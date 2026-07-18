@@ -137,7 +137,7 @@ process (oracle first, C twin second, measured-then-pinned parity gate, registry
 
 ## 6. The larger implication — closing the train → export → serve loop
 
-BCIR now has two complementary end-to-end gates. The real-model gate starts from a pinned trained
+BCIR now has three complementary bounded gates. The real-model gate starts from a pinned trained
 checkpoint and verifies the deployment half:
 
 ```
@@ -153,9 +153,24 @@ The hosted micro gate proves the owned training path without conflating it with 
                 → BCIRQ8 group-32 → Python Q8 + standalone C → parity report
 ```
 
-CI does not claim that BCIR trained the pinned TinyLlama checkpoint, and the micro sequence task is
-not evidence of useful language-model quality. Together the gates prove both compositions while
-keeping their provenance and claims separate.
+The offline staged-training gate proves the machinery above pretraining without claiming a
+large-model run:
+
+```
+ generated corpus → byte BPE → tiny safe pretrain → SFT → RM → DPO → bounded PPO
+                                      ├────────────→ verified reasoning SFT
+                                      └────────────→ relational embedding distillation
+ generated tensors ────────────────────────────────→ MLP / GRU / encoder confirmation
+```
+
+It uses provider-neutral contracts and generated fixtures, runs twice on one CPU thread, restores
+process-global RNG/determinism state around each stage, and requires an identical content-addressed
+pipeline report. No live teacher API, remote executor, pretrained weight, or generated checkpoint is
+committed.
+
+CI does not claim that BCIR trained the pinned TinyLlama checkpoint, and neither micro gate is
+evidence of useful language-model quality. Together the gates prove deployment, safe owned
+pretraining, and staged-alignment compositions while keeping their provenance and claims separate.
 
 ---
 

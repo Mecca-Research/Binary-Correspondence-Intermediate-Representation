@@ -33,9 +33,9 @@ jobs:
         run: |
           cppcheck --std=c11 --enable=warning,performance,portability \
             --error-exitcode=1 --inline-suppr -I runtime/c \
-            runtime/c/bcir_cpp.c runtime/c/bcir_cfront.c runtime/c/bcir_q8_model.c runtime/c/bcir_llama.c \
+            runtime/c/bcir_cpp.c runtime/c/bcir_cfront.c runtime/c/bcir_q8_model.c runtime/c/bcir_q4_kernel.c runtime/c/bcir_llama.c \
             runtime/c/bcir_runtime_channel.c runtime/c/bcir_verify.c
-          for source in bcir_cpp.c bcir_cfront.c bcir_q8_model.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c; do
+          for source in bcir_cpp.c bcir_cfront.c bcir_q8_model.c bcir_q4_kernel.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c; do
             scan-build --status-bugs clang -std=c11 -I runtime/c -c "runtime/c/${source}" \
               -o "/tmp/${source%.c}.o"
           done

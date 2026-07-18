@@ -128,6 +128,14 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     pickle-free exact-resume Safetensors, passes strict BCIR ingestion, and preserves the
     learned token through deterministic BCIRQ8 and Python/C logit parity. The 32M profile
     and TinyStories hashes are pinned, but that model has not been trained.
+13. **Offline staged model-development machinery is code-backed**: deterministic corpus
+    preparation and byte BPE feed a tiny safe pretrain; typed SFT, reward, DPO, bounded PPO,
+    verified reasoning, relational embedding distillation, and MLP/GRU/encoder stages run
+    behind an append-only pipeline ledger. Teacher-data and remote-compute contracts are
+    separate and provider-neutral; only recorded/offline adapters exist, so no live API or
+    outsourced training claim is made. BCIRQ4T, measured schedule artifacts, expanded AD,
+    and numerical-provider evidence close local reference portions of A1/B1/B3/B5 while
+    leaving multi-target and production qualification open.
 
 ## Confirmed limitations
 
@@ -146,9 +154,10 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
    channels are modeled (no resident driver yet — Phase D); CIM/PIM offload and DVFS
    energy numbers are models, not measured Joules; DVFS actuation reports exactly why
    it cannot actuate in a sandbox.
-4. **Intelligence ahead of substrate** remains the top structural risk: a rich
-   learned/ML stack over cost tables that are calibrated on host but not yet validated
-   on a rig; the quarantine keeps it off the deterministic path until measured.
+4. **Intelligence ahead of substrate** remains the top structural risk: local schedule
+   artifacts can now record real host counters, but no two-target promotion corpus or
+   resident-device qualification exists. The quarantine keeps learned and measured
+   candidates off the deterministic legality path until reviewed and frozen.
 5. The C compiler rail is a **subset** compiler: unsupported constructs route honestly
    to `--fallback` (LLVM); the road to a hosted C23 replacement is the ordinary
    hard-compiler work ([`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §4.1). `_Decimal*` is blocked on a

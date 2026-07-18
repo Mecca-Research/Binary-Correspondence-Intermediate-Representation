@@ -212,6 +212,17 @@ The next step beyond "GPT helps write code" is a **cloud-teacher training loop**
 
 This is a real training architecture, but it is not magic gradient access to GPT. The API call is an **inference-time teacher/sample generator**, not a differentiable layer inside BCIR's optimizer. The learnable weights that change are the BCIR-owned student models, prompt/tool policies, retrieval rankers, Q8 tables, or hosted fine-tuned models where product support permits.
 
+**Current implementation boundary.** The provider-neutral seam now exists in
+`bcir.hosted.training.providers`, independent of any OpenAI or cloud SDK. `TeacherProvider`
+separates frozen embedding/preference/score/label targets from `RemoteComputeProvider`, which
+represents execution of BCIR-owned code from an attested source/spec/corpus/tokenizer/container
+bundle. `RecordedTeacherProvider` replays content-addressed JSONL responses and
+`OfflineComputeAdapter` exercises result attestation without a network. The local training rail
+can consume relational embedding targets, preferences, and verified examples, but no live API
+adapter, key handling, upload path, hosted fine-tune call, or remote executor is implemented in
+this slice. This preserves the central rule: provider inference may create data; only an attested
+compute executor can return trained BCIR weights, and neither can define legality.
+
 A concrete session ABI should look like this:
 
 ```text

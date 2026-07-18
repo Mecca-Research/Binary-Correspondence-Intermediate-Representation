@@ -70,7 +70,7 @@ def test_out_of_set_op_is_rejected_deterministically():
     # forge a node with an unsupported op by reaching into the store (the closure boundary the oracle pins).
     from bcir.kbcir.autodiff import Node
     bogus = len(t._nodes)
-    t._nodes.append(Node(bogus, "exp", (f,), None, ("exp", None, (f,))))
+    t._nodes.append(Node(bogus, "foreign", (f,), None, ("foreign", None, (f,))))
     try:
         emit_autodiff_kernel_c(t, bogus, ("a",))
         assert False, "an op outside the closed set must be rejected"

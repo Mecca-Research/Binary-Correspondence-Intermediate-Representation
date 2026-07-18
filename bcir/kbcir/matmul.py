@@ -79,16 +79,13 @@ def matmul_tiled(a, b, M: int, N: int, K: int, plan: "TilePlan") -> list[float]:
         raise ValueError(f"unsupported matmul loop order {plan.loop_order!r}")
     c = [0.0] * (M * N)
     tm, tn, tk = plan.tile_m, plan.tile_n, plan.tile_k
-    # loop_order names the order of the three tile loops; the k loop always accumulates into C.
-    for i0 in range(0, M, tm):
-        for j0 in range(0, N, tn):
-            for k0 in range(0, K, tk):
-                for i in range(i0, min(i0 + tm, M)):
-                    for j in range(j0, min(j0 + tn, N)):
-                        s = 0.0
-                        for k in range(k0, min(k0 + tk, K)):
-                            s += a[i * K + k] * b[k * N + j]
-                        c[i * N + j] += s
+    for i0, j0, k0 in tile_origins(M, N, K, plan):
+        for i in range(i0, min(i0 + tm, M)):
+            for j in range(j0, min(j0 + tn, N)):
+                s = 0.0
+                for k in range(k0, min(k0 + tk, K)):
+                    s += a[i * K + k] * b[k * N + j]
+                c[i * N + j] += s
     return c
 
 
@@ -136,6 +133,23 @@ class TilePlan:
 
 
 _LOOP_ORDERS = ("ijk", "ikj", "jik")     # the outer tile-loop permutations we cost (k always innermost-accum)
+
+
+def tile_origins(M: int, N: int, K: int, plan: TilePlan):
+    """Yield tiled-loop origins in the plan's declared outer-loop order."""
+    _validate_dimensions(M, N, K)
+    if not isinstance(plan, TilePlan) or plan.loop_order not in _LOOP_ORDERS:
+        raise ValueError("tile origins require a valid TilePlan")
+    steps = {"i": plan.tile_m, "j": plan.tile_n, "k": plan.tile_k}
+    limits = {"i": M, "j": N, "k": K}
+    if any(type(step) is not int or step <= 0 for step in steps.values()):
+        raise ValueError("tile extents must be positive integers")
+    axes = tuple(plan.loop_order)
+    for first in range(0, limits[axes[0]], steps[axes[0]]):
+        for second in range(0, limits[axes[1]], steps[axes[1]]):
+            for third in range(0, limits[axes[2]], steps[axes[2]]):
+                origin = {axes[0]: first, axes[1]: second, axes[2]: third}
+                yield origin["i"], origin["j"], origin["k"]
 
 
 def _divisor_tiles(dim: int) -> list[int]:

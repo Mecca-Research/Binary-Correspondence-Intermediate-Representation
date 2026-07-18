@@ -297,6 +297,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   correctness/Windows/real-model Q8 closure (#634), two C bug sweeps (#635–#636),
   hosted memory discipline and RuntimeChannel hooks (#637), and the pre-driver
   machine/telemetry/assembly foundation (#638).
+- **2026-07-15 → 07-17:** the hosted model lab reached a deterministic random-weight
+  train→safe-checkpoint→strict-ingest→BCIRQ8→standalone-C gate (#641). The follow-on
+  offline model-development slice added corpus/BPE preparation, SFT/RM/DPO/PPO/reasoning/
+  embedding stages, small MLP/GRU/encoder confirmation models, provider-neutral teacher
+  and remote-compute contracts, BCIRQ4T/AVX2/SmoothQuant, measured schedule artifacts,
+  expanded AD/rematerialization, and workload-scoped numerical-provider evidence.
 
 ---
 
@@ -313,7 +319,7 @@ exist; it does not imply production deployment or hardware evidence.
 | Optimizer and backend | 12-axis K_BCIR, min-plus/RCSP/(max,+), GEM scheduling, C23 and resident LLVM/object paths, JVM/CIL/WASM bounded validation | Arbitrary-graph LLVM AOT, general native isel (gated), target-specific measured scheduling evidence |
 | Machine/driver substrate | StreamPack v1–v3, device manifests, bank/move/event/DMA contracts, MC1/MC2 operator tools, direct RuntimeChannel hooks | Resident UART/virtio/device drivers, stable UAPI, Linux modules, native IPC, physical-device qualification |
 | Memory discipline | Freestanding/hosted/adapter classes, checked hosted allocator and fault injection, fail-every-allocation tests | Per-operation compiler arenas and further context migration as allocation-bearing surfaces expand |
-| ML/model stack | Planned/streamed training, deterministic optimizers, model manifest/tokenizer/decoder, GQA/KV cache, BCIRQ8, standalone-C TinyLlama parity gate | Production serving, broader architectures, packed INT2–INT6, activation/outlier quantization and hardware-qualified model gates |
+| ML/model stack | Planned/streamed training, hosted safe pretraining and bounded alignment stages, deterministic corpus/BPE, provider-neutral contracts, model manifest/tokenizer/decoder, GQA/KV cache, BCIRQ8, BCIRQ4T tensor compute, and standalone-C TinyLlama parity | Production serving, whole-decoder Q4/additional formats, canonical 32M training, live providers, distributed/GPU execution, and hardware-qualified model gates |
 | Telemetry/control | Signal registry, BTLM codec, metric derivation, deterministic serializers, shared-ring baseline | Generated fixed-width C registry, source/session/generation/clock identity, live SPSC protocol and real transports |
 
 ### Retired AI-substrate research note
@@ -323,23 +329,22 @@ the 2026-07 documentation consolidation and then retired. Its conclusions
 now have stable owners:
 
 - **A1 precision:** exact-width `_BitInt(N)`, groupwise power-of-two Q8, BCIRQ8, and
-  the reference Q8 path landed. Packed INT2–INT6 storage/compute, activation
-  quantization, outlier/smoothing strategies, and any additional format remain in
+  a bounded BCIRQ4T/SmoothQuant/AVX2 tensor path landed. Whole-decoder low-bit,
+  model-level quality qualification, other targets, and any additional format remain in
   [`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md)
   §6 and require R17/provenance/drift gates.
-- **B1 scheduling:** deterministic matmul tile/loop search with min-plus selection and
-  the compute-vs-memory roofline landed. Transform-dialect (or equivalent portable)
-  schedule export and analytic-versus-measured evidence on real targets remain in the
-  same roadmap.
+- **B1 scheduling:** deterministic matmul tile/loop search, compute-vs-memory roofline,
+  measured schedule artifacts, real OS/optional PMU counters, and selected-schedule MLIR
+  landed. Two-target exhaustive evidence and reviewed promotion remain in the same roadmap.
 - **B3 differentiation:** the hash-consed closed primitive set, reverse mode,
-  closed-set symbolic reverse-over-reverse, law op, C lowering, and tests landed.
-  Post-optimization AD comparison, checkpoint/rematerialization, mutation and
-  unbounded-control-flow policy, and genuine higher-order/transcendental VJPs remain
-  open. The accepted mathematical description is monoidal/string-diagram/PROP
+  transcendental VJPs, symbolic reverse-over-reverse, law op, C lowering, measured
+  ordering, rematerialization, local mutation, and bounded loop/finite-call handling
+  landed. Representative-graph qualification and the explicitly quarantined aliased/
+  unbounded/dynamic cases remain open. The accepted mathematical description is monoidal/string-diagram/PROP
   rewriting—not “operad 2-cells.”
 - **B5 libraries:** CBLAS, FFTW 1D/2D, LAPACK, GSL, SLEEF, and libcerf wrappers,
-  link metadata, calling-side tuning, and red-team coverage landed. Further libraries
-  are demand-driven and require actual target availability and performance evidence.
+  link metadata, calling-side tuning, demand-driven provider probes, measurements, and
+  evidence artifacts landed. Further libraries and target qualification remain workload-driven.
 
 ## 5. Where the detailed notes live now
 

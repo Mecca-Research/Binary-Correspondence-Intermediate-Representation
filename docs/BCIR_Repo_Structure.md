@@ -46,6 +46,7 @@ history and git.
 | `lower/` | Portable C, the single-claim elementwise LLVM AOT/JIT subset, WASM, stack-machine, library, SYCL, and model lowering helpers |
 | `codegen/` | Resident-toolchain object/assembly paths and target validation |
 | `hosted/models/` | Opt-in PyTorch Llama training, pickle-free exact-resume checkpoints, strict Safetensors export, and train-to-C gating; never imported by the oracle path |
+| `hosted/training/` | Dependency-free corpus/BPE/provider/stage/ledger contracts plus lazily imported PyTorch SFT, reward, DPO, PPO, reasoning, embedding, MLP, GRU, and encoder references |
 | `tests/` | Explicit test registry and named quick, C-runtime, silicon-degrade, and thorough tiers |
 
 Top-level modules such as `telemetry_frame.py`, `telemetry_export.py`,
@@ -145,6 +146,7 @@ bash tools/cpp/check_handoff.sh
 
 # Optional pinned hosted-model CPU gate (one thread in CI)
 python tools/models/test_hosted_model_lab.py --output-dir build/hosted-model-gate
+python tools/models/test_training_pipeline.py --output-dir build/training-pipeline-gate
 
 # MLIR/IRDL rails when the coherent LLVM toolset is installed
 bash tools/wsl/check_passes.sh

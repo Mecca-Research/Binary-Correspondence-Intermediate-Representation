@@ -128,7 +128,7 @@ jobs:
         run: |
           diagnostics="$(mktemp)"
           trap 'rm -f "${diagnostics}"' EXIT
-          for source in bcir_cpp.c bcir_cfront.c bcir_q8_model.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c; do
+          for source in bcir_cpp.c bcir_cfront.c bcir_q8_model.c bcir_q4_kernel.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c; do
             : > "${diagnostics}"
             if ! clang --analyze -std=c11 -I runtime/c "runtime/c/${source}" -o /dev/null 2>"${diagnostics}"; then
               cat "${diagnostics}" >&2
@@ -224,11 +224,16 @@ jobs:
       - name: Hosted model configuration, checkpoint, resume, export, and train-to-C gate
         run: python tools/models/test_hosted_model_lab.py --output-dir build/hosted-model-gate
 
+      - name: Offline pretrain, alignment, reasoning, embedding, and small-model gate
+        run: python tools/models/test_training_pipeline.py --output-dir build/training-pipeline-gate
+
       - name: Upload deterministic hosted-model parity report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: bcir-hosted-model-parity-report-${{ runner.os }}
-          path: build/hosted-model-gate/parity-report.json
+          path: |
+            build/hosted-model-gate/parity-report.json
+            build/training-pipeline-gate/report.json
           if-no-files-found: error
 
       - name: Tests leave tracked sources unchanged

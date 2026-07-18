@@ -29,7 +29,9 @@ from bcir.kbcir.autodiff import CLOSED_SET, Tape, _ARITY
 
 # The fixed opcode int codes the law op + verifier use (mirror autodiff._ARITY's order). The vocabulary is the
 # CLOSED SET; this map is the serialization of it.
-_CODE = {"const": 0, "var": 1, "neg": 2, "add": 3, "sub": 4, "mul": 5, "div": 6, "dot": 7, "select": 8}
+_CODE = {"const": 0, "var": 1, "neg": 2, "add": 3, "sub": 4, "mul": 5,
+         "div": 6, "dot": 7, "select": 8, "exp": 9, "log": 10, "sqrt": 11,
+         "tanh": 12, "sin": 13, "cos": 14}
 
 
 def _build_f_xy_plus_x():
@@ -53,7 +55,13 @@ def _build_rich():
     d = t.div(ab, k)
     dp = t.dot((a, b), (b, c))
     sel = t.select(c, d, dp)
-    out = t.add(sel, na)
+    positive = t.add(t.mul(a, a), t.const(2.0))
+    trans = t.add(t.exp(t.neg(positive)), t.log(positive))
+    trans = t.add(trans, t.sqrt(positive))
+    trans = t.add(trans, t.tanh(b))
+    trans = t.add(trans, t.sin(a))
+    trans = t.add(trans, t.cos(c))
+    out = t.add(t.add(sel, na), trans)
     return t, out, ["a", "b", "c"]
 
 
@@ -163,7 +171,7 @@ def test_law_rail_rejects_a_foreign_opcode():
     tape, output, names = _build_f_xy_plus_x()
     s = _serialize(tape, output, names)
     s["opcodes"] = list(s["opcodes"])
-    s["opcodes"][2] = 9                         # a foreign opcode (9 is outside the closed set's 0..8)
+    s["opcodes"][2] = 15                        # foreign: closed vocabulary ends at code 14
     proc = subprocess.run([bo], input=_to_mlir("bad", s), capture_output=True, text=True)
     assert proc.returncode != 0, "the law rail must reject a foreign opcode"
     assert "is not in the closed set" in proc.stderr, \

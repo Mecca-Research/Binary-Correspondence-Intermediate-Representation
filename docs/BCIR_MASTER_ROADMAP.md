@@ -163,23 +163,28 @@ The full maturity ladder and kernel escalation policy live in
 
 ### 4.4 ML and model rail
 
-Two bounded seams are proven: immutable TinyLlama inputs produce a deterministic group-Q8 artifact
-with Python/C parity, and the optional hosted lab trains a 90,688-element model from random weights
-through exact safe resume, strict Safetensors ingestion, BCIRQ8, and standalone C. Generated weights
-remain build-only. The active queue is:
+Three bounded seams are proven: immutable TinyLlama inputs produce a deterministic group-Q8 artifact
+with Python/C parity; the optional hosted lab trains a 90,688-element model from random weights
+through exact safe resume, strict Safetensors ingestion, BCIRQ8, and standalone C; and an offline
+provider-neutral gate exercises generated-corpus pretraining, SFT, reward, DPO, PPO, verified
+reasoning, embedding distillation, and three small architecture families with deterministic replay.
+Generated weights remain build-only. The active queue is:
 
-1. Define packed INT2–INT6 storage/compute and activation-outlier policy under R17.
-2. Export analytic tensor schedules and compare them with bounded exhaustive measurements on real
-   targets; keep GEMM and fused/attention conclusions separate.
-3. Add multi-level/post-optimization AD evidence, checkpoint/rematerialization, and broader
-   control/mutation/higher-order coverage.
+1. Extend the landed BCIRQ4T/AVX2/SmoothQuant tensor slice to whole-decoder Q4, model-level
+   compactness/drift/NLL, ARM/other targets, and independently specified additional formats.
+2. Qualify the landed measured schedule artifact on at least two real targets and publish GEMM
+   versus fused/attention evidence separately before target promotion.
+3. Qualify differentiate-high/optimize-low and rematerialization on representative graphs; keep
+   aliased mutation, unbounded control, recursion, and dynamic higher-order calls quarantined.
 4. Differentially freeze the pinned 16,384-piece tokenizer, then train and evaluate the specified
    BCIR-TinyStories-32M model on a canonical hosted rig; local work is pilot-only.
 5. Establish SDPA device parity, static request-owned KV/CUDA graphs, then verified BCIRQ8 GPU
    execution before defining BCIRQ4 or custom attention kernels.
 6. Complete sampling, raw-text standalone tokenization, scalable batching/placement, bounded
    serving, and architecture coverage in that order.
-7. Materialize Phase-C data organs only behind schema/provenance and bounded-memory contracts.
+7. Implement live teacher/remote-compute adapters only behind the provider-neutral artifact ABI,
+   explicit credentials/policy, cost limits, and offline replay; embeddings remain frozen targets.
+8. Materialize Phase-C data organs only behind schema/provenance and bounded-memory contracts.
 
 The detailed closure register, model ladder, and explicit production gaps are in
 [`machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md).

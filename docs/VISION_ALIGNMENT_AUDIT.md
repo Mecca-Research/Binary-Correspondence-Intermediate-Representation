@@ -33,8 +33,8 @@ not promoted to driver, transport, or hardware evidence.
 | C registry/macro-assembly surface | **Landed core; partial language breadth** | MMIO/volatile/atomic/bitfield/ABI/project/link/fallback paths are dual-railed; not full ISO C23 and not a resident driver |
 | IR ownership of planning and execution shape | **Landed** | R1–R23, K_BCIR, GEM, StreamPack v1–v3, event/DMA/device contracts; arbitrary-graph LLVM AOT remains absent |
 | Certified optimization and learning | **Landed reference; hardware evidence partial** | Exact search and frozen-Q8/replay/provenance controls exist; most target calibration is not yet driver/hardware qualified |
-| Math, AD, precision, and library substrate | **Advanced but bounded** | Tensor ops, R17, Q8, closed-set AD and six library families exist; broader AD/low-bit/schedule-export work remains |
-| Model inference and training | **Real reference + hosted micro/C gates; not production/bare-metal complete** | Planned/streamed semantics, owned random-weight safe-resume training, and TinyLlama/hosted→BCIRQ8→standalone-C parity exist; 32M/GPU/serving remain open |
+| Math, AD, precision, and library substrate | **Advanced but bounded** | BCIRQ4T/AVX2/SmoothQuant, measured schedule artifacts, expanded closed-set AD, and workload-scoped numerical evidence exist; whole-model and multi-target qualification remains |
+| Model inference and training | **Real reference + hosted micro/C gates; not production/bare-metal complete** | Planned/streamed semantics, owned safe-resume pretraining, offline SFT/RM/DPO/PPO/reasoning/embedding stages, and TinyLlama/hosted→BCIRQ8→standalone-C parity exist; 32M/GPU/serving remain open |
 | Driver, kernel, ABI, and IPC | **Foundation only** | Direct RuntimeChannel, manifests, event/DMA and ordinary x86 edges exist; no resident driver, Linux module/fork, stable UAPI, native kernel, or native IPC |
 | Telemetry/control plane | **Codec/meaning landed; live plane missing** | Registry, BTLM, metrics, deterministic exposition and ring baseline exist; identity envelope, live SPSC and transports/providers are open |
 
@@ -98,17 +98,20 @@ not promoted to driver, transport, or hardware evidence.
 - Learned ranking/routing/calibration artifacts are quantized, generation-tagged,
   content-addressed, replay-gated, and reversible. They may change search effort or choose
   certified alternatives, never an R-law verdict.
-- A1 precision foundations, B1 deterministic matmul search/roofline, B3 closed-set
-  reverse AD, and B5 CBLAS/FFTW/LAPACK/GSL/SLEEF/libcerf integration have code and tests.
+- A1 includes BCIRQ4T signed-Q4 storage, SmoothQuant/outlier calibration, portable C and
+  AVX2 packed compute. B1 has content-addressed analytic/measured schedule evidence and
+  selected-schedule MLIR. B3 includes six transcendental VJPs, rematerialization, bounded
+  loop/call handling, and explicit quarantine. B5 has workload-scoped measured provider
+  selection over the existing library families.
 
 ### Still open
 
-- packed INT2–INT6 wire/compute paths; activation quantization, smoothing and outlier
-  policy; additional formats with R17/provenance/drift gates;
-- portable schedule export through MLIR Transform (or an equivalent contract) and
-  analytic-versus-measured results on real CPU/GPU/device targets;
-- post-optimization AD comparison, checkpoint/rematerialization, mutation and unbounded
-  control-flow policy, and genuine higher-order/transcendental VJPs;
+- whole-decoder Q4, model-level compactness/drift/NLL, ARM/other packed compute, and
+  independently specified additional formats;
+- bounded exhaustive schedule evidence on at least two real CPU/GPU/device targets and
+  reviewed artifact promotion into a target transform;
+- representative-model qualification of AD ordering/rematerialization; aliased mutation,
+  recursion, unbounded control, and dynamic higher-order calls remain quarantined;
 - target/device calibration and Q8-prior promotion from resident-driver telemetry.
 
 The correct mathematical description of the AD/rewrite structure is
@@ -131,11 +134,16 @@ implementation claim.
 - The import-quarantined hosted lab independently implements Llama/GQA in PyTorch, accepts
   only explicit AdamW/device/precision modes, checkpoints without pickle, and proves exact
   same-host resume plus random-weights→Safetensors→BCIRQ8→standalone-C composition.
+- The sibling hosted-training package adds deterministic corpus/BPE preparation, typed
+  SFT/preference/PPO/reasoning records, RM/DPO/PPO/reasoning/embedding objectives, three
+  bounded non-LLM model families, and an append-only pipeline ledger. Recorded teacher and
+  offline remote-compute adapters prove the provider-neutral boundary without a live API.
 - The C++ handoff has a small compiled single-node seam and explicit ownership rules.
 
 ### Still open
 
-- The pinned 16K tokenizer and canonical BCIR-TinyStories-32M run, distributed training,
+- The pinned 16K tokenizer and canonical BCIR-TinyStories-32M run, live provider adapters,
+  distributed training,
   production tokenizer/runtime integration, sampling, safety policy, broad architectures,
   long-context/device kernels, robust serving/evaluation, and physical accelerator qualification.
 - A freestanding whole-decoder profile with caller-owned memory if bare-metal deployment

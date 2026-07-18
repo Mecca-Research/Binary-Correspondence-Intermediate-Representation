@@ -57,7 +57,8 @@ from bcir.kbcir.autodiff import (
 # the module's DERIVED CLOSED_SET equals this literal AND equals _LOWERABLE -- three independent
 # spellings forced to agree, so none can silently drift).
 _CLOSED_SET_LITERAL = frozenset(
-    {"const", "var", "neg", "add", "sub", "mul", "div", "dot", "select"})
+    {"const", "var", "neg", "add", "sub", "mul", "div", "dot", "select",
+     "exp", "log", "sqrt", "tanh", "sin", "cos"})
 
 # The per-primitive closure statement: for each differentiable op, the closed-set op kinds its
 # adjoint (VJP) rule is allowed to emit. This is the human-readable CLAIM; the test PROVES it by
@@ -72,6 +73,12 @@ _EXPECTED_EMITTED = {
     "div":    {"div", "mul", "neg", "var"},    # grad_a = gz/b ; grad_b = -(gz*a)/(b*b)
     "dot":    {"mul", "var"},                  # grad_u_i = gz*v_i ; grad_v_i = gz*u_i
     "select": {"select", "const", "var"},      # grad_a = select(cond,gz,0) ; grad_b = select(cond,0,gz)
+    "exp":    {"mul", "exp", "var"},
+    "log":    {"div", "var"},
+    "sqrt":   {"div", "mul", "sqrt", "const", "var"},
+    "tanh":   {"mul", "sub", "tanh", "const", "var"},
+    "sin":    {"mul", "cos", "var"},
+    "cos":    {"neg", "mul", "sin", "var"},
 }
 
 

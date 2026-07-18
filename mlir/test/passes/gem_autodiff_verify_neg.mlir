@@ -10,8 +10,8 @@
 // (1 -- CLOSED VOCABULARY) a FOREIGN opcode (code 9 is outside {const..select} = codes 0..8): rejected. This is
 // the law the closure proof underwrites -- the serialized DAG may use ONLY the closed vocabulary.
 bcir.module @foreign_opcode {
-  // expected-error @+1 {{autodiff: node 2 opcode 9 is not in the closed set {const,var,neg,add,sub,mul,div,dot,select} (codes 0..8)}}
-  bcir.gem.autodiff @bad { n_inputs = 2 : i64, opcodes = array<i64: 1, 1, 9, 3>,
+  // expected-error @+1 {{autodiff: node 2 opcode 15 is not in the closed set {const,var,neg,add,sub,mul,div,dot,select,exp,log,sqrt,tanh,sin,cos} (codes 0..14)}}
+  bcir.gem.autodiff @bad { n_inputs = 2 : i64, opcodes = array<i64: 1, 1, 15, 3>,
                            arities = array<i64: 0, 0, 2, 2>, arg_base = array<i64: 0, 0, 0, 2>,
                            args = array<i64: 0, 1, 2, 0>, consts = array<i64: 0, 1, -1, -1>,
                            output = 3 : i64 }
