@@ -112,8 +112,10 @@ def test_hosted_manifest_and_reports_have_content_identity():
 def test_hosted_namespace_does_not_import_tensor_framework():
     code = (
         "import sys; import bcir; import bcir.hosted.models as m; "
+        "import bcir.hosted.training as training; "
         "assert 'torch' not in sys.modules; "
-        "assert m.HostedTrainSpec.__module__ == 'bcir.hosted.models.spec'"
+        "assert m.HostedTrainSpec.__module__ == 'bcir.hosted.models.spec'; "
+        "assert training.HardwarePolicySpec.__module__.endswith('hardware_policy_spec')"
     )
     env = dict(os.environ)
     env["PYTHONPATH"] = str(_ROOT)

@@ -136,6 +136,12 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     outsourced training claim is made. BCIRQ4T, measured schedule artifacts, expanded AD,
     and numerical-provider evidence close local reference portions of A1/B1/B3/B5 while
     leaving multi-target and production qualification open.
+14. **The first hardware-policy composition is code-backed but honestly bounded**:
+    availability-aware telemetry and bank/link topology feed a quarantined GNN/Transformer;
+    exact K_BCIR outcomes drive reward, DPO, and PPO references; bounded PUCT searches only
+    feasible assessed candidates; and the winner must still pass claims, bank moves,
+    StreamPack, and exact aligned static-address verification. The required gate trains twice
+    on six simulated episodes and refuses live promotion from that provenance.
 
 ## Confirmed limitations
 
@@ -155,17 +161,20 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
    energy numbers are models, not measured Joules; DVFS actuation reports exactly why
    it cannot actuate in a sandbox.
 4. **Intelligence ahead of substrate** remains the top structural risk: local schedule
-   artifacts can now record real host counters, but no two-target promotion corpus or
-   resident-device qualification exists. The quarantine keeps learned and measured
-   candidates off the deterministic legality path until reviewed and frozen.
+   artifacts can record real host counters and the first hardware policy can learn a bounded
+   simulated portfolio, but no real policy episode corpus, two-target exhaustive comparison,
+   frozen deployment model, or resident-device qualification exists. The quarantine and
+   measured-only promotion gate keep learned candidates off legality and live activation.
 5. The C compiler rail is a **subset** compiler: unsupported constructs route honestly
    to `--fallback` (LLVM); the road to a hosted C23 replacement is the ordinary
    hard-compiler work ([`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §4.1). `_Decimal*` is blocked on a
    reference compiler that can compile it. `runtime/cpp/` dynamic-graph and
    distributed orchestration are stubs pending multi-node hardware.
-6. **Hosted model execution is a bounded reference, not a production training stack.**
+6. **Hosted model execution and hardware RL are bounded references, not production stacks.**
    Distributed/data-parallel execution, the frozen 16K tokenizer, the canonical 32M run,
-   CUDA kernels/graphs, serving, RAG, and model publication remain gated follow-on work.
+   CUDA kernels/graphs, real PMU/GPU policy training, rematerialization/spill execution,
+   serving, RAG, and model publication remain gated follow-on work. Static memory v1 plans
+   resource-level phase lifetimes; it is not online eviction, semantic swap, or paged KV.
 7. **There is no resident UART driver or production driver telemetry ABI.** The UART register
    header/polling source is a compiler fixture; the channel-backed driver, UART simulator,
    IRQ service, and U0–U9 program remain planned. Telemetry has a registry, codecs, metrics,
@@ -197,6 +206,10 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
    gate where hardware permits, then use driver telemetry/replay evidence to promote
    device-specific immutable Q8 artifacts. Local ARM and board evidence remains
    hardware-gated, not emulated without an explicit bounded CI job.
+5. **Hardware-policy evidence** — record real CPU episodes with explicit counter availability,
+   compare policy-guided search with the bounded exhaustive portfolio, then repeat on a second
+   physical target. Add rematerialize/spill/KV actions only after their claim and static/dynamic
+   memory verifiers exist; do not build an unrestricted assembly generator or in-flight hot-swap.
 
 ## Changelog
 

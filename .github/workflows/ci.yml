@@ -227,6 +227,9 @@ jobs:
       - name: Offline pretrain, alignment, reasoning, embedding, and small-model gate
         run: python tools/models/test_training_pipeline.py --output-dir build/training-pipeline-gate
 
+      - name: Bounded hardware RL train, search, static-memory, and StreamPack gate
+        run: python tools/models/run_hardware_rl_gate.py --output-dir build/hardware-rl-gate
+
       - name: Upload deterministic hosted-model parity report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -234,6 +237,7 @@ jobs:
           path: |
             build/hosted-model-gate/parity-report.json
             build/training-pipeline-gate/report.json
+            build/hardware-rl-gate/report.json
           if-no-files-found: error
 
       - name: Tests leave tracked sources unchanged

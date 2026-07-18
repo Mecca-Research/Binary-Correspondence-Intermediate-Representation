@@ -146,7 +146,7 @@ process (oracle first, C twin second, measured-then-pinned parity gate, registry
 
 ## 6. The larger implication — closing the train → export → serve loop
 
-BCIR now has three complementary bounded gates. The real-model gate starts from a pinned trained
+BCIR now has four complementary bounded gates. The real-model gate starts from a pinned trained
 checkpoint and verifies the deployment half:
 
 ```
@@ -177,9 +177,24 @@ process-global RNG/determinism state around each stage, and requires an identica
 pipeline report. No live teacher API, remote executor, pretrained weight, or generated checkpoint is
 committed.
 
-CI does not claim that BCIR trained the pinned TinyLlama checkpoint, and neither micro gate is
+The hardware-policy gate closes the first model→hardware-plan learning loop without executing a
+large model or granting a network authority over legality:
+
+```
+ model header + hardware envelope → finite placement candidates → generated telemetry episodes
+     → tiny GNN/Transformer reward+DPO+PPO → bounded PUCT → verified claims + StreamPack
+     → exact per-bank static addresses → simulated evidence withheld from live promotion
+```
+
+It also runs twice on one CPU thread. The policy learns metric preferences over real candidate
+shapes, while the fixture outcomes remain explicitly simulated. A live generation may be promoted
+only from measured selected/baseline outcomes at a quiescent boundary after plan, pack, bank-move,
+and static-memory re-verification.
+
+CI does not claim that BCIR trained the pinned TinyLlama checkpoint, and none of the micro gates is
 evidence of useful language-model quality. Together the gates prove deployment, safe owned
-pretraining, and staged-alignment compositions while keeping their provenance and claims separate.
+pretraining, staged-alignment composition, and a bounded learned plan-selection seam while keeping
+their provenance and claims separate.
 
 ---
 
@@ -204,3 +219,7 @@ from the other roadmaps, importing no new subsystem:
   *oracle*. The BCIRQ8 header carries immutable source/config/tokenizer hashes and layered CRCs;
   the deterministic parity report records the exact outcome. Seeded sampler provenance remains
   part of the open WMR-3 slice.
+- **Hardware-policy rail** — model placement supplies the finite action set; telemetry and exact
+  K_BCIR metrics supply training evidence; verification and static memory remain the authority.
+  The policy cannot turn model layers into independent agents, bypass autoregressive ordering, or
+  certify a simulated speedup.

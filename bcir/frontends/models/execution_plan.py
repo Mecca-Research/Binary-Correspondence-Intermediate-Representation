@@ -13,6 +13,7 @@ from ...kbcir.device_manifest import (DeviceManifest, MemoryBank, check_bank_mov
                                       check_device_manifest, move_claim)
 from ...kbcir.provenance import hash_module
 from ...kbcir.realize import RealizationResult, optimize
+from ...kbcir.static_memory import ResourceBankBinding
 from ...model import Claim, Domain, Lane, Lifetime, Module, Opcode, Phase, Resource, StrideClass
 from ...verify import verify_all, verify_smart_lowering
 from .assessment import (HardwareEnvelope, ModelCostReport, ModelExecutionPlan,
@@ -28,6 +29,7 @@ class LoweredModelExecution:
     realization: RealizationResult
     streampack: StreamPack
     streampack_data: bytes
+    resource_banks: tuple[ResourceBankBinding, ...]
 
 
 def _device_manifest(hardware: HardwareEnvelope) -> DeviceManifest:
@@ -79,6 +81,7 @@ class _Builder:
                              target=hardware.architecture)
         self.actions: list[PlanAction] = []
         self.claim_channels: dict[int, str] = {}
+        self.resource_banks: dict[int, str] = {}
         self.next_rid = 1; self.next_cid = 1; self.next_phase = 1; self.previous_phase = 0
 
     def peak_component(self, bank_name: str, field: str) -> int:
@@ -91,6 +94,7 @@ class _Builder:
         bank = self.hardware.bank(bank_name); rid = self.next_rid; self.next_rid += 1
         self.module.add_resource(Resource(rid, Domain[bank.domain], 1, (max(1, nbytes),),
                                           align=bank.alignment, name=name))
+        self.resource_banks[rid] = bank_name
         return rid
 
     def phase(self, claim: Claim, action: PlanAction) -> None:
@@ -320,7 +324,9 @@ def lower_model_execution(report: ModelCostReport, candidate: PlacementCandidate
         report.digest, candidate.candidate_id, candidate.classification,
         tuple(builder.actions), module_digest, hashlib.sha256(pack_data).hexdigest(),
         len(pack_data))
-    return LoweredModelExecution(artifact, builder.module, result, pack, pack_data)
+    bindings = tuple(ResourceBankBinding(rid, builder.resource_banks[rid])
+                     for rid in sorted(builder.resource_banks))
+    return LoweredModelExecution(artifact, builder.module, result, pack, pack_data, bindings)
 
 
 __all__ = ["LoweredModelExecution", "lower_model_execution"]
