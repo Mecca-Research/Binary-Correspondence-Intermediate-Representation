@@ -762,13 +762,15 @@ static bool checkedMul4Nonnegative(int64_t a, int64_t b, int64_t c,
   // The B3 closed-set forward autodiff DAG (mirrors bcir/kbcir/autodiff.py: CLOSED_SET / _ARITY /
   // the Tape Node list -- the op-level structural well-formedness law the sibling gem ops validate
   // inline; NO new globally-numbered R-law). Slice 5 proved differentiating any expression in the
-  // closed vocabulary {const,var,neg,add,sub,mul,div,dot,select} stays in the SAME set; this verifier
+  // closed vocabulary {const,var,neg,add,sub,mul,div,dot,select,exp,log,sqrt,tanh,sin,cos}
+  // stays in the SAME set; this verifier
   // is the law that closure underwrites: the serialized forward DAG uses ONLY that vocabulary, with the
   // correct per-op arity and a strictly-earlier (acyclic/topological) operand-index discipline.
   //
   // The fixed opcode codes (mirror autodiff._ARITY's order): 0=const 1=var 2=neg 3=add 4=sub 5=mul
-  // 6=div 7=dot 8=select. _ARITY: const/var leaves = 0; neg = 1; add/sub/mul/div = 2; select = 3;
-  // dot is VARIADIC (an even 2k operands). Codes 0..8 are the closed set; anything else is a FOREIGN op.
+  // 6=div 7=dot 8=select 9=exp 10=log 11=sqrt 12=tanh 13=sin 14=cos. _ARITY:
+  // const/var leaves = 0; unary ops = 1; add/sub/mul/div = 2; select = 3; dot is
+  // VARIADIC (an even 2k operands). Codes 0..14 are closed; anything else is FOREIGN.
   ::llvm::ArrayRef<int64_t> opcodes = getOpcodes();
   ::llvm::ArrayRef<int64_t> arities = getArities();
   ::llvm::ArrayRef<int64_t> argBase = getArgBase();
@@ -792,19 +794,21 @@ static bool checkedMul4Nonnegative(int64_t a, int64_t b, int64_t c,
 
   // _ARITY for the fixed-arity ops (index = opcode); dot (7) is variadic and handled separately. -1 marks
   // the variadic / out-of-range slot. Mirrors autodiff._ARITY exactly.
-  static const int64_t kArity[9] = {/*const*/ 0, /*var*/ 0, /*neg*/ 1, /*add*/ 2, /*sub*/ 2,
-                                    /*mul*/ 2, /*div*/ 2, /*dot*/ -1, /*select*/ 3};
-  static const char *kName[9] = {"const", "var", "neg", "add", "sub",
-                                 "mul", "div", "dot", "select"};
+  static const int64_t kArity[15] = {/*const*/ 0, /*var*/ 0, /*neg*/ 1, /*add*/ 2,
+                                     /*sub*/ 2, /*mul*/ 2, /*div*/ 2, /*dot*/ -1,
+                                     /*select*/ 3, /*exp*/ 1, /*log*/ 1, /*sqrt*/ 1,
+                                     /*tanh*/ 1, /*sin*/ 1, /*cos*/ 1};
+  static const char *kName[15] = {"const", "var", "neg", "add", "sub", "mul", "div",
+                                  "dot", "select", "exp", "log", "sqrt", "tanh", "sin", "cos"};
 
   int64_t expectedBase = 0;   // the running prefix-sum of arities: arg_base[i] must equal it (see (3a')).
   for (int64_t i = 0; i < nNodes; ++i) {
     int64_t op = opcodes[i];
-    // (1) CLOSED VOCABULARY: a code outside [0, 8] is a FOREIGN opcode (the law the closure proof underwrites).
-    if (op < 0 || op > 8)
+    // (1) CLOSED VOCABULARY: a code outside [0, 14] is a FOREIGN opcode.
+    if (op < 0 || op > 14)
       return emitOpError() << "autodiff: node " << i << " opcode " << op
-                           << " is not in the closed set {const,var,neg,add,sub,mul,div,dot,select} "
-                              "(codes 0..8)";
+                           << " is not in the closed set {const,var,neg,add,sub,mul,div,dot,select,"
+                              "exp,log,sqrt,tanh,sin,cos} (codes 0..14)";
     int64_t arity = arities[i];
     if (arity < 0)
       return emitOpError() << "autodiff: node " << i << " (" << kName[op] << ") arity must be non-negative (got "

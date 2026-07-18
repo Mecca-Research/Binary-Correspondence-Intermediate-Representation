@@ -353,7 +353,8 @@ def BCIR_GEMAutodiffOp : BCIR_Op<"gem.autodiff", [Symbol]> {
   let summary = "Serialized closed-set forward autodiff DAG (the B3 content-addressed differentiable graph as a law object)";
   // The law-rail record of the B3 reverse-mode-AD oracle (bcir/kbcir/autodiff.py). Slice 5 PROVED that B3's
   // differentiable expression DAG is a CLOSED SET, content-addressed (hash-consed) DAG over a FIXED vocabulary
-  // {const,var,neg,add,sub,mul,div,dot,select} (autodiff.CLOSED_SET / _ARITY / differentiable_ops): differentiating
+  // {const,var,neg,add,sub,mul,div,dot,select,exp,log,sqrt,tanh,sin,cos}
+  // (autodiff.CLOSED_SET / _ARITY / differentiable_ops): differentiating
   // any expression in that set produces a gradient DAG that STAYS in the same set, no foreign op kind ever appears.
   // That closure is exactly what lets the law rail carry the forward autodiff DAG as a FIRST-CLASS op with a
   // fixed-vocabulary structural verifier. This op SERIALIZES one such forward Tape (the hash-consed Node list) so it
@@ -365,7 +366,8 @@ def BCIR_GEMAutodiffOp : BCIR_Op<"gem.autodiff", [Symbol]> {
   // their users, so the array is already topological/acyclic):
   //   * n_inputs   -- the number of `var` leaves (function inputs); a var's slot must be < n_inputs.
   //   * opcodes    -- per node, the op kind as a fixed int code (the closed vocabulary):
-  //                     0=const 1=var 2=neg 3=add 4=sub 5=mul 6=div 7=dot 8=select  (mirrors autodiff._ARITY order).
+  //                     0=const 1=var 2=neg 3=add 4=sub 5=mul 6=div 7=dot 8=select
+  //                     9=exp 10=log 11=sqrt 12=tanh 13=sin 14=cos (mirrors autodiff._ARITY order).
   //   * arities    -- per node, its operand count. Fixed for every op (neg=1; add/sub/mul/div/dot... see _ARITY) EXCEPT
   //                   `dot`, which is VARIADIC (2k operands: k u-ids then k v-ids), so the arity is carried per node.
   //   * arg_base   -- per node, the offset into the flat `args` array where this node's operands begin.

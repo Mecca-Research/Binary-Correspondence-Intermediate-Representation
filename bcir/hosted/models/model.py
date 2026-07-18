@@ -140,19 +140,20 @@ class HostedLlama(nn.Module):
         if isinstance(module, (nn.Linear, nn.Embedding)):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, input_ids: torch.Tensor,
-                targets: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor | None]:
+    def hidden_states(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Return normalized decoder states without projecting the vocabulary head.
+
+        Alignment heads use this explicit boundary rather than reaching into private
+        submodules or retaining a second subtly different transformer implementation.
+        """
         if input_ids.ndim != 2 or input_ids.dtype != torch.long:
             raise ValueError("input_ids must be a rank-2 torch.long tensor")
-        if targets is not None and (targets.shape != input_ids.shape or targets.dtype != torch.long):
-            raise ValueError("targets must be torch.long with the input shape")
         if input_ids.shape[1] < 1:
             raise ValueError("input sequence must not be empty")
+        if self.context_length is not None and input_ids.shape[1] > self.context_length:
+            raise ValueError("input sequence exceeds the configured context length")
         if torch.any(input_ids < 0) or torch.any(input_ids >= self.spec.vocab_size):
             raise ValueError("input token id is outside the vocabulary")
-        if targets is not None \
-                and (torch.any(targets < 0) or torch.any(targets >= self.spec.vocab_size)):
-            raise ValueError("target token id is outside the vocabulary")
         values = self.model.embed_tokens(input_ids)
         cos, sin = _rope_cache(input_ids.shape[1], self.spec.d_k, self.spec.rope_base,
                                values.device, values.dtype)
@@ -163,12 +164,39 @@ class HostedLlama(nn.Module):
                 values = checkpoint(layer, values, cos, sin, use_reentrant=False)
             else:
                 values = layer(values, cos, sin)
-        values = self.model.norm(values)
+        return self.model.norm(values)
+
+    def forward(self, input_ids: torch.Tensor, targets: torch.Tensor | None = None,
+                loss_mask: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor | None]:
+        if targets is not None and (targets.shape != input_ids.shape or targets.dtype != torch.long):
+            raise ValueError("targets must be torch.long with the input shape")
+        if targets is not None and targets.device != input_ids.device:
+            raise ValueError("targets and input_ids must be on the same device")
+        if targets is not None \
+                and (torch.any(targets < 0) or torch.any(targets >= self.spec.vocab_size)):
+            raise ValueError("target token id is outside the vocabulary")
+        if loss_mask is not None:
+            if targets is None or loss_mask.shape != input_ids.shape \
+                    or loss_mask.dtype not in (torch.bool, torch.float16, torch.float32,
+                                               torch.float64, torch.bfloat16):
+                raise ValueError("loss_mask requires targets and must be bool/float with the input shape")
+            if loss_mask.device != input_ids.device:
+                raise ValueError("loss_mask and input_ids must be on the same device")
+            if not torch.isfinite(loss_mask).all() or torch.any(loss_mask < 0):
+                raise ValueError("loss_mask must contain finite non-negative values")
+            if not bool(torch.any(loss_mask > 0).item()):
+                raise ValueError("loss_mask must select at least one target")
+        values = self.hidden_states(input_ids)
         logits = F.linear(values, self.lm_head.weight)
         loss = None
         if targets is not None:
-            loss = F.cross_entropy(logits.float().reshape(-1, self.spec.vocab_size),
-                                   targets.reshape(-1))
+            losses = F.cross_entropy(logits.float().reshape(-1, self.spec.vocab_size),
+                                     targets.reshape(-1), reduction="none")
+            if loss_mask is None:
+                loss = losses.mean()
+            else:
+                mask = loss_mask.float().reshape(-1)
+                loss = (losses * mask).sum() / mask.sum()
         return logits, loss
 
     @torch.no_grad()

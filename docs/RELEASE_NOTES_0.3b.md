@@ -46,6 +46,13 @@ the first direct driver lifecycle and completing the publication gate.
   TinyLlama checkpoint/tokenizer can be verified, converted to a compact Q8 artifact,
   run through Python and standalone C greedy inference, and compared in a deterministic
   parity report. Source assets and derived weights are not committed.
+- The optional hosted rail includes deterministic corpus/BPE preparation and bounded
+  pretraining, SFT, reward, DPO, PPO, verified-reasoning, embedding, MLP, GRU, and encoder
+  confirmation gates. Provider-neutral recorded-teacher and offline-compute contracts are
+  present; live API adapters and large-model training are not release claims.
+- BCIRQ4T/SmoothQuant/AVX2, measured schedule artifacts, expanded closed-set AD, and
+  workload-scoped numerical evidence are bounded research/reference slices. They do not
+  declare whole-model Q4, multi-target performance, or hardware qualification.
 - The ordinary x86-64 long-mode C entry, descriptor/segment loads, and ordinary interrupt
   trampoline are typed/lowered and object/disassembly-gated. Reset transition, paranoid
   exception entry, and production feature policy remain outside this release.

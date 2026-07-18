@@ -64,12 +64,13 @@ discipline:
 HONEST LIMITATION (the precise boundary; faithful to the roadmap's B3 research basis, which cites
 arXiv:2107.13433, 1804.00746, 2105.09469). Reverse-over-reverse is sound HERE for one
 specific reason: every primitive's VJP is itself expressible in the SAME closed primitive
-set (+, -, *, /, neg, dot, select), so the gradient graph is an ordinary DAG that can be
+set (+, -, *, /, neg, dot, select, exp, log, sqrt, tanh, sin, cos), so the gradient graph is an ordinary DAG that can be
 differentiated again. This closure is what makes ``hessian`` honest -- and it is exactly
 where the general story is known to strain. Two boundaries:
 
-  (a) CLOSURE is required. A primitive whose VJP is NOT in the primitive set (e.g. one
-      needing exp/log/a transcendental), or a genuinely higher-order functional / unbounded
+  (a) CLOSURE is required. The admitted transcendental VJPs are now expressed in the
+      same vocabulary; a foreign primitive whose VJP is not, or a genuinely dynamic
+      higher-order functional / unbounded
       data-dependent recursion, breaks the closure: the gradient would not be a DAG in this
       set and could not be re-differentiated by this machinery. The B3 closure register flags this
       directly -- reverse-derivative categories "do not natively support higher-order
@@ -90,6 +91,7 @@ Deterministic, pure-Python, dependency-free. This is a **research organ** and is
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 
@@ -106,6 +108,7 @@ from dataclasses import dataclass
 # ``select`` is the differentiable conditional (arity 3: predicate, then-branch, else-branch).
 _ARITY = {"const": 0, "var": 0, "neg": 1,
           "add": 2, "sub": 2, "mul": 2, "div": 2, "select": 3,
+          "exp": 1, "log": 1, "sqrt": 1, "tanh": 1, "sin": 1, "cos": 1,
           "dot": None}  # dot is n-ary (variadic)
 
 
@@ -185,6 +188,24 @@ class Tape:
         """a / b (b must be non-zero at the linearization point)."""
         return self._intern("div", (a, b))
 
+    def exp(self, a: int) -> int:
+        return self._intern("exp", (a,))
+
+    def log(self, a: int) -> int:
+        return self._intern("log", (a,))
+
+    def sqrt(self, a: int) -> int:
+        return self._intern("sqrt", (a,))
+
+    def tanh(self, a: int) -> int:
+        return self._intern("tanh", (a,))
+
+    def sin(self, a: int) -> int:
+        return self._intern("sin", (a,))
+
+    def cos(self, a: int) -> int:
+        return self._intern("cos", (a,))
+
     # -- the control-flow primitive: a differentiable conditional (JAX lax.select / C ?:) --
     def select(self, cond: int, a: int, b: int) -> int:
         """select(cond, a, b) = a if fval[cond] > 0 else b -- the differentiable
@@ -250,6 +271,18 @@ def evaluate(tape: Tape, root: int, env: dict) -> float:
             cache[nid] = cache[n.args[0]] * cache[n.args[1]]
         elif op == "div":
             cache[nid] = cache[n.args[0]] / cache[n.args[1]]
+        elif op == "exp":
+            cache[nid] = math.exp(cache[n.args[0]])
+        elif op == "log":
+            cache[nid] = math.log(cache[n.args[0]])
+        elif op == "sqrt":
+            cache[nid] = math.sqrt(cache[n.args[0]])
+        elif op == "tanh":
+            cache[nid] = math.tanh(cache[n.args[0]])
+        elif op == "sin":
+            cache[nid] = math.sin(cache[n.args[0]])
+        elif op == "cos":
+            cache[nid] = math.cos(cache[n.args[0]])
         elif op == "select":
             # predicate is the SIGN TEST of the cond node's forward value (JAX lax.select).
             cond, a, b = n.args
@@ -360,11 +393,38 @@ def _bw_select(fvals, args, const, gz):
     return [(a, 0.0), (b, gz), (cond, 0.0)]
 
 
+def _bw_exp(fvals, args, const, gz):
+    return [(args[0], gz * math.exp(fvals[args[0]]))]
+
+
+def _bw_log(fvals, args, const, gz):
+    return [(args[0], gz / fvals[args[0]])]
+
+
+def _bw_sqrt(fvals, args, const, gz):
+    return [(args[0], gz / (2.0 * math.sqrt(fvals[args[0]])))]
+
+
+def _bw_tanh(fvals, args, const, gz):
+    value = math.tanh(fvals[args[0]])
+    return [(args[0], gz * (1.0 - value * value))]
+
+
+def _bw_sin(fvals, args, const, gz):
+    return [(args[0], gz * math.cos(fvals[args[0]]))]
+
+
+def _bw_cos(fvals, args, const, gz):
+    return [(args[0], -gz * math.sin(fvals[args[0]]))]
+
+
 # the rewrite-rule table: one local backward rule per primitive (leaves have none --
 # const and var are differentiation boundaries, const contributing zero by definition).
 _BACKWARD = {
     "neg": _bw_neg, "add": _bw_add, "sub": _bw_sub,
     "mul": _bw_mul, "div": _bw_div, "dot": _bw_dot, "select": _bw_select,
+    "exp": _bw_exp, "log": _bw_log, "sqrt": _bw_sqrt, "tanh": _bw_tanh,
+    "sin": _bw_sin, "cos": _bw_cos,
 }
 
 
@@ -500,6 +560,18 @@ def _forward_values(tape: Tape, topo: list[int], env: dict) -> dict:
             cache[nid] = cache[n.args[0]] * cache[n.args[1]]
         elif op == "div":
             cache[nid] = cache[n.args[0]] / cache[n.args[1]]
+        elif op == "exp":
+            cache[nid] = math.exp(cache[n.args[0]])
+        elif op == "log":
+            cache[nid] = math.log(cache[n.args[0]])
+        elif op == "sqrt":
+            cache[nid] = math.sqrt(cache[n.args[0]])
+        elif op == "tanh":
+            cache[nid] = math.tanh(cache[n.args[0]])
+        elif op == "sin":
+            cache[nid] = math.sin(cache[n.args[0]])
+        elif op == "cos":
+            cache[nid] = math.cos(cache[n.args[0]])
         elif op == "select":
             cond, a, b = n.args
             cache[nid] = cache[a] if cache[cond] > 0 else cache[b]
@@ -666,12 +738,41 @@ def _sbw_select(tape, args, const, gz):
     return [(a, grad_a), (b, grad_b), (cond, zero)]
 
 
+def _sbw_exp(tape, args, const, gz):
+    return [(args[0], tape.mul(gz, tape.exp(args[0])))]
+
+
+def _sbw_log(tape, args, const, gz):
+    return [(args[0], tape.div(gz, args[0]))]
+
+
+def _sbw_sqrt(tape, args, const, gz):
+    denominator = tape.mul(tape.const(2.0), tape.sqrt(args[0]))
+    return [(args[0], tape.div(gz, denominator))]
+
+
+def _sbw_tanh(tape, args, const, gz):
+    value = tape.tanh(args[0])
+    derivative = tape.sub(tape.const(1.0), tape.mul(value, value))
+    return [(args[0], tape.mul(gz, derivative))]
+
+
+def _sbw_sin(tape, args, const, gz):
+    return [(args[0], tape.mul(gz, tape.cos(args[0])))]
+
+
+def _sbw_cos(tape, args, const, gz):
+    return [(args[0], tape.neg(tape.mul(gz, tape.sin(args[0]))))]
+
+
 # the SYMBOLIC rewrite-rule table -- one graph-valued backward rule per primitive,
 # mirroring _BACKWARD. Each builds new Tape nodes in the SAME closed primitive set, so the
 # gradient graph is an ordinary DAG that can be differentiated again.
 _BACKWARD_SYM = {
     "neg": _sbw_neg, "add": _sbw_add, "sub": _sbw_sub,
     "mul": _sbw_mul, "div": _sbw_div, "dot": _sbw_dot, "select": _sbw_select,
+    "exp": _sbw_exp, "log": _sbw_log, "sqrt": _sbw_sqrt, "tanh": _sbw_tanh,
+    "sin": _sbw_sin, "cos": _sbw_cos,
 }
 
 
@@ -812,9 +913,9 @@ def max_hessian_error(a: dict, b: dict) -> float:
 # This section FORMALIZES and machine-PROVES the property the module's honest-limitation
 # note states in prose and the whole reverse-over-reverse story relies on: the adjoint
 # operator set is CLOSED. Differentiating any expression built from the primitive set
-# {const, var, neg, add, sub, mul, div, dot, select} produces a gradient DAG that stays in
-# the SAME set -- the adjoint never introduces a foreign op kind (no exp/log, no new
-# functional primitive). Together with hash-consing, that closure is exactly what gives the
+# {const, var, neg, add, sub, mul, div, dot, select, exp, log, sqrt, tanh, sin, cos}
+# produces a gradient DAG that stays in the SAME set -- the adjoint never introduces a
+# foreign op kind or dynamic functional primitive. Together with hash-consing, that closure is exactly what gives the
 # adjoint DAG a CANONICAL FORM over a fixed vocabulary -- the property a future
 # ``gem.autodiff`` law op will serialize/verify against.
 #

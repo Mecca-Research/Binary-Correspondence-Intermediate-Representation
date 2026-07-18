@@ -47,9 +47,10 @@ grad-kernel -> SGD into one ``void train_step(float *params, float lr, float *va
 run a full loop in C.
 
 CLOSED PRIMITIVE SET ONLY. The emitter lowers EXACTLY the primitives ``autodiff`` supports --
-``neg/add/sub/mul/div/dot/select`` plus the ``const``/``var`` leaves -- and raises (deterministically) on
-anything outside it. This mirrors the oracle's closure property (every primitive's VJP is in the same set)
-and is the same closed set ``autodiff._BACKWARD`` covers; the full set is lowered, ``dot`` included.
+``neg/add/sub/mul/div/dot/select/exp/log/sqrt/tanh/sin/cos`` plus the ``const``/``var``
+leaves -- and raises deterministically on anything outside it. Transcendentals use the
+host's declared libm edge. This mirrors the oracle's closure property and is the same
+closed set ``autodiff._BACKWARD`` covers.
 
 This is the ORACLE realization + emitter + verification (the reference reverse-mode grad, the
 finite-difference gate, the compile-and-run parity). Wiring it into an MLIR ``gem.grad`` / backward-pass
@@ -63,7 +64,9 @@ from ..kbcir.autodiff import Tape, _BACKWARD, _topo_order
 
 # The closed primitive set this emitter lowers: the differentiable ops (each carries a local _BACKWARD
 # rule) plus the two leaves. This is EXACTLY autodiff's primitive set; anything else is rejected.
-_LOWERABLE = frozenset({"const", "var", "neg", "add", "sub", "mul", "div", "dot", "select"})
+_MATH_OPS = frozenset({"exp", "log", "sqrt", "tanh", "sin", "cos"})
+_LOWERABLE = frozenset({"const", "var", "neg", "add", "sub", "mul", "div", "dot", "select"}) \
+    | _MATH_OPS
 
 
 def _fc(v) -> str:
@@ -78,7 +81,7 @@ def _fc(v) -> str:
 
 def _validate(tape: Tape, order) -> None:
     """Reject any node outside the closed primitive set (deterministic). The oracle's closure -- every
-    primitive's VJP lives in {neg,add,sub,mul,div,dot,select} -- is exactly what makes a straight-line
+    primitive's VJP lives in the same registered vocabulary -- is exactly what makes a straight-line
     backward lowering possible; a node outside the set has no emittable local rule, so we raise."""
     for nid in order:
         op = tape.node(nid).op
@@ -121,6 +124,8 @@ def _forward_expr(tape: Tape, nid: int, name_to_pidx: dict) -> str:
         return f"v{a[0]} * v{a[1]}"
     if op == "div":
         return f"v{a[0]} / v{a[1]}"
+    if op in ("exp", "log", "sqrt", "tanh", "sin", "cos"):
+        return f"{op}f(v{a[0]})"
     if op == "select":
         cond, x, y = a
         # the SIGN TEST of cond's forward value (JAX lax.select / C ?:), identical to autodiff.evaluate.
@@ -196,6 +201,18 @@ def _backward_lines(tape: Tape, nid: int, needed: set) -> list[str]:
     elif op == "div":
         b = a[1]
         cand = [acc(a[0], f"{gz} / v{b}"), acc(b, f"-{gz} * v{a[0]} / (v{b} * v{b})")]
+    elif op == "exp":
+        cand = [acc(a[0], f"{gz} * v{nid}")]
+    elif op == "log":
+        cand = [acc(a[0], f"{gz} / v{a[0]}")]
+    elif op == "sqrt":
+        cand = [acc(a[0], f"{gz} / (2.0f * v{nid})")]
+    elif op == "tanh":
+        cand = [acc(a[0], f"{gz} * (1.0f - v{nid} * v{nid})")]
+    elif op == "sin":
+        cand = [acc(a[0], f"{gz} * cosf(v{a[0]})")]
+    elif op == "cos":
+        cand = [acc(a[0], f"-{gz} * sinf(v{a[0]})")]
     elif op == "dot":
         k = n.const[1]
         us, vs = a[:k], a[k:]
@@ -237,8 +254,9 @@ def emit_autodiff_kernel_c(tape: Tape, output: int, params, fn_name: str = "bcir
     is preserved. ``params`` fixes the ABI: ``params[i]`` is the value of var ``params[i]`` and
     ``grad_out[i]`` is its gradient.
 
-    Self-contained: only ``<stddef.h>`` (no libm -- the closed primitive set is purely arithmetic). The
-    emit is warning-free under ``-Wall -Wextra`` and deterministic. Raises ``ValueError`` on any op outside
+    Self-contained C: arithmetic graphs need only ``<stddef.h>``; graphs using the admitted
+    transcendental vocabulary also include ``<math.h>`` and link through the platform-aware
+    libm edge. The emit is warning-free under ``-Wall -Wextra`` and deterministic. Raises ``ValueError`` on any op outside
     the closed lowerable set, a duplicate parameter name, or a DAG var not bound by ``params``. A requested
     parameter that does not reach the output is allowed -- its gradient is identically 0 (the oracle's
     unused-input rule)."""
@@ -264,6 +282,7 @@ def emit_autodiff_kernel_c(tape: Tape, output: int, params, fn_name: str = "bcir
     # which ops actually appear (informational, for the attestation comment).
     ops_used = sorted({tape.node(nid).op for nid in order})
 
+    needs_math = any(tape.node(nid).op in _MATH_OPS for nid in order)
     head = (
         f"/* BCIR -> G6 autodiff forward+backward kernel '{fn_name}' (Pillar 5b; lower the B3 autodiff\n"
         f" * oracle bcir.kbcir.autodiff to a self-contained reference-verified C kernel). Computes:\n"
@@ -279,6 +298,7 @@ def emit_autodiff_kernel_c(tape: Tape, output: int, params, fn_name: str = "bcir
         f" * float round-off. scope: the deployable forward+backward+SGD training primitive -- NOT a full\n"
         f" * optimizer/data-loader/mini-batch framework (that breadth is deferred). */\n"
         "#include <stddef.h>\n"
+        + ("#include <math.h>\n" if needs_math else "")
     )
 
     lines = [f"void {fn_name}(const float *params, float *value_out, float *grad_out) {{"]
@@ -383,7 +403,8 @@ def compile_and_run_grad_c(tape: Tape, output: int, params, env: dict,
     and return ``(ok, value, grads, combined_output)`` where ``value`` is the forward value and ``grads``
     is the gradient list in ``params`` order. The caller compares ``value`` to ``autodiff.evaluate`` and
     ``grads`` to BOTH ``autodiff.grad`` and ``autodiff.finite_difference_grad`` (to float round-off).
-    No ``-lm`` needed (the closed primitive set is purely arithmetic)."""
+    Arithmetic-only graphs need no libm; transcendental graphs use the platform-aware
+    math-library link edge."""
     import os
     import subprocess
     import tempfile
@@ -411,9 +432,15 @@ def compile_and_run_grad_c(tape: Tape, output: int, params, env: dict,
         exe = os.path.join(workdir, "grad")
         with open(src, "w") as f:
             f.write(kernel + main)
+        needs_math = any(tape.node(nid).op in _MATH_OPS
+                         for nid in _topo_order(tape, output))
         build = None
         for std in ("-std=c23", "-std=c2x", "-std=c11"):
-            build = subprocess.run([cc, std, "-O2", "-Wall", "-Wextra", src, "-o", exe],
+            from ..toolchain import host_link_args
+            command = [cc, std, "-O2", "-Wall", "-Wextra", src, "-o", exe]
+            if needs_math:
+                command.append("-lm")
+            build = subprocess.run(host_link_args(command),
                                    capture_output=True, text=True)
             if build.returncode == 0:
                 break

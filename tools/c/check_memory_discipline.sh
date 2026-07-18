@@ -49,7 +49,7 @@ compat_warnings=(-Wno-misleading-indentation)
 if ! "${CC_BIN}" --version 2>/dev/null | head -n 1 | grep -qi clang; then
   compat_warnings+=(-Wno-format-truncation)
 fi
-for unit in bcir_runtime_channel.c bcir_cpp.c bcir_q8_model.c bcir_llama.c \
+for unit in bcir_runtime_channel.c bcir_cpp.c bcir_q8_model.c bcir_q4_kernel.c bcir_llama.c \
             bcir_verify.c bcir_cc.c bcir_llama_cli.c bcir_microbench.c; do
   "${CC_BIN}" "${strict[@]}" -c "${C}/${unit}" -o "${tmp}/${unit%.c}.o"
 done
