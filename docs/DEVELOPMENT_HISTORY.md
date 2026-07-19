@@ -9,7 +9,7 @@
 > slice-by-slice build notes formerly embedded in the roadmaps. Roadmap docs now describe
 > *what exists and what is next*; this doc records *how it got here*. For current counts
 > (tests, ops, passes, laws) see the generated [`STATUS.md`](STATUS.md) — nothing here is
-> a live count. This revision is current through merged PR #638 and package version
+> a live count. This revision is current through merged PR #645 and package version
 > `0.2.0`. Sources are the GitHub PR record, first-parent history, implementation/tests,
 > and pre-consolidation document revisions retained in git.
 
@@ -241,6 +241,16 @@ completed the ordinary x86-64 assembly edge, MC1/MC2 operator tools, strict Stre
 semantics, and the source-backed driver/kernel roadmap v2; all required push and pull-request jobs
 passed before merge.
 
+### #639–#645 — consolidation, security, and bounded model/control planes (2026-07-15 → 07-18)
+The docs tree was consolidated by subject and its current-state records were reconciled. A
+repository-wide post-#538 security pass then hardened memory-sensitive parsing, artifact handling,
+race windows, and publication checks. The hosted model lab established deterministic random-weight
+training, safe exact resume/export, strict ingest, BCIRQ8, and standalone-C parity. Follow-on work
+added bounded corpus/tokenizer and alignment pipelines, provider-neutral offline contracts,
+payload-free model inventory/placement plans, a simulated hardware-policy GNN/Transformer with
+measured-only promotion, and a TMSAO performance/regression harness. These are compiler and
+control-plane foundations, not claims of large-model training or physical-device speedup.
+
 ---
 
 ## 3. Condensed dated changelog
@@ -312,6 +322,9 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   GNN/Transformer reward+DPO+PPO trainer, bounded root-PUCT, exact per-bank static tensor
   addresses, and measured-only quiescent promotion. Its tiny CI corpus is simulated and proves
   deterministic machinery, not a hardware speedup or live hot-swap.
+- **2026-07-18:** the TMSAO sweep pinned canonical data-structure behavior and bounded performance
+  evidence across GEM, StreamPack, K_BCIR, unsupervised ML, and the small AI organs; observed
+  regressions remain gates rather than theoretical-maximum claims.
 
 ---
 
@@ -326,7 +339,7 @@ exist; it does not imply production deployment or hardware evidence.
 |---|---|---|
 | Language and verifier | Python/C C-front twins, project/cross-TU mode, ABI and effect contracts, R1–R23, ordinary x86-64 assembly edges | Hosted-C completeness, `_Decimal*` reference support, reset/exception/paranoid entry, additional language frontends |
 | Optimizer and backend | 12-axis K_BCIR, min-plus/RCSP/(max,+), GEM scheduling, C23 and resident LLVM/object paths, JVM/CIL/WASM bounded validation | Arbitrary-graph LLVM AOT, general native isel (gated), target-specific measured scheduling evidence |
-| Machine/driver substrate | StreamPack v1–v3, device manifests, bank/move/event/DMA contracts, MC1/MC2 operator tools, direct RuntimeChannel hooks | Resident UART/virtio/device drivers, stable UAPI, Linux modules, native IPC, physical-device qualification |
+| Machine/driver substrate | StreamPack v1–v3, device manifests, bank/move/event/DMA contracts, MC1/MC2 operator tools, direct RuntimeChannel hooks, metadata-only HAM routing/residency/replay, and strict context-shard activation | Resident UART/virtio/device drivers, physical HAM adapters, stable UAPI, Linux modules, native IPC, and physical-device qualification |
 | Memory discipline | Freestanding/hosted/adapter classes, checked hosted allocator and fault injection, fail-every-allocation tests | Per-operation compiler arenas and further context migration as allocation-bearing surfaces expand |
 | ML/model stack | Planned/streamed training, hosted safe pretraining and bounded alignment stages, deterministic corpus/BPE, provider-neutral contracts, model manifest/tokenizer/decoder, header-only cost/placement plans, exact static addresses, bounded hardware-policy training/search, GQA/KV cache, BCIRQ8, BCIRQ4T tensor compute, and standalone-C TinyLlama parity | Production serving, executable hardware placement/rematerialization, whole-decoder Q4/additional formats, canonical 32M training, live providers, distributed/GPU execution, and hardware-qualified model/policy gates |
 | Telemetry/control | Signal registry, BTLM codec, metric derivation, deterministic serializers, shared-ring baseline | Generated fixed-width C registry, source/session/generation/clock identity, live SPSC protocol and real transports |
@@ -357,7 +370,7 @@ now have stable owners:
 
 ## 5. Where the detailed notes live now
 
-- **Per-landing detail:** the GitHub PR record (#2–#638; PR bodies carry Verification
+- **Per-landing detail:** the GitHub PR record (#2–#645; PR bodies carry Verification
   sections with exact gate outputs), `git log`, and the pre-consolidation revisions of
   `REPO_CURRENT_STATE_AUDIT.md` / `BCIR_MASTER_ROADMAP.md` /
   `machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md` (recoverable via git).

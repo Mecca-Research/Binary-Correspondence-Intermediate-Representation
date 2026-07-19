@@ -1,9 +1,10 @@
-# BCIR Machine-Code / HAL / ABI / ISA Audit — verified gap register (2026-07-15)
+# BCIR Machine-Code / HAL / ABI / ISA Audit — verified gap register (2026-07-18)
 
 > Status in this document is derived from repository implementation and tests, not from roadmap
-> prose. The original wave-14 analysis is retained, but MC1/MC2 and the x86 asm-edge statuses are
-> updated to the current tree, MC10–MC14 capture backend contracts omitted by the first audit,
-> and MC15 records the measurement/trace feedback ABI required by drivers and kernels.
+> prose. The original wave-14 analysis is retained, but MC1/MC2, MC6, and the x86 asm-edge
+> statuses are updated to the current tree, MC10–MC14 capture backend contracts omitted by the
+> first audit, and MC15 records the measurement/trace feedback ABI required by drivers and
+> kernels.
 
 **Question set** (verbatim intent): does BCIR need a dedicated HAL backend or does the IR
 already cover it; should HAL functions migrate into the BCIR ABI; how mature is the ABI
@@ -38,7 +39,7 @@ HAL/ABI) with `file:line` anchors throughout.
 | V6 | **Assembler/linker/object code?** | **Source-level: done** (bcir-cc, `--linkable`, derived link flags, real ELF via resident clang/llc — eBPF/x86-64/aarch64, `e_machine`-verified). **Native isel: deferred by the standing gate** (correct; G1–G4 unmet). **Pack-level linking (multi-pack compose, RID relocation, symbol section): missing** (MC7). |
 | V7 | **Clang reliance?** | Every path from IR to *machine code or execution* rides clang/llc/lli/wasm-ld **by design** (the resident-compiler path). Everything else — all text emission (LLVM IR, C23, MLIR dialect, stack-VM mnemonics), the StreamPack codec, the loader/validator/executor, bcir-cc — is native BCIR (pure Python + freestanding C). This is the gate's intended split; the audit found no accidental clang dependence. |
 | V8 | **Registers / flags / branches / addressing?** | **Registers: none, by design** (RID-addressed registry). **Flags/carry: none** — comparisons produce *values* (registry-first: conditions are data, not hidden state); what's genuinely missing is carry-as-data for wide arithmetic (MC4). **Branches: structured emit-only tree, erased before planning** — the planner sees straight-line phased claims (a real, documented modeling boundary; MC5 names what a CFG-aware plan would add). **Addressing: affine only** (`offset`/`stride_k`/`count`/stride-class); indexed access is the GGG gather lane, not a mode — SIB-style compound modes are *intentionally* absent. |
-| V9 | **HAM / semantic swap / hotness?** | **HAM is a cost knob only** (realize + R3 + MLIR attr; never consumed by allocator or executor). **`Resource.priority` ("CXL semantic hotness") is inert** — read only by the provenance digest. **No swap/eviction exists** outside the KV-page evict. MC6 makes all three real *as planned claims* (the A2/D-R3 machinery now makes that cheap). |
+| V9 | **HAM / semantic swap / hotness?** | **The metadata-only planner baseline is landed.** `HAMResource` dependencies, size, home, priority, mutability, and generation drive directed-link routing, deterministic prefetch/eviction/writeback, capacity replay, and ordinary verified claims/StreamPack. This is a compiler/simulator contract: no GDS, P2PDMA, CXL, NVMe, or controller binding exists, and no payload is moved by the planning process. MC6 tracks the remaining physical and measured boundary. |
 
 ---
 
@@ -177,7 +178,7 @@ their frozen-bytes/reject-newer policy.
 | **MC3** | **Open** | ROP v2 registry assembly: constants, immediates, offsets/strides, full contracts, deps/events, macros/includes, and BSP logical-name binding | One parser/pretty-printer grammar, hygienic expansion bounds, canonical output, and MC1 shared names |
 | **MC4** | **Open** | Carry-as-data and typed predicate contracts | Oracle/MLIR/C twins, checked/wide arithmetic differential, no hidden status register |
 | **MC5** | **Deferred** | CFG-aware planning boundary | Build only when a driver fixture needs planned divergence; otherwise retain structured emit-time control and straight-line phased planning |
-| **MC6** | **Mostly open** | HAM placement and semantic swap; `Resource.priority` is currently provenance-only and HAM is cost-only | Allocator consumption, D-R3/A2-priced eviction claims, capacity/liveness laws, replay and measured tier data |
+| **MC6** | **Planner baseline landed** | Strict semantic-resource/access artifacts, priority-aware capacity eviction, dependency closure, next-use prefetch, directed direct/staged/host-bounce routing, mutable-generation invalidation/writeback, independent replay, verified claim lowering, and StreamPack output | Physical allocators and transfers; GDS/P2PDMA/dma-buf/CXL/NVMe/controller adapters; checkpoint/rematerialization actions; live topology probes; real tier counters and multi-target performance evidence |
 | **MC7** | **Open** | StreamPack-level linking, RID/claim relocation, and symbol section | Append-only wire version, collision/overflow checks, deterministic compose, provenance-preserving unlink/list tests |
 | **MC8** | **Baseline landed** | Direct append-only RuntimeChannel hook ABI and loopback | First in-process hardware driver must prove ownership, cancellation, saturation, event loss, teardown, reset, and restart before transport work |
 | **MC9** | **Open** | Linux/POSIX adapter and UAPI | Version-zero device-fd/ioctl/mmap/poll/errno rail, direct/adapter trace parity, then UART+virtio-blk evidence before v1 freeze |

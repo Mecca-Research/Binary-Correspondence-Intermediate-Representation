@@ -69,10 +69,10 @@ The normative semantics and artifact contract are in
 | GEM and StreamPack | Hydration, scheduling, execution, strict v1–v3 codecs, C/Python byte parity, operator disassembly/hexdump | Hardware command packets and per-device execution are not implied |
 | C compiler | Broad driver-oriented C23 subset, twin lowering, Clang differentials, target ABI matrix, project/link/fallback modes | Not complete ISO C23; unsupported constructs route to the resident compiler |
 | C memory/runtime | Freestanding/hosted/driver classes, allocator injection, failure tests, direct RuntimeChannel v1 | No out-of-process transport or resident hardware binding |
-| ML/reference | Tensor claims, closed-set AD, planned/streamed training, optional hosted Llama/AdamW micro training, safe resume/export, model ingest/tokenizer/decode, BCIRQ8, standalone-C parity, payload-free placement, exact static tensor addresses, and a bounded GNN/Transformer hardware-policy gate | The 32M model is untrained; hardware-RL evidence is simulated; no distributed trainer, GPU backend, live promotion corpus, or production serving engine |
+| ML/reference | Tensor claims, closed-set AD, planned/streamed training, optional hosted Llama/AdamW micro training, safe resume/export, model ingest/tokenizer/decode, BCIRQ8, standalone-C parity, payload-free placement, exact static tensor addresses, verified HAM residency/routes, strict context shards, dual-memory oracle, and a bounded GNN/Transformer hardware-policy gate | The 32M model is untrained; hardware-RL evidence is simulated; HAM has no physical adapter; no distributed trainer, GPU backend, live promotion corpus, or production serving engine |
 | Telemetry | Stable signal registry, BTLM codec, continuity/ring witnesses, metrics, deterministic Prometheus/OTLP/Redfish-shaped serialization | No live HTTP/OTLP/BMC/UART transport; driver envelope/live concurrent ring remain version-zero design work |
 | Machine edge | Typed MMIO/port/fence/control-register/MSR operations, ordinary x86 long-mode entry and interrupt trampoline, real object/disassembly gates | Reset transition, paranoid NMI/IST entry, feature-specific entry policy, native CPU backend remain open |
-| Drivers/kernel | Device-manifest/event/DMA substrates, direct hook ABI, driver package and BCIR-Linux plans | No resident device driver, Linux module/fork, stable UAPI, native kernel, or native IPC is present |
+| Drivers/kernel | Device-manifest/event/DMA substrates, direct hook ABI, generic HAM compiler/simulator contract, driver package and BCIR-Linux plans | No resident device driver, GDS/P2PDMA/CXL/NVMe adapter, Linux module/fork, stable UAPI, native kernel, or native IPC is present |
 | Performance evidence | Bounded cross-organ audit, deterministic result digests, controlled-box budget rail, exact scheduler/static-layout differential tests | Target-specific TMSAO certificate still needs PMU/energy/thermal evidence and exhaustive measured candidates |
 
 The exact driver boundary is maintained in
@@ -171,6 +171,8 @@ provider-neutral gate exercises generated-corpus pretraining, SFT, reward, DPO, 
 reasoning, embedding distillation, and three small architecture families with deterministic replay;
 and a tiny hardware policy combines an availability-aware telemetry Transformer, memory-topology
 GNN, metric reward/DPO/PPO, bounded PUCT, verified plan lowering, and exact static addresses.
+The generic HAM slice adds semantic-resource DAGs, declared-link routing, dynamic residency and
+generation replay, context-shard activation, and a fuzzy-ranking/hard-fact-veto memory oracle.
 Its gate is simulated and deliberately cannot issue a live promotion certificate.
 Generated weights remain build-only. The active queue is:
 
@@ -185,14 +187,15 @@ Generated weights remain build-only. The active queue is:
 5. Establish SDPA device parity, static request-owned KV/CUDA graphs, then verified BCIRQ8 GPU
    execution before defining BCIRQ4 or custom attention kernels.
 6. Replay real CPU and driver episodes through the hardware policy; add verified
-   rematerialize/spill/KV actions; compare policy-guided search with exhaustive portfolios on two
+   rematerialize/checkpoint/KV-reuse actions on top of the landed HAM action rail; compare policy-guided search with exhaustive portfolios on two
    physical targets; freeze deployment weights only after measured, quiescent promotion/rollback.
 7. Extend the landed payload-free resident/layer-stream/host-device planner into executable
    batching and hardware-qualified placement, then complete sampling, raw-text standalone
    tokenization, bounded serving, and architecture coverage in that order.
 8. Implement live teacher/remote-compute adapters only behind the provider-neutral artifact ABI,
    explicit credentials/policy, cost limits, and offline replay; embeddings remain frozen targets.
-9. Materialize Phase-C data organs only behind schema/provenance and bounded-memory contracts.
+9. Extend the landed bounded HAM/dual-memory oracle with durable ingest/index/recovery only behind
+   schema, provenance, corruption, recall/filter-parity, and bounded-memory contracts.
 
 The detailed closure register, model ladder, and explicit production gaps are in
 [`machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md).
@@ -230,6 +233,7 @@ protobuf, gRPC, BMC, or UART delivery. Normative details live in
 | Small real-model reference | Landed | Pinned source hashes, BCIRQ8 compactness, Python/C ID and logit parity |
 | Hosted train-to-C micro gate | Landed | Random-weight CPU training, exact resume, deterministic Safetensors/Q8 export, Python/C parity |
 | Payload-free model planning | Landed baseline | Header inventory, exact memory report, measured intervals, placement candidates, verified claim/StreamPack plan; target execution remains open |
+| HAM/model-artifact fabric | Compiler/simulator baseline landed | Semantic DAG, exact declared-link routes, capacity/generation replay, StreamPack lowering, context-shard rollback, and dual-memory hard veto; physical GDS/P2PDMA/CXL/NVMe adapters remain driver-gated |
 | Hardware RL plan policy | Bounded simulated gate landed | Real telemetry corpus, exhaustive two-target comparison, verified rematerialization/spill actions, frozen deployment artifact, measured quiescent promotion/rollback |
 | BCIR-TinyStories-32M | Spec/pins landed | Tokenizer differential, canonical BF16 run, validation/model card, reviewed publication artifacts |
 | Low-bit/model scaling | Partial | Versioned format, R17/error evidence, target execution, sampling/batching/placement gates |
@@ -345,7 +349,9 @@ History explains past decisions but does not reopen superseded sequencing.
 4. Add event-driven UART lifecycle, replay, fault, saturation, cancellation, and teardown evidence.
 5. In parallel, prototype the A1 packed-low-bit contract and B1 measured schedule comparison on
    available hardware without blocking the UART proof.
-6. Start BCIR-Linux and native-kernel implementation only at their explicit dependency gates.
+6. Keep HAM hardware work at the documented HMF-D0–D5 gates: capability adapters first, then
+   GDS/P2PDMA/CXL/NVMe work only after relevant driver/kernel prerequisites and physical rigs.
+7. Start BCIR-Linux and native-kernel implementation only at their explicit dependency gates.
 
 Completed-wave details and the former master roadmap's capability-by-capability ledger are retained
 in [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md).

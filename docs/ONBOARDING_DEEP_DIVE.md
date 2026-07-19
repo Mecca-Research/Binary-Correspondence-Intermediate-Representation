@@ -207,6 +207,15 @@ two-target qualification remain open. Production-scale training, serving, and br
 model/low-bit support remain open; see
 [`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md).
 
+The metadata-only HAM rail generalizes model movement without loading weights. `HAMResource` and
+`HAMAccess` describe a semantic dependency/access trace; `bcir-ham-plan` routes it only over
+declared directed hardware links, replays residency/capacity/generations independently, and lowers
+the result through existing claims and StreamPack. Context-shard manifests reference existing
+BCIRQ8/Q8-table/Safetensors/StreamPack payloads and activate only at quiescent generation
+boundaries with rollback. The exact Q15 optimization-memory reference applies hard facts before
+similarity results are visible. Read
+[`BCIR_HAM_MEMORY_FABRIC.md`](kernel/BCIR_HAM_MEMORY_FABRIC.md) before changing this boundary.
+
 ## 8. Drivers, kernel, telemetry, and IPC
 
 The present foundation includes device manifests, bank/move constraints, event phases,
@@ -214,7 +223,8 @@ DMA descriptors, StreamPack, a signal registry, telemetry codec/metrics/serializ
 direct RuntimeChannel hooks, and loopback behavior.
 
 It does **not** yet include a resident UART/virtio/device driver, Linux module, stable
-UAPI, BCIR-Linux fork, native kernel, or native IPC. UART/GPIO sources currently prove
+UAPI, physical GDS/P2PDMA/CXL/NVMe memory-fabric adapter, BCIR-Linux fork, native kernel,
+or native IPC. UART/GPIO sources currently prove
 compiler shapes; they are not deployed drivers.
 
 The dependency order is:

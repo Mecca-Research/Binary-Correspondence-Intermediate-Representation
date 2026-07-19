@@ -34,6 +34,13 @@ the first direct driver lifecycle and completing the publication gate.
 - Runtime C is classified as freestanding core, hosted tools, or driver adapters.
   Hosted allocation has checked arithmetic/growth, allocator injection, idempotent
   destruction, and fail-every-allocation regressions.
+- The metadata-only HAM control plane compiles bounded semantic resource/access traces
+  over declared directed memory links. It performs deterministic priority/next-use
+  residency, prefetch, eviction, mutable-generation invalidation and writeback; independently
+  replays capacity and routes; and lowers ordinary verified claims and StreamPack without
+  reading payloads. Context-shard manifests and a hard-fact-vetoed fuzzy-memory oracle are
+  strict control-plane artifacts. Physical GDS, P2PDMA, CXL, NVMe, and controller bindings
+  remain driver/kernel work.
 - Direct RuntimeChannel v1 hooks and a bounded loopback exist. There is no Linux IPC
   adapter, stable UAPI, or resident hardware driver yet.
 

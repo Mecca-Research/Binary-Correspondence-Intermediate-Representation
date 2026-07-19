@@ -38,7 +38,7 @@ history and git.
 |---|---|
 | `model/` | Registry-first resources, claims, phases, lane/domain/hazard types |
 | `verify/` | Executable R-law reference and plan/pack/lowering checks |
-| `kbcir/` | Cost vectors, min-plus/RCSP/(max,+) planning, certified learned organs, calibration, AD, quantization, bounded hardware-RL contracts, and exact static memory planning |
+| `kbcir/` | Cost vectors, min-plus/RCSP/(max,+) planning, certified learned organs, calibration, AD, quantization, bounded hardware-RL contracts, exact static memory planning, verified HAM residency/routing, context shards, and the dual-memory oracle |
 | `gem/` | Hydration, StreamPack construction, scheduling, overlap, execution, event/DMA/device contracts |
 | `frontends/` | ROP, MAP, Python C-front oracle, and model manifest/tokenizer/header-only assessment rails |
 | `etl/` | Text and binary event-to-claim transduction |
@@ -62,6 +62,13 @@ The lowering also retains exact RID→bank bindings. `kbcir.static_memory` turns
 and phase lifetimes into an independently verified aligned address plan; the hosted hardware
 policy may rank the finite candidates but cannot replace assessment, verification, or measured
 promotion evidence.
+
+`bcir-ham-plan` is the payload-free semantic-memory entry point. A strict `HAMWorkload` and
+`HardwareEnvelope` produce independently replayed route/capacity/generation actions, an ordinary
+verified BCIR module, and a channel-tagged StreamPack. `kbcir.context_shard` owns attested
+model/Q8/plan references plus quiescent rollback-capable activation; `kbcir.optimization_memory`
+is the bounded exact-Q15/hard-fact oracle for future ANN/property-graph adapters. None of these
+modules configures GDS, P2PDMA, CXL, NVMe, or controller firmware.
 
 Top-level modules such as `telemetry_frame.py`, `telemetry_export.py`,
 `signal_registry.py`, and `channels.py` own host-side protocol/reference behavior. They
@@ -106,6 +113,7 @@ is documented in [`CPP_HANDOFF_BOUNDARY.md`](languages/CPP_HANDOFF_BOUNDARY.md).
 | BCIRQ8 v1 | [`BCIR_LANGREF.md`](BCIR_LANGREF.md#16-bcirq8-v1-decoder-artifact-contract) §16 | Python artifact reader/writer and portable C loader |
 | Telemetry frame and registry | [`TELEMETRY_FRAME_ABI.md`](kernel/TELEMETRY_FRAME_ABI.md), [`SIGNAL_REGISTRY.md`](kernel/SIGNAL_REGISTRY.md) | Python codec/registry and fixed C frame codec |
 | RuntimeChannel and future UAPI | [`BCIR_DRIVER_KERNEL_ROADMAP.md`](kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) | direct C hook table today; Linux/native adapters later |
+| HAM routes and context shards | [`BCIR_HAM_MEMORY_FABRIC.md`](kernel/BCIR_HAM_MEMORY_FABRIC.md) | `bcir/kbcir/ham.py`, `context_shard.py`, `optimization_memory.py`, and deterministic tests |
 | Hosted allocation | [`C_MEMORY_DISCIPLINE.md`](languages/C_MEMORY_DISCIPLINE.md) | hosted allocator implementation and fault-injection tests |
 
 When prose, generated inventory, and implementation disagree, resolve them in this

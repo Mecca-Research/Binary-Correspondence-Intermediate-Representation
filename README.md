@@ -87,6 +87,7 @@ bash tools/irdl/check_corpus.sh         # round-trip the IRDL projection on stoc
 - [`docs/BCIR_LANGREF.md`](docs/BCIR_LANGREF.md) — the normative language reference (levels, laws R1–R23, the equation, and BCIRQ8 v1 artifact ABI).
 - [`docs/BCIR_MASTER_ROADMAP.md`](docs/BCIR_MASTER_ROADMAP.md) — cross-program dependency order, promotion gates, stop conditions, and release policy; history and counts live elsewhere.
 - [`docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md`](docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) — the canonical proof-carrying driver, BCIR-Linux, UAPI, native-kernel, telemetry, and IPC sequence.
+- [`docs/kernel/BCIR_HAM_MEMORY_FABRIC.md`](docs/kernel/BCIR_HAM_MEMORY_FABRIC.md) — the verified semantic-memory/context-shard control plane and the explicit GDS/P2PDMA/CXL/NVMe firmware/kernel boundary.
 - [`docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md) — the detailed ML/model closure program, from low-bit/scheduling/AD gaps through production serving and data organs.
 - [`docs/PARITY.md`](docs/PARITY.md) — the Python↔MLIR law contract and Python↔C artifact/runtime parity ledger.
 - [`docs/STATUS.md`](docs/STATUS.md) — the generated static inventory of tests, ODS ops, passes, runtime files, and verifier-law fixture tags; it does not claim those gates were executed.
