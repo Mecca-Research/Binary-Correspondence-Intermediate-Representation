@@ -205,9 +205,11 @@ artifacts are:
   separately from the bytes they touch. The lowering must pass module/plan/lifetime/bank-move/
   StreamPack verification before the canonical JSON and StreamPack bytes receive their hashes.
 
-Kernel evidence is fail-closed. The portable `model_microbench.py` helper runs hard-bounded
-prefill-like matmul and decode-like matvec references (`dimension ≤ 64`, `repeats ≤ 15`) and emits
-an empirical lower/median/upper interval. It is a local CPU reference floor, not GPU evidence;
+Kernel evidence is fail-closed. The portable C measurement twin runs hard-bounded
+prefill-like matmul and decode-like matvec kernels (`dimension ≤ 64`, `repeats ≤ 15`) and emits
+an empirical lower/median/upper interval. `bcir-model-assess --microbench` selects it by default;
+`--microbench-engine python-oracle` retains the diagnostic reference. It is a local CPU floor,
+not GPU evidence;
 vendor/device channels require measurements from the actual target. Predictions use only
 matching operation/channel/format records, conservatively scale their operation, weight-byte,
 and workspace envelopes, price both sides of a host/device split plus its directed transfer, and
@@ -244,6 +246,20 @@ bcir-model-assess MODEL_DIR \
   --plan-out build/model-plan/plan.json \
   --pack-out build/model-plan/plan.bspk
 ```
+
+### 1.3.1 Python oracle and native AI data plane
+
+The 2026-07-19 source and performance audit established a narrow native boundary rather
+than attempting a wholesale rewrite. Portable no-heap C now implements byte-identical Q8/Q4
+quantization, Q8 decoder/head projections, exact hard-filtered Q15 retrieval, the group-32
+Q4×Q8 primitive, and bounded model measurement. Python retains schemas, laws, planning,
+provenance, reference decode, hardware search, and hosted-training orchestration; PyTorch tensor
+work already executes below Python. C++ remains reserved for a future measured serving/device
+lifecycle where RAII or asynchronous ownership is actually needed.
+
+The complete module-by-module decision record, safety contract, bounded local evidence, public
+interfaces, and future promotion gates are in
+[`BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md`](BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md).
 
 ### 1.4 First hardware-RL policy and exact tensor-address planner
 

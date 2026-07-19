@@ -101,6 +101,8 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
     "optimization_memory": ("OptimizationFact", "OptimizationMatch",
                             "OptimizationMemory", "OptimizationPattern",
                             "query_optimization_memory"),
+    "native_ai": ("NativeAIKernels", "NativeOptimizationIndex",
+                  "NativeQuantizedTensor"),
     "sensing": ("PathSamples", "RegretSensor", "TelemetryDecision", "total_overhead",
                 "full_resolution_overhead", "sense_by_ranker", "DEFAULT_MARGIN_THRESHOLD"),
     "precision": ("Interval", "iadd", "isub", "imul_q8", "ulp_distance",

@@ -64,6 +64,10 @@ the first direct driver lifecycle and completing the publication gate.
   format/KV/training/per-bank memory, enumerate resident/layer-stream/host-device candidates,
   and emit a verified content-addressed claim/StreamPack plan. Its bounded reference timings are
   evidence records, not a production GPU-performance or executable large-model claim.
+- The measured Python/native boundary adds a cold explicit C bridge for byte-identical Q8/Q4
+  conversion, exact Q15 retrieval, and bounded C model measurement. Standalone BCIRQ8 inference
+  uses the native projection/head loops. Python remains the law/planning/reference authority;
+  whole-model Q4, target SIMD/GPU kernels, and a production C++ serving lifecycle remain open.
 - A bounded hosted hardware policy combines availability-aware telemetry, a memory-topology GNN,
   a temporal Transformer, metric reward/DPO/PPO, and root-PUCT over feasible model plans. Exact
   static per-bank addresses and StreamPack re-verification remain deterministic authorities.

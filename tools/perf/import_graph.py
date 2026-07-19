@@ -28,7 +28,7 @@ _COLD_KBCIR = ("calibloop", "microbench", "accel", "portfolio", "moegate", "regr
                "egraph", "operad", "twotruth", "memory", "throttle", "mapping", "bayescal",
                "allocator", "sensing", "precision", "autodiff", "lowbit",
                "schedule_artifact", "autodiff_program", "numerical_providers",
-               "hardware_rl", "static_memory")
+               "hardware_rl", "static_memory", "native_ai")
 _COLD_LOWER = ("jit", "wasm", "specialist")
 _COLD_GEM = ("concurrency", "overlap", "schedule", "async_tokens", "cim", "dvfs")
 _COLD_TOP = ("silicon", "performance_audit")

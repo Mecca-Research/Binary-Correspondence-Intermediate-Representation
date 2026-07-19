@@ -241,15 +241,26 @@ completed the ordinary x86-64 assembly edge, MC1/MC2 operator tools, strict Stre
 semantics, and the source-backed driver/kernel roadmap v2; all required push and pull-request jobs
 passed before merge.
 
-### #639–#645 — consolidation, security, and bounded model/control planes (2026-07-15 → 07-18)
+### #639–#646 — consolidation, security, and bounded model/control planes (2026-07-15 → 07-19)
 The docs tree was consolidated by subject and its current-state records were reconciled. A
 repository-wide post-#538 security pass then hardened memory-sensitive parsing, artifact handling,
 race windows, and publication checks. The hosted model lab established deterministic random-weight
 training, safe exact resume/export, strict ingest, BCIRQ8, and standalone-C parity. Follow-on work
 added bounded corpus/tokenizer and alignment pipelines, provider-neutral offline contracts,
 payload-free model inventory/placement plans, a simulated hardware-policy GNN/Transformer with
-measured-only promotion, and a TMSAO performance/regression harness. These are compiler and
-control-plane foundations, not claims of large-model training or physical-device speedup.
+measured-only promotion, a TMSAO performance/regression harness, and the HAM/context-shard/
+dual-memory compiler-simulator baseline. These are compiler and control-plane foundations, not
+claims of large-model training or physical-device speedup.
+
+### Post-#646 — measured Python/native AI boundary (2026-07-19)
+
+A source-wide placement audit kept laws, schemas, K_BCIR/HAM planning, hardware search, and hosted
+training in the independent Python control/oracle rail while moving stable repeated work into a
+portable no-heap C ABI. Q8/Q4 conversion, standalone-decoder Q8 projections, exact hard-filtered
+Q15 retrieval, group-32 Q4×Q8 accumulation, and bounded native model measurement gained strict
+Python parity, malformed-input, sanitizer, import-quarantine, and host-portability gates. No new
+C++ layer was added because the kernels need a reusable C ABI, not another owner; C++ remains
+gated on a measured asynchronous serving/device lifecycle.
 
 ---
 
@@ -325,6 +336,9 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
 - **2026-07-18:** the TMSAO sweep pinned canonical data-structure behavior and bounded performance
   evidence across GEM, StreamPack, K_BCIR, unsupervised ML, and the small AI organs; observed
   regressions remain gates rather than theoretical-maximum claims.
+- **2026-07-19:** HAM/context-shard/dual-memory planning landed, followed by the measured
+  Python/native boundary: portable Q8/Q4 conversion and projection, exact Q15 retrieval, native
+  model measurement, and standalone-decoder integration with the Python oracle retained.
 
 ---
 
@@ -341,7 +355,7 @@ exist; it does not imply production deployment or hardware evidence.
 | Optimizer and backend | 12-axis K_BCIR, min-plus/RCSP/(max,+), GEM scheduling, C23 and resident LLVM/object paths, JVM/CIL/WASM bounded validation | Arbitrary-graph LLVM AOT, general native isel (gated), target-specific measured scheduling evidence |
 | Machine/driver substrate | StreamPack v1–v3, device manifests, bank/move/event/DMA contracts, MC1/MC2 operator tools, direct RuntimeChannel hooks, metadata-only HAM routing/residency/replay, and strict context-shard activation | Resident UART/virtio/device drivers, physical HAM adapters, stable UAPI, Linux modules, native IPC, and physical-device qualification |
 | Memory discipline | Freestanding/hosted/adapter classes, checked hosted allocator and fault injection, fail-every-allocation tests | Per-operation compiler arenas and further context migration as allocation-bearing surfaces expand |
-| ML/model stack | Planned/streamed training, hosted safe pretraining and bounded alignment stages, deterministic corpus/BPE, provider-neutral contracts, model manifest/tokenizer/decoder, header-only cost/placement plans, exact static addresses, bounded hardware-policy training/search, GQA/KV cache, BCIRQ8, BCIRQ4T tensor compute, and standalone-C TinyLlama parity | Production serving, executable hardware placement/rematerialization, whole-decoder Q4/additional formats, canonical 32M training, live providers, distributed/GPU execution, and hardware-qualified model/policy gates |
+| ML/model stack | Planned/streamed training, hosted safe pretraining and bounded alignment stages, deterministic corpus/BPE, provider-neutral contracts, model manifest/tokenizer/decoder, header-only cost/placement plans, exact static addresses, bounded hardware-policy training/search, GQA/KV cache, BCIRQ8, BCIRQ4T tensor compute, native Q8/Q4 conversion/projection and exact Q15 retrieval, and standalone-C TinyLlama parity | Production serving, executable hardware placement/rematerialization, whole-decoder Q4/additional formats, canonical 32M training, live providers, distributed/GPU execution, and hardware-qualified model/policy gates |
 | Telemetry/control | Signal registry, BTLM codec, metric derivation, deterministic serializers, shared-ring baseline | Generated fixed-width C registry, source/session/generation/clock identity, live SPSC protocol and real transports |
 
 ### Retired AI-substrate research note
@@ -370,7 +384,7 @@ now have stable owners:
 
 ## 5. Where the detailed notes live now
 
-- **Per-landing detail:** the GitHub PR record (#2–#645; PR bodies carry Verification
+- **Per-landing detail:** the GitHub PR record (#2–#646, plus subsequent changes; PR bodies carry Verification
   sections with exact gate outputs), `git log`, and the pre-consolidation revisions of
   `REPO_CURRENT_STATE_AUDIT.md` / `BCIR_MASTER_ROADMAP.md` /
   `machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md` (recoverable via git).

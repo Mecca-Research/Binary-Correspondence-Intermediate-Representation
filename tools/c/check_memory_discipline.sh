@@ -49,8 +49,9 @@ compat_warnings=(-Wno-misleading-indentation)
 if ! "${CC_BIN}" --version 2>/dev/null | head -n 1 | grep -qi clang; then
   compat_warnings+=(-Wno-format-truncation)
 fi
-for unit in bcir_runtime_channel.c bcir_cpp.c bcir_q8_model.c bcir_q4_kernel.c bcir_llama.c \
-            bcir_verify.c bcir_cc.c bcir_llama_cli.c bcir_microbench.c; do
+for unit in bcir_runtime_channel.c bcir_cpp.c bcir_q8_model.c bcir_q4_kernel.c \
+            bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_verify.c \
+            bcir_cc.c bcir_llama_cli.c bcir_microbench.c; do
   "${CC_BIN}" "${strict[@]}" -c "${C}/${unit}" -o "${tmp}/${unit%.c}.o"
 done
 
@@ -63,12 +64,22 @@ sources=(
   "${C}/bcir_runtime.c"
   "${C}/bcir_q8_model.c"
   "${C}/bcir_decode.c"
+  "${C}/bcir_ai_kernels.c"
   "${C}/bcir_llama.c"
+)
+
+ai_sources=(
+  "${C}/test_ai_kernels.c"
+  "${C}/bcir_ai_kernels.c"
+  "${C}/bcir_q4_kernel.c"
 )
 
 "${CC_BIN}" "${strict[@]}" -O1 "${compat_warnings[@]}" \
   "${sources[@]}" -o "${tmp}/memory-discipline" "${link_args[@]}"
 "${tmp}/memory-discipline" "${model}"
+"${CC_BIN}" "${strict[@]}" -O2 -ffp-contract=off \
+  "${ai_sources[@]}" -o "${tmp}/ai-kernels" "${link_args[@]}"
+"${tmp}/ai-kernels"
 
 if [ "${MEMORY_DISCIPLINE_SANITIZE:-0}" = 1 ]; then
   case "$(uname -s 2>/dev/null || true)" in
@@ -80,6 +91,12 @@ if [ "${MEMORY_DISCIPLINE_SANITIZE:-0}" = 1 ]; then
       ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
       UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
         "${tmp}/memory-discipline-sanitize" "${model}"
+      "${CC_BIN}" -std=c11 -O1 -g -fno-omit-frame-pointer -ffp-contract=off \
+        -fsanitize=address,undefined "${compat_warnings[@]}" -I "${C}" \
+        "${ai_sources[@]}" -o "${tmp}/ai-kernels-sanitize" "${link_args[@]}"
+      ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+        "${tmp}/ai-kernels-sanitize"
       ;;
     *)
       echo "memory-discipline: sanitizer stage is Linux-only; strict/fault gates passed"

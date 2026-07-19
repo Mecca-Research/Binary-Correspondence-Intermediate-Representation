@@ -1,6 +1,6 @@
 # BCIR repository structure
 
-> Current for package version `0.2.0` and the post-PR-640 tree. This document is an
+> Current for package version `0.2.0` and the 2026-07-19 tree. This document is an
 > ownership map, not a generated inventory or a migration log. Static counts belong in
 > [`STATUS.md`](STATUS.md); historical reorganizations belong in
 > [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md).
@@ -38,7 +38,7 @@ history and git.
 |---|---|
 | `model/` | Registry-first resources, claims, phases, lane/domain/hazard types |
 | `verify/` | Executable R-law reference and plan/pack/lowering checks |
-| `kbcir/` | Cost vectors, min-plus/RCSP/(max,+) planning, certified learned organs, calibration, AD, quantization, bounded hardware-RL contracts, exact static memory planning, verified HAM residency/routing, context shards, and the dual-memory oracle |
+| `kbcir/` | Cost vectors, min-plus/RCSP/(max,+) planning, certified learned organs, calibration, AD, quantization, bounded hardware-RL contracts, exact static memory planning, verified HAM residency/routing, context shards, the dual-memory oracle, and the cold explicit native-AI bridge |
 | `gem/` | Hydration, StreamPack construction, scheduling, overlap, execution, event/DMA/device contracts |
 | `frontends/` | ROP, MAP, Python C-front oracle, and model manifest/tokenizer/header-only assessment rails |
 | `etl/` | Text and binary event-to-claim transduction |
@@ -57,7 +57,8 @@ execution entry points; see [`PERFORMANCE_AUDIT.md`](PERFORMANCE_AUDIT.md).
 `bcir-model-assess` is the payload-free model planning entry point. Its model directory parser
 reads only `config.json` and validated Safetensors headers, while caller-authored hardware and
 workload artifacts drive exact capacity accounting. It can publish a canonical cost report,
-content-addressed execution plan, and verified StreamPack; it never publishes weights.
+content-addressed execution plan, and verified StreamPack; it never publishes weights. Requested
+bounded CPU measurement uses the native C twin by default, with an explicit Python-oracle mode.
 The lowering also retains exact RID→bank bindings. `kbcir.static_memory` turns those bindings
 and phase lifetimes into an independently verified aligned address plan; the hosted hardware
 policy may rank the finite candidates but cannot replace assessment, verification, or measured
@@ -102,6 +103,12 @@ rejects additional executable claims. Neither path claims arbitrary-graph native
 
 `runtime/cpp/` is an orchestration layer above those contracts. The ownership boundary
 is documented in [`CPP_HANDOFF_BOUNDARY.md`](languages/CPP_HANDOFF_BOUNDARY.md).
+
+The hosted model data plane in `runtime/c/` includes the validating BCIRQ8 loader,
+standalone GQA decoder, Q8/Q4 conversion and projection kernels, exact Q15 top-k, and a
+fixed-storage benchmark. Python parity and placement rules are documented in
+[`BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md`](machine-learning/BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md).
+The kernels have a C ABI usable from C++; this does not expand `runtime/cpp/` ownership.
 
 ## 5. Contract ownership
 

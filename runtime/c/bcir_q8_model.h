@@ -75,6 +75,10 @@ typedef struct bcir_q8_model {
   uint32_t _owner_tag;
 } bcir_q8_model;
 
+/* A successfully loaded model owns `storage` and `tensors`; callers borrow the
+ * complete object as immutable state until bcir_q8_model_free.  Mutating either
+ * inventory invalidates the loader's CRC/value validation and is unsupported. */
+
 void bcir_q8_model_init(bcir_q8_model *model);
 
 /* Load and fully validate a BCIRQ8 v1 file.  The loader checks the header/body/tensor

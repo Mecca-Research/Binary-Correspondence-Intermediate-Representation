@@ -14,7 +14,8 @@ from .assessment import (HardwareEnvelope, ModelWorkloadSpec, assess_model,
                          select_execution_candidate)
 from .execution_plan import lower_model_execution
 from .inventory import build_tensor_inventory
-from .model_microbench import run_bounded_model_microbench
+from .model_microbench import (run_bounded_model_microbench,
+                               run_bounded_model_microbench_native)
 
 
 def _atomic_write(path: str, data: bytes) -> None:
@@ -81,7 +82,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--pack-out", help="write selected verified StreamPack binary")
     parser.add_argument("--candidate", help="select a feasible candidate by exact id")
     parser.add_argument("--microbench", action="store_true",
-                        help="run bounded local reference prefill/decode calibration")
+                        help="run bounded local prefill/decode calibration")
+    parser.add_argument("--microbench-engine", choices=("native", "python-oracle"),
+                        default="native",
+                        help="measurement engine (native C by default; Python is oracle-only)")
     parser.add_argument("--microbench-channel", default="host")
     parser.add_argument("--microbench-dimension", type=int, default=24)
     parser.add_argument("--microbench-repeats", type=int, default=5)
@@ -100,8 +104,10 @@ def _run(args) -> int:
         args.workload, "model workload", max_bytes=1 << 20))
     if args.microbench:
         evidence = list(hardware.benchmarks)
+        measure = (run_bounded_model_microbench_native if args.microbench_engine == "native"
+                   else run_bounded_model_microbench)
         for fmt in workload.formats:
-            measured = run_bounded_model_microbench(
+            measured = measure(
                 channel=args.microbench_channel, weight_format=fmt,
                 dimension=args.microbench_dimension, repeats=args.microbench_repeats)
             keys = {(row.operation, row.channel, row.weight_format) for row in measured}

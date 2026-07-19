@@ -138,7 +138,7 @@ jobs:
         run: |
           diagnostics="$(mktemp)"
           trap 'rm -f "${diagnostics}"' EXIT
-          for source in bcir_cpp.c bcir_cfront.c bcir_q8_model.c bcir_q4_kernel.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c; do
+          for source in bcir_cpp.c bcir_cfront.c bcir_q8_model.c bcir_q4_kernel.c bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c; do
             : > "${diagnostics}"
             if ! clang --analyze -std=c11 -I runtime/c "runtime/c/${source}" -o /dev/null 2>"${diagnostics}"; then
               cat "${diagnostics}" >&2
@@ -189,6 +189,9 @@ jobs:
       - name: C memory classes, strict warnings, allocator failures, and direct channel
         shell: bash
         run: CC=clang bash tools/c/check_memory_discipline.sh
+
+      - name: Native AI C/Python parity and bounded measurement
+        run: python -m bcir.tests.test_native_ai
 
       - name: Clang statement-expression/bitfield differential
         run: |
@@ -438,6 +441,9 @@ jobs:
 
       - name: Freestanding C StreamPack runtime on ARM (no-libc + ABI parity)
         run: bash tools/c/check_runtime.sh
+
+      - name: Native AI strict C and ownership gates on ARM
+        run: CC=clang bash tools/c/check_memory_discipline.sh
 
       - name: CT4 measured-replan runbook on ARM (degrade mode; exercises the perf syscall)
         run: bash tools/silicon/measure_replan.sh

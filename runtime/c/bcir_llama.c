@@ -1,6 +1,7 @@
 /*===- bcir_llama.c - standalone greedy inference over BCIRQ8 v1 --------===*/
 #include "bcir_llama.h"
 
+#include "bcir_ai_kernels.h"
 #include "bcir_decode.h"
 
 #include <math.h>
@@ -57,8 +58,12 @@ static int tensor_ready(const bcir_q8_model *m, uint16_t id, int16_t layer,
   if(count!=t->element_count||groups!=t->group_count||
      t->exponent_offset>m->storage_size||exponent_bytes>m->storage_size-t->exponent_offset||
      t->code_offset>m->storage_size||count>m->storage_size-t->code_offset) return 0;
-  return t->exponents==m->storage+t->exponent_offset&&
-         t->codes==m->storage+t->code_offset;
+  /* bcir_q8_model_load already validated every immutable exponent/code byte and
+   * CRC.  Re-scanning the complete model on every generation request would turn
+   * request setup into O(parameter_count); retain the structural/stale-pointer
+   * checks here and use the prevalidated kernels below. */
+  return t->exponents == m->storage + t->exponent_offset &&
+         t->codes == m->storage + t->code_offset;
 }
 
 static int model_ready(const bcir_q8_model *m) {
@@ -156,16 +161,12 @@ static void dequant_vector(const bcir_q8_model *m, const bcir_q8_tensor *t,
 }
 
 /* x[1 x in] @ weight[in x out], matching matmul_reference's i/j/k loop order. */
-static void matvec(const bcir_q8_model *m, const double *x,
-                   const bcir_q8_tensor *weight, uint32_t in, uint32_t out,
-                   double *result) {
-  uint32_t j, k;
-  for (j = 0; j < out; ++j) {
-    double sum = 0.0;
-    for (k = 0; k < in; ++k)
-      sum += x[k] * tensor_value_unchecked(m, weight, k * out + j);
-    result[j] = sum;
-  }
+static int matvec(const bcir_q8_model *m, const double *x,
+                  const bcir_q8_tensor *weight, uint32_t in, uint32_t out,
+                  double *result) {
+  return bcir_ai_q8_matvec_f64_prevalidated(
+      x, in, weight->codes, weight->element_count, weight->exponents,
+      weight->group_count, out, m->group_size, result);
 }
 
 static double sigmoid_guarded(double x) {
@@ -207,9 +208,9 @@ static int step_token(const bcir_q8_model *m, workspace *w, int32_t token, size_
 
     dequant_vector(m, g_attn, w->gamma);
     bcir_rmsnorm(w->x, 1, (int)d, w->gamma, m->rms_norm_eps, w->h);
-    matvec(m, w->h, wq, d, d, w->q);
-    matvec(m, w->h, wk, d, kvd, w->k);
-    matvec(m, w->h, wv, d, kvd, w->v);
+    if (matvec(m, w->h, wq, d, d, w->q) ||
+        matvec(m, w->h, wk, d, kvd, w->k) ||
+        matvec(m, w->h, wv, d, kvd, w->v)) return -1;
     for (head = 0; head < m->n_heads; ++head)
       bcir_rope(w->q + (size_t)head * dk, 1, (int)dk, m->rope_base, (int)pos,
                 w->q_rope + (size_t)head * dk);
@@ -221,15 +222,15 @@ static int step_token(const bcir_q8_model *m, workspace *w, int32_t token, size_
     if (bcir_gqa_attention_row(w->q_rope, k_layer, v_layer, (int)pos + 1,
                                (int)m->n_heads, (int)m->n_kv_heads, (int)dk,
                                w->scores, w->context)) return -1;
-    matvec(m, w->context, wo, d, d, w->attn);
+    if (matvec(m, w->context, wo, d, d, w->attn)) return -1;
     for (i = 0; i < d; ++i) w->x[i] += w->attn[i];
     dequant_vector(m, g_ff, w->gamma);
     bcir_rmsnorm(w->x, 1, (int)d, w->gamma, m->rms_norm_eps, w->h2);
-    matvec(m, w->h2, wg, d, m->d_ff, w->gate);
-    matvec(m, w->h2, wu, d, m->d_ff, w->up);
+    if (matvec(m, w->h2, wg, d, m->d_ff, w->gate) ||
+        matvec(m, w->h2, wu, d, m->d_ff, w->up)) return -1;
     for (i = 0; i < m->d_ff; ++i)
       w->ff[i] = w->gate[i] * sigmoid_guarded(w->gate[i]) * w->up[i];
-    matvec(m, w->ff, wd, m->d_ff, d, w->attn);
+    if (matvec(m, w->ff, wd, m->d_ff, d, w->attn)) return -1;
     for (i = 0; i < d; ++i) w->x[i] += w->attn[i];
   }
   {
@@ -242,20 +243,19 @@ static int step_token(const bcir_q8_model *m, workspace *w, int32_t token, size_
 }
 
 static int logits_and_argmax(const bcir_q8_model *m, const double *row,
-                             double *logits) {
+                             double *logits, int *best_out) {
   const bcir_q8_tensor *head =
       (m->flags & BCIR_Q8_FLAG_TIED_EMBEDDINGS)
           ? bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_EMBEDDING, -1)
           : bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_LM_HEAD, -1);
-  uint32_t token, k, best = 0;
-  for (token = 0; token < m->vocab_size; ++token) {
-    double sum = 0.0;
-    for (k = 0; k < m->d_model; ++k)
-      sum += row[k] * tensor_value_unchecked(m, head, token * m->d_model + k);
-    logits[token] = sum;
-    if (token && logits[token] > logits[best]) best = token;
-  }
-  return (int)best;
+  uint32_t token, best = 0;
+  if (!best_out || bcir_ai_q8_rows_dot_f64_prevalidated(
+          row, m->d_model, head->codes, head->element_count, head->exponents,
+          head->group_count, m->vocab_size, m->group_size, logits)) return -1;
+  for (token = 1; token < m->vocab_size; ++token)
+    if (logits[token] > logits[best]) best = token;
+  *best_out = (int)best;
+  return 0;
 }
 
 int bcir_llama_generate_greedy_with_allocator(
@@ -282,7 +282,9 @@ int bcir_llama_generate_greedy_with_allocator(
       workspace_free(&w); return -1;
     }
   for (step = 0; step < max_new_tokens; ++step) {
-    next = logits_and_argmax(model, w.h, w.logits);
+    if (logits_and_argmax(model, w.h, w.logits, &next)) {
+      workspace_free(&w); return -1;
+    }
     generated_ids[step] = (int32_t)next;
     if (step + 1 < max_new_tokens &&
         step_token(model, &w, (int32_t)next, prompt_count + step, w.h)) {
