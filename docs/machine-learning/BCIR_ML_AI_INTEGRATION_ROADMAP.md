@@ -310,19 +310,42 @@ Research informs this shape without becoming a performance claim:
 | Primary result | BCIR use | Boundary retained |
 |---|---|---|
 | [AlphaDev](https://www.nature.com/articles/s41586-023-06004-9) | finite policy/search game with an external correctness oracle | no unrestricted assembly generation; a future sort/hash game needs a closed ISA vocabulary, sandbox, machine-code validator, and exhaustive/differential functional tests |
-| [Checkmate](https://proceedings.mlsys.org/paper_files/paper/2020/hash/0b816ae8f06f8dd3543dc3d9ef196cab-Abstract.html), [DTR](https://arxiv.org/abs/2006.09616), and [MemoMalloc](https://arxiv.org/abs/2203.00448) | exact lifetime/address planning now; rematerialization/spill policy next | v1 is static resource-level phase liveness, not predictive runtime rematerialization or semantic swap |
+| [Checkmate](https://proceedings.mlsys.org/paper_files/paper/2020/hash/0b816ae8f06f8dd3543dc3d9ef196cab-Abstract.html), [DTR](https://arxiv.org/abs/2006.09616), and [MemoMalloc](https://arxiv.org/abs/2203.00448) | exact lifetime addresses plus generic verified HAM residency now; rematerialization policy next | current HAM is a bounded compiler/simulator plan, not predictive rematerialization or physical semantic swap |
 | [Transferable Graph Optimizers](https://proceedings.neurips.cc/paper_files/paper/2020/hash/9f29450d2eb58feb555078bdefe28aa5-Abstract.html) | GNN topology plus temporal/candidate context | current evidence is a generated micro fixture, not transfer across physical targets |
 | [TVM](https://arxiv.org/abs/1802.04799), [Ansor](https://www.usenix.org/conference/osdi20/presentation/zheng), and [MLGO](https://llvm.org/docs/MLGO.html) | learned ranking reduces a bounded measured search | measured hardware remains the oracle and compiler legality remains independent |
 | [DPO](https://arxiv.org/abs/2305.18290) | exact hardware metrics produce deterministic preference pairs | no human-preference or frontier-model score substitutes for counters |
-| [FlexGen](https://arxiv.org/abs/2303.06865) and [PagedAttention](https://arxiv.org/abs/2309.06180) | future tiered tensor/KV placement | no current CPU/GPU/disk offload runtime or paged-KV allocator is claimed |
+| [FlexGen](https://arxiv.org/abs/2303.06865) and [PagedAttention](https://arxiv.org/abs/2309.06180) | tiered tensor/KV placement | paged-KV reference and generic HAM plans exist; no accelerator-resident/offload runtime or production page allocator is claimed |
+
+#### 1.4.1 HAM, context shards, and dual optimization memory
+
+The provider-neutral control-plane portion is now executable. The canonical contract is
+[`BCIR_HAM_MEMORY_FABRIC.md`](../kernel/BCIR_HAM_MEMORY_FABRIC.md): semantic resources form a
+bounded dependency DAG with content identity, home bank, exact size, priority, mutability, and
+generation; accesses compile over directed `HardwareEnvelope` links into direct-peer, direct-DMA,
+or explicit staged/host-bounce routes. The planner protects nearer lookahead data, emits explicit
+transfer/prefetch/barrier/access/invalidate/evict actions, and uses deterministic next-use for
+capacity pressure. An independent simulator re-derives every route, transient/persistent peak,
+generation, write-back, byte count, and link-time estimate before the plan lowers through existing
+BCIR claims and StreamPack.
+
+Cloud/hosted training outputs now have a narrow `ContextShardManifest` and catalog contract. A
+shard references BCIRQ8, a frozen Q8 table, Safetensors LoRA/weight delta, or a verified StreamPack;
+it binds model, hardware, selector, provenance, certificate, source revision, size, and payload
+hash. Activation is exact-match, quiescent, generation-advancing, and rollback-capable. No API
+attaches weights in flight.
+
+`OptimizationMemory` supplies the bounded dual-rail oracle: exact Q15 nearest-pattern retrieval is
+the fuzzy ranker, while canonical hardware/program facts veto candidates before they can be
+returned. It is not yet a persistent ANN database or full Code Property Graph. A production
+FAISS/ScaNN/graph adapter must match this oracle's hard filtering and deterministic fixtures.
 
 The next evidence steps are ordered: replay real CPU episodes; add driver-proven register,
 bandwidth, energy, and throttle providers; compare policy-guided search with exhaustive candidates;
-add checkpoint/rematerialize/spill actions to the verified vocabulary; qualify two physical
-targets; then consider a lightweight draft policy. A larger background policy may prepare a next
-generation, but activation remains at a quiescent boundary with rollback. Full HAM materialization,
-semantic swap, live GPU register allocation, and AlphaDev-style sorting/hashing assembly games are
-separate future slices.
+add checkpoint/rematerialize actions to the verified vocabulary; qualify two physical targets;
+then consider a lightweight draft policy. A larger background policy may prepare a next
+generation, but activation remains at a quiescent boundary with rollback. Physical GDS/P2PDMA/CXL
+adapters, durable semantic storage, live GPU register allocation, production ANN/CPG services,
+and AlphaDev-style sorting/hashing assembly games are separate future slices.
 
 ### 1.5 CUDA-LLM findings and the BCIR-owned 32M program
 
@@ -470,21 +493,24 @@ rematerialization/spill execution remain to be materialized here.*
   streaming buffer; streamed rows become a tensor stream over `!bcir.token` + GEM waves — *accelerated* tabular
   learning instead of sequential epochs. Reuses the binary-record decoder + the telemetry ring; net-new: the
   column buffer + windowed-aggregate ops.
-- **C2 — The BCIR vector database.** **Materialize the HAM** O(log n) cost abstraction into a real hierarchical
-  index (today HAM is priced but never allocated), persisted through **HDF5** + **LMDB**, with embeddings from
-  Phase B. The **content-addressed operad index** (the FNV fingerprint) is the natural vector key — CSE and the
-  liked-pair identity `a = a` give dedup and reproducibility for free. Combine with the existing memory tiers
-  (L1..SSD/CXL) so hot vectors promote and cold vectors demote under the same cost model.
+- **C2 — The BCIR optimization memory.** **Landed bounded oracle:** `OptimizationMemory`
+  performs exact Q15 similarity retrieval and applies a hard hardware/program-fact veto; HAM resources provide
+  content-addressed semantic identity and dependency traversal. **Remaining:** a durable index/recovery format,
+  embedding generation contract, a full AST/CFG/dependence/hardware property graph, scalable ANN adapter,
+  recall/filter parity, multi-process service, corruption recovery, and measured tier placement. Select
+  HDF5/LMDB/Arrow/Zarr or another provider only after the workload and recovery contract are measured.
 - **C3 — Cloud deployment.** Promote the telemetry **ring → a real Kafka producer** (net-new C; the Python
   abstraction exists); use **Zarr** chunked arrays as the StreamPack-friendly tensor-on-disk format; target
   **WASM** as a channel for portable deployment. *Assess vs alternatives* (Arrow/Parquet for columnar; Arrow
   Flight vs Kafka for transport) before committing — the StreamPack ABI and the channel model are the fixed
   points.
-- **C4 — Predictive tensor residency.** **Landed baseline:** exact phase-lifetime address reuse,
-  capacity/alignment/alias verification, and model-plan RID→bank bindings. **Remaining:** verified
-  checkpoint/rematerialize/spill/prefetch actions, bounded online eviction policy, request-owned KV
-  generations, host/device transfer execution, OOM forecasting, and replay against real counters.
-  A learned policy may rank these actions; the static verifier and memory-capacity proof admit them.
+- **C4 — Predictive tensor residency.** **Landed compiler/simulator baseline:** exact phase-lifetime
+  address reuse, model-plan RID→bank bindings, generic HAM transfer/prefetch/barrier/invalidate/evict actions,
+  deterministic next-use capacity policy, dependency residency, mutable generation/write-back, exact link
+  routes, StreamPack lowering, and independent replay. **Remaining:** checkpoint/rematerialization execution,
+  request-owned generic paging/reuse, asynchronous overlap and cancellation, physical host/device/storage
+  adapters, OOM forecasting evidence, and replay against real counters. A learned policy may rank legal
+  candidates; the dynamic/static verifiers and memory-capacity proof admit them.
 
 ### Phase D — Language reach (more goal-graph sources) — *extends Phase F*
 - **D1 — Fortran, immediate: GCC/Flang fallback.** Compile Fortran with Flang/GCC → object/static lib; BCIR
@@ -1067,9 +1093,9 @@ source needs:
 | 1 | **Telemetry** (self-supervised: cost, schedule, thermal) | ring → episodes → calibrators/rankers | codecs/metrics/push-button loop landed; identity, live providers/transports and resident service remain open |
 | 2 | **Built-in tables** (Unicode DB → the F1 tokenizer; Q8/ISA/training tables via `#embed`) | frozen compile-time datasets (the C23 `#embed`/`constexpr` self-assembly pattern) | ABI machinery exists; F1 unstarted |
 | 3 | **User input / intent** (ROP/MAP/C sources, CLI episodes) | frontends → claim graphs + provenance | frontends real; intent-mining unstarted |
-| 4 | **RAG / vector store** | Phase C2: materialized HAM + operad content-address as the key; HDF5/LMDB persistence | priced-but-not-materialized |
+| 4 | **RAG / vector store** | Phase C2: HAM semantic identities + exact Q15/hard-fact optimization-memory oracle; durable ANN/CPG service later | bounded in-memory oracle landed; persistence/scale/RAG open |
 | 5 | **Wikipedia / web scraping** | the ETL rail (parse/FSM/binary) + C1 streaming, with license/provenance tags and the reject-don't-clamp ingest posture | ETL seed exists; scale organs are Phase C |
-| 6 | **Frontier-model APIs** (cloud teachers) | typed TrainingSession/Episode records, schema-gated (`OPENAI_BCIR_INTEGRATION_RESEARCH.md` §3.8) | designed, unbuilt |
+| 6 | **Frontier-model APIs** (cloud teachers) | separated teacher targets and remote-compute bundles, recorded/offline adapters, strict context-shard manifests/catalogs | provider-neutral/offline contracts landed; live provider adapters and API evidence open |
 | 7 | **Local open weights + trainer models** | §7 manifest → tokenizer parity → reference decode → quantized artifact ladder | small Llama float/Q8/C gate landed; production scale and trainer export open |
 
 The integration law: **every source produces the same thing** — provenance-tagged, typed
@@ -1123,12 +1149,13 @@ and the §8.6 intent loop.
 | Shape/dtype laws (D2) | ✅ Landed (R22/R23) | R19–R21 promotion pattern |
 | Learned cost priors (D3) | **Landed bounded tile/channel priors** | exhaustive-equivalence certificates and stale-artifact refusal |
 | Resident calibloop service (8.3) | Open; push-button host pieces exist and measured promotion is rig/driver-gated | performance budget + provenance + lifecycle |
-| Summary-artifact law (8.4) | Partly embodied; a general public contract remains open | replay gate + idempotence |
-| Data organs at scale (8.5 rungs 4–5) | Phase C, real engineering | C1/C2 slices |
-| Cloud-teacher + open-weight rungs (8.5 rungs 6–7) | Small Llama open-weight gate landed; cloud teacher and production serving remain open | §7.4 ladder + safety/eval |
+| Summary-artifact law (8.4) | Context-shard manifest/catalog/activation contract landed for model/Q8/plan artifacts; broader summaries remain open | replay, quiescence, rollback, payload integrity |
+| Data organs at scale (8.5 rungs 4–5) | HAM/dual-memory bounded oracle landed; persistence and scale remain Phase C engineering | C1/C2 slices |
+| Cloud-teacher + open-weight rungs (8.5 rungs 6–7) | Small Llama gate and offline provider/context-shard contracts landed; live cloud adapters and production serving remain open | §7.4 ladder + safety/eval |
 | Intent-synthesis ecosystem (8.6) | Horizon (Phase F-adjacent); seed slices possible now | quarantine + certificates |
 | Rule synthesis (D4) | Research-side | equivalence certificates |
 
 Current order: **packed low-bit contract and measured schedule evidence → resident
-telemetry/calibration service after driver traces → 8.4 codification → C1/C2 data organs →
-8.6 intent-synthesis seed**. Each slice is bounded, oracle-first, and parity/certificate-gated.
+telemetry/calibration service after driver traces → durable C1/C2 ingestion/index recovery →
+physical HAM adapters only after their driver prerequisites → 8.6 intent-synthesis seed**. Each
+slice is bounded, oracle-first, and parity/certificate-gated.

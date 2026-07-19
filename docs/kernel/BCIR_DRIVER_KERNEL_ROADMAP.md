@@ -1,6 +1,7 @@
 # BCIR Driver and Kernel Roadmap v2
 
-> **Status:** canonical execution roadmap, rewritten 2026-07-15.
+> **Status:** canonical execution roadmap, rewritten 2026-07-15; memory-fabric boundary
+> reconciled 2026-07-18.
 >
 > This document defines how BCIR develops driver/compiler packages, experiments on Linux,
 > and eventually hosts those packages in a native BCIR kernel. It replaces the historical
@@ -59,6 +60,7 @@ designed elsewhere but must not be described as operational.
 | Python conformance oracle and MLIR law rail | **Landed** | The parity contract is documented in [`PARITY.md`](../PARITY.md); current inventories are generated in [`STATUS.md`](../STATUS.md) |
 | K_BCIR cost and target model | **Landed** | Twelve-dimensional integer `CostVector`, runtime-pressure `Theta`, `TargetProfile`, channel registry, exact optimization, and replay/provenance machinery |
 | Driver hardening laws | **Landed** | `DeviceManifest`, `StridedView`, explicit bank moves, distance pricing, `probe_agree`, R22 native-tile validation, and StreamPack generation checks |
+| HAM control-plane foundation | **Landed software contract** | [`ham.py`](../../bcir/kbcir/ham.py) compiles semantic resource DAGs over declared directed links, distinguishes direct peer/direct DMA/staged host-bounce routes, replays capacity and generations independently, and lowers through existing claims/StreamPack. [`BCIR_HAM_MEMORY_FABRIC.md`](BCIR_HAM_MEMORY_FABRIC.md) owns the contract. No GDS, P2PDMA, CXL, NVMe, or controller binding is implied |
 | Event and DMA IR substrate | **Landed** | EV1–EV3 event phases on both rails and descriptor generation from `StridedView` pairs |
 | Shared learned-optimization mechanism | **Landed** | Frozen Q8 tile/channel priors and certificates proving guided selection agrees with exhaustive selection |
 | Telemetry registry, codecs, and calibration | **Partially landed** | Stable Python signal IDs/units/metric semantics, strict BTLM framing, quiescent ring snapshots, integrity witnesses, metrics, serialization, calibration, replay, and portfolio gates exist. The driver envelope, live concurrent ring, generated C signal table, and transports do not |
@@ -315,6 +317,24 @@ Training corpora and promotion reports must retain raw episode hashes and transf
 artifact is reproducible from its recorded corpus and configuration. Production artifacts do not
 contain an unfrozen training model, optimizer state, or hidden online update path.
 
+### 4.4 Hierarchical memory-fabric boundary
+
+The provider-neutral HAM planner is now an executable compiler/simulator foundation. It treats
+model/data artifacts as content-addressed resources with dependency, home-bank, capacity,
+priority, mutability, generation, and version-lineage metadata. Routes exist only over directed
+`HardwareEnvelope` links; direct peer, direct DMA, staged, and host-bounce byte totals remain
+separate. Exact next-use and an independent replay verifier own legality. Learned policy identity
+may be bound to a plan but cannot establish a route, waive capacity, or update an in-flight
+generation.
+
+Deep integration remains driver/kernel work. GPUDirect/cuFile, Linux PCI P2PDMA/dma-buf,
+CXL region/DAX/tiering, NVMe semantic-store durability, controller firmware, and interrupt-free
+device mailboxes follow the HMF-D0–D5 sequence in
+[`BCIR_HAM_MEMORY_FABRIC.md`](BCIR_HAM_MEMORY_FABRIC.md#9-driverkernelfirmware-sequence).
+They are not prerequisites for the UART compiler/driver proof and must not enter the freestanding
+core. A compatibility fallback through host memory is functional evidence, not direct-path
+performance evidence.
+
 ## 5. Driver maturity and build order
 
 ### 5.1 The D0–D7 maturity ladder
@@ -385,6 +405,7 @@ BCIR does not reimplement UEFI firmware, a TPM, or vendor firmware.
 | **M7 — targeted kernel research** | Only measured, reviewable BCIR-Linux patches that outperform or enable behavior unavailable through stock interfaces | Per-patch stock baseline, rebase test, fallback, and sanitizer/fuzz evidence |
 | **M8 — native IPC/kernel service proof** | Native RuntimeChannel adapter, slim IPC, POSIX source-compatibility slice, and preverified instance loader | Direct/Linux/native parity across UART and virtio-blk |
 | **M9 — hardware expansion** | Physical PCIe/storage/network and vendor accelerator packages | Device-specific D7 reports and regression-free shared contracts |
+| **M10 — memory-fabric qualification** | HMF-D0 capability envelope, then separately qualified GDS/P2PDMA, CXL, and semantic-storage adapters as hardware permits | Direct/staged parity, topology/IOMMU/lifecycle evidence, measured intervals, and no compatibility-mode result mislabeled direct |
 
 ## 6. BCIR-Linux: compatibility oracle and experimental fork
 
@@ -633,6 +654,7 @@ new driver family, as defined in [`C_MEMORY_DISCIPLINE.md`](../languages/C_MEMOR
 | Runtime JIT creates latency or privileged-code risk | AOT-specialize, sign, content-address, snapshot/clone, and restrict true JIT to small verifiable slices |
 | Vendor integration becomes a replacement project | Prefer supported vendor UAPI/runtime interop; require a separate approved blueprint before forking a vendor stack |
 | Busy polling wins latency by hiding power cost | Charge utilization, power, thermal, and contention axes; compare with interrupt/coalesced baselines |
+| A modeled memory link is mistaken for CPU-bypass hardware | Require an attested capability adapter and physical direct/staged measurements; report host-bounce bytes separately and fail closed on undeclared routes |
 | Local tests damage workstation availability | Bound concurrency/time/memory, avoid local cross-architecture emulation, and move long campaigns to managed CI |
 | Compatibility claims outrun evidence | Publish generated syscall/device/architecture support matrices and label source, binary, emulated, delegated, and unsupported behavior separately |
 

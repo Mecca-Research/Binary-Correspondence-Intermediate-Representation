@@ -151,6 +151,15 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     partial-plan/non-finite/coercion failures. Timings are evidence rather than shared-CI
     thresholds; methodology and local observations are in
     [`PERFORMANCE_AUDIT.md`](PERFORMANCE_AUDIT.md).
+16. **The HAM/model-artifact control plane is now code-backed without overstating
+    hardware support.** Metadata-only semantic resources and dependency traces compile over
+    declared directed bank links; direct peer, direct DMA, staged, and host-bounce routes remain
+    separately accounted; deterministic next-use, mutable generation invalidation/write-back,
+    and an independent capacity/lineage replay gate dispose the plan before ordinary BCIR claims
+    and StreamPack. Strict context-shard catalogs require quiescent activation and rollback, while
+    exact Q15 retrieval cannot return a candidate whose hard facts are absent. No payload is moved
+    and no GDS/P2PDMA/CXL/NVMe/controller support is claimed; see
+    [`BCIR_HAM_MEMORY_FABRIC.md`](kernel/BCIR_HAM_MEMORY_FABRIC.md).
 
 ## Confirmed limitations
 
@@ -179,11 +188,14 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
    hard-compiler work ([`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §4.1). `_Decimal*` is blocked on a
    reference compiler that can compile it. `runtime/cpp/` dynamic-graph and
    distributed orchestration are stubs pending multi-node hardware.
-6. **Hosted model execution and hardware RL are bounded references, not production stacks.**
+6. **Hosted model execution, HAM, and hardware RL are bounded references, not production stacks.**
    Distributed/data-parallel execution, the frozen 16K tokenizer, the canonical 32M run,
-   CUDA kernels/graphs, real PMU/GPU policy training, rematerialization/spill execution,
-   serving, RAG, and model publication remain gated follow-on work. Static memory v1 plans
-   resource-level phase lifetimes; it is not online eviction, semantic swap, or paged KV.
+   CUDA kernels/graphs, real PMU/GPU policy training, checkpoint/rematerialization execution,
+   serving, durable ANN/CPG/RAG, and model publication remain gated follow-on work. HAM now plans
+   bounded semantic residency, prefetch, eviction, mutation generations, and declared-link routes,
+   but it does not submit physical transfers, configure CXL/storage, run an online eviction model,
+   or prove a direct peer path from a live topology. Static memory and paged KV remain separate
+   exact reference contracts.
 7. **There is no resident UART driver or production driver telemetry ABI.** The UART register
    header/polling source is a compiler fixture; the channel-backed driver, UART simulator,
    IRQ service, and U0–U9 program remain planned. Telemetry has a registry, codecs, metrics,
@@ -219,10 +231,12 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
    gate where hardware permits, then use driver telemetry/replay evidence to promote
    device-specific immutable Q8 artifacts. Local ARM and board evidence remains
    hardware-gated, not emulated without an explicit bounded CI job.
-5. **Hardware-policy evidence** — record real CPU episodes with explicit counter availability,
+5. **Hardware-policy and HAM evidence** — record real CPU episodes with explicit counter availability,
    compare policy-guided search with the bounded exhaustive portfolio, then repeat on a second
-   physical target. Add rematerialize/spill/KV actions only after their claim and static/dynamic
-   memory verifiers exist; do not build an unrestricted assembly generator or in-flight hot-swap.
+   physical target. Extend the landed HAM action/replay rail with checkpoint/rematerialization and
+   generic page reuse only after their numerical/lifetime contracts exist. Keep GDS/P2PDMA/CXL/
+   NVMe and controller work at the driver/kernel gates; do not build an unrestricted assembly
+   generator or in-flight hot-swap.
 
 ## Changelog
 
