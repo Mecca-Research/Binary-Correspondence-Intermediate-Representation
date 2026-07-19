@@ -69,7 +69,7 @@ The normative semantics and artifact contract are in
 | GEM and StreamPack | Hydration, scheduling, execution, strict v1–v3 codecs, C/Python byte parity, operator disassembly/hexdump | Hardware command packets and per-device execution are not implied |
 | C compiler | Broad driver-oriented C23 subset, twin lowering, Clang differentials, target ABI matrix, project/link/fallback modes | Not complete ISO C23; unsupported constructs route to the resident compiler |
 | C memory/runtime | Freestanding/hosted/driver classes, allocator injection, failure tests, direct RuntimeChannel v1 | No out-of-process transport or resident hardware binding |
-| ML/reference | Tensor claims, closed-set AD, planned/streamed training, optional hosted Llama/AdamW micro training, safe resume/export, model ingest/tokenizer/decode, BCIRQ8, standalone-C parity, payload-free placement, exact static tensor addresses, verified HAM residency/routes, strict context shards, dual-memory oracle, and a bounded GNN/Transformer hardware-policy gate | The 32M model is untrained; hardware-RL evidence is simulated; HAM has no physical adapter; no distributed trainer, GPU backend, live promotion corpus, or production serving engine |
+| ML/reference | Tensor claims, closed-set AD, planned/streamed training, optional hosted Llama/AdamW micro training, safe resume/export, model ingest/tokenizer/decode, BCIRQ8, standalone-C parity, native Q8/Q4 conversion and Q8 projection kernels, exact native Q15 retrieval, payload-free placement, exact static tensor addresses, verified HAM residency/routes, strict context shards, dual-memory oracle, and a bounded GNN/Transformer hardware-policy gate | The 32M model is untrained; hardware-RL evidence is simulated; HAM has no physical adapter; no whole-model Q4, distributed trainer, GPU backend, live promotion corpus, or production serving engine |
 | Telemetry | Stable signal registry, BTLM codec, continuity/ring witnesses, metrics, deterministic Prometheus/OTLP/Redfish-shaped serialization | No live HTTP/OTLP/BMC/UART transport; driver envelope/live concurrent ring remain version-zero design work |
 | Machine edge | Typed MMIO/port/fence/control-register/MSR operations, ordinary x86 long-mode entry and interrupt trampoline, real object/disassembly gates | Reset transition, paranoid NMI/IST entry, feature-specific entry policy, native CPU backend remain open |
 | Drivers/kernel | Device-manifest/event/DMA substrates, direct hook ABI, generic HAM compiler/simulator contract, driver package and BCIR-Linux plans | No resident device driver, GDS/P2PDMA/CXL/NVMe adapter, Linux module/fork, stable UAPI, native kernel, or native IPC is present |
@@ -174,6 +174,12 @@ GNN, metric reward/DPO/PPO, bounded PUCT, verified plan lowering, and exact stat
 The generic HAM slice adds semantic-resource DAGs, declared-link routing, dynamic residency and
 generation replay, context-shard activation, and a fuzzy-ranking/hard-fact-veto memory oracle.
 Its gate is simulated and deliberately cannot issue a live promotion certificate.
+The Python/native placement audit has also closed the current high-confidence CPU data-plane
+ports: group Q8/Q4 conversion, standalone-Q8 matvec/head loops, exact Q15 retrieval, and native
+bounded model measurement. The independent Python oracle remains mandatory. See
+[`BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md`](machine-learning/BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md);
+future native work must present a measured bottleneck and a stable differential contract.
+
 Generated weights remain build-only. The active queue is:
 
 1. Extend the landed BCIRQ4T/AVX2/SmoothQuant tensor slice to whole-decoder Q4, model-level

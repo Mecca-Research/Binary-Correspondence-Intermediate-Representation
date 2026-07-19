@@ -78,3 +78,47 @@ double bcir_q4_q8_dot(const uint8_t *packed_q4, const int8_t *q8,
     }
     return ldexp((double)accumulator, (int)q4_exp + (int)q8_exp);
 }
+
+static int bcir_q4_exponent_le(const uint8_t *bytes, size_t group) {
+    const uint8_t *value = bytes + 2U * group;
+    uint16_t raw = (uint16_t)value[0] | (uint16_t)((uint16_t)value[1] << 8);
+    return raw >= UINT16_C(0x8000) ? (int)raw - 65536 : (int)raw;
+}
+
+int bcir_q4_q8_group32_dot(const uint8_t *packed_q4,
+                           const uint8_t *q4_exponents_le,
+                           const int8_t *q8,
+                           const uint8_t *q8_exponents_le,
+                           size_t element_count, size_t exponent_count,
+                           double *result) {
+    size_t group_count, group;
+    double total = 0.0;
+    if (result == NULL || element_count > (size_t)BCIR_Q4_MAX_ELEMENTS)
+        return -1;
+    group_count = element_count == 0U ? 0U : 1U + (element_count - 1U) / 32U;
+    if (((packed_q4 == NULL || q8 == NULL) && element_count != 0U) ||
+        ((q4_exponents_le == NULL || q8_exponents_le == NULL) && group_count != 0U) ||
+        exponent_count < group_count || !bcir_q4_codes_validate(packed_q4, element_count))
+        return -1;
+    for (group = 0U; group < group_count; ++group) {
+        int q4_exp = bcir_q4_exponent_le(q4_exponents_le, group);
+        int q8_exp = bcir_q4_exponent_le(q8_exponents_le, group);
+        size_t begin = group * 32U;
+        size_t end = begin + 32U;
+        size_t index;
+        int64_t accumulator = 0;
+        if (end > element_count) end = element_count;
+        if (q4_exp < -300 || q4_exp > 300 || q8_exp < -300 || q8_exp > 300)
+            return -1;
+        for (index = begin; index < end; ++index) {
+            uint8_t byte = packed_q4[index / 2U];
+            uint8_t nibble = (uint8_t)((index & 1U) != 0U ? byte >> 4 : byte & UINT8_C(0x0f));
+            if (q8[index] == INT8_MIN) return -1;
+            accumulator += (int64_t)bcir_q4_decode(nibble) * (int64_t)q8[index];
+        }
+        total += ldexp((double)accumulator, q4_exp + q8_exp);
+        if (!isfinite(total)) return -1;
+    }
+    *result = total;
+    return 0;
+}

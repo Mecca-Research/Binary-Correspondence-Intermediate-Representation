@@ -51,6 +51,30 @@ def _quantize_code(x: float, cmax: int, scale: float, rounding: str) -> int:
     return cmax if c > cmax else -cmax if c < -cmax else c          # saturate into the lane
 
 
+def _scale_exponent(amax: float, cmax: int) -> int:
+    """Return the exact minimal admitted power-of-two scale exponent.
+
+    ``float.as_integer_ratio`` avoids libm ``log2`` boundary variance, subnormal
+    division underflow, and conversion overflow for BCIR's wide ``_BitInt`` code
+    ranges.  The integer comparison computes ``ceil(log2(amax / cmax))`` exactly
+    before applying the bridge's fixed exponent band.
+    """
+    numerator, denominator = amax.as_integer_ratio()
+    scaled_denominator = denominator * cmax
+    exponent = numerator.bit_length() - scaled_denominator.bit_length()
+
+    def covers(value: int) -> bool:
+        if value >= 0:
+            return (scaled_denominator << value) >= numerator
+        return scaled_denominator >= (numerator << -value)
+
+    if not covers(exponent):
+        exponent += 1
+    elif covers(exponent - 1):
+        exponent -= 1
+    return max(_EXP_MIN, min(_EXP_MAX, exponent))
+
+
 @dataclass(frozen=True)
 class QGroup:
     """One quantized block: `bits`-wide signed integer `codes` sharing a power-of-two scale 2**scale_exp.
@@ -102,10 +126,9 @@ def quantize_group(values, bits: int, *, rounding: str = "nearest") -> QGroup:
     amax = max((abs(v) for v in vals), default=0.0)
     if amax == 0.0:
         return QGroup(codes=tuple(0 for _ in vals), scale_exp=0, bits=bits)
-    # smallest power-of-two step 2**e with cmax * 2**e >= amax  ->  e = ceil(log2(amax / cmax)).
-    e = max(_EXP_MIN, min(_EXP_MAX, math.ceil(math.log2(amax / cmax))))
-    while e < _EXP_MAX and cmax * math.ldexp(1.0, e) < amax:        # fp guard: never let the max saturate
-        e += 1
+    # Smallest power-of-two step 2**e with cmax * 2**e >= amax.  The
+    # integer-ratio helper is exact even at transition points and subnormals.
+    e = _scale_exponent(amax, cmax)
     scale = math.ldexp(1.0, e)
     return QGroup(codes=tuple(_quantize_code(v, cmax, scale, rounding) for v in vals),
                   scale_exp=e, bits=bits)

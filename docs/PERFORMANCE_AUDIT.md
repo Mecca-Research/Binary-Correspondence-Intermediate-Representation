@@ -109,6 +109,20 @@ every required predecessor edge is inherently more expensive than the independen
 The improvement removes avoidable search and allocation overhead; it does not pretend the
 output itself is subquadratic.
 
+### 3.1 Native AI data-plane follow-up
+
+The 2026-07-19 Python/native audit then measured the post-#642 AI surfaces on the same
+bounded WSL x86 system. It moved stable numeric work—not legality or planning—into a portable
+no-heap C ABI. One CPython 3.10.12/Clang 22 observation recorded Q8 and Q4 conversion at
+4.00×/2.97× the Python rate including marshaling, exact 4,096×128 Q15 top-k at 113.70×, and the
+dimension-64 Q8 prefill/decode measurement kernels at 158.71×/146.36×. These are diagnostic
+ratios, not shared-CI floors.
+
+The standalone C decoder now uses the same Q8 projection kernels, while Python remains the
+float/Q8 differential oracle. The complete module placement, raw observations, safety contract,
+and explicit non-ports are in
+[`BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md`](machine-learning/BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md).
+
 ## 4. What remains hardware- and workload-gated
 
 - Native PMU/cache/register-pressure counters, energy, thermal throttling, and stable
@@ -119,7 +133,8 @@ output itself is subquadratic.
 - Vendor BLAS, GPU kernels, memory-controller behavior, real StreamPack device execution,
   and large-model layer streaming require target-specific measured candidates.
 - The Python oracle prioritizes semantic transparency. Production throughput comes from
-  verified C/LLVM/vendor realizations; a Python microbenchmark is useful for algorithmic
+  verified C/LLVM/vendor realizations. The model-assessment CLI now defaults to its bounded
+  native C measurement twin; the Python microbenchmark remains useful for algorithmic
   complexity and orchestration overhead, not peak FLOP/s.
 - Full TMSAO evidence for a target requires calibrated counters, exhaustive or bounded-
   exhaustive candidate comparison, confidence intervals, thermal/energy context, exact

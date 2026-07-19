@@ -168,7 +168,8 @@ def _build_cli(directory: Path) -> Path:
     executable = directory / ("bcir-llama.exe" if os.name == "nt" else "bcir-llama")
     command = [compiler, "-std=c11", "-O2", "-ffp-contract=off", "-Wall", "-Wextra",
                "-I", str(_RUNTIME), str(_RUNTIME / "bcir_q8_model.c"),
-               str(_RUNTIME / "bcir_decode.c"), str(_RUNTIME / "bcir_llama.c"),
+               str(_RUNTIME / "bcir_decode.c"), str(_RUNTIME / "bcir_ai_kernels.c"),
+               str(_RUNTIME / "bcir_llama.c"),
                str(_RUNTIME / "bcir_llama_cli.c"), "-o", str(executable), *_link_args()]
     result = subprocess.run(command, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

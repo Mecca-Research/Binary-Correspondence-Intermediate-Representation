@@ -188,6 +188,24 @@ def query_optimization_memory(memory: OptimizationMemory, embedding_q15,
                               *, top_k: int = 1,
                               active_facts=None) -> tuple[OptimizationMatch, ...]:
     """Return exact nearest admissible patterns with lowest-digest tie breaking."""
+    values, eligible = _prepare_optimization_query(
+        memory, embedding_q15, top_k=top_k, active_facts=active_facts)
+    matches = []
+    for pattern, admitted in zip(memory.patterns, eligible):
+        if not admitted:
+            continue
+        distance = sum((left - right) * (left - right)
+                       for left, right in zip(values, pattern.embedding_q15))
+        matches.append(OptimizationMatch(pattern.pattern_sha256,
+                                         pattern.context_shard_sha256, distance))
+    matches.sort(key=lambda row: (row.squared_distance, row.pattern_sha256))
+    return tuple(matches[:top_k])
+
+
+def _prepare_optimization_query(memory: OptimizationMemory, embedding_q15, *,
+                                top_k: int, active_facts) -> tuple[tuple[int, ...],
+                                                                  tuple[bool, ...]]:
+    """Shared strict boundary for the Python oracle and optional C data plane."""
     if not isinstance(memory, OptimizationMemory):
         raise ValueError("optimization query requires an OptimizationMemory")
     if not isinstance(embedding_q15, tuple | list) \
@@ -206,17 +224,8 @@ def query_optimization_memory(memory: OptimizationMemory, embedding_q15,
         admitted = set(active_facts)
         if not admitted <= set(memory.facts):
             raise ValueError("optimization query supplied a fact outside hard memory")
-    values = tuple(embedding_q15)
-    matches = []
-    for pattern in memory.patterns:
-        if not set(pattern.required_facts) <= admitted:
-            continue
-        distance = sum((left - right) * (left - right)
-                       for left, right in zip(values, pattern.embedding_q15))
-        matches.append(OptimizationMatch(pattern.pattern_sha256,
-                                         pattern.context_shard_sha256, distance))
-    matches.sort(key=lambda row: (row.squared_distance, row.pattern_sha256))
-    return tuple(matches[:top_k])
+    return tuple(embedding_q15), tuple(set(pattern.required_facts) <= admitted
+                                      for pattern in memory.patterns)
 
 
 __all__ = ["OptimizationFact", "OptimizationMatch", "OptimizationMemory",

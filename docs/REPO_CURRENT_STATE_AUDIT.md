@@ -1,6 +1,6 @@
 # BCIR Repository Current State Audit
 
-> Audited 2026-07-18 against the `bcir/` (oracle + opt-in hosted adapter) + `mlir/` (law) + `runtime/c` (C rail)
+> Audited 2026-07-19 against the `bcir/` (oracle + opt-in hosted adapter) + `mlir/` (law) + `runtime/c` (C rail)
 > tree — after the vision-alignment gap-closure program (tensor ops, bare-metal
 > inference/training kernels), the R19–R21 law promotion, the telemetry T1–T4 pipeline,
 > the ML Tier-1 trio + breadth slices (M1–M3, E1–E7), and the asm/driver arc
@@ -70,7 +70,10 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
   frontend → `bcir_verify.c` → `bcir_plan`/`bcir_hydrate`/`bcir_exec`, driven by the
   cc-like `bcir-cc`), Python↔C parity-gated per stage (structural digest + emitted-C
   Clang equivalence) over the shared `cfront_*.c` fixture corpus, with
-  libFuzzer+ASan/UBSan on every trust boundary. `runtime/cpp/` is the small C↔C++
+  libFuzzer+ASan/UBSan on every trust boundary. The model data plane includes the
+  fully validating BCIRQ8 loader, standalone GQA decoder, native Q8 projections,
+  byte-identical Q8/Q4 conversion, exact Q15 top-k, and the bounded C measurement twin.
+  `runtime/cpp/` is the small C↔C++
   hand-off seam (single-node orchestrator real; dynamic/distributed backends honest
   stubs — [`CPP_HANDOFF_BOUNDARY.md`](languages/CPP_HANDOFF_BOUNDARY.md)).
 
@@ -160,6 +163,14 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     exact Q15 retrieval cannot return a candidate whose hard facts are absent. No payload is moved
     and no GDS/P2PDMA/CXL/NVMe/controller support is claimed; see
     [`BCIR_HAM_MEMORY_FABRIC.md`](kernel/BCIR_HAM_MEMORY_FABRIC.md).
+17. **The Python/native AI boundary is measured and code-backed.** Stable repeated numeric work
+    now has an opt-in no-heap C ABI: group Q8/Q4 conversion, Q8 input/output-major projection,
+    exact hard-filtered Q15 retrieval, group-32 Q4×Q8 accumulation, and bounded native model
+    measurement. The standalone C decoder consumes the Q8 kernels; schemas, laws, K_BCIR/HAM
+    planning, provenance, reference decode, hardware search, and hosted training remain Python
+    authorities. C++ is deferred until a serving/device lifecycle demonstrates an ownership need.
+    The source audit, bounded evidence, and complete placement register are in
+    [`BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md`](machine-learning/BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md).
 
 ## Confirmed limitations
 
@@ -213,6 +224,10 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
    results and exposes algorithmic overhead, but WSL/shared-CI timings do not establish a
    theoretical hardware maximum. PMU/energy/thermal evidence, exhaustive measured
    candidates, direct devices, and target-specific confidence intervals remain rig-gated.
+10. **Native AI coverage is deliberately partial.** There is no whole-decoder Q4, target-dispatched
+    Q8 SIMD family, GPU kernel, native serving scheduler, or native hardware-policy engine. Those
+    require their format/lifecycle ABI, differential oracle, measured target evidence, and rollback
+    gate; the existence of a fast scalar C primitive does not establish peak hardware performance.
 
 ## Recommended next milestones
 

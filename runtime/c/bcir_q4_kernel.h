@@ -19,6 +19,17 @@ int bcir_q4_codes_validate(const uint8_t *packed, size_t element_count);
 double bcir_q4_q8_dot(const uint8_t *packed_q4, const int8_t *q8,
                       size_t element_count, int16_t q4_exp, int16_t q8_exp);
 
+/* BCIRQ4T/BCIRQ8 group-32 inference primitive. Exponent tables are borrowed
+ * little-endian int16 byte sequences. The function rejects forbidden -8/-128
+ * symmetric codes and exponents outside the oracle's [-300, 300] bridge band.
+ * `result` is written only on success. */
+int bcir_q4_q8_group32_dot(const uint8_t *packed_q4,
+                           const uint8_t *q4_exponents_le,
+                           const int8_t *q8,
+                           const uint8_t *q8_exponents_le,
+                           size_t element_count, size_t exponent_count,
+                           double *result);
+
 #ifdef __cplusplus
 }
 #endif

@@ -198,6 +198,13 @@ cache/build products, never repository assets. A second micro gate trains a 90,6
 model from random weights for 64 CPU steps and proves Safetensors→BCIRQ8→standalone-C parity;
 it is a composition test, not a useful language model.
 
+Stable repeated AI work has a cold opt-in C data plane: Q8/Q4 conversion, Q8 decoder/head
+projections, exact hard-filtered Q15 retrieval, group-32 Q4×Q8 accumulation, and bounded native
+measurement. The Python implementation remains the independent semantic oracle and owns laws,
+schemas, planning, provenance, and hosted orchestration. Read
+[`BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md`](machine-learning/BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md)
+before proposing another port; file size or loop count alone is not a placement argument.
+
 A third optional micro gate trains a 32-wide GNN/Transformer over availability-aware telemetry,
 memory-bank topology, and the finite payload-free placement portfolio. Exact K_BCIR outcomes
 create reward/DPO/PPO targets; bounded PUCT proposes a winner; deterministic claims, StreamPack,
@@ -295,6 +302,7 @@ them to pass. The test registry prevents adding an uncollected `test_*.py` file.
 | Portfolio execution order | [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) |
 | Driver/kernel sequence | [`kernel/BCIR_DRIVER_KERNEL_ROADMAP.md`](kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) |
 | ML/model sequence | [`machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md) |
+| Python/native AI placement | [`machine-learning/BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md`](machine-learning/BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md) |
 | C usage and ownership | [`languages/CFRONT_GUIDE.md`](languages/CFRONT_GUIDE.md), [`languages/C_MEMORY_DISCIPLINE.md`](languages/C_MEMORY_DISCIPLINE.md) |
 | Machine/backend gaps | [`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`](BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md) |
 | Merged chronology | [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md) |

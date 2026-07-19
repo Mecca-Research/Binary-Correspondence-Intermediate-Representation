@@ -42,6 +42,12 @@ points remain compatibility wrappers over process-static contexts and are explic
 non-thread-safe. The Q8 loader and Llama inference runtime expose allocator-injected
 forms while preserving their libc-default APIs.
 
+The native AI kernel ABI is a hosted model component because it uses the host math
+contract, but its kernels allocate no memory: all buffers are borrowed, capacities are
+explicit, and input/output spans may not overlap. The bounded model benchmark uses fixed
+storage. Q8 model storage is fully validated by the loader and then borrowed immutably by
+prevalidated inference kernels; callers must not mutate it before model destruction.
+
 ## Direct driver ABI first
 
 [`bcir_runtime_channel.h`](../../runtime/c/bcir_runtime_channel.h) is the append-only v1

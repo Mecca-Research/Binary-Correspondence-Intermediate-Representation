@@ -116,10 +116,12 @@ def main() -> int:
         fail(errors, C_DIR / "bcir_runtime_channel.c", "Linux IPC entered before the direct driver ABI stabilized")
 
     ownership_headers = {
+        "bcir_ai_kernels.h": ("borrowed", "must not overlap", "allocate no memory"),
         "bcir_cpp.h": ("borrowed", "NON-THREAD-SAFE"),
         "bcir_cfront.h": ("owns", "Idempotent"),
         "bcir_q8_model.h": ("owned", "borrowed"),
         "bcir_llama.h": ("borrowed", "released"),
+        "bcir_q4_kernel.h": ("borrowed", "written only on success"),
     }
     for name, markers in ownership_headers.items():
         text = (C_DIR / name).read_text(encoding="utf-8")

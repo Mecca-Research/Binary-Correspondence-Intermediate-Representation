@@ -134,6 +134,20 @@ class PackedQ4Tensor:
                    pack_signed_int4(code for group in groups for code in group.codes),
                    source_sha256, calibration_sha256)
 
+    @classmethod
+    def from_values_native(cls, values, shape, *, source_sha256: str,
+                           calibration_sha256: str, native_kernels) -> "PackedQ4Tensor":
+        """Build BCIRQ4T through the explicit C data plane, with no fallback."""
+        from .native_ai import NativeAIKernels
+        if not isinstance(native_kernels, NativeAIKernels):
+            raise ValueError("native_kernels must be a NativeAIKernels instance")
+        shape = _checked_shape(shape); values = tuple(values)
+        if len(values) != math.prod(shape):
+            raise ValueError("Q4 values length does not match shape")
+        native = native_kernels.quantize(values, group_size=_GROUP_SIZE, bits=4)
+        return cls(shape, native.exponents, native.codes,
+                   source_sha256, calibration_sha256)
+
 
 def _align8(value: int) -> int:
     return (value + 7) & ~7

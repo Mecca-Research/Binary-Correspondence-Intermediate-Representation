@@ -255,6 +255,7 @@ _MODULES = [
     "bcir.tests.test_precision",
     "bcir.tests.test_quantize",
     "bcir.tests.test_lowbit",
+    "bcir.tests.test_native_ai",
     "bcir.tests.test_matmul",
     "bcir.tests.test_matmul_law_parity",
     "bcir.tests.test_activation",

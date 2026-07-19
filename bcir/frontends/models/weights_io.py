@@ -22,12 +22,15 @@ import tempfile
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
 from ...kbcir.quantize import quantize_per_group
 from ...kbcir.unsupervised import EmbeddingTable
 from .decode import (DecoderSpec, DecoderWeights, LayerWeights,
                      check_decoder_weights)
+
+if TYPE_CHECKING:
+    from ...kbcir.native_ai import NativeAIKernels
 
 MAGIC = b"BCIRQ8\0\0"
 VERSION = 1
@@ -186,7 +189,8 @@ def write_q8_decoder(path: os.PathLike | str, spec: DecoderSpec, weights: Decode
                      group_size: int = 32, source_hashes: Mapping[str, str],
                      tokenizer_ids: Mapping[str, int], context_length: int | None = None,
                      max_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
-                     max_elements: int = DEFAULT_MAX_DECODED_ELEMENTS
+                     max_elements: int = DEFAULT_MAX_DECODED_ELEMENTS,
+                     native_kernels: NativeAIKernels | None = None,
                      ) -> Q8ArtifactMetadata:
     """Write one atomic, deterministic ``BCIRQ8 v1`` artifact.
 
@@ -196,7 +200,9 @@ def write_q8_decoder(path: os.PathLike | str, spec: DecoderSpec, weights: Decode
     otherwise ``tokenizer_ids['context_length']`` or ``spec.context_length`` is
     used, falling back to zero for synthetic fixtures. ``max_bytes`` and
     ``max_elements`` bound the in-memory export before any tensor is copied or
-    quantized; callers must explicitly opt into larger artifacts.
+    quantized; callers must explicitly opt into larger artifacts. Supplying a
+    typed ``NativeAIKernels`` instance moves group quantization into the checked
+    C data plane; omission retains the independent Python oracle.
     """
     if not isinstance(spec, DecoderSpec):
         raise ValueError("spec must be a DecoderSpec")
@@ -208,6 +214,10 @@ def write_q8_decoder(path: os.PathLike | str, spec: DecoderSpec, weights: Decode
         raise ValueError(f"max_bytes must be an integer >= {HEADER_SIZE}")
     if type(max_elements) is not int or max_elements < 1:
         raise ValueError("max_elements must be an integer >= 1")
+    if native_kernels is not None:
+        from ...kbcir.native_ai import NativeAIKernels
+        if not isinstance(native_kernels, NativeAIKernels):
+            raise ValueError("native_kernels must be a NativeAIKernels instance")
     dimensions = {
         "vocab_size": spec.vocab_size, "d_model": spec.d_model,
         "n_heads": spec.n_heads, "n_kv_heads": spec.kv_heads,
@@ -271,10 +281,19 @@ def write_q8_decoder(path: os.PathLike | str, spec: DecoderSpec, weights: Decode
                                   - (payload_offset + len(payload)))))
 
     for tensor in tensors:
-        groups = quantize_per_group(tensor.values, group_size, BITS)
-        exponent_bytes = struct.pack(f"<{len(groups)}h", *(g.scale_exp for g in groups))
-        code_values = [code for group in groups for code in group.codes]
-        code_bytes = struct.pack(f"<{len(code_values)}b", *code_values)
+        if native_kernels is None:
+            groups = quantize_per_group(tensor.values, group_size, BITS)
+            exponent_bytes = struct.pack(f"<{len(groups)}h",
+                                         *(g.scale_exp for g in groups))
+            code_values = [code for group in groups for code in group.codes]
+            code_bytes = struct.pack(f"<{len(code_values)}b", *code_values)
+            group_count = len(groups)
+        else:
+            native = native_kernels.quantize(tensor.values, group_size=group_size,
+                                             bits=BITS)
+            exponent_bytes = native.exponent_bytes_le
+            code_bytes = native.codes
+            group_count = len(native.exponents)
         pad_payload()
         exponent_offset = payload_offset + len(payload)
         payload.extend(exponent_bytes)
@@ -285,7 +304,7 @@ def write_q8_decoder(path: os.PathLike | str, spec: DecoderSpec, weights: Decode
         crc = zlib.crc32(code_bytes, crc) & 0xFFFFFFFF
         entries.append(_DirectoryEntry(
             tensor.tensor_id, tensor.layer, tensor.rank, 0, tensor.dims,
-            len(tensor.values), len(groups), crc, exponent_offset, code_offset))
+            len(tensor.values), group_count, crc, exponent_offset, code_offset))
 
     file_size = payload_offset + len(payload)
     directory = bytearray()

@@ -98,7 +98,8 @@ def _build_c_cli(output: Path) -> None:
     runtime = ROOT / "runtime" / "c"
     command = [compiler, "-std=c11", "-O2", "-ffp-contract=off", "-Wall", "-Wextra",
                "-Werror", "-I", str(runtime), str(runtime / "bcir_q8_model.c"),
-               str(runtime / "bcir_decode.c"), str(runtime / "bcir_llama.c"),
+               str(runtime / "bcir_decode.c"), str(runtime / "bcir_ai_kernels.c"),
+               str(runtime / "bcir_llama.c"),
                str(runtime / "bcir_llama_cli.c"), "-o", str(output), *_host_link_args()]
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode:

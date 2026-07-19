@@ -7,6 +7,7 @@ fit their `_BitInt(N)` lane (|code| <= code_max -- no overflow); determinism; ed
 claims (a quantize bridge is 1 ULP; a quantized reduction is quant + reduce, so a tight tolerance forces
 both compensation and budgeting the quant step). All pure-Python + deterministic (no toolchain needed)."""
 
+import math
 import os
 import random
 import shutil
@@ -101,6 +102,22 @@ def test_extreme_dynamic_range_does_not_crash_or_overflow():
         g = quantize_group([v, v / 2, -v], bits=8)
         assert max(abs(c) for c in g.codes) <= code_max(8)
         assert all(abs(x) != float("inf") for x in g.dequantize())
+
+
+def test_scale_transition_subnormal_and_wide_code_selection_are_exact():
+    for bits in (4, 8):
+        maximum = code_max(bits)
+        for exponent in (-200, -7, 0, 100):
+            boundary = maximum * (2.0 ** exponent)
+            below = math.nextafter(boundary, 0.0)
+            above = math.nextafter(boundary, float("inf"))
+            assert quantize_group([below], bits).scale_exp == exponent
+            assert quantize_group([boundary], bits).scale_exp == exponent
+            assert quantize_group([above], bits).scale_exp == exponent + 1
+    subnormal = math.ldexp(1.0, -1074)
+    assert quantize_group([subnormal], 8).scale_exp == -300
+    wide = quantize_group([1.0], 4096)
+    assert wide.scale_exp == -300 and len(wide.codes) == 1
 
 
 def test_non_finite_inputs_are_rejected_at_the_bridge_boundary():
