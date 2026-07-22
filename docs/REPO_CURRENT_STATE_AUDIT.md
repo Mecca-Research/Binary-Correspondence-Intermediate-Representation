@@ -177,6 +177,14 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     parameter/KV accounting and dominant-FLOP lower bounds feed verified claims and StreamPack;
     tiny one-thread PyTorch probes run twice deterministically. No external source/weights are
     imported, and none of these architectures is yet a BCIRQ8/C-runtime deployment claim.
+19. **Raw-byte model research has a bounded, verified rail.** Direct octets plus four control ids,
+    strict no-normalization UTF-8 references, causal fixed/entropy/learned patches, local/global/local
+    BLT, joint AR/block diffusion, exact BLT-S/BLT-DV verification, selective-SSM MambaByte, and
+    exact-shape global-only transplantation have dependency-free contracts and hosted probes. Exact
+    parameter/cache/state sizes plus analytic lower bounds feed R1–R23-verified claims and
+    StreamPack. The one-thread gate proves finite gradients, tiny loss reduction, deterministic
+    reports, failure-atomic transplant, and exact verified-generation ids. It imports no upstream
+    code/assets and claims no useful model, checkpoint format, native decoder, or GPU kernel.
 
 ## Confirmed limitations
 
@@ -207,7 +215,8 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
    distributed orchestration are stubs pending multi-node hardware.
 6. **Hosted model execution, HAM, and hardware RL are bounded references, not production stacks.**
    Distributed/data-parallel execution, the frozen 16K tokenizer, the canonical 32M run,
-   CUDA kernels/graphs, real PMU/GPU policy training, checkpoint/rematerialization execution,
+   byte-native scale training/export, CUDA kernels/graphs, real PMU/GPU policy training,
+   checkpoint/rematerialization execution,
    serving, durable ANN/CPG/RAG, and model publication remain gated follow-on work. HAM now plans
    bounded semantic residency, prefetch, eviction, mutation generations, and declared-link routes,
    but it does not submit physical transfers, configure CXL/storage, run an online eviction model,

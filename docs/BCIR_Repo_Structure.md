@@ -1,6 +1,6 @@
 # BCIR repository structure
 
-> Current for package version `0.2.0` and the 2026-07-19 tree. This document is an
+> Current for package version `0.2.0` and the 2026-07-22 tree. This document is an
 > ownership map, not a generated inventory or a migration log. Static counts belong in
 > [`STATUS.md`](STATUS.md); historical reorganizations belong in
 > [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md).
@@ -38,7 +38,7 @@ history and git.
 |---|---|
 | `model/` | Registry-first resources, claims, phases, lane/domain/hazard types |
 | `verify/` | Executable R-law reference and plan/pack/lowering checks |
-| `kbcir/` | Cost vectors, min-plus/RCSP/(max,+) planning, certified learned organs, calibration, AD, quantization, bounded hardware-RL and adaptive-transformer contracts, exact static memory planning, verified HAM residency/routing, context shards, the dual-memory oracle, and the cold explicit native-AI bridge |
+| `kbcir/` | Cost vectors, min-plus/RCSP/(max,+) planning, certified learned organs, calibration, AD, quantization, bounded hardware-RL, adaptive-transformer, and byte-native BLT/MambaByte contracts, exact static memory planning, verified HAM residency/routing, context shards, the dual-memory oracle, and the cold explicit native-AI bridge |
 | `gem/` | Hydration, StreamPack construction, scheduling, overlap, execution, event/DMA/device contracts |
 | `frontends/` | ROP, MAP, Python C-front oracle, and model manifest/tokenizer/header-only assessment rails |
 | `etl/` | Text and binary event-to-claim transduction |
@@ -46,7 +46,7 @@ history and git.
 | `lower/` | Portable C, the single-claim elementwise LLVM AOT/JIT subset, WASM, stack-machine, library, SYCL, and model lowering helpers |
 | `codegen/` | Resident-toolchain object/assembly paths and target validation |
 | `hosted/models/` | Opt-in PyTorch Llama training, pickle-free exact-resume checkpoints, strict Safetensors export, and train-to-C gating; never imported by the oracle path |
-| `hosted/training/` | Dependency-free corpus/BPE/provider/stage/ledger/hardware-policy specs plus lazily imported PyTorch SFT, reward, DPO, PPO, reasoning, embedding, MLP, GRU, encoder, adaptive-language/multi-patch, and GNN/Transformer hardware-policy references |
+| `hosted/training/` | Dependency-free corpus/BPE/provider/stage/ledger/hardware-policy specs plus lazily imported PyTorch SFT, reward, DPO, PPO, reasoning, embedding, MLP, GRU, encoder, adaptive-language/multi-patch, byte-latent/selective-SSM, and GNN/Transformer hardware-policy references |
 | `tests/` | Explicit test registry and named quick, C-runtime, silicon-degrade, and thorough tiers |
 
 `bcir.performance_audit` is an opt-in, dependency-free audit coordinator. It exercises
@@ -176,6 +176,8 @@ bash tools/cpp/check_handoff.sh
 # Optional pinned hosted-model CPU gate (one thread in CI)
 python tools/models/test_hosted_model_lab.py --output-dir build/hosted-model-gate
 python tools/models/test_training_pipeline.py --output-dir build/training-pipeline-gate
+python tools/models/test_adaptive_transformers.py --output-dir build/adaptive-transformer-gate
+python tools/models/test_byte_latent_models.py --output-dir build/byte-native-model-gate
 
 # MLIR/IRDL rails when the coherent LLVM toolset is installed
 bash tools/wsl/check_passes.sh

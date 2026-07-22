@@ -146,12 +146,18 @@ process (oracle first, C twin second, measured-then-pinned parity gate, registry
   processing have independent dependency-free contracts and tiny hosted training probes. Their
   work lowers to verified claims/StreamPack, but they are **not** part of `DecoderSpec`, BCIRQ8, or
   the standalone C decoder. Native export waits for measured value, a format decision, and parity.
+- **WMR-6 — bounded byte-native architecture laboratory:** direct UTF-8/raw-byte semantics,
+  incremental entropy/learned patches, BLT-D block denoising, exact BLT-S/BLT-DV verification,
+  selective-SSM MambaByte, exact-shape global-weight transplantation, and measured ingest-provider
+  selection now have dependency-free contracts and tiny hosted probes. They lower to verified
+  claims/StreamPack but have no checkpoint format, BCIRQ8 mapping, native decoder, GPU kernel, or
+  useful-quality model claim yet.
 
 ---
 
 ## 6. The larger implication — closing the train → export → serve loop
 
-BCIR now has four complementary bounded gates. The real-model gate starts from a pinned trained
+BCIR now has six complementary bounded gates. The real-model gate starts from a pinned trained
 checkpoint and verifies the deployment half:
 
 ```
@@ -209,10 +215,27 @@ cache; LoopDeepNorm prices virtual depth; and ExoFormer anchors are normalized a
 by [arXiv:2601.08131v4](https://arxiv.org/abs/2601.08131). None may silently enter the stable Llama
 train-to-C path.
 
+The byte-native gate adds a raw-sequence laboratory without pretending that latent patches are a
+new stable tokenizer or that theoretical FLOPs are realized latency:
+
+```
+ strict UTF-8/raw bytes → causal local encoder → incremental latent patches → global Transformer
+       ├──────────────→ selective-SSM local rail
+       ├──────────────→ joint AR + masked block diffusion
+       └──────────────→ local/diffusion draft → exact greedy verification
+     → exact cost inventory → verified claims + StreamPack → deterministic report
+```
+
+Unicode scalar spans are diagnostic metadata; octets are the semantic units and no normalization
+is implicit. The gate proves finite gradients, tiny BLT/MambaByte loss reduction, exact symbolic
+parameter counts, BLT-S/BLT-DV greedy-id identity, failure-atomic global transplantation, and
+bounded ingest-provider selection. It does not train a useful language model, run a GPU, or export
+the architecture through BCIRQ8/C.
+
 CI does not claim that BCIR trained the pinned TinyLlama checkpoint, and none of the micro gates is
 evidence of useful language-model quality. Together the gates prove deployment, safe owned
-pretraining, staged-alignment composition, and a bounded learned plan-selection seam while keeping
-their provenance and claims separate.
+pretraining, staged-alignment composition, bounded architecture experiments, and a learned
+plan-selection seam while keeping their provenance and claims separate.
 
 ---
 
