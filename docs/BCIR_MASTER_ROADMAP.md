@@ -164,13 +164,16 @@ The full maturity ladder and kernel escalation policy live in
 
 ### 4.4 ML and model rail
 
-Four bounded seams are proven: immutable TinyLlama inputs produce a deterministic group-Q8 artifact
+Five bounded seams are proven: immutable TinyLlama inputs produce a deterministic group-Q8 artifact
 with Python/C parity; the optional hosted lab trains a 90,688-element model from random weights
 through exact safe resume, strict Safetensors ingestion, BCIRQ8, and standalone C; and an offline
 provider-neutral gate exercises generated-corpus pretraining, SFT, reward, DPO, PPO, verified
 reasoning, embedding distillation, and three small architecture families with deterministic replay;
 and a tiny hardware policy combines an availability-aware telemetry Transformer, memory-topology
 GNN, metric reward/DPO/PPO, bounded PUCT, verified plan lowering, and exact static addresses.
+The fifth independently validates tied-depth, fixed-residual variable-width, reference-sliding,
+exogenous-anchor, and multi-patch architecture contracts through tiny hosted training and ordinary
+verified claims/StreamPack, without adding those experimental shapes to BCIRQ8 or the C decoder.
 The generic HAM slice adds semantic-resource DAGs, declared-link routing, dynamic residency and
 generation replay, context-shard activation, and a fuzzy-ranking/hard-fact-veto memory oracle.
 Its gate is simulated and deliberately cannot issue a live promotion certificate.
@@ -202,6 +205,8 @@ Generated weights remain build-only. The active queue is:
    explicit credentials/policy, cost limits, and offline replay; embeddings remain frozen targets.
 9. Extend the landed bounded HAM/dual-memory oracle with durable ingest/index/recovery only behind
    schema, provenance, corruption, recall/filter-parity, and bounded-memory contracts.
+10. Profile adaptive per-shape kernels and fused fixed-residual carry on two targets before defining
+    checkpoint/export schemas, GQA/native parity, or any production architecture promotion.
 
 The detailed closure register, model ladder, and explicit production gaps are in
 [`machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md).
@@ -238,6 +243,7 @@ protobuf, gRPC, BMC, or UART delivery. Normative details live in
 | Native kernel/IPC proof | Gated | Boot/memory/IRQ/PCIe/DMA prerequisites and direct/Linux/native parity |
 | Small real-model reference | Landed | Pinned source hashes, BCIRQ8 compactness, Python/C ID and logit parity |
 | Hosted train-to-C micro gate | Landed | Random-weight CPU training, exact resume, deterministic Safetensors/Q8 export, Python/C parity |
+| Adaptive architecture lab | Bounded reference landed | Per-shape fusion/counters on two targets, export schema, GQA/native parity, and quality evaluation |
 | Payload-free model planning | Landed baseline | Header inventory, exact memory report, measured intervals, placement candidates, verified claim/StreamPack plan; target execution remains open |
 | HAM/model-artifact fabric | Compiler/simulator baseline landed | Semantic DAG, exact declared-link routes, capacity/generation replay, StreamPack lowering, context-shard rollback, and dual-memory hard veto; physical GDS/P2PDMA/CXL/NVMe adapters remain driver-gated |
 | Hardware RL plan policy | Bounded simulated gate landed | Real telemetry corpus, exhaustive two-target comparison, verified rematerialization/spill actions, frozen deployment artifact, measured quiescent promotion/rollback |

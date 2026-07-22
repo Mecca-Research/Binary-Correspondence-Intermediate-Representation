@@ -103,6 +103,12 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
                             "query_optimization_memory"),
     "native_ai": ("NativeAIKernels", "NativeOptimizationIndex",
                   "NativeQuantizedTensor"),
+    "adaptive_transformer": (
+        "AdaptiveCostReport", "AdaptiveLanguageSpec", "ExogenousAnchorSpec",
+        "LoweredAdaptivePlan", "MultiPatchCostReport", "MultiPatchSpec",
+        "ReferenceWindowSpec", "WidthScheduleSpec", "assess_adaptive_language",
+        "assess_multi_patch", "fixed_residual_update", "fixed_residual_view",
+        "lower_adaptive_language"),
     "sensing": ("PathSamples", "RegretSensor", "TelemetryDecision", "total_overhead",
                 "full_resolution_overhead", "sense_by_ranker", "DEFAULT_MARGIN_THRESHOLD"),
     "precision": ("Interval", "iadd", "isub", "imul_q8", "ulp_distance",

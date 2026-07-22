@@ -35,6 +35,11 @@ _LAZY = {
     "load_hardware_policy": (".hardware_policy", "load_hardware_policy"),
     "hardware_policy_priors_q20": (".hardware_policy", "hardware_policy_priors_q20"),
     "train_hardware_policy": (".hardware_policy", "train_hardware_policy"),
+    "HostedAdaptiveLanguageModel": (".adaptive_transformer", "HostedAdaptiveLanguageModel"),
+    "HostedMultiPatchTransformer": (".adaptive_transformer", "HostedMultiPatchTransformer"),
+    "train_adaptive_pretrain": (".adaptive_transformer", "train_adaptive_pretrain"),
+    "train_multipatch_reconstruction": (
+        ".adaptive_transformer", "train_multipatch_reconstruction"),
 }
 
 
@@ -52,7 +57,8 @@ __all__ = [
     "ArtifactFile", "BytePairTokenizer", "DataPreparationReport", "DataPreparationSpec",
     "HardwarePolicyArtifact", "HardwarePolicyEvent", "HardwarePolicyNetwork",
     "HardwarePolicyRunReport", "HardwarePolicySpec", "HardwarePolicyTrainSpec",
-    "HostedEmbeddingStudent", "HostedRewardModel", "HostedSmallModel", "HostedValueModel",
+    "HostedAdaptiveLanguageModel", "HostedEmbeddingStudent", "HostedMultiPatchTransformer",
+    "HostedRewardModel", "HostedSmallModel", "HostedValueModel",
     "OfflineComputeAdapter", "PipelineStageRecord", "PPOExample",
     "PreferenceExample", "PreparedCorpus", "PreparedDocument", "RawDocument",
     "ReasoningCandidate", "ReasoningExample", "RecordedTeacherProvider",
@@ -61,9 +67,10 @@ __all__ = [
     "StageTrainSpec", "TeacherProvider", "TrainingPipelineLedger",
     "TeacherRequest", "TeacherResponse", "Verification", "bounded_reasoning_search",
     "prepare_corpus", "read_pipeline_ledger", "relational_embedding_targets",
-    "token_source_from_corpus", "train_dpo",
+    "token_source_from_corpus", "train_adaptive_pretrain", "train_dpo",
     "train_embedding_distillation", "train_ppo", "train_reasoning_sft", "train_reward_model",
-    "train_sft", "train_small_supervised", "train_hardware_policy", "load_hardware_policy",
+    "train_sft", "train_small_supervised", "train_multipatch_reconstruction",
+    "train_hardware_policy", "load_hardware_policy",
     "hardware_policy_priors_q20",
     "write_pipeline_ledger", "write_prepared_corpus",
 ]

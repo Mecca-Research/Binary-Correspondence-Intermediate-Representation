@@ -28,14 +28,14 @@ _COLD_KBCIR = ("calibloop", "microbench", "accel", "portfolio", "moegate", "regr
                "egraph", "operad", "twotruth", "memory", "throttle", "mapping", "bayescal",
                "allocator", "sensing", "precision", "autodiff", "lowbit",
                "schedule_artifact", "autodiff_program", "numerical_providers",
-               "hardware_rl", "static_memory", "native_ai")
+               "hardware_rl", "static_memory", "native_ai", "adaptive_transformer")
 _COLD_LOWER = ("jit", "wasm", "specialist")
 _COLD_GEM = ("concurrency", "overlap", "schedule", "async_tokens", "cim", "dvfs")
 _COLD_TOP = ("silicon", "performance_audit")
 _COLD_HOSTED_MODELS = ("spec", "model", "train", "export", "checkpoint")
 _COLD_HOSTED_TRAINING = ("contracts", "data", "bpe", "providers", "reasoning", "stages",
                          "architecture_spec", "architectures", "pipeline",
-                         "hardware_policy_spec", "hardware_policy")
+                         "hardware_policy_spec", "hardware_policy", "adaptive_transformer")
 _COLD_MODEL_ASSESS = ("assessment", "execution_plan", "model_microbench", "assess_tool")
 
 COLD: frozenset[str] = frozenset(
