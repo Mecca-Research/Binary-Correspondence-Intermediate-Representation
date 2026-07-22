@@ -61,6 +61,12 @@ the first direct driver lifecycle and completing the publication gate.
   fixed-residual variable-width carry, reference-plus-sliding attention, H0/H1 ExoFormer mixing,
   and coarse-to-fine image-token probes. It emits verified claims/StreamPack and deterministic
   micro-training evidence; it does not change BCIRQ8, the C decoder, or claim production speed.
+- A separate byte-native laboratory implements direct-octet/strict-UTF-8 semantics, incremental
+  entropy and learned patches, local/global/local BLT, joint AR/block diffusion, exact BLT-S and
+  BLT-DV verification, a selective-SSM MambaByte reference, failure-atomic global-only weight
+  transplantation, and measured ingest selection. Tiny one-thread CPU gates emit verified
+  claims/StreamPack; no useful model, native/GPU decoder, upstream source, or external asset is a
+  release claim.
 - BCIRQ4T/SmoothQuant/AVX2, measured schedule artifacts, expanded closed-set AD, and
   workload-scoped numerical evidence are bounded research/reference slices. They do not
   declare whole-model Q4, multi-target performance, or hardware qualification.

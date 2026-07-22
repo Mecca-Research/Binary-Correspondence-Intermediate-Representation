@@ -267,6 +267,7 @@ _MODULES = [
     "bcir.tests.test_transformer",
     "bcir.tests.test_transformer_grads",
     "bcir.tests.test_adaptive_transformer",
+    "bcir.tests.test_byte_latent",
     "bcir.tests.test_shape_dtype_laws",
     "bcir.tests.test_train_graph",
     "bcir.tests.test_train_pack_exec",

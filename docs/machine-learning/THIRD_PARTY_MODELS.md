@@ -78,3 +78,23 @@ The associated papers are [arXiv:2607.13491](https://arxiv.org/abs/2607.13491) (
 [arXiv:2606.23050](https://arxiv.org/abs/2606.23050) (Unlimited-OCR), and
 [arXiv:2601.08131v4](https://arxiv.org/abs/2601.08131) (ExoFormer). No paper result is
 restated as BCIR-measured performance.
+
+## Byte-native architecture research boundary
+
+The byte-native laboratory is an independent implementation from the papers below. The associated
+repositories were source-audited at immutable commits only; they are not submodules, dependencies,
+training inputs, or sources of copied code, weights, tokenizer assets, or datasets.
+
+| Research source | Audited source | License at audited source | BCIR use |
+|---|---|---|---|
+| [Byte Latent Transformer](https://arxiv.org/abs/2412.09871) | [`facebookresearch/blt`](https://github.com/facebookresearch/blt/tree/9774ed4fcc78313f9f218295f3d7e4decdadf2ae) `9774ed4fcc78313f9f218295f3d7e4decdadf2ae` | CC-BY-NC-4.0 | Independently implemented local/global/local shape, causal entropy patches, and hash n-gram idea; no source, weights, or data imported |
+| [Fast Byte Latent Transformer](https://arxiv.org/abs/2605.08044) | Paper specification | Paper-derived independent implementation | Joint AR/block-denoising objective, diffusion selection, local self-draft, and exact full-model verification contracts |
+| [MambaByte](https://arxiv.org/abs/2401.13660) | [`jxiw/MambaByte`](https://github.com/jxiw/MambaByte/tree/5e16f780bc331d1dc9430f4258dfb247d73aff44) `5e16f780bc331d1dc9430f4258dfb247d73aff44` | Apache-2.0 | Independently implemented readable selective diagonal SSM reference; no fused scan or upstream trainer imported |
+| [End-to-end learned tokenization](https://arxiv.org/abs/2602.13940) | [`SamD770/bitter-lesson-tokenization`](https://github.com/SamD770/bitter-lesson-tokenization/tree/8992678ece92f33eb572d6e5fd213ac7510a04c0) `8992678ece92f33eb572d6e5fd213ac7510a04c0` | MIT | Paper-derived score-function boundary objective and target-rate contract only |
+| [GPUTOK](https://arxiv.org/abs/2603.02597) | [`venugopalkadamba/gpu-tokenizer`](https://github.com/venugopalkadamba/gpu-tokenizer/tree/d08e0bf8135bd25553a5887b81176f2347013464) `d08e0bf8135bd25553a5887b81176f2347013464` | Apache-2.0 | Measured provider/crossover/pool contract only; BCIR does not import its CUDA BPE implementation or describe it as a GPU Unicode pipeline |
+
+The five reviewed PDF byte identities are recorded in the deterministic hosted gate report. They
+are research provenance, not redistributed artifacts. In particular, the CC-BY-NC BLT source is
+not mixed into BCIR's implementation. Any future source reuse requires a separate license review;
+any future pretrained “byteification” requires the source model's own license, architecture,
+tensor provenance, and evaluation record in addition to the contracts above.

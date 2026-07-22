@@ -61,6 +61,7 @@ designed elsewhere but must not be described as operational.
 | K_BCIR cost and target model | **Landed** | Twelve-dimensional integer `CostVector`, runtime-pressure `Theta`, `TargetProfile`, channel registry, exact optimization, and replay/provenance machinery |
 | Driver hardening laws | **Landed** | `DeviceManifest`, `StridedView`, explicit bank moves, distance pricing, `probe_agree`, R22 native-tile validation, and StreamPack generation checks |
 | HAM control-plane foundation | **Landed software contract** | [`ham.py`](../../bcir/kbcir/ham.py) compiles semantic resource DAGs over declared directed links, distinguishes direct peer/direct DMA/staged host-bounce routes, replays capacity and generations independently, and lowers through existing claims/StreamPack. [`BCIR_HAM_MEMORY_FABRIC.md`](BCIR_HAM_MEMORY_FABRIC.md) owns the contract. No GDS, P2PDMA, CXL, NVMe, or controller binding is implied |
+| Raw-byte model ingest selection | **Landed planning contract** | `ByteIngestProfile` selects host/device only from measured launch/per-byte costs, chunk/pool capacity, and exact round-trip evidence. No CUDA Unicode/byte provider, pinned pool, asynchronous transfer, DMA bypass, or kernel binding exists |
 | Event and DMA IR substrate | **Landed** | EV1–EV3 event phases on both rails and descriptor generation from `StridedView` pairs |
 | Shared learned-optimization mechanism | **Landed** | Frozen Q8 tile/channel priors and certificates proving guided selection agrees with exhaustive selection |
 | Telemetry registry, codecs, and calibration | **Partially landed** | Stable Python signal IDs/units/metric semantics, strict BTLM framing, quiescent ring snapshots, integrity witnesses, metrics, serialization, calibration, replay, and portfolio gates exist. The driver envelope, live concurrent ring, generated C signal table, and transports do not |
@@ -334,6 +335,36 @@ device mailboxes follow the HMF-D0–D5 sequence in
 They are not prerequisites for the UART compiler/driver proof and must not enter the freestanding
 core. A compatibility fallback through host memory is functional evidence, not direct-path
 performance evidence.
+
+### 4.5 Raw-byte model ingest and accelerator boundary
+
+The byte-native model laboratory adds a userspace planning seam, not a device implementation.
+Raw octets are already the semantic representation, so a provider may validate/copy bytes without
+inventing token ids. Text enters through a corpus-declared normalization policy followed by strict
+UTF-8; Unicode scalar spans remain diagnostic host metadata and need not cross the execution ABI.
+The landed selector chooses a device path only from a content-addressed measured profile with exact
+round-trip evidence, bounded chunks, resident-pool capacity, launch cost, and a strict predicted
+advantage. A short sequence therefore remains host-side when launch overhead dominates.
+
+Any real accelerator provider follows the ordinary driver maturity ladder:
+
+1. Define a bounded byte-buffer schema, immutable corpus/chunk identity, malformed-input policy,
+   exact host/device differential oracle, and telemetry signal set.
+2. Prove request-owned pinned/staging pools, generation-tagged offsets, cancellation, teardown,
+   saturation/backpressure, and failure atomicity through the direct RuntimeChannel path.
+3. Implement and measure device-side validation/copy or optional patch/BPE kernels through a
+   supported vendor userspace runtime. Report UTF-8 conversion, chunk assembly, transfers, launch,
+   and model compute separately; do not relabel a BPE merge kernel as end-to-end Unicode ingest.
+4. Add asynchronous H2D/prefetch overlap only after event and lifetime traces prove that buffers
+   cannot be reused while in flight. Feed measured crossover constants back through the frozen
+   profile/promotion gate at a quiescent generation boundary.
+5. Consider dma-buf/P2PDMA/GDS or kernel-bypass paths only when a physical topology and workload
+   demonstrate a supported direct path. Preserve host-bounce fallback and report its bytes.
+
+Firmware DMA, IOMMU programming, GPU page pinning, peer mappings, interrupt/event integration, and
+kernel bypass remain driver/kernel work. They are neither prerequisites for byte-model research nor
+permitted in the freestanding core, and they inherit the HAM, telemetry, fault, security, and
+hardware-promotion gates above.
 
 ## 5. Driver maturity and build order
 
