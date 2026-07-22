@@ -1,6 +1,6 @@
 # BCIR Repository Current State Audit
 
-> Audited 2026-07-19 against the `bcir/` (oracle + opt-in hosted adapter) + `mlir/` (law) + `runtime/c` (C rail)
+> Audited 2026-07-22 against the `bcir/` (oracle + opt-in hosted adapter) + `mlir/` (law) + `runtime/c` (C rail)
 > tree — after the vision-alignment gap-closure program (tensor ops, bare-metal
 > inference/training kernels), the R19–R21 law promotion, the telemetry T1–T4 pipeline,
 > the ML Tier-1 trio + breadth slices (M1–M3, E1–E7), and the asm/driver arc
@@ -171,6 +171,12 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     authorities. C++ is deferred until a serving/device lifecycle demonstrates an ownership need.
     The source audit, bounded evidence, and complete placement register are in
     [`BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md`](machine-learning/BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md).
+18. **Adaptive transformer research has a bounded, verified rail.** Independent contracts cover
+    tied physical blocks with LoopDeepNorm, fixed-residual variable widths, reference-plus-sliding
+    attention/cache bounds, H0/H1 ExoFormer mixing, and coarse-to-fine image tokens. Exact hosted
+    parameter/KV accounting and dominant-FLOP lower bounds feed verified claims and StreamPack;
+    tiny one-thread PyTorch probes run twice deterministically. No external source/weights are
+    imported, and none of these architectures is yet a BCIRQ8/C-runtime deployment claim.
 
 ## Confirmed limitations
 
@@ -228,6 +234,12 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     Q8 SIMD family, GPU kernel, native serving scheduler, or native hardware-policy engine. Those
     require their format/lifecycle ABI, differential oracle, measured target evidence, and rollback
     gate; the existence of a fast scalar C primitive does not establish peak hardware performance.
+11. **Adaptive architectures are not optimized kernels.** Variable widths introduce heterogeneous
+    shapes, fixed-residual carry traffic, and unresolved tensor/pipeline-parallel partitioning;
+    ExoFormer's observed implementation overhead exceeds its theoretical FLOP overhead; R-SWA has
+    no native paged-cache realization; and the multi-patch reference omits diffusion-scale training.
+    Per-shape fusion, two-target counters, export schemas, GQA/native parity, and quality evaluation
+    are required before any production or speed claim.
 
 ## Recommended next milestones
 

@@ -240,6 +240,9 @@ jobs:
       - name: Offline pretrain, alignment, reasoning, embedding, and small-model gate
         run: python tools/models/test_training_pipeline.py --output-dir build/training-pipeline-gate
 
+      - name: Adaptive transformer architecture and tiny-training gate
+        run: python tools/models/test_adaptive_transformers.py --output-dir build/adaptive-transformer-gate
+
       - name: Bounded hardware RL train, search, static-memory, and StreamPack gate
         run: python tools/models/run_hardware_rl_gate.py --output-dir build/hardware-rl-gate
 
@@ -250,6 +253,7 @@ jobs:
           path: |
             build/hosted-model-gate/parity-report.json
             build/training-pipeline-gate/report.json
+            build/adaptive-transformer-gate/report.json
             build/hardware-rl-gate/report.json
           if-no-files-found: error
 

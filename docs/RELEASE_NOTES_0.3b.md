@@ -57,6 +57,10 @@ the first direct driver lifecycle and completing the publication gate.
   pretraining, SFT, reward, DPO, PPO, verified-reasoning, embedding, MLP, GRU, and encoder
   confirmation gates. Provider-neutral recorded-teacher and offline-compute contracts are
   present; live API adapters and large-model training are not release claims.
+- A bounded adaptive-architecture laboratory independently implements tied-depth LoopDeepNorm,
+  fixed-residual variable-width carry, reference-plus-sliding attention, H0/H1 ExoFormer mixing,
+  and coarse-to-fine image-token probes. It emits verified claims/StreamPack and deterministic
+  micro-training evidence; it does not change BCIRQ8, the C decoder, or claim production speed.
 - BCIRQ4T/SmoothQuant/AVX2, measured schedule artifacts, expanded closed-set AD, and
   workload-scoped numerical evidence are bounded research/reference slices. They do not
   declare whole-model Q4, multi-target performance, or hardware qualification.

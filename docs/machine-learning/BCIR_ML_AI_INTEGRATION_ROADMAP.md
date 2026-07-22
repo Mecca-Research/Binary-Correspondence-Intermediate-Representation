@@ -405,6 +405,53 @@ The next slices are ordered and not yet claimed as landed:
    `Mecca-Research/BCIR-Models` under BCIR-NC terms with the TinyStories/CDLA notices and a
    reproduction container.
 
+### 1.6 Adaptive transformer architecture laboratory (2026-07-22)
+
+BCIR now has an **independent, bounded architecture laboratory** for five recent research
+directions. It does not vendor the assessed repositories, alter the stable `DecoderSpec` or BCIRQ8
+wire format, or claim production latency. The dependency-free contract is
+[`kbcir/adaptive_transformer.py`](../../bcir/kbcir/adaptive_transformer.py); the opt-in PyTorch
+reference is [`hosted/training/adaptive_transformer.py`](../../bcir/hosted/training/adaptive_transformer.py).
+The normal oracle remains free of PyTorch.
+
+| Source | What BCIR takes | What BCIR does not take |
+|---|---|---|
+| [DeepLoop](https://arxiv.org/abs/2607.13491), `9d86da3367214b1e760c4713dc8612d2ae518430` | Physical-block reuse; effective-depth accounting; LoopDeepNorm `alpha=sqrt(2N)`, `beta=1/sqrt(8N)`; beta initialization of V/O and SwiGLU residual-branch projections | Upstream trainer/config stack, distributed launch machinery, or an unmeasured speed/quality claim |
+| [Variable-Width Transformers](https://arxiv.org/abs/2606.18246), `69dde8143d9a7912de353b57093d36d8788070d4` | Explicit/geometric symmetric schedules; fixed global residual stream; inactive-coordinate carry-forward; exact parameter/KV sizes; dominant-FLOP lower bounds | The million-line dependency/submodule stack, per-shape CUDA kernels, parameter-matched solver, or tensor/pipeline-parallel readiness |
+| [MPDiT](https://arxiv.org/abs/2603.26357), `258ebda7a2e15dc99f3f3948520e3098f348dd9f` | Coarse-patch blocks, deterministic token upsampling, fine-patch refinement, skip path, and a tiny reconstruction probe | Source reuse, diffusion-scale training, FNO/timestep stack, or a claimed 50% realized speedup |
+| [Unlimited-OCR](https://arxiv.org/abs/2606.23050), `1ab6b46b989ebf26328a968d87ce583a9650ab90` | Reference-plus-sliding causal visibility and a continuation KV bound independent of generated length | The remote-code model, weights, SGLang deployment, OCR training corpus, or unbounded request execution |
+| [ExoFormer](https://arxiv.org/abs/2601.08131), v4 | Dedicated H0/H1 Q/K/V/gate anchors; per-head source RMSNorm; post-mix QK normalization and RoPE; gated SDPA; static scalar/head/element coefficients and dynamic `d→16→8` modulation | Copying the authors' model, extrapolating to GQA, H2, or post-norm combinations, or calling theoretical FLOPs measured latency |
+
+The Variable-Width paper changes the resize contract in an important way. A narrower block reads
+and writes only a prefix of one **fixed global residual stream**. Its inactive suffix survives
+unchanged and is restored when a later block widens. Zero-padding the immediately previous layer
+is merely an inferior ablation. BCIR pins this distinction with a deterministic carry-forward
+regression. The convenience schedule is geometric and aligned, but it is not the paper's
+parameter-matched numerical solver; reviewed production schedules enter as explicit integer widths.
+
+The paper's own limitations are BCIR promotion gates: every shape needs a measured kernel profile;
+slicing/copy/carry must be fused or its launch and bandwidth cost charged; and tensor/pipeline
+parallel partitioning must be demonstrated rather than inferred. The K_BCIR report therefore labels
+its operation counts `analytic-lower-bound`. It records exact hosted parameter elements and KV bytes,
+but not tokens/second. A uniform-width baseline is emitted beside every variable-width report.
+
+The deeper BCIR integration is architectural rather than framework-specific:
+
+- tied depth is priced at effective depth while parameters remain physical, preventing weight
+  sharing from undercounting KV and execution work;
+- R-SWA visibility determines exact attention pairs and bounded KV capacity before execution;
+- width carry, attention, SwiGLU, loop barriers, and one-time anchor projection lower to ordinary
+  verified claims and a provenance-carrying StreamPack;
+- multi-patch reports separate coarse and fine token quadratics from a uniform-fine baseline; and
+- all learned coefficients remain training parameters, never BCIR legality or verification inputs.
+
+The always-on hosted job runs two deterministic one-thread micro sessions: a tied-depth
+variable-width model and a dynamic H1-anchor/R-SWA model, plus a static-anchor gradient check and a
+coarse-to-fine image reconstruction. It downloads nothing and emits only a timestamp-free report.
+The promotion order is: measured per-shape CPU kernels → fused carry path → two-target evidence →
+checkpoint/export schema → GQA design and Python/C parity where measurements justify a native path.
+Until those gates pass, these models are research references and cannot be exported as BCIRQ8.
+
 ---
 
 ## 2. The ordered build-out

@@ -141,6 +141,11 @@ process (oracle first, C twin second, measured-then-pinned parity gate, registry
   Maykeye/TinyLLama-v0 revision. The gate requires token-ID parity and C-vs-Python-Q8 logit error
   at most `1e-9`, while recording float-vs-Q8 drift and NLL delta without treating them as hidden
   implementation details.
+- **WMR-5 — bounded adaptive architecture laboratory:** tied-depth LoopDeepNorm, fixed-residual
+  variable widths, reference-plus-sliding attention, H0/H1 ExoFormer mixing, and multi-patch image
+  processing have independent dependency-free contracts and tiny hosted training probes. Their
+  work lowers to verified claims/StreamPack, but they are **not** part of `DecoderSpec`, BCIRQ8, or
+  the standalone C decoder. Native export waits for measured value, a format decision, and parity.
 
 ---
 
@@ -191,6 +196,19 @@ shapes, while the fixture outcomes remain explicitly simulated. A live generatio
 only from measured selected/baseline outcomes at a quiescent boundary after plan, pack, bank-move,
 and static-memory re-verification.
 
+The adaptive architecture gate explores model structure without changing the deployment claim:
+
+```
+ explicit architecture → exact sizes + analytic lower bound → tiny hosted forward/backward
+        → verified claims + StreamPack → deterministic report (no weights/checkpoint committed)
+```
+
+It proves implementation consistency, not useful model quality or production speed. Variable-width
+carry preserves inactive coordinates in a fixed global residual stream; R-SWA bounds the continuation
+cache; LoopDeepNorm prices virtual depth; and ExoFormer anchors are normalized and gated as specified
+by [arXiv:2601.08131v4](https://arxiv.org/abs/2601.08131). None may silently enter the stable Llama
+train-to-C path.
+
 CI does not claim that BCIR trained the pinned TinyLlama checkpoint, and none of the micro gates is
 evidence of useful language-model quality. Together the gates prove deployment, safe owned
 pretraining, staged-alignment composition, and a bounded learned plan-selection seam while keeping
@@ -223,3 +241,7 @@ from the other roadmaps, importing no new subsystem:
   K_BCIR metrics supply training evidence; verification and static memory remain the authority.
   The policy cannot turn model layers into independent agents, bypass autoregressive ordering, or
   certify a simulated speedup.
+- **Adaptive architecture rail** — shape and cache contracts are dependency-free and
+  content-addressed; optional PyTorch performs only bounded tensor validation. K_BCIR sees explicit
+  width/carry/attention/MLP/barrier work, while unsupported combinations refuse. C/C++ lowering is
+  deferred until per-shape and cache measurements demonstrate an inference benefit.

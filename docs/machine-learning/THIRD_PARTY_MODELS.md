@@ -52,3 +52,29 @@ SHA-256. The always-on gate does not download or redistribute them, and BCIR has
 the 32M model. A later
 training run must retain the train/validation split, dataset notice, tokenizer provenance, and
 source hashes in every published model artifact.
+
+## Adaptive-architecture research boundary
+
+The following repositories were cloned into a disposable external audit directory and tested only
+with bounded CPU/offline probes. They are not submodules, dependencies, model fixtures, or sources
+for copied code or weights.
+
+| Project | Audited commit | Declared repository license | Bounded evidence |
+|---|---|---|---|
+| [`lszshu/DeepLoop`](https://github.com/lszshu/DeepLoop) | `9d86da3367214b1e760c4713dc8612d2ae518430` | Apache-2.0 | Tiny 2-physical-layer/3-repeat CPU forward and backward were finite; the repository declares Python 3.12, so a Python 3.10-only evaluation-script parse failure was recorded as an environment mismatch |
+| [`ZhaofengWu/variable-width-transformers`](https://github.com/ZhaofengWu/variable-width-transformers) | `69dde8143d9a7912de353b57093d36d8788070d4` | **NOASSERTION** at repository root | Pure schedule, residual-resize, Sinkhorn, and shape helpers were exercised; CUDA/FlashAttention/lm-engine training was not built |
+| [`quandao10/MPDiT`](https://github.com/quandao10/MPDiT) | `258ebda7a2e15dc99f3f3948520e3098f348dd9f` | **NOASSERTION**: source refers to a root license file that is absent | A tiny 13,224-parameter model ran finite forward/backward with faithful lightweight `timm` interfaces; token upsampling produced the expected coarse-to-fine shape |
+| [`baidu/Unlimited-OCR`](https://github.com/baidu/Unlimited-OCR) | `1ab6b46b989ebf26328a968d87ce583a9650ab90` | MIT | Image/job/stream helpers were tested offline; a valid stream object with an empty `choices` array raises an uncaught `IndexError`, so BCIR does not inherit that parser behavior |
+
+The Variable-Width and MPDiT roots do not provide a usable license grant at the audited commits, so
+BCIR uses only independently implemented paper-level ideas. Unlimited-OCR's public launcher relies
+on remote model code and large GPU infrastructure; neither is admitted. DeepLoop's Apache grant
+would permit reuse, but BCIR still implements the small tied-depth/normalization contract
+independently to keep one coherent oracle and avoid its training-stack dependencies.
+
+The associated papers are [arXiv:2607.13491](https://arxiv.org/abs/2607.13491) (DeepLoop),
+[arXiv:2606.18246v1](https://arxiv.org/abs/2606.18246) (Variable-Width Transformers),
+[arXiv:2603.26357](https://arxiv.org/abs/2603.26357) (MPDiT),
+[arXiv:2606.23050](https://arxiv.org/abs/2606.23050) (Unlimited-OCR), and
+[arXiv:2601.08131v4](https://arxiv.org/abs/2601.08131) (ExoFormer). No paper result is
+restated as BCIR-measured performance.
