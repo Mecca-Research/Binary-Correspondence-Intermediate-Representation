@@ -53,6 +53,14 @@ _LAZY = {
     "self_speculative_generate": (".byte_latent", "self_speculative_generate"),
     "train_byte_latent_pretrain": (".byte_latent", "train_byte_latent_pretrain"),
     "train_mambabyte_pretrain": (".byte_latent", "train_mambabyte_pretrain"),
+    "ExpandedRowTable": (".sequence_interfaces", "ExpandedRowTable"),
+    "HostedProgressiveLanguageModel": (
+        ".sequence_interfaces", "HostedProgressiveLanguageModel"),
+    "clipped_cross_tokenizer_opd_loss": (
+        ".sequence_interfaces", "clipped_cross_tokenizer_opd_loss"),
+    "initialize_expanded_rows": (".sequence_interfaces", "initialize_expanded_rows"),
+    "train_progressive_growth_stage": (
+        ".sequence_interfaces", "train_progressive_growth_stage"),
 }
 
 
@@ -71,7 +79,8 @@ __all__ = [
     "HardwarePolicyArtifact", "HardwarePolicyEvent", "HardwarePolicyNetwork",
     "HardwarePolicyRunReport", "HardwarePolicySpec", "HardwarePolicyTrainSpec",
     "HostedAdaptiveLanguageModel", "HostedByteLatentModel", "HostedEmbeddingStudent",
-    "HostedMambaByteModel", "HostedMultiPatchTransformer", "HostedRewardModel",
+    "HostedMambaByteModel", "HostedMultiPatchTransformer",
+    "HostedProgressiveLanguageModel", "HostedRewardModel",
     "HostedSmallModel", "HostedValueModel",
     "OfflineComputeAdapter", "PipelineStageRecord", "PPOExample",
     "PreferenceExample", "PreparedCorpus", "PreparedDocument", "RawDocument",
@@ -80,9 +89,10 @@ __all__ = [
     "SearchBudget", "SearchResult", "SmallModelSpec", "StageRunReport", "StageTrainEvent",
     "StageTrainSpec", "TeacherProvider", "TrainingPipelineLedger",
     "TeacherRequest", "TeacherResponse", "Verification", "bounded_reasoning_search",
-    "apply_byteified_transplant", "byte_latent_tensor_shapes",
+    "ExpandedRowTable", "apply_byteified_transplant", "byte_latent_tensor_shapes",
     "byteified_parameter_groups", "diffusion_draft", "diffusion_generate",
-    "diffusion_verify_generate", "greedy_generate_byte_latent",
+    "clipped_cross_tokenizer_opd_loss", "diffusion_verify_generate",
+    "greedy_generate_byte_latent",
     "greedy_generate_mambabyte", "prepare_corpus", "read_pipeline_ledger",
     "relational_embedding_targets", "self_speculative_generate",
     "token_source_from_corpus", "train_adaptive_pretrain", "train_dpo",
@@ -90,6 +100,7 @@ __all__ = [
     "train_sft", "train_small_supervised", "train_multipatch_reconstruction",
     "train_byte_latent_pretrain", "train_mambabyte_pretrain",
     "train_hardware_policy", "load_hardware_policy",
-    "hardware_policy_priors_q20",
+    "hardware_policy_priors_q20", "initialize_expanded_rows",
+    "train_progressive_growth_stage",
     "write_pipeline_ledger", "write_prepared_corpus",
 ]

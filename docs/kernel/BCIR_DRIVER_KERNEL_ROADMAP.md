@@ -366,6 +366,34 @@ kernel bypass remain driver/kernel work. They are neither prerequisites for byte
 permitted in the freestanding core, and they inherit the HAM, telemetry, fault, security, and
 hardware-promotion gates above.
 
+### 4.6 Sequence-interface accelerator boundary
+
+The dependency-free sequence-interface rail now covers exact-byte cross-tokenizer alignment,
+bounded unigram segmentation, continued-BPE proofs, causal FSQ series coding, and active-budget
+growth without a driver. Large suffix-array/vocabulary construction, glyph rasterization/PCA,
+device-resident Unicode validation, and tokenizer kernels are hosted accelerator candidates only
+after profiling identifies a real bottleneck. They do not belong in the freestanding core or alter
+the model/tokenizer semantic identity.
+
+A promoted device path must follow the same maturity ladder as raw-byte ingest:
+
+1. Pin corpus, normalization, source/target tokenizer, font/renderer/PCA where applicable, exact
+   host oracle, malformed-input policy, and per-stage telemetry identities.
+2. Separate UTF-8 validation, candidate construction, merge/segmentation, embedding lookup, model
+   projection, transfer, and launch timings. Fertility or GPU kernel time alone is not an
+   end-to-end win.
+3. Use request-owned generation-tagged offsets and bounded pools; prove cancellation, saturation,
+   teardown, stale-generation refusal, and exact host/device byte/token parity before overlap.
+4. Lower transfers and kernels through RuntimeChannel/HAM actions and StreamPack, with immutable
+   measured profiles activated only at quiescent generation boundaries.
+5. Consider pinned memory, dma-buf/P2PDMA/GDS, IOMMU mappings, or firmware DMA only after physical
+   topology evidence. Preserve and separately report the host fallback.
+
+Constructive model growth itself remains a hosted training concern. A future driver may accelerate
+new-block/LoRA tensor work, but optimizer-state ownership and frozen-parameter proofs stay in the
+model artifact contract; no in-flight driver telemetry may decide which weights are legal to
+update.
+
 ## 5. Driver maturity and build order
 
 ### 5.1 The D0–D7 maturity ladder

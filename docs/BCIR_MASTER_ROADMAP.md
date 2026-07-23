@@ -69,7 +69,7 @@ The normative semantics and artifact contract are in
 | GEM and StreamPack | Hydration, scheduling, execution, strict v1–v3 codecs, C/Python byte parity, operator disassembly/hexdump | Hardware command packets and per-device execution are not implied |
 | C compiler | Broad driver-oriented C23 subset, twin lowering, Clang differentials, target ABI matrix, project/link/fallback modes | Not complete ISO C23; unsupported constructs route to the resident compiler |
 | C memory/runtime | Freestanding/hosted/driver classes, allocator injection, failure tests, direct RuntimeChannel v1 | No out-of-process transport or resident hardware binding |
-| ML/reference | Tensor claims, closed-set AD, planned/streamed training, optional hosted Llama/AdamW micro training, safe resume/export, model ingest/tokenizer/decode, BCIRQ8, standalone-C parity, native Q8/Q4 conversion and Q8 projection kernels, exact native Q15 retrieval, payload-free placement, exact static tensor addresses, verified HAM residency/routes, strict context shards, dual-memory oracle, a bounded GNN/Transformer hardware-policy gate, adaptive architectures, and raw-byte BLT/MambaByte experiments | The 32M and byte-native models are untrained at useful scale; hardware-RL evidence is simulated; HAM has no physical adapter; no whole-model Q4, distributed trainer, GPU byte/model backend, live promotion corpus, or production serving engine |
+| ML/reference | Tensor claims, closed-set AD, planned/streamed training, optional hosted Llama/AdamW micro training, safe resume/export, model ingest/tokenizer/decode, BCIRQ8, standalone-C parity, native Q8/Q4 conversion and Q8 projection kernels, exact native Q15 retrieval, payload-free placement, exact static tensor addresses, verified HAM residency/routes, strict context shards, dual-memory oracle, a bounded GNN/Transformer hardware-policy gate, adaptive and raw-byte BLT/MambaByte experiments, exact sequence-interface adaptation, causal FSQ series coding, and active-budget growth | The 32M, byte-native, and progressive models are untrained at useful scale; hardware-RL evidence is simulated; HAM has no physical adapter; no whole-model Q4, distributed trainer, GPU byte/model backend, live promotion corpus, or production serving engine |
 | Telemetry | Stable signal registry, BTLM codec, continuity/ring witnesses, metrics, deterministic Prometheus/OTLP/Redfish-shaped serialization | No live HTTP/OTLP/BMC/UART transport; driver envelope/live concurrent ring remain version-zero design work |
 | Machine edge | Typed MMIO/port/fence/control-register/MSR operations, ordinary x86 long-mode entry and interrupt trampoline, real object/disassembly gates | Reset transition, paranoid NMI/IST entry, feature-specific entry policy, native CPU backend remain open |
 | Drivers/kernel | Device-manifest/event/DMA substrates, direct hook ABI, generic HAM compiler/simulator contract, driver package and BCIR-Linux plans | No resident device driver, GDS/P2PDMA/CXL/NVMe adapter, Linux module/fork, stable UAPI, native kernel, or native IPC is present |
@@ -164,7 +164,7 @@ The full maturity ladder and kernel escalation policy live in
 
 ### 4.4 ML and model rail
 
-Six bounded seams are proven: immutable TinyLlama inputs produce a deterministic group-Q8 artifact
+Seven bounded seams are proven: immutable TinyLlama inputs produce a deterministic group-Q8 artifact
 with Python/C parity; the optional hosted lab trains a 90,688-element model from random weights
 through exact safe resume, strict Safetensors ingestion, BCIRQ8, and standalone C; an offline
 provider-neutral gate exercises generated-corpus pretraining, SFT, reward, DPO, PPO, verified
@@ -176,6 +176,12 @@ multi-patch models; and a byte-native lab validates raw-byte BLT/BLT-D/BLT-S/BLT
 patching, MambaByte, exact-shape global transplantation, and measured ingest selection. Both
 architecture labs use tiny hosted training and ordinary verified claims/StreamPack without adding
 their experimental shapes to BCIRQ8 or the C decoder.
+A sequence-interface lab additionally proves exact-byte cross-tokenizer alignment and credit
+projection, continued-BPE decomposition/copy/mean/freeze semantics, bounded unigram segmentation,
+multi-objective tokenizer evidence, causal FSQ time-series prefixes, fixed binary token interfaces,
+and newest-block-only constructive growth. Its dense growth stages lower through ordinary verified
+claims/StreamPack; glyph/PCA, large tokenizer construction, balanced multilingual continuation,
+LoRA execution, and useful-scale growth remain gated.
 The generic HAM slice adds semantic-resource DAGs, declared-link routing, dynamic residency and
 generation replay, context-shard activation, and a fuzzy-ranking/hard-fact-veto memory oracle.
 Its gate is simulated and deliberately cannot issue a live promotion certificate.
@@ -213,6 +219,10 @@ Generated weights remain build-only. The active queue is:
     fused local/scan/patch kernels, two-target measurements, and only afterward a native/GPU
     inference format. Architecture-specific byteified Llama/Gemma mappings require exact tensor
     provenance and quality recovery; device-side UTF-8/ingest and DMA overlap remain driver work.
+12. Build multilingual/domain tokenizer corpora and reconstruction/probe/generative evaluations;
+    qualify balanced continued-BPE expansion and multi-seed dense-versus-growth/LoRA runs before
+    any sequence interface or progressive checkpoint is promoted. Glyph/PCA assets require pinned
+    fonts/renderers/configuration, while GPU suffix/token kernels remain driver-qualified work.
 
 The detailed closure register, model ladder, and explicit production gaps are in
 [`machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md).

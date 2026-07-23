@@ -67,6 +67,13 @@ the first direct driver lifecycle and completing the publication gate.
   transplantation, and measured ingest selection. Tiny one-thread CPU gates emit verified
   claims/StreamPack; no useful model, native/GPU decoder, upstream source, or external asset is a
   release claim.
+- A sequence-interface laboratory implements exact-byte cross-tokenizer alignment and conserved
+  credit projection, continued-BPE decomposition/copy/mean/freeze semantics, bounded
+  substring/unigram selection, multi-objective tokenizer evidence, causal float32/FSQ series
+  coding, fixed binary interfaces, and active-budget constructive growth. A tiny one-thread gate
+  proves copied rows and earlier blocks remain unchanged and emits verified growth
+  claims/StreamPack. It imports no PGT/Embeddings source or assets and makes no universal-tokenizer,
+  useful-scale model, glyph/PCA, LoRA-execution, or native-kernel claim.
 - BCIRQ4T/SmoothQuant/AVX2, measured schedule artifacts, expanded closed-set AD, and
   workload-scoped numerical evidence are bounded research/reference slices. They do not
   declare whole-model Q4, multi-target performance, or hardware qualification.
