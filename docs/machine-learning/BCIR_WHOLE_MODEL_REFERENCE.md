@@ -152,12 +152,20 @@ process (oracle first, C twin second, measured-then-pinned parity gate, registry
   selection now have dependency-free contracts and tiny hosted probes. They lower to verified
   claims/StreamPack but have no checkpoint format, BCIRQ8 mapping, native decoder, GPU kernel, or
   useful-quality model claim yet.
+- **WMR-7 — bounded sequence-interface and constructive-growth laboratory:** exact-byte
+  cross-tokenizer alignment and probability projection, continued-BPE expansion proofs and row
+  ownership, bounded unigram segmentation, multi-objective tokenizer evidence, causal FSQ
+  time-series tokens, fixed binary interfaces, and active-budget depth growth now have
+  dependency-free contracts. Dense growth lowers to verified claims/StreamPack and a tiny hosted
+  run proves that copied tokenizer rows and earlier blocks stay unchanged. There is no claim of a
+  universal tokenizer, useful progressive model, large UniTok/Thunder tokenizer, LoRA execution,
+  glyph/PCA artifact, native decoder, or production distillation system.
 
 ---
 
 ## 6. The larger implication — closing the train → export → serve loop
 
-BCIR now has six complementary bounded gates. The real-model gate starts from a pinned trained
+BCIR now has seven complementary bounded gates. The real-model gate starts from a pinned trained
 checkpoint and verifies the deployment half:
 
 ```
@@ -232,6 +240,21 @@ parameter counts, BLT-S/BLT-DV greedy-id identity, failure-atomic global transpl
 bounded ingest-provider selection. It does not train a useful language model, run a GPU, or export
 the architecture through BCIRQ8/C.
 
+The sequence-interface gate tests adaptation and growth without conflating tokenizer metrics,
+representation quality, or model quality:
+
+```
+ exact decoded bytes → minimal student/teacher chunks → conserved teacher log mass → clipped OPD
+ continued BPE merges → source-token decomposition → copied/mean rows → explicit two-stage owner
+ causal float32 anchors + FSQ residuals → prefix-stable scientific tokens
+ fixed token-ID bits → bounded newest-block training → frozen-stack proof → claims + StreamPack
+```
+
+The one-thread fixture performs no external download and no large training. Its Pareto evidence
+keeps fertility, size, latency, reconstruction, probe geometry, domain score, and round-trip
+identity separate. Font rendering/PCA, multilingual balanced continuation training, large
+time-series tokenizers, LoRA execution, and native kernels remain promotion-gated.
+
 CI does not claim that BCIR trained the pinned TinyLlama checkpoint, and none of the micro gates is
 evidence of useful language-model quality. Together the gates prove deployment, safe owned
 pretraining, staged-alignment composition, bounded architecture experiments, and a learned
@@ -268,3 +291,7 @@ from the other roadmaps, importing no new subsystem:
   content-addressed; optional PyTorch performs only bounded tensor validation. K_BCIR sees explicit
   width/carry/attention/MLP/barrier work, while unsupported combinations refuse. C/C++ lowering is
   deferred until per-shape and cache measurements demonstrate an inference benefit.
+- **Sequence-interface rail** — tokenizer identity and decoded bytes remain semantic inputs;
+  cross-token alignment cannot normalize them implicitly. Expansion and growth plans account for
+  added rows, vocabulary projection work, active parameters, and optimizer state before hosted
+  mutation. Learned tokenizer/probe scores can rank evidence but cannot become a verifier law.

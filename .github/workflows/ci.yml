@@ -246,6 +246,9 @@ jobs:
       - name: Byte-native BLT, MambaByte, and tiny-training gate
         run: python tools/models/test_byte_latent_models.py --output-dir build/byte-native-model-gate
 
+      - name: Sequence-interface, tokenizer-adaptation, and progressive-growth gate
+        run: python tools/models/test_sequence_interfaces.py --output-dir build/sequence-interface-gate
+
       - name: Bounded hardware RL train, search, static-memory, and StreamPack gate
         run: python tools/models/run_hardware_rl_gate.py --output-dir build/hardware-rl-gate
 
@@ -258,6 +261,7 @@ jobs:
             build/training-pipeline-gate/report.json
             build/adaptive-transformer-gate/report.json
             build/byte-native-model-gate/report.json
+            build/sequence-interface-gate/report.json
             build/hardware-rl-gate/report.json
           if-no-files-found: error
 

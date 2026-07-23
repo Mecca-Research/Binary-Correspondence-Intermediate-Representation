@@ -98,3 +98,32 @@ are research provenance, not redistributed artifacts. In particular, the CC-BY-N
 not mixed into BCIR's implementation. Any future source reuse requires a separate license review;
 any future pretrained “byteification” requires the source model's own license, architecture,
 tensor provenance, and evaluation record in addition to the contracts above.
+
+## Sequence-interface and progressive-growth research boundary
+
+The sequence-interface laboratory is independently implemented from seven supplied research
+papers. PDF hashes below identify the exact reviewed revisions; the PDFs are not redistributed or
+used as runtime/training inputs.
+
+| Paper | Reviewed revision | Reviewed PDF SHA-256 | BCIR boundary |
+|---|---|---|---|
+| [Emergent Semantics Beyond Token Embeddings](https://arxiv.org/abs/2507.04886) | `2507.04886v4` | `9676a04d619f09f35dace23906a7196c876153bffb447ad37a39a98923e74310` | Fixed binary-ID interface landed; font rendering, glyph rasterization, PCA basis, and visual-code evidence remain provenance-pinned hosted work |
+| [The Galaxy's Guide to the Tokenizer](https://arxiv.org/abs/2606.25610) | `2606.25610v1` | `dccc20680ac120a8916cb1091433fb2ed02fda4eaaecc6d572a54ab577bfe87a` | Multi-objective evidence/Pareto contract only; no imported tokenizer, weights, data, or claim of a universal best interface |
+| [Time Series as Language](https://arxiv.org/abs/2606.09861) | `2606.09861v1` | `1777fcd9f81fce593a884e65d7b7bb7239777ccf410fadd69dc5598ba9f91143` | Independent causal prefix/float32/FSQ oracle; no UniTok model, checkpoint, GAN, corpus, or result imported |
+| [Less Is More](https://arxiv.org/abs/2506.15138) | `2506.15138v2` | `a395f6aad4219a1447a32ef2edf6440f1d8b3d4d395f2deb2500a73ca2fa74e4` | Conservative candidate/scoring/segmentation contract only; no suffix-array trainer or vocabulary imported |
+| [Breaking the Tokenizer Barrier](https://arxiv.org/abs/2606.09456) | `2606.09456v1` | `d9d361add05fbeb9fd338966ecd0f99282033a3160eb7f4d35e6940402d2e18f` | Exact-byte DPCA/projection and tiny hosted clipped objective; no upstream distillation code, teacher, student, rollout, or dataset imported |
+| [In-Place Tokenizer Expansion](https://arxiv.org/abs/2607.15232) | `2607.15232v1` | `63f689a974302bbfc025b74b897d0b7aceb24a06be750e7117acc3cfa81eb918` | Continued-BPE proof, copy/mean rows, freeze boundary, and cost accounting only; no expanded tokenizer, model, weights, or multilingual corpus imported |
+| [Growing Transformers](https://arxiv.org/abs/2507.07129) | `2507.07129v3` | `b0aeb9afd97ad498e9f23a1c5970e1b493a5f442227c5956c4eae0590692e192` | Independent active-budget dense-growth contract and tiny fixture; LoRA is cost/schedule-only and no model, checkpoint, data, or result is imported |
+
+Two associated repositories were cloned into a disposable external directory and audited at
+immutable commits. They are not dependencies, submodules, fixtures, or sources of copied code:
+
+| Project | Audited commit | Declared license | Source-backed audit result |
+|---|---|---|---|
+| [`AVBochkov/PGT`](https://github.com/AVBochkov/PGT) | `4ed95fd272e126281352aea321d175cd00b9b381` | Apache-2.0 | Current tree contains tokenizer builders, n-gram data, benchmark helpers, and notebooks, including two publishing notebooks; it has no automated test suite, dependency lock, or executable progressive-growth trainer |
+| [`AVBochkov/Embeddings`](https://github.com/AVBochkov/Embeddings) | `4161521d9f88a9d7fe7aa146de673bdac3f4a1a5` | Apache-2.0 | Current implementation tree is otherwise materially the same tokenizer/benchmark research surface; its Python helper compiles and notebooks parse, but no recorded outputs establish reproducible training evidence |
+
+The repository license would permit reuse, but BCIR intentionally keeps one independent oracle and
+imports no source, model, tokenizer, n-gram table, font, result, or notebook. Any later reuse needs
+a new source/license/dependency review and must not silently replace the content-addressed BCIR
+contracts or their differential gates.

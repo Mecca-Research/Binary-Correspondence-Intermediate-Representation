@@ -76,6 +76,9 @@ bcir-model-assess MODEL_DIR --hardware hardware.json --workload workload.json \
 # Requires the model-lab extra; uses generated simulated episodes and performs no GPU/large training.
 python tools/models/run_hardware_rl_gate.py --output-dir build/hardware-rl-gate
 
+# Optional one-thread sequence-interface/adaptation/growth confirmation; generated fixtures only.
+python tools/models/test_sequence_interfaces.py --output-dir build/sequence-interface-gate
+
 # The compiled MLIR dialect (needs libmlir-NN-dev + llvm-NN-dev):
 bash tools/wsl/build_mlir.sh            # build bcir-opt (LangRef M3)
 bash tools/wsl/check_ods_examples.sh    # parse/verify the pretty ODS corpus via bcir-opt

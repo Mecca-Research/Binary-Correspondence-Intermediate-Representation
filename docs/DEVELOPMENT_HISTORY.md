@@ -262,6 +262,18 @@ Python parity, malformed-input, sanitizer, import-quarantine, and host-portabili
 C++ layer was added because the kernels need a reusable C ABI, not another owner; C++ remains
 gated on a measured asynchronous serving/device lifecycle.
 
+### Post-#649 — sequence-interface adaptation and constructive growth (2026-07-22)
+
+Seven tokenizer/representation papers and the pinned Apache-2.0 PGT/Embeddings repositories were
+audited without importing source or assets. The independent implementation added exact-byte
+student/teacher chunk alignment and probability-conserving credit projection, continued-BPE
+decomposition plus copy/mean/freeze ownership, bounded Thunder-style unigram segmentation,
+multi-objective tokenizer evidence, causal float32/FSQ time-series prefixes, fixed binary token
+interfaces, and explicit active-parameter/optimizer-state growth schedules. A tiny one-thread
+PyTorch gate proves copied rows and earlier blocks remain unchanged; dense growth lowers through
+ordinary verified claims and StreamPack. Large tokenizers/models, glyph/PCA artifacts, LoRA
+execution, GPU kernels, and external data remain promotion-gated.
+
 ---
 
 ## 3. Condensed dated changelog
@@ -349,6 +361,11 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   selective-SSM rail, failure-atomic global-weight transplantation, measured ingest selection,
   and R-law/StreamPack lowering. The deterministic CPU gate performs only tiny confirmation runs;
   no pretrained weights, upstream source, GPU kernel, or useful-scale training entered the tree.
+- **2026-07-22:** the sequence-interface laboratory added exact-byte DPCA/credit projection,
+  continued-BPE expansion and stage ownership, bounded substring/unigram selection, Pareto
+  tokenizer evidence, prefix-stable FSQ series coding, frozen binary interfaces, and
+  active-budget constructive growth. Tiny hosted training and verified StreamPack lowering landed
+  without importing PGT/Embeddings code or claiming useful-scale quality.
 
 ---
 
@@ -365,7 +382,7 @@ exist; it does not imply production deployment or hardware evidence.
 | Optimizer and backend | 12-axis K_BCIR, min-plus/RCSP/(max,+), GEM scheduling, C23 and resident LLVM/object paths, JVM/CIL/WASM bounded validation | Arbitrary-graph LLVM AOT, general native isel (gated), target-specific measured scheduling evidence |
 | Machine/driver substrate | StreamPack v1–v3, device manifests, bank/move/event/DMA contracts, MC1/MC2 operator tools, direct RuntimeChannel hooks, metadata-only HAM routing/residency/replay, and strict context-shard activation | Resident UART/virtio/device drivers, physical HAM adapters, stable UAPI, Linux modules, native IPC, and physical-device qualification |
 | Memory discipline | Freestanding/hosted/adapter classes, checked hosted allocator and fault injection, fail-every-allocation tests | Per-operation compiler arenas and further context migration as allocation-bearing surfaces expand |
-| ML/model stack | Planned/streamed training, hosted safe pretraining and bounded alignment stages, deterministic corpus/BPE, provider-neutral contracts, model manifest/tokenizer/decoder, header-only cost/placement plans, exact static addresses, bounded hardware-policy training/search, adaptive and raw-byte BLT/MambaByte references, GQA/KV cache, BCIRQ8, BCIRQ4T tensor compute, native Q8/Q4 conversion/projection and exact Q15 retrieval, and standalone-C TinyLlama parity | Production serving, executable hardware placement/rematerialization, architecture native/export promotion, whole-decoder Q4/additional formats, canonical 32M and useful byte-native training, live providers, distributed/GPU execution, and hardware-qualified model/policy gates |
+| ML/model stack | Planned/streamed training, hosted safe pretraining and bounded alignment stages, deterministic corpus/BPE, provider-neutral contracts, model manifest/tokenizer/decoder, header-only cost/placement plans, exact static addresses, bounded hardware-policy training/search, adaptive/raw-byte/sequence-interface/growth references, GQA/KV cache, BCIRQ8, BCIRQ4T tensor compute, native Q8/Q4 conversion/projection and exact Q15 retrieval, and standalone-C TinyLlama parity | Production serving, executable hardware placement/rematerialization, architecture native/export promotion, whole-decoder Q4/additional formats, canonical 32M and useful byte-native/progressive training, balanced multilingual tokenizer expansion, large UniTok/Thunder builders, glyph/PCA artifacts, live providers, distributed/GPU execution, and hardware-qualified model/policy gates |
 | Telemetry/control | Signal registry, BTLM codec, metric derivation, deterministic serializers, shared-ring baseline | Generated fixed-width C registry, source/session/generation/clock identity, live SPSC protocol and real transports |
 
 ### Retired AI-substrate research note

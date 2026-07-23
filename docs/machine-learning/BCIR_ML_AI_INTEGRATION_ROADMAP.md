@@ -108,7 +108,8 @@ The reference-state metrics — the **12-d cost vector**, the **thermal/power bu
 losses/optimizers/training, numerical-provider contracts, model ingestion, BCIRQ8, the bounded
 BCIRQ4T tensor slice, and the small-Llama standalone-C gate are implemented. The optional hosted
 rail also has deterministic corpus/BPE preparation and bounded SFT, reward, DPO, PPO, reasoning,
-embedding, MLP, GRU, encoder, adaptive-transformer, byte-latent, and selective-SSM stages. These
+embedding, MLP, GRU, encoder, adaptive-transformer, byte-latent, selective-SSM,
+sequence-interface adaptation, and constructive-growth stages. These
 remain reference infrastructure—not
 a production training framework or serving stack. Real multi-target calibration, whole-model Q4,
 large-corpus training, GPU execution, and the Phase-C data/memory organs remain open.
@@ -525,6 +526,68 @@ the driver/kernel portions stay in
 [`BCIR_DRIVER_KERNEL_ROADMAP.md`](../kernel/BCIR_DRIVER_KERNEL_ROADMAP.md). No large model was
 trained for this slice.
 
+### 1.8 Sequence-interface and constructive-growth laboratory (2026-07-22)
+
+BCIR now treats tokenization as a **portfolio of explicit sequence interfaces**, not one
+universal front door. Token BPE, direct bytes, causal scientific/time-series codes, and future
+domain codecs retain separate semantics while sharing evidence, provenance, cost, and training
+boundaries. The dependency-free contracts and verified growth lowering live in
+[`kbcir/sequence_interfaces.py`](../../bcir/kbcir/sequence_interfaces.py); the opt-in PyTorch
+confirmation rail lives in
+[`hosted/training/sequence_interfaces.py`](../../bcir/hosted/training/sequence_interfaces.py).
+Neither module changes `DecoderSpec`, BCIRQ8, or the standalone C decoder.
+
+| Research source | Landed bounded mechanism | Boundary retained by BCIR |
+|---|---|---|
+| [Emergent Semantics Beyond Token Embeddings](https://arxiv.org/abs/2507.04886) | Canonical low-rank binary token-ID codes and a frozen-interface growth probe | Glyph rasterization, font identity, PCA basis, and random-code ablations require hosted artifacts with exact font/corpus/config provenance; the small reported experiment is not generalized into a claim that learned embeddings are obsolete |
+| [The Galaxy's Guide to the Tokenizer](https://arxiv.org/abs/2606.25610) | Multi-objective evidence and deterministic Pareto selection over fertility, size, latency, reconstruction, probe geometry, domain score, and exact round trip | Reconstruction is not treated as a proxy for representation quality, and BCIR emits no fabricated aggregate “best tokenizer” score |
+| [Time Series as Language / UniTok](https://arxiv.org/abs/2606.09861) | Prefix-stable causal univariate coding, exact float32 warm-up anchors, causal location/scale estimates, finite scalar quantization, a deterministic prefix-length map, and direct replay | The 113M tokenizer, GAN/perceptual/wavelet objectives, multivariate model, and large training corpus are not imported; the landed codec is a small semantic oracle, not a SOTA forecasting claim |
+| [Less Is More / Thunder-Tok](https://arxiv.org/abs/2506.15138) | Conservative UTF-8/atomic-byte candidate admission, trailing-fragment truncation, the Jensen-style pruning score, and bounded exact unigram dynamic programming | Million-candidate suffix arrays and large tokenizer training remain hosted work; pruning scores never replace final unigram segmentation or model-quality evaluation |
+| [Breaking the Tokenizer Barrier](https://arxiv.org/abs/2606.09456) | Dual-pointer minimal synchronized chunks over exact bytes, strict nonempty/left-inverse assumptions, proportional teacher-log-mass projection, and a clipped hosted OPD objective | Teachers must score the student's raw rollout; Unicode normalization is not inferred; zero/invalid log mass fails closed; the reported sub-8B evidence is not extrapolated |
+| [In-Place Tokenizer Expansion](https://arxiv.org/abs/2607.15232) | Strict continuation of source BPE merges, unchanged source/special IDs, recursive decomposition into source tokens, direct-copy/mean row initialization, copied-row freezing, explicit stage-two unfreeze, and vocabulary/head compute accounting per source unit | Arbitrary tokenizer replacement is not mislabeled continuation. Balanced multilingual CPT, generative-collapse tests, and large-model quality remain required before model promotion |
+| [Growing Transformers](https://arxiv.org/abs/2507.07129) | Constructive block groups, frozen prior blocks, head updates, exact active/optimizer-state budgets, optional all-layer LoRA budget schedules, fixed binary interfaces, and R-law/StreamPack lowering | The hosted micro gate executes dense growth only. LoRA execution, Net2Net comparisons, multiple seeds, useful-scale quality, and claims against dense monolithic training remain open |
+
+The two supplied Apache-2.0 repositories were pinned and audited independently:
+[`AVBochkov/PGT`](https://github.com/AVBochkov/PGT) at
+`4ed95fd272e126281352aea321d175cd00b9b381` and
+[`AVBochkov/Embeddings`](https://github.com/AVBochkov/Embeddings) at
+`4161521d9f88a9d7fe7aa146de673bdac3f4a1a5`. Their current trees contain tokenizer
+builders, n-gram data, benchmark helpers, and notebooks, but no automated tests, pinned runtime
+environment, or executable progressive-growth trainer. BCIR therefore imports no code, model,
+data, font, or result artifact. The paper-level mechanisms above are independent implementations;
+the exact PDF and repository identities are recorded in
+[`THIRD_PARTY_MODELS.md`](THIRD_PARTY_MODELS.md).
+
+The semantic contracts are fail-closed:
+
+- cross-tokenizer chunks cover both token streams contiguously and hash the common payload;
+  projection conserves every teacher chunk's summed log probability before any gradient exists;
+- continued-BPE plans prove the old merge table is an exact prefix, reduce every new row to old
+  token IDs, and price both added storage and the larger vocabulary projection against observed
+  tokens per source unit;
+- the causal series codec emits exact float32 anchors then bounded one-dimensional FSQ residuals;
+  encoding a longer prefix cannot alter any earlier token;
+- tokenizer trials stay as a vector of evidence. Pareto dominance can discard a strictly worse
+  candidate but cannot invent a scalar objective or declare one interface universal; and
+- growth stages identify the exact trainable blocks, active elements, optimizer-state bytes, and
+  frozen forward stack. The hosted trainer snapshots every frozen parameter in its bounded test
+  and refuses a stage/model mismatch before optimization.
+
+The always-on Ubuntu/Windows gate runs twice with one CPU thread and generated fixtures. It proves
+source-row immutability during tokenizer-expansion stage one, finite clipped-OPD gradients,
+teacher-log-mass conservation, FSQ prefix replay, a two-stage fixed-interface model whose first
+block remains bit-identical during stage two, deterministic telemetry, and verified growth
+claims/StreamPack. It performs eight tiny optimizer steps per run, downloads nothing, and commits
+no report or weights.
+
+Promotion is ordered: broader multilingual/domain corpus evidence → reconstruction/probe and
+generative evaluation → balanced continuation-training protocol → exact safe checkpoint/export →
+multi-seed dense/constructive/LoRA comparison → measured memory and wall-clock evidence on two
+targets → native kernels only for demonstrated bottlenecks. GPU suffix construction, Unicode
+validation, pinned pools, asynchronous transfer, and firmware/DMA support remain in the
+[`driver/kernel roadmap`](../kernel/BCIR_DRIVER_KERNEL_ROADMAP.md); none is required for the
+dependency-free oracle.
+
 ---
 
 ## 2. The ordered build-out
@@ -681,10 +744,12 @@ them (thermal/power/clock optimization, adaptive unrolling, best-ISA selection).
 ### Phase F — Higher cognition (NLP + recursive intelligence) — *extends Phase L*
 *The payoff layer, on top of compilers + kernels + the ML library.*
 
-- **F1 — The NLP base: a deterministic token generator.** After codegen is solid, pair an **ML FreeType**
-  interface with the **Unicode database** as the base tokenizer: glyph/grapheme/codepoint structure → tokens,
-  with the **operad content-addressed index** as the stable token fingerprint (reproducible, CSE-friendly). This
-  is the substrate for an NLP system that inherits BCIR's determinism + provenance.
+- **F1 — Sequence-interface promotion.** BPE, direct-byte, scientific/time-series, glyph, and
+  learned interfaces compete under one provenance and multi-objective evidence contract; no single
+  tokenizer is declared the base of every model. A future FreeType/Unicode visual interface must pin
+  the font, renderer, Unicode database, raster/PCA configuration, corpus, and probe evidence before
+  its frozen table can enter a model artifact. Content-addressed operad identities remain useful,
+  but visual similarity never becomes semantic truth or BCIR legality.
 - **F2 — The file-creation backbone.** Keep object/file production on the resident
   ELF/DWARF/BFD/LLVM ecosystem behind
   [`BCIR_NATIVE_OBJECT_GATE.md`](../BCIR_NATIVE_OBJECT_GATE.md). BCIR may plan section
@@ -773,6 +838,7 @@ canonical home for the obligations that remain.
 | **B3 autodiff** | The closed set includes arithmetic, select/dot, and six transcendentals; Python/C/MLIR parity, measured AD ordering, differentiate-high/optimize-low selection, rematerialization, local mutation functionalization, bounded dynamic-loop tracing, and finite call tables are landed | Qualify ordering/rematerialization on representative model graphs; keep aliased mutation, unbounded loops, recursion, and dynamic higher-order calls quarantined until a replayable closed representation exists |
 | **B5 numerical libraries** | Existing six library families now sit behind workload/dtype descriptors, demand-driven probes, bounded real-counter measurements, measured selection, and deterministic legality-independent evidence | Collect and review linked-library availability/performance artifacts on supported CPU/accelerator hosts; add providers only for demonstrated workloads |
 | **Hardware RL / memory** | Availability-aware telemetry tokens, bank/link graph encoding, ordered placement features, K_BCIR metric rewards, reward/DPO/PPO micro training, bounded PUCT, exact static addresses, StreamPack lowering, and measured-only quiescent promotion are landed | Gather real CPU/GPU/driver episodes, add verified rematerialize/spill/KV actions, compare against exhaustive search on two targets, freeze a deployment artifact, and build any assembly game only behind ISA and functional-oracle gates |
+| **Sequence interfaces / growth** | Exact-byte cross-token alignment and credit projection, continued-BPE decomposition and row ownership, bounded Thunder-style segmentation, multi-objective tokenizer evidence, causal FSQ series coding, fixed binary interfaces, active-budget growth stages, a tiny hosted training probe, and verified StreamPack lowering are landed | Add multilingual/domain corpora and probes; implement provenance-pinned glyph/PCA and larger UniTok/Thunder builders only when justified; qualify balanced tokenizer expansion and generative quality; compare dense/growth/LoRA with multiple seeds and two-target memory/time evidence before export or native promotion |
 
 Research basis retained from the retired scan: SmoothQuant (`arXiv:2211.10438`), OCP microscaling
 (`arXiv:2310.10537`), QLoRA/NF4 (`arXiv:2305.14314`), and the INT-vs-FP hardware analysis

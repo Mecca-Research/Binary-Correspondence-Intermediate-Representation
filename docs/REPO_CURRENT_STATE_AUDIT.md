@@ -44,6 +44,9 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     memory-module fixpoints, two-truth quarantine), and the ML substrate (autodiff with
     a machine-proven closed primitive set, losses, optimizers, training loop, OLS/PCA,
     transformer block, recurrent cells, classical-ML predict, unsupervised + pipeline).
+    The cold research rail also carries exact-byte cross-tokenizer alignment/projection,
+    continued-BPE expansion and row ownership, bounded unigram segmentation, causal FSQ
+    time-series coding, fixed binary token interfaces, and active-budget growth plans.
     Suite: `python -m bcir.tests.run_all` (live count + coverage in
     [`STATUS.md`](STATUS.md), generated from the tree — see that file rather than a
     hard-coded number here, which is what the 580/615/631 drift came from).
@@ -185,6 +188,15 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     StreamPack. The one-thread gate proves finite gradients, tiny loss reduction, deterministic
     reports, failure-atomic transplant, and exact verified-generation ids. It imports no upstream
     code/assets and claims no useful model, checkpoint format, native decoder, or GPU kernel.
+20. **Sequence-interface adaptation and constructive growth have a bounded, verified rail.**
+    Minimal synchronized chunks operate on exact decoded bytes and conserve teacher chunk log
+    probability; continued BPE preserves every source merge/token and initializes new rows from
+    proved source decompositions; bounded Thunder-style segmentation, Pareto tokenizer evidence,
+    and prefix-stable float32/FSQ time-series coding are dependency-free. A one-thread hosted gate
+    trains two fixed-binary-interface growth stages while copied rows and the earlier dense block
+    remain bit-identical. Dense growth lowers through R1–R23-verified claims/StreamPack. No external
+    source/assets, universal-tokenizer claim, glyph/PCA artifact, LoRA execution, useful model, or
+    native kernel entered the tree.
 
 ## Confirmed limitations
 
@@ -215,7 +227,9 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
    distributed orchestration are stubs pending multi-node hardware.
 6. **Hosted model execution, HAM, and hardware RL are bounded references, not production stacks.**
    Distributed/data-parallel execution, the frozen 16K tokenizer, the canonical 32M run,
-   byte-native scale training/export, CUDA kernels/graphs, real PMU/GPU policy training,
+   byte-native or progressive scale training/export, large UniTok/Thunder construction,
+   balanced multilingual tokenizer expansion, glyph/PCA artifacts, LoRA growth execution,
+   CUDA kernels/graphs, real PMU/GPU policy training,
    checkpoint/rematerialization execution,
    serving, durable ANN/CPG/RAG, and model publication remain gated follow-on work. HAM now plans
    bounded semantic residency, prefetch, eviction, mutation generations, and declared-link routes,

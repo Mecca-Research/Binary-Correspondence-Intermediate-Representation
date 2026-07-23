@@ -38,7 +38,7 @@ history and git.
 |---|---|
 | `model/` | Registry-first resources, claims, phases, lane/domain/hazard types |
 | `verify/` | Executable R-law reference and plan/pack/lowering checks |
-| `kbcir/` | Cost vectors, min-plus/RCSP/(max,+) planning, certified learned organs, calibration, AD, quantization, bounded hardware-RL, adaptive-transformer, and byte-native BLT/MambaByte contracts, exact static memory planning, verified HAM residency/routing, context shards, the dual-memory oracle, and the cold explicit native-AI bridge |
+| `kbcir/` | Cost vectors, min-plus/RCSP/(max,+) planning, certified learned organs, calibration, AD, quantization, bounded hardware-RL, adaptive-transformer, byte-native BLT/MambaByte, sequence-interface/tokenizer-adaptation, causal-series, and constructive-growth contracts, exact static memory planning, verified HAM residency/routing, context shards, the dual-memory oracle, and the cold explicit native-AI bridge |
 | `gem/` | Hydration, StreamPack construction, scheduling, overlap, execution, event/DMA/device contracts |
 | `frontends/` | ROP, MAP, Python C-front oracle, and model manifest/tokenizer/header-only assessment rails |
 | `etl/` | Text and binary event-to-claim transduction |
@@ -46,7 +46,7 @@ history and git.
 | `lower/` | Portable C, the single-claim elementwise LLVM AOT/JIT subset, WASM, stack-machine, library, SYCL, and model lowering helpers |
 | `codegen/` | Resident-toolchain object/assembly paths and target validation |
 | `hosted/models/` | Opt-in PyTorch Llama training, pickle-free exact-resume checkpoints, strict Safetensors export, and train-to-C gating; never imported by the oracle path |
-| `hosted/training/` | Dependency-free corpus/BPE/provider/stage/ledger/hardware-policy specs plus lazily imported PyTorch SFT, reward, DPO, PPO, reasoning, embedding, MLP, GRU, encoder, adaptive-language/multi-patch, byte-latent/selective-SSM, and GNN/Transformer hardware-policy references |
+| `hosted/training/` | Dependency-free corpus/BPE/provider/stage/ledger/hardware-policy specs plus lazily imported PyTorch SFT, reward, DPO, PPO, reasoning, embedding, MLP, GRU, encoder, adaptive-language/multi-patch, byte-latent/selective-SSM, cross-tokenizer/continued-BPE/growth, and GNN/Transformer hardware-policy references |
 | `tests/` | Explicit test registry and named quick, C-runtime, silicon-degrade, and thorough tiers |
 
 `bcir.performance_audit` is an opt-in, dependency-free audit coordinator. It exercises
