@@ -162,7 +162,14 @@ double bcir_q8_tensor_value(const bcir_q8_model *model,
     return NAN;
   code = (int)tensor->codes[index];
   if (code >= 128) code -= 256;
-  exponent = (int)rdi16(tensor->exponents + 2u * (index / model->group_size));
+  /* Widen to size_t BEFORE scaling: `2u * (index / group_size)` is `unsigned int`
+   * arithmetic, so a group index at or above 2^31 wraps modulo 2^32 and addresses the
+   * WRONG exponent -- silently dequantizing against another group's scale rather than
+   * failing. Reachable only through the caller-supplied `max_file_size` of
+   * bcir_q8_model_load_limited (the 64 MiB default bounds element_count far below that),
+   * but the span above is validated in 64-bit, so the read must be too. This matches the
+   * widened form the loader already uses for the same array (`(size_t)j * 2u`). */
+  exponent = (int)rdi16(tensor->exponents + (size_t)(index / model->group_size) * 2u);
   if (code == -128 || exponent < -300 || exponent > 300) return NAN;
   return ldexp((double)code, exponent);
 }

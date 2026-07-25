@@ -33,6 +33,13 @@ bcir_binrec_status bcir_binrec_field(const uint8_t *BCIR_RESTRICT data, size_t l
     if (v & sign_bit)
       v |= ~((sign_bit << 1) - 1u);        /* set all bits above the field */
   }
-  *out = (int64_t)v;                        /* nbytes==8 reinterprets two's complement */
+  /* Reinterpret the two's-complement bit pattern WITHOUT the conversion from an
+   * out-of-range uint64_t to int64_t, which C11/C17 leave implementation-defined (only
+   * C23 mandates the wraparound every target we build for happens to implement). The
+   * subtraction below is always in range before the signed cast, including the INT64_MIN
+   * pattern -- the same idiom bcir_telemetry_frame.c's rd_i64 uses for the same reason,
+   * so the two decoders no longer disagree about how carefully to spell this. */
+  *out = (v <= (uint64_t)INT64_MAX) ? (int64_t)v
+                                    : -INT64_C(1) - (int64_t)(UINT64_MAX - v);
   return BCIR_BINREC_OK;
 }
