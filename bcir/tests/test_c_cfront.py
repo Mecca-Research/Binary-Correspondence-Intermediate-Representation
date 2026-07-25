@@ -4839,8 +4839,12 @@ def test_c_twin_preprocessor_differential_against_reference():
         cl, _gc = _pp_reference_pair(os.path.join(_C, fx))
         ct = _ctwin_emit_cpp(fx)
         if fx in _PP_CTWIN_PIN:
-            # a pinned fixture is EXPECTED to diverge; assert it still does (so a silent C-twin FIX
-            # un-pins it loudly) and record it.
+            # a pinned fixture is EXPECTED to diverge; assert it still DOES (so a silent C-twin FIX
+            # un-pins it loudly instead of leaving a stale pin that hides real coverage).
+            if ct is not None and ct == cl:
+                fails.append(f"{fx}: STALE PIN -- the C twin now AGREES with the reference; drop it "
+                             f"from _PP_CTWIN_PIN so the fixture is differentialed again "
+                             f"(recorded reason: {_PP_CTWIN_PIN[fx]})")
             pinned.append(fx)
             continue
         if ct is None:
@@ -4854,9 +4858,12 @@ def test_c_twin_preprocessor_differential_against_reference():
             tested += 1
     assert not fails, ("C-twin preprocessor differential failures (the C rail diverges from the "
                        "reference on a non-pinned fair fixture):\n" + "\n".join(f"  {m}" for m in fails))
-    # the pinned set must stay bounded -- it must not silently absorb a new divergence.
+    # The pinned set stays bounded from BOTH sides, and neither side is a tautology:
+    #   * it cannot GROW  -- a new divergence lands on a non-pinned fixture and is in `fails` above;
+    #   * it cannot ROT   -- a pin whose divergence disappeared is a STALE PIN, also in `fails`.
+    # This residual check only guards the bookkeeping itself (a pin recorded for a fixture that is
+    # not in the pin table would mean `_pp_fixture_verdict`/the loop drifted).
     assert set(pinned) <= set(_PP_CTWIN_PIN), f"unexpected C-twin pins: {set(pinned) - set(_PP_CTWIN_PIN)}"
-    assert len(pinned) <= len(_PP_CTWIN_PIN), f"C-twin pinned set grew: {pinned}"
     # ANTI-DEGENERATION: the C-twin differential must have actually RUN on a non-trivial fair subset.
     assert tested >= 3, (f"C-twin preprocessor differential degenerated: only {tested} fixtures ran "
                          f"(pinned={pinned}) -- a real differential must exercise the clean subset")

@@ -26,8 +26,10 @@ from ..model.lanes import Domain
 
 # 12-dimensional K_BCIR cost (matches the BCIR LangRef v0.1 !kbcir.costvec).
 # `verification` is the 12th axis: the cost of discharging a claim's verify
-# contract (bounds/exact/hash). Currently modeled as 0 in the oracle until
-# verify-cost modeling lands; the dimension exists in the algebra now for lockstep.
+# contract. It is modeled by `realize._verify_cost` -- `none`/`bounds` are free
+# (a bounds check fuses into the access the memory axis already prices),
+# `exact`/`hash` cost O(count) and are width-independent, so the axis is a
+# tradeable RCSP resource rather than an inert placeholder (docs/PARITY.md).
 DIMS = (
     "compute", "memory", "fabric", "sync", "compile",
     "thermal", "power", "reliability", "security", "accuracy", "contention",
