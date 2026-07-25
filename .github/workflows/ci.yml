@@ -150,7 +150,10 @@ jobs:
             fi
           done
 
-      - name: StreamPack C decoder fuzz (libFuzzer + ASan/UBSan on the trust boundary)
+      - name: Binary trust-boundary fuzz (libFuzzer + ASan/UBSan on all six decoders)
+        # StreamPack decoder/executor/encoder, the ETL binary-record decoder, the UART
+        # telemetry-frame decoder, and the BCIRQ8 model loader -- every runtime/c/ entry
+        # point that parses bytes it did not produce.
         run: FUZZ_RUNS=500000 bash tools/c/fuzz_streampack.sh
 
       - name: CT4 measured-replan runbook (degrade mode; the rig path stays exercised)

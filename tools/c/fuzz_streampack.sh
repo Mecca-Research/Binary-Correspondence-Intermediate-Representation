@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
-# Fuzz the StreamPack C decoder (a trust boundary) under libFuzzer + ASan/UBSan, and
-# run an ASan/UBSan smoke on a real Python-encoded pack + byte mutations. Needs clang
-# with compiler-rt (libclang-rt-NN-dev). FUZZ_RUNS controls the fuzz iteration count.
+# Fuzz every BINARY TRUST BOUNDARY in runtime/c/ under libFuzzer + ASan/UBSan, and run an
+# ASan/UBSan smoke on a real Python-encoded pack + byte mutations. Needs clang with
+# compiler-rt (libclang-rt-NN-dev). FUZZ_RUNS controls the fuzz iteration count.
+#
+# The six harnesses, and whose bytes each one distrusts:
+#   StreamPack decoder / executor / encoder  -- an artifact handed to the runtime
+#   ETL binary-record decoder                -- device/driver packet fields
+#   telemetry-frame decoder                  -- frames a device emits over UART
+#   BCIRQ8 model loader                      -- an external model artifact (LangRef 16)
+#
+# Each seeds from real Python-rail output so the campaign starts inside the format rather
+# than rediscovering its magic; the BCIRQ8 harness additionally REPAIRS the format's three
+# checksum layers, without which a coverage-guided fuzzer only ever proves that the CRC
+# check works and never reaches the parser behind it.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -105,5 +116,64 @@ if "${tmp}/fuzz_encode" -runs="${RUNS}" -max_total_time=60 "${tmp}/corpus_enc" >
   echo "  PASS libFuzzer encoder (${RUNS} runs, no crash)"
 else
   echo "  FAIL: libFuzzer encoder found a crash"; tail -40 "${tmp}/flog4"; exit 1
+fi
+
+echo "[fuzz] libFuzzer on the telemetry-frame decoder (${RUNS} runs)"
+# bcir_telemetry_frame.c decodes frames a DEVICE emits over a byte transport (UART --
+# docs/kernel/TELEMETRY_FRAME_ABI.md), so the count/CRC/resync fields are all hostile.
+# Seeded from real Python-encoded frames plus a garbage-prefixed multi-frame stream, so
+# the fuzzer starts past the magic instead of rediscovering it.
+"${CLANG}" -std=c23 -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all \
+  "${C}/fuzz_telemetry_frame.c" "${C}/bcir_telemetry_frame.c" "${C}/bcir_runtime.c" \
+  -I "${C}" -o "${tmp}/fuzz_tf" || { echo "  FAIL: telemetry-frame fuzzer build"; exit 1; }
+mkdir -p "${tmp}/corpus_tf"
+python3 - "${tmp}/corpus_tf" <<'PY' || { echo "  FAIL: telemetry frame seed"; exit 1; }
+import os, sys
+import bcir.telemetry_frame as tf
+d = sys.argv[1]
+def mk(n, seq=7, ts=12345):
+    recs = [tf.DataDNA(segment_id=f"s{i}", claim_id=1000 + i, cycles=100 * i, bytes=8 * i,
+                       misses=i, thermal=40 + i, voltage=-i, utilization=i % 101)
+            for i in range(n)]
+    return tf.encode_frame(recs, seq=seq, timestamp=ts)
+for n in (0, 1, 2, 5, 17, 64):
+    open(os.path.join(d, f"frame_{n}.bin"), "wb").write(mk(n))
+open(os.path.join(d, "stream2.bin"), "wb").write(mk(2) + mk(3))          # back-to-back frames
+open(os.path.join(d, "noise.bin"), "wb").write(                          # the resync path
+    b"\xde\xad\xbe\xefBTL" + mk(2) + b"\x00\x01BTLM" + mk(1))
+PY
+if "${tmp}/fuzz_tf" -runs="${RUNS}" -max_total_time=60 "${tmp}/corpus_tf" >"${tmp}/flog5" 2>&1; then
+  echo "  PASS libFuzzer telemetry frame (${RUNS} runs, no crash)"
+else
+  echo "  FAIL: libFuzzer telemetry frame found a crash"; tail -40 "${tmp}/flog5"; exit 1
+fi
+
+echo "[fuzz] libFuzzer on the BCIRQ8 model loader (${RUNS} runs)"
+# bcir_q8_model.c parses an EXTERNAL model artifact (LangRef 16). The format is sealed by
+# a header CRC, a body CRC, and per-tensor CRCs -- right for the format, fatal for a
+# fuzzer, since a random mutation dies on a checksum long before it reaches the geometry,
+# span-overlap, exponent-range or canonical-inventory checks. The harness therefore drives
+# each input twice: RAW (keeps the reject-on-bad-CRC path covered) and CRC-REPAIRED, which
+# is what actually explores the parser (measured: 49 -> 228 covered blocks).
+"${CLANG}" -std=c23 -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all \
+  "${C}/fuzz_q8_model.c" "${C}/bcir_q8_model.c" -I "${C}" -o "${tmp}/fuzz_q8" \
+  || { echo "  FAIL: BCIRQ8 fuzzer build"; exit 1; }
+mkdir -p "${tmp}/corpus_q8"
+if python3 - "${tmp}/corpus_q8" <<'PY'
+import sys
+from pathlib import Path
+from bcir.tests.test_model_weights_io import _write        # the canonical BCIRQ8 writer
+for tied in (False, True):
+    _write(Path(sys.argv[1]) / ("tied.bcirq8" if tied else "untied.bcirq8"), tied=tied)
+PY
+then
+  if "${tmp}/fuzz_q8" -runs="${RUNS}" -max_total_time=60 -max_len=16384 "${tmp}/corpus_q8" \
+       >"${tmp}/flog6" 2>&1; then
+    echo "  PASS libFuzzer BCIRQ8 loader (${RUNS} runs, no crash)"
+  else
+    echo "  FAIL: libFuzzer BCIRQ8 loader found a crash"; tail -40 "${tmp}/flog6"; exit 1
+  fi
+else
+  echo "  SKIP BCIRQ8 loader fuzz (could not build a seed artifact)"
 fi
 echo "[fuzz] ok"

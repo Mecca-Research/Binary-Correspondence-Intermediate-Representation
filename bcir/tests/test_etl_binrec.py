@@ -100,6 +100,33 @@ def test_oob_is_rejected_on_both_rails():
             assert any(st == _OOB for st, _ in p), "a short buffer must OOB some field"
 
 
+def test_full_width_signed_extremes_reinterpret_identically():
+    """The 64-bit signed field at the two's-complement EXTREMES.
+
+    A full-width signed field is the one case with no room to sign-extend: the decoder
+    must reinterpret the raw bit pattern. Spelling that as a bare `(int64_t)v` cast is
+    implementation-defined in C11/C17 whenever `v > INT64_MAX` (only C23 mandates the
+    wraparound), which is exactly why `bcir_telemetry_frame.c::rd_i64` avoids it. This
+    pins the same discipline for `bcir_binrec.c` on the patterns a cast would decide:
+    all-ones (-1), INT64_MIN, INT64_MAX, and INT64_MAX+1.
+    """
+    if not (shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")):
+        return
+    # _FIELDS[5] is (0, 64, "s", "little") -- the full-width signed field.
+    cases = [(b"\xff" * 8, -1),
+             (b"\x00" * 7 + b"\x80", -(2 ** 63)),          # INT64_MIN
+             (b"\xff" * 7 + b"\x7f", 2 ** 63 - 1),         # INT64_MAX
+             (b"\x01" + b"\x00" * 6 + b"\x80", -(2 ** 63) + 1)]
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = _build_harness(tmp)
+        assert exe is not None
+        for raw, expected in cases:
+            buf = raw + b"\x00" * 4                        # pad so every field is in bounds
+            c, p = _c_decode(exe, tmp, buf), _py_decode(buf)
+            assert c == p, (raw.hex(), c, p)
+            assert p[5] == (_OK, expected), (raw.hex(), p[5], expected)
+
+
 def test_nvme_sqe_header_decodes_consistently():
     """The reference NVMe SQE header (the documented record) decodes the same on both
     rails -- a concrete, named ABI shape, not just random bytes."""
