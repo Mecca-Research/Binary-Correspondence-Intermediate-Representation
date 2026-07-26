@@ -40,8 +40,13 @@ class Component:
 
     name: str
     type: "Asn1Type"
-    #: Context-specific tag number, or None to keep the base type's tag.
+    #: Tag number, or None to keep the base type's tag.
     tag: int | None = None
+    #: The tag's class. X.680 §31 allows [APPLICATION n] and [PRIVATE n] as well as the
+    #: bare [n] that means context-specific, and the class is not cosmetic: X.680 §8.6
+    #: orders tags by class first, which is what fixes the component order of a SET in
+    #: every canonical encoding (X.690 §11.6, X.696 §18.2).
+    tag_class: TagClass = TagClass.CONTEXT
     #: §8.14.3 (explicit) versus §8.14.4 (implicit) tagging for this component.
     explicit: bool = False
     optional: bool = False
@@ -56,7 +61,7 @@ class Component:
             return base
         # §8.14.4 a): implicit tagging keeps the base's constructed bit; §8.14.3:
         # explicit tagging is always constructed, since it nests a full encoding.
-        return Tag(TagClass.CONTEXT, self.tag, True if self.explicit else base.constructed)
+        return Tag(self.tag_class, self.tag, True if self.explicit else base.constructed)
 
     def outer_tag(self) -> Tag | None:
         """The single tag this component shows on the wire, or None if it has no one tag.
@@ -70,8 +75,8 @@ class Component:
         if self.tag is None:
             return None if isinstance(self.type, Choice) else self.type.base_tag()
         if self.explicit:                                  # §8.14.3
-            return Tag(TagClass.CONTEXT, self.tag, True)
-        return Tag(TagClass.CONTEXT, self.tag,             # §8.14.4
+            return Tag(self.tag_class, self.tag, True)
+        return Tag(self.tag_class, self.tag,               # §8.14.4
                    self.type.base_tag().constructed)
 
     def expected_tags(self) -> tuple[Tag, ...]:
@@ -410,8 +415,8 @@ def _apply_tag(comp: Component, base: Tlv) -> Tlv:
     if comp.tag is None:
         return base
     if comp.explicit:                                     # §8.14.3
-        return Tlv(Tag(TagClass.CONTEXT, comp.tag, True), b"", [base])
-    return Tlv(Tag(TagClass.CONTEXT, comp.tag, base.tag.constructed),  # §8.14.4
+        return Tlv(Tag(comp.tag_class, comp.tag, True), b"", [base])
+    return Tlv(Tag(comp.tag_class, comp.tag, base.tag.constructed),    # §8.14.4
                base.content, base.children, offset=base.offset)
 
 

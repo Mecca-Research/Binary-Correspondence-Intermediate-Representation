@@ -56,7 +56,7 @@ rule.
 | X.693 | 8825-4:2021 | XER | not started |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
-| X.696 | 8825-7:2021 | OER | **blocked** — spec not available (see §4 D) |
+| X.696 | 8825-7:2021 | OER | **built** (COER out, BASIC-OER in; validated against Annex A) |
 | X.697 | 8825-8:2021 | JER | not started |
 
 Sizes, as a rough effort signal (converted spec text, lines): X.681 1 125 · X.682 345 ·
@@ -181,12 +181,14 @@ for every corpus program — and a dual-rail C twin with the same differential
 discipline. X.695 (registration of PER encoding instructions) follows as a small
 appendix once PER lands.
 
-### D. X.696 OER + DER→native fast path · **fast path BUILT · OER blocked**
+### D. X.696 OER + DER→native fast path · **BUILT**
 
-> **Status: half delivered.** The **DER→native fast path** is built:
-> `runtime/c/bcir_asn1_streampack.{h,c}`, wired into `check_runtime.sh` and fuzzed as
-> the eighth trust boundary. **X.696 OER is not started and is blocked on the
-> specification** — see the note below.
+> **Status: delivered, both halves.** OER is `bcir/asn1/oer.py` (BASIC-OER +
+> CANONICAL-OER, clauses 8–32), validated **byte-for-byte against the standard's own
+> Annex A worked example** (95 octets). The DER→native fast path is
+> `runtime/c/bcir_asn1_streampack.{h,c}`, wired into `check_runtime.sh` and fuzzed as the
+> eighth trust boundary. Measured on the corpus: OER is **76.4 %** of DER and **41.6 %**
+> of the native format.
 
 
 Octet Encoding Rules: octet-aligned, no bit-shifting, designed for fast encode/decode
@@ -201,14 +203,24 @@ reconstruction twice.
 No dependency on constraints (OER's canonical variant, COER, is well-defined without
 them), so this can run in parallel with B/C.
 
-**Blocker for the OER half.** Rec. ITU-T X.696 | ISO/IEC 8825-7 is not among the
-specifications available to this project: the uploaded set covers X.680–X.693, and
-`itu.int` is refused by the environment's network policy. OER is a *binary wire format*
-whose canonical variant BCIR would emit and digest, so implementing it from recollection
-is not an option — a plausible-looking encoder that gets the length determinant, the
-SEQUENCE preamble bitmap, or the SEQUENCE OF quantity field wrong produces octets that
-are not OER, and the error would be frozen into an ABI. **X.696 must be supplied before
-this half can start.**
+**How the OER half was validated.** X.696 Annex A carries a complete worked example — a
+personnel record, 95 octets, with a per-field commentary. That fixture is transcribed into
+`bcir/tests/test_asn1_oer.py` and the encoder reproduces it byte for byte. This matters
+more than a round-trip test: a round trip passes just as happily when the encoder and
+decoder share the same wrong assumption about the length determinant, the SEQUENCE
+preamble bitmap or the SEQUENCE OF quantity field, which is exactly the failure mode an
+implementation written from recollection produces. Annex A also happens to exercise the
+three rules most easily got wrong — SET components in canonical tag order (§18.2, and the
+record's `name` is `[APPLICATION 1]`, sorting ahead of `title`'s `[0]`), the presence
+bitmap (§16.2.3), and the quantity field, which is a length determinant followed by the
+count rather than a bare count (§17.2).
+
+**The constraint dependency, stated.** Clauses 10, 13, 14 and 27 pick between a
+fixed-width and a length-prefixed form from the type's *effective constraint* (§8.2.7,
+§8.2.8). BCIR has no constraint model yet (phase B), so every integer takes §10.4 e) and
+every string the length-prefixed form. That is not a shortcut — it is what X.696
+specifies for an unconstrained type — and phase B adds the narrower forms without
+changing any octets already emitted for one.
 
 **What the fast path delivers on its own.** A driver that receives a DER projection can
 now reconstruct the native artifact in freestanding C, with no Python in the path. The

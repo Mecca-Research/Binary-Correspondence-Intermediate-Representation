@@ -281,8 +281,29 @@ def decode_pack(data: bytes, *, strictness: Strictness = Strictness.DER):
     return value_to_pack(MODULE.decode("StreamPack", data, strictness=strictness))
 
 
+def encode_pack_oer(pack) -> bytes:
+    """CANONICAL-OER octets for a StreamPack under the same BCIR-StreamPack module.
+
+    The type model is the SAME object the DER projection uses -- nothing about the module
+    changes to gain a second transfer syntax. That is the point roadmap section 0 turns on:
+    an abstract value has several legal realizations, the encoding rules are a *realization
+    choice*, and the schema is not where that choice lives. Phase H prices these
+    candidates; this is one of them.
+    """
+    from .oer import OerRules, encode_oer
+    return encode_oer(STREAM_PACK, pack_to_value(pack), rules=OerRules.CANONICAL)
+
+
+def decode_pack_oer(data: bytes, *, canonical: bool = False):
+    """Recover a StreamPack from its OER projection (BASIC-OER admitted by default)."""
+    from .oer import OerRules, decode_oer
+    rules = OerRules.CANONICAL if canonical else OerRules.BASIC
+    return value_to_pack(decode_oer(STREAM_PACK, data, rules=rules))
+
+
 __all__ = [
     "BCIR_ARC", "BLOCK", "DISPATCH_NAMES", "DISPATCH_VALUES", "LANE_SEGMENT", "MODULE",
     "PREFETCH", "PROJECTION_VERSION", "STREAM_PACK", "STREAMPACK_MODULE_OID",
-    "TRACE_NOTE", "decode_pack", "encode_pack", "pack_to_value", "value_to_pack",
+    "TRACE_NOTE", "decode_pack", "decode_pack_oer", "encode_pack", "encode_pack_oer",
+    "pack_to_value", "value_to_pack",
 ]
