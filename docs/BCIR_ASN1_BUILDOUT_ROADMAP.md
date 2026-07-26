@@ -123,7 +123,14 @@ Two hard dependencies, both from the standards rather than from BCIR:
 
 ## 4. The phases
 
-### A. X.680 front-end — the ASN.1 compiler front-end · **prerequisite for everything**
+### A. X.680 front-end — the ASN.1 compiler front-end · **BUILT**
+
+> **Status: delivered.** `bcir/frontends/asn1/` (lexer · parser · printer · lowering),
+> the `bcir-asn1c` CLI, and `bcir/tests/test_asn1_frontend.py`. The gate below passes:
+> `BCIR-StreamPack` is now *parsed from its own text* and produces byte-identical DER
+> for all 12 corpus programs. The third-party half passes for
+> `AuthorityKeyIdentifier` and **is blocked for `SubjectPublicKeyInfo`** — see the
+> X.681 finding under §6.
 
 Parse real ASN.1 module text into the existing `schema.py` type model. Today the model
 is hand-built in Python; a peer's `.asn1` module cannot be consumed at all.
@@ -272,7 +279,41 @@ A/B if there is capacity. H is reachable after C+D, before F/G — the thesis do
 need ECN to be demonstrated over a fixed candidate set, which is precisely why §4 G
 carries a cut condition.
 
+**Revision after building A.** A is done, and its stop condition fired with a result
+that changes what F is for (§6). The order above is still right *if the goal is the
+BCIR thesis*: B → C → H is the path to cost-governed encoding selection, and none of it
+needs X.681. But if the goal is **consuming real-world schemas**, F moves to the front —
+X.509, LDAP, SNMP, and the 3GPP families all use information object classes, and A
+cannot express any of them. The two orders are:
+
+| Goal | Order |
+|---|---|
+| Demonstrate the thesis (cost-governed encoding selection) | **A → D → B → C → H**, F/G after |
+| Consume real-world schemas | **A → F → D → B → C → H** |
+
+This is a genuine fork, not a detail — it is worth an explicit decision rather than a
+default.
+
 ## 6. Stop conditions and decision boundaries
+
+- **Phase A's X.509 stop condition — TRIGGERED, and measured.** §4 A said: *"if the
+  parsed subset cannot express X.509 without X.681 information objects, stop and take
+  phase F first rather than inventing a dialect."* It half-triggers, and the split is
+  clean:
+
+  | RFC 5280 type | Result |
+  |---|---|
+  | `AuthorityKeyIdentifier` (+ `GeneralName`, `Name`, `RDNSequence`, `DirectoryString`) | **Parses, lowers, and re-encodes 37/37 real trust-store extensions byte-for-byte.** |
+  | `SubjectPublicKeyInfo` | **Blocked.** `AlgorithmIdentifier.parameters` is `ANY DEFINED BY algorithm` — withdrawn X.680:1988 notation whose modern spelling is an X.681 open type. |
+
+  The blocker is not marginal: **152 of 152** certificates in the host trust store carry
+  `parameters`, so the type cannot be usefully expressed without X.681 at all. The
+  front-end refuses `ANY` by name rather than inventing an open-type dialect, which is
+  what the stop condition asked for.
+
+  **Consequence for sequencing:** phase **F** (X.681) is what unblocks X.509, not phase
+  B or C. F is no longer only "nice for real-world modules" — it is the gate on
+  consuming the single most widely deployed ASN.1 schema family there is. See §5.
 
 - **ECN reduction (§4 G).** If cost-governed selection over the fixed set
   {DER, CANONICAL-PER-ALIGNED, CANONICAL-PER-UNALIGNED, COER, CJER} demonstrates the

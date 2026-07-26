@@ -29,6 +29,7 @@ bcir = "bcir.run:main"
 bcir-pack = "bcir.abi.streampack_tool:main"
 bcir-registry = "bcir.registry_tool:main"
 bcir-model-assess = "bcir.frontends.models.assess_tool:main"
+bcir-asn1c = "bcir.frontends.asn1.__main__:main"
 bcir-ham-plan = "bcir.kbcir.ham_tool:main"
 bcir-tmsao-audit = "bcir.performance_audit:main"
 
@@ -38,6 +39,14 @@ Documentation = "https://github.com/Mecca-Research/Binary-Correspondence-Interme
 
 [tool.setuptools.packages.find]
 include = ["bcir*"]
+
+# The ASN.1 modules are SOURCE, not documentation: `bcir/asn1/BCIR-StreamPack.asn1` is
+# what the X.680 front-end compiles into the projection's type model, and the RFC 5280
+# excerpt is what the third-party conformance test reads. An sdist/wheel without them
+# installs a package whose own tests cannot run.
+[tool.setuptools.package-data]
+"bcir.asn1" = ["*.asn1"]
+"bcir.frontends.asn1" = ["testdata/*.asn1"]
 
 # --- ruff ---------------------------------------------------------------------------
 # Calibrated to be GREEN on the existing tree so the gate catches *regressions*, not the

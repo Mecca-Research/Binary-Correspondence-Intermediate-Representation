@@ -43,6 +43,8 @@ _COLD_MODEL_ASSESS = ("assessment", "execution_plan", "model_microbench", "asses
 # (plan a program, emit a kernel) never touches ASN.1, so loading it eagerly would put
 # the whole clause-8 type surface on every `import bcir`.
 _COLD_ASN1 = ("tags", "length", "tlv", "values", "der", "codec", "schema", "streampack")
+#: The X.680 front-end (roadmap phase A): a schema COMPILER, never on the hot path.
+_COLD_ASN1_FRONTEND = ("lexer", "ast", "parser", "printer", "lower")
 
 COLD: frozenset[str] = frozenset(
     [f"bcir.kbcir.{m}" for m in _COLD_KBCIR]
@@ -52,7 +54,9 @@ COLD: frozenset[str] = frozenset(
     + [f"bcir.hosted.models.{m}" for m in _COLD_HOSTED_MODELS]
     + [f"bcir.hosted.training.{m}" for m in _COLD_HOSTED_TRAINING]
     + [f"bcir.frontends.models.{m}" for m in _COLD_MODEL_ASSESS]
-    + ["bcir.asn1"] + [f"bcir.asn1.{m}" for m in _COLD_ASN1])
+    + ["bcir.asn1"] + [f"bcir.asn1.{m}" for m in _COLD_ASN1]
+    + ["bcir.frontends.asn1"]
+    + [f"bcir.frontends.asn1.{m}" for m in _COLD_ASN1_FRONTEND])
 
 # --- the HOT entry points that must stay lean ---
 HOT_ENTRIES: dict[str, str] = {

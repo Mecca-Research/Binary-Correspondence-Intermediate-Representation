@@ -58,6 +58,29 @@ class Component:
         # explicit tagging is always constructed, since it nests a full encoding.
         return Tag(TagClass.CONTEXT, self.tag, True if self.explicit else base.constructed)
 
+    def outer_tag(self) -> Tag | None:
+        """The single tag this component shows on the wire, or None if it has no one tag.
+
+        None means an UNTAGGED CHOICE, which shows whichever alternative was chosen
+        (X.680 §29.1). Note that an EXPLICIT tag is computed WITHOUT consulting the base
+        type: §8.14.3 wraps the base encoding in a new constructed tag, so the base tag
+        moves inside and stops being observable from outside. That distinction is what
+        lets `[4] Name` work when `Name` is a CHOICE and has no base tag to ask for.
+        """
+        if self.tag is None:
+            return None if isinstance(self.type, Choice) else self.type.base_tag()
+        if self.explicit:                                  # §8.14.3
+            return Tag(TagClass.CONTEXT, self.tag, True)
+        return Tag(TagClass.CONTEXT, self.tag,             # §8.14.4
+                   self.type.base_tag().constructed)
+
+    def expected_tags(self) -> tuple[Tag, ...]:
+        """Every tag this component may present on the wire."""
+        tag = self.outer_tag()
+        if tag is None:
+            return self.type.alternative_tags()
+        return (tag,)
+
 
 class Asn1Type:
     """Base of the type model. Subclasses encode/decode a Python value."""
@@ -193,19 +216,18 @@ class Sequence(Asn1Type):
         children = list(tlv.children)
         index = 0
         for comp in self.components:
-            expected = comp.tagged(comp.type.base_tag())
-            if index < len(children) and _matches(children[index], expected):
+            if index < len(children) and _matches_any(children[index], comp):
                 out[comp.name] = comp.type.decode(
-                    _strip_tag(comp, children[index], expected),
-                    strictness=strictness)
+                    _strip_tag(comp, children[index]), strictness=strictness)
                 index += 1
             elif comp.has_default:
                 out[comp.name] = comp.default          # §11.5: absent means DEFAULT
             elif comp.optional:
                 continue
             else:
+                shown = " | ".join(str(t) for t in comp.expected_tags())
                 raise Asn1Error(
-                    f"{self.name}: mandatory component {comp.name!r} ({expected}) is "
+                    f"{self.name}: mandatory component {comp.name!r} ({shown}) is "
                     f"missing or out of order (X.690 8.9.2)", tlv.offset)
         if index != len(children):
             raise Asn1Error(
@@ -214,8 +236,174 @@ class Sequence(Asn1Type):
         return out
 
 
+@dataclass
+class SetOf(Asn1Type):
+    """SET OF (X.690 §8.12): unordered as an abstract value.
+
+    DER fixes the order the octets appear in -- §11.6 requires ascending order of the
+    component encodings -- so the encoder SORTS rather than preserving input order.
+    That is the whole point of a canonical encoding: two peers holding the same set
+    must produce the same octets, and therefore the same digest.
+    """
+
+    element: Asn1Type
+    name: str = "SET OF"
+
+    def base_tag(self) -> Tag:
+        return Tag(TagClass.UNIVERSAL, Universal.SET, True)
+
+    def encode(self, value) -> Tlv:
+        children = [self.element.encode(v) for v in value]
+        return Tlv(self.base_tag(), b"", _sorted_set_of(children))
+
+    def decode(self, tlv: Tlv, *, strictness: Strictness) -> list:
+        if not tlv.constructed:
+            raise Asn1Error(
+                f"{self.name} must be constructed (X.690 8.12.1)", tlv.offset)
+        return [self.element.decode(c, strictness=strictness) for c in tlv.children]
+
+
+@dataclass
+class Set(Asn1Type):
+    """SET (X.690 §8.11): components identified by tag, not by position.
+
+    Because the wire order carries no information, DER fixes it: the components are
+    emitted in ascending tag order. Decoding accepts them in any order, which is what
+    makes a SET a SET rather than a SEQUENCE with a different tag.
+    """
+
+    components: tuple[Component, ...]
+    name: str = "SET"
+
+    def base_tag(self) -> Tag:
+        return Tag(TagClass.UNIVERSAL, Universal.SET, True)
+
+    def encode(self, value: dict) -> Tlv:
+        unknown = set(value) - {c.name for c in self.components}
+        if unknown:
+            raise Asn1Error(f"{self.name}: unknown component(s) {sorted(unknown)}")
+        children: list[Tlv] = []
+        for comp in self.components:
+            if comp.name not in value:
+                if comp.optional or comp.has_default:
+                    continue
+                raise Asn1Error(f"{self.name}: component {comp.name!r} is mandatory")
+            item = value[comp.name]
+            if comp.has_default and item == comp.default:  # §11.5
+                continue
+            children.append(_apply_tag(comp, comp.type.encode(item)))
+        return Tlv(self.base_tag(), b"", _sorted_set_of(children))
+
+    def decode(self, tlv: Tlv, *, strictness: Strictness) -> dict:
+        if not tlv.constructed:
+            raise Asn1Error(
+                f"{self.name} must be constructed (X.690 8.11.1)", tlv.offset)
+        remaining = list(tlv.children)
+        out: dict[str, object] = {}
+        for comp in self.components:
+            for position, child in enumerate(remaining):
+                if _matches_any(child, comp):
+                    out[comp.name] = comp.type.decode(
+                        _strip_tag(comp, child), strictness=strictness)
+                    del remaining[position]
+                    break
+            else:
+                if comp.has_default:
+                    out[comp.name] = comp.default
+                elif not comp.optional:
+                    raise Asn1Error(
+                        f"{self.name}: mandatory component {comp.name!r} is missing "
+                        f"(X.690 8.11.2)", tlv.offset)
+        if remaining:
+            raise Asn1Error(
+                f"{self.name}: {len(remaining)} component(s) match no alternative",
+                tlv.offset)
+        return out
+
+
+@dataclass
+class Choice(Asn1Type):
+    """CHOICE (X.680 §29): exactly one alternative, identified by its tag.
+
+    A CHOICE has NO TAG OF ITS OWN (§29.1) -- the encoding is the chosen alternative's
+    encoding, unchanged. Two consequences the model has to carry:
+
+    * `base_tag` cannot answer, so it raises rather than inventing one. A CHOICE
+      component is matched through `Component.expected_tags` instead.
+    * X.680 §31.2.7 forbids an IMPLICIT tag on a CHOICE: an implicit tag REPLACES the
+      base tag, and replacing the tag of an untagged type would erase the only thing
+      that says which alternative was chosen. A context tag on a CHOICE must therefore
+      be explicit, and `Component` is checked for that here.
+
+    Values are `(alternative_name, value)` pairs -- a bare value would be ambiguous
+    whenever two alternatives accept the same Python type.
+    """
+
+    alternatives: tuple[Component, ...]
+    name: str = "CHOICE"
+
+    def __post_init__(self) -> None:
+        for alt in self.alternatives:
+            if alt.tag is not None and not alt.explicit and isinstance(alt.type, Choice):
+                raise Asn1Error(
+                    f"{self.name}: alternative {alt.name!r} tags a CHOICE implicitly; "
+                    f"X.680 31.2.7 requires EXPLICIT")
+        tags = [t for alt in self.alternatives for t in alt.expected_tags()]
+        duplicate = {t for t in tags if tags.count(t) > 1}
+        if duplicate:
+            raise Asn1Error(
+                f"{self.name}: alternatives share tag {sorted(map(str, duplicate))}; "
+                f"X.680 29.3 requires distinct tags")
+
+    def base_tag(self) -> Tag:
+        raise Asn1Error(
+            f"{self.name}: a CHOICE has no tag of its own (X.680 29.1); tag the "
+            f"component that references it, EXPLICITly (X.680 31.2.7)")
+
+    def alternative_tags(self) -> tuple[Tag, ...]:
+        return tuple(t for alt in self.alternatives for t in alt.expected_tags())
+
+    def encode(self, value) -> Tlv:
+        if not (isinstance(value, tuple) and len(value) == 2):
+            raise Asn1Error(
+                f"{self.name}: value must be an (alternative, value) pair, got "
+                f"{type(value).__name__}")
+        chosen, payload = value
+        for alt in self.alternatives:
+            if alt.name == chosen:
+                return _apply_tag(alt, alt.type.encode(payload))
+        raise Asn1Error(f"{self.name}: {chosen!r} is not an alternative")
+
+    def decode(self, tlv: Tlv, *, strictness: Strictness) -> tuple:
+        for alt in self.alternatives:
+            if _matches_any(tlv, alt):
+                return (alt.name,
+                        alt.type.decode(_strip_tag(alt, tlv), strictness=strictness))
+        raise Asn1Error(
+            f"{self.name}: {tlv.tag} matches no alternative (X.680 29.1)", tlv.offset)
+
+
+def _sorted_set_of(children: list[Tlv]) -> list[Tlv]:
+    """X.690 §11.6 ordering: ascending, shorter encodings padded with zero octets.
+
+    The padding is what makes the comparison a total order on encodings of unequal
+    length; it mirrors `der.py`, so what the encoder emits is exactly what
+    `der_violations` accepts.
+    """
+    if len(children) < 2:
+        return children
+    encoded = [encode_tlv(c) for c in children]
+    width = max(len(e) for e in encoded)
+    return [c for _, c in sorted(zip(encoded, children),
+                                 key=lambda pair: pair[0].ljust(width, b"\x00"))]
+
+
 def _matches(tlv: Tlv, expected: Tag) -> bool:
     return tlv.tag.cls is expected.cls and tlv.tag.number == expected.number
+
+
+def _matches_any(tlv: Tlv, comp: Component) -> bool:
+    return any(_matches(tlv, tag) for tag in comp.expected_tags())
 
 
 def _apply_tag(comp: Component, base: Tlv) -> Tlv:
@@ -227,7 +415,7 @@ def _apply_tag(comp: Component, base: Tlv) -> Tlv:
                base.content, base.children, offset=base.offset)
 
 
-def _strip_tag(comp: Component, tlv: Tlv, expected: Tag) -> Tlv:
+def _strip_tag(comp: Component, tlv: Tlv) -> Tlv:
     if comp.tag is None:
         return tlv
     if comp.explicit:                                     # §8.14.3: unwrap the nesting
@@ -261,4 +449,5 @@ class Module:
         return self.types[type_name].decode(tlv, strictness=strictness)
 
 
-__all__ = ["Asn1Type", "Component", "Module", "Primitive", "Sequence", "SequenceOf"]
+__all__ = ["Asn1Type", "Choice", "Component", "Module", "Primitive", "Sequence",
+           "SequenceOf", "Set", "SetOf"]
