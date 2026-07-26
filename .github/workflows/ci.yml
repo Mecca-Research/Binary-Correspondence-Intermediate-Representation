@@ -22,8 +22,22 @@ jobs:
   # work no longer sits sequentially behind the ~80s Python suite, so the critical path drops
   # from their sum to their max. Each job restores the same cached toolchain (clang/lld/llvm/node).
   oracle:
-    name: BCIR oracle (Python conformance + parity + fuzz)
+    name: BCIR oracle ${{ matrix.shard }}/2 (Python conformance + parity + fuzz)
     runs-on: ubuntu-latest
+    # The suite is sharded across two runners. A shard is a STRIDE of the discovery order,
+    # not a contiguous block: `test_c_cfront` is ~60% of the suite's CPU and its tests are
+    # adjacent, so contiguous halves would leave one shard doing nearly all the work.
+    # The union of the shards is exactly the full inventory and they are disjoint, so this
+    # cannot drop a test -- the property that makes splitting a conformance suite safe.
+    # Sharding only pays across SEPARATE runners. On ONE 4-core machine it is a net LOSS,
+    # because each shard already saturates the cores and the pool startup is paid twice
+    # (measured locally, thorough -j0: 140s unsharded vs 70s + 89s = 159s run one after the
+    # other). Across two runners the job's wall time is the SLOWER shard, so the 44/56 split
+    # above is what matters, not the sum.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -55,12 +69,16 @@ jobs:
         # runner has no such constraint and the suite is ~2x oversubscribed against it.
         # Measured on the thorough tier: 343s of test CPU over 4 cores, so the wall time is
         # bound by the pool width, not by any single test (the longest is ~15s).
-        run: BCIR_THOROUGH=1 python3 -m bcir.tests.run_all -j0
+        run: BCIR_THOROUGH=1 python3 -m bcir.tests.run_all -j0 --shard ${{ matrix.shard }}/2
 
+      # The campaigns below are whole-suite work, not per-test, so they run ONCE on shard 1
+      # rather than being duplicated. Guarding them also keeps the artifact names unique.
       - name: Bounded TMSAO cross-organ audit (correctness strict; timings informational)
+        if: matrix.shard == 1
         run: python3 tools/perf/run_tmsao_audit.py --repeats 3 --output build/performance/tmsao-report.json
 
       - name: Upload bounded TMSAO report
+        if: matrix.shard == 1
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: bcir-tmsao-performance-report
@@ -68,6 +86,7 @@ jobs:
           if-no-files-found: error
 
       - name: BCIR generated Python<->MLIR differential parity (large campaign)
+        if: matrix.shard == 1
         run: |
           # the two seeds are independent campaigns -> run them in parallel; wait on
           # each PID so a failure in either still fails the step (bare `wait` would not).
@@ -82,6 +101,7 @@ jobs:
           git diff --exit-code -- mlir/test/passes/target_matrix.mlir
 
       - name: BCIR trust-boundary fuzz (seeded by gen_module)
+        if: matrix.shard == 1
         run: |
           python3 -m bcir.kbcir.fuzz -n 4000 --seed 1 & pf1=$!
           python3 -m bcir.kbcir.fuzz -n 4000 --seed 2 & pf2=$!
@@ -171,6 +191,10 @@ jobs:
           version: train-${{ runner.arch }}-v1
 
       - name: cfront twin sanitizer sweep (ASan/UBSan/LSan over the C compiler's own lexer/parser/lowering/emit)
+        # SANITIZE_ENGINES_PARALLEL=1 runs the clang and gcc ASan/UBSan campaigns at the same
+        # time. They build separate binaries from the same sources and share nothing but the
+        # fixture files, which are read-only -- so the only thing serializing them was the
+        # order they were written in.
         # Runs tools/c/sanitize_cfront.sh -- the ASan+UBSan+LSan harness over the bcir_cfront C twin
         # (every cfront_*.c fixture + a bounded 300-valid/400-malformed fuzz campaign + the adversarial
         # Bug-1/2/A/B fixtures), so a memory bug INSIDE the compiler -- including the SEG6/7 fence + the
@@ -180,7 +204,7 @@ jobs:
         # step stays well under a minute; ASan/UBSan/leak remain always-on. check_runtime.sh's own nested
         # call to this same harness is suppressed in the c-runtime job (BCIR_SKIP_CFRONT_SANITIZE=1) so
         # the campaign runs exactly once per CI run; the Valgrind stage lives in c-memory-deep-sweep.yml.
-        run: SANITIZE_SKIP_VALGRIND=1 bash tools/c/sanitize_cfront.sh
+        run: SANITIZE_SKIP_VALGRIND=1 SANITIZE_ENGINES_PARALLEL=1 bash tools/c/sanitize_cfront.sh
 
       - name: Hosted C ownership static analysis
         # Nine independent whole-file analyses (clang --analyze is single-threaded per TU and
@@ -258,16 +282,48 @@ jobs:
           clang --version
           python -c "from bcir.tests.test_c_cfront import test_stmtexpr_dual_rail; test_stmtexpr_dual_rail()"
 
+      - name: Install Ninja (pinned wheel; makes the generator choice deterministic)
+        # The generator dominates the gate below, so which one is available must not be left to
+        # whatever the runner image happens to ship. The pip wheel is ~300 KB and installs in a
+        # couple of seconds. Version-pinned like the other pip installs in this workflow.
+        # `|| true`: a failed install is not a test failure -- the gate below just falls back to
+        # the serial default generator, which is exactly the behaviour before this step existed.
+        shell: bash
+        run: python -m pip install --disable-pip-version-check --no-input ninja==1.13.0 || true
+
       - name: LLVM training aggregate CMake gate
-        # The 16 gates under llvm-training-check are independent, so they build in parallel.
-        # LLVM_TRAINING_USES_TERMINAL=OFF is what makes -j effective: USES_TERMINAL puts a
-        # target in the console pool (depth 1) and serializes the lot regardless of -j. The
-        # default stays ON for a developer who wants live streaming output.
-        # Measured: ubuntu 16.3s -> 5.6s locally; this step was 124s on windows-latest, where
-        # the ~16 bash/python process launches dominate.
+        shell: bash
+        # 16 independent gates, each a short bash/python process. THE GENERATOR DOMINATES, and
+        # getting it wrong is measurable: with the Visual Studio generator CMake gives every custom
+        # target its own .vcxproj and `-j` becomes MSBuild `/m`, which spawns a build node per
+        # project. Measured on windows-latest: 124s serial, **290s** with `-j 4` under MSBuild --
+        # the parallel flag more than doubled the time. Ninja has no per-target project overhead,
+        # so it is preferred and the SERIAL default generator is the fallback, never a parallel
+        # MSBuild.
+        #
+        # The probe is an actual `-G Ninja` configure rather than `command -v ninja`, because the
+        # question that matters is whether CMAKE can use Ninja, not whether a binary sits on PATH.
+        # The fallback MUST wipe the build directory: a failed configure can still leave a
+        # CMakeCache.txt pinning CMAKE_GENERATOR:INTERNAL=Ninja, and re-configuring that directory
+        # without -G does not reset it -- CMake silently RETAINS the cached generator (verified),
+        # so the fallback would quietly rebuild with the very generator that just failed. Passing
+        # an explicit conflicting -G instead hard-errors ("Does not match the generator used
+        # previously"). Removing the directory is the only clean recovery.
+        #
+        # LLVM_TRAINING_USES_TERMINAL=OFF is what lets Ninja actually parallelize: USES_TERMINAL
+        # puts a target in the console pool, which has depth 1. It is a no-op for the VS generator,
+        # which is why turning it off alone did nothing on Windows. The CMake default stays ON for
+        # a developer who wants live streaming output.
         run: |
-          cmake -S llvm-training -B build/llvm-training -DLLVM_TRAINING_USES_TERMINAL=OFF
-          cmake --build build/llvm-training --target llvm-training-check -j 4
+          if cmake -S llvm-training -B build/llvm-training -G Ninja -DLLVM_TRAINING_USES_TERMINAL=OFF; then
+            echo "generator: Ninja (parallel, -j 4)"
+            cmake --build build/llvm-training --target llvm-training-check -j 4
+          else
+            echo "generator: default, SERIAL (CMake could not configure with Ninja)"
+            rm -rf build/llvm-training
+            cmake -S llvm-training -B build/llvm-training
+            cmake --build build/llvm-training --target llvm-training-check
+          fi
 
       - name: Tests leave tracked sources unchanged
         run: git diff --exit-code

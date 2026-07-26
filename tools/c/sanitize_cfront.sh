@@ -23,6 +23,9 @@ N_VALID="${SANITIZE_N_VALID:-300}"        # random VALID programs (the rich cfro
 M_MALFORMED="${SANITIZE_M_MALFORMED:-400}" # random MALFORMED inputs (the totality contract: never crash)
 FUZZ_SEED="${SANITIZE_SEED:-20240628}"     # deterministic: no unseeded randomness
 VG_SUBSET="${SANITIZE_VG_SUBSET:-10}"      # how many fixtures the (slow ~20x) Valgrind pass covers
+# SANITIZE_ENGINES_PARALLEL=1 overlaps the three independent engine stages (clang ASan/UBSan, gcc ASan/UBSan,
+# clang UBSan-trap) instead of running them one after another -- same coverage, wall time max() not sum().
+# Off by default so an interactive run streams its output live; CI sets it. See the scheduler near the end.
 
 tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 fail=0
@@ -54,14 +57,18 @@ can_sanitize() {  # <compiler>
 }
 
 # Run every fixture + the fuzz campaign through one sanitized driver. Sets fail=1 on any diagnostic.
-run_san_engine() {  # <label> <san-binary>
-  local label="$1" bin="$2" fx errf rc
+# <key> namespaces this engine's scratch files: with SANITIZE_ENGINES_PARALLEL=1 the clang and gcc engines
+# run at the same time, and a SHARED fxerr.txt/secerr.txt would let one engine's stderr overwrite the
+# other's between the write and the grep -- silently losing a real diagnostic (or attributing it to the
+# wrong compiler). Every path below is therefore per-engine.
+run_san_engine() {  # <key> <label> <san-binary>
+  local key="$1" label="$2" bin="$3" fx errf rc
   engines_ran=$((engines_ran+1))   # an engine actually built + is running the twin -- the gate has teeth
   local nfix; nfix=$(printf '%s\n' ${FIXTURES} | wc -l)
   echo "[sanitize] ${label}: all ${nfix} cfront_*.c fixtures through the sanitized twin"
   local nfx=0 ffail=0
   for fx in ${FIXTURES}; do
-    nfx=$((nfx+1)); errf="${tmp}/fxerr.txt"
+    nfx=$((nfx+1)); errf="${tmp}/fxerr_${key}.txt"
     "${bin}" "${C}/${fx}" >/dev/null 2>"${errf}"; rc=$?
     # A clean parse error is rc 1 with no sanitizer text (the adversarial deep-nest / lexer-tail fixtures
     # deliberately PARSE-ERR -- "nesting too deep" / "input too large" -- which is the CORRECT, crash-free
@@ -155,7 +162,7 @@ PY
     if [ ! -f "${C}/${sec}" ]; then
       echo "  FAIL: ${label} adversarial fixture ${sec} is MISSING (a memory-safety regression pin was removed)"; adv_fail=1; fail=1; continue
     fi
-    errf="${tmp}/secerr.txt"
+    errf="${tmp}/secerr_${key}.txt"
     ASAN_OPTIONS="halt_on_error=1:detect_leaks=1" "${bin}" "${C}/${sec}" >/dev/null 2>"${errf}"; rc=$?
     if [ "${rc}" -ge 128 ] || grep -qiE "AddressSanitizer|UndefinedBehaviorSanitizer|runtime error|stack-buffer|heap-buffer-overflow|global-buffer-overflow|stack-overflow|use-after-free|out of bounds|detected memory leaks" "${errf}"; then
       echo "  FAIL: ${label} adversarial fixture ${sec} tripped the sanitizer (rc=${rc}):"; sed 's/^/    /' "${errf}" | head -25; adv_fail=1; fail=1
@@ -164,35 +171,56 @@ PY
   [ "${adv_fail}" -eq 0 ] && echo "  PASS ${label} adversarial fixtures (env realloc, signature overflow, deep nesting, lexer tail, preprocessor macro overflow; ASan+leak clean)"
 }
 
+# ----- the three engine stages, each a self-contained function ---------------------------------------
+# Every stage ends with `stage_result <key>`, which is the ONLY way a stage reports back. With
+# SANITIZE_ENGINES_PARALLEL=1 a stage runs backgrounded, i.e. in a SUBSHELL, where an assignment to `fail`
+# or `engines_ran` is invisible to the parent -- so the parent must not read those variables at all and
+# instead aggregates the per-stage files below. This is the same discipline fuzz_streampack.sh uses for its
+# concurrent campaigns (per-campaign rc FILES, never `wait`-ing on a PID: `wait -n` reaps an ARBITRARY
+# child, so a later `wait "$pid"` finds the status already consumed and a CRASHING engine reports PASS).
+# Serial mode calls the stages in a subshell too, so the reporting path is identical either way.
+stage_result() {  # <key>
+  echo "${fail}" >"${tmp}/rc_$1"
+  echo "${engines_ran}" >"${tmp}/ran_$1"
+}
+
 # ----- stage 1: clang ASan/UBSan (primary) ----------------------------------------------------------
-if [ -n "${CLANG}" ] && [ -x "${CLANG}" ]; then
-  if can_sanitize "${CLANG}"; then
-    if build_san "${CLANG}" "${tmp}/cfront_clang_san"; then
-      run_san_engine "clang ASan/UBSan" "${tmp}/cfront_clang_san"
+stage_clang() {
+  fail=0; engines_ran=0
+  if [ -n "${CLANG}" ] && [ -x "${CLANG}" ]; then
+    if can_sanitize "${CLANG}"; then
+      if build_san "${CLANG}" "${tmp}/cfront_clang_san"; then
+        run_san_engine clang "clang ASan/UBSan" "${tmp}/cfront_clang_san"
+      else
+        echo "[sanitize] FAIL: clang sanitizer build of the twin failed"; fail=1
+      fi
     else
-      echo "[sanitize] FAIL: clang sanitizer build of the twin failed"; fail=1
+      echo "[sanitize] SKIP clang ASan/UBSan (tool absent: clang has no compiler-rt / libclang_rt.asan to link)"
     fi
   else
-    echo "[sanitize] SKIP clang ASan/UBSan (tool absent: clang has no compiler-rt / libclang_rt.asan to link)"
+    echo "[sanitize] SKIP clang ASan/UBSan (tool absent: no clang)"
   fi
-else
-  echo "[sanitize] SKIP clang ASan/UBSan (tool absent: no clang)"
-fi
+  stage_result clang
+}
 
 # ----- stage 2: gcc ASan/UBSan (bonus -- and the real engine when clang lacks compiler-rt) -----------
-if command -v gcc >/dev/null 2>&1; then
-  if can_sanitize gcc; then
-    if build_san gcc "${tmp}/cfront_gcc_san"; then
-      run_san_engine "gcc ASan/UBSan" "${tmp}/cfront_gcc_san"
+stage_gcc() {
+  fail=0; engines_ran=0
+  if command -v gcc >/dev/null 2>&1; then
+    if can_sanitize gcc; then
+      if build_san gcc "${tmp}/cfront_gcc_san"; then
+        run_san_engine gcc "gcc ASan/UBSan" "${tmp}/cfront_gcc_san"
+      else
+        echo "[sanitize] FAIL: gcc sanitizer build of the twin failed"; fail=1
+      fi
     else
-      echo "[sanitize] FAIL: gcc sanitizer build of the twin failed"; fail=1
+      echo "[sanitize] SKIP gcc ASan/UBSan (tool absent: gcc has no libasan to link)"
     fi
   else
-    echo "[sanitize] SKIP gcc ASan/UBSan (tool absent: gcc has no libasan to link)"
+    echo "[sanitize] SKIP gcc ASan/UBSan (tool absent: no gcc)"
   fi
-else
-  echo "[sanitize] SKIP gcc ASan/UBSan (tool absent: no gcc)"
-fi
+  stage_result gcc
+}
 
 # ----- stage 2b: clang UBSan in TRAP mode (no compiler-rt / libclang_rt needed) ---------------------
 # clang's -fsanitize=undefined is STRICTER than gcc's: it flags out-of-bounds POINTER ARITHMETIC (forming
@@ -201,30 +229,72 @@ fi
 # -fsanitize-trap=undefined each UB becomes an inline trap (ud2 -> SIGILL), needing NO sanitizer runtime to
 # link, so this stage runs even where clang lacks compiler-rt -- closing the "local gcc green, CI clang red"
 # gap. UB-only (no ASan/leak), so it does NOT count as an ASan engine for the vacuous-gate below.
-if [ -n "${CLANG}" ] && [ -x "${CLANG}" ]; then
-  CTRAP=""
-  for std in c23 c2x c11; do
-    if "${CLANG}" -std=${std} -fsanitize=undefined -fsanitize-trap=undefined -fno-sanitize-recover=all -g -O1 \
-         -I "${C}" ${CFRONT_SRCS} -o "${tmp}/cfront_clang_trap" 2>/dev/null; then CTRAP="${tmp}/cfront_clang_trap"; break; fi
-  done
-  if [ -z "${CTRAP}" ]; then
-    echo "[sanitize] SKIP clang UBSan-trap (clang could not build the trap twin)"
-  else
-    nct=$(printf '%s\n' ${FIXTURES} | wc -l)
-    echo "[sanitize] clang UBSan-trap (-fsanitize=undefined -fsanitize-trap, no compiler-rt): all ${nct} cfront_*.c fixtures"
-    ctfail=0
-    for fx in ${FIXTURES}; do
-      "${CTRAP}" "${C}/${fx}" >/dev/null 2>"${tmp}/ct.txt"; rc=$?
-      # A UB trap dies by signal (rc>=128: SIGILL=132). A normal parse error is rc 1 (fine, not UB).
-      if [ "${rc}" -ge 128 ]; then
-        echo "  FAIL: clang UBSan-trap caught undefined behavior on ${fx} (rc=${rc}, signal $((rc-128))) -- a clang-strict UB gcc's UBSan misses"; ctfail=1; fail=1
-      fi
+stage_ctrap() {
+  fail=0; engines_ran=0
+  if [ -n "${CLANG}" ] && [ -x "${CLANG}" ]; then
+    CTRAP=""
+    for std in c23 c2x c11; do
+      if "${CLANG}" -std=${std} -fsanitize=undefined -fsanitize-trap=undefined -fno-sanitize-recover=all -g -O1 \
+           -I "${C}" ${CFRONT_SRCS} -o "${tmp}/cfront_clang_trap" 2>/dev/null; then CTRAP="${tmp}/cfront_clang_trap"; break; fi
     done
-    [ "${ctfail}" -eq 0 ] && echo "  PASS clang UBSan-trap (${nct} cfront_*.c fixtures incl. adversarial, no clang-strict UB)"
+    if [ -z "${CTRAP}" ]; then
+      echo "[sanitize] SKIP clang UBSan-trap (clang could not build the trap twin)"
+    else
+      nct=$(printf '%s\n' ${FIXTURES} | wc -l)
+      echo "[sanitize] clang UBSan-trap (-fsanitize=undefined -fsanitize-trap, no compiler-rt): all ${nct} cfront_*.c fixtures"
+      ctfail=0
+      for fx in ${FIXTURES}; do
+        "${CTRAP}" "${C}/${fx}" >/dev/null 2>"${tmp}/ct_ctrap.txt"; rc=$?
+        # A UB trap dies by signal (rc>=128: SIGILL=132). A normal parse error is rc 1 (fine, not UB).
+        if [ "${rc}" -ge 128 ]; then
+          echo "  FAIL: clang UBSan-trap caught undefined behavior on ${fx} (rc=${rc}, signal $((rc-128))) -- a clang-strict UB gcc's UBSan misses"; ctfail=1; fail=1
+        fi
+      done
+      [ "${ctfail}" -eq 0 ] && echo "  PASS clang UBSan-trap (${nct} cfront_*.c fixtures incl. adversarial, no clang-strict UB)"
+    fi
+  else
+    echo "[sanitize] SKIP clang UBSan-trap (no clang)"
   fi
+  stage_result ctrap
+}
+
+# ----- engine scheduler ------------------------------------------------------------------------------
+# The three stages are independent: each builds its OWN binary from the same read-only sources, keeps its
+# own scratch files (the <key> namespacing above), and the fuzz driver mkdtemp's its own program directory.
+# Nothing is written that another stage reads, so SANITIZE_ENGINES_PARALLEL=1 can overlap them and turn the
+# gate's wall time from sum(stages) into max(stages). Logs are buffered per stage and replayed in a FIXED
+# order afterwards, so a parallel run's output is byte-identical to a serial one instead of interleaved.
+STAGE_KEYS="clang gcc ctrap"
+if [ "${SANITIZE_ENGINES_PARALLEL:-0}" = "1" ]; then
+  echo "[sanitize] SANITIZE_ENGINES_PARALLEL=1: clang, gcc and clang-trap engines run concurrently"
+  echo "[sanitize] (per-engine binaries + scratch files; logs replayed below in serial order)"
+  for key in ${STAGE_KEYS}; do
+    ( "stage_${key}" ) >"${tmp}/log_${key}" 2>&1 &
+  done
+  wait
+  for key in ${STAGE_KEYS}; do
+    [ -f "${tmp}/log_${key}" ] && cat "${tmp}/log_${key}"
+  done
 else
-  echo "[sanitize] SKIP clang UBSan-trap (no clang)"
+  for key in ${STAGE_KEYS}; do ( "stage_${key}" ); done
 fi
+
+# Aggregate the stages. `fail`/`engines_ran` in THIS shell are meaningless until now (each stage zeroed its
+# own copy inside a subshell), so they are recomputed here purely from the per-stage files.
+fail=0
+engines_ran=0
+for key in ${STAGE_KEYS}; do
+  if [ ! -f "${tmp}/rc_${key}" ] || [ ! -f "${tmp}/ran_${key}" ]; then
+    # A stage that never wrote its result file died before finishing (killed, or the shell aborted mid-stage).
+    # Silence there must NOT read as success -- that is exactly the vacuous-green shape this gate exists to
+    # prevent, so a missing result is a hard failure.
+    echo "[sanitize] FAIL: engine stage '${key}' produced no result file -- it died before reporting"
+    fail=1
+    continue
+  fi
+  [ "$(cat "${tmp}/rc_${key}")" = "0" ] || fail=1
+  engines_ran=$(( engines_ran + $(cat "${tmp}/ran_${key}") ))
+done
 
 # The vacuous-gate guard: if NO sanitizer engine actually ran (neither a compiler-rt clang nor a libasan
 # gcc could link the runtime), the per-tool SKIPs above would otherwise leave `fail=0` and exit 0 -- a

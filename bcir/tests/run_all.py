@@ -406,6 +406,39 @@ def _pool_context():
     return multiprocessing.get_context(method)
 
 
+def _resolve_shard(argv: list[str] | None = None) -> tuple[int, int]:
+    """Parse ``--shard I/N``: run the Ith of N disjoint slices. Default ``1/1`` (all).
+
+    The slice is a STRIDE (`pairs[i-1::n]`, I being 1-based), not a contiguous block. That matters because the
+    per-test cost is wildly uneven -- `test_c_cfront` alone is ~60% of the suite's CPU and
+    its tests are adjacent in discovery order, so contiguous blocks would put nearly all of
+    it in one shard and the split would buy almost nothing. Striding interleaves the
+    expensive module across every shard.
+
+    The union of all N shards is exactly the full inventory and the shards are disjoint, so
+    sharding cannot silently drop a test -- which is the property that makes it safe to
+    split a conformance suite across CI jobs at all.
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    raw: str | None = None
+    for i, a in enumerate(argv):
+        if a == "--shard" and i + 1 < len(argv):
+            raw = argv[i + 1]; break
+        if a.startswith("--shard="):
+            raw = a.split("=", 1)[1]; break
+    if raw is None:
+        return (1, 1)
+    try:
+        index, count = (int(part) for part in raw.split("/", 1))
+    except ValueError:
+        sys.stderr.write(f"[run_all] --shard needs I/N, got {raw!r}\n")
+        raise SystemExit(2) from None
+    if not (count >= 1 and 1 <= index <= count):
+        sys.stderr.write(f"[run_all] --shard {raw} is out of range\n")
+        raise SystemExit(2)
+    return (index, count)
+
+
 def _resolve_jobs(argv: list[str] | None = None) -> int:
     """Resolve a bounded worker count.
 
@@ -439,7 +472,7 @@ def _resolve_jobs(argv: list[str] | None = None) -> int:
 
 def main() -> int:
     if "-h" in sys.argv or "--help" in sys.argv:
-        print("usage: python -m bcir.tests.run_all [--tier TIER] [-j N]")
+        print("usage: python -m bcir.tests.run_all [--tier TIER] [-j N] [--shard I/N]")
         print("       python -m bcir.tests.run_all --list-tiers")
         print("safe default: at most 2 workers; -j0 or --jobs=auto opts into all cores")
         return 0
@@ -451,8 +484,14 @@ def main() -> int:
     tier = resolve_tier()
     _apply_tier(tier)                       # gate the toolchain BEFORE importing test modules
     jobs = _resolve_jobs()
-    print(f"[run_all] tier={tier} — {_TIER_BLURB[tier]}  (jobs={jobs})\n")
+    shard, shards = _resolve_shard()
+    print(f"[run_all] tier={tier} — {_TIER_BLURB[tier]}  (jobs={jobs}"
+          + (f", shard {shard}/{shards}" if shards > 1 else "") + ")\n")
     pairs = _collect_tests()                # stable discovery; fork also benefits from the warm imports
+    total = len(pairs)
+    if shards > 1:
+        pairs = pairs[shard - 1::shards]
+        print(f"[run_all] shard {shard}/{shards}: {len(pairs)} of {total} tests\n")
     passed = failed = 0
 
     def _report(modname: str, name: str, tb: str | None) -> None:
@@ -481,7 +520,8 @@ def main() -> int:
             for res in pool.map(_run_one, pairs, chunksize=1):
                 _report(*res)
 
-    print(f"\n{passed} passed, {failed} failed")
+    suffix = f" (shard {shard}/{shards} of {total} total)" if shards > 1 else ""
+    print(f"\n{passed} passed, {failed} failed{suffix}")
     return 1 if failed else 0
 
 
