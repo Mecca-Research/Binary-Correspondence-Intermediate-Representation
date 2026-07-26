@@ -115,6 +115,88 @@ _A2_UNALIGNED = bytes.fromhex(
 )
 
 
+
+# A.3 adds extension markers throughout: an extensible SET, extensible SEQUENCEs, an
+# extensible INTEGER constraint, and extensible SIZE constraints.
+_A3_MODULE = """
+AnnexA3 DEFINITIONS ::= BEGIN
+  PersonnelRecord ::= [APPLICATION 0] IMPLICIT SET {
+      name Name,
+      title [0] VisibleString,
+      number EmployeeNumber,
+      dateOfHire [1] Date,
+      nameOfSpouse [2] Name,
+      children [3] IMPLICIT SEQUENCE (SIZE(2, ...)) OF ChildInformation OPTIONAL,
+      ... }
+  ChildInformation ::= SET {
+      name Name,
+      dateOfBirth [0] Date,
+      ...,
+      sex [1] IMPLICIT ENUMERATED {male(1), female(2), unknown(3)} OPTIONAL }
+  Name ::= [APPLICATION 1] IMPLICIT SEQUENCE {
+      givenName NameString, initial NameString (SIZE(1)), familyName NameString, ... }
+  EmployeeNumber ::= [APPLICATION 2] IMPLICIT INTEGER (0..9999, ...)
+  Date ::= [APPLICATION 3] IMPLICIT VisibleString (FROM("0".."9") ^ SIZE(8, ..., 9..20))
+  NameString ::= VisibleString (FROM("a".."z" | "A".."Z" | "-.") ^ SIZE(1..64, ...))
+END
+"""
+
+_A3_RECORD = {
+    "name": {"givenName": "John", "initial": "P", "familyName": "Smith"},
+    "title": "Director",
+    "number": 51,
+    "dateOfHire": "19710917",
+    "nameOfSpouse": {"givenName": "Mary", "initial": "T", "familyName": "Smith"},
+    "children": [
+        {"name": {"givenName": "Ralph", "initial": "T", "familyName": "Smith"},
+         "dateOfBirth": "19571111"},
+        {"name": {"givenName": "Susan", "initial": "B", "familyName": "Jones"},
+         "dateOfBirth": "19590717", "sex": 2},
+    ],
+}
+
+# A.4 is the extension-addition-GROUP case: version brackets in a SEQUENCE and in a
+# CHOICE, an extension marker PAIR with root components written after it, AUTOMATIC TAGS.
+_A4_MODULE = """
+AnnexA4 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+  Ax ::= SEQUENCE {
+      a INTEGER (250..253),
+      b BOOLEAN,
+      c CHOICE { d INTEGER, ..., [[ e BOOLEAN, f IA5String ]], ... },
+      ...,
+      [[ g NumericString (SIZE(3)), h BOOLEAN OPTIONAL ]],
+      ...,
+      i BMPString OPTIONAL,
+      j PrintableString OPTIONAL }
+END
+"""
+
+_A4_RECORD = {"a": 253, "b": True, "c": {"e": True}, "g": "123", "h": True}
+
+_A3_ALIGNED = bytes.fromhex(
+    "40c04a6f686e5008536d697468000033"
+    "084469726563746f720019710917034d"
+    "6172795408536d697468010052616c70"
+    "685408536d6974680019571111820053"
+    "7573616e42084a6f6e65730019590717"
+    "010140"
+)
+_A3_UNALIGNED = bytes.fromhex(
+    "40cbaa3a5108a5125f180330889a7965"
+    "c7d37f20cb8848b819ce5ba2a114a24b"
+    "e30113727ae3542294497c6195711118"
+    "22985ce521842eaa60b832b20e2e0202"
+    "80"
+)
+_A4_ALIGNED = bytes.fromhex(
+    "9e000180010291a4"
+)
+_A4_UNALIGNED = bytes.fromhex(
+    "9e000600040a4690"
+)
+
+
+
 def _encode_annex(module: str, variant: PerVariant) -> bytes:
     lowered = compile_module(module, "<annex>")
     return encode_per(lowered.module.types["PersonnelRecord"], _PERSONNEL_RECORD,
@@ -414,3 +496,102 @@ def _int_range(low: int, high: int) -> Primitive:
     from bcir.asn1.constraints import ValueRange
 
     return Primitive(Universal.INTEGER, "INTEGER", ValueRange(low, high))
+
+
+def test_annex_a3_matches_the_specification_octets_in_both_variants():
+    """A.3: extension markers on the SET, the SEQUENCEs, the INTEGER and the SIZEs.
+
+    83 and 65 octets. This is the vector that pins X.680 50.11: `initial NameString
+    (SIZE(1))` is serially constrained, so the parent's extension marker is erased and it
+    encodes with NO extension bit and NO length -- while its sibling `givenName`, the same
+    base type left unconstrained, keeps both.
+    """
+    for variant, expected, octets in (
+        (PerVariant.ALIGNED, _A3_ALIGNED, 83),
+        (PerVariant.UNALIGNED, _A3_UNALIGNED, 65),
+    ):
+        got = _encode_named(_A3_MODULE, "PersonnelRecord", _A3_RECORD, variant)
+        assert len(got) == octets, f"{variant} is {octets} octets, got {len(got)}"
+        assert got == expected, "A.3 " + variant.value + ": " + got.hex() + " != " + expected.hex()
+
+
+def test_annex_a4_matches_the_specification_octets_in_both_variants():
+    """A.4: extension addition GROUPS (version brackets) and an extension marker pair.
+
+    Both variants are 8 octets. Three separate rules land at once: a group in a SEQUENCE
+    encodes as one open type holding a SEQUENCE of its members (19.9); a bracket in a
+    CHOICE has no effect and its members are ordinary extension alternatives (23.8 NOTE);
+    and `i`/`j`, written after the SECOND marker, are extension ROOT components (19.9
+    NOTE 2), not additions.
+    """
+    for variant, expected in ((PerVariant.ALIGNED, _A4_ALIGNED),
+                              (PerVariant.UNALIGNED, _A4_UNALIGNED)):
+        got = _encode_named(_A4_MODULE, "Ax", _A4_RECORD, variant)
+        assert len(got) == 8, f"A.4 is 8 octets, got {len(got)}"
+        assert got == expected, "A.4 " + variant.value + ": " + got.hex() + " != " + expected.hex()
+
+
+def test_annex_a3_and_a4_round_trip_in_both_variants():
+    for module, name, value in ((_A3_MODULE, "PersonnelRecord", _A3_RECORD),
+                                (_A4_MODULE, "Ax", _A4_RECORD)):
+        lowered = compile_module(module, "<annex>")
+        kind = lowered.module.types[name]
+        for variant in (PerVariant.ALIGNED, PerVariant.UNALIGNED):
+            data = encode_per(kind, value, variant=variant)
+            assert decode_per(data, kind, variant=variant) == value, (name, variant)
+
+
+def test_serial_application_erases_the_parent_extension_marker():
+    """X.680 50.11, isolated from the Annex A.3 vector that exposed it."""
+    from bcir.asn1.constraints import root_size_bounds
+
+    lowered = compile_module(_A3_MODULE, "<annex>")
+    name = lowered.module.types["Name"]
+    given = next(c for c in name.components if c.name == "givenName")
+    initial = next(c for c in name.components if c.name == "initial")
+    assert root_size_bounds(given.type.constraint) == ((1, 64), True), (
+        "the plain reference keeps NameString's extensible SIZE(1..64, ...)")
+    assert root_size_bounds(initial.type.constraint) == ((1, 1), False), (
+        "the serially constrained one is fixed at 1 and NOT extensible")
+
+
+def test_extensible_integer_outside_the_root_switches_to_unconstrained():
+    """13.1: one bit says which side of the extension root the value fell on."""
+    module = "M DEFINITIONS ::= BEGIN T ::= SEQUENCE { v INTEGER (0..9999, ...) } END"
+    kind = compile_module(module, "<p>").module.types["T"]
+    for variant in (PerVariant.ALIGNED, PerVariant.UNALIGNED):
+        inside = encode_per(kind, {"v": 51}, variant=variant)
+        outside = encode_per(kind, {"v": 100000}, variant=variant)
+        assert inside[0] & 0x80 == 0, "a root value sets the extension bit to zero"
+        assert outside[0] & 0x80 != 0, "a value past the root sets it to one"
+        for data, value in ((inside, 51), (outside, 100000)):
+            assert decode_per(data, kind, variant=variant) == {"v": value}
+
+
+def test_extensible_size_outside_the_root_drops_the_size_constraint():
+    """17.3/30.4: outside the root the length is encoded as if unconstrained."""
+    module = "M DEFINITIONS ::= BEGIN T ::= SEQUENCE { v OCTET STRING (SIZE(2, ...)) } END"
+    kind = compile_module(module, "<p>").module.types["T"]
+    for variant in (PerVariant.ALIGNED, PerVariant.UNALIGNED):
+        for payload in (b"ab", b"", b"abcdefgh"):
+            data = encode_per(kind, {"v": payload}, variant=variant)
+            assert decode_per(data, kind, variant=variant) == {"v": payload}
+
+
+def test_half_open_integer_range_encodes_semi_constrained():
+    """13.2.3. This branch was unreachable while a scalar bound was compared against the
+    UNBOUNDED sentinel TUPLE, which sent `INTEGER (0..MAX)` into int(None)."""
+    from bcir.asn1.constraints import ValueRange
+
+    kind = Sequence((Component("v", Primitive(
+        Universal.INTEGER, "INTEGER", ValueRange(0, None))),), name="S")
+    for variant in (PerVariant.ALIGNED, PerVariant.UNALIGNED):
+        for value in (0, 5, 300, 70000):
+            data = encode_per(kind, {"v": value}, variant=variant)
+            assert decode_per(data, kind, variant=variant) == {"v": value}
+
+
+def _encode_named(module: str, name: str, value, variant: PerVariant) -> bytes:
+    lowered = compile_module(module, "<annex>")
+    return encode_per(lowered.module.types[name], value,
+                      variant=variant, rules=PerRules.CANONICAL)

@@ -8,6 +8,7 @@ freestanding_core bcir_decode.c
 freestanding_core bcir_encode.c
 freestanding_core bcir_exec.c
 freestanding_core bcir_hydrate.c
+freestanding_core bcir_per.c
 freestanding_core bcir_plan.c
 freestanding_core bcir_provenance.c
 freestanding_core bcir_runtime.c

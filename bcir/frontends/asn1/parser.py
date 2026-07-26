@@ -447,9 +447,8 @@ class Parser:
             if self.at_punct("..."):
                 self.take()
                 items.append(ast.ExtensionMarker())
-                # An extension addition group `[[ ... ]]` may follow (§25.1).
-                if self.at_punct("[["):
-                    self._skip_balanced("[[", "]]")
+            elif self.at_punct("[["):
+                items.append(self.parse_extension_group(choice))
             elif self.at_word("COMPONENTS"):
                 raise self.error("COMPONENTS OF requires component-list inlining, "
                                  "which this front-end does not implement (X.680 25.1)")
@@ -459,6 +458,24 @@ class Parser:
                 break
         self.expect_punct("}")
         return tuple(items)
+
+    def parse_extension_group(self, choice: bool) -> ast.ExtensionGroup:
+        """`[[ a INTEGER, b BOOLEAN OPTIONAL ]]` (X.680 §25.1).
+
+        A version number may prefix the members (`[[ 2: a INTEGER ]]`); it identifies the
+        version that added the group and has no effect on the encoding, so it is consumed
+        and dropped rather than modelled.
+        """
+        self.expect_punct("[[")
+        if self.at("number") and self.at_punct(":", 1):
+            self.take(); self.take()
+        members: list[object] = []
+        while not self.at_punct("]]"):
+            members.append(self.parse_component(choice))
+            if not self.accept("punct", ","):
+                break
+        self.expect_punct("]]")
+        return ast.ExtensionGroup(tuple(members))
 
     def parse_component(self, choice: bool) -> ast.ComponentNode:
         name = self.expect("identifier").text

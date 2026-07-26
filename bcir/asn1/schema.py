@@ -57,6 +57,11 @@ class Component:
     #: the two hard (X.691 §19.1/§19.7-§19.9: the root gets a presence bitmap, additions
     #: get a separate bitmap and are each wrapped as an open type).
     extension: bool = False
+    #: For an extension addition GROUP (`[[ a, b ]]`, X.680 §25.1): the members of the
+    #: bracket. X.691 §19.9 encodes the whole group as ONE open type holding a SEQUENCE of
+    #: these, so a single bit in the addition bitmap covers the bracket however many
+    #: components it holds -- and a group whose members are all absent is itself absent.
+    group: tuple["Component", ...] | None = None
 
     @property
     def has_default(self) -> bool:

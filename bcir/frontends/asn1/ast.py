@@ -227,7 +227,24 @@ class ComponentNode:
 
 @dataclass(frozen=True)
 class ExtensionMarker:
-    """`...` in a component list (§25.1): the extension root ends here."""
+    """`...` in a component list (§25.1): the extension root ends here.
+
+    A SECOND marker closes an "extension marker pair": X.691 §19.9 NOTE 2 makes components
+    written after it part of the extension ROOT again, "encoded as if they were defined
+    immediately before the extension marker pair".
+    """
+
+
+@dataclass(frozen=True)
+class ExtensionGroup:
+    """`[[ a, b ]]` — a version bracket (X.680 §25.1), one extension addition GROUP.
+
+    A group is present or absent as a unit and, per X.691 §19.9, is encoded as a SEQUENCE
+    of its members which is then wrapped as a single open type field -- so one bit in the
+    addition bitmap covers the whole bracket, however many components it holds.
+    """
+
+    components: tuple[object, ...] = ()
 
 
 @dataclass(frozen=True)

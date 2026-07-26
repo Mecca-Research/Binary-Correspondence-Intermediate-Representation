@@ -263,6 +263,106 @@ class Extensible(Constraint):
         return f"({str(self.root).strip('()')}, ...)"
 
 
+def _root_bounds(constraint: Constraint, dimension: str) -> tuple[Bounds, bool]:
+    """The EXTENSION ROOT's bounds along `dimension`, and whether a marker was found.
+
+    `value_bounds`/`size_bounds` deliberately collapse an extensible constraint to
+    UNBOUNDED, because X.696 §8.2.2 g) makes such a constraint invisible to OER: the marker
+    says the value set may grow, so an encoder that sized a field from today's bounds would
+    emit octets a future peer could not read.
+
+    PER makes the opposite choice and needs both halves. X.691 §13.1/§17.3/§20.4/§30.4 all
+    have the same shape: emit ONE bit saying whether the value falls inside the extension
+    root, then encode it against the ROOT's bounds if it does and unconstrained if it does
+    not. So a PER encoder needs the root bounds that OER discards, plus the flag -- and
+    collapsing to UNBOUNDED would silently cost every constrained field its width.
+
+    The walk descends through Union/Intersection because the marker is usually nested:
+    `SIZE(8, ..., 9..20)` inside `FROM("0".."9") ^ SIZE(...)` is an extensible size sitting
+    beside a non-extensible alphabet, and §10.3.21 keeps the intersection PER-visible.
+    """
+    if isinstance(constraint, Extensible):
+        inner, _ = _root_bounds(constraint.root, dimension)
+        return inner, True
+    if isinstance(constraint, Size):
+        # SIZE crosses dimensions: its SIZE bounds are its inner constraint's VALUE bounds
+        # (`size_bounds` delegates exactly so). The extension marker in `SIZE(8, ..., 9..20)`
+        # sits on that inner constraint, so a walk that does not cross here never sees the
+        # `Extensible` and reports the type as non-extensible with unbounded size.
+        if dimension != "size":
+            return UNBOUNDED, False
+        return _root_bounds(constraint.inner, "value")
+    if isinstance(constraint, Intersection):
+        low, high = UNBOUNDED
+        extensible = False
+        for part in constraint.parts:
+            (part_low, part_high), part_ext = _root_bounds(part, dimension)
+            extensible = extensible or part_ext
+            low = part_low if low is None else (
+                low if part_low is None else max(low, part_low))
+            high = part_high if high is None else (
+                high if part_high is None else min(high, part_high))
+        return (low, high), extensible
+    if isinstance(constraint, Union):
+        parts = [_root_bounds(part, dimension) for part in constraint.parts]
+        return _span(bounds for bounds, _ in parts), any(ext for _, ext in parts)
+    getter = constraint.value_bounds if dimension == "value" else constraint.size_bounds
+    return getter(), False
+
+
+def without_extension(constraint: Constraint) -> Constraint:
+    """Strip every extension marker from a constraint tree (X.680 §50.11).
+
+    §50.11: when a subtype constraint is SERIALLY applied to a parent that is extensible,
+    "the result of the second (serially applied) constraint is defined to be the same as if
+    the constraint had been applied to the parent type without its extension marker and
+    possible extension additions". So `NameString (SIZE(1))`, where NameString is
+    `VisibleString (FROM(...) ^ SIZE(1..64, ...))`, is NOT extensible -- the outer SIZE(1)
+    erases the inner marker.
+
+    That is visible in the encoding and nowhere else: X.691 Annex A.3 encodes `initial`
+    with no extension bit and no length determinant at all, while the sibling `givenName`
+    of the same base type keeps both.
+    """
+    if isinstance(constraint, Extensible):
+        return without_extension(constraint.root)
+    if isinstance(constraint, Intersection):
+        return Intersection(tuple(without_extension(p) for p in constraint.parts))
+    if isinstance(constraint, Union):
+        return Union(tuple(without_extension(p) for p in constraint.parts))
+    if isinstance(constraint, Size):
+        return Size(without_extension(constraint.inner))
+    return constraint
+
+
+def root_value_bounds(constraint: Constraint | None) -> tuple[Bounds, bool]:
+    """`((low, high), extensible)` for the VALUE dimension (X.691 §13.1)."""
+    if constraint is None:
+        return UNBOUNDED, False
+    return _root_bounds(constraint, "value")
+
+
+def root_size_bounds(constraint: Constraint | None) -> tuple[Bounds, bool]:
+    """`((low, high), extensible)` for the SIZE dimension (§17.3/§20.4/§30.4)."""
+    if constraint is None:
+        return UNBOUNDED, False
+    return _root_bounds(constraint, "size")
+
+
+def root_alphabet(constraint: Constraint | None) -> frozenset[str] | None:
+    """The effective permitted alphabet, honouring §10.3.11.
+
+    An EXTENSIBLE permitted-alphabet constraint is not PER-visible at all -- unlike a size
+    or value constraint, there is no "encode against the root" fallback, the alphabet simply
+    reverts to the base type's. `Extensible.alphabet()` already returns None for exactly
+    that reason, so the ordinary accessor is correct here and this is a named alias that
+    says so rather than a second implementation.
+    """
+    if constraint is None:
+        return None
+    return constraint.alphabet()
+
+
 def _render(value) -> str:
     """Render an endpoint the way X.680 writes it.
 
