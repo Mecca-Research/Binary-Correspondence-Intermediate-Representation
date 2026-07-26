@@ -3274,11 +3274,21 @@ print('OK' if ok else 'NO')")" \
 # cfront_*.c fixture + a bounded seeded fuzz campaign (valid + malformed) through it, and runs a bounded
 # Valgrind pass over a fixture subset. Each stage self-skips when its tool is absent (SKIP, not FAIL). The
 # heavy Valgrind stage can be dropped with SANITIZE_SKIP_VALGRIND=1 while ASan/UBSan stay always-on.
+#
+# BCIR_SKIP_CFRONT_SANITIZE=1 suppresses this nested call for a CALLER THAT RUNS THE SAME
+# HARNESS ITSELF. The CI c-runtime job does exactly that (a dedicated step, so a sanitizer
+# diagnostic is attributed to the sanitizer rather than buried in this script's output), and
+# without the opt-out the whole 300-valid/400-malformed campaign ran twice in one job. Anyone
+# invoking check_runtime.sh directly still gets the harness, valgrind included.
+if [ "${BCIR_SKIP_CFRONT_SANITIZE:-0}" = "1" ]; then
+  echo "[c-runtime] SKIP cfront sanitizer harness (BCIR_SKIP_CFRONT_SANITIZE=1; the caller runs it)"
+else
 echo "[c-runtime] cfront twin under ASan/UBSan + Valgrind (sanitize_cfront.sh)"
 if CLANG="${CC}" bash "${ROOT}/tools/c/sanitize_cfront.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
   echo "  PASS cfront sanitizer/valgrind harness"
 else
   echo "  FAIL: cfront sanitizer/valgrind harness reported a diagnostic"; exit 1
+fi
 fi
 
 # StreamPack SEMANTIC trust boundary (R10/R11 + lane/width/dispatch range, ported into the

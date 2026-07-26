@@ -50,7 +50,12 @@ jobs:
           version: train-${{ runner.arch }}-v2
 
       - name: BCIR oracle (Python conformance tests)
-        run: BCIR_THOROUGH=1 python3 -m bcir.tests.run_all
+        # -j0 = every core. run_all's own default is a deliberately safe min(cpu, 2) for a
+        # developer workstation (AGENTS.md caps local work at two workers); a dedicated CI
+        # runner has no such constraint and the suite is ~2x oversubscribed against it.
+        # Measured on the thorough tier: 343s of test CPU over 4 cores, so the wall time is
+        # bound by the pool width, not by any single test (the longest is ~15s).
+        run: BCIR_THOROUGH=1 python3 -m bcir.tests.run_all -j0
 
       - name: Bounded TMSAO cross-organ audit (correctness strict; timings informational)
         run: python3 tools/perf/run_tmsao_audit.py --repeats 3 --output build/performance/tmsao-report.json
@@ -102,7 +107,12 @@ jobs:
           version: train-${{ runner.arch }}-v1
 
       - name: Freestanding C StreamPack runtime (no-libc + Python->C ABI parity)
-        run: bash tools/c/check_runtime.sh
+        # BCIR_SKIP_CFRONT_SANITIZE=1: this script ALSO invokes tools/c/sanitize_cfront.sh, which
+        # the dedicated step below runs. Without the opt-out the 300-valid/400-malformed ASan/UBSan
+        # campaign ran twice in this job -- and the nested call additionally ran the ~20x Valgrind
+        # stage the dedicated step deliberately drops. Valgrind coverage lives in
+        # .github/workflows/c-memory-deep-sweep.yml (SANITIZE_VG_SUBSET=30), not on the PR path.
+        run: BCIR_SKIP_CFRONT_SANITIZE=1 bash tools/c/check_runtime.sh
 
       - name: Cache the immutable TinyLlama source checkpoint
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -121,40 +131,8 @@ jobs:
           path: build/model-gate/parity-report.json
           if-no-files-found: error
 
-      - name: cfront twin sanitizer sweep (ASan/UBSan/LSan over the C compiler's own lexer/parser/lowering/emit)
-        # Runs tools/c/sanitize_cfront.sh -- the ASan+UBSan+LSan harness over the bcir_cfront C twin
-        # (every cfront_*.c fixture + a bounded 300-valid/400-malformed fuzz campaign + the adversarial
-        # Bug-1/2/A/B fixtures), so a memory bug INSIDE the compiler -- including the SEG6/7 fence + the
-        # c.asm lowering -- is caught, not just rail-output divergence. The runner has clang+libclang-rt
-        # and gcc, so both ASan engines + clang's stricter UBSan-trap run; the script self-skips a missing
-        # engine and fails LOUD only if NONE ran. Valgrind (the slow ~20x stage) is dropped here so the
-        # step stays well under a minute; ASan/UBSan/leak remain always-on.
-        run: SANITIZE_SKIP_VALGRIND=1 bash tools/c/sanitize_cfront.sh
-
       - name: Allocator-failure and direct-channel sanitizer sweep
         run: MEMORY_DISCIPLINE_SANITIZE=1 bash tools/c/check_memory_discipline.sh
-
-      - name: Hosted C ownership static analysis
-        run: |
-          diagnostics="$(mktemp)"
-          trap 'rm -f "${diagnostics}"' EXIT
-          for source in bcir_cpp.c bcir_cfront.c bcir_q8_model.c bcir_q4_kernel.c bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c; do
-            : > "${diagnostics}"
-            if ! clang --analyze -std=c11 -I runtime/c "runtime/c/${source}" -o /dev/null 2>"${diagnostics}"; then
-              cat "${diagnostics}" >&2
-              exit 1
-            fi
-            if [ -s "${diagnostics}" ]; then
-              cat "${diagnostics}" >&2
-              exit 1
-            fi
-          done
-
-      - name: Binary trust-boundary fuzz (libFuzzer + ASan/UBSan on all six decoders)
-        # StreamPack decoder/executor/encoder, the ETL binary-record decoder, the UART
-        # telemetry-frame decoder, and the BCIRQ8 model loader -- every runtime/c/ entry
-        # point that parses bytes it did not produce.
-        run: FUZZ_RUNS=500000 bash tools/c/fuzz_streampack.sh
 
       - name: CT4 measured-replan runbook (degrade mode; the rig path stays exercised)
         # No PMU/RAPL/governor in CI, so this degrades honestly (synthetic, no measured win)
@@ -166,6 +144,82 @@ jobs:
         # Non-flaky by design: STRICT on correctness + measurement validity always, perf floors
         # only under BCIR_BAREMETAL (unset here), so a loaded shared runner never flakes the gate.
         run: python3 tools/perf/check_budgets.py --trend build/perf/trend.jsonl
+
+  # The C rail's ADVERSARIAL half, split out of c-runtime so it runs on its own runner rather
+  # than queueing behind the byte-identity gates. Same reasoning (and same measurement) as the
+  # earlier oracle | c-runtime | llvm-training split above: c-runtime was a ~9-minute serial
+  # chain on a 4-core machine, and its sanitizer/static-analysis/fuzz half is independent of
+  # its parity/model half -- neither reads the other's outputs. The two halves are balanced to
+  # ~3 minutes each, so the C critical path is now their max instead of their sum.
+  c-analysis:
+    name: BCIR C analysis (sanitizers + static analysis + decoder fuzz)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
+
+      - name: Install lowering toolchain (clang + compiler-rt for ASan/UBSan/libFuzzer)
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        with:
+          packages: clang lld llvm nodejs libclang-rt-18-dev
+          version: train-${{ runner.arch }}-v1
+
+      - name: cfront twin sanitizer sweep (ASan/UBSan/LSan over the C compiler's own lexer/parser/lowering/emit)
+        # Runs tools/c/sanitize_cfront.sh -- the ASan+UBSan+LSan harness over the bcir_cfront C twin
+        # (every cfront_*.c fixture + a bounded 300-valid/400-malformed fuzz campaign + the adversarial
+        # Bug-1/2/A/B fixtures), so a memory bug INSIDE the compiler -- including the SEG6/7 fence + the
+        # c.asm lowering -- is caught, not just rail-output divergence. The runner has clang+libclang-rt
+        # and gcc, so both ASan engines + clang's stricter UBSan-trap run; the script self-skips a missing
+        # engine and fails LOUD only if NONE ran. Valgrind (the slow ~20x stage) is dropped here so the
+        # step stays well under a minute; ASan/UBSan/leak remain always-on. check_runtime.sh's own nested
+        # call to this same harness is suppressed in the c-runtime job (BCIR_SKIP_CFRONT_SANITIZE=1) so
+        # the campaign runs exactly once per CI run; the Valgrind stage lives in c-memory-deep-sweep.yml.
+        run: SANITIZE_SKIP_VALGRIND=1 bash tools/c/sanitize_cfront.sh
+
+      - name: Hosted C ownership static analysis
+        # Nine independent whole-file analyses (clang --analyze is single-threaded per TU and
+        # bcir_cfront.c alone dominates), so they fan out across the runner's cores instead of
+        # queueing. Each still fails the gate on a nonzero exit OR on any diagnostic at all --
+        # `--analyze` reports findings on stderr while exiting 0, so the emptiness check is the
+        # part that actually enforces "no ownership diagnostics".
+        run: |
+          workdir="$(mktemp -d)"
+          trap 'rm -rf "${workdir}"' EXIT
+          sources="bcir_cpp.c bcir_cfront.c bcir_q8_model.c bcir_q4_kernel.c bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c"
+          for source in ${sources}; do
+            (
+              if clang --analyze -std=c11 -I runtime/c "runtime/c/${source}" -o /dev/null \
+                   2>"${workdir}/${source}.log"; then
+                [ -s "${workdir}/${source}.log" ] && echo failed > "${workdir}/${source}.rc"
+              else
+                echo failed > "${workdir}/${source}.rc"
+              fi
+            ) &
+          done
+          wait
+          status=0
+          for source in ${sources}; do
+            if [ -f "${workdir}/${source}.rc" ]; then
+              echo "::error::clang --analyze reported diagnostics in runtime/c/${source}" >&2
+              cat "${workdir}/${source}.log" >&2
+              status=1
+            fi
+          done
+          exit "${status}"
+
+      - name: Binary trust-boundary fuzz (libFuzzer + ASan/UBSan on all seven decoders)
+        # StreamPack decoder/executor/encoder, the ETL binary-record decoder, the UART
+        # telemetry-frame decoder, the BCIRQ8 model loader, and the X.690 BER/DER decoder --
+        # every runtime/c/ entry point that parses bytes it did not produce. The campaigns are
+        # independent processes and run concurrently (FUZZ_JOBS, default nproc); the per-harness
+        # run count and time bound are unchanged, so only the scheduling differs.
+        run: FUZZ_RUNS=500000 bash tools/c/fuzz_streampack.sh
 
   host-portability:
     name: Host portability (${{ matrix.os }}, Python 3.12)
@@ -184,7 +238,9 @@ jobs:
           python-version: "3.12"
 
       - name: Quick tier (portable process pool; spawn on Windows)
-        run: python -m bcir.tests.run_all --tier quick -j 2
+        # -j0 = every core. The point of this step is the PORTABLE POOL (spawn on Windows), so
+        # widening it also widens what is being tested, not just how fast it finishes.
+        run: python -m bcir.tests.run_all --tier quick -j0
 
       - name: Focused host adaptation checks
         run: python -c "from bcir.tests import test_silicon as s, test_tiers as t, test_toolchain as h; s.test_counter_sampler_degrades_without_posix_rusage(); t.test_versioned_and_windows_tool_names_are_gated_by_family(); t.test_pool_context_uses_spawn_when_fork_is_unavailable(); [getattr(h, n)() for n in sorted(dir(h)) if n.startswith('test_')]"
@@ -202,9 +258,15 @@ jobs:
           python -c "from bcir.tests.test_c_cfront import test_stmtexpr_dual_rail; test_stmtexpr_dual_rail()"
 
       - name: LLVM training aggregate CMake gate
+        # The 16 gates under llvm-training-check are independent, so they build in parallel.
+        # LLVM_TRAINING_USES_TERMINAL=OFF is what makes -j effective: USES_TERMINAL puts a
+        # target in the console pool (depth 1) and serializes the lot regardless of -j. The
+        # default stays ON for a developer who wants live streaming output.
+        # Measured: ubuntu 16.3s -> 5.6s locally; this step was 124s on windows-latest, where
+        # the ~16 bash/python process launches dominate.
         run: |
-          cmake -S llvm-training -B build/llvm-training
-          cmake --build build/llvm-training --target llvm-training-check
+          cmake -S llvm-training -B build/llvm-training -DLLVM_TRAINING_USES_TERMINAL=OFF
+          cmake --build build/llvm-training --target llvm-training-check -j 4
 
       - name: Tests leave tracked sources unchanged
         run: git diff --exit-code
@@ -427,7 +489,7 @@ jobs:
             print('host default:', default_target_name(), TargetProfile.for_host().name)"
 
       - name: BCIR oracle (Python conformance) on ARM
-        run: BCIR_THOROUGH=1 python3 -m bcir.tests.run_all
+        run: BCIR_THOROUGH=1 python3 -m bcir.tests.run_all -j0
 
       - name: Python<->MLIR differential parity on ARM (smaller campaign)
         run: python3 -m bcir.kbcir.differential -n 3000 --seed 1
