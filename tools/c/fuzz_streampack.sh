@@ -3,7 +3,7 @@
 # ASan/UBSan smoke on a real Python-encoded pack + byte mutations. Needs clang with
 # compiler-rt (libclang-rt-NN-dev). FUZZ_RUNS controls the fuzz iteration count.
 #
-# The six harnesses, and whose bytes each one distrusts:
+# The seven harnesses, and whose bytes each one distrusts:
 #   StreamPack decoder / executor / encoder  -- an artifact handed to the runtime
 #   ETL binary-record decoder                -- device/driver packet fields
 #   telemetry-frame decoder                  -- frames a device emits over UART
@@ -14,12 +14,23 @@
 # than rediscovering its magic; the BCIRQ8 harness additionally REPAIRS the format's three
 # checksum layers, without which a coverage-guided fuzzer only ever proves that the CRC
 # check works and never reaches the parser behind it.
+#
+# WALL TIME. Every campaign is bounded by `-max_total_time` (wall clock), so running them
+# one after another made this gate cost the SUM of those bounds -- ~7 minutes for work that
+# uses one core. The harnesses are independent processes over independent corpora, so they
+# run CONCURRENTLY here, bounded by FUZZ_JOBS (default: the core count). Nothing about the
+# campaigns changes -- same FUZZ_RUNS, same per-harness time bound, same seeds -- so the
+# coverage is identical and only the scheduling differs. They are started LONGEST-FIRST
+# (measured: BCIRQ8 and telemetry-frame saturate the time bound; binrec finishes its runs in
+# ~1s), so the long poles own the machine while the short ones drain.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 C="${ROOT}/runtime/c"
 CLANG="${CLANG:-$(command -v clang || true)}"
 RUNS="${FUZZ_RUNS:-200000}"
+MAX_TIME="${FUZZ_MAX_TOTAL_TIME:-60}"
+JOBS="${FUZZ_JOBS:-$( (command -v nproc >/dev/null && nproc) || echo 4 )}"
 if [ -z "${CLANG}" ]; then
   echo "no clang; skipping StreamPack fuzz." >&2
   exit 0
@@ -34,6 +45,7 @@ fi
 
 tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 SAN="-fsanitize=address,undefined -fno-sanitize-recover=all"
+FUZZ_SAN="-fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all"
 
 echo "[fuzz] ASan/UBSan smoke: decode a real pack + byte mutations"
 "${CLANG}" -std=c23 -g ${SAN} "${C}/bcir_runtime.c" "${C}/test_runtime.c" -I "${C}" \
@@ -69,65 +81,87 @@ for f in "${tmp}"/m*.bin; do
 done
 echo "  PASS ASan/UBSan smoke (valid decode + mutations rejected cleanly)"
 
-echo "[fuzz] libFuzzer on the decoder (${RUNS} runs)"
-"${CLANG}" -std=c23 -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all \
-  "${C}/fuzz_streampack.c" "${C}/bcir_runtime.c" -I "${C}" -o "${tmp}/fuzz" \
-  || { echo "  FAIL: fuzzer build"; exit 1; }
-mkdir -p "${tmp}/corpus" && cp "${tmp}/pack.bin" "${tmp}/corpus/"   # seed from a real pack
-if "${tmp}/fuzz" -runs="${RUNS}" -max_total_time=60 "${tmp}/corpus" >"${tmp}/flog" 2>&1; then
-  echo "  PASS libFuzzer (${RUNS} runs, no crash)"
-else
-  echo "  FAIL: libFuzzer found a crash"; tail -40 "${tmp}/flog"; exit 1
-fi
+# --- the harness table ------------------------------------------------------------------
+# One row per trust boundary: <key> <label> <extra libFuzzer flags> <sources...>. Ordered
+# LONGEST-MEASURED-FIRST so the scheduler starts the time-bound-saturating campaigns before
+# the ones that exhaust FUZZ_RUNS in seconds.
+KEYS=()
+declare -A LABEL FLAGS SRCS
+add_target() {  # <key> <label> <extra-flags> <sources...>
+  local key="$1" label="$2" flags="$3"; shift 3
+  KEYS+=("${key}"); LABEL["${key}"]="${label}"; FLAGS["${key}"]="${flags}"; SRCS["${key}"]="$*"
+}
 
-echo "[fuzz] libFuzzer on the ETL binary-record decoder (${RUNS} runs)"
-# bcir_binrec.c is the C twin of bcir/etl/binary.py -- a second binary trust boundary
-# (driver/device packet field extraction). An arbitrary descriptor + buffer must never
-# read out of bounds; ASan/UBSan would catch it.
-"${CLANG}" -std=c23 -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all \
-  "${C}/fuzz_binrec.c" "${C}/bcir_binrec.c" -I "${C}" -o "${tmp}/fuzz_binrec" \
-  || { echo "  FAIL: binrec fuzzer build"; exit 1; }
-if "${tmp}/fuzz_binrec" -runs="${RUNS}" -max_total_time=60 -max_len=64 >"${tmp}/flog2" 2>&1; then
-  echo "  PASS libFuzzer binrec (${RUNS} runs, no crash)"
-else
-  echo "  FAIL: libFuzzer binrec found a crash"; tail -40 "${tmp}/flog2"; exit 1
-fi
+# bcir_q8_model.c parses an EXTERNAL model artifact (LangRef 16). The format is sealed by
+# a header CRC, a body CRC, and per-tensor CRCs -- right for the format, fatal for a
+# fuzzer, since a random mutation dies on a checksum long before it reaches the geometry,
+# span-overlap, exponent-range or canonical-inventory checks. The harness therefore drives
+# each input twice: RAW (keeps the reject-on-bad-CRC path covered) and CRC-REPAIRED, which
+# is what actually explores the parser (measured: 49 -> 228 covered blocks).
+add_target q8 "BCIRQ8 model loader" "-max_len=16384" \
+  "${C}/fuzz_q8_model.c" "${C}/bcir_q8_model.c"
 
-echo "[fuzz] libFuzzer on the StreamPack executor (${RUNS} runs)"
-# bcir_exec.c runs an untrusted pack end to end with fixed caller buffers; a malformed
-# pack must return a status and never read/write out of bounds (incl. the NOSPACE path).
-"${CLANG}" -std=c23 -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all \
-  "${C}/fuzz_exec.c" "${C}/bcir_exec.c" "${C}/bcir_runtime.c" -I "${C}" -o "${tmp}/fuzz_exec" \
-  || { echo "  FAIL: executor fuzzer build"; exit 1; }
-mkdir -p "${tmp}/corpus_exec" && cp "${tmp}/pack.bin" "${tmp}/corpus_exec/"   # seed from a real pack
-if "${tmp}/fuzz_exec" -runs="${RUNS}" -max_total_time=60 "${tmp}/corpus_exec" >"${tmp}/flog3" 2>&1; then
-  echo "  PASS libFuzzer executor (${RUNS} runs, no crash)"
-else
-  echo "  FAIL: libFuzzer executor found a crash"; tail -40 "${tmp}/flog3"; exit 1
-fi
-
-echo "[fuzz] libFuzzer on the StreamPack encoder (${RUNS} runs)"
-# bcir_encode.c re-serializes an untrusted pack; a malformed input must return a status
-# and the writer must never exceed the output buffer (incl. the small-buffer NOSPACE path).
-"${CLANG}" -std=c23 -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all \
-  "${C}/fuzz_encode.c" "${C}/bcir_encode.c" "${C}/bcir_runtime.c" -I "${C}" -o "${tmp}/fuzz_encode" \
-  || { echo "  FAIL: encoder fuzzer build"; exit 1; }
-mkdir -p "${tmp}/corpus_enc" && cp "${tmp}/pack.bin" "${tmp}/corpus_enc/"
-if "${tmp}/fuzz_encode" -runs="${RUNS}" -max_total_time=60 "${tmp}/corpus_enc" >"${tmp}/flog4" 2>&1; then
-  echo "  PASS libFuzzer encoder (${RUNS} runs, no crash)"
-else
-  echo "  FAIL: libFuzzer encoder found a crash"; tail -40 "${tmp}/flog4"; exit 1
-fi
-
-echo "[fuzz] libFuzzer on the telemetry-frame decoder (${RUNS} runs)"
 # bcir_telemetry_frame.c decodes frames a DEVICE emits over a byte transport (UART --
 # docs/kernel/TELEMETRY_FRAME_ABI.md), so the count/CRC/resync fields are all hostile.
 # Seeded from real Python-encoded frames plus a garbage-prefixed multi-frame stream, so
 # the fuzzer starts past the magic instead of rediscovering it.
-"${CLANG}" -std=c23 -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all \
-  "${C}/fuzz_telemetry_frame.c" "${C}/bcir_telemetry_frame.c" "${C}/bcir_runtime.c" \
-  -I "${C}" -o "${tmp}/fuzz_tf" || { echo "  FAIL: telemetry-frame fuzzer build"; exit 1; }
-mkdir -p "${tmp}/corpus_tf"
+add_target tf "telemetry frame" "" \
+  "${C}/fuzz_telemetry_frame.c" "${C}/bcir_telemetry_frame.c" "${C}/bcir_runtime.c"
+
+# bcir_asn1.c parses BER/DER from a peer. X.690's own structures -- multi-octet tags
+# and lengths, indefinite-length constructed encodings closed by end-of-contents
+# octets, arbitrary nesting -- are the shapes that historically break hand-written
+# parsers, so the harness walks every node and reads every contents octet the decoder
+# hands out. Seeded from real StreamPack DER projections plus the standard's own
+# worked examples (the constructed/indefinite forms a fuzzer rarely invents).
+add_target asn1 "X.690 decoder" "-max_len=8192" \
+  "${C}/fuzz_asn1.c" "${C}/bcir_asn1.c"
+
+# The StreamPack decoder itself: an artifact handed to the runtime by anyone.
+add_target decoder "decoder" "" \
+  "${C}/fuzz_streampack.c" "${C}/bcir_runtime.c"
+
+# bcir_exec.c runs an untrusted pack end to end with fixed caller buffers; a malformed
+# pack must return a status and never read/write out of bounds (incl. the NOSPACE path).
+add_target exec "executor" "" \
+  "${C}/fuzz_exec.c" "${C}/bcir_exec.c" "${C}/bcir_runtime.c"
+
+# bcir_encode.c re-serializes an untrusted pack; a malformed input must return a status
+# and the writer must never exceed the output buffer (incl. the small-buffer NOSPACE path).
+add_target encode "encoder" "" \
+  "${C}/fuzz_encode.c" "${C}/bcir_encode.c" "${C}/bcir_runtime.c"
+
+# bcir_binrec.c is the C twin of bcir/etl/binary.py -- a second binary trust boundary
+# (driver/device packet field extraction). An arbitrary descriptor + buffer must never
+# read out of bounds; ASan/UBSan would catch it.
+add_target binrec "binrec" "-max_len=64" \
+  "${C}/fuzz_binrec.c" "${C}/bcir_binrec.c"
+
+# --- build every harness (independent link jobs, so build them concurrently) --------------
+echo "[fuzz] building ${#KEYS[@]} harnesses under libFuzzer + ASan/UBSan"
+build_fail=0
+for key in "${KEYS[@]}"; do
+  # shellcheck disable=SC2086 -- SRCS is a deliberate word-split source list.
+  ( "${CLANG}" -std=c23 -g ${FUZZ_SAN} ${SRCS[${key}]} -I "${C}" -o "${tmp}/fuzz_${key}" \
+      2>"${tmp}/build_${key}.log" ) &
+done
+wait
+for key in "${KEYS[@]}"; do
+  if [ ! -x "${tmp}/fuzz_${key}" ]; then
+    echo "  FAIL: ${LABEL[${key}]} fuzzer build"; sed 's/^/    /' "${tmp}/build_${key}.log"; build_fail=1
+  fi
+done
+[ "${build_fail}" -eq 0 ] || exit 1
+
+# --- seed each corpus from real Python-rail output ---------------------------------------
+# A corpus directory is passed to libFuzzer only when it has seeds; binrec deliberately has
+# none (its input is a raw descriptor+buffer, not a framed format).
+for key in "${KEYS[@]}"; do mkdir -p "${tmp}/corpus_${key}"; done
+cp "${tmp}/pack.bin" "${tmp}/corpus_decoder/"
+cp "${tmp}/pack.bin" "${tmp}/corpus_exec/"
+cp "${tmp}/pack.bin" "${tmp}/corpus_encode/"
+rmdir "${tmp}/corpus_binrec"
+
 python3 - "${tmp}/corpus_tf" <<'PY' || { echo "  FAIL: telemetry frame seed"; exit 1; }
 import os, sys
 import bcir.telemetry_frame as tf
@@ -143,24 +177,8 @@ open(os.path.join(d, "stream2.bin"), "wb").write(mk(2) + mk(3))          # back-
 open(os.path.join(d, "noise.bin"), "wb").write(                          # the resync path
     b"\xde\xad\xbe\xefBTL" + mk(2) + b"\x00\x01BTLM" + mk(1))
 PY
-if "${tmp}/fuzz_tf" -runs="${RUNS}" -max_total_time=60 "${tmp}/corpus_tf" >"${tmp}/flog5" 2>&1; then
-  echo "  PASS libFuzzer telemetry frame (${RUNS} runs, no crash)"
-else
-  echo "  FAIL: libFuzzer telemetry frame found a crash"; tail -40 "${tmp}/flog5"; exit 1
-fi
 
-echo "[fuzz] libFuzzer on the BCIRQ8 model loader (${RUNS} runs)"
-# bcir_q8_model.c parses an EXTERNAL model artifact (LangRef 16). The format is sealed by
-# a header CRC, a body CRC, and per-tensor CRCs -- right for the format, fatal for a
-# fuzzer, since a random mutation dies on a checksum long before it reaches the geometry,
-# span-overlap, exponent-range or canonical-inventory checks. The harness therefore drives
-# each input twice: RAW (keeps the reject-on-bad-CRC path covered) and CRC-REPAIRED, which
-# is what actually explores the parser (measured: 49 -> 228 covered blocks).
-"${CLANG}" -std=c23 -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all \
-  "${C}/fuzz_q8_model.c" "${C}/bcir_q8_model.c" -I "${C}" -o "${tmp}/fuzz_q8" \
-  || { echo "  FAIL: BCIRQ8 fuzzer build"; exit 1; }
-mkdir -p "${tmp}/corpus_q8"
-if python3 - "${tmp}/corpus_q8" <<'PY'
+if ! python3 - "${tmp}/corpus_q8" <<'PY'
 import sys
 from pathlib import Path
 from bcir.tests.test_model_weights_io import _write        # the canonical BCIRQ8 writer
@@ -168,26 +186,9 @@ for tied in (False, True):
     _write(Path(sys.argv[1]) / ("tied.bcirq8" if tied else "untied.bcirq8"), tied=tied)
 PY
 then
-  if "${tmp}/fuzz_q8" -runs="${RUNS}" -max_total_time=60 -max_len=16384 "${tmp}/corpus_q8" \
-       >"${tmp}/flog6" 2>&1; then
-    echo "  PASS libFuzzer BCIRQ8 loader (${RUNS} runs, no crash)"
-  else
-    echo "  FAIL: libFuzzer BCIRQ8 loader found a crash"; tail -40 "${tmp}/flog6"; exit 1
-  fi
-else
-  echo "  SKIP BCIRQ8 loader fuzz (could not build a seed artifact)"
+  echo "  SKIP BCIRQ8 seed corpus (could not build a seed artifact); fuzzing unseeded"
 fi
-echo "[fuzz] libFuzzer on the X.690 BER/DER decoder (${RUNS} runs)"
-# bcir_asn1.c parses BER/DER from a peer. X.690's own structures -- multi-octet tags
-# and lengths, indefinite-length constructed encodings closed by end-of-contents
-# octets, arbitrary nesting -- are the shapes that historically break hand-written
-# parsers, so the harness walks every node and reads every contents octet the decoder
-# hands out. Seeded from real StreamPack DER projections plus the standard's own
-# worked examples (the constructed/indefinite forms a fuzzer rarely invents).
-"${CLANG}" -std=c23 -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all \
-  "${C}/fuzz_asn1.c" "${C}/bcir_asn1.c" -I "${C}" -o "${tmp}/fuzz_asn1" \
-  || { echo "  FAIL: X.690 fuzzer build"; exit 1; }
-mkdir -p "${tmp}/corpus_asn1"
+
 python3 - "${tmp}/corpus_asn1" <<'ASN1SEED' || { echo "  FAIL: X.690 seed"; exit 1; }
 import os, sys
 from bcir.asn1.streampack import encode_pack
@@ -211,10 +212,42 @@ for name, octets in {
 }.items():
     open(os.path.join(d, name + ".bin"), "wb").write(bytes.fromhex(octets))
 ASN1SEED
-if "${tmp}/fuzz_asn1" -runs="${RUNS}" -max_total_time=60 -max_len=8192 \
-     "${tmp}/corpus_asn1" >"${tmp}/flog7" 2>&1; then
-  echo "  PASS libFuzzer X.690 decoder (${RUNS} runs, no crash)"
-else
-  echo "  FAIL: libFuzzer X.690 decoder found a crash"; tail -40 "${tmp}/flog7"; exit 1
-fi
+
+# --- run the campaigns, at most ${JOBS} at a time ----------------------------------------
+echo "[fuzz] ${#KEYS[@]} campaigns x ${RUNS} runs (<=${MAX_TIME}s each), ${JOBS} at a time"
+# Each campaign records its own exit status in a file rather than the caller waiting on a
+# specific PID: the slot scheduler below uses `wait -n`, which reaps an ARBITRARY child, so a
+# later `wait "${pid}"` would find the status already consumed and report a false pass.
+run_campaign() {  # <key>
+  local key="$1" corpus="${tmp}/corpus_$1"
+  [ -d "${corpus}" ] || corpus=""
+  # -artifact_prefix keeps the crashing unit out of the CHECKOUT: libFuzzer writes it to the
+  # working directory by default, and seven concurrent campaigns would litter the repo root.
+  # The log we tail on failure already carries the unit's Base64, which is what reproduces it.
+  # shellcheck disable=SC2086 -- FLAGS/corpus are deliberate word-split libFuzzer arguments.
+  "${tmp}/fuzz_${key}" -runs="${RUNS}" -max_total_time="${MAX_TIME}" \
+    -artifact_prefix="${tmp}/artifact_${key}_" ${FLAGS[${key}]} \
+    ${corpus} >"${tmp}/log_${key}" 2>&1
+  echo "$?" >"${tmp}/rc_${key}"
+}
+
+for key in "${KEYS[@]}"; do
+  # Block until a slot frees. `wait -n` returns as soon as ANY child exits, which is what
+  # keeps the long poles running while short campaigns cycle through the remaining slots.
+  while [ "$(jobs -rp | wc -l)" -ge "${JOBS}" ]; do wait -n 2>/dev/null || break; done
+  run_campaign "${key}" &
+done
+wait
+
+fail=0
+for key in "${KEYS[@]}"; do
+  rc="$(cat "${tmp}/rc_${key}" 2>/dev/null || echo missing)"
+  if [ "${rc}" = "0" ]; then
+    echo "  PASS libFuzzer ${LABEL[${key}]} (${RUNS} runs, no crash)"
+  else
+    echo "  FAIL: libFuzzer ${LABEL[${key}]} found a crash (exit ${rc})"
+    tail -40 "${tmp}/log_${key}" 2>/dev/null; fail=1
+  fi
+done
+[ "${fail}" -eq 0 ] || exit 1
 echo "[fuzz] ok"
