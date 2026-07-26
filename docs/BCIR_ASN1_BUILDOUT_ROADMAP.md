@@ -51,7 +51,7 @@ rule.
 | X.682 | 8824-3:2021 | Constraint specification | **partial** — X.680 cl. 49–51 subtype constraints built; X.682's table/user-defined constraints not |
 | X.683 | 8824-4:2021 | Parameterization | not started |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
-| X.691 | 8825-2:2021 | PER | not started |
+| X.691 | 8825-2:2021 | PER | **partial** — CANONICAL-PER out, both variants; extensible *constraints* not built |
 | X.692 | 8825-3:2021 | ECN | not started |
 | X.693 | 8825-4:2021 | XER | not started |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
@@ -70,7 +70,9 @@ the suite by a factor of three, and §0 is why it is nevertheless the destinatio
 - A freestanding, allocation-free, non-recursive C twin (`runtime/c/bcir_asn1.{h,c}`),
   fuzzed under ASan/UBSan, dual-rail differentialed over 12 000 mutants.
 - The `BCIR-StreamPack` module and its **additive** DER projection, with the A1–A4 laws.
-- The `BCIR-ArtifactBundle` module and additive DER/COER projection. It preserves the
+- X.691 PER on the oracle rail (`bcir/asn1/per.py`), ALIGNED and UNALIGNED, validated
+  byte-identically against the standard's own Annex A.1 and A.2 vectors in both variants.
+- The `BCIR-ArtifactBundle` module and additive DER/COER/CANONICAL-PER projection. It preserves the
   complete abstract BCAB directory and payloads while native offsets, padding, CRCs, and
   digests are recomputed; native→DER/COER→native is byte-identical. This is the second
   artifact family to prove that the encoding-rule rail is reusable rather than
@@ -181,7 +183,31 @@ starts feeding the optimizer rather than sitting beside it.
 Gate: R24 extends to reject a constraint that is unsatisfiable (empty value set) — a
 static fault in the same family as duplicate component tags.
 
-### C. X.691 PER (ALIGNED + UNALIGNED)
+### C. X.691 PER (ALIGNED + UNALIGNED) · **PARTIAL**
+
+**Built.** `bcir/asn1/per.py`: clause 11's whole-number and length machinery (constrained,
+semi-constrained, unconstrained, normally-small, the one/two-octet length forms and the
+§11.9.3.8 16K fragmentation), and clauses 12-14, 17, 19-24 and 30 for the types the BCIR
+modules use. CANONICAL-PER out, BASIC-PER in. SEQUENCE/SET extension markers are encoded
+and decoded, including the §19.9 open-type wrapper that lets an older reader skip an
+addition it does not know. BCAB gains `native_to_per`/`per_to_native` with the same
+byte-identity law as DER and OER, and the size law holds: 512 octets against DER's 551 on
+the three-variant fixture.
+
+Validated against Annex A.1 (unconstrained, 94/84 octets) and A.2 (subtype constraints,
+74/61 octets) in both variants -- byte-identical to the standard's printed encodings. That
+check earned its keep immediately: it found that serial constraint application
+(`NameString (SIZE(1))`) was dropping the inner permitted alphabet, which is invisible to
+BER/DER/OER and changes every character's width under PER.
+
+**Not built.** Extensible *constraints* -- `INTEGER (0..9999, ...)`, `SIZE(8, ..., 9..20)`,
+`FROM(...) ^ SIZE(1..64, ...)`. These need the phase-B constraint model to expose the
+extension ROOT bounds separately from the extensibility flag, which today collapses to
+UNBOUNDED. That is what Annex A.3 and A.4 exercise, so those two vectors are not yet
+claimed. Also not built: the dual-rail C twin, and REAL/BIT STRING/EMBEDDED PDV/unrestricted
+character strings (clauses 15, 16, 28, 31), none of which appear in a BCIR module.
+
+#### Original plan
 
 The first *compact* encoding, and the first real test of the additive posture: a
 StreamPack projected to UNALIGNED PER should be materially smaller than its DER form,

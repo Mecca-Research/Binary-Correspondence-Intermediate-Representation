@@ -51,6 +51,12 @@ class Component:
     explicit: bool = False
     optional: bool = False
     default: object = _NO_DEFAULT
+    #: True when this component appears AFTER the `...` extension marker, i.e. it is an
+    #: extension addition rather than part of the extension root (X.680 §25.1). Invisible
+    #: to BER/DER/OER, which encode a component the same way wherever it sits; PER splits
+    #: the two hard (X.691 §19.1/§19.7-§19.9: the root gets a presence bitmap, additions
+    #: get a separate bitmap and are each wrapped as an open type).
+    extension: bool = False
 
     @property
     def has_default(self) -> bool:
@@ -135,6 +141,26 @@ class Primitive(Asn1Type):
     #: way regardless -- but load-bearing for OER and PER, which CHOOSE the encoding from
     #: it (X.696 §8.2.7/§8.2.8).
     constraint: object | None = None
+    #: For ENUMERATED: the `identifier(number)` list of the enumeration ROOT, in source
+    #: order. Like `constraint`, this is invisible to BER/DER/OER -- all three encode the
+    #: enumeration *value* (X.690 §8.4, X.696 §11) -- but PER encodes the enumeration
+    #: *INDEX* (X.691 §14.1/§14.2: sort the root ascending by value, number from zero, then
+    #: encode as a constrained whole number with lb=0 and ub=the largest index). Without the
+    #: enumeration a PER codec cannot know either the index or the bit width, so a bare
+    #: ENUMERATED is encodable under the other three rules and not under this one.
+    enumeration: tuple[tuple[str, int], ...] | None = None
+    #: True when the "Enumerations" production carried an extension marker (X.680 §20.1).
+    #: X.691 §10.3.22 a) makes such a type extensible for PER, which adds the §14.3 bit.
+    enum_extensible: bool = False
+
+    def enum_indices(self) -> dict[int, int]:
+        """X.691 §14.1: enumeration value -> enumeration index, root sorted ascending."""
+        if not self.enumeration:
+            raise Asn1Error(
+                f"{self.name}: ENUMERATED has no enumeration; PER encodes the enumeration "
+                f"index (X.691 §14.1), which cannot be derived from the value alone")
+        ordered = sorted({number for _name, number in self.enumeration})
+        return {number: index for index, number in enumerate(ordered)}
 
     def base_tag(self) -> Tag:
         constructed = self.universal in (Universal.SEQUENCE, Universal.SET)
@@ -249,6 +275,8 @@ class Sequence(Asn1Type):
 
     components: tuple[Component, ...]
     name: str = "SEQUENCE"
+    #: True when the component list carried a `...` extension marker (X.680 §25.1).
+    extensible: bool = False
 
     def base_tag(self) -> Tag:
         return Tag(TagClass.UNIVERSAL, Universal.SEQUENCE, True)
@@ -338,6 +366,8 @@ class Set(Asn1Type):
 
     components: tuple[Component, ...]
     name: str = "SET"
+    #: True when the component list carried a `...` extension marker (X.680 §25.1).
+    extensible: bool = False
 
     def base_tag(self) -> Tag:
         return Tag(TagClass.UNIVERSAL, Universal.SET, True)
@@ -405,6 +435,8 @@ class Choice(Asn1Type):
 
     alternatives: tuple[Component, ...]
     name: str = "CHOICE"
+    #: True when the alternative list carried a `...` extension marker (X.680 §25.1).
+    extensible: bool = False
 
     def __post_init__(self) -> None:
         for alt in self.alternatives:

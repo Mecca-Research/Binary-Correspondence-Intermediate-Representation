@@ -97,15 +97,29 @@ _U64 = Primitive(Universal.INTEGER, "U64", ValueRange(0, (1 << 64) - 1))
 _I32 = Primitive(
     Universal.INTEGER, "I32", ValueRange(-(1 << 31), (1 << 31) - 1),
 )
-_ENUM = Primitive(Universal.ENUMERATED, "ENUMERATED")
+# One ENUMERATED per named type, each carrying its own enumeration, rather than a single
+# anonymous `ENUMERATED` shared by all three. DER and OER encode the enumeration VALUE
+# (X.690 §8.4, X.696 §11), so a bare primitive was sufficient for them and the difference
+# was invisible; X.691 §14.1 encodes the enumeration INDEX, which cannot be derived without
+# the root list. Sharing one object would additionally have given ArtifactKind and
+# Endianness the same PER width, which they do not have (5 bits against 2).
+_KIND_ENUM = Primitive(
+    Universal.ENUMERATED, "ArtifactKind",
+    enumeration=tuple((k.name.lower(), int(k)) for k in ArtifactKind))
+_FORMAT_ENUM = Primitive(
+    Universal.ENUMERATED, "ArtifactFormat",
+    enumeration=tuple((f.name.lower(), int(f)) for f in ArtifactFormat))
+_ENDIAN_ENUM = Primitive(
+    Universal.ENUMERATED, "Endianness",
+    enumeration=tuple((e.name.lower(), int(e)) for e in Endianness))
 _UTF8 = Primitive(Universal.UTF8_STRING, "UTF8String")
 _OCTETS = Primitive(Universal.OCTET_STRING, "OCTET STRING")
 _FEATURES = SequenceOf(_UTF8, "FeatureList")
 
 ARTIFACT_VARIANT = Sequence((
     Component("variantId", _UTF8, tag=0),
-    Component("kind", _ENUM, tag=1),
-    Component("format", _ENUM, tag=2),
+    Component("kind", _KIND_ENUM, tag=1),
+    Component("format", _FORMAT_ENUM, tag=2),
     Component("payload", _OCTETS, tag=3),
     Component("triple", _UTF8, tag=4),
     Component("architecture", _UTF8, tag=5),
@@ -114,7 +128,7 @@ ARTIFACT_VARIANT = Sequence((
     Component("entrySymbol", _UTF8, tag=8),
     Component("requiredFeatures", _FEATURES, tag=9),
     Component("prohibitedFeatures", _FEATURES, tag=10),
-    Component("endianness", _ENUM, tag=11),
+    Component("endianness", _ENDIAN_ENUM, tag=11),
     Component("pointerBits", _U8, tag=12),
     Component("machine", _U32, tag=13),
     Component("priority", _I32, tag=14),
@@ -141,9 +155,9 @@ MODULE = Module("BCIR-ArtifactBundle", ARTIFACT_BUNDLE_MODULE_OID, {
     "U32": _U32,
     "U64": _U64,
     "I32": _I32,
-    "ArtifactKind": _ENUM,
-    "ArtifactFormat": _ENUM,
-    "Endianness": _ENUM,
+    "ArtifactKind": _KIND_ENUM,
+    "ArtifactFormat": _FORMAT_ENUM,
+    "Endianness": _ENDIAN_ENUM,
     "FeatureList": _FEATURES,
     "ArtifactVariant": ARTIFACT_VARIANT,
     "ArtifactBundle": ARTIFACT_BUNDLE,
@@ -380,6 +394,43 @@ def decode_bundle_oer(data: bytes, *, canonical: bool = False) -> ArtifactBundle
     return value_to_bundle(value)
 
 
+def encode_bundle_per(bundle: ArtifactBundle, *, aligned: bool = False) -> bytes:
+    """Emit the CANONICAL-PER projection of ``bundle``.
+
+    UNALIGNED is the default because the projection is dominated by bounded integers and
+    a compact wire is the whole reason to reach for PER; ``aligned=True`` selects the
+    variant that trades size for octet-aligned reads.  The two do not interwork (X.691
+    §7.8), so the caller's choice has to travel with the bytes.
+    """
+    from .per import PerRules, PerVariant, encode_per
+
+    variant = PerVariant.ALIGNED if aligned else PerVariant.UNALIGNED
+    return encode_per(
+        ARTIFACT_BUNDLE, bundle_to_value(bundle),
+        variant=variant, rules=PerRules.CANONICAL,
+    )
+
+
+def decode_bundle_per(data: bytes, *, aligned: bool = False) -> ArtifactBundle:
+    """Decode a PER projection of a bundle."""
+    from .per import PerRules, PerVariant, decode_per
+
+    variant = PerVariant.ALIGNED if aligned else PerVariant.UNALIGNED
+    bounded = _bounded_octets(data, "PER artifact-bundle projection")
+    value = decode_per(bounded, ARTIFACT_BUNDLE, variant=variant, rules=PerRules.CANONICAL)
+    return value_to_bundle(value)
+
+
+def native_to_per(data: bytes, *, aligned: bool = False) -> bytes:
+    """Validate native BCAB bytes and project the abstract bundle to CANONICAL-PER."""
+    return encode_bundle_per(inspect_bundle(data).bundle, aligned=aligned)
+
+
+def per_to_native(data: bytes, *, aligned: bool = False) -> bytes:
+    """Decode a PER projection and reconstruct canonical native BCAB bytes."""
+    return encode_bundle(decode_bundle_per(data, aligned=aligned))
+
+
 def native_to_der(data: bytes) -> bytes:
     """Validate native BCAB bytes and project the abstract bundle to DER."""
     return encode_bundle_der(inspect_bundle(data).bundle)
@@ -413,11 +464,15 @@ __all__ = [
     "bundle_to_value",
     "decode_bundle_der",
     "decode_bundle_oer",
+    "decode_bundle_per",
     "der_to_native",
     "encode_bundle_der",
     "encode_bundle_oer",
+    "encode_bundle_per",
     "native_to_der",
     "native_to_oer",
+    "native_to_per",
     "oer_to_native",
+    "per_to_native",
     "value_to_bundle",
 ]

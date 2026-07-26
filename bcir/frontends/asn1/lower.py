@@ -27,7 +27,7 @@ from dataclasses import dataclass, field, replace
 
 from bcir.asn1.schema import (Asn1Type, Choice, Component, Module, OpenType, Primitive,
                               Sequence, SequenceOf, Set, SetOf)
-from bcir.asn1.tags import Asn1Error, Tag, Universal
+from bcir.asn1.tags import Asn1Error, Tag, TagClass, Universal
 
 from . import ast
 from .lexer import Asn1SyntaxError
@@ -104,6 +104,11 @@ class LoweredModule:
     #: type name -> {enumeration item name: number}, for reading DEFAULT values back.
     enumerations: dict[str, dict[str, int]] = field(default_factory=dict)
     node: ast.ModuleNode | None = None
+    #: type name -> (TagClass, number, mode) for a type ASSIGNED a tag
+    #: (`Name ::= [APPLICATION 1] IMPLICIT SEQUENCE {...}`). Components that reference the
+    #: name already carry the tag; this is the record for an outermost direct encode, which
+    #: the component-shaped type model cannot express.
+    assigned_tags: dict[str, tuple] = field(default_factory=dict)
 
     def __getattr__(self, item):                           # convenience delegation
         return getattr(self.module, item)
@@ -122,6 +127,7 @@ class Lowerer:
         self.imported = imports or {}
         self.types: dict[str, Asn1Type] = {}
         self.enumerations: dict[str, dict[str, int]] = {}
+        self.assigned_tags: dict[str, tuple] = {}
         self._in_progress: set[str] = set()
 
     # --- entry point ------------------------------------------------------------------
@@ -131,7 +137,8 @@ class Lowerer:
             self._type_by_name(name)
         oid = self._oid(self.node.oid) if self.node.oid else ()
         module = Module(self.node.name, oid, dict(self.types))
-        return LoweredModule(module, self.node.tag_default, self.enumerations, self.node)
+        return LoweredModule(module, self.node.tag_default, self.enumerations, self.node,
+                            dict(self.assigned_tags))
 
     def _oid(self, value: ast.OidValue) -> tuple[int, ...]:
         arcs: list[int] = []
@@ -192,12 +199,22 @@ class Lowerer:
             return self._builtin(node, label)
 
         if isinstance(node, ast.Tagged):
-            # A tagged type at ASSIGNMENT level (`T ::= [0] INTEGER`) is a distinct type
-            # in X.680, but the encoder model carries tags on components. Only the
-            # component form is supported, and saying so beats silently dropping a tag.
-            raise Asn1SemanticError(
-                f"{label}: a tagged type outside a component list is not supported; "
-                f"write the tag on the component that references this type")
+            # A tagged type at ASSIGNMENT level (`Name ::= [APPLICATION 1] IMPLICIT
+            # SEQUENCE {...}`). The encoder model carries tags on COMPONENTS, so the tag is
+            # recorded against the assigned name and picked up by every component that
+            # references it (see `_components`). That is where the tag is observable: it is
+            # what X.690 puts on the wire for such a component and what X.691 §21 / X.696
+            # §18.2 sort a SET on.
+            #
+            # The one place it is NOT reinstated is a direct encode of the assigned type as
+            # an outermost value under a tag-visible rule, which would need a wrapper the
+            # type model does not have. That is recorded rather than papered over:
+            # `LoweredModule.assigned_tags` exposes it, and PER is unaffected either way
+            # because X.691 §10.4.1/§10.6.3 make tagging invisible to it.
+            inner, number, mode, cls = _peel_tag(node)
+            built = self._type(inner, label)
+            self.assigned_tags[label] = (cls, number, mode)
+            return built
 
         if isinstance(node, ast.SequenceOfType):
             element = self._type(node.element, f"{label} element")
@@ -208,13 +225,16 @@ class Lowerer:
             return SetOf(element, f"SET OF {_render_name(node.element)}")
 
         if isinstance(node, ast.SequenceType):
-            return Sequence(self._components(node.components, label), label)
+            comps, ext = self._components(node.components, label)
+            return Sequence(comps, label, ext)
 
         if isinstance(node, ast.SetType):
-            return Set(self._components(node.components, label), label)
+            comps, ext = self._components(node.components, label)
+            return Set(comps, label, ext)
 
         if isinstance(node, ast.ChoiceType):
-            return Choice(self._components(node.alternatives, label, choice=True), label)
+            alts, ext = self._components(node.alternatives, label, choice=True)
+            return Choice(alts, label, ext)
 
         raise Asn1SemanticError(f"{label}: unsupported type node {type(node).__name__}")
 
@@ -230,6 +250,16 @@ class Lowerer:
         from bcir.asn1.constraints import Intersection, require_satisfiable
 
         combined = applied[0] if len(applied) == 1 else Intersection(tuple(applied))
+        inner = getattr(built, "constraint", None)
+        if inner is not None:
+            # SERIAL APPLICATION (X.680 §50.11, X.691 §10.3.20/§10.3.21). `NameString
+            # (SIZE(1))` constrains a type that is ALREADY constrained, and the effective
+            # constraint is the intersection of the two, not the outer one: the outer SIZE
+            # narrows the length while NameString's permitted alphabet survives untouched.
+            # Overwriting here silently widened the alphabet back to the base type's, which
+            # is invisible to BER/DER/OER -- they encode the value identically either way --
+            # and changes the WIDTH of every character under PER (X.691 §30.5.2).
+            combined = Intersection((inner, combined))
         require_satisfiable(combined, label)
         if isinstance(built, (Primitive, SequenceOf, SetOf)):
             return replace(built, constraint=combined)
@@ -270,26 +300,54 @@ class Lowerer:
             raise Asn1SemanticError(f"{label}: unknown built-in type {node.name!r}")
         if node.named:
             self.enumerations[label] = {n.name: n.number for n in node.named}
+        if universal == Universal.ENUMERATED:
+            # Carry the enumeration ONTO the type, not just into the module-level side
+            # table. The side table answers "what does this DEFAULT identifier mean"; PER
+            # asks a different question -- X.691 §14.1 encodes the enumeration INDEX, so
+            # the codec needs the whole root list at the point of use. BER/DER/OER never
+            # needed it because they encode the value itself.
+            return Primitive(
+                int(universal), node.name,
+                enumeration=tuple((n.name, n.number) for n in node.named),
+                enum_extensible=bool(node.extensible))
         return Primitive(int(universal), node.name)
 
     def _components(self, nodes, label: str, choice: bool = False):
-        entries = [n for n in nodes if isinstance(n, ast.ComponentNode)]
+        # X.680 §25.1: `...` splits the list into the extension ROOT and the extension
+        # ADDITIONS. BER/DER/OER encode both alike, so this pass used to drop the marker;
+        # PER does not (X.691 §19.1/§19.7), so the split is recorded on each component.
+        entries, after_marker, extension_of = [], False, {}
+        for node in nodes:
+            if isinstance(node, ast.ExtensionMarker):
+                after_marker = True
+                continue
+            if isinstance(node, ast.ComponentNode):
+                extension_of[id(node)] = after_marker
+                entries.append(node)
         automatic = self._use_automatic_tags(entries)
         out: list[Component] = []
         for position, item in enumerate(entries):
-            inner, tag, mode = _peel_tag(item.type)
+            inner, tag, mode, tag_cls = _peel_tag(item.type)
             if tag is None and automatic:
-                tag, mode = position, None                 # §12.3 automatic assignment
+                tag, mode, tag_cls = position, None, TagClass.CONTEXT   # §12.3
             built = self._type(inner, f"{label}.{item.name}")
+            if tag is None and isinstance(inner, ast.TypeRef):
+                # The component is untagged, but the type it names may have been ASSIGNED
+                # a tag (`Name ::= [APPLICATION 1] IMPLICIT SEQUENCE {...}`). X.680 §31
+                # makes that tag part of the referenced type, so the component carries it
+                # -- and it is what X.691 §21 / X.696 §18.2 sort a SET on, which is why
+                # dropping it would silently reorder a SET's components.
+                assigned = self.assigned_tags.get(inner.name)
+                if assigned is not None:
+                    tag_cls, tag, mode = assigned
             explicit = self._explicit(mode, built)
             default, has_default = self._default(item, built, f"{label}.{item.name}")
             out.append(Component(
                 name=item.name, type=built, tag=tag, explicit=explicit,
-                optional=item.optional,
+                optional=item.optional, extension=extension_of[id(item)],
+                **({"tag_class": tag_cls} if tag_cls is not None else {}),
                 **({"default": default} if has_default else {})))
-        if choice:
-            return tuple(out)
-        return tuple(out)
+        return tuple(out), any(isinstance(n, ast.ExtensionMarker) for n in nodes)
 
     def _use_automatic_tags(self, entries) -> bool:
         """§12.3: automatic tagging applies only when NO component carries a tag."""
@@ -403,15 +461,24 @@ _WELL_KNOWN_ARCS = {
 }
 
 
+#: X.680 §8.1 tag classes, as spelled in the notation. An empty class name is the default
+#: context-specific case (`[0]`), which is why it maps to CONTEXT rather than UNIVERSAL.
+_TAG_CLASSES = {
+    "": TagClass.CONTEXT,
+    "UNIVERSAL": TagClass.UNIVERSAL,
+    "APPLICATION": TagClass.APPLICATION,
+    "PRIVATE": TagClass.PRIVATE,
+}
+
+
 def _peel_tag(node):
-    """Split `[n] IMPLICIT Type` into (Type, n, mode); (node, None, None) if untagged."""
+    """Split `[class n] IMPLICIT Type` into (Type, n, mode, class); 4x None if untagged."""
     if isinstance(node, ast.Tagged):
-        if node.tag_class:
-            raise Asn1SemanticError(
-                f"[{node.tag_class} {node.number}] is not a context-specific tag; the "
-                f"encoder model carries context tags only")
-        return node.inner, node.number, node.mode
-    return node, None, None
+        cls = _TAG_CLASSES.get(node.tag_class)
+        if cls is None:
+            raise Asn1SemanticError(f"unknown tag class {node.tag_class!r}")
+        return node.inner, node.number, node.mode, cls
+    return node, None, None, None
 
 
 def _needs_explicit_tag(built: Asn1Type) -> bool:
