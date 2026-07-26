@@ -37,7 +37,7 @@ fail=0
 step() { printf '  %-44s' "$1"; shift; if "$@" >"${STEP_LOG}" 2>&1; then echo "OK"; else echo "FAIL"; tail -8 "${STEP_LOG}"; fail=1; fi; }
 echo "[rail22] running the full rail on true MLIR 22:"
 step "tblgen (ODS family)"                 env MLIR_TBLGEN="${MLIR_TBLGEN}" MLIR_INCLUDE="${MLIR_INCLUDE}" bash "${ROOT}/tools/wsl/tblgen_check.sh"
-step "passes (R1-R23 / GEM / optimizer)"   env BCIR_OPT="${BO}" bash "${ROOT}/tools/wsl/check_passes.sh"
+step "passes (R1-R24 / GEM / optimizer)"   env BCIR_OPT="${BO}" bash "${ROOT}/tools/wsl/check_passes.sh"
 step "ODS pretty examples"                 env BCIR_OPT="${BO}" bash "${ROOT}/tools/wsl/check_ods_examples.sh"
 step "bytecode round-trip"                 env BCIR_OPT="${BO}" bash "${ROOT}/tools/wsl/check_bytecode.sh"
 step "IRDL corpus (22-only named syntax)"  env MLIR_OPT="${MLIR_OPT}" bash "${ROOT}/tools/irdl/check_corpus.sh"

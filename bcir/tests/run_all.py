@@ -324,6 +324,7 @@ _MODULES = [
     "bcir.tests.test_asn1_x690",
     "bcir.tests.test_asn1_streampack",
     "bcir.tests.test_c_asn1",
+    "bcir.tests.test_asn1_law_parity",
     "bcir.tests.test_native_object_gate",
     "bcir.tests.test_c_executor",
     "bcir.tests.test_c_encoder",

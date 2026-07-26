@@ -178,6 +178,21 @@ irdl.dialect @bcir {
   irdl.operation @binary_record
   irdl.operation @binary_decode
 
+  // ASN.1 / X.690 interop rail (docs/BCIR_ASN1_X690_ABI.md). The module and type are
+  // containers; components, encode/decode and the projection are leaves.
+  irdl.operation @asn1_module {
+    %body = irdl.region
+    irdl.regions(body: %body)
+  }
+  irdl.operation @asn1_type {
+    %body = irdl.region
+    irdl.regions(body: %body)
+  }
+  irdl.operation @asn1_component
+  irdl.operation @asn1_encode
+  irdl.operation @asn1_decode
+  irdl.operation @asn1_projection
+
   // ---- M1: verifier obligations as IR (R1-R12) ----
   irdl.operation @verify_registry_symbols
   irdl.operation @verify_resource_domain

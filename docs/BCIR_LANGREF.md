@@ -159,7 +159,7 @@ is a hard parity failure). The supported surface and ownership discipline are
 [`CFRONT_GUIDE.md`](languages/CFRONT_GUIDE.md) and
 [`C_MEMORY_DISCIPLINE.md`](languages/C_MEMORY_DISCIPLINE.md).
 
-## 10. Verifier laws (R1–R23)
+## 10. Verifier laws (R1–R24)
 
 R1 registry uniqueness · R2 registry resolution · R3 domain legality ·
 R4 phase-DAG legality · R5 hazard legality · R6 lane legality · R7 bounds
@@ -187,7 +187,7 @@ swaps are never silent. Encoded as IR via the `bcir.verify.*` op family. The
 runnable full set lives in `bcir/verify`, one entry point per correspondence
 artifact — `verify(module)` R1–R8(static), `verify_plan` R8–R9, `verify_pack`
 R10–R11, `verify_lowering` R12, `verify_provenance` R13 — and the MLIR-native
-`-bcir-verify` pass enforces the structurally checkable form of all of R1–R23
+`-bcir-verify` pass enforces the structurally checkable form of all of R1–R24
 on the dialect.
 
 **Timing + lifetime laws (R19/R20/R21).** Three further laws over the
@@ -210,6 +210,26 @@ it), now carried on the dialect as the `#bcir.timing` / `#bcir.lifetime` attribu
   claim order against the freed set, a read of a freed-and-not-reallocated resource
   is a use-after-free, a `free` of an already-freed resource is a double-free, and a
   write (reassignment / `alloc`) re-validates.
+
+**ASN.1 encoding-rule legality (R24).** Over the `bcir.asn1.*` schema operations
+(§17's ASN.1 profile, [`BCIR_ASN1_X690_ABI.md`](BCIR_ASN1_X690_ABI.md)). R24 checks the
+faults decidable from the **type alone**, before any value exists — which is why they
+belong on the law rail rather than in the oracle's encoder: a SET whose components
+share a tag is undecodable for every value it could ever hold, and X.680 §24.4/§25.3
+say so about the type. The rules: encoding rules must be `der` on a module and on an
+`asn1.encode` (X.690 clause 10 + 11 — BER and CER leave the octets to the sender, and
+BCIR digests what it emits); a module OID must be well-formed under X.690 §8.19.4
+(root arc 0–2, second arc 0–39 beneath arcs 0 and 1); a universal tag number must be
+assigned by X.680 Table 1 (0, 15 and 37+ are reserved); a primitive names a universal
+tag and a constructor does not; a `sequence_of`/`set_of` names an element type and
+nothing else does; component tags within a type are distinct; OPTIONAL and DEFAULT are
+exclusive (X.680 §25.5) and a DEFAULT carries its value (needed for §11.5's omission);
+a SET does not mix tagged and untagged components (it is order-free on the wire, X.690
+§8.11.2); a `strict_der` decode does not also declare it accepts BER; and an
+`asn1.projection` is marked **additive** — a projection that replaced a frozen wire
+format would invalidate every digest taken over the native octets, so the IR refuses to
+express one. Vacuous for IR with no `bcir.asn1.*` operation (the non-disturbance
+invariant R14–R23 also hold to). Oracle twins: `asn1.schema` and `asn1.der`.
 
 **Shape + dtype laws (R22/R23) — the D2 promotion.** The E3–E6 `check_*` validators'
 "structurally valid tensors" guarantee, made law over the `gem.*` tensor claims:
@@ -280,7 +300,7 @@ oracle's `verify.verify_timing` / `verify.verify_lifetime` (run through
 `verify.verify_smart_lowering` alongside R14–R17 and R22), each with a negative
 `-verify-diagnostics` case in `mlir/test/passes/verify_timing_lifetime.mlir`, so the
 generated status ([`STATUS.md`](STATUS.md)) now reports the first-class set as
-**R1–R23**. R21 detection runs on both driver rails; it is *advisory* by default
+**R1–R24**. R21 detection runs on both driver rails; it is *advisory* by default
 (surfaced, never gates), and the `bcir-cc` / `bcir-cfront` drivers expose a `--r21`
 policy — `advisory` (default) · `fallback` (route the unit to the LLVM backend,
 exit 2) · `reject` (a hard verify error, exit 1) — so a detected use-after-free /
@@ -1059,7 +1079,7 @@ provenance and license pins live in
 This reference defines semantics; an implementation must name the profile it supports
 and reject work outside it. The current profiles are:
 
-- **MLIR law profile:** ODS/TableGen dialects plus `-bcir-verify` R1–R23 and the
+- **MLIR law profile:** ODS/TableGen dialects plus `-bcir-verify` R1–R24 and the
   documented optimizer/GEM passes. A successful parse is not a lowering guarantee.
 - **Python oracle profile:** executable semantic, planning, GEM, model, and codec
   reference. It is the differential oracle, not an alternative normative syntax.

@@ -165,7 +165,38 @@ A3 is the compatibility claim: a pack can leave BCIR as DER, be handled by an
 ASN.1-speaking peer, and come back as the *same native octets*, so StreamPack digests
 and provenance manifests stay valid across the boundary.
 
-## 5. Trust boundary
+## 5. The law rail (R24)
+
+The ASN.1 schema is also **IR**: `bcir.asn1.module` / `type` / `component` / `encode` /
+`decode` / `projection` in `mlir/include/BCIR/BCIRAsn1Ops.td`, verified by law **R24**
+in `-bcir-verify`.
+
+The split between the two rails is deliberate and is about *when* a fault is
+detectable. The oracle rejects a bad schema when a value is encoded through it; R24
+rejects it when the **type is written**, before any value exists. Those are different
+sets of faults, and the ones R24 owns are the ones that are properties of the type:
+
+| Rule | Clause | Why it is static |
+|---|---|---|
+| module/encode rules must be `der` | X.690 10 + 11 | BER and CER leave the octets to the sender; BCIR digests what it emits |
+| module OID well-formed | X.690 8.19.4 | root arc 0–2, second arc 0–39 under arcs 0 and 1 |
+| universal tag assigned | X.680 Table 1 | 0, 15 and 37+ are reserved; a conforming sender never emits one |
+| primitive ⇔ universal tag | — | a primitive without one is unencodable; a constructor with one names a tag it does not own |
+| `sequence_of`/`set_of` ⇔ element | — | an "of" type with no element names nothing |
+| **component tags distinct** | X.680 24.4/25.3/29.3 | a type with duplicate tags is undecodable **for every value it could ever hold** |
+| OPTIONAL xor DEFAULT | X.680 25.5 | a DEFAULT already makes the component omissible |
+| DEFAULT carries its value | X.690 11.5 | the encoder must compare against it to omit it |
+| SET tags all present | X.690 8.11.2 | a set is order-free on the wire, so tag is the only discriminator |
+| `strict_der` ⇏ accepts BER | — | a direct contradiction |
+| projection is `additive` | — | a replacement would invalidate every digest over the native octets |
+
+Vacuous for IR with no `bcir.asn1.*` operation — the non-disturbance invariant R14–R23
+also hold to. Negative fixtures: `mlir/test/passes/verify_asn1.mlir` (1 positive, 13
+negatives, one per diagnostic). Enum values, the module OID, and the
+diagnostic-to-fixture pairing are pinned across the rails by
+`bcir/tests/test_asn1_law_parity.py`.
+
+## 6. Trust boundary
 
 Every octet handed to a decoder is untrusted. The contract is **total**: for any
 input, every entry point either returns a value or reports a fault — it never reads
@@ -189,7 +220,7 @@ another keeps reading is how content gets smuggled past one implementation.
 `runtime/c/fuzz_asn1.c` fuzzes the C rail under ASan/UBSan as part of
 `tools/c/fuzz_streampack.sh`.
 
-## 6. Transfer syntax identity
+## 7. Transfer syntax identity
 
 X.690 §12 assigns object identifiers to the encoding rules themselves:
 
@@ -201,11 +232,12 @@ X.690 §12 assigns object identifiers to the encoding rules themselves:
 Exported as `bcir.asn1.BER_OID` / `DER_OID` and their `_IRI` forms, so a protocol that
 must name its transfer syntax can do so without hard-coding the arcs.
 
-## 7. Validation
+## 8. Validation
 
 ```bash
-python -m bcir.tests.run_all --tier quick          # includes the three ASN.1 modules
+python -m bcir.tests.run_all --tier quick          # includes the four ASN.1 modules
 FUZZ_RUNS=500000 bash tools/c/fuzz_streampack.sh   # includes the X.690 harness
+bash tools/wsl/check_passes.sh                     # includes the R24 fixture
 ```
 
 Evidence recorded at the time of writing: X.690's own worked examples reproduce

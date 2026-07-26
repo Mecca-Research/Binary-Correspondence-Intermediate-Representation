@@ -21,6 +21,9 @@ Integer enum values are identical in `bcir/model/lanes.py` /
 | Bounds | Strict=0, Masked=1, AssumedSafe=2 |
 | MemTier | L1=0, L2=1, L3=2, DRAM=3, HBM=4, CXL=5, SSD=6 |
 | Access | Flat=0, HAM=1 |
+| Asn1Class | Universal=0, Application=1, Context=2, Private=3 (X.690 Table 1: the identifier octet's high bits) |
+| Asn1Rules | Ber=0, Cer=1, Der=2 |
+| Asn1Tagging | Implicit=0, Explicit=1 |
 
 The K_BCIR cost vector is **12-d** in both, same dimension order:
 `compute, memory, fabric, sync, compile, thermal, power, reliability, security,
@@ -81,6 +84,7 @@ accuracy, contention, verification`.
 | deterministic executor | `gem.execute` (topological phase order, ascending claim id within a phase, per-phase telemetry) | **C** `runtime/c/bcir_exec.c` (`bcir_sp_execute`): freestanding, Python↔C dispatch-order + telemetry parity (`test_c_executor.py`, `check_runtime.sh`) + libFuzzer (`fuzz_exec.c`) |
 | verifier differential (illegal modules) | `kbcir.differential.{gen_illegal_module, check_verifier, gen_illegal_plan, check_plan_verifier, _artifact_law_misses, run_verifier_campaign}` — the original differential fault-injects the scoped R1–R18 oracle entry points (R1/R18 construction guards included). R19–R23 use their dedicated optional-metadata/GEM seam tests. | **`-bcir-verify` implements the current R1–R23 set** (`BCIRVerifyPass.cpp`), with negative `-verify-diagnostics` fixtures under `mlir/test/passes/verify*.mlir`; generated `STATUS.md` inventories tags but does not claim execution |
 | overlap law net (the C++ port's net) | `kbcir.differential.check_overlap` + `gem.overlap.price_scheduled` (R9: makespan + gain == serial == score, 0 ≤ makespan ≤ serial) | `bcir.kbcir.scheduled_price` VerifyPass R9 — the invariant the deterministic-optimizer-core C++ port must reproduce |
+| verifier **R24** (ASN.1 encoding-rule legality) | `asn1.schema` (OPTIONAL/DEFAULT, tag application) + `asn1.der` (clause 10+11) — enforced when a VALUE is encoded | **first-class `-bcir-verify` R24** over the `bcir.asn1.*` schema ops — enforced when the TYPE is written, before any value exists (`verify_asn1.mlir`: 1 positive + 13 negatives); enum/OID/diagnostic parity pinned by `test_asn1_law_parity.py` |
 | ASN.1 / X.690 codec | `asn1.{tags,length,tlv,values,der,codec}` (clause 8 contents, clauses 10+11 restrictions, BER→DER rewrite) | **C** `runtime/c/bcir_asn1.{h,c}` (freestanding, non-recursive, explicit-stack walk); dual-rail node-tree + BER-verdict + DER-verdict differential (`test_c_asn1.py`), 12 000 mutants clean |
 | ASN.1 StreamPack projection | `asn1.streampack` (the `BCIR-StreamPack` module + DER projection; additive, native octets frozen) | *(interop rail)* laws A1 faithful / A2 canonical / A3 additive / A4 normalizing in `test_asn1_streampack.py`; `docs/BCIR_ASN1_X690_ABI.md` |
 | trust-boundary fuzz | `kbcir.fuzz` (`run_fuzz`, seeded by `gen_module`): StreamPack codec, ROP/MAP/ETL front-ends, calibration JSON, the MLIR emitter — valid round-trip + graceful malformed rejection | *(host fuzz; C/C++ libFuzzer + ASan/UBSan is the toolchain-rail remainder)* |

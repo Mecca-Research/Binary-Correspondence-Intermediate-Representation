@@ -230,6 +230,13 @@ echo "[passes] R7 masked clause + extent-provenance (SS5.14 Phase 2: masked need
 echo "[passes] R22/R23 gem shape/dtype seam laws (D2 promotion: matmul->activation extent + conv/attention->activation dtype; negatives + a legal seam)"
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_shape_dtype.mlir" \
   && echo "  PASS verify_shape_dtype.mlir" || { echo "  FAIL verify_shape_dtype.mlir"; fail=1; }
+
+# R24 -- ASN.1 / X.690 encoding-rule legality over the bcir.asn1.* schema ops. These are the
+# faults decidable from the TYPE alone, before any value exists (a SET with duplicate component
+# tags is undecodable for every value it could hold), which is exactly why they belong on the
+# law rail rather than in the oracle's encoder.
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_asn1.mlir" \
+  && echo "  PASS verify_asn1.mlir" || { echo "  FAIL verify_asn1.mlir"; fail=1; }
 echo "[passes] bcir.creg_read/write round-trip (D1.3: x86-64 control-register access parses/prints identically)"
 if [ -n "${FC}" ]; then
   "${BO}" "${T}/creg_roundtrip.mlir" 2>"${ERR}" | "${BO}" | "${FC}" "${T}/creg_roundtrip.mlir" \
