@@ -119,6 +119,15 @@ add_target tf "telemetry frame" "" \
 add_target asn1 "X.690 decoder" "-max_len=8192" \
   "${C}/fuzz_asn1.c" "${C}/bcir_asn1.c"
 
+# X.691 clause 11's decoding primitives. PER is NOT self-delimiting (X.691 7.2), so unlike
+# the X.690 target there is no structure to walk without a schema -- what is reachable, and
+# what is dangerous, is exactly the layer that takes an attacker-supplied bit width, octet
+# count or fragment header and advances a cursor with it. The harness derives the bounds
+# from the input so the 11.5 range-selection branches (bit-field / one-octet / two-octet /
+# indefinite) are all reachable instead of one being hammered.
+add_target per "X.691 PER primitives" "-max_len=4096" \
+  "${C}/fuzz_per.c" "${C}/bcir_per.c"
+
 # The StreamPack decoder itself: an artifact handed to the runtime by anyone.
 add_target decoder "decoder" "" \
   "${C}/fuzz_streampack.c" "${C}/bcir_runtime.c"

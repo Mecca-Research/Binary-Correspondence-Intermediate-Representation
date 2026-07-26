@@ -3324,6 +3324,72 @@ print('OK' if ok else 'NO')")" \
   && echo "  PASS barrier: the aarch64 dmb-ish + riscv64 fence families emit correctly off-arch (per-ISA --target keying)" \
   || { echo "  FAIL: barrier per-ISA off-arch emit text is wrong"; exit 1; }
 
+# X.691 PER decoding primitives (#per, roadmap phase C): the C twin of clause 11. PER is
+# NOT self-delimiting (X.691 7.2), so unlike the X.690 twin there is no schema-free
+# structure walk -- clause 11's whole-number and length decoders ARE the schema-free layer,
+# and they are the ones that take an attacker-supplied width, octet count or fragment header
+# and move a cursor with it. The dual-rail differential lives in bcir/tests/test_c_per.py;
+# what is checked HERE is the same discipline the other twins get: strict warnings as
+# errors, and a genuinely freestanding translation unit.
+echo "[c-runtime] X.691 PER primitives: strict-warning and freestanding build (#per)"
+if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
+     "${C}/bcir_per.c" "${C}/test_per.c" -o "${tmp}/test_per"; then
+  for std in c11 c23; do
+    "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Werror -I "${C}" \
+      -c "${C}/bcir_per.c" -o /dev/null \
+      || { echo "  FAIL: bcir_per is not freestanding-clean under -std=${std}"; exit 1; }
+  done
+  # A decoder whose answers depend on the optimiser is not a decoder. Build the same twin
+  # at -O0 and -O3 and require identical output on the same campaign: a signed-overflow or
+  # shift-past-width bug typically only diverges at one of the two.
+  per_ok=1
+  "${CC}" -std=c23 -O0 -I "${C}" "${C}/bcir_per.c" "${C}/test_per.c" -o "${tmp}/test_per_O0" \
+    || per_ok=0
+  "${CC}" -std=c23 -O3 -I "${C}" "${C}/bcir_per.c" "${C}/test_per.c" -o "${tmp}/test_per_O3" \
+    || per_ok=0
+  if [ "${per_ok}" -eq 1 ]; then
+    python3 - "${tmp}" <<'PERPY' > "${tmp}/per_cases.txt"
+import sys, random
+sys.path.insert(0, ".")
+from bcir.asn1.per import (BitWriter, PerVariant, _encode_constrained,
+                           _encode_semi_constrained, _encode_unconstrained,
+                           _encode_normally_small)
+rng = random.Random(20260726)
+for variant, flag in ((PerVariant.UNALIGNED, 0), (PerVariant.ALIGNED, 1)):
+    for lb, ub in ((0, 255), (0, 256), (0, 65535), (0, 1 << 40), (-5, 5)):
+        for _ in range(40):
+            v = rng.randint(lb, ub)
+            w = BitWriter(variant); _encode_constrained(w, v, lb, ub)
+            print(f"constrained {lb} {ub} {flag} {w.to_bytes().hex()}")
+    for _ in range(40):
+        v = rng.randint(-(1 << 40), 1 << 40)
+        w = BitWriter(variant); _encode_unconstrained(w, v)
+        print(f"unconstrained {flag} {w.to_bytes().hex()}")
+    for _ in range(40):
+        v = rng.randint(0, 1 << 20)
+        w = BitWriter(variant); _encode_semi_constrained(w, v, 0)
+        print(f"semi 0 {flag} {w.to_bytes().hex()}")
+    for v in (0, 63, 64, 300):
+        w = BitWriter(variant); _encode_normally_small(w, v)
+        print(f"small {flag} {w.to_bytes().hex()}")
+PERPY
+    "${tmp}/test_per_O0" < "${tmp}/per_cases.txt" > "${tmp}/per_O0.txt"
+    "${tmp}/test_per_O3" < "${tmp}/per_cases.txt" > "${tmp}/per_O3.txt"
+    if cmp -s "${tmp}/per_O0.txt" "${tmp}/per_O3.txt"; then
+      echo "  PASS X.691 PER twin (freestanding, -Werror, -O0 == -O3 over $(wc -l < "${tmp}/per_cases.txt") cases)"
+    else
+      echo "  FAIL: the PER twin's answers depend on the optimisation level"
+      diff "${tmp}/per_O0.txt" "${tmp}/per_O3.txt" | head -10
+      exit 1
+    fi
+  else
+    echo "  SKIP PER optimisation-parity (a build failed)"
+  fi
+else
+  echo "  FAIL: the X.691 PER twin does not build warning-clean"
+  exit 1
+fi
+
 # DER -> native StreamPack fast path (#asn1fast, roadmap phase D): reconstruct the native
 # artifact from its X.690 DER projection in freestanding C, with no Python anywhere in the
 # reconstruction path, and assert BYTE IDENTITY against what the Python encoder produced.

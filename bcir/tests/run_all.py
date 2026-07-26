@@ -332,6 +332,7 @@ _MODULES = [
     "bcir.tests.test_asn1_oer",
     "bcir.tests.test_asn1_constraints",
     "bcir.tests.test_asn1_per",
+    "bcir.tests.test_c_per",
     "bcir.tests.test_native_object_gate",
     "bcir.tests.test_c_executor",
     "bcir.tests.test_c_encoder",

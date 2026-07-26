@@ -259,7 +259,14 @@ class Lowerer:
             # Overwriting here silently widened the alphabet back to the base type's, which
             # is invisible to BER/DER/OER -- they encode the value identically either way --
             # and changes the WIDTH of every character under PER (X.691 §30.5.2).
-            combined = Intersection((inner, combined))
+            #
+            # §50.11 also DROPS the parent's extension marker: the serially applied
+            # constraint behaves "as if the constraint had been applied to the parent type
+            # without its extension marker". So the parent is stripped before intersecting,
+            # and the result is extensible only if the OUTER constraint says so.
+            from bcir.asn1.constraints import without_extension
+
+            combined = Intersection((without_extension(inner), combined))
         require_satisfiable(combined, label)
         if isinstance(built, (Primitive, SequenceOf, SetOf)):
             return replace(built, constraint=combined)
@@ -316,17 +323,60 @@ class Lowerer:
         # X.680 §25.1: `...` splits the list into the extension ROOT and the extension
         # ADDITIONS. BER/DER/OER encode both alike, so this pass used to drop the marker;
         # PER does not (X.691 §19.1/§19.7), so the split is recorded on each component.
-        entries, after_marker, extension_of = [], False, {}
+        # X.680 §25.1 / X.691 §19.9 NOTE 2. One `...` opens the extension additions; a
+        # SECOND `...` closes the pair, and anything written after it is part of the
+        # extension ROOT again ("encoded as if they were defined immediately before the
+        # extension marker pair"). Tracking a bare boolean would put those trailing root
+        # components in the additions and shift every bit after the preamble.
+        entries, markers, extension_of, groups = [], 0, {}, {}
         for node in nodes:
             if isinstance(node, ast.ExtensionMarker):
-                after_marker = True
+                markers += 1
+                continue
+            if isinstance(node, ast.ExtensionGroup):
+                # The group is one addition; it is lowered below into a single Component
+                # carrying its members.
+                marker = object()
+                extension_of[id(marker)] = True
+                groups[id(marker)] = node
+                entries.append(marker)
                 continue
             if isinstance(node, ast.ComponentNode):
-                extension_of[id(node)] = after_marker
+                extension_of[id(node)] = markers == 1
                 entries.append(node)
-        automatic = self._use_automatic_tags(entries)
+        automatic = self._use_automatic_tags(
+            [e for e in entries if isinstance(e, ast.ComponentNode)])
         out: list[Component] = []
-        for position, item in enumerate(entries):
+        position = -1
+        for item in entries:
+            position += 1
+            if id(item) in groups:
+                members, _ = self._components(
+                    groups[id(item)].components, f"{label}.group{position}", choice)
+                if choice:
+                    # X.691 §23.8 NOTE: "Version brackets in the definition of choice
+                    # extension additions have no effect on how ExtensionAdditionAlternatives
+                    # are encoded." A bracket in a CHOICE is presentational only -- each
+                    # member is its own alternative with its own index (§23.2), so grouping
+                    # them would invent a nesting the encoding does not have.
+                    for i, m in enumerate(members):
+                        out.append(replace(
+                            m, extension=True,
+                            **({"tag": position + i, "tag_class": TagClass.CONTEXT}
+                               if automatic else {})))
+                    position += len(members) - 1
+                    continue
+                if automatic:
+                    # §12.3 numbers a group's members in the enclosing list's sequence, so
+                    # the group consumes as many tag numbers as it holds.
+                    members = tuple(
+                        replace(m, tag=position + i, tag_class=TagClass.CONTEXT)
+                        for i, m in enumerate(members))
+                    position += len(members) - 1
+                out.append(Component(
+                    name=f"[[{position}]]", type=Sequence(members, f"{label}.group"),
+                    extension=True, optional=True, group=members))
+                continue
             inner, tag, mode, tag_cls = _peel_tag(item.type)
             if tag is None and automatic:
                 tag, mode, tag_cls = position, None, TagClass.CONTEXT   # §12.3

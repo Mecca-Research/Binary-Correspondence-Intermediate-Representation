@@ -30,7 +30,7 @@ from __future__ import annotations
 from enum import Enum
 
 from .codec import Asn1Error
-from .constraints import UNBOUNDED, effective_size_constraint, effective_value_constraint
+from .constraints import UNBOUNDED, root_size_bounds, root_value_bounds
 from .schema import (
     Asn1Type,
     Choice,
@@ -490,53 +490,94 @@ def _char_bits(kind: Primitive, variant: PerVariant) -> tuple[int, dict[str, int
     return bits, forward, {v: k for k, v in forward.items()}
 
 
-def _value_bounds(kind: Primitive) -> tuple[object, object]:
+def _value_bounds(kind: Primitive) -> tuple[tuple[object, object], bool]:
+    """The extension ROOT's value bounds plus the §13.1 extensibility flag."""
     from .constraints import Constraint
 
     if isinstance(kind.constraint, Constraint):
-        return effective_value_constraint(kind.constraint)
-    return UNBOUNDED, UNBOUNDED
+        return root_value_bounds(kind.constraint)
+    return UNBOUNDED, False
 
 
-def _size_bounds(kind) -> tuple[int, int | None]:
+def _size_bounds(kind) -> tuple[int, int | None, bool]:
+    """Length bounds in §11.9's (lb, ub) shape, plus the extensibility flag.
+
+    A type whose SIZE carries an extension marker is extensible for PER (§10.3.9 read with
+    §17.3/§20.4/§30.4), and the bounds returned here are the ROOT's -- the width used when
+    the extension bit says the value is inside it.
+    """
     from .constraints import Constraint
 
     constraint = getattr(kind, "constraint", None)
     if isinstance(constraint, Constraint):
-        return _length_bounds(effective_size_constraint(constraint))
-    return 0, None
+        bounds, extensible = root_size_bounds(constraint)
+        lower, upper = _length_bounds(bounds)
+        return lower, upper, extensible
+    return 0, None, False
 
 
-def _encode_integer(writer: BitWriter, kind: Primitive, value: int) -> None:
-    """§13: the three cases, chosen by what the PER-visible constraint pins down."""
-    low, high = _value_bounds(kind)
-    if low is not UNBOUNDED and high is not UNBOUNDED:
+def _encode_integer_root(writer: BitWriter, value: int, low, high) -> None:
+    """§13.2: the three non-extensible cases, chosen by what the constraint pins down."""
+    if low is not None and high is not None:
         if low == high:
             if value != low:                             # §13.2.1: single value, no field
                 raise Asn1Error(f"PER: {value} is not the single permitted value {low}")
             return
         _encode_constrained(writer, value, int(low), int(high))
-    elif low is not UNBOUNDED:
+    elif low is not None:
         _encode_semi_constrained(writer, value, int(low))   # §13.2.3
     else:
         _encode_unconstrained(writer, value)                # §13.2.4
 
 
-def _decode_integer(reader: BitReader, kind: Primitive) -> int:
-    low, high = _value_bounds(kind)
-    if low is not UNBOUNDED and high is not UNBOUNDED:
+def _decode_integer_root(reader: BitReader, low, high) -> int:
+    if low is not None and high is not None:
         if low == high:
             return int(low)
         return _decode_constrained(reader, int(low), int(high))
-    if low is not UNBOUNDED:
+    if low is not None:
         return _decode_semi_constrained(reader, int(low))
     return _decode_unconstrained(reader)
 
 
+def _encode_integer(writer: BitWriter, kind: Primitive, value: int) -> None:
+    """§13, including §13.1's extension bit.
+
+    A half-open bound is `None`, not the UNBOUNDED sentinel -- the two were conflated here
+    before, which made the §13.2.3 semi-constrained branch unreachable and sent
+    `INTEGER (0..MAX)` into `int(None)`.
+    """
+    (low, high), extensible = _value_bounds(kind)
+    if extensible:
+        # §13.1: one bit, set when the value falls OUTSIDE the extension root. Outside, the
+        # value is encoded unconstrained, because a future version may widen the root and a
+        # root-sized field could not carry what it then admits.
+        inside = (low is None or value >= low) and (high is None or value <= high)
+        writer.put_bit(0 if inside else 1)
+        if not inside:
+            _encode_unconstrained(writer, value)
+            return
+    _encode_integer_root(writer, value, low, high)
+
+
+def _decode_integer(reader: BitReader, kind: Primitive) -> int:
+    (low, high), extensible = _value_bounds(kind)
+    if extensible and reader.get_bit():
+        return _decode_unconstrained(reader)
+    return _decode_integer_root(reader, low, high)
+
+
 def _encode_octets(writer: BitWriter, kind, data: bytes) -> None:
     """§17: octet strings. Fixed short lengths stay unaligned; the rest take a length."""
-    lower, upper = _size_bounds(kind)
+    lower, upper, extensible = _size_bounds(kind)
     count = len(data)
+    if extensible:
+        # §17.3: one bit, set when the LENGTH is outside the extension root. Outside, the
+        # length becomes a semi-constrained whole number and the size constraint is ignored.
+        inside = count >= lower and (upper is None or count <= upper)
+        writer.put_bit(0 if inside else 1)
+        if not inside:
+            lower, upper = 0, None
     if upper is not None and lower == upper:
         if count != upper:
             raise Asn1Error(f"PER: octet string is {count} octets, fixed size is {upper}")
@@ -556,7 +597,9 @@ def _encode_octets(writer: BitWriter, kind, data: bytes) -> None:
 
 
 def _decode_octets(reader: BitReader, kind) -> bytes:
-    lower, upper = _size_bounds(kind)
+    lower, upper, extensible = _size_bounds(kind)
+    if extensible and reader.get_bit():
+        lower, upper = 0, None
     if upper is not None and lower == upper:
         if upper == 0:
             return b""
@@ -576,8 +619,17 @@ def _decode_octets(reader: BitReader, kind) -> bytes:
 def _encode_known_multiplier(writer: BitWriter, kind: Primitive, text: str) -> None:
     """§30.5: one of the six known-multiplier types."""
     bits, forward, _ = _char_bits(kind, writer.variant)
-    lower, upper = _size_bounds(kind)
+    lower, upper, extensible = _size_bounds(kind)
     count = len(text)
+    if extensible:
+        # §30.4: zero when the value is within the extension root, one otherwise. Outside,
+        # the encoding proceeds "as if there was no effective size constraint" -- the
+        # permitted ALPHABET still applies, since an extensible alphabet is not PER-visible
+        # at all (§10.3.11) and a non-extensible one is unaffected by the size marker.
+        inside = count >= lower and (upper is None or count <= upper)
+        writer.put_bit(0 if inside else 1)
+        if not inside:
+            lower, upper = 0, None
 
     def emit(start: int, stop: int) -> None:
         # §30.5.6/§30.5.7: align only when the whole field is wider than 16 bits.
@@ -599,7 +651,9 @@ def _encode_known_multiplier(writer: BitWriter, kind: Primitive, text: str) -> N
 
 def _decode_known_multiplier(reader: BitReader, kind: Primitive) -> str:
     bits, _, back = _char_bits(kind, reader.variant)
-    lower, upper = _size_bounds(kind)
+    lower, upper, extensible = _size_bounds(kind)
+    if extensible and reader.get_bit():
+        lower, upper = 0, None
     out: list[str] = []
 
     def consume(count: int) -> None:
@@ -776,6 +830,10 @@ def _split_root(kind) -> tuple[tuple[Component, ...], tuple[Component, ...]]:
 
 def _supplied(comp: Component, value: dict, rules: PerRules) -> bool:
     """Whether a component's encoding is present, applying the §19.5 DEFAULT rule."""
+    if comp.group is not None:
+        # §19.9: "If all components values of the ExtensionAdditionGroup are missing then
+        # the ExtensionAdditionGroup shall be encoded as a missing extension addition."
+        return any(_supplied(member, value, rules) for member in comp.group)
     if comp.name not in value:
         return False
     if comp.has_default and rules is PerRules.CANONICAL:
@@ -791,7 +849,11 @@ def _encode_sequence(writer: BitWriter, kind, value: dict, rules: PerRules) -> N
     if not isinstance(value, dict):
         raise Asn1Error(f"{kind.name}: expected a mapping")
     root, additions = _split_root(kind)
-    unknown = set(value) - {comp.name for comp in root + additions}
+    known = {comp.name for comp in root + additions}
+    for comp in additions:
+        if comp.group is not None:
+            known.update(member.name for member in comp.group)
+    unknown = set(value) - known
     if unknown:
         raise Asn1Error(f"{kind.name}: unknown components {sorted(unknown)}")
 
@@ -826,7 +888,14 @@ def _encode_sequence(writer: BitWriter, kind, value: dict, rules: PerRules) -> N
         if not _supplied(comp, value, rules):
             continue
         inner = BitWriter(writer.variant)
-        _encode(inner, comp.type, value[comp.name], rules)
+        if comp.group is not None:
+            # A version bracket is encoded as a SEQUENCE of its members (§19.2-§19.6), then
+            # wrapped as one open type. Its members live FLAT in the parent value, so the
+            # subset is projected here rather than expecting a nested mapping.
+            subset = {m.name: value[m.name] for m in comp.group if m.name in value}
+            _encode(inner, comp.type, subset, rules)
+        else:
+            _encode(inner, comp.type, value[comp.name], rules)
         octets = inner.to_bytes()
         _encode_length_and_payload(
             writer, len(octets), 0, None,
@@ -874,9 +943,13 @@ def _decode_sequence(reader: BitReader, kind, rules: PerRules) -> dict:
             continue
         comp = additions[index]
         inner = BitReader(b"".join(chunks), reader.variant)
-        out[comp.name] = _decode(inner, comp.type, rules)
+        decoded = _decode(inner, comp.type, rules)
+        if comp.group is not None:
+            out.update(decoded)                          # the bracket's members are flat
+        else:
+            out[comp.name] = decoded
     for comp in additions:
-        if comp.name not in out and comp.has_default:
+        if comp.group is None and comp.name not in out and comp.has_default:
             out[comp.name] = comp.default
     return out
 
@@ -902,7 +975,14 @@ def _encode_sequence_of(writer: BitWriter, kind, value, rules: PerRules) -> None
     if not isinstance(value, (list, tuple)):
         raise Asn1Error(f"{kind.name}: expected a list")
     items = list(value)
-    lower, upper = _size_bounds(kind)
+    lower, upper, extensible = _size_bounds(kind)
+    if extensible:
+        # §20.4: one bit, set when the COUNT is outside the extension root; outside, the
+        # length determinant becomes a semi-constrained whole number.
+        inside = len(items) >= lower and (upper is None or len(items) <= upper)
+        writer.put_bit(0 if inside else 1)
+        if not inside:
+            lower, upper = 0, None
     if upper is not None and lower == upper and upper < _64K:
         if len(items) != upper:                           # §20.5: no length determinant
             raise Asn1Error(f"{kind.name}: expected exactly {upper} components")
@@ -918,7 +998,9 @@ def _encode_sequence_of(writer: BitWriter, kind, value, rules: PerRules) -> None
 
 
 def _decode_sequence_of(reader: BitReader, kind, rules: PerRules) -> list:
-    lower, upper = _size_bounds(kind)
+    lower, upper, extensible = _size_bounds(kind)
+    if extensible and reader.get_bit():
+        lower, upper = 0, None
     out: list = []
     if upper is not None and lower == upper and upper < _64K:
         for _ in range(upper):
@@ -938,24 +1020,59 @@ def _encode_choice(writer: BitWriter, kind, value, rules: PerRules) -> None:
     if not isinstance(value, dict) or len(value) != 1:
         raise Asn1Error(f"{kind.name}: a CHOICE value is a single-entry mapping")
     (name, inner), = value.items()
-    alternatives = _root_components(kind)
-    for index, comp in enumerate(alternatives):
+    root, additions = _split_root(kind)
+    for index, comp in enumerate(root):
         if comp.name == name:
-            if len(alternatives) > 1:                     # §23.4
-                _encode_constrained(writer, index, 0, len(alternatives) - 1)   # §23.6
+            if kind.extensible:                           # §23.5
+                writer.put_bit(0)
+            if len(root) > 1:                             # §23.4: one alternative, no index
+                _encode_constrained(writer, index, 0, len(root) - 1)           # §23.6/§23.7
             _encode(writer, comp.type, inner, rules)
             return
+    for index, comp in enumerate(additions):
+        if comp.name != name:
+            continue
+        if not kind.extensible:                           # pragma: no cover - guarded
+            raise Asn1Error(f"{kind.name}: extension alternative on a non-extensible CHOICE")
+        writer.put_bit(1)                                 # §23.5
+        # §23.8: the index is a normally small non-negative whole number with lb=0, and the
+        # alternative itself is wrapped as an open type so a reader that does not know it
+        # can still skip exactly the right number of octets.
+        _encode_normally_small(writer, index)
+        payload = BitWriter(writer.variant)
+        _encode(payload, comp.type, inner, rules)
+        octets = payload.to_bytes()
+        _encode_length_and_payload(
+            writer, len(octets), 0, None,
+            lambda start, stop, _o=octets: (writer.align(), writer.put_octets(_o[start:stop])),
+        )
+        return
     raise Asn1Error(f"{kind.name}: {name!r} is not an alternative of this CHOICE")
 
 
 def _decode_choice(reader: BitReader, kind, rules: PerRules) -> dict:
-    alternatives = _root_components(kind)
+    root, additions = _split_root(kind)
+    if kind.extensible and reader.get_bit():              # §23.8
+        index = _decode_normally_small(reader)
+        chunks: list[bytes] = []
+
+        def consume(n: int) -> None:
+            reader.align()
+            chunks.append(reader.get_octets(n))
+
+        _decode_length_and_payload(reader, 0, None, consume)
+        if index >= len(additions):
+            raise Asn1Error(
+                f"{kind.name}: extension alternative {index} is unknown to this version")
+        comp = additions[index]
+        inner = BitReader(b"".join(chunks), reader.variant)
+        return {comp.name: _decode(inner, comp.type, rules)}
     index = 0
-    if len(alternatives) > 1:
-        index = _decode_constrained(reader, 0, len(alternatives) - 1)
-    if not 0 <= index < len(alternatives):
+    if len(root) > 1:
+        index = _decode_constrained(reader, 0, len(root) - 1)
+    if not 0 <= index < len(root):
         raise Asn1Error(f"{kind.name}: CHOICE index {index} is out of range")
-    comp = alternatives[index]
+    comp = root[index]
     return {comp.name: _decode(reader, comp.type, rules)}
 
 

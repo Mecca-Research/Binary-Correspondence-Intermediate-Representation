@@ -237,7 +237,7 @@ jobs:
           done
           exit "${status}"
 
-      - name: Binary trust-boundary fuzz (libFuzzer + ASan/UBSan on all nine decoders)
+      - name: Binary trust-boundary fuzz (libFuzzer + ASan/UBSan on all ten decoders)
         # StreamPack decoder/executor/encoder, the ETL binary-record decoder, the UART
         # telemetry-frame decoder, the BCIRQ8 model loader, the BCAB artifact-bundle
         # reader, the X.690 BER/DER decoder, and the DER -> native StreamPack fast path --
