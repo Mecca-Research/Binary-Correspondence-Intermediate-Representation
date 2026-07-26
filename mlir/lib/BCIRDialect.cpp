@@ -16,11 +16,16 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/IR/SymbolTable.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #include <algorithm>
 #include <limits>
 #include <numeric>
+#include <utility>
 
 using namespace bcir;
 
@@ -69,6 +74,49 @@ static bool checkedMul4Nonnegative(int64_t a, int64_t b, int64_t c,
   int64_t first;
   return checkedMul3Nonnegative(a, b, c, first) &&
          checkedMulNonnegative(first, d, out);
+}
+
+static bool isLowerHex(::llvm::StringRef value, size_t width) {
+  if (value.size() != width)
+    return false;
+  return ::llvm::all_of(value, [](char c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+  });
+}
+
+static bool isCanonicalWireText(::llvm::StringRef value, size_t maximum,
+                                bool required = false) {
+  if ((required && value.empty()) || value.size() > maximum)
+    return false;
+  if (!value.empty() && (value.front() == ' ' || value.back() == ' '))
+    return false;
+  return ::llvm::all_of(value, [](char c) { return c >= 0x20 && c <= 0x7e; });
+}
+
+static bool isFeatureName(::llvm::StringRef value) {
+  return !value.empty() && ::llvm::all_of(value, [](char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+           (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '+' ||
+           c == ':' || c == '-';
+  });
+}
+
+static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
+  ::llvm::StringRef previous;
+  size_t wireBytes = 0;
+  for (::mlir::Attribute attribute : values) {
+    auto text = ::mlir::dyn_cast<::mlir::StringAttr>(attribute);
+    if (!text || !isFeatureName(text.getValue()) ||
+        (!previous.empty() && text.getValue() <= previous))
+      return false;
+    size_t separator = wireBytes == 0 ? 0 : 1;
+    if (wireBytes > 63 || separator > 63 - wireBytes ||
+        text.getValue().size() > 63 - wireBytes - separator)
+      return false;
+    wireBytes += separator + text.getValue().size();
+    previous = text.getValue();
+  }
+  return true;
 }
 
 } // namespace
@@ -937,6 +985,206 @@ static bool checkedMul4Nonnegative(int64_t a, int64_t b, int64_t c,
   ::llvm::StringRef lo = getLoopOrder();
   if (lo != "ijk" && lo != "ikj" && lo != "jik")
     return emitOpError() << "loop_order must be one of ijk|ikj|jik (got '" << lo << "')";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult ArtifactVariantOp::verify() {
+  static const ::llvm::StringMap<::llvm::StringRef> kindFormats = {
+      {"stream_pack", "stream_pack"}, {"elf_object", "elf"},
+      {"elf_shared", "elf"},          {"coff_object", "coff"},
+      {"macho_object", "macho"},      {"archive", "archive"},
+      {"wasm", "wasm"},               {"llvm_bitcode", "llvm_bitcode"},
+      {"llvm_ir", "text"},            {"ptx", "text"},
+      {"cubin", "elf"},               {"spirv", "spirv"},
+      {"jvm_class", "jvm_class"},     {"cil", "text"},
+      {"c_source", "text"},           {"cpp_source", "text"},
+      {"sycl_source", "text"},        {"assembly", "text"},
+      {"elf_executable", "elf"},      {"pe_executable", "pe"},
+      {"pe_shared", "pe"},            {"macho_executable", "macho"},
+      {"macho_shared", "macho"},      {"raw_binary", "raw"},
+  };
+  auto found = kindFormats.find(getKind());
+  if (found == kindFormats.end())
+    return emitOpError() << "unknown artifact kind '" << getKind() << "'";
+  if (found->second != getFormat())
+    return emitOpError() << "artifact kind '" << getKind() << "' requires format '"
+                         << found->second << "' (got '" << getFormat() << "')";
+  if (!isCanonicalWireText(getSymName(), 47, true) ||
+      !isCanonicalWireText(getTriple(), 47) ||
+      !isCanonicalWireText(getArchitecture(), 23) ||
+      !isCanonicalWireText(getOsAbi(), 23) ||
+      !isCanonicalWireText(getChannel(), 23) ||
+      !isCanonicalWireText(getEntrySymbol(), 31))
+    return emitOpError()
+           << "variant ID or target strings exceed BCAB printable-ASCII wire limits";
+  if (getEndianness() != "neutral" && getEndianness() != "little" &&
+      getEndianness() != "big")
+    return emitOpError() << "endianness must be neutral|little|big";
+  auto signedAttr = [&](::llvm::StringRef name) {
+    return (*this)->getAttrOfType<::mlir::IntegerAttr>(name).getInt();
+  };
+  int64_t bits = signedAttr("pointer_bits"), machine = signedAttr("machine"),
+          flags = signedAttr("flags"), offset = signedAttr("payload_offset"),
+          size = signedAttr("payload_size"), crc = signedAttr("payload_crc32"),
+          calGen = signedAttr("cal_gen");
+  if (bits != 0 && bits != 32 && bits != 64)
+    return emitOpError() << "pointer_bits must be 0, 32, or 64";
+  if (machine < 0 || machine > 0xffffffffLL || offset < 0 || size <= 0 ||
+      crc < 0 || crc > 0xffffffffLL || calGen < 0)
+    return emitOpError() << "machine and payload_crc32 must be u32 values, "
+                            "offset/cal_gen non-negative, and payload_size positive";
+  if ((offset & 7) != 0)
+    return emitOpError() << "payload_offset must be eight-byte aligned";
+  if (flags < 0 || (flags & ~0xfLL) != 0)
+    return emitOpError() << "artifact flags contain an unknown bit";
+  const bool native = getFormat() == "elf" || getFormat() == "coff" ||
+                      getFormat() == "macho" || getFormat() == "pe";
+  if (native && (bits == 0 || getEndianness() == "neutral" || machine == 0))
+    return emitOpError()
+           << "native object metadata requires pointer_bits, endianness, and machine";
+  const bool namedExecutable = getKind() == "elf_executable" ||
+                               getKind() == "pe_executable" ||
+                               getKind() == "macho_executable";
+  if (namedExecutable && (flags & 0x2LL) == 0)
+    return emitOpError() << "named executable artifact kinds require the executable flag";
+  if (!isLowerHex(getPayloadSha256(), 64))
+    return emitOpError() << "payload_sha256 must be 64 lowercase hexadecimal digits";
+  auto provenance =
+      (*this)->getAttrOfType<::mlir::StringAttr>("provenance_digest");
+  if (!provenance || !isLowerHex(provenance.getValue(), 16))
+    return emitOpError() << "provenance_digest must be 16 lowercase hexadecimal digits";
+  if (!getTargetManifestSha256().empty() && !isLowerHex(getTargetManifestSha256(), 64))
+    return emitOpError() << "target_manifest_sha256 must be empty or a lowercase SHA-256";
+  if (!isCanonicalFeatureArray(getRequiredFeatures()) ||
+      !isCanonicalFeatureArray(getProhibitedFeatures()))
+    return emitOpError() << "feature arrays must contain strictly sorted unique strings";
+  ::llvm::StringSet<> required;
+  for (::mlir::Attribute attribute : getRequiredFeatures())
+    required.insert(::mlir::cast<::mlir::StringAttr>(attribute).getValue());
+  for (::mlir::Attribute attribute : getProhibitedFeatures())
+    if (required.contains(::mlir::cast<::mlir::StringAttr>(attribute).getValue()))
+      return emitOpError() << "required and prohibited feature sets overlap";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult ArtifactBundleOp::verify() {
+  auto signedAttr = [&](::llvm::StringRef name) {
+    return (*this)->getAttrOfType<::mlir::IntegerAttr>(name).getInt();
+  };
+  if (signedAttr("version") != 1)
+    return emitOpError() << "only BCAB version 1 is supported";
+  if (signedAttr("generation") < 0 || signedAttr("wire_bytes") < 128 ||
+      signedAttr("wire_bytes") > (1LL << 30) ||
+      signedAttr("body_crc32") < 0 || signedAttr("body_crc32") > 0xffffffffLL ||
+      signedAttr("header_crc32") < 0 || signedAttr("header_crc32") > 0xffffffffLL)
+    return emitOpError() << "generation/size/CRC fields are outside BCAB v1 ranges";
+  if (!isLowerHex(getProvenanceDigest(), 16))
+    return emitOpError() << "provenance_digest must be 16 lowercase hexadecimal digits";
+  if (!isLowerHex(getArtifactSha256(), 64))
+    return emitOpError() << "artifact_sha256 must be 64 lowercase hexadecimal digits";
+  if (getBody().empty())
+    return emitOpError() << "bundle body must contain artifact.variant operations";
+  const size_t variantCount = getBody().front().getOperations().size();
+  if (variantCount > 1024)
+    return emitOpError() << "bundle exceeds the BCAB v1 1024-entry limit";
+  ::llvm::StringSet<> identifiers;
+  ::llvm::StringRef previous;
+  int64_t previousEnd = 128 + 448 * static_cast<int64_t>(variantCount);
+  auto align8Checked = [](int64_t value, int64_t &aligned) {
+    if (value < 0 || value > std::numeric_limits<int64_t>::max() - 7)
+      return false;
+    aligned = (value + 7) & ~7LL;
+    return true;
+  };
+  if (!align8Checked(previousEnd, previousEnd))
+    return emitOpError() << "bundle directory geometry overflows";
+  for (::mlir::Operation &operation : getBody().front()) {
+    auto variant = ::mlir::dyn_cast<ArtifactVariantOp>(operation);
+    if (!variant)
+      return emitOpError() << "bundle body may contain only bcir.artifact.variant operations";
+    ::llvm::StringRef identifier = variant.getSymName();
+    if (!previous.empty() && identifier <= previous)
+      return emitOpError() << "variant symbols must be strictly sorted";
+    previous = identifier;
+    identifiers.insert(identifier);
+    int64_t offset =
+        variant->getAttrOfType<::mlir::IntegerAttr>("payload_offset").getInt();
+    int64_t size =
+        variant->getAttrOfType<::mlir::IntegerAttr>("payload_size").getInt();
+    int64_t expectedOffset;
+    if (!align8Checked(previousEnd, expectedOffset) ||
+        offset != expectedOffset ||
+        size > std::numeric_limits<int64_t>::max() - offset)
+      return emitOpError() << "variant '" << identifier
+                           << "' has non-canonical or overflowing payload geometry";
+    previousEnd = offset + size;
+  }
+  if (identifiers.empty())
+    return emitOpError() << "bundle must contain at least one variant";
+  for (auto pair : {std::make_pair(getRootVariant(), "root_variant"),
+                    std::make_pair(getDefaultVariant(), "default_variant")})
+    if (!pair.first.empty() && !identifiers.contains(pair.first))
+      return emitOpError() << pair.second << " '" << pair.first << "' is not present";
+  if (!getRootVariant().empty()) {
+    for (::mlir::Operation &operation : getBody().front()) {
+      auto variant = ::mlir::cast<ArtifactVariantOp>(operation);
+      if (variant.getSymName() == getRootVariant() && variant.getKind() != "stream_pack")
+        return emitOpError() << "root_variant must name a stream_pack";
+    }
+  }
+  if (!getDefaultVariant().empty()) {
+    for (::mlir::Operation &operation : getBody().front()) {
+      auto variant = ::mlir::cast<ArtifactVariantOp>(operation);
+      if (variant.getSymName() != getDefaultVariant())
+        continue;
+      int64_t flags =
+          variant->getAttrOfType<::mlir::IntegerAttr>("flags").getInt();
+      if ((flags & 0x2LL) != 0 && (flags & 0x1LL) == 0)
+        return emitOpError()
+               << "executable default_variant must carry R12 attestation";
+    }
+  }
+  int64_t canonicalWireBytes;
+  if (!align8Checked(previousEnd, canonicalWireBytes))
+    return emitOpError() << "bundle payload geometry overflows";
+  if (canonicalWireBytes != signedAttr("wire_bytes"))
+    return emitOpError() << "wire_bytes does not match canonical bundle geometry";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult ArtifactSelectionOp::verify() {
+  if (getVariant().empty())
+    return emitOpError() << "variant must not be empty";
+  if (getClassification() != "exact" && getClassification() != "quantized" &&
+      getClassification() != "approximate")
+    return emitOpError() << "classification must be exact|quantized|approximate";
+  if (!isLowerHex(getEnvelopeSha256(), 64))
+    return emitOpError() << "envelope_sha256 must be 64 lowercase hexadecimal digits";
+  if ((*this)->getAttrOfType<::mlir::IntegerAttr>("generation").getInt() < 0)
+    return emitOpError() << "generation must be non-negative";
+  auto bundle = ::mlir::SymbolTable::lookupNearestSymbolFrom<ArtifactBundleOp>(
+      getOperation(), getBundleAttr());
+  if (!bundle)
+    return emitOpError() << "bundle symbol '" << getBundle()
+                         << "' does not resolve to bcir.artifact.bundle";
+  int64_t selectionGeneration =
+      (*this)->getAttrOfType<::mlir::IntegerAttr>("generation").getInt();
+  int64_t bundleGeneration =
+      bundle->getAttrOfType<::mlir::IntegerAttr>("generation").getInt();
+  if (selectionGeneration != bundleGeneration)
+    return emitOpError() << "generation does not match bundle generation "
+                         << bundleGeneration;
+  bool found = false;
+  for (::mlir::Operation &operation : bundle.getBody().front()) {
+    auto candidate = ::mlir::cast<ArtifactVariantOp>(operation);
+    if (candidate.getSymName() == getVariant()) {
+      found = true;
+      break;
+    }
+  }
+  if (!found)
+    return emitOpError() << "variant '" << getVariant()
+                         << "' is not present in bundle '" << getBundle() << "'";
   return ::mlir::success();
 }
 

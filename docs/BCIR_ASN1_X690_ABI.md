@@ -1,8 +1,8 @@
 # BCIR ↔ ASN.1 / X.690 binary format compatibility (normative)
 
 BCIR speaks **ASN.1** as an interoperability rail. This document is the normative
-contract: which encoding rules BCIR emits and accepts, how the BCIR ABI projects into
-an ASN.1 module, and which laws hold across the boundary.
+contract: which encoding rules BCIR emits and accepts, how StreamPack and the Artifact
+Bundle project into ASN.1 modules, and which laws hold across the boundary.
 
 Standards implemented:
 
@@ -14,9 +14,9 @@ Standards implemented:
 Rails: `bcir/asn1/` is the executable reference; `runtime/c/bcir_asn1.{h,c}` is the
 freestanding C twin. Both must agree, and `bcir/tests/test_c_asn1.py` gates it.
 
-What is built here is X.690 only. The rest of the suite — PER, OER, JER, ECN, the
-X.680 front-end, constraints and information objects — is scoped in
-[`BCIR_ASN1_BUILDOUT_ROADMAP.md`](BCIR_ASN1_BUILDOUT_ROADMAP.md).
+X.690, the X.680 front end/subtype constraints, X.681 open types, and X.696 OER are
+built. PER, JER, ECN, parameterization, and table-constraint resolution remain scoped
+in [`BCIR_ASN1_BUILDOUT_ROADMAP.md`](BCIR_ASN1_BUILDOUT_ROADMAP.md).
 
 ## 1. The stance: DER out, BER in
 
@@ -48,6 +48,10 @@ foreign artifact becomes something BCIR can store and digest.
 | accept, trusted store | DER only (`Strictness.DER`) | `decode_der` |
 | accept, foreign peer | full BER (`Strictness.BER`) | `decode_value` |
 | normalize | BER → DER | `reencode_as_der` |
+
+The Artifact Bundle adds `artifact_bundle.encode_bundle_der/decode_bundle_der` and
+`encode_bundle_oer/decode_bundle_oer`; the same DER-out/BER-in and
+CANONICAL-OER-out/BASIC-OER-in rules apply.
 
 ## 2. Coverage
 
@@ -185,7 +189,31 @@ than normalized (normalizing would let a peer choose the digest by choosing a sp
 and every reconstruction is re-validated through `bcir_sp_verify_semantic` before it is
 returned, so a well-formed projection of a nonsense plan cannot mint an unexecutable pack.
 
-## 4. The laws
+## 4. The BCIR-ArtifactBundle module
+
+[`bcir/asn1/BCIR-ArtifactBundle.asn1`](../bcir/asn1/BCIR-ArtifactBundle.asn1)
+projects the abstract BCAB v1 header, target directory, and payloads under module OID
+`{ 1 3 6 1 4 1 62596 2 }`. It is additive: the native 128-byte header, fixed directory,
+alignment, CRCs, and SHA-256 contract in
+[`BCIR_ARTIFACT_BUNDLE_ABI.md`](kernel/BCIR_ARTIFACT_BUNDLE_ABI.md) remains frozen.
+
+The ASN.1 form carries semantic fields and payload octets, not derived native offsets
+or integrity fields. Reconstructing BCAB recomputes those fields canonically and then
+runs the normal native validator. Both available canonical rule sets obey native byte
+identity:
+
+```text
+der_to_native(native_to_der(b)) == b
+oer_to_native(native_to_oer(b), canonical=True) == b
+```
+
+The X.680 source is compiled and compared to the hand-bound schema under both DER and
+COER. The MLIR law rail records an additive `bcir.asn1.projection` of
+`native = "artifact_bundle"`; the generic C X.690 rail validates the DER tree before
+the reconstructed native bytes enter the C BCAB reader. A schema-specific C projection
+decoder is not claimed.
+
+## 5. The laws
 
 Gated in `bcir/tests/test_asn1_streampack.py` and `bcir/tests/test_c_asn1.py`:
 
@@ -201,7 +229,7 @@ A3 is the compatibility claim: a pack can leave BCIR as DER, be handled by an
 ASN.1-speaking peer, and come back as the *same native octets*, so StreamPack digests
 and provenance manifests stay valid across the boundary.
 
-## 5. The law rail (R24)
+## 6. The law rail (R24)
 
 The ASN.1 schema is also **IR**: `bcir.asn1.module` / `type` / `component` / `encode` /
 `decode` / `projection` in `mlir/include/BCIR/BCIRAsn1Ops.td`, verified by law **R24**
@@ -232,7 +260,7 @@ negatives, one per diagnostic). Enum values, the module OID, and the
 diagnostic-to-fixture pairing are pinned across the rails by
 `bcir/tests/test_asn1_law_parity.py`.
 
-## 6. Trust boundary
+## 7. Trust boundary
 
 Every octet handed to a decoder is untrusted. The contract is **total**: for any
 input, every entry point either returns a value or reports a fault — it never reads
@@ -256,7 +284,7 @@ another keeps reading is how content gets smuggled past one implementation.
 `runtime/c/fuzz_asn1.c` fuzzes the C rail under ASan/UBSan as part of
 `tools/c/fuzz_streampack.sh`.
 
-## 7. Transfer syntax identity
+## 8. Transfer syntax identity
 
 X.690 §12 assigns object identifiers to the encoding rules themselves:
 
@@ -268,7 +296,7 @@ X.690 §12 assigns object identifiers to the encoding rules themselves:
 Exported as `bcir.asn1.BER_OID` / `DER_OID` and their `_IRI` forms, so a protocol that
 must name its transfer syntax can do so without hard-coding the arcs.
 
-## 8. Validation
+## 9. Validation
 
 ```bash
 python -m bcir.tests.run_all --tier quick          # includes the four ASN.1 modules

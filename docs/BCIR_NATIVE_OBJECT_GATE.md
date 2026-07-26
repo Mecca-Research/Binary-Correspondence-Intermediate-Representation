@@ -15,6 +15,11 @@ the deeper cost and feasibility study is
 [`BCIR_NATIVE_BACKEND_FEASIBILITY.md`](research/BCIR_NATIVE_BACKEND_FEASIBILITY.md).
 Those documents may rank experiments, but none can bypass this gate.
 
+[`BCIR_ARTIFACT_BUNDLE_ABI.md`](kernel/BCIR_ARTIFACT_BUNDLE_ABI.md) defines BCAB v1,
+which may carry resident-toolchain objects and linked images unchanged and select one by
+target metadata. Packaging is not object emission, relocation, linking, loading, or native
+instruction selection, so BCAB does not change this gate's verdict.
+
 ## 1. The decision
 
 BCIR's job is the **planning + verification brain** (the K_BCIR cost algebra, the

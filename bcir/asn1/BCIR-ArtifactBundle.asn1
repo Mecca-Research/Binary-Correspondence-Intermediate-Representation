@@ -1,0 +1,55 @@
+BCIR-ArtifactBundle { iso(1) identified-organization(3) dod(6) internet(1)
+                      private(4) enterprise(1) 62596 2 }
+DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+  U8  ::= INTEGER (0..255)
+  U32 ::= INTEGER (0..4294967295)
+  U64 ::= INTEGER (0..18446744073709551615)
+  I32 ::= INTEGER (-2147483648..2147483647)
+
+  ArtifactKind ::= ENUMERATED {
+      streamPack(1), elfObject(2), elfShared(3), coffObject(4),
+      machoObject(5), archive(6), wasm(7), llvmBitcode(8), llvmIr(9),
+      ptx(10), cubin(11), spirv(12), jvmClass(13), cil(14), cSource(15),
+      cppSource(16), syclSource(17), assembly(18), elfExecutable(19),
+      peExecutable(20), peShared(21), machoExecutable(22), machoShared(23),
+      rawBinary(24) }
+
+  ArtifactFormat ::= ENUMERATED {
+      none(0), streamPack(1), elf(2), coff(3), macho(4), archive(5),
+      wasm(6), llvmBitcode(7), text(8), spirv(9), jvmClass(10), pe(11),
+      raw(12) }
+
+  Endianness ::= ENUMERATED { neutral(0), little(1), big(2) }
+  FeatureList ::= SEQUENCE OF UTF8String
+
+  ArtifactVariant ::= SEQUENCE {
+      variantId           [0] UTF8String,
+      kind                [1] ArtifactKind,
+      format              [2] ArtifactFormat,
+      payload             [3] OCTET STRING,
+      triple              [4] UTF8String,
+      architecture        [5] UTF8String,
+      osAbi               [6] UTF8String,
+      channel             [7] UTF8String,
+      entrySymbol         [8] UTF8String,
+      requiredFeatures    [9] FeatureList,
+      prohibitedFeatures [10] FeatureList,
+      endianness         [11] Endianness,
+      pointerBits        [12] U8,
+      machine            [13] U32,
+      priority           [14] I32,
+      provenanceDigest   [15] U64,
+      targetManifest     [16] OCTET STRING,
+      calibrationGen     [17] U64,
+      flags              [18] U8 }
+
+  ArtifactBundle ::= SEQUENCE {
+      version             [0] U8,
+      rootVariant         [1] UTF8String OPTIONAL,
+      defaultVariant      [2] UTF8String OPTIONAL,
+      provenanceDigest    [3] U64,
+      generation          [4] U64,
+      variants            [5] SEQUENCE OF ArtifactVariant }
+
+END

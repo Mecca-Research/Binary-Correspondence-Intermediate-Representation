@@ -7,6 +7,11 @@ v1 wire format. The reference encoder/decoder is
 [`runtime/c/bcir_streampack.h`](../../runtime/c/bcir_streampack.h). All three must
 agree (a parity test pins the round-trip).
 
+StreamPack is intentionally not a fat binary. When one portable plan is distributed with
+multiple standard target images, it is the `root_variant` payload of a separately versioned
+[`BCIR Artifact Bundle`](BCIR_ARTIFACT_BUNDLE_ABI.md). BCAB selection does not change any
+StreamPack byte, generation rule, or R10/R11 obligation.
+
 ## Conventions
 
 - **Endianness:** little-endian.

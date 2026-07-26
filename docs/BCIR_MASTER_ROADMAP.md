@@ -17,7 +17,7 @@ GEM schedule, target lowering, and provenance as one auditable chain.
 
 Every program in this roadmap obeys these invariants:
 
-1. **Legality precedes optimization.** R1–R23 and device-specific laws reject illegal
+1. **Legality precedes optimization.** R1–R24 and device-specific laws reject illegal
    candidates before K_BCIR prices them.
 2. **One semantic truth, multiple realizations.** Python is the executable oracle; MLIR is
    the compiled law rail; C is the freestanding/hosted realization rail. A new rail earns
@@ -49,13 +49,13 @@ The normative semantics and artifact contract are in
 | BCIR-2 | Registry and placement candidates | Registry, device manifests, memory banks, channels, generations |
 | BCIR-3 | Legal K_BCIR realization plan | Exact integer cost search, RCSP/Pareto, schedule-aware price, certified priors |
 | BCIR-4 | GEM execution and StreamPack | Hydration, wave/token scheduling, v1–v3 StreamPack, C executor |
-| BCIR-5 | Target lowering | Partial LLVM/MLIR, portable C23, WASM/JVM/CIL subsets, SYCL/SPIR-V channel, resident toolchains |
+| BCIR-5 | Target lowering and distribution | Partial LLVM/MLIR, portable C23, WASM/JVM/CIL subsets, SYCL/SPIR-V channel, resident toolchains, deterministic BCAB target-image selection |
 
 ### 2.2 Implementation rails
 
 | Rail | Owns | Explicit boundary |
 |---|---|---|
-| `bcir/` | Dependency-free conformance oracle plus import-quarantined hosted-model adapters, K_BCIR, GEM, frontends, ML/reference organs | Hosted PyTorch execution is optional and must re-enter through strict oracle ingestion; not the production law definition |
+| `bcir/` | Dependency-free conformance oracle plus import-quarantined hosted-model adapters, K_BCIR, GEM, frontends, ML/reference organs, and BCAB codec/selection tools | Hosted PyTorch execution is optional and must re-enter through strict oracle ingestion; not the production law definition |
 | `mlir/` | ODS/IRDL structure, compiled verifier and transformations, target-edge lowering | `bcir-aot` is partial preparation; Python LLVM lowering accepts one supported elementwise claim |
 | `runtime/c/` | Freestanding runtime, C-front twin, hosted model/compiler tools, direct RuntimeChannel | Memory classes are explicit; no hidden platform or IPC dependency in freestanding code |
 | `runtime/cpp/` | Hosted orchestration above the C ABI | Single-node handoff is real; distributed/device-manager backends remain scaffolded |
@@ -65,13 +65,14 @@ The normative semantics and artifact contract are in
 
 | Area | Landed baseline | Boundary that remains |
 |---|---|---|
-| Law and optimizer | R1–R23, twelve-axis cost vectors, exact planning, RCSP/Pareto, overlap pricing, replay/provenance, frozen learned priors | Additional laws require a demonstrated semantic gap and dual-rail negative coverage |
+| Law and optimizer | R1–R24, twelve-axis cost vectors, exact planning, RCSP/Pareto, overlap pricing, replay/provenance, frozen learned priors | Additional laws require a demonstrated semantic gap and dual-rail negative coverage |
 | GEM and StreamPack | Hydration, scheduling, execution, strict v1–v3 codecs, C/Python byte parity, operator disassembly/hexdump | Hardware command packets and per-device execution are not implied |
 | C compiler | Broad driver-oriented C23 subset, twin lowering, Clang differentials, target ABI matrix, project/link/fallback modes | Not complete ISO C23; unsupported constructs route to the resident compiler |
 | C memory/runtime | Freestanding/hosted/driver classes, allocator injection, failure tests, direct RuntimeChannel v1 | No out-of-process transport or resident hardware binding |
 | ML/reference | Tensor claims, closed-set AD, planned/streamed training, optional hosted Llama/AdamW micro training, safe resume/export, model ingest/tokenizer/decode, BCIRQ8, standalone-C parity, native Q8/Q4 conversion and Q8 projection kernels, exact native Q15 retrieval, payload-free placement, exact static tensor addresses, verified HAM residency/routes, strict context shards, dual-memory oracle, a bounded GNN/Transformer hardware-policy gate, adaptive and raw-byte BLT/MambaByte experiments, exact sequence-interface adaptation, causal FSQ series coding, and active-budget growth | The 32M, byte-native, and progressive models are untrained at useful scale; hardware-RL evidence is simulated; HAM has no physical adapter; no whole-model Q4, distributed trainer, GPU byte/model backend, live promotion corpus, or production serving engine |
 | Telemetry | Stable signal registry, BTLM codec, continuity/ring witnesses, metrics, deterministic Prometheus/OTLP/Redfish-shaped serialization | No live HTTP/OTLP/BMC/UART transport; driver envelope/live concurrent ring remain version-zero design work |
 | Machine edge | Typed MMIO/port/fence/control-register/MSR operations, ordinary x86 long-mode entry and interrupt trampoline, real object/disassembly gates | Reset transition, paranoid NMI/IST entry, feature-specific entry policy, native CPU backend remain open |
+| Artifact compatibility | BCAB v1 deterministic multi-image envelope, standard payload preservation, Python/C/C++ selection, MLIR metadata projection, listing/hex/extraction and delegated disassembly | No signature/trust directory, pack symbol relocation, OS loader, or claim of cross-ISA binary compatibility |
 | Drivers/kernel | Device-manifest/event/DMA substrates, direct hook ABI, generic HAM compiler/simulator contract, driver package and BCIR-Linux plans | No resident device driver, GDS/P2PDMA/CXL/NVMe adapter, Linux module/fork, stable UAPI, native kernel, or native IPC is present |
 | Performance evidence | Bounded cross-organ audit, deterministic result digests, controlled-box budget rail, exact scheduler/static-layout differential tests | Target-specific TMSAO certificate still needs PMU/energy/thermal evidence and exhaustive measured candidates |
 
@@ -129,8 +130,9 @@ surface.
 ### 4.2 Machine-code and backend rail
 
 LLVM remains the resident implementation of general CPU machine-code work. BCIR currently owns
-typed target/device edges, StreamPack/operator tools, verification, and device-command assembly.
-The next sequence is:
+typed target/device edges, StreamPack/operator tools, verification, device-command assembly, and
+BCAB v1 packaging/selection around unmodified standard artifacts. BCAB is not MC7 pack linking or
+MC11 object linking. The next sequence is:
 
 1. Complete source-module symbol resolution and a freestanding C twin for MC1 disassembly.
 2. Bind MC2 registry operations through RuntimeChannel only after a real driver resource exists.
@@ -248,7 +250,7 @@ protobuf, gRPC, BMC, or UART delivery. Normative details live in
 
 | Milestone | Current state | Exit evidence |
 |---|---|---|
-| Foundation law/parity | Landed | R1–R23 negative coverage, generated differentials, deterministic replay |
+| Foundation law/parity | Landed | R1–R24 negative coverage, generated differentials, deterministic replay |
 | C/runtime memory discipline | Landed baseline | Strict hosted/freestanding builds, allocation-failure campaign, sanitizers, idempotent teardown |
 | Pre-driver machine edge | Partial landed | Ordinary x86 edge and MC1/MC2 baselines; paranoid/reset and hardware binding remain explicit |
 | UART direct package | Open | D0–D2 schema/assembler/verifier/simulator/direct parity, faults, cancellation, saturation, replay |

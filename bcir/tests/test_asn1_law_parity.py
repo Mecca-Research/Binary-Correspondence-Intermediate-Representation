@@ -15,6 +15,7 @@ import os
 import re
 
 from bcir.asn1 import Asn1Error, TagClass
+from bcir.asn1.artifact_bundle import ARTIFACT_BUNDLE_MODULE_OID
 from bcir.asn1.schema import Component, Module, Primitive, Sequence
 from bcir.asn1.streampack import STREAMPACK_MODULE_OID
 from bcir.asn1.tags import RESERVED_UNIVERSAL, Universal
@@ -23,6 +24,9 @@ _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _ATTRS_TD = os.path.join(_ROOT, "mlir", "include", "BCIR", "BCIRAttrs.td")
 _ASN1_TD = os.path.join(_ROOT, "mlir", "include", "BCIR", "BCIRAsn1Ops.td")
 _FIXTURE = os.path.join(_ROOT, "mlir", "test", "passes", "verify_asn1.mlir")
+_ARTIFACT_FIXTURE = os.path.join(
+    _ROOT, "mlir", "test", "passes", "artifact_bundle_asn1.mlir",
+)
 
 
 def _cases(name: str) -> dict[str, int]:
@@ -84,6 +88,15 @@ def test_streampack_module_oid_is_the_one_the_law_fixture_names():
     arcs = ", ".join(str(a) for a in STREAMPACK_MODULE_OID)
     assert f"array<i64: {arcs}>" in fixture, (
         f"the law fixture must name the oracle's module OID {arcs}")
+
+
+def test_artifact_bundle_module_oid_and_additive_projection_match_both_rails():
+    """BCAB's second transfer syntax must keep one OID and R24's additive marker."""
+    fixture = open(_ARTIFACT_FIXTURE, encoding="utf-8").read()
+    arcs = ", ".join(str(arc) for arc in ARTIFACT_BUNDLE_MODULE_OID)
+    assert f"array<i64: {arcs}>" in fixture
+    assert 'native = "artifact_bundle"' in fixture
+    assert "additive" in fixture
 
 
 def test_oracle_refuses_the_same_component_faults_r24_rejects():

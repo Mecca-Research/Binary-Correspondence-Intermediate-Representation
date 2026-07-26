@@ -207,7 +207,7 @@ jobs:
         run: SANITIZE_SKIP_VALGRIND=1 SANITIZE_ENGINES_PARALLEL=1 bash tools/c/sanitize_cfront.sh
 
       - name: Hosted C ownership static analysis
-        # Nine independent whole-file analyses (clang --analyze is single-threaded per TU and
+        # Ten independent whole-file analyses (clang --analyze is single-threaded per TU and
         # bcir_cfront.c alone dominates), so they fan out across the runner's cores instead of
         # queueing. Each still fails the gate on a nonzero exit OR on any diagnostic at all --
         # `--analyze` reports findings on stderr while exiting 0, so the emptiness check is the
@@ -215,7 +215,7 @@ jobs:
         run: |
           workdir="$(mktemp -d)"
           trap 'rm -rf "${workdir}"' EXIT
-          sources="bcir_cpp.c bcir_cfront.c bcir_q8_model.c bcir_q4_kernel.c bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c"
+          sources="bcir_cpp.c bcir_cfront.c bcir_artifact_bundle.c bcir_q8_model.c bcir_q4_kernel.c bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c"
           for source in ${sources}; do
             (
               if clang --analyze -std=c11 -I runtime/c "runtime/c/${source}" -o /dev/null \
@@ -237,11 +237,11 @@ jobs:
           done
           exit "${status}"
 
-      - name: Binary trust-boundary fuzz (libFuzzer + ASan/UBSan on all eight decoders)
+      - name: Binary trust-boundary fuzz (libFuzzer + ASan/UBSan on all nine decoders)
         # StreamPack decoder/executor/encoder, the ETL binary-record decoder, the UART
-        # telemetry-frame decoder, the BCIRQ8 model loader, and the X.690 BER/DER decoder --
-        # the DER -> native StreamPack fast path -- every runtime/c/ entry point that parses
-        # bytes it did not produce. The campaigns are
+        # telemetry-frame decoder, the BCIRQ8 model loader, the BCAB artifact-bundle
+        # reader, the X.690 BER/DER decoder, and the DER -> native StreamPack fast path --
+        # every runtime/c/ entry point that parses bytes it did not produce. The campaigns are
         # independent processes and run concurrently (FUZZ_JOBS, default nproc); the per-harness
         # run count and time bound are unchanged, so only the scheduling differs.
         run: FUZZ_RUNS=500000 bash tools/c/fuzz_streampack.sh
