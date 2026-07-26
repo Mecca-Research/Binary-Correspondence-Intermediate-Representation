@@ -200,8 +200,11 @@ abstract bundle:
   explicitly selects `Strictness.BER`;
 - `encode_bundle_oer` emits CANONICAL-OER; `decode_bundle_oer` accepts BASIC-OER or
   requires canonical form on request;
-- `native_to_der`/`der_to_native` and `native_to_oer`/`oer_to_native` validate both
-  sides and reconstruct canonical native BCAB bytes; and
+- `encode_bundle_per` emits CANONICAL-PER, UNALIGNED by default and ALIGNED on request;
+  the two variants do not interwork (X.691 §7.8), so the choice travels with the bytes;
+- `native_to_der`/`der_to_native`, `native_to_oer`/`oer_to_native` and
+  `native_to_per`/`per_to_native` validate both sides and reconstruct canonical native
+  BCAB bytes; and
 - `bcir-bundle to-der|from-der|to-oer|from-oer` exposes those bounded transcodes with
   atomic destination replacement.
 
@@ -213,7 +216,15 @@ The compatibility law is byte identity:
 ```text
 der_to_native(native_to_der(native)) == native
 oer_to_native(native_to_oer(native), canonical=True) == native
+per_to_native(native_to_per(native, aligned=a), aligned=a) == native
 ```
+
+PER is the compact projection: on the three-variant conformance fixture the same bundle is
+551 octets of DER, 524 of COER, 512 of UNALIGNED PER and 466 of ALIGNED PER. ALIGNED being
+the smaller of the two is not an anomaly -- the directory is dominated by `U32`/`U64` fields
+whose declared ranges are enormous and whose values are small, and X.691 §11.5.6 makes
+UNALIGNED spend the full range width (64 bits for a `U64`) where §11.5.7.4 lets ALIGNED
+spend a short length plus the minimum octets.
 
 It is not an ASN.1 blob hidden in a BCAB raw-image slot and it allocates no competing
 BCAB kind/format IDs. The native enum values are projected as ASN.1 ENUMERATED values,
