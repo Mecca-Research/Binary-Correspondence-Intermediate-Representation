@@ -127,6 +127,70 @@ class Tagged:
 
 
 @dataclass(frozen=True)
+class OpenTypeNode:
+    """An open type — X.681 §14, reached two ways.
+
+    `ANY` / `ANY DEFINED BY x` is the withdrawn X.680:1988 spelling that RFC 5280's
+    1988 module still uses; `CLASS.&Field` where the field is a TYPE field is the modern
+    one. Both mean the same thing: the schema does not fix this component's type.
+
+    `governed_by` records the sibling component (`DEFINED BY x`) or the object set
+    (`({Algorithms}{@algorithm})`) that a peer uses to work out the contained type. It is
+    kept because it is real information a caller can act on, and dropped from the
+    encoding because X.690 encodes the contained value the same way regardless.
+    """
+
+    governed_by: str | None = None
+    #: The information object class the field came from, when reached via `CLASS.&Field`.
+    object_class: str | None = None
+    field: str | None = None
+
+
+@dataclass(frozen=True)
+class ClassField:
+    """One field of an information object class (X.681 §9)."""
+
+    name: str                      # including the leading `&`
+    #: A TYPE field (`&Type`, capitalised) versus a VALUE field (`&id`).
+    is_type_field: bool
+    type: object | None = None     # the declared type of a value field
+    optional: bool = False
+    unique: bool = False
+
+
+@dataclass(frozen=True)
+class ClassAssignment:
+    """`NAME ::= CLASS { ... } WITH SYNTAX { ... }` (X.681 §9.1)."""
+
+    name: str
+    fields: tuple[ClassField, ...] = ()
+
+
+@dataclass(frozen=True)
+class ObjectAssignment:
+    """`obj CLASS ::= { ... }` (X.681 §11.1) — recorded, not interpreted.
+
+    `raw` is the object's body as a normalized token stream. It is kept so the printer
+    can reproduce the assignment and the round-trip law keeps covering these modules;
+    dropping the body would let the law pass over a module the parser had gutted.
+    """
+
+    name: str
+    object_class: str
+    raw: str = ""
+
+
+@dataclass(frozen=True)
+class ObjectSetAssignment:
+    """`Set CLASS ::= { obj | obj, ... }` (X.681 §12.1) — recorded, not interpreted."""
+
+    name: str
+    object_class: str
+    objects: tuple[str, ...] = ()
+    raw: str = ""
+
+
+@dataclass(frozen=True)
 class SequenceOfType:
     element: object
     #: The element's identifier when written `SEQUENCE OF name Type` (§25.1).
@@ -211,9 +275,10 @@ class ModuleNode:
 
 
 __all__ = [
-    "BitsValue", "BoolValue", "BracedValue", "Builtin", "ChoiceType",
-    "ComponentNode", "ExtensionMarker", "IntValue", "ModuleNode", "NamedNumber",
-    "NullValue", "OidArc", "OidValue", "RefValue", "SequenceOfType", "SequenceType",
+    "BitsValue", "BoolValue", "BracedValue", "Builtin", "ChoiceType", "ClassAssignment",
+    "ClassField", "ComponentNode", "ExtensionMarker", "IntValue", "ModuleNode",
+    "NamedNumber", "NullValue", "ObjectAssignment", "ObjectSetAssignment", "OidArc",
+    "OidValue", "OpenTypeNode", "RefValue", "SequenceOfType", "SequenceType",
     "SetOfType", "SetType", "StrValue", "SymbolsFromModule", "Tagged", "TypeAssignment",
     "TypeRef", "ValueAssignment",
 ]

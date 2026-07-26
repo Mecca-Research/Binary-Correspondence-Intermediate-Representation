@@ -47,7 +47,7 @@ rule.
 | Rec. | ISO/IEC | Title | BCIR status |
 |---|---|---|---|
 | X.680 | 8824-1:2021 | Basic notation | **partial** — tag assignments consumed; notation not parsed |
-| X.681 | 8824-2:2021 | Information object specification | not started |
+| X.681 | 8824-2:2021 | Information object specification | **partial** — classes, objects, object sets, open types; table constraints recorded not resolved |
 | X.682 | 8824-3:2021 | Constraint specification | not started |
 | X.683 | 8824-4:2021 | Parameterization | not started |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
@@ -125,12 +125,12 @@ Two hard dependencies, both from the standards rather than from BCIR:
 
 ### A. X.680 front-end — the ASN.1 compiler front-end · **BUILT**
 
-> **Status: delivered.** `bcir/frontends/asn1/` (lexer · parser · printer · lowering),
-> the `bcir-asn1c` CLI, and `bcir/tests/test_asn1_frontend.py`. The gate below passes:
-> `BCIR-StreamPack` is now *parsed from its own text* and produces byte-identical DER
-> for all 12 corpus programs. The third-party half passes for
-> `AuthorityKeyIdentifier` and **is blocked for `SubjectPublicKeyInfo`** — see the
-> X.681 finding under §6.
+> **Status: delivered, and its stop condition since cleared.** `bcir/frontends/asn1/`
+> (lexer · parser · printer · lowering), the `bcir-asn1c` CLI, and
+> `bcir/tests/test_asn1_frontend.py`. `BCIR-StreamPack` is *parsed from its own text* and
+> produces byte-identical DER for all 12 corpus programs. Both third-party gates now pass:
+> `AuthorityKeyIdentifier` (37/37 real extensions) **and** `SubjectPublicKeyInfo`
+> (**152/152** real certificates), the latter unblocked by phase F's open type.
 
 Parse real ASN.1 module text into the existing `schema.py` type model. Today the model
 is hand-built in Python; a peer's `.asn1` module cannot be consumed at all.
@@ -246,7 +246,18 @@ schema with a canonical binary projection, rather than each being an ad-hoc shap
 
 Canonical variant: CJER, for the digest discipline.
 
-### F. X.681 information objects + X.683 parameterization
+### F. X.681 information objects + X.683 parameterization · **X.681 PARTIAL, the X.509 blocker cleared**
+
+> **Status: the open type is built.** `OpenType` in `bcir/asn1/schema.py` (DER) and
+> `bcir/asn1/oer.py` §30 (OER); the front-end parses X.681 §9 class definitions, §11
+> objects, §12 object sets, `CLASS.&field` references, and the withdrawn-but-ubiquitous
+> `ANY DEFINED BY` spelling. **The X.509 gate passes: 152/152 real certificates.**
+>
+> What is deliberately *not* built: X.682's table constraints are recorded, not resolved,
+> so an open type stays open rather than being narrowed to the type an object set implies.
+> That is honest rather than lossy — the octets are carried through untouched, which is
+> exactly the open-type contract — and it is what a later phase would add. X.683
+> parameterization is still refused by name.
 
 ASN.1's own generics and open-type machinery. `CLASS`, `WITH SYNTAX`, information
 object sets, and the `&Type` / `&id` field references that make `ALGORITHM-IDENTIFIER`

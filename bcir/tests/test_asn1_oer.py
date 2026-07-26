@@ -209,6 +209,32 @@ def test_octet_string_and_utf8_string_are_length_prefixed_when_unconstrained():
     assert decode_oer(_UTF8, b"\x02\xc3\xa9") == "é"
 
 
+def test_object_identifier_is_a_length_then_the_ber_contents_octets():
+    """§21: OER reuses X.690's OID contents octets verbatim behind a length determinant.
+
+    This path had no coverage until an AlgorithmIdentifier needed it -- neither the
+    Annex A record nor the BCIR-StreamPack module contains an OBJECT IDENTIFIER, so a
+    fault here would have shipped green.
+    """
+    from bcir.asn1.codec import Oid
+
+    kind = Primitive(Universal.OBJECT_IDENTIFIER, "OBJECT IDENTIFIER")
+    # X.690 §8.19's own example: {2 999 3} packs the first two arcs as 40*2 + 999.
+    assert encode_oer(kind, Oid((2, 999, 3))) == b"\x03\x88\x37\x03"
+    rsa = Oid((1, 2, 840, 113549, 1, 1, 11))
+    assert decode_oer(kind, encode_oer(kind, rsa)) == rsa
+
+
+def test_an_open_type_is_a_length_then_the_contained_encoding():
+    """§30. The contained TYPE is unknown by definition, so the octets pass through
+    unchanged -- re-encoding them would need the type an open type refuses to fix."""
+    from bcir.asn1.schema import OpenType
+
+    kind = OpenType()
+    assert encode_oer(kind, bytes.fromhex("0500")) == b"\x02\x05\x00"
+    assert decode_oer(kind, b"\x02\x05\x00") == bytes.fromhex("0500")
+
+
 # --- §16 SEQUENCE preamble --------------------------------------------------------------
 
 def test_a_sequence_with_no_optional_components_has_an_empty_preamble():

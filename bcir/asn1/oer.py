@@ -32,8 +32,8 @@ from __future__ import annotations
 
 from enum import Enum
 
-from .schema import (Asn1Type, Choice, Component, Primitive, Sequence, SequenceOf, Set,
-                     SetOf)
+from .schema import (Asn1Type, Choice, Component, OpenType, Primitive, Sequence,
+                     SequenceOf, Set, SetOf)
 from .tags import Asn1Error, Tag, TagClass, Universal
 
 #: X.696 §32.2 — the object identifiers that name these encoding rules.
@@ -199,9 +199,10 @@ def _encode_primitive(kind: Primitive, value, rules: OerRules) -> bytes:
 
     if universal in (Universal.OBJECT_IDENTIFIER, Universal.RELATIVE_OID):
         # §21 / §22: the length determinant then the BER contents octets, unchanged.
-        from .codec import Oid, RelativeOid
         from .values import encode_oid, encode_relative_oid
-        arcs = tuple(value.arcs) if isinstance(value, (Oid, RelativeOid)) else tuple(value)
+        # `Oid` and `RelativeOid` are tuple subclasses, so an arc sequence is exactly
+        # what they already are -- no unwrapping step.
+        arcs = tuple(value)
         octets = (encode_oid(arcs) if universal == Universal.OBJECT_IDENTIFIER
                   else encode_relative_oid(arcs))
         return encode_length(len(octets)) + octets
@@ -392,6 +393,15 @@ def encode_value(kind: Asn1Type, value, *, rules: OerRules = OerRules.CANONICAL)
             raise Asn1Error(f"{kind.name}: expected a dict, got {type(value).__name__}")
         return _encode_fields(kind, value, rules)
 
+    if isinstance(kind, OpenType):                         # §30
+        # An open type is a length determinant then the contained value's encoding. The
+        # contained TYPE is unknown here by definition, so the octets pass through
+        # unchanged rather than being re-encoded -- re-encoding would require knowing the
+        # type, and guessing it is the one thing an open type forbids.
+        if not isinstance(value, (bytes, bytearray)):
+            raise Asn1Error(f"{kind.name}: an open type value must be bytes")
+        return encode_length(len(value)) + bytes(value)
+
     if isinstance(kind, Choice):                           # §20.1
         if not (isinstance(value, tuple) and len(value) == 2):
             raise Asn1Error(f"{kind.name}: value must be an (alternative, value) pair")
@@ -436,6 +446,13 @@ def decode_value(kind: Asn1Type, data: bytes, offset: int = 0, *,
 
     if isinstance(kind, (Sequence, Set)):                  # §16 / §18
         return _decode_fields(kind, data, offset, rules)
+
+    if isinstance(kind, OpenType):                         # §30
+        length, cursor = decode_length(data, offset)
+        end = cursor + length
+        if end > len(data):
+            raise Asn1Error(f"{kind.name}: truncated open type (X.696 30)", offset)
+        return data[cursor:end], end
 
     if isinstance(kind, Choice):                           # §20.1
         tag, cursor = decode_tag(data, offset)

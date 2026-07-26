@@ -1,0 +1,22 @@
+-- A faithful excerpt of RFC 5280 Appendix A.1 (PKIX1Explicit88), reduced to the types
+-- SubjectPublicKeyInfo needs. This is the module that BLOCKED roadmap phase A: its
+-- AlgorithmIdentifier.parameters is an OPEN TYPE, written here in the 1988 spelling
+-- `ANY DEFINED BY`, and no fixed type can describe it. RSA carries NULL there, most EC
+-- curves carry an OID, RSASSA-PSS carries a SEQUENCE. Phase F made it expressible.
+--
+-- (Note for the reader: this file deliberately contains no doubled hyphen inside a
+-- comment line. X.680 12.6.3 ends a comment at the NEXT such pair, so text after one
+-- becomes live ASN.1 again.)
+PKIX1Explicit88 { iso(1) identified-organization(3) dod(6) internet(1) security(5)
+                  mechanisms(5) pkix(7) id-mod(0) id-pkix1-explicit(18) }
+DEFINITIONS EXPLICIT TAGS ::= BEGIN
+
+  SubjectPublicKeyInfo ::= SEQUENCE {
+      algorithm        AlgorithmIdentifier,
+      subjectPublicKey BIT STRING }
+
+  AlgorithmIdentifier ::= SEQUENCE {
+      algorithm  OBJECT IDENTIFIER,
+      parameters ANY DEFINED BY algorithm OPTIONAL }
+
+END

@@ -73,16 +73,23 @@ class Component:
         lets `[4] Name` work when `Name` is a CHOICE and has no base tag to ask for.
         """
         if self.tag is None:
-            return None if isinstance(self.type, Choice) else self.type.base_tag()
+            if isinstance(self.type, (Choice, OpenType)):
+                return None
+            return self.type.base_tag()
         if self.explicit:                                  # §8.14.3
             return Tag(self.tag_class, self.tag, True)
         return Tag(self.tag_class, self.tag,               # §8.14.4
                    self.type.base_tag().constructed)
 
     def expected_tags(self) -> tuple[Tag, ...]:
-        """Every tag this component may present on the wire."""
+        """Every tag this component may present on the wire.
+
+        Empty means "any tag": an untagged open type does not constrain what arrives.
+        """
         tag = self.outer_tag()
         if tag is None:
+            if isinstance(self.type, OpenType):
+                return ()
             return self.type.alternative_tags()
         return (tag,)
 
@@ -160,6 +167,49 @@ _STRING_UNIVERSALS = frozenset({
     Universal.GRAPHIC_STRING, Universal.VISIBLE_STRING, Universal.GENERAL_STRING,
     Universal.UNIVERSAL_STRING, Universal.BMP_STRING, Universal.OBJECT_DESCRIPTOR,
 })
+
+
+@dataclass
+class OpenType(Asn1Type):
+    """An OPEN TYPE — X.681 §14: a field whose type is not fixed by the schema.
+
+    This is the construct that X.509 cannot be written without. `AlgorithmIdentifier`'s
+    `parameters` component holds *whatever the algorithm identified by the sibling
+    `algorithm` component says it holds*: NULL for RSA, an OID for most EC curves, a
+    SEQUENCE for RSASSA-PSS. No fixed type can describe it.
+
+    An open type value is carried here as the **complete encoding of the contained
+    value** (X.690: an open type field is the contained type's encoding, unchanged).
+    Keeping it as octets rather than a decoded object is the honest representation: this
+    layer does not know the contained type, and inventing one would be worse than
+    admitting it. A caller who *does* know -- because it read the governing field -- can
+    decode the octets with the right type as a second step.
+
+    Two consequences the rest of the model has to respect:
+
+    * **No tag of its own.** Like a CHOICE (X.680 §29.1), an open type shows whichever
+      tag the contained value has, so `base_tag` raises and matching is by position.
+    * **IMPLICIT tagging is impossible on it.** An implicit tag replaces the base tag,
+      and there is no base tag to replace (X.680 §31.2.7 names open types alongside
+      CHOICE for exactly this reason).
+    """
+
+    name: str = "OPEN TYPE"
+
+    def base_tag(self) -> Tag:
+        raise Asn1Error(
+            f"{self.name}: an open type has no tag of its own (X.681 14); it shows the "
+            f"tag of whatever value it contains")
+
+    def encode(self, value) -> Tlv:
+        if not isinstance(value, (bytes, bytearray)):
+            raise Asn1Error(
+                f"{self.name}: an open type value is the contained value's complete "
+                f"encoding, so it must be bytes, not {type(value).__name__}")
+        return decode_one(bytes(value))
+
+    def decode(self, tlv: Tlv, *, strictness: Strictness) -> bytes:
+        return encode_tlv(tlv)
 
 
 @dataclass
@@ -408,6 +458,12 @@ def _matches(tlv: Tlv, expected: Tag) -> bool:
 
 
 def _matches_any(tlv: Tlv, comp: Component) -> bool:
+    # An untagged open type accepts ANY tag: the schema does not fix its contained type,
+    # so there is nothing to compare against (X.681 14). This is what lets
+    # `parameters ANY OPTIONAL` sit at the end of AlgorithmIdentifier and absorb whatever
+    # the algorithm actually carries.
+    if comp.tag is None and isinstance(comp.type, OpenType):
+        return True
     return any(_matches(tlv, tag) for tag in comp.expected_tags())
 
 
@@ -454,5 +510,5 @@ class Module:
         return self.types[type_name].decode(tlv, strictness=strictness)
 
 
-__all__ = ["Asn1Type", "Choice", "Component", "Module", "Primitive", "Sequence",
-           "SequenceOf", "Set", "SetOf"]
+__all__ = ["Asn1Type", "Choice", "Component", "Module", "OpenType", "Primitive",
+           "Sequence", "SequenceOf", "Set", "SetOf"]
