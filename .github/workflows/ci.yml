@@ -213,10 +213,11 @@ jobs:
           done
           exit "${status}"
 
-      - name: Binary trust-boundary fuzz (libFuzzer + ASan/UBSan on all seven decoders)
+      - name: Binary trust-boundary fuzz (libFuzzer + ASan/UBSan on all eight decoders)
         # StreamPack decoder/executor/encoder, the ETL binary-record decoder, the UART
         # telemetry-frame decoder, the BCIRQ8 model loader, and the X.690 BER/DER decoder --
-        # every runtime/c/ entry point that parses bytes it did not produce. The campaigns are
+        # the DER -> native StreamPack fast path -- every runtime/c/ entry point that parses
+        # bytes it did not produce. The campaigns are
         # independent processes and run concurrently (FUZZ_JOBS, default nproc); the per-harness
         # run count and time bound are unchanged, so only the scheduling differs.
         run: FUZZ_RUNS=500000 bash tools/c/fuzz_streampack.sh
