@@ -1100,6 +1100,13 @@ and reject work outside it. The current profiles are:
   indefinite length form mandatory for constructed encodings, which no digested,
   frozen artifact can carry. X.681/X.682/X.683 (information objects, constraints,
   parameterization) and X.691/X.692/X.693 (PER, ECN, XER) are outside the profile.
+  Module TEXT is compiled by the X.680 front-end (`bcir/frontends/asn1/`, the
+  `bcir-asn1c` CLI): a `.asn1` module lowers to the same type model the encoder uses,
+  so a peer's schema is consumed rather than transcribed. The front-end covers the
+  clause 13 module structure and the clause 16-31 types the profile can encode, and
+  REFUSES what it cannot express -- an `ANY DEFINED BY` or an information object class
+  names X.681 rather than being skipped, because a front-end that silently dropped one
+  would build a type model disagreeing with the module it just read.
 
 The following versioned contracts are adjacent to BCIR semantics but have dedicated
 normative documents because their byte/lifecycle evolution is independent:

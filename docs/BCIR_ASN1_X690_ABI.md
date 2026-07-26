@@ -80,6 +80,13 @@ bytes in an OCTET STRING would have been trivial and useless — a peer could no
 a field without implementing BCIR's format. Every field is named, so an ASN.1 peer
 can consume a BCIR plan with nothing but the module below.
 
+The text below is not a transcription: it is
+[`bcir/asn1/BCIR-StreamPack.asn1`](../bcir/asn1/BCIR-StreamPack.asn1) verbatim, the
+file the X.680 front-end compiles (a test asserts the two are identical). The
+compiled model produces byte-identical DER to the hand-built one in
+`bcir/asn1/streampack.py` for every corpus program, so this module IS the schema
+rather than a description of one.
+
 ```asn1
 BCIR-StreamPack { iso(1) identified-organization(3) dod(6) internet(1)
                   private(4) enterprise(1) 62596 1 }

@@ -1,0 +1,53 @@
+BCIR-StreamPack { iso(1) identified-organization(3) dod(6) internet(1)
+                  private(4) enterprise(1) 62596 1 }
+DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+  StreamPack ::= SEQUENCE {
+      version        [0] INTEGER DEFAULT 1,
+      sourcePlan     [1] UTF8String,
+      topoGen        [2] INTEGER DEFAULT 1,
+      mapGen         [3] INTEGER DEFAULT 0,
+      dataGen        [4] INTEGER DEFAULT 0,
+      pipelineDepth  [5] INTEGER DEFAULT 1,
+      segments       [6] SEQUENCE OF LaneSegment,
+      prefetches     [7] SEQUENCE OF Prefetch  DEFAULT {},
+      blocks         [8] SEQUENCE OF Block     DEFAULT {},
+      traceNotes     [9] SEQUENCE OF TraceNote DEFAULT {} }
+
+  LaneSegment ::= SEQUENCE {
+      name           [0] UTF8String,
+      claimId        [1] INTEGER,
+      phaseId        [2] INTEGER,
+      lane           [3] Lane,
+      width          [4] INTEGER,
+      opcode         [5] UTF8String,
+      reads          [6] SEQUENCE OF INTEGER,
+      writes         [7] SEQUENCE OF INTEGER,
+      prefetch       [8] UTF8String OPTIONAL,
+      fenceBefore    [9] SEQUENCE OF UTF8String DEFAULT {},
+      fenceAfter    [10] SEQUENCE OF UTF8String DEFAULT {},
+      dispatch      [11] Dispatch  DEFAULT core,
+      channel       [12] UTF8String DEFAULT "host" }
+
+  Lane     ::= ENUMERATED { u(0), ux(1), t(2), ggg(3), a(4), h(5) }
+  Dispatch ::= ENUMERATED { core(0), pim(1) }
+
+  Prefetch ::= SEQUENCE {
+      name           [0] UTF8String,
+      distance       [1] INTEGER,
+      targets        [2] SEQUENCE OF INTEGER,
+      hint           [3] UTF8String DEFAULT "T0",
+      pattern        [4] UTF8String DEFAULT "linear",
+      buffers        [5] INTEGER    DEFAULT 1 }
+
+  Block ::= SEQUENCE {
+      base           [0] INTEGER,
+      count          [1] INTEGER,
+      strides        [2] SEQUENCE OF INTEGER DEFAULT { 1 } }
+
+  TraceNote ::= SEQUENCE {
+      claimId        [0] INTEGER,
+      srcHash        [1] INTEGER DEFAULT 0,
+      traceHash      [2] INTEGER DEFAULT 0 }
+
+END

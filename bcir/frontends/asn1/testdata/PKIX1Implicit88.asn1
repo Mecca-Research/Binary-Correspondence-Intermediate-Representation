@@ -1,0 +1,51 @@
+-- A faithful excerpt of RFC 5280 Appendix A.2 (PKIX1Implicit88), reduced to the
+-- types the AuthorityKeyIdentifier extension needs. Used as THIRD-PARTY validation
+-- of the X.680 front-end: this text is not BCIR's, and the DER it must agree with
+-- comes from real certificates in the host trust store.
+--
+-- The module header is IMPLICIT TAGS, which is what makes it a real test of X.680
+-- 31.2.7: `directoryName [4] Name` must still be EXPLICIT because Name is a CHOICE,
+-- and a front-end that applies the module default blindly gets the wrong octets.
+PKIX1Implicit88 { iso(1) identified-organization(3) dod(6) internet(1) security(5)
+                  mechanisms(5) pkix(7) id-mod(0) id-pkix1-implicit(19) }
+DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+  AuthorityKeyIdentifier ::= SEQUENCE {
+      keyIdentifier             [0] KeyIdentifier            OPTIONAL,
+      authorityCertIssuer       [1] GeneralNames             OPTIONAL,
+      authorityCertSerialNumber [2] CertificateSerialNumber  OPTIONAL }
+
+  KeyIdentifier ::= OCTET STRING
+  CertificateSerialNumber ::= INTEGER
+
+  GeneralNames ::= SEQUENCE SIZE (1..MAX) OF GeneralName
+
+  GeneralName ::= CHOICE {
+      otherName                 [0] AnotherName,
+      rfc822Name                [1] IA5String,
+      dNSName                   [2] IA5String,
+      directoryName             [4] Name,
+      uniformResourceIdentifier [6] IA5String,
+      iPAddress                 [7] OCTET STRING,
+      registeredID              [8] OBJECT IDENTIFIER }
+
+  AnotherName ::= SEQUENCE {
+      type-id OBJECT IDENTIFIER,
+      value   [0] EXPLICIT OCTET STRING }
+
+  Name ::= CHOICE { rdnSequence RDNSequence }
+  RDNSequence ::= SEQUENCE OF RelativeDistinguishedName
+  RelativeDistinguishedName ::= SET SIZE (1..MAX) OF AttributeTypeAndValue
+
+  AttributeTypeAndValue ::= SEQUENCE {
+      type  OBJECT IDENTIFIER,
+      value DirectoryString }
+
+  DirectoryString ::= CHOICE {
+      teletexString   TeletexString,
+      printableString PrintableString,
+      universalString UniversalString,
+      utf8String      UTF8String,
+      bmpString       BMPString }
+
+END
