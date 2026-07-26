@@ -56,7 +56,7 @@ rule.
 | X.693 | 8825-4:2021 | XER | not started |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
-| X.696 | 8825-7:2021 | OER | not started |
+| X.696 | 8825-7:2021 | OER | **blocked** — spec not available (see §4 D) |
 | X.697 | 8825-8:2021 | JER | not started |
 
 Sizes, as a rough effort signal (converted spec text, lines): X.681 1 125 · X.682 345 ·
@@ -181,7 +181,13 @@ for every corpus program — and a dual-rail C twin with the same differential
 discipline. X.695 (registration of PER encoding instructions) follows as a small
 appendix once PER lands.
 
-### D. X.696 OER · independent, cheap, high practical value
+### D. X.696 OER + DER→native fast path · **fast path BUILT · OER blocked**
+
+> **Status: half delivered.** The **DER→native fast path** is built:
+> `runtime/c/bcir_asn1_streampack.{h,c}`, wired into `check_runtime.sh` and fuzzed as
+> the eighth trust boundary. **X.696 OER is not started and is blocked on the
+> specification** — see the note below.
+
 
 Octet Encoding Rules: octet-aligned, no bit-shifting, designed for fast encode/decode
 rather than minimum size. OER is the encoding rule with the *best decode cost* in the
@@ -194,6 +200,27 @@ reconstruction twice.
 
 No dependency on constraints (OER's canonical variant, COER, is well-defined without
 them), so this can run in parallel with B/C.
+
+**Blocker for the OER half.** Rec. ITU-T X.696 | ISO/IEC 8825-7 is not among the
+specifications available to this project: the uploaded set covers X.680–X.693, and
+`itu.int` is refused by the environment's network policy. OER is a *binary wire format*
+whose canonical variant BCIR would emit and digest, so implementing it from recollection
+is not an option — a plausible-looking encoder that gets the length determinant, the
+SEQUENCE preamble bitmap, or the SEQUENCE OF quantity field wrong produces octets that
+are not OER, and the error would be frozen into an ABI. **X.696 must be supplied before
+this half can start.**
+
+**What the fast path delivers on its own.** A driver that receives a DER projection can
+now reconstruct the native artifact in freestanding C, with no Python in the path. The
+law is byte identity, not equivalence:
+
+    bcir_asn1_to_streampack(encode_pack(P)) == encode(P)
+
+which forces the C rail to re-derive the three things the projection does not carry —
+the native StreamPack version (v1/v2/v3 is a function of content; the module's own
+`version` field is the *projection* version and is deliberately independent), the
+reserved `stride_k` the projection omits by design, and the CRC. Proven byte-identical
+on all 12 corpus programs and on all three native versions.
 
 ### E. X.697 JER · independent
 

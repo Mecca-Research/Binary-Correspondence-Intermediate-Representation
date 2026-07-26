@@ -160,6 +160,31 @@ Design notes worth stating because they are the non-obvious choices:
 - **The projection version is independent of the native StreamPack version.** The
   module can gain a field without the native format moving, and vice versa.
 
+## 3a. The DER → native fast path
+
+A driver that receives a projection can rebuild the native artifact without Python:
+`bcir_asn1_to_streampack` (`runtime/c/bcir_asn1_streampack.{h,c}`) is a freestanding,
+allocation-free reconstruction that reads the DER and writes native StreamPack octets.
+
+The law it upholds is law A3 below, stated as **byte identity** and proven on the C rail:
+
+```
+bcir_asn1_to_streampack(encode_pack(P))  ==  encode(P)
+```
+
+Byte identity rather than equivalence is deliberate — it forces the C rail to re-derive
+everything the projection does not carry: the native StreamPack **version** (v1/v2/v3 is
+a function of content, and this module's own `version` field is the *projection* version,
+independent by design), the reserved `stride_k` this module does not project, and the
+CRC trailer. Anything less would let the reconstruction produce a decodable pack with a
+different digest, which for a frozen, digested artifact is the same as producing the
+wrong one.
+
+The path is a trust boundary and is treated as one: BER-only spellings are refused rather
+than normalized (normalizing would let a peer choose the digest by choosing a spelling),
+and every reconstruction is re-validated through `bcir_sp_verify_semantic` before it is
+returned, so a well-formed projection of a nonsense plan cannot mint an unexecutable pack.
+
 ## 4. The laws
 
 Gated in `bcir/tests/test_asn1_streampack.py` and `bcir/tests/test_c_asn1.py`:

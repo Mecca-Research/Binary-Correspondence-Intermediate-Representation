@@ -3,12 +3,13 @@
 # ASan/UBSan smoke on a real Python-encoded pack + byte mutations. Needs clang with
 # compiler-rt (libclang-rt-NN-dev). FUZZ_RUNS controls the fuzz iteration count.
 #
-# The seven harnesses, and whose bytes each one distrusts:
+# The eight harnesses, and whose bytes each one distrusts:
 #   StreamPack decoder / executor / encoder  -- an artifact handed to the runtime
 #   ETL binary-record decoder                -- device/driver packet fields
 #   telemetry-frame decoder                  -- frames a device emits over UART
 #   BCIRQ8 model loader                      -- an external model artifact (LangRef 16)
 #   X.690 BER/DER decoder                    -- an ASN.1 artifact from a foreign peer
+#   DER -> native StreamPack fast path       -- a projection a peer hands a driver
 #
 # Each seeds from real Python-rail output so the campaign starts inside the format rather
 # than rediscovering its magic; the BCIRQ8 harness additionally REPAIRS the format's three
@@ -137,6 +138,15 @@ add_target encode "encoder" "" \
 add_target binrec "binrec" "-max_len=64" \
   "${C}/fuzz_binrec.c" "${C}/bcir_binrec.c"
 
+# bcir_asn1_streampack.c does not merely READ hostile octets, it WRITES a native artifact
+# derived from them. The harness therefore feeds every blessed output straight back into
+# the native decoder and the semantic verifier: a fast path that emitted a subtly
+# malformed pack would be worse than one that crashed, because the corruption would
+# surface far from here. Its output buffer is fixed and small, so NOSPACE stays reachable.
+add_target sp_fast "DER->native fast path" "-max_len=8192" \
+  "${C}/fuzz_asn1_streampack.c" "${C}/bcir_asn1_streampack.c" "${C}/bcir_asn1.c" \
+  "${C}/bcir_runtime.c"
+
 # --- build every harness (independent link jobs, so build them concurrently) --------------
 echo "[fuzz] building ${#KEYS[@]} harnesses under libFuzzer + ASan/UBSan"
 build_fail=0
@@ -189,6 +199,7 @@ then
   echo "  SKIP BCIRQ8 seed corpus (could not build a seed artifact); fuzzing unseeded"
 fi
 
+# The fast path takes the same projections as the X.690 harness -- seed both.
 python3 - "${tmp}/corpus_asn1" <<'ASN1SEED' || { echo "  FAIL: X.690 seed"; exit 1; }
 import os, sys
 from bcir.asn1.streampack import encode_pack
@@ -212,6 +223,7 @@ for name, octets in {
 }.items():
     open(os.path.join(d, name + ".bin"), "wb").write(bytes.fromhex(octets))
 ASN1SEED
+cp "${tmp}"/corpus_asn1/*.der "${tmp}/corpus_sp_fast/" 2>/dev/null || true
 
 # --- run the campaigns, at most ${JOBS} at a time ----------------------------------------
 echo "[fuzz] ${#KEYS[@]} campaigns x ${RUNS} runs (<=${MAX_TIME}s each), ${JOBS} at a time"

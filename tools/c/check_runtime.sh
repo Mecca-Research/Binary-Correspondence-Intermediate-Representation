@@ -3266,6 +3266,73 @@ print('OK' if ok else 'NO')")" \
   && echo "  PASS barrier: the aarch64 dmb-ish + riscv64 fence families emit correctly off-arch (per-ISA --target keying)" \
   || { echo "  FAIL: barrier per-ISA off-arch emit text is wrong"; exit 1; }
 
+# DER -> native StreamPack fast path (#asn1fast, roadmap phase D): reconstruct the native
+# artifact from its X.690 DER projection in freestanding C, with no Python anywhere in the
+# reconstruction path, and assert BYTE IDENTITY against what the Python encoder produced.
+# That is law A3 (additive: the native octets survive the round trip) proven on the C rail.
+# Byte identity, not equivalence -- the fast path has to re-derive the StreamPack VERSION
+# from content the way bcir/abi::encode does, emit the reserved stride_k the projection
+# deliberately omits, and recompute the CRC.
+echo "[c-runtime] DER -> native StreamPack fast path: byte-identical reconstruction (#asn1fast)"
+if "${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${C}/bcir_asn1_streampack.c" \
+     "${C}/bcir_asn1.c" "${C}/bcir_runtime.c" "${C}/test_asn1_streampack.c" \
+     -o "${tmp}/test_asn1_sp"; then
+  for std in c11 c23; do
+    "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -I "${C}" \
+      -c "${C}/bcir_asn1_streampack.c" -o /dev/null \
+      || { echo "  FAIL: bcir_asn1_streampack not freestanding-clean under -std=${std}"; exit 1; }
+  done
+  python3 - "${tmp}" <<'ASN1FASTPY' || { echo "  FAIL: could not project the corpus"; exit 1; }
+import os, sys
+from bcir.abi import encode
+from bcir.asn1.streampack import encode_pack
+from bcir.examples import PROGRAMS
+from bcir.gem import hydrate
+from bcir.kbcir import optimize
+from bcir.kbcir.cost import TargetProfile, Theta
+d = sys.argv[1]
+host, theta = TargetProfile.x86_avx512(), Theta.cool()
+for name, build in sorted(PROGRAMS.items()):
+    module = build()
+    pack = hydrate(module, optimize(module, host, theta))
+    open(os.path.join(d, name + ".proj.der"), "wb").write(encode_pack(pack))
+    open(os.path.join(d, name + ".native.bin"), "wb").write(encode(pack))
+ASN1FASTPY
+  fast_ok=0; fast_bad=0
+  for proj in "${tmp}"/*.proj.der; do
+    base="$(basename "${proj}" .proj.der)"
+    if out="$("${tmp}/test_asn1_sp" "${proj}" "${tmp}/${base}.native.bin" 2>&1)" \
+         && [ "${out%% *}" = "OK" ]; then
+      fast_ok=$((fast_ok + 1))
+    else
+      echo "  FAIL ${base}: ${out}"; fast_bad=$((fast_bad + 1))
+    fi
+  done
+  # A malformed or BER-only projection must be refused, never partially reconstructed.
+  python3 - "${tmp}" <<'ASN1NEGPY'
+import os, sys
+d = sys.argv[1]
+der = open(os.path.join(d, "vector_add.proj.der"), "rb").read()
+for n in (0, 1, 5, len(der) // 2, len(der) - 1):
+    open(os.path.join(d, f"neg{n}.bad.der"), "wb").write(der[:n])
+if der[1] < 0x80:      # the same value with a non-minimal length: legal BER, not DER
+    open(os.path.join(d, "nonmin.bad.der"), "wb").write(
+        bytes([der[0], 0x81, der[1]]) + der[2:])
+ASN1NEGPY
+  for bad in "${tmp}"/*.bad.der; do
+    if "${tmp}/test_asn1_sp" "${bad}" >/dev/null 2>&1; then
+      echo "  FAIL: $(basename "${bad}") was accepted by the fast path"; fast_bad=$((fast_bad + 1))
+    fi
+  done
+  if [ "${fast_bad}" -eq 0 ] && [ "${fast_ok}" -ge 10 ]; then
+    echo "  PASS DER -> native byte-identical on ${fast_ok} corpus programs; malformed + BER-only refused"
+  else
+    echo "  FAIL: fast path (${fast_ok} ok, ${fast_bad} bad)"; exit 1
+  fi
+else
+  echo "  SKIP fast path (harness did not build)"
+fi
+
 # Sanitizer + memory-stress harness for the cfront C twin (#sanitize): the dual-rail parity gates above
 # compare the twin's OUTPUT against the oracle, but never build bcir_cfront.c under AddressSanitizer/UBSan
 # and never run Valgrind -- so a memory bug (buffer overflow, use-after-free, UB) INSIDE the compiler's own
