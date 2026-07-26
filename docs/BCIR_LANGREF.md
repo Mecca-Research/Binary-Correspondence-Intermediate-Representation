@@ -1074,11 +1074,19 @@ and reject work outside it. The current profiles are:
   transition, NMI/IST/paranoid entry, and unmodeled feature policy.
 - **BCIRQ8 decoder-artifact profile:** the complete v1 contract in §16, including
   canonical order, CRC/bounds checks, provenance hashes, and tied/untied heads.
+- **ASN.1 / X.690 interop profile:** the whole of X.690 (02/2021) clause 8 over the
+  X.680 (02/2021) tag assignments, restricted by clauses 10 and 11 on emission —
+  **DER out, BER in**. CER is accepted on input and never emitted: §9.1 makes the
+  indefinite length form mandatory for constructed encodings, which no digested,
+  frozen artifact can carry. X.681/X.682/X.683 (information objects, constraints,
+  parameterization) and X.691/X.692/X.693 (PER, ECN, XER) are outside the profile.
 
 The following versioned contracts are adjacent to BCIR semantics but have dedicated
 normative documents because their byte/lifecycle evolution is independent:
 
-- StreamPack v1–v3: [`BCIR_STREAMPACK_ABI.md`](kernel/BCIR_STREAMPACK_ABI.md);
+- StreamPack v1–v3: [`BCIR_STREAMPACK_ABI.md`](kernel/BCIR_STREAMPACK_ABI.md), whose
+  native octets stay frozen; its **additive** ASN.1 module and DER projection live in
+  [`BCIR_ASN1_X690_ABI.md`](BCIR_ASN1_X690_ABI.md);
 - BTLM telemetry frame and signal meaning:
   [`TELEMETRY_FRAME_ABI.md`](kernel/TELEMETRY_FRAME_ABI.md) and
   [`SIGNAL_REGISTRY.md`](kernel/SIGNAL_REGISTRY.md);

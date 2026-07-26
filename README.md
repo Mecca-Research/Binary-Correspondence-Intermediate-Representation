@@ -92,6 +92,7 @@ bash tools/irdl/check_corpus.sh         # round-trip the IRDL projection on stoc
 - [`docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md`](docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) — the canonical proof-carrying driver, BCIR-Linux, UAPI, native-kernel, telemetry, and IPC sequence.
 - [`docs/kernel/BCIR_HAM_MEMORY_FABRIC.md`](docs/kernel/BCIR_HAM_MEMORY_FABRIC.md) — the verified semantic-memory/context-shard control plane and the explicit GDS/P2PDMA/CXL/NVMe firmware/kernel boundary.
 - [`docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md) — the detailed ML/model closure program, from low-bit/scheduling/AD gaps through production serving and data organs.
+- [`docs/BCIR_ASN1_X690_ABI.md`](docs/BCIR_ASN1_X690_ABI.md) — ASN.1 / X.690 binary format compatibility: the DER-out/BER-in stance, the `BCIR-StreamPack` ASN.1 module, and the additive DER projection of the frozen StreamPack ABI.
 - [`docs/PARITY.md`](docs/PARITY.md) — the Python↔MLIR law contract and Python↔C artifact/runtime parity ledger.
 - [`docs/STATUS.md`](docs/STATUS.md) — the generated static inventory of tests, ODS ops, passes, runtime files, and verifier-law fixture tags; it does not claim those gates were executed.
 - [`docs/PERFORMANCE_AUDIT.md`](docs/PERFORMANCE_AUDIT.md) — the bounded TMSAO methodology, fixed bottlenecks, local evidence, and hardware-gated limits.
