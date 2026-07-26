@@ -23,7 +23,7 @@ that cannot be built bottom-up for a cycle.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from bcir.asn1.schema import (Asn1Type, Choice, Component, Module, OpenType, Primitive,
                               Sequence, SequenceOf, Set, SetOf)
@@ -181,6 +181,10 @@ class Lowerer:
                 return target.types[node.name]
             return self._type_by_name(node.name)
 
+        if isinstance(node, ast.Constrained):
+            built = self._type(node.inner, label)
+            return self._apply_constraints(built, node.constraints, label)
+
         if isinstance(node, ast.OpenTypeNode):
             return self._open_type(node, label)
 
@@ -213,6 +217,23 @@ class Lowerer:
             return Choice(self._components(node.alternatives, label, choice=True), label)
 
         raise Asn1SemanticError(f"{label}: unsupported type node {type(node).__name__}")
+
+    def _apply_constraints(self, built: Asn1Type, applied, label: str) -> Asn1Type:
+        """Attach a constraint to the type it constrains.
+
+        Only the types whose ENCODING depends on a constraint carry one: an integer or a
+        string (X.696 §10/§13/§14/§27) and a sequence-of/set-of (its SIZE bounds the
+        occurrence count). A constraint on anything else is dropped, because there is no
+        encoding decision for it to inform -- and it is still checked for satisfiability
+        first, so an empty value set is not silently discarded along with it.
+        """
+        from bcir.asn1.constraints import Intersection, require_satisfiable
+
+        combined = applied[0] if len(applied) == 1 else Intersection(tuple(applied))
+        require_satisfiable(combined, label)
+        if isinstance(built, (Primitive, SequenceOf, SetOf)):
+            return replace(built, constraint=combined)
+        return built
 
     def _open_type(self, node: ast.OpenTypeNode, label: str) -> Asn1Type:
         """Resolve `ANY [DEFINED BY x]` and `CLASS.&field` (X.681 §14/§15).

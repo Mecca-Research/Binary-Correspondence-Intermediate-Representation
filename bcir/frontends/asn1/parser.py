@@ -19,8 +19,15 @@ at `_constraint`, where a constraint carries an encoding consequence.
 
 from __future__ import annotations
 
+from bcir.asn1 import constraints
+
 from . import ast
 from .lexer import Asn1SyntaxError, Token, tokenize
+
+#: Distinguishes "this endpoint is MIN/MAX" (None) from "this form is not
+#: represented" -- conflating them would silently turn an unparsed constraint
+#: into an unbounded one, which is the same value set but a different intent.
+_UNREPRESENTABLE = object()
 
 #: X.680 Table 1 built-in types that need no extra notation to parse.
 _SIMPLE_BUILTINS = {
@@ -275,10 +282,18 @@ class Parser:
 
     def parse_type(self):
         node = self.parse_untagged_type()
-        # §49: trailing constraints restrict the value set; they do not change the tag
-        # or the structure, so they are consumed and discarded.
-        while self.at_punct("(") or self.at_word("SIZE") or self.at_word("WITH"):
-            self._constraint()
+        # §49: a trailing constraint restricts the value set. It changes no tag and no
+        # structure -- so DER never sees it -- but OER and PER choose the encoding from
+        # it, so it is attached to the node rather than dropped. A serial application of
+        # constraints (§49.9) intersects: each one further restricts the last.
+        collected = []
+        while self.at_punct("(") or self.at_word("SIZE") or self.at_word("WITH") \
+                or self.at_word("FROM"):
+            built = self._constraint()
+            if built is not None:
+                collected.append(built)
+        if collected:
+            node = ast.Constrained(node, tuple(collected))
         return node
 
     def parse_untagged_type(self):
@@ -386,20 +401,30 @@ class Parser:
         return ast.SequenceType(self.parse_component_list())
 
     def _sequence_of(self):
+        # `SEQUENCE SIZE (1..64) OF T` -- the constraint bounds the OCCURRENCE COUNT
+        # (§51.5.2), so it belongs to the sequence-of type and not to its element.
+        collected = []
         while self.at_punct("(") or self.at_word("SIZE"):
-            self._constraint()
+            built = self._constraint()
+            if built is not None:
+                collected.append(built)
         self.expect("reserved", "OF")
         name, element = self.parse_maybe_named_type()
-        return ast.SequenceOfType(element, name)
+        node = ast.SequenceOfType(element, name)
+        return ast.Constrained(node, tuple(collected)) if collected else node
 
     def parse_set(self):
         self.expect("reserved", "SET")
         if self.at_word("OF") or self.at_punct("(") or self.at_word("SIZE"):
+            collected = []
             while self.at_punct("(") or self.at_word("SIZE"):
-                self._constraint()
+                built = self._constraint()
+                if built is not None:
+                    collected.append(built)
             self.expect("reserved", "OF")
             name, element = self.parse_maybe_named_type()
-            return ast.SetOfType(element, name)
+            node = ast.SetOfType(element, name)
+            return ast.Constrained(node, tuple(collected)) if collected else node
         return ast.SetType(self.parse_component_list())
 
     def parse_choice(self):
@@ -596,21 +621,51 @@ class Parser:
 
     # --- clause 49: constraints (consumed, not modelled) --------------------------------
 
-    def _constraint(self) -> None:
-        """Consume a constraint.
+    def _constraint(self):
+        """Parse a constraint into the model (X.680 clauses 49–51), or None if unusable.
 
-        Discarding is sound for DER: X.680 §49 defines a constraint as a restriction on
-        the VALUE SET, and X.690 encodes a value the same way whether or not a
-        constraint admitted it. The one constraint with an encoding consequence is
-        CONTAINING/ENCODED BY (§36), which is refused rather than dropped because it
-        changes what the contents octets ARE.
+        Constraints used to be consumed and thrown away, which was sound for DER — §49
+        defines a constraint as a restriction on the VALUE SET, and X.690 encodes a value
+        the same way regardless. It is NOT sound for OER or PER, which choose the encoding
+        FROM the constraint, so they are now built.
+
+        A form this model does not represent (an inner type constraint, a pattern, a table
+        constraint) is consumed and reported as None rather than refused: it still cannot
+        change a DER encoding, and for OER an unrepresented constraint simply leaves the
+        type unconstrained — which is the SAFE direction, because the length-prefixed form
+        can carry every value the narrower form could. The one exception stays refused:
+        CONTAINING / ENCODED BY changes what the contents octets ARE (§36).
         """
-        if self.at_word("SIZE") or self.at_word("WITH"):
+        is_size = is_alphabet = False
+        if self.at_word("SIZE"):
+            self.take()
+            is_size = True
+        elif self.at_word("FROM"):
+            self.take()
+            is_alphabet = True
+        elif self.at_word("WITH"):
             self.take()
             if self.at_word("COMPONENT") or self.at_word("COMPONENTS"):
                 self.take()
         if not self.at_punct("("):
-            return
+            return None
+        start = self.index
+        try:
+            inner = self._element_set_specs()
+        except Asn1SyntaxError:
+            inner = None
+            self.index = start
+            self._consume_constraint()
+        if inner is None:
+            return None
+        if is_size:
+            return constraints.Size(inner)
+        if is_alphabet:
+            return constraints.PermittedAlphabet(inner)
+        return inner
+
+    def _consume_constraint(self) -> None:
+        """Skip a constraint this model cannot represent, refusing only §36's."""
         depth, start = 0, self.current
         while True:
             if self.current.kind == "end":
@@ -626,6 +681,115 @@ class Parser:
                 if depth == 0:
                     self.take()
                     return
+            self.take()
+
+    def _element_set_specs(self):
+        """§49.4 `RootElementSetSpec [ "," "..." [ "," AdditionalElementSetSpec ] ]`."""
+        self.expect_punct("(")
+        if self.at_word("CONTAINING") or self.at_word("ENCODED"):
+            raise self.error(
+                "a CONTAINING / ENCODED BY constraint changes the contents octets "
+                "(X.680 36), so it cannot be discarded like a value-set constraint")
+        root = self._unions()
+        extensible = False
+        if self.accept("punct", ","):
+            self.expect_punct("...")
+            extensible = True
+            if self.accept("punct", ","):
+                self._unions()          # the additional set: not OER-visible either
+        self.expect_punct(")")
+        if root is None:
+            return None
+        return constraints.Extensible(root) if extensible else root
+
+    def _unions(self):
+        """§49.6 `A | B`, spelled `|` or `UNION`."""
+        parts = [self._intersections()]
+        while self.at_punct("|") or self.at_word("UNION"):
+            self.take()
+            parts.append(self._intersections())
+        if any(part is None for part in parts):
+            return None
+        return parts[0] if len(parts) == 1 else constraints.Union(tuple(parts))
+
+    def _intersections(self):
+        """§49.7 `A ^ B`, spelled `^` or `INTERSECTION`; §49.8 `EXCEPT`."""
+        parts = [self._constraint_element()]
+        while self.at_punct("^") or self.at_word("INTERSECTION"):
+            self.take()
+            parts.append(self._constraint_element())
+        if self.at_word("EXCEPT"):
+            # §49.8 removes values. The encoder must not narrow on the strength of an
+            # EXCEPT: the remaining set is a subset, so the bounds it would compute could
+            # exclude a value the parent still permits. Report unrepresentable.
+            self.take()
+            self._constraint_element()
+            return None
+        if any(part is None for part in parts):
+            return None
+        return parts[0] if len(parts) == 1 else constraints.Intersection(tuple(parts))
+
+    def _constraint_element(self):
+        """§51 SubtypeElements, restricted to the forms this model represents."""
+        if self.at_punct("("):                     # a parenthesised element set
+            return self._element_set_specs()
+        if self.at_word("SIZE"):
+            self.take()
+            inner = self._element_set_specs()
+            return None if inner is None else constraints.Size(inner)
+        if self.at_word("FROM"):
+            self.take()
+            inner = self._element_set_specs()
+            return None if inner is None else constraints.PermittedAlphabet(inner)
+        if self.at_word("ALL") or self.at_word("WITH") or self.at_word("PATTERN") \
+                or self.at_word("SETTINGS") or self.at_word("INCLUDES"):
+            self._skip_element()
+            return None
+        low = self._endpoint_value(lower=True)
+        if low is _UNREPRESENTABLE:
+            self._skip_element()
+            return None
+        lower_open = bool(self.accept("punct", "<"))
+        if not self.at_punct(".."):
+            if lower_open:                         # `v <` with no range is not a form
+                return None
+            return constraints.SingleValue(low)
+        self.take()
+        upper_open = bool(self.accept("punct", "<"))
+        high = self._endpoint_value(lower=False)
+        if high is _UNREPRESENTABLE:
+            return None
+        return constraints.ValueRange(low, high, lower_open, upper_open)
+
+    def _endpoint_value(self, lower: bool):
+        """§51.4.4 `Value | MIN` / `Value | MAX`; None is the unbounded endpoint."""
+        if self.at_word("MIN") if lower else self.at_word("MAX"):
+            self.take()
+            return None
+        tok = self.current
+        if tok.kind == "number" or self.at_punct("-"):
+            return self.parse_signed_number()
+        if tok.kind == "cstring":
+            self.take()
+            return tok.text                        # a permitted-alphabet endpoint
+        if tok.kind == "reserved" and tok.text in ("TRUE", "FALSE"):
+            self.take()
+            return tok.text == "TRUE"
+        return _UNREPRESENTABLE
+
+    def _skip_element(self) -> None:
+        """Consume one element of a set spec whose form this model does not represent."""
+        depth = 0
+        while self.current.kind != "end":
+            if self.at_punct("("):
+                depth += 1
+            elif self.at_punct(")"):
+                if depth == 0:
+                    return
+                depth -= 1
+            elif depth == 0 and (self.at_punct("|") or self.at_punct("^")
+                                 or self.at_punct(",")):
+                return
             self.take()
 
     def _skip_balanced(self, opener: str, closer: str) -> None:

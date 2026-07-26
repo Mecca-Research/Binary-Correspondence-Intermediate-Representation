@@ -53,6 +53,15 @@ def BCIR_Asn1TypeOp : BCIR_Op<"asn1.type", [Symbol, NoTerminator]> {
     `universal` is required for `primitive` and meaningless otherwise -- R24 enforces
     both directions, so a `sequence` cannot smuggle a universal tag past the verifier.
 
+    `constraint_low`/`constraint_high` and `size_low`/`size_high` are the type's
+    *effective* X.680 clause 51 constraint bounds (X.696 §8.2.7/§8.2.8) — the ones an
+    encoding is chosen from, already reduced from whatever set arithmetic the module
+    wrote. They are optional because an unconstrained type has none, and an EXTENSIBLE
+    constraint deliberately reports none (X.696 §8.2.2 g): a field sized from today's
+    bounds could not carry a later version's values. R24 rejects a pair whose low exceeds
+    its high, which is an empty value set — a static fault in the same family as two
+    components sharing a tag, since no value of the type could ever be encoded.
+
     The body is `AnyRegion` because it is EMPTY for the kinds that own no components,
     and an empty body has zero blocks rather than one. The type is a `Symbol` (the
     module refers to it) but deliberately NOT a `SymbolTable`: an ASN.1 component is
@@ -63,7 +72,11 @@ def BCIR_Asn1TypeOp : BCIR_Op<"asn1.type", [Symbol, NoTerminator]> {
   let arguments = (ins SymbolNameAttr:$sym_name,
                        StrAttr:$kind,
                        OptionalAttr<I64Attr>:$universal,
-                       OptionalAttr<FlatSymbolRefAttr>:$element);
+                       OptionalAttr<FlatSymbolRefAttr>:$element,
+                       OptionalAttr<I64Attr>:$constraint_low,
+                       OptionalAttr<I64Attr>:$constraint_high,
+                       OptionalAttr<I64Attr>:$size_low,
+                       OptionalAttr<I64Attr>:$size_high);
   let regions = (region AnyRegion:$body);
   let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
 }

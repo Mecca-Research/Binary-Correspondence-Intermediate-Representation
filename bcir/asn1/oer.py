@@ -18,20 +18,25 @@ determine the structure of the encoding"*. So unlike `der.py`, none of this can 
 schema-free — every function here takes the type. A decoder that guessed would not be a
 lenient decoder, it would be a wrong one.
 
-THE CONSTRAINT DEPENDENCY. Clauses 10, 13, 14 and 27 choose between a fixed-width and a
-length-prefixed form based on the type's *effective value/size constraint* (§8.2.7,
-§8.2.8). BCIR has no constraint model yet (roadmap phase B), so every integer here is
-unconstrained and takes §10.4 e) — a length determinant followed by a variable-size
-signed number — and every string takes the length-prefixed form. That is not a shortcut:
-it is what X.696 specifies for a type with no OER-visible constraints, and phase B will
-add the narrower forms without changing anything already emitted for an unconstrained
-type.
+CONSTRAINTS CHOOSE THE ENCODING. Clauses 10, 13, 14 and 27 select between a fixed-width
+and a length-prefixed form from the type's *effective value/size constraint* (§8.2.7,
+§8.2.8) — this is where `bcir/asn1/constraints.py` earns its place. `INTEGER (0..255)` is
+ONE octet with no length determinant; unconstrained `INTEGER` is a length determinant plus
+a variable-size signed number, four times the size for the same abstract value. An
+unconstrained type still takes exactly the form it took before constraints existed, so
+nothing already emitted moved.
+
+The subtle case is the **extensible** constraint: `(0..255, ...)` is NOT OER-visible
+(§8.2.2 g), so it encodes as though unbounded. The marker says the value set may grow in
+a later protocol version, and a field sized from today's bounds could not carry
+tomorrow's values.
 """
 
 from __future__ import annotations
 
 from enum import Enum
 
+from .constraints import effective_size_constraint, effective_value_constraint
 from .schema import (Asn1Type, Choice, Component, OpenType, Primitive, Sequence,
                      SequenceOf, Set, SetOf)
 from .tags import Asn1Error, Tag, TagClass, Universal
@@ -159,6 +164,46 @@ _STRING_UNIVERSALS = _KNOWN_MULTIPLIER | {
 }
 
 
+def _integer_form(kind) -> tuple[int | None, bool]:
+    """§10.3 / §10.4: the fixed word width an integer's constraint selects, and its sign.
+
+    Returns `(None, signed)` for the length-prefixed variable-size cases §10.3 e) and
+    §10.4 e). The split between the two clauses is whether a lower bound EXISTS and is
+    non-negative -- not whether the bounds happen to be small -- so a type with no lower
+    bound is signed however tight its upper bound is.
+    """
+    low, high = effective_value_constraint(getattr(kind, "constraint", None))
+    if low is not None and low >= 0:                        # §10.2 a) -> §10.3, unsigned
+        if high is None:
+            return None, False
+        for width, limit in ((1, 0xFF), (2, 0xFFFF), (4, 0xFFFFFFFF),
+                             (8, 0xFFFFFFFFFFFFFFFF)):
+            if high <= limit:
+                return width, False
+        return None, False                                  # §10.3 e)
+    # §10.2 b) -> §10.4, signed. Both bounds must be present and inside the word.
+    if low is None or high is None:
+        return None, True
+    for width in (1, 2, 4, 8):
+        bits = width * 8
+        if -(1 << (bits - 1)) <= low and high <= (1 << (bits - 1)) - 1:
+            return width, True
+    return None, True                                       # §10.4 e)
+
+
+def _fixed_size(kind) -> int | None:
+    """The single length a SIZE constraint fixes, or None when it does not fix one.
+
+    §13.1, §14.1 and §27.2 all turn on the SAME condition: the effective size
+    constraint's lower and upper bounds being *identical*. A range is not enough -- only
+    an exact length lets the decoder find the end of the field without a determinant.
+    """
+    low, high = effective_size_constraint(getattr(kind, "constraint", None))
+    if low is not None and low == high:
+        return low
+    return None
+
+
 def _string_octets(universal: int, value: str) -> bytes:
     """§27.4 — the octets that encode a character string value of this type."""
     from .values import encode_string
@@ -173,11 +218,21 @@ def _encode_primitive(kind: Primitive, value, rules: OerRules) -> bytes:
             raise Asn1Error(f"{kind.name}: expected bool, got {type(value).__name__}")
         return b"\xff" if value else b"\x00"               # §31.3: TRUE is 255
 
-    if universal == Universal.INTEGER:                     # §10.4 e), unconstrained
+    if universal == Universal.INTEGER:                     # §10
         if isinstance(value, bool) or not isinstance(value, int):
             raise Asn1Error(f"{kind.name}: expected int, got {type(value).__name__}")
-        octets = _encode_var_signed(value)
-        return encode_length(len(octets)) + octets
+        width, signed = _integer_form(kind)
+        if width is None:                                  # §10.3 e) / §10.4 e)
+            octets = (_encode_var_signed(value) if signed
+                      else _encode_var_unsigned(value))
+            return encode_length(len(octets)) + octets
+        try:
+            return value.to_bytes(width, "big", signed=signed)
+        except OverflowError:
+            raise Asn1Error(
+                f"{kind.name}: {value} does not fit the {width}-octet "
+                f"{'signed' if signed else 'unsigned'} word its constraint selected "
+                f"(X.696 10.3/10.4)") from None
 
     if universal == Universal.ENUMERATED:                  # §11
         if isinstance(value, bool) or not isinstance(value, int):
@@ -192,10 +247,17 @@ def _encode_primitive(kind: Primitive, value, rules: OerRules) -> bytes:
     if universal == Universal.NULL:                        # §15
         return b""
 
-    if universal == Universal.OCTET_STRING:                # §14.2, unconstrained
+    if universal == Universal.OCTET_STRING:                # §14
         if not isinstance(value, (bytes, bytearray)):
             raise Asn1Error(f"{kind.name}: expected bytes, got {type(value).__name__}")
-        return encode_length(len(value)) + bytes(value)
+        fixed = _fixed_size(kind)
+        if fixed is not None:                              # §14.1: no length determinant
+            if len(value) != fixed:
+                raise Asn1Error(
+                    f"{kind.name}: SIZE ({fixed}) requires exactly {fixed} octets, got "
+                    f"{len(value)} (X.696 14.1)")
+            return bytes(value)
+        return encode_length(len(value)) + bytes(value)     # §14.2
 
     if universal in (Universal.OBJECT_IDENTIFIER, Universal.RELATIVE_OID):
         # §21 / §22: the length determinant then the BER contents octets, unchanged.
@@ -207,11 +269,22 @@ def _encode_primitive(kind: Primitive, value, rules: OerRules) -> bytes:
                   else encode_relative_oid(arcs))
         return encode_length(len(octets)) + octets
 
-    if universal in _STRING_UNIVERSALS:                    # §27.3, unconstrained
+    if universal in _STRING_UNIVERSALS:                    # §27
         if not isinstance(value, str):
             raise Asn1Error(f"{kind.name}: expected str, got {type(value).__name__}")
         octets = _string_octets(universal, value)
-        return encode_length(len(octets)) + octets
+        # §27.2 drops the length determinant only for a KNOWN-MULTIPLIER type whose
+        # effective size constraint is a single value: only then does the character count
+        # fix the octet count. UTF8String never qualifies (§27.1) -- a character costs
+        # 1..4 octets there, so its length is never implied.
+        if universal in _KNOWN_MULTIPLIER and _fixed_size(kind) is not None:
+            fixed = _fixed_size(kind)
+            if len(value) != fixed:
+                raise Asn1Error(
+                    f"{kind.name}: SIZE ({fixed}) requires exactly {fixed} characters, "
+                    f"got {len(value)} (X.696 27.2)")
+            return octets
+        return encode_length(len(octets)) + octets          # §27.3
 
     raise Asn1Error(f"{kind.name}: universal tag {universal} has no OER encoding here "
                     f"(X.696 clauses 9-30 cover the types this model can express)")
@@ -230,12 +303,18 @@ def _decode_primitive(kind: Primitive, data: bytes, offset: int,
                             f"(X.696 31.3)", offset)
         return octet != 0, offset + 1                      # §9: any non-zero is TRUE
 
-    if universal == Universal.INTEGER:                     # §10.4 e)
+    if universal == Universal.INTEGER:                     # §10
+        width, signed = _integer_form(kind)
+        if width is not None:
+            end = offset + width
+            if end > len(data):
+                raise Asn1Error("truncated fixed-width INTEGER", offset)
+            return int.from_bytes(data[offset:end], "big", signed=signed), end
         length, cursor = decode_length(data, offset)
         end = cursor + length
         if length == 0 or end > len(data):
             raise Asn1Error("truncated INTEGER", offset)
-        return int.from_bytes(data[cursor:end], "big", signed=True), end
+        return int.from_bytes(data[cursor:end], "big", signed=signed), end
 
     if universal == Universal.ENUMERATED:                  # §11
         if offset >= len(data):
@@ -253,7 +332,13 @@ def _decode_primitive(kind: Primitive, data: bytes, offset: int,
         from .codec import NULL
         return NULL, offset
 
-    if universal == Universal.OCTET_STRING:                # §14.2
+    if universal == Universal.OCTET_STRING:                # §14
+        fixed = _fixed_size(kind)
+        if fixed is not None:                              # §14.1
+            end = offset + fixed
+            if end > len(data):
+                raise Asn1Error("truncated fixed-size OCTET STRING", offset)
+            return data[offset:end], end
         length, cursor = decode_length(data, offset)
         end = cursor + length
         if end > len(data):
@@ -280,6 +365,15 @@ def _decode_primitive(kind: Primitive, data: bytes, offset: int,
         # serve both rails.
         from .tlv import Tlv
         from .values import decode_string
+        fixed = _fixed_size(kind)
+        if universal in _KNOWN_MULTIPLIER and fixed is not None:      # §27.2
+            width = {Universal.BMP_STRING: 2, Universal.UNIVERSAL_STRING: 4}.get(
+                universal, 1)
+            end = offset + fixed * width
+            if end > len(data):
+                raise Asn1Error(f"truncated fixed-size {kind.name}", offset)
+            return decode_string(
+                Tlv(Tag(TagClass.UNIVERSAL, universal), data[offset:end])), end
         length, cursor = decode_length(data, offset)
         end = cursor + length
         if end > len(data):

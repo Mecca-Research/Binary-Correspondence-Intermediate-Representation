@@ -130,6 +130,11 @@ class Primitive(Asn1Type):
 
     universal: int
     name: str = "PRIMITIVE"
+    #: The X.680 clause 51 subtype constraint, when the module stated one. Invisible to
+    #: BER/DER -- a constraint restricts the value set, and X.690 encodes a value the same
+    #: way regardless -- but load-bearing for OER and PER, which CHOOSE the encoding from
+    #: it (X.696 §8.2.7/§8.2.8).
+    constraint: object | None = None
 
     def base_tag(self) -> Tag:
         constructed = self.universal in (Universal.SEQUENCE, Universal.SET)
@@ -218,6 +223,8 @@ class SequenceOf(Asn1Type):
 
     element: Asn1Type
     name: str = "SEQUENCE OF"
+    #: A SIZE constraint on the number of occurrences (X.680 §51.5).
+    constraint: object | None = None
 
     def base_tag(self) -> Tag:
         return Tag(TagClass.UNIVERSAL, Universal.SEQUENCE, True)
@@ -303,6 +310,8 @@ class SetOf(Asn1Type):
 
     element: Asn1Type
     name: str = "SET OF"
+    #: A SIZE constraint on the number of occurrences (X.680 §51.5).
+    constraint: object | None = None
 
     def base_tag(self) -> Tag:
         return Tag(TagClass.UNIVERSAL, Universal.SET, True)
