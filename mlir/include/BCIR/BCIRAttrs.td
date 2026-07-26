@@ -171,4 +171,48 @@ def BCIR_CostVectorAttr : BCIR_Attr<"CostVector", "costvec"> {
   let assemblyFormat = "`<` struct(params) `>`";
 }
 
+// --- ASN.1 / X.690 (Rec. ITU-T X.690 02/2021 | ISO/IEC 8825-1:2021) ---
+//
+// Integer values are NORMATIVE and MUST match bcir/asn1/ exactly (docs/PARITY.md):
+// BCIR_Asn1Class mirrors `tags.TagClass` and the encoding of X.690 Table 1 (the two
+// high bits of an identifier octet), so a class attribute and a wire octet agree by
+// construction rather than by a lookup table.
+def BCIR_Asn1Class : BCIR_Enum<"Asn1Class", "ASN.1 tag class (X.690 Table 1)", [
+  I32EnumAttrCase<"Universal", 0, "universal">,
+  I32EnumAttrCase<"Application", 1, "application">,
+  I32EnumAttrCase<"Context", 2, "context">,
+  I32EnumAttrCase<"Private", 3, "private">]>;
+def BCIR_Asn1ClassAttr : BCIR_EnumAttr<BCIR_Asn1Class, "asn1_class">;
+
+// The encoding rules an operation emits or accepts. BCIR emits `der` only -- BER's
+// sender's options make a value's octets non-unique, which no digested artifact can
+// carry -- and accepts `ber` on input. `cer` is namable so a peer's transfer syntax
+// can be DESCRIBED, but law R24 forbids emitting it (X.690 9.1 makes the indefinite
+// length form mandatory for constructed encodings).
+def BCIR_Asn1Rules : BCIR_Enum<"Asn1Rules", "X.690 encoding rules", [
+  I32EnumAttrCase<"Ber", 0, "ber">,
+  I32EnumAttrCase<"Cer", 1, "cer">,
+  I32EnumAttrCase<"Der", 2, "der">]>;
+def BCIR_Asn1RulesAttr : BCIR_EnumAttr<BCIR_Asn1Rules, "asn1_rules">;
+
+// X.690 8.14.3 (explicit: the tag wraps a complete base encoding, always constructed)
+// versus 8.14.4 (implicit: the tag REPLACES the base tag and the form is inherited).
+def BCIR_Asn1Tagging : BCIR_Enum<"Asn1Tagging", "ASN.1 tagging mode (X.690 8.14)", [
+  I32EnumAttrCase<"Implicit", 0, "implicit">,
+  I32EnumAttrCase<"Explicit", 1, "explicit">]>;
+def BCIR_Asn1TaggingAttr : BCIR_EnumAttr<BCIR_Asn1Tagging, "asn1_tagging">;
+
+// One ASN.1 tag: the class, the number, and whether THIS ENCODING is constructed
+// (identifier octet bit 6, X.690 8.1.2.5). `constructed` describes the encoding, not
+// the tag's identity, which is why the DER set ordering of X.690 10.3 sorts on
+// (class, number) alone.
+def BCIR_Asn1TagAttr : BCIR_Attr<"Asn1Tag", "asn1_tag"> {
+  let summary = "ASN.1 tag: class, number, and encoding form (X.690 8.1.2)";
+  let parameters = (ins
+    "::bcir::Asn1Class":$tag_class,
+    "int64_t":$number,
+    "bool":$constructed);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
 #endif // BCIR_ATTRS

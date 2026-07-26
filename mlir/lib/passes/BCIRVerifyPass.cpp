@@ -1,4 +1,4 @@
-//===- BCIRVerifyPass.cpp - the -bcir-verify semantic laws R1-R23 -*- C++ -*-===//
+//===- BCIRVerifyPass.cpp - the -bcir-verify semantic laws R1-R24 -*- C++ -*-===//
 //
 // Part of the modular BCIR MLIR pass library (split out of the former monolithic
 // BCIRPasses.cpp). Shared helpers live in BCIRPassSupport.h; registration in
@@ -198,7 +198,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
 
   StringRef getArgument() const final { return "bcir-verify"; }
   StringRef getDescription() const final {
-    return "Verify the BCIR semantic laws R1-R23: registry, domain, phase DAG, "
+    return "Verify the BCIR semantic laws R1-R24: registry, domain, phase DAG, "
            "hazard, lane, bounds, cost, plan, provenance, generation, lowering, "
            "policy provenance, CIM/PIM dispatch, DVFS clock, allocator placement, "
            "accuracy contract, compositional call graph, synchronous timing, "
@@ -1805,6 +1805,213 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
                 << " (in Supp(J) but not Supp(J'), with no discharge)";
             ok = false;
           }
+      }
+    });
+
+    // ------------------------------------------------------------------------
+    // R24: ASN.1 / X.690 encoding-rule legality.
+    //
+    // The law-rail half of the ASN.1 interop profile (LangRef §17,
+    // docs/BCIR_ASN1_X690_ABI.md). Oracle twin: bcir/asn1/schema.py + der.py.
+    //
+    // These are the schema faults that are decidable STATICALLY -- without any value
+    // ever being encoded. That is the whole reason they belong here rather than in the
+    // oracle: a SET whose components share a tag is undecodable no matter what values
+    // it later carries, and X.680 says so about the type, not about an encoding of it.
+    //
+    // Vacuous for IR with no bcir.asn1.* operation (the non-disturbance invariant that
+    // R14-R23 also hold to).
+    root->walk([&](Asn1ModuleOp m) {
+      // X.690 9.1 makes the indefinite length form MANDATORY for constructed CER
+      // encodings, so a CER artifact cannot be byte-stable; BER leaves the spelling to
+      // the sender. Neither can carry a digest, and BCIR digests what it emits.
+      if (m.getRules() != Asn1Rules::Der) {
+        m.emitError("R24: ASN.1 module ")
+            << m.getSymName() << " declares encoding rules "
+            << stringifyAsn1Rules(m.getRules())
+            << "; BCIR emits DER only (X.690 clause 10 + 11)";
+        ok = false;
+      }
+      // X.690 8.19.4 NOTE: only three values are allocated from the root node, and
+      // under arcs 0 and 1 the second component is 0..39 (that is what makes the
+      // X*40 + Y packing invertible).
+      ArrayRef<int64_t> oid = m.getOid();
+      if (oid.size() < 2) {
+        m.emitError("R24: ASN.1 module ")
+            << m.getSymName() << " object identifier needs at least two components";
+        ok = false;
+      } else {
+        if (oid[0] < 0 || oid[0] > 2) {
+          m.emitError("R24: ASN.1 module ")
+              << m.getSymName() << " object identifier root arc " << oid[0]
+              << " is not 0, 1 or 2 (X.690 8.19.4)";
+          ok = false;
+        } else if (oid[0] < 2 && (oid[1] < 0 || oid[1] >= 40)) {
+          m.emitError("R24: ASN.1 module ")
+              << m.getSymName() << " object identifier second arc " << oid[1]
+              << " must be 0..39 under root arc " << oid[0] << " (X.690 8.19.4)";
+          ok = false;
+        }
+        for (int64_t arc : oid)
+          if (arc < 0) {
+            m.emitError("R24: ASN.1 module ")
+                << m.getSymName() << " object identifier arc " << arc
+                << " is negative";
+            ok = false;
+            break;
+          }
+      }
+    });
+
+    root->walk([&](Asn1TypeOp t) {
+      StringRef kind = t.getKind();
+      bool isPrimitive = kind == "primitive";
+      bool isOf = kind == "sequence_of" || kind == "set_of";
+      bool isStructured = kind == "sequence" || kind == "set" || kind == "choice";
+      if (!isPrimitive && !isOf && !isStructured) {
+        t.emitError("R24: ASN.1 type ")
+            << t.getSymName() << " has unknown kind '" << kind
+            << "' (primitive | sequence | sequence_of | set | set_of | choice)";
+        ok = false;
+        return;
+      }
+      // A universal tag number is meaningful for exactly one kind, both ways round:
+      // a primitive without one is unencodable, and a constructor with one is naming
+      // a tag it does not own.
+      if (isPrimitive && !t.getUniversal()) {
+        t.emitError("R24: ASN.1 type ")
+            << t.getSymName() << " is primitive but names no universal tag number";
+        ok = false;
+      }
+      if (!isPrimitive && t.getUniversal()) {
+        t.emitError("R24: ASN.1 type ")
+            << t.getSymName() << " has kind '" << kind
+            << "' but names a universal tag number";
+        ok = false;
+      }
+      if (t.getUniversal()) {
+        int64_t u = *t.getUniversal();
+        // X.680 Table 1: 0 is the encoding rules' own (end-of-contents), 15 is
+        // reserved for future editions, and 37+ for addenda. A conforming sender
+        // never emits one, so accepting one would silently admit garbage.
+        if (u < 1 || u == 15 || u > 36) {
+          t.emitError("R24: ASN.1 type ")
+              << t.getSymName() << " names reserved universal tag number " << u
+              << " (X.680 Table 1: 0, 15 and 37+ are reserved)";
+          ok = false;
+        }
+      }
+      if (isOf && !t.getElement()) {
+        t.emitError("R24: ASN.1 type ")
+            << t.getSymName() << " has kind '" << kind << "' but names no element type";
+        ok = false;
+      }
+      if (!isOf && t.getElement()) {
+        t.emitError("R24: ASN.1 type ")
+            << t.getSymName() << " has kind '" << kind
+            << "' but names an element type";
+        ok = false;
+      }
+
+      // Component-level laws, and the distinct-tag rule that is the reason this law
+      // exists at all.
+      llvm::DenseMap<int64_t, StringRef> byTag;
+      bool sawUntagged = false;
+      t.walk([&](Asn1ComponentOp c) {
+        // X.680 25.5: OPTIONAL and DEFAULT are alternatives -- a DEFAULT already makes
+        // the component omissible, so carrying both is a contradiction, not a
+        // reinforcement.
+        if (c.getOptional() && c.getHasDefault()) {
+          c.emitError("R24: ASN.1 component ")
+              << c.getName() << " is both OPTIONAL and DEFAULT (X.680 25.5)";
+          ok = false;
+        }
+        // X.690 11.5 requires a DER encoder to omit a component equal to its DEFAULT.
+        // It cannot do that without the value, so declaring DEFAULT without one makes
+        // the type unencodable under DER.
+        if (c.getHasDefault() && !c.getDefaultValue()) {
+          c.emitError("R24: ASN.1 component ")
+              << c.getName()
+              << " declares DEFAULT but carries no value; X.690 11.5 requires the "
+                 "encoder to compare against it";
+          ok = false;
+        }
+        if (!c.getHasDefault() && c.getDefaultValue()) {
+          c.emitError("R24: ASN.1 component ")
+              << c.getName() << " carries a DEFAULT value but is not DEFAULT";
+          ok = false;
+        }
+        if (c.getTagging() && !c.getTag()) {
+          c.emitError("R24: ASN.1 component ")
+              << c.getName() << " states a tagging mode but carries no tag";
+          ok = false;
+        }
+        if (c.getTag()) {
+          int64_t tag = *c.getTag();
+          if (tag < 0) {
+            c.emitError("R24: ASN.1 component ")
+                << c.getName() << " has negative tag number " << tag;
+            ok = false;
+          }
+          // X.680 24.4 (SEQUENCE) / 25.3 (SET) / 29.3 (CHOICE): the tags of the
+          // components shall be distinct. Without that a decoder cannot tell which
+          // component it is looking at -- the type is undecodable as written, for
+          // every value it could ever hold.
+          auto [it, inserted] = byTag.try_emplace(tag, c.getName());
+          if (!inserted) {
+            c.emitError("R24: ASN.1 type ")
+                << t.getSymName() << " components " << it->second << " and "
+                << c.getName() << " share tag [" << tag
+                << "] (X.680 24.4/25.3/29.3: component tags shall be distinct)";
+            ok = false;
+          }
+        } else {
+          sawUntagged = true;
+        }
+      });
+      // A SET is order-free on the wire (X.690 8.11.2), so its components are told
+      // apart by tag alone; an untagged one among tagged siblings is ambiguous in a
+      // way the SEQUENCE case (which has position to fall back on) is not.
+      if (kind == "set" && sawUntagged && !byTag.empty()) {
+        t.emitError("R24: ASN.1 SET ")
+            << t.getSymName()
+            << " mixes tagged and untagged components; a set is order-free on the "
+               "wire (X.690 8.11.2) so every component needs a distinct tag";
+        ok = false;
+      }
+    });
+
+    root->walk([&](Asn1EncodeOp e) {
+      if (e.getRules() != Asn1Rules::Der) {
+        e.emitError("R24: ASN.1 encode ")
+            << e.getSymName() << " declares encoding rules "
+            << stringifyAsn1Rules(e.getRules())
+            << "; BCIR emits DER only (X.690 clause 10 + 11)";
+        ok = false;
+      }
+    });
+
+    root->walk([&](Asn1DecodeOp d) {
+      // Decoding is the permissive half by design -- `ber` here is correct, not a
+      // defect. Only the contradiction is a fault.
+      if (d.getStrictDer() && d.getRules() == Asn1Rules::Ber) {
+        d.emitError("R24: ASN.1 decode ")
+            << d.getSymName()
+            << " is marked strict_der but declares it accepts BER";
+        ok = false;
+      }
+    });
+
+    root->walk([&](Asn1ProjectionOp p) {
+      // A projection that replaced a frozen format would invalidate every digest and
+      // provenance manifest taken over the native octets, so the IR refuses to
+      // express one at all.
+      if (!p.getAdditive()) {
+        p.emitError("R24: ASN.1 projection ")
+            << p.getSymName() << " of " << p.getNative()
+            << " is not marked additive; an ASN.1 projection is a SECOND transfer "
+               "syntax, never a replacement for a frozen wire format";
+        ok = false;
       }
     });
 
