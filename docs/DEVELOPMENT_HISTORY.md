@@ -274,6 +274,16 @@ PyTorch gate proves copied rows and earlier blocks remain unchanged; dense growt
 ordinary verified claims and StreamPack. Large tokenizers/models, glyph/PCA artifacts, LoRA
 execution, GPU kernels, and external data remain promotion-gated.
 
+### Post-#649 — multi-backend artifact compatibility (2026-07-22)
+
+BCAB v1 established a bounded deterministic envelope around unmodified StreamPack and standard
+backend payloads. The landing added Python encode/decode/selection and tooling, an allocation-free
+C reader/selector, a borrowed C++ facade, MLIR directory/selection operations, a real bounded JVM
+class assembler, resident compiler/linker adapters, and malformed-wire/differential gates. It did
+not add a native linker, OS loader, signature policy, or claim that one ISA image runs on another.
+After the ASN.1 rail landed, BCAB gained an additive DER/BER and COER/OER projection whose
+round trip reconstructs byte-identical native artifacts without changing BCAB v1.
+
 ---
 
 ## 3. Condensed dated changelog
@@ -378,7 +388,7 @@ exist; it does not imply production deployment or hardware evidence.
 
 | Program | Landed baseline | Work deliberately left open |
 |---|---|---|
-| Language and verifier | Python/C C-front twins, project/cross-TU mode, ABI and effect contracts, R1–R23, ordinary x86-64 assembly edges | Hosted-C completeness, `_Decimal*` reference support, reset/exception/paranoid entry, additional language frontends |
+| Language and verifier | Python/C C-front twins, project/cross-TU mode, ABI and effect contracts, R1–R24, ordinary x86-64 assembly edges | Hosted-C completeness, `_Decimal*` reference support, reset/exception/paranoid entry, additional language frontends |
 | Optimizer and backend | 12-axis K_BCIR, min-plus/RCSP/(max,+), GEM scheduling, C23 and resident LLVM/object paths, JVM/CIL/WASM bounded validation | Arbitrary-graph LLVM AOT, general native isel (gated), target-specific measured scheduling evidence |
 | Machine/driver substrate | StreamPack v1–v3, device manifests, bank/move/event/DMA contracts, MC1/MC2 operator tools, direct RuntimeChannel hooks, metadata-only HAM routing/residency/replay, and strict context-shard activation | Resident UART/virtio/device drivers, physical HAM adapters, stable UAPI, Linux modules, native IPC, and physical-device qualification |
 | Memory discipline | Freestanding/hosted/adapter classes, checked hosted allocator and fault injection, fail-every-allocation tests | Per-operation compiler arenas and further context migration as allocation-bearing surfaces expand |

@@ -42,7 +42,7 @@ history and git.
 | `gem/` | Hydration, StreamPack construction, scheduling, overlap, execution, event/DMA/device contracts |
 | `frontends/` | ROP, MAP, Python C-front oracle, and model manifest/tokenizer/header-only assessment rails |
 | `etl/` | Text and binary event-to-claim transduction |
-| `abi/` | StreamPack and other byte-level host contracts |
+| `abi/` | StreamPack, BCAB multi-backend bundles, and other byte-level host contracts |
 | `lower/` | Portable C, the single-claim elementwise LLVM AOT/JIT subset, WASM, stack-machine, library, SYCL, and model lowering helpers |
 | `codegen/` | Resident-toolchain object/assembly paths and target validation |
 | `hosted/models/` | Opt-in PyTorch Llama training, pickle-free exact-resume checkpoints, strict Safetensors export, and train-to-C gating; never imported by the oracle path |
@@ -80,7 +80,7 @@ must remain consistent with the corresponding fixed-width C contracts where one 
 | Path | Responsibility |
 |---|---|
 | `include/BCIR/*.td` | ODS operations, types, attributes, interfaces, and pass declarations |
-| `lib/` | Dialect registration, R1–R23 verification, K_BCIR/GEM passes, and partial conversions |
+| `lib/` | Dialect registration, R1–R24 verification, K_BCIR/GEM passes, and partial conversions |
 | `tools/bcir-opt.cpp` | Registered command-line law/pipeline driver |
 | `test/` | Positive, negative-diagnostic, pass, assembly, and lowering fixtures |
 | `examples/` | Canonical readable modules and worked parity anchors |
@@ -117,6 +117,7 @@ The kernels have a C ABI usable from C++; this does not expand `runtime/cpp/` ow
 | BCIR semantics and R-laws | [`BCIR_LANGREF.md`](BCIR_LANGREF.md) | `bcir/model`, `bcir/verify`, `mlir/` |
 | Oracle ↔ law/twin agreement | [`PARITY.md`](PARITY.md) | differential tests and C-front parity gates |
 | StreamPack v1–v3 | [`BCIR_STREAMPACK_ABI.md`](kernel/BCIR_STREAMPACK_ABI.md) | `bcir/abi/streampack_abi.py`, `runtime/c/bcir_streampack.h` |
+| Artifact Bundle v1 | [`BCIR_ARTIFACT_BUNDLE_ABI.md`](kernel/BCIR_ARTIFACT_BUNDLE_ABI.md) | Python codec/tool/builder, additive ASN.1 DER/COER projection, allocation-free C reader, C++ view, and MLIR metadata ops |
 | BCIRQ8 v1 | [`BCIR_LANGREF.md`](BCIR_LANGREF.md#16-bcirq8-v1-decoder-artifact-contract) §16 | Python artifact reader/writer and portable C loader |
 | Telemetry frame and registry | [`TELEMETRY_FRAME_ABI.md`](kernel/TELEMETRY_FRAME_ABI.md), [`SIGNAL_REGISTRY.md`](kernel/SIGNAL_REGISTRY.md) | Python codec/registry and fixed C frame codec |
 | RuntimeChannel and future UAPI | [`BCIR_DRIVER_KERNEL_ROADMAP.md`](kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) | direct C hook table today; Linux/native adapters later |
@@ -147,7 +148,7 @@ The root of `docs/` is intentionally small and cross-cutting:
 
 Subdirectories have one clear subject:
 
-- `docs/kernel/` — drivers, kernel, StreamPack, RuntimeChannel, telemetry, signals,
+- `docs/kernel/` — drivers, kernel, StreamPack/Artifact Bundle, RuntimeChannel, telemetry, signals,
   hardware validation, heterogeneous channels, and SYCL interoperability.
 - `docs/machine-learning/` — ML/model architecture, training/inference, language
   placement, third-party model provenance, and product-integration research.

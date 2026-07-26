@@ -131,6 +131,10 @@ hard score, with equality at `T = 0`) is a verifier obligation under R9
   bandwidth knee, or the `!bcir.token` DAG. StreamPack v1 is frozen; v2 adds
   pipelining/double-buffer records and v3 adds segment dispatch/channel metadata under the
   append-only rules in [`BCIR_STREAMPACK_ABI.md`](kernel/BCIR_STREAMPACK_ABI.md).
+- **Artifact selection envelope.** BCAB v1 binds a StreamPack to exact standard backend
+  payloads and selects by target/feature/manifest/calibration/R12 policy. It is separately
+  versioned because it does not change StreamPack or BCIR semantics; see
+  [`BCIR_ARTIFACT_BUNDLE_ABI.md`](kernel/BCIR_ARTIFACT_BUNDLE_ABI.md).
 
 ### The naked-pointer policy (normative, §4)
 
@@ -1111,12 +1115,20 @@ and reject work outside it. The current profiles are:
   REFUSES what it cannot express -- an `ANY DEFINED BY` or an information object class
   names X.681 rather than being skipped, because a front-end that silently dropped one
   would build a type model disagreeing with the module it just read.
+- **BCAB artifact-bundle profile:** canonical multi-image directory, integrity checks,
+  standard payload identity, deterministic compatibility selection, and Python/C/C++/MLIR
+  parity. Its additive ASN.1 projection provides DER/BER and COER/OER transfer syntaxes
+  without changing native BCAB kind IDs or bytes. Payload assembler, linker, loader, and
+  ISA semantics remain external standards.
 
 The following versioned contracts are adjacent to BCIR semantics but have dedicated
 normative documents because their byte/lifecycle evolution is independent:
 
 - StreamPack v1–v3: [`BCIR_STREAMPACK_ABI.md`](kernel/BCIR_STREAMPACK_ABI.md), whose
   native octets stay frozen; its **additive** ASN.1 module and DER projection live in
+  [`BCIR_ASN1_X690_ABI.md`](BCIR_ASN1_X690_ABI.md);
+- Artifact Bundle v1: [`BCIR_ARTIFACT_BUNDLE_ABI.md`](kernel/BCIR_ARTIFACT_BUNDLE_ABI.md);
+  its additive ASN.1 projection is specified by
   [`BCIR_ASN1_X690_ABI.md`](BCIR_ASN1_X690_ABI.md);
 - BTLM telemetry frame and signal meaning:
   [`TELEMETRY_FRAME_ABI.md`](kernel/TELEMETRY_FRAME_ABI.md) and

@@ -12,7 +12,7 @@ the first direct driver lifecycle and completing the publication gate.
 
 ### Law and compiler rails
 
-- The MLIR law rail carries R1–R23 with negative fixtures; the C frontend remains
+- The MLIR law rail carries R1–R24 with negative fixtures; the C frontend remains
   explicitly scoped to the laws and constructs it implements rather than claiming false
   full-law symmetry.
 - Python and C C-front rails cover a broad driver-oriented C23 subset, target ABI
@@ -28,6 +28,10 @@ the first direct driver lifecycle and completing the publication gate.
 
 - StreamPack v1 is frozen; v2/v3 extensions are append-only and Python/C codec parity is
   adversarially tested.
+- BCAB v1 supplies a bounded deterministic multi-backend envelope and fail-closed target
+  selector over preserved standard payloads. Python, allocation-free C, C++, and MLIR metadata
+  surfaces are parity-gated. Its additive ASN.1 DER/COER projection reconstructs byte-identical
+  native BCAB; signatures, relocation policy, and an OS loader remain out of scope.
 - Native Windows host behavior includes canonical line endings, guarded resource
   counters, spawn-compatible test workers, platform-aware `-lm` handling, and coherent
   version-aware LLVM discovery.
@@ -119,6 +123,7 @@ the first direct driver lifecycle and completing the publication gate.
 - arbitrary-graph LLVM lowering or a BCIR-native CPU instruction selector/linker;
 - stable Linux UAPI, Linux fork, native kernel, or native IPC;
 - resident AMD/NVIDIA/other device drivers;
+- an authenticated BCAB package store or BCIR-owned ELF/PE/Mach-O loader;
 - production model serving or unqualified ARM/board performance claims.
 
 Those programs are governed by [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md),

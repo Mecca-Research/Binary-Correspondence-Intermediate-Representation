@@ -36,7 +36,7 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     variadics), M5 ETL, telemetry/calibration (T1–T4: stable signal IDs and explicit metric
     semantics, strict UART frame ABI with sequence evidence,
     derived metrics, and OTLP/Prometheus-text/Redfish serialization adapters), StreamPack ABI
-    (v1 frozen, v2/v3 append-only), the **R1–R23** verifier, lowering (the single-claim
+    (v1 frozen, v2/v3 append-only), the **R1–R24** verifier, lowering (the single-claim
     elementwise LLVM AOT/JIT/WASM subset /
     stackify / per-target llc / portable C23 kernels / Area-B library wraps), the
     Phase 13–26 learned organs (calibration, portfolio + replay gate, MoE gate, search
@@ -50,9 +50,17 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     Suite: `python -m bcir.tests.run_all` (live count + coverage in
     [`STATUS.md`](STATUS.md), generated from the tree — see that file rather than a
     hard-coded number here, which is what the 580/615/631 drift came from).
+- **Artifact distribution** — BCAB v1 is a deterministic, bounded multi-backend
+  envelope over unmodified StreamPack, ELF/COFF/PE/Mach-O, archive, WASM, LLVM,
+  PTX/CUBIN, SPIR-V, JVM/CIL, source/assembly, and explicitly typed raw payloads.
+  The Python codec/builder/CLI and allocation-free C reader/selector agree on integrity,
+  payload identity, compatibility, and deterministic selection. It is not a linker,
+  loader, signature format, or replacement for any platform object ABI. The additive
+  `BCIR-ArtifactBundle` ASN.1 module projects the same abstract bundle through DER/COER
+  and reconstructs byte-identical native BCAB without allocating competing kind IDs.
 - **`mlir/`** — the law: the ODS/TableGen dialect family (op count in
     [`STATUS.md`](STATUS.md)), the compiled `bcir-opt` with `-bcir-verify`
-    (**R1–R23**), the full deterministic optimizer core in C++23 (`-bcir-cost-model`
+    (**R1–R24**), the full deterministic optimizer core in C++23 (`-bcir-cost-model`
     cost+fusion/CSE → `-bcir-plan` coupled min-plus → `-bcir-overlap` (max,+) →
     `-bcir-rcsp`/`-bcir-rcsp-plan` constrained search, plus the bundle/compose/
     schedule/async/power/allocator passes and the gem tensor-op cost + lowering
@@ -65,7 +73,8 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     release — LLVM 22, gating (`mlir-rail-validate`).
 - **`runtime/c/`** — the production C rail (component count in
   [`STATUS.md`](STATUS.md)): the freestanding (no-libc) StreamPack decoder/encoder/
-  executor + hydrate + scalar planner, direct append-only RuntimeChannel v1 hooks and
+  executor + hydrate + scalar planner, allocation-free BCAB reader/selector, direct
+  append-only RuntimeChannel v1 hooks and
   loopback, the ETL binary-record decoder, the UART telemetry-frame codec (strict
   flags/CRC/exact decode), the fixed ordinary-x86 interrupt-frame contract, the C23
   `#embed` frozen Q8 tier table, the bounds-quarantine
@@ -85,7 +94,7 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
 1. The oracle runs the whole correspondence chain end to end, deterministically
    (integer/Q-fixed), with worked-example parity pinned (`vector_add` AVX-512
    cool Θ → vec16, score **7808**; under a 700 thermal/power cap → vec8, **9472**).
-2. Verifier laws **R1–R23** run on the law rail and have a negative fixture per law
+2. Verifier laws **R1–R24** run on the law rail and have a negative fixture per law
    (`bcir/verify` and the MLIR `-bcir-verify` pass; static negative-fixture inventory generated in
    [`STATUS.md`](STATUS.md)). R19/R20 (timing) and R21 (lifetime) ride optional claim
    metadata and are vacuous over the scalar/C subset — the non-disturbance invariant.
@@ -184,7 +193,7 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     strict no-normalization UTF-8 references, causal fixed/entropy/learned patches, local/global/local
     BLT, joint AR/block diffusion, exact BLT-S/BLT-DV verification, selective-SSM MambaByte, and
     exact-shape global-only transplantation have dependency-free contracts and hosted probes. Exact
-    parameter/cache/state sizes plus analytic lower bounds feed R1–R23-verified claims and
+    parameter/cache/state sizes plus analytic lower bounds feed R1–R24-verified claims and
     StreamPack. The one-thread gate proves finite gradients, tiny loss reduction, deterministic
     reports, failure-atomic transplant, and exact verified-generation ids. It imports no upstream
     code/assets and claims no useful model, checkpoint format, native decoder, or GPU kernel.
@@ -194,9 +203,16 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     proved source decompositions; bounded Thunder-style segmentation, Pareto tokenizer evidence,
     and prefix-stable float32/FSQ time-series coding are dependency-free. A one-thread hosted gate
     trains two fixed-binary-interface growth stages while copied rows and the earlier dense block
-    remain bit-identical. Dense growth lowers through R1–R23-verified claims/StreamPack. No external
+    remain bit-identical. Dense growth lowers through R1–R24-verified claims/StreamPack. No external
     source/assets, universal-tokenizer claim, glyph/PCA artifact, LoRA execution, useful model, or
     native kernel entered the tree.
+21. **Binary compatibility now has an explicit selection envelope.** BCAB preserves standard
+    payload bytes, binds them to target/features/manifest/calibration/R12 metadata, validates the
+    complete file before display or extraction, and selects identically in Python and C. Real
+    resident compiler/linker products and the bounded JVM class assembler are round-trip gated;
+    MLIR carries the validated directory and selected content address rather than embedding bytes.
+    Its additive ASN.1 DER/COER projection preserves native BCAB byte identity and is separately
+    visible to R24; generic C X.690 validation does not overclaim a C schema transcoder.
 
 ## Confirmed limitations
 
@@ -263,6 +279,10 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     no native paged-cache realization; and the multi-patch reference omits diffusion-scale training.
     Per-shape fusion, two-target counters, export schemas, GQA/native parity, and quality evaluation
     are required before any production or speed claim.
+12. **BCAB integrity is not artifact authenticity.** V1 has CRC and SHA-256 integrity,
+    deterministic compatibility selection, and strict format identity, but no signature directory,
+    certificate policy, relocation validation, W^X loader, revocation, or errata admission. Those
+    are MC14/trusted-loader work; extraction alone never authorizes execution.
 
 ## Recommended next milestones
 

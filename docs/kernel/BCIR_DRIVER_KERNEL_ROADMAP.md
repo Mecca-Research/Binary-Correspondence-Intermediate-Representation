@@ -186,6 +186,7 @@ The package must contain all of the following before the driver can be promoted:
 |---|---|
 | **Device ISA/schema** | Normative register fields, command packets, descriptors, feature bits, architectural variants, errata, and source provenance |
 | **Generated views** | C register/packet headers, BCIR/MLIR declarations, parser/serializer tables, and human-readable listings generated from the same schema |
+| **Artifact bundle** | A deterministic BCAB directory containing the portable StreamPack root and any compatible standard/device images, with target/features/manifest/calibration/R12 metadata and exact source provenance |
 | **Manifest** | Device identity, immutable capabilities, memory banks, interconnect distances, native tile/alignment limits, firmware compatibility, and calibration generation |
 | **Compiler backend** | Legal BCIR/GEM/StreamPack claims to device commands, register programs, descriptors, or vendor-runtime calls |
 | **Assembler toolset** | Assembler/encoder, decoder/disassembler, verifier, listing/hex-dump support, and deterministic round trips |
@@ -651,7 +652,7 @@ Every driver PR runs the repository gates required by [`AGENTS.md`](../../AGENTS
 | Evidence class | Required scenarios |
 |---|---|
 | Schema/generator | Deterministic regeneration, encode/decode round trip, source provenance, variant compatibility, reserved-bit and malformed-record rejection |
-| Compiler/law | Positive and negative laws, unsupported capability refusal, bounds/alignment/bank/generation failures, deterministic artifacts and listings |
+| Compiler/law | Positive and negative laws, unsupported capability refusal, bounds/alignment/bank/generation failures, deterministic artifacts/listings, and BCAB compatibility-selection parity |
 | Simulator/differential | Reference-versus-simulator, C/Python/MLIR parity where applicable, randomized bounded protocols, errata fixtures, replay determinism |
 | Memory/ownership | Strict warnings, ASan/UBSan/LSan, allocator-failure for hosted code, idempotent teardown, failed-growth preservation, and no partial artifact on failure |
 | Queue/lifecycle | Wraparound, saturation, overwrite/backpressure policy, cancel races, event loss/duplication, reset, hotplug, suspend/resume, peer/device death, and restart |

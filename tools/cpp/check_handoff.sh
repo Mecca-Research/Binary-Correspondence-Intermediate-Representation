@@ -114,4 +114,40 @@ rj="$("${tmp}/reject" "${tmp}/bad.bin")"; rrc=$?
   && echo "  PASS corrupted artifact REJECTED at the boundary (admit() carries the C/IR verdict; the two-truth quarantine holds)" \
   || { echo "  FAIL: corrupted artifact was admitted (got '${rj}', rc=${rrc})"; exit 1; }
 
+echo "[cpp-handoff] BCAB C++ borrowed-view wrapper + deterministic selector"
+python3 - "${tmp}/bundle.bcab" <<'PY' || { echo "  FAIL: Python BCAB fixture"; exit 1; }
+import struct, sys
+from bcir.abi import (ArtifactBundle, ArtifactFormat, ArtifactKind, ArtifactVariant,
+                      Endianness, encode, write_bundle)
+from bcir.examples import vector_add
+from bcir.gem import hydrate
+from bcir.kbcir import optimize
+from bcir.kbcir.cost import TargetProfile, Theta
+m = vector_add(8); pack = hydrate(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()))
+elf = bytearray(20); elf[:7] = b"\x7fELF\x02\x01\x01"; struct.pack_into("<H", elf, 16, 1); struct.pack_into("<H", elf, 18, 62)
+variants = (
+  ArtifactVariant("00-root", ArtifactKind.STREAM_PACK, ArtifactFormat.STREAM_PACK,
+                  encode(pack), channel="host", portable=True),
+  ArtifactVariant("portable-c", ArtifactKind.C_SOURCE, ArtifactFormat.TEXT,
+                  b"int bcir_kernel(void){return 0;}\n", portable=True),
+  ArtifactVariant("x86-avx2", ArtifactKind.ELF_OBJECT, ArtifactFormat.ELF, bytes(elf),
+                  triple="x86_64-unknown-linux-gnu", architecture="x86_64",
+                  os_abi="linux-gnu", channel="host", entry_symbol="bcir_kernel",
+                  required_features=("avx2",), endianness=Endianness.LITTLE,
+                  pointer_bits=64, e_machine=62, priority=9,
+                  r12_attested=True, executable=True),
+)
+write_bundle(sys.argv[1], ArtifactBundle(variants, "00-root", "portable-c", 123, 7))
+PY
+"${CXX}" -std=c++17 -O2 -Wall -Wextra -Werror -I "${C}" -I "${CPP}" \
+  "${CPP}/test_artifact_bundle.cpp" "${C}/bcir_artifact_bundle.c" "${C}/bcir_runtime.c" \
+  -o "${tmp}/test_artifact_bundle_cpp" \
+  || { echo "  FAIL: BCAB C++ wrapper build"; exit 1; }
+cppout="$("${tmp}/test_artifact_bundle_cpp" "${tmp}/bundle.bcab")" \
+  || { echo "  FAIL: BCAB C++ wrapper run"; exit 1; }
+case "${cppout}" in
+  OK\ C++*) echo "  PASS BCAB C++ wrapper validates and selects the native image" ;;
+  *) echo "  FAIL: unexpected BCAB C++ output '${cppout}'"; exit 1 ;;
+esac
+
 echo "[cpp-handoff] ok"

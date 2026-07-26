@@ -39,6 +39,25 @@ echo "[passes] parse-time op verifiers (hasVerifier structural well-formedness)"
   && echo "  PASS verify_overflow (checked derived geometry/cost)" || { echo "  FAIL verify_overflow"; fail=1; }
 "${BO}" -bcir-lower-gem-matmul -bcir-lower-gem-activation -bcir-lower-gem-conv -bcir-lower-gem-attention -verify-diagnostics -split-input-file "${T}/lower_expansion_limits.mlir" \
   && echo "  PASS lower_expansion_limits (bounded materialization)" || { echo "  FAIL lower_expansion_limits"; fail=1; }
+if [ -n "${FC}" ]; then
+  "${BO}" "${T}/artifact_bundle_roundtrip.mlir" 2>"${ERR}" | "${FC}" "${T}/artifact_bundle_roundtrip.mlir" \
+    && echo "  PASS artifact_bundle_roundtrip (BCAB directory projection)" || { echo "  FAIL artifact_bundle_roundtrip"; cat "${ERR}"; fail=1; }
+else
+  "${BO}" "${T}/artifact_bundle_roundtrip.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY artifact_bundle_roundtrip" || { echo "  FAIL artifact_bundle_roundtrip"; cat "${ERR}"; fail=1; }
+fi
+"${BO}" -verify-diagnostics -split-input-file "${T}/artifact_bundle_verify_neg.mlir" \
+  && echo "  PASS artifact_bundle_verify_neg (BCAB metadata refusal)" || { echo "  FAIL artifact_bundle_verify_neg"; fail=1; }
+if [ -n "${FC}" ]; then
+  "${BO}" -bcir-verify "${T}/artifact_bundle_asn1.mlir" 2>"${ERR}" \
+    | "${FC}" "${T}/artifact_bundle_asn1.mlir" \
+    && echo "  PASS artifact_bundle_asn1 (BCAB additive ASN.1/R24 projection)" \
+    || { echo "  FAIL artifact_bundle_asn1"; cat "${ERR}"; fail=1; }
+else
+  "${BO}" -bcir-verify "${T}/artifact_bundle_asn1.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY artifact_bundle_asn1" \
+    || { echo "  FAIL artifact_bundle_asn1"; cat "${ERR}"; fail=1; }
+fi
 
 echo "[passes] -bcir-verify on the pretty corpus (must be clean)"
 for f in "${ROOT}"/mlir/examples/*.mlir; do

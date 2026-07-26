@@ -54,6 +54,11 @@ exactly **two** roles, and is held out of a third on purpose:
    (the two-truth quarantine): a SYCL device's measured agreement *informs* (a differential oracle), it
    never *legislates*.
 
+SYCL source, produced SPIR-V, and produced native device images may be carried unchanged as BCAB
+variants on the `sycl_spirv` channel. BCAB compatibility selection chooses among already verified
+artifacts; it neither makes a missing SYCL backend real nor moves SYCL onto the legality path. See
+[`BCIR_ARTIFACT_BUNDLE_ABI.md`](BCIR_ARTIFACT_BUNDLE_ABI.md).
+
 ## Resident dispatch (the channel executes)
 
 Beyond pricing + routing + the standalone differential oracle, the `sycl_spirv` channel now has a

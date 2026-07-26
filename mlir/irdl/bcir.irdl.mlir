@@ -177,6 +177,12 @@ irdl.dialect @bcir {
   irdl.operation @binary_field
   irdl.operation @binary_record
   irdl.operation @binary_decode
+  irdl.operation @artifact_bundle {
+    %body = irdl.region
+    irdl.regions(body: %body)
+  }
+  irdl.operation @artifact_variant
+  irdl.operation @artifact_selection
 
   // ASN.1 / X.690 interop rail (docs/BCIR_ASN1_X690_ABI.md). The module and type are
   // containers; components, encode/decode and the projection are leaves.

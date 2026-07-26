@@ -63,13 +63,18 @@ Sizes, as a rough effort signal (converted spec text, lines): X.681 1 125 · X.6
 X.683 567 · X.691 2 733 · X.692 **7 599** · X.693 2 562. ECN is the largest document in
 the suite by a factor of three, and §0 is why it is nevertheless the destination.
 
-## 2. What is built (baseline, PRs #653/#654)
+## 2. What is built (baseline through PR #660 plus the artifact projection)
 
 - The whole of X.690 clause 8 on the oracle rail (`bcir/asn1/`, ~2 160 lines), clauses
   10 + 11 as a checker and a BER→DER rewrite.
 - A freestanding, allocation-free, non-recursive C twin (`runtime/c/bcir_asn1.{h,c}`),
   fuzzed under ASan/UBSan, dual-rail differentialed over 12 000 mutants.
 - The `BCIR-StreamPack` module and its **additive** DER projection, with the A1–A4 laws.
+- The `BCIR-ArtifactBundle` module and additive DER/COER projection. It preserves the
+  complete abstract BCAB directory and payloads while native offsets, padding, CRCs, and
+  digests are recomputed; native→DER/COER→native is byte-identical. This is the second
+  artifact family to prove that the encoding-rule rail is reusable rather than
+  StreamPack-specific.
 - The schema in the IR (`bcir.asn1.*`) and verifier law **R24**.
 
 Two constraints inherited from that baseline shape everything below:
@@ -77,8 +82,8 @@ Two constraints inherited from that baseline shape everything below:
 1. **DER out, BER in** — BCIR digests what it emits, so an encoding whose octets a peer
    may choose cannot be emitted. Every new encoding rule must name its canonical
    variant or be decode-only.
-2. **Additive** — the native StreamPack format is frozen. A new encoding rule adds a
-   transfer syntax; it never replaces one.
+2. **Additive** — the native StreamPack and BCAB formats are frozen. A new encoding
+   rule adds a transfer syntax; it never replaces one.
 
 ## 3. Dependency order
 

@@ -82,7 +82,7 @@ accuracy, contention, verification`.
 | bundle (joint) optimization | `kbcir.bundle.optimize_bundled` (jointly reorder input-sharing claims; bounded, dependency-preserving; `BundleCertificate` per gain) | **`-bcir-bundle`** (`BCIRBundlePass.cpp`, C++): detects input-sharing bundles and reorders the cost columns, re-pricing each legal intra-bundle order via the shared `PlanAnalysis` min-plus; annotates `kbcir.bundle_gain` / `bundle_order` (`bundle.mlir`, `bundle_reorder.mlir`) — the real matmul gain the pairwise shortest path misses |
 | proof-carrying records | `kbcir.proof` (`explain`/`replay`/`reduce`; `DecisionRecord` = R13 digest + per-claim rationale + rewrite certificates) | CLI `bcir.run --explain/--replay/--reduce`; replays bit-for-bit from the same inputs or diffs (`test_proof.py`) |
 | deterministic executor | `gem.execute` (topological phase order, ascending claim id within a phase, per-phase telemetry) | **C** `runtime/c/bcir_exec.c` (`bcir_sp_execute`): freestanding, Python↔C dispatch-order + telemetry parity (`test_c_executor.py`, `check_runtime.sh`) + libFuzzer (`fuzz_exec.c`) |
-| verifier differential (illegal modules) | `kbcir.differential.{gen_illegal_module, check_verifier, gen_illegal_plan, check_plan_verifier, _artifact_law_misses, run_verifier_campaign}` — the original differential fault-injects the scoped R1–R18 oracle entry points (R1/R18 construction guards included). R19–R23 use their dedicated optional-metadata/GEM seam tests. | **`-bcir-verify` implements the current R1–R23 set** (`BCIRVerifyPass.cpp`), with negative `-verify-diagnostics` fixtures under `mlir/test/passes/verify*.mlir`; generated `STATUS.md` inventories tags but does not claim execution |
+| verifier differential (illegal modules) | `kbcir.differential.{gen_illegal_module, check_verifier, gen_illegal_plan, check_plan_verifier, _artifact_law_misses, run_verifier_campaign}` — the original differential fault-injects the scoped R1–R18 oracle entry points (R1/R18 construction guards included). R19–R23 use their dedicated optional-metadata/GEM seam tests; ASN.1 parity and negative fixtures cover R24. | **`-bcir-verify` implements the current R1–R24 set** (`BCIRVerifyPass.cpp`), with negative `-verify-diagnostics` fixtures under `mlir/test/passes/verify*.mlir`; generated `STATUS.md` inventories tags but does not claim execution |
 | overlap law net (the C++ port's net) | `kbcir.differential.check_overlap` + `gem.overlap.price_scheduled` (R9: makespan + gain == serial == score, 0 ≤ makespan ≤ serial) | `bcir.kbcir.scheduled_price` VerifyPass R9 — the invariant the deterministic-optimizer-core C++ port must reproduce |
 | verifier **R24** (ASN.1 encoding-rule legality) | `asn1.schema` (OPTIONAL/DEFAULT, tag application) + `asn1.der` (clause 10+11) — enforced when a VALUE is encoded | **first-class `-bcir-verify` R24** over the `bcir.asn1.*` schema ops — enforced when the TYPE is written, before any value exists (`verify_asn1.mlir`: 1 positive + 13 negatives); enum/OID/diagnostic parity pinned by `test_asn1_law_parity.py` |
 | ASN.1 / X.690 codec | `asn1.{tags,length,tlv,values,der,codec}` (clause 8 contents, clauses 10+11 restrictions, BER→DER rewrite) | **C** `runtime/c/bcir_asn1.{h,c}` (freestanding, non-recursive, explicit-stack walk); dual-rail node-tree + BER-verdict + DER-verdict differential (`test_c_asn1.py`), 12 000 mutants clean |
@@ -150,6 +150,8 @@ operations. Their governing prose is the LangRef or the corresponding ABI docume
 
 | Surface | Python/reference rail | C/production rail and gate |
 |---|---|---|
+| BCAB v1 artifact bundle | `bcir.abi.artifact_bundle` deterministic codec, integrity/identity checks, compatibility envelope and selector; `bcir-bundle` validates before listing, extraction, hex or delegated disassembly | `bcir_artifact_bundle.c` allocation-free borrowed reader/selector plus the C++ borrowed-view wrapper; identical malformed-input refusal and priority/specificity/feature/ID selection; MLIR records the validated directory/selection metadata, not payload bytes |
+| BCAB ASN.1 projection | `asn1.artifact_bundle` + compiled `BCIR-ArtifactBundle.asn1`; DER-out/BER-in and COER-out/BASIC-OER-in, with native byte-identity transcodes and atomic CLI conversion | R24 carries the additive `native = "artifact_bundle"` projection; generic freestanding C X.690 validates DER and the existing C BCAB reader validates reconstructed native bytes. A schema-specific C transcoder is not claimed |
 | StreamPack v1–v3 | `bcir.abi.streampack_abi` encode/decode and semantic validation | `bcir_runtime.c` + `bcir_encode.c`; byte-identical re-encode, exact-version, CRC, bounds, trailing-byte, dispatch/channel, and malformed-corpus gates |
 | BTLM telemetry frame v1 | `bcir.telemetry_frame` strict codec, resync, continuity/wrap evidence | `bcir_telemetry_frame.c`; exact layout/CRC/re-encode and corruption rejection in `test_telemetry_frame.py` and the C gate |
 | Signal and metric meaning | `bcir.signal_registry`, `telemetry_metrics`, deterministic exporters | C carries the frame codec today; a generated fixed-width signal table and live transport remain open and therefore are not claimed as parity |
@@ -162,7 +164,8 @@ operations. Their governing prose is the LangRef or the corresponding ABI docume
 | RuntimeChannel direct ABI | Transport-neutral device/event/DMA contracts provide reference inputs | append-only C v1 hook table and bounded loopback; future Linux/native adapters must reproduce direct behavior before they can claim parity |
 
 BCIRQ8’s normative byte contract is [`BCIR_LANGREF.md`](BCIR_LANGREF.md#16-bcirq8-v1-decoder-artifact-contract)
-§16. StreamPack and telemetry bytes are owned by
+§16. BCAB is owned by
+[`BCIR_ARTIFACT_BUNDLE_ABI.md`](kernel/BCIR_ARTIFACT_BUNDLE_ABI.md); StreamPack and telemetry bytes are owned by
 [`BCIR_STREAMPACK_ABI.md`](kernel/BCIR_STREAMPACK_ABI.md) and
 [`TELEMETRY_FRAME_ABI.md`](kernel/TELEMETRY_FRAME_ABI.md). A clean skip for a missing
 compiler, architecture, or model cache is not parity evidence for that execution path.
@@ -278,7 +281,7 @@ modules. When the MLIR toolchain is available, the `mlir/examples` + `mlir/test/
 corpus round-trips through `bcir-opt` / stock `mlir-opt` and must carry the same
 constants, and `mlir/test/passes/gem_corpus.mlir` recomputes the widened corpus.
 
-The current **R1–R23** MLIR law set is negative-tested per law with
+The current **R1–R24** MLIR law set is negative-tested per law with
 `-bcir-verify -verify-diagnostics`: `verify_laws.mlir` (R1–R7),
 `verify_laws_deep.mlir` (R8–R16), `verify_accuracy.mlir` (R17),
 `verify_callgraph.mlir` (R18), `verify_timing_lifetime.mlir` (R19–R21), and

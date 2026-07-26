@@ -3,11 +3,12 @@
 # ASan/UBSan smoke on a real Python-encoded pack + byte mutations. Needs clang with
 # compiler-rt (libclang-rt-NN-dev). FUZZ_RUNS controls the fuzz iteration count.
 #
-# The eight harnesses, and whose bytes each one distrusts:
+# The nine harnesses, and whose bytes each one distrusts:
 #   StreamPack decoder / executor / encoder  -- an artifact handed to the runtime
 #   ETL binary-record decoder                -- device/driver packet fields
 #   telemetry-frame decoder                  -- frames a device emits over UART
 #   BCIRQ8 model loader                      -- an external model artifact (LangRef 16)
+#   BCAB artifact-bundle reader              -- a multi-backend artifact from a peer
 #   X.690 BER/DER decoder                    -- an ASN.1 artifact from a foreign peer
 #   DER -> native StreamPack fast path       -- a projection a peer hands a driver
 #
@@ -122,6 +123,11 @@ add_target asn1 "X.690 decoder" "-max_len=8192" \
 add_target decoder "decoder" "" \
   "${C}/fuzz_streampack.c" "${C}/bcir_runtime.c"
 
+# BCAB is a multi-backend artifact handed to the runtime. Its checksum and digest
+# layers are deliberately exercised from a canonical seed as well as arbitrary bytes.
+add_target artifact "BCAB artifact bundle" "-max_len=16384" \
+  "${C}/fuzz_artifact_bundle.c" "${C}/bcir_artifact_bundle.c" "${C}/bcir_runtime.c"
+
 # bcir_exec.c runs an untrusted pack end to end with fixed caller buffers; a malformed
 # pack must return a status and never read/write out of bounds (incl. the NOSPACE path).
 add_target exec "executor" "" \
@@ -147,15 +153,16 @@ add_target sp_fast "DER->native fast path" "-max_len=8192" \
   "${C}/fuzz_asn1_streampack.c" "${C}/bcir_asn1_streampack.c" "${C}/bcir_asn1.c" \
   "${C}/bcir_runtime.c"
 
-# --- build every harness (independent link jobs, so build them concurrently) --------------
-echo "[fuzz] building ${#KEYS[@]} harnesses under libFuzzer + ASan/UBSan"
+# --- build every harness (independent link jobs, bounded by the same worker cap) -----------
+echo "[fuzz] building ${#KEYS[@]} harnesses under libFuzzer + ASan/UBSan (${JOBS} at a time)"
 build_fail=0
 for key in "${KEYS[@]}"; do
+  while [ "$(jobs -rp | wc -l)" -ge "${JOBS}" ]; do wait -n 2>/dev/null || true; done
   # shellcheck disable=SC2086 -- SRCS is a deliberate word-split source list.
   ( "${CLANG}" -std=c23 -g ${FUZZ_SAN} ${SRCS[${key}]} -I "${C}" -o "${tmp}/fuzz_${key}" \
       2>"${tmp}/build_${key}.log" ) &
 done
-wait
+wait || true
 for key in "${KEYS[@]}"; do
   if [ ! -x "${tmp}/fuzz_${key}" ]; then
     echo "  FAIL: ${LABEL[${key}]} fuzzer build"; sed 's/^/    /' "${tmp}/build_${key}.log"; build_fail=1
@@ -171,6 +178,26 @@ cp "${tmp}/pack.bin" "${tmp}/corpus_decoder/"
 cp "${tmp}/pack.bin" "${tmp}/corpus_exec/"
 cp "${tmp}/pack.bin" "${tmp}/corpus_encode/"
 rmdir "${tmp}/corpus_binrec"
+
+if ! python3 - "${tmp}/corpus_artifact" <<'PY'
+import sys
+from pathlib import Path
+from bcir.abi.artifact_bundle import (
+    ArtifactBundle, ArtifactFormat, ArtifactKind, ArtifactVariant, encode_bundle,
+)
+pack = Path(sys.argv[1]).parent.joinpath("pack.bin").read_bytes()
+bundle = ArtifactBundle((
+    ArtifactVariant(
+        "00-root", ArtifactKind.STREAM_PACK, ArtifactFormat.STREAM_PACK,
+        pack, channel="host", portable=True,
+    ),
+), "00-root", "00-root", 7, 3)
+Path(sys.argv[1], "minimal.bcab").write_bytes(encode_bundle(bundle))
+PY
+then
+  echo "  FAIL: BCAB seed corpus"
+  exit 1
+fi
 
 python3 - "${tmp}/corpus_tf" <<'PY' || { echo "  FAIL: telemetry frame seed"; exit 1; }
 import os, sys

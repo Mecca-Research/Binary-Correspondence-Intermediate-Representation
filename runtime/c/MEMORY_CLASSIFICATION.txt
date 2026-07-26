@@ -2,6 +2,7 @@
 # Test/fixture files are intentionally outside this inventory.
 freestanding_core bcir_asn1.c
 freestanding_core bcir_asn1_streampack.c
+freestanding_core bcir_artifact_bundle.c
 freestanding_core bcir_binrec.c
 freestanding_core bcir_decode.c
 freestanding_core bcir_encode.c

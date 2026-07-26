@@ -27,6 +27,7 @@ model-lab = ["torch==2.13.0", "safetensors[numpy]==0.8.0", "numpy==2.2.6"]
 [project.scripts]
 bcir = "bcir.run:main"
 bcir-pack = "bcir.abi.streampack_tool:main"
+bcir-bundle = "bcir.abi.artifact_tool:main"
 bcir-registry = "bcir.registry_tool:main"
 bcir-model-assess = "bcir.frontends.models.assess_tool:main"
 bcir-asn1c = "bcir.frontends.asn1.__main__:main"

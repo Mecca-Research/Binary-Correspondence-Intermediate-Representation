@@ -37,7 +37,7 @@ kernel internals unless a measured decision gate says otherwise.
 | Rail | Role | Key property |
 |---|---|---|
 | `bcir/` | Executable Python conformance oracle plus opt-in hosted adapters | Default/core behavior is dependency-free; hosted model execution is import-quarantined |
-| `mlir/` | ODS/TableGen/C++ law rail | R1–R23, native optimizer/GEM passes, IRDL projection, and partial lowering |
+| `mlir/` | ODS/TableGen/C++ law rail | R1–R24, native optimizer/GEM passes, IRDL projection, and partial lowering |
 | `runtime/c/` | Production C compiler/runtime rail | Freestanding execution plus hosted compiler/model tools and direct RuntimeChannel hooks |
 
 `runtime/cpp/` is a narrow orchestration seam above the C ABI. It does not redefine
@@ -64,7 +64,7 @@ source / ROP / MAP / binary record / model
                      │
                      ▼
 BCIR-0..2: semantic claims + shaped resources + placement candidates
-                     │  verify legality (R1–R23 where applicable)
+                     │  verify legality (R1–R24 where applicable)
                      ▼
 BCIR-3: K_BCIR legal realization + budgeted plan
                      │
@@ -95,7 +95,7 @@ boundary with rollback available.
   contracts, and optional timing/lifetime metadata.
 - A `Phase` is a dependency node; event-triggered phases make asynchronous entry
   explicit.
-- R1–R23 cover registry, resolution, domains, DAGs, hazards, lanes, bounds, costs,
+- R1–R24 cover registry, resolution, domains, DAGs, hazards, lanes, bounds, costs,
   plans, stream provenance/generation, lowering/provenance, smart lowering, accuracy,
   call graphs, timing/CDC/lifetime, and GEM shape/dtype seams.
 
@@ -153,6 +153,10 @@ differential reference. Start with
 - JVM/CIL/WASM and SYCL/SPIR-V paths have explicitly bounded validation surfaces.
 - Real ELF objects for documented scalar slices are produced through resident
   Clang/LLVM and checked for expected machine type.
+- BCAB v1 packages preserved standard artifacts with target/feature/provenance metadata;
+  Python and allocation-free C validate and select the same variant, while MLIR records
+  the directory, selection, and additive ASN.1 projection. Read
+  [`BCIR_ARTIFACT_BUNDLE_ABI.md`](kernel/BCIR_ARTIFACT_BUNDLE_ABI.md) before changing it.
 
 BCIR does not implement a general CPU instruction selector, register allocator, or
 linker. The decision can change only through
@@ -296,6 +300,7 @@ them to pass. The test registry prevents adding an uncollected `test_*.py` file.
 | Need | Canonical entry |
 |---|---|
 | Language, laws, BCIRQ8 | [`BCIR_LANGREF.md`](BCIR_LANGREF.md) |
+| Multi-backend artifact and binary selection | [`kernel/BCIR_ARTIFACT_BUNDLE_ABI.md`](kernel/BCIR_ARTIFACT_BUNDLE_ABI.md) |
 | Current implementation truth | [`REPO_CURRENT_STATE_AUDIT.md`](REPO_CURRENT_STATE_AUDIT.md) |
 | Static inventory | [`STATUS.md`](STATUS.md) |
 | Oracle/MLIR/C correspondence | [`PARITY.md`](PARITY.md) |

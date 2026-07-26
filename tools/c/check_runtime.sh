@@ -78,6 +78,64 @@ out="$("${tmp}/test_runtime" "${tmp}/pack.bin")" || { echo "  FAIL: C decode"; e
 echo "${out}" | grep -q "^OK$" && echo "  PASS parity (Python encode -> C decode)" \
   || { echo "  FAIL: parity"; echo "${out}"; exit 1; }
 
+echo "[c-runtime] BCAB artifact bundle: freestanding reader + Python/C selection parity"
+for std in c11 c23; do
+  "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Werror -I "${C}" \
+    -c "${C}/bcir_artifact_bundle.c" -o /dev/null \
+    || { echo "  FAIL: BCAB reader not freestanding-clean under -std=${std}"; exit 1; }
+done
+python3 - "${tmp}/bundle.bcab" "${tmp}/bundle.der" "${tmp}/bundle.from-der.bcab" <<'PY' \
+  || { echo "  FAIL: Python BCAB/ASN.1 fixture"; exit 1; }
+import struct, sys
+from bcir.abi import (ArtifactBundle, ArtifactFormat, ArtifactKind, ArtifactVariant,
+                      Endianness, encode, encode_bundle)
+from bcir.asn1.artifact_bundle import der_to_native, native_to_der
+from bcir.examples import vector_add
+from bcir.gem import hydrate
+from bcir.kbcir import optimize
+from bcir.kbcir.cost import TargetProfile, Theta
+m = vector_add(8)
+pack = hydrate(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()))
+elf = bytearray(20); elf[:7] = b"\x7fELF\x02\x01\x01"; struct.pack_into("<H", elf, 16, 1); struct.pack_into("<H", elf, 18, 62)
+variants = (
+    ArtifactVariant("00-root", ArtifactKind.STREAM_PACK, ArtifactFormat.STREAM_PACK,
+                    encode(pack), channel="host", portable=True),
+    ArtifactVariant("portable-c", ArtifactKind.C_SOURCE, ArtifactFormat.TEXT,
+                    b"int bcir_kernel(void){return 0;}\n", portable=True),
+    ArtifactVariant("x86-avx2", ArtifactKind.ELF_OBJECT, ArtifactFormat.ELF, bytes(elf),
+                    triple="x86_64-unknown-linux-gnu", architecture="x86_64",
+                    os_abi="linux-gnu", channel="host", entry_symbol="bcir_kernel",
+                    required_features=("avx2",), endianness=Endianness.LITTLE,
+                    pointer_bits=64, e_machine=62, priority=9,
+                    r12_attested=True, executable=True),
+)
+native = encode_bundle(ArtifactBundle(variants, "00-root", "portable-c", 123, 7))
+open(sys.argv[1], "wb").write(native)
+projection = native_to_der(native)
+open(sys.argv[2], "wb").write(projection)
+open(sys.argv[3], "wb").write(der_to_native(projection))
+PY
+"${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
+  "${C}/bcir_artifact_bundle.c" "${C}/bcir_runtime.c" \
+  "${C}/test_artifact_bundle.c" -o "${tmp}/test_artifact_bundle" \
+  || { echo "  FAIL: BCAB C parity harness build"; exit 1; }
+about="$("${tmp}/test_artifact_bundle" "${tmp}/bundle.bcab")" \
+  || { echo "  FAIL: BCAB C parity harness"; exit 1; }
+case "${about}" in
+  OK\ entries=3*) echo "  PASS BCAB Python encode -> C checksum/select parity" ;;
+  *) echo "  FAIL: unexpected BCAB result '${about}'"; exit 1 ;;
+esac
+cmp -s "${tmp}/bundle.bcab" "${tmp}/bundle.from-der.bcab" \
+  || { echo "  FAIL: BCAB native -> ASN.1 DER -> native bytes differ"; exit 1; }
+"${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
+  "${C}/bcir_asn1.c" "${C}/test_asn1.c" -o "${tmp}/test_artifact_asn1" \
+  || { echo "  FAIL: BCAB ASN.1 C validation harness build"; exit 1; }
+asn1_about="$("${tmp}/test_artifact_asn1" "${tmp}/bundle.der")" \
+  || { echo "  FAIL: BCAB ASN.1 projection C validation"; exit 1; }
+printf '%s\n' "${asn1_about}" | grep -q '^der ok$' \
+  && echo "  PASS BCAB native <-> DER byte identity + generic C X.690 validation" \
+  || { echo "  FAIL: C X.690 rail rejected BCAB DER projection"; printf '%s\n' "${asn1_about}"; exit 1; }
+
 echo "[c-runtime] ETL binary-record decoder: freestanding compile (C11 + C23)"
 # bcir_binrec.c is the C twin of bcir/etl/binary.py (a second binary trust boundary).
 for std in c11 c23; do
