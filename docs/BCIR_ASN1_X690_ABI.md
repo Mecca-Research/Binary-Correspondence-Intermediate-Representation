@@ -14,6 +14,10 @@ Standards implemented:
 Rails: `bcir/asn1/` is the executable reference; `runtime/c/bcir_asn1.{h,c}` is the
 freestanding C twin. Both must agree, and `bcir/tests/test_c_asn1.py` gates it.
 
+What is built here is X.690 only. The rest of the suite — PER, OER, JER, ECN, the
+X.680 front-end, constraints and information objects — is scoped in
+[`BCIR_ASN1_BUILDOUT_ROADMAP.md`](BCIR_ASN1_BUILDOUT_ROADMAP.md).
+
 ## 1. The stance: DER out, BER in
 
 **BCIR emits DER and only DER. BCIR accepts the full BER surface on input.**
