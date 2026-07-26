@@ -20,6 +20,7 @@ import os
 import re
 
 from bcir.asn1.codec import Oid, Strictness
+from bcir.asn1.tags import Universal
 from bcir.asn1.schema import Choice, SequenceOf, Set, SetOf
 from bcir.asn1.tlv import decode_one, encode_tlv
 from bcir.frontends.asn1 import (Asn1SemanticError, Asn1SyntaxError, compile_module,
@@ -292,12 +293,15 @@ def test_recursive_type_definitions_resolve():
 
 def test_constructs_from_the_companion_recommendations_are_refused_by_name():
     """A front-end that skipped these would build a model disagreeing with the module.
-    Each diagnostic names the Recommendation and the roadmap phase that would add it."""
+    Each diagnostic names the Recommendation and the roadmap phase that would add it.
+
+    X.681 information object classes and open types moved OUT of this list when phase F
+    built them; what remains is X.683 parameterization and X.692 encoding control.
+    """
     cases = [
-        ("M DEFINITIONS ::= BEGIN\n  C ::= CLASS { &id INTEGER }\nEND\n", "X.681"),
-        ("M DEFINITIONS ::= BEGIN\n  T ::= SEQUENCE { a ANY DEFINED BY b }\nEND\n",
-         "X.681"),
         ("M DEFINITIONS ::= BEGIN\n  T{P} ::= SEQUENCE { a P }\nEND\n", "X.683"),
+        ("M DEFINITIONS ::= BEGIN\n  T ::= SEQUENCE { a INTEGER }\n"
+         "ENCODING-CONTROL PER\nEND\n", "X.692"),
     ]
     for text, recommendation in cases:
         try:
@@ -305,6 +309,124 @@ def test_constructs_from_the_companion_recommendations_are_refused_by_name():
             raise AssertionError(f"accepted a construct needing {recommendation}")
         except (Asn1SyntaxError, Asn1SemanticError) as exc:
             assert recommendation in str(exc), (recommendation, str(exc))
+
+
+# --- X.681 information objects and open types (roadmap phase F) --------------------------
+
+_PKIX_EXPLICIT = os.path.join(_ROOT, "bcir", "frontends", "asn1", "testdata",
+                              "PKIX1Explicit88.asn1")
+
+
+def test_any_defined_by_lowers_to_an_open_type():
+    """`ANY DEFINED BY x` is withdrawn X.680:1988 notation, but it is exactly X.681 §14's
+    open type, so both spellings lower to the same thing rather than to a dialect.
+
+    Neither `ANY` nor `DEFINED` is a reserved word in the 2021 edition, so they arrive at
+    the parser as ordinary typereferences — which is why the match is on text.
+    """
+    from bcir.asn1.schema import OpenType
+
+    compiled = compile_module(
+        "M DEFINITIONS ::= BEGIN\n"
+        "  T ::= SEQUENCE { algorithm OBJECT IDENTIFIER,\n"
+        "                   parameters ANY DEFINED BY algorithm OPTIONAL }\nEND\n"
+    ).module
+    parameters = compiled.types["T"].components[1]
+    assert isinstance(parameters.type, OpenType), parameters.type
+    assert "algorithm" in parameters.type.name
+
+
+def test_a_class_value_field_keeps_its_declared_type_while_a_type_field_stays_open():
+    """X.681 §14/§15. `ALGORITHM.&id` is a VALUE field whose type the class declared, so
+    lowering it to an open type would discard information the module supplied and turn a
+    checkable OBJECT IDENTIFIER into opaque octets. Only `&Type` is genuinely open."""
+    from bcir.asn1.schema import OpenType, Primitive
+
+    compiled = compile_module(
+        "M DEFINITIONS ::= BEGIN\n"
+        "  ALGORITHM ::= CLASS { &id OBJECT IDENTIFIER UNIQUE, &Type OPTIONAL }\n"
+        "    WITH SYNTAX { &Type IDENTIFIED BY &id }\n"
+        "  T ::= SEQUENCE { algorithm ALGORITHM.&id,\n"
+        "                   parameters ALGORITHM.&Type OPTIONAL }\nEND\n").module
+    algorithm, parameters = compiled.types["T"].components
+    assert isinstance(algorithm.type, Primitive), algorithm.type
+    assert algorithm.type.universal == int(Universal.OBJECT_IDENTIFIER)
+    assert isinstance(parameters.type, OpenType), parameters.type
+
+
+def test_a_reference_to_an_undefined_class_is_a_named_error():
+    try:
+        compile_module("M DEFINITIONS ::= BEGIN\n"
+                       "  T ::= SEQUENCE { a MISSING.&Type }\nEND\n")
+        raise AssertionError("accepted a reference to an undefined class")
+    except Asn1SemanticError as exc:
+        assert "MISSING" in str(exc) and "never defined" in str(exc), exc
+
+
+def test_objects_and_object_sets_round_trip_with_their_bodies_intact():
+    """They are recorded, not interpreted — their content selects WHICH type an open type
+    contains, which is X.682's table-constraint machinery. Keeping the body is what makes
+    the round-trip law still meaningful for these modules: a parser that dropped it would
+    print a gutted module and the law would happily pass."""
+    text = ("M DEFINITIONS ::= BEGIN\n"
+            "  ALGORITHM ::= CLASS { &id OBJECT IDENTIFIER UNIQUE, &Type OPTIONAL }\n"
+            "  sha256 ALGORITHM ::= { &id id-sha256 }\n"
+            "  Algorithms ALGORITHM ::= { sha256 | sha512 }\nEND\n")
+    node = parse_module(text)
+    assert parse_module(print_module(node)) == node
+    kinds = [type(a).__name__ for a in node.assignments]
+    assert kinds == ["ClassAssignment", "ObjectAssignment", "ObjectSetAssignment"], kinds
+    assert "sha512" in node.assignments[2].objects
+
+
+def test_an_implicit_tag_on_an_open_type_is_refused():
+    """X.680 §31.2.7 names open types alongside CHOICE: an implicit tag REPLACES the base
+    tag, and an open type has none — the contained value's tag is the only thing there."""
+    try:
+        compile_module("M DEFINITIONS ::= BEGIN\n"
+                       "  T ::= SEQUENCE { a [0] IMPLICIT ANY }\nEND\n")
+        raise AssertionError("IMPLICIT over an open type was accepted")
+    except Asn1SemanticError as exc:
+        assert "31.2.7" in str(exc), exc
+
+
+def test_rfc5280_subject_public_key_info_round_trips_the_whole_host_trust_store():
+    """The gate phase A could not pass, and the reason phase F exists.
+
+    `AlgorithmIdentifier.parameters` is an open type; every certificate in the store
+    carries it, so the type is unusable without X.681. Byte-identical re-encoding is the
+    strong form: it means the open type's octets survived untouched, which is the whole
+    contract of an open type — this layer does not know the contained type and must not
+    alter it.
+    """
+    from bcir.asn1.codec import Strictness
+    from bcir.asn1.tlv import decode_one, encode_tlv
+
+    paths = sorted(glob.glob("/etc/ssl/certs/*.pem"))
+    if not paths:
+        return                                     # no host trust store: nothing to widen
+    spki = compile_module(open(_PKIX_EXPLICIT, encoding="utf-8").read(),
+                          "PKIX1Explicit88.asn1").module.types["SubjectPublicKeyInfo"]
+    seen = identical = with_parameters = 0
+    for path in paths:
+        for block in re.findall(
+                r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----",
+                open(path, encoding="utf-8", errors="replace").read(), re.S):
+            cert = decode_one(base64.b64decode("".join(block.split())))
+            tbs = cert.children[0]
+            index = 6 if tbs.children[0].tag.cls.name == "CONTEXT" else 5
+            node = tbs.children[index]
+            seen += 1
+            value = spki.decode(node, strictness=Strictness.DER)
+            if "parameters" in value["algorithm"]:
+                with_parameters += 1
+            if encode_tlv(spki.encode(value)) == encode_tlv(node):
+                identical += 1
+    assert seen > 0
+    assert identical == seen, f"{seen - identical} of {seen} SPKIs did not re-encode"
+    # Every certificate carries `parameters`, which is why the open type is not optional
+    # in practice and why phase A's stop condition fired on this type.
+    assert with_parameters == seen, (with_parameters, seen)
 
 
 def test_a_containing_constraint_is_refused_rather_than_discarded():

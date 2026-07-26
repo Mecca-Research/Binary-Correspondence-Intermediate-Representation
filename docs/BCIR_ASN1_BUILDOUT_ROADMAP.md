@@ -47,7 +47,7 @@ rule.
 | Rec. | ISO/IEC | Title | BCIR status |
 |---|---|---|---|
 | X.680 | 8824-1:2021 | Basic notation | **partial** — tag assignments consumed; notation not parsed |
-| X.681 | 8824-2:2021 | Information object specification | not started |
+| X.681 | 8824-2:2021 | Information object specification | **partial** — classes, objects, object sets, open types; table constraints recorded not resolved |
 | X.682 | 8824-3:2021 | Constraint specification | not started |
 | X.683 | 8824-4:2021 | Parameterization | not started |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
@@ -56,7 +56,7 @@ rule.
 | X.693 | 8825-4:2021 | XER | not started |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
-| X.696 | 8825-7:2021 | OER | **blocked** — spec not available (see §4 D) |
+| X.696 | 8825-7:2021 | OER | **built** (COER out, BASIC-OER in; validated against Annex A) |
 | X.697 | 8825-8:2021 | JER | not started |
 
 Sizes, as a rough effort signal (converted spec text, lines): X.681 1 125 · X.682 345 ·
@@ -125,12 +125,12 @@ Two hard dependencies, both from the standards rather than from BCIR:
 
 ### A. X.680 front-end — the ASN.1 compiler front-end · **BUILT**
 
-> **Status: delivered.** `bcir/frontends/asn1/` (lexer · parser · printer · lowering),
-> the `bcir-asn1c` CLI, and `bcir/tests/test_asn1_frontend.py`. The gate below passes:
-> `BCIR-StreamPack` is now *parsed from its own text* and produces byte-identical DER
-> for all 12 corpus programs. The third-party half passes for
-> `AuthorityKeyIdentifier` and **is blocked for `SubjectPublicKeyInfo`** — see the
-> X.681 finding under §6.
+> **Status: delivered, and its stop condition since cleared.** `bcir/frontends/asn1/`
+> (lexer · parser · printer · lowering), the `bcir-asn1c` CLI, and
+> `bcir/tests/test_asn1_frontend.py`. `BCIR-StreamPack` is *parsed from its own text* and
+> produces byte-identical DER for all 12 corpus programs. Both third-party gates now pass:
+> `AuthorityKeyIdentifier` (37/37 real extensions) **and** `SubjectPublicKeyInfo`
+> (**152/152** real certificates), the latter unblocked by phase F's open type.
 
 Parse real ASN.1 module text into the existing `schema.py` type model. Today the model
 is hand-built in Python; a peer's `.asn1` module cannot be consumed at all.
@@ -181,12 +181,14 @@ for every corpus program — and a dual-rail C twin with the same differential
 discipline. X.695 (registration of PER encoding instructions) follows as a small
 appendix once PER lands.
 
-### D. X.696 OER + DER→native fast path · **fast path BUILT · OER blocked**
+### D. X.696 OER + DER→native fast path · **BUILT**
 
-> **Status: half delivered.** The **DER→native fast path** is built:
-> `runtime/c/bcir_asn1_streampack.{h,c}`, wired into `check_runtime.sh` and fuzzed as
-> the eighth trust boundary. **X.696 OER is not started and is blocked on the
-> specification** — see the note below.
+> **Status: delivered, both halves.** OER is `bcir/asn1/oer.py` (BASIC-OER +
+> CANONICAL-OER, clauses 8–32), validated **byte-for-byte against the standard's own
+> Annex A worked example** (95 octets). The DER→native fast path is
+> `runtime/c/bcir_asn1_streampack.{h,c}`, wired into `check_runtime.sh` and fuzzed as the
+> eighth trust boundary. Measured on the corpus: OER is **76.4 %** of DER and **41.6 %**
+> of the native format.
 
 
 Octet Encoding Rules: octet-aligned, no bit-shifting, designed for fast encode/decode
@@ -201,14 +203,24 @@ reconstruction twice.
 No dependency on constraints (OER's canonical variant, COER, is well-defined without
 them), so this can run in parallel with B/C.
 
-**Blocker for the OER half.** Rec. ITU-T X.696 | ISO/IEC 8825-7 is not among the
-specifications available to this project: the uploaded set covers X.680–X.693, and
-`itu.int` is refused by the environment's network policy. OER is a *binary wire format*
-whose canonical variant BCIR would emit and digest, so implementing it from recollection
-is not an option — a plausible-looking encoder that gets the length determinant, the
-SEQUENCE preamble bitmap, or the SEQUENCE OF quantity field wrong produces octets that
-are not OER, and the error would be frozen into an ABI. **X.696 must be supplied before
-this half can start.**
+**How the OER half was validated.** X.696 Annex A carries a complete worked example — a
+personnel record, 95 octets, with a per-field commentary. That fixture is transcribed into
+`bcir/tests/test_asn1_oer.py` and the encoder reproduces it byte for byte. This matters
+more than a round-trip test: a round trip passes just as happily when the encoder and
+decoder share the same wrong assumption about the length determinant, the SEQUENCE
+preamble bitmap or the SEQUENCE OF quantity field, which is exactly the failure mode an
+implementation written from recollection produces. Annex A also happens to exercise the
+three rules most easily got wrong — SET components in canonical tag order (§18.2, and the
+record's `name` is `[APPLICATION 1]`, sorting ahead of `title`'s `[0]`), the presence
+bitmap (§16.2.3), and the quantity field, which is a length determinant followed by the
+count rather than a bare count (§17.2).
+
+**The constraint dependency, stated.** Clauses 10, 13, 14 and 27 pick between a
+fixed-width and a length-prefixed form from the type's *effective constraint* (§8.2.7,
+§8.2.8). BCIR has no constraint model yet (phase B), so every integer takes §10.4 e) and
+every string the length-prefixed form. That is not a shortcut — it is what X.696
+specifies for an unconstrained type — and phase B adds the narrower forms without
+changing any octets already emitted for one.
 
 **What the fast path delivers on its own.** A driver that receives a DER projection can
 now reconstruct the native artifact in freestanding C, with no Python in the path. The
@@ -234,7 +246,18 @@ schema with a canonical binary projection, rather than each being an ad-hoc shap
 
 Canonical variant: CJER, for the digest discipline.
 
-### F. X.681 information objects + X.683 parameterization
+### F. X.681 information objects + X.683 parameterization · **X.681 PARTIAL, the X.509 blocker cleared**
+
+> **Status: the open type is built.** `OpenType` in `bcir/asn1/schema.py` (DER) and
+> `bcir/asn1/oer.py` §30 (OER); the front-end parses X.681 §9 class definitions, §11
+> objects, §12 object sets, `CLASS.&field` references, and the withdrawn-but-ubiquitous
+> `ANY DEFINED BY` spelling. **The X.509 gate passes: 152/152 real certificates.**
+>
+> What is deliberately *not* built: X.682's table constraints are recorded, not resolved,
+> so an open type stays open rather than being narrowed to the type an object set implies.
+> That is honest rather than lossy — the octets are carried through untouched, which is
+> exactly the open-type contract — and it is what a later phase would add. X.683
+> parameterization is still refused by name.
 
 ASN.1's own generics and open-type machinery. `CLASS`, `WITH SYNTAX`, information
 object sets, and the `&Type` / `&id` field references that make `ALGORITHM-IDENTIFIER`

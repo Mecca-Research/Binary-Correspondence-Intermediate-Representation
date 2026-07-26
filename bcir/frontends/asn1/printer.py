@@ -84,6 +84,13 @@ def _type(node, depth: int) -> str:
         mode = f" {node.mode}" if node.mode else ""
         return f"{head}{mode} {_type(node.inner, depth)}"
 
+    if isinstance(node, ast.OpenTypeNode):
+        if node.object_class is not None:
+            return f"{node.object_class}.{node.field}"
+        if node.governed_by is not None:
+            return f"ANY DEFINED BY {node.governed_by}"
+        return "ANY"
+
     if isinstance(node, ast.SequenceOfType):
         name = f"{node.element_name} " if node.element_name else ""
         return f"SEQUENCE OF {name}{_type(node.element, depth)}"
@@ -120,6 +127,23 @@ def _components(items: tuple[object, ...], depth: int) -> str:
     return "{\n" + ",\n".join(rendered) + "\n" + _INDENT * depth + "}"
 
 
+def _class_fields(assignment: ast.ClassAssignment) -> str:
+    """X.681 §9.1. WITH SYNTAX is deliberately not reproduced: it defines an alternative
+    NOTATION for writing objects of the class, never an encoding, and the parser discards
+    it — so printing one would invent text the AST does not carry."""
+    parts = []
+    for field in assignment.fields:
+        piece = field.name
+        if field.type is not None:
+            piece += f" {_type(field.type, 1)}"
+        if field.unique:
+            piece += " UNIQUE"
+        if field.optional:
+            piece += " OPTIONAL"
+        parts.append(piece)
+    return "{ " + ", ".join(parts) + " }" if parts else "{}"
+
+
 def print_module(node: ast.ModuleNode) -> str:
     lines: list[str] = []
     header = node.name
@@ -147,6 +171,11 @@ def print_module(node: ast.ModuleNode) -> str:
         elif isinstance(assignment, ast.ValueAssignment):
             lines.append(f"{assignment.name} {_type(assignment.type, 0)} ::= "
                          f"{_value(assignment.value)}")
+        elif isinstance(assignment, ast.ClassAssignment):
+            lines.append(f"{assignment.name} ::= CLASS {_class_fields(assignment)}")
+        elif isinstance(assignment, (ast.ObjectAssignment, ast.ObjectSetAssignment)):
+            lines.append(f"{assignment.name} {assignment.object_class} ::= "
+                         f"{assignment.raw}")
         lines.append("")
 
     lines.append("END")

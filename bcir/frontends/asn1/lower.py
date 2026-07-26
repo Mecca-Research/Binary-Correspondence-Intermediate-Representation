@@ -25,8 +25,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from bcir.asn1.schema import (Asn1Type, Choice, Component, Module, Primitive, Sequence,
-                              SequenceOf, Set, SetOf)
+from bcir.asn1.schema import (Asn1Type, Choice, Component, Module, OpenType, Primitive,
+                              Sequence, SequenceOf, Set, SetOf)
 from bcir.asn1.tags import Asn1Error, Tag, Universal
 
 from . import ast
@@ -113,6 +113,12 @@ class Lowerer:
     def __init__(self, node: ast.ModuleNode, imports: dict[str, Module] | None = None):
         self.node = node
         self.assignments = node.type_assignments()
+        #: X.681 §9 class definitions, by name. Needed because `CLASS.&field` resolves to
+        #: the field's DECLARED type when it is a value field, and only to an open type
+        #: when it is a type field -- the class definition is the only place that says
+        #: which, so a front-end without this table has to guess.
+        self.classes = {a.name: a for a in node.assignments
+                        if isinstance(a, ast.ClassAssignment)}
         self.imported = imports or {}
         self.types: dict[str, Asn1Type] = {}
         self.enumerations: dict[str, dict[str, int]] = {}
@@ -175,6 +181,9 @@ class Lowerer:
                 return target.types[node.name]
             return self._type_by_name(node.name)
 
+        if isinstance(node, ast.OpenTypeNode):
+            return self._open_type(node, label)
+
         if isinstance(node, ast.Builtin):
             return self._builtin(node, label)
 
@@ -204,6 +213,35 @@ class Lowerer:
             return Choice(self._components(node.alternatives, label, choice=True), label)
 
         raise Asn1SemanticError(f"{label}: unsupported type node {type(node).__name__}")
+
+    def _open_type(self, node: ast.OpenTypeNode, label: str) -> Asn1Type:
+        """Resolve `ANY [DEFINED BY x]` and `CLASS.&field` (X.681 §14/§15).
+
+        A `CLASS.&Type` reference is genuinely open. A `CLASS.&id` reference is NOT: the
+        class declared a type for that value field, so lowering it to an open type would
+        throw away information the module supplied and turn a checkable OBJECT IDENTIFIER
+        into opaque octets.
+        """
+        if node.object_class is not None:
+            declared = self.classes.get(node.object_class)
+            if declared is None:
+                raise Asn1SemanticError(
+                    f"{label}: information object class {node.object_class!r} is "
+                    f"referenced but never defined in this module")
+            for field in declared.fields:
+                if field.name != node.field:
+                    continue
+                if field.is_type_field:
+                    return OpenType(f"{node.object_class}{node.field}")
+                if field.type is None:
+                    raise Asn1SemanticError(
+                        f"{label}: {node.object_class}{node.field} is a value field with "
+                        f"no declared type, so it has no encoding")
+                return self._type(field.type, label)
+            raise Asn1SemanticError(
+                f"{label}: {node.object_class} has no field {node.field!r}")
+        governed = f" DEFINED BY {node.governed_by}" if node.governed_by else ""
+        return OpenType(f"ANY{governed}")
 
     def _builtin(self, node: ast.Builtin, label: str) -> Asn1Type:
         universal = UNIVERSAL_OF.get(node.name)
@@ -243,14 +281,14 @@ class Lowerer:
         if mode == "EXPLICIT":
             return True
         if mode == "IMPLICIT":
-            if _is_untagged_choice(built):
+            if _needs_explicit_tag(built):
                 raise Asn1SemanticError(
-                    "IMPLICIT cannot tag a CHOICE: an implicit tag replaces the base "
-                    "tag and a CHOICE has none (X.680 29.1/31.2.7)")
+                    "IMPLICIT cannot tag a CHOICE or an open type: an implicit tag "
+                    "replaces the base tag and neither has one (X.680 29.1/31.2.7)")
             return False
         # No keyword: the module's default decides -- except that §31.2.7 forces
-        # EXPLICIT over a CHOICE even in an IMPLICIT or AUTOMATIC module.
-        if _is_untagged_choice(built):
+        # EXPLICIT over a CHOICE or an open type even in an IMPLICIT/AUTOMATIC module.
+        if _needs_explicit_tag(built):
             return True
         return self.node.tag_default == "EXPLICIT"
 
@@ -355,12 +393,18 @@ def _peel_tag(node):
     return node, None, None
 
 
-def _is_untagged_choice(built: Asn1Type) -> bool:
-    if isinstance(built, Choice):
+def _needs_explicit_tag(built: Asn1Type) -> bool:
+    """X.680 §31.2.7: a tag over a CHOICE or an OPEN TYPE is always EXPLICIT.
+
+    Both have no tag of their own -- a CHOICE shows the chosen alternative's tag (§29.1),
+    an open type the contained value's -- so an implicit tag would have nothing to
+    replace and would erase the only discriminator on the wire.
+    """
+    if isinstance(built, (Choice, OpenType)):
         return True
     if isinstance(built, _LazyType):
         try:
-            return isinstance(built._resolved(), Choice)
+            return isinstance(built._resolved(), (Choice, OpenType))
         except Asn1SemanticError:                          # pragma: no cover - guarded
             return False
     return False

@@ -164,6 +164,13 @@ class Parser:
         if self.at_word("ENCODING-CONTROL"):
             raise self.error(f"{_OUT_OF_SCOPE['ENCODING-CONTROL']} are not supported "
                              "(roadmap phase G)")
+        # X.681 §11.1/§12.1: an information object or object set is `<name> CLASSNAME ::=
+        # { ... }` -- TWO references before the assignment, where a type assignment has
+        # one. That two-token lookahead is the whole discriminator.
+        if (tok.kind in ("typereference", "identifier")
+                and self.peek(1).kind == "typereference"
+                and self.at_punct("::=", 2)):
+            return self.parse_object_or_set()
         if tok.kind == "typereference":
             name = self.take().text
             if self.at_punct("{"):
@@ -172,8 +179,10 @@ class Parser:
                     "(roadmap phase F)")
             self.expect_punct("::=")
             if self.at_word("CLASS"):
-                raise self.error(f"{_OUT_OF_SCOPE['CLASS']} are not supported "
-                                 "(roadmap phase F)")
+                return self.parse_class(name)
+            # `Set CLASS ::= { obj | obj }` -- an object SET assignment (X.681 §12.1).
+            # It is told from a type assignment by the class name standing where a type
+            # would: `Algorithms ALGORITHM ::= {...}` has already consumed `Algorithms`.
             return ast.TypeAssignment(name, self.parse_type())
         if tok.kind == "identifier":
             name = self.take().text
@@ -181,6 +190,86 @@ class Parser:
             self.expect_punct("::=")
             return ast.ValueAssignment(name, value_type, self.parse_value())
         raise self.error(f"expected an assignment, found {tok.text!r}")
+
+    # --- X.681: information object classes, objects, and object sets ------------------
+
+    def parse_class(self, name: str) -> ast.ClassAssignment:
+        """X.681 §9.1 `CLASS { &field ..., ... }`, plus the WITH SYNTAX clause.
+
+        WITH SYNTAX defines a *user-friendly notation* for writing objects of the class
+        (§10). It changes how an object is spelled, never what an encoding looks like, so
+        it is consumed and discarded -- objects themselves are recorded but not
+        interpreted here.
+        """
+        self.expect("reserved", "CLASS")
+        self.expect_punct("{")
+        fields: list[ast.ClassField] = []
+        while not self.at_punct("}"):
+            token = self.expect("fieldreference")
+            field_name = token.text
+            if len(field_name) < 2:
+                raise self.error("a field reference needs a name after '&'", token)
+            is_type_field = field_name[1].isupper()
+            declared = None
+            if not is_type_field and not (self.at_punct(",") or self.at_punct("}")
+                                          or self.at_word("OPTIONAL")
+                                          or self.at_word("UNIQUE")):
+                declared = self.parse_type()
+            unique = bool(self.accept("reserved", "UNIQUE"))
+            optional = bool(self.accept("reserved", "OPTIONAL"))
+            if self.at_word("DEFAULT"):
+                self.take()
+                self.parse_value() if not self.at_punct("{") else self.parse_value()
+            fields.append(ast.ClassField(field_name, is_type_field, declared, optional,
+                                        unique))
+            if not self.accept("punct", ","):
+                break
+        self.expect_punct("}")
+        if self.at_word("WITH"):
+            self.take()
+            self.expect("reserved", "SYNTAX")
+            self._skip_balanced("{", "}")
+        return ast.ClassAssignment(name, tuple(fields))
+
+    def parse_object_or_set(self):
+        """X.681 §11.1 an information object, §12.1 an object set.
+
+        Both are recorded rather than interpreted: their content selects WHICH type an
+        open type contains, which is X.682's table-constraint machinery. Recording the
+        names keeps the module's shape honest -- a later phase can resolve them without
+        the parser having quietly dropped them.
+        """
+        name = self.take().text
+        object_class = self.expect("typereference").text
+        self.expect_punct("::=")
+        start = self.index
+        if not self.at_punct("{"):
+            self.take()
+            return ast.ObjectAssignment(name, object_class,
+                                        self._raw_span(start, self.index))
+        self._skip_balanced("{", "}")
+        raw = self._raw_span(start, self.index)
+        members = tuple(
+            self.tokens[i].text for i in range(start, self.index)
+            if self.tokens[i].kind in ("typereference", "identifier"))
+        # A capitalised name denotes an object SET (§12.1); a lower-case one an object.
+        if name[0].isupper():
+            return ast.ObjectSetAssignment(name, object_class, members, raw)
+        return ast.ObjectAssignment(name, object_class, raw)
+
+    def _raw_span(self, start: int, stop: int) -> str:
+        """The tokens in [start, stop) as normalized text.
+
+        Normalized rather than verbatim because the round-trip law compares ASTs: what has
+        to survive is the token sequence, not the author's whitespace. Re-lexing this
+        string yields the same tokens, so the law holds without the parser having to keep
+        byte offsets.
+        """
+        out: list[str] = []
+        for index in range(start, stop):
+            tok = self.tokens[index]
+            out.append(f'"{tok.text}"' if tok.kind == "cstring" else tok.text)
+        return " ".join(out)
 
     # --- clauses 16-31: types ---------------------------------------------------------
 
@@ -236,22 +325,32 @@ class Parser:
                 return self.parse_set()
             if tok.text == "CHOICE":
                 return self.parse_choice()
-            if tok.text == "ANY":                          # pragma: no cover - see below
-                raise self.error("ANY / ANY DEFINED BY is the pre-1994 open type; the "
-                                 "modern spelling needs X.681 (roadmap phase F)")
             raise self.error(f"{tok.text!r} is a reserved word, not a type")
 
         if tok.kind == "typereference":
-            # ANY / ANY DEFINED BY is X.680:1988 notation, WITHDRAWN from the standard
-            # (the 2021 edition has no `ANY`). It lexes as an ordinary typereference, so
-            # without this it would be reported as an undefined type or as a stray token
-            # -- neither of which tells the reader that the module needs an open type and
-            # therefore X.681. RFC 5280's AlgorithmIdentifier.parameters is exactly this.
+            # ANY / ANY DEFINED BY is withdrawn X.680:1988 notation -- the 2021 edition
+            # dropped both `ANY` and `DEFINED` from the reserved words of Table 3, which
+            # is why they arrive here as ordinary typereferences and are matched on TEXT.
+            # RFC 5280's 1988 module still uses the spelling, and it means exactly what
+            # X.681 §14 calls an open type, so accepting it is not accepting a dialect:
+            # both spellings lower to the same OpenType.
             if tok.text == "ANY":
-                raise self.error(
-                    "ANY / ANY DEFINED BY is withdrawn X.680:1988 notation; the modern "
-                    "spelling is an X.681 open type (e.g. ALGORITHM.&Type), which this "
-                    "front-end does not implement (roadmap phase F)")
+                self.take()
+                governed = None
+                if self.at("typereference", "DEFINED"):
+                    self.take()
+                    self.expect("reserved", "BY")
+                    governed = self.expect("identifier").text
+                return ast.OpenTypeNode(governed_by=governed)
+            # `CLASS.&Field` -- an information object class field reference. A TYPE
+            # field (`&Type`, capitalised after the ampersand) is an OPEN TYPE; a VALUE
+            # field (`&id`) has whatever type the class declared for it, which the
+            # lowering resolves from the class definition.
+            if self.at_punct(".", 1) and self.peek(2).kind == "fieldreference":
+                class_name = self.take().text
+                self.take()
+                field = self.take().text
+                return ast.OpenTypeNode(object_class=class_name, field=field)
             # `Module.Type` -- an external type reference (§14.1).
             if self.at_punct(".", 1) and self.peek(2).kind == "typereference":
                 module_name = self.take().text
