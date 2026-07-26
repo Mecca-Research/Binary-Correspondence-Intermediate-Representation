@@ -39,6 +39,10 @@ _COLD_HOSTED_TRAINING = ("contracts", "data", "bpe", "providers", "reasoning", "
                          "hardware_policy_spec", "hardware_policy", "adaptive_transformer",
                          "byte_latent", "sequence_interfaces")
 _COLD_MODEL_ASSESS = ("assessment", "execution_plan", "model_microbench", "assess_tool")
+# The X.690 codec is an interop rail, not part of planning or emission: the simple path
+# (plan a program, emit a kernel) never touches ASN.1, so loading it eagerly would put
+# the whole clause-8 type surface on every `import bcir`.
+_COLD_ASN1 = ("tags", "length", "tlv", "values", "der", "codec", "schema", "streampack")
 
 COLD: frozenset[str] = frozenset(
     [f"bcir.kbcir.{m}" for m in _COLD_KBCIR]
@@ -47,7 +51,8 @@ COLD: frozenset[str] = frozenset(
     + [f"bcir.{m}" for m in _COLD_TOP]
     + [f"bcir.hosted.models.{m}" for m in _COLD_HOSTED_MODELS]
     + [f"bcir.hosted.training.{m}" for m in _COLD_HOSTED_TRAINING]
-    + [f"bcir.frontends.models.{m}" for m in _COLD_MODEL_ASSESS])
+    + [f"bcir.frontends.models.{m}" for m in _COLD_MODEL_ASSESS]
+    + ["bcir.asn1"] + [f"bcir.asn1.{m}" for m in _COLD_ASN1])
 
 # --- the HOT entry points that must stay lean ---
 HOT_ENTRIES: dict[str, str] = {

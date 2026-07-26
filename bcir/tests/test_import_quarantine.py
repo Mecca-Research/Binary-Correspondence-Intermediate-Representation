@@ -31,10 +31,17 @@ def test_quarantine_holds_across_every_hot_entry():
 def test_cold_manifest_is_nontrivial_and_resolves_to_real_modules():
     # The manifest can't silently empty out (which would make the gate vacuous)...
     assert len(COLD) >= 20
-    # ...and every declared cold organ must name a real module file.
+    # ...and every declared cold organ must name a real module. A cold organ may be a
+    # PACKAGE as well as a single module (bcir.asn1 is the whole X.690 codec), so
+    # resolve both spellings: `<name>.py` and `<name>/__init__.py`. Resolving only the
+    # first would force a package to be quarantined submodule-by-submodule and would
+    # silently reject the package's own name.
     for mod in COLD:
-        rel = os.path.join(_ROOT, *mod.split(".")) + ".py"
-        assert os.path.exists(rel), f"cold manifest names a missing module: {mod} ({rel})"
+        base = os.path.join(_ROOT, *mod.split("."))
+        candidates = (base + ".py", os.path.join(base, "__init__.py"))
+        assert any(os.path.exists(path) for path in candidates), (
+            f"cold manifest names a missing module: {mod} "
+            f"(tried {', '.join(candidates)})")
 
 
 def test_every_hot_entry_actually_imports_some_bcir():

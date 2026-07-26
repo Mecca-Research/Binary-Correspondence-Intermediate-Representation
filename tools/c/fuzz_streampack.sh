@@ -8,6 +8,7 @@
 #   ETL binary-record decoder                -- device/driver packet fields
 #   telemetry-frame decoder                  -- frames a device emits over UART
 #   BCIRQ8 model loader                      -- an external model artifact (LangRef 16)
+#   X.690 BER/DER decoder                    -- an ASN.1 artifact from a foreign peer
 #
 # Each seeds from real Python-rail output so the campaign starts inside the format rather
 # than rediscovering its magic; the BCIRQ8 harness additionally REPAIRS the format's three
@@ -175,5 +176,45 @@ then
   fi
 else
   echo "  SKIP BCIRQ8 loader fuzz (could not build a seed artifact)"
+fi
+echo "[fuzz] libFuzzer on the X.690 BER/DER decoder (${RUNS} runs)"
+# bcir_asn1.c parses BER/DER from a peer. X.690's own structures -- multi-octet tags
+# and lengths, indefinite-length constructed encodings closed by end-of-contents
+# octets, arbitrary nesting -- are the shapes that historically break hand-written
+# parsers, so the harness walks every node and reads every contents octet the decoder
+# hands out. Seeded from real StreamPack DER projections plus the standard's own
+# worked examples (the constructed/indefinite forms a fuzzer rarely invents).
+"${CLANG}" -std=c23 -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all \
+  "${C}/fuzz_asn1.c" "${C}/bcir_asn1.c" -I "${C}" -o "${tmp}/fuzz_asn1" \
+  || { echo "  FAIL: X.690 fuzzer build"; exit 1; }
+mkdir -p "${tmp}/corpus_asn1"
+python3 - "${tmp}/corpus_asn1" <<'ASN1SEED' || { echo "  FAIL: X.690 seed"; exit 1; }
+import os, sys
+from bcir.asn1.streampack import encode_pack
+from bcir.examples import PROGRAMS
+from bcir.gem import hydrate
+from bcir.kbcir import optimize
+from bcir.kbcir.cost import TargetProfile, Theta
+d = sys.argv[1]
+h, theta = TargetProfile.x86_avx512(), Theta.cool()
+for name, build in sorted(PROGRAMS.items()):
+    module = build()
+    open(os.path.join(d, name + ".der"), "wb").write(
+        encode_pack(hydrate(module, optimize(module, h, theta))))
+# X.690's own worked examples: the constructed and indefinite forms coverage needs.
+for name, octets in {
+    "jones_primitive": "1a054a6f6e6573",
+    "jones_indefinite": "3a8004034a6f6e040265730000",
+    "bitstring_constructed": "23800303000a3b0305045f291cd00000",
+    "oid_2_999_3": "0603883703",
+    "sequence_smith": "300a1605536d6974680101ff",
+}.items():
+    open(os.path.join(d, name + ".bin"), "wb").write(bytes.fromhex(octets))
+ASN1SEED
+if "${tmp}/fuzz_asn1" -runs="${RUNS}" -max_total_time=60 -max_len=8192 \
+     "${tmp}/corpus_asn1" >"${tmp}/flog7" 2>&1; then
+  echo "  PASS libFuzzer X.690 decoder (${RUNS} runs, no crash)"
+else
+  echo "  FAIL: libFuzzer X.690 decoder found a crash"; tail -40 "${tmp}/flog7"; exit 1
 fi
 echo "[fuzz] ok"
