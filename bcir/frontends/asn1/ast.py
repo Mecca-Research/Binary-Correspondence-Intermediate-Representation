@@ -127,6 +127,19 @@ class Tagged:
 
 
 @dataclass(frozen=True)
+class Constrained:
+    """A type with one or more X.680 clause 51 subtype constraints applied.
+
+    Kept as a WRAPPER rather than a field on every type node so that a serial application
+    of constraints (§49.9) round-trips in the order written — and so that the printer can
+    reproduce `INTEGER (0..255) (0..100)` rather than silently folding it to one.
+    """
+
+    inner: object
+    constraints: tuple[object, ...] = ()
+
+
+@dataclass(frozen=True)
 class OpenTypeNode:
     """An open type — X.681 §14, reached two ways.
 
@@ -276,7 +289,7 @@ class ModuleNode:
 
 __all__ = [
     "BitsValue", "BoolValue", "BracedValue", "Builtin", "ChoiceType", "ClassAssignment",
-    "ClassField", "ComponentNode", "ExtensionMarker", "IntValue", "ModuleNode",
+    "ClassField", "ComponentNode", "Constrained", "ExtensionMarker", "IntValue", "ModuleNode",
     "NamedNumber", "NullValue", "ObjectAssignment", "ObjectSetAssignment", "OidArc",
     "OidValue", "OpenTypeNode", "RefValue", "SequenceOfType", "SequenceType",
     "SetOfType", "SetType", "StrValue", "SymbolsFromModule", "Tagged", "TypeAssignment",

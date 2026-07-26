@@ -6,10 +6,10 @@
 
 | Metric | Value |
 |---|---|
-| Static Python `test_*` function inventory | **2357** across 202 files |
+| Static Python `test_*` function inventory | **2379** across 203 files |
 | Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **122** |
 | Static registered-pass inventory | **37** |
-| Static MLIR fixture inventory (`mlir/test/`) | **112** files; 247 `expected-error` markers |
+| Static MLIR fixture inventory (`mlir/test/`) | **112** files; 250 `expected-error` markers |
 | Static runtime C source/header inventory (`runtime/c/`) | **272** files |
 | Verifier-law negative-fixture tag inventory | **R1–R24** (24/24 present) |
 | Registered hardware-channel inventory | **9** (cpu, fpga, gpu, memory, storage) |

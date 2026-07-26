@@ -1889,6 +1889,45 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
             << "' but names a universal tag number";
         ok = false;
       }
+      // An X.680 clause 51 constraint whose lower bound exceeds its upper bound permits
+      // NO VALUE AT ALL. That is a static fault of the same kind as two components
+      // sharing a tag: every use of the type is dead, because nothing can be encoded
+      // through it. The bounds here are already EFFECTIVE (X.696 8.2.7/8.2.8), so the
+      // set arithmetic has been reduced and an extensible constraint has correctly
+      // reported no bounds -- this check never fires on a type that is merely extensible.
+      // The bounds are read as SIGNED. ODS `I64Attr` accessors hand back an unsigned
+      // value, so a negative bound arrives as a huge positive one: `-1` becomes 2^64-1,
+      // a `< 0` test can never fire, and the emptiness comparison reports nonsense. A
+      // value constraint is legitimately negative (`INTEGER (-128..127)`), so this is not
+      // a theoretical concern.
+      const auto lowValue = [](std::optional<uint64_t> raw) {
+        return static_cast<int64_t>(*raw);
+      };
+      if (t.getConstraintLow() && t.getConstraintHigh() &&
+          lowValue(t.getConstraintLow()) > lowValue(t.getConstraintHigh())) {
+        t.emitError("R24: ASN.1 type ")
+            << t.getSymName() << " has an empty value constraint ("
+            << lowValue(t.getConstraintLow()) << ".."
+            << lowValue(t.getConstraintHigh())
+            << "); no value of the type can be encoded (X.680 49)";
+        ok = false;
+      }
+      // A negative SIZE is checked BEFORE emptiness so the diagnostic names the real
+      // fault: a length cannot be negative whatever the upper bound says.
+      if (t.getSizeLow() && lowValue(t.getSizeLow()) < 0) {
+        t.emitError("R24: ASN.1 type ")
+            << t.getSymName() << " has a negative SIZE lower bound ("
+            << lowValue(t.getSizeLow())
+            << "); a length cannot be negative (X.680 51.5)";
+        ok = false;
+      } else if (t.getSizeLow() && t.getSizeHigh() &&
+                 lowValue(t.getSizeLow()) > lowValue(t.getSizeHigh())) {
+        t.emitError("R24: ASN.1 type ")
+            << t.getSymName() << " has an empty SIZE constraint ("
+            << lowValue(t.getSizeLow()) << ".." << lowValue(t.getSizeHigh())
+            << "); no value of the type can be encoded (X.680 51.5)";
+        ok = false;
+      }
       if (t.getUniversal()) {
         int64_t u = *t.getUniversal();
         // X.680 Table 1: 0 is the encoding rules' own (end-of-contents), 15 is

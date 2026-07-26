@@ -84,6 +84,16 @@ def _type(node, depth: int) -> str:
         mode = f" {node.mode}" if node.mode else ""
         return f"{head}{mode} {_type(node.inner, depth)}"
 
+    if isinstance(node, ast.Constrained):
+        # A SIZE on a sequence-of belongs between the keyword and OF (§51.5), not after
+        # the element type -- printing it in the trailing position would re-parse as a
+        # constraint on the ELEMENT and change what the module means.
+        rendered = " ".join(str(c) for c in node.constraints)
+        if isinstance(node.inner, (ast.SequenceOfType, ast.SetOfType)):
+            keyword, rest = _type(node.inner, depth).split(" OF ", 1)
+            return f"{keyword} {rendered} OF {rest}"
+        return f"{_type(node.inner, depth)} {rendered}"
+
     if isinstance(node, ast.OpenTypeNode):
         if node.object_class is not None:
             return f"{node.object_class}.{node.field}"

@@ -48,7 +48,7 @@ rule.
 |---|---|---|---|
 | X.680 | 8824-1:2021 | Basic notation | **partial** — tag assignments consumed; notation not parsed |
 | X.681 | 8824-2:2021 | Information object specification | **partial** — classes, objects, object sets, open types; table constraints recorded not resolved |
-| X.682 | 8824-3:2021 | Constraint specification | not started |
+| X.682 | 8824-3:2021 | Constraint specification | **partial** — X.680 cl. 49–51 subtype constraints built; X.682's table/user-defined constraints not |
 | X.683 | 8824-4:2021 | Parameterization | not started |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | not started |
@@ -149,7 +149,19 @@ program. Third-party validation: parse the X.509 `AuthorityKeyIdentifier` and
 Stop condition: if the parsed subset cannot express X.509 without X.681 information
 objects, stop and take phase F first rather than inventing a dialect.
 
-### B. X.682 constraints · unblocks PER
+### B. X.682 constraints · **BUILT** (the X.680 subtype half) · unblocks PER
+
+> **Status: delivered.** `bcir/asn1/constraints.py` — single values, value ranges
+> with open endpoints and MIN/MAX, SIZE, FROM, and the UNION/INTERSECTION/EXCEPT
+> composition of clause 49 — plus the *effective* value/size constraint
+> (X.696 §8.2.7/§8.2.8), which is what an encoding is chosen from. OER now narrows:
+> `INTEGER (0..255)` is one octet where unconstrained INTEGER is two, and a
+> fixed-SIZE OCTET STRING or known-multiplier string drops its length determinant
+> entirely. R24 gained three diagnostics for an empty value set.
+>
+> Note the split the roadmap glossed: the *notation* phase B needs is **X.680**
+> clauses 49–51, not X.682. X.682 itself is table, component-relation and
+> user-defined constraints, which stay with phase F.
 
 Size, value-range, permitted-alphabet, `SIZE`, `FROM`, inner-subtyping, and the
 extensibility marker. Table and component-relation constraints (X.682 §10) need X.681

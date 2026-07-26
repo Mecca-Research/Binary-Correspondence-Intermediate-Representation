@@ -43,7 +43,7 @@ _COLD_MODEL_ASSESS = ("assessment", "execution_plan", "model_microbench", "asses
 # (plan a program, emit a kernel) never touches ASN.1, so loading it eagerly would put
 # the whole clause-8 type surface on every `import bcir`.
 _COLD_ASN1 = ("tags", "length", "tlv", "values", "der", "codec", "schema",
-              "streampack", "oer")
+              "streampack", "oer", "constraints")
 #: The X.680 front-end (roadmap phase A): a schema COMPILER, never on the hot path.
 _COLD_ASN1_FRONTEND = ("lexer", "ast", "parser", "printer", "lower")
 

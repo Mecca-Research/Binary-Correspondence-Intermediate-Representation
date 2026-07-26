@@ -118,6 +118,32 @@ def test_oracle_refuses_the_same_component_faults_r24_rejects():
         pass
 
 
+def test_the_law_rail_carries_the_effective_constraint_bounds_the_oracle_computes():
+    """The bounds in the IR are the EFFECTIVE ones (X.696 8.2.7/8.2.8), so both rails
+    must agree on what "effective" means -- most sharply for an extensible constraint,
+    which reports NO bounds (X.696 8.2.2 g) and therefore can never trip R24's emptiness
+    check however odd its root looks.
+    """
+    from bcir.asn1.constraints import (Extensible, Size, ValueRange, is_unsatisfiable)
+
+    text = open(_ASN1_TD, encoding="utf-8").read()
+    for attribute in ("constraint_low", "constraint_high", "size_low", "size_high"):
+        assert f"${attribute}" in text, f"the law rail does not carry {attribute}"
+
+    fixture = open(_FIXTURE, encoding="utf-8").read()
+    # Each emptiness the law rejects, the oracle must also call unsatisfiable...
+    assert is_unsatisfiable(ValueRange(10, 1)), "oracle accepts the value set R24 rejects"
+    assert is_unsatisfiable(Size(ValueRange(5, 2))), "oracle accepts the SIZE R24 rejects"
+    assert is_unsatisfiable(Size(ValueRange(-1, 4))), "oracle accepts a negative SIZE"
+    assert "constraint_low = 10 : i64" in fixture and "size_low = 5 : i64" in fixture
+    assert "size_low = -1 : i64" in fixture
+    # ...and the extensible case must be legal on BOTH rails.
+    assert not is_unsatisfiable(Extensible(ValueRange(10, 1)))
+    assert "@extensible_ok" in fixture, (
+        "the law fixture must pin the extensible case as a POSITIVE, since X.696 8.2.2 g "
+        "makes it carry no effective bounds at all")
+
+
 def test_law_fixture_covers_every_r24_diagnostic_the_pass_can_emit():
     """Anti-degeneration: each R24 message class must have a negative fixture.
 
@@ -142,6 +168,9 @@ def test_law_fixture_covers_every_r24_diagnostic_the_pass_can_emit():
         "but names no element type",
         "is marked strict_der but declares it accepts BER",
         "is not marked additive",
+        "has an empty value constraint",
+        "has an empty SIZE constraint",
+        "has a negative SIZE lower bound",
     ]
     for fragment in fragments:
         assert fragment in pass_src, f"R24 diagnostic vanished from the pass: {fragment}"

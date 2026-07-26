@@ -208,3 +208,62 @@ bcir.asn1.module @replacing_projection attributes {
   // expected-error @+1 {{R24: ASN.1 projection replace of streampack is not marked additive; an ASN.1 projection is a SECOND transfer syntax, never a replacement for a frozen wire format}}
   bcir.asn1.projection @replace { native = "streampack", type = @Int }
 }
+
+// -----
+// (15 -- NEGATIVE) an X.680 clause 51 constraint whose bounds cross permits NO value, so
+// every use of the type is dead. The bounds carried in the IR are already EFFECTIVE
+// (X.696 8.2.7), which is why an extensible constraint -- reporting no bounds at all --
+// can never trip this.
+bcir.asn1.module @empty_constraint attributes {
+  oid = array<i64: 1, 3, 6, 1, 4, 1, 62596, 13>,
+  rules = #bcir.asn1_rules<der>,
+  default_tagging = #bcir.asn1_tagging<implicit>
+} {
+  // expected-error @+1 {{R24: ASN.1 type Impossible has an empty value constraint (10..1); no value of the type can be encoded (X.680 49)}}
+  bcir.asn1.type @Impossible attributes { kind = "primitive", universal = 2 : i64,
+                                          constraint_low = 10 : i64,
+                                          constraint_high = 1 : i64 } { }
+}
+
+// -----
+// (16 -- NEGATIVE) the same fault on a SIZE, which bounds a LENGTH rather than a value.
+bcir.asn1.module @empty_size attributes {
+  oid = array<i64: 1, 3, 6, 1, 4, 1, 62596, 14>,
+  rules = #bcir.asn1_rules<der>,
+  default_tagging = #bcir.asn1_tagging<implicit>
+} {
+  bcir.asn1.type @Int attributes { kind = "primitive", universal = 2 : i64 } { }
+  // expected-error @+1 {{R24: ASN.1 type NoLength has an empty SIZE constraint (5..2); no value of the type can be encoded (X.680 51.5)}}
+  bcir.asn1.type @NoLength attributes { kind = "sequence_of", element = @Int,
+                                        size_low = 5 : i64, size_high = 2 : i64 } { }
+}
+
+// -----
+// (17 -- NEGATIVE) a negative SIZE lower bound. A length is a count of octets or
+// occurrences and cannot be below zero, so this is unsatisfiable however the upper
+// bound is written.
+bcir.asn1.module @negative_size attributes {
+  oid = array<i64: 1, 3, 6, 1, 4, 1, 62596, 15>,
+  rules = #bcir.asn1_rules<der>,
+  default_tagging = #bcir.asn1_tagging<implicit>
+} {
+  bcir.asn1.type @Int attributes { kind = "primitive", universal = 2 : i64 } { }
+  // expected-error @+1 {{R24: ASN.1 type Negative has a negative SIZE lower bound (-1); a length cannot be negative (X.680 51.5)}}
+  bcir.asn1.type @Negative attributes { kind = "sequence_of", element = @Int,
+                                        size_low = -1 : i64, size_high = 4 : i64 } { }
+}
+
+// -----
+// (18 -- POSITIVE) an EXTENSIBLE constraint reports NO effective bounds (X.696 8.2.2 g),
+// so a type whose root bounds would look odd is still legal -- and, crucially, is encoded
+// as though unbounded, because a field sized from today's root could not carry a later
+// version's values.
+bcir.asn1.module @extensible_ok attributes {
+  oid = array<i64: 1, 3, 6, 1, 4, 1, 62596, 16>,
+  rules = #bcir.asn1_rules<der>,
+  default_tagging = #bcir.asn1_tagging<implicit>
+} {
+  bcir.asn1.type @Bounded attributes { kind = "primitive", universal = 2 : i64,
+                                       constraint_low = 0 : i64,
+                                       constraint_high = 255 : i64 } { }
+}
