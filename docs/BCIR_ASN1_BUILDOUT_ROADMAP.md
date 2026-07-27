@@ -57,7 +57,7 @@ rule.
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
 | X.696 | 8825-7:2021 | OER | **built** (COER out, BASIC-OER in; validated against Annex A) |
-| X.697 | 8825-8:2021 | JER | not started |
+| X.697 | 8825-8:2021 | JER | **built** — clauses 20-41 plus §7.2 constraint visibility; X.697 registers NO canonical variant (§42.2), so the canonical profile is BCIR's own and carries no OID; encoding instructions (cl. 14-19) excluded |
 
 Sizes, as a rough effort signal (converted spec text, lines): X.681 1 125 · X.682 345 ·
 X.683 567 · X.691 2 733 · X.692 **7 599** · X.693 2 562. ECN is the largest document in
