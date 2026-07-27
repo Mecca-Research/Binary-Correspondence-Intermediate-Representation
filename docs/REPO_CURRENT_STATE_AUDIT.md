@@ -56,8 +56,9 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
   The Python codec/builder/CLI and allocation-free C reader/selector agree on integrity,
   payload identity, compatibility, and deterministic selection. It is not a linker,
   loader, signature format, or replacement for any platform object ABI. The additive
-  `BCIR-ArtifactBundle` ASN.1 module projects the same abstract bundle through DER/COER
-  and reconstructs byte-identical native BCAB without allocating competing kind IDs.
+  `BCIR-ArtifactBundle` ASN.1 module projects the same abstract bundle through DER,
+  COER, and canonical aligned/unaligned PER and reconstructs byte-identical native BCAB
+  without allocating competing kind IDs.
 - **`mlir/`** — the law: the ODS/TableGen dialect family (op count in
     [`STATUS.md`](STATUS.md)), the compiled `bcir-opt` with `-bcir-verify`
     (**R1–R24**), the full deterministic optimizer core in C++23 (`-bcir-cost-model`
@@ -211,8 +212,16 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     complete file before display or extraction, and selects identically in Python and C. Real
     resident compiler/linker products and the bounded JVM class assembler are round-trip gated;
     MLIR carries the validated directory and selected content address rather than embedding bytes.
-    Its additive ASN.1 DER/COER projection preserves native BCAB byte identity and is separately
-    visible to R24; generic C X.690 validation does not overclaim a C schema transcoder.
+    Its additive ASN.1 DER/COER/canonical-PER projections preserve native BCAB byte identity.
+    The DER projection is separately visible to the current X.690-shaped R24 rail; generic C
+    X.690 validation does not overclaim a C schema transcoder for the other encodings.
+22. **The wider ASN.1 oracle is substantial but deliberately uneven across rails.**
+    X.681/X.682/X.683, PER, OER, XER, Python-oracle JER with all six instruction
+    families, ECN's built-in model, and fixed-candidate encoding measurement are landed
+    within their documented subsets. JER still materializes through Python `json.loads`;
+    no bounded C JER twin, MLIR family/profile, direct claim lowering, native target
+    table, selection certificate, or driver path exists. The promotion sequence is
+    [`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md).
 
 ## Confirmed limitations
 
@@ -283,6 +292,11 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     deterministic compatibility selection, and strict format identity, but no signature directory,
     certificate policy, relocation validation, W^X loader, revocation, or errata admission. Those
     are MC14/trusted-loader work; extraction alone never authorizes execution.
+13. **Schema-bound JER is not parser-free or an execution-path binary format.** ASN.1
+    removes type guessing and can enable generated bounded sinks, but JSON still requires
+    lexical, UTF-8, escape, number, duplicate, bounds, and complete-consumption checks.
+    Privileged execution must consume verified claims, StreamPack, BCAB, or native
+    objects; schema compatibility alone does not authorize live driver replacement.
 
 ## Recommended next milestones
 

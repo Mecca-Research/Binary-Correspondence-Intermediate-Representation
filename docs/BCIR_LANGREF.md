@@ -235,6 +235,12 @@ format would invalidate every digest taken over the native octets, so the IR ref
 express one. Vacuous for IR with no `bcir.asn1.*` operation (the non-disturbance
 invariant R14–R23 also hold to). Oracle twins: `asn1.schema` and `asn1.der`.
 
+The current MLIR attribute and emission checks are specifically X.690-shaped:
+`#bcir.asn1_rules` names BER/CER/DER only. The Python oracle also implements bounded
+PER/OER/XER/JER and ECN surfaces, but those do not silently become R24-visible. The
+additive family/profile representation and R24 extension required for JER are future
+work in [`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md).
+
 **Shape + dtype laws (R22/R23) — the D2 promotion.** The E3–E6 `check_*` validators'
 "structurally valid tensors" guarantee, made law over the `gem.*` tensor claims:
 
@@ -1098,28 +1104,25 @@ and reject work outside it. The current profiles are:
   transition, NMI/IST/paranoid entry, and unmodeled feature policy.
 - **BCIRQ8 decoder-artifact profile:** the complete v1 contract in §16, including
   canonical order, CRC/bounds checks, provenance hashes, and tied/untied heads.
-- **ASN.1 / X.690 interop profile:** the whole of X.690 (02/2021) clause 8 over the
-  X.680 (02/2021) tag assignments, restricted by clauses 10 and 11 on emission —
-  **DER out, BER in**. CER is accepted on input and never emitted: §9.1 makes the
-  indefinite length form mandatory for constructed encodings, which no digested,
-  frozen artifact can carry. X.681/X.682/X.683 (information objects, constraints,
-  parameterization) and X.691/X.692/X.693 (PER, ECN, XER) are outside the profile.
-  A second set of encoding rules is built: **X.696 OER** (`bcir/asn1/oer.py`), under the
-  same posture — **CANONICAL-OER out, BASIC-OER in** — over the same type model, which is
-  the concrete form of the claim that encoding rules are a realization choice and not part
-  of the schema. It is validated against X.696 Annex A's own worked example.
-  Module TEXT is compiled by the X.680 front-end (`bcir/frontends/asn1/`, the
-  `bcir-asn1c` CLI): a `.asn1` module lowers to the same type model the encoder uses,
-  so a peer's schema is consumed rather than transcribed. The front-end covers the
-  clause 13 module structure and the clause 16-31 types the profile can encode, and
-  REFUSES what it cannot express -- an `ANY DEFINED BY` or an information object class
-  names X.681 rather than being skipped, because a front-end that silently dropped one
-  would build a type model disagreeing with the module it just read.
+- **ASN.1 interoperability profiles:** the MLIR law profile is the whole of X.690
+  (02/2021) clause 8 over X.680 tag assignments, restricted by clauses 10 and 11 on
+  emission — **DER out, BER in**. CER is accepted as BER input and never emitted.
+  The shared Python schema/oracle additionally implements the documented subsets of
+  X.681 information objects, X.682 constraints/table resolution, X.683
+  parameterization, canonical aligned/unaligned PER, COER/OER, CXER/XER, Python-oracle
+  JER with all six X.697 instruction families, and ECN's built-in model. Each profile
+  has its own explicit exclusions and C coverage in
+  [`BCIR_ASN1_BUILDOUT_ROADMAP.md`](BCIR_ASN1_BUILDOUT_ROADMAP.md); only X.690 is
+  currently represented by the MLIR `asn1_rules` attribute and R24 emission checks.
+  Module text is compiled by the X.680 front end (`bcir/frontends/asn1/`, the
+  `bcir-asn1c` CLI), and unsupported notation fails closed. JER remains JSON text,
+  has no standardized canonical variant, and has no C/MLIR/direct-claims rail yet;
+  [`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md) owns that promotion path.
 - **BCAB artifact-bundle profile:** canonical multi-image directory, integrity checks,
   standard payload identity, deterministic compatibility selection, and Python/C/C++/MLIR
-  parity. Its additive ASN.1 projection provides DER/BER and COER/OER transfer syntaxes
-  without changing native BCAB kind IDs or bytes. Payload assembler, linker, loader, and
-  ISA semantics remain external standards.
+  parity. Its additive ASN.1 projection provides DER/BER, COER/OER, and canonical
+  aligned/unaligned PER transfer syntaxes without changing native BCAB kind IDs or
+  bytes. Payload assembler, linker, loader, and ISA semantics remain external standards.
 
 The following versioned contracts are adjacent to BCIR semantics but have dedicated
 normative documents because their byte/lifecycle evolution is independent:
@@ -1130,6 +1133,9 @@ normative documents because their byte/lifecycle evolution is independent:
 - Artifact Bundle v1: [`BCIR_ARTIFACT_BUNDLE_ABI.md`](kernel/BCIR_ARTIFACT_BUNDLE_ABI.md);
   its additive ASN.1 projection is specified by
   [`BCIR_ASN1_X690_ABI.md`](BCIR_ASN1_X690_ABI.md);
+- schema-bound JER compilation:
+  [`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md), which keeps JSON off the
+  privileged execution path;
 - BTLM telemetry frame and signal meaning:
   [`TELEMETRY_FRAME_ABI.md`](kernel/TELEMETRY_FRAME_ABI.md) and
   [`SIGNAL_REGISTRY.md`](kernel/SIGNAL_REGISTRY.md);

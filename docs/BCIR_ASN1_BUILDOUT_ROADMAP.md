@@ -6,7 +6,8 @@ makes the whole thing more than a second codec.
 
 Companion documents: [`BCIR_ASN1_X690_ABI.md`](BCIR_ASN1_X690_ABI.md) is the normative
 contract for what is already built; [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md)
-owns cross-program ordering.
+owns cross-program ordering. [`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md)
+owns the post-X.697 plan for compiling schema-bound JER into verified BCIR artifacts.
 
 ## 0. The thesis: encoding rules are a realization choice
 
@@ -46,7 +47,7 @@ rule.
 
 | Rec. | ISO/IEC | Title | BCIR status |
 |---|---|---|---|
-| X.680 | 8824-1:2021 | Basic notation | **partial** — tag assignments consumed; notation not parsed |
+| X.680 | 8824-1:2021 | Basic notation | **supported subset built** — parser/printer/lowering consume the module and type surface used by the current rails; unsupported notation fails closed |
 | X.681 | 8824-2:2021 | Information object specification | **built** — classes, WITH SYNTAX, objects, object sets, associated tables (cl. 13); X.683 parameterized objects excluded |
 | X.682 | 8824-3:2021 | Constraint specification | **built** — table + component relation (cl. 10), user-defined (cl. 9), contents (cl. 11) |
 | X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references; cross-module tag-default nuance (§9.8) excluded |
@@ -63,7 +64,7 @@ Sizes, as a rough effort signal (converted spec text, lines): X.681 1 125 · X.6
 X.683 567 · X.691 2 733 · X.692 **7 599** · X.693 2 562. ECN is the largest document in
 the suite by a factor of three, and §0 is why it is nevertheless the destination.
 
-## 2. What is built (baseline through PR #660 plus the artifact projection)
+## 2. What is built (baseline through PR #670)
 
 - The whole of X.690 clause 8 on the oracle rail (`bcir/asn1/`, ~2 160 lines), clauses
   10 + 11 as a checker and a BER→DER rewrite.
@@ -243,9 +244,10 @@ appendix once PER lands.
 > of the native format.
 
 
-Octet Encoding Rules: octet-aligned, no bit-shifting, designed for fast encode/decode
-rather than minimum size. OER is the encoding rule with the *best decode cost* in the
-suite, which makes it the natural default for a driver-side or DMA-fed path.
+Octet Encoding Rules: octet-aligned, no bit-shifting, and designed for fast
+encode/decode rather than minimum size. Whether it has the lowest decode cost on a
+specific target is a measurement question; the Python oracle does not establish that
+ordering.
 
 This phase pairs naturally with the **DER→native fast path**: a C-side decoder that
 reconstructs a StreamPack directly from octets without the Python oracle. OER is the
@@ -286,19 +288,27 @@ the native StreamPack version (v1/v2/v3 is a function of content; the module's o
 reserved `stride_k` the projection omits by design, and the CRC. Proven byte-identical
 on all 12 corpus programs and on all three native versions.
 
-### E. X.697 JER · independent
+### E. X.697 JER · **PYTHON ORACLE BUILT; NATIVE COMPILATION OPEN**
 
-JSON Encoding Rules. Low implementation cost, disproportionate integration value: it
-makes every BCIR artifact readable by tooling that will never speak ASN.1, and X.697
-explicitly supports using ASN.1 as a *schema language for JSON*.
+`bcir/asn1/jer.py` implements X.697 clauses 20–41 and the ARRAY, BASE64, NAME,
+OBJECT, TEXT, and UNWRAPPED instructions with clause 13 precedence. The conformance
+corpus covers deterministic emission and malformed-input rejection on the Python
+oracle.
 
 Interaction with the existing rails worth noting: BCIR already emits JSON in several
-places (telemetry export, performance reports, model plans). JER would give those a
-schema with a canonical binary projection, rather than each being an ad-hoc shape.
+places (telemetry export, performance reports, model plans). JER can give selected
+surfaces an ASN.1 schema and deterministic **textual** projection rather than an ad-hoc
+shape. JER remains UTF-8 JSON and still requires lexical, UTF-8, escaping, bounds, and
+numeric validation.
 
-Canonical variant: CJER, for the digest discipline.
+X.697 defines no canonical variant. BCIR's deterministic emit mode is the private,
+versioned **BCIR canonical JER profile**, carries no standards OID, and must not be
+described as CJER. The C scalar parser, generated schema descriptors, MLIR
+family/profile representation, direct claim lowering, optional hosted SIMD scanner,
+and native K_BCIR measurements remain open in
+[`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md).
 
-### F. X.681 information objects + X.683 parameterization · **X.681 BUILT**
+### F. X.681 information objects + X.683 parameterization · **BUILT**
 
 **Built.** Classes with WITH SYNTAX; objects in both DefaultSyntax (`{&f v, ...}`) and
 DefinedSyntax (`{"A" 1 INTEGER}`, matched against the class's syntax list including its
@@ -334,7 +344,7 @@ default. This front-end lowers one module at a time, so the two coincide. Also
 `ObjectFromObject` (§15) and the self-referential link fields of §13.2 b), whose column set
 is deliberately infinite.
 
-### G. X.692 ECN · the metaprogramming layer
+### G. X.692 ECN · **BUILT-IN MODEL LANDED; USER-DEFINED CLASSES CUT**
 
 The Encoding Control Notation: a language for **defining encodings**, in which encoding
 classes are declared, encoding objects realize them, and encoding object sets are
@@ -345,18 +355,17 @@ implementation. An ECN encoding object set *is* a plan; applying one to a type *
 realization. BCIR's contribution is that ECN never specified how to *choose* among
 legal object sets — it is a notation, not an optimizer — and BCIR has the optimizer.
 
-Deliverables: the ECN class/object/object-set model in the IR (a natural extension of
-`bcir.asn1.*`), the built-in BER and PER object sets, `#TRANSFORM` and `#OUTER` mapped
-onto BCIR lowering contracts, and R24 extended with ECN's own well-formedness rules
-(one object per class per set, X.692 §9.5.2 — a static law of exactly the R24 kind).
+The Python oracle contains the ECN class/object/object-set model, EDM/ELM, the built-in
+BER and PER object sets, and the one-object-per-class checks. It does not parse or lower
+user-defined encoding classes, and no ECN representation has been added to MLIR.
 
-Stop condition, stated up front: ECN is 7 599 lines of specification and is not widely
-deployed. If phases C–E show that cost-governed selection over a *fixed* candidate set
-(DER/PER/OER/JER) already delivers the win, **ECN's user-defined encodings are not
-required for the thesis** and this phase should be cut to the built-in object sets
-only. That decision is a gate, not a preference — see §6.
+The §6 reduction gate has now fired and is signed off: the fixed
+DER/PER/OER/BCIR-canonical-JER candidate set already demonstrates cost-governed
+selection. User-defined ECN classes, `#TRANSFORM`, and `#OUTER` lowering are closed,
+not active prerequisites. Reopening them requires an approved measured workload and a
+proof that ordinary BCIR lowering contracts cannot express it.
 
-### H. K_BCIR encoding selection · the thesis
+### H. K_BCIR encoding selection · **MEASUREMENT HARNESS BUILT; CERTIFIED RAIL OPEN**
 
 Encoding rules become a candidate dimension in the optimizer. Given an abstract value,
 a target profile H, live Θ, and an RCSP budget, `K_BCIR` selects the encoding rules the
@@ -390,32 +399,23 @@ reproduces today's DER exactly (the degenerate case, pinning that nothing regres
 > above forbids promoting a measured cost to a verdict — phase H's real selection reads the
 > calibrated table in `kbcir/microbench.py`, and a Python-oracle timing is not that table.
 
-## 5. Sequencing recommendation
+## 5. Sequencing recommendation after PR #670
 
-Three phases can run in parallel because they share no dependency: **A** (front-end),
-**D** (OER + native fast path), **E** (JER). Of those, **A is the one to start**, since
-every later phase consumes parsed modules and A is the only phase that is a hard
-prerequisite for the rest.
+Phases A–F and the reduced, built-in part of G are landed on their documented rails.
+Phase H has exact wire-size evidence and a Python measurement harness, but not native
+target calibration or a K_BCIR certificate. The next sequence is therefore:
 
-Suggested order: **A → D → B → C → E → F → G(reduced) → H**, with D and E parallel to
-A/B if there is capacity. H is reachable after C+D, before F/G — the thesis does not
-need ECN to be demonstrated over a fixed candidate set, which is precisely why §4 G
-carries a cut condition.
+1. harden the JER oracle with pre-parse limits and byte-exact canonical validation;
+2. compile schemas/instructions into deterministic descriptors;
+3. build the bounded scalar C JER twin and differential/fuzz rail;
+4. add an additive MLIR family/profile representation and extend R24;
+5. lower selected schemas directly to claims and StreamPack;
+6. measure scalar and optional SIMD implementations on controlled targets; and
+7. freeze target tables and issue K_BCIR selection certificates.
 
-**Revision after building A.** A is done, and its stop condition fired with a result
-that changes what F is for (§6). The order above is still right *if the goal is the
-BCIR thesis*: B → C → H is the path to cost-governed encoding selection, and none of it
-needs X.681. But if the goal is **consuming real-world schemas**, F moves to the front —
-X.509, LDAP, SNMP, and the 3GPP families all use information object classes, and A
-cannot express any of them. The two orders are:
-
-| Goal | Order |
-|---|---|
-| Demonstrate the thesis (cost-governed encoding selection) | **A → D → B → C → H**, F/G after |
-| Consume real-world schemas | **A → F → D → B → C → H** |
-
-This is a genuine fork, not a detail — it is worth an explicit decision rather than a
-default.
+The complete dependency and driver boundary are in
+[`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md). X.681/X.683 are no longer a
+sequencing fork: both are already built within their documented subset.
 
 ## 6. Stop conditions and decision boundaries
 
@@ -438,7 +438,7 @@ default.
   B or C. F is no longer only "nice for real-world modules" — it is the gate on
   consuming the single most widely deployed ASN.1 schema family there is. See §5.
 
-- **ECN reduction (§4 G) — MEASURED, decision pending sign-off.** The candidate set is
+- **ECN reduction (§4 G) — MEASURED AND SIGNED OFF.** The candidate set is
   {DER, CANONICAL-PER-ALIGNED, CANONICAL-PER-UNALIGNED, COER, **BCIR-canonical JER**} —
   note the fifth: §4 G and this bullet previously said "CJER", but X.697 §42.2 registers
   exactly one object identifier and defines **no canonical variant at all**, so the
@@ -448,8 +448,9 @@ default.
   and a bandwidth-capped objective selects UNALIGNED PER at **61.8% of DER** with no
   user-defined encoding class involved. On Annex A.2 the same value falls to 61 octets
   because constraints are PER-visible and, per §7.2.2 l), invisible to JER. That is the
-  win the gate asks about; on it, build ECN's built-in object sets only (done) and do not
-  implement user-defined encoding classes.
+  win the gate asks about. ECN's built-in object sets are sufficient for the current
+  thesis; user-defined encoding classes remain closed unless a measured workload proves
+  that ordinary BCIR lowering contracts are insufficient.
 - **X.694 stays out.** Mapping W3C XML Schema into ASN.1 serves XML interop BCIR has no
   stake in. Revisit only if a concrete consumer appears.
 - **XER (X.693) is decode-oriented, and is now built on those terms.** BASIC-XER and
@@ -461,9 +462,9 @@ default.
   digested artifact and XER is still **not** a selection candidate for phase H.
 - **No encoding rule ships without a canonical variant** on the emit path. BER taught
   this lesson already; the rule generalizes.
-- **No phase ships without a C twin and a dual-rail differential.** Phase 1 found three
-  parser differentials in the C decoder that way; that is the discipline that found
-  them, not a formality.
+- **No native fast path ships without a C twin and a dual-rail differential.** JER is
+  currently an oracle-only surface, not a promoted native path. The scalar C twin and
+  its differential are explicit gates in the JER compilation roadmap.
 
 ## 7. Risk register
 
@@ -478,6 +479,8 @@ default.
 
 ## 8. What this is not
 
-This roadmap does not claim any of the phases below X.690 are started. The inventory in
-§1 is the truth; `docs/STATUS.md` remains the generated record of what is executed. A
-phase is complete when its laws are gated in CI, not when its code exists.
+This roadmap records the ASN.1 portfolio through PR #670; many phases below X.690 are
+now implemented on explicitly bounded rails. The inventory in §1 and the per-phase
+status labels are the source-backed statement of scope, while `docs/STATUS.md` remains
+the generated static inventory. A component is promoted only when its implementation,
+positive and negative tests, and required parity gates exist.
