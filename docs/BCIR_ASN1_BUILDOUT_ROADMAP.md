@@ -52,7 +52,7 @@ rule.
 | X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references; cross-module tag-default nuance (§9.8) excluded |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
-| X.692 | 8825-3:2021 | ECN | not started |
+| X.692 | 8825-3:2021 | ECN | **part 1 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; user-defined encodings (cl. 19-25) held behind the §6 reduction gate |
 | X.693 | 8825-4:2021 | XER | **built** — BASIC-XER + CXER (CXER out, both in; validated against Annex A.3/A.4); EXTENDED-XER by design excluded |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
