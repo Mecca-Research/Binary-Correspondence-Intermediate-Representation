@@ -184,12 +184,20 @@ class Parser:
                 and self.peek(1).kind == "typereference"
                 and self.at_punct("::=", 2)):
             return self.parse_object_or_set()
+        # X.683 §8.2: a parameterized assignment is an ordinary one with a ParameterList
+        # after the initial reference. It is spotted here, before the X.681 two-token
+        # lookahead below, because `Set {P} CLASS ::= {...}` puts the list BETWEEN the two
+        # references and would otherwise not look like an object set assignment at all.
+        if (tok.kind in ("typereference", "identifier") and self.at_punct("{", 1)):
+            save = self.index
+            name = self.take().text
+            params, governors = self._parameter_list()
+            if params is not None:
+                body = self.parse_assignment_body(name)
+                return ast.ParameterizedAssignment(name, params, body, governors)
+            self.index = save
         if tok.kind == "typereference":
             name = self.take().text
-            if self.at_punct("{"):
-                raise self.error(
-                    f"parameterized type {name!r} needs X.683 parameterization "
-                    "(roadmap phase F)")
             self.expect_punct("::=")
             if self.at_word("CLASS"):
                 assignment = self.parse_class(name)
@@ -205,6 +213,69 @@ class Parser:
             self.expect_punct("::=")
             return ast.ValueAssignment(name, value_type, self.parse_value())
         raise self.error(f"expected an assignment, found {tok.text!r}")
+
+    def parse_assignment_body(self, name: str):
+        """Parse whatever follows an assignment's (already consumed) reference name."""
+        if self.at("typereference") and self.at_punct("::=", 1):
+            return self.parse_object_or_set(name)
+        if self.at_punct("::="):
+            self.take()
+            if self.at_word("CLASS"):
+                assignment = self.parse_class(name)
+                self.classes_seen[assignment.name] = assignment
+                return assignment
+            return ast.TypeAssignment(name, self.parse_type())
+        value_type = self.parse_type()
+        self.expect_punct("::=")
+        return ast.ValueAssignment(name, value_type, self.parse_value())
+
+    def _parameter_list(self):
+        """X.683 §8.3 `{ [Governor ":"] DummyReference , ... }`, or (None, ()).
+
+        Returns (None, ()) without consuming when the braces are NOT a parameter list --
+        `Name {1 2 3}` is a value assignment's braced value and `Name {a(1)}` an
+        enumeration, so the shape has to be checked rather than assumed from the brace.
+        """
+        save = self.index
+        if not self.at_punct("{"):
+            return None, ()
+        self.take()
+        params: list[str] = []
+        governors: list[object] = []
+        while not self.at_punct("}"):
+            governor = None
+            mark = self.index
+            if not (self.at_punct(",", 1) or self.at_punct("}", 1)):
+                # A Governor precedes the ":" (§8.3). Parse it as a type and require the
+                # colon; anything else means these braces were never a parameter list.
+                try:
+                    governor = self.parse_type()
+                except Asn1SyntaxError:
+                    self.index = save
+                    return None, ()
+                if not self.at_punct(":"):
+                    self.index = save
+                    return None, ()
+                self.take()
+            if self.current.kind not in ("typereference", "identifier", "fieldreference"):
+                self.index = save
+                return None, ()
+            params.append(self.take().text)
+            governors.append(governor)
+            if not self.accept("punct", ","):
+                break
+        if not self.at_punct("}") or not params:
+            self.index = save
+            return None, ()
+        self.take()
+        # A ParameterList is followed by the rest of the assignment; if what follows cannot
+        # begin one, the braces were something else entirely.
+        if not (self.at_punct("::=") or self.at("typereference")
+                or self.at("reserved") or self.at("identifier")):
+            self.index = save
+            return None, ()
+        _ = mark
+        return tuple(params), tuple(governors)
 
     # --- X.681: information object classes, objects, and object sets ------------------
 
@@ -254,7 +325,7 @@ class Parser:
             syntax = [self.tokens[i].text for i in range(start + 1, self.index - 1)]
         return ast.ClassAssignment(name, tuple(fields), tuple(syntax))
 
-    def parse_object_or_set(self):
+    def parse_object_or_set(self, name: str | None = None):
         """X.681 §11.1 an information object, §12.1 an object set.
 
         Both are recorded rather than interpreted: their content selects WHICH type an
@@ -262,7 +333,7 @@ class Parser:
         names keeps the module's shape honest -- a later phase can resolve them without
         the parser having quietly dropped them.
         """
-        name = self.take().text
+        name = self.take().text if name is None else name
         object_class = self.expect("typereference").text
         self.expect_punct("::=")
         start = self.index
@@ -545,12 +616,36 @@ class Parser:
                 self.take()
                 return ast.TypeRef(self.take().text, module_name)
             name = self.take().text
-            if self.at_punct("{"):
-                raise self.error(f"parameterized reference {name!r} needs X.683 "
-                                 "parameterization (roadmap phase F)")
+            if self.at_punct("{"):                         # X.683 §9.2 ParameterizedType
+                return ast.ParameterizedRef(name, self._actual_parameter_list())
             return ast.TypeRef(name)
 
         raise self.error(f"expected a type, found {tok.text!r}")
+
+    def _actual_parameter_list(self) -> tuple:
+        """X.683 §9.5 `{ ActualParameter , ... }`.
+
+        An ActualParameter may be a Type, a Value, an ObjectSet or a class reference (§9.5).
+        A bare reference is kept as its NAME rather than being forced into a type node: at
+        parse time there is nothing to say whether `Supported` is a type or an object set,
+        and §9.6 makes that the instantiation's business, not the parser's.
+        """
+        self.expect_punct("{")
+        actuals: list[object] = []
+        while not self.at_punct("}"):
+            if (self.current.kind in ("typereference", "identifier")
+                    and (self.at_punct(",", 1) or self.at_punct("}", 1))):
+                actuals.append(self.take().text)
+            elif self.at_punct("{"):
+                start = self.index
+                self._skip_balanced("{", "}")
+                actuals.append(self._raw_span(start, self.index))
+            else:
+                actuals.append(self.parse_type())
+            if not self.accept("punct", ","):
+                break
+        self.expect_punct("}")
+        return tuple(actuals)
 
     def parse_tagged_type(self):
         """§31: `[ EncodingReference : Class ClassNumber ] (IMPLICIT|EXPLICIT)? Type`."""

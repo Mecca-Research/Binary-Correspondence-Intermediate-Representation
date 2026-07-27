@@ -238,6 +238,35 @@ class ObjectSetAssignment:
 
 
 @dataclass(frozen=True)
+class ParameterizedAssignment:
+    """`Name {P1, P2} ::= <body>` — X.683 §8.2.
+
+    The body is kept as an UNRESOLVED assignment node. §9.7 makes instantiation a
+    substitution of actual parameters for dummy references, so there is nothing to lower
+    until a reference supplies them: lowering the body eagerly would have to invent types
+    for the dummies, and any type it invented would be wrong for some instantiation.
+
+    `governors` records each parameter's optional `Governor ":"` prefix (§8.3). It is not
+    consulted when substituting -- §9.6 says the ACTUAL parameter's form is what has to fit
+    -- but dropping it would lose the module's own statement of intent.
+    """
+
+    name: str
+    params: tuple[str, ...]
+    body: object
+    governors: tuple[object, ...] = ()
+
+
+@dataclass(frozen=True)
+class ParameterizedRef:
+    """`Name {Actual1, Actual2}` — X.683 §9.2, a reference that supplies actuals."""
+
+    name: str
+    actuals: tuple[object, ...] = ()
+    module: str | None = None
+
+
+@dataclass(frozen=True)
 class ContentsConstraintNode:
     """X.682 §11 `CONTAINING Type [ENCODED BY oid]` / `ENCODED BY oid`.
 

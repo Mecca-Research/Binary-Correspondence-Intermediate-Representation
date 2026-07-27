@@ -49,7 +49,7 @@ rule.
 | X.680 | 8824-1:2021 | Basic notation | **partial** — tag assignments consumed; notation not parsed |
 | X.681 | 8824-2:2021 | Information object specification | **built** — classes, WITH SYNTAX, objects, object sets, associated tables (cl. 13); X.683 parameterized objects excluded |
 | X.682 | 8824-3:2021 | Constraint specification | **built** — table + component relation (cl. 10), user-defined (cl. 9), contents (cl. 11) |
-| X.683 | 8824-4:2021 | Parameterization | not started |
+| X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references; cross-module tag-default nuance (§9.8) excluded |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
 | X.692 | 8825-3:2021 | ECN | not started |
@@ -316,10 +316,23 @@ and the decoded value appears alongside them under `<name>.resolved`. An unmatch
 produces no key at all rather than a guess — X.681 §12.9 explicitly permits a peer to use an
 object outside an extensible set, so an unresolvable open type is ordinary traffic.
 
-**Not built.** X.683 parameterization: `ParameterizedObject` and `ParameterizedObjectSet`
-(§11.3 d), §12) still fall back to the recorded raw span, which means such an object
-contributes no row rather than a wrong one. Also `ObjectFromObject` (§15) and the
-self-referential link fields of §13.2 b), whose column set is deliberately infinite.
+**X.683 parameterization is built.** A parameterized assignment keeps its body
+UNRESOLVED — §9.7 makes instantiation a substitution of actuals for dummy references, so
+lowering the body eagerly would have to invent a type for each dummy and any type it
+invented would be wrong for some instantiation. A reference substitutes structurally over
+the AST and lowers the result, memoised on the ACTUALS rather than the name so two
+instantiations of one template stay independent.
+
+That is what makes X.681/682 fire on real modules. RFC 5280 writes
+`AttributeTypeAndValue {ATTRIBUTE:Supported}` with its table constraints naming the DUMMY
+set, so instantiation has to rewrite `{Supported}` to the actual before the associated table
+can be built. Before this the machinery was correct and simply never triggered.
+
+**Not built.** §9.8's NOTE — the actual parameter's TAGGING ENVIRONMENT applies, not the
+dummy's, which differs only when the actual crosses a module boundary with a different tag
+default. This front-end lowers one module at a time, so the two coincide. Also
+`ObjectFromObject` (§15) and the self-referential link fields of §13.2 b), whose column set
+is deliberately infinite.
 
 ### G. X.692 ECN · the metaprogramming layer
 
