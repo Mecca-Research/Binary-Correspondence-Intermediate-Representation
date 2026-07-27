@@ -73,6 +73,7 @@ designed elsewhere but must not be described as operational.
 | C and C++ language rails | **Explicit subsets** | C-front is an L1–L7 driver-oriented subset with total LLVM fallback, not complete ISO C23. C++ has a real single-node handoff but distributed/device-manager orchestration remains scaffolded |
 | LLVM/WASM/JVM/CIL/SPIR-V hub | **Mixed, bounded scopes** | LLVM AOT/JIT/WASM accepts one elementwise claim; JVM/CIL execute a bounded stack subset; SYCL/SPIR-V has modeled routing and portable fallback, with real SPIR-V backend/device execution tool-gated |
 | Interface-description formats | **Not implemented** | No IDL/CORBA, SDL, SGML/XML Schema, or PMML parser/generator is present. They are consume-on-demand standards, not prerequisites for the first driver |
+| ASN.1 JER schema-bound source rail | **Python oracle landed; native/compiler path missing** | X.697 values and six instruction families exist in Python, but no bounded C JER twin, MLIR family/profile, direct claim lowering, native selection certificate, or driver path exists; [`BCIR_ASN1_JSON_ROADMAP.md`](../BCIR_ASN1_JSON_ROADMAP.md) owns the promotion gates |
 | UART | **Compiler fixture only** | Register header and driver-shaped C-front fixture exist. The simulator, resident/channel-backed implementation, IRQ service, telemetry producer, learned prior, and U0–U9 program remain unbuilt; see [`BCIR_UART_DRIVER_BLUEPRINT.md`](BCIR_UART_DRIVER_BLUEPRINT.md) |
 | Resident hardware drivers | **Missing** | No UART, virtio, NVMe, NIC, GPU, or other device is driven through RuntimeChannel |
 | Linux UAPI/IPC adapter | **Missing** | The intended boundary is documented; no BCIR kernel module, device node, or transport has landed |
@@ -200,6 +201,12 @@ The package must contain all of the following before the driver can be promoted:
 The schema is authoritative. Hand-maintained duplicate register definitions, packet layouts, or
 feature matrices are prohibited. A schema update must regenerate every view and either preserve
 wire compatibility or deliberately increment the affected version.
+
+ASN.1/JER may become one schema-bound authoring and interchange rail for selected manifests,
+register/packet descriptions, and control envelopes. It is not a device-command or kernel UAPI
+wire format. JER is compiled before activation into fixed-width generated views, verified claims,
+StreamPack, and BCAB/native images; interrupt, DMA, submission, and completion paths never parse
+JSON.
 
 ### 3.2 Hybrid compiler/assembler boundary
 
@@ -563,6 +570,11 @@ The Linux mapping remains conventional and additive:
 | Cancel/sync | Typed operation with sequence and generation |
 | Teardown | `close`, explicit cancel policy, and deterministic peer/device-death completion |
 
+The UAPI uses these fixed-width typed records even when a build tool consumed an ASN.1/JER source
+description. Schema agreement does not make JSON suitable for an `ioctl`, mapped ring, interrupt,
+or DMA contract, and it does not replace module signatures, capability checks, quiescence, state
+migration, rollback, or teardown safety.
+
 UAPI v1 freezes only after UART and virtio-blk demonstrate MMIO/event and queue/DMA lifecycles.
 Before that point, experimental structures carry version zero and make no compatibility promise.
 The version-zero signal table, telemetry envelope, and live SPSC ring land **before** the first D2
@@ -717,6 +729,7 @@ new driver family, as defined in [`C_MEMORY_DISCIPLINE.md`](../languages/C_MEMOR
 | A modeled memory link is mistaken for CPU-bypass hardware | Require an attested capability adapter and physical direct/staged measurements; report host-bounce bytes separately and fail closed on undeclared routes |
 | Local tests damage workstation availability | Bound concurrency/time/memory, avoid local cross-architecture emulation, and move long campaigns to managed CI |
 | Compatibility claims outrun evidence | Publish generated syscall/device/architecture support matrices and label source, binary, emulated, delegated, and unsupported behavior separately |
+| Schema-bound JER is mistaken for a binary UAPI or secure live-update protocol | Compile it off the execution path; preserve fixed-width UAPI records; require signatures, quiescence, generations, state migration, rollback, and teardown evidence independently |
 
 A milestone stops rather than expands scope when its prerequisite contract is unstable, its test
 matrix cannot express teardown/recovery, its performance claim lacks a baseline, or required
@@ -755,6 +768,7 @@ Detailed historical design material remains available in the UART blueprint, the
 [`machine-code/HAL audit`](../BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md), the
 [`heterogeneous-channel inventory`](HETEROGENEOUS_CHANNELS.md), the
 [`AMD driver roadmap`](BCIR_AMD_AI_DRIVER_ROADMAP.md), the
+[`ASN.1 JER compilation roadmap`](../BCIR_ASN1_JSON_ROADMAP.md), the
 [`ML/AI integration roadmap`](../machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md), and the
 [`hardware validation runbook`](HARDWARE_VALIDATION.md). New implementation plans must use this v2
 document when any companion's old sequencing or status language conflicts with it.

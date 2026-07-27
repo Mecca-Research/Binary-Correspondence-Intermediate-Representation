@@ -14,9 +14,11 @@ Standards implemented:
 Rails: `bcir/asn1/` is the executable reference; `runtime/c/bcir_asn1.{h,c}` is the
 freestanding C twin. Both must agree, and `bcir/tests/test_c_asn1.py` gates it.
 
-X.690, the X.680 front end/subtype constraints, X.681 open types, and X.696 OER are
-built. PER, JER, ECN, parameterization, and table-constraint resolution remain scoped
-in [`BCIR_ASN1_BUILDOUT_ROADMAP.md`](BCIR_ASN1_BUILDOUT_ROADMAP.md).
+This document is intentionally limited to the normative X.690 rail. The wider
+repository also implements bounded profiles of X.681/X.682/X.683, PER, OER, XER,
+Python-oracle JER, and ECN's built-in model. Their exact states and remaining native
+gaps are recorded in [`BCIR_ASN1_BUILDOUT_ROADMAP.md`](BCIR_ASN1_BUILDOUT_ROADMAP.md)
+and [`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md).
 
 ## 1. The stance: DER out, BER in
 
@@ -49,9 +51,9 @@ foreign artifact becomes something BCIR can store and digest.
 | accept, foreign peer | full BER (`Strictness.BER`) | `decode_value` |
 | normalize | BER → DER | `reencode_as_der` |
 
-The Artifact Bundle adds `artifact_bundle.encode_bundle_der/decode_bundle_der` and
-`encode_bundle_oer/decode_bundle_oer`; the same DER-out/BER-in and
-CANONICAL-OER-out/BASIC-OER-in rules apply.
+The Artifact Bundle adds DER/BER, COER/OER, and canonical aligned/unaligned PER
+projections through `bcir.asn1.artifact_bundle`; each keeps the emit-canonical,
+accept-basic posture defined by its own encoding rules.
 
 ## 2. Coverage
 
@@ -69,9 +71,11 @@ schema layer (`bcir/asn1/schema.py`), because a schema-free walk cannot see a
 component's DEFAULT. Everything else is checked structurally by `der_violations`,
 on both rails.
 
-Out of scope, and not claimed: X.681 information object classes, X.682 constraints,
-X.683 parameterization, X.691 PER, X.692 ECN, X.693 XER. A type the schema layer
-cannot express is a type the projection does not use.
+Out of scope **for this X.690 contract**, not absent from the repository: X.681
+information object classes, X.682 constraints, X.683 parameterization, X.691 PER,
+X.692 ECN, X.693 XER, X.696 OER, and X.697 JER. Their implementations do not expand
+what this document's DER/BER projection claims. A type the X.690 schema projection
+cannot express is a type this rail does not silently approximate.
 
 ## 3. The BCIR-StreamPack module
 
@@ -199,16 +203,18 @@ alignment, CRCs, and SHA-256 contract in
 
 The ASN.1 form carries semantic fields and payload octets, not derived native offsets
 or integrity fields. Reconstructing BCAB recomputes those fields canonically and then
-runs the normal native validator. Both available canonical rule sets obey native byte
-identity:
+runs the normal native validator. All three available canonical projection families
+obey native byte identity:
 
 ```text
 der_to_native(native_to_der(b)) == b
 oer_to_native(native_to_oer(b), canonical=True) == b
+per_to_native(native_to_per(b, aligned=A), aligned=A) == b  # A is false or true
 ```
 
-The X.680 source is compiled and compared to the hand-bound schema under both DER and
-COER. The MLIR law rail records an additive `bcir.asn1.projection` of
+The X.680 source is compiled and compared to the hand-bound schema under DER, COER,
+and canonical PER. The MLIR law rail currently records the additive DER
+`bcir.asn1.projection` of
 `native = "artifact_bundle"`; the generic C X.690 rail validates the DER tree before
 the reconstructed native bytes enter the C BCAB reader. A schema-specific C projection
 decoder is not claimed.
@@ -299,7 +305,7 @@ must name its transfer syntax can do so without hard-coding the arcs.
 ## 9. Validation
 
 ```bash
-python -m bcir.tests.run_all --tier quick          # includes the four ASN.1 modules
+python -m bcir.tests.run_all --tier quick          # includes the ASN.1 conformance modules
 FUZZ_RUNS=500000 bash tools/c/fuzz_streampack.sh   # includes the X.690 harness
 bash tools/wsl/check_passes.sh                     # includes the R24 fixture
 ```
