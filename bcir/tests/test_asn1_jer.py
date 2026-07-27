@@ -22,7 +22,17 @@ from bcir.asn1.constraints import Extensible, Size, ValueRange
 from bcir.asn1.jer import (
     JER_OID,
     JER_OID_DESCRIPTOR,
+    Array,
+    Base64,
+    JerInstructions,
     JerRules,
+    Name,
+    NameKeyword,
+    Not,
+    ObjectAs,
+    Text,
+    Unwrapped,
+    apply_name_keyword,
     decode_jer,
     encode_jer,
 )
@@ -419,3 +429,305 @@ def test_a_string_carries_only_the_escapes_ecma_404_requires():
     # A conforming peer may escape anything, and the decoder must accept it (§6.3).
     assert decode_jer(b'"\\u00e9"', kind) == "é"
     _refuses(lambda: encode_jer(kind, "a\ud800"), "unpaired surrogate")
+
+
+# --- clauses 14-19: the JER encoding instructions -----------------------------------------
+
+
+def test_the_five_name_keyword_case_operations():
+    """§16.1.5.1-§16.1.5.5 — each is narrower than its name suggests.
+
+    `UPPERCASED` changes "all characters of the identifier that are lower-case letters …
+    Other characters are unchanged", so hyphens survive; `UPPERCAMELCASED` removes them.
+    `CAPITALIZED` changes exactly one character. `LOWERCASED` on an all-lower-case
+    identifier is a no-op, which is the case a looser implementation gets wrong by also
+    stripping hyphens.
+    """
+    assert apply_name_keyword("some-name-here", NameKeyword.CAPITALIZED) \
+        == "Some-name-here"
+    assert apply_name_keyword("some-name-here", NameKeyword.UPPERCASED) \
+        == "SOME-NAME-HERE"
+    assert apply_name_keyword("some-name-here", NameKeyword.LOWERCASED) \
+        == "some-name-here"
+    assert apply_name_keyword("some-name-here", NameKeyword.UPPERCAMELCASED) \
+        == "SomeNameHere"
+    assert apply_name_keyword("some-name-here", NameKeyword.LOWERCAMELCASED) \
+        == "someNameHere"
+    assert apply_name_keyword("A-b", NameKeyword.LOWERCASED) == "a-b"
+
+
+def _abc_sequence() -> Sequence:
+    return Sequence((Component("a", Primitive(Universal.INTEGER, "INTEGER")),
+                     Component("b", Primitive(Universal.BOOLEAN, "BOOLEAN"), tag=0),
+                     Component("c", Primitive(Universal.INTEGER, "INTEGER"), tag=1,
+                               optional=True)))
+
+
+def test_array_encodes_a_sequence_positionally():
+    """§14.1.2 with §27.2 — a JSON array instead of a JSON object."""
+    kind = _abc_sequence()
+    instructions = JerInstructions().assign(kind, Array())
+    assert encode_jer(kind, {"a": 1, "b": True, "c": 3},
+                      instructions=instructions) == b"[1,true,3]"
+    assert encode_jer(kind, {"a": 1, "b": True}) == b'{"a":1,"b":true}'
+    assert decode_jer(b"[1,true,3]", kind, instructions=instructions) \
+        == {"a": 1, "b": True, "c": 3}
+    assert decode_jer(b"[1,true,null]", kind, instructions=instructions) \
+        == {"a": 1, "b": True}
+    _refuses(lambda: decode_jer(b"[1,true,3,4]", kind, instructions=instructions),
+             "27.2.1")
+
+
+def test_a_trailing_null_may_be_omitted_and_the_canonical_profile_omits_it():
+    """§27.2.2 — "Any number of instances of the JSON token null may be omitted from the
+    end of the JSON array, as a sender's option"."""
+    kind = _abc_sequence()
+    instructions = JerInstructions().assign(kind, Array())
+    assert encode_jer(kind, {"a": 1, "b": True}, instructions=instructions) == b"[1,true]"
+    assert encode_jer(kind, {"a": 1, "b": True}, rules=JerRules.BASIC,
+                      instructions=instructions) == b"[1,true,null]"
+    # Both spellings denote the same abstract value.
+    for text in (b"[1,true]", b"[1,true,null]"):
+        assert decode_jer(text, kind, rules=JerRules.BASIC,
+                          instructions=instructions) == {"a": 1, "b": True}
+
+
+def test_array_forbids_an_optional_component_that_could_itself_be_null():
+    """§14.2 — because the array has no names, an absent component and a present NULL
+    would be the same three characters."""
+    kind = Sequence((Component("a", Primitive(Universal.INTEGER, "INTEGER")),
+                     Component("n", Primitive(Universal.NULL, "NULL"), tag=0,
+                               optional=True)))
+    _refuses(lambda: JerInstructions().assign(kind, Array()), "14.2")
+    _refuses(lambda: JerInstructions().assign(
+        Set((Component("a", Primitive(Universal.INTEGER, "INTEGER")),)), Array()),
+        "14.2 restricts ARRAY to a sequence type")
+
+
+def test_base64_replaces_the_hexadecimal_octetstring_encoding():
+    """§15.1.2 with §25.2 — RFC 2045 §6.8, "except that the 76-character limit does not
+    apply", which is why the encoder never folds lines."""
+    kind = Primitive(Universal.OCTET_STRING, "OCTET STRING")
+    instructions = JerInstructions().assign(kind, Base64())
+    assert encode_jer(kind, b"hello world", instructions=instructions) \
+        == b'"aGVsbG8gd29ybGQ="'
+    assert encode_jer(kind, b"hello world") == b'"68656C6C6F20776F726C64"'
+    assert decode_jer(b'"aGVsbG8gd29ybGQ="', kind, instructions=instructions) \
+        == b"hello world"
+    assert encode_jer(kind, bytes(range(70)), instructions=instructions).count(b"\n") == 0
+    _refuses(lambda: decode_jer(b'"not base64!"', kind, instructions=instructions),
+             "RFC 2045")
+    _refuses(lambda: JerInstructions().assign(
+        Primitive(Universal.INTEGER, "INTEGER"), Base64()), "15.2")
+
+
+def test_name_changes_a_member_name_and_is_keyed_on_the_component():
+    """§16.1.4, and §9.9's exception — NAME is the one instruction a typereference does
+    NOT inherit, which is why it is assigned against the component rather than its type.
+
+    The two components below share one `Primitive` object, exactly as two components
+    referencing one assigned type would. Keying NAME on the type would rename both.
+    """
+    shared = Primitive(Universal.INTEGER, "INTEGER")
+    kind = Sequence((Component("first", shared),
+                     Component("second", shared, tag=0)))
+    instructions = JerInstructions().assign(kind.components[0], Name("alpha"))
+    assert encode_jer(kind, {"first": 1, "second": 2}, instructions=instructions) \
+        == b'{"alpha":1,"second":2}'
+    assert decode_jer(b'{"alpha":1,"second":2}', kind, instructions=instructions) \
+        == {"first": 1, "second": 2}
+    keyworded = JerInstructions().assign(kind.components[1],
+                                         Name(NameKeyword.UPPERCASED))
+    assert encode_jer(kind, {"first": 1, "second": 2}, instructions=keyworded) \
+        == b'{"first":1,"SECOND":2}'
+
+
+def test_name_applies_to_a_choice_alternative_too():
+    """§31.3.2 a) — the wrapped choice's single member name is subject to NAME."""
+    kind = Choice((Component("alpha", Primitive(Universal.INTEGER, "INTEGER"), tag=0),))
+    instructions = JerInstructions().assign(kind.alternatives[0], Name("A"))
+    assert encode_jer(kind, ("alpha", 1), instructions=instructions) == b'{"A":1}'
+    assert decode_jer(b'{"A":1}', kind, instructions=instructions) == ("alpha", 1)
+
+
+def _map_setof() -> SetOf:
+    return SetOf(Sequence((
+        Component("key", Primitive(Universal.UTF8_STRING, "UTF8String")),
+        Component("val", Primitive(Universal.INTEGER, "INTEGER"), tag=0))))
+
+
+def test_object_turns_a_set_of_pairs_into_a_json_map():
+    """§17.1.2 with §30.3 — "A typical use … is to produce a JSON object that represents an
+    unordered set of associations … Such a set is often called a map"."""
+    kind = _map_setof()
+    instructions = JerInstructions().assign(kind, ObjectAs())
+    items = [{"key": "b", "val": 2}, {"key": "a", "val": 1}]
+    assert encode_jer(kind, items, instructions=instructions) == b'{"a":1,"b":2}'
+    assert encode_jer(kind, items) \
+        == b'[{"key":"a","val":1},{"key":"b","val":2}]'
+    assert decode_jer(b'{"a":1,"b":2}', kind, instructions=instructions) \
+        == [{"key": "a", "val": 1}, {"key": "b", "val": 2}]
+
+
+def test_object_restrictions_are_all_of_clause_17_2():
+    """§17.2 — every clause of it, because a map is only unambiguous if all of them hold."""
+    integer = Primitive(Universal.INTEGER, "INTEGER")
+    pair = Sequence((Component("key", Primitive(Universal.UTF8_STRING, "UTF8String")),
+                     Component("val", integer, tag=0)))
+    _refuses(lambda: JerInstructions().assign(SequenceOf(pair), ObjectAs()),
+             "17.2 restricts OBJECT to a set-of type")
+    _refuses(lambda: JerInstructions().assign(SetOf(integer), ObjectAs()),
+             "to be a sequence type")
+    _refuses(lambda: JerInstructions().assign(
+        SetOf(Sequence((Component("a", integer), Component("b", integer, tag=0),
+                        Component("c", integer, tag=1)))), ObjectAs()),
+        "exactly two components")
+    # The key becomes a JSON member name, which ECMA-404 clause 6 requires to be a string.
+    _refuses(lambda: JerInstructions().assign(
+        SetOf(Sequence((Component("k", integer), Component("v", integer, tag=0)))),
+        ObjectAs()), "17.2 restricts the first component")
+    _refuses(lambda: JerInstructions().assign(
+        SetOf(Sequence((Component("k", Primitive(Universal.UTF8_STRING, "UTF8String")),
+                        Component("v", integer, tag=0, optional=True)))), ObjectAs()),
+        "OPTIONAL or DEFAULT")
+    _refuses(lambda: JerInstructions().assign(
+        SetOf(Sequence((Component("k", Primitive(Universal.UTF8_STRING, "UTF8String")),
+                        Component("v", integer, tag=0)), extensible=True)), ObjectAs()),
+        "without an extension marker")
+
+
+def _colour() -> Primitive:
+    return Primitive(Universal.ENUMERATED, "ENUMERATED",
+                     enumeration=(("red", 0), ("light-blue", 1), ("green", 2)))
+
+
+def test_text_rewrites_the_enumeration_strings_and_all_covers_the_rest():
+    """§18.1.4 with §18.1.5 — a named identifier wins, and ALL "applies to all the
+    enumeration items whose identifiers do not appear in this TEXT encoding instruction"."""
+    kind = _colour()
+    instructions = JerInstructions().assign(
+        kind, Text((("red", "ROT"), ("ALL", NameKeyword.UPPERCAMELCASED))))
+    assert encode_jer(kind, 0, instructions=instructions) == b'"ROT"'
+    assert encode_jer(kind, 1, instructions=instructions) == b'"LightBlue"'
+    assert encode_jer(kind, 2, instructions=instructions) == b'"Green"'
+    for number in (0, 1, 2):
+        text = encode_jer(kind, number, instructions=instructions)
+        assert decode_jer(text, kind, instructions=instructions) == number
+    # Without the instruction the identifier is used unchanged (§22.2).
+    assert encode_jer(kind, 1) == b'"light-blue"'
+
+
+def test_text_restrictions():
+    """§18.2.1-§18.2.3."""
+    kind = _colour()
+    _refuses(lambda: JerInstructions().assign(
+        Primitive(Universal.INTEGER, "INTEGER"), Text((("a", "b"),))), "18.2.1")
+    _refuses(lambda: JerInstructions().assign(kind, Text((("purple", "X"),))),
+             "not an enumeration identifier")
+    _refuses(lambda: JerInstructions().assign(kind, Text((("red", "A"), ("red", "B")))),
+             "18.2.2")
+    _refuses(lambda: JerInstructions().assign(kind, Text((("ALL", "X"),))),
+             "to be a Keyword when the IdentifierOrAll is ALL")
+    # §18.2.3: the final set of strings shall not contain two identical strings.
+    _refuses(lambda: JerInstructions().assign(kind, Text((("red", "green"),))), "18.2.3")
+
+
+def test_unwrapped_drops_the_wrapping_object():
+    """§19.1.2 with §31.2 — "the encoding of the chosen alternative", and nothing else."""
+    kind = Choice((
+        Component("n", Primitive(Universal.INTEGER, "INTEGER"), tag=0),
+        Component("s", Primitive(Universal.UTF8_STRING, "UTF8String"), tag=1),
+        Component("l", SequenceOf(Primitive(Universal.INTEGER, "INTEGER")), tag=2),
+        Component("z", Primitive(Universal.NULL, "NULL"), tag=3),
+    ))
+    instructions = JerInstructions().assign(kind, Unwrapped())
+    for value, text in ((("n", 5), b"5"), (("s", "hi"), b'"hi"'),
+                        (("l", [1, 2]), b"[1,2]"), (("z", None), b"null")):
+        assert encode_jer(kind, value, instructions=instructions) == text
+        assert decode_jer(text, kind, instructions=instructions) == value
+    assert encode_jer(kind, ("n", 5)) == b'{"n":5}'         # §31.3 without the instruction
+
+
+def test_unwrapped_discriminates_two_object_alternatives_by_member_name():
+    """§19.2.3 — the rule that lets two sequence alternatives coexist unwrapped."""
+    left = Sequence((Component("p", Primitive(Universal.INTEGER, "INTEGER")),))
+    right = Sequence((Component("q", Primitive(Universal.INTEGER, "INTEGER")),))
+    kind = Choice((Component("x", left, tag=0), Component("y", right, tag=1)))
+    instructions = JerInstructions().assign(kind, Unwrapped())
+    assert decode_jer(b'{"p":1}', kind, instructions=instructions) == ("x", {"p": 1})
+    assert decode_jer(b'{"q":1}', kind, instructions=instructions) == ("y", {"q": 1})
+
+
+def test_a_19_2_violation_surfaces_as_an_ambiguity_rather_than_a_guess():
+    """§19.2.2, enforced where its absence would actually hurt.
+
+    §6.6's NOTE says "It is the final encoding instructions that determine conformity", so
+    a check at assignment time could be wrong in either direction once a later assignment
+    lands. Decoding is the point where the ambiguity becomes real, so that is where it is
+    reported — against the clause, rather than by picking a winner.
+    """
+    kind = Choice((Component("i", Primitive(Universal.INTEGER, "INTEGER"), tag=0),
+                   Component("j", Primitive(Universal.INTEGER, "INTEGER"), tag=1)))
+    instructions = JerInstructions().assign(kind, Unwrapped())
+    # Encoding is unambiguous -- the caller named the alternative.
+    assert encode_jer(kind, ("i", 1), instructions=instructions) == b"1"
+    _refuses(lambda: decode_jer(b"1", kind, instructions=instructions), "19.2.2")
+    _refuses(lambda: JerInstructions().assign(_abc_sequence(), Unwrapped()), "19.2.1")
+
+
+def test_no_alternative_of_the_right_shape_is_refused():
+    kind = Choice((Component("n", Primitive(Universal.INTEGER, "INTEGER"), tag=0),))
+    instructions = JerInstructions().assign(kind, Unwrapped())
+    _refuses(lambda: decode_jer(b'"text"', kind, instructions=instructions), "31.2")
+
+
+def test_clause_13_precedence_negating_and_replacement():
+    """§13.2 and §13.3 — the two ways an assignment changes the associated set.
+
+    §9.8 is the invariant these maintain: "An ASN.1 type can never have more than one
+    associated JER encoding instruction of a given category, no matter how they are
+    assigned."
+    """
+    octets = Primitive(Universal.OCTET_STRING, "OCTET STRING")
+    # §13.2: a negating instruction removes the one of that category, and never joins the
+    # set itself.
+    negated = JerInstructions().assign(octets, Base64()).assign(octets, Not(Base64))
+    assert encode_jer(octets, b"\xde\xad", instructions=negated) == b'"DEAD"'
+    # §13.3.2: a second positive instruction of the same category REPLACES the first.
+    kind = _abc_sequence()
+    replaced = JerInstructions().assign(kind.components[0], Name("one"), Name("two"))
+    assert encode_jer(kind, {"a": 1, "b": True}, instructions=replaced) \
+        == b'{"two":1,"b":true}'
+    # Negating a category that was never assigned is harmless (§13.2's NOTE 1).
+    JerInstructions().assign(octets, Not(Base64))
+
+
+def test_instructions_compose_across_a_whole_value():
+    """All six at once, because the interesting failures are in the interactions."""
+    colour = _colour()
+    pairs = _map_setof()
+    inner = Sequence((Component("blob", Primitive(Universal.OCTET_STRING,
+                                                  "OCTET STRING")),
+                      Component("shade", colour, tag=0)))
+    kind = Sequence((Component("head", inner),
+                     Component("tags", pairs, tag=0)))
+    instructions = (JerInstructions()
+                    .assign(inner, Array())
+                    .assign(inner.components[0].type, Base64())
+                    .assign(colour, Text((("ALL", NameKeyword.UPPERCASED),)))
+                    .assign(pairs, ObjectAs())
+                    .assign(kind.components[1], Name("labels")))
+    value = {"head": {"blob": b"\x01\x02", "shade": 1},
+             "tags": [{"key": "b", "val": 2}, {"key": "a", "val": 1}]}
+    assert encode_jer(kind, value, instructions=instructions) \
+        == b'{"head":["AQI=","LIGHT-BLUE"],"labels":{"a":1,"b":2}}'
+    # The set-of comes back in canonical order rather than the caller's, which is what
+    # §30.3.3 leaves free and X.680 §28.3's NOTE 2 says outright: "Encoding rules are not
+    # required to preserve the order of these values."
+    sorted_value = dict(value, tags=[{"key": "a", "val": 1}, {"key": "b", "val": 2}])
+    assert decode_jer(encode_jer(kind, value, instructions=instructions), kind,
+                      instructions=instructions) == sorted_value
+    # Without the instructions the same value is a completely different document.
+    assert encode_jer(kind, value) == (
+        b'{"head":{"blob":"0102","shade":"light-blue"},'
+        b'"tags":[{"key":"a","val":1},{"key":"b","val":2}]}')
