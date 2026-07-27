@@ -128,6 +128,14 @@ add_target asn1 "X.690 decoder" "-max_len=8192" \
 add_target per "X.691 PER primitives" "-max_len=4096" \
   "${C}/fuzz_per.c" "${C}/bcir_per.c"
 
+# X.693's lexical layer: the tag scanner and the xmlcstring escaper. This is the half of an
+# XER decode that runs BEFORE any type is consulted, on bytes an attacker chose, so it is
+# the half where a cursor can be walked out of the buffer. The harness drives the escape and
+# unescape pair with an ample buffer, a deliberately undersized one and a NULL measuring
+# call, because the measure-then-write path is where an off-by-one hides.
+add_target xer "X.693 XER lexical layer" "-max_len=4096" \
+  "${C}/fuzz_xer.c" "${C}/bcir_xer.c"
+
 # The StreamPack decoder itself: an artifact handed to the runtime by anyone.
 add_target decoder "decoder" "" \
   "${C}/fuzz_streampack.c" "${C}/bcir_runtime.c"
