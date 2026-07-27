@@ -65,6 +65,7 @@ repository inventories remain generated in [`STATUS.md`](STATUS.md).
 | X.680/X.681/X.682/X.683 schema rail | **Landed within the documented subset** | Front-end, information objects, constraints, open-type table resolution, and parameterization feed the shared schema model |
 | Other encoding candidates | **Landed on their stated rails** | DER/BER, canonical PER aligned/unaligned, COER/OER, and CXER/XER are recorded in the ASN.1 build-out roadmap; their C coverage differs by format |
 | ECN | **Part 1 landed** | [`ecn.py`](../bcir/asn1/ecn.py) models classes, objects, object sets, EDM/ELM, and built-in BER/PER sets; it does not parse or lower user-defined encoding classes |
+| JER bounded reader in C (J3) | **Landed on the C rail** | [`bcir_jer.c`](../runtime/c/bcir_jer.c) runs the same three stages in the same order — §4.3's limits in one octet pass, §7.6.2's encoding, then the grammar — with **no allocation, no recursion and no floating point**: the container stack and decode scratch are the caller's, and a number event hands back the raw token rather than a parsed double. Canonical-byte validation (§3.2) and schema legality stay on the Python rail and are deliberately *not* reimplemented, because a second definition of canonicality is free to drift from the encoder that is the actual definition. Building it found three defects in J1's rail; see §7.2 |
 | JER schema plan (J2) | **Landed on the Python oracle** | [`jer_plan.py`](../bcir/asn1/jer_plan.py) compiles a root type into the §5.1 descriptor — identity and source hash, family/profile/instruction hash, sorted member dispatch, required/default/extension metadata, recursion bounds and static capacity. **Static capacity is `None` almost everywhere**, and that is a property of JER rather than of the compiler: §7.2.2 l) and h) hide integer and string constraints from a JER encoder, so only BOOLEAN, NULL, ENUMERATED and a single-size BIT STRING (§7.2.1 a) are derivable. J3's C interface must therefore take its capacity from the caller |
 | Encoding selection harness | **Landed as measurement evidence** | [`selection.py`](../bcir/asn1/selection.py) measures exact wire size and Python-oracle timing for a fixed candidate set; it is not a native K_BCIR table or selection certificate |
 | Existing bounded C JSON precedent | **Shape-specific only** | [`bcir_channel.c`](../runtime/c/bcir_channel.c) bounds bytes and depth and decodes `channel.json`; it is not a JER engine or generated ASN.1 parser |
@@ -319,7 +320,7 @@ errata admission.
 | **J0 — truth and boundaries** | This roadmap plus reconciled ASN.1/current-state/driver documentation | Docs governance and full repository CI green; no implementation claim added |
 | **J1 — bounded Python oracle** · **DELIVERED** | Pre-parse limits, exact canonical-byte validation, schema/path diagnostics, framed input, and `bcir-asn1c` JER encode/decode/transcode modes | Met: limits are asserted at each N/N+1 boundary, every encoder's option that decodes to the right value is refused by octet comparison, every truncated prefix of a framed document is refused, and a failed decode leaves a retry succeeding unchanged |
 | **J2 — schema-plan compiler** · **DELIVERED** | Deterministic descriptor, bound derivation, instruction compilation, version/hash contract, and first `channel.json` schema | Met: [`jer_plan.py`](../bcir/asn1/jer_plan.py) regenerates byte-identically, refuses a bare ENUMERATED, an open type, a duplicate JSON member name and an undiscriminable UNWRAPPED choice at compile time, and its plan-driven trace equals the direct one |
-| **J3 — scalar C twin** | Allocation-free bounded scanner/parser, generated wrappers, event sink, diagnostics, and fuzz target | Python/C value, trace, error-class, and final-offset parity at `-O0`/`-O3`; strict warnings, sanitizers, allocator-independence, and bounded fuzz green |
+| **J3 — scalar C twin** | **Landed.** [`bcir_jer.{h,c}`](../runtime/c/bcir_jer.c): allocation-free bounded scanner, whole-document UTF-8 check, ECMA-404 parser driving a caller's event sink, §4.2 diagnostics, §3.3 unframing, and the twelfth fuzz target | Python/C error-class, byte-offset, required-capacity and event-trace parity in [`test_c_jer.py`](../bcir/tests/test_c_jer.py); `-O0 == -O3` over 667 cases in `check_runtime.sh` `#jer`; freestanding `-Werror` under C11 and C23; ASan/UBSan fuzz green |
 | **J4 — law and execution lowering** | Additive MLIR family/profile representation, expanded R24, typed/direct claim builders, StreamPack lowering, and `DeviceManifest`/selection schemas | Positive/negative Python↔MLIR parity; direct/typed claim graphs and StreamPack bytes agree; **and the JER↔MLIR projection commutes in both directions** (see below) |
 | **J5 — hosted SIMD rail** | Optional C++17 structural/UTF-8 scanner behind the C ABI with scalar fallback | Same accepted/rejected corpus and trace; statistically significant measured advantage on at least two hosts; no unsupported-CPU fault |
 | **J6 — certified K_BCIR choice** | Native microbench protocol, frozen target tables, prediction intervals, RCSP integration, and selection certificate | Exact candidate sizes, controlled counters, repeatability, legality-first refusal, and deterministic selection on at least two targets |
@@ -348,6 +349,35 @@ carry programs, the bounded C parser sits on a materially more important path. P
 gains a consumer rather than a new law. The program-representation work has its own phase
 ladder (P0–P6) in that note; P1 depends on J2, P2 depends on J4, and no P phase is
 scheduled ahead of the JER phase it depends on.
+
+### 7.2 What building the C twin found in the Python rail
+
+Three defects, all in `jer_bounded.py`, all fixed in the same change as J3. They are recorded
+because the pattern generalizes: a second implementation is worth more as a *question asked
+of the first* than as a performance artifact.
+
+1. **An unpaired surrogate escaped the §4.2 contract entirely.** `json.loads` accepts
+   `"\ud800"` and returns a `str` holding a lone surrogate — a value with no UTF-8 encoding,
+   which is exactly why `jer.py`'s *encoder* already refused to emit one. The decoder had no
+   matching refusal, so the rail could decode a value it could never re-encode. Under the
+   canonical profile that was worse than a wrong value: `_canonical` re-encoded, the encoder
+   raised its §7.6.2 error, and that error left `decode_bounded` **unstructured** — no
+   `JerDiagnostic`, no stable code, no byte offset, contradicting §4.2 for an input an
+   attacker chooses freely. Both rails now refuse it in the octet pass, as `NOT_UTF8` rather
+   than `MALFORMED`: the JSON is well formed and it is the *encoding* that has no answer.
+2. **The bounding pass admitted a number grammar ECMA-404 does not have.** `01` passed
+   `scan` and was refused downstream by `json.loads`, arriving as a `SCHEMA` diagnostic for
+   what is a lexical fault. The accept/reject decision was already right; the diagnostic was
+   not, and a reader that admits a leading zero has a grammar the encoder does not.
+3. **Two work-accounting loops charged different offsets** for the same exhausted budget —
+   `pos` in the main loop, `pos + 1` inside `_scan_number`. `work` is the one limit whose
+   diagnostic offset is not otherwise derivable, so the C twin would have had to reproduce
+   the discrepancy to stay in parity. Made uniform instead.
+
+A fourth item is a deliberate divergence rather than a defect: `bcir_jer_parse` reports
+`TRAILING_INPUT` where the Python rail reports `SCHEMA`, because on that rail the trailing
+octets are `json.loads`'s complaint rather than the bounding pass's. The C diagnostic is the
+better one; the acceptance decision is identical, which is what the parity test compares.
 
 ## 8. Validation and performance method
 
