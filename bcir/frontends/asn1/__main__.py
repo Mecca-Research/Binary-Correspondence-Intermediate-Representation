@@ -14,6 +14,17 @@ Options:
     --decode TYPE           read DER on stdin, write the decoded value as JSON to stdout
     --hex                   with --encode/--decode, use hex text instead of raw octets
     --ber                   with --decode, accept BER rather than requiring DER
+    --jer                   with --encode/--decode, use X.697 JER instead of X.690 DER;
+                            decoding runs the bounded J1 oracle (explicit limits, UTF-8,
+                            and exact canonical-byte validation) and reports a stable
+                            error code, byte offset and required capacity on refusal
+    --basic                 with --jer, use BASIC JER rather than the BCIR canonical
+                            profile -- accepts every encoder's option X.697 allows
+    --framed                with --jer, wrap (or expect) the BCIR frame of roadmap 3.3:
+                            version, sequence, generation, length and a CRC-32, all
+                            verified before any payload is returned
+    --transcode TYPE        read DER on stdin and write JER for TYPE to stdout, or the
+                            reverse with --jer; the value never leaves the type model
 
 Exit status is 0 on success and 1 on any lexical, syntactic, or semantic fault; every
 diagnostic carries `file:line:column`, so the output drops straight into an editor.
@@ -23,6 +34,8 @@ from __future__ import annotations
 
 import json
 import sys
+
+from bcir.asn1.jer_bounded import JerBoundedError
 
 from .lexer import Asn1SyntaxError
 from .lower import Asn1SemanticError, compile_module
@@ -64,7 +77,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     mode, encode_type, decode_type = "list", None, None
-    use_hex = ber = False
+    use_hex = ber = jer = basic = framed = False
+    transcode_type = None
     paths: list[str] = []
     index = 0
     while index < len(args):
@@ -75,6 +89,18 @@ def main(argv: list[str] | None = None) -> int:
             use_hex = True
         elif arg == "--ber":
             ber = True
+        elif arg == "--jer":
+            jer = True
+        elif arg == "--basic":
+            basic = True
+        elif arg == "--framed":
+            framed = True
+        elif arg == "--transcode":
+            index += 1
+            if index >= len(args):
+                sys.stderr.write(f"bcir-asn1c: {arg} needs a type name\n")
+                return 1
+            mode, transcode_type = "transcode", args[index]
         elif arg in ("--encode", "--decode"):
             index += 1
             if index >= len(args):
@@ -114,7 +140,15 @@ def main(argv: list[str] | None = None) -> int:
             if mode == "list":
                 print("\n".join(_describe(lowered)))
                 continue
-            status |= _transcode(lowered, mode, encode_type, decode_type, use_hex, ber)
+            status |= _transcode(lowered, mode, encode_type, decode_type,
+                                 use_hex, ber, jer, basic, framed,
+                                 transcode_type)
+        except JerBoundedError as exc:
+            # The J1 diagnostic is structured; print it as such so a caller can branch on
+            # the code rather than on the prose.
+            diagnostic = exc.diagnostic
+            sys.stderr.write(f"bcir-asn1c: {diagnostic.code.value}: {diagnostic}\n")
+            status = 1
         except (Asn1SyntaxError, Asn1SemanticError) as exc:
             sys.stderr.write(f"{exc}\n")
             status = 1
@@ -124,24 +158,73 @@ def main(argv: list[str] | None = None) -> int:
     return status
 
 
-def _transcode(lowered, mode, encode_type, decode_type, use_hex, ber) -> int:
+def _transcode(lowered, mode, encode_type, decode_type, use_hex, ber, jer=False,
+               basic=False, framed=False, transcode_type=None) -> int:
     from bcir.asn1.codec import Strictness
+
+    if mode == "transcode":
+        # DER in, JER out -- or the reverse with --jer. The value passes through the type
+        # model, so a transcode is two conformant codecs rather than a textual rewrite.
+        kind = lowered.module.types[transcode_type]
+        raw = sys.stdin.read().strip() if use_hex else sys.stdin.buffer.read()
+        if jer:
+            value = _jer_decode(bytes.fromhex(raw) if use_hex else raw, kind, basic,
+                                framed)
+            octets = lowered.module.encode(transcode_type, value)
+            print(octets.hex()) if use_hex else sys.stdout.buffer.write(octets)
+            return 0
+        octets = bytes.fromhex(raw) if use_hex else raw
+        value = lowered.module.decode(
+            transcode_type, octets,
+            strictness=Strictness.BER if ber else Strictness.DER)
+        sys.stdout.buffer.write(_jer_encode(kind, value, basic, framed))
+        return 0
 
     if mode == "encode":
         value = json.loads(sys.stdin.read())
+        if jer:
+            sys.stdout.buffer.write(
+                _jer_encode(lowered.module.types[encode_type], value, basic, framed))
+            return 0
         octets = lowered.module.encode(encode_type, value)
         if use_hex:
             print(octets.hex())
         else:
             sys.stdout.buffer.write(octets)
         return 0
+
     raw = sys.stdin.read().strip() if use_hex else sys.stdin.buffer.read()
     octets = bytes.fromhex(raw) if use_hex else raw
-    decoded = lowered.module.decode(
-        decode_type, octets,
-        strictness=Strictness.BER if ber else Strictness.DER)
+    if jer:
+        decoded = _jer_decode(octets, lowered.module.types[decode_type], basic, framed)
+    else:
+        decoded = lowered.module.decode(
+            decode_type, octets,
+            strictness=Strictness.BER if ber else Strictness.DER)
     print(json.dumps(decoded, indent=2, default=str))
     return 0
+
+
+def _jer_encode(kind, value, basic: bool, framed: bool) -> bytes:
+    from bcir.asn1.jer import JerRules, encode_jer
+    from bcir.asn1.jer_bounded import encode_framed
+
+    rules = JerRules.BASIC if basic else JerRules.CANONICAL
+    if framed:
+        return encode_framed(kind, value, rules=rules)
+    return encode_jer(kind, value, rules=rules)
+
+
+def _jer_decode(octets: bytes, kind, basic: bool, framed: bool):
+    """Always through the bounded oracle: J1's limits and canonical-byte check are not an
+    opt-in, they are what makes the CLI safe to point at a file someone else wrote."""
+    from bcir.asn1.jer import JerRules
+    from bcir.asn1.jer_bounded import decode_bounded, decode_framed
+
+    rules = JerRules.BASIC if basic else JerRules.CANONICAL
+    if framed:
+        return decode_framed(octets, kind, rules=rules)
+    return decode_bounded(octets, kind, rules=rules)
 
 
 if __name__ == "__main__":

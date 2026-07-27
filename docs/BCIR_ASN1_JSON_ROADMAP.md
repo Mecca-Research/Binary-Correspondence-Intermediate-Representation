@@ -57,7 +57,10 @@ repository inventories remain generated in [`STATUS.md`](STATUS.md).
 |---|---|---|
 | X.697 value encoding | **Landed on the Python oracle** | [`jer.py`](../bcir/asn1/jer.py) implements clauses 20–41 over the supported ASN.1 type model |
 | JER encoding instructions | **Landed on the Python oracle** | `ARRAY`, `BASE64`, `NAME`, `OBJECT`, `TEXT`, and `UNWRAPPED`, including clause 13 precedence, are gated in [`test_asn1_jer.py`](../bcir/tests/test_asn1_jer.py) |
-| JER input rejection | **Partial** | Duplicate keys and non-JSON `NaN`/`Infinity` tokens are refused, but decode currently converts the complete input to text and materializes a Python object graph through `json.loads` |
+| JER input rejection | **Landed on the Python oracle (J1)** | [`jer_bounded.py`](../bcir/asn1/jer_bounded.py) enforces every §4.3 limit in a single octet pass *before* any value graph exists, then validates UTF-8, then the schema; gated at each boundary by [`test_asn1_jer_bounded.py`](../bcir/tests/test_asn1_jer_bounded.py). `json.loads` still builds the value graph after the bounding pass approves the input — removing that materialization is J3 streaming work, not an input-rejection gap |
+| Canonical-byte validation | **Landed on the Python oracle (J1)** | §3.2's re-encode-and-compare oracle: a canonical decode reads the input with BASIC (§6.3), then refuses any octet the canonical encoder would not have produced, reporting the first differing offset |
+| Framed input and diagnostics | **Landed on the Python oracle (J1)** | §3.3's version/sequence/generation/length/CRC-32 frame, verified before any payload is returned; §4.2's stable error code, byte offset and required capacity as a structured `JerDiagnostic` |
+| `bcir-asn1c` JER modes | **Landed** | `--jer`, `--basic`, `--framed` and `--transcode TYPE`; decoding always runs the bounded oracle |
 | Deterministic JER emission | **Landed as a BCIR profile** | `JerRules.CANONICAL` fixes BCIR choices; X.697 defines no standard canonical JER variant, so this profile has no standards OID |
 | X.680/X.681/X.682/X.683 schema rail | **Landed within the documented subset** | Front-end, information objects, constraints, open-type table resolution, and parameterization feed the shared schema model |
 | Other encoding candidates | **Landed on their stated rails** | DER/BER, canonical PER aligned/unaligned, COER/OER, and CXER/XER are recorded in the ASN.1 build-out roadmap; their C coverage differs by format |
@@ -109,6 +112,14 @@ whitespace, escape spelling, number spelling, default omission, SET OF ordering,
 instruction effects. A canonical decoder must reject non-canonical bytes, not merely
 decode them to the same abstract value. Re-encoding and byte comparison is the initial
 oracle; a later streaming implementation may enforce the same rules directly.
+
+**Implementation note (J1).** A canonical decode reads the input with the BASIC profile
+first — §6.3 makes BASIC the decoder that "shall support all JER encoding alternatives" — and
+only then compares octets against a re-encode. Splitting it that way leaves exactly one
+mechanism responsible for canonicality. Asking the schema layer to *also* judge it, as an
+earlier draft did for member order, creates a second definition that can drift from the
+encoder and produces two different diagnostics for one property; the octet comparison cannot
+drift, because the canonical encoder is the definition.
 
 [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785.html) is a comparison corpus, not an
 automatic replacement for the BCIR profile. JCS number and string rules must not silently
@@ -305,7 +316,7 @@ errata admission.
 | Phase | Deliverable | Exit gate |
 |---|---|---|
 | **J0 — truth and boundaries** | This roadmap plus reconciled ASN.1/current-state/driver documentation | Docs governance and full repository CI green; no implementation claim added |
-| **J1 — bounded Python oracle** | Pre-parse limits, exact canonical-byte validation, schema/path diagnostics, framed input, and `bcir-asn1c` JER encode/decode/transcode modes | Existing X.697 corpus plus hostile size/depth/Unicode/number/duplicate/truncation cases; no mutation on failure |
+| **J1 — bounded Python oracle** · **DELIVERED** | Pre-parse limits, exact canonical-byte validation, schema/path diagnostics, framed input, and `bcir-asn1c` JER encode/decode/transcode modes | Met: limits are asserted at each N/N+1 boundary, every encoder's option that decodes to the right value is refused by octet comparison, every truncated prefix of a framed document is refused, and a failed decode leaves a retry succeeding unchanged |
 | **J2 — schema-plan compiler** | Deterministic descriptor, bound derivation, instruction compilation, version/hash contract, and first `channel.json` schema | Byte-identical descriptor regeneration; unsupported schema/instruction refusal; Python table-driven/direct traces agree |
 | **J3 — scalar C twin** | Allocation-free bounded scanner/parser, generated wrappers, event sink, diagnostics, and fuzz target | Python/C value, trace, error-class, and final-offset parity at `-O0`/`-O3`; strict warnings, sanitizers, allocator-independence, and bounded fuzz green |
 | **J4 — law and execution lowering** | Additive MLIR family/profile representation, expanded R24, typed/direct claim builders, StreamPack lowering, and `DeviceManifest`/selection schemas | Positive/negative Python↔MLIR parity; direct/typed claim graphs and StreamPack bytes agree |
