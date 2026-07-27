@@ -133,6 +133,12 @@ class Lowerer:
         self.object_sets = {a.name: a for a in node.assignments
                             if isinstance(a, ast.ObjectSetAssignment)}
         self._tables: dict[str, ObjectSetTable] = {}
+        #: X.683 §8.2 parameterized assignments, by name. They are NOT lowered eagerly:
+        #: §9.7 makes instantiation a substitution of actuals for dummy references, so
+        #: there is nothing to build until a reference supplies them.
+        self.parameterized = {a.name: a for a in node.assignments
+                              if isinstance(a, ast.ParameterizedAssignment)}
+        self._instantiations: dict[tuple, Asn1Type] = {}
         self._in_progress: set[str] = set()
 
     # --- entry point ------------------------------------------------------------------
@@ -192,6 +198,9 @@ class Lowerer:
                         f"available; pass the module in `imports`")
                 return target.types[node.name]
             return self._type_by_name(node.name)
+
+        if isinstance(node, ast.ParameterizedRef):
+            return self._instantiate(node, label)
 
         if isinstance(node, ast.Constrained):
             built = self._type(node.inner, label)
@@ -341,6 +350,53 @@ class Lowerer:
                 f"{label}: {node.object_class} has no field {node.field!r}")
         governed = f" DEFINED BY {node.governed_by}" if node.governed_by else ""
         return OpenType(f"ANY{governed}")
+
+    def _instantiate(self, node: ast.ParameterizedRef, label: str) -> Asn1Type:
+        """X.683 §9.7: build the type a parameterized reference denotes.
+
+        The actual parameters replace the dummy references throughout the assignment's body
+        and the result is lowered. §9.8's NOTE warns that this is "not exactly textual
+        substitution" -- the ACTUAL parameter's tagging environment applies, not the dummy's
+        -- which only differs when the actual crosses a module boundary with a different
+        tag default. This front-end lowers one module at a time, so the two coincide; a
+        cross-module instantiation with differing tag defaults is a known gap, not a claim.
+        """
+        target = self.parameterized.get(node.name)
+        if target is None:
+            raise Asn1SemanticError(
+                f"{label}: {node.name!r} is referenced with actual parameters but is not a "
+                f"parameterized assignment (X.683 9.2)")
+        if len(node.actuals) != len(target.params):
+            raise Asn1SemanticError(
+                f"{label}: {node.name} takes {len(target.params)} parameter(s), "
+                f"{len(node.actuals)} supplied (X.683 9.6)")
+        key = (node.name, tuple(map(_actual_key, node.actuals)))
+        if key in self._instantiations:
+            return self._instantiations[key]
+        bindings = dict(zip(target.params, node.actuals))
+        body = target.body
+        if not isinstance(body, ast.TypeAssignment):
+            raise Asn1SemanticError(
+                f"{label}: only a parameterized TYPE assignment can be referenced as a "
+                f"type; {node.name} assigns a {type(body).__name__}")
+        substituted = _substitute(body.type, bindings)
+        # Object sets carried as actuals have to be visible to the table machinery under the
+        # dummy's name for the duration, because a table constraint inside the body names
+        # the DUMMY (`{Supported}`), not the actual.
+        saved = {name: self.object_sets.get(name) for name in bindings}
+        for dummy, actual in bindings.items():
+            if isinstance(actual, str) and actual in self.object_sets:
+                self.object_sets[dummy] = self.object_sets[actual]
+        try:
+            built = self._type(substituted, f"{label}[{node.name}]")
+        finally:
+            for name, previous in saved.items():
+                if previous is None:
+                    self.object_sets.pop(name, None)
+                else:
+                    self.object_sets[name] = previous
+        self._instantiations[key] = built
+        return built
 
     def _encoded_by(self, node, label: str) -> tuple | None:
         """X.682 §11.2: the ENCODED BY value, which shall be an OBJECT IDENTIFIER.
@@ -741,6 +797,45 @@ def _render_name(node) -> str:
 def lower(node: ast.ModuleNode, imports: dict[str, Module] | None = None
           ) -> LoweredModule:
     return Lowerer(node, imports).run()
+
+
+def _actual_key(actual) -> str:
+    """A stable identity for one actual parameter, so instantiations can be memoised."""
+    return actual if isinstance(actual, str) else repr(actual)
+
+
+def _substitute(node, bindings: dict):
+    """Replace every dummy reference in `node` with its actual parameter (X.683 §9.7).
+
+    The walk is structural over the AST dataclasses rather than textual, which is what
+    §9.8's NOTE asks for: a `TypeRef` naming a dummy becomes the actual's NODE, so the
+    actual is re-lowered in its own right instead of having its spelling pasted in.
+    """
+    import dataclasses
+
+    if isinstance(node, ast.TypeRef) and node.module is None and node.name in bindings:
+        actual = bindings[node.name]
+        return ast.TypeRef(actual) if isinstance(actual, str) else actual
+    if isinstance(node, ast.ParameterizedRef):
+        return dataclasses.replace(
+            node, actuals=tuple(_substitute(a, bindings) for a in node.actuals))
+    if isinstance(node, ast.TableConstraintNode):
+        # `{Supported}` inside the body names a DUMMY object set; rewriting it to the
+        # actual's name is what lets the table constraint resolve after instantiation.
+        actual = bindings.get(node.object_set)
+        if isinstance(actual, str):
+            return dataclasses.replace(node, object_set=actual)
+        return node
+    if dataclasses.is_dataclass(node) and not isinstance(node, type):
+        changes = {}
+        for f in dataclasses.fields(node):
+            value = getattr(node, f.name)
+            if isinstance(value, tuple):
+                changes[f.name] = tuple(_substitute(v, bindings) for v in value)
+            elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+                changes[f.name] = _substitute(value, bindings)
+        return dataclasses.replace(node, **changes) if changes else node
+    return node
 
 
 def compile_module(text: str, source: str = "<asn1>",

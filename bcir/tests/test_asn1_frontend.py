@@ -295,11 +295,11 @@ def test_constructs_from_the_companion_recommendations_are_refused_by_name():
     """A front-end that skipped these would build a model disagreeing with the module.
     Each diagnostic names the Recommendation and the roadmap phase that would add it.
 
-    X.681 information object classes and open types moved OUT of this list when phase F
-    built them; what remains is X.683 parameterization and X.692 encoding control.
+    The list SHRINKS as phases land: X.681's classes and open types left it when phase F
+    built them, and X.683 parameterization left it when phase F's follow-on did. What
+    remains is X.692 encoding control.
     """
     cases = [
-        ("M DEFINITIONS ::= BEGIN\n  T{P} ::= SEQUENCE { a P }\nEND\n", "X.683"),
         ("M DEFINITIONS ::= BEGIN\n  T ::= SEQUENCE { a INTEGER }\n"
          "ENCODING-CONTROL PER\nEND\n", "X.692"),
     ]
@@ -309,6 +309,31 @@ def test_constructs_from_the_companion_recommendations_are_refused_by_name():
             raise AssertionError(f"accepted a construct needing {recommendation}")
         except (Asn1SyntaxError, Asn1SemanticError) as exc:
             assert recommendation in str(exc), (recommendation, str(exc))
+
+
+def test_a_parameterized_reference_with_the_wrong_arity_is_refused():
+    """X.683 §9.6: exactly one ActualParameter per Parameter, in the same order.
+
+    Arity is the one thing instantiation can check without knowing what the actuals mean,
+    and getting it wrong silently would bind a dummy to nothing.
+    """
+    try:
+        compile_module("M DEFINITIONS ::= BEGIN\n"
+                       "  Pair {X, Y} ::= SEQUENCE { a X, b Y }\n"
+                       "  T ::= Pair {BOOLEAN}\nEND\n")
+        raise AssertionError("a one-actual reference to a two-parameter assignment passed")
+    except Asn1SemanticError as exc:
+        assert "9.6" in str(exc), exc
+
+
+def test_a_parameterized_reference_to_a_plain_assignment_is_refused():
+    """§9.2: actual parameters may only be supplied to a PARAMETERIZED assignment."""
+    try:
+        compile_module("M DEFINITIONS ::= BEGIN\n"
+                       "  Plain ::= INTEGER\n  T ::= Plain {BOOLEAN}\nEND\n")
+        raise AssertionError("actual parameters were accepted on a plain assignment")
+    except Asn1SemanticError as exc:
+        assert "9.2" in str(exc), exc
 
 
 # --- X.681 information objects and open types (roadmap phase F) --------------------------

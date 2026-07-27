@@ -280,3 +280,94 @@ def test_an_open_type_with_no_table_constraint_stays_opaque():
     octets = _wrap(Primitive(Universal.INTEGER, "INTEGER"), 5)
     back = module.decode("T", module.encode("T", {"code": 1, "body": octets}))
     assert back["body"] == octets and "body.resolved" not in back
+
+
+# --- X.683 parameterization --------------------------------------------------------------
+
+
+def test_a_parameterized_type_instantiates_per_actual_parameter():
+    """X.683 §9.7: the actual parameter takes the place of the dummy reference."""
+    module = compile_module("""
+      M DEFINITIONS ::= BEGIN
+        Pair {X} ::= SEQUENCE { a X, b INTEGER }
+        BoolPair ::= Pair {BOOLEAN}
+        StrPair  ::= Pair {PrintableString}
+      END
+    """, "<param>").module
+    assert module.types["BoolPair"].components[0].type.universal == Universal.BOOLEAN
+    assert module.types["StrPair"].components[0].type.universal == Universal.PRINTABLE_STRING
+    # Both instantiations share the un-parameterized component untouched.
+    for name in ("BoolPair", "StrPair"):
+        assert module.types[name].components[1].type.universal == Universal.INTEGER
+
+
+def test_the_rfc5280_shape_resolves_through_a_parameterized_object_set():
+    """The pattern real PKIX modules are written in, end to end.
+
+    `AttributeTypeAndValue` is parameterized on the object set, and its table constraints
+    name the DUMMY (`{Supported}`). Instantiating with a real set has to rewrite those
+    constraints, or the open type has nothing to resolve against -- which is exactly the
+    state the front-end was in before X.683: X.681/682 were built and could not fire on an
+    unmodified module.
+    """
+    from bcir.asn1.codec import Oid
+
+    module = compile_module("""
+      Pkix DEFINITIONS ::= BEGIN
+        ATTRIBUTE ::= CLASS { &id OBJECT IDENTIFIER UNIQUE, &Type }
+          WITH SYNTAX {&Type IDENTIFIED BY &id}
+        SupportedAttributes ATTRIBUTE ::= {
+            {PrintableString IDENTIFIED BY {2 5 4 6}} |
+            {UTF8String IDENTIFIED BY {2 5 4 3}} }
+        AttributeTypeAndValue {ATTRIBUTE:Supported} ::= SEQUENCE {
+            type  ATTRIBUTE.&id ({Supported}),
+            value ATTRIBUTE.&Type ({Supported}{@type}) }
+        Attr ::= AttributeTypeAndValue {SupportedAttributes}
+      END
+    """, "<rfc5280>").module
+
+    open_type = module.types["Attr"].components[1].type
+    assert open_type.table is not None and len(open_type.table.rows) == 2, (
+        "the dummy object set must be rewritten to the actual before the table is built")
+
+    for arcs, kind, value in (
+        ((2, 5, 4, 6), Primitive(Universal.PRINTABLE_STRING, "PrintableString"), "GB"),
+        ((2, 5, 4, 3), Primitive(Universal.UTF8_STRING, "UTF8String"), "Example CA"),
+    ):
+        octets = _wrap(kind, value)
+        back = module.decode("Attr", module.encode(
+            "Attr", {"type": Oid(arcs), "value": octets}))
+        assert back["value.resolved"] == value, (arcs, back.get("value.resolved"))
+
+
+def test_two_instantiations_of_one_parameterized_type_stay_independent():
+    """Memoising instantiations must key on the ACTUALS, not just the name."""
+    module = compile_module("""
+      M DEFINITIONS ::= BEGIN
+        C ::= CLASS { &id INTEGER UNIQUE, &Type } WITH SYNTAX {&Type IDENTIFIED BY &id}
+        SetA C ::= { {INTEGER IDENTIFIED BY 1} }
+        SetB C ::= { {BOOLEAN IDENTIFIED BY 1} | {PrintableString IDENTIFIED BY 2} }
+        Holder {C:S} ::= SEQUENCE { id C.&id ({S}), body C.&Type ({S}{@id}) }
+        UsesA ::= Holder {SetA}
+        UsesB ::= Holder {SetB}
+      END
+    """, "<two>").module
+    a = module.types["UsesA"].components[1].type
+    b = module.types["UsesB"].components[1].type
+    assert len(a.table.rows) == 1 and len(b.table.rows) == 2, (
+        f"instantiations must not share a table: {len(a.table.rows)} vs {len(b.table.rows)}")
+    assert a.resolve({("id",): 1}).universal == Universal.INTEGER
+    assert b.resolve({("id",): 1}).universal == Universal.BOOLEAN
+
+
+def test_a_nested_parameterized_reference_instantiates():
+    """A parameterized type may itself be an actual parameter (§9.5's Type alternative)."""
+    module = compile_module("""
+      M DEFINITIONS ::= BEGIN
+        Box {X} ::= SEQUENCE { item X }
+        Pair {Y} ::= SEQUENCE { left Y, right Y }
+        T ::= Pair {Box {INTEGER}}
+      END
+    """, "<nested>").module
+    left = module.types["T"].components[0].type
+    assert left.components[0].type.universal == Universal.INTEGER
