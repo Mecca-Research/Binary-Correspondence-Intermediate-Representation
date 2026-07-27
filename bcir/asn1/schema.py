@@ -153,6 +153,22 @@ class Primitive(Asn1Type):
     #: encode as a constrained whole number with lb=0 and ub=the largest index). Without the
     #: enumeration a PER codec cannot know either the index or the bit width, so a bare
     #: ENUMERATED is encodable under the other three rules and not under this one.
+    #: X.682 §10.6 b): the permitted values of a table-constrained VALUE field, i.e. one
+    #: column of an associated table. Deliberately NOT `constraint`: X.691 §10.3.4 and
+    #: §10.3.5 make table and component relation constraints NOT PER-visible, and X.696 is
+    #: the same, so putting these in `constraint` would narrow a PER field's WIDTH from a
+    #: constraint the standard says the encoder must not see. A verifier reads this; no
+    #: encoder does.
+    table_values: tuple | None = None
+    #: X.682 §11.4: the type whose ENCODING this octet/bit string's value is. Set by a
+    #: `CONTAINING` constraint. Like a table-constrained open type this is resolvable -- the
+    #: octets are a complete encoding of `contains` -- and like it, resolution is an
+    #: enrichment: the octets stay exactly as they arrived.
+    contains: object | None = None
+    #: §11.5's `ENCODED BY`: the object identifier of the rules that produced the contents.
+    #: Recorded, not dispatched on -- naming a rule this rail does not implement is a
+    #: statement about the data, not licence to guess at it.
+    encoded_by: tuple | None = None
     enumeration: tuple[tuple[str, int], ...] | None = None
     #: True when the "Enumerations" production carried an extension marker (X.680 §20.1).
     #: X.691 §10.3.22 a) makes such a type extensible for PER, which adds the §14.3 bit.
@@ -205,6 +221,40 @@ _STRING_UNIVERSALS = frozenset({
 })
 
 
+@dataclass(frozen=True)
+class ObjectSetTable:
+    """The ASSOCIATED TABLE of an information object set — X.681 §13.
+
+    §13.1: "Every information object or information object set can be viewed as a table."
+    Columns are the class's fields, rows are its objects. A cell holds a VALUE for a value
+    field and an `Asn1Type` for a type field, which is the whole point: the type-field
+    column is a column of types, and selecting a row selects a type.
+
+    This is what makes an open type resolvable. X.682 §10.19/§10.20 select rows by matching
+    the referenced components' values, then constrain the referencing component to the
+    selected rows -- so for a type field, a selected row names the type the open type's
+    octets actually are.
+
+    `extensible` records §12.3's `...`. It matters at resolution time rather than encoding
+    time: §12.9 lets a conforming peer use an object outside an extensible set, so an
+    unmatched row is a legitimate "cannot resolve", not a malformed value.
+    """
+
+    object_class: str
+    rows: tuple[dict, ...] = ()
+    extensible: bool = False
+
+    def column(self, field: str) -> tuple:
+        """Every non-empty cell of one column, in row order (§13.2 a))."""
+        return tuple(row[field] for row in self.rows if field in row)
+
+    def select(self, criteria: dict) -> tuple[dict, ...]:
+        """§10.19: the rows whose referenced columns all equal the given values."""
+        return tuple(
+            row for row in self.rows
+            if all(field in row and row[field] == want for field, want in criteria.items()))
+
+
 @dataclass
 class OpenType(Asn1Type):
     """An OPEN TYPE — X.681 §14: a field whose type is not fixed by the schema.
@@ -231,6 +281,42 @@ class OpenType(Asn1Type):
     """
 
     name: str = "OPEN TYPE"
+    #: The X.682 §10 constraining table, when a table constraint named one.
+    table: ObjectSetTable | None = None
+    #: The class field this open type IS (`&Type`), i.e. which column of `table` to select.
+    field: str | None = None
+    #: The AtNotation component paths of §10.7, as dotted paths relative to the constrained
+    #: type. `("errorCategory",)` for `@errorCategory`. Empty for a SimpleTableConstraint,
+    #: which selects no rows and therefore cannot resolve to a single type.
+    governing: tuple[tuple[str, ...], ...] = ()
+    #: The class fields the governing paths correspond to, positionally -- §10.15 requires
+    #: the referenced components to be ObjectClassFieldTypes of the same class, so each
+    #: governing path has a column that its value must match.
+    governing_fields: tuple[str, ...] = ()
+
+    def resolve(self, context: dict):
+        """The contained type, per §10.19/§10.20, or None when it cannot be determined.
+
+        `context` maps a governing path to the value already decoded for it. Returning None
+        rather than raising is deliberate: §12.9 permits a peer to use an object outside an
+        extensible set, and §10.21 only requires exactly one selected row when a referenced
+        component is an identifier field. An unresolvable open type keeps its octets, which
+        is what this type models anyway -- resolution is an enrichment, not a precondition.
+        """
+        if self.table is None or self.field is None or not self.governing:
+            return None
+        criteria = {}
+        for path, column in zip(self.governing, self.governing_fields):
+            if path not in context:
+                return None                                # §10.18: a referenced component
+            criteria[column] = context[path]               #         is absent
+        selected = self.table.select(criteria)
+        if len(selected) != 1:
+            # §10.21 wants exactly one row when the field is a type field and a referenced
+            # component is an identifier field. Zero rows is an unknown object; more than
+            # one is genuinely ambiguous. Neither is a type this layer may invent.
+            return None
+        return selected[0].get(self.field)
 
     def base_tag(self) -> Tag:
         raise Asn1Error(
@@ -314,6 +400,7 @@ class Sequence(Asn1Type):
             if index < len(children) and _matches_any(children[index], comp):
                 out[comp.name] = comp.type.decode(
                     _strip_tag(comp, children[index]), strictness=strictness)
+                _resolve_open_type(comp, out, strictness)
                 index += 1
             elif comp.has_default:
                 out[comp.name] = comp.default          # §11.5: absent means DEFAULT
@@ -482,6 +569,53 @@ class Choice(Asn1Type):
                         alt.type.decode(_strip_tag(alt, tlv), strictness=strictness))
         raise Asn1Error(
             f"{self.name}: {tlv.tag} matches no alternative (X.680 29.1)", tlv.offset)
+
+
+def _resolve_open_type(comp: Component, decoded: dict, strictness: Strictness) -> None:
+    """X.682 §10.19/§10.20: decode a table-constrained open type as its selected type.
+
+    An open type's octets are the contained value's COMPLETE encoding, so once the governing
+    siblings are known the contained type is decodable in place. Because a SEQUENCE decodes
+    its components in definition order and §10.15 requires the referenced components to be
+    in the same enclosing type, the governing values are already in `decoded` by the time the
+    referencing component arrives -- which is the whole reason this can happen during the
+    walk rather than in a second pass.
+
+    The resolved value is added ALONGSIDE the octets rather than replacing them, under
+    `<name>.resolved`. Replacing them would break the encode/decode round trip (the encoder
+    needs the octets back) and would also throw away the one honest representation when the
+    row is unknown. §12.9 permits a peer to use an object outside an extensible set, so an
+    unresolvable open type is ordinary traffic, not a fault.
+    """
+    inner = comp.type
+    if isinstance(inner, Primitive) and inner.contains is not None:
+        # X.682 §11.4: the octets ARE an encoding of `contains`, so no sibling is needed.
+        octets = decoded.get(comp.name)
+        if isinstance(octets, (bytes, bytearray)):
+            try:
+                decoded[f"{comp.name}.resolved"] = inner.contains.decode(
+                    decode_one(bytes(octets)), strictness=strictness)
+            except Asn1Error:
+                pass
+        return
+    if not isinstance(inner, OpenType) or inner.table is None or not inner.governing:
+        return
+    octets = decoded.get(comp.name)
+    if not isinstance(octets, (bytes, bytearray)):
+        return
+    context = {path: decoded.get(path[-1]) for path in inner.governing
+               if path[-1] in decoded}
+    contained = inner.resolve(context)
+    if contained is None:
+        return
+    try:
+        decoded[f"{comp.name}.resolved"] = contained.decode(
+            decode_one(bytes(octets)), strictness=strictness)
+    except Asn1Error:
+        # The row said one type and the octets are another. That is a real disagreement, but
+        # it belongs to the caller that chose to trust the table, not to the structural
+        # decode -- the octets are still exactly what arrived, and they stay available.
+        return
 
 
 def _sorted_set_of(children: list[Tlv]) -> list[Tlv]:

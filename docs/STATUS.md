@@ -6,7 +6,7 @@
 
 | Metric | Value |
 |---|---|
-| Static Python `test_*` function inventory | **2442** across 207 files |
+| Static Python `test_*` function inventory | **2455** across 208 files |
 | Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **125** |
 | Static registered-pass inventory | **37** |
 | Static MLIR fixture inventory (`mlir/test/`) | **116** files; 262 `expected-error` markers |

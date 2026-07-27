@@ -55,6 +55,12 @@ class Parser:
         self.tokens = tokenize(text, source)
         self.index = 0
         self.source = source
+        #: Class definitions seen so far, by name. X.681 §11.4 makes reading an object body
+        #: depend on whether its class declared WITH SYNTAX, so the class has to be in hand
+        #: BEFORE its objects are parsed -- which it is, since a module defines a class
+        #: before the objects of that class. An object whose class has not been seen falls
+        #: back to the §7 capitalisation rule rather than failing.
+        self.classes_seen: dict[str, ast.ClassAssignment] = {}
 
     # --- token plumbing ---------------------------------------------------------------
 
@@ -186,7 +192,9 @@ class Parser:
                     "(roadmap phase F)")
             self.expect_punct("::=")
             if self.at_word("CLASS"):
-                return self.parse_class(name)
+                assignment = self.parse_class(name)
+                self.classes_seen[assignment.name] = assignment
+                return assignment
             # `Set CLASS ::= { obj | obj }` -- an object SET assignment (X.681 §12.1).
             # It is told from a type assignment by the class name standing where a type
             # would: `Algorithms ALGORITHM ::= {...}` has already consumed `Algorithms`.
@@ -204,9 +212,11 @@ class Parser:
         """X.681 §9.1 `CLASS { &field ..., ... }`, plus the WITH SYNTAX clause.
 
         WITH SYNTAX defines a *user-friendly notation* for writing objects of the class
-        (§10). It changes how an object is spelled, never what an encoding looks like, so
-        it is consumed and discarded -- objects themselves are recorded but not
-        interpreted here.
+        (§10). It changes how an object is spelled, never what an encoding looks like -- but
+        it is not discardable: §11.4 makes an object of a class that HAS a WithSyntaxSpec use
+        DefinedSyntax, so `{"A" 1 INTEGER}` can only be read back into field settings by
+        knowing the syntax list's field order. The literal words between the fields are
+        decoration and are dropped; the `&field` order is kept.
         """
         self.expect("reserved", "CLASS")
         self.expect_punct("{")
@@ -232,11 +242,17 @@ class Parser:
             if not self.accept("punct", ","):
                 break
         self.expect_punct("}")
+        syntax: list[str] = []
         if self.at_word("WITH"):
             self.take()
             self.expect("reserved", "SYNTAX")
+            start = self.index
             self._skip_balanced("{", "}")
-        return ast.ClassAssignment(name, tuple(fields))
+            # Everything between the braces except the braces themselves. `[` and `]` mark
+            # an OPTIONAL group (§10.5); they are kept so the object reader can tell an
+            # omitted group from a mismatch.
+            syntax = [self.tokens[i].text for i in range(start + 1, self.index - 1)]
+        return ast.ClassAssignment(name, tuple(fields), tuple(syntax))
 
     def parse_object_or_set(self):
         """X.681 §11.1 an information object, §12.1 an object set.
@@ -254,15 +270,166 @@ class Parser:
             self.take()
             return ast.ObjectAssignment(name, object_class,
                                         self._raw_span(start, self.index))
-        self._skip_balanced("{", "}")
+        # A capitalised name denotes an object SET (§12.1); a lower-case one an object.
+        is_set = name[0].isupper()
+        cls = self.classes_seen.get(object_class)
+        try:
+            if is_set:
+                elements, extensible = self._parse_object_set_body(cls)
+            else:
+                settings = self._parse_object_body(cls)
+        except Asn1SyntaxError:
+            # An object or set this front-end cannot read yet must not fail the module:
+            # X.681 §11.3 admits ObjectFromObject and ParameterizedObject forms that need
+            # X.683. Fall back to recording the raw span, which is what the printer and the
+            # round-trip law consume -- the associated table simply gains no row from it,
+            # and a table constraint naming it will say so rather than resolve wrongly.
+            self.index = start
+            self._skip_balanced("{", "}")
+            raw = self._raw_span(start, self.index)
+            members = tuple(
+                self.tokens[i].text for i in range(start, self.index)
+                if self.tokens[i].kind in ("typereference", "identifier"))
+            if is_set:
+                return ast.ObjectSetAssignment(name, object_class, members, raw)
+            return ast.ObjectAssignment(name, object_class, raw)
         raw = self._raw_span(start, self.index)
         members = tuple(
             self.tokens[i].text for i in range(start, self.index)
             if self.tokens[i].kind in ("typereference", "identifier"))
-        # A capitalised name denotes an object SET (§12.1); a lower-case one an object.
-        if name[0].isupper():
-            return ast.ObjectSetAssignment(name, object_class, members, raw)
-        return ast.ObjectAssignment(name, object_class, raw)
+        if is_set:
+            return ast.ObjectSetAssignment(name, object_class, members, raw,
+                                           tuple(elements), extensible)
+        return ast.ObjectAssignment(name, object_class, raw, tuple(settings))
+
+    def _parse_object_body(self, cls) -> list:
+        """X.681 §11.5 DefaultSyntax `{&field setting, ...}` / §11.6 DefinedSyntax.
+
+        Which one applies is decided by the CLASS, not by looking at the tokens: §11.4 says
+        DefaultSyntax iff the class has no WithSyntaxSpec. A class with WITH SYNTAX spells
+        its objects positionally (`{"A" 1 INTEGER}`), so the field names come from the
+        syntax list rather than from the object body.
+        """
+        self.expect_punct("{")
+        settings: list[ast.FieldSetting] = []
+        if cls is not None and cls.with_syntax:
+            for token in cls.with_syntax:
+                if self.at_punct("}"):
+                    break                                   # an omitted OPTIONAL group
+                if token in ("[", "]"):
+                    continue                                # §10.5 optional-group brackets
+                if token.startswith("&"):
+                    settings.append(ast.FieldSetting(
+                        token, self._parse_setting(cls, token)))
+                elif self.current.text == token:
+                    self.take()                             # a literal word of the syntax
+                else:
+                    # The object does not follow its class's DefinedSyntax. Raising sends
+                    # `parse_object_or_set` down the raw-span fallback rather than producing
+                    # a half-read object that would contribute a wrong row to the table.
+                    raise self.error(
+                        f"object does not match the WITH SYNTAX of its class: expected "
+                        f"{token!r} (X.681 11.4/11.6)")
+                self.accept("punct", ",")
+        else:
+            while not self.at_punct("}"):
+                field_name = self.expect("fieldreference").text
+                settings.append(ast.FieldSetting(
+                    field_name, self._parse_setting(cls, field_name)))
+                if not self.accept("punct", ","):
+                    break
+        self.expect_punct("}")
+        return settings
+
+    def _parse_setting(self, cls, field_name: str):
+        """§11.7: a Setting is a TYPE for a type field and a VALUE for a value field.
+
+        The distinction cannot be made from the tokens alone -- `INTEGER` is a type and `1`
+        is a value, but a value field's setting may itself be a defined value whose name
+        looks like a type reference. The class definition is the authority, and the leading
+        capital of the field name is the fallback X.681 §7 gives when the class is unknown.
+        """
+        is_type_field = None
+        if cls is not None:
+            for field in cls.fields:
+                if field.name == field_name:
+                    is_type_field = field.is_type_field
+                    break
+        if is_type_field is None:
+            is_type_field = len(field_name) > 1 and field_name[1].isupper()
+        return self.parse_type() if is_type_field else self.parse_value()
+
+    def _parse_object_set_body(self, cls):
+        """X.681 §12.3 `{ obj | obj, ... }`.
+
+        The separator is `|` (union) but real modules also use `,`; both are accepted since
+        §12.3 NOTE 1 makes the set the union of its elements either way.
+        """
+        self.expect_punct("{")
+        elements: list[object] = []
+        extensible = False
+        while not self.at_punct("}"):
+            if self.at_punct("..."):
+                self.take()
+                extensible = True                           # §12.3
+            elif self.at_punct("{"):
+                elements.append(tuple(self._parse_object_body(cls)))
+            elif self.at("typereference") or self.at("identifier"):
+                elements.append(self.take().text)           # a defined object / object set
+            else:
+                raise self.error("an object set element must be an object, a reference "
+                                 "or '...' (X.681 12.3)")
+            if not (self.accept("punct", "|") or self.accept("punct", ",")):
+                break
+        self.expect_punct("}")
+        return elements, extensible
+
+    def _parse_table_constraint(self):
+        """X.682 §10.3/§10.7, when the next tokens are `({ObjectSet} [{@...}])`.
+
+        Returns None when there is no table constraint, leaving the ordinary constraint path
+        (and its subtype constraints) untouched -- an ObjectClassFieldType may carry either.
+        """
+        if not (self.at_punct("(") and self.at_punct("{", 1)):
+            return None
+        save = self.index
+        self.take()                                        # "("
+        self.take()                                        # "{"
+        if not self.at("typereference"):
+            self.index = save                              # a braced VALUE, not an ObjectSet
+            return None
+        object_set = self.take().text
+        if not self.at_punct("}"):
+            self.index = save
+            return None
+        self.take()                                        # "}"
+        ats: list[str] = []
+        if self.at_punct("{"):                             # §10.7 ComponentRelationConstraint
+            self.take()
+            while not self.at_punct("}"):
+                if not self.at_punct("@"):
+                    self.index = save
+                    return None
+                self.take()
+                # §10.10: the dots after `@` count enclosing levels, so they are kept
+                # verbatim -- `@.x` and `@...x` mean different parents.
+                text = "@"
+                while self.at_punct("."):
+                    self.take()
+                    text += "."
+                parts = [self.expect("identifier").text]
+                while self.at_punct("."):
+                    self.take()
+                    parts.append(self.expect("identifier").text)
+                ats.append(text + ".".join(parts))
+                if not self.accept("punct", ","):
+                    break
+            self.expect_punct("}")
+        if not self.at_punct(")"):
+            self.index = save
+            return None
+        self.take()                                        # ")"
+        return ast.TableConstraintNode(object_set, tuple(ats))
 
     def _raw_span(self, start: int, stop: int) -> str:
         """The tokens in [start, stop) as normalized text.
@@ -365,7 +532,13 @@ class Parser:
                 class_name = self.take().text
                 self.take()
                 field = self.take().text
-                return ast.OpenTypeNode(object_class=class_name, field=field)
+                # X.682 §10.1: a TABLE CONSTRAINT may only be applied to an
+                # ObjectClassFieldType, so this is the one place it can appear. It is parsed
+                # here rather than by the general constraint path because `({Set}{@a})` is
+                # not an ElementSetSpec -- the general path would read `{Set}` as a braced
+                # value and lose the AtNotation entirely.
+                table = self._parse_table_constraint()
+                return ast.OpenTypeNode(object_class=class_name, field=field, table=table)
             # `Module.Type` -- an external type reference (§14.1).
             if self.at_punct(".", 1) and self.peek(2).kind == "typereference":
                 module_name = self.take().text
@@ -650,9 +823,18 @@ class Parser:
         constraint) is consumed and reported as None rather than refused: it still cannot
         change a DER encoding, and for OER an unrepresented constraint simply leaves the
         type unconstrained — which is the SAFE direction, because the length-prefixed form
-        can carry every value the narrower form could. The one exception stays refused:
-        CONTAINING / ENCODED BY changes what the contents octets ARE (§36).
+        can carry every value the narrower form could.
+
+        Two X.682 forms are modelled rather than skipped: §11's CONTAINING / ENCODED BY,
+        which says what the contents octets ARE and so cannot be dropped, and §9's
+        CONSTRAINED BY, which is recorded because §9 NOTE 1 calls it a form of comment and
+        deleting an author's stated intent is not the same as ignoring it.
         """
+        if self.at_punct("(") and (self.at_word("CONTAINING", 1)
+                                   or self.at_word("ENCODED", 1)):
+            return self._contents_constraint()
+        if self.at_punct("(") and self.at_word("CONSTRAINED", 1):
+            return self._user_defined_constraint()
         is_size = is_alphabet = False
         if self.at_word("SIZE"):
             self.take()
@@ -680,6 +862,35 @@ class Parser:
         if is_alphabet:
             return constraints.PermittedAlphabet(inner)
         return inner
+
+    def _contents_constraint(self):
+        """X.682 §11.1: `( CONTAINING Type [ENCODED BY Value] )` or `( ENCODED BY Value )`."""
+        self.expect_punct("(")
+        contained = None
+        encoded_by = None
+        if self.at_word("CONTAINING"):
+            self.take()
+            contained = self.parse_type()
+        if self.at_word("ENCODED"):
+            self.take()
+            self.expect("reserved", "BY")
+            encoded_by = self.parse_value()               # §11.2: an OBJECT IDENTIFIER
+        self.expect_punct(")")
+        return ast.ContentsConstraintNode(contained, encoded_by)
+
+    def _user_defined_constraint(self):
+        """X.682 §9.1: `( CONSTRAINED BY { ... } )`, recorded verbatim."""
+        self.expect_punct("(")
+        self.expect("reserved", "CONSTRAINED") if self.at("reserved", "CONSTRAINED") \
+            else self.take()
+        if self.at_word("BY"):
+            self.take()
+        start = self.index
+        if self.at_punct("{"):
+            self._skip_balanced("{", "}")
+        raw = self._raw_span(start, self.index)
+        self.expect_punct(")")
+        return ast.UserDefinedConstraintNode(raw)
 
     def _consume_constraint(self) -> None:
         """Skip a constraint this model cannot represent, refusing only §36's."""
