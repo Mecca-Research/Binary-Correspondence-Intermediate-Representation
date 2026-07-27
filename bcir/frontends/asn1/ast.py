@@ -157,6 +157,10 @@ class OpenTypeNode:
     #: The information object class the field came from, when reached via `CLASS.&Field`.
     object_class: str | None = None
     field: str | None = None
+    #: The X.682 §10 table constraint applied to this ObjectClassFieldType, when one was
+    #: written. It is what turns an opaque open type into a RESOLVABLE one: the object set
+    #: names the candidate rows and the AtNotation names the sibling that selects among them.
+    table: object | None = None
 
 
 @dataclass(frozen=True)
@@ -177,30 +181,99 @@ class ClassAssignment:
 
     name: str
     fields: tuple[ClassField, ...] = ()
+    #: The WITH SYNTAX list as its full token sequence, fields AND literal words, in order
+    #: (X.681 §10). It changes only how an OBJECT is spelled, never an encoding -- but §11.4
+    #: makes the spelling mandatory: with a WithSyntaxSpec an object MUST use DefinedSyntax.
+    #: The literals have to be kept, not just the `&field`s: `{&Type IDENTIFIED BY &id}`
+    #: puts two words between the settings, and an object body that is matched positionally
+    #: against fields alone stops at the first literal it did not expect.
+    with_syntax: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FieldSetting:
+    """One `PrimitiveFieldName Setting` of an object (X.681 §11.5).
+
+    `value` is a value node for a value field and a TYPE node for a type field -- which is
+    the whole point of the machinery: a type field's setting IS a type, and that is what an
+    open type governed by this object resolves to.
+    """
+
+    name: str                      # including the leading `&`
+    value: object
 
 
 @dataclass(frozen=True)
 class ObjectAssignment:
-    """`obj CLASS ::= { ... }` (X.681 §11.1) — recorded, not interpreted.
+    """`obj CLASS ::= { ... }` (X.681 §11.1).
 
-    `raw` is the object's body as a normalized token stream. It is kept so the printer
-    can reproduce the assignment and the round-trip law keeps covering these modules;
-    dropping the body would let the law pass over a module the parser had gutted.
+    `raw` is the object's body as a normalized token stream, kept so the printer can
+    reproduce the assignment and the round-trip law keeps covering these modules.
+    `settings` is the interpreted form: dropping it is what left table constraints
+    unresolvable, because an object with no readable field settings contributes no row to
+    the associated table of §13.
     """
 
     name: str
     object_class: str
     raw: str = ""
+    settings: tuple[FieldSetting, ...] = ()
 
 
 @dataclass(frozen=True)
 class ObjectSetAssignment:
-    """`Set CLASS ::= { obj | obj, ... }` (X.681 §12.1) — recorded, not interpreted."""
+    """`Set CLASS ::= { obj | obj, ... }` (X.681 §12.1).
+
+    `elements` holds each member: either an inline `ObjectAssignment`-shaped body or the
+    name of a defined object / object set to splice in (§12.5 inherits an extension marker
+    through such a reference). `extensible` records the `...` of §12.3.
+    """
 
     name: str
     object_class: str
     objects: tuple[str, ...] = ()
     raw: str = ""
+    elements: tuple[object, ...] = ()
+    extensible: bool = False
+
+
+@dataclass(frozen=True)
+class ContentsConstraintNode:
+    """X.682 §11 `CONTAINING Type [ENCODED BY oid]` / `ENCODED BY oid`.
+
+    Unlike a value-set constraint this one says what the contents octets ARE, so it cannot
+    be discarded: §11.4 makes the octet/bit string's abstract value the ENCODING of another
+    type. It is only valid on OCTET STRING and on BIT STRING without a NamedBitList (§11.3).
+    """
+
+    contained: object | None = None
+    encoded_by: object | None = None
+
+
+@dataclass(frozen=True)
+class UserDefinedConstraintNode:
+    """X.682 §9 `CONSTRAINED BY { ... }`.
+
+    §9 NOTE 1 calls this "a special form of ASN.1 comment": it is explicitly not fully
+    machine-processable, and X.691 §10.3.3 makes it not PER-visible. So it is RECORDED and
+    never consulted by an encoder -- keeping it is what lets a module round-trip through the
+    printer without the front-end having silently deleted part of the author's intent.
+    """
+
+    raw: str = ""
+
+
+@dataclass(frozen=True)
+class TableConstraintNode:
+    """X.682 §10.3 `({ObjectSet})` / §10.7 `({ObjectSet}{@a,@.b})`.
+
+    `at_notations` is empty for a SimpleTableConstraint. Each entry is the raw AtNotation
+    text (`@errorCategory`, `@.errorCode`, `@...errorId`), kept verbatim because §10.10's
+    level counting is positional and re-deriving it from a parsed form would lose the dots.
+    """
+
+    object_set: str
+    at_notations: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

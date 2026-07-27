@@ -25,8 +25,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from bcir.asn1.schema import (Asn1Type, Choice, Component, Module, OpenType, Primitive,
-                              Sequence, SequenceOf, Set, SetOf)
+from bcir.asn1.schema import (Asn1Type, Choice, Component, Module, ObjectSetTable,
+                              OpenType, Primitive, Sequence, SequenceOf, Set, SetOf)
 from bcir.asn1.tags import Asn1Error, Tag, TagClass, Universal
 
 from . import ast
@@ -128,6 +128,11 @@ class Lowerer:
         self.types: dict[str, Asn1Type] = {}
         self.enumerations: dict[str, dict[str, int]] = {}
         self.assigned_tags: dict[str, tuple] = {}
+        self.objects = {a.name: a for a in node.assignments
+                        if isinstance(a, ast.ObjectAssignment)}
+        self.object_sets = {a.name: a for a in node.assignments
+                            if isinstance(a, ast.ObjectSetAssignment)}
+        self._tables: dict[str, ObjectSetTable] = {}
         self._in_progress: set[str] = set()
 
     # --- entry point ------------------------------------------------------------------
@@ -249,6 +254,28 @@ class Lowerer:
         """
         from bcir.asn1.constraints import Intersection, require_satisfiable
 
+        # X.682 §11 CONTAINING / ENCODED BY and §9 CONSTRAINED BY are not element set specs
+        # and never reach the value-set machinery: §11 says what the contents octets ARE,
+        # and §9 is explicitly "a special form of ASN.1 comment" (§9 NOTE 1). Both are split
+        # off here so `Intersection` is only ever handed real element set specs.
+        contents = [c for c in applied if isinstance(c, ast.ContentsConstraintNode)]
+        applied = [c for c in applied
+                   if not isinstance(c, (ast.ContentsConstraintNode,
+                                         ast.UserDefinedConstraintNode))]
+        if contents:
+            spec = contents[0]
+            if not isinstance(built, Primitive) or built.universal not in (
+                    Universal.OCTET_STRING, Universal.BIT_STRING):
+                raise Asn1SemanticError(
+                    f"{label}: a contents constraint applies only to OCTET STRING and to "
+                    f"BIT STRING without a NamedBitList (X.682 11.3)")
+            built = replace(
+                built,
+                contains=(self._type(spec.contained, f"{label} CONTAINING")
+                          if spec.contained is not None else None),
+                encoded_by=self._encoded_by(spec.encoded_by, label))
+        if not applied:
+            return built
         combined = applied[0] if len(applied) == 1 else Intersection(tuple(applied))
         inner = getattr(built, "constraint", None)
         if inner is not None:
@@ -289,17 +316,130 @@ class Lowerer:
             for field in declared.fields:
                 if field.name != node.field:
                     continue
+                table = self._table_for(node, label)
                 if field.is_type_field:
-                    return OpenType(f"{node.object_class}{node.field}")
+                    governing, columns = self._governing(node, declared, label)
+                    return OpenType(f"{node.object_class}{node.field}", table=table,
+                                    field=node.field, governing=governing,
+                                    governing_fields=columns)
                 if field.type is None:
                     raise Asn1SemanticError(
                         f"{label}: {node.object_class}{node.field} is a value field with "
                         f"no declared type, so it has no encoding")
-                return self._type(field.type, label)
+                built = self._type(field.type, label)
+                if table is not None and isinstance(built, Primitive):
+                    # X.682 §10.6 b): a value field is restricted to its column. This rides
+                    # on `table_values`, NOT `constraint` -- X.691 §10.3.4 makes a table
+                    # constraint invisible to PER, so narrowing `constraint` here would
+                    # change the field's encoded WIDTH from a constraint the encoder is
+                    # required not to see.
+                    column = table.column(node.field)
+                    if column:
+                        built = replace(built, table_values=tuple(column))
+                return built
             raise Asn1SemanticError(
                 f"{label}: {node.object_class} has no field {node.field!r}")
         governed = f" DEFINED BY {node.governed_by}" if node.governed_by else ""
         return OpenType(f"ANY{governed}")
+
+    def _encoded_by(self, node, label: str) -> tuple | None:
+        """X.682 §11.2: the ENCODED BY value, which shall be an OBJECT IDENTIFIER.
+
+        `{2 1 1}` is ambiguous in isolation -- the parser reads a braced literal as a
+        `BracedValue` carrying BOTH readings -- so the arcs are taken from whichever shape
+        arrived rather than assuming one. Anything that is not an object identifier is a
+        specification error under §11.2 and is refused instead of being dropped.
+        """
+        if node is None:
+            return None
+        if isinstance(node, ast.OidValue):
+            return self._oid(node)
+        arcs = getattr(node, "arcs", None)
+        if arcs:
+            return self._oid(ast.OidValue(arcs))
+        raise Asn1SemanticError(
+            f"{label}: ENCODED BY takes an object identifier value (X.682 11.2)")
+
+    def _table_for(self, node: ast.OpenTypeNode, label: str):
+        """The associated table (X.681 §13) of the object set a table constraint names."""
+        if node.table is None:
+            return None
+        return self._object_set_table(node.table.object_set, label)
+
+    def _object_set_table(self, name: str, label: str):
+        """Build one object set's associated table, resolving references and unions."""
+        if name in self._tables:
+            return self._tables[name]
+        assignment = self.object_sets.get(name)
+        if assignment is None:
+            raise Asn1SemanticError(
+                f"{label}: table constraint names object set {name!r}, which this module "
+                f"does not define (X.682 10.4)")
+        rows: list[dict] = []
+        extensible = assignment.extensible
+        self._tables[name] = ObjectSetTable(assignment.object_class, (), extensible)
+        for element in assignment.elements:
+            if isinstance(element, str):
+                # §12.5: a referenced object set is spliced in and its extension marker is
+                # inherited; a referenced OBJECT contributes its single row.
+                nested = self.object_sets.get(element)
+                if nested is not None:
+                    inner = self._object_set_table(element, label)
+                    rows.extend(inner.rows)
+                    extensible = extensible or inner.extensible
+                    continue
+                obj = self.objects.get(element)
+                if obj is None:
+                    raise Asn1SemanticError(
+                        f"{label}: object set {name!r} references {element!r}, which is "
+                        f"neither a defined object nor a defined object set")
+                rows.append(self._row(obj.settings, assignment.object_class, label))
+                continue
+            rows.append(self._row(element, assignment.object_class, label))
+        table = ObjectSetTable(assignment.object_class, tuple(rows), extensible)
+        self._tables[name] = table
+        return table
+
+    def _row(self, settings, class_name: str, label: str) -> dict:
+        """One row of the associated table: a field name -> cell mapping (§13.4 a)).
+
+        A type field's cell is a lowered `Asn1Type`; a value field's cell is a Python value.
+        That asymmetry is §13.1's, not an implementation shortcut -- the columns of a class
+        genuinely hold different kinds of thing.
+        """
+        declared = self.classes.get(class_name)
+        by_name = {f.name: f for f in declared.fields} if declared else {}
+        row: dict = {}
+        for setting in settings:
+            field = by_name.get(setting.name)
+            is_type = (field.is_type_field if field is not None
+                       else len(setting.name) > 1 and setting.name[1].isupper())
+            if is_type:
+                row[setting.name] = self._type(setting.value, f"{label}.{setting.name}")
+            else:
+                governor = (self._type(field.type, label)
+                            if field is not None and field.type is not None else None)
+                row[setting.name] = self.value(
+                    setting.value, governor, f"{label}.{setting.name}")
+        return row
+
+    def _governing(self, node: ast.OpenTypeNode, declared, label: str):
+        """Turn §10.7's AtNotation list into (component paths, matching class columns).
+
+        §10.10's level counting is deliberately NOT resolved to an absolute path here: the
+        dots count enclosing constructions, and the decoder walks the value it is building,
+        so the path is kept relative and the leading dots are recorded by stripping them.
+        The column each path matches comes from §10.15 -- the referenced components are
+        ObjectClassFieldTypes of the same class, so their FIELD is what names the column,
+        and it is looked up when the constrained type is assembled (see `_bind_governing`).
+        """
+        if node.table is None or not node.table.at_notations:
+            return (), ()
+        paths: list[tuple[str, ...]] = []
+        for at in node.table.at_notations:
+            body = at.lstrip("@").lstrip(".")
+            paths.append(tuple(body.split(".")))
+        return tuple(paths), ()
 
     def _builtin(self, node: ast.Builtin, label: str) -> Asn1Type:
         universal = UNIVERSAL_OF.get(node.name)
@@ -397,7 +537,40 @@ class Lowerer:
                 optional=item.optional, extension=extension_of[id(item)],
                 **({"tag_class": tag_cls} if tag_cls is not None else {}),
                 **({"default": default} if has_default else {})))
-        return tuple(out), any(isinstance(n, ast.ExtensionMarker) for n in nodes)
+        return (self._bind_governing(tuple(out), entries, label),
+                any(isinstance(n, ast.ExtensionMarker) for n in nodes))
+
+    def _bind_governing(self, built: tuple, entries, label: str) -> tuple:
+        """Fill in each table-constrained open type's governing COLUMNS (X.682 §10.15).
+
+        §10.15 requires the referenced components to be ObjectClassFieldTypes of the same
+        class as the referencing one, so a referenced component's own `&field` is what names
+        the column its value has to match. That is knowable only once the sibling list
+        exists, which is why it happens here and not in `_open_type`.
+
+        A path this list cannot resolve is left unbound rather than guessed: `OpenType.resolve`
+        returns None for an incomplete binding, so the open type keeps its octets instead of
+        being decoded as the wrong type.
+        """
+        fields: dict[str, str] = {}
+        for item in entries:
+            if not isinstance(item, ast.ComponentNode):
+                continue                                   # an extension-group marker
+            node = item.type
+            while isinstance(node, (ast.Tagged, ast.Constrained)):
+                node = node.inner
+            if isinstance(node, ast.OpenTypeNode) and node.field:
+                fields[item.name] = node.field
+        out = []
+        for comp in built:
+            inner = comp.type
+            if isinstance(inner, OpenType) and inner.governing and not inner.governing_fields:
+                columns = tuple(fields.get(path[-1], "") for path in inner.governing)
+                if all(columns):
+                    inner = replace(inner, governing_fields=columns)
+                    comp = replace(comp, type=inner)
+            out.append(comp)
+        return tuple(out)
 
     def _use_automatic_tags(self, entries) -> bool:
         """§12.3: automatic tagging applies only when NO component carries a tag."""

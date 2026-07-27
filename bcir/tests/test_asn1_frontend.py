@@ -429,16 +429,28 @@ def test_rfc5280_subject_public_key_info_round_trips_the_whole_host_trust_store(
     assert with_parameters == seen, (with_parameters, seen)
 
 
-def test_a_containing_constraint_is_refused_rather_than_discarded():
+def test_a_containing_constraint_is_modelled_not_discarded():
     """Value-set constraints are dropped because X.690 encodes a value the same way
-    whether or not a constraint admitted it. CONTAINING is the exception -- X.680 36
-    makes it change what the contents octets ARE, so dropping it would be a lie."""
+    whether or not a constraint admitted it. CONTAINING is the exception -- X.682 §11.4
+    makes the octet string's abstract value the ENCODING of another type -- so it is now
+    carried on the type. It used to be REFUSED, which was the honest answer while it was
+    unimplemented; modelling it is the better one.
+    """
+    compiled = compile_module("M DEFINITIONS ::= BEGIN\n"
+                              "  T ::= OCTET STRING (CONTAINING INTEGER)\nEND\n")
+    contained = compiled.module.types["T"].contains
+    assert contained is not None, "a CONTAINING constraint was silently discarded"
+    assert contained.universal == Universal.INTEGER
+
+
+def test_a_contents_constraint_is_refused_on_a_type_it_cannot_apply_to():
+    """§11.3 limits it to OCTET STRING and BIT STRING; anything else is a spec error."""
     try:
         compile_module("M DEFINITIONS ::= BEGIN\n"
-                       "  T ::= OCTET STRING (CONTAINING INTEGER)\nEND\n")
-        raise AssertionError("a CONTAINING constraint was silently discarded")
-    except Asn1SyntaxError as exc:
-        assert "CONTAINING" in str(exc), exc
+                       "  T ::= INTEGER (CONTAINING BOOLEAN)\nEND\n")
+        raise AssertionError("a contents constraint on an INTEGER must be refused")
+    except Asn1SemanticError as exc:
+        assert "11.3" in str(exc), exc
 
 
 def test_a_size_constraint_is_discarded_and_does_not_change_the_encoding():

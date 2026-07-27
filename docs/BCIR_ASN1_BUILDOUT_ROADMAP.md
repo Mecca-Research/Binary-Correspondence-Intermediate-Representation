@@ -47,8 +47,8 @@ rule.
 | Rec. | ISO/IEC | Title | BCIR status |
 |---|---|---|---|
 | X.680 | 8824-1:2021 | Basic notation | **partial** — tag assignments consumed; notation not parsed |
-| X.681 | 8824-2:2021 | Information object specification | **partial** — classes, objects, object sets, open types; table constraints recorded not resolved |
-| X.682 | 8824-3:2021 | Constraint specification | **partial** — X.680 cl. 49–51 subtype constraints built; X.682's table/user-defined constraints not |
+| X.681 | 8824-2:2021 | Information object specification | **built** — classes, WITH SYNTAX, objects, object sets, associated tables (cl. 13); X.683 parameterized objects excluded |
+| X.682 | 8824-3:2021 | Constraint specification | **built** — table + component relation (cl. 10), user-defined (cl. 9), contents (cl. 11) |
 | X.683 | 8824-4:2021 | Parameterization | not started |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
@@ -79,6 +79,11 @@ the suite by a factor of three, and §0 is why it is nevertheless the destinatio
   digests are recomputed; native→DER/COER→native is byte-identical. This is the second
   artifact family to prove that the encoding-rule rail is reusable rather than
   StreamPack-specific.
+- X.681 information objects and X.682 constraints: object sets carry their **associated
+  table** (X.681 cl. 13), and a component relation constraint RESOLVES an open type from a
+  governing sibling at decode time — so `AttributeTypeAndValue`'s `value` decodes as the
+  type its `type` OID names instead of opaque octets. Table constraints are deliberately
+  invisible to the encoders (X.691 §10.3.4/§10.3.5), which is pinned by a law.
 - The schema in the IR (`bcir.asn1.*`) and verifier law **R24**.
 
 Two constraints inherited from that baseline shape everything below:
@@ -158,32 +163,27 @@ program. Third-party validation: parse the X.509 `AuthorityKeyIdentifier` and
 Stop condition: if the parsed subset cannot express X.509 without X.681 information
 objects, stop and take phase F first rather than inventing a dialect.
 
-### B. X.682 constraints · **BUILT** (the X.680 subtype half) · unblocks PER
+### B. X.682 constraints · **BUILT**
 
-> **Status: delivered.** `bcir/asn1/constraints.py` — single values, value ranges
-> with open endpoints and MIN/MAX, SIZE, FROM, and the UNION/INTERSECTION/EXCEPT
-> composition of clause 49 — plus the *effective* value/size constraint
-> (X.696 §8.2.7/§8.2.8), which is what an encoding is chosen from. OER now narrows:
-> `INTEGER (0..255)` is one octet where unconstrained INTEGER is two, and a
-> fixed-SIZE OCTET STRING or known-multiplier string drops its length determinant
-> entirely. R24 gained three diagnostics for an empty value set.
->
-> Note the split the roadmap glossed: the *notation* phase B needs is **X.680**
-> clauses 49–51, not X.682. X.682 itself is table, component-relation and
-> user-defined constraints, which stay with phase F.
+X.680 clauses 49–51 (subtype constraints) landed first, because OER and PER choose an
+encoding *from* a constraint. X.682's own three forms are now built on top:
 
-Size, value-range, permitted-alphabet, `SIZE`, `FROM`, inner-subtyping, and the
-extensibility marker. Table and component-relation constraints (X.682 §10) need X.681
-and belong to phase F.
+* **Table and component relation constraints** (cl. 10) — see phase F above; this is the
+  half that resolves open types.
+* **User-defined constraints** (cl. 9) — `CONSTRAINED BY {...}` is recorded and never
+  consulted by an encoder. §9 NOTE 1 calls it "a special form of ASN.1 comment" and X.691
+  §10.3.3 makes it not PER-visible, so recording without acting is the whole contract.
+* **Contents constraints** (cl. 11) — `CONTAINING Type [ENCODED BY oid]`. Unlike a value-set
+  constraint this one says what the contents octets *are*, so it is modelled rather than
+  discarded, and it resolves the same way a table-constrained open type does. It used to be
+  refused outright, which was the honest answer while unimplemented. §11.3's restriction to
+  OCTET STRING and BIT STRING is enforced.
 
-The BCIR-specific payoff arrives immediately and independently of PER: **a constrained
-ASN.1 type is a claim geometry.** `INTEGER (0..255)` is an 8-bit lane; `SEQUENCE
-(SIZE(1..64)) OF` is a bounded extent. Constraints are exactly the information
-`realize.candidates_for` needs to price a decode, so this phase is where the ASN.1 rail
-starts feeding the optimizer rather than sitting beside it.
-
-Gate: R24 extends to reject a constraint that is unsatisfiable (empty value set) — a
-static fault in the same family as duplicate component tags.
+The governing law across all three is negative: **none of them may move a bit**. X.691
+§10.3.3–§10.3.6 make user-defined, table, component relation and table-dependent constraints
+PER-invisible, and X.696 agrees, so a table-constrained value field's column lands on
+`Primitive.table_values` and never on `Primitive.constraint` — the latter is what OER and PER
+read to size a field. `test_a_table_constraint_never_moves_a_bit_of_any_encoding` pins it.
 
 ### C. X.691 PER (ALIGNED + UNALIGNED) · **BUILT**
 
@@ -298,30 +298,28 @@ schema with a canonical binary projection, rather than each being an ad-hoc shap
 
 Canonical variant: CJER, for the digest discipline.
 
-### F. X.681 information objects + X.683 parameterization · **X.681 PARTIAL, the X.509 blocker cleared**
+### F. X.681 information objects + X.683 parameterization · **X.681 BUILT**
 
-> **Status: the open type is built.** `OpenType` in `bcir/asn1/schema.py` (DER) and
-> `bcir/asn1/oer.py` §30 (OER); the front-end parses X.681 §9 class definitions, §11
-> objects, §12 object sets, `CLASS.&field` references, and the withdrawn-but-ubiquitous
-> `ANY DEFINED BY` spelling. **The X.509 gate passes: 152/152 real certificates.**
->
-> What is deliberately *not* built: X.682's table constraints are recorded, not resolved,
-> so an open type stays open rather than being narrowed to the type an object set implies.
-> That is honest rather than lossy — the octets are carried through untouched, which is
-> exactly the open-type contract — and it is what a later phase would add. X.683
-> parameterization is still refused by name.
+**Built.** Classes with WITH SYNTAX; objects in both DefaultSyntax (`{&f v, ...}`) and
+DefinedSyntax (`{"A" 1 INTEGER}`, matched against the class's syntax list including its
+literal words); object sets with union, reference splicing and the §12.3 extension marker;
+and the **associated table** of clause 13 — rows are objects, columns are class fields, and
+a type field's column is a column of *types*.
 
-ASN.1's own generics and open-type machinery. `CLASS`, `WITH SYNTAX`, information
-object sets, and the `&Type` / `&id` field references that make `ALGORITHM-IDENTIFIER`
-and the whole X.509 algorithm-agility pattern expressible.
+That last point is what the whole chapter is for. X.682 §10.19/§10.20 select a row from the
+values of sibling components, and a selected row names the type an open type's octets
+actually are. `bcir/tests/test_asn1_objects.py` carries X.682 clause 10's own worked example
+(ERROR-CLASS / ErrorSet / ErrorReturn) plus the X.509-shaped `AttributeTypeAndValue`.
 
-This is the phase that unlocks *real-world* modules. X.509, LDAP, SNMP, 3GPP and
-S1AP/NGAP all use information object classes; a front-end without them can parse toy
-modules only. It also completes X.682 (table and component-relation constraints).
+Resolution is an **enrichment, not a replacement**: the octets stay exactly as they arrived
+and the decoded value appears alongside them under `<name>.resolved`. An unmatched row
+produces no key at all rather than a guess — X.681 §12.9 explicitly permits a peer to use an
+object outside an extensible set, so an unresolvable open type is ordinary traffic.
 
-Sequencing note: this phase is placed after PER/OER deliberately, because information
-objects are only worth the complexity once there is a reason to consume third-party
-modules at scale. If phase A's stop condition fires, it moves ahead of B.
+**Not built.** X.683 parameterization: `ParameterizedObject` and `ParameterizedObjectSet`
+(§11.3 d), §12) still fall back to the recorded raw span, which means such an object
+contributes no row rather than a wrong one. Also `ObjectFromObject` (§15) and the
+self-referential link fields of §13.2 b), whose column set is deliberately infinite.
 
 ### G. X.692 ECN · the metaprogramming layer
 
