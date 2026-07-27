@@ -380,6 +380,16 @@ Gate: on a bandwidth-capped Θ the optimizer selects UNALIGNED PER over DER and 
 selection is certified; on a decode-latency-capped Θ it selects OER; with no budget it
 reproduces today's DER exactly (the degenerate case, pinning that nothing regresses).
 
+> **Measurement status (`bcir/asn1/selection.py`).** Two of the three hold today. The
+> no-budget case reproduces DER exactly, and the bandwidth case selects
+> CANONICAL-PER-UNALIGNED at 84 octets against DER's 136 — decided by arithmetic, so it
+> holds on every host. **The decode-latency case does not select OER on the Python
+> oracle**, and the reason is an implementation artifact rather than a property of the
+> rules: JER decodes through `json.loads`, which is C, while COER decodes through pure
+> Python. This is recorded rather than papered over precisely because the *two-truth* law
+> above forbids promoting a measured cost to a verdict — phase H's real selection reads the
+> calibrated table in `kbcir/microbench.py`, and a Python-oracle timing is not that table.
+
 ## 5. Sequencing recommendation
 
 Three phases can run in parallel because they share no dependency: **A** (front-end),
@@ -428,10 +438,18 @@ default.
   B or C. F is no longer only "nice for real-world modules" — it is the gate on
   consuming the single most widely deployed ASN.1 schema family there is. See §5.
 
-- **ECN reduction (§4 G).** If cost-governed selection over the fixed set
-  {DER, CANONICAL-PER-ALIGNED, CANONICAL-PER-UNALIGNED, COER, CJER} demonstrates the
-  win, build ECN's built-in object sets only and do not implement user-defined encoding
-  classes. Record the decision with the measurement that justified it.
+- **ECN reduction (§4 G) — MEASURED, decision pending sign-off.** The candidate set is
+  {DER, CANONICAL-PER-ALIGNED, CANONICAL-PER-UNALIGNED, COER, **BCIR-canonical JER**} —
+  note the fifth: §4 G and this bullet previously said "CJER", but X.697 §42.2 registers
+  exactly one object identifier and defines **no canonical variant at all**, so the
+  candidate is BCIR's own profile and carries no OID. The measurement now exists
+  (`bcir/asn1/selection.py`, recorded by `bcir/tests/test_asn1_selection.py`); on the
+  X.691 Annex A.1 record the five legal encodings span **84 to 385 octets, a 4.6× spread**,
+  and a bandwidth-capped objective selects UNALIGNED PER at **61.8% of DER** with no
+  user-defined encoding class involved. On Annex A.2 the same value falls to 61 octets
+  because constraints are PER-visible and, per §7.2.2 l), invisible to JER. That is the
+  win the gate asks about; on it, build ECN's built-in object sets only (done) and do not
+  implement user-defined encoding classes.
 - **X.694 stays out.** Mapping W3C XML Schema into ASN.1 serves XML interop BCIR has no
   stake in. Revisit only if a concrete consumer appears.
 - **XER (X.693) is decode-oriented, and is now built on those terms.** BASIC-XER and
