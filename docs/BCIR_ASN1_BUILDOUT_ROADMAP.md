@@ -53,7 +53,7 @@ rule.
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
 | X.692 | 8825-3:2021 | ECN | not started |
-| X.693 | 8825-4:2021 | XER | not started |
+| X.693 | 8825-4:2021 | XER | **built** — BASIC-XER + CXER (CXER out, both in; validated against Annex A.3/A.4); EXTENDED-XER by design excluded |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
 | X.696 | 8825-7:2021 | OER | **built** (COER out, BASIC-OER in; validated against Annex A) |
@@ -434,9 +434,13 @@ default.
   classes. Record the decision with the measurement that justified it.
 - **X.694 stays out.** Mapping W3C XML Schema into ASN.1 serves XML interop BCIR has no
   stake in. Revisit only if a concrete consumer appears.
-- **XER (X.693) is decode-oriented.** BASIC-XER and CXER are worth having for
-  interchange, but XML is a poor fit for a digested artifact and XER should never be a
-  selection candidate. Build it if a peer requires it, not on principle.
+- **XER (X.693) is decode-oriented, and is now built on those terms.** BASIC-XER and
+  CXER are in (`bcir/asn1/xer.py`, byte-identical to Annex A.4 and matching A.3's stated
+  653 octets); **EXTENDED-XER is not**, and is a deliberate exclusion rather than a gap.
+  Clauses 10 and 18-39 are a second language — XER type prefixes, an encoding control
+  section, XML namespaces and attributes — and none of it changes a BASIC-XER or CXER
+  encoding, so it buys interchange BCIR has no consumer for. XML remains a poor fit for a
+  digested artifact and XER is still **not** a selection candidate for phase H.
 - **No encoding rule ships without a canonical variant** on the emit path. BER taught
   this lesson already; the rule generalizes.
 - **No phase ships without a C twin and a dual-rail differential.** Phase 1 found three

@@ -36,6 +36,33 @@ def verify_file(path: Path, info: dict) -> bool:
             and _digest(path) == str(info["sha256"]).lower())
 
 
+def _publish(part: Path, target: Path, tries: int = 8) -> None:
+    """Move a verified staging file into place, tolerating a lost Windows rename race.
+
+    ``os.replace`` is atomic on every platform, but atomic is not the same as always
+    permitted: on Windows ``MoveFileEx`` fails with ERROR_ACCESS_DENIED (WinError 5, which
+    Python raises as ``PermissionError``) when the *destination* is momentarily open —
+    another gate publishing the same pin, a concurrent reader, or a virus scanner that
+    opened the file the instant it appeared.  POSIX has no such rule and never takes this
+    branch, so the retry is gated on the platform rather than applied blindly, where it
+    would paper over a genuine permissions fault.
+
+    Only the publish is retried, never the download.  By the time this is called the bytes
+    are written, fsynced and checksum-verified, so a lost race is a scheduling accident and
+    re-fetching a file we already hold and have proven correct would be the wrong repair.
+    The wait is short and bounded (~1.8 s in total) and the last failure is re-raised, so a
+    destination that is genuinely unwritable still fails rather than hanging.
+    """
+    for attempt in range(1, tries + 1):
+        try:
+            os.replace(part, target)
+            return
+        except PermissionError:
+            if os.name != "nt" or attempt == tries:
+                raise
+            time.sleep(0.05 * attempt)
+
+
 def _download(url: str, target: Path, info: dict, attempts: int = 3) -> None:
     last_error: BaseException | None = None
     for attempt in range(1, attempts + 1):
@@ -64,7 +91,7 @@ def _download(url: str, target: Path, info: dict, attempts: int = 3) -> None:
                     os.fsync(out.fileno())
             if not verify_file(part, info):
                 raise ValueError(f"downloaded {target.name} failed size/SHA-256 verification")
-            os.replace(part, target)
+            _publish(part, target)
             return
         except (OSError, ValueError, urllib.error.URLError) as exc:
             last_error = exc
