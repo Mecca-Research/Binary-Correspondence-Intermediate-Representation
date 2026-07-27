@@ -320,7 +320,7 @@ errata admission.
 | **J1 — bounded Python oracle** · **DELIVERED** | Pre-parse limits, exact canonical-byte validation, schema/path diagnostics, framed input, and `bcir-asn1c` JER encode/decode/transcode modes | Met: limits are asserted at each N/N+1 boundary, every encoder's option that decodes to the right value is refused by octet comparison, every truncated prefix of a framed document is refused, and a failed decode leaves a retry succeeding unchanged |
 | **J2 — schema-plan compiler** · **DELIVERED** | Deterministic descriptor, bound derivation, instruction compilation, version/hash contract, and first `channel.json` schema | Met: [`jer_plan.py`](../bcir/asn1/jer_plan.py) regenerates byte-identically, refuses a bare ENUMERATED, an open type, a duplicate JSON member name and an undiscriminable UNWRAPPED choice at compile time, and its plan-driven trace equals the direct one |
 | **J3 — scalar C twin** | Allocation-free bounded scanner/parser, generated wrappers, event sink, diagnostics, and fuzz target | Python/C value, trace, error-class, and final-offset parity at `-O0`/`-O3`; strict warnings, sanitizers, allocator-independence, and bounded fuzz green |
-| **J4 — law and execution lowering** | Additive MLIR family/profile representation, expanded R24, typed/direct claim builders, StreamPack lowering, and `DeviceManifest`/selection schemas | Positive/negative Python↔MLIR parity; direct/typed claim graphs and StreamPack bytes agree |
+| **J4 — law and execution lowering** | Additive MLIR family/profile representation, expanded R24, typed/direct claim builders, StreamPack lowering, and `DeviceManifest`/selection schemas | Positive/negative Python↔MLIR parity; direct/typed claim graphs and StreamPack bytes agree; **and the JER↔MLIR projection commutes in both directions** (see below) |
 | **J5 — hosted SIMD rail** | Optional C++17 structural/UTF-8 scanner behind the C ABI with scalar fallback | Same accepted/rejected corpus and trace; statistically significant measured advantage on at least two hosts; no unsupported-CPU fault |
 | **J6 — certified K_BCIR choice** | Native microbench protocol, frozen target tables, prediction intervals, RCSP integration, and selection certificate | Exact candidate sizes, controlled counters, repeatability, legality-first refusal, and deterministic selection on at least two targets |
 | **J7 — driver experiment** | Userspace/simulator driver specification ingest, generated views, and sequential BCIR-Linux module comparison | D0–D3 driver gates, signed modules, direct/Linux trace parity, teardown/restart tests, and controlled performance evidence |
@@ -329,6 +329,25 @@ User-defined ECN classes are closed after the J0 sign-off. The built-in sets and
 BCIR lowering contracts are sufficient for the measured fixed-candidate result. Reopening
 ECN requires a written workload, a missing expressiveness proof, and approval separate
 from the JER implementation.
+
+### 7.1 J4's bidirectionality extension
+
+J4 was originally scoped as a **one-way** lowering: JER text in, claims and StreamPack
+bytes out. [`BCIR_JSON_PROGRAM_REPRESENTATION.md`](BCIR_JSON_PROGRAM_REPRESENTATION.md)
+examines whether JER can also carry *programs* — BCIR's own IR — and concludes that this
+is not a new representation but a **third serialization of the `bcir.*` dialect BCIR
+already has**, alongside MLIR textual assembly and MLIR bytecode. That conclusion adds one
+requirement to J4, recorded here so it is designed for rather than retrofitted:
+
+> The projection between the `bcir.*` dialect and its JER form must **commute in both
+> directions**. `MLIR -> JER -> MLIR` must be the identity on the dialect, and
+> `JER -> MLIR -> JER` must be byte-identical under the canonical profile.
+
+Nothing else in J0–J7 changes. J3 is unaffected and more strongly motivated: if JER can
+carry programs, the bounded C parser sits on a materially more important path. Phase H
+gains a consumer rather than a new law. The program-representation work has its own phase
+ladder (P0–P6) in that note; P1 depends on J2, P2 depends on J4, and no P phase is
+scheduled ahead of the JER phase it depends on.
 
 ## 8. Validation and performance method
 
@@ -423,6 +442,7 @@ gates are proven.
 | ECN scope returns without evidence | Reopen only with an approved workload and missing-expressiveness proof |
 | Integrity is described as authenticity | Keep BCAB CRC/SHA and future signature/loader policy separate |
 | Physical register layout is “optimized” illegally | Device schema fixes MMIO facts; optimize only access schedules and declared packet variants |
+| JER-as-program-representation forks a second IR | J4's §7.1 gate: the projection must reproduce the existing `bcir.*` dialect exactly, in both directions |
 | Linux module experiments endanger a workstation | Disposable CI/BCIR-Linux environments, bounded tests, signed artifacts, and explicit hardware gates |
 
 ## 11. References
@@ -438,6 +458,9 @@ gates are proven.
   <https://www.rfc-editor.org/rfc/rfc7464.html>
 - Langdale and Lemire, *Parsing Gigabytes of JSON per Second*:
   <https://arxiv.org/abs/1902.08318>
+- [`BCIR_JSON_PROGRAM_REPRESENTATION.md`](BCIR_JSON_PROGRAM_REPRESENTATION.md) — whether
+  schema-bound JSON can carry BCIR programs, and the P0–P6 ladder that would follow. §7.1
+  above records the one change it makes to this roadmap.
 - Li et al., *Mison: A Fast JSON Parser for Data Analytics*:
   <https://www.microsoft.com/en-us/research/wp-content/uploads/2017/05/mison-vldb17.pdf>
 - Linux kernel documentation: driver binding, module signing, livepatch consistency,
