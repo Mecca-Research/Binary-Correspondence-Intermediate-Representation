@@ -50,8 +50,26 @@ STREAMPACK_MODULE_OID: tuple[int, ...] = (*BCIR_ARC, 1)
 PROJECTION_VERSION = 1
 
 _INTEGER = Primitive(Universal.INTEGER, "INTEGER")
-_ENUMERATED = Primitive(Universal.ENUMERATED, "ENUMERATED")
 _UTF8 = Primitive(Universal.UTF8_STRING, "UTF8String")
+
+#: X.680 §20: an ENUMERATED type IS its enumeration, and these two carry theirs.
+#:
+#: They did not, until J4 part 2. A bare `Primitive(Universal.ENUMERATED)` encodes fine
+#: under DER and OER, which encode the enumeration *value* (X.690 §8.4, X.696 §11), so the
+#: omission was invisible for as long as those were the only projections. It is not
+#: invisible to the other two rails: X.691 §14 encodes the enumeration *index*, which needs
+#: the root sorted, and X.697 §22.2 encodes the *identifier*, which cannot be derived from
+#: the number at all. So the module was DER/OER-only by accident rather than by design, and
+#: the JER projection is what surfaced it.
+#:
+#: The names and numbers are exactly the ones this file's own ASN.1 comment block above
+#: already declares — the code simply had not carried them. DER octets are unchanged,
+#: because DER never looked at the identifiers; `test_asn1_streampack.py` pins that.
+LANE = Primitive(Universal.ENUMERATED, "Lane",
+                 enumeration=(("u", 0), ("ux", 1), ("t", 2), ("ggg", 3), ("a", 4),
+                              ("h", 5)))
+DISPATCH = Primitive(Universal.ENUMERATED, "Dispatch",
+                     enumeration=(("core", 0), ("pim", 1)))
 
 #: `dispatch` on the wire (native `_DISPATCH_WIRE`), mirrored so the two rails agree
 #: on the integer meaning of each name rather than each inventing one.
@@ -121,7 +139,7 @@ LANE_SEGMENT = Sequence((
     Component("name", _UTF8, tag=0),
     Component("claimId", _INTEGER, tag=1),
     Component("phaseId", _INTEGER, tag=2),
-    Component("lane", _ENUMERATED, tag=3),
+    Component("lane", LANE, tag=3),
     Component("width", _INTEGER, tag=4),
     Component("opcode", _UTF8, tag=5),
     Component("reads", _INTEGERS, tag=6),
@@ -129,7 +147,7 @@ LANE_SEGMENT = Sequence((
     Component("prefetch", _UTF8, tag=8, optional=True),
     Component("fenceBefore", _STRINGS, tag=9, default=[]),
     Component("fenceAfter", _STRINGS, tag=10, default=[]),
-    Component("dispatch", _ENUMERATED, tag=11, default=0),
+    Component("dispatch", DISPATCH, tag=11, default=0),
     Component("channel", _UTF8, tag=12, default="host"),
 ), name="LaneSegment")
 
@@ -301,8 +319,47 @@ def decode_pack_oer(data: bytes, *, canonical: bool = False):
     return value_to_pack(decode_oer(STREAM_PACK, data, rules=rules))
 
 
+def encode_pack_jer(pack, *, canonical: bool = True) -> bytes:
+    """JER text for a StreamPack under the SAME BCIR-StreamPack module.
+
+    The third transfer syntax over one type model, and it needed no change to the module —
+    which is the property roadmap §0 turns on and the reason a schema is worth having.
+
+    §6.3 draws the line this function sits on: **JER is never a replacement for native
+    StreamPack.** A projection is additive and must reconstruct byte-identical native
+    artifacts, which is a testable claim rather than a promise — `test_asn1_dialect.py`
+    round-trips real packs through JER and compares the *native* octets, not the JSON.
+
+    Nor is this a hot path. JER is roughly four times the size of the binary projections
+    and is parsed as text; §1's boundary keeps it in the build, control, configuration and
+    load planes. What it buys is a schema-bound rail a human can read and a foreign tool
+    can produce without a BER toolkit.
+    """
+    from .jer import JerRules, encode_jer
+    rules = JerRules.CANONICAL if canonical else JerRules.BASIC
+    return encode_jer(STREAM_PACK, pack_to_value(pack), rules=rules)
+
+
+def decode_pack_jer(data: bytes, *, canonical: bool = True):
+    """Recover a StreamPack from its JER projection.
+
+    Defaults to the canonical profile because a pack that arrives over JER is a pack the
+    caller is about to digest or execute, and BASIC would let a sender choose the spelling
+    — and so the digest. Pass `canonical=False` only where the input is known-foreign and
+    the result is not being bound to a content address.
+    """
+    from .jer import JerRules
+    from .jer_bounded import decode_bounded
+    rules = JerRules.CANONICAL if canonical else JerRules.BASIC
+    # Through the BOUNDED reader, never bare `decode_jer`: this is a trust boundary, and
+    # §4.3's limits have to apply before a value graph exists. `encode_pack_jer`'s output
+    # is the only input that is not attacker-chosen, and it costs nothing to bound that too.
+    return value_to_pack(decode_bounded(data, STREAM_PACK, rules=rules))
+
+
 __all__ = [
     "BCIR_ARC", "BLOCK", "DISPATCH_NAMES", "DISPATCH_VALUES", "LANE_SEGMENT", "MODULE",
+    "decode_pack_jer", "encode_pack_jer",
     "PREFETCH", "PROJECTION_VERSION", "STREAM_PACK", "STREAMPACK_MODULE_OID",
     "TRACE_NOTE", "decode_pack", "decode_pack_oer", "encode_pack", "encode_pack_oer",
     "pack_to_value", "value_to_pack",
