@@ -14,16 +14,22 @@ number" is a refusal that names what is missing, never a substitute that looks l
 
 **Two candidates are absent for different reasons, and the difference matters.**
 
-* **OER** has no C implementation yet. That is a gap in the repository, and it closes when
-  somebody writes one.
 * **PER cannot have one.** X.691 §7.2: a PER encoding is not self-delimiting — "without
   knowledge of the type of the value" the octets cannot be walked at all. There is no
   schema-free structural pass to time, so a comparable native number does not exist and
   will not exist. `bcir_per.c` implements the reading *primitives*; timing those against a
   whole-document scan would compare unlike work and call the difference an encoding cost.
+* **OER cannot either, and this entry was wrong at first.** It read "no C OER decoder
+  exists yet", which called a law an ordinary gap. X.696 §6.2 states the same rule as
+  X.691 §7.2: *"without knowledge of the type of the value encoded, it is not possible to
+  determine the structure of the encoding"*. `runtime/c/bcir_oer.c` now decodes OER
+  natively — and that did **not** make it measurable here, because it is schema-*directed*
+  while everything in this table is a schema-free structural pass. Writing the decoder is
+  what exposed the mislabel.
 
-That asymmetry is recorded in `NATIVE_OPS` rather than left implicit, because "not yet" and
-"not ever" call for different decisions from whoever reads the table.
+Both reasons are recorded in `NATIVE_OPS` rather than left implicit, because a reader who
+cannot tell "not yet" from "not ever" will either wait for a row that is never coming or
+conclude the harness is broken.
 
 **What is timed is what a peer pays at a trust boundary**: walk the octets you were handed
 and decide whether they are well formed. `bcir_asn1_validate_der` for DER, the three-stage
@@ -88,10 +94,24 @@ NATIVE_OPS: dict[str, NativeOp] = {
     "BASIC-PER-UNALIGNED": NativeOp(
         None, permanent=True,
         reason="X.691 §7.2: a PER encoding is not self-delimiting (see the aligned entry)"),
+    # CORRECTED. These previously read "no C OER decoder exists yet; this closes when one
+    # is written", which called X.696 §6.2's law an ordinary gap. It is not: §6.2 says
+    # "without knowledge of the type of the value encoded, it is not possible to determine
+    # the structure of the encoding" — the same law X.691 §7.2 states for PER. A C OER
+    # decoder now exists (`runtime/c/bcir_oer.c`) and it did NOT make OER measurable here,
+    # because it is schema-directed and everything else in this table is a schema-free
+    # structural pass. Timing the two against each other would compare unlike work and
+    # report the difference as an encoding cost.
     "COER": NativeOp(
-        None, reason="no C OER decoder exists yet; this closes when one is written"),
+        None, permanent=True,
+        reason="X.696 §6.2: without the type, the structure of an OER encoding cannot be "
+               "determined, so there is no schema-free structural pass to time. "
+               "runtime/c/bcir_oer.c decodes OER natively but is schema-DIRECTED, which is "
+               "not comparable to the structural scans this table measures"),
     "BASIC-OER": NativeOp(
-        None, reason="no C OER decoder exists yet; this closes when one is written"),
+        None, permanent=True,
+        reason="X.696 §6.2: without the type, the structure of an OER encoding cannot be "
+               "determined (see the COER entry)"),
 }
 
 

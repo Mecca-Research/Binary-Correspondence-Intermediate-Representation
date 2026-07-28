@@ -11,6 +11,7 @@ freestanding_core bcir_hydrate.c
 freestanding_core bcir_per.c
 freestanding_core bcir_xer.c
 freestanding_core bcir_jer.c
+freestanding_core bcir_oer.c
 freestanding_core bcir_plan.c
 freestanding_core bcir_provenance.c
 freestanding_core bcir_runtime.c

@@ -146,6 +146,15 @@ add_target xer "X.693 XER lexical layer" "-max_len=4096" \
 add_target jer "X.697 bounded JER reader" "-max_len=4096" \
   "${C}/fuzz_jer.c" "${C}/bcir_jer.c" "${C}/bcir_runtime.c"
 
+# X.696's decoder, and the only target here whose PLAN is fuzzed as well as its input.
+# X.696 6.2 makes a schema-free walk impossible, so bcir_oer.c is driven by a caller-supplied
+# field table as well as by octets -- which doubles the surface: a plan whose declared widths
+# and lengths disagree with the document is exactly the shape that walks a cursor out of
+# bounds, and it is reachable whenever a descriptor and a document come from different
+# places. For a driver reading a manifest, that is always.
+add_target oer "X.696 OER decoder" "-max_len=4096" \
+  "${C}/fuzz_oer.c" "${C}/bcir_oer.c"
+
 # The StreamPack decoder itself: an artifact handed to the runtime by anyone.
 add_target decoder "decoder" "" \
   "${C}/fuzz_streampack.c" "${C}/bcir_runtime.c"
