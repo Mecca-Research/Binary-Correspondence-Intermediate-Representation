@@ -3556,6 +3556,94 @@ else
   exit 1
 fi
 
+# X.696 OER decoder (#oer, ASN.1 build-out phase D): the encoding rule with the best decode
+# cost -- octet-aligned throughout, most fields fixed-width words a target loads directly --
+# and therefore the one a driver-side or DMA-fed path actually wants. It is SCHEMA-DIRECTED
+# because 6.2 leaves no choice: "without knowledge of the type of the value encoded, it is
+# not possible to determine the structure of the encoding". The dual-rail differential lives
+# in bcir/tests/test_c_oer.py; what is checked here is the usual discipline plus -O0 == -O3,
+# which earns its place because the decoder sign-extends by hand and compares widths against
+# attacker-supplied lengths.
+echo "[c-runtime] X.696 OER decoder: strict-warning and freestanding build (#oer)"
+if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
+     "${C}/bcir_oer.c" "${C}/test_oer.c" -o "${tmp}/test_oer"; then
+  for std in c11 c23; do
+    "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Werror -I "${C}" \
+      -c "${C}/bcir_oer.c" -o /dev/null \
+      || { echo "  FAIL: bcir_oer is not freestanding-clean under -std=${std}"; exit 1; }
+  done
+  oer_ok=1
+  "${CC}" -std=c23 -O0 -I "${C}" "${C}/bcir_oer.c" "${C}/test_oer.c" \
+    -o "${tmp}/test_oer_O0" || oer_ok=0
+  "${CC}" -std=c23 -O3 -I "${C}" "${C}/bcir_oer.c" "${C}/test_oer.c" \
+    -o "${tmp}/test_oer_O3" || oer_ok=0
+  if [ "${oer_ok}" -eq 1 ]; then
+    python3 - <<'OERPY' > "${tmp}/oer_cases.txt"
+import sys
+sys.path.insert(0, ".")
+from bcir.asn1.constraints import Size, ValueRange
+from bcir.asn1.oer import OerRules, encode_length, encode_oer
+from bcir.asn1.schema import Component, Primitive, Sequence
+from bcir.asn1.tags import Universal
+
+for value in (0, 1, 126, 127, 128, 255, 256, 65535, 65536, 1 << 24):
+    raw = encode_length(value)
+    for pos in range(len(raw) + 2):
+        print(f"length {raw.hex()} {pos}")
+# The malformed and BASIC-OER spellings a decoder must tell apart.
+for raw in ("80", "8100", "820080", "82ff", "ff"):
+    print(f"length {raw} 0")
+
+byte = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 255))
+word = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(-32768, 32767))
+wide = Primitive(Universal.INTEGER, "INTEGER")
+text = Primitive(Universal.UTF8_STRING, "UTF8String")
+for kind, width, signed, values in ((byte, 1, 0, (0, 1, 255)),
+                                    (word, 2, 1, (-32768, -1, 0, 32767)),
+                                    (wide, 0, 1, (0, -1, 128, -129, 2 ** 40))):
+    for value in values:
+        raw = encode_oer(kind, value, rules=OerRules.CANONICAL)
+        print(f"integer {raw.hex()} 0 {width} {signed}")
+for raw in ("00", "ff", "0000", "ffff", "ffffffffffffffff"):
+    for width in (1, 2, 4, 8, 0, 3):
+        for signed in (0, 1):
+            print(f"integer {raw} 0 {width} {signed}")
+
+for raw in ("00", "80", "40", "c0", "ff", "81"):
+    for count in (0, 1, 2, 3, 8):
+        print(f"preamble {raw} 0 {count}")
+
+record = Sequence((Component("id", byte), Component("delta", word),
+                   Component("label", text), Component("note", text, optional=True)),
+                  name="Record")
+plan = "0:1:0:0:0,0:2:1:0:0,4:0:0:0:0,4:0:0:1:0"
+for value in ({"id": 7, "delta": -3, "label": "abc", "note": "n"},
+              {"id": 0, "delta": 0, "label": ""},
+              {"id": 255, "delta": 32767, "label": "x" * 200}):
+    raw = encode_oer(record, value, rules=OerRules.CANONICAL)
+    for cut in range(len(raw) + 1):
+        print(f"sequence {raw[:cut].hex() or '-'} {plan}")
+# Plans the checker must refuse before reading an octet.
+print(f"sequence 00 9:0:0:0:0")
+print(f"sequence 00 0:3:0:0:0")
+OERPY
+    "${tmp}/test_oer_O0" < "${tmp}/oer_cases.txt" > "${tmp}/oer_O0.txt"
+    "${tmp}/test_oer_O3" < "${tmp}/oer_cases.txt" > "${tmp}/oer_O3.txt"
+    if cmp -s "${tmp}/oer_O0.txt" "${tmp}/oer_O3.txt"; then
+      echo "  PASS X.696 OER twin (freestanding, -Werror, -O0 == -O3 over $(wc -l < "${tmp}/oer_cases.txt") cases)"
+    else
+      echo "  FAIL: the OER twin's answers depend on the optimisation level"
+      diff "${tmp}/oer_O0.txt" "${tmp}/oer_O3.txt" | head -10
+      exit 1
+    fi
+  else
+    echo "  SKIP OER optimisation-parity (a build failed)"
+  fi
+else
+  echo "  FAIL: the X.696 OER twin does not build warning-clean"
+  exit 1
+fi
+
 # The native ASN.1 decode microbench (#asn1bench, JSON roadmap J6 follow-on): the harness
 # that makes a `measured` cost table possible, and therefore the reason select_certified can
 # decide a timing objective at all instead of refusing every one. It is a MEASUREMENT tool,

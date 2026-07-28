@@ -17,6 +17,8 @@ Skips cleanly when no C compiler is visible, exactly as the other native tests d
 
 from __future__ import annotations
 
+import os
+
 from bcir.asn1.certified import MIN_SAMPLES, EncodingCostTable, UnmeasuredTarget, select_certified
 from bcir.asn1.native_bench import (
     NATIVE_OPS, NativeOp, build_harness, measured_table, native_available, run_native_bench,
@@ -24,6 +26,10 @@ from bcir.asn1.native_bench import (
 from bcir.asn1.schema import Component, Primitive, Sequence
 from bcir.asn1.selection import ALL_CANDIDATES, Objective, measure_one
 from bcir.asn1.tags import Asn1Error, Universal
+
+_ROOT_C = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "runtime", "c")
 
 _RECORD = Sequence((
     Component("id", Primitive(Universal.INTEGER)),
@@ -103,14 +109,19 @@ def test_every_candidate_has_an_explicit_native_decision():
             assert entry.reason, f"{name} is unmeasured with no reason given"
 
 
-def test_per_is_refused_permanently_and_oer_is_refused_for_now():
-    """"Not yet" and "not ever" are different, and the map says which.
+def test_per_and_oer_are_both_refused_by_law_not_by_a_missing_decoder():
+    """The correction. This test asserted the opposite when it was written.
 
-    X.691 §7.2 makes a PER encoding non-self-delimiting: without the type, the octets
-    cannot be walked, so there is no schema-free structural pass to time and no comparable
-    native number can exist. OER's absence is an ordinary gap that closes when somebody
-    writes a C decoder. A consumer that treated them the same would either wait forever for
-    a PER row or conclude the harness was broken.
+    OER's entry read "no C OER decoder exists yet", which called a law an ordinary gap.
+    X.696 §6.2 states the same rule as X.691 §7.2 — *"without knowledge of the type of the
+    value encoded, it is not possible to determine the structure of the encoding"* — so
+    neither has a schema-free structural pass to time.
+
+    `runtime/c/bcir_oer.c` now decodes OER natively, and writing it is what exposed the
+    mislabel: the decoder is schema-**directed**, while every row in this table is a
+    schema-free structural scan. Timing the two against each other would compare unlike
+    work and report the difference as an encoding cost, which is the error §2 warns about
+    one level up. So the decoder exists AND the row is still absent, for a stated reason.
     """
     for name in ("CANONICAL-PER-ALIGNED", "CANONICAL-PER-UNALIGNED",
                  "BASIC-PER-ALIGNED", "BASIC-PER-UNALIGNED"):
@@ -119,8 +130,12 @@ def test_per_is_refused_permanently_and_oer_is_refused_for_now():
         assert "7.2" in entry.reason and "self-delimiting" in entry.reason, name
     for name in ("COER", "BASIC-OER"):
         entry = NATIVE_OPS[name]
-        assert entry.op is None and not entry.permanent, name
-        assert "yet" in entry.reason, name
+        assert entry.op is None and entry.permanent, name
+        assert "6.2" in entry.reason, name
+        assert "yet" not in entry.reason, (
+            f"{name} still describes a law as a temporary gap")
+    # The native decoder really is there — the absence is about comparability, not capability.
+    assert os.path.exists(os.path.join(_ROOT_C, "bcir_oer.c"))
 
 
 def test_the_measured_table_contains_only_natively_measured_rows():

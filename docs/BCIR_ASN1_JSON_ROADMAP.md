@@ -424,12 +424,18 @@ than the candidate list, and `select_certified` then refuses any objective needi
 row. Two absences, for different reasons that are recorded separately because they call for
 different decisions:
 
-- **OER** has no C decoder yet. An ordinary gap; it closes when one is written.
 - **PER cannot have one.** X.691 §7.2 makes a PER encoding non-self-delimiting — without
   the type, the octets cannot be walked — so there is no schema-free structural pass to
   time and no comparable native number will ever exist. `bcir_per.c` implements the reading
   *primitives*; timing those against a whole-document scan would compare unlike work and
   call the difference an encoding cost.
+- **OER cannot either**, and this entry was **wrong when first written**. It read "no C OER
+  decoder exists yet", which called a law an ordinary gap. X.696 §6.2 states the same rule
+  as X.691 §7.2: *"without knowledge of the type of the value encoded, it is not possible to
+  determine the structure of the encoding"*. [`bcir_oer.c`](../runtime/c/bcir_oer.c) now
+  decodes OER natively — and writing it is exactly what exposed the mislabel, because the
+  decoder is schema-**directed** while every row in this table is a schema-free structural
+  scan. The decoder exists *and* the row is still absent, for a stated reason.
 
 Also still open: RCSP integration, and a native **encode** column — nothing here times an
 encode, because the C rail has no encoder for these candidates, and a row that reported one

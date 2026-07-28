@@ -57,7 +57,7 @@ rule.
 | X.693 | 8825-4:2021 | XER | **built** — BASIC-XER + CXER (CXER out, both in; validated against Annex A.3/A.4); EXTENDED-XER by design excluded |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
-| X.696 | 8825-7:2021 | OER | **built** (COER out, BASIC-OER in; validated against Annex A) |
+| X.696 | 8825-7:2021 | OER | **built on both rails** (COER out, BASIC-OER in; validated against Annex A). [`bcir_oer.c`](../runtime/c/bcir_oer.c) is the C twin of the decoding half — schema-directed, because §6.2 leaves no choice — with dual-rail parity, a `#oer` gate at `-O0 == -O3`, and the twelfth fuzz target |
 | X.697 | 8825-8:2021 | JER | **built** — clauses 20-41, the §7.2 constraint visibility rules, and the encoding instructions of cl. 14-19 (ARRAY, BASE64, NAME, OBJECT, TEXT, UNWRAPPED) with clause 13 precedence; X.697 registers NO canonical variant (§42.2), so the canonical profile is BCIR's own and carries no OID; the cl. 10-11 assignment syntax (X.680 surface) excluded. Bounded J1 oracle in `jer_bounded.py`: §4.3 limits, canonical-byte validation, framing and structured diagnostics — see [the JER compilation roadmap](BCIR_ASN1_JSON_ROADMAP.md) |
 
 Sizes, as a rough effort signal (converted spec text, lines): X.681 1 125 · X.682 345 ·
