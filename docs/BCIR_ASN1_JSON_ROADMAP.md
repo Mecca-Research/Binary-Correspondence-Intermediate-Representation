@@ -70,7 +70,7 @@ repository inventories remain generated in [`STATUS.md`](STATUS.md).
 | Encoding selection harness | **Landed as measurement evidence** | [`selection.py`](../bcir/asn1/selection.py) measures exact wire size and Python-oracle timing for a fixed candidate set; it is not a native K_BCIR table or selection certificate |
 | Existing bounded C JSON precedent | **Shape-specific only** | [`bcir_channel.c`](../runtime/c/bcir_channel.c) bounds bytes and depth and decodes `channel.json`; it is not a JER engine or generated ASN.1 parser |
 | MLIR family/profile and R24 (J4 part 1) | **Landed on the law rail** | `BCIR_Asn1Rules` names every transfer syntax the repository speaks; family, canonicality and PER alignment are **derived** from it rather than stored beside it, so no two attributes can disagree about one syntax. R24's emission law generalizes from "emits DER" to "emits a syntax whose octets are a function of the abstract value", which closed two holes the X.690-shaped test had left open. `bcir.asn1.transcode` and `strict_canonical` are added. See §5.3 for why this is one enum and not the (family, profile) pair originally planned |
-| JER-to-claims lowering | **Missing** | No direct builder produces BCIR resources, claims, GEM graphs, StreamPack, or BCAB from JER |
+| JER-to-claims lowering (J4 part 3) | **Landed for the manifest surface** | [`manifest.py`](../bcir/asn1/manifest.py) gives `channel.json`, `DeviceManifest` and the §6.2 selection envelope ASN.1 schemas, and §5.4's two sinks commute over all nine built-in channels. **Not** claimed: GEM graphs and BCAB have no direct JER builder, and the value graph still exists behind the walk because `json.loads` builds it — removing that materialization is J6 streaming work |
 | Native calibration and certificates | **Missing** | Python timing cannot stand in for target counters, frozen cost tables, confidence intervals, or an RCSP/K_BCIR verdict |
 | Driver/kernel use | **Missing** | No resident driver, Linux module, native-kernel parser, or physical-device comparison uses JER |
 
@@ -303,6 +303,35 @@ JER -> typed value -> claims
 Both paths then pass normal law verification. Telemetry JSON/JSONL remains evidence or
 export data and cannot steer legality or mutate an in-flight plan.
 
+**Landed in J4 part 3** ([`manifest.py`](../bcir/asn1/manifest.py)), over all nine built-in
+`HardwareChannel`s. The design decision that makes the law testable rather than tautological:
+**both sinks consume ONE event walk.** Two independent readers would be two parsers, free to
+disagree about what the document says, and "the paths commute" would then be testing parser
+agreement rather than builder agreement. With one walk feeding both, a difference in the
+result is a difference in the *builders*, which is what §5.4 is about. That the direct path
+really is direct is checked structurally rather than asserted: a test watches
+`ChannelManifest.__init__` and fails if the direct builder constructs one.
+
+The walk visits members in **schema order**, not document order, which is what lets a
+generated fixed-schema consumer exist at all (§5.2). A sink keyed on arrival order would be
+right for canonical input and wrong for a BASIC document that wrote its members differently.
+
+Building it produced one finding, and it is a general hazard rather than a one-off. **A
+DEFAULT in an ASN.1 schema is not free**: X.690 §11.5, via X.697 §21.2, makes the canonical
+encoder *omit* a component equal to its default, while `channel_plugin`'s validator requires
+every declared key to be present. `MemoryTier.capacity` defaults to 0 in the dataclass and is
+read with `.get("capacity", 0)`, so `DEFAULT 0` looked faithful — but `profile_to_schema`
+always writes the key, so the canonical JER for a zero-capacity tier was a document the
+repository's own loader refused. The schema was the wrong rail and was corrected; loosening a
+third-party-input validator to match a schema would have been fixing the wrong side. A test
+now forces every zero-valued member and re-checks the loader accepts the canonical form.
+
+Two limits worth stating. A schema gives well-formedness, never correctness: `lane_widths`
+must start at 1 and be strictly increasing, which is a rule about a cost model that X.680
+constraints cannot express, so those checks stay in `channel_plugin`. And the direct builder
+reuses `schema_to_profile` deliberately — a second construction of `TargetProfile` would be a
+second definition of the K_BCIR cost model, free to drift from the one the optimizer reads.
+
 ## 6. K_BCIR selection and artifacts
 
 ### 6.1 Cost model
@@ -338,6 +367,35 @@ The current Python harness is retained as an oracle experiment. Production selec
 reads the frozen target table and refuses an unmeasured required target instead of
 substituting Python timings.
 
+**Landed in J6** ([`certified.py`](../bcir/asn1/certified.py)). Three things are worth
+recording about how, because each was a choice with an alternative that looks reasonable and
+is not:
+
+*Timings are carried as **intervals**, never scalars.* A median comparison always produces a
+winner — including when the difference is scheduler noise — and produces a *different* winner
+on the next host. Two candidates whose intervals overlap are reported as **indistinguishable**,
+and the decision falls to exact encoded size, which has no distribution. That is two-truth
+applied to the tie-break: the noisy measurement says "I cannot separate these", and the exact
+one decides. The certificate records which candidates could not be separated, because "we
+chose A over B" and "A and B were the same and A sorted first" are different decisions.
+
+*The intervals are distribution-free*, from order statistics rather than a normal
+approximation. Timing distributions are heavy-tailed and asymmetric, so a normal CI would
+understate the spread exactly where scheduler noise lives. Coverage is computed in exact
+integer arithmetic and reported in parts per million — a coverage figure that varied with the
+host's rounding would not be one, and it is written into a certificate.
+
+*The refusal fires where a timing is **consulted**, not at the door.* A wire-size objective
+reads no interval, so it is decidable from exact arithmetic on any table, and refusing it
+would teach callers to pass `allow_oracle_table=True` by reflex — carrying that habit into
+the timing decisions where the guard is load-bearing. A guard that fires when it is not
+needed is a guard people learn to disable.
+
+Still open in this phase: the **native microbench protocol** that would produce a genuinely
+`measured` table, and RCSP integration. `build_table` therefore defaults to
+`provenance="oracle"`, so producing a `measured` table is a deliberate argument rather than
+something that happens by omission.
+
 ### 6.3 StreamPack and BCAB
 
 JER is never a replacement for native StreamPack or BCAB. A JER projection, if a
@@ -357,9 +415,9 @@ errata admission.
 | **J1 — bounded Python oracle** · **DELIVERED** | Pre-parse limits, exact canonical-byte validation, schema/path diagnostics, framed input, and `bcir-asn1c` JER encode/decode/transcode modes | Met: limits are asserted at each N/N+1 boundary, every encoder's option that decodes to the right value is refused by octet comparison, every truncated prefix of a framed document is refused, and a failed decode leaves a retry succeeding unchanged |
 | **J2 — schema-plan compiler** · **DELIVERED** | Deterministic descriptor, bound derivation, instruction compilation, version/hash contract, and first `channel.json` schema | Met: [`jer_plan.py`](../bcir/asn1/jer_plan.py) regenerates byte-identically, refuses a bare ENUMERATED, an open type, a duplicate JSON member name and an undiscriminable UNWRAPPED choice at compile time, and its plan-driven trace equals the direct one |
 | **J3 — scalar C twin** | **Landed.** [`bcir_jer.{h,c}`](../runtime/c/bcir_jer.c): allocation-free bounded scanner, whole-document UTF-8 check, ECMA-404 parser driving a caller's event sink, §4.2 diagnostics, §3.3 unframing, and the twelfth fuzz target | Python/C error-class, byte-offset, required-capacity and event-trace parity in [`test_c_jer.py`](../bcir/tests/test_c_jer.py); `-O0 == -O3` over 667 cases in `check_runtime.sh` `#jer`; freestanding `-Werror` under C11 and C23; ASan/UBSan fuzz green |
-| **J4 — law and execution lowering** | **Parts 1 and 2 landed:** part 1 the transfer-syntax rail and generalized R24 (§5.3); part 2 the commuting projection [`dialect.py`](../bcir/asn1/dialect.py), StreamPack over JER, and the ENUMERATED completion it forced. **Remaining:** typed/direct claim builders and the `DeviceManifest`/selection-envelope schemas | **§7.1's two laws hold** over all 26 law fixtures — `MLIR -> JER -> MLIR` is the identity on the dialect, `JER -> MLIR -> JER` is byte-identical — in [`test_asn1_dialect.py`](../bcir/tests/test_asn1_dialect.py); native StreamPack octets survive the JER round trip (§6.3) |
+| **J4 — law and execution lowering** | **Landed.** Part 1 the transfer-syntax rail and generalized R24 (§5.3); part 2 the commuting projection [`dialect.py`](../bcir/asn1/dialect.py) and StreamPack over JER; part 3 the [`manifest.py`](../bcir/asn1/manifest.py) schemas for `channel.json`, `DeviceManifest` and the §6.2 selection envelope, with §5.4's two sinks | **§7.1's two laws hold** over all 26 law fixtures; **§5.4's commutation holds** over all nine built-in channels — `JER -> typed value -> claims` equals `JER -> direct builder`, both fed by one event walk; native StreamPack octets survive the JER round trip (§6.3) |
 | **J5 — hosted SIMD rail** | Optional C++17 structural/UTF-8 scanner behind the C ABI with scalar fallback | Same accepted/rejected corpus and trace; statistically significant measured advantage on at least two hosts; no unsupported-CPU fault |
-| **J6 — certified K_BCIR choice** | Native microbench protocol, frozen target tables, prediction intervals, RCSP integration, and selection certificate | Exact candidate sizes, controlled counters, repeatability, legality-first refusal, and deterministic selection on at least two targets |
+| **J6 — certified K_BCIR choice** | **Landed on the Python oracle** ([`certified.py`](../bcir/asn1/certified.py)): distribution-free prediction intervals from order statistics, a frozen generation-tagged cost table with declared provenance, §6.2's certificate, and a production select that **refuses** an oracle table for any timing objective. The native microbench protocol and RCSP integration remain open | Exact sizes decide wire-size objectives with no timing consulted; repeatability is a refusal rather than an average; legality-first and canonical-or-excluded precede every comparison; deterministic selection on two tables, each certificate bound to the table digest it read — [`test_asn1_certified.py`](../bcir/tests/test_asn1_certified.py) |
 | **J7 — driver experiment** | Userspace/simulator driver specification ingest, generated views, and sequential BCIR-Linux module comparison | D0–D3 driver gates, signed modules, direct/Linux trace parity, teardown/restart tests, and controlled performance evidence |
 
 User-defined ECN classes are closed after the J0 sign-off. The built-in sets and ordinary
