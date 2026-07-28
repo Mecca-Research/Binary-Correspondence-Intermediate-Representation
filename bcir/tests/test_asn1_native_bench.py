@@ -20,8 +20,11 @@ from __future__ import annotations
 import os
 
 from bcir.asn1.certified import MIN_SAMPLES, EncodingCostTable, UnmeasuredTarget, select_certified
+from bcir.asn1.codec import decode_one, encode_der, encode_tlv
+from bcir.asn1.jer import encode_jer
 from bcir.asn1.native_bench import (
-    NATIVE_OPS, NativeOp, build_harness, measured_table, native_available, run_native_bench,
+    ENCODE_OPS, NATIVE_OPS, NativeOp, build_harness, measured_table, native_available,
+    observed_encode_partition, run_native_bench,
 )
 from bcir.asn1.schema import Component, Primitive, Sequence
 from bcir.asn1.selection import ALL_CANDIDATES, Objective, measure_one
@@ -253,3 +256,64 @@ def test_a_measured_table_is_content_addressed_and_generation_tagged():
     rebuilt = EncodingCostTable(target="alpha", cal_gen=7, provenance="measured",
                                 rows=table.rows)
     assert rebuilt.digest() == table.digest()
+
+
+# --- the encode column, and why it is not the decode table's mirror ------------------------
+
+
+def test_the_recorded_encode_partition_matches_the_encoders_themselves():
+    """`ENCODE_OPS` is derived-checkable, not a comment.
+
+    The table above records which candidates have a schema-free encoder. That is a claim
+    about the oracle's own code, so it is checked against the oracle's own code — a table
+    that drifted from the encoders would be worse than no table, because it would be
+    consulted.
+    """
+    observed = observed_encode_partition()
+    assert {name: op.schema_free for name, op in ENCODE_OPS.items()} == observed
+    assert set(ENCODE_OPS) == {c.name for c in ALL_CANDIDATES}, (
+        "every candidate needs an encode verdict, or the column has a silent hole")
+
+
+def test_only_the_x690_family_can_be_encoded_without_a_schema():
+    """The finding, as a fact rather than as prose.
+
+    X.690 is self-describing in *both* directions: a TLV tree carries its own tags and
+    lengths, so `encode_der` takes a value and no type and a re-emit is the whole operation.
+    Every other candidate needs the type — X.697 §22.2 puts member identifiers in a JER
+    document and identifiers live only in the schema.
+    """
+    free = {name for name, op in ENCODE_OPS.items() if op.schema_free}
+    assert free == {"DER", "BER"}
+    # The complete operation, not a stand-in: octets in, tree, octets out, byte-identical.
+    source = encode_der([1, 2, b"abc"])
+    assert encode_tlv(decode_one(source)) == source
+    # And the JER encoder refuses without a type rather than inventing identifiers.
+    try:
+        encode_jer(None, {"id": 1})
+    except Asn1Error as error:
+        assert "schema type" in str(error)
+    else:
+        raise AssertionError("JER must not encode without a schema")
+
+
+def test_the_encode_and_decode_absences_are_different_absences():
+    """The asymmetry that decides what an encode harness has to be.
+
+    PER and OER are permanently absent from the *decode* table because X.691 §7.2 and
+    X.696 §6.2 say the structure cannot be recovered without the type. Neither says anything
+    about the write side, so both are perfectly encodable *given a plan* — while JER, which
+    the decode table measures, is not encodable without one. A schema-free encode harness
+    would therefore produce a two-row table with JER missing, which reads as an unfinished
+    implementation rather than as the law it is.
+    """
+    decode_permanent = {name for name, op in NATIVE_OPS.items() if op.permanent}
+    encode_directed = {name for name, op in ENCODE_OPS.items() if not op.schema_free}
+    assert decode_permanent < encode_directed, "encode should be the stricter partition"
+    # The two candidates that are measurable one way and not the other.
+    assert {"JER", "JER-BCIR-CANONICAL"} <= encode_directed - decode_permanent
+    # And the ones absent from decode are NOT absent for a write-side reason.
+    for name in decode_permanent:
+        assert "not self-delimiting" in NATIVE_OPS[name].reason or "structure" in \
+            NATIVE_OPS[name].reason
+        assert "self-delimiting" not in ENCODE_OPS[name].reason

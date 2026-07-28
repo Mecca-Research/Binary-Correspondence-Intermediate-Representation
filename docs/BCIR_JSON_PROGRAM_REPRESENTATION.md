@@ -177,6 +177,20 @@ The minimal text language should be treated as a *typing shortcut with a printer
 language: no macro system, no syntax extensions, no semantics of its own. The moment it
 acquires semantics the canonical form stops being authoritative.
 
+**Recorded from building it (P5).** Both defects the surface shipped with had one shape: the
+reader was *stricter than the canonical form*, so a document that decodes had no spelling.
+An empty attribute name — `Attribute.name` is an unconstrained `UTF8String`, so `""` is legal
+— was refused as "a colon with no name after it"; and `roots` was treated as a keyword *by
+position*, which left a node whose `kind` is literally `roots` printing as text the reader
+then rejected. The lesson generalizes past this file: a surface is lossy exactly where it is
+stricter than the form it projects, and the convenient rule that makes a parser simpler is
+the usual way that strictness gets in. The keyword is now disambiguated by the following
+**token** — a node's second token is always its quoted label — rather than by where it sits.
+
+The same reasoning is why an out-of-range edge target is *accepted* by the reader: P1 already
+decided a dangling edge is an `EdgeFault`, a value, so refusing it in the surface would make
+a decodable document unspellable while looking like a safety check.
+
 ### 4.3 Scope and lifetime — BCIR already has these laws; JER must project them
 
 The proposal is right that raw JSON has no notion of ownership or time, and right that
@@ -278,7 +292,7 @@ Each phase depends on the JER phases in the sibling roadmap and inherits their g
 | **P2 — IR projection** | **Landed** ([`graph.py`](../bcir/asn1/graph.py)): `dialect_to_graph` / `graph_to_dialect`, projecting the `bcir.asn1.*` dialect into the P1 node table | **Met** over all 26 law fixtures, legal and illegal alike: the dialect survives the graph round trip, the JER is byte-identical, and `MLIR -> graph -> JER -> graph -> MLIR` composes with J4 part 2's text rail. A component now points at its type with a real **edge** rather than a name, which is what makes mutually recursive types representable | J4, P1 |
 | **P3 — scope and lifetime projection** | **Landed** ([`program.py`](../bcir/asn1/program.py)): a `Module`'s phases, claims, resources, `Timing` and `Lifetime` projected through the P1 node table, with phase and claim **order carried structurally** in the ordered edge lists | **Met** over all 12 corpus programs, plus fixtures that trip R19, R20 and R21 and one that is *excused* by a barriered hazard — because a projection that made every module more illegal would be just as wrong and easier to ship. Absent timing and all-default timing stay distinguishable, or every untimed claim in the repository would fall under the timing laws | P2 |
 | **P4 — cost-graph execution** | **Landed** ([`tropical.py`](../bcir/kbcir/tropical.py)): composition adds, a conditional is `min`, a loop is the Kleene closure, Karp (1978) gives the minimum mean cycle, and `Semiring` is a caller's parameter | **Met.** A negative cycle raises `NegativeCycle` **naming the cycle** rather than returning −∞ or clamping; Karp reproduces hand-derived means (6/2, 3/3, and an exact 4/3 as a `Fraction`); the unroll optimum is derived from the overhead term and checked against hand arithmetic. Legality-first is checked *structurally* — a test asserts the module never references the verifier | P2, phase H |
-| **P5 — surface projections** | The sparse text language and the visual editor, both as lossless views | `surface -> canonical -> surface` identity; formatting confined to a side table; two presentations of one program hash identically | P1 |
+| **P5 — surface projections** | **Landed** ([`surface.py`](../bcir/asn1/surface.py)): the sparse text language as a lossless view, with `Presentation` — aliases, comments, indentation — returned as a *separate* record the canonical form cannot see | **Met.** Identity on the canonical side over all 12 corpus programs and all 26 dialect modules; three deliberately divergent spellings of one program give byte-identical JER and one content address; both directions are iterative, checked by round-tripping a 1000-node chain under a recursion limit of 80. The visual editor is not built — the text surface is what the gate names first and what the node table can be checked against | P1 |
 | **P6 — staged self-modification** | §6's pipeline end to end, in a simulator | No executable memory written by the emitting program; verification precedes compilation; unsigned artifact refused; rollback and quiescence tested | P3, P4, trusted loader |
 
 **Registry.** The proposal's "globally unique schema registry, cryptographically signed and

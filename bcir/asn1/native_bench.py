@@ -115,6 +115,100 @@ NATIVE_OPS: dict[str, NativeOp] = {
 }
 
 
+# --- the encode column, and why it is not this table's mirror ------------------------------------
+
+
+@dataclass(frozen=True)
+class EncodeOp:
+    """Whether a candidate can be encoded WITHOUT a schema, and what follows if it cannot.
+
+    A schema-free encoder is what makes a candidate measurable on the same terms as the
+    decode table above: one common input, one pass, no descriptor to compile or to blame for
+    the difference.
+    """
+
+    schema_free: bool
+    reason: str = ""
+
+
+#: The partition, and it is **not** the decode table's partition.
+#:
+#: Everything above measures a schema-free structural *scan*, and the rows missing from it
+#: are missing because X.691 §7.2 and X.696 §6.2 say the structure of the encoding cannot be
+#: recovered without the type. On the write side that law does not apply — you are handed the
+#: value, not the octets — so the obvious expectation is that the encode column has *more*
+#: rows. It has fewer, and the two absences do not overlap:
+#:
+#: - **X.690 is self-describing in both directions.** `encode_der` takes a value and no type;
+#:   a TLV tree carries its own tags and lengths, so a re-emit is the complete operation
+#:   rather than a stand-in for one.
+#: - **Every other candidate needs the type to encode.** X.697 §22.2 puts member
+#:   *identifiers* in a JER document, and an identifier exists only in the schema — the value
+#:   has never heard of it. X.693 needs element names for the same reason, and OER and PER
+#:   need the type to fix field widths and presence bits.
+#:
+#: So JER — the candidate the whole J roadmap is about — is on the measurable side of the
+#: decode table and the **unmeasurable** side of a schema-free encode column, while PER and
+#: OER, permanently absent above, are perfectly encodable *given a plan*. A schema-directed
+#: encode harness would therefore cover **every** candidate, including the two the decode
+#: table can never hold. That harness is J2's plan compiled into C for the write side; J3
+#: built the read side from `JerSchemaPlan.serialize()` and the write side does not exist.
+#:
+#: Recording this is the point. A schema-free encode harness is cheap to build and would
+#: yield a two-row table with JER absent, which reads as a gap in the implementation rather
+#: than as the law it is.
+ENCODE_OPS: dict[str, EncodeOp] = {
+    "DER": EncodeOp(True),
+    "BER": EncodeOp(True),
+    "JER": EncodeOp(
+        False,
+        reason="X.697 §22.2: a JER document carries member IDENTIFIERS, which exist only in "
+               "the type — the value has never heard of them"),
+    "JER-BCIR-CANONICAL": EncodeOp(
+        False, reason="X.697 §22.2: member identifiers come from the type (see the JER entry)"),
+    "COER": EncodeOp(
+        False,
+        reason="X.696: field widths, presence bits and the preamble are fixed by the type, "
+               "so there is nothing to emit without one"),
+    "BASIC-OER": EncodeOp(False, reason="X.696: the type fixes the layout (see the COER entry)"),
+    "CANONICAL-PER-ALIGNED": EncodeOp(
+        False,
+        reason="X.691: the type fixes field widths, the extension bit and the presence "
+               "bitmap, so a value alone determines no octets"),
+    "CANONICAL-PER-UNALIGNED": EncodeOp(
+        False, reason="X.691: the type fixes the bit layout (see the aligned entry)"),
+    "BASIC-PER-ALIGNED": EncodeOp(
+        False, reason="X.691: the type fixes the bit layout (see the aligned entry)"),
+    "BASIC-PER-UNALIGNED": EncodeOp(
+        False, reason="X.691: the type fixes the bit layout (see the aligned entry)"),
+}
+
+
+def observed_encode_partition() -> dict[str, bool]:
+    """Which candidates the *oracle's own encoders* can serialize without a schema.
+
+    Derived from the encoder signatures rather than asserted, so `ENCODE_OPS` cannot drift
+    away from the code it describes. An encoder whose first parameter is the type is
+    schema-directed by construction; `encode_der`'s first parameter is the value.
+    """
+    import inspect
+
+    from . import codec, jer, oer, per, xer
+
+    by_family = {
+        "DER": codec.encode_der, "BER": codec.encode_der,
+        "JER": jer.encode_jer, "JER-BCIR-CANONICAL": jer.encode_jer,
+        "COER": oer.encode_oer, "BASIC-OER": oer.encode_oer,
+        "CANONICAL-PER-ALIGNED": per.encode_per, "CANONICAL-PER-UNALIGNED": per.encode_per,
+        "BASIC-PER-ALIGNED": per.encode_per, "BASIC-PER-UNALIGNED": per.encode_per,
+    }
+    # `xer` is imported so a future XER candidate is a KeyError here rather than a silent
+    # omission from the partition.
+    assert hasattr(xer, "encode_xer")
+    return {name: next(iter(inspect.signature(fn).parameters)) != "kind"
+            for name, fn in by_family.items()}
+
+
 def native_available() -> bool:
     """Whether this host can build the harness at all. Absence is a clean skip."""
     return (shutil.which("clang") or shutil.which("gcc") or shutil.which("cc")) is not None
