@@ -281,6 +281,26 @@ Every arrow is an existing or already-planned BCIR stage. The properties that ma
 **The one-line honest summary: a program can safely propose new logic at runtime. It cannot
 safely admit it without a trusted loader, and no schema changes that.**
 
+**Built (P6).** [`staged.py`](../bcir/asn1/staged.py) is that loader. Two things are worth
+carrying forward from writing it.
+
+The first is that **every separation above wants to be a type**. A discipline that lives in
+review comments is one refactor from being gone, so `Proposal` has exactly two fields and no
+method that produces an `Artifact`; the loader holds the key and is the only producer. W^X
+then stops depending on every future caller choosing correctly.
+
+The second is that **a signature must cover the label, not only the payload**. Signing the
+compiled code alone leaves a signed artifact that can be re-tagged with another generation or
+another proposal's digest and still verify — it would be attesting to something nobody
+admitted. The HMAC here covers generation, proposal digest and code together. It is still
+symmetric, and therefore proves possession of the loader's key rather than the identity of a
+signer; a deployment where the proposer and the admitting authority are different principals
+needs asymmetric signing, and the key cannot live on both sides.
+
+Rollback moves the generation **forward**. Reusing the old number would let two different live
+states share a tag, and a tag that does not identify a state cannot decide whether a caller is
+holding a stale handle — which is the only thing generation tags are for.
+
 ## 7. Phase ladder
 
 Each phase depends on the JER phases in the sibling roadmap and inherits their gates.
@@ -293,7 +313,7 @@ Each phase depends on the JER phases in the sibling roadmap and inherits their g
 | **P3 — scope and lifetime projection** | **Landed** ([`program.py`](../bcir/asn1/program.py)): a `Module`'s phases, claims, resources, `Timing` and `Lifetime` projected through the P1 node table, with phase and claim **order carried structurally** in the ordered edge lists | **Met** over all 12 corpus programs, plus fixtures that trip R19, R20 and R21 and one that is *excused* by a barriered hazard — because a projection that made every module more illegal would be just as wrong and easier to ship. Absent timing and all-default timing stay distinguishable, or every untimed claim in the repository would fall under the timing laws | P2 |
 | **P4 — cost-graph execution** | **Landed** ([`tropical.py`](../bcir/kbcir/tropical.py)): composition adds, a conditional is `min`, a loop is the Kleene closure, Karp (1978) gives the minimum mean cycle, and `Semiring` is a caller's parameter | **Met.** A negative cycle raises `NegativeCycle` **naming the cycle** rather than returning −∞ or clamping; Karp reproduces hand-derived means (6/2, 3/3, and an exact 4/3 as a `Fraction`); the unroll optimum is derived from the overhead term and checked against hand arithmetic. Legality-first is checked *structurally* — a test asserts the module never references the verifier | P2, phase H |
 | **P5 — surface projections** | **Landed** ([`surface.py`](../bcir/asn1/surface.py)): the sparse text language as a lossless view, with `Presentation` — aliases, comments, indentation — returned as a *separate* record the canonical form cannot see | **Met.** Identity on the canonical side over all 12 corpus programs and all 26 dialect modules; three deliberately divergent spellings of one program give byte-identical JER and one content address; both directions are iterative, checked by round-tripping a 1000-node chain under a recursion limit of 80. The visual editor is not built — the text surface is what the gate names first and what the node table can be checked against | P1 |
-| **P6 — staged self-modification** | §6's pipeline end to end, in a simulator | No executable memory written by the emitting program; verification precedes compilation; unsigned artifact refused; rollback and quiescence tested | P3, P4, trusted loader |
+| **P6 — staged self-modification** | **Landed** ([`staged.py`](../bcir/asn1/staged.py)): §6's pipeline with a `TrustedLoader` holding the only key, and each separation carried by a *type* rather than by convention | **Met.** `Proposal` has two fields — octets and an origin — and no path to an `Artifact` except through the loader. "Verification precedes compilation" is checked with a compilation **counter**, not by reading statement order, over P3's own R20 fixture. "Unsigned refused" is checked with an artifact whose SHA-256 is perfectly correct, because the failure worth catching is a loader accepting integrity as authority. Rollback moves the generation *forward* and re-signs. **Stated limitation:** the signature is HMAC, so it proves possession of the key, not the identity of a signer | P3, P4, trusted loader |
 
 **Registry.** The proposal's "globally unique schema registry, cryptographically signed and
 versioned" spans all phases and needs its two halves kept distinct:
