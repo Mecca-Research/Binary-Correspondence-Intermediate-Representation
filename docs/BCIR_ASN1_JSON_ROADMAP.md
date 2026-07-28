@@ -357,7 +357,7 @@ errata admission.
 | **J1 — bounded Python oracle** · **DELIVERED** | Pre-parse limits, exact canonical-byte validation, schema/path diagnostics, framed input, and `bcir-asn1c` JER encode/decode/transcode modes | Met: limits are asserted at each N/N+1 boundary, every encoder's option that decodes to the right value is refused by octet comparison, every truncated prefix of a framed document is refused, and a failed decode leaves a retry succeeding unchanged |
 | **J2 — schema-plan compiler** · **DELIVERED** | Deterministic descriptor, bound derivation, instruction compilation, version/hash contract, and first `channel.json` schema | Met: [`jer_plan.py`](../bcir/asn1/jer_plan.py) regenerates byte-identically, refuses a bare ENUMERATED, an open type, a duplicate JSON member name and an undiscriminable UNWRAPPED choice at compile time, and its plan-driven trace equals the direct one |
 | **J3 — scalar C twin** | **Landed.** [`bcir_jer.{h,c}`](../runtime/c/bcir_jer.c): allocation-free bounded scanner, whole-document UTF-8 check, ECMA-404 parser driving a caller's event sink, §4.2 diagnostics, §3.3 unframing, and the twelfth fuzz target | Python/C error-class, byte-offset, required-capacity and event-trace parity in [`test_c_jer.py`](../bcir/tests/test_c_jer.py); `-O0 == -O3` over 667 cases in `check_runtime.sh` `#jer`; freestanding `-Werror` under C11 and C23; ASan/UBSan fuzz green |
-| **J4 — law and execution lowering** | **Part 1 landed:** `BCIR_Asn1Rules` extended additively to every transfer syntax, family/canonicality/alignment derived rather than stored, R24 generalized from "emits DER" to "emits a canonical syntax", `strict_canonical`, and `bcir.asn1.transcode` (§5.3). **Remaining:** typed/direct claim builders, StreamPack lowering, `DeviceManifest`/selection schemas | Positive/negative Python↔MLIR parity — landed for part 1 in [`test_asn1_law_parity.py`](../bcir/tests/test_asn1_law_parity.py) and `verify_asn1.mlir` cases 19–26; direct/typed claim graphs and StreamPack bytes agree; **and the JER↔MLIR projection commutes in both directions** (see below) |
+| **J4 — law and execution lowering** | **Parts 1 and 2 landed:** part 1 the transfer-syntax rail and generalized R24 (§5.3); part 2 the commuting projection [`dialect.py`](../bcir/asn1/dialect.py), StreamPack over JER, and the ENUMERATED completion it forced. **Remaining:** typed/direct claim builders and the `DeviceManifest`/selection-envelope schemas | **§7.1's two laws hold** over all 26 law fixtures — `MLIR -> JER -> MLIR` is the identity on the dialect, `JER -> MLIR -> JER` is byte-identical — in [`test_asn1_dialect.py`](../bcir/tests/test_asn1_dialect.py); native StreamPack octets survive the JER round trip (§6.3) |
 | **J5 — hosted SIMD rail** | Optional C++17 structural/UTF-8 scanner behind the C ABI with scalar fallback | Same accepted/rejected corpus and trace; statistically significant measured advantage on at least two hosts; no unsupported-CPU fault |
 | **J6 — certified K_BCIR choice** | Native microbench protocol, frozen target tables, prediction intervals, RCSP integration, and selection certificate | Exact candidate sizes, controlled counters, repeatability, legality-first refusal, and deterministic selection on at least two targets |
 | **J7 — driver experiment** | Userspace/simulator driver specification ingest, generated views, and sequential BCIR-Linux module comparison | D0–D3 driver gates, signed modules, direct/Linux trace parity, teardown/restart tests, and controlled performance evidence |
@@ -379,6 +379,27 @@ requirement to J4, recorded here so it is designed for rather than retrofitted:
 > The projection between the `bcir.*` dialect and its JER form must **commute in both
 > directions**. `MLIR -> JER -> MLIR` must be the identity on the dialect, and
 > `JER -> MLIR -> JER` must be byte-identical under the canonical profile.
+
+**Both hold as of J4 part 2** ([`dialect.py`](../bcir/asn1/dialect.py)), over all 26
+modules in the law fixture corpus — including the *negative* ones, because a projection is
+not a filter: a module R24 rejects must round-trip as faithfully as one it accepts, or a
+document that lost an attribute in transit could come back legal.
+
+The asymmetry between the two laws is deliberate and is the part most easily got wrong.
+Canonical JER defines exactly one octet string per abstract value, so a byte claim is
+meaningful there. **MLIR textual assembly defines no such thing** — `mlir-opt` may reprint
+attributes in another order and remain correct — so a byte claim about MLIR text would be a
+statement about a formatter, failing for reasons unrelated to the projection. What must
+survive that direction is the dialect itself, which is what "identity on the dialect" says.
+
+Building it produced one finding in a neighbouring module. The BCIR-StreamPack schema's
+`Lane` and `Dispatch` carried **no enumeration**, though this file's own ASN.1 comment block
+declared both. DER and OER encode an enumeration's *value* (X.690 §8.4, X.696 §11), so the
+omission was invisible for as long as those were the only projections; X.691 §14 needs the
+*index* and X.697 §22.2 needs the *identifier*, neither derivable from the number. The
+module was therefore DER/OER-only by accident rather than by design. Adding the
+enumerations is additive — DER octets are unchanged, and `test_asn1_streampack.py` pins
+that — and it is what makes `encode_pack_jer` emit `"lane":"t"` rather than a number.
 
 Nothing else in J0–J7 changes. J3 is unaffected and more strongly motivated: if JER can
 carry programs, the bounded C parser sits on a materially more important path. Phase H
