@@ -40,7 +40,7 @@ bcir.asn1.module @BCIR_StreamPack attributes {
 // -----
 // (2 -- NEGATIVE) CER is namable but never emittable: X.690 9.1 makes the indefinite length
 // form mandatory for constructed encodings, so a CER artifact cannot be byte-stable.
-// expected-error @+1 {{R24: ASN.1 module cer_module declares encoding rules cer; BCIR emits DER only (X.690 clause 10 + 11)}}
+// expected-error @+1 {{R24: ASN.1 module cer_module declares encoding rules cer (X.690), which is not canonical; BCIR emits only a transfer syntax whose octets are a function of the abstract value, because it digests what it emits}}
 bcir.asn1.module @cer_module attributes {
   oid = array<i64: 1, 3, 6, 1, 4, 1, 62596, 2>,
   rules = #bcir.asn1_rules<cer>,
@@ -179,7 +179,7 @@ bcir.asn1.module @encode_ber attributes {
   default_tagging = #bcir.asn1_tagging<implicit>
 } {
   bcir.asn1.type @Int attributes { kind = "primitive", universal = 2 : i64 } { }
-  // expected-error @+1 {{R24: ASN.1 encode loose declares encoding rules ber; BCIR emits DER only (X.690 clause 10 + 11)}}
+  // expected-error @+1 {{R24: ASN.1 encode loose declares encoding rules ber (X.690), which is not canonical; BCIR emits only a transfer syntax whose octets are a function of the abstract value}}
   bcir.asn1.encode @loose { type = @Int, rules = #bcir.asn1_rules<ber> }
 }
 
@@ -191,7 +191,7 @@ bcir.asn1.module @strict_ber attributes {
   default_tagging = #bcir.asn1_tagging<implicit>
 } {
   bcir.asn1.type @Int attributes { kind = "primitive", universal = 2 : i64 } { }
-  // expected-error @+1 {{R24: ASN.1 decode confused is marked strict_der but declares it accepts BER}}
+  // expected-error @+1 {{R24: ASN.1 decode confused is marked strict_der but declares it accepts ber, which is not a canonical transfer syntax}}
   bcir.asn1.decode @confused { type = @Int, rules = #bcir.asn1_rules<ber>, strict_der }
 }
 
@@ -266,4 +266,148 @@ bcir.asn1.module @extensible_ok attributes {
   bcir.asn1.type @Bounded attributes { kind = "primitive", universal = 2 : i64,
                                        constraint_low = 0 : i64,
                                        constraint_high = 255 : i64 } { }
+}
+
+// -----
+// (19 -- POSITIVE) Every canonical transfer syntax the repository speaks is emittable.
+// The generalized R24 law is CANONICALITY, not "der": DER is the X.690 member of the set,
+// and CANONICAL-PER (both alignments), COER, CXER and BCIR's canonical JER profile are the
+// others. `bcir/asn1/selection.py` measures exactly these five, and
+// test_asn1_law_parity.py pins the two lists against each other so neither can grow a
+// member the other does not know about.
+bcir.asn1.module @canonical_per attributes {
+  oid = array<i64: 1, 3, 6, 1, 4, 1, 62596, 17>,
+  rules = #bcir.asn1_rules<canonical_per_unaligned>,
+  default_tagging = #bcir.asn1_tagging<implicit>
+} {
+  bcir.asn1.type @Int attributes { kind = "primitive", universal = 2 : i64 } { }
+  bcir.asn1.encode @emit_unaligned { type = @Int,
+                                     rules = #bcir.asn1_rules<canonical_per_unaligned> }
+  bcir.asn1.encode @emit_aligned { type = @Int,
+                                   rules = #bcir.asn1_rules<canonical_per_aligned> }
+  bcir.asn1.encode @emit_coer { type = @Int, rules = #bcir.asn1_rules<coer> }
+  bcir.asn1.encode @emit_cxer { type = @Int, rules = #bcir.asn1_rules<cxer> }
+  bcir.asn1.encode @emit_jer { type = @Int, rules = #bcir.asn1_rules<bcir_canonical_jer> }
+  // The permissive half: a decoder may accept anything a peer can write, in any family.
+  bcir.asn1.decode @take_basic_per { type = @Int,
+                                     rules = #bcir.asn1_rules<basic_per_unaligned> }
+  bcir.asn1.decode @take_jer { type = @Int, rules = #bcir.asn1_rules<jer> }
+  bcir.asn1.decode @take_oer { type = @Int, rules = #bcir.asn1_rules<oer> }
+  bcir.asn1.decode @take_xer { type = @Int, rules = #bcir.asn1_rules<xer> }
+  // ...and may declare it refuses non-canonical octets, in the family-neutral spelling.
+  bcir.asn1.decode @take_strict_jer { type = @Int,
+                                      rules = #bcir.asn1_rules<bcir_canonical_jer>,
+                                      strict_canonical }
+}
+
+// -----
+// (20) A non-canonical PER encode fails for the SAME reason `ber` does. The old law named
+// DER, so this document would have been rejected with a message about X.690 that has
+// nothing to do with X.691; the generalized law names the property and the family.
+bcir.asn1.module @basic_per_emit attributes {
+  oid = array<i64: 1, 3, 6, 1, 4, 1, 62596, 18>,
+  rules = #bcir.asn1_rules<der>,
+  default_tagging = #bcir.asn1_tagging<implicit>
+} {
+  bcir.asn1.type @Int attributes { kind = "primitive", universal = 2 : i64 } { }
+  // expected-error @+1 {{R24: ASN.1 encode loose_per declares encoding rules basic_per_aligned (X.691), which is not canonical; BCIR emits only a transfer syntax whose octets are a function of the abstract value}}
+  bcir.asn1.encode @loose_per { type = @Int, rules = #bcir.asn1_rules<basic_per_aligned> }
+}
+
+// -----
+// (21) The hole the old law left open. `strict_der` with `cer` passed verification,
+// because the test was `rules == ber` rather than "is the declared syntax canonical".
+// CER is exactly as un-byte-stable as BER -- X.690 9.1 makes the indefinite length form
+// mandatory for constructed encodings -- so a decoder claiming to refuse non-canonical
+// octets while declaring it accepts CER is contradicting itself just as plainly.
+bcir.asn1.module @strict_cer attributes {
+  oid = array<i64: 1, 3, 6, 1, 4, 1, 62596, 19>,
+  rules = #bcir.asn1_rules<der>,
+  default_tagging = #bcir.asn1_tagging<implicit>
+} {
+  bcir.asn1.type @Int attributes { kind = "primitive", universal = 2 : i64 } { }
+  // expected-error @+1 {{R24: ASN.1 decode confused_cer is marked strict_der but declares it accepts cer, which is not a canonical transfer syntax}}
+  bcir.asn1.decode @confused_cer { type = @Int, rules = #bcir.asn1_rules<cer>, strict_der }
+}
+
+// -----
+// (22) The second hole: `strict_der` on a decode outside X.690. "Strict DER" is a
+// category error about a JER decoder, not a stricter setting -- there is no DER for it to
+// be strict about. R24 points at `strict_canonical` rather than silently accepting.
+bcir.asn1.module @strict_der_on_jer attributes {
+  oid = array<i64: 1, 3, 6, 1, 4, 1, 62596, 20>,
+  rules = #bcir.asn1_rules<der>,
+  default_tagging = #bcir.asn1_tagging<implicit>
+} {
+  bcir.asn1.type @Int attributes { kind = "primitive", universal = 2 : i64 } { }
+  // expected-error @+1 {{R24: ASN.1 decode wrong_family is marked strict_der but declares the X.697 syntax bcir_canonical_jer; strict_der names X.690's own canonical form, so use strict_canonical for another family}}
+  bcir.asn1.decode @wrong_family { type = @Int,
+                                   rules = #bcir.asn1_rules<bcir_canonical_jer>,
+                                   strict_der }
+}
+
+// -----
+// (23 -- POSITIVE) A transcode: one schema, one abstract value, two transfer syntaxes.
+// This is the law-rail form of what `bcir-asn1c --transcode` does and what the selection
+// harness measures. Reading a peer's BER and emitting DER is the ordinary trust-boundary
+// shape; the JER-to-COER pair is the build-plane shape the JSON roadmap is for.
+bcir.asn1.module @transcodes attributes {
+  oid = array<i64: 1, 3, 6, 1, 4, 1, 62596, 21>,
+  rules = #bcir.asn1_rules<der>,
+  default_tagging = #bcir.asn1_tagging<implicit>
+} {
+  bcir.asn1.type @Int attributes { kind = "primitive", universal = 2 : i64 } { }
+  bcir.asn1.transcode @ber_in_der_out { type = @Int, from = #bcir.asn1_rules<ber>,
+                                        to = #bcir.asn1_rules<der> }
+  bcir.asn1.transcode @jer_in_coer_out { type = @Int, from = #bcir.asn1_rules<jer>,
+                                         to = #bcir.asn1_rules<coer> }
+  // preserve_value needs a canonical SOURCE too, and this one has it.
+  bcir.asn1.transcode @replayable { type = @Int,
+                                    from = #bcir.asn1_rules<bcir_canonical_jer>,
+                                    to = #bcir.asn1_rules<der>, preserve_value }
+}
+
+// -----
+// (24) A transcode EMITS its target, so the target falls under the same canonicality law
+// as an encode.
+bcir.asn1.module @transcode_loose_target attributes {
+  oid = array<i64: 1, 3, 6, 1, 4, 1, 62596, 22>,
+  rules = #bcir.asn1_rules<der>,
+  default_tagging = #bcir.asn1_tagging<implicit>
+} {
+  bcir.asn1.type @Int attributes { kind = "primitive", universal = 2 : i64 } { }
+  // expected-error @+1 {{R24: ASN.1 transcode to_ber targets ber (X.690), which is not canonical; a transcode EMITS its target}}
+  bcir.asn1.transcode @to_ber { type = @Int, from = #bcir.asn1_rules<jer>,
+                                to = #bcir.asn1_rules<ber> }
+}
+
+// -----
+// (25) Transcoding a syntax to itself is not a transcode. It reads as one in a pass
+// pipeline and does nothing, which is the kind of no-op that hides a wrong attribute
+// instead of announcing it.
+bcir.asn1.module @transcode_identity attributes {
+  oid = array<i64: 1, 3, 6, 1, 4, 1, 62596, 23>,
+  rules = #bcir.asn1_rules<der>,
+  default_tagging = #bcir.asn1_tagging<implicit>
+} {
+  bcir.asn1.type @Int attributes { kind = "primitive", universal = 2 : i64 } { }
+  // expected-error @+1 {{R24: ASN.1 transcode nothing has the same source and target syntax der}}
+  bcir.asn1.transcode @nothing { type = @Int, from = #bcir.asn1_rules<der>,
+                                 to = #bcir.asn1_rules<der> }
+}
+
+// -----
+// (26) `preserve_value` asserts REPLAYABILITY: the same source octets always give the
+// same target octets. A non-canonical source admits several encodings of one value, so
+// the sender has a choice the replay cannot reproduce, and the claim is unsupportable
+// however canonical the target is.
+bcir.asn1.module @transcode_loose_source attributes {
+  oid = array<i64: 1, 3, 6, 1, 4, 1, 62596, 24>,
+  rules = #bcir.asn1_rules<der>,
+  default_tagging = #bcir.asn1_tagging<implicit>
+} {
+  bcir.asn1.type @Int attributes { kind = "primitive", universal = 2 : i64 } { }
+  // expected-error @+1 {{R24: ASN.1 transcode unreplayable claims preserve_value but reads jer, which admits more than one encoding of a value; a value-preserving transcode must read a canonical syntax or it cannot be replayed}}
+  bcir.asn1.transcode @unreplayable { type = @Int, from = #bcir.asn1_rules<jer>,
+                                      to = #bcir.asn1_rules<der>, preserve_value }
 }

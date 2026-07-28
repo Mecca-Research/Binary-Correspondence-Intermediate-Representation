@@ -69,8 +69,7 @@ repository inventories remain generated in [`STATUS.md`](STATUS.md).
 | JER schema plan (J2) | **Landed on the Python oracle** | [`jer_plan.py`](../bcir/asn1/jer_plan.py) compiles a root type into the §5.1 descriptor — identity and source hash, family/profile/instruction hash, sorted member dispatch, required/default/extension metadata, recursion bounds and static capacity. **Static capacity is `None` almost everywhere**, and that is a property of JER rather than of the compiler: §7.2.2 l) and h) hide integer and string constraints from a JER encoder, so only BOOLEAN, NULL, ENUMERATED and a single-size BIT STRING (§7.2.1 a) are derivable. J3's C interface must therefore take its capacity from the caller |
 | Encoding selection harness | **Landed as measurement evidence** | [`selection.py`](../bcir/asn1/selection.py) measures exact wire size and Python-oracle timing for a fixed candidate set; it is not a native K_BCIR table or selection certificate |
 | Existing bounded C JSON precedent | **Shape-specific only** | [`bcir_channel.c`](../runtime/c/bcir_channel.c) bounds bytes and depth and decodes `channel.json`; it is not a JER engine or generated ASN.1 parser |
-| C or C++ JER twin | **Missing** | No `bcir_jer` runtime component, schema descriptor, differential rail, or JER fuzz target exists |
-| MLIR JER family/profile | **Missing** | `BCIR_Asn1Rules` names only BER/CER/DER and current `bcir.asn1.*` operations and R24 checks are X.690-oriented |
+| MLIR family/profile and R24 (J4 part 1) | **Landed on the law rail** | `BCIR_Asn1Rules` names every transfer syntax the repository speaks; family, canonicality and PER alignment are **derived** from it rather than stored beside it, so no two attributes can disagree about one syntax. R24's emission law generalizes from "emits DER" to "emits a syntax whose octets are a function of the abstract value", which closed two holes the X.690-shaped test had left open. `bcir.asn1.transcode` and `strict_canonical` are added. See §5.3 for why this is one enum and not the (family, profile) pair originally planned |
 | JER-to-claims lowering | **Missing** | No direct builder produces BCIR resources, claims, GEM graphs, StreamPack, or BCAB from JER |
 | Native calibration and certificates | **Missing** | Python timing cannot stand in for target counters, frozen cost tables, confidence intervals, or an RCSP/K_BCIR verdict |
 | Driver/kernel use | **Missing** | No resident driver, Linux module, native-kernel parser, or physical-device comparison uses JER |
@@ -231,21 +230,58 @@ event trace and diagnostics as the table-driven scalar implementation.
 
 ### 5.3 MLIR and R24
 
-The existing `#bcir.asn1_rules<ber|cer|der>` attribute remains the X.690 compatibility
-surface. It is not extended by assigning JER an arbitrary enum value.
+**Landed, and not in the shape this section originally proposed.** The plan here was a
+*second* attribute, `#bcir.asn1_encoding<family = …, profile = …>`, sitting beside the
+legacy `#bcir.asn1_rules<ber|cer|der>`, with R24 checking "family/profile consistency".
+Building it made the objection plain: **consistency between two attributes is a check that
+only exists because the IR was allowed to write down the contradiction.** A pair
+`family = jer, profile = canonical_per_aligned` is expressible and meaningless, and an
+operation carrying *both* a legacy rules attribute and an encoding profile has two answers
+to one question. That is the same drift the byte-comparison oracle in §3.2 exists to avoid,
+one level up.
 
-An additive encoding-family/profile attribute will identify at least:
+What landed instead: `BCIR_Asn1Rules` is extended **in place and additively** to name every
+transfer syntax the repository speaks, and family, profile, canonicality and PER alignment
+are **derived** from it (`asn1FamilyOf`, `isCanonicalAsn1Rules`, `asn1RulesAreAligned` in
+`mlir/lib/BCIRDialect.cpp`). One stored fact, one source of truth, and the decomposition
+the laws are written over cannot disagree with it. Each switch is exhaustive with no
+`default:`, so adding a syntax without classifying it is a `-Werror=switch` build failure
+rather than a silent misclassification — which for canonicality would mean R24 quietly
+permitting a sender's-option encoding to be emitted and digested.
 
 ```text
-#bcir.asn1_encoding<family = jer, profile = basic>
-#bcir.asn1_encoding<family = jer, profile = bcir_canonical_v1>
+#bcir.asn1_rules<der>                       // X.690,  canonical
+#bcir.asn1_rules<canonical_per_unaligned>   // X.691,  canonical
+#bcir.asn1_rules<coer>                      // X.696,  canonical
+#bcir.asn1_rules<cxer>                      // X.693,  canonical
+#bcir.asn1_rules<bcir_canonical_jer>        // X.697,  canonical, no registered OID
+#bcir.asn1_rules<jer>                       // X.697,  decode target only
 ```
 
-Legacy X.690 operations remain source-compatible. New or generalized ASN.1 encode/decode
-operations accept exactly one legacy rules attribute or one encoding profile. R24 keeps
-its number and expands from X.690-only emission checks to family/profile consistency,
-JER instruction legality, schema constraints, descriptor identity, and additive
-projection rules. Python/MLIR negative-fixture parity is required before promotion.
+`ber`/`cer`/`der` keep integer values 0/1/2, so every artifact, bytecode file and fixture
+written before the other families existed still parses and still means what it meant — the
+source compatibility this section asked for, obtained without a second attribute.
+
+**R24 keeps its number and its laws generalize rather than multiply.** "BCIR emits DER
+only" becomes **"BCIR emits only a transfer syntax whose octets are a function of the
+abstract value"** — the property a digest actually rests on, of which DER is merely the
+X.690 member. That closed two holes the X.690-shaped law had left open:
+
+- `strict_der` with `cer` passed verification, because the test was `rules == ber`. X.690
+  §9.1 makes the indefinite length form mandatory for constructed CER encodings, so a CER
+  artifact is exactly as un-byte-stable as a BER one.
+- `strict_der` on a non-X.690 decode passed, though "strict DER" is a category error about
+  a PER or JER decoder rather than a stricter setting. `strict_canonical` is the
+  family-neutral spelling, and R24 now directs callers to it.
+
+`bcir.asn1.transcode` is added as the law-rail form of `bcir-asn1c --transcode` and of what
+`selection.py` measures: one schema, one abstract value, two transfer syntaxes. Its target
+is emitted, so it falls under the same canonicality law; `preserve_value` additionally
+requires a **canonical source**, because a syntax admitting several encodings of one value
+gives the sender a choice a replay cannot reproduce.
+
+JER *instruction* legality and descriptor identity remain future work — they need the
+descriptor on the law rail, which is J5's `#5.1` promotion, not this one.
 
 ### 5.4 Direct lowering
 
@@ -321,7 +357,7 @@ errata admission.
 | **J1 — bounded Python oracle** · **DELIVERED** | Pre-parse limits, exact canonical-byte validation, schema/path diagnostics, framed input, and `bcir-asn1c` JER encode/decode/transcode modes | Met: limits are asserted at each N/N+1 boundary, every encoder's option that decodes to the right value is refused by octet comparison, every truncated prefix of a framed document is refused, and a failed decode leaves a retry succeeding unchanged |
 | **J2 — schema-plan compiler** · **DELIVERED** | Deterministic descriptor, bound derivation, instruction compilation, version/hash contract, and first `channel.json` schema | Met: [`jer_plan.py`](../bcir/asn1/jer_plan.py) regenerates byte-identically, refuses a bare ENUMERATED, an open type, a duplicate JSON member name and an undiscriminable UNWRAPPED choice at compile time, and its plan-driven trace equals the direct one |
 | **J3 — scalar C twin** | **Landed.** [`bcir_jer.{h,c}`](../runtime/c/bcir_jer.c): allocation-free bounded scanner, whole-document UTF-8 check, ECMA-404 parser driving a caller's event sink, §4.2 diagnostics, §3.3 unframing, and the twelfth fuzz target | Python/C error-class, byte-offset, required-capacity and event-trace parity in [`test_c_jer.py`](../bcir/tests/test_c_jer.py); `-O0 == -O3` over 667 cases in `check_runtime.sh` `#jer`; freestanding `-Werror` under C11 and C23; ASan/UBSan fuzz green |
-| **J4 — law and execution lowering** | Additive MLIR family/profile representation, expanded R24, typed/direct claim builders, StreamPack lowering, and `DeviceManifest`/selection schemas | Positive/negative Python↔MLIR parity; direct/typed claim graphs and StreamPack bytes agree; **and the JER↔MLIR projection commutes in both directions** (see below) |
+| **J4 — law and execution lowering** | **Part 1 landed:** `BCIR_Asn1Rules` extended additively to every transfer syntax, family/canonicality/alignment derived rather than stored, R24 generalized from "emits DER" to "emits a canonical syntax", `strict_canonical`, and `bcir.asn1.transcode` (§5.3). **Remaining:** typed/direct claim builders, StreamPack lowering, `DeviceManifest`/selection schemas | Positive/negative Python↔MLIR parity — landed for part 1 in [`test_asn1_law_parity.py`](../bcir/tests/test_asn1_law_parity.py) and `verify_asn1.mlir` cases 19–26; direct/typed claim graphs and StreamPack bytes agree; **and the JER↔MLIR projection commutes in both directions** (see below) |
 | **J5 — hosted SIMD rail** | Optional C++17 structural/UTF-8 scanner behind the C ABI with scalar fallback | Same accepted/rejected corpus and trace; statistically significant measured advantage on at least two hosts; no unsupported-CPU fault |
 | **J6 — certified K_BCIR choice** | Native microbench protocol, frozen target tables, prediction intervals, RCSP integration, and selection certificate | Exact candidate sizes, controlled counters, repeatability, legality-first refusal, and deterministic selection on at least two targets |
 | **J7 — driver experiment** | Userspace/simulator driver specification ingest, generated views, and sequential BCIR-Linux module comparison | D0–D3 driver gates, signed modules, direct/Linux trace parity, teardown/restart tests, and controlled performance evidence |

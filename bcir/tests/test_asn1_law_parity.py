@@ -55,19 +55,128 @@ def test_tag_class_values_match_x690_table_1_on_both_rails():
         assert octet >> 6 == value, (name, hex(octet))
 
 
+#: The law rail's transfer-syntax enum, spelled once here so the three tests below can
+#: each ask a different question of it. The X.690 three keep values 0/1/2 because the
+#: extension had to be ADDITIVE: every artifact, bytecode file and fixture written before
+#: the other families existed must still parse and still mean what it meant.
+_EXPECTED_RULES = {
+    "ber": 0, "cer": 1, "der": 2,
+    "basic_per_aligned": 3, "basic_per_unaligned": 4,
+    "canonical_per_aligned": 5, "canonical_per_unaligned": 6,
+    "oer": 7, "coer": 8,
+    "xer": 9, "cxer": 10,
+    "jer": 11, "bcir_canonical_jer": 12,
+}
+
+
 def test_encoding_rules_and_tagging_enums_agree():
     rules = _cases("Asn1Rules")
-    assert rules == {"ber": 0, "cer": 1, "der": 2}, rules
+    assert rules == _EXPECTED_RULES, rules
+    # The X.690 members must keep their original integers, or an artifact encoded before
+    # the enum grew would decode as a different syntax.
+    assert (rules["ber"], rules["cer"], rules["der"]) == (0, 1, 2), rules
     tagging = _cases("Asn1Tagging")
     assert tagging == {"implicit": 0, "explicit": 1}, tagging
+
+
+def test_the_law_rail_names_every_transfer_syntax_the_oracle_can_speak():
+    """One list, two rails: the ODS enum and `selection.py`'s candidate table.
+
+    The selection harness is the oracle's own inventory of what this repository can
+    encode and decode — it is what phase H measures over — so it is the right thing to
+    pin the law rail against. A syntax the IR can name but the oracle cannot produce is a
+    law with no implementation; one the oracle produces but the IR cannot name cannot be
+    reasoned about by R24 at all, which is worse, because it means an encoding path
+    exists that no static law governs.
+
+    XER is the one entry that is *deliberately* asymmetric: `xer.py` implements BASIC-XER
+    and CXER, but `selection.py` does not offer them as candidates, because the harness
+    measures encodings BCIR would choose between for a wire and XER is not one of them.
+    The law rail still names them, because R24 must be able to govern an XER decode.
+    """
+    from bcir.asn1.selection import ALL_CANDIDATES
+
+    rules = set(_cases("Asn1Rules"))
+    # The mapping is read from `Candidate.rules`, not kept here: a transcription the
+    # checker maintains privately is one the checker cannot catch drifting.
+    spellings = {c.name: c.rules for c in ALL_CANDIDATES}
+    for name, spelling in spellings.items():
+        assert spelling, f"candidate {name} declares no law-rail spelling"
+        assert spelling in rules, f"{name} names {spelling!r}, which the ODS enum lacks"
+    # Only these three may be named without being a candidate: `cer` because R24 has to be
+    # able to REFUSE it by name, and the two XER profiles for the reason above.
+    assert rules - set(spellings.values()) == {"cer", "xer", "cxer"}, sorted(rules)
+
+
+def test_canonicality_agrees_between_the_law_rail_and_the_measured_candidates():
+    """R24's generalized law rests on ONE predicate, so both rails must classify alike.
+
+    The law is no longer "BCIR emits DER"; it is "BCIR emits a transfer syntax whose
+    octets are a function of the abstract value", because that is the property a digest
+    actually needs. `selection.py` marks the same property as `Candidate.canonical` — it
+    is what splits the five selectable candidates from the five decode-only ones — so a
+    disagreement here would mean the verifier permits emitting something the harness
+    knows is not replayable, or refuses something it measures.
+
+    `cer` is the case worth stating out loud. Its NAME says canonical and it is not: X.690
+    §9.1 makes the indefinite length form mandatory for constructed CER encodings, so a
+    CER artifact is not byte-stable however canonically it chose among BER's options.
+    """
+    from bcir.asn1.selection import ALL_CANDIDATES
+
+    source = open(os.path.join(_ROOT, "mlir", "lib", "BCIRDialect.cpp"), encoding="utf-8")
+    body = re.search(r"bool isCanonicalAsn1Rules\(Asn1Rules rules\) \{.*?\n\}",
+                     source.read(), re.S)
+    assert body, "isCanonicalAsn1Rules not found; R24's law rests on it"
+    returns_true = body.group(0).split("return true;")[0]
+    law_canonical = set(re.findall(r"case Asn1Rules::(\w+):", returns_true))
+    assert law_canonical == {"Der", "CanonicalPerAligned", "CanonicalPerUnaligned",
+                             "Coer", "Cxer", "BcirCanonicalJer"}, sorted(law_canonical)
+    # CER is classified, and classified as NOT canonical.
+    assert "Cer" not in law_canonical, "CER is not byte-stable (X.690 9.1)"
+
+    # snake_case ODS spelling -> the CamelCase enumerator the pass switches on.
+    def camel(spelling: str) -> str:
+        return "".join(part.capitalize() for part in spelling.split("_"))
+
+    for candidate in ALL_CANDIDATES:
+        assert (camel(candidate.rules) in law_canonical) == candidate.canonical, (
+            f"{candidate.name}: the oracle says canonical={candidate.canonical}, "
+            f"the law rail disagrees")
 
 
 def test_law_rail_declares_every_op_the_oracle_needs():
     """The schema layer's constructors must all be nameable in the IR."""
     text = open(_ASN1_TD, encoding="utf-8").read()
     for mnemonic in ("asn1.module", "asn1.type", "asn1.component", "asn1.encode",
-                     "asn1.decode", "asn1.projection"):
+                     "asn1.decode", "asn1.projection", "asn1.transcode"):
         assert f'BCIR_Op<"{mnemonic}"' in text, mnemonic
+
+
+def test_the_generalized_r24_laws_are_pinned_by_the_fixture():
+    """Each new law needs a document that trips it, or it is a claim without a witness.
+
+    The two holes the old `strict_der && rules == ber` test left open are called out by
+    name: CER passed it, though CER is exactly as un-byte-stable as BER, and so did
+    `strict_der` on a JER decode, which is a category error rather than a strict setting.
+    """
+    fixture = open(_FIXTURE, encoding="utf-8").read()
+    for needle in (
+        # the generalized canonicality law, in a family that is not X.690
+        "basic_per_aligned (X.691), which is not canonical",
+        # the two closed holes
+        "accepts cer, which is not a canonical transfer syntax",
+        "strict_der but declares the X.697 syntax bcir_canonical_jer",
+        # the transcode laws
+        "targets ber (X.690), which is not canonical; a transcode EMITS its target",
+        "has the same source and target syntax der",
+        "claims preserve_value but reads jer",
+    ):
+        assert needle in fixture, f"no fixture witnesses: {needle}"
+    # And the positive direction: every canonical syntax must be emittable somewhere.
+    for spelling in ("canonical_per_unaligned", "canonical_per_aligned", "coer", "cxer",
+                     "bcir_canonical_jer"):
+        assert f"rules = #bcir.asn1_rules<{spelling}>" in fixture, spelling
 
 
 def test_reserved_universal_tags_agree_with_the_law_fixture():
@@ -179,8 +288,19 @@ def test_law_fixture_covers_every_r24_diagnostic_the_pass_can_emit():
         "mixes tagged and untagged components",
         "is primitive but names no universal tag number",
         "but names no element type",
-        "is marked strict_der but declares it accepts BER",
+        # Was "is marked strict_der but declares it accepts BER". The old law tested
+        # `strict_der && rules == ber` and so let two contradictions through: CER, which
+        # X.690 9.1 makes just as un-byte-stable, and a `strict_der` decode in a family
+        # that has no DER at all. Both now have their own diagnostic and their own
+        # fixture below.
+        "but declares it accepts",
+        "strict_der but declares the",
         "is not marked additive",
+        # The generalized canonicality law and the three transcode laws.
+        "which is not canonical; BCIR emits only a transfer syntax",
+        "which is not canonical; a transcode EMITS its target",
+        "has the same source and target syntax",
+        "claims preserve_value but reads",
         "has an empty value constraint",
         "has an empty SIZE constraint",
         "has a negative SIZE lower bound",

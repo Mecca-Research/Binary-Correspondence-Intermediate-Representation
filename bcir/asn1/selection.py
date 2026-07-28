@@ -84,6 +84,13 @@ class Candidate:
     canonical: bool
     encode: Callable[[Asn1Type, object], bytes]
     decode: Callable[[bytes, Asn1Type], object]
+    #: How the law rail spells this syntax — the `BCIR_Asn1Rules` case in
+    #: `mlir/include/BCIR/BCIRAttrs.td`. It lives HERE, next to the encoder that defines
+    #: what the name means, rather than in a table the parity test keeps privately: a
+    #: transcription maintained by the checker is one the checker cannot catch drifting.
+    #: `test_asn1_law_parity` reads this field, so adding a candidate without giving it a
+    #: law-rail spelling fails the gate instead of silently going ungoverned by R24.
+    rules: str = ""
 
 
 def _der_encode(kind: Asn1Type, value) -> bytes:
@@ -158,19 +165,23 @@ def _build_candidates() -> tuple[Candidate, ...]:
 
     return (
         # --- selectable: one abstract value, one encoding ---------------------------------
-        Candidate("DER", DER_OID, True, _der_encode, _der_decode),
-        Candidate("CANONICAL-PER-UNALIGNED", CANONICAL_PER_UNALIGNED_OID, True, *unaligned),
-        Candidate("CANONICAL-PER-ALIGNED", CANONICAL_PER_ALIGNED_OID, True, *aligned),
-        Candidate("COER", CANONICAL_OER_OID, True, *coer),
+        Candidate("DER", DER_OID, True, _der_encode, _der_decode, "der"),
+        Candidate("CANONICAL-PER-UNALIGNED", CANONICAL_PER_UNALIGNED_OID, True, *unaligned,
+                  rules="canonical_per_unaligned"),
+        Candidate("CANONICAL-PER-ALIGNED", CANONICAL_PER_ALIGNED_OID, True, *aligned,
+                  rules="canonical_per_aligned"),
+        Candidate("COER", CANONICAL_OER_OID, True, *coer, rules="coer"),
         # X.697 registers no canonical variant, so this names BCIR's profile and carries no
         # object identifier of its own -- see the module docstring of `jer.py`.
-        Candidate("JER-BCIR-CANONICAL", None, True, *cjer),
+        Candidate("JER-BCIR-CANONICAL", None, True, *cjer, rules="bcir_canonical_jer"),
         # --- decode targets only: a value has more than one legal encoding ----------------
-        Candidate("BER", BER_OID, False, _der_encode, _ber_decode),
-        Candidate("BASIC-PER-UNALIGNED", BASIC_PER_UNALIGNED_OID, False, *basic_unaligned),
-        Candidate("BASIC-PER-ALIGNED", BASIC_PER_ALIGNED_OID, False, *basic_aligned),
-        Candidate("BASIC-OER", BASIC_OER_OID, False, *basic_oer),
-        Candidate("JER", JER_OID, False, *bjer),
+        Candidate("BER", BER_OID, False, _der_encode, _ber_decode, "ber"),
+        Candidate("BASIC-PER-UNALIGNED", BASIC_PER_UNALIGNED_OID, False, *basic_unaligned,
+                  rules="basic_per_unaligned"),
+        Candidate("BASIC-PER-ALIGNED", BASIC_PER_ALIGNED_OID, False, *basic_aligned,
+                  rules="basic_per_aligned"),
+        Candidate("BASIC-OER", BASIC_OER_OID, False, *basic_oer, rules="oer"),
+        Candidate("JER", JER_OID, False, *bjer, rules="jer"),
     )
 
 

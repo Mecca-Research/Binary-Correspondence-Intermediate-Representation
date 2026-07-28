@@ -1522,6 +1522,72 @@ static bool isX86AsmSymbol(::llvm::StringRef name) {
   return ::mlir::success();
 }
 
+namespace bcir {
+
+// --- the derived decomposition of an ASN.1 transfer syntax -------------------------------
+//
+// See BCIREnums.h for why these are functions rather than stored attributes. Each switch
+// is deliberately exhaustive with no `default:`, so adding a case to BCIR_Asn1Rules and
+// forgetting to classify it is a -Werror=switch build failure rather than a silent
+// misclassification -- which for `isCanonicalAsn1Rules` would mean R24 quietly permitting
+// a sender's-option syntax to be emitted and digested.
+
+llvm::StringRef asn1FamilyOf(Asn1Rules rules) {
+  switch (rules) {
+    case Asn1Rules::Ber:
+    case Asn1Rules::Cer:
+    case Asn1Rules::Der:
+      return "X.690";
+    case Asn1Rules::BasicPerAligned:
+    case Asn1Rules::BasicPerUnaligned:
+    case Asn1Rules::CanonicalPerAligned:
+    case Asn1Rules::CanonicalPerUnaligned:
+      return "X.691";
+    case Asn1Rules::Xer:
+    case Asn1Rules::Cxer:
+      return "X.693";
+    case Asn1Rules::Oer:
+    case Asn1Rules::Coer:
+      return "X.696";
+    case Asn1Rules::Jer:
+    case Asn1Rules::BcirCanonicalJer:
+      return "X.697";
+  }
+  return "X.690";
+}
+
+bool isCanonicalAsn1Rules(Asn1Rules rules) {
+  switch (rules) {
+    case Asn1Rules::Der:
+    case Asn1Rules::CanonicalPerAligned:
+    case Asn1Rules::CanonicalPerUnaligned:
+    case Asn1Rules::Coer:
+    case Asn1Rules::Cxer:
+    case Asn1Rules::BcirCanonicalJer:
+      return true;
+    // `cer` is here, and its name is the trap. X.690 9.1 makes the indefinite length form
+    // MANDATORY for constructed CER encodings, so a CER artifact is not byte-stable and a
+    // digest over it does not identify the value. "Canonical" in CER's name is about
+    // choosing canonically among BER's options, not about the octets being a function of
+    // the value -- which is the only property a digest can rest on.
+    case Asn1Rules::Cer:
+    case Asn1Rules::Ber:
+    case Asn1Rules::BasicPerAligned:
+    case Asn1Rules::BasicPerUnaligned:
+    case Asn1Rules::Xer:
+    case Asn1Rules::Oer:
+    case Asn1Rules::Jer:
+      return false;
+  }
+  return false;
+}
+
+bool asn1RulesAreAligned(Asn1Rules rules) {
+  return rules == Asn1Rules::BasicPerAligned || rules == Asn1Rules::CanonicalPerAligned;
+}
+
+}  // namespace bcir
+
 void BCIRDialect::initialize() {
   addOperations<
 #define GET_OP_LIST

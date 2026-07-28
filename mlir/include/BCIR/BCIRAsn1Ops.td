@@ -121,16 +121,60 @@ def BCIR_Asn1EncodeOp : BCIR_Op<"asn1.encode", [Symbol]> {
 def BCIR_Asn1DecodeOp : BCIR_Op<"asn1.decode", [Symbol]> {
   let summary = "Decode octets as a named ASN.1 type under stated encoding rules";
   let description = [{
-    `rules` states what the decoder ACCEPTS, and here `ber` is legal and expected: the
-    interoperability half of the profile is that a peer built against a BER toolkit can
-    still talk to BCIR. `strict_der` marks a decode that additionally refuses every
-    BER-only form -- the posture a trust boundary takes when it stores or digests what
-    it receives, since otherwise a peer picks the digest by picking a spelling.
+    `rules` states what the decoder ACCEPTS, and here a non-canonical syntax is legal and
+    expected: the interoperability half of the profile is that a peer built against a BER,
+    BASIC-PER or plain JER toolkit can still talk to BCIR.
+
+    `strict_der` marks a decode that additionally refuses every BER-only form -- the
+    posture a trust boundary takes when it stores or digests what it receives, since
+    otherwise a peer picks the digest by picking a spelling. It is X.690-specific by
+    name and R24 now holds it to that: marking a PER or JER decode `strict_der` is a
+    category error, not a stricter setting.
+
+    `strict_canonical` is the same posture stated for any family, and is what a decode
+    outside X.690 should use. R24 requires either flag to agree with `rules`: a decode
+    cannot claim to refuse non-canonical octets while declaring it accepts them.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name,
                        FlatSymbolRefAttr:$type,
                        BCIR_Asn1RulesAttr:$rules,
-                       UnitAttr:$strict_der);
+                       UnitAttr:$strict_der,
+                       UnitAttr:$strict_canonical);
+  let assemblyFormat = "$sym_name attr-dict";
+}
+
+def BCIR_Asn1TranscodeOp : BCIR_Op<"asn1.transcode", [Symbol]> {
+  let summary = "Re-encode one abstract value from one transfer syntax into another";
+  let description = [{
+    The law-rail form of what `bcir-asn1c --transcode` does and what the selection
+    harness in `bcir/asn1/selection.py` measures: one schema, one abstract value, more
+    than one transfer syntax.
+
+    ONE `type`, NOT A SOURCE AND A TARGET TYPE. A transcode is only meaningful when both
+    sides denote the same abstract value, and naming two types would let the IR claim a
+    correspondence X.680 does not give it. The single symbol is what makes the claim
+    checkable.
+
+    `from` may be any syntax a peer can write. `to` is EMITTED by BCIR and so falls under
+    the same canonicality law as `bcir.asn1.encode` -- R24 rejects a non-canonical target.
+
+    `preserve_value` asserts the stronger property that the transcode is replayable: the
+    same source octets always produce the same target octets. That requires the SOURCE to
+    be canonical too, because a syntax admitting several encodings of one value gives the
+    sender a choice the replay cannot reproduce. R24 checks it.
+
+    NOTE on the direction that is not symmetric. X.697 §7.2.2 hides an integer's value
+    constraint and a string's SIZE from JER, so a JER source carries strictly less
+    information about the type's bounds than a PER or OER source does. That is a property
+    of the SCHEMA rather than of any one value, so it is not decidable here; it is why
+    `bcir/asn1/jer_plan.py` reports a static capacity of `None` almost everywhere and why
+    the C reader takes its buffer sizes from the caller.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       FlatSymbolRefAttr:$type,
+                       BCIR_Asn1RulesAttr:$from,
+                       BCIR_Asn1RulesAttr:$to,
+                       UnitAttr:$preserve_value);
   let assemblyFormat = "$sym_name attr-dict";
 }
 
