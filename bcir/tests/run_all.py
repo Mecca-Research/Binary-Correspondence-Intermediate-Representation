@@ -343,6 +343,7 @@ _MODULES = [
     "bcir.tests.test_asn1_dialect",
     "bcir.tests.test_asn1_manifest",
     "bcir.tests.test_asn1_certified",
+    "bcir.tests.test_asn1_native_bench",
     "bcir.tests.test_c_jer",
     "bcir.tests.test_c_per",
     "bcir.tests.test_native_object_gate",

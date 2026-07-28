@@ -3556,6 +3556,29 @@ else
   exit 1
 fi
 
+# The native ASN.1 decode microbench (#asn1bench, JSON roadmap J6 follow-on): the harness
+# that makes a `measured` cost table possible, and therefore the reason select_certified can
+# decide a timing objective at all instead of refusing every one. It is a MEASUREMENT tool,
+# so what is gated here is that it builds warning-clean and answers a corpus -- the numbers
+# themselves are deliberately NOT a CI assertion, because a shared runner's timings are not
+# evidence about a target and pinning them would invent the false precision J6 refuses.
+echo "[c-runtime] native ASN.1 decode microbench: strict-warning build (#asn1bench)"
+if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
+     "${C}/bcir_asn1_bench.c" "${C}/bcir_asn1.c" "${C}/bcir_jer.c" "${C}/bcir_xer.c" \
+     "${C}/bcir_runtime.c" -o "${tmp}/asn1_bench"; then
+  printf 'rounds 1 7 8\ncase DER der 3009020102040461\ncase JER jer 7b2261223a317d\nrun\n' \
+    > "${tmp}/bench_cases.txt"
+  if "${tmp}/asn1_bench" < "${tmp}/bench_cases.txt" | grep -q '^done 2$'; then
+    echo "  PASS native ASN.1 microbench (builds -Werror, answers a two-case corpus)"
+  else
+    echo "  FAIL: the native ASN.1 microbench did not complete its corpus"
+    exit 1
+  fi
+else
+  echo "  FAIL: the native ASN.1 microbench does not build warning-clean"
+  exit 1
+fi
+
 # DER -> native StreamPack fast path (#asn1fast, roadmap phase D): reconstruct the native
 # artifact from its X.690 DER projection in freestanding C, with no Python anywhere in the
 # reconstruction path, and assert BYTE IDENTITY against what the Python encoder produced.

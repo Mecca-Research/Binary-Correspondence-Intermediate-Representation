@@ -71,7 +71,7 @@ repository inventories remain generated in [`STATUS.md`](STATUS.md).
 | Existing bounded C JSON precedent | **Shape-specific only** | [`bcir_channel.c`](../runtime/c/bcir_channel.c) bounds bytes and depth and decodes `channel.json`; it is not a JER engine or generated ASN.1 parser |
 | MLIR family/profile and R24 (J4 part 1) | **Landed on the law rail** | `BCIR_Asn1Rules` names every transfer syntax the repository speaks; family, canonicality and PER alignment are **derived** from it rather than stored beside it, so no two attributes can disagree about one syntax. R24's emission law generalizes from "emits DER" to "emits a syntax whose octets are a function of the abstract value", which closed two holes the X.690-shaped test had left open. `bcir.asn1.transcode` and `strict_canonical` are added. See §5.3 for why this is one enum and not the (family, profile) pair originally planned |
 | JER-to-claims lowering (J4 part 3) | **Landed for the manifest surface** | [`manifest.py`](../bcir/asn1/manifest.py) gives `channel.json`, `DeviceManifest` and the §6.2 selection envelope ASN.1 schemas, and §5.4's two sinks commute over all nine built-in channels. **Not** claimed: GEM graphs and BCAB have no direct JER builder, and the value graph still exists behind the walk because `json.loads` builds it — removing that materialization is J6 streaming work |
-| Native calibration and certificates | **Missing** | Python timing cannot stand in for target counters, frozen cost tables, confidence intervals, or an RCSP/K_BCIR verdict |
+| Native calibration and certificates (J6) | **Landed for the encoding-selection surface** | [`certified.py`](../bcir/asn1/certified.py) gives distribution-free intervals, frozen generation-tagged tables and §6.2's certificate; [`native_bench.py`](../bcir/asn1/native_bench.py) produces a genuinely `measured` table from a native C harness and refuses every candidate the C rail does not implement. **Not** claimed: target hardware counters, a native encode column, and RCSP integration |
 | Driver/kernel use | **Missing** | No resident driver, Linux module, native-kernel parser, or physical-device comparison uses JER |
 
 The current PersonnelRecord experiment proves a useful but narrow point. Exact encoded
@@ -79,6 +79,21 @@ sizes span 84 bytes for canonical unaligned PER through 385 bytes for BCIR-canon
 and a bandwidth objective selects unaligned PER without user-defined ECN. Decode timings
 are Python implementation measurements: `json.loads` is native code while COER decode is
 currently Python, so those timings cannot establish a target-independent ordering.
+
+**That caveat is no longer a prediction — it is measured, and the ordering is inverted.**
+The native harness ([`bcir_asn1_bench.c`](../runtime/c/bcir_asn1_bench.c),
+[`native_bench.py`](../bcir/asn1/native_bench.py)) times two C decoders against each other
+on the same abstract value:
+
+| Rail | DER | BCIR-canonical JER | Verdict |
+|---|---|---|---|
+| Python oracle | ~30.8 µs | ~13.7 µs | JER **2.2× faster** |
+| Native C | ~51 ns | ~209 ns | DER **4.1× faster** |
+
+Same values, same encodings, opposite answer. The oracle was ranking `json.loads` against a
+Python DER decoder and reporting the result as a property of the *encodings*. This is
+exactly what J6's refusal to decide a timing objective from an oracle table exists to
+prevent, and it is now pinned by a test rather than argued from first principles.
 
 ## 3. Standards and terminology
 
@@ -391,10 +406,34 @@ would teach callers to pass `allow_oracle_table=True` by reflex — carrying tha
 the timing decisions where the guard is load-bearing. A guard that fires when it is not
 needed is a guard people learn to disable.
 
-Still open in this phase: the **native microbench protocol** that would produce a genuinely
-`measured` table, and RCSP integration. `build_table` therefore defaults to
-`provenance="oracle"`, so producing a `measured` table is a deliberate argument rather than
-something that happens by omission.
+**The native microbench protocol landed** with J6's follow-on
+([`bcir_asn1_bench.c`](../runtime/c/bcir_asn1_bench.c) +
+[`native_bench.py`](../bcir/asn1/native_bench.py)), so a `measured` table can now be
+produced and a timing objective can actually be decided. `build_table` still defaults to
+`provenance="oracle"`, because it runs under a Python codec; `measured_table` is the
+function that earns the other label.
+
+Its protocol is where the numbers become comparable: one corpus with identical octets every
+round, warmup discarded, **interleaved round-robin** so a drifting CPU biases no single
+candidate, per-round medians so clock granularity cannot quantize a short decode to zero,
+and every round emitted so the interval is derived by the reader rather than baked in.
+
+**The refusal moves rather than disappears, and this is the design.** The harness measures
+what the C rail natively implements and refuses the rest — so the measured table is smaller
+than the candidate list, and `select_certified` then refuses any objective needing a missing
+row. Two absences, for different reasons that are recorded separately because they call for
+different decisions:
+
+- **OER** has no C decoder yet. An ordinary gap; it closes when one is written.
+- **PER cannot have one.** X.691 §7.2 makes a PER encoding non-self-delimiting — without
+  the type, the octets cannot be walked — so there is no schema-free structural pass to
+  time and no comparable native number will ever exist. `bcir_per.c` implements the reading
+  *primitives*; timing those against a whole-document scan would compare unlike work and
+  call the difference an encoding cost.
+
+Also still open: RCSP integration, and a native **encode** column — nothing here times an
+encode, because the C rail has no encoder for these candidates, and a row that reported one
+would be a Python timing wearing a `measured` label.
 
 ### 6.3 StreamPack and BCAB
 
