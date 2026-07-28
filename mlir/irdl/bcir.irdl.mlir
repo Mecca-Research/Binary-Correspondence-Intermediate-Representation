@@ -184,8 +184,12 @@ irdl.dialect @bcir {
   irdl.operation @artifact_variant
   irdl.operation @artifact_selection
 
-  // ASN.1 / X.690 interop rail (docs/BCIR_ASN1_X690_ABI.md). The module and type are
-  // containers; components, encode/decode and the projection are leaves.
+  // ASN.1 interop rail (docs/BCIR_ASN1_X690_ABI.md). The module and type are containers;
+  // components, encode/decode/transcode and the projection are leaves. The transfer
+  // syntax each names lives in an attribute, so this projection carries the operation
+  // shapes and not the BCIR_Asn1Rules enum -- IRDL describes structure, and the
+  // canonicality law R24 rests on is a predicate over that attribute rather than a
+  // structural constraint.
   irdl.operation @asn1_module {
     %body = irdl.region
     irdl.regions(body: %body)
@@ -197,6 +201,7 @@ irdl.dialect @bcir {
   irdl.operation @asn1_component
   irdl.operation @asn1_encode
   irdl.operation @asn1_decode
+  irdl.operation @asn1_transcode
   irdl.operation @asn1_projection
 
   // ---- M1: verifier obligations as IR (R1-R12) ----

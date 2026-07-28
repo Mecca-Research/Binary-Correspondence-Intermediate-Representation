@@ -229,17 +229,34 @@ tag and a constructor does not; a `sequence_of`/`set_of` names an element type a
 nothing else does; component tags within a type are distinct; OPTIONAL and DEFAULT are
 exclusive (X.680 §25.5) and a DEFAULT carries its value (needed for §11.5's omission);
 a SET does not mix tagged and untagged components (it is order-free on the wire, X.690
-§8.11.2); a `strict_der` decode does not also declare it accepts BER; and an
+§8.11.2); a `strict_der` or `strict_canonical` decode does not also declare it accepts
+a non-canonical syntax, and `strict_der` is not claimed outside X.690; a
+`bcir.asn1.transcode` emits a canonical target, does not transcode a syntax to itself,
+and reads a canonical source when it claims `preserve_value`; and an
 `asn1.projection` is marked **additive** — a projection that replaced a frozen wire
 format would invalidate every digest taken over the native octets, so the IR refuses to
 express one. Vacuous for IR with no `bcir.asn1.*` operation (the non-disturbance
 invariant R14–R23 also hold to). Oracle twins: `asn1.schema` and `asn1.der`.
 
-The current MLIR attribute and emission checks are specifically X.690-shaped:
-`#bcir.asn1_rules` names BER/CER/DER only. The Python oracle also implements bounded
-PER/OER/XER/JER and ECN surfaces, but those do not silently become R24-visible. The
-additive family/profile representation and R24 extension required for JER are future
-work in [`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md).
+`#bcir.asn1_rules` names **every transfer syntax the repository speaks** — the X.690
+three, X.691's four PER variants, X.696's OER/COER, X.693's XER/CXER, and X.697's JER
+plus BCIR's canonical JER profile. It is one enum rather than a (family, profile) pair
+of attributes, because a transfer syntax is what a peer either speaks or does not;
+family, canonicality and PER alignment are **derived** from it in `BCIRDialect.cpp`, so
+no two attributes can disagree about one syntax. `ber`/`cer`/`der` keep integer values
+0/1/2, so the extension is additive and pre-existing artifacts are unaffected.
+
+R24's emission law is stated over the derived predicate: **BCIR emits only a syntax
+whose octets are a function of the abstract value**, because it digests what it emits.
+DER is the X.690 member of that set; CANONICAL-PER, COER, CXER and BCIR's canonical JER
+are the others. `cer` fails it despite its name — X.690 §9.1 makes the indefinite length
+form mandatory for constructed CER encodings, so a CER artifact is not byte-stable.
+`strict_canonical` is the family-neutral spelling of `strict_der`, which R24 now holds
+to X.690. `bcir.asn1.transcode` names one value in two syntaxes.
+
+JER *instruction* legality and compiled-descriptor identity are still future work in
+[`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md); the ECN surfaces remain
+oracle-only and do not silently become R24-visible.
 
 **Shape + dtype laws (R22/R23) — the D2 promotion.** The E3–E6 `check_*` validators'
 "structurally valid tensors" guarantee, made law over the `gem.*` tensor claims:
@@ -1112,8 +1129,9 @@ and reject work outside it. The current profiles are:
   parameterization, canonical aligned/unaligned PER, COER/OER, CXER/XER, Python-oracle
   JER with all six X.697 instruction families, and ECN's built-in model. Each profile
   has its own explicit exclusions and C coverage in
-  [`BCIR_ASN1_BUILDOUT_ROADMAP.md`](BCIR_ASN1_BUILDOUT_ROADMAP.md); only X.690 is
-  currently represented by the MLIR `asn1_rules` attribute and R24 emission checks.
+  [`BCIR_ASN1_BUILDOUT_ROADMAP.md`](BCIR_ASN1_BUILDOUT_ROADMAP.md); the MLIR
+  `asn1_rules` attribute names every one of them, and R24's emission check is stated
+  over canonicality rather than over X.690.
   Module text is compiled by the X.680 front end (`bcir/frontends/asn1/`, the
   `bcir-asn1c` CLI), and unsupported notation fails closed. JER remains JSON text,
   has no standardized canonical variant, and has no C/MLIR/direct-claims rail yet;

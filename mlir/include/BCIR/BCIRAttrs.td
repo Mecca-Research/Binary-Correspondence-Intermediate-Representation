@@ -184,15 +184,56 @@ def BCIR_Asn1Class : BCIR_Enum<"Asn1Class", "ASN.1 tag class (X.690 Table 1)", [
   I32EnumAttrCase<"Private", 3, "private">]>;
 def BCIR_Asn1ClassAttr : BCIR_EnumAttr<BCIR_Asn1Class, "asn1_class">;
 
-// The encoding rules an operation emits or accepts. BCIR emits `der` only -- BER's
-// sender's options make a value's octets non-unique, which no digested artifact can
-// carry -- and accepts `ber` on input. `cer` is namable so a peer's transfer syntax
-// can be DESCRIBED, but law R24 forbids emitting it (X.690 9.1 makes the indefinite
-// length form mandatory for constructed encodings).
-def BCIR_Asn1Rules : BCIR_Enum<"Asn1Rules", "X.690 encoding rules", [
+// The transfer syntax an operation emits or accepts.
+//
+// ONE ENUM, NOT A (FAMILY, PROFILE) PAIR OF ATTRIBUTES. A transfer syntax is what a
+// peer either speaks or does not; "family" and "profile" are a decomposition of that
+// one identity, useful for stating laws, not two independently settable facts. Storing
+// both would create a pair that can disagree -- an op declaring family X.691 with an
+// X.697 profile is expressible and meaningless -- and R24 would then be policing a
+// contradiction the IR should not have been able to write down. The decomposition is
+// DERIVED instead (`asn1FamilyOf`, `isCanonicalAsn1Rules`, `asn1RulesAreAligned` in
+// BCIRDialect.cpp), so there is exactly one source of truth and the predicates the laws
+// are written over cannot drift from it.
+//
+// ADDITIVE. `ber`/`cer`/`der` keep values 0/1/2, so every existing artifact, bytecode
+// file and .mlir fixture still parses and still means what it meant. The new cases are
+// appended.
+//
+// WHAT EACH ONE IS FOR. BCIR EMITS only a canonical transfer syntax -- one where the
+// octets are a function of the abstract value -- because it digests and replays what it
+// emits, and a sender's-option encoding lets a peer pick the digest by picking a
+// spelling. Everything else is namable so a peer's syntax can be DESCRIBED and DECODED;
+// R24 forbids emitting it. That generalizes the old "der only" rule without weakening
+// it: `der` is simply the X.690 member of the canonical set.
+//
+// `bcir_canonical_jer` is deliberately NOT called "CJER". Rec. ITU-T X.697 (02/2021)
+// 42.2 registers exactly ONE object identifier for JER and defines no canonical variant
+// at all, so this names BCIR's own profile and has no registered OID -- unlike
+// CANONICAL-PER and COER, which do. The oracle's `selection.py` records the same
+// asymmetry, and test_asn1_law_parity pins the two lists against each other.
+def BCIR_Asn1Rules : BCIR_Enum<"Asn1Rules", "ASN.1 transfer syntax", [
+  // X.690 (02/2021) | ISO/IEC 8825-1
   I32EnumAttrCase<"Ber", 0, "ber">,
   I32EnumAttrCase<"Cer", 1, "cer">,
-  I32EnumAttrCase<"Der", 2, "der">]>;
+  I32EnumAttrCase<"Der", 2, "der">,
+  // X.691 (02/2021) | ISO/IEC 8825-2. Alignment is part of the syntax's identity, not a
+  // modifier on it: an aligned and an unaligned encoder produce different octets for the
+  // same value, so a peer must be told which one, and folding it into the enum makes
+  // "aligned" underivable-but-unset impossible to express.
+  I32EnumAttrCase<"BasicPerAligned", 3, "basic_per_aligned">,
+  I32EnumAttrCase<"BasicPerUnaligned", 4, "basic_per_unaligned">,
+  I32EnumAttrCase<"CanonicalPerAligned", 5, "canonical_per_aligned">,
+  I32EnumAttrCase<"CanonicalPerUnaligned", 6, "canonical_per_unaligned">,
+  // X.696 (02/2021) | ISO/IEC 8825-7
+  I32EnumAttrCase<"Oer", 7, "oer">,
+  I32EnumAttrCase<"Coer", 8, "coer">,
+  // X.693 (02/2021) | ISO/IEC 8825-4
+  I32EnumAttrCase<"Xer", 9, "xer">,
+  I32EnumAttrCase<"Cxer", 10, "cxer">,
+  // X.697 (02/2021) | ISO/IEC 8825-8
+  I32EnumAttrCase<"Jer", 11, "jer">,
+  I32EnumAttrCase<"BcirCanonicalJer", 12, "bcir_canonical_jer">]>;
 def BCIR_Asn1RulesAttr : BCIR_EnumAttr<BCIR_Asn1Rules, "asn1_rules">;
 
 // X.690 8.14.3 (explicit: the tag wraps a complete base encoding, always constructed)

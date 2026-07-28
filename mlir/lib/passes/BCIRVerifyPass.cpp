@@ -1822,14 +1822,23 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // Vacuous for IR with no bcir.asn1.* operation (the non-disturbance invariant that
     // R14-R23 also hold to).
     root->walk([&](Asn1ModuleOp m) {
-      // X.690 9.1 makes the indefinite length form MANDATORY for constructed CER
-      // encodings, so a CER artifact cannot be byte-stable; BER leaves the spelling to
-      // the sender. Neither can carry a digest, and BCIR digests what it emits.
-      if (m.getRules() != Asn1Rules::Der) {
+      // The law is CANONICALITY, not "DER". BCIR digests and replays what it emits, so
+      // the octets must be a function of the abstract value; otherwise the sender picks
+      // the digest by picking a spelling. DER is the X.690 member of that set, and
+      // CANONICAL-PER, COER, CXER and BCIR's canonical JER profile are the others -- so
+      // the rule generalizes across every family the repository speaks WITHOUT being
+      // weakened, and without R24 having to enumerate anything.
+      //
+      // `cer` still fails, and its name is the trap: X.690 9.1 makes the indefinite
+      // length form mandatory for constructed CER encodings, so a CER artifact is not
+      // byte-stable however canonically it chose among BER's options.
+      if (!isCanonicalAsn1Rules(m.getRules())) {
         m.emitError("R24: ASN.1 module ")
             << m.getSymName() << " declares encoding rules "
-            << stringifyAsn1Rules(m.getRules())
-            << "; BCIR emits DER only (X.690 clause 10 + 11)";
+            << stringifyAsn1Rules(m.getRules()) << " (" << asn1FamilyOf(m.getRules())
+            << "), which is not canonical; BCIR emits only a transfer syntax whose "
+               "octets are a function of the abstract value, because it digests what "
+               "it emits";
         ok = false;
       }
       // X.690 8.19.4 NOTE: only three values are allocated from the root node, and
@@ -2021,22 +2030,79 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     });
 
     root->walk([&](Asn1EncodeOp e) {
-      if (e.getRules() != Asn1Rules::Der) {
+      if (!isCanonicalAsn1Rules(e.getRules())) {
         e.emitError("R24: ASN.1 encode ")
             << e.getSymName() << " declares encoding rules "
-            << stringifyAsn1Rules(e.getRules())
-            << "; BCIR emits DER only (X.690 clause 10 + 11)";
+            << stringifyAsn1Rules(e.getRules()) << " (" << asn1FamilyOf(e.getRules())
+            << "), which is not canonical; BCIR emits only a transfer syntax whose "
+               "octets are a function of the abstract value";
         ok = false;
       }
     });
 
     root->walk([&](Asn1DecodeOp d) {
-      // Decoding is the permissive half by design -- `ber` here is correct, not a
-      // defect. Only the contradiction is a fault.
-      if (d.getStrictDer() && d.getRules() == Asn1Rules::Ber) {
+      // Decoding is the permissive half BY DESIGN -- `ber`, `jer` and `oer` here are
+      // correct rather than defects, and that is the whole interoperability half of the
+      // profile. Only a self-contradicting declaration is a fault.
+      //
+      // The old form of this law tested `strict_der && rules == ber` and so had two
+      // holes: `strict_der` with `cer` passed, though CER is exactly as un-byte-stable
+      // as BER, and `strict_der` with a non-X.690 syntax passed, though "strict DER" is
+      // a category error about a PER or JER decoder. Both are closed below.
+      bool strict = d.getStrictDer() || d.getStrictCanonical();
+      if (strict && !isCanonicalAsn1Rules(d.getRules())) {
         d.emitError("R24: ASN.1 decode ")
-            << d.getSymName()
-            << " is marked strict_der but declares it accepts BER";
+            << d.getSymName() << " is marked "
+            << (d.getStrictDer() ? "strict_der" : "strict_canonical")
+            << " but declares it accepts " << stringifyAsn1Rules(d.getRules())
+            << ", which is not a canonical transfer syntax";
+        ok = false;
+      }
+      if (d.getStrictDer() && asn1FamilyOf(d.getRules()) != "X.690") {
+        d.emitError("R24: ASN.1 decode ")
+            << d.getSymName() << " is marked strict_der but declares the "
+            << asn1FamilyOf(d.getRules()) << " syntax "
+            << stringifyAsn1Rules(d.getRules())
+            << "; strict_der names X.690's own canonical form, so use strict_canonical "
+               "for another family";
+        ok = false;
+      }
+    });
+
+    root->walk([&](Asn1TranscodeOp t) {
+      // A transcode is the operation the selection harness performs: one abstract value,
+      // two transfer syntaxes. Its INPUT may be anything a peer can write -- that is the
+      // point of transcoding -- but its OUTPUT is emitted by BCIR and so falls under the
+      // same canonicality law as an encode.
+      if (!isCanonicalAsn1Rules(t.getTo())) {
+        t.emitError("R24: ASN.1 transcode ")
+            << t.getSymName() << " targets " << stringifyAsn1Rules(t.getTo())
+            << " (" << asn1FamilyOf(t.getTo())
+            << "), which is not canonical; a transcode EMITS its target";
+        ok = false;
+      }
+      // Transcoding a syntax to itself is not a transcode. It reads as one in a pass
+      // pipeline and does nothing, which is the kind of no-op that hides a wrong
+      // attribute rather than announcing it.
+      if (t.getFrom() == t.getTo()) {
+        t.emitError("R24: ASN.1 transcode ")
+            << t.getSymName() << " has the same source and target syntax "
+            << stringifyAsn1Rules(t.getFrom());
+        ok = false;
+      }
+      // The abstract values have to be comparable for a transcode to mean anything, and
+      // X.697 7.2.2 is why this is not automatic: JER cannot see an integer's value
+      // constraint or a string's SIZE, so a JER-to-binary transcode can produce a value
+      // the target's constrained encoding has no room for. Naming the source and target
+      // type separately would let the IR claim a correspondence it cannot have; one
+      // `type` is the honest surface, and R24 enforces that the projection is of ONE
+      // named type.
+      if (t.getPreserveValue() && !isCanonicalAsn1Rules(t.getFrom())) {
+        t.emitError("R24: ASN.1 transcode ")
+            << t.getSymName() << " claims preserve_value but reads "
+            << stringifyAsn1Rules(t.getFrom())
+            << ", which admits more than one encoding of a value; a value-preserving "
+               "transcode must read a canonical syntax or it cannot be replayed";
         ok = false;
       }
     });
