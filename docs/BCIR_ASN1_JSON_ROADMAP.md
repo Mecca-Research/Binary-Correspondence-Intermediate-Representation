@@ -464,9 +464,30 @@ So the two absences do not overlap: **JER is measurable one way and not the othe
 and OER — permanently absent from the decode table — are perfectly encodable *given a plan*.
 A schema-free encode harness is cheap to build and would yield a two-row table with JER
 missing, which reads as an unfinished implementation rather than as the law it is. A
-schema-**directed** encode harness would instead cover *every* candidate, including the two
-the decode table can never hold; that is J2's plan compiled into C for the write side, and
-J3 built only the read side from `JerSchemaPlan.serialize()`.
+schema-**directed** encode harness instead covers *every* candidate, including the two the
+decode table can never hold.
+
+**E1 landed — the write-side plan and its reference emitters.** The harness splits the way
+J2 and J3 split, for the same reason: [`encode_plan.py`](../bcir/asn1/encode_plan.py)
+compiles a *write* plan (J2's is compiled for reading — it carries `json_kinds` and dispatch
+tables, and no ASN.1 tags, because a JER document has none), and
+[`emit.py`](../bcir/asn1/emit.py) drives DER, BER, JER and CANONICAL-OER from it. Every
+emitter reads **one format-neutral value stream**, which is what makes the costs comparable
+at all: hand DER its own octets and JER a Python object and the harness measures the
+adapters. All four are byte-identical to the oracle over a 26-case corpus.
+
+*Recorded from building it, and it is an argument for having a neutral stream at all:* the
+oracle's three encoders **disagree about how a Python value spells ASN.1 NULL**. `codec`
+wants its `NULL` sentinel and refuses `None`; `encode_jer` wants `None` and refuses `NULL`;
+`encode_oer` takes either. There is no single value you can hand all three. The ambiguity is
+in the value mapping rather than in any encoding, and it stays invisible until something
+drives every encoder from one input — which is exactly what a matched comparison must do. It
+is pinned by a test rather than papered over, so unifying the spelling stays a deliberate act.
+
+**E2 remains: the C twin.** The plan serializes to a canonical descriptor a freestanding
+encoder can parse, exactly as `JerSchemaPlan.serialize()` did for the read side, and until
+that exists there are still no *native* encode timings — the reference emitters are Python,
+and a Python timing wearing a `measured` label is what J6's refusal exists to prevent.
 
 ### 6.3 StreamPack and BCAB
 
