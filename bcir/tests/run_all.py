@@ -342,6 +342,7 @@ _MODULES = [
     "bcir.tests.test_asn1_jer_plan",
     "bcir.tests.test_asn1_dialect",
     "bcir.tests.test_asn1_graph",
+    "bcir.tests.test_asn1_program",
     "bcir.tests.test_asn1_manifest",
     "bcir.tests.test_asn1_certified",
     "bcir.tests.test_asn1_native_bench",
