@@ -136,6 +136,16 @@ add_target per "X.691 PER primitives" "-max_len=4096" \
 add_target xer "X.693 XER lexical layer" "-max_len=4096" \
   "${C}/fuzz_xer.c" "${C}/bcir_xer.c"
 
+# X.697's bounded reader: the stage of a JER decode that runs BEFORE any type is consulted.
+# Three surfaces here have no Python counterpart and so exist nowhere else -- the
+# caller-owned container stack, the caller-owned decode scratch, and the event sink -- and
+# each is driven with a deliberately undersized buffer as well as an ample one, because the
+# measure-then-write path is where an off-by-one hides. The 4.3 limits are derived FROM the
+# input rather than fixed: a ceiling that is never reached is a refusal branch never fuzzed,
+# and those ceilings are most of this reader's refusal surface.
+add_target jer "X.697 bounded JER reader" "-max_len=4096" \
+  "${C}/fuzz_jer.c" "${C}/bcir_jer.c" "${C}/bcir_runtime.c"
+
 # The StreamPack decoder itself: an artifact handed to the runtime by anyone.
 add_target decoder "decoder" "" \
   "${C}/fuzz_streampack.c" "${C}/bcir_runtime.c"

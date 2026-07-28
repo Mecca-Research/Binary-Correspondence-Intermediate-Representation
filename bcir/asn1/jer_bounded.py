@@ -262,6 +262,9 @@ def scan(data: bytes, limits: JerLimits = JerLimits()) -> int:
                 spend(len(literal), pos)
                 pos += len(literal)
                 nodes += 1
+                if nodes > limits.nodes:
+                    raise _fail(JerErrorCode.NODES_EXCEEDED, pos, needed=nodes,
+                                detail=f"limit is {limits.nodes}")
                 break
         else:
             raise _fail(JerErrorCode.MALFORMED, pos,
@@ -270,6 +273,67 @@ def scan(data: bytes, limits: JerLimits = JerLimits()) -> int:
         raise _fail(JerErrorCode.MALFORMED, end, detail=f"{len(kinds)} container(s) left "
                                                         f"unclosed at end of input")
     return nodes
+
+
+_HEX = frozenset(b"0123456789abcdefABCDEF")
+
+
+def _scan_u_escape(data: bytes, pos: int, spend) -> tuple[int, int]:
+    r"""Consume one `\uXXXX` escape — and its low surrogate, if it opened a pair.
+
+    Returns the offset just past what was consumed and the number of UTF-8 octets it
+    denotes, so the caller's `string_bytes` ceiling counts decoded octets rather than
+    source ones.
+
+    **This is where an unpaired surrogate is refused, and it has to be here.** §7.6.2 makes
+    a JER document UTF-8, and an unpaired surrogate has no UTF-8 encoding at all — which is
+    exactly why `jer.py`'s *encoder* refuses to emit one. The decoder had no matching
+    refusal: `json.loads` accepts `"\ud800"` and hands back a `str` holding a lone
+    surrogate, so the rail could decode a value it could never re-encode. Under the
+    canonical profile that is worse than a wrong value: `_canonical` re-encodes, the
+    encoder raises its §7.6.2 error, and that error escapes `decode_bounded` *unstructured*
+    — no `JerDiagnostic`, no stable code, no byte offset, in direct contradiction of §4.2.
+    Catching it in the octet pass fixes the contract and the value together, and it is the
+    offset-bearing layer the C twin can reproduce.
+
+    The four hex digits are also validated here rather than left to `json.loads`, because
+    the surrogate test needs their value anyway.
+    """
+    start = pos
+    end = len(data)
+
+    def scalar(at: int) -> int:
+        if at + 6 > end:
+            # No `needed`: MALFORMED is not a capacity fault. There is no ceiling a caller
+            # could raise that makes a truncated escape well formed, and reporting one
+            # invites a retry against an input that is simply wrong. `needed` is reserved
+            # for the §4.3 limits, where "how much would have been enough" is a real answer.
+            raise _fail(JerErrorCode.MALFORMED, at, detail="a truncated \\u escape")
+        digits = data[at + 2:at + 6]
+        if any(digit not in _HEX for digit in digits):
+            raise _fail(JerErrorCode.MALFORMED, at + 2,
+                        detail=f"{digits!r} is not four hexadecimal digits")
+        spend(6, at)
+        return int(digits, 16)
+
+    code = scalar(pos)
+    pos += 6
+    if 0xD800 <= code <= 0xDBFF:                             # a high surrogate: expect a low
+        if pos + 1 < end and data[pos] == 0x5C and data[pos + 1] == 0x75:
+            low = scalar(pos)
+            if not 0xDC00 <= low <= 0xDFFF:
+                raise _fail(JerErrorCode.NOT_UTF8, start,
+                            detail=f"U+{code:04X} is a high surrogate followed by "
+                                   f"U+{low:04X}, which is not a low surrogate (7.6.2)")
+            return pos + 6, 4
+        raise _fail(JerErrorCode.NOT_UTF8, start,
+                    detail=f"U+{code:04X} is an unpaired high surrogate and has no UTF-8 "
+                           f"encoding (7.6.2)")
+    if 0xDC00 <= code <= 0xDFFF:
+        raise _fail(JerErrorCode.NOT_UTF8, start,
+                    detail=f"U+{code:04X} is an unpaired low surrogate and has no UTF-8 "
+                           f"encoding (7.6.2)")
+    return pos, 1 if code < 0x80 else (2 if code < 0x800 else 3)
 
 
 def _scan_string(data: bytes, pos: int, limits: JerLimits, spend) -> int:
@@ -289,11 +353,8 @@ def _scan_string(data: bytes, pos: int, limits: JerLimits, spend) -> int:
                             detail="an escape at end of input")
             following = data[pos + 1]
             if following == 0x75:                            # \\uXXXX
-                if pos + 6 > end:
-                    raise _fail(JerErrorCode.MALFORMED, pos,
-                                detail="a truncated \\u escape")
-                pos += 6
-                decoded += 3                                 # worst case in UTF-8
+                pos, grew = _scan_u_escape(data, pos, spend)
+                decoded += grew
             else:
                 pos += 2
                 decoded += 1
@@ -317,16 +378,31 @@ def _scan_number(data: bytes, pos: int, limits: JerLimits, spend) -> int:
     `1e999999999` is a short token that denotes a number no ASN.1 real can hold, and
     `1000…0` with a thousand digits is a long token denoting a perfectly ordinary integer.
     §4.3 asks for both, and neither implies the other.
+
+    Every `spend` here charges the offset of the octet being examined, matching the main
+    loop. That uniformity is not cosmetic: `work` is the one limit whose diagnostic offset
+    is not otherwise derivable, so a rail that charged `pos + 1` in one loop and `pos` in
+    another would report two different octets for the same exhausted budget — and the C
+    twin, which reproduces this accounting, would have to reproduce the discrepancy too.
     """
     start = pos
     end = len(data)
     if pos < end and data[pos] == 0x2D:
         pos += 1
+    # ECMA-404's `int` production is `0` or a nonzero digit followed by more, so `01` is not
+    # a number — it is two tokens. Refusing it here rather than leaving it to `json.loads`
+    # is not a cosmetic change of code: a reader that admits a leading zero has a grammar
+    # the *encoder* does not, so a document exists that the rail accepts and can never
+    # reproduce. The accept/reject decision is unchanged (`json.loads` refused it too); what
+    # changes is that the diagnostic now names the octet instead of arriving as SCHEMA.
+    if pos < end and data[pos] == 0x30 and pos + 1 < end and data[pos + 1] in _DIGITS:
+        raise _fail(JerErrorCode.MALFORMED, pos + 1,
+                    detail="a number may not have a leading zero")
     digits = 0
     while pos < end and data[pos] in _DIGITS:
         digits += 1
-        pos += 1
         spend(1, pos)
+        pos += 1
     if digits == 0:
         raise _fail(JerErrorCode.MALFORMED, start, detail="a number with no digits")
     if digits > limits.integer_digits:
@@ -337,8 +413,8 @@ def _scan_number(data: bytes, pos: int, limits: JerLimits, spend) -> int:
         fraction = 0
         while pos < end and data[pos] in _DIGITS:
             fraction += 1
-            pos += 1
             spend(1, pos)
+            pos += 1
         if fraction == 0:
             raise _fail(JerErrorCode.MALFORMED, pos,
                         detail="a decimal point with no digits after it")
@@ -348,8 +424,8 @@ def _scan_number(data: bytes, pos: int, limits: JerLimits, spend) -> int:
             pos += 1
         exponent_start = pos
         while pos < end and data[pos] in _DIGITS:
-            pos += 1
             spend(1, pos)
+            pos += 1
         if pos == exponent_start:
             raise _fail(JerErrorCode.MALFORMED, pos, detail="an exponent with no digits")
         magnitude = int(data[exponent_start:pos])

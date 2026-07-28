@@ -340,6 +340,7 @@ _MODULES = [
     "bcir.tests.test_asn1_selection",
     "bcir.tests.test_asn1_jer_bounded",
     "bcir.tests.test_asn1_jer_plan",
+    "bcir.tests.test_c_jer",
     "bcir.tests.test_c_per",
     "bcir.tests.test_native_object_gate",
     "bcir.tests.test_c_executor",
