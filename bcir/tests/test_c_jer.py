@@ -30,6 +30,13 @@ divergence is the interesting part:
   that a comma separates two values. The C rail has nothing behind it, so `bcir_jer_parse`
   is a real parser. Stage-1 parity is against `scan`; stage-3 acceptance is against
   `json.loads`.
+- The driver's `parse` op runs **all three stages in §4.2's order** — scan, UTF-8, grammar —
+  because that is what `decode_bounded` does and what a real caller must do. Comparing
+  `bcir_jer_parse` *alone* against `json.loads` would be comparing unlike things: a raw
+  `0x80` inside a string literal is well-formed JSON structure, so the parser copies it
+  through untouched by design (answering the encoding question in two places would give one
+  fault two different offsets), while `json.loads` refuses the document because decoding
+  UTF-8 is part of what it does. Only the composed pipeline is comparable to it.
 - `bcir_jer_parse` reports `TRAILING_INPUT` where the Python rail reports `SCHEMA`, because
   on that rail the trailing octets are `json.loads`'s complaint rather than the bounding
   pass's. Compared as accept/reject, not by code.
@@ -156,6 +163,15 @@ _DOCS: list[bytes] = [
 ]
 
 
+class _Object(list):
+    """A JSON object, kept distinguishable from an array.
+
+    `object_pairs_hook=list` alone cannot tell `{}` from `[]` — both arrive as an empty
+    `list`, and "does it start with a tuple?" is a heuristic that silently fails on exactly
+    the empty case. Naming the type removes the guess.
+    """
+
+
 class _Number(str):
     """A number token, kept distinct from a JSON string.
 
@@ -189,7 +205,7 @@ def _reference(raw: bytes) -> list[str] | None:
     except UnicodeDecodeError:
         return None
     try:
-        value = json.loads(text, object_pairs_hook=list, parse_float=_Number,
+        value = json.loads(text, object_pairs_hook=_Object, parse_float=_Number,
                            parse_int=_Number,
                            parse_constant=lambda name: (_ for _ in ()).throw(ValueError(name)))
     except ValueError:
@@ -197,7 +213,7 @@ def _reference(raw: bytes) -> list[str] | None:
     out: list[str] = []
 
     def walk(node) -> None:
-        if isinstance(node, list) and node and isinstance(node[0], tuple):
+        if isinstance(node, _Object):
             out.append("{")
             for name, member in node:
                 out.append(f"key {_hex(name.encode())}")
@@ -294,8 +310,14 @@ def test_every_limit_is_reached_and_named_by_both_rails():
     cases: list[tuple[bytes, JerErrorCode]] = [
         (b"[" * (limits.depth + 1) + b"]" * (limits.depth + 1),
          JerErrorCode.DEPTH_EXCEEDED),
-        (b"[" + b",".join(b"1" for _ in range(limits.elements + 2)) + b"]",
-         JerErrorCode.ELEMENTS_EXCEEDED),
+        # Bare separators, not values. `elements` and `nodes` are both 512 under this
+        # profile, so 514 scalar elements are 514 nodes and NODES_EXCEEDED fires first —
+        # the ceiling under test never gets reached. Commas are counted as elements by the
+        # bounding pass and are not nodes, which isolates the one limit this row is for.
+        # (The document is not valid JSON; stage 1 is a bounding pass and does not care,
+        # and stage 3 is not what this test drives.)
+        (b"[" + b"," * (limits.elements + 1) + b"]", JerErrorCode.ELEMENTS_EXCEEDED),
+        (b"{" + b"," * (limits.members + 1) + b"}", JerErrorCode.MEMBERS_EXCEEDED),
         (b'"' + b"a" * (limits.string_bytes + 1) + b'"', JerErrorCode.STRING_TOO_LONG),
         (b"1" * (limits.integer_digits + 1), JerErrorCode.DIGITS_EXCEEDED),
         (b"1e" + str(limits.exponent_magnitude + 1).encode(),

@@ -304,8 +304,11 @@ def _scan_u_escape(data: bytes, pos: int, spend) -> tuple[int, int]:
 
     def scalar(at: int) -> int:
         if at + 6 > end:
-            raise _fail(JerErrorCode.MALFORMED, at, needed=at + 6 - end,
-                        detail="a truncated \\u escape")
+            # No `needed`: MALFORMED is not a capacity fault. There is no ceiling a caller
+            # could raise that makes a truncated escape well formed, and reporting one
+            # invites a retry against an input that is simply wrong. `needed` is reserved
+            # for the §4.3 limits, where "how much would have been enough" is a real answer.
+            raise _fail(JerErrorCode.MALFORMED, at, detail="a truncated \\u escape")
         digits = data[at + 2:at + 6]
         if any(digit not in _HEX for digit in digits):
             raise _fail(JerErrorCode.MALFORMED, at + 2,

@@ -220,7 +220,11 @@ static bcir_jer_status emit_utf8(uint32_t code, uint8_t *out, size_t cap, size_t
 static bcir_jer_status read_u16(const uint8_t *data, size_t len, size_t pos, uint32_t *out,
                                 bcir_jer_diag *diag) {
   int a, b, c, d;
-  if (len - pos < 6) return fail(diag, BCIR_JER_MALFORMED, pos, 6 - (len - pos));
+  /* No `needed`: MALFORMED is not a capacity fault. There is no buffer size that makes a
+   * truncated escape well formed, and reporting one would invite a caller to retry with a
+   * larger ceiling against an input that is simply wrong. The Python rail says `None`
+   * here for the same reason, and the parity test compares the field. */
+  if (len - pos < 6) return fail(diag, BCIR_JER_MALFORMED, pos, 0);
   a = hex_value(data[pos + 2]);
   b = hex_value(data[pos + 3]);
   c = hex_value(data[pos + 4]);
@@ -264,7 +268,7 @@ bcir_jer_status bcir_jer_unescape(const uint8_t *data, size_t len,
       pos++;
       continue;
     }
-    if (pos + 1 >= len) return fail(diag, BCIR_JER_MALFORMED, pos, 2 - (len - pos));
+    if (pos + 1 >= len) return fail(diag, BCIR_JER_MALFORMED, pos, 0);
     {
       uint8_t what = data[pos + 1];
       uint32_t code = 0;
@@ -365,7 +369,7 @@ static bcir_jer_status scan_string(const uint8_t *data, size_t len, size_t pos,
     }
     if (byte == '\\') {
       if (pos + 1 >= len)
-        return fail(ctx->diag, BCIR_JER_MALFORMED, pos, 2 - (len - pos));
+        return fail(ctx->diag, BCIR_JER_MALFORMED, pos, 0);
       if (data[pos + 1] == 'u') {
         uint32_t code = 0;
         st = read_u16(data, len, pos, &code, ctx->diag);

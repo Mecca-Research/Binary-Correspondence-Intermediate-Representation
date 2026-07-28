@@ -77,6 +77,26 @@ static void profile(long strict, bcir_jer_limits *out) {
   else bcir_jer_default_limits(out);
 }
 
+/* The two stages that must run BEFORE bcir_jer_parse, in 4.2's order.
+ *
+ * `bcir_jer_parse` is deliberately not a whole decode: it enforces the grammar and leaves
+ * the encoding to stage 2, because a reader that answered the UTF-8 question in two places
+ * would report two different offsets for one fault depending on which found it. That makes
+ * calling it alone a mis-use, and the `parse` op composes the stages the way `decode_bounded`
+ * does so the driver measures what a real caller gets rather than one layer in isolation.
+ *
+ * It matters concretely: a raw 0x80 inside a string literal is well-formed JSON *structure*,
+ * so the parser copies it through untouched -- and `json.loads` refuses the same document,
+ * because decoding UTF-8 is part of what it does. Only the composed pipeline is comparable
+ * to it. Returns nonzero when a stage refused. */
+static int prestages(const unsigned char *input, size_t len, const bcir_jer_limits *limits,
+                     bcir_jer_level *stack, size_t entries, bcir_jer_diag *diag) {
+  uint64_t nodes = 0;
+  if (bcir_jer_scan(input, len, limits, stack, entries, &nodes, diag) != BCIR_JER_OK)
+    return 1;
+  return bcir_jer_validate_utf8(input, len, diag) != BCIR_JER_OK;
+}
+
 /* --- the event sink -------------------------------------------------------------------- */
 
 static const char *const kEventName[10] = {
@@ -168,6 +188,11 @@ int main(void) {
         state.refuse_at = -1;
         state.seen = 0;
         printf("TRACE\n");
+        if (prestages(input, (size_t)len, &limits, stack, MAX_DEPTH, &diag)) {
+          print_err(&diag);
+          printf("END\n");
+          continue;
+        }
         st = bcir_jer_parse(input, (size_t)len, &limits, stack, MAX_DEPTH, scratch,
                             sizeof(scratch), trace_sink, &state, &diag);
         if (st != BCIR_JER_OK) print_err(&diag);
@@ -195,6 +220,11 @@ int main(void) {
       state.refuse_at = extra;
       state.seen = 0;
       printf("TRACE\n");
+      if (prestages(input, (size_t)len, &limits, stack, MAX_DEPTH, &diag)) {
+        print_err(&diag);
+        printf("END\n");
+        continue;
+      }
       st = bcir_jer_parse(input, (size_t)len, &limits, stack, MAX_DEPTH, scratch,
                           sizeof(scratch), trace_sink, &state, &diag);
       if (st != BCIR_JER_OK) printf("ERR %d %ld %d\n", (int)diag.status,
