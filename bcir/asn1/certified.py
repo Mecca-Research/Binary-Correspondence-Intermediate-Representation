@@ -374,8 +374,181 @@ def select_certified(kind, value, table: EncodingCostTable, *,
                        indistinguishable=tuple(sorted(r.candidate for r in tie[1:])))
 
 
+
+
+# --- RCSP: a budgeted plan across several stages -------------------------------------------
+#
+# `select_certified` decides ONE encoding. A pipeline decides several — a manifest here, a
+# telemetry frame there, a program artifact at the end — and the constraint that actually
+# binds is usually global: total wire size under a link budget, total decode latency under a
+# frame deadline. Choosing each stage's best in isolation solves a different problem and can
+# miss the only feasible plan, because a stage whose local best is large may be the one that
+# has to give way.
+#
+# That is a **resource-constrained shortest path**: minimize an additive cost along a chain
+# subject to an additive resource staying inside a budget. With integer octets and a bounded
+# budget it is exact by dynamic programming over (stage, octets spent) — no search, no
+# heuristic, and no relaxation whose gap someone has to remember.
+#
+# P4's min-plus semiring is the algebra underneath: composition along the chain adds, and the
+# choice at a stage is `min`. What P4 could not carry is the second dimension, which is the
+# whole reason RCSP is not just a shortest path.
+
+
+@dataclass(frozen=True)
+class Stage:
+    """One choice point: a name, and the candidates admissible there.
+
+    The candidate names are checked against the table rather than assumed, so a stage that
+    names something unmeasured refuses in the same way a single selection does.
+    """
+
+    name: str
+    candidates: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BudgetedPlan:
+    """The chosen candidate per stage, with the summed cost and what it cost in coverage.
+
+    `coverage_ppm` is the load-bearing field. Summing intervals along a chain does **not**
+    preserve their coverage: each is a statement that holds with some probability, and the
+    statement about the sum holds only when they all do. `certified` says whether the answer
+    is still evidence at that coverage or has decayed into a median comparison wearing an
+    interval's clothes.
+    """
+
+    chosen: tuple[tuple[str, str], ...]
+    total_octets: int
+    latency_low: int
+    latency_median: int
+    latency_high: int
+    coverage_ppm: int
+    budget: int
+    certified: bool
+    indistinguishable: tuple[tuple[tuple[str, str], ...], ...] = ()
+
+
+class Infeasible(Asn1Error):
+    """No assignment of candidates to stages fits the budget.
+
+    Its own class because the correct response differs from an unmeasured target: raise the
+    budget, drop a stage, or admit a candidate that was excluded — none of which is
+    "measure something".
+    """
+
+
+def _sum_coverage(parts: list[int]) -> int:
+    """Union bound on the joint coverage of several independent interval statements.
+
+    Each interval holds with probability `c_i`; the sum's bound holds when all of them do,
+    and P(all) >= 1 - sum(1 - c_i). That is Bonferroni: conservative, distribution-free, and
+    the same kind of truth the intervals themselves are.
+
+    Multiplying the coverages would be tighter and would assume independence the harness has
+    not established. Reporting the *component* coverage unchanged — the obvious shortcut —
+    would claim a chain of ten 95% statements is itself 95%, which is false by a wide margin
+    and in the optimistic direction.
+    """
+    deficit = sum(1_000_000 - c for c in parts)
+    return max(0, 1_000_000 - deficit)
+
+
+def select_budgeted(table: EncodingCostTable, stages, *, budget: int,
+                    objective: Objective = Objective.DECODE_LATENCY,
+                    min_coverage_ppm: int = 500_000,
+                    allow_oracle_table: bool = False) -> BudgetedPlan:
+    """Minimize the objective across `stages` subject to total octets <= `budget`.
+
+    Exact, by dynamic programming over (stage, octets spent). The state space is bounded by
+    the budget, which is why this terminates with an optimum rather than with a good guess.
+
+    `min_coverage_ppm` is the floor below which the plan is reported as **not certified**:
+    the answer is still the DP's optimum, but the intervals no longer separate it from its
+    rivals and saying otherwise would be dressing a median up as evidence.
+    """
+    stages = tuple(stages)
+    if not stages:
+        raise Asn1Error("a budgeted plan needs at least one stage")
+    if budget < 0:
+        raise Asn1Error("a negative octet budget is not a constraint, it is a typo")
+    if objective in (Objective.NONE, Objective.WIRE_SIZE):
+        raise Asn1Error(
+            f"{objective.value} is the RESOURCE here, not the objective; a budgeted plan "
+            f"minimizes a timing subject to the octet budget, and minimizing octets subject "
+            f"to an octet budget is a single selection with extra steps")
+    if table.provenance == "oracle" and not allow_oracle_table:
+        raise UnmeasuredTarget(
+            f"a budgeted {objective.value} plan would be decided from the {table.target!r} "
+            f"table, whose provenance is 'oracle'; §6.2 requires a MEASURED table (pass "
+            f"allow_oracle_table=True only in an experiment recorded as one)")
+
+    field_name = "encode" if objective is Objective.ENCODE_LATENCY else "decode"
+    missing = sorted({name for stage in stages for name in stage.candidates
+                      if table.row(name) is None})
+    if missing:
+        raise UnmeasuredTarget(
+            f"target {table.target!r} (cal_gen {table.cal_gen}) has no measured row for "
+            f"{', '.join(missing)}; a budgeted plan cannot be decided here")
+    for stage in stages:
+        if not stage.candidates:
+            raise Asn1Error(f"stage {stage.name!r} admits no candidate at all")
+
+    # state: octets spent -> (summed median, summed low, summed high, coverages, choices)
+    State = tuple[int, int, int, tuple[int, ...], tuple[tuple[str, str], ...]]
+    frontier: dict[int, State] = {0: (0, 0, 0, (), ())}
+    for stage in stages:
+        nxt: dict[int, State] = {}
+        for spent, (median, low, high, coverages, chosen) in frontier.items():
+            for name in stage.candidates:
+                row = table.row(name)
+                cost = getattr(row, field_name)
+                total = spent + row.octets
+                if total > budget:
+                    continue
+                state: State = (median + cost.median, low + cost.low, high + cost.high,
+                                coverages + (cost.coverage_ppm,),
+                                chosen + ((stage.name, name),))
+                # Keep one optimum per resource level: the classic RCSP label rule, and it
+                # is what makes the table's width the budget rather than the candidate count
+                # raised to the number of stages.
+                held = nxt.get(total)
+                if held is None or state[0] < held[0]:
+                    nxt[total] = state
+        frontier = nxt
+        if not frontier:
+            break
+
+    if not frontier:
+        cheapest = sum(min(table.row(n).octets for n in stage.candidates) for stage in stages)
+        raise Infeasible(
+            f"no assignment fits {budget} octets across {len(stages)} stages; the cheapest "
+            f"legal plan costs {cheapest}")
+
+    best_spent = min(frontier, key=lambda spent: (frontier[spent][0], spent))
+    median, low, high, coverages, chosen = frontier[best_spent]
+    coverage = _sum_coverage(list(coverages))
+    # Everything whose summed interval overlaps the winner's is indistinguishable from it,
+    # and at a chain length where coverage has decayed that will be most of them — which is
+    # the honest report, not a defect to hide behind a median.
+    #
+    # A LOWER BOUND, not the whole tie set: the label rule keeps one optimum per resource
+    # level, so a rival that spends the same octets as a better plan was already discarded.
+    # Reporting it as complete would overstate what the frontier retains, and widening the
+    # rule to keep every plan would trade an exact pseudo-polynomial search for an
+    # exponential one to enumerate answers the caller cannot act on differently.
+    tied = tuple(sorted(
+        state[4] for spent, state in frontier.items()
+        if spent != best_spent and state[1] <= high and low <= state[2]))
+    return BudgetedPlan(
+        chosen=chosen, total_octets=best_spent, latency_low=low, latency_median=median,
+        latency_high=high, coverage_ppm=coverage, budget=budget,
+        certified=coverage >= min_coverage_ppm, indistinguishable=tied)
+
+
 __all__ = [
-    "COST_TABLE_VERSION", "MIN_SAMPLES", "TIE_BREAK", "Certificate", "CostRow",
-    "EncodingCostTable", "Interval", "UnmeasuredTarget", "build_table", "interval_of",
-    "measure_repeatedly", "select_certified",
+    "COST_TABLE_VERSION", "MIN_SAMPLES", "TIE_BREAK", "BudgetedPlan", "Certificate",
+    "CostRow", "EncodingCostTable", "Infeasible", "Interval", "Stage", "UnmeasuredTarget",
+    "build_table", "interval_of", "measure_repeatedly", "select_budgeted",
+    "select_certified",
 ]

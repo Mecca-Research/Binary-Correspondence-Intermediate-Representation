@@ -20,8 +20,8 @@ from __future__ import annotations
 
 from bcir.asn1.certified import (
     COST_TABLE_VERSION, MIN_SAMPLES, TIE_BREAK, Certificate, CostRow, EncodingCostTable,
-    Interval, UnmeasuredTarget, build_table, interval_of, measure_repeatedly,
-    select_certified,
+    Infeasible, Interval, Stage, UnmeasuredTarget, build_table, interval_of,
+    measure_repeatedly, select_budgeted, select_certified,
 )
 from bcir.asn1.schema import Component, Primitive, Sequence
 from bcir.asn1.selection import ALL_CANDIDATES, Objective
@@ -365,3 +365,167 @@ def test_the_certificate_separates_the_verdict_from_the_costs():
         assert hasattr(certificate, name), name
     # A refusal carries its reason, so the verdict is actionable without the costs.
     assert all(reason for _name, reason in certificate.refused)
+
+
+# --- RCSP: the budgeted plan across several stages ------------------------------------------
+#
+# `select_certified` decides one encoding; a pipeline decides several under one global
+# budget, and picking each stage's local best solves a different problem. These check the
+# dynamic program against optima derived by hand, and check the part that is easy to get
+# wrong for free: what summing intervals does to their coverage.
+
+
+def _iv(low: int, median: int, high: int, coverage_ppm: int = 950_000) -> Interval:
+    return Interval(low=low, high=high, median=median, samples=11,
+                    coverage_ppm=coverage_ppm)
+
+
+def _budget_table(coverage_ppm: int = 950_000) -> EncodingCostTable:
+    """Three candidates spanning the trade-off: fast-and-fat, slow-and-thin, middling."""
+    fixed = _iv(1, 1, 1, coverage_ppm)
+    return EncodingCostTable(target="host", cal_gen=1, provenance="measured", rows=(
+        CostRow("A", octets=10, encode=fixed, decode=_iv(90, 100, 110, coverage_ppm)),
+        CostRow("B", octets=4, encode=fixed, decode=_iv(280, 300, 320, coverage_ppm)),
+        CostRow("C", octets=6, encode=fixed, decode=_iv(190, 200, 210, coverage_ppm)),
+    ))
+
+
+_TWO = (Stage("s1", ("A", "B", "C")), Stage("s2", ("A", "B", "C")))
+
+
+def test_the_budgeted_plan_reproduces_a_hand_derived_optimum():
+    """Every budget worked out on paper first, including the one where the answer changes.
+
+    The medians are 100/300/200 and the octets 10/4/6, so the optimum is not monotone in
+    either axis alone — which is the whole reason this is a constrained problem and not a
+    sort.
+    """
+    table = _budget_table()
+    expected = {
+        20: (["A", "A"], 200),   # both fast, exactly on budget
+        16: (["A", "C"], 300),   # A+A no longer fits
+        14: (["C", "C"], 400),   # ties A+B at 400 and spends four fewer octets
+        10: (["B", "C"], 500),   # A cannot appear at all
+        8: (["B", "B"], 600),    # the cheapest plan there is
+    }
+    for budget, (chosen, median) in expected.items():
+        plan = select_budgeted(table, _TWO, budget=budget,
+                               objective=Objective.DECODE_LATENCY)
+        assert [name for _, name in plan.chosen] == chosen, budget
+        assert plan.latency_median == median, budget
+        assert plan.total_octets <= budget
+
+
+def test_a_local_best_per_stage_is_not_the_budgeted_optimum():
+    """The property that makes RCSP worth having rather than two independent selections."""
+    table = _budget_table()
+    plan = select_budgeted(table, _TWO, budget=16, objective=Objective.DECODE_LATENCY)
+    # Greedy would take the fastest candidate at stage 1 and then find nothing affordable
+    # at stage 2 that beats what the joint optimum reaches.
+    assert [name for _, name in plan.chosen] == ["A", "C"]
+    assert plan.latency_median == 300 < 100 + 300  # A then the only affordable rival, B
+
+
+def test_an_unaffordable_budget_is_infeasible_and_says_what_the_floor_is():
+    table = _budget_table()
+    try:
+        select_budgeted(table, _TWO, budget=7, objective=Objective.DECODE_LATENCY)
+    except Infeasible as error:
+        assert "cheapest legal plan costs 8" in str(error)
+    else:
+        raise AssertionError("7 octets cannot hold two stages whose floor is 4 each")
+
+
+def test_summing_intervals_decays_their_coverage_and_the_plan_says_so():
+    """The finding: a chain of twenty 95% statements certifies nothing.
+
+    Each interval holds with some probability and the statement about the SUM holds only
+    when all of them do, so the union bound gives 1 - n(1 - c). At ten stages that is
+    exactly 50%, and at twenty it is zero — the DP still returns its optimum, and the plan
+    reports that the optimum is no longer distinguishable from its rivals by evidence.
+
+    Carrying the component coverage through unchanged is the obvious shortcut and it is
+    wrong in the optimistic direction, which is the direction that gets believed.
+    """
+    table = _budget_table()
+    seen = {}
+    for count in (1, 2, 5, 10, 20):
+        stages = tuple(Stage(f"s{i}", ("B",)) for i in range(count))
+        plan = select_budgeted(table, stages, budget=4 * count,
+                               objective=Objective.DECODE_LATENCY)
+        seen[count] = (plan.coverage_ppm, plan.certified)
+    assert seen[1] == (950_000, True)
+    assert seen[2] == (900_000, True)
+    assert seen[5] == (750_000, True)
+    assert seen[10] == (500_000, True)     # exactly at the default floor
+    assert seen[20] == (0, False)          # the answer survives; the evidence does not
+    # Monotone, and never negative — a coverage that wrapped would read as a strong claim.
+    values = [seen[n][0] for n in sorted(seen)]
+    assert values == sorted(values, reverse=True) and min(values) >= 0
+
+
+def test_the_coverage_floor_is_the_callers_and_is_reported_not_enforced():
+    """A plan below the floor is returned and marked, not withheld.
+
+    The optimum is still the optimum; what changed is whether the intervals separate it. A
+    caller deciding a soft budget may act on it anyway, and a caller signing a certificate
+    must not — that is a policy difference the selector should not make on their behalf.
+    """
+    stages = tuple(Stage(f"s{i}", ("B",)) for i in range(10))
+    table = _budget_table()
+    strict = select_budgeted(table, stages, budget=40, min_coverage_ppm=900_000,
+                             objective=Objective.DECODE_LATENCY)
+    lax = select_budgeted(table, stages, budget=40, min_coverage_ppm=100_000,
+                          objective=Objective.DECODE_LATENCY)
+    assert strict.chosen == lax.chosen and strict.latency_median == lax.latency_median
+    assert strict.certified is False and lax.certified is True
+
+
+def test_a_budgeted_timing_plan_refuses_an_oracle_table():
+    """The same §6.2 refusal as the single selection, at the point a timing is consulted."""
+    oracle = EncodingCostTable(target="host", cal_gen=1, provenance="oracle",
+                               rows=_budget_table().rows)
+    try:
+        select_budgeted(oracle, _TWO, budget=20, objective=Objective.DECODE_LATENCY)
+    except UnmeasuredTarget as error:
+        assert "provenance is 'oracle'" in str(error)
+    else:
+        raise AssertionError("a budgeted timing plan must not read an oracle table")
+    # And it is permitted when the caller records the experiment as one.
+    plan = select_budgeted(oracle, _TWO, budget=20, objective=Objective.DECODE_LATENCY,
+                           allow_oracle_table=True)
+    assert plan.total_octets == 20
+
+
+def test_a_stage_naming_an_unmeasured_candidate_refuses():
+    table = _budget_table()
+    stages = (Stage("s1", ("A",)), Stage("s2", ("A", "ZZZ")))
+    try:
+        select_budgeted(table, stages, budget=100, objective=Objective.DECODE_LATENCY)
+    except UnmeasuredTarget as error:
+        assert "ZZZ" in str(error)
+    else:
+        raise AssertionError("an unmeasured candidate must refuse, not be skipped")
+
+
+def test_wire_size_is_the_resource_and_therefore_not_a_legal_objective():
+    """Minimizing octets subject to an octet budget is a single selection with extra steps."""
+    table = _budget_table()
+    for objective in (Objective.WIRE_SIZE, Objective.NONE):
+        try:
+            select_budgeted(table, _TWO, budget=20, objective=objective)
+        except Asn1Error as error:
+            assert "the RESOURCE here" in str(error)
+        else:
+            raise AssertionError(f"{objective} must be refused as a budgeted objective")
+
+
+def test_indistinguishable_plans_are_reported_as_a_lower_bound():
+    """At budget 14 the optimum ties another plan four octets more expensive."""
+    table = _budget_table()
+    plan = select_budgeted(table, _TWO, budget=14, objective=Objective.DECODE_LATENCY)
+    assert plan.latency_median == 400
+    # C+C at 12 octets and A+B at 14 both total 400; the interval check finds the rival.
+    assert plan.indistinguishable
+    rival = [name for _, name in plan.indistinguishable[0]]
+    assert sorted(rival) == ["A", "B"]

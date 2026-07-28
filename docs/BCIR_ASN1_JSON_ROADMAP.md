@@ -71,7 +71,7 @@ repository inventories remain generated in [`STATUS.md`](STATUS.md).
 | Existing bounded C JSON precedent | **Shape-specific only** | [`bcir_channel.c`](../runtime/c/bcir_channel.c) bounds bytes and depth and decodes `channel.json`; it is not a JER engine or generated ASN.1 parser |
 | MLIR family/profile and R24 (J4 part 1) | **Landed on the law rail** | `BCIR_Asn1Rules` names every transfer syntax the repository speaks; family, canonicality and PER alignment are **derived** from it rather than stored beside it, so no two attributes can disagree about one syntax. R24's emission law generalizes from "emits DER" to "emits a syntax whose octets are a function of the abstract value", which closed two holes the X.690-shaped test had left open. `bcir.asn1.transcode` and `strict_canonical` are added. See §5.3 for why this is one enum and not the (family, profile) pair originally planned |
 | JER-to-claims lowering (J4 part 3) | **Landed for the manifest surface** | [`manifest.py`](../bcir/asn1/manifest.py) gives `channel.json`, `DeviceManifest` and the §6.2 selection envelope ASN.1 schemas, and §5.4's two sinks commute over all nine built-in channels. **Not** claimed: GEM graphs and BCAB have no direct JER builder, and the value graph still exists behind the walk because `json.loads` builds it — removing that materialization is J6 streaming work |
-| Native calibration and certificates (J6) | **Landed for the encoding-selection surface** | [`certified.py`](../bcir/asn1/certified.py) gives distribution-free intervals, frozen generation-tagged tables and §6.2's certificate; [`native_bench.py`](../bcir/asn1/native_bench.py) produces a genuinely `measured` table from a native C harness and refuses every candidate the C rail does not implement. **Not** claimed: target hardware counters, a native encode column, and RCSP integration |
+| Native calibration and certificates (J6) | **Landed for the encoding-selection surface** | [`certified.py`](../bcir/asn1/certified.py) gives distribution-free intervals, frozen generation-tagged tables and §6.2's certificate; [`native_bench.py`](../bcir/asn1/native_bench.py) produces a genuinely `measured` table from a native C harness and refuses every candidate the C rail does not implement; `select_budgeted` adds RCSP — a timing minimized across stages under a total octet budget, with the union-bound coverage decay reported rather than hidden. **Not** claimed: target hardware counters, or a native encode column (§6.2 records why that column is not the decode table's mirror) |
 | Driver/kernel use | **Missing** | No resident driver, Linux module, native-kernel parser, or physical-device comparison uses JER |
 
 The current PersonnelRecord experiment proves a useful but narrow point. Exact encoded
@@ -437,9 +437,36 @@ different decisions:
   decoder is schema-**directed** while every row in this table is a schema-free structural
   scan. The decoder exists *and* the row is still absent, for a stated reason.
 
-Also still open: RCSP integration, and a native **encode** column — nothing here times an
-encode, because the C rail has no encoder for these candidates, and a row that reported one
-would be a Python timing wearing a `measured` label.
+**RCSP integration landed** as
+[`select_budgeted`](../bcir/asn1/certified.py): minimize a timing across a chain of stages
+subject to a total octet budget, exactly, by dynamic programming over `(stage, octets spent)`.
+It is a real constrained problem rather than two independent selections — the optimum is not
+monotone in either axis, so taking each stage's local best can miss the only feasible plan.
+The part worth recording is what summing intervals does to them: each is a statement holding
+with some probability, and the statement about the *sum* holds only when all of them do, so
+the union bound gives `1 − n(1 − c)`. **A chain of twenty 95% intervals certifies nothing.**
+The plan still returns the optimum and reports `certified=False`, because withholding the
+answer and overstating it are both worse than saying which one you have.
+
+**The native encode column: not the decode table's mirror, and the reason is a law.** The
+obvious expectation is that the write side is easier — you are handed the value, not the
+octets, so X.691 §7.2 and X.696 §6.2 do not apply. Checking it against the oracle's own
+encoders says otherwise, and the partition is *recorded and derived-checked* in
+[`ENCODE_OPS`](../bcir/asn1/native_bench.py) rather than asserted:
+
+| | schema-free decode (a structural scan) | schema-free encode |
+|---|---|---|
+| BER, DER | yes | **yes** — a TLV tree carries its own tags and lengths |
+| JER, JER-BCIR-CANONICAL | yes | **no** — X.697 §22.2 puts member *identifiers* in the document, and an identifier exists only in the type |
+| PER (4 rows), OER (2 rows) | no, by §7.2 / §6.2 | no — the type fixes field widths, presence bits and the preamble |
+
+So the two absences do not overlap: **JER is measurable one way and not the other**, and PER
+and OER — permanently absent from the decode table — are perfectly encodable *given a plan*.
+A schema-free encode harness is cheap to build and would yield a two-row table with JER
+missing, which reads as an unfinished implementation rather than as the law it is. A
+schema-**directed** encode harness would instead cover *every* candidate, including the two
+the decode table can never hold; that is J2's plan compiled into C for the write side, and
+J3 built only the read side from `JerSchemaPlan.serialize()`.
 
 ### 6.3 StreamPack and BCAB
 
