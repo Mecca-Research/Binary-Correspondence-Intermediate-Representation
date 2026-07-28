@@ -224,7 +224,15 @@ Two honest limits to record now:
    answer for expected cost. The cost model needs edge probabilities — which makes it a
    Markov chain expectation, not a shortest path — or an explicitly worst-case objective
    (max-plus) for real-time work. **The semiring must be a declared parameter of the
-   objective**, not a fixed choice.
+   objective**, not a fixed choice. *In P4 it is:* `Semiring.MIN_PLUS` and
+   `Semiring.MAX_PLUS` are both reachable and the caller names which. No expected-cost
+   objective is offered, deliberately — expectation needs branch probabilities the cost
+   model does not carry, and offering one would be the overclaim this limit warns about.
+
+   A deflating result worth recording from the implementation: for a loop whose body cost is
+   unaffected by unrolling, the `iterations × mean` term **cancels**, so the optimum is
+   bounded entirely by the prologue/epilogue overhead. A pass reporting a large win from
+   unrolling a body it did not change would be reporting an artefact.
 2. **This is a legality-preserving optimization only if the graph is legality-checked
    first.** Phase H's laws apply unchanged: legality first, two-truth, canonical or
    excluded.
@@ -268,8 +276,8 @@ Each phase depends on the JER phases in the sibling roadmap and inherits their g
 | **P0 — this note** | Prior art, corrections, mechanism selection, and a recorded scope boundary | Docs governance green; no implementation claim added | — |
 | **P1 — graph representation** | **Landed** ([`graph.py`](../bcir/asn1/graph.py)): a flat node table with **integer index edges** — the LLVM-bitcode / MLIR-bytecode shape — X.681/X.682 typing as an *enrichment*, and cycle-safe content addressing | **Met.** A mutually recursive pair, a self-loop and a 1000-node chain all round-trip byte-identically; every edge is typed through §10.19 row selection and a mistyped one is named; an unknown node kind and a dangling edge are both **values** that still re-emit. See §4.1's correction below | J2 |
 | **P2 — IR projection** | **Landed** ([`graph.py`](../bcir/asn1/graph.py)): `dialect_to_graph` / `graph_to_dialect`, projecting the `bcir.asn1.*` dialect into the P1 node table | **Met** over all 26 law fixtures, legal and illegal alike: the dialect survives the graph round trip, the JER is byte-identical, and `MLIR -> graph -> JER -> graph -> MLIR` composes with J4 part 2's text rail. A component now points at its type with a real **edge** rather than a name, which is what makes mutually recursive types representable | J4, P1 |
-| **P3 — scope and lifetime projection** | `#bcir.lifetime` / `#bcir.timing` / effect and ownership attributes carried in the P1 schema | R19/R20/R21 verdicts identical whether the input arrived as MLIR or as JER | P2 |
-| **P4 — cost-graph execution** | §5's min-plus formulation as an actual pass: conditionals as `min`, loops as closure, unroll factor from minimum mean cycle, semiring as a declared objective parameter | Negative-cycle detection refuses rather than diverges; unroll decisions reproduce a hand-derived optimum on a fixture set; legality-first preserved | P2, phase H |
+| **P3 — scope and lifetime projection** | **Landed** ([`program.py`](../bcir/asn1/program.py)): a `Module`'s phases, claims, resources, `Timing` and `Lifetime` projected through the P1 node table, with phase and claim **order carried structurally** in the ordered edge lists | **Met** over all 12 corpus programs, plus fixtures that trip R19, R20 and R21 and one that is *excused* by a barriered hazard — because a projection that made every module more illegal would be just as wrong and easier to ship. Absent timing and all-default timing stay distinguishable, or every untimed claim in the repository would fall under the timing laws | P2 |
+| **P4 — cost-graph execution** | **Landed** ([`tropical.py`](../bcir/kbcir/tropical.py)): composition adds, a conditional is `min`, a loop is the Kleene closure, Karp (1978) gives the minimum mean cycle, and `Semiring` is a caller's parameter | **Met.** A negative cycle raises `NegativeCycle` **naming the cycle** rather than returning −∞ or clamping; Karp reproduces hand-derived means (6/2, 3/3, and an exact 4/3 as a `Fraction`); the unroll optimum is derived from the overhead term and checked against hand arithmetic. Legality-first is checked *structurally* — a test asserts the module never references the verifier | P2, phase H |
 | **P5 — surface projections** | The sparse text language and the visual editor, both as lossless views | `surface -> canonical -> surface` identity; formatting confined to a side table; two presentations of one program hash identically | P1 |
 | **P6 — staged self-modification** | §6's pipeline end to end, in a simulator | No executable memory written by the emitting program; verification precedes compilation; unsigned artifact refused; rollback and quiescence tested | P3, P4, trusted loader |
 
