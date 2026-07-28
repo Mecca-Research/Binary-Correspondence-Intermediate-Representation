@@ -367,6 +367,35 @@ The current Python harness is retained as an oracle experiment. Production selec
 reads the frozen target table and refuses an unmeasured required target instead of
 substituting Python timings.
 
+**Landed in J6** ([`certified.py`](../bcir/asn1/certified.py)). Three things are worth
+recording about how, because each was a choice with an alternative that looks reasonable and
+is not:
+
+*Timings are carried as **intervals**, never scalars.* A median comparison always produces a
+winner — including when the difference is scheduler noise — and produces a *different* winner
+on the next host. Two candidates whose intervals overlap are reported as **indistinguishable**,
+and the decision falls to exact encoded size, which has no distribution. That is two-truth
+applied to the tie-break: the noisy measurement says "I cannot separate these", and the exact
+one decides. The certificate records which candidates could not be separated, because "we
+chose A over B" and "A and B were the same and A sorted first" are different decisions.
+
+*The intervals are distribution-free*, from order statistics rather than a normal
+approximation. Timing distributions are heavy-tailed and asymmetric, so a normal CI would
+understate the spread exactly where scheduler noise lives. Coverage is computed in exact
+integer arithmetic and reported in parts per million — a coverage figure that varied with the
+host's rounding would not be one, and it is written into a certificate.
+
+*The refusal fires where a timing is **consulted**, not at the door.* A wire-size objective
+reads no interval, so it is decidable from exact arithmetic on any table, and refusing it
+would teach callers to pass `allow_oracle_table=True` by reflex — carrying that habit into
+the timing decisions where the guard is load-bearing. A guard that fires when it is not
+needed is a guard people learn to disable.
+
+Still open in this phase: the **native microbench protocol** that would produce a genuinely
+`measured` table, and RCSP integration. `build_table` therefore defaults to
+`provenance="oracle"`, so producing a `measured` table is a deliberate argument rather than
+something that happens by omission.
+
 ### 6.3 StreamPack and BCAB
 
 JER is never a replacement for native StreamPack or BCAB. A JER projection, if a
@@ -388,7 +417,7 @@ errata admission.
 | **J3 — scalar C twin** | **Landed.** [`bcir_jer.{h,c}`](../runtime/c/bcir_jer.c): allocation-free bounded scanner, whole-document UTF-8 check, ECMA-404 parser driving a caller's event sink, §4.2 diagnostics, §3.3 unframing, and the twelfth fuzz target | Python/C error-class, byte-offset, required-capacity and event-trace parity in [`test_c_jer.py`](../bcir/tests/test_c_jer.py); `-O0 == -O3` over 667 cases in `check_runtime.sh` `#jer`; freestanding `-Werror` under C11 and C23; ASan/UBSan fuzz green |
 | **J4 — law and execution lowering** | **Landed.** Part 1 the transfer-syntax rail and generalized R24 (§5.3); part 2 the commuting projection [`dialect.py`](../bcir/asn1/dialect.py) and StreamPack over JER; part 3 the [`manifest.py`](../bcir/asn1/manifest.py) schemas for `channel.json`, `DeviceManifest` and the §6.2 selection envelope, with §5.4's two sinks | **§7.1's two laws hold** over all 26 law fixtures; **§5.4's commutation holds** over all nine built-in channels — `JER -> typed value -> claims` equals `JER -> direct builder`, both fed by one event walk; native StreamPack octets survive the JER round trip (§6.3) |
 | **J5 — hosted SIMD rail** | Optional C++17 structural/UTF-8 scanner behind the C ABI with scalar fallback | Same accepted/rejected corpus and trace; statistically significant measured advantage on at least two hosts; no unsupported-CPU fault |
-| **J6 — certified K_BCIR choice** | Native microbench protocol, frozen target tables, prediction intervals, RCSP integration, and selection certificate | Exact candidate sizes, controlled counters, repeatability, legality-first refusal, and deterministic selection on at least two targets |
+| **J6 — certified K_BCIR choice** | **Landed on the Python oracle** ([`certified.py`](../bcir/asn1/certified.py)): distribution-free prediction intervals from order statistics, a frozen generation-tagged cost table with declared provenance, §6.2's certificate, and a production select that **refuses** an oracle table for any timing objective. The native microbench protocol and RCSP integration remain open | Exact sizes decide wire-size objectives with no timing consulted; repeatability is a refusal rather than an average; legality-first and canonical-or-excluded precede every comparison; deterministic selection on two tables, each certificate bound to the table digest it read — [`test_asn1_certified.py`](../bcir/tests/test_asn1_certified.py) |
 | **J7 — driver experiment** | Userspace/simulator driver specification ingest, generated views, and sequential BCIR-Linux module comparison | D0–D3 driver gates, signed modules, direct/Linux trace parity, teardown/restart tests, and controlled performance evidence |
 
 User-defined ECN classes are closed after the J0 sign-off. The built-in sets and ordinary
