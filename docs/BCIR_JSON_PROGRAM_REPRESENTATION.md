@@ -136,12 +136,28 @@ Content addressing (a SHA-256 of the canonical JER of a subtree) is the **second
 mechanism, for identity and deduplication across files — Unison's model. The two compose:
 the table gives typed intra-program edges, the hash gives global identity.
 
-**Open question for P1:** cycles. Table constraints resolve a reference, but a
-*mutually recursive* pair of functions is a cycle in the graph, and `jer_plan.py` currently
-refuses schema recursion beyond depth 64. A program representation needs a cycle-tolerant
-descriptor — most likely a flat node table with index edges (the shape LLVM bitcode and
-MLIR bytecode both use) rather than a nested tree. **This is the single largest unsolved
-design question in the proposal** and P1 exists to answer it.
+**Answered in P1.** Cycles are held by a **flat node table with integer index edges** — the
+shape LLVM bitcode and MLIR bytecode both use, and the guess above turned out to be the right
+one. A mutually recursive pair is two ordinary rows; the JSON's depth is constant however
+tangled the graph gets, which matters because §4.3's depth ceiling is 64 and a nested
+representation of a thousand-node chain could not be read at all.
+
+**And one half of the mechanism above did not survive contact with X.697.** The proposal that
+a node's payload be an OPEN TYPE resolved through the table, with §12.9's extensibility making
+an unknown node ordinary traffic, is only half right. X.697 §41 says an open type's encoding
+*is* the contained value's encoding and — unlike XER §8.5 — gives **no hexadecimal fallback**,
+so `jer.py` refuses an unresolvable open type outright. It is right to: there is no JSON
+spelling for "some octets whose type I do not know". An open-type payload would therefore have
+made an unknown node **unencodable**, which is the exact opposite of the property P1 needed.
+
+The fix keeps the mechanism and moves the layer. The object set is still the typing authority
+— it says what a `kind` must carry, and `resolve` checks both nodes and edges against it — but
+the payload travels in ordinary declared components and resolution is an **enrichment** that
+*reports*. So an unknown node decodes, re-emits byte-identically, and is reported as
+unresolved with §12.9 cited; a dangling edge is likewise reported rather than raised. That is
+what "unresolvable is a value, not a fault" has to mean if the document is to survive at all,
+and it is the same posture the repository already takes when it records a resolved result
+alongside the octets rather than in place of them.
 
 ### 4.2 Verbosity — solved by making the canonical form authoritative and the syntax a view
 
@@ -250,8 +266,8 @@ Each phase depends on the JER phases in the sibling roadmap and inherits their g
 | Phase | Deliverable | Exit gate | Depends on |
 |---|---|---|---|
 | **P0 — this note** | Prior art, corrections, mechanism selection, and a recorded scope boundary | Docs governance green; no implementation claim added | — |
-| **P1 — graph representation** | A flat node-table JER schema with typed X.681/X.682 edges and content addresses; the cycle question of §4.1 answered; a descriptor that admits mutual recursion | Round-trip of a cyclic graph; every edge typed; unresolvable edge is a value, not a fault; byte-identical re-emission | J2 |
-| **P2 — IR projection** | A commuting projection between the `bcir.*` dialect and the P1 schema, both directions, under R24's additive rule | `MLIR -> JER -> MLIR` is the identity on the dialect; `JER -> MLIR -> JER` is byte-identical; positive and negative Python↔MLIR parity fixtures | J4, P1 |
+| **P1 — graph representation** | **Landed** ([`graph.py`](../bcir/asn1/graph.py)): a flat node table with **integer index edges** — the LLVM-bitcode / MLIR-bytecode shape — X.681/X.682 typing as an *enrichment*, and cycle-safe content addressing | **Met.** A mutually recursive pair, a self-loop and a 1000-node chain all round-trip byte-identically; every edge is typed through §10.19 row selection and a mistyped one is named; an unknown node kind and a dangling edge are both **values** that still re-emit. See §4.1's correction below | J2 |
+| **P2 — IR projection** | **Landed** ([`graph.py`](../bcir/asn1/graph.py)): `dialect_to_graph` / `graph_to_dialect`, projecting the `bcir.asn1.*` dialect into the P1 node table | **Met** over all 26 law fixtures, legal and illegal alike: the dialect survives the graph round trip, the JER is byte-identical, and `MLIR -> graph -> JER -> graph -> MLIR` composes with J4 part 2's text rail. A component now points at its type with a real **edge** rather than a name, which is what makes mutually recursive types representable | J4, P1 |
 | **P3 — scope and lifetime projection** | `#bcir.lifetime` / `#bcir.timing` / effect and ownership attributes carried in the P1 schema | R19/R20/R21 verdicts identical whether the input arrived as MLIR or as JER | P2 |
 | **P4 — cost-graph execution** | §5's min-plus formulation as an actual pass: conditionals as `min`, loops as closure, unroll factor from minimum mean cycle, semiring as a declared objective parameter | Negative-cycle detection refuses rather than diverges; unroll decisions reproduce a hand-derived optimum on a fixture set; legality-first preserved | P2, phase H |
 | **P5 — surface projections** | The sparse text language and the visual editor, both as lossless views | `surface -> canonical -> surface` identity; formatting confined to a side table; two presentations of one program hash identically | P1 |
