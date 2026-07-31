@@ -181,6 +181,7 @@ def _compile_node(kind: Asn1Type, path: str, depth: int) -> EncodeNode:
         raise Asn1Error(
             f"{path}: the write plan refuses recursion beyond depth 32; a descriptor whose "
             f"depth is unbounded cannot state a scratch bound, and §5.1 requires one")
+    _refuse_constraint(kind, path)
     if isinstance(kind, Primitive):
         leaf = _LEAF_KIND.get(kind.universal)
         if leaf is None:
@@ -205,6 +206,34 @@ def _compile_node(kind: Asn1Type, path: str, depth: int) -> EncodeNode:
         f"OPEN TYPE each need a rule of their own (X.690 §11.6 orders a SET's components by "
         f"tag, and X.697 §41 gives an open type no JER fallback), and inventing one here "
         f"would produce an emitter that silently disagrees with the oracle")
+
+
+def _refuse_constraint(kind, path: str) -> None:
+    """Refuse a type carrying a subtype constraint, because this plan cannot record one.
+
+    DER, BER and JER encode a value identically whether or not a constraint exists — X.690
+    encodes the value, and X.697 §7.2.2 l)/h) hide integer and string constraints from JER
+    outright. **OER and PER do not.** X.696 §10.3 gives a constrained INTEGER a fixed-width
+    form, so `INTEGER (0..255)` is `2A` where the unconstrained type is `01 2A`; X.691 does
+    the same and more.
+
+    So a plan that drops the constraint produces an emitter that is right for three
+    candidates and silently WRONG for the fourth. That is exactly what happened: the OER
+    emitter shipped emitting the unconstrained form for every type, and every parity test
+    passed because the corpus contained no constrained type. Refusing here converts a wrong
+    encoding into a loud one — the same discipline that refuses SET, OPEN TYPE and extension
+    additions rather than guessing at them.
+
+    Plan version 3, carrying constraints, is what lifts this and is the first piece of the
+    PER column.
+    """
+    constraint = getattr(kind, "constraint", None)
+    if constraint is not None:
+        raise Asn1Error(
+            f"{path}: the write plan cannot record a subtype constraint ({constraint!r}), "
+            f"and X.696 §10.3 makes it load-bearing for OER — a constrained INTEGER has a "
+            f"fixed-width form. Emitting the unconstrained spelling would disagree with the "
+            f"oracle silently, so this is refused until a plan version carries constraints")
 
 
 def _compile_members(kind, path: str, depth: int) -> tuple[EncodeMember, ...]:

@@ -292,3 +292,133 @@ def test_every_emitter_consumes_the_identical_stream():
         # there is no constructed length to leave open, which this corpus never hits.
         assert outputs[EmitRules.DER] != outputs[EmitRules.JER]
         assert outputs[EmitRules.DER] != outputs[EmitRules.COER]
+
+
+# --- why PER cannot join this harness without a plan-format change --------------------------
+
+
+def test_the_write_plan_cannot_drive_per_because_it_drops_constraints():
+    """The blocker for the PER column, as a checked fact rather than a plan.
+
+    The write plan carries kinds, tags, member names and optionality — everything DER, BER,
+    JER and CANONICAL-OER need. It deliberately drops **constraints**, and for those four
+    that is correct: X.690 encodes a value the same whether or not a subtype constraint
+    exists, X.697 §7.2.2 l)/h) hide integer and string constraints from JER entirely, and
+    the OER form E2 emits is the unconstrained one.
+
+    **PER is the candidate for which constraints are load-bearing.** A `ValueRange(0, 255)`
+    INTEGER encodes as one octet; the unconstrained one is length-prefixed. So two schemas
+    PER distinguishes have *nowhere to differ in the plan*, which means no plan-driven PER
+    emitter can be written against plan version 2, however careful.
+
+    The claim is structural rather than incidental, so it is checked structurally: no field
+    of the compiled node, of a member, or of the plan itself can hold a constraint, and the
+    serialized line grammar has no slot for one. That is why compiling a constrained type
+    refuses instead of quietly producing a plan indistinguishable from the unconstrained
+    one — the refusal is the *consequence* of this gap, not an independent policy.
+
+    A plan version 3 carrying constraints is therefore the first piece of the PER column,
+    and this test is what says so: when the plan starts recording them, this fails and
+    whoever changed it should be building the PER emitter.
+    """
+    import dataclasses
+
+    from bcir.asn1.constraints import ValueRange
+    from bcir.asn1.encode_plan import PLAN_VERSION, EncodeMember, EncodeNode
+    from bcir.asn1.per import PerRules, PerVariant, encode_per
+
+    unconstrained = Primitive(Universal.INTEGER, "INTEGER")
+    bounded = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 255))
+    free_type = _seq(Component("v", unconstrained))
+    bound_type = _seq(Component("v", bounded))
+
+    # PER tells them apart, in both variants.
+    for variant in (PerVariant.ALIGNED, PerVariant.UNALIGNED):
+        free_octets = encode_per(free_type, {"v": 42}, variant=variant,
+                                 rules=PerRules.CANONICAL)
+        bound_octets = encode_per(bound_type, {"v": 42}, variant=variant,
+                                  rules=PerRules.CANONICAL)
+        assert free_octets != bound_octets, variant
+        assert bound_octets == b"\x2a" and free_octets == b"\x01\x2a", variant
+
+    # The plan has nowhere to put the difference: not in a node, not in a member, not at
+    # the top. `_kind` is the live back-reference parity tests use to call the oracle, and
+    # §5.1 keeps it out of the serialization precisely so it cannot become a smuggled
+    # process pointer — so it is not a place a descriptor may carry a constraint either.
+    assert PLAN_VERSION == 2, "plan version moved; re-derive what this test asserts"
+    for holder in (EncodeNode, EncodeMember, EncodePlan):
+        assert not [f.name for f in dataclasses.fields(holder) if "constraint" in f.name], (
+            f"{holder.__name__} now has a constraint field; build the PER emitter")
+
+    # And the serialized grammar, which is what E2 actually reads, has no slot for one.
+    free_plan = compile_encode_plan(free_type, module="Test", type_name="S")
+    keys = {word.split("=", 1)[0]
+            for line in free_plan.serialize().decode("utf-8").splitlines()
+            for word in line.split() if "=" in word}
+    assert keys and "constraint" not in keys, keys
+
+    # Which is why the constrained type cannot be compiled at all rather than compiling to
+    # something that looks right and encodes wrongly under OER and PER alike.
+    try:
+        compile_encode_plan(bound_type, module="Test", type_name="S")
+    except Asn1Error as error:
+        assert "constraint" in str(error), error
+    else:
+        raise AssertionError(
+            "the write plan now accepts a constrained type; if it records the constraint "
+            "that is the prerequisite for a PER emitter, so build it rather than deleting "
+            "this test")
+
+
+def test_a_constrained_type_is_refused_rather_than_silently_mis_encoded():
+    """The bug this investigation found in already-landed code, now a refusal.
+
+    DER, BER and JER encode a value identically whether or not a subtype constraint exists.
+    **OER does not** — X.696 §10.3 gives a constrained INTEGER a fixed-width form, so
+    `INTEGER (0..255)` is `2A` where the unconstrained type is `01 2A`.
+
+    The plan drops constraints, so the OER emitter shipped emitting the *unconstrained*
+    spelling for every type — and every parity test passed, because the corpus contained no
+    constrained type. Corpus blindness, not a subtle bug: the emitter was simply never asked.
+
+    Compiling such a type now refuses, which is the same discipline that refuses SET, OPEN
+    TYPE and extension additions. A loud refusal beats a document that decodes to a
+    different value.
+    """
+    from bcir.asn1.constraints import Size, ValueRange
+
+    for kind, fragment in (
+            (_seq(Component("v", Primitive(Universal.INTEGER, "INTEGER",
+                                           constraint=ValueRange(0, 255)))), "§10.3"),
+            (_seq(Component("v", SequenceOf(_I, "SEQ", constraint=Size(ValueRange(1, 4))))),
+             "subtype constraint"),
+    ):
+        try:
+            compile_encode_plan(kind, module="Test", type_name="constrained")
+        except Asn1Error as error:
+            assert fragment in str(error), error
+        else:
+            raise AssertionError(
+                "a constrained type compiled; the OER emitter will now silently emit the "
+                "unconstrained spelling for it")
+
+
+def test_the_three_candidates_that_ignore_constraints_really_do_ignore_them():
+    """The other half: DER, BER and JER are unaffected, which is why the plan was ever enough.
+
+    Without this the refusal above reads as "the plan is broken". It is not — it is complete
+    for the candidates whose encodings do not read constraints, and the boundary is a
+    property of the encodings rather than of the compiler.
+    """
+    from bcir.asn1.constraints import ValueRange
+
+    unconstrained = _seq(Component("v", Primitive(Universal.INTEGER, "INTEGER")))
+    bounded = _seq(Component("v", Primitive(Universal.INTEGER, "INTEGER",
+                                            constraint=ValueRange(0, 255))))
+    value = {"v": 42}
+    assert encode_tlv(unconstrained.encode(value)) == encode_tlv(bounded.encode(value))
+    assert encode_jer(unconstrained, value) == encode_jer(bounded, value)
+    # OER is the one that differs, which is what makes the refusal necessary.
+    assert encode_oer(unconstrained, value) != encode_oer(bounded, value)
+    assert encode_oer(bounded, value) == b"\x2a"
+    assert encode_oer(unconstrained, value) == b"\x01\x2a"
