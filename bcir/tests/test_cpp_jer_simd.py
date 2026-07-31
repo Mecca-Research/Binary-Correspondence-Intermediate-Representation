@@ -1,0 +1,266 @@
+"""J5 — the hosted SIMD rail, and the one clause of its gate this container cannot close.
+
+**J5's gate**: *"Optional C++17 structural/UTF-8 scanner behind the C ABI with scalar
+fallback. Same accepted/rejected corpus and trace; statistically significant measured
+advantage on at least two hosts; no unsupported-CPU fault."*
+
+Three of those four clauses are checked here. The fourth — **two hosts** — is not, and is
+recorded as unmet rather than approximated. One machine cannot produce a two-host result,
+and a single-host number presented against a two-host gate would be the kind of claim §8
+exists to refuse: *"no absolute claim ships without reproducible evidence."*
+
+**Why "same trace" holds by construction and is tested anyway.** §4.1 says the scalar rail
+is authoritative. So the SIMD path answers only *"is this block entirely ASCII?"* — a
+question one comparison settles, and whose "yes" implies valid UTF-8 with no further
+reasoning — and hands everything else to `bcir_jer_validate_utf8` itself. There is no second
+UTF-8 implementation to keep in step. The differential below still walks every tier over
+multi-byte sequences straddling **every** offset in a 32-octet block, and invalid sequences
+at every offset, because "by construction" is a claim about the code as written and the test
+is a claim about the code as built.
+
+Skips cleanly when no C++ compiler is visible.
+"""
+
+from __future__ import annotations
+
+import os
+import random
+import shutil
+import statistics
+import subprocess
+import tempfile
+
+_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_C = os.path.join(_ROOT, "runtime", "c")
+_CPP = os.path.join(_ROOT, "runtime", "cpp")
+#: The C++ adapter and the C core are compiled by their OWN compilers and then linked.
+#: Handing a `.c` file to clang++ is an error under `-Werror` — and it would also be the
+#: wrong thing to test, since the rail ships as a C++ translation unit linked against the C
+#: core, not as C recompiled in C++ mode.
+_CXX_SOURCES = [os.path.join(_CPP, "bcir_jer_simd.cpp"),
+                os.path.join(_CPP, "test_jer_simd.cpp")]
+_C_SOURCES = [os.path.join(_C, "bcir_jer.c"), os.path.join(_C, "bcir_runtime.c")]
+
+#: Every tier the driver accepts. `auto` is whatever this CPU resolved to, and it is in the
+#: list so the dispatch itself is differentiated rather than only the pinned paths.
+_TIERS = ("scalar", "sse2", "avx2", "neon", "auto")
+
+
+def _available() -> bool:
+    have_cxx = shutil.which("clang++") or shutil.which("g++") or shutil.which("c++")
+    have_cc = shutil.which("clang") or shutil.which("gcc") or shutil.which("cc")
+    return bool(have_cxx and have_cc)
+
+
+def _build(tmp: str, optimization: str = "-O2") -> str:
+    cxx = shutil.which("clang++") or shutil.which("g++") or shutil.which("c++")
+    cc = shutil.which("clang") or shutil.which("gcc") or shutil.which("cc")
+    objects = []
+    for source, compiler, std in ([(s, cxx, "-std=c++17") for s in _CXX_SOURCES]
+                                  + [(s, cc, "-std=c11") for s in _C_SOURCES]):
+        obj = os.path.join(tmp, os.path.basename(source) + ".o")
+        proc = subprocess.run(
+            [compiler, std, optimization, "-Wall", "-Wextra", "-Werror", "-I", _C, "-I",
+             _CPP, "-c", source, "-o", obj], capture_output=True, text=True)
+        assert proc.returncode == 0, (
+            f"{os.path.basename(source)} must build warning-clean:\n{proc.stderr[:2000]}")
+        objects.append(obj)
+    out = os.path.join(tmp, "test_jer_simd")
+    proc = subprocess.run([cxx, *objects, "-o", out], capture_output=True, text=True)
+    assert proc.returncode == 0, f"the SIMD rail must link:\n{proc.stderr[:2000]}"
+    return out
+
+
+def _drive(binary: str, lines: list[str]) -> list[str]:
+    proc = subprocess.run([binary], input="\n".join(lines) + "\n", capture_output=True,
+                          text=True, timeout=600)
+    assert proc.returncode == 0, proc.stderr[:2000]
+    return proc.stdout.splitlines()
+
+
+def _corpus() -> list[tuple[str, bytes]]:
+    """Everything where a vector pass and a scalar pass could disagree.
+
+    The straddle and offset families are the ones that earn their place: a multi-byte
+    sequence crossing a 16- or 32-octet boundary is exactly what a block-at-a-time validator
+    splits, and an invalid octet at every offset is what pins the *offset* rather than just
+    the status.
+    """
+    cases: list[tuple[str, bytes]] = [
+        ("empty", b""),
+        ("pure ascii", b'{"a":1,"b":"hello"}'),
+        ("long ascii", b'{"k":"' + b"x" * 5000 + b'"}'),
+        ("two-octet", "café".encode()),
+        ("three-octet", "日本語".encode()),
+        ("four-octet", "\U0001f600".encode()),
+        ("astral run", "\U0001f600".encode() * 400),
+        ("a lone 0xff", b"\xff"),
+        ("every high octet", bytes(range(0x80, 0x100))),
+    ]
+    # Past both vector widths, so a boundary at 16 and at 32 is covered.
+    for pad in range(40):
+        cases.append((f"straddle-2-{pad}", b"a" * pad + "é".encode() + b"b" * 40))
+        cases.append((f"straddle-4-{pad}", b"a" * pad + "\U0001f600".encode() + b"b" * 40))
+        cases.append((f"stray-continuation-{pad}", b"a" * pad + b"\x80" + b"b" * 40))
+        cases.append((f"truncated-{pad}", b"a" * pad + b"\xc3"))
+        cases.append((f"overlong-{pad}", b"a" * pad + b"\xc0\xaf" + b"b" * 10))
+        cases.append((f"surrogate-{pad}", b"a" * pad + b"\xed\xa0\x80" + b"b" * 10))
+        cases.append((f"above-u10ffff-{pad}", b"a" * pad + b"\xf5\x80\x80\x80" + b"b" * 10))
+    generator = random.Random(7)
+    for index in range(200):
+        cases.append((f"random-{index}",
+                      bytes(generator.randrange(256)
+                            for _ in range(generator.randrange(0, 200)))))
+    return cases
+
+
+# --- the gate's binding clause: same corpus, same trace ---------------------------------------
+
+
+def test_every_tier_agrees_with_the_scalar_rail_on_status_and_offset():
+    """J5's first clause. Not "equivalent" — identical, status and byte offset both.
+
+    An offset that differed by one would still accept and reject the same documents, and
+    would still be a broken diagnostic: §4.2's contract is a stable code *and* a byte
+    offset, and a caller that reports the wrong octet sends someone to the wrong place.
+    """
+    if not _available():
+        return
+    cases = _corpus()
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = _build(tmp)
+        lines = [f"utf8 {tier} {octets.hex() or '-'}"
+                 for _label, octets in cases for tier in _TIERS]
+        replies = _drive(binary, lines)
+    assert len(replies) == len(cases) * len(_TIERS)
+    for index, (label, _octets) in enumerate(cases):
+        window = replies[index * len(_TIERS):(index + 1) * len(_TIERS)]
+        scalar = window[0]
+        for tier, reply in zip(_TIERS, window):
+            assert reply == scalar, f"{label}: {tier} gave {reply}, scalar gave {scalar}"
+    assert len(cases) > 250, f"the corpus collapsed to {len(cases)} documents"
+
+
+def test_the_corpus_actually_contains_both_verdicts():
+    """A differential over documents that are all valid would prove nothing about rejection."""
+    if not _available():
+        return
+    cases = _corpus()
+    with tempfile.TemporaryDirectory() as tmp:
+        replies = _drive(_build(tmp),
+                         [f"utf8 auto {octets.hex() or '-'}" for _label, octets in cases])
+    verdicts = {reply.split()[1] for reply in replies}
+    assert len(verdicts) > 1, f"every document got the same verdict: {verdicts}"
+    rejected = sum(1 for reply in replies if reply.split()[1] != "0")
+    assert rejected > 100, f"only {rejected} documents were rejected"
+    # And the rejections carry a spread of offsets, so the offset comparison has teeth.
+    offsets = {reply.split()[2] for reply in replies if reply.split()[1] != "0"}
+    assert len(offsets) > 20, f"only {len(offsets)} distinct offsets among the rejections"
+
+
+# --- the gate's "no unsupported-CPU fault" clause ---------------------------------------------
+
+
+def test_a_tier_the_cpu_does_not_advertise_is_never_entered():
+    """J5's third clause. The dispatch degrades; it does not fault and does not refuse.
+
+    Asking for NEON on x86 (or AVX2 on a machine without it) must produce the scalar answer,
+    not a crash and not an error about the machine — a caller asking for a width that is not
+    there wants the answer.
+    """
+    if not _available():
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = _build(tmp)
+        report = _drive(binary, ["tiers"])[0].split()
+        available, compiled = int(report[1]), [int(v) for v in report[3].split(",")]
+        # Scalar is always compiled; the rest depend on the target.
+        assert compiled[0] == 1
+        # Every tier answers, including ones this build or this CPU does not have.
+        replies = _drive(binary, [f"utf8 {tier} {b'{}'.hex()}" for tier in _TIERS])
+        assert len({reply for reply in replies}) == 1, replies
+    # The resolved tier must be one this build actually compiled.
+    assert compiled[available] == 1, f"resolved tier {available} is not compiled in"
+
+
+def test_the_resolved_tier_is_reported_by_name_so_a_measurement_can_say_which():
+    if not _available():
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        report = _drive(_build(tmp), ["tiers"])[0].split()
+    assert report[2] in ("scalar", "sse2", "avx2", "neon"), report
+
+
+# --- what the rail actually buys, including where it buys nothing ------------------------------
+
+
+def _median_ns(binary: str, tier: str, document: bytes, rounds: int = 15,
+               iterations: int = 32) -> float:
+    replies = _drive(binary, [f"bench {tier} {rounds} {iterations} {document.hex()}"])
+    return statistics.median(int(reply.split()[3]) for reply in replies)
+
+
+def _ascii_document(nodes: int = 400) -> bytes:
+    body = b",".join(b'{"kind":"claim","label":"%d","attributes":['
+                     b'{"name":"op","value":"add"}]}' % index for index in range(nodes))
+    return b'{"version":1,"nodes":[' + body + b'],"roots":[0]}'
+
+
+def test_the_rail_is_faster_on_the_documents_it_targets():
+    """The advantage clause, on ONE host — which is not the gate, and the next test says so.
+
+    JER text is ASCII-dominant, which is the case this rail accelerates. Asserted as a
+    generous ratio rather than a tight one: the claim under test is "the vector path is
+    doing something", and a threshold tuned to this container would fail on a slower one for
+    reasons that have nothing to do with the code.
+    """
+    if not _available():
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = _build(tmp)
+        document = _ascii_document()
+        scalar = _median_ns(binary, "scalar", document)
+        best = _median_ns(binary, "auto", document)
+    assert best < scalar, f"the resolved tier ({best}ns) did not beat scalar ({scalar}ns)"
+    assert scalar / best > 2.0, f"only {scalar / best:.1f}x on an all-ASCII document"
+
+
+def test_the_rail_buys_nothing_once_a_multi_byte_octet_appears_early():
+    """The limitation, pinned rather than buried in a docstring.
+
+    The first non-ASCII octet hands the REST of the document to the scalar rail, so the
+    acceleration is proportional to the ASCII prefix and a document whose first multi-byte
+    sequence is near the front sees no gain at all. That is the cost of refusing to write a
+    second UTF-8 implementation, and it is a cost worth naming: someone measuring
+    non-Latin-script JER will see 1.0x and should find this test rather than a surprise.
+    """
+    if not _available():
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = _build(tmp)
+        # Non-ASCII in the very first node: essentially the whole document goes scalar.
+        early = _ascii_document().replace(b'"add"', '"café"'.encode(), 1)
+        scalar = _median_ns(binary, "scalar", early)
+        best = _median_ns(binary, "auto", early)
+    ratio = scalar / best if best else 0.0
+    assert 0.5 < ratio < 1.6, (
+        f"an early multi-byte octet gave {ratio:.2f}x; the rail is expected to be neither "
+        f"faster nor materially slower there, and a large number either way means the "
+        f"fallback boundary moved")
+
+
+def test_the_two_host_clause_of_the_gate_is_unmet_and_recorded_as_unmet():
+    """J5's gate wants a significant advantage on **at least two hosts**. This is one host.
+
+    This test exists so the gap is a checked fact rather than a sentence someone might edit
+    away. It reads the roadmap and requires the J5 row to still say the measurement is
+    single-host — if a second host is ever added, this test is what tells whoever does it to
+    come back and update the claim.
+    """
+    roadmap = os.path.join(_ROOT, "docs", "BCIR_ASN1_JSON_ROADMAP.md")
+    text = open(roadmap, encoding="utf-8").read()
+    assert "two hosts" in text, "the gate's two-host clause disappeared from the roadmap"
+    assert "single-host" in text or "one host" in text, (
+        "the roadmap no longer records that J5's measurement is single-host; either a "
+        "second host was added — in which case update this test and the row together — or "
+        "the limitation was quietly dropped")

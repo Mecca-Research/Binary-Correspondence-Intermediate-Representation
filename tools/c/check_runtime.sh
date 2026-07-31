@@ -3879,6 +3879,23 @@ else
   echo "  FAIL: a CRC-valid semantically-corrupt pack was not rejected on the C rail"; exit 1
 fi
 
+# The hosted SIMD rail (#jersimd, J5): an optional C++17 UTF-8 accept-scanner behind the
+# SCALAR C ABI, with SSE2/AVX2/NEON tiers, runtime feature detection and scalar fallback.
+# 4.1 is the constraint: "the scalar rail is authoritative for native parser correctness.
+# SIMD is an optimization candidate, not a separate semantic implementation." So the vector
+# pass answers only "is this block entirely ASCII?" and hands everything else to
+# bcir_jer_validate_utf8 ITSELF -- there is no second UTF-8 implementation to keep in step.
+# check_jer_simd.sh proves every tier returns an identical status AND byte offset to the
+# scalar rail over 489 documents, and that an unavailable tier degrades rather than faults.
+# The two-host advantage clause of J5's gate is deliberately NOT checked on a shared runner;
+# 8 refuses "noisy timing thresholds" there. Self-skips if no C++ compiler is present.
+echo "[c-runtime] hosted SIMD rail: scalar-identical status/offset at every tier (#jersimd)"
+if bash "${ROOT}/tools/cpp/check_jer_simd.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+  echo "  PASS hosted SIMD rail (same corpus + same trace at every tier, no unsupported-CPU fault)"
+else
+  echo "  FAIL: the hosted SIMD rail diverged from the scalar rail or did not build"; exit 1
+fi
+
 # The C<->C++ hand-off seam scaffold (#cpphandoff, docs/languages/CPP_HANDOFF_BOUNDARY.md): the boundary
 # between the deterministic single-node C/IR rail and the C++ layer ABOVE it (dynamic graph
 # topology + distributed MPI/NCCL orchestration). check_handoff.sh compiles the STANDALONE C++17
