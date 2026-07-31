@@ -106,6 +106,40 @@ static int plan_tag_class(const char *text, size_t len, uint8_t *out) {
   return 0;
 }
 
+/* One bound: `-` for unbounded, else optional `-` sign and decimal magnitude. The magnitude
+ * is unsigned 64-bit because X.696 10.3 d)'s widest fixed word is eight octets UNSIGNED --
+ * see bcir_emit_bound. Overflow is a REFUSAL, never a wrap: a truncated bound names a
+ * different type, and would pick a different OER field width. */
+static int plan_bound(const char *text, size_t len, bcir_emit_bound *out) {
+  uint64_t value = 0;
+  size_t i = 0;
+  out->present = 0;
+  out->negative = 0;
+  out->magnitude = 0;
+  if (len == 0) return 0;
+  if (len == 1 && text[0] == '-') return 1;         /* unbounded */
+  if (text[0] == '-') {
+    out->negative = 1;
+    i = 1;
+    if (len == 1) return 0;
+  }
+  for (; i < len; i++) {
+    if (text[i] < '0' || text[i] > '9') return 0;
+    if (value > (0xFFFFFFFFFFFFFFFFull - (uint64_t)(text[i] - '0')) / 10ull) return 0;
+    value = value * 10ull + (uint64_t)(text[i] - '0');
+  }
+  out->present = 1;
+  out->magnitude = value;
+  if (value == 0) out->negative = 0;                /* one spelling for zero */
+  return 1;
+}
+
+static int plan_hex_nibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  return -1;                                        /* the writer emits lower case only */
+}
+
 typedef struct plan_build {
   plan_reader r;
   bcir_emit_node *nodes;
@@ -114,6 +148,9 @@ typedef struct plan_build {
   bcir_emit_member *members;
   uint32_t member_cap;
   uint32_t member_count;
+  bcir_emit_constraint *constraints;
+  uint32_t constraint_cap;
+  uint32_t constraint_count;
   bcir_emit_diag *diag;
 } plan_build;
 
@@ -123,6 +160,58 @@ static bcir_emit_status plan_fail(plan_build *b, bcir_emit_status status) {
     b->diag->offset = b->r.at;
   }
   return status;
+}
+
+/* The optional `constraint` line, which follows its node's line when there is one. Peeked
+ * rather than counted: a node line's `members`/`element` counts exist so the reader needs no
+ * path arithmetic, and a count of "constraints on this node" could only ever be 0 or 1. */
+static bcir_emit_status plan_read_constraint(plan_build *b, uint32_t self) {
+  static const char *const bound_keys[8] = {"vlo", "vhi", "slo", "shi",
+                                            "rvlo", "rvhi", "rslo", "rshi"};
+  size_t save = b->r.at, start = 0, len = 0, i;
+  bcir_emit_constraint *k;
+  bcir_emit_bound *slots[8];
+
+  len = plan_token(&b->r, &start);
+  if (len != 10 || !emit_streq(b->r.text + start, "constraint", 10)) {
+    b->r.at = save;                                 /* not ours; leave the line alone */
+    return BCIR_EMIT_OK;
+  }
+  if (b->constraint_count >= b->constraint_cap) return plan_fail(b, BCIR_EMIT_PLAN_TOO_BIG);
+  k = &b->constraints[b->constraint_count];
+  slots[0] = &k->value_low;      slots[1] = &k->value_high;
+  slots[2] = &k->size_low;       slots[3] = &k->size_high;
+  slots[4] = &k->root_value_low; slots[5] = &k->root_value_high;
+  slots[6] = &k->root_size_low;  slots[7] = &k->root_size_high;
+
+  (void)plan_token(&b->r, &start);                  /* the path, as on a node line */
+  for (i = 0; i < 8; i++) {
+    if (!plan_field(&b->r, bound_keys[i], &start, &len) ||
+        !plan_bound(b->r.text + start, len, slots[i]))
+      return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+  }
+  if (!plan_field(&b->r, "vext", &start, &len) || len != 1)
+    return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+  k->value_extensible = (uint8_t)(b->r.text[start] == '1');
+  if (!plan_field(&b->r, "sext", &start, &len) || len != 1)
+    return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+  k->size_extensible = (uint8_t)(b->r.text[start] == '1');
+  if (!plan_field(&b->r, "alpha", &start, &len)) return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+  k->alphabet_len = 0;
+  if (!(len == 1 && b->r.text[start] == '-')) {
+    if ((len & 1u) != 0) return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+    if (len / 2 > BCIR_EMIT_ALPHABET_MAX) return plan_fail(b, BCIR_EMIT_PLAN_TOO_BIG);
+    for (i = 0; i < len; i += 2) {
+      int hi = plan_hex_nibble(b->r.text[start + i]);
+      int lo = plan_hex_nibble(b->r.text[start + i + 1]);
+      if (hi < 0 || lo < 0) return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+      k->alphabet[i / 2] = (char)((hi << 4) | lo);
+    }
+    k->alphabet_len = (uint8_t)(len / 2);
+  }
+  plan_next_line(&b->r);
+  b->nodes[self].constraint = (int32_t)b->constraint_count++;
+  return BCIR_EMIT_OK;
 }
 
 static bcir_emit_status plan_read_node(plan_build *b, uint32_t *out_index, uint32_t depth) {
@@ -155,6 +244,12 @@ static bcir_emit_status plan_read_node(plan_build *b, uint32_t *out_index, uint3
   b->nodes[self].member_count = members;
   b->nodes[self].first_member = b->member_count;
   b->nodes[self].element = -1;
+  b->nodes[self].constraint = -1;
+
+  {
+    bcir_emit_status status = plan_read_constraint(b, self);
+    if (status != BCIR_EMIT_OK) return status;
+  }
 
   if (members > 0) {
     if (members > b->member_cap - b->member_count) return plan_fail(b, BCIR_EMIT_PLAN_TOO_BIG);
@@ -217,7 +312,9 @@ static bcir_emit_status plan_read_node(plan_build *b, uint32_t *out_index, uint3
 
 bcir_emit_status bcir_emit_parse_plan(const char *text, size_t len, bcir_emit_node *nodes,
                                       uint32_t node_cap, bcir_emit_member *members,
-                                      uint32_t member_cap, bcir_emit_plan *out,
+                                      uint32_t member_cap,
+                                      bcir_emit_constraint *constraints,
+                                      uint32_t constraint_cap, bcir_emit_plan *out,
                                       bcir_emit_diag *diag) {
   plan_build b;
   size_t start = 0, tok;
@@ -227,9 +324,13 @@ bcir_emit_status bcir_emit_parse_plan(const char *text, size_t len, bcir_emit_no
 
   if (diag) { diag->status = BCIR_EMIT_OK; diag->offset = 0; diag->needed = 0; }
   if (!text || !nodes || !members || !out) return BCIR_EMIT_PLAN_MALFORMED;
+  /* A null constraint table with a nonzero capacity would be a caller error that only shows
+   * up on the first constrained schema, so it is refused up front rather than trusted. */
+  if (!constraints && constraint_cap != 0) return BCIR_EMIT_PLAN_MALFORMED;
   b.r.text = text; b.r.len = len; b.r.at = 0;
   b.nodes = nodes; b.node_cap = node_cap; b.node_count = 0;
   b.members = members; b.member_cap = member_cap; b.member_count = 0;
+  b.constraints = constraints; b.constraint_cap = constraint_cap; b.constraint_count = 0;
   b.diag = diag;
 
   tok = plan_token(&b.r, &start);
@@ -248,6 +349,8 @@ bcir_emit_status bcir_emit_parse_plan(const char *text, size_t len, bcir_emit_no
   out->node_count = b.node_count;
   out->members = members;
   out->member_count = b.member_count;
+  out->constraints = constraints;
+  out->constraint_count = b.constraint_count;
   out->root = root;
   return BCIR_EMIT_OK;
 }
@@ -1021,6 +1124,92 @@ static int jer_node(emit_ctx *c, uint32_t node_index, uint32_t depth) {
 
 static void put_oer_length(emit_ctx *c, size_t count) { put_definite_length(c, count); }
 
+/* 10.3 / 10.4: the fixed word width the constraint selects, and its sign. Width 0 is
+ * 10.3 e) / 10.4 e), the length-prefixed variable-size form.
+ *
+ * The split between the two clauses is whether a lower bound EXISTS and is non-negative --
+ * not whether the bounds happen to be small -- so a type with no lower bound is signed
+ * however tight its upper bound is. This mirrors the Python `_oer_integer_form` clause for
+ * clause; both read the plan, and the oracle reads the live constraint. */
+static void oer_integer_form(const emit_ctx *c, const bcir_emit_node *node, unsigned *width,
+                             int *is_signed) {
+  static const uint64_t unsigned_limit[4] = {0xFFull, 0xFFFFull, 0xFFFFFFFFull,
+                                             0xFFFFFFFFFFFFFFFFull};
+  static const unsigned widths[4] = {1, 2, 4, 8};
+  const bcir_emit_constraint *k;
+  int i;
+
+  *width = 0;
+  *is_signed = 1;
+  if (node->constraint < 0) return;
+  k = &c->plan->constraints[node->constraint];
+  if (k->value_low.present && !k->value_low.negative) {   /* 10.2 a) -> 10.3, unsigned */
+    *is_signed = 0;
+    if (!k->value_high.present || k->value_high.negative) return;      /* 10.3 e) */
+    for (i = 0; i < 4; i++)
+      if (k->value_high.magnitude <= unsigned_limit[i]) { *width = widths[i]; return; }
+    return;                                                           /* 10.3 e) */
+  }
+  if (!k->value_low.present || !k->value_high.present) return;         /* 10.4 e) */
+  for (i = 0; i < 4; i++) {
+    /* `top` is 2^(bits-1): the magnitude of the most negative value the word holds, and one
+     * past the largest positive one. Written this way because 8 octets makes 2^63 the
+     * boundary and computing `1 << 64` to get the limit would be undefined. */
+    uint64_t top = 1ull << (widths[i] * 8u - 1u);
+    int low_ok = k->value_low.negative ? (k->value_low.magnitude <= top)
+                                       : (k->value_low.magnitude < top);
+    int high_ok = k->value_high.negative || k->value_high.magnitude < top;
+    if (low_ok && high_ok) { *width = widths[i]; return; }
+  }
+}
+
+/* Write a value the stream carries as minimal two's complement into the fixed `width`-octet
+ * word the constraint selected. REFUSES rather than truncates: a value outside its own
+ * constraint is a well-formed document of a different value, which is the failure this
+ * whole constraint-carrying plan version exists to stop. */
+static int oer_fixed_word(emit_ctx *c, const uint8_t *data, size_t n, unsigned width,
+                          int is_signed) {
+  uint8_t fill;
+  size_t i;
+
+  if (n == 0) return ctx_fail(c, BCIR_EMIT_STREAM_SHORT);
+  /* A non-negative value's minimal two's-complement form always has its top bit clear, so
+   * a set one here means the value is negative -- and an unsigned field cannot hold it. */
+  fill = (uint8_t)((data[0] & 0x80u) ? 0xFFu : 0x00u);
+  if (!is_signed && fill == 0xFFu) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+  if (n > width) {
+    for (i = 0; i < n - width; i++)
+      if (data[i] != fill) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+    if (is_signed && (((data[n - width] ^ fill) & 0x80u) != 0))
+      return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+    put_bytes(c, data + (n - width), width);
+    return 1;
+  }
+  for (i = n; i < width; i++) put(c, fill);
+  put_bytes(c, data, n);
+  return 1;
+}
+
+/* 14.1 / 27.2: the single length a SIZE constraint fixes. A RANGE is not enough -- only an
+ * exact length lets a decoder find the end of the field without a determinant. */
+static int oer_fixed_size(const emit_ctx *c, const bcir_emit_node *node, uint64_t *out) {
+  const bcir_emit_constraint *k;
+  if (node->constraint < 0) return 0;
+  k = &c->plan->constraints[node->constraint];
+  if (!k->size_low.present || !k->size_high.present) return 0;
+  if (k->size_low.negative || k->size_high.negative) return 0;
+  if (k->size_low.magnitude != k->size_high.magnitude) return 0;
+  *out = k->size_low.magnitude;
+  return 1;
+}
+
+/* 27.2's known-multiplier character types, restricted to the ones this plan compiles as
+ * `string`. UTF8String is deliberately absent: 27.1 keeps it out because a character costs
+ * 1..4 octets there, so its length is never implied by a character count. */
+static int oer_known_multiplier(uint32_t universal) {
+  return universal == 18u || universal == 19u || universal == 22u || universal == 26u;
+}
+
 static int oer_node(emit_ctx *c, uint32_t node_index, uint32_t depth) {
   const bcir_emit_node *node = &c->plan->nodes[node_index];
   uint8_t byte = 0;
@@ -1034,21 +1223,57 @@ static int oer_node(emit_ctx *c, uint32_t node_index, uint32_t depth) {
       /* 11: any non-zero octet is TRUE, and CANONICAL-OER fixes it at 0xFF. */
       put(c, byte ? 0xFF : 0x00);
       return 1;
-    case BCIR_EMIT_INTEGER:
-    case BCIR_EMIT_ENUMERATED:
-      /* 10.4: an unconstrained integer is length-prefixed two's complement. */
+    case BCIR_EMIT_INTEGER: {
+      /* 10.3 / 10.4. A constrained integer is a FIXED-WIDTH word with no length
+       * determinant; only the unbounded cases 10.3 e) / 10.4 e) are length-prefixed. */
+      unsigned width = 0;
+      int is_signed = 1;
       if (!rd_u8(c, &byte) || !rd_take(c, byte, &data)) return 0;
+      oer_integer_form(c, node, &width, &is_signed);
+      if (width != 0) return oer_fixed_word(c, data, byte, width, is_signed);
+      if (!is_signed) {
+        /* 10.3 e) is UNSIGNED, and the stream carries the minimal SIGNED form -- which
+         * gives a value at or above 0x80 a leading zero octet the unsigned form drops. */
+        while (byte > 1 && data[0] == 0x00) { data++; byte--; }
+        if ((data[0] & 0x80u) != 0) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+      }
       put_oer_length(c, byte);
+      put_bytes(c, data, byte);
+      return 1;
+    }
+    case BCIR_EMIT_ENUMERATED:
+      /* 11 gives ENUMERATED its own form and reads NO constraint: the short form below 128,
+       * else a long form whose count octet has its top bit set and whose body is SIGNED.
+       * It is not 10's integer, and sharing a branch with one emitted `01 05` where the
+       * standard says `05` -- a well-formed document of a different value for every
+       * enumerated ever encoded through this plan. */
+      if (!rd_u8(c, &byte) || !rd_take(c, byte, &data)) return 0;
+      if (byte == 0) return ctx_fail(c, BCIR_EMIT_STREAM_SHORT);
+      if (byte == 1 && data[0] < 0x80u) { put(c, data[0]); return 1; }   /* 11.3 */
+      if (byte > 0x7Fu) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);       /* 11.4 */
+      put(c, (uint8_t)(0x80u | byte));
       put_bytes(c, data, byte);
       return 1;
     case BCIR_EMIT_NULL:
       return 1; /* 12: no octets at all */
-    case BCIR_EMIT_OCTETSTRING: /* 15 */
-    case BCIR_EMIT_STRING:      /* 27 */
+    case BCIR_EMIT_OCTETSTRING: /* 14 */
+    case BCIR_EMIT_STRING: {    /* 27 */
+      uint64_t fixed = 0;
+      int has_fixed = oer_fixed_size(c, node, &fixed);
       if (!rd_u32(c, &count) || !rd_take(c, count, &data)) return 0;
+      /* 14.1 and 27.2 drop the length determinant when the size is pinned to one value.
+       * Every repertoire `oer_known_multiplier` admits is single-octet, so the stream's
+       * octet count IS the character count 27.2 is about. */
+      if (has_fixed && (node->kind == BCIR_EMIT_OCTETSTRING ||
+                        oer_known_multiplier(node->universal))) {
+        if ((uint64_t)count != fixed) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+        put_bytes(c, data, count);
+        return 1;
+      }
       put_oer_length(c, count);
       put_bytes(c, data, count);
       return 1;
+    }
     case BCIR_EMIT_OID: {       /* 14 */
       size_t size = 0;
       if (!rd_u32(c, &count) || !rd_take(c, count, &data)) return 0;

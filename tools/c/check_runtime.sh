@@ -3581,6 +3581,7 @@ if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
 import sys
 sys.path.insert(0, ".")
 from bcir.asn1.codec import NULL, Oid
+from bcir.asn1.constraints import Extensible, Size, ValueRange
 from bcir.asn1.emit import flatten
 from bcir.asn1.encode_plan import compile_encode_plan
 from bcir.asn1.schema import Choice, Component, Primitive, Sequence, SequenceOf
@@ -3635,6 +3636,32 @@ CASES = [
     (seq(Component("v", CH, tag=5, explicit=True)), {"v": ("txt", "hi")}),
     (seq(Component("s", seq(Component("a", I), name="In"), tag=3)), {"s": {"a": 9}}),
     (seq(Component("v", SequenceOf(I, "SEQ"), tag=4)), {"v": [1, 2]}),
+]
+
+# Plan version 3's cases. Every row above is UNCONSTRAINED, and that is precisely how an OER
+# emitter ignoring constraints passed this gate: X.696 10.3 gives a constrained INTEGER a
+# fixed-width form with no length determinant, and nothing here ever asked for one. An
+# ENUMERATED is here for the same reason -- 11 is not 10, and nothing asked for that either.
+CASES += [
+    (seq(Component("v", Primitive(Universal.INTEGER, "I",
+                                  constraint=ValueRange(0, 255)))), {"v": 42}),
+    (seq(Component("v", Primitive(Universal.INTEGER, "I",
+                                  constraint=ValueRange(0, 2 ** 64 - 1)))), {"v": 2 ** 63}),
+    (seq(Component("v", Primitive(Universal.INTEGER, "I",
+                                  constraint=ValueRange(-128, 127)))), {"v": -5}),
+    (seq(Component("v", Primitive(Universal.INTEGER, "I",
+                                  constraint=ValueRange(0, None)))), {"v": 300}),
+    (seq(Component("v", Primitive(Universal.INTEGER, "I",
+                                  constraint=Extensible(ValueRange(0, 255))))), {"v": 42}),
+    (seq(Component("v", Primitive(Universal.OCTET_STRING, "O",
+                                  constraint=Size(ValueRange(3, 3))))), {"v": b"abc"}),
+    (seq(Component("v", Primitive(Universal.IA5_STRING, "A",
+                                  constraint=Size(ValueRange(3, 3))))), {"v": "abc"}),
+    (seq(Component("v", Primitive(Universal.UTF8_STRING, "U",
+                                  constraint=Size(ValueRange(3, 3))))), {"v": "abc"}),
+    (seq(Component("v", Primitive(Universal.ENUMERATED, "E"))), {"v": 5}),
+    (seq(Component("v", Primitive(Universal.ENUMERATED, "E"))), {"v": 200}),
+    (seq(Component("v", Primitive(Universal.ENUMERATED, "E"))), {"v": -1}),
 ]
 
 for index, (kind, value) in enumerate(CASES):

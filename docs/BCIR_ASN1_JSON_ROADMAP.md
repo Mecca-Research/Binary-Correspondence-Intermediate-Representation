@@ -524,6 +524,48 @@ implementation, which is what makes it worth recording at all.
 The second and third were reachable only by fuzzing the **descriptor** alongside the value,
 which is why `fuzz_emit.c` does, as `fuzz_oer.c` does.
 
+#### 6.2.1 Plan version 3 — a constraint is not a comment
+
+Scoping the PER column turned up two defects in the code above, and both were the same
+failure: **the corpus never asked.**
+
+Plan version 2 recorded kinds, tags, member names and optionality, and deliberately dropped
+**subtype constraints**. For DER, BER and JER that is correct — X.690 encodes the same
+octets whether or not a constraint exists, and X.697 §7.2.2 l)/h) hide integer and string
+constraints from JER outright. It is *wrong* for OER: X.696 §10.3 gives a constrained
+INTEGER a fixed-width form with no length determinant, so `INTEGER (0..255)` holding 42 is
+`2A` where the unconstrained type is `01 2A`. The emitter had been writing the unconstrained
+spelling for every type since it landed — a well-formed document of a different value.
+
+The second was found while writing the test for the first: **ENUMERATED shared a branch with
+INTEGER**, and X.696 §11 is not §10. Every enumerated this emitter ever encoded was wrong,
+constrained or not — `5` came out as `01 05` where the standard says `05`.
+
+Neither needed a subtle input. `_CORPUS` had no constrained type and no ENUMERATED, and a
+construct absent from the corpus is untested however many tests run over it. Both corpora —
+the Python differential's and `check_runtime.sh`'s — now carry both.
+
+Version 3 records what each rule *reads* off a constraint rather than the constraint itself,
+because §5.1 makes a descriptor data and a `Constraint` is an object graph with `permits()`
+on it. It carries **four** bound pairs, not two, and that is the part worth stating: X.696
+§8.2.2 g) makes an extensible constraint invisible to OER, while X.691 §13.1 emits one bit
+and then encodes against the extension *root*. Those are different facts about the same
+constraint and they genuinely differ — intersect an extensible `(0..255, ...)` with a plain
+`(0..1000)` and OER reads `0..1000` while PER's root reads `0..255` — so deriving one from
+the other would be a guess.
+
+The extension-root bounds and the permitted alphabet are PER's alone and nothing emits them
+yet. A field nothing reads is a field nothing checks, so the C driver reads the parsed table
+back and the differential compares it against the compiler that wrote it.
+
+**What still stands between this plan and a PER emitter** is no longer about constraints. It
+is three schema facts version 3 does not carry: extensibility of a SEQUENCE, a CHOICE and an
+ENUMERATED (X.691 §19.1, §23.5, §14.3 each emit a leading bit for it); the enumeration's
+*numbers*, since §14.1 encodes an ENUMERATED as its index into the root sorted ascending;
+and extension additions, which `_compile_members` refuses outright because §19.7 splits root
+from additions and X.690 does not. Those belong to one further version alongside the emitter
+that reads them, rather than dribbling in as fields nothing consumes.
+
 ### 6.3 StreamPack and BCAB
 
 JER is never a replacement for native StreamPack or BCAB. A JER projection, if a

@@ -266,11 +266,20 @@ def test_a_truncated_or_overlong_stream_is_refused():
 
 
 def test_a_plan_of_another_version_is_refused_rather_than_read_hopefully():
-    """The fields are positional, so a mismatched reader mis-assigns instead of failing."""
+    """The fields are positional, so a mismatched reader mis-assigns instead of failing.
+
+    The version is read from `PLAN_VERSION` rather than spelled out: a literal here silently
+    stopped substituting when the format moved to 3, so the test kept passing while checking
+    that a *well-formed current* plan parses — which every other test already covers.
+    """
     if not _available():
         return
+    from bcir.asn1.encode_plan import PLAN_VERSION
+
     plan = compile_encode_plan(_seq(Component("a", _I)), module="Test", type_name="v")
-    text = plan.serialize().replace(b"plan-version 2", b"plan-version 9")
+    current = f"plan-version {PLAN_VERSION}".encode("ascii")
+    assert plan.serialize().startswith(current), plan.serialize()[:32]
+    text = plan.serialize().replace(current, b"plan-version 9999")
     with tempfile.TemporaryDirectory() as tmp:
         replies = _drive(_build(tmp), ["plan " + text.hex()])
     assert replies[0].startswith("err 2 "), replies[0]      # PLAN_VERSION_BAD
@@ -373,3 +382,204 @@ def test_a_nested_sequence_does_not_cost_exponential_time_in_oer():
             f"emit coer {stream.hex()}",
         ]) if line != "ok"]
     assert bytes.fromhex(replies[0][3:]) == emit(plan, stream, rules=EmitRules.COER)
+
+
+# --- plan version 3: the constraints, across both rails ---------------------------------------
+
+#: Constrained cases the shared `_CORPUS` cannot hold, because every entry there is
+#: unconstrained. That is not an oversight in the corpus — it is the exact blindness that let
+#: an OER emitter ignoring constraints pass every parity test it had.
+_CONSTRAINED = (
+    ("§10.3 a) one unsigned octet", "ValueRange(0, 255)", 42),
+    ("§10.3 b) two unsigned octets", "ValueRange(0, 65535)", 42),
+    ("§10.3 c) four unsigned octets", "ValueRange(0, 2 ** 32 - 1)", 70000),
+    ("§10.3 d) eight unsigned octets", "ValueRange(0, 2 ** 64 - 1)", 2 ** 63),
+    ("§10.4 a) one signed octet", "ValueRange(-128, 127)", -5),
+    ("§10.4 b) two signed octets", "ValueRange(-32768, 32767)", -5),
+    ("§10.4 d) eight signed octets", "ValueRange(-(2 ** 63), 2 ** 63 - 1)", -(2 ** 62)),
+    ("§10.3 e) a lower bound alone", "ValueRange(0, None)", 300),
+    ("§10.4 e) an upper bound alone", "ValueRange(None, 255)", -300),
+    ("an extensible bound is invisible to OER", "Extensible(ValueRange(0, 255))", 42),
+)
+
+
+def _constrained_cases():
+    """Build the constrained corpus. Imported lazily so the module stays cheap to import."""
+    from bcir.asn1.constraints import Extensible, PermittedAlphabet, Size, ValueRange
+
+    scope = {"Extensible": Extensible, "PermittedAlphabet": PermittedAlphabet,
+             "Size": Size, "ValueRange": ValueRange}
+    cases = [(label, _seq(Component("v", Primitive(Universal.INTEGER, "I",
+                                                   constraint=eval(spelling, scope)))),
+              {"v": value})
+             for label, spelling, value in _CONSTRAINED]
+    cases += [
+        ("§14.1 a fixed-size OCTET STRING",
+         _seq(Component("v", Primitive(Universal.OCTET_STRING, "O",
+                                       constraint=Size(ValueRange(3, 3))))), {"v": b"abc"}),
+        ("§14.2 a size RANGE keeps its determinant",
+         _seq(Component("v", Primitive(Universal.OCTET_STRING, "O",
+                                       constraint=Size(ValueRange(1, 3))))), {"v": b"abc"}),
+        ("§27.2 a fixed-size known-multiplier string",
+         _seq(Component("v", Primitive(Universal.IA5_STRING, "A",
+                                       constraint=Size(ValueRange(3, 3))))), {"v": "abc"}),
+        ("§27.1 UTF8String is never known-multiplier",
+         _seq(Component("v", Primitive(Universal.UTF8_STRING, "U",
+                                       constraint=Size(ValueRange(3, 3))))), {"v": "abc"}),
+        ("a permitted alphabet, which OER does not read",
+         _seq(Component("v", Primitive(Universal.IA5_STRING, "A",
+                                       constraint=PermittedAlphabet(
+                                           ValueRange("0", "9"))))), {"v": "019"}),
+        ("an ENUMERATED, short form", _seq(Component("v", Primitive(
+            Universal.ENUMERATED, "E"))), {"v": 5}),
+        ("an ENUMERATED, long form", _seq(Component("v", Primitive(
+            Universal.ENUMERATED, "E"))), {"v": 200}),
+        ("a negative ENUMERATED", _seq(Component("v", Primitive(
+            Universal.ENUMERATED, "E"))), {"v": -1}),
+        ("a constrained integer inside a SEQUENCE OF",
+         _seq(Component("v", SequenceOf(Primitive(Universal.INTEGER, "I",
+                                                  constraint=ValueRange(0, 255)), "S"))),
+         {"v": [1, 2, 250]}),
+        ("an optional constrained integer, absent",
+         _seq(Component("a", _I), Component("b", Primitive(
+             Universal.INTEGER, "I", constraint=ValueRange(0, 255)), optional=True)),
+         {"a": 1}),
+    ]
+    return cases
+
+
+def test_the_twin_reaches_the_same_octets_for_a_constrained_type():
+    """The differential over the cases version 2 could not express at all.
+
+    Every rule is driven, not just OER: recording a constraint must move no byte for DER,
+    BER or JER, and a twin that quietly started reading bounds in the X.690 path would be
+    just as wrong as one that ignored them in the OER path.
+    """
+    if not _available():
+        return
+    lines: list[str] = []
+    expect: list[tuple[str, str, bytes]] = []
+    for label, kind, value in _constrained_cases():
+        plan = compile_encode_plan(kind, module="Test", type_name=label)
+        stream = flatten(plan, value)
+        lines.append("plan " + plan.serialize().hex())
+        for rules, name in _RULES:
+            lines.append(f"emit {name} {stream.hex() or '-'}")
+            expect.append((label, name, emit(plan, stream, rules=rules)))
+    with tempfile.TemporaryDirectory() as tmp:
+        replies = [line for line in _drive(_build(tmp), lines) if line != "ok"]
+    assert len(replies) == len(expect), f"{len(replies)} replies for {len(expect)} cases"
+    for (label, name, want), reply in zip(expect, replies):
+        assert reply.startswith("ok "), f"{label} / {name}: {reply}"
+        assert bytes.fromhex(reply[3:]) == want, (
+            f"{label} / {name}: {reply[3:]} != {want.hex()}")
+
+
+def test_the_c_reader_stores_every_constraint_field_the_compiler_wrote():
+    """The fields no emitter reads YET are still checked, because a field nothing reads rots.
+
+    Version 3 records the X.691 extension-root bounds and the permitted alphabet, which only
+    PER will consume. Landing a parser for them and testing only the OER-visible half would
+    leave the PER writer to discover its own reader's bugs later, on top of its own.
+
+    So the driver reads the parsed table back and this compares it against the Python
+    compiler that wrote it — field for field, including the sign of a negative bound and the
+    exact octets of an alphabet.
+    """
+    if not _available():
+        return
+    from bcir.asn1.constraints import (
+        Extensible, Intersection, PermittedAlphabet, Size, ValueRange,
+    )
+
+    cases = [
+        ("plain bounds", ValueRange(0, 255)),
+        ("a negative lower bound", ValueRange(-(2 ** 63), 2 ** 63 - 1)),
+        ("the widest unsigned bound", ValueRange(0, 2 ** 64 - 1)),
+        ("MIN..255", ValueRange(None, 255)),
+        ("a size", Size(ValueRange(1, 4))),
+        ("an alphabet", PermittedAlphabet(ValueRange("0", "9"))),
+        # The case that proves the two bound pairs are separate facts rather than one: OER
+        # reads 0..1000 here (§8.2.2 g) drops the extensible part) while PER's extension
+        # root is 0..255. A reader that stored one and derived the other gets this wrong.
+        ("an extensible bound met by a plain one",
+         Intersection((Extensible(ValueRange(0, 255)), ValueRange(0, 1000)))),
+    ]
+    lines, expect = [], []
+    for label, constraint in cases:
+        kind = _seq(Component("v", Primitive(Universal.IA5_STRING, "A",
+                                             constraint=constraint)))
+        plan = compile_encode_plan(kind, module="Test", type_name=label)
+        lines.append("plan " + plan.serialize().hex())
+        lines.append("constraint 1")           # node 0 is the SEQUENCE, node 1 the member
+        expect.append((label, plan.root.members[0].node.constraint))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        replies = [line for line in _drive(_build(tmp), lines) if line != "ok"]
+    assert len(replies) == len(expect), f"{len(replies)} replies for {len(expect)} cases"
+    for (label, want), reply in zip(expect, replies):
+        assert reply.startswith("ok "), f"{label}: {reply}"
+        fields = reply[3:].split()
+        assert want is not None, label
+        bounds = [None if f == "-" else int(f) for f in fields[:8]]
+        assert bounds == [want.value_low, want.value_high, want.size_low, want.size_high,
+                          want.root_value_low, want.root_value_high,
+                          want.root_size_low, want.root_size_high], label
+        assert fields[8] == ("1" if want.value_extensible else "0"), label
+        assert fields[9] == ("1" if want.size_extensible else "0"), label
+        alphabet = "" if fields[10] == "-" else bytes.fromhex(fields[10]).decode("utf-8")
+        assert alphabet == want.alphabet, label
+
+
+def test_an_unconstrained_node_records_no_constraint_at_all():
+    """The format's cost is proportional to what it says.
+
+    A node with nothing an encoder would read emits no constraint line, so a plan for an
+    unconstrained schema is what version 2 wrote apart from its version. Checked on both
+    rails: the Python compiler must leave the line out, and the C reader must report the
+    node as unconstrained rather than as one with all-absent bounds.
+    """
+    if not _available():
+        return
+    kind = _seq(Component("v", _I))
+    plan = compile_encode_plan(kind, module="Test", type_name="free")
+    text = plan.serialize().decode("utf-8")
+    assert "constraint" not in text, text
+    assert text.startswith("plan-version 3\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        replies = _drive(_build(tmp), ["plan " + plan.serialize().hex(), "constraint 1"])
+    assert replies[1] == "ok none", replies
+
+
+def test_a_value_outside_its_constraint_is_refused_rather_than_truncated():
+    """A fixed-width OER field cannot hold every integer, and the twin must say so.
+
+    X.696 §10.3 selects the width from the *constraint*, not from the value, so a value the
+    constraint does not admit has nowhere to go. Writing its low octets would produce a
+    perfectly well-formed document of a different value — the failure this whole plan
+    version exists to stop — so the twin refuses, and the Python emitter raises.
+    """
+    if not _available():
+        return
+    from bcir.asn1.constraints import ValueRange
+
+    kind = _seq(Component("v", Primitive(Universal.INTEGER, "I",
+                                         constraint=ValueRange(0, 255))))
+    plan = compile_encode_plan(kind, module="Test", type_name="narrow")
+    # The stream is built against an UNCONSTRAINED plan of the same shape, so the value is
+    # well-formed as a stream and only the constraint makes it impossible.
+    free = compile_encode_plan(_seq(Component("v", _I)), module="Test", type_name="free")
+    for value in (300, -1):
+        stream = flatten(free, {"v": value})
+        try:
+            emit(plan, stream, rules=EmitRules.COER)
+        except Exception as error:               # noqa: BLE001 - the type is the oracle's
+            assert "10.3" in str(error) or "10.4" in str(error), error
+        else:
+            raise AssertionError(f"{value} encoded into a one-octet unsigned field")
+        with tempfile.TemporaryDirectory() as tmp:
+            replies = [line for line in _drive(_build(tmp), [
+                "plan " + plan.serialize().hex(),
+                f"emit coer {stream.hex()}",
+            ]) if line != "ok"]
+        assert replies[0].startswith("err 9 "), f"{value}: {replies[0]}"   # UNSUPPORTED
