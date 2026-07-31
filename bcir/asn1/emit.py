@@ -295,8 +295,21 @@ def _emit_jer(node: EncodeNode, reader: _Reader) -> str:
     kind = node.kind
     if kind == "boolean":
         return "true" if reader.u8() else "false"
-    if kind in ("integer", "enumerated"):
+    if kind == "integer":
         return str(int.from_bytes(reader.take(reader.u8()), "big", signed=True))
+    if kind == "enumerated":
+        # §22.2: the JSON string denotes "the identifier of the chosen enumeration item".
+        # NOT the number — X.690 §8.4 encodes the number and X.697 deliberately does not,
+        # which is why the plan has to carry the identifiers at all. Sharing this branch
+        # with `integer` emitted `4` where the standard requires `"red"`: a document a JER
+        # decoder cannot map back to any enumeration item.
+        value = int.from_bytes(reader.take(reader.u8()), "big", signed=True)
+        for name, number in node.enumeration:
+            if number == value:
+                return _json_string(name)
+        raise Asn1Error(
+            f"{value} names no item of this enumeration, and X.697 §22.1 gives an "
+            f"enumerated value no numeric spelling")
     if kind == "null":
         return "null"
     if kind == "octetstring":

@@ -142,15 +142,11 @@ static int plan_hex_nibble(char c) {
 
 typedef struct plan_build {
   plan_reader r;
-  bcir_emit_node *nodes;
-  uint32_t node_cap;
+  bcir_emit_tables t;
   uint32_t node_count;
-  bcir_emit_member *members;
-  uint32_t member_cap;
   uint32_t member_count;
-  bcir_emit_constraint *constraints;
-  uint32_t constraint_cap;
   uint32_t constraint_count;
+  uint32_t enum_count;
   bcir_emit_diag *diag;
 } plan_build;
 
@@ -177,8 +173,8 @@ static bcir_emit_status plan_read_constraint(plan_build *b, uint32_t self) {
     b->r.at = save;                                 /* not ours; leave the line alone */
     return BCIR_EMIT_OK;
   }
-  if (b->constraint_count >= b->constraint_cap) return plan_fail(b, BCIR_EMIT_PLAN_TOO_BIG);
-  k = &b->constraints[b->constraint_count];
+  if (b->constraint_count >= b->t.constraint_cap) return plan_fail(b, BCIR_EMIT_PLAN_TOO_BIG);
+  k = &b->t.constraints[b->constraint_count];
   slots[0] = &k->value_low;      slots[1] = &k->value_high;
   slots[2] = &k->size_low;       slots[3] = &k->size_high;
   slots[4] = &k->root_value_low; slots[5] = &k->root_value_high;
@@ -210,14 +206,54 @@ static bcir_emit_status plan_read_constraint(plan_build *b, uint32_t self) {
     k->alphabet_len = (uint8_t)(len / 2);
   }
   plan_next_line(&b->r);
-  b->nodes[self].constraint = (int32_t)b->constraint_count++;
+  b->t.nodes[self].constraint = (int32_t)b->constraint_count++;
+  return BCIR_EMIT_OK;
+}
+
+/* The node line's `enum=` field: `-`, or `name:number|name:number|...`. Parsed into the
+ * caller's enum table, whose slots are contiguous per node so a node needs only a first
+ * index and a count. */
+static bcir_emit_status plan_read_enum(plan_build *b, uint32_t self, const char *text,
+                                       size_t len) {
+  size_t at = 0;
+
+  b->t.nodes[self].first_enum = b->enum_count;
+  b->t.nodes[self].enum_count = 0;
+  if (len == 1 && text[0] == '-') return BCIR_EMIT_OK;
+  while (at < len) {
+    size_t name_start = at, name_len, number_len, i;
+    bcir_emit_enum_item *item;
+    bcir_emit_bound number;
+
+    while (at < len && text[at] != ':') at++;
+    if (at == len) return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+    name_len = at - name_start;
+    if (name_len == 0) return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+    if (name_len > BCIR_EMIT_NAME_MAX) return plan_fail(b, BCIR_EMIT_PLAN_TOO_BIG);
+    at++;                                             /* the ':' */
+    number_len = at;
+    while (at < len && text[at] != '|') at++;
+    number_len = at - number_len;
+    /* A bound rather than a plain integer: an enumeration number is signed, and X.680
+     * 20.1 puts no ceiling on it. `plan_bound` refuses overflow instead of wrapping. */
+    if (!plan_bound(text + at - number_len, number_len, &number) || !number.present)
+      return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+    if (number.magnitude > 0x7FFFFFFFFFFFFFFFull) return plan_fail(b, BCIR_EMIT_PLAN_TOO_BIG);
+    if (b->enum_count >= b->t.enum_cap) return plan_fail(b, BCIR_EMIT_PLAN_TOO_BIG);
+    item = &b->t.enums[b->enum_count++];
+    for (i = 0; i < name_len; i++) item->name[i] = text[name_start + i];
+    item->name_len = (uint8_t)name_len;
+    item->number = number.negative ? -(int64_t)number.magnitude : (int64_t)number.magnitude;
+    b->t.nodes[self].enum_count++;
+    if (at < len) at++;                               /* the '|' */
+  }
   return BCIR_EMIT_OK;
 }
 
 static bcir_emit_status plan_read_node(plan_build *b, uint32_t *out_index, uint32_t depth) {
-  size_t start = 0, len = 0;
+  size_t start = 0, len = 0, enum_start = 0, enum_len = 0;
   uint32_t self, members = 0, element = 0, universal = 0, i;
-  uint8_t kind = 0;
+  uint8_t kind = 0, extensible = 0;
 
   if (depth > BCIR_EMIT_MAX_PLAN_DEPTH) return plan_fail(b, BCIR_EMIT_TOO_DEEP);
   len = plan_token(&b->r, &start);
@@ -235,30 +271,40 @@ static bcir_emit_status plan_read_node(plan_build *b, uint32_t *out_index, uint3
   if (!plan_field(&b->r, "element", &start, &len) ||
       !plan_uint(b->r.text + start, len, &element))
     return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+  (void)plan_field(&b->r, "type", &start, &len);  /* identity, not structure */
+  if (!plan_field(&b->r, "enum", &enum_start, &enum_len))
+    return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+  if (!plan_field(&b->r, "ext", &start, &len) || len != 1)
+    return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+  extensible = (uint8_t)(b->r.text[start] == '1');
   plan_next_line(&b->r);
 
-  if (b->node_count >= b->node_cap) return plan_fail(b, BCIR_EMIT_PLAN_TOO_BIG);
+  if (b->node_count >= b->t.node_cap) return plan_fail(b, BCIR_EMIT_PLAN_TOO_BIG);
   self = b->node_count++;
-  b->nodes[self].kind = kind;
-  b->nodes[self].universal = universal;
-  b->nodes[self].member_count = members;
-  b->nodes[self].first_member = b->member_count;
-  b->nodes[self].element = -1;
-  b->nodes[self].constraint = -1;
+  b->t.nodes[self].kind = kind;
+  b->t.nodes[self].extensible = extensible;
+  b->t.nodes[self].universal = universal;
+  b->t.nodes[self].member_count = members;
+  b->t.nodes[self].first_member = b->member_count;
+  b->t.nodes[self].element = -1;
+  b->t.nodes[self].constraint = -1;
 
   {
-    bcir_emit_status status = plan_read_constraint(b, self);
+    /* `enum_start` points into the descriptor text, which outlives the parse. */
+    bcir_emit_status status = plan_read_enum(b, self, b->r.text + enum_start, enum_len);
+    if (status != BCIR_EMIT_OK) return status;
+    status = plan_read_constraint(b, self);
     if (status != BCIR_EMIT_OK) return status;
   }
 
   if (members > 0) {
-    if (members > b->member_cap - b->member_count) return plan_fail(b, BCIR_EMIT_PLAN_TOO_BIG);
+    if (members > b->t.member_cap - b->member_count) return plan_fail(b, BCIR_EMIT_PLAN_TOO_BIG);
     b->member_count += members;
   }
 
   for (i = 0; i < members; i++) {
-    uint32_t slot = b->nodes[self].first_member + i, value = 0, child = 0;
-    bcir_emit_member *m = &b->members[slot];
+    uint32_t slot = b->t.nodes[self].first_member + i, value = 0, child = 0;
+    bcir_emit_member *m = &b->t.members[slot];
     bcir_emit_status status;
     size_t n;
 
@@ -296,25 +342,22 @@ static bcir_emit_status plan_read_node(plan_build *b, uint32_t *out_index, uint3
 
     status = plan_read_node(b, &child, depth + 1);
     if (status != BCIR_EMIT_OK) return status;
-    b->members[slot].node = child;
+    b->t.members[slot].node = child;
   }
 
   if (element) {
     uint32_t child = 0;
     bcir_emit_status status = plan_read_node(b, &child, depth + 1);
     if (status != BCIR_EMIT_OK) return status;
-    b->nodes[self].element = (int32_t)child;
+    b->t.nodes[self].element = (int32_t)child;
   }
 
   *out_index = self;
   return BCIR_EMIT_OK;
 }
 
-bcir_emit_status bcir_emit_parse_plan(const char *text, size_t len, bcir_emit_node *nodes,
-                                      uint32_t node_cap, bcir_emit_member *members,
-                                      uint32_t member_cap,
-                                      bcir_emit_constraint *constraints,
-                                      uint32_t constraint_cap, bcir_emit_plan *out,
+bcir_emit_status bcir_emit_parse_plan(const char *text, size_t len,
+                                      const bcir_emit_tables *tables, bcir_emit_plan *out,
                                       bcir_emit_diag *diag) {
   plan_build b;
   size_t start = 0, tok;
@@ -323,14 +366,18 @@ bcir_emit_status bcir_emit_parse_plan(const char *text, size_t len, bcir_emit_no
   int i;
 
   if (diag) { diag->status = BCIR_EMIT_OK; diag->offset = 0; diag->needed = 0; }
-  if (!text || !nodes || !members || !out) return BCIR_EMIT_PLAN_MALFORMED;
-  /* A null constraint table with a nonzero capacity would be a caller error that only shows
-   * up on the first constrained schema, so it is refused up front rather than trusted. */
-  if (!constraints && constraint_cap != 0) return BCIR_EMIT_PLAN_MALFORMED;
+  if (!text || !tables || !out) return BCIR_EMIT_PLAN_MALFORMED;
+  if (!tables->nodes || !tables->members) return BCIR_EMIT_PLAN_MALFORMED;
+  /* A null table with a nonzero capacity is a caller error that would otherwise surface
+   * only on the first schema needing it, so it is refused up front rather than trusted. */
+  if (!tables->constraints && tables->constraint_cap != 0) return BCIR_EMIT_PLAN_MALFORMED;
+  if (!tables->enums && tables->enum_cap != 0) return BCIR_EMIT_PLAN_MALFORMED;
   b.r.text = text; b.r.len = len; b.r.at = 0;
-  b.nodes = nodes; b.node_cap = node_cap; b.node_count = 0;
-  b.members = members; b.member_cap = member_cap; b.member_count = 0;
-  b.constraints = constraints; b.constraint_cap = constraint_cap; b.constraint_count = 0;
+  b.t = *tables;
+  b.node_count = 0;
+  b.member_count = 0;
+  b.constraint_count = 0;
+  b.enum_count = 0;
   b.diag = diag;
 
   tok = plan_token(&b.r, &start);
@@ -345,12 +392,14 @@ bcir_emit_status bcir_emit_parse_plan(const char *text, size_t len, bcir_emit_no
 
   status = plan_read_node(&b, &root, 0);
   if (status != BCIR_EMIT_OK) return status;
-  out->nodes = nodes;
+  out->nodes = b.t.nodes;
   out->node_count = b.node_count;
-  out->members = members;
+  out->members = b.t.members;
   out->member_count = b.member_count;
-  out->constraints = constraints;
+  out->constraints = b.t.constraints;
   out->constraint_count = b.constraint_count;
+  out->enums = b.t.enums;
+  out->enum_count = b.enum_count;
   out->root = root;
   return BCIR_EMIT_OK;
 }
@@ -1050,9 +1099,31 @@ static int jer_node(emit_ctx *c, uint32_t node_index, uint32_t depth) {
       else { put(c, 'f'); put(c, 'a'); put(c, 'l'); put(c, 's'); put(c, 'e'); }
       return 1;
     case BCIR_EMIT_INTEGER:
-    case BCIR_EMIT_ENUMERATED:
       if (!rd_u8(c, &byte) || !rd_take(c, byte, &data)) return 0;
       return put_int_decimal(c, data, byte);
+    case BCIR_EMIT_ENUMERATED: {
+      /* 22.2: the JSON string denotes "the identifier of the chosen enumeration item".
+       * NOT the number -- X.690 8.4 encodes the number and X.697 deliberately does not,
+       * which is why the plan carries the identifiers at all. Sharing this branch with
+       * INTEGER emitted `4` where the standard requires `"red"`. */
+      int64_t value = 0;
+      uint32_t k;
+      if (!rd_u8(c, &byte) || !rd_take(c, byte, &data)) return 0;
+      if (byte == 0 || byte > 8) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+      value = (data[0] & 0x80u) ? -1 : 0;              /* sign-extend, then shift in */
+      for (i = 0; i < byte; i++) value = (int64_t)(((uint64_t)value << 8) | data[i]);
+      for (k = 0; k < node->enum_count; k++) {
+        const bcir_emit_enum_item *item = &c->plan->enums[node->first_enum + k];
+        if (item->number != value) continue;
+        put(c, '"');
+        put_bytes(c, (const uint8_t *)item->name, item->name_len);
+        put(c, '"');
+        return 1;
+      }
+      /* 22.1 gives an enumerated value no numeric spelling, so there is nothing to fall
+       * back to: a number outside the enumeration has no JER document at all. */
+      return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+    }
     case BCIR_EMIT_NULL:
       put(c, 'n'); put(c, 'u'); put(c, 'l'); put(c, 'l');
       return 1;

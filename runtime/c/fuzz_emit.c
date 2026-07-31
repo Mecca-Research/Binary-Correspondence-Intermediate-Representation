@@ -24,6 +24,7 @@
 #define FUZZ_NODES 64
 #define FUZZ_MEMBERS 64
 #define FUZZ_CONSTRAINTS 64
+#define FUZZ_ENUMS 64
 #define FUZZ_SCRATCH 256
 #define FUZZ_OUT 4096
 
@@ -33,9 +34,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   static bcir_emit_node nodes[FUZZ_NODES];
   static bcir_emit_member members[FUZZ_MEMBERS];
   static bcir_emit_constraint constraints[FUZZ_CONSTRAINTS];
+  static bcir_emit_enum_item enums[FUZZ_ENUMS];
   static uint32_t scratch[FUZZ_SCRATCH];
   static uint8_t out[FUZZ_OUT];
   bcir_emit_plan plan;
+  bcir_emit_tables tables;
   bcir_emit_diag diag;
   bcir_emit_rules rules;
   size_t plan_len, written = 0;
@@ -53,9 +56,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   plan_len = ((size_t)(control >> 2) * size) / 64u;
   if (plan_len > size) plan_len = size;
 
-  if (bcir_emit_parse_plan((const char *)data, plan_len, nodes, FUZZ_NODES, members,
-                           FUZZ_MEMBERS, constraints, FUZZ_CONSTRAINTS, &plan,
-                           &diag) != BCIR_EMIT_OK)
+  tables.nodes = nodes;             tables.node_cap = FUZZ_NODES;
+  tables.members = members;         tables.member_cap = FUZZ_MEMBERS;
+  tables.constraints = constraints; tables.constraint_cap = FUZZ_CONSTRAINTS;
+  tables.enums = enums;             tables.enum_cap = FUZZ_ENUMS;
+  if (bcir_emit_parse_plan((const char *)data, plan_len, &tables, &plan, &diag) !=
+      BCIR_EMIT_OK)
     return 0;
 
   /* The return value is deliberately ignored: every status is a legitimate answer here.

@@ -558,13 +558,50 @@ The extension-root bounds and the permitted alphabet are PER's alone and nothing
 yet. A field nothing reads is a field nothing checks, so the C driver reads the parsed table
 back and the differential compares it against the compiler that wrote it.
 
-**What still stands between this plan and a PER emitter** is no longer about constraints. It
-is three schema facts version 3 does not carry: extensibility of a SEQUENCE, a CHOICE and an
-ENUMERATED (X.691 §19.1, §23.5, §14.3 each emit a leading bit for it); the enumeration's
-*numbers*, since §14.1 encodes an ENUMERATED as its index into the root sorted ascending;
-and extension additions, which `_compile_members` refuses outright because §19.7 splits root
-from additions and X.690 does not. Those belong to one further version alongside the emitter
-that reads them, rather than dribbling in as fields nothing consumes.
+#### 6.2.2 Plan version 4 — and a third bug of the same family
+
+Writing the test for the ENUMERATED defect turned up a **third**, in the same place and for
+the same reason. X.697 §22.2 spells an enumerated value as *"the identifier of the chosen
+enumeration item"*, and §22.1 gives it **no numeric spelling at all**. X.690 §8.4 encodes the
+number. The two rules disagree by design, and the plan-driven JER emitter shared a branch
+with INTEGER — so it wrote `4` where the standard requires `"red"`, a document no JER decoder
+can map back to an enumeration item.
+
+This one could not be fixed in the emitter. The identifier is **not derivable** from the
+number, so a plan that dropped the enumeration made the correct output unreachable however
+careful the emitter was. Version 4 records the enumeration as `(identifier, number)` pairs,
+and a bare ENUMERATED — which X.690 and X.696 encode happily from the number alone — is now
+**refused at compile time**, because one plan drives four emitters and two of them need what
+a number cannot supply.
+
+Version 4 also records the **extension marker** on a SEQUENCE, a CHOICE and an ENUMERATED.
+X.691 §19.1, §23.5 and §14.3 each emit a leading bit for it, so two schemas differing only
+there encode differently under PER and identically under everything else.
+
+The C reader's four caller-owned tables now arrive as one `bcir_emit_tables` struct rather
+than as pointer/capacity pairs. The parameter list grew twice while the format did, and a
+positional argument inserted mid-list is precisely the mis-assignment the version check
+exists to catch.
+
+**What still stands between this plan and a PER emitter is one thing: extension additions.**
+`_compile_members` refuses a component marked `extension`, because X.691 §19.7 splits the
+root from the additions and X.690 does not — one plan cannot describe both until the emitter
+that needs the split exists. Everything else X.691 reads is now in the descriptor.
+
+#### 6.2.3 What three bugs in one place are actually evidence of
+
+All three were found by *adding a construct to the corpus*, not by reading the code. Each had
+survived every parity test, every fuzz run and every `-O0 == -O3` differential, because the
+corpus contained no constrained type and no ENUMERATED — and **a construct absent from the
+corpus is untested however many tests run over it.**
+
+The dual-rail differential made it worse rather than better in one specific way: the C twin's
+expectations come from E1's Python emitter, while E1's parity with the oracle is asserted
+separately over `_CORPUS`. A construct present in one corpus and absent from the other lets
+**both rails agree on a wrong answer**, which is exactly what happened to the JER enumerated.
+`test_the_twin_agrees_with_the_oracle_and_not_merely_with_the_python_rail` now takes the
+expectation from the oracle for every case the constrained corpus adds, which closes that
+loop rather than widening the corpus and hoping.
 
 ### 6.3 StreamPack and BCAB
 

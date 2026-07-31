@@ -26,7 +26,7 @@ import tempfile
 
 from bcir.asn1.codec import NULL, Oid
 from bcir.asn1.emit import EmitRules, emit, flatten
-from bcir.asn1.encode_plan import compile_encode_plan
+from bcir.asn1.encode_plan import PLAN_VERSION, compile_encode_plan
 from bcir.asn1.schema import Choice, Component, Primitive, Sequence, SequenceOf
 from bcir.asn1.tags import Universal
 
@@ -274,8 +274,6 @@ def test_a_plan_of_another_version_is_refused_rather_than_read_hopefully():
     """
     if not _available():
         return
-    from bcir.asn1.encode_plan import PLAN_VERSION
-
     plan = compile_encode_plan(_seq(Component("a", _I)), module="Test", type_name="v")
     current = f"plan-version {PLAN_VERSION}".encode("ascii")
     assert plan.serialize().startswith(current), plan.serialize()[:32]
@@ -403,6 +401,11 @@ _CONSTRAINED = (
 )
 
 
+#: An enumeration whose identifiers exercise the descriptor's `name:number|...` field: a
+#: hyphen (X.680 12.4 allows it), a negative number, and a number past the short form.
+_ENUM = (("five", 5), ("two-hundred", 200), ("minus-one", -1))
+
+
 def _constrained_cases():
     """Build the constrained corpus. Imported lazily so the module stays cheap to import."""
     from bcir.asn1.constraints import Extensible, PermittedAlphabet, Size, ValueRange
@@ -430,12 +433,23 @@ def _constrained_cases():
          _seq(Component("v", Primitive(Universal.IA5_STRING, "A",
                                        constraint=PermittedAlphabet(
                                            ValueRange("0", "9"))))), {"v": "019"}),
+        # Version 4: an ENUMERATED needs its enumeration, because X.697 22.2 spells the
+        # value as the IDENTIFIER and X.691 14.1 indexes the root. The three rows below are
+        # X.696 11.3's short form, 11.4's long form and 11.4's SIGNED body.
         ("an ENUMERATED, short form", _seq(Component("v", Primitive(
-            Universal.ENUMERATED, "E"))), {"v": 5}),
+            Universal.ENUMERATED, "E", enumeration=_ENUM))), {"v": 5}),
         ("an ENUMERATED, long form", _seq(Component("v", Primitive(
-            Universal.ENUMERATED, "E"))), {"v": 200}),
+            Universal.ENUMERATED, "E", enumeration=_ENUM))), {"v": 200}),
         ("a negative ENUMERATED", _seq(Component("v", Primitive(
-            Universal.ENUMERATED, "E"))), {"v": -1}),
+            Universal.ENUMERATED, "E", enumeration=_ENUM))), {"v": -1}),
+        ("an extensible ENUMERATED", _seq(Component("v", Primitive(
+            Universal.ENUMERATED, "E", enumeration=_ENUM, enum_extensible=True))),
+         {"v": 5}),
+        ("an extensible SEQUENCE", Sequence(
+            (Component("a", _I),), name="X", extensible=True), {"a": 1}),
+        ("an extensible CHOICE", _seq(Component("v", Choice(
+            (Component("num", _I, tag=0),), name="C", extensible=True), tag=5,
+            explicit=True)), {"v": ("num", 7)}),
         ("a constrained integer inside a SEQUENCE OF",
          _seq(Component("v", SequenceOf(Primitive(Universal.INTEGER, "I",
                                                   constraint=ValueRange(0, 255)), "S"))),
@@ -531,6 +545,67 @@ def test_the_c_reader_stores_every_constraint_field_the_compiler_wrote():
         assert alphabet == want.alphabet, label
 
 
+def test_the_twin_agrees_with_the_oracle_and_not_merely_with_the_python_rail():
+    """The differential's blind spot, closed.
+
+    Every case above compares the C twin against E1's Python emitter, and E1's parity with
+    the oracle is asserted separately over `_CORPUS` — which contains no constrained type and
+    no ENUMERATED. So a construct present here and absent there could have both rails
+    agreeing on a wrong answer, and one did: the JER emitter wrote an enumerated as a number
+    on both rails, and the C differential passed.
+
+    This closes the loop by taking the expectation from the ORACLE for every case the
+    constrained corpus adds.
+    """
+    if not _available():
+        return
+    from bcir.asn1.codec import encode_tlv
+    from bcir.asn1.jer import encode_jer
+    from bcir.asn1.oer import encode_oer
+
+    for label, kind, value in _constrained_cases():
+        plan = compile_encode_plan(kind, module="Test", type_name=label)
+        stream = flatten(plan, value)
+        assert emit(plan, stream, rules=EmitRules.DER) == encode_tlv(kind.encode(value)), label
+        assert emit(plan, stream, rules=EmitRules.JER) == encode_jer(kind, value), label
+        assert emit(plan, stream, rules=EmitRules.COER) == encode_oer(kind, value), label
+
+
+def test_the_c_reader_stores_the_enumeration_and_the_extension_marker():
+    """Version 4's two fields, read back off the parsed table.
+
+    The extension marker is PER's and nothing emits it yet, so the same argument applies as
+    for the constraint's root bounds: a field nothing reads is a field nothing checks. The
+    enumeration IS read — by the JER emitter — but its numbers are PER's, and a reader that
+    stored the names and dropped the numbers would pass every JER test.
+    """
+    if not _available():
+        return
+    cases = [
+        ("a plain enumeration", Primitive(Universal.ENUMERATED, "E", enumeration=_ENUM),
+         False),
+        ("an extensible enumeration",
+         Primitive(Universal.ENUMERATED, "E", enumeration=_ENUM, enum_extensible=True),
+         True),
+    ]
+    lines, expect = [], []
+    for label, kind, extensible in cases:
+        plan = compile_encode_plan(_seq(Component("v", kind)), module="Test",
+                                   type_name=label)
+        lines.append("plan " + plan.serialize().hex())
+        lines.append("enum 1")
+        expect.append((label, kind.enumeration, extensible))
+    with tempfile.TemporaryDirectory() as tmp:
+        replies = [line for line in _drive(_build(tmp), lines) if line != "ok"]
+    assert len(replies) == len(expect), f"{len(replies)} replies for {len(expect)} cases"
+    for (label, enumeration, extensible), reply in zip(expect, replies):
+        assert reply.startswith("ok "), f"{label}: {reply}"
+        fields = reply[3:].split()
+        assert fields[0] == ("1" if extensible else "0"), label
+        got = tuple((item.split(":")[0], int(item.split(":")[1])) for item in fields[1:])
+        assert got == enumeration, f"{label}: {got} != {enumeration}"
+
+
 def test_an_unconstrained_node_records_no_constraint_at_all():
     """The format's cost is proportional to what it says.
 
@@ -545,7 +620,7 @@ def test_an_unconstrained_node_records_no_constraint_at_all():
     plan = compile_encode_plan(kind, module="Test", type_name="free")
     text = plan.serialize().decode("utf-8")
     assert "constraint" not in text, text
-    assert text.startswith("plan-version 3\n")
+    assert text.startswith(f"plan-version {PLAN_VERSION}\n")
     with tempfile.TemporaryDirectory() as tmp:
         replies = _drive(_build(tmp), ["plan " + plan.serialize().hex(), "constraint 1"])
     assert replies[1] == "ok none", replies

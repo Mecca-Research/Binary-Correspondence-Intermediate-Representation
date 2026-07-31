@@ -11,6 +11,7 @@
  *   emitcap <rules> <cap> <hex>   the same with a deliberately small output buffer
  *   scratchcap <n>                cap the size scratch, to exercise SCRATCH_SHORT
  *   constraint <node>             read back what the parser stored for one node
+ *   enum <node>                   read back a node's extension marker and enumeration
  *
  * `constraint` exists because plan version 3 records more than any emitter here consumes
  * yet: the X.691 extension-root bounds and the permitted alphabet are PER's, and PER's
@@ -33,6 +34,7 @@
 #define MAX_NODES 512
 #define MAX_MEMBERS 512
 #define MAX_CONSTRAINTS 64
+#define MAX_ENUMS 128
 #define MAX_OUT (1 << 20)
 #define MAX_SCRATCH 8192
 
@@ -74,7 +76,9 @@ int main(void) {
   static bcir_emit_node nodes[MAX_NODES];
   static bcir_emit_member members[MAX_MEMBERS];
   static bcir_emit_constraint constraints[MAX_CONSTRAINTS];
+  static bcir_emit_enum_item enums[MAX_ENUMS];
   bcir_emit_plan plan;
+  bcir_emit_tables tables;
   bcir_emit_diag diag;
   int have_plan = 0;
   size_t scratch_cap = MAX_SCRATCH;
@@ -90,9 +94,11 @@ int main(void) {
       if (sscanf(line, "%31s %s", op, hex) != 2) { printf("err 1 0 0\n"); continue; }
       len = unhex(hex, text, sizeof(text));
       if (len < 0) { printf("err 1 0 0\n"); continue; }
-      status = bcir_emit_parse_plan((const char *)text, (size_t)len, nodes, MAX_NODES,
-                                    members, MAX_MEMBERS, constraints, MAX_CONSTRAINTS,
-                                    &plan, &diag);
+      tables.nodes = nodes;             tables.node_cap = MAX_NODES;
+      tables.members = members;         tables.member_cap = MAX_MEMBERS;
+      tables.constraints = constraints; tables.constraint_cap = MAX_CONSTRAINTS;
+      tables.enums = enums;             tables.enum_cap = MAX_ENUMS;
+      status = bcir_emit_parse_plan((const char *)text, (size_t)len, &tables, &plan, &diag);
       if (status != BCIR_EMIT_OK) {
         printf("err %d %lu %lu\n", (int)status, (unsigned long)diag.offset,
                (unsigned long)diag.needed);
@@ -131,6 +137,25 @@ int main(void) {
       printf(" %u %u ", (unsigned)k->value_extensible, (unsigned)k->size_extensible);
       if (k->alphabet_len == 0) printf("-");
       else print_hex((const unsigned char *)k->alphabet, k->alphabet_len);
+      printf("\n");
+      continue;
+    }
+
+    if (strcmp(op, "enum") == 0) {
+      unsigned long index = 0;
+      const bcir_emit_node *node;
+      uint32_t k;
+      if (sscanf(line, "%31s %lu", op, &index) != 2 || !have_plan ||
+          index >= plan.node_count) {
+        printf("err 1 0 0\n");
+        continue;
+      }
+      node = &plan.nodes[index];
+      printf("ok %u", (unsigned)node->extensible);
+      for (k = 0; k < node->enum_count; k++) {
+        const bcir_emit_enum_item *item = &plan.enums[node->first_enum + k];
+        printf(" %.*s:%lld", (int)item->name_len, item->name, (long long)item->number);
+      }
       printf("\n");
       continue;
     }
