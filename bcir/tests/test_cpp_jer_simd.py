@@ -225,28 +225,82 @@ def test_the_rail_is_faster_on_the_documents_it_targets():
     assert scalar / best > 2.0, f"only {scalar / best:.1f}x on an all-ASCII document"
 
 
-def test_the_rail_buys_nothing_once_a_multi_byte_octet_appears_early():
-    """The limitation, pinned rather than buried in a docstring.
+def test_one_multi_byte_octet_no_longer_costs_the_whole_document():
+    """The defect this test was originally written to pin, now fixed — and still pinned.
 
-    The first non-ASCII octet hands the REST of the document to the scalar rail, so the
-    acceleration is proportional to the ASCII prefix and a document whose first multi-byte
-    sequence is near the front sees no gain at all. That is the cost of refusing to write a
-    second UTF-8 implementation, and it is a cost worth naming: someone measuring
-    non-Latin-script JER will see 1.0x and should find this test rather than a surprise.
+    The first version handed everything from the first non-ASCII octet to the END of the
+    document to the scalar rail, so a single `café` near the front cost a 29 KB document
+    its entire acceleration: 1.00x. The runs now ALTERNATE, so the ASCII either side of a
+    short multi-byte stretch is still vectorized.
+
+    This is asserted as a *ratio against the all-ASCII case* rather than an absolute
+    speedup, because that is the property that regressed before: an early accent must not
+    collapse the document to scalar. A generous bound, since the claim is "the cliff is
+    gone", not "the number is exactly this".
     """
     if not _available():
         return
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
-        # Non-ASCII in the very first node: essentially the whole document goes scalar.
+        clean = _ascii_document()
         early = _ascii_document().replace(b'"add"', '"café"'.encode(), 1)
-        scalar = _median_ns(binary, "scalar", early)
-        best = _median_ns(binary, "auto", early)
-    ratio = scalar / best if best else 0.0
-    assert 0.5 < ratio < 1.6, (
-        f"an early multi-byte octet gave {ratio:.2f}x; the rail is expected to be neither "
-        f"faster nor materially slower there, and a large number either way means the "
-        f"fallback boundary moved")
+        clean_gain = _median_ns(binary, "scalar", clean) / _median_ns(binary, "auto", clean)
+        early_gain = _median_ns(binary, "scalar", early) / _median_ns(binary, "auto", early)
+    assert early_gain > 2.0, (
+        f"one multi-byte octet dropped the speedup to {early_gain:.2f}x; the alternating "
+        f"walk regressed to a single hand-off")
+    assert early_gain > clean_gain * 0.4, (
+        f"an early accent cost {clean_gain:.1f}x -> {early_gain:.1f}x; the two should be "
+        f"close, because only the short multi-byte run goes scalar")
+
+
+def test_multi_byte_text_does_not_regress_against_the_scalar_rail():
+    """Heavy multi-byte text gains too, but the gain is small — so this asserts NO REGRESSION.
+
+    Measured on an idle host (§7.3): 2.43× on accented text, 2.74× on CJK, 1.46× on emoji.
+    Those are real, and they are also too small to assert on a shared runner: this test
+    originally required >1.2× and failed under `-j 2` while the same binary measured 2.4×
+    standalone. §8 settles what to do about that — *"shared CI gates validity and trend
+    evidence, not noisy timing thresholds"* — so the threshold moves to the claim contention
+    cannot fake.
+
+    **No regression is still a real claim.** The alternating walk adds run-detection work to
+    every multi-byte stretch; if that overhead exceeded what it saves, heavy multi-byte
+    documents would be *slower* than plain scalar, and this is what would catch it. The
+    speedups themselves live in §7.3 with the host they were measured on, which is where a
+    performance number belongs.
+    """
+    if not _available():
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = _build(tmp)
+        for label, replacement in (("cjk", "日本語のテキスト"), ("accents", "café"),
+                                   ("emoji", "\U0001f600\U0001f601")):
+            document = _ascii_document().replace(b'"add"', replacement.encode())
+            gain = (_median_ns(binary, "scalar", document)
+                    / _median_ns(binary, "auto", document))
+            assert gain > 0.75, (
+                f"{label}: {gain:.2f}x — the vector rail is materially SLOWER than scalar on "
+                f"multi-byte text, so run detection is costing more than it saves")
+
+
+def test_the_adapter_contains_no_utf8_decision_of_its_own():
+    """Structural: the only verdict-producing call is into the scalar rail.
+
+    A word search would be the wrong check — it flags prose explaining the absence. This
+    counts what the adapter actually *calls*: `bcir_jer_validate_utf8` must be the only
+    function it invokes that can return a status, so a future contributor who adds a local
+    validator trips this rather than passing the differential by luck.
+    """
+    source = open(os.path.join(_CPP, "bcir_jer_simd.cpp"), encoding="utf-8").read()
+    body = "\n".join(line for line in source.splitlines()
+                     if not line.strip().startswith("*") and "/*" not in line)
+    # Every producer of a bcir_jer_status in the adapter is the scalar rail or a dispatcher.
+    assert "bcir_jer_validate_utf8(" in body
+    for invented in ("0x80 && data[", "continuation", "overlong", "0xC2", "0xF4"):
+        assert invented not in body, (
+            f"the adapter references {invented!r}, which suggests it decides UTF-8 validity "
+            f"itself; that is the second semantics rail §4.1 forbids")
 
 
 def test_the_two_host_clause_of_the_gate_is_unmet_and_recorded_as_unmet():

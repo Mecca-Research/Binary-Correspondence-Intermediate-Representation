@@ -5,18 +5,27 @@
  *
  *   THE ONLY CODE THAT DECIDES WHETHER A DOCUMENT IS VALID UTF-8 IS THE SCALAR RAIL.
  *
- * A vector pass answers one narrower question -- "is this block entirely ASCII?" -- which is
- * decidable by a single comparison and for which the answer "yes" implies "valid UTF-8"
- * with no further reasoning. Every other case is handed to `bcir_jer_validate_utf8`. There
- * is therefore no second UTF-8 implementation to keep in step, and the "same trace" clause
- * of J5's gate holds by construction rather than by testing (it is tested anyway).
+ The vector passes answer only WHERE the ASCII and non-ASCII runs are. They never answer
+ * what is valid: every verdict comes from `bcir_jer_validate_utf8` itself, so there is no
+ * second UTF-8 implementation to keep in step and the "same trace" clause of J5's gate holds
+ * by construction rather than by testing (it is tested anyway).
  *
- * WHY THE TAIL IS RE-VALIDATED FROM A BLOCK BOUNDARY. When a block is not all-ASCII the
- * scalar validator is called on the REST OF THE DOCUMENT, not on that block alone. A
- * multi-byte sequence can straddle a block boundary, so validating block-by-block would
- * split a legal sequence and reject it -- and would report an offset inside a valid
- * character. Resuming at the boundary and running to the end costs the tail once and cannot
- * be wrong.
+ * WHY ALTERNATING RUNS ARE SOUND, AND WHY NO SECOND VALIDATOR IS NEEDED. The obvious way to
+ * accelerate multi-byte text is to vectorize UTF-8 validation itself. That would be a second
+ * definition of "valid UTF-8", which is the risk 8's table names -- and a bug in the fast one
+ * produces a WRONG ACCEPT, the silent failure.
+ *
+ * It is also unnecessary. An ASCII octet can never be a CONTINUATION octet, because
+ * continuations are 0x80-0xBF. So the next ASCII octet is always a sequence boundary, and no
+ * legal multi-byte sequence can span it. That means [first non-ASCII, next ASCII) can be
+ * handed to the scalar rail IN ISOLATION and yields exactly the answer validating it in
+ * context would -- including for a truncated sequence, which is invalid either way. So the
+ * two runs alternate, each vectorized, and the scalar rail sees only the short multi-byte
+ * stretches.
+ *
+ * The earlier version handed everything from the first non-ASCII octet to the END of the
+ * document to scalar, so one "cafe" near the front cost a 29 KB document its entire
+ * acceleration.
  *===----------------------------------------------------------------------===*/
 #include "bcir_jer_simd.h"
 
@@ -73,23 +82,76 @@ size_t ascii_run_neon(const uint8_t *data, size_t len) {
 }
 #endif
 
-size_t ascii_run_scalar(const uint8_t *data, size_t len) {
-  size_t at = 0;
+/* The vector helpers stop at a BLOCK boundary, which is a lower bound rather than the exact
+ * position. Both runs are finished by a scalar loop of at most one block, because the
+ * alternation below needs each run to be EXACT: a run that stopped early while still on its
+ * own class would make no progress and spin. */
+size_t ascii_run(bcir_jer_simd_tier tier, const uint8_t *data, size_t len) {
+  size_t at;
+  switch (tier) {
+#if defined(BCIR_SIMD_X86)
+    case BCIR_JER_SIMD_AVX2: at = ascii_run_avx2(data, len); break;
+    case BCIR_JER_SIMD_SSE2: at = ascii_run_sse2(data, len); break;
+#endif
+#if defined(BCIR_SIMD_ARM)
+    case BCIR_JER_SIMD_NEON: at = ascii_run_neon(data, len); break;
+#endif
+    default: at = 0; break;
+  }
   while (at < len && data[at] < 0x80) at++;
   return at;
 }
 
-size_t ascii_run(bcir_jer_simd_tier tier, const uint8_t *data, size_t len) {
+/* The mirror image: how far the NON-ASCII run extends. Vectorized for the same reason the
+ * ASCII run is -- a long CJK or emoji stretch is exactly the case the old code sent to
+ * scalar one octet at a time. */
+#if defined(BCIR_SIMD_X86)
+size_t nonascii_run_sse2(const uint8_t *data, size_t len) {
+  size_t at = 0;
+  for (; at + 16 <= len; at += 16) {
+    __m128i block = _mm_loadu_si128(reinterpret_cast<const __m128i *>(data + at));
+    /* Every lane's sign bit set means every octet is >= 0x80. */
+    if (_mm_movemask_epi8(block) != 0xFFFF) return at;
+  }
+  return at;
+}
+
+__attribute__((target("avx2"))) size_t nonascii_run_avx2(const uint8_t *data, size_t len) {
+  size_t at = 0;
+  for (; at + 32 <= len; at += 32) {
+    __m256i block = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(data + at));
+    if (_mm256_movemask_epi8(block) != -1) return at;
+  }
+  return at + nonascii_run_sse2(data + at, len - at);
+}
+#endif
+
+#if defined(BCIR_SIMD_ARM)
+size_t nonascii_run_neon(const uint8_t *data, size_t len) {
+  size_t at = 0;
+  for (; at + 16 <= len; at += 16) {
+    uint8x16_t block = vld1q_u8(data + at);
+    /* An all-non-ASCII block has a MINIMUM at or above 0x80. */
+    if (vminvq_u8(block) < 0x80) return at;
+  }
+  return at;
+}
+#endif
+
+size_t nonascii_run(bcir_jer_simd_tier tier, const uint8_t *data, size_t len) {
+  size_t at;
   switch (tier) {
 #if defined(BCIR_SIMD_X86)
-    case BCIR_JER_SIMD_AVX2: return ascii_run_avx2(data, len);
-    case BCIR_JER_SIMD_SSE2: return ascii_run_sse2(data, len);
+    case BCIR_JER_SIMD_AVX2: at = nonascii_run_avx2(data, len); break;
+    case BCIR_JER_SIMD_SSE2: at = nonascii_run_sse2(data, len); break;
 #endif
 #if defined(BCIR_SIMD_ARM)
-    case BCIR_JER_SIMD_NEON: return ascii_run_neon(data, len);
+    case BCIR_JER_SIMD_NEON: at = nonascii_run_neon(data, len); break;
 #endif
-    default: return ascii_run_scalar(data, len);
+    default: at = 0; break;
   }
+  while (at < len && data[at] >= 0x80) at++;
+  return at;
 }
 
 bcir_jer_simd_tier detect() {
@@ -109,25 +171,42 @@ bcir_jer_simd_tier detect() {
 
 bcir_jer_status validate(bcir_jer_simd_tier tier, const uint8_t *data, size_t len,
                          bcir_jer_diag *diag) {
-  size_t skipped;
+  size_t at = 0;
   if (data == nullptr || len == 0) return bcir_jer_validate_utf8(data, len, diag);
 
-  skipped = ascii_run(tier, data, len);
-  if (skipped == len) {
-    /* Every octet was ASCII. Still call the scalar rail on the empty remainder so the
-     * `diag` this returns is written by the same code that writes it on every other path
-     * -- a success whose diagnostic was filled in by a different function is exactly the
-     * drift this file exists to avoid. */
-    return bcir_jer_validate_utf8(data + len, 0, diag);
-  }
+  /* ALTERNATE rather than hand off once. The first version sent everything from the first
+   * non-ASCII octet to the END of the document to scalar, so one "café" near the front cost
+   * a 29 KB document its entire acceleration. Alternating restores it.
+   *
+   * WHY SPLITTING HERE IS SOUND, and why it needs no second UTF-8 implementation: an ASCII
+   * octet can never be a CONTINUATION octet, because continuations are 0x80-0xBF. So the
+   * next ASCII octet is always a sequence boundary, and no legal multi-byte sequence can
+   * span it. Validating [first non-ASCII, next ASCII) in isolation therefore yields exactly
+   * the answer validating it in context would -- including for a truncated sequence, which
+   * is invalid either way.
+   *
+   * Every verdict still comes from `bcir_jer_validate_utf8` itself. This function decides
+   * only WHERE to look, never WHAT is valid. */
+  while (at < len) {
+    size_t run_end;
+    bcir_jer_status status;
 
-  /* From the first non-ASCII octet to the end, scalar. The offset the scalar rail reports
-   * is relative to what it was handed, so it is rebased onto the whole document. */
-  {
-    bcir_jer_status status = bcir_jer_validate_utf8(data + skipped, len - skipped, diag);
-    if (status != BCIR_JER_OK && diag != nullptr) diag->offset += skipped;
-    return status;
+    at += ascii_run(tier, data + at, len - at);
+    if (at == len) break;
+
+    run_end = at + nonascii_run(tier, data + at, len - at);
+    status = bcir_jer_validate_utf8(data + at, run_end - at, diag);
+    if (status != BCIR_JER_OK) {
+      /* The scalar rail's offset is relative to the run it was handed. */
+      if (diag != nullptr) diag->offset += at;
+      return status;
+    }
+    at = run_end;
   }
+  /* The success `diag` is written by the scalar rail too, so a caller cannot tell which
+   * path produced it -- a success whose diagnostic came from different code on different
+   * inputs is exactly the drift this file exists to avoid. */
+  return bcir_jer_validate_utf8(data + len, 0, diag);
 }
 
 }  // namespace

@@ -624,31 +624,47 @@ better one; the acceptance decision is identical, which is what the parity test 
 
 ### 7.3 J5's measurement, and the clause it does not close
 
-The rail is **23.4×** scalar at AVX2 and **15.7×** at SSE2 on a 29 KB ASCII-dominant JER
-document, with non-overlapping order-statistic brackets. It is **1.00×** on a document whose
-first multi-byte octet appears early.
+| document (≈30 KB) | scalar | AVX2 | speedup |
+|---|---|---|---|
+| all ASCII | 28470 ns | 1029 ns | **27.7×** |
+| one accent near the front | 28438 ns | 1138 ns | **25.0×** |
+| an accent in every node | 36614 ns | 15056 ns | 2.43× |
+| CJK in every node | 75353 ns | 27498 ns | 2.74× |
+| emoji in every node | 19012 ns | 12990 ns | 1.46× |
 
-Both numbers are the design. §4.1 says *"the scalar rail is authoritative for native parser
-correctness. SIMD is an optimization candidate, not a separate semantic implementation."* So
-the vector pass answers only *"is this block entirely ASCII?"* — one comparison settles it,
-and "yes" implies valid UTF-8 with no further reasoning — and hands everything else to
-`bcir_jer_validate_utf8` **itself**, not to a reimplementation of it. There is no second
-UTF-8 implementation to keep in step, which is why the "same trace" clause holds by
-construction rather than only by testing.
+**No second UTF-8 implementation, and that was a design decision rather than a shortcut.**
+The obvious way to accelerate multi-byte text is to vectorize UTF-8 validation itself. That
+would be a second definition of *valid UTF-8* — the risk §8's table names — and a bug in the
+fast one produces a **wrong accept**, the silent failure. §4.1 already settles it: *"the
+scalar rail is authoritative for native parser correctness. SIMD is an optimization
+candidate, not a separate semantic implementation."*
 
-The price is that acceleration is proportional to the ASCII prefix: the first non-ASCII
-octet sends the remainder to scalar. A fully vectorized UTF-8 DFA would accelerate the rest
-too, and would be the second semantics rail §8's risk table names. The 1.00× case is pinned
-by a test so that someone measuring non-Latin-script JER finds the explanation rather than a
-surprise.
+It is also unnecessary. **An ASCII octet can never be a continuation octet**, because
+continuations are `80`–`BF`. So the next ASCII octet is always a sequence boundary, and no
+legal multi-byte sequence can span it — which means `[first non-ASCII, next ASCII)` can be
+handed to the scalar rail *in isolation* and yields exactly the answer validating it in
+context would, including for a truncated sequence, which is invalid either way. The vector
+passes therefore answer only **where the runs are**, never what is valid, and the two runs
+alternate.
+
+*The first version got this wrong in an instructive way.* It handed everything from the
+first non-ASCII octet to the **end** of the document to scalar, so a single `café` near the
+front cost a 29 KB document its entire acceleration: **1.00×**. Alternating restored it to
+25×. The regression is pinned by a test asserting the early-accent ratio against the
+all-ASCII ratio, so a return to a single hand-off fails rather than merely slows down.
 
 **The two-host clause is not met and is not approximated.** J5's gate asks for a
-statistically significant advantage on *at least two hosts*; this measurement is
+statistically significant advantage on *at least two hosts*; the numbers above are
 **single-host** (x86-64, AVX2). §8 is explicit that *"no absolute claim ships without
 reproducible evidence"* and that SIMD is admitted *"on a declared target"*, so a one-machine
-number presented against a two-host gate would be exactly the claim that section refuses. A
-test reads this row and fails if the single-host limitation is dropped without a second host
-being added.
+number presented against a two-host gate would be exactly the claim that section refuses.
+
+The aarch64 CI lane is a second *machine*, and the NEON path is proven **correct** there —
+`tiers 3 neon` resolves and all 489 documents agree with the scalar rail on status and
+offset. It is not a second *measured host*: §8 refuses timing thresholds on shared runners
+("shared CI gates validity and trend evidence, not noisy timing thresholds"), so a
+controlled rig is what closes this clause. A test reads this row and fails if the
+single-host limitation is dropped without one appearing.
 
 ## 8. Validation and performance method
 
