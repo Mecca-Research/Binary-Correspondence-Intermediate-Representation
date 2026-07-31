@@ -365,15 +365,69 @@ def test_an_enumerated_is_not_an_integer_under_oer():
     A construct absent from the corpus is untested however many tests run over the corpus,
     which is why this one names its own values rather than adding a row and hoping.
     """
-    kind = Primitive(Universal.ENUMERATED, "E")
+    wanted = ((0, b"\x00"), (5, b"\x05"), (127, b"\x7f"), (128, b"\x82\x00\x80"),
+              (200, b"\x82\x00\xc8"), (-1, b"\x81\xff"), (-129, b"\x82\xff\x7f"))
+    kind = Primitive(Universal.ENUMERATED, "E",
+                     enumeration=tuple((f"i{index}", value)
+                                       for index, (value, _want) in enumerate(wanted)))
     outer = _seq(Component("v", kind))
     plan = compile_encode_plan(outer, module="Test", type_name="S")
-    for value, want in ((0, b"\x00"), (5, b"\x05"), (127, b"\x7f"),
-                        (128, b"\x82\x00\x80"), (200, b"\x82\x00\xc8"), (-1, b"\x81\xff"),
-                        (-129, b"\x82\xff\x7f")):
+    for value, want in wanted:
         got = emit(plan, flatten(plan, {"v": value}), rules=EmitRules.COER)
         assert got == want, f"{value}: {got.hex()} != {want.hex()}"
         assert got == encode_oer(outer, {"v": value}), value
+
+
+def test_a_jer_enumerated_is_its_identifier_and_never_its_number():
+    """The third defect of the same family: JER shared a branch with INTEGER too.
+
+    X.697 §22.2 spells an enumerated value as "the identifier of the chosen enumeration
+    item", and §22.1 gives it **no numeric spelling at all**. X.690 §8.4 encodes the number,
+    so the two rules disagree by design — and the plan-driven JER emitter wrote the number,
+    producing a document no JER decoder can map back to an enumeration item.
+
+    This is also the reason the plan carries the enumeration: the identifier is not derivable
+    from the number, so no amount of care in the emitter could have covered for a plan that
+    dropped it. Version 4 records it, and a bare ENUMERATED is refused at compile time rather
+    than three emitters downstream.
+    """
+    kind = Primitive(Universal.ENUMERATED, "E",
+                     enumeration=(("red", 4), ("green", 9), ("deep-blue", -3)))
+    outer = _seq(Component("v", kind))
+    plan = compile_encode_plan(outer, module="Test", type_name="S")
+    for value, want in ((4, b'{"v":"red"}'), (9, b'{"v":"green"}'),
+                        (-3, b'{"v":"deep-blue"}')):
+        got = emit(plan, flatten(plan, {"v": value}), rules=EmitRules.JER)
+        assert got == want, f"{value}: {got!r} != {want!r}"
+        assert got == encode_jer(outer, {"v": value}), value
+    # A number outside the enumeration has no JER document, so it is refused rather than
+    # falling back to the numeric spelling §22.1 does not define.
+    try:
+        emit(plan, flatten(plan, {"v": 7}), rules=EmitRules.JER)
+    except Asn1Error as error:
+        assert "§22.1" in str(error), error
+    else:
+        raise AssertionError("a value outside the enumeration produced a JER document")
+
+
+def test_a_bare_enumerated_is_refused_because_two_rules_need_the_identifiers():
+    """One plan drives four emitters, so it must refuse what any one of them cannot encode.
+
+    A bare ENUMERATED looks encodable: X.690 §8.4 and X.696 §11 read the number the value
+    already carries. X.697 §22.2 needs the identifier and X.691 §14.1 needs the whole root to
+    compute an index, and neither is derivable from a number. The oracle's `encode_jer`
+    refuses such a type for exactly this reason; version 3 compiled it happily and the JER
+    emitter wrote the bare number.
+
+    Refusing at compile time keeps the failure where the missing information is.
+    """
+    outer = _seq(Component("v", Primitive(Universal.ENUMERATED, "E")))
+    try:
+        compile_encode_plan(outer, module="Test", type_name="S")
+    except Asn1Error as error:
+        assert "§22.2" in str(error) and "§14.1" in str(error), error
+    else:
+        raise AssertionError("a bare ENUMERATED compiled")
 
 
 def test_the_three_candidates_that_ignore_constraints_still_ignore_them():
@@ -439,37 +493,28 @@ def test_a_constraint_the_plan_cannot_write_down_is_refused_not_truncated():
 
 
 def test_what_still_stands_between_this_plan_and_a_per_emitter():
-    """The remaining PER blockers, as checked facts rather than a plan.
+    """The remaining PER blocker, as a checked fact rather than a plan.
 
-    Version 3 records constraints **completely**: everything X.691 reads off one is in
-    `EncodeConstraint`, including the extension-root bounds and the permitted alphabet that
-    OER never looks at. That was the first blocker and it is gone.
+    Version 3 recorded constraints completely — every field X.691 reads off one, including
+    the extension-root bounds and the permitted alphabet OER never looks at. Version 4 adds
+    the two *schema* facts PER also needs, and both arrived as bug fixes rather than as
+    features: the enumeration, because X.697 §22.2 encodes the identifier and the JER emitter
+    was writing a number; and the extension marker, because X.691 §19.1, §23.5 and §14.3
+    each emit a leading bit for it.
 
-    What is left is not about constraints at all, which is why it is a separate version
-    rather than more fields here:
-
-    1. **Extensibility of a SEQUENCE, a CHOICE and an ENUMERATED.** X.691 §19.1, §23.5 and
-       §14.3 each emit a leading bit for it. The plan has no field for it, and a SEQUENCE
-       that is extensible encodes differently from one that is not even with identical
-       components.
-    2. **The enumeration itself.** X.691 §14.1 encodes an ENUMERATED as its *index* into
-       the root sorted ascending, not as its value — so the plan must carry the numbers.
-       `EncodeNode.enumeration` exists but holds names, which cannot produce an index.
-    3. **Extension additions**, which `_compile_members` refuses outright: X.691 §19.7
-       splits root from additions and X.690 does not.
-
-    These are schema facts rather than constraint facts, and a version that mixes the two
-    would make neither seam meaningful. When they land, this test fails and whoever changed
-    it is building the PER emitter.
+    **One blocker is left: extension additions.** `_compile_members` refuses a component
+    marked `extension`, because X.691 §19.7 splits the root from the additions and X.690
+    does not — one plan cannot describe both until the emitter that needs the split exists.
+    Everything else PER reads is now in the descriptor.
     """
     from bcir.asn1.constraints import ValueRange
     from bcir.asn1.encode_plan import PLAN_VERSION
     from bcir.asn1.per import PerRules, PerVariant, encode_per
 
-    assert PLAN_VERSION == 3, "plan version moved; re-derive what this test asserts"
+    assert PLAN_VERSION == 4, "plan version moved; re-derive what this test asserts"
 
-    # 1. Two SEQUENCEs differing only in extensibility encode differently under PER and
-    #    identically in the plan.
+    # The extension marker: two SEQUENCEs differing only there encode differently under PER,
+    # and the plan now tells them apart. This is the fix, asserted as one.
     plain = Sequence((Component("a", _B),), name="S")
     extensible = Sequence((Component("a", _B),), name="S", extensible=True)
     for variant in (PerVariant.ALIGNED, PerVariant.UNALIGNED):
@@ -477,20 +522,16 @@ def test_what_still_stands_between_this_plan_and_a_per_emitter():
                 != encode_per(extensible, {"a": True}, variant=variant,
                               rules=PerRules.CANONICAL)), variant
     assert (compile_encode_plan(plain, module="T", type_name="S").sha256()
-            == compile_encode_plan(extensible, module="T", type_name="S").sha256()), (
-        "the plan now distinguishes an extensible SEQUENCE; that is a PER prerequisite, so "
-        "build the emitter rather than deleting this test")
+            != compile_encode_plan(extensible, module="T", type_name="S").sha256())
 
-    # 2. The enumeration's numbers are what §14.1 indexes, and the plan records no numbers.
+    # The enumeration carries NUMBERS, which is what §14.1 indexes — names alone could not
+    # produce an index, and the identifier alone could not satisfy X.697.
     enumerated = _seq(Component("v", Primitive(
         Universal.ENUMERATED, "E", enumeration=(("red", 4), ("green", 9)))))
     node = compile_encode_plan(enumerated, module="T", type_name="S").root.members[0].node
-    assert node.enumeration == (), (
-        "the plan now records an enumeration; make sure it carries the NUMBERS X.691 §14.1 "
-        "indexes, not the identifiers")
+    assert node.enumeration == (("red", 4), ("green", 9))
 
-    # 3. But the constraint half really is complete: every field PER reads off a constraint
-    #    is present and populated.
+    # The constraint half stays complete.
     bounded = _seq(Component("v", Primitive(
         Universal.INTEGER, "I", constraint=ValueRange(0, 255))))
     recorded = compile_encode_plan(bounded, module="T", type_name="S").root.members[0].node
@@ -498,3 +539,15 @@ def test_what_still_stands_between_this_plan_and_a_per_emitter():
     assert recorded.constraint.root_value_low == 0
     assert recorded.constraint.root_value_high == 255
 
+    # And what is left is exactly one thing, which refuses by name.
+    additions = Sequence((Component("a", _B), Component("b", _I, optional=True,
+                                                        extension=True)),
+                         name="S", extensible=True)
+    try:
+        compile_encode_plan(additions, module="T", type_name="S")
+    except Asn1Error as error:
+        assert "19.7" in str(error), error
+    else:
+        raise AssertionError(
+            "the plan now compiles extension additions; that was the last PER prerequisite, "
+            "so build the emitter rather than deleting this test")

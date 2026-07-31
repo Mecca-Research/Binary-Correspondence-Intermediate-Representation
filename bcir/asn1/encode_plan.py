@@ -63,7 +63,7 @@ from .constraints import (
 from .schema import Asn1Type, Choice, Primitive, Sequence, SequenceOf
 from .tags import Asn1Error, TagClass, Universal
 
-PLAN_VERSION = 3
+PLAN_VERSION = 4
 PLAN_COMPILER = "bcir-encode-plan/1"
 
 #: The widest bound this plan will record, both signs. A descriptor is read by a
@@ -184,10 +184,21 @@ class EncodeNode:
     universal: int = 0
     members: tuple[EncodeMember, ...] = ()
     element: "EncodeNode | None" = None
-    enumeration: tuple[str, ...] = ()
+    #: The enumeration ROOT as `(identifier, number)` pairs, in source order. **Both halves
+    #: are load-bearing and to different rules.** X.690 §8.4 and X.696 §11 encode the
+    #: *number*, which the value stream already carries. X.697 §22.2 encodes the
+    #: *identifier* — "the identifier of the chosen enumeration item" — and says so
+    #: explicitly because it cannot be derived from the number. X.691 §14.1 encodes neither:
+    #: it encodes the value's INDEX into the root sorted ascending. One field, three
+    #: readings, and a plan that carried only names could not serve the third.
+    enumeration: tuple[tuple[str, int], ...] = ()
     type_name: str = ""
     #: None where the type carries no encoding-visible constraint. Version 3 is this field.
     constraint: EncodeConstraint | None = None
+    #: X.680 §25.4's `...` on a SEQUENCE or CHOICE, or X.680 §20.4's on an ENUMERATED.
+    #: X.691 §19.1, §23.5 and §14.3 each emit a leading bit for it, so two schemas differing
+    #: only here encode differently under PER and identically everywhere else. Version 4.
+    extensible: bool = False
 
 
 @dataclass(frozen=True)
@@ -231,10 +242,12 @@ def _serialize_node(node: EncodeNode, path: str, out: list[str]) -> None:
     # Counting makes the descriptor parseable with a fixed stack and no string arithmetic.
     # Version 2 was exactly this addition; version 3 adds the optional `constraint` line
     # below, which a node emits only when it has something an encoder would read.
+    enumeration = "|".join(f"{name}:{number}" for name, number in node.enumeration)
     out.append(
         f"node {here} kind={node.kind} universal={node.universal} "
         f"members={len(node.members)} element={'1' if node.element is not None else '0'} "
-        f"type={node.type_name or '-'} enum={'|'.join(node.enumeration) or '-'}")
+        f"type={node.type_name or '-'} enum={enumeration or '-'} "
+        f"ext={'1' if node.extensible else '0'}")
     if node.constraint is not None:
         out.append(_serialize_constraint(node.constraint, here))
     for member in node.members:
@@ -301,12 +314,15 @@ def _compile_node(kind: Asn1Type, path: str, depth: int) -> EncodeNode:
                 f"{kind.universal} ({kind.name}); refusing rather than guessing a spelling "
                 f"that three encoders would each get differently")
         return EncodeNode(kind=leaf, universal=int(kind.universal), type_name=kind.name,
-                          constraint=constraint)
+                          constraint=constraint,
+                          enumeration=_record_enumeration(kind, path),
+                          extensible=bool(getattr(kind, "enum_extensible", False)))
     if isinstance(kind, Sequence):
         return EncodeNode(kind="sequence", universal=int(Universal.SEQUENCE),
                           type_name=getattr(kind, "name", "") or "",
                           members=_compile_members(kind, path, depth),
-                          constraint=constraint)
+                          constraint=constraint,
+                          extensible=bool(getattr(kind, "extensible", False)))
     if isinstance(kind, SequenceOf):
         return EncodeNode(kind="sequence-of", universal=int(Universal.SEQUENCE),
                           type_name=getattr(kind, "name", "") or "",
@@ -315,7 +331,8 @@ def _compile_node(kind: Asn1Type, path: str, depth: int) -> EncodeNode:
     if isinstance(kind, Choice):
         return EncodeNode(kind="choice", type_name=getattr(kind, "name", "") or "",
                           members=_compile_members(kind, path, depth),
-                          constraint=constraint)
+                          constraint=constraint,
+                          extensible=bool(getattr(kind, "extensible", False)))
     raise Asn1Error(
         f"{path}: the write plan does not compile {type(kind).__name__}; SET, SET OF and "
         f"OPEN TYPE each need a rule of their own (X.690 §11.6 orders a SET's components by "
@@ -366,6 +383,40 @@ def _record_constraint(kind, path: str) -> EncodeConstraint | None:
             f"the alphabet decide bits-per-character, so a truncated one encodes a "
             f"different document rather than a slightly wrong one")
     return None if recorded.is_trivial() else recorded
+
+
+def _record_enumeration(kind: Primitive, path: str) -> tuple[tuple[str, int], ...]:
+    """The enumeration root, refusing an ENUMERATED that has none.
+
+    A bare ENUMERATED is encodable under X.690 and X.696, which read the *number* the value
+    already carries. It is NOT encodable under X.697 — §22.2 spells an enumerated value as
+    "the identifier of the chosen enumeration item", and no identifier can be derived from a
+    number — nor under X.691, whose §14.1 needs the whole root to compute an index. The
+    oracle's `encode_jer` refuses it for exactly that reason.
+
+    Version 3 compiled such a type happily and the JER emitter wrote the bare number: a
+    document the oracle would not have produced and a JER decoder cannot map back. Refusing
+    at compile time keeps the failure where the missing information is, rather than three
+    emitters downstream.
+    """
+    if kind.universal != Universal.ENUMERATED:
+        return ()
+    enumeration = getattr(kind, "enumeration", None)
+    if not enumeration:
+        raise Asn1Error(
+            f"{path}: ENUMERATED has no enumeration. X.690 §8.4 and X.696 §11 encode the "
+            f"number, so this would look encodable — but X.697 §22.2 encodes the "
+            f"IDENTIFIER and X.691 §14.1 encodes the index into the root, and neither can "
+            f"be derived from a number alone. One plan drives all four, so it is refused "
+            f"here rather than producing a JER document of the wrong shape")
+    for name, _number in enumeration:
+        if not name or any(character in name for character in "|: \n"):
+            raise Asn1Error(
+                f"{path}: the enumeration identifier {name!r} contains a character the "
+                f"descriptor's `name:number|...` field uses as a separator; X.680 §12.4 "
+                f"gives an identifier no such character, so this is a malformed schema "
+                f"rather than a format limitation")
+    return tuple((str(name), int(number)) for name, number in enumeration)
 
 
 def _compile_members(kind, path: str, depth: int) -> tuple[EncodeMember, ...]:

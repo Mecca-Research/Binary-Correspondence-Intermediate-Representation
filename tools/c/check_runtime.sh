@@ -3601,6 +3601,11 @@ def seq(*components, name="X"):
 
 CH = Choice((Component("num", I, tag=0), Component("txt", S, tag=1)), name="C")
 
+# Version 4: an ENUMERATED needs its enumeration, because X.697 22.2 spells the value as the
+# IDENTIFIER of its item and X.691 14.1 indexes the root. A hyphen exercises the descriptor's
+# `name:number|...` field against an identifier X.680 12.4 permits.
+ENUM = (("five", 5), ("two-hundred", 200), ("minus-one", -1))
+
 CASES = [
     (seq(Component("v", I)), {"v": -1}),
     (seq(Component("v", I)), {"v": 2 ** 64 + 7}),
@@ -3659,9 +3664,12 @@ CASES += [
                                   constraint=Size(ValueRange(3, 3))))), {"v": "abc"}),
     (seq(Component("v", Primitive(Universal.UTF8_STRING, "U",
                                   constraint=Size(ValueRange(3, 3))))), {"v": "abc"}),
-    (seq(Component("v", Primitive(Universal.ENUMERATED, "E"))), {"v": 5}),
-    (seq(Component("v", Primitive(Universal.ENUMERATED, "E"))), {"v": 200}),
-    (seq(Component("v", Primitive(Universal.ENUMERATED, "E"))), {"v": -1}),
+    (seq(Component("v", Primitive(Universal.ENUMERATED, "E", enumeration=ENUM))), {"v": 5}),
+    (seq(Component("v", Primitive(Universal.ENUMERATED, "E", enumeration=ENUM))), {"v": 200}),
+    (seq(Component("v", Primitive(Universal.ENUMERATED, "E", enumeration=ENUM))), {"v": -1}),
+    (seq(Component("v", Primitive(Universal.ENUMERATED, "E", enumeration=ENUM,
+                                  enum_extensible=True))), {"v": 5}),
+    (Sequence((Component("a", I),), name="X", extensible=True), {"a": 1}),
 ]
 
 for index, (kind, value) in enumerate(CASES):

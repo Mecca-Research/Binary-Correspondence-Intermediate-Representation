@@ -104,6 +104,7 @@ static long unhex(const char *text, unsigned char *out, size_t cap) {
  * alphabet buffer and is two orders of magnitude larger than a node, while almost every
  * schema in the corpus has none. */
 #define MAX_PLAN_CONSTRAINTS 32
+#define MAX_PLAN_ENUMS 64
 #define EMIT_SCRATCH 4096
 #define EMIT_OUT (1 << 17)
 
@@ -123,6 +124,7 @@ typedef struct bench_case {
   bcir_emit_node nodes[MAX_PLAN_NODES];
   bcir_emit_member members[MAX_PLAN_MEMBERS];
   bcir_emit_constraint constraints[MAX_PLAN_CONSTRAINTS];
+  bcir_emit_enum_item enums[MAX_PLAN_ENUMS];
 } bench_case;
 
 /* The work one candidate's peer does on the octets it was handed. Returns a value derived
@@ -242,6 +244,7 @@ int main(void) {
       bench_case *c;
       long plan_len, value_len;
       bcir_emit_diag diag;
+      bcir_emit_tables tables;
 
       if (n_cases >= MAX_CASES) { printf("unsupported case too-many\n"); return 2; }
       c = &cases[n_cases];
@@ -258,9 +261,11 @@ int main(void) {
       plan_len = unhex(plan_hex, plan_text, sizeof(plan_text));
       value_len = unhex(hex, c->data, sizeof(c->data));
       if (plan_len < 0 || value_len < 0) { printf("unsupported encase bad-hex\n"); return 2; }
-      if (bcir_emit_parse_plan((const char *)plan_text, (size_t)plan_len, c->nodes,
-                               MAX_PLAN_NODES, c->members, MAX_PLAN_MEMBERS,
-                               c->constraints, MAX_PLAN_CONSTRAINTS, &c->plan,
+      tables.nodes = c->nodes;             tables.node_cap = MAX_PLAN_NODES;
+      tables.members = c->members;         tables.member_cap = MAX_PLAN_MEMBERS;
+      tables.constraints = c->constraints; tables.constraint_cap = MAX_PLAN_CONSTRAINTS;
+      tables.enums = c->enums;             tables.enum_cap = MAX_PLAN_ENUMS;
+      if (bcir_emit_parse_plan((const char *)plan_text, (size_t)plan_len, &tables, &c->plan,
                                &diag) != BCIR_EMIT_OK) {
         printf("unsupported encase bad-plan\n");
         return 2;
