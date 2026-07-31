@@ -100,6 +100,10 @@ static long unhex(const char *text, unsigned char *out, size_t cap) {
 #define MAX_PLAN_TEXT (1 << 14)
 #define MAX_PLAN_NODES 256
 #define MAX_PLAN_MEMBERS 256
+/* Sized by the number of CONSTRAINED nodes, not by the node count: a constraint carries an
+ * alphabet buffer and is two orders of magnitude larger than a node, while almost every
+ * schema in the corpus has none. */
+#define MAX_PLAN_CONSTRAINTS 32
 #define EMIT_SCRATCH 4096
 #define EMIT_OUT (1 << 17)
 
@@ -118,6 +122,7 @@ typedef struct bench_case {
   bcir_emit_plan plan;
   bcir_emit_node nodes[MAX_PLAN_NODES];
   bcir_emit_member members[MAX_PLAN_MEMBERS];
+  bcir_emit_constraint constraints[MAX_PLAN_CONSTRAINTS];
 } bench_case;
 
 /* The work one candidate's peer does on the octets it was handed. Returns a value derived
@@ -254,7 +259,8 @@ int main(void) {
       value_len = unhex(hex, c->data, sizeof(c->data));
       if (plan_len < 0 || value_len < 0) { printf("unsupported encase bad-hex\n"); return 2; }
       if (bcir_emit_parse_plan((const char *)plan_text, (size_t)plan_len, c->nodes,
-                               MAX_PLAN_NODES, c->members, MAX_PLAN_MEMBERS, &c->plan,
+                               MAX_PLAN_NODES, c->members, MAX_PLAN_MEMBERS,
+                               c->constraints, MAX_PLAN_CONSTRAINTS, &c->plan,
                                &diag) != BCIR_EMIT_OK) {
         printf("unsupported encase bad-plan\n");
         return 2;

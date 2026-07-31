@@ -40,6 +40,15 @@ The stream, in plan traversal order::
 *compile* time with the clause that governs it. A plan that silently skipped a construct
 would produce an emitter disagreeing with the oracle, and the parity test would report that
 as an unexplained byte difference rather than as the missing feature it is.
+
+**Version 3 records subtype constraints, and that is a bug fix rather than a feature.**
+Version 2 dropped them, which is harmless for DER, BER and JER — X.690 encodes the value
+either way and X.697 §7.2.2 l)/h) hide integer and string constraints from JER outright —
+and *wrong* for OER, where X.696 §10.3 gives a constrained INTEGER a fixed-width form with
+no length determinant. The version 2 OER emitter therefore wrote the unconstrained spelling
+for every type: a well-formed document of a different value, which every parity test passed
+over because the corpus contained no constrained type. `EncodeConstraint` says what each
+rule reads; see its docstring for why the OER and PER bound pairs are separate facts.
 """
 
 from __future__ import annotations
@@ -47,11 +56,27 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 
+from .constraints import (
+    Constraint, effective_size_constraint, effective_value_constraint, root_alphabet,
+    root_size_bounds, root_value_bounds,
+)
 from .schema import Asn1Type, Choice, Primitive, Sequence, SequenceOf
 from .tags import Asn1Error, TagClass, Universal
 
-PLAN_VERSION = 2
+PLAN_VERSION = 3
 PLAN_COMPILER = "bcir-encode-plan/1"
+
+#: The widest bound this plan will record, both signs. A descriptor is read by a
+#: freestanding C twin with no bignum, so the format states its arithmetic range rather than
+#: letting one rail silently truncate what the other wrote. 2**64-1 is not an arbitrary
+#: ceiling: it is exactly X.696 §10.3 d)'s widest fixed word, so every bound that selects an
+#: OER width is representable and anything past it falls to the length-prefixed form anyway.
+BOUND_MAX = (1 << 64) - 1
+
+#: The longest permitted alphabet recorded, in UTF-8 octets. X.691 §30.5's alphabet is a
+#: per-node fixed buffer in the C twin, so §5.1's "state your scratch bound" applies. 128
+#: covers IA5String's whole repertoire, which is the largest a known-multiplier type has.
+ALPHABET_MAX = 128
 
 #: Universal tag -> the plan's leaf kind. Written out rather than derived so an unlisted
 #: type is a refusal naming itself, not a default that encodes wrongly.
@@ -97,6 +122,60 @@ class EncodeMember:
 
 
 @dataclass(frozen=True)
+class EncodeConstraint:
+    """What the encoding rules read out of a subtype constraint — recorded, not re-derived.
+
+    A constraint restricts a value SET. DER, BER and JER encode a value identically whether
+    or not one exists, and X.697 §7.2.2 l)/h) hide integer and string constraints from JER
+    outright. **OER and PER do not**: X.696 §10.3 gives a constrained INTEGER a fixed-width
+    form with no length determinant, so `INTEGER (0..255)` holding 42 is `2A` where the
+    unconstrained type is `01 2A`. Version 2 of this plan dropped constraints, and the OER
+    emitter it drove therefore emitted the unconstrained spelling for every type — a
+    well-formed document of a different value, hidden by a corpus with no constrained type.
+
+    **Four bound pairs, not two, because the two rules disagree about extensibility.**
+    X.696 §8.2.2 g) makes an extensible constraint invisible to OER: the marker says the
+    value set may grow, so sizing a field from today's bounds would emit octets a future
+    peer cannot read. X.691 §13.1/§17.3/§20.4/§30.4 make the opposite choice — one bit
+    saying whether the value is inside the extension root, then the root's own width. So the
+    OER-effective bounds and the PER root bounds are different facts about the same
+    constraint, and they genuinely differ: intersecting an extensible `(0..255, ...)` with a
+    plain `(0..1000)` leaves OER reading `0..1000` and PER's root reading `0..255`.
+
+    Deriving one pair from the other would therefore be a guess. Both are recorded, which is
+    the same discipline the rest of this compiler follows: a descriptor states what each rule
+    reads, and a rule this plan cannot state is refused rather than approximated.
+    """
+
+    #: X.696 §8.2.7 / §8.2.8 — what OER reads. `None` is "no finite bound".
+    value_low: int | None = None
+    value_high: int | None = None
+    size_low: int | None = None
+    size_high: int | None = None
+    #: X.691 §13.1 / §17.3 — the extension ROOT's bounds, which PER encodes against.
+    root_value_low: int | None = None
+    root_value_high: int | None = None
+    root_size_low: int | None = None
+    root_size_high: int | None = None
+    #: X.691 §13.1's extension bit: whether one is emitted at all, per dimension.
+    value_extensible: bool = False
+    size_extensible: bool = False
+    #: X.691 §30.5's permitted alphabet in canonical order, or "" when unrestricted. Empty
+    #: rather than None because a *constraint* that permits no character at all is
+    #: unsatisfiable and `require_satisfiable` refuses it before this is ever built.
+    alphabet: str = ""
+
+    def is_trivial(self) -> bool:
+        """True when this records nothing an encoder would read.
+
+        A node with a trivial constraint serializes no constraint line, so a plan for an
+        unconstrained schema is byte-identical to what version 2 wrote apart from its
+        version. That keeps the format's cost proportional to what it actually says.
+        """
+        return self == EncodeConstraint()
+
+
+@dataclass(frozen=True)
 class EncodeNode:
     """The compiled write-side form of one type."""
 
@@ -107,6 +186,8 @@ class EncodeNode:
     element: "EncodeNode | None" = None
     enumeration: tuple[str, ...] = ()
     type_name: str = ""
+    #: None where the type carries no encoding-visible constraint. Version 3 is this field.
+    constraint: EncodeConstraint | None = None
 
 
 @dataclass(frozen=True)
@@ -148,11 +229,14 @@ def _serialize_node(node: EncodeNode, path: str, out: list[str]) -> None:
     # lines arrive depth first, so a reader without counts must rebuild the tree from the
     # PATH strings — and a member name containing `/` splits a path in the wrong place.
     # Counting makes the descriptor parseable with a fixed stack and no string arithmetic.
-    # Version 2 is exactly this addition.
+    # Version 2 was exactly this addition; version 3 adds the optional `constraint` line
+    # below, which a node emits only when it has something an encoder would read.
     out.append(
         f"node {here} kind={node.kind} universal={node.universal} "
         f"members={len(node.members)} element={'1' if node.element is not None else '0'} "
         f"type={node.type_name or '-'} enum={'|'.join(node.enumeration) or '-'}")
+    if node.constraint is not None:
+        out.append(_serialize_constraint(node.constraint, here))
     for member in node.members:
         out.append(
             f"member {here} {member.index} name={member.name} id={member.identifier} "
@@ -163,6 +247,33 @@ def _serialize_node(node: EncodeNode, path: str, out: list[str]) -> None:
         _serialize_node(member.node, f"{here}/{member.name}", out)
     if node.element is not None:
         _serialize_node(node.element, f"{here}[]", out)
+
+
+def _bound(value: int | None) -> str:
+    """One bound, `-` for unbounded. Decimal with a leading `-` for negatives.
+
+    Written as text rather than as a fixed word because the range a bound may take is a
+    property of ASN.1, not of a machine: `INTEGER (0..18446744073709551615)` is X.696
+    §10.3 d)'s eight-octet unsigned word, and its upper bound does not fit int64. The C
+    reader parses sign and magnitude separately for exactly that reason.
+    """
+    return "-" if value is None else str(value)
+
+
+def _serialize_constraint(constraint: EncodeConstraint, path: str) -> str:
+    # The alphabet is hex-encoded UTF-8: it may contain a space, a `=`, or the `-` that
+    # spells "absent" everywhere else in this format, and a quoting scheme the C reader has
+    # to unpick is more surface than a fixed two-nibble encoding.
+    alphabet = constraint.alphabet.encode("utf-8").hex() or "-"
+    return (
+        f"constraint {path} "
+        f"vlo={_bound(constraint.value_low)} vhi={_bound(constraint.value_high)} "
+        f"slo={_bound(constraint.size_low)} shi={_bound(constraint.size_high)} "
+        f"rvlo={_bound(constraint.root_value_low)} rvhi={_bound(constraint.root_value_high)} "
+        f"rslo={_bound(constraint.root_size_low)} rshi={_bound(constraint.root_size_high)} "
+        f"vext={'1' if constraint.value_extensible else '0'} "
+        f"sext={'1' if constraint.size_extensible else '0'} "
+        f"alpha={alphabet}")
 
 
 # --- compilation ------------------------------------------------------------------------------
@@ -181,6 +292,7 @@ def _compile_node(kind: Asn1Type, path: str, depth: int) -> EncodeNode:
         raise Asn1Error(
             f"{path}: the write plan refuses recursion beyond depth 32; a descriptor whose "
             f"depth is unbounded cannot state a scratch bound, and §5.1 requires one")
+    constraint = _record_constraint(kind, path)
     if isinstance(kind, Primitive):
         leaf = _LEAF_KIND.get(kind.universal)
         if leaf is None:
@@ -188,23 +300,72 @@ def _compile_node(kind: Asn1Type, path: str, depth: int) -> EncodeNode:
                 f"{path}: the write plan has no leaf rule for universal tag "
                 f"{kind.universal} ({kind.name}); refusing rather than guessing a spelling "
                 f"that three encoders would each get differently")
-        return EncodeNode(kind=leaf, universal=int(kind.universal), type_name=kind.name)
+        return EncodeNode(kind=leaf, universal=int(kind.universal), type_name=kind.name,
+                          constraint=constraint)
     if isinstance(kind, Sequence):
         return EncodeNode(kind="sequence", universal=int(Universal.SEQUENCE),
                           type_name=getattr(kind, "name", "") or "",
-                          members=_compile_members(kind, path, depth))
+                          members=_compile_members(kind, path, depth),
+                          constraint=constraint)
     if isinstance(kind, SequenceOf):
         return EncodeNode(kind="sequence-of", universal=int(Universal.SEQUENCE),
                           type_name=getattr(kind, "name", "") or "",
-                          element=_compile_node(kind.element, f"{path}[]", depth + 1))
+                          element=_compile_node(kind.element, f"{path}[]", depth + 1),
+                          constraint=constraint)
     if isinstance(kind, Choice):
         return EncodeNode(kind="choice", type_name=getattr(kind, "name", "") or "",
-                          members=_compile_members(kind, path, depth))
+                          members=_compile_members(kind, path, depth),
+                          constraint=constraint)
     raise Asn1Error(
         f"{path}: the write plan does not compile {type(kind).__name__}; SET, SET OF and "
         f"OPEN TYPE each need a rule of their own (X.690 §11.6 orders a SET's components by "
         f"tag, and X.697 §41 gives an open type no JER fallback), and inventing one here "
         f"would produce an emitter that silently disagrees with the oracle")
+
+
+def _record_constraint(kind, path: str) -> EncodeConstraint | None:
+    """Project a live constraint onto the facts the encoding rules read.
+
+    The constraint object itself is not stored: §5.1 makes a descriptor data, and a
+    `Constraint` is a Python object graph with `permits()` on it. What OER and PER read out
+    of one is four bound pairs, two extension flags and an alphabet — arithmetic, and
+    therefore expressible in a text descriptor a freestanding reader can parse.
+
+    Returns None when the projection is empty, so an unconstrained schema's plan is what
+    version 2 wrote apart from its version line.
+    """
+    constraint = getattr(kind, "constraint", None)
+    if not isinstance(constraint, Constraint):
+        return None
+    value_low, value_high = effective_value_constraint(constraint)
+    size_low, size_high = effective_size_constraint(constraint)
+    (root_value_low, root_value_high), value_extensible = root_value_bounds(constraint)
+    (root_size_low, root_size_high), size_extensible = root_size_bounds(constraint)
+    alphabet = root_alphabet(constraint)
+    recorded = EncodeConstraint(
+        value_low=value_low, value_high=value_high,
+        size_low=size_low, size_high=size_high,
+        root_value_low=root_value_low, root_value_high=root_value_high,
+        root_size_low=root_size_low, root_size_high=root_size_high,
+        value_extensible=value_extensible, size_extensible=size_extensible,
+        alphabet="".join(sorted(alphabet)) if alphabet else "")
+    for name in ("value_low", "value_high", "size_low", "size_high",
+                 "root_value_low", "root_value_high", "root_size_low", "root_size_high"):
+        bound = getattr(recorded, name)
+        if bound is not None and abs(bound) > BOUND_MAX:
+            raise Asn1Error(
+                f"{path}: the constraint's {name} is {bound}, past the ±{BOUND_MAX} this "
+                f"plan format records; X.696 §10.3 d)'s widest fixed word is eight octets, "
+                f"so a bound beyond it selects the length-prefixed form anyway — but "
+                f"writing it down would truncate in the C reader, and a silently truncated "
+                f"bound is a different type")
+    if len(recorded.alphabet.encode("utf-8")) > ALPHABET_MAX:
+        raise Asn1Error(
+            f"{path}: the permitted alphabet is {len(recorded.alphabet)} characters, past "
+            f"the {ALPHABET_MAX}-octet buffer this plan format states; X.691 §30.5 makes "
+            f"the alphabet decide bits-per-character, so a truncated one encodes a "
+            f"different document rather than a slightly wrong one")
+    return None if recorded.is_trivial() else recorded
 
 
 def _compile_members(kind, path: str, depth: int) -> tuple[EncodeMember, ...]:
@@ -235,6 +396,6 @@ def _compile_members(kind, path: str, depth: int) -> tuple[EncodeMember, ...]:
 
 
 __all__ = [
-    "PLAN_COMPILER", "PLAN_VERSION", "EncodeMember", "EncodeNode", "EncodePlan",
-    "compile_encode_plan",
+    "ALPHABET_MAX", "BOUND_MAX", "PLAN_COMPILER", "PLAN_VERSION", "EncodeConstraint",
+    "EncodeMember", "EncodeNode", "EncodePlan", "compile_encode_plan",
 ]

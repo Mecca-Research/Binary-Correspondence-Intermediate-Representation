@@ -57,8 +57,12 @@ extern "C" {
 
 /* The plan-format version this reader accepts. A descriptor naming any other version is
  * refused rather than read hopefully: the fields are positional, so a mismatched reader
- * would silently mis-assign them instead of failing. */
-#define BCIR_EMIT_PLAN_VERSION 2
+ * would silently mis-assign them instead of failing.
+ *
+ * Version 3 adds the optional `constraint` line. It is a BUG FIX: version 2 dropped subtype
+ * constraints, which is harmless for DER, BER and JER but wrong for OER, where X.696 10.3
+ * gives a constrained INTEGER a fixed-width form with no length determinant. */
+#define BCIR_EMIT_PLAN_VERSION 3
 
 /* The deepest plan this reader will accept, matching the plan compiler's own limit. */
 #define BCIR_EMIT_MAX_PLAN_DEPTH 32
@@ -66,6 +70,12 @@ extern "C" {
 /* The longest member name stored. A longer one is REFUSED, never truncated: a truncated
  * JER identifier is a document that decodes to a different value. */
 #define BCIR_EMIT_NAME_MAX 48
+
+/* The longest permitted alphabet stored, in octets. X.691 30.5 makes the alphabet decide
+ * bits-per-character, so a truncated one encodes a different document rather than a
+ * slightly wrong one -- hence REFUSED above this, matching the compiler's own limit. 128
+ * covers IA5String's whole repertoire, the largest a known-multiplier type has. */
+#define BCIR_EMIT_ALPHABET_MAX 128
 
 typedef enum bcir_emit_status {
   BCIR_EMIT_OK = 0,
@@ -111,12 +121,40 @@ typedef struct bcir_emit_member {
   uint32_t node;     /* index into the node table */
 } bcir_emit_member;
 
+/* One constraint bound. Sign and magnitude rather than a signed word, because the range a
+ * bound may take is a property of ASN.1 and not of a machine: X.696 10.3 d)'s widest fixed
+ * word is eight octets UNSIGNED, so `INTEGER (0..18446744073709551615)` has an upper bound
+ * that does not fit int64_t. Storing it as int64_t would make that type's width unreadable
+ * -- which is the whole fact the constraint exists to carry. */
+typedef struct bcir_emit_bound {
+  uint8_t present;    /* 0 = no finite bound (ASN.1 MIN/MAX, or no constraint at all) */
+  uint8_t negative;   /* sign of `magnitude`; never set when `magnitude` is 0 */
+  uint64_t magnitude;
+} bcir_emit_bound;
+
+/* What the encoding rules read out of a subtype constraint. Four bound pairs, not two,
+ * because OER and PER disagree about extensibility: X.696 8.2.2 g) makes an extensible
+ * constraint invisible to OER, while X.691 13.1 emits one bit and then encodes against the
+ * extension ROOT's bounds. Those are different facts about the same constraint and they
+ * genuinely differ, so deriving one from the other would be a guess. */
+typedef struct bcir_emit_constraint {
+  bcir_emit_bound value_low, value_high;            /* X.696 8.2.7 -- what OER reads */
+  bcir_emit_bound size_low, size_high;              /* X.696 8.2.8 */
+  bcir_emit_bound root_value_low, root_value_high;  /* X.691 13.1 -- what PER reads */
+  bcir_emit_bound root_size_low, root_size_high;    /* X.691 17.3 / 20.4 / 30.4 */
+  uint8_t value_extensible;  /* X.691 13.1: whether an extension bit is emitted */
+  uint8_t size_extensible;
+  uint8_t alphabet_len;      /* octets used in `alphabet`; 0 = unrestricted */
+  char alphabet[BCIR_EMIT_ALPHABET_MAX];  /* X.691 30.5, UTF-8, canonical order */
+} bcir_emit_constraint;
+
 typedef struct bcir_emit_node {
   uint8_t kind;      /* bcir_emit_kind */
   uint32_t universal; /* base universal tag number; unused where the kind has none */
   uint32_t first_member;
   uint32_t member_count;
   int32_t element;   /* index of the SEQUENCE OF element node, or -1 */
+  int32_t constraint; /* index into the constraint table, or -1 when unconstrained */
 } bcir_emit_node;
 
 typedef struct bcir_emit_plan {
@@ -124,6 +162,8 @@ typedef struct bcir_emit_plan {
   uint32_t node_count;
   bcir_emit_member *members;
   uint32_t member_count;
+  bcir_emit_constraint *constraints;
+  uint32_t constraint_count;
   uint32_t root;
 } bcir_emit_plan;
 
@@ -137,11 +177,15 @@ typedef struct bcir_emit_diag {
   size_t needed;
 } bcir_emit_diag;
 
-/* Parse the canonical descriptor text into caller-owned tables. */
+/* Parse the canonical descriptor text into caller-owned tables. The constraint table is
+ * separate from the node table, and sized by the number of CONSTRAINED nodes rather than by
+ * the node count: a constraint is two orders of magnitude larger than a node and almost
+ * every schema has none, so folding it into the node would make the common plan pay for the
+ * rare one. Passing zero capacity is correct for a schema with no constraint. */
 BCIR_EMIT_NODISCARD bcir_emit_status bcir_emit_parse_plan(
     const char *text, size_t len, bcir_emit_node *nodes, uint32_t node_cap,
-    bcir_emit_member *members, uint32_t member_cap, bcir_emit_plan *out,
-    bcir_emit_diag *diag);
+    bcir_emit_member *members, uint32_t member_cap, bcir_emit_constraint *constraints,
+    uint32_t constraint_cap, bcir_emit_plan *out, bcir_emit_diag *diag);
 
 /* Emit one value. `scratch` holds one content length per visited node and is sized by the
  * VALUE; only BCIR_EMIT_DER reads it, and passing zero capacity for the other three rules is

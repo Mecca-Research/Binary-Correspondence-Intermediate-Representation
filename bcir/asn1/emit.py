@@ -339,23 +339,120 @@ def _oer_length(count: int) -> bytes:
     return bytes((0x80 | len(body), *body))
 
 
+#: X.696 §27.2's known-multiplier character types, restricted to the ones this plan compiles
+#: as `string`. BMPString and UniversalString are known-multiplier too, but `_LEAF_KIND` has
+#: no rule for them, so listing them here would describe a case that cannot arise.
+_OER_KNOWN_MULTIPLIER = frozenset({
+    int(Universal.NUMERIC_STRING), int(Universal.PRINTABLE_STRING),
+    int(Universal.VISIBLE_STRING), int(Universal.IA5_STRING),
+})
+
+
+def _oer_integer_form(node: EncodeNode) -> tuple[int | None, bool]:
+    """§10.3 / §10.4: the fixed word width the constraint selects, and its sign.
+
+    `(None, signed)` is §10.3 e) / §10.4 e), the length-prefixed variable-size form. The
+    split between the two clauses is whether a lower bound EXISTS and is non-negative, not
+    whether the bounds happen to be small — so a type with no lower bound is signed however
+    tight its upper bound is. This mirrors `oer._integer_form` clause for clause, reading the
+    plan's recorded bounds where the oracle reads the live constraint.
+    """
+    constraint = node.constraint
+    low = None if constraint is None else constraint.value_low
+    high = None if constraint is None else constraint.value_high
+    if low is not None and low >= 0:                        # §10.2 a) -> §10.3, unsigned
+        if high is None:
+            return None, False
+        for width, limit in ((1, 0xFF), (2, 0xFFFF), (4, 0xFFFFFFFF),
+                             (8, 0xFFFFFFFFFFFFFFFF)):
+            if high <= limit:
+                return width, False
+        return None, False                                  # §10.3 e)
+    if low is None or high is None:                         # §10.2 b) -> §10.4, signed
+        return None, True
+    for width in (1, 2, 4, 8):
+        bits = width * 8
+        if -(1 << (bits - 1)) <= low and high <= (1 << (bits - 1)) - 1:
+            return width, True
+    return None, True                                       # §10.4 e)
+
+
+def _oer_fixed_size(node: EncodeNode) -> int | None:
+    """The single length a SIZE constraint fixes, or None when it does not fix one.
+
+    §14.1 and §27.2 turn on the same condition — the effective size constraint's bounds
+    being *identical*. A range is not enough: only an exact length lets a decoder find the
+    end of the field without a determinant.
+    """
+    constraint = node.constraint
+    if constraint is None or constraint.size_low is None:
+        return None
+    return constraint.size_low if constraint.size_low == constraint.size_high else None
+
+
 def _emit_oer(node: EncodeNode, reader: _Reader) -> bytes:
     kind = node.kind
     if kind == "boolean":
         # §11: any non-zero octet is TRUE, and CANONICAL-OER fixes it at 0xFF.
         return b"\xff" if reader.u8() else b"\x00"
-    if kind in ("integer", "enumerated"):
+    if kind == "integer":
         octets = reader.take(reader.u8())
-        # §10.4: an unconstrained integer is length-prefixed two's complement.
-        return _oer_length(len(octets)) + octets
+        width, signed = _oer_integer_form(node)
+        if width is None:
+            # §10.3 e) / §10.4 e): length-prefixed. The stream carries the minimal *signed*
+            # form, which is already right for §10.4; §10.3's unsigned form drops the sign
+            # octet a non-negative value may carry.
+            value = int.from_bytes(octets, "big", signed=True)
+            if not signed:
+                octets = value.to_bytes(max(1, (value.bit_length() + 7) // 8), "big")
+            return _oer_length(len(octets)) + octets
+        value = int.from_bytes(octets, "big", signed=True)
+        try:
+            return value.to_bytes(width, "big", signed=signed)
+        except OverflowError:
+            raise Asn1Error(
+                f"{value} does not fit the {width}-octet {'signed' if signed else 'unsigned'}"
+                f" word its constraint selected (X.696 §10.3/§10.4)") from None
+    if kind == "enumerated":
+        # §11 gives ENUMERATED its own form and reads no constraint: the short form below
+        # 128, else a long form whose count octet has the top bit set. It is NOT §10's
+        # integer, which is why this no longer shares a branch with it.
+        value = int.from_bytes(reader.take(reader.u8()), "big", signed=True)
+        if 0 <= value < 0x80:
+            return bytes((value,))                    # §11.3
+        octets = _int_octets(value)                   # §11.4 long form: SIGNED
+        if len(octets) > 0x7F:
+            raise Asn1Error("enumerated value needs more than 127 octets (X.696 §11.4)")
+        return bytes((0x80 | len(octets),)) + octets
     if kind == "null":
         return b""                                   # §12: no octets at all
     if kind == "octetstring":
         data = reader.blob()
-        return _oer_length(len(data)) + data          # §15
+        fixed = _oer_fixed_size(node)
+        if fixed is not None:                         # §14.1: no length determinant
+            if len(data) != fixed:
+                raise Asn1Error(
+                    f"SIZE ({fixed}) requires exactly {fixed} octets, got {len(data)} "
+                    f"(X.696 §14.1)")
+            return data
+        return _oer_length(len(data)) + data          # §14.2
     if kind == "string":
         data = reader.blob()
-        return _oer_length(len(data)) + data          # §27
+        # §27.2 drops the length determinant only for a KNOWN-MULTIPLIER type whose
+        # effective size constraint is a single value: only then does the character count
+        # fix the octet count. UTF8String never qualifies (§27.1) — a character costs 1..4
+        # octets there, so its length is never implied.
+        fixed = _oer_fixed_size(node)
+        if fixed is not None and node.universal in _OER_KNOWN_MULTIPLIER:
+            # Every repertoire in `_OER_KNOWN_MULTIPLIER` is single-octet, so the stream's
+            # UTF-8 octet count IS the character count. A wider known-multiplier type would
+            # need the character count instead, and none reaches here.
+            if len(data) != fixed:
+                raise Asn1Error(
+                    f"SIZE ({fixed}) requires exactly {fixed} characters, got {len(data)} "
+                    f"(X.696 §27.2)")
+            return data
+        return _oer_length(len(data)) + data          # §27.3
     if kind == "oid":
         body = _oid_octets(reader.blob().decode("ascii"))
         return _oer_length(len(body)) + body           # §14

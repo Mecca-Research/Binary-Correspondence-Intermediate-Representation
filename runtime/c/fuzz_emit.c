@@ -23,6 +23,7 @@
 
 #define FUZZ_NODES 64
 #define FUZZ_MEMBERS 64
+#define FUZZ_CONSTRAINTS 64
 #define FUZZ_SCRATCH 256
 #define FUZZ_OUT 4096
 
@@ -31,6 +32,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   static bcir_emit_node nodes[FUZZ_NODES];
   static bcir_emit_member members[FUZZ_MEMBERS];
+  static bcir_emit_constraint constraints[FUZZ_CONSTRAINTS];
   static uint32_t scratch[FUZZ_SCRATCH];
   static uint8_t out[FUZZ_OUT];
   bcir_emit_plan plan;
@@ -52,7 +54,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   if (plan_len > size) plan_len = size;
 
   if (bcir_emit_parse_plan((const char *)data, plan_len, nodes, FUZZ_NODES, members,
-                           FUZZ_MEMBERS, &plan, &diag) != BCIR_EMIT_OK)
+                           FUZZ_MEMBERS, constraints, FUZZ_CONSTRAINTS, &plan,
+                           &diag) != BCIR_EMIT_OK)
     return 0;
 
   /* The return value is deliberately ignored: every status is a legitimate answer here.

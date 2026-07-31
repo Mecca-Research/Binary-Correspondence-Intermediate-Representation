@@ -10,10 +10,17 @@
  *   emit <rules> <hex>            rules is der | ber | jer | coer; hex is the value stream
  *   emitcap <rules> <cap> <hex>   the same with a deliberately small output buffer
  *   scratchcap <n>                cap the size scratch, to exercise SCRATCH_SHORT
+ *   constraint <node>             read back what the parser stored for one node
+ *
+ * `constraint` exists because plan version 3 records more than any emitter here consumes
+ * yet: the X.691 extension-root bounds and the permitted alphabet are PER's, and PER's
+ * writer is a later step. A field nothing reads is a field nothing checks, so the Python
+ * differential reads them back and compares against the compiler that wrote them.
  *
  * Output:
  *
  *   ok <hex>                      the octets emitted
+ *   ok <fields...>                for `constraint`
  *   err <status> <offset> <needed>
  *===----------------------------------------------------------------------===*/
 #include <stdio.h>
@@ -25,6 +32,7 @@
 #define MAX_LINE (MAX_TEXT * 2 + 64)
 #define MAX_NODES 512
 #define MAX_MEMBERS 512
+#define MAX_CONSTRAINTS 64
 #define MAX_OUT (1 << 20)
 #define MAX_SCRATCH 8192
 
@@ -65,6 +73,7 @@ int main(void) {
   static uint32_t scratch[MAX_SCRATCH];
   static bcir_emit_node nodes[MAX_NODES];
   static bcir_emit_member members[MAX_MEMBERS];
+  static bcir_emit_constraint constraints[MAX_CONSTRAINTS];
   bcir_emit_plan plan;
   bcir_emit_diag diag;
   int have_plan = 0;
@@ -82,7 +91,8 @@ int main(void) {
       len = unhex(hex, text, sizeof(text));
       if (len < 0) { printf("err 1 0 0\n"); continue; }
       status = bcir_emit_parse_plan((const char *)text, (size_t)len, nodes, MAX_NODES,
-                                    members, MAX_MEMBERS, &plan, &diag);
+                                    members, MAX_MEMBERS, constraints, MAX_CONSTRAINTS,
+                                    &plan, &diag);
       if (status != BCIR_EMIT_OK) {
         printf("err %d %lu %lu\n", (int)status, (unsigned long)diag.offset,
                (unsigned long)diag.needed);
@@ -91,6 +101,37 @@ int main(void) {
         have_plan = 1;
         printf("ok\n");
       }
+      continue;
+    }
+
+    if (strcmp(op, "constraint") == 0) {
+      unsigned long index = 0;
+      const bcir_emit_node *node;
+      const bcir_emit_constraint *k;
+      const bcir_emit_bound *bounds[8];
+      int i;
+      if (sscanf(line, "%31s %lu", op, &index) != 2 || !have_plan ||
+          index >= plan.node_count) {
+        printf("err 1 0 0\n");
+        continue;
+      }
+      node = &plan.nodes[index];
+      if (node->constraint < 0) { printf("ok none\n"); continue; }
+      k = &plan.constraints[node->constraint];
+      bounds[0] = &k->value_low;      bounds[1] = &k->value_high;
+      bounds[2] = &k->size_low;       bounds[3] = &k->size_high;
+      bounds[4] = &k->root_value_low; bounds[5] = &k->root_value_high;
+      bounds[6] = &k->root_size_low;  bounds[7] = &k->root_size_high;
+      printf("ok");
+      for (i = 0; i < 8; i++) {
+        if (!bounds[i]->present) printf(" -");
+        else printf(" %s%llu", bounds[i]->negative ? "-" : "",
+                    (unsigned long long)bounds[i]->magnitude);
+      }
+      printf(" %u %u ", (unsigned)k->value_extensible, (unsigned)k->size_extensible);
+      if (k->alphabet_len == 0) printf("-");
+      else print_hex((const unsigned char *)k->alphabet, k->alphabet_len);
+      printf("\n");
       continue;
     }
 

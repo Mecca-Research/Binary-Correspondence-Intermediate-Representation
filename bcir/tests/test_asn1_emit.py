@@ -292,3 +292,209 @@ def test_every_emitter_consumes_the_identical_stream():
         # there is no constructed length to leave open, which this corpus never hits.
         assert outputs[EmitRules.DER] != outputs[EmitRules.JER]
         assert outputs[EmitRules.DER] != outputs[EmitRules.COER]
+
+
+# --- constraints: the bug this found, and what still stands between the plan and PER ---------
+
+
+def test_a_constrained_type_reaches_the_oer_form_its_constraint_selects():
+    """The defect this investigation found in already-landed code, now fixed and pinned.
+
+    DER, BER and JER encode a value identically whether or not a subtype constraint exists,
+    and X.697 §7.2.2 l)/h) hide integer and string constraints from JER outright. **OER does
+    not** — X.696 §10.3 gives a constrained INTEGER a fixed-width form with no length
+    determinant, so `INTEGER (0..255)` holding 42 is `2A` where the unconstrained type is
+    `01 2A`.
+
+    Plan version 2 dropped constraints, so the OER emitter it drove wrote the unconstrained
+    spelling for **every** type: a well-formed document of a different value. Every parity
+    test passed because the corpus contained no constrained type — corpus blindness rather
+    than a subtle bug, since the emitter was simply never asked.
+
+    Each case below is one clause of §10.2's dispatch, and every one of them differs from
+    the length-prefixed form the old emitter produced.
+    """
+    from bcir.asn1.constraints import Size, ValueRange
+
+    cases = (
+        # (label, type, value, the octets X.696 requires)
+        ("§10.3 a) one unsigned octet", Primitive(
+            Universal.INTEGER, "I", constraint=ValueRange(0, 255)), 42, b"\x2a"),
+        ("§10.3 b) two unsigned octets", Primitive(
+            Universal.INTEGER, "I", constraint=ValueRange(0, 65535)), 42, b"\x00\x2a"),
+        ("§10.3 d) eight unsigned octets", Primitive(
+            Universal.INTEGER, "I", constraint=ValueRange(0, 2 ** 64 - 1)), 2 ** 63,
+         b"\x80" + b"\x00" * 7),
+        ("§10.4 a) one signed octet", Primitive(
+            Universal.INTEGER, "I", constraint=ValueRange(-128, 127)), -5, b"\xfb"),
+        ("§10.3 e) a lower bound alone stays length-prefixed", Primitive(
+            Universal.INTEGER, "I", constraint=ValueRange(0, None)), 300, b"\x02\x01\x2c"),
+        ("§14.1 a fixed size drops the determinant", Primitive(
+            Universal.OCTET_STRING, "O", constraint=Size(ValueRange(3, 3))), b"abc",
+         b"abc"),
+        ("§14.2 a size RANGE does not", Primitive(
+            Universal.OCTET_STRING, "O", constraint=Size(ValueRange(1, 3))), b"abc",
+         b"\x03abc"),
+        ("§27.2 a known-multiplier string, fixed", Primitive(
+            Universal.IA5_STRING, "A", constraint=Size(ValueRange(3, 3))), "abc", b"abc"),
+        # §27.1 keeps UTF8String out of §27.2: a character costs 1..4 octets there, so a
+        # character count never implies an octet count and the determinant must stay.
+        ("§27.1 UTF8String is never known-multiplier", Primitive(
+            Universal.UTF8_STRING, "U", constraint=Size(ValueRange(3, 3))), "abc",
+         b"\x03abc"),
+    )
+    for label, kind, value, want in cases:
+        outer = _seq(Component("v", kind))
+        plan = compile_encode_plan(outer, module="Test", type_name="S")
+        got = emit(plan, flatten(plan, {"v": value}), rules=EmitRules.COER)
+        assert got == want, f"{label}: {got.hex()} != {want.hex()}"
+        # The oracle is the arbiter; `want` is spelled out so a reader can check the clause
+        # without running the oracle, and the two agreeing is what makes both trustworthy.
+        assert got == encode_oer(outer, {"v": value}), label
+
+
+def test_an_enumerated_is_not_an_integer_under_oer():
+    """The second defect the same investigation found, which no constraint was needed to hit.
+
+    X.696 §11 gives ENUMERATED its own form: §11.3's short form is the bare octet below 128,
+    and §11.4's long form sets the top bit of a count octet over a SIGNED body. §10's
+    length-prefixed integer is a different encoding, and the plan-driven emitter shared a
+    branch with it — so every enumerated it ever encoded was wrong, unconstrained ones
+    included. `_CORPUS` had no ENUMERATED, so nothing asked.
+
+    A construct absent from the corpus is untested however many tests run over the corpus,
+    which is why this one names its own values rather than adding a row and hoping.
+    """
+    kind = Primitive(Universal.ENUMERATED, "E")
+    outer = _seq(Component("v", kind))
+    plan = compile_encode_plan(outer, module="Test", type_name="S")
+    for value, want in ((0, b"\x00"), (5, b"\x05"), (127, b"\x7f"),
+                        (128, b"\x82\x00\x80"), (200, b"\x82\x00\xc8"), (-1, b"\x81\xff"),
+                        (-129, b"\x82\xff\x7f")):
+        got = emit(plan, flatten(plan, {"v": value}), rules=EmitRules.COER)
+        assert got == want, f"{value}: {got.hex()} != {want.hex()}"
+        assert got == encode_oer(outer, {"v": value}), value
+
+
+def test_the_three_candidates_that_ignore_constraints_still_ignore_them():
+    """The other half: DER, BER and JER are unaffected, which is why version 2 was ever enough.
+
+    Without this the fix above reads as "the plan was broken". It was not — it was complete
+    for the candidates whose encodings do not read constraints, and the boundary is a
+    property of the encodings rather than of the compiler. Recording a constraint must not
+    move a byte for these three.
+    """
+    from bcir.asn1.constraints import ValueRange
+
+    unconstrained = _seq(Component("v", Primitive(Universal.INTEGER, "INTEGER")))
+    bounded = _seq(Component("v", Primitive(Universal.INTEGER, "INTEGER",
+                                            constraint=ValueRange(0, 255))))
+    value = {"v": 42}
+    free_plan = compile_encode_plan(unconstrained, module="Test", type_name="S")
+    bound_plan = compile_encode_plan(bounded, module="Test", type_name="S")
+    for rules in (EmitRules.DER, EmitRules.BER, EmitRules.JER):
+        assert (emit(free_plan, flatten(free_plan, value), rules=rules)
+                == emit(bound_plan, flatten(bound_plan, value), rules=rules)), rules
+    assert encode_tlv(unconstrained.encode(value)) == encode_tlv(bounded.encode(value))
+    assert encode_jer(unconstrained, value) == encode_jer(bounded, value)
+    # OER is the one that differs, which is what made the fix necessary.
+    assert encode_oer(unconstrained, value) != encode_oer(bounded, value)
+
+
+def test_a_constraint_the_plan_cannot_write_down_is_refused_not_truncated():
+    """The format states its arithmetic range, and says so rather than wrapping.
+
+    A descriptor is read by a freestanding C twin with no bignum, so `BOUND_MAX` and
+    `ALPHABET_MAX` are §5.1's "state your scratch bound" applied to a text format. Both are
+    chosen from the standard rather than from convenience: X.696 §10.3 d)'s widest fixed
+    word is eight octets, and X.691 §30.5's alphabet decides bits-per-character.
+
+    Truncating either produces a *different type* — a narrower OER field, or a different
+    character width — so both refuse.
+    """
+    from bcir.asn1.constraints import PermittedAlphabet, Union, ValueRange
+    from bcir.asn1.encode_plan import ALPHABET_MAX, BOUND_MAX
+
+    too_wide = _seq(Component("v", Primitive(
+        Universal.INTEGER, "I", constraint=ValueRange(0, BOUND_MAX + 1))))
+    try:
+        compile_encode_plan(too_wide, module="Test", type_name="S")
+    except Asn1Error as error:
+        assert "value_high" in str(error) and "§10.3" in str(error), error
+    else:
+        raise AssertionError("a bound past the format's range compiled")
+
+    # A permitted alphabet one character past the buffer. Built as a union of single
+    # characters so the count is exact rather than an artefact of a range's endpoints.
+    from bcir.asn1.constraints import SingleValue
+    wide = Union(tuple(SingleValue(chr(0x21 + i)) for i in range(ALPHABET_MAX + 1)))
+    too_many = _seq(Component("v", Primitive(
+        Universal.IA5_STRING, "A", constraint=PermittedAlphabet(wide))))
+    try:
+        compile_encode_plan(too_many, module="Test", type_name="S")
+    except Asn1Error as error:
+        assert "alphabet" in str(error) and "§30.5" in str(error), error
+    else:
+        raise AssertionError("an alphabet past the format's buffer compiled")
+
+
+def test_what_still_stands_between_this_plan_and_a_per_emitter():
+    """The remaining PER blockers, as checked facts rather than a plan.
+
+    Version 3 records constraints **completely**: everything X.691 reads off one is in
+    `EncodeConstraint`, including the extension-root bounds and the permitted alphabet that
+    OER never looks at. That was the first blocker and it is gone.
+
+    What is left is not about constraints at all, which is why it is a separate version
+    rather than more fields here:
+
+    1. **Extensibility of a SEQUENCE, a CHOICE and an ENUMERATED.** X.691 §19.1, §23.5 and
+       §14.3 each emit a leading bit for it. The plan has no field for it, and a SEQUENCE
+       that is extensible encodes differently from one that is not even with identical
+       components.
+    2. **The enumeration itself.** X.691 §14.1 encodes an ENUMERATED as its *index* into
+       the root sorted ascending, not as its value — so the plan must carry the numbers.
+       `EncodeNode.enumeration` exists but holds names, which cannot produce an index.
+    3. **Extension additions**, which `_compile_members` refuses outright: X.691 §19.7
+       splits root from additions and X.690 does not.
+
+    These are schema facts rather than constraint facts, and a version that mixes the two
+    would make neither seam meaningful. When they land, this test fails and whoever changed
+    it is building the PER emitter.
+    """
+    from bcir.asn1.constraints import ValueRange
+    from bcir.asn1.encode_plan import PLAN_VERSION
+    from bcir.asn1.per import PerRules, PerVariant, encode_per
+
+    assert PLAN_VERSION == 3, "plan version moved; re-derive what this test asserts"
+
+    # 1. Two SEQUENCEs differing only in extensibility encode differently under PER and
+    #    identically in the plan.
+    plain = Sequence((Component("a", _B),), name="S")
+    extensible = Sequence((Component("a", _B),), name="S", extensible=True)
+    for variant in (PerVariant.ALIGNED, PerVariant.UNALIGNED):
+        assert (encode_per(plain, {"a": True}, variant=variant, rules=PerRules.CANONICAL)
+                != encode_per(extensible, {"a": True}, variant=variant,
+                              rules=PerRules.CANONICAL)), variant
+    assert (compile_encode_plan(plain, module="T", type_name="S").sha256()
+            == compile_encode_plan(extensible, module="T", type_name="S").sha256()), (
+        "the plan now distinguishes an extensible SEQUENCE; that is a PER prerequisite, so "
+        "build the emitter rather than deleting this test")
+
+    # 2. The enumeration's numbers are what §14.1 indexes, and the plan records no numbers.
+    enumerated = _seq(Component("v", Primitive(
+        Universal.ENUMERATED, "E", enumeration=(("red", 4), ("green", 9)))))
+    node = compile_encode_plan(enumerated, module="T", type_name="S").root.members[0].node
+    assert node.enumeration == (), (
+        "the plan now records an enumeration; make sure it carries the NUMBERS X.691 §14.1 "
+        "indexes, not the identifiers")
+
+    # 3. But the constraint half really is complete: every field PER reads off a constraint
+    #    is present and populated.
+    bounded = _seq(Component("v", Primitive(
+        Universal.INTEGER, "I", constraint=ValueRange(0, 255))))
+    recorded = compile_encode_plan(bounded, module="T", type_name="S").root.members[0].node
+    assert recorded.constraint is not None
+    assert recorded.constraint.root_value_low == 0
+    assert recorded.constraint.root_value_high == 255
+

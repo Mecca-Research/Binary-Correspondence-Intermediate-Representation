@@ -524,6 +524,48 @@ implementation, which is what makes it worth recording at all.
 The second and third were reachable only by fuzzing the **descriptor** alongside the value,
 which is why `fuzz_emit.c` does, as `fuzz_oer.c` does.
 
+#### 6.2.1 Plan version 3 — a constraint is not a comment
+
+Scoping the PER column turned up two defects in the code above, and both were the same
+failure: **the corpus never asked.**
+
+Plan version 2 recorded kinds, tags, member names and optionality, and deliberately dropped
+**subtype constraints**. For DER, BER and JER that is correct — X.690 encodes the same
+octets whether or not a constraint exists, and X.697 §7.2.2 l)/h) hide integer and string
+constraints from JER outright. It is *wrong* for OER: X.696 §10.3 gives a constrained
+INTEGER a fixed-width form with no length determinant, so `INTEGER (0..255)` holding 42 is
+`2A` where the unconstrained type is `01 2A`. The emitter had been writing the unconstrained
+spelling for every type since it landed — a well-formed document of a different value.
+
+The second was found while writing the test for the first: **ENUMERATED shared a branch with
+INTEGER**, and X.696 §11 is not §10. Every enumerated this emitter ever encoded was wrong,
+constrained or not — `5` came out as `01 05` where the standard says `05`.
+
+Neither needed a subtle input. `_CORPUS` had no constrained type and no ENUMERATED, and a
+construct absent from the corpus is untested however many tests run over it. Both corpora —
+the Python differential's and `check_runtime.sh`'s — now carry both.
+
+Version 3 records what each rule *reads* off a constraint rather than the constraint itself,
+because §5.1 makes a descriptor data and a `Constraint` is an object graph with `permits()`
+on it. It carries **four** bound pairs, not two, and that is the part worth stating: X.696
+§8.2.2 g) makes an extensible constraint invisible to OER, while X.691 §13.1 emits one bit
+and then encodes against the extension *root*. Those are different facts about the same
+constraint and they genuinely differ — intersect an extensible `(0..255, ...)` with a plain
+`(0..1000)` and OER reads `0..1000` while PER's root reads `0..255` — so deriving one from
+the other would be a guess.
+
+The extension-root bounds and the permitted alphabet are PER's alone and nothing emits them
+yet. A field nothing reads is a field nothing checks, so the C driver reads the parsed table
+back and the differential compares it against the compiler that wrote it.
+
+**What still stands between this plan and a PER emitter** is no longer about constraints. It
+is three schema facts version 3 does not carry: extensibility of a SEQUENCE, a CHOICE and an
+ENUMERATED (X.691 §19.1, §23.5, §14.3 each emit a leading bit for it); the enumeration's
+*numbers*, since §14.1 encodes an ENUMERATED as its index into the root sorted ascending;
+and extension additions, which `_compile_members` refuses outright because §19.7 splits root
+from additions and X.690 does not. Those belong to one further version alongside the emitter
+that reads them, rather than dribbling in as fields nothing consumes.
+
 ### 6.3 StreamPack and BCAB
 
 JER is never a replacement for native StreamPack or BCAB. A JER projection, if a
@@ -544,7 +586,7 @@ errata admission.
 | **J2 — schema-plan compiler** · **DELIVERED** | Deterministic descriptor, bound derivation, instruction compilation, version/hash contract, and first `channel.json` schema | Met: [`jer_plan.py`](../bcir/asn1/jer_plan.py) regenerates byte-identically, refuses a bare ENUMERATED, an open type, a duplicate JSON member name and an undiscriminable UNWRAPPED choice at compile time, and its plan-driven trace equals the direct one |
 | **J3 — scalar C twin** | **Landed.** [`bcir_jer.{h,c}`](../runtime/c/bcir_jer.c): allocation-free bounded scanner, whole-document UTF-8 check, ECMA-404 parser driving a caller's event sink, §4.2 diagnostics, §3.3 unframing, and the twelfth fuzz target | Python/C error-class, byte-offset, required-capacity and event-trace parity in [`test_c_jer.py`](../bcir/tests/test_c_jer.py); `-O0 == -O3` over 667 cases in `check_runtime.sh` `#jer`; freestanding `-Werror` under C11 and C23; ASan/UBSan fuzz green |
 | **J4 — law and execution lowering** | **Landed.** Part 1 the transfer-syntax rail and generalized R24 (§5.3); part 2 the commuting projection [`dialect.py`](../bcir/asn1/dialect.py) and StreamPack over JER; part 3 the [`manifest.py`](../bcir/asn1/manifest.py) schemas for `channel.json`, `DeviceManifest` and the §6.2 selection envelope, with §5.4's two sinks | **§7.1's two laws hold** over all 26 law fixtures; **§5.4's commutation holds** over all nine built-in channels — `JER -> typed value -> claims` equals `JER -> direct builder`, both fed by one event walk; native StreamPack octets survive the JER round trip (§6.3) |
-| **J5 — hosted SIMD rail** | **Landed, gate PARTIALLY met** ([`bcir_jer_simd.cpp`](../runtime/cpp/bcir_jer_simd.cpp)): a C++17 UTF-8 accept-scanner behind the scalar C ABI, with SSE2/AVX2/NEON tiers, runtime detection and scalar fallback | **Corpus and trace: met.** Every tier returns an identical status *and* byte offset to `bcir_jer_validate_utf8` over 489 documents — including multi-byte sequences straddling every offset in a 32-octet block and invalid sequences at every offset. **No unsupported-CPU fault: met.** A tier the CPU does not advertise, or this build did not compile, degrades to scalar rather than faulting or refusing. **Advantage on at least two hosts: UNMET — the measurement is single-host.** See §7.3 |
+| **J5 — hosted SIMD rail** | **Landed, gate PARTIALLY met** ([`bcir_jer_simd.cpp`](../runtime/cpp/bcir_jer_simd.cpp)): a C++17 UTF-8 accept-scanner behind the scalar C ABI, with SSE2/AVX2/NEON tiers, runtime detection and scalar fallback | **Corpus and trace: met.** Every tier returns an identical status *and* byte offset to `bcir_jer_validate_utf8` over 489 documents — including multi-byte sequences straddling every offset in a 32-octet block and invalid sequences at every offset. **No unsupported-CPU fault: met.** A tier the CPU does not advertise, or this build did not compile, degrades to scalar rather than faulting or refusing. **Advantage on at least two hosts: UNMET — the measurement is single-host.** Covers **UTF-8 validation only**; the structural index is a separate build and §7.4 says why it is not the same shape. See §7.3 |
 | **J6 — certified K_BCIR choice** | **Landed on the Python oracle** ([`certified.py`](../bcir/asn1/certified.py)): distribution-free prediction intervals from order statistics, a frozen generation-tagged cost table with declared provenance, §6.2's certificate, and a production select that **refuses** an oracle table for any timing objective. The native microbench protocol and RCSP integration remain open | Exact sizes decide wire-size objectives with no timing consulted; repeatability is a refusal rather than an average; legality-first and canonical-or-excluded precede every comparison; deterministic selection on two tables, each certificate bound to the table digest it read — [`test_asn1_certified.py`](../bcir/tests/test_asn1_certified.py) |
 | **J7 — driver experiment** | Userspace/simulator driver specification ingest, generated views, and sequential BCIR-Linux module comparison | D0–D3 driver gates, signed modules, direct/Linux trace parity, teardown/restart tests, and controlled performance evidence |
 
@@ -665,6 +707,47 @@ offset. It is not a second *measured host*: §8 refuses timing thresholds on sha
 ("shared CI gates validity and trend evidence, not noisy timing thresholds"), so a
 controlled rig is what closes this clause. A test reads this row and fails if the
 single-host limitation is dropped without one appearing.
+
+### 7.4 The structural index is a different problem from the UTF-8 rail
+
+§1's pipeline lists *"optional hosted SIMD structural index"* next to the UTF-8 scanner, and
+they look like the same kind of work. They are not, and the difference is worth stating
+before someone builds the wrong thing.
+
+**`bcir_jer_validate_utf8` has no cost budget.** Skipping an ASCII run is semantically free:
+the function's answer is a property of the octets alone, so a vector pass that proves a run
+irrelevant can skip it and change nothing.
+
+**`bcir_jer_scan` charges one work unit per octet**, against §4.3's `work` ceiling, and
+`BCIR_JER_WORK_EXCEEDED` carries *the exact octet at which the budget ran out*. A ceiling of
+100 rejects a 410-octet document at octet 100, needing 101. So the scan's cost is not
+incidental — it is **observable output**, and §4.3 designed it that way so a sender "cannot
+buy unbounded work with few bytes".
+
+Two consequences for any structural index:
+
+1. **A vector pass may not simply skip — but it may charge in bulk, exactly.** Skipping a
+   run without charging for it accepts documents the scalar rail rejects. Charging in bulk,
+   however, is not an approximation: the main loop charges **exactly one unit per octet, at
+   that octet's own position**, so a run of `n` octets starting with `w` units already spent
+   against a ceiling of `L` fails — when it fails — at octet `L - w` reporting `needs L + 1`,
+   in closed form. Verified over every ceiling from 1 to 59 against `jer_bounded`: zero
+   mispredictions.
+
+   *This corrects the first version of this section*, which claimed a crossing run had to be
+   re-walked per octet to report the right offset. It does not: uniform positional charging
+   makes the failure point arithmetic. The budget therefore constrains the design without
+   capping the speed-up, which is a materially different conclusion.
+2. **It cannot be a drop-in accelerator.** The UTF-8 rail works because the C ABI exposes a
+   whole-document function the C++ adapter can wrap. `bcir_jer_scan` carries its state
+   internally, so accelerating it means either putting SIMD inside the freestanding core —
+   the wrong direction across the layering §4.1 sets up — or a **stage-2 parser that walks
+   the index**, which is a second scanner and needs §8's full mitigation: same C ABI, same
+   corpus, scalar fallback, and differential fuzzing against `bcir_jer_scan`'s events,
+   diagnostics, offsets *and* work accounting.
+
+That second option is the real shape of the work, and it is not a follow-on to the UTF-8
+rail — it is a J3-sized build of its own. It is **not started**.
 
 ## 8. Validation and performance method
 

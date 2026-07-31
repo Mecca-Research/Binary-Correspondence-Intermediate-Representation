@@ -318,3 +318,65 @@ def test_the_two_host_clause_of_the_gate_is_unmet_and_recorded_as_unmet():
         "the roadmap no longer records that J5's measurement is single-host; either a "
         "second host was added — in which case update this test and the row together — or "
         "the limitation was quietly dropped")
+
+
+def test_the_scan_s_work_budget_is_a_semantic_limit_not_an_incidental_cost():
+    """Why the structural index is not the same shape as the UTF-8 rail (§7.4).
+
+    `bcir_jer_validate_utf8` has no cost budget, so skipping an ASCII run is semantically
+    free. `bcir_jer_scan` charges one work unit per octet against §4.3's `work` ceiling, and
+    `WORK_EXCEEDED` carries the *exact* octet at which the budget ran out — so the scan's
+    cost is observable output, not an implementation detail. A vector pass that skipped a
+    run without charging for it would accept documents the scalar rail rejects.
+
+    This test exists so that constraint is a checked fact before anyone builds the index,
+    rather than something discovered halfway through.
+    """
+    import dataclasses
+
+    from bcir.asn1.jer_bounded import JerBoundedError, JerLimits, scan
+
+    document = b'{"k":"' + b" " * 400 + b'"}'
+    assert scan(document, JerLimits()) == 3, "the fixture stopped being accepted at all"
+    try:
+        scan(document, dataclasses.replace(JerLimits(), work=100))
+    except JerBoundedError as error:
+        # The exact octet, not merely "too much work": that precision is what a bulk-charging
+        # vector pass would have to reproduce by re-walking the run that crosses the budget.
+        assert "octet 100" in str(error), error
+        assert "needs 101" in str(error), error
+    else:
+        raise AssertionError(
+            "a 410-octet document passed a work ceiling of 100; the budget stopped being a "
+            "semantic limit, and §7.4's argument about the structural index no longer holds")
+
+
+def test_a_bulk_work_charge_reproduces_the_scalar_failure_point_in_closed_form():
+    """The property that makes a vectorized scan feasible at all (§7.4).
+
+    The scan's main loop charges **one unit per octet, at that octet's own position**. So a
+    vector pass that skips a run and charges for it in bulk does not have to re-walk the run
+    to find where the budget crossed: with `w` units spent against a ceiling of `L`, the
+    failure is at octet `L - w` reporting `needs L + 1`, by arithmetic.
+
+    The first version of §7.4 claimed the opposite — that a crossing run had to be re-walked
+    per octet — and that would have capped any speed-up at the point the budget binds. It is
+    wrong, and this test is what makes the correction checkable: if the charging ever stops
+    being uniform, the closed form stops predicting and this fails.
+    """
+    import dataclasses
+
+    from bcir.asn1.jer_bounded import JerBoundedError, JerLimits, scan
+
+    document = b'{"k":' + b" " * 500 + b"1}"
+    checked = 0
+    for ceiling in range(1, 60):
+        try:
+            scan(document, dataclasses.replace(JerLimits(), work=ceiling))
+        except JerBoundedError as error:
+            # Nothing has been spent when the loop starts, so w = 0 and the failure is at
+            # octet `ceiling`, needing `ceiling + 1`.
+            assert f"at octet {ceiling}" in str(error), (ceiling, str(error))
+            assert f"needs {ceiling + 1}" in str(error), (ceiling, str(error))
+            checked += 1
+    assert checked > 40, f"only {checked} ceilings actually failed; the fixture is too cheap"
