@@ -50,7 +50,7 @@ from dataclasses import dataclass, field
 from .schema import Asn1Type, Choice, Primitive, Sequence, SequenceOf
 from .tags import Asn1Error, TagClass, Universal
 
-PLAN_VERSION = 1
+PLAN_VERSION = 2
 PLAN_COMPILER = "bcir-encode-plan/1"
 
 #: Universal tag -> the plan's leaf kind. Written out rather than derived so an unlisted
@@ -144,8 +144,14 @@ class EncodePlan:
 
 def _serialize_node(node: EncodeNode, path: str, out: list[str]) -> None:
     here = path or "."
+    # `members` and `element` are counts, and E2's freestanding reader is why. The node
+    # lines arrive depth first, so a reader without counts must rebuild the tree from the
+    # PATH strings — and a member name containing `/` splits a path in the wrong place.
+    # Counting makes the descriptor parseable with a fixed stack and no string arithmetic.
+    # Version 2 is exactly this addition.
     out.append(
         f"node {here} kind={node.kind} universal={node.universal} "
+        f"members={len(node.members)} element={'1' if node.element is not None else '0'} "
         f"type={node.type_name or '-'} enum={'|'.join(node.enumeration) or '-'}")
     for member in node.members:
         out.append(

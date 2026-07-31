@@ -484,10 +484,45 @@ in the value mapping rather than in any encoding, and it stays invisible until s
 drives every encoder from one input — which is exactly what a matched comparison must do. It
 is pinned by a test rather than papered over, so unifying the spelling stays a deliberate act.
 
-**E2 remains: the C twin.** The plan serializes to a canonical descriptor a freestanding
-encoder can parse, exactly as `JerSchemaPlan.serialize()` did for the read side, and until
-that exists there are still no *native* encode timings — the reference emitters are Python,
-and a Python timing wearing a `measured` label is what J6's refusal exists to prevent.
+**E2 landed — the C twin, and with it the first native encode timings.**
+[`bcir_emit.{h,c}`](../runtime/c/bcir_emit.c) parses the serialized descriptor with a fixed
+stack and no allocation, and emits DER, BER, JER and CANONICAL-OER from the same neutral
+value stream. It is byte-identical to E1's reference across 152 cases × 4 candidates, at
+`-O0` and `-O3` alike.
+
+**The encode column reaches a row the decode column never can.** CANONICAL-OER is measured
+here; X.696 §6.2 bars it from the decode table permanently. `CostRow` needs both axes, so
+OER still has no two-axis row — `run_native_encode_bench` returns the number it *does* have
+and `measured_table` declines to invent the half it does not, which is the same discipline
+§6.2 applies one level up. PER is in neither column: encodable given a plan, but `bcir_emit`
+has no bit-oriented writer, and that is an ordinary gap rather than a law.
+
+**A cost difference the standard predicts, now measured.** §10.1 forbids DER the indefinite
+length form, so a DER encoder must know each constructed length before writing its header —
+two passes, or a shift. §8.1.3.6 lets BER leave the length open and close with an EOC, so it
+needs one pass and no scratch. On this rail BER encodes at **0.65×** DER's median and
+CANONICAL-OER at **0.44×**; the gap is a property of the encodings rather than of the
+implementation, which is what makes it worth recording at all.
+
+*Three defects found by building the twin, none of them reachable from E1:*
+
+1. **A silent 64-bit truncation.** The first `put_int_decimal` accumulated into a `uint64_t`,
+   so `2**64 + 7` emitted as `7` — well-formed JER, wrong value, no error anywhere. Python's
+   arbitrary-precision integers meant the reference could never have shown it. The
+   conversion is now long division on the magnitude octets, and a width past the buffer is a
+   refusal rather than a wrap.
+2. **An exponential re-walk**, found by the fuzzer. OER's preamble precedes components that
+   the stream interleaves with values, and the first version walked each SEQUENCE's members
+   twice to collect the presence bits — so every nesting level re-walked its whole subtree.
+   The preamble's *size* comes from the plan and no value can change it, so the space is now
+   reserved and the bits patched in during one pass.
+3. **An unbounded element count**, also from the fuzzer. A `SEQUENCE OF` whose element
+   consumes *no* stream octets — a NULL — turns four attacker-chosen bytes into four billion
+   iterations that produce output and read nothing. The bound now comes from the plan, which
+   is trusted, rather than from the stream, which is not.
+
+The second and third were reachable only by fuzzing the **descriptor** alongside the value,
+which is why `fuzz_emit.c` does, as `fuzz_oer.c` does.
 
 ### 6.3 StreamPack and BCAB
 

@@ -155,6 +155,15 @@ add_target jer "X.697 bounded JER reader" "-max_len=4096" \
 add_target oer "X.696 OER decoder" "-max_len=4096" \
   "${C}/fuzz_oer.c" "${C}/bcir_oer.c"
 
+# The plan-driven ENCODER (E2). Its descriptor is fuzzed alongside its value stream, for the
+# same reason the OER target fuzzes its plan: a descriptor and a value that came from
+# different places is the ordinary case, not the exotic one. Two hangs were found this way
+# and neither was reachable from the differential corpus -- an exponential re-walk in the
+# OER preamble, and a SEQUENCE OF whose zero-cost element turned four bytes of count into
+# unbounded output.
+add_target emit "plan-driven ASN.1 encoder" "-max_len=4096" \
+  "${C}/fuzz_emit.c" "${C}/bcir_emit.c"
+
 # The StreamPack decoder itself: an artifact handed to the runtime by anyone.
 add_target decoder "decoder" "" \
   "${C}/fuzz_streampack.c" "${C}/bcir_runtime.c"

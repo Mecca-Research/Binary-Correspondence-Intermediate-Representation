@@ -54,7 +54,7 @@ from .tags import Asn1Error
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
 _SOURCES = ["bcir_asn1_bench.c", "bcir_asn1.c", "bcir_jer.c", "bcir_xer.c",
-            "bcir_runtime.c"]
+            "bcir_runtime.c", "bcir_emit.c"]
 
 
 @dataclass(frozen=True)
@@ -129,6 +129,10 @@ class EncodeOp:
 
     schema_free: bool
     reason: str = ""
+    #: The `bcir_emit` rules name that measures this candidate natively, or None. A
+    #: candidate can be schema-DIRECTED and still measurable — that is the whole point of
+    #: E1/E2 — so this is independent of `schema_free`.
+    native_op: str | None = None
 
 
 #: The partition, and it is **not** the decode table's partition.
@@ -158,19 +162,23 @@ class EncodeOp:
 #: yield a two-row table with JER absent, which reads as a gap in the implementation rather
 #: than as the law it is.
 ENCODE_OPS: dict[str, EncodeOp] = {
-    "DER": EncodeOp(True),
-    "BER": EncodeOp(True),
+    "DER": EncodeOp(True, native_op="der"),
+    "BER": EncodeOp(True, native_op="ber"),
     "JER": EncodeOp(
-        False,
+        False, native_op="jer",
         reason="X.697 §22.2: a JER document carries member IDENTIFIERS, which exist only in "
                "the type — the value has never heard of them"),
     "JER-BCIR-CANONICAL": EncodeOp(
-        False, reason="X.697 §22.2: member identifiers come from the type (see the JER entry)"),
+        False, native_op="jer",
+        reason="X.697 §22.2: member identifiers come from the type (see the JER entry)"),
     "COER": EncodeOp(
-        False,
+        False, native_op="coer",
         reason="X.696: field widths, presence bits and the preamble are fixed by the type, "
                "so there is nothing to emit without one"),
-    "BASIC-OER": EncodeOp(False, reason="X.696: the type fixes the layout (see the COER entry)"),
+    "BASIC-OER": EncodeOp(
+        False, reason="X.696: the type fixes the layout; CANONICAL-OER is the row E2 "
+                      "measures, and BASIC-OER's non-canonical spellings are a decoder's "
+                      "problem rather than a distinct encode cost"),
     "CANONICAL-PER-ALIGNED": EncodeOp(
         False,
         reason="X.691: the type fixes field widths, the extension bit and the presence "
@@ -297,18 +305,93 @@ def run_native_bench(kind, value, *, warmup: int = 2, rounds: int = MIN_SAMPLES 
              for name, samples in sorted(per_case.items())], skipped)
 
 
+
+def run_native_encode_bench(kind, value, *, warmup: int = 2, rounds: int = MIN_SAMPLES + 4,
+                            iterations: int = 64, candidates=ALL_CANDIDATES
+                            ) -> tuple[dict[str, tuple[int, ...]], dict[str, str]]:
+    """Time the NATIVE encode of `value` under every candidate E2 can emit.
+
+    Every candidate goes through one write-side plan and one format-neutral value stream, so
+    what is timed is the encoding rather than an adapter — which is the property #682 showed
+    a schema-free harness could not have.
+
+    **This column is not the decode column's mirror, and the difference is the point.**
+    CANONICAL-OER appears here and can never appear in the decode table (X.696 §6.2), while
+    PER appears in neither: it is encodable given a plan, but `bcir_emit` has no bit-oriented
+    writer, which is an ordinary gap rather than a law.
+    """
+    from .encode_plan import compile_encode_plan
+    from .emit import flatten
+
+    skipped: dict[str, str] = {}
+    cases: list[tuple[str, str]] = []
+    try:
+        plan = compile_encode_plan(kind, module="bench", type_name="Bench")
+        stream = flatten(plan, value)
+    except Asn1Error as error:
+        raise Asn1Error(f"the write plan refuses this schema, so no encode column exists "
+                        f"for it: {error}") from None
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        entry = ENCODE_OPS.get(candidate.name)
+        if entry is None:
+            skipped[candidate.name] = "no ENCODE_OPS entry; add one rather than defaulting"
+            continue
+        if entry.native_op is None:
+            skipped[candidate.name] = entry.reason
+            continue
+        cases.append((candidate.name, entry.native_op))
+        seen.add(candidate.name)
+    if not cases:
+        return {}, skipped
+
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = build_harness(tmp)
+        if binary is None:
+            raise Asn1Error("no C compiler; a measured encode table cannot be produced here")
+        lines = [f"rounds {warmup} {rounds} {iterations}"]
+        lines += [f"encase {name} {op} {plan.serialize().hex()} {stream.hex()}"
+                  for name, op in cases]
+        lines.append("run")
+        proc = subprocess.run([binary], input="\n".join(lines) + "\n",
+                              capture_output=True, text=True, timeout=600)
+        if proc.returncode != 0:
+            raise Asn1Error(f"the native bench refused the encode corpus: "
+                            f"{proc.stdout.strip()}")
+
+    per_case: dict[str, list[int]] = {}
+    for row in proc.stdout.splitlines():
+        parts = row.split()
+        if parts and parts[0] == "sample":
+            per_case.setdefault(parts[1], []).append(int(parts[4]))
+    return {name: tuple(samples) for name, samples in sorted(per_case.items())}, skipped
+
+
 def measured_table(kind, value, *, target: str, cal_gen: int,
                    candidates=ALL_CANDIDATES, **kwargs) -> EncodingCostTable:
     """A `provenance="measured"` table — containing only what was natively measured.
 
-    The encode interval is the decode interval, and that is a deliberate under-claim rather
-    than an oversight: nothing here times an encode, because the C rail has no encoder for
-    these candidates. Reusing the decode figure keeps the row shape uniform while making an
-    encode-latency objective decide on a number that is honestly labelled in the docstring
-    and in the roadmap; a caller who needs a real encode column must wait for a native
-    encoder rather than read one out of this table.
+    **The encode interval is now a real encode measurement** where E2 can produce one. It
+    used to be a copy of the decode figure, an under-claim made necessary by the C rail
+    having no encoder; `bcir_emit` removed that.
+
+    A row still needs BOTH axes, because `CostRow` carries both. CANONICAL-OER therefore
+    remains outside this table even though it now has a perfectly good encode number —
+    X.696 §6.2 denies it a schema-free decode forever, so the two-axis row can never close.
+    `run_native_encode_bench` returns that number directly for a caller who wants the axis
+    rather than the row, and refusing to fabricate the missing half is the same discipline
+    §6.2 applies one level up.
     """
     samples, skipped = run_native_bench(kind, value, candidates=candidates, **kwargs)
+    encode_samples: dict[str, tuple[int, ...]] = {}
+    try:
+        encode_samples, _ = run_native_encode_bench(kind, value, candidates=candidates,
+                                                    **kwargs)
+    except Asn1Error:
+        # A schema the WRITE plan refuses still has a decode column; the encode interval
+        # then falls back to the decode figure and the docstring above says what that means.
+        encode_samples = {}
     rows = []
     for sample in samples:
         if len(sample.decode_ns) < MIN_SAMPLES:
@@ -316,14 +399,18 @@ def measured_table(kind, value, *, target: str, cal_gen: int,
                 f"{sample.candidate}: {len(sample.decode_ns)} rounds is below the "
                 f"{MIN_SAMPLES}-sample floor an order-statistic interval needs")
         interval = interval_of(list(sample.decode_ns))
+        measured_encode = encode_samples.get(sample.candidate)
+        encode = (interval_of(list(measured_encode))
+                  if measured_encode and len(measured_encode) >= MIN_SAMPLES else interval)
         rows.append(CostRow(candidate=sample.candidate, octets=sample.octets,
-                            encode=interval, decode=interval))
+                            encode=encode, decode=interval))
     _ = skipped                                          # reported by run_native_bench
     return EncodingCostTable(target=target, cal_gen=cal_gen, provenance="measured",
                              rows=tuple(rows))
 
 
 __all__ = [
-    "NATIVE_OPS", "NativeOp", "NativeSamples", "build_harness", "measured_table",
-    "native_available", "run_native_bench",
+    "ENCODE_OPS", "NATIVE_OPS", "EncodeOp", "NativeOp", "NativeSamples", "build_harness",
+    "measured_table", "native_available", "observed_encode_partition", "run_native_bench",
+    "run_native_encode_bench",
 ]

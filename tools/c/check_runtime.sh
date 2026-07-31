@@ -3556,6 +3556,112 @@ else
   exit 1
 fi
 
+# Plan-driven ASN.1 encoder (#emit, E2): the write-side twin of bcir/asn1/emit.py. #682
+# established that only X.690 can be encoded WITHOUT a type -- X.697 22.2 puts member
+# identifiers in a JER document and an identifier exists only in the schema -- so every
+# emitter here is schema-DIRECTED and all four read one format-neutral value stream. That is
+# what makes their costs comparable at all. -O0 == -O3 earns its place twice over: the file
+# does long division on octet arrays for arbitrary-width integers, and it compares
+# attacker-supplied counts against remaining stream lengths.
+echo "[c-runtime] plan-driven ASN.1 encoder: strict-warning and freestanding build (#emit)"
+if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
+     "${C}/bcir_emit.c" "${C}/test_emit.c" -o "${tmp}/test_emit"; then
+  for std in c11 c23; do
+    "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Werror -I "${C}" \
+      -c "${C}/bcir_emit.c" -o /dev/null \
+      || { echo "  FAIL: bcir_emit is not freestanding-clean under -std=${std}"; exit 1; }
+  done
+  emit_ok=1
+  "${CC}" -std=c23 -O0 -I "${C}" "${C}/bcir_emit.c" "${C}/test_emit.c" \
+    -o "${tmp}/test_emit_O0" || emit_ok=0
+  "${CC}" -std=c23 -O3 -I "${C}" "${C}/bcir_emit.c" "${C}/test_emit.c" \
+    -o "${tmp}/test_emit_O3" || emit_ok=0
+  if [ "${emit_ok}" -eq 1 ]; then
+    python3 - <<'EMITPY' > "${tmp}/emit_cases.txt"
+import sys
+sys.path.insert(0, ".")
+from bcir.asn1.codec import NULL, Oid
+from bcir.asn1.emit import flatten
+from bcir.asn1.encode_plan import compile_encode_plan
+from bcir.asn1.schema import Choice, Component, Primitive, Sequence, SequenceOf
+from bcir.asn1.tags import Universal
+
+I = Primitive(Universal.INTEGER)
+S = Primitive(Universal.UTF8_STRING)
+B = Primitive(Universal.BOOLEAN)
+N = Primitive(Universal.NULL)
+O = Primitive(Universal.OCTET_STRING)
+D = Primitive(Universal.OBJECT_IDENTIFIER)
+
+
+def seq(*components, name="X"):
+    return Sequence(tuple(components), name=name)
+
+
+CH = Choice((Component("num", I, tag=0), Component("txt", S, tag=1)), name="C")
+
+CASES = [
+    (seq(Component("v", I)), {"v": -1}),
+    (seq(Component("v", I)), {"v": 2 ** 64 + 7}),
+    (seq(Component("v", I)), {"v": 2 ** 400 + 12345}),
+    (seq(Component("v", I)), {"v": 0}),
+    (seq(Component("v", I)), {"v": 128}),
+    (seq(Component("a", B), Component("b", B)), {"a": True, "b": False}),
+    (seq(Component("v", N)), {"v": NULL}),
+    (seq(Component("a", I), Component("v", N), Component("b", I)),
+     {"a": 1, "v": NULL, "b": 2}),
+    (seq(Component("v", O)), {"v": b"\x00\xff\x10"}),
+    (seq(Component("v", O)), {"v": b""}),
+    (seq(Component("v", S)), {"v": ""}),
+    (seq(Component("v", S)), {"v": "a\nb\tc\"d\\e"}),
+    (seq(Component("v", S)), {"v": "x" * 300}),
+    (seq(Component("v", D)), {"v": Oid((1, 3, 6, 1, 4, 1, 62596, 1))}),
+    (seq(Component("v", D)), {"v": Oid((2, 999, 1234567))}),
+    (seq(Component("a", I), Component("b", I, optional=True)), {"a": 1, "b": 2}),
+    (seq(Component("a", I), Component("b", I, optional=True)), {"a": 1}),
+    (seq(Component("a", I), Component("b", B, default=False)), {"a": 1}),
+    (seq(*[Component("c%d" % i, I, optional=True) for i in range(12)]),
+     dict(("c%d" % i, i) for i in range(0, 12, 2))),
+    (seq(*[Component("c%d" % i, I, optional=True) for i in range(12)]), {}),
+    (seq(Component("v", SequenceOf(I, "SEQ"))), {"v": []}),
+    (seq(Component("v", SequenceOf(I, "SEQ"))), {"v": [1, 2, 3]}),
+    (seq(Component("v", SequenceOf(I, "SEQ"))), {"v": list(range(300))}),
+    (seq(Component("in", seq(Component("a", I), name="In"))), {"in": {"a": 5}}),
+    (seq(Component("a", I, tag=0), Component("b", S, tag=1)), {"a": 1, "b": "x"}),
+    (seq(Component("a", I, tag=0, explicit=True)), {"a": 1}),
+    (seq(Component("a", I, tag=100, explicit=True)), {"a": 1}),
+    (seq(Component("a", I, tag=100)), {"a": 1}),
+    (seq(Component("v", CH, tag=5, explicit=True)), {"v": ("num", 7)}),
+    (seq(Component("v", CH, tag=5, explicit=True)), {"v": ("txt", "hi")}),
+    (seq(Component("s", seq(Component("a", I), name="In"), tag=3)), {"s": {"a": 9}}),
+    (seq(Component("v", SequenceOf(I, "SEQ"), tag=4)), {"v": [1, 2]}),
+]
+
+for index, (kind, value) in enumerate(CASES):
+    plan = compile_encode_plan(kind, module="Gate", type_name="c%d" % index)
+    stream = flatten(plan, value)
+    print("plan %s" % plan.serialize().hex())
+    for rules in ("der", "ber", "jer", "coer"):
+        print("emit %s %s" % (rules, stream.hex() or "-"))
+EMITPY
+    "${tmp}/test_emit_O0" < "${tmp}/emit_cases.txt" > "${tmp}/emit_O0.txt"
+    "${tmp}/test_emit_O3" < "${tmp}/emit_cases.txt" > "${tmp}/emit_O3.txt"
+    if ! diff -q "${tmp}/emit_O0.txt" "${tmp}/emit_O3.txt" >/dev/null; then
+      echo "  FAIL: the plan-driven encoder answers differently at -O0 and -O3"
+      exit 1
+    fi
+    emit_cases=$(grep -c '^emit ' "${tmp}/emit_cases.txt")
+    if grep -q '^err ' "${tmp}/emit_O0.txt"; then
+      echo "  FAIL: the encoder refused a case from its own reference corpus"
+      exit 1
+    fi
+    echo "  ok: -O0 == -O3 over ${emit_cases} encode cases (4 candidates x 1 plan each)"
+  fi
+else
+  echo "  FAIL: the plan-driven ASN.1 encoder does not build warning-clean"
+  exit 1
+fi
+
 # X.696 OER decoder (#oer, ASN.1 build-out phase D): the encoding rule with the best decode
 # cost -- octet-aligned throughout, most fields fixed-width words a target loads directly --
 # and therefore the one a driver-side or DMA-fed path actually wants. It is SCHEMA-DIRECTED

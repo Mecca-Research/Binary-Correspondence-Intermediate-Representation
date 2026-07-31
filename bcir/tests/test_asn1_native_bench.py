@@ -24,7 +24,7 @@ from bcir.asn1.codec import decode_one, encode_der, encode_tlv
 from bcir.asn1.jer import encode_jer
 from bcir.asn1.native_bench import (
     ENCODE_OPS, NATIVE_OPS, NativeOp, build_harness, measured_table, native_available,
-    observed_encode_partition, run_native_bench,
+    observed_encode_partition, run_native_bench, run_native_encode_bench,
 )
 from bcir.asn1.schema import Component, Primitive, Sequence
 from bcir.asn1.selection import ALL_CANDIDATES, Objective, measure_one
@@ -317,3 +317,75 @@ def test_the_encode_and_decode_absences_are_different_absences():
         assert "not self-delimiting" in NATIVE_OPS[name].reason or "structure" in \
             NATIVE_OPS[name].reason
         assert "self-delimiting" not in ENCODE_OPS[name].reason
+
+
+# --- E2: the native encode column ------------------------------------------------------------
+
+
+def test_the_encode_column_is_measured_natively_and_covers_oer():
+    """The payoff of E1/E2: an OER encode number, which the DECODE table can never hold.
+
+    X.696 §6.2 denies OER a schema-free decode forever. It says nothing about the write
+    side, and `bcir_emit` encodes it through a plan like every other candidate — so the
+    encode column reaches a row the decode column is permanently barred from.
+    """
+    if not native_available():
+        return
+    samples, skipped = run_native_encode_bench(_RECORD, _VALUE)
+    assert set(samples) >= {"DER", "BER", "JER", "COER"}, sorted(samples)
+    for name, rounds in samples.items():
+        assert len(rounds) >= MIN_SAMPLES, f"{name}: {len(rounds)} rounds"
+        assert all(value >= 0 for value in rounds)
+    # PER is skipped for a stated reason rather than missing silently.
+    assert any("PER" in name for name in skipped)
+
+
+def test_ber_encodes_faster_than_der_because_the_standard_says_it_may():
+    """A cost difference the standard predicts, not an artefact of this implementation.
+
+    X.690 §10.1 forbids DER the indefinite length form, so a DER encoder must know each
+    constructed length before writing its header — two passes, or a shift. §8.1.3.6 lets BER
+    leave the length open and close with an EOC, so it needs one pass and no scratch. The
+    gap between the two rows is therefore a property of the encodings.
+
+    Asserted on the median only. The intervals are not required to separate: on a contended
+    runner they will sometimes overlap, and widening the claim to non-overlap would make
+    this test report the runner's load as an encoding fact.
+    """
+    if not native_available():
+        return
+    samples, _ = run_native_encode_bench(_RECORD, _VALUE, rounds=MIN_SAMPLES + 10)
+    der = sorted(samples["DER"])[len(samples["DER"]) // 2]
+    ber = sorted(samples["BER"])[len(samples["BER"]) // 2]
+    assert ber <= der, f"BER {ber}ns did not beat DER {der}ns; §8.1.3.6 says it should"
+
+
+def test_a_measured_table_now_carries_a_real_encode_interval():
+    """It used to copy the decode figure, because the C rail had no encoder. It has one."""
+    if not native_available():
+        return
+    table = measured_table(_RECORD, _VALUE, target="host", cal_gen=1,
+                           candidates=_named("DER", "BER"))
+    rows = {row.candidate: row for row in table.rows}
+    assert set(rows) == {"DER", "BER"}
+    # The two axes are now independent measurements, so demanding they differ would be
+    # asserting on noise; what must hold is that both are real intervals over real samples.
+    for row in rows.values():
+        assert row.encode.samples >= MIN_SAMPLES and row.decode.samples >= MIN_SAMPLES
+        assert row.encode.low <= row.encode.median <= row.encode.high
+
+
+def test_oer_has_an_encode_row_but_still_no_two_axis_row():
+    """`CostRow` needs both axes, and OER can never close the decode half.
+
+    Refusing to fabricate the missing half is the same discipline §6.2 applies one level up:
+    the number that exists is available, and the row that would need an invented number is
+    not produced.
+    """
+    if not native_available():
+        return
+    samples, _ = run_native_encode_bench(_RECORD, _VALUE)
+    assert "COER" in samples and len(samples["COER"]) >= MIN_SAMPLES
+    table = measured_table(_RECORD, _VALUE, target="host", cal_gen=1)
+    assert "COER" not in {row.candidate for row in table.rows}
+    assert NATIVE_OPS["COER"].permanent and ENCODE_OPS["COER"].native_op == "coer"
