@@ -544,7 +544,7 @@ errata admission.
 | **J2 — schema-plan compiler** · **DELIVERED** | Deterministic descriptor, bound derivation, instruction compilation, version/hash contract, and first `channel.json` schema | Met: [`jer_plan.py`](../bcir/asn1/jer_plan.py) regenerates byte-identically, refuses a bare ENUMERATED, an open type, a duplicate JSON member name and an undiscriminable UNWRAPPED choice at compile time, and its plan-driven trace equals the direct one |
 | **J3 — scalar C twin** | **Landed.** [`bcir_jer.{h,c}`](../runtime/c/bcir_jer.c): allocation-free bounded scanner, whole-document UTF-8 check, ECMA-404 parser driving a caller's event sink, §4.2 diagnostics, §3.3 unframing, and the twelfth fuzz target | Python/C error-class, byte-offset, required-capacity and event-trace parity in [`test_c_jer.py`](../bcir/tests/test_c_jer.py); `-O0 == -O3` over 667 cases in `check_runtime.sh` `#jer`; freestanding `-Werror` under C11 and C23; ASan/UBSan fuzz green |
 | **J4 — law and execution lowering** | **Landed.** Part 1 the transfer-syntax rail and generalized R24 (§5.3); part 2 the commuting projection [`dialect.py`](../bcir/asn1/dialect.py) and StreamPack over JER; part 3 the [`manifest.py`](../bcir/asn1/manifest.py) schemas for `channel.json`, `DeviceManifest` and the §6.2 selection envelope, with §5.4's two sinks | **§7.1's two laws hold** over all 26 law fixtures; **§5.4's commutation holds** over all nine built-in channels — `JER -> typed value -> claims` equals `JER -> direct builder`, both fed by one event walk; native StreamPack octets survive the JER round trip (§6.3) |
-| **J5 — hosted SIMD rail** | Optional C++17 structural/UTF-8 scanner behind the C ABI with scalar fallback | Same accepted/rejected corpus and trace; statistically significant measured advantage on at least two hosts; no unsupported-CPU fault |
+| **J5 — hosted SIMD rail** | **Landed, gate PARTIALLY met** ([`bcir_jer_simd.cpp`](../runtime/cpp/bcir_jer_simd.cpp)): a C++17 UTF-8 accept-scanner behind the scalar C ABI, with SSE2/AVX2/NEON tiers, runtime detection and scalar fallback | **Corpus and trace: met.** Every tier returns an identical status *and* byte offset to `bcir_jer_validate_utf8` over 489 documents — including multi-byte sequences straddling every offset in a 32-octet block and invalid sequences at every offset. **No unsupported-CPU fault: met.** A tier the CPU does not advertise, or this build did not compile, degrades to scalar rather than faulting or refusing. **Advantage on at least two hosts: UNMET — the measurement is single-host.** See §7.3 |
 | **J6 — certified K_BCIR choice** | **Landed on the Python oracle** ([`certified.py`](../bcir/asn1/certified.py)): distribution-free prediction intervals from order statistics, a frozen generation-tagged cost table with declared provenance, §6.2's certificate, and a production select that **refuses** an oracle table for any timing objective. The native microbench protocol and RCSP integration remain open | Exact sizes decide wire-size objectives with no timing consulted; repeatability is a refusal rather than an average; legality-first and canonical-or-excluded precede every comparison; deterministic selection on two tables, each certificate bound to the table digest it read — [`test_asn1_certified.py`](../bcir/tests/test_asn1_certified.py) |
 | **J7 — driver experiment** | Userspace/simulator driver specification ingest, generated views, and sequential BCIR-Linux module comparison | D0–D3 driver gates, signed modules, direct/Linux trace parity, teardown/restart tests, and controlled performance evidence |
 
@@ -621,6 +621,34 @@ A fourth item is a deliberate divergence rather than a defect: `bcir_jer_parse` 
 `TRAILING_INPUT` where the Python rail reports `SCHEMA`, because on that rail the trailing
 octets are `json.loads`'s complaint rather than the bounding pass's. The C diagnostic is the
 better one; the acceptance decision is identical, which is what the parity test compares.
+
+### 7.3 J5's measurement, and the clause it does not close
+
+The rail is **23.4×** scalar at AVX2 and **15.7×** at SSE2 on a 29 KB ASCII-dominant JER
+document, with non-overlapping order-statistic brackets. It is **1.00×** on a document whose
+first multi-byte octet appears early.
+
+Both numbers are the design. §4.1 says *"the scalar rail is authoritative for native parser
+correctness. SIMD is an optimization candidate, not a separate semantic implementation."* So
+the vector pass answers only *"is this block entirely ASCII?"* — one comparison settles it,
+and "yes" implies valid UTF-8 with no further reasoning — and hands everything else to
+`bcir_jer_validate_utf8` **itself**, not to a reimplementation of it. There is no second
+UTF-8 implementation to keep in step, which is why the "same trace" clause holds by
+construction rather than only by testing.
+
+The price is that acceleration is proportional to the ASCII prefix: the first non-ASCII
+octet sends the remainder to scalar. A fully vectorized UTF-8 DFA would accelerate the rest
+too, and would be the second semantics rail §8's risk table names. The 1.00× case is pinned
+by a test so that someone measuring non-Latin-script JER finds the explanation rather than a
+surprise.
+
+**The two-host clause is not met and is not approximated.** J5's gate asks for a
+statistically significant advantage on *at least two hosts*; this measurement is
+**single-host** (x86-64, AVX2). §8 is explicit that *"no absolute claim ships without
+reproducible evidence"* and that SIMD is admitted *"on a declared target"*, so a one-machine
+number presented against a two-host gate would be exactly the claim that section refuses. A
+test reads this row and fails if the single-host limitation is dropped without a second host
+being added.
 
 ## 8. Validation and performance method
 
