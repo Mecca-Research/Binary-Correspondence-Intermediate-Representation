@@ -684,10 +684,18 @@ buy unbounded work with few bytes".
 
 Two consequences for any structural index:
 
-1. **A vector pass may not simply skip.** Skipping a run without charging for it accepts
-   documents the scalar rail rejects. Charging in bulk is correct for the accept/reject
-   verdict, but a run that crosses the budget still has to be re-walked per octet to report
-   the right offset — so the fast path helps only while the budget is not binding.
+1. **A vector pass may not simply skip — but it may charge in bulk, exactly.** Skipping a
+   run without charging for it accepts documents the scalar rail rejects. Charging in bulk,
+   however, is not an approximation: the main loop charges **exactly one unit per octet, at
+   that octet's own position**, so a run of `n` octets starting with `w` units already spent
+   against a ceiling of `L` fails — when it fails — at octet `L - w` reporting `needs L + 1`,
+   in closed form. Verified over every ceiling from 1 to 59 against `jer_bounded`: zero
+   mispredictions.
+
+   *This corrects the first version of this section*, which claimed a crossing run had to be
+   re-walked per octet to report the right offset. It does not: uniform positional charging
+   makes the failure point arithmetic. The budget therefore constrains the design without
+   capping the speed-up, which is a materially different conclusion.
 2. **It cannot be a drop-in accelerator.** The UTF-8 rail works because the C ABI exposes a
    whole-document function the C++ adapter can wrap. `bcir_jer_scan` carries its state
    internally, so accelerating it means either putting SIMD inside the freestanding core —

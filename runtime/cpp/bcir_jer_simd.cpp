@@ -31,10 +31,11 @@
  * cost budget, so skipping an ASCII run is semantically free. `bcir_jer_scan` charges ONE
  * WORK UNIT PER OCTET against 4.3's `work` ceiling, and BCIR_JER_WORK_EXCEEDED carries the
  * exact octet at which the budget ran out. A vector pass that skipped a run without charging
- * for it would accept documents the scalar rail rejects; one that charged in bulk would
- * still have to fall back per-octet to report the right offset when the budget crosses
- * mid-run. Accelerating the scan is therefore a different problem from accelerating the
- * validation, and it is not solved here -- see the roadmap 7.4.
+ * for it would accept documents the scalar rail rejects. A bulk charge IS exact, though:
+ * the charge is one unit per octet at that octet's own position, so a crossing run's failure
+ * point is arithmetic rather than a re-walk. What still differs from the UTF-8 rail is the
+ * layering -- bcir_jer_scan holds its state internally, so accelerating it needs a stage-2
+ * parser rather than a wrapper. Not solved here; see the roadmap 7.4.
  *===----------------------------------------------------------------------===*/
 #include "bcir_jer_simd.h"
 
