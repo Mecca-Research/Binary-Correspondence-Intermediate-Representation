@@ -59,6 +59,7 @@
 #include <time.h>
 
 #include "bcir_asn1.h"
+#include "bcir_emit.h"
 #include "bcir_jer.h"
 #include "bcir_xer.h"
 
@@ -96,11 +97,27 @@ static long unhex(const char *text, unsigned char *out, size_t cap) {
   return (long)n;
 }
 
+#define MAX_PLAN_TEXT (1 << 14)
+#define MAX_PLAN_NODES 256
+#define MAX_PLAN_MEMBERS 256
+#define EMIT_SCRATCH 4096
+#define EMIT_OUT (1 << 17)
+
 typedef struct bench_case {
   char label[64];
   char op[8];
   unsigned char data[MAX_BYTES];
   size_t len;
+  /* An ENCODE case carries a descriptor as well as a value; `encode` selects the arm. The
+   * two live in one struct so the interleaved round-robin below can mix decode and encode
+   * cases in a single run -- which matters, because comparing an encode number measured in
+   * one process against a decode number measured in another reintroduces exactly the drift
+   * the interleaving exists to remove. */
+  int encode;
+  bcir_emit_rules rules;
+  bcir_emit_plan plan;
+  bcir_emit_node nodes[MAX_PLAN_NODES];
+  bcir_emit_member members[MAX_PLAN_MEMBERS];
 } bench_case;
 
 /* The work one candidate's peer does on the octets it was handed. Returns a value derived
@@ -108,6 +125,18 @@ typedef struct bench_case {
  * dead code measures nothing, and at -O2 that is exactly what would happen. */
 static uint64_t do_work(const bench_case *c) {
   uint64_t sink = 0;
+  if (c->encode) {
+    /* The plan-driven encoder (E2). Every candidate goes through the same descriptor and
+     * the same neutral value stream, so what is timed is the ENCODING and not an adapter. */
+    static uint8_t out[EMIT_OUT];
+    static uint32_t scratch[EMIT_SCRATCH];
+    size_t written = 0;
+    bcir_emit_diag diag;
+    sink += (uint64_t)bcir_emit(&c->plan, c->rules, c->data, c->len, out, sizeof(out),
+                                &written, scratch, EMIT_SCRATCH, 32, &diag);
+    sink += written;
+    return sink;
+  }
   if (strcmp(c->op, "der") == 0) {
     sink += (uint64_t)bcir_asn1_validate_der(c->data, c->len, 64);
   } else if (strcmp(c->op, "ber") == 0) {
@@ -197,6 +226,41 @@ int main(void) {
         return 2;
       }
       c->len = (size_t)len;
+      n_cases++;
+      continue;
+    }
+
+    if (strcmp(op, "encase") == 0) {
+      /* encase <label> <rules> <plan-hex> <stream-hex> */
+      static unsigned char plan_text[MAX_PLAN_TEXT];
+      static char plan_hex[MAX_LINE];
+      bench_case *c;
+      long plan_len, value_len;
+      bcir_emit_diag diag;
+
+      if (n_cases >= MAX_CASES) { printf("unsupported case too-many\n"); return 2; }
+      c = &cases[n_cases];
+      if (sscanf(line, "%31s %63s %7s %s %s", op, c->label, c->op, plan_hex, hex) != 5) {
+        printf("unsupported encase malformed\n");
+        return 2;
+      }
+      if (strcmp(c->op, "der") == 0) c->rules = BCIR_EMIT_DER;
+      else if (strcmp(c->op, "ber") == 0) c->rules = BCIR_EMIT_BER;
+      else if (strcmp(c->op, "jer") == 0) c->rules = BCIR_EMIT_JER;
+      else if (strcmp(c->op, "coer") == 0) c->rules = BCIR_EMIT_COER;
+      else { printf("unsupported %s no-native-encoder\n", c->op); return 2; }
+
+      plan_len = unhex(plan_hex, plan_text, sizeof(plan_text));
+      value_len = unhex(hex, c->data, sizeof(c->data));
+      if (plan_len < 0 || value_len < 0) { printf("unsupported encase bad-hex\n"); return 2; }
+      if (bcir_emit_parse_plan((const char *)plan_text, (size_t)plan_len, c->nodes,
+                               MAX_PLAN_NODES, c->members, MAX_PLAN_MEMBERS, &c->plan,
+                               &diag) != BCIR_EMIT_OK) {
+        printf("unsupported encase bad-plan\n");
+        return 2;
+      }
+      c->len = (size_t)value_len;
+      c->encode = 1;
       n_cases++;
       continue;
     }
