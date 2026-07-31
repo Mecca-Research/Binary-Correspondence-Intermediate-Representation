@@ -544,7 +544,7 @@ errata admission.
 | **J2 — schema-plan compiler** · **DELIVERED** | Deterministic descriptor, bound derivation, instruction compilation, version/hash contract, and first `channel.json` schema | Met: [`jer_plan.py`](../bcir/asn1/jer_plan.py) regenerates byte-identically, refuses a bare ENUMERATED, an open type, a duplicate JSON member name and an undiscriminable UNWRAPPED choice at compile time, and its plan-driven trace equals the direct one |
 | **J3 — scalar C twin** | **Landed.** [`bcir_jer.{h,c}`](../runtime/c/bcir_jer.c): allocation-free bounded scanner, whole-document UTF-8 check, ECMA-404 parser driving a caller's event sink, §4.2 diagnostics, §3.3 unframing, and the twelfth fuzz target | Python/C error-class, byte-offset, required-capacity and event-trace parity in [`test_c_jer.py`](../bcir/tests/test_c_jer.py); `-O0 == -O3` over 667 cases in `check_runtime.sh` `#jer`; freestanding `-Werror` under C11 and C23; ASan/UBSan fuzz green |
 | **J4 — law and execution lowering** | **Landed.** Part 1 the transfer-syntax rail and generalized R24 (§5.3); part 2 the commuting projection [`dialect.py`](../bcir/asn1/dialect.py) and StreamPack over JER; part 3 the [`manifest.py`](../bcir/asn1/manifest.py) schemas for `channel.json`, `DeviceManifest` and the §6.2 selection envelope, with §5.4's two sinks | **§7.1's two laws hold** over all 26 law fixtures; **§5.4's commutation holds** over all nine built-in channels — `JER -> typed value -> claims` equals `JER -> direct builder`, both fed by one event walk; native StreamPack octets survive the JER round trip (§6.3) |
-| **J5 — hosted SIMD rail** | **Landed, gate PARTIALLY met** ([`bcir_jer_simd.cpp`](../runtime/cpp/bcir_jer_simd.cpp)): a C++17 UTF-8 accept-scanner behind the scalar C ABI, with SSE2/AVX2/NEON tiers, runtime detection and scalar fallback | **Corpus and trace: met.** Every tier returns an identical status *and* byte offset to `bcir_jer_validate_utf8` over 489 documents — including multi-byte sequences straddling every offset in a 32-octet block and invalid sequences at every offset. **No unsupported-CPU fault: met.** A tier the CPU does not advertise, or this build did not compile, degrades to scalar rather than faulting or refusing. **Advantage on at least two hosts: UNMET — the measurement is single-host.** See §7.3 |
+| **J5 — hosted SIMD rail** | **Landed, gate PARTIALLY met** ([`bcir_jer_simd.cpp`](../runtime/cpp/bcir_jer_simd.cpp)): a C++17 UTF-8 accept-scanner behind the scalar C ABI, with SSE2/AVX2/NEON tiers, runtime detection and scalar fallback | **Corpus and trace: met.** Every tier returns an identical status *and* byte offset to `bcir_jer_validate_utf8` over 489 documents — including multi-byte sequences straddling every offset in a 32-octet block and invalid sequences at every offset. **No unsupported-CPU fault: met.** A tier the CPU does not advertise, or this build did not compile, degrades to scalar rather than faulting or refusing. **Advantage on at least two hosts: UNMET — the measurement is single-host.** Covers **UTF-8 validation only**; the structural index is a separate build and §7.4 says why it is not the same shape. See §7.3 |
 | **J6 — certified K_BCIR choice** | **Landed on the Python oracle** ([`certified.py`](../bcir/asn1/certified.py)): distribution-free prediction intervals from order statistics, a frozen generation-tagged cost table with declared provenance, §6.2's certificate, and a production select that **refuses** an oracle table for any timing objective. The native microbench protocol and RCSP integration remain open | Exact sizes decide wire-size objectives with no timing consulted; repeatability is a refusal rather than an average; legality-first and canonical-or-excluded precede every comparison; deterministic selection on two tables, each certificate bound to the table digest it read — [`test_asn1_certified.py`](../bcir/tests/test_asn1_certified.py) |
 | **J7 — driver experiment** | Userspace/simulator driver specification ingest, generated views, and sequential BCIR-Linux module comparison | D0–D3 driver gates, signed modules, direct/Linux trace parity, teardown/restart tests, and controlled performance evidence |
 
@@ -665,6 +665,39 @@ offset. It is not a second *measured host*: §8 refuses timing thresholds on sha
 ("shared CI gates validity and trend evidence, not noisy timing thresholds"), so a
 controlled rig is what closes this clause. A test reads this row and fails if the
 single-host limitation is dropped without one appearing.
+
+### 7.4 The structural index is a different problem from the UTF-8 rail
+
+§1's pipeline lists *"optional hosted SIMD structural index"* next to the UTF-8 scanner, and
+they look like the same kind of work. They are not, and the difference is worth stating
+before someone builds the wrong thing.
+
+**`bcir_jer_validate_utf8` has no cost budget.** Skipping an ASCII run is semantically free:
+the function's answer is a property of the octets alone, so a vector pass that proves a run
+irrelevant can skip it and change nothing.
+
+**`bcir_jer_scan` charges one work unit per octet**, against §4.3's `work` ceiling, and
+`BCIR_JER_WORK_EXCEEDED` carries *the exact octet at which the budget ran out*. A ceiling of
+100 rejects a 410-octet document at octet 100, needing 101. So the scan's cost is not
+incidental — it is **observable output**, and §4.3 designed it that way so a sender "cannot
+buy unbounded work with few bytes".
+
+Two consequences for any structural index:
+
+1. **A vector pass may not simply skip.** Skipping a run without charging for it accepts
+   documents the scalar rail rejects. Charging in bulk is correct for the accept/reject
+   verdict, but a run that crosses the budget still has to be re-walked per octet to report
+   the right offset — so the fast path helps only while the budget is not binding.
+2. **It cannot be a drop-in accelerator.** The UTF-8 rail works because the C ABI exposes a
+   whole-document function the C++ adapter can wrap. `bcir_jer_scan` carries its state
+   internally, so accelerating it means either putting SIMD inside the freestanding core —
+   the wrong direction across the layering §4.1 sets up — or a **stage-2 parser that walks
+   the index**, which is a second scanner and needs §8's full mitigation: same C ABI, same
+   corpus, scalar fallback, and differential fuzzing against `bcir_jer_scan`'s events,
+   diagnostics, offsets *and* work accounting.
+
+That second option is the real shape of the work, and it is not a follow-on to the UTF-8
+rail — it is a J3-sized build of its own. It is **not started**.
 
 ## 8. Validation and performance method
 

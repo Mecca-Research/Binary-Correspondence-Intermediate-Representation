@@ -5,7 +5,7 @@
  *
  *   THE ONLY CODE THAT DECIDES WHETHER A DOCUMENT IS VALID UTF-8 IS THE SCALAR RAIL.
  *
- The vector passes answer only WHERE the ASCII and non-ASCII runs are. They never answer
+ * The vector passes answer only WHERE the ASCII and non-ASCII runs are. They never answer
  * what is valid: every verdict comes from `bcir_jer_validate_utf8` itself, so there is no
  * second UTF-8 implementation to keep in step and the "same trace" clause of J5's gate holds
  * by construction rather than by testing (it is tested anyway).
@@ -26,6 +26,15 @@
  * The earlier version handed everything from the first non-ASCII octet to the END of the
  * document to scalar, so one "cafe" near the front cost a 29 KB document its entire
  * acceleration.
+ *
+ * WHY THIS SHAPE DOES NOT CARRY OVER TO THE STRUCTURAL SCAN. `bcir_jer_validate_utf8` has no
+ * cost budget, so skipping an ASCII run is semantically free. `bcir_jer_scan` charges ONE
+ * WORK UNIT PER OCTET against 4.3's `work` ceiling, and BCIR_JER_WORK_EXCEEDED carries the
+ * exact octet at which the budget ran out. A vector pass that skipped a run without charging
+ * for it would accept documents the scalar rail rejects; one that charged in bulk would
+ * still have to fall back per-octet to report the right offset when the budget crosses
+ * mid-run. Accelerating the scan is therefore a different problem from accelerating the
+ * validation, and it is not solved here -- see the roadmap 7.4.
  *===----------------------------------------------------------------------===*/
 #include "bcir_jer_simd.h"
 
