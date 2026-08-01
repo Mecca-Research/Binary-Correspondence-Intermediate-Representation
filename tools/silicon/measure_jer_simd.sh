@@ -181,6 +181,31 @@ print((b'{"version":1,"nodes":[' + body + b'],"roots":[0]}').hex())
 PYDOC
 )"
 
+# Contention accounting, sampled ACROSS the measured rounds. `--tenancy dedicated` is a
+# claim about the machine, and these two counters are the machine's own record of whether it
+# held: steal is time a hypervisor gave to another tenant, throttling is time a cgroup quota
+# took away. The reader refuses a `dedicated` record whose counters moved, so the claim is
+# falsifiable instead of merely asserted -- which matters most on exactly the hosts whose
+# label is ambiguous, like a cloud container.
+read_contention() {
+  local steal=0 throttled=0
+  if [ -r /proc/stat ]; then
+    while read -r name _u _n _s _i _w _q _sq st _rest; do
+      [ "${name}" = "cpu" ] && { steal="${st:-0}"; break; }
+    done </proc/stat
+  fi
+  for f in /sys/fs/cgroup/cpu.stat /sys/fs/cgroup/cpu/cpu.stat; do
+    if [ -r "${f}" ]; then
+      while read -r key value; do
+        case "${key}" in throttled_usec|throttled_time) throttled="${value}" ;; esac
+      done <"${f}"
+      break
+    fi
+  done
+  printf '%s %s\n' "${steal}" "${throttled}"
+}
+read -r STEAL_BEFORE THROTTLED_BEFORE <<<"$(read_contention)"
+
 echo "[measure] ${ROUNDS} interleaved rounds x ${ITERATIONS} iterations per candidate" >&2
 {
   round=0
@@ -191,12 +216,19 @@ echo "[measure] ${ROUNDS} interleaved rounds x ${ITERATIONS} iterations per cand
   done
 } | "${RUN[@]}" > "${tmp}/samples.txt"
 
-python3 - "${tmp}/samples.txt" "${HOST}" "${TIER_NAME}" "${TENANCY}" "${PIN_STATE}" "${NOTES}" <<'PYREPORT'
+read -r STEAL_AFTER THROTTLED_AFTER <<<"$(read_contention)"
+STEAL_DELTA=$((STEAL_AFTER - STEAL_BEFORE))
+THROTTLED_DELTA=$((THROTTLED_AFTER - THROTTLED_BEFORE))
+echo "[measure] contention during the rounds: steal ${STEAL_DELTA} ticks, throttled ${THROTTLED_DELTA} us" >&2
+
+python3 - "${tmp}/samples.txt" "${HOST}" "${TIER_NAME}" "${TENANCY}" "${PIN_STATE}" "${NOTES}" \
+         "${STEAL_DELTA}" "${THROTTLED_DELTA}" <<'PYREPORT'
 import json
 import platform
 import sys
 
 path, host, tier, tenancy, pin_state, notes = sys.argv[1:7]
+steal, throttled = int(sys.argv[7]), int(sys.argv[8])
 scalar, vector, cpus = [], [], set()
 with open(path, encoding="utf-8") as handle:
     for line in handle:
@@ -217,6 +249,10 @@ record = {
     "scalar_ns": scalar,
     "vector_ns": vector,
     "cpus": sorted(cpus),
+    # The machine's own account of whether `dedicated` held. The reader refuses a dedicated
+    # record whose counters moved during the rounds.
+    "steal_ticks": steal,
+    "throttled_usec": throttled,
     "notes": "; ".join(part for part in (f"pin: {pin_state}", platform.platform(), notes)
                        if part),
 }

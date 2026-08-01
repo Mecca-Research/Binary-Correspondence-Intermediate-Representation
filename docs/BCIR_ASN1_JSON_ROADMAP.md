@@ -692,7 +692,7 @@ errata admission.
 | **J2 — schema-plan compiler** · **DELIVERED** | Deterministic descriptor, bound derivation, instruction compilation, version/hash contract, and first `channel.json` schema | Met: [`jer_plan.py`](../bcir/asn1/jer_plan.py) regenerates byte-identically, refuses a bare ENUMERATED, an open type, a duplicate JSON member name and an undiscriminable UNWRAPPED choice at compile time, and its plan-driven trace equals the direct one |
 | **J3 — scalar C twin** | **Landed.** [`bcir_jer.{h,c}`](../runtime/c/bcir_jer.c): allocation-free bounded scanner, whole-document UTF-8 check, ECMA-404 parser driving a caller's event sink, §4.2 diagnostics, §3.3 unframing, and the twelfth fuzz target | Python/C error-class, byte-offset, required-capacity and event-trace parity in [`test_c_jer.py`](../bcir/tests/test_c_jer.py); `-O0 == -O3` over 667 cases in `check_runtime.sh` `#jer`; freestanding `-Werror` under C11 and C23; ASan/UBSan fuzz green |
 | **J4 — law and execution lowering** | **Landed.** Part 1 the transfer-syntax rail and generalized R24 (§5.3); part 2 the commuting projection [`dialect.py`](../bcir/asn1/dialect.py) and StreamPack over JER; part 3 the [`manifest.py`](../bcir/asn1/manifest.py) schemas for `channel.json`, `DeviceManifest` and the §6.2 selection envelope, with §5.4's two sinks | **§7.1's two laws hold** over all 26 law fixtures; **§5.4's commutation holds** over all nine built-in channels — `JER -> typed value -> claims` equals `JER -> direct builder`, both fed by one event walk; native StreamPack octets survive the JER round trip (§6.3) |
-| **J5 — hosted SIMD rail** | **Landed, gate PARTIALLY met** ([`bcir_jer_simd.cpp`](../runtime/cpp/bcir_jer_simd.cpp)): a C++17 UTF-8 accept-scanner behind the scalar C ABI, with SSE2/AVX2/NEON tiers, runtime detection and scalar fallback | **Corpus and trace: met, on two materially different aarch64 implementations.** Every tier returns an identical status *and* byte offset to `bcir_jer_validate_utf8` over 489 documents — including multi-byte sequences straddling every offset in a 32-octet block and invalid sequences at every offset — on x86-64, on CI's Ampere/Cobalt **server** ARM runners, and under Termux on a Snapdragon 8 Gen 3 **phone** (`tiers 3 neon 1,0,0,1`). `#jersimd` also cross-compiles the tier this host cannot run and disassembles it, so a tier that silently degraded to scalar fails where nothing executes it — see §7.3.3. **No unsupported-CPU fault: met.** A tier the CPU does not advertise, or this build did not compile, degrades to scalar rather than faulting or refusing. **Advantage on at least two hosts: UNMET at 1 of 2, and decided from evidence rather than asserted.** [`jer_simd_hosts.json`](../docs/measurements/jer_simd_hosts.json) holds one record per measured machine and [`simd_hosts.py`](../bcir/asn1/simd_hosts.py) decides admissibility against §8 — dedicated tenancy, a vector tier, enough rounds for an order-statistic interval, and every round on one CPU. **The Samsung S24+ record is ADMITTED**: NEON, pinned to cpu7, 41 rounds per candidate, vector `[886, 937]` ns strictly below scalar `[9739, 9739]` ns — **10.4×**. The remaining host must be x86 *and* dedicated; the shared cloud container is refused and kept in the store as a worked example of why. §7.3.0 has the numbers, §7.3.2 what a big.LITTLE phone changes. Covers **UTF-8 validation only**; the structural index is a separate build and §7.4 says why it is not the same shape. See §7.3 |
+| **J5 — hosted SIMD rail** | **Landed, gate MET for UTF-8 validation** ([`bcir_jer_simd.cpp`](../runtime/cpp/bcir_jer_simd.cpp)): a C++17 UTF-8 accept-scanner behind the scalar C ABI, with SSE2/AVX2/NEON tiers, runtime detection and scalar fallback | **Corpus and trace: met, on two materially different aarch64 implementations.** Every tier returns an identical status *and* byte offset to `bcir_jer_validate_utf8` over 489 documents — including multi-byte sequences straddling every offset in a 32-octet block and invalid sequences at every offset — on x86-64, on CI's Ampere/Cobalt **server** ARM runners, and under Termux on a Snapdragon 8 Gen 3 **phone** (`tiers 3 neon 1,0,0,1`). `#jersimd` also cross-compiles the tier this host cannot run and disassembles it, so a tier that silently degraded to scalar fails where nothing executes it — see §7.3.3. **No unsupported-CPU fault: met.** A tier the CPU does not advertise, or this build did not compile, degrades to scalar rather than faulting or refusing. **Advantage on at least two hosts: MET.** [`jer_simd_hosts.json`](../docs/measurements/jer_simd_hosts.json) holds one record per measured machine and [`simd_hosts.py`](../bcir/asn1/simd_hosts.py) decides admissibility against §8 — dedicated tenancy *corroborated by the host's own steal and throttling counters*, a vector tier, enough rounds for an order-statistic interval, and every round on one CPU. **Two hosts on two architectures are admitted**: Samsung S24+ / Snapdragon 8 Gen 3 on NEON at **10.4×** (`[886, 937]` ns against `[9739, 9739]`), and the Claude Code cloud container on x86-64 AVX2 at **23.2×** (`[552, 554]` against `[12807, 12818]`). A test fails if the store and this table ever disagree. §7.3 has the numbers and the mis-diagnosis that delayed them. Covers **UTF-8 validation only**; the structural index is a separate build and §7.4 says why it is not the same shape. See §7.3 |
 | **J6 — certified K_BCIR choice** | **Landed on the Python oracle** ([`certified.py`](../bcir/asn1/certified.py)): distribution-free prediction intervals from order statistics, a frozen generation-tagged cost table with declared provenance, §6.2's certificate, and a production select that **refuses** an oracle table for any timing objective. The native microbench protocol and RCSP integration remain open | Exact sizes decide wire-size objectives with no timing consulted; repeatability is a refusal rather than an average; legality-first and canonical-or-excluded precede every comparison; deterministic selection on two tables, each certificate bound to the table digest it read — [`test_asn1_certified.py`](../bcir/tests/test_asn1_certified.py) |
 | **J7 — driver experiment** | Userspace/simulator driver specification ingest, generated views, and sequential BCIR-Linux module comparison | D0–D3 driver gates, signed modules, direct/Linux trace parity, teardown/restart tests, and controlled performance evidence |
 
@@ -801,11 +801,18 @@ front cost a 29 KB document its entire acceleration: **1.00×**. Alternating res
 25×. The regression is pinned by a test asserting the early-accent ratio against the
 all-ASCII ratio, so a return to a single hand-off fails rather than merely slows down.
 
-**The two-host clause is not met and is not approximated.** J5's gate asks for a
-statistically significant advantage on *at least two hosts*; the numbers above are
-**single-host** (x86-64, AVX2). §8 is explicit that *"no absolute claim ships without
-reproducible evidence"* and that SIMD is admitted *"on a declared target"*, so a one-machine
-number presented against a two-host gate would be exactly the claim that section refuses.
+**The two-host clause is MET.** Two dedicated hosts on two architectures, each with a vector
+interval strictly below its scalar interval:
+
+| ≈29 KB all-ASCII claim graph | scalar | vector | speedup |
+|---|---|---|---|
+| Samsung S24+, Snapdragon 8 Gen 3, **NEON**, pinned to cpu7 | `[9739, 9739]` ns | `[886, 937]` ns | **10.4×** |
+| Claude Code cloud container, x86-64, **AVX2**, pinned to cpu1 | `[12807, 12818]` ns | `[552, 554]` ns | **23.2×** |
+
+`python3 -m bcir.asn1.simd_hosts` renders the verdict from
+[`jer_simd_hosts.json`](measurements/jer_simd_hosts.json), and a test fails if this prose and
+that store ever disagree — which is how the paragraph came to say *met*: the evidence landed
+and the test refused to let the sentence stay.
 
 The aarch64 CI lane is a second *machine*, and the NEON path is proven **correct** there —
 `tiers 3 neon` resolves and all 489 documents agree with the scalar rail on status and
@@ -831,13 +838,25 @@ Cortex-X4's *scalar* rail is also nearly 3× faster than the x86 figure (9739 ns
 28470 ns), which shrinks the headroom a vector pass can win back. Both ratios are what a
 reader should expect on that silicon, which is why every figure now carries its host.
 
-**The phone produced a cleaner measurement than the cloud container did**, which is worth
-recording because it inverts the intuition that a handset is the noisy environment. Pinned to
-the big core, on mains, 37 of 41 scalar rounds landed on *exactly* 9739 ns — a degenerate
-order-statistic interval. The shared x86 container came back bimodal at roughly 500 and
-2500 ns and is refused. **Contention, not silicon class, is what makes a timing unusable**,
-and §8's `shared`/`dedicated` split is aimed at precisely that rather than at hardware
-prestige.
+**The phone produced a cleaner measurement than the container's first attempt did**, which
+is worth recording because it inverts the intuition that a handset is the noisy environment.
+Pinned to the big core, on mains, 37 of 41 scalar rounds landed on *exactly* 9739 ns.
+
+**And the reason the container's first run looked worse was diagnosed wrongly at the time.**
+It came back bimodal at roughly 500 and 2500 ns, and that was attributed to contention from
+other tenants — the machine being a cloud container. It was not. That run was simply
+**unpinned**: the same core-migration failure §7.3.2 builds a guard for on the phone, hiding
+in plain sight on x86. Pinned to cpu1 the same container yields a scalar interval of
+`[12807, 12818]` ns — an eleven-nanosecond spread across 41 rounds.
+
+The mislabelling had a second cause worth naming: `dedicated` was a **declaration nobody
+checked**, so a host was classified by *what kind of machine it is* rather than by what it
+was doing. A record now carries the hypervisor steal ticks and cgroup throttling accumulated
+**during the measured rounds**, and either being nonzero refuses a `dedicated` claim. This
+container reports zero of both, no CPU quota (`nr_periods 0`) and load 0.01 — so the claim is
+now backed by the machine's own accounting instead of by an assumption about its hosting.
+The check can only ever catch a *false* declaration: a host that does not report the counters
+is not penalised for staying silent.
 
 **NEON is now also proven correct on a phone-class core**, which CI could not have shown.
 GitHub's ARM runners are Ampere/Cobalt *server* parts; a Snapdragon 8 Gen 3 is a

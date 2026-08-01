@@ -1,13 +1,16 @@
-"""J5 — the hosted SIMD rail, and the one clause of its gate this container cannot close.
+"""J5 — the hosted SIMD rail, and where each clause of its gate is decided.
 
 **J5's gate**: *"Optional C++17 structural/UTF-8 scanner behind the C ABI with scalar
 fallback. Same accepted/rejected corpus and trace; statistically significant measured
 advantage on at least two hosts; no unsupported-CPU fault."*
 
-Three of those four clauses are checked here. The fourth — **two hosts** — is not, and is
-recorded as unmet rather than approximated. One machine cannot produce a two-host result,
-and a single-host number presented against a two-host gate would be the kind of claim §8
-exists to refuse: *"no absolute claim ships without reproducible evidence."*
+Three of those four are checked here, on whatever machine runs the suite. The fourth —
+**two hosts** — cannot be, because one machine cannot produce a two-host result. It is
+decided from recorded evidence instead: `bcir.asn1.simd_hosts` reads
+`docs/measurements/jer_simd_hosts.json`, and the test at the bottom of this file only ties
+the roadmap to whatever that verdict says. It holds no opinion of its own about the answer,
+which is what let the clause close when a second host arrived without anyone having to
+remember to edit an assertion here.
 
 **Why "same trace" holds by construction and is tested anyway.** §4.1 says the scalar rail
 is authoritative. So the SIMD path answers only *"is this block entirely ASCII?"* — a
@@ -310,21 +313,36 @@ def test_the_adapter_contains_no_utf8_decision_of_its_own():
             f"itself; that is the second semantics rail §4.1 forbids")
 
 
-def test_the_two_host_clause_of_the_gate_is_unmet_and_recorded_as_unmet():
-    """J5's gate wants a significant advantage on **at least two hosts**. This is one host.
+def test_the_two_host_clause_is_decided_by_the_store_and_not_by_this_file():
+    """J5's advantage clause, and where the authority for it lives.
 
-    This test exists so the gap is a checked fact rather than a sentence someone might edit
-    away. It reads the roadmap and requires the J5 row to still say the measurement is
-    single-host — if a second host is ever added, this test is what tells whoever does it to
-    come back and update the claim.
+    This test used to assert the roadmap still said the measurement was *single-host* — a
+    reasonable guard when one machine was all there was, and an obstacle the moment a second
+    landed. The clause is now decided from evidence: `simd_hosts` reads
+    `docs/measurements/jer_simd_hosts.json` and reports whether two admissible hosts on two
+    architectures each show a disjoint advantage.
+
+    So this file no longer holds an opinion about the answer. What it still checks is that
+    **the roadmap and the store agree**, in whichever direction the store points, and that
+    the gate's wording has not quietly lost the clause. `test_asn1_simd_hosts` owns the
+    detail; this is the tie between the SIMD rail's own tests and that verdict.
     """
+    from bcir.asn1.simd_hosts import STORE, load_records, two_host_verdict
+
     roadmap = os.path.join(_ROOT, "docs", "BCIR_ASN1_JSON_ROADMAP.md")
     text = open(roadmap, encoding="utf-8").read()
     assert "two hosts" in text, "the gate's two-host clause disappeared from the roadmap"
-    assert "single-host" in text or "one host" in text, (
-        "the roadmap no longer records that J5's measurement is single-host; either a "
-        "second host was added — in which case update this test and the row together — or "
-        "the limitation was quietly dropped")
+
+    verdict = two_host_verdict(load_records(os.path.join(_ROOT, STORE)))
+    if verdict.met:
+        assert "two-host clause is MET" in text, (
+            f"the store closes the clause ({verdict.reason}) and the roadmap does not say so")
+        assert "single-host" not in text, (
+            "the roadmap still calls the measurement single-host after a second host was "
+            "admitted")
+    else:
+        assert "two-host clause is not met" in text.lower(), (
+            "the store does not close the clause, but the roadmap no longer records that")
 
 
 def test_the_scan_s_work_budget_is_a_semantic_limit_not_an_incidental_cost():

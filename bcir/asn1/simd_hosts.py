@@ -5,6 +5,14 @@ The correctness half has been met since the rail landed — every tier returns a
 status and byte offset to the scalar rail, on x86-64 and on the aarch64 CI lane alike. This
 module is about the other half, which is not a matter of running the benchmark twice.
 
+**Tenancy is declared, and then checked against the machine's own accounting.** The first
+version took `dedicated` on trust, which made the most important field the least verifiable
+one — and led to this repository's own container being labelled `shared` on the strength of
+*what kind of machine it is* rather than what it was doing. A record now carries the
+hypervisor steal ticks and cgroup throttling accumulated **during the measured rounds**, and
+either being nonzero refuses a `dedicated` claim. That can only catch a false declaration: a
+host that does not report the counters is not penalised for it.
+
 **§8 refuses a timing threshold on a shared runner** — *"shared CI gates validity and trend
 evidence, not noisy timing thresholds"* — and admits SIMD *"on a declared target"*. Those two
 sentences decide the whole design here: a measurement is evidence only if the machine it came
@@ -83,6 +91,12 @@ class HostRecord:
     cpus: tuple[int, ...] = (-1,)
     #: Free text: thermal state, whether the run was pinned, anything a reader would want.
     notes: str = ""
+    #: Hypervisor steal ticks accumulated DURING the measured rounds, from `/proc/stat`.
+    #: `None` where the host does not report it.
+    steal_ticks: int | None = None
+    #: cgroup CPU throttling accumulated during the rounds, microseconds. `None` where the
+    #: host does not report it.
+    throttled_usec: int | None = None
 
     def scalar_interval(self) -> Interval:
         return interval_of(list(self.scalar_ns))
@@ -98,6 +112,25 @@ class HostRecord:
         keeping — it is evidence about a machine — it simply does not count toward the gate.
         """
         out: list[str] = []
+        # `dedicated` is a claim about the machine, and the machine keeps its own accounting
+        # of whether that claim held. Steal counts time a hypervisor gave to another tenant;
+        # cgroup throttling counts time a quota took away. Either being nonzero DURING the
+        # measured rounds contradicts the declaration, so the record is refused on the host's
+        # own evidence rather than on anybody's opinion of what kind of machine it is.
+        #
+        # `None` means the host does not report the counter, which does not refuse: the check
+        # can only ever catch a false declaration, never invalidate an honest record made
+        # before the counter was collected.
+        if self.tenancy == DEDICATED and self.steal_ticks:
+            out.append(
+                f"declared dedicated, but the CPU accumulated {self.steal_ticks} steal "
+                f"tick(s) during the measured rounds: a hypervisor gave that time to another "
+                f"tenant, which is what `dedicated` denies")
+        if self.tenancy == DEDICATED and self.throttled_usec:
+            out.append(
+                f"declared dedicated, but the cgroup throttled the run for "
+                f"{self.throttled_usec} us: a quota took CPU away mid-measurement, so the "
+                f"samples describe the quota as much as the code")
         if self.tenancy != DEDICATED:
             out.append(
                 f"tenancy is {self.tenancy!r}: §8 admits SIMD on a declared target and "
@@ -221,7 +254,11 @@ def load_records(path: str) -> list[HostRecord]:
             scalar_ns=tuple(int(value) for value in entry["scalar_ns"]),
             vector_ns=tuple(int(value) for value in entry["vector_ns"]),
             cpus=tuple(int(value) for value in entry.get("cpus", (-1,))),
-            notes=str(entry.get("notes", ""))))
+            notes=str(entry.get("notes", "")),
+            steal_ticks=(None if entry.get("steal_ticks") is None
+                         else int(entry["steal_ticks"])),
+            throttled_usec=(None if entry.get("throttled_usec") is None
+                            else int(entry["throttled_usec"]))))
     return out
 
 
