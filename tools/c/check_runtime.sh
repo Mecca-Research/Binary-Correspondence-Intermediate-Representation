@@ -3684,7 +3684,7 @@ for index, (kind, value) in enumerate(CASES):
     plan = compile_encode_plan(kind, module="Gate", type_name="c%d" % index)
     stream = flatten(plan, value)
     print("plan %s" % plan.serialize().hex())
-    for rules in ("der", "ber", "jer", "coer"):
+    for rules in ("der", "ber", "jer", "coer", "cper-a", "cper-u", "bper-a", "bper-u"):
         print("emit %s %s" % (rules, stream.hex() or "-"))
 EMITPY
     "${tmp}/test_emit_O0" < "${tmp}/emit_cases.txt" > "${tmp}/emit_O0.txt"
@@ -3698,7 +3698,7 @@ EMITPY
       echo "  FAIL: the encoder refused a case from its own reference corpus"
       exit 1
     fi
-    echo "  ok: -O0 == -O3 over ${emit_cases} encode cases (4 candidates x 1 plan each)"
+    echo "  ok: -O0 == -O3 over ${emit_cases} encode cases (8 candidates x 1 plan each)"
   fi
 else
   echo "  FAIL: the plan-driven ASN.1 encoder does not build warning-clean"

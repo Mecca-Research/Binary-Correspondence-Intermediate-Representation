@@ -684,9 +684,12 @@ def _per_size_bounds(node: EncodeNode) -> tuple[int, int | None, bool]:
 
 def _emit_per(node: EncodeNode, reader: _Reader, writer, rules) -> None:
     """One node's field-list. `writer` is `per.BitWriter`, whose variant carries the padding rule."""
+    # §11.9.3.4's normally small LENGTH is deliberately absent: it spells §19.8's extension
+    # ADDITION bitmap, and `_compile_members` refuses an extension addition outright. An
+    # imported name with no call site would look like coverage this rail does not have.
     from .per import (
         _64K, _encode_constrained, _encode_integer_root, _encode_length_and_payload,
-        _encode_normally_small_length, _KNOWN_MULTIPLIER, char_bits_for, default_alphabet,
+        _KNOWN_MULTIPLIER,
     )
 
     kind = node.kind

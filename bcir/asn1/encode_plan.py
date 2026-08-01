@@ -263,11 +263,17 @@ def _serialize_node(node: EncodeNode, path: str, out: list[str]) -> None:
     # Version 2 was exactly this addition; version 3 adds the optional `constraint` line
     # below, which a node emits only when it has something an encoder would read.
     enumeration = "|".join(f"{name}:{number}" for name, number in node.enumeration)
+    # `type` is LAST because it is the only free-text field on the line. A type name may
+    # contain a space — `SEQUENCE OF INTEGER` is an ordinary one — and the descriptor's
+    # tokens are space-delimited, so a reader parsing named fields *after* it would split
+    # the line in the wrong place. Putting it at the end makes that structurally impossible
+    # instead of relying on every name being one word. It is identity, never structure, so
+    # a reader may stop at `ext`.
     out.append(
         f"node {here} kind={node.kind} universal={node.universal} "
         f"members={len(node.members)} element={'1' if node.element is not None else '0'} "
-        f"type={node.type_name or '-'} enum={enumeration or '-'} "
-        f"ext={'1' if node.extensible else '0'}")
+        f"enum={enumeration or '-'} ext={'1' if node.extensible else '0'} "
+        f"type={node.type_name or '-'}")
     if node.constraint is not None:
         out.append(_serialize_constraint(node.constraint, here))
     for member in node.members:

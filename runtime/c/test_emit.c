@@ -7,7 +7,7 @@
  * Input, one command per line:
  *
  *   plan <hex>                    the serialized descriptor
- *   emit <rules> <hex>            rules is der | ber | jer | coer; hex is the value stream
+ *   emit <rules> <hex>            der | ber | jer | coer | {c,b}per-{a,u}; hex is the stream
  *   emitcap <rules> <cap> <hex>   the same with a deliberately small output buffer
  *   scratchcap <n>                cap the size scratch, to exercise SCRATCH_SHORT
  *   constraint <node>             read back what the parser stored for one node
@@ -187,6 +187,10 @@ int main(void) {
       else if (strcmp(rules_name, "ber") == 0) rules = BCIR_EMIT_BER;
       else if (strcmp(rules_name, "jer") == 0) rules = BCIR_EMIT_JER;
       else if (strcmp(rules_name, "coer") == 0) rules = BCIR_EMIT_COER;
+      else if (strcmp(rules_name, "cper-a") == 0) rules = BCIR_EMIT_CPER_ALIGNED;
+      else if (strcmp(rules_name, "cper-u") == 0) rules = BCIR_EMIT_CPER_UNALIGNED;
+      else if (strcmp(rules_name, "bper-a") == 0) rules = BCIR_EMIT_BPER_ALIGNED;
+      else if (strcmp(rules_name, "bper-u") == 0) rules = BCIR_EMIT_BPER_UNALIGNED;
       else { printf("err 9 0 0\n"); continue; }
 
       len = unhex(hex, stream, sizeof(stream));

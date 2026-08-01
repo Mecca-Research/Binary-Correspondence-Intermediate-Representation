@@ -271,11 +271,13 @@ static bcir_emit_status plan_read_node(plan_build *b, uint32_t *out_index, uint3
   if (!plan_field(&b->r, "element", &start, &len) ||
       !plan_uint(b->r.text + start, len, &element))
     return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
-  (void)plan_field(&b->r, "type", &start, &len);  /* identity, not structure */
   if (!plan_field(&b->r, "enum", &enum_start, &enum_len))
     return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
   if (!plan_field(&b->r, "ext", &start, &len) || len != 1)
     return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+  /* `type` follows and is deliberately NOT read: it is identity, and it is the only
+   * free-text field on the line -- a type name may contain a space, and `SEQUENCE OF
+   * INTEGER` is an ordinary one. It sits last so this reader can stop here. */
   extensible = (uint8_t)(b->r.text[start] == '1');
   plan_next_line(&b->r);
 
@@ -434,6 +436,13 @@ typedef struct emit_ctx {
   uint32_t max_depth;
   bcir_emit_status status;
   size_t fail_offset;
+  /* PER only. The unit of composition is a FIELD-LIST of bit-fields (X.691 10.5), not an
+   * octet stream, so the cursor is a bit count; `written` is kept as its octet ceiling so
+   * the OUT_SHORT contract still reports a capacity a caller can retry with. `aligned`
+   * is 11.1.4 vs 11.1.3, and `canonical` is 19.5's DEFAULT rule. */
+  size_t bit_count;
+  int per_aligned;
+  int per_canonical;
 } emit_ctx;
 
 static int ctx_fail(emit_ctx *c, bcir_emit_status status) {
@@ -573,6 +582,73 @@ static int member_present(emit_ctx *c, const bcir_emit_member *m, int omit_defau
   }
   c->at = start;
   return 1;
+}
+
+/* --- X.691 bit-level output ------------------------------------------------------------------
+ *
+ * Same discipline as `put`: count always, write only where there is room, so a short buffer
+ * yields an accurate `written` rather than a partial write the caller has to unpick.
+ *
+ * An octet is zeroed when its FIRST bit is written rather than relying on the caller's
+ * buffer being clean. 11.1.4's padding is zero, and inheriting whatever was in the buffer
+ * would make the padding -- and therefore the document -- depend on the caller's memory. */
+
+static void put_bit(emit_ctx *c, int bit) {
+  size_t index = c->bit_count++;
+  size_t octet = index >> 3;
+  if (c->out && octet < c->out_cap) {
+    if ((index & 7u) == 0) c->out[octet] = 0;
+    if (bit) c->out[octet] |= (uint8_t)(0x80u >> (index & 7u));
+  }
+  c->written = (c->bit_count + 7u) >> 3;
+}
+
+/* Set an ALREADY-RESERVED bit. 19.2's presence bitmap precedes the components while the
+ * value stream interleaves a presence octet with each value, so the bits cannot be
+ * collected first -- the slots are reserved as zeroes and patched as each flag is read.
+ * Only ones are written, because a reserved slot is already zero. */
+static void patch_bit(emit_ctx *c, size_t index, int bit) {
+  size_t octet = index >> 3;
+  if (bit && c->out && octet < c->out_cap)
+    c->out[octet] |= (uint8_t)(0x80u >> (index & 7u));
+}
+
+/* 11.3: a non-negative-binary-integer into a bit-field of `width` bits, most significant
+ * first. A value that does not fit is REFUSED rather than masked: a truncated field is a
+ * well-formed document of a different value. */
+static int put_bits(emit_ctx *c, uint64_t value, unsigned width) {
+  unsigned i;
+  if (width > 64) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+  if (width < 64 && (value >> width) != 0) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+  for (i = width; i > 0; i--) put_bit(c, (int)((value >> (i - 1)) & 1u));
+  return 1;
+}
+
+static void put_bit_octets(emit_ctx *c, const uint8_t *data, size_t len) {
+  size_t i;
+  unsigned k;
+  for (i = 0; i < len; i++)
+    for (k = 8; k > 0; k--) put_bit(c, (int)((data[i] >> (k - 1)) & 1u));
+}
+
+/* 11.1.4: in ALIGNED, zero bits are inserted so an octet-aligned bit-field starts on an
+ * octet boundary. 11.1.3 makes it a no-op in UNALIGNED -- "all fields shall be concatenated
+ * without padding" -- which is the whole difference between the two variants. */
+static void per_align(emit_ctx *c) {
+  if (c->per_aligned)
+    while ((c->bit_count & 7u) != 0) put_bit(c, 0);
+}
+
+/* 11.5.6: the minimum number of bits that can represent `range` distinct values, i.e.
+ * ceil(log2(range)); 11.5.4 makes a range of 1 an empty bit-field. */
+static unsigned bits_for_range(uint64_t range) {
+  unsigned bits = 0;
+  uint64_t span;
+  if (range == 0) return 64;              /* the 2^64 sentinel; see `per_constrained` */
+  if (range == 1) return 0;
+  span = range - 1;
+  while (span != 0) { bits++; span >>= 1; }
+  return bits;
 }
 
 /* --- X.690 primitives ---------------------------------------------------------------------- */
@@ -1546,6 +1622,642 @@ static int oer_node(emit_ctx *c, uint32_t node_index, uint32_t depth) {
   }
 }
 
+/* --- X.691 PER: the field encoders of clause 11 -----------------------------------------------
+ *
+ * These read no schema at all -- an integer and a pair of bounds go in, bits come out --
+ * which is exactly why the Python rail IMPORTS them from the oracle instead of retyping
+ * them. This rail has no such option: it is the second implementation, and the differential
+ * against E1 is what makes it worth having.
+ *
+ * ARITHMETIC RANGE. A bound is at most 2^64-1 by the plan format's own limit, so an offset
+ * within a finite range fits a uint64 except at the extremes; those are REFUSED. The
+ * unconstrained form of 13.2.4 is exempt and handles any width, because it passes the
+ * stream's own minimal two's-complement octets straight through -- which is how the corpus's
+ * 400-bit integer encodes without a bignum anywhere in this file. */
+
+#define PER_64K (64u * 1024u)
+#define PER_2_OCTET_MAX (16u * 1024u)
+#define PER_FRAG_UNIT (16u * 1024u)
+
+static int per_constrained(emit_ctx *c, uint64_t offset, uint64_t range);
+
+/* 11.9.3.6 / 11.9.3.7: the one- and two-octet unconstrained length forms. The fragmented
+ * form of 11.9.3.8 belongs to the payload loop, which is the only place that can split. */
+static int per_unconstrained_length(emit_ctx *c, uint64_t count) {
+  per_align(c);
+  if (count <= 127u) return put_bits(c, count, 8);
+  if (count < PER_2_OCTET_MAX) {
+    put_bit(c, 1);
+    put_bit(c, 0);
+    return put_bits(c, count, 14);
+  }
+  return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+}
+
+/* 11.5: a constrained whole number, in whichever of the five cases applies. `offset` is
+ * already value - lower, and `range` is upper - lower + 1.
+ *
+ * `range == 0` SPELLS 2^64, which is a real case rather than a defensive one:
+ * `INTEGER (0..18446744073709551615)` and `INTEGER (-2^63..2^63-1)` both have exactly that
+ * many values, and both are ordinary ASN.1. Refusing them would leave the C rail unable to
+ * encode two types the Python rail encodes, which the differential would report as a gap in
+ * the twin rather than as the arithmetic limit it actually is. Every such range lands in
+ * 11.5.7.4 anyway, so the sentinel only has to survive as far as `bits_for_range` and the
+ * span computation below. */
+static int per_constrained(emit_ctx *c, uint64_t offset, uint64_t range) {
+  if (range == 1) return 1;                          /* 11.5.4: empty bit-field */
+  if (range != 0 && offset >= range) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+  if (!c->per_aligned) return put_bits(c, offset, bits_for_range(range));   /* 11.5.6 */
+  if (range != 0) {
+    if (range <= 255u) return put_bits(c, offset, bits_for_range(range));   /* 11.5.7.1 */
+    if (range == 256u) { per_align(c); return put_bits(c, offset, 8); }     /* 11.5.7.2 */
+    if (range <= PER_64K) { per_align(c); return put_bits(c, offset, 16); } /* 11.5.7.3 */
+  }
+  {
+    /* 11.5.7.4: the indefinite-length case. 13.2.6 a) makes the length itself a constrained
+     * whole number with lb=1 and ub=the octet count the range needs. */
+    uint8_t body[8];
+    unsigned octets = 0, length_upper = 0, i;
+    /* `range - 1` is the largest offset, and for the 2^64 sentinel that is 0xFF..FF -- which
+     * is what `0 - 1` produces in unsigned arithmetic, so the sentinel needs no branch. */
+    uint64_t value = offset, span = range - 1u;
+    do { octets++; value >>= 8; } while (value != 0);
+    do { length_upper++; span >>= 8; } while (span != 0);
+    if (!per_constrained(c, (uint64_t)(octets - 1u), (uint64_t)length_upper)) return 0;
+    per_align(c);
+    for (i = 0; i < octets; i++)
+      body[i] = (uint8_t)((offset >> (8u * (octets - 1u - i))) & 0xFFu);
+    put_bit_octets(c, body, octets);
+    return 1;
+  }
+}
+
+/* 11.7: the offset from `lower` in the minimum octets, behind a length determinant. */
+static int per_semi_constrained(emit_ctx *c, uint64_t offset) {
+  uint8_t body[8];
+  unsigned octets = 0, i;
+  uint64_t value = offset;
+  do { octets++; value >>= 8; } while (value != 0);
+  if (!per_unconstrained_length(c, (uint64_t)octets)) return 0;
+  per_align(c);
+  for (i = 0; i < octets; i++)
+    body[i] = (uint8_t)((offset >> (8u * (octets - 1u - i))) & 0xFFu);
+  put_bit_octets(c, body, octets);
+  return 1;
+}
+
+/* 11.8: two's complement in the minimum octets, behind a length determinant. The stream
+ * already carries exactly that spelling, so this is a passthrough and therefore the one
+ * integer path with no width ceiling at all. */
+static int per_unconstrained_int(emit_ctx *c, const uint8_t *octets, size_t len) {
+  if (len == 0) return ctx_fail(c, BCIR_EMIT_STREAM_SHORT);
+  if (!per_unconstrained_length(c, (uint64_t)len)) return 0;
+  per_align(c);
+  put_bit_octets(c, octets, len);
+  return 1;
+}
+
+/* The stream's minimal two's complement as sign and magnitude, refusing anything past 64
+ * bits. Only the paths that must do ARITHMETIC on the value call this; 13.2.4 does not. */
+static int per_int_magnitude(emit_ctx *c, const uint8_t *data, size_t len, int *negative,
+                             uint64_t *magnitude) {
+  uint64_t value = 0;
+  size_t i;
+  if (len == 0) return ctx_fail(c, BCIR_EMIT_STREAM_SHORT);
+  *negative = (data[0] & 0x80u) != 0;
+  if (len > 9 || (len == 9 && ((*negative ? (uint8_t)0xFF : (uint8_t)0x00) != data[0])))
+    return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+  for (i = 0; i < len; i++) value = (value << 8) | data[i];
+  if (*negative) {
+    /* Two's complement to magnitude, within the width the octets actually occupy. */
+    uint64_t mask = (len >= 8) ? 0xFFFFFFFFFFFFFFFFull : ((1ull << (8u * len)) - 1u);
+    value = ((~value) & mask) + 1u;
+  }
+  *magnitude = value;
+  return 1;
+}
+
+/* Bound arithmetic in sign and magnitude, because the plan records bounds that way and
+ * X.691 needs differences a signed 64-bit word cannot always hold. `INTEGER (0..2^64-1)` has
+ * a bound past int64 and `INTEGER (-2^63..2^63-1)` has a SPAN past uint64 by one, and both
+ * are ordinary ASN.1 -- so converting to int64 first, which the first version did, refused
+ * two types the Python rail encodes.
+ *
+ * `a - b` for a >= b, as a magnitude. Returns 0 and sets `*overflow` when the difference
+ * does not fit, which is the honest boundary for a rail with no bignum. */
+static uint64_t per_difference(int a_neg, uint64_t a_mag, int b_neg, uint64_t b_mag,
+                               int *overflow) {
+  *overflow = 0;
+  if (a_mag == 0) a_neg = 0;
+  if (b_mag == 0) b_neg = 0;
+  if (a_neg == b_neg) {
+    /* Same sign: the magnitudes subtract, and a >= b makes the result non-negative. */
+    return a_neg ? (b_mag - a_mag) : (a_mag - b_mag);
+  }
+  /* a >= b with different signs means b is the negative one, so the magnitudes ADD. */
+  if (a_mag > 0xFFFFFFFFFFFFFFFFull - b_mag) { *overflow = 1; return 0; }
+  return a_mag + b_mag;
+}
+
+/* Order two sign-and-magnitude numbers. -1, 0 or 1 as `a` is below, equal to or above `b`. */
+static int per_compare(int a_neg, uint64_t a_mag, int b_neg, uint64_t b_mag) {
+  if (a_mag == 0) a_neg = 0;
+  if (b_mag == 0) b_neg = 0;
+  if (a_neg != b_neg) return a_neg ? -1 : 1;
+  if (a_mag == b_mag) return 0;
+  if (a_neg) return (a_mag > b_mag) ? -1 : 1;
+  return (a_mag > b_mag) ? 1 : -1;
+}
+/* 13.1's extension root bounds and 17.3/20.4/30.4's size bounds, read off the plan. */
+static void per_value_bounds(const emit_ctx *c, const bcir_emit_node *node,
+                             const bcir_emit_bound **low, const bcir_emit_bound **high,
+                             int *extensible) {
+  static const bcir_emit_bound absent = {0, 0, 0};
+  const bcir_emit_constraint *k;
+  *low = *high = &absent;
+  *extensible = 0;
+  if (node->constraint < 0) return;
+  k = &c->plan->constraints[node->constraint];
+  *low = &k->root_value_low;
+  *high = &k->root_value_high;
+  *extensible = k->value_extensible;
+}
+
+/* 11.9.1 makes a length's lower bound default to ZERO rather than to "unknown": a length is
+ * a count, and a count has a floor whether or not the schema wrote one down. */
+static void per_size_bounds(const emit_ctx *c, const bcir_emit_node *node, uint64_t *lower,
+                            int *has_upper, uint64_t *upper, int *extensible) {
+  const bcir_emit_constraint *k;
+  *lower = 0;
+  *has_upper = 0;
+  *upper = 0;
+  *extensible = 0;
+  if (node->constraint < 0) return;
+  k = &c->plan->constraints[node->constraint];
+  if (k->root_size_low.present && !k->root_size_low.negative) *lower = k->root_size_low.magnitude;
+  if (k->root_size_high.present && !k->root_size_high.negative) {
+    *has_upper = 1;
+    *upper = k->root_size_high.magnitude;
+  }
+  *extensible = k->size_extensible;
+}
+
+/* 23.2's sort key for one CHOICE alternative: its outer tag, class first. An untagged
+ * alternative uses its type's own tag, and 23.3 gives an untagged nested CHOICE the smallest
+ * tag among ITS alternatives -- which is why this recurses rather than reading one field. */
+static uint64_t per_alternative_key(const emit_ctx *c, const bcir_emit_member *m,
+                                    uint32_t depth) {
+  const bcir_emit_node *node;
+  uint64_t best;
+  uint32_t i;
+  if (m->tag >= 0) {
+    /* The plan spells a class as the X.690 Table 1 bits; shifting them above the tag number
+     * makes one comparison sort by class first, which is what 23.2 asks for. */
+    return ((uint64_t)(m->tag_class >> 6) << 32) | (uint64_t)(uint32_t)m->tag;
+  }
+  node = &c->plan->nodes[m->node];
+  if (node->kind != BCIR_EMIT_CHOICE || node->member_count == 0 ||
+      depth > BCIR_EMIT_MAX_PLAN_DEPTH)
+    return (uint64_t)node->universal;             /* UNIVERSAL sorts as class 0 */
+  best = per_alternative_key(c, &c->plan->members[node->first_member], depth + 1);
+  for (i = 1; i < node->member_count; i++) {
+    uint64_t key = per_alternative_key(c, &c->plan->members[node->first_member + i],
+                                       depth + 1);
+    if (key < best) best = key;
+  }
+  return best;
+}
+
+/* The chosen alternative's position in 23.2's canonical order, and how many there are.
+ * Computed by counting alternatives that sort BEFORE it rather than by sorting the table:
+ * the plan is the caller's memory and a scan has no scratch to ask for. */
+static void per_choice_position(const emit_ctx *c, const bcir_emit_node *node,
+                                uint32_t chosen, uint64_t *position) {
+  uint64_t key = per_alternative_key(c, &c->plan->members[node->first_member + chosen], 0);
+  uint32_t i;
+  *position = 0;
+  for (i = 0; i < node->member_count; i++) {
+    uint64_t other;
+    if (i == chosen) continue;
+    other = per_alternative_key(c, &c->plan->members[node->first_member + i], 0);
+    /* Ties are impossible in a legal CHOICE -- X.680 26.3 requires distinct tags -- so the
+     * index is well defined without a tiebreak on declaration order. */
+    if (other < key) (*position)++;
+  }
+}
+
+static int per_node(emit_ctx *c, uint32_t node_index, uint32_t depth);
+
+/* 17.8 / 30.5.7 / 20.6's length determinant plus its material, including 11.9.3.8's
+ * fragmentation. One copy, three payload kinds, because the fragmenting loop is the same
+ * for octets, characters and SEQUENCE OF components -- which is exactly the observation
+ * that lets the Python rail pass a range rather than pre-built bytes. */
+typedef enum per_payload_kind {
+  PER_PAY_OCTETS = 0,
+  PER_PAY_CHARS = 1,
+  PER_PAY_ELEMENTS = 2
+} per_payload_kind;
+
+typedef struct per_payload {
+  per_payload_kind kind;
+  const uint8_t *data;      /* octets or characters */
+  unsigned char_bits;       /* 30.5's bits per character */
+  const uint8_t *char_map;  /* 30.5.4 b)'s renumbering, or null for the natural code */
+  unsigned char_map_len;
+  int align_chars;          /* 30.5.6/30.5.7's alignment decision, made by the caller */
+  uint32_t element_node;
+  uint32_t depth;
+} per_payload;
+
+static int per_emit_payload(emit_ctx *c, const per_payload *pay, uint64_t start,
+                            uint64_t stop) {
+  uint64_t i;
+  switch (pay->kind) {
+    case PER_PAY_OCTETS:
+      per_align(c);
+      put_bit_octets(c, pay->data + start, (size_t)(stop - start));
+      return 1;
+    case PER_PAY_CHARS:
+      if (pay->align_chars) per_align(c);
+      for (i = start; i < stop; i++) {
+        unsigned value = pay->data[i];
+        if (pay->char_map) {
+          unsigned k;
+          unsigned found = pay->char_map_len;
+          for (k = 0; k < pay->char_map_len; k++)
+            if (pay->char_map[k] == pay->data[i]) { found = k; break; }
+          if (found == pay->char_map_len) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+          value = found;
+        }
+        if (!put_bits(c, (uint64_t)value, pay->char_bits)) return 0;
+      }
+      return 1;
+    default:
+      for (i = start; i < stop; i++)
+        if (!per_node(c, pay->element_node, pay->depth)) return 0;
+      return 1;
+  }
+}
+
+static int per_length_and_payload(emit_ctx *c, uint64_t count, uint64_t lower,
+                                  int has_upper, uint64_t upper, const per_payload *pay) {
+  uint64_t start = 0;
+  if (has_upper) {
+    /* 11.9.3.3: constrained with ub < 64K -- the length is a constrained whole number and
+     * there is never fragmentation. */
+    if (count < lower || count > upper) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+    if (!per_constrained(c, count - lower, upper - lower + 1u)) return 0;
+    if (count) return per_emit_payload(c, pay, 0, count);
+    return 1;
+  }
+  for (;;) {
+    uint64_t remaining = count - start;
+    if (remaining >= PER_FRAG_UNIT) {
+      uint64_t blocks = remaining / PER_FRAG_UNIT;              /* 11.9.3.8.1 */
+      uint64_t chunk;
+      if (blocks > 4u) blocks = 4u;
+      chunk = blocks * PER_FRAG_UNIT;
+      per_align(c);
+      if (!put_bits(c, 0xC0u | blocks, 8)) return 0;            /* 11.9.3.8 */
+      if (!per_emit_payload(c, pay, start, start + chunk)) return 0;
+      start += chunk;
+      /* 11.9.3.8.3 NOTE: a final fragment that exactly fills the last block is still
+       * followed by a zero length, so the loop always emits a terminating short form. */
+      continue;
+    }
+    if (!per_unconstrained_length(c, remaining)) return 0;
+    if (remaining) return per_emit_payload(c, pay, start, count);
+    return 1;
+  }
+}
+
+/* X.680 43's canonical order for the two known-multiplier types whose full range is not
+ * contiguous. Everything else 30.1 lists has a contiguous range `per_char_bits` derives. */
+static const char per_numeric_alphabet[] = " 0123456789";
+static const char per_printable_alphabet[] =
+    " '()+,-./0123456789:=?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+/* 30.1's known-multiplier types, restricted to the ones this plan compiles as `string`.
+ * BMPString and UniversalString are known-multiplier too, but `_LEAF_KIND` has no rule for
+ * them, so listing them would describe a case that cannot arise. */
+static int per_known_multiplier(uint32_t universal, unsigned *low, unsigned *high) {
+  switch (universal) {
+    case 18u: *low = 32u; *high = 57u; return 1;   /* NumericString */
+    case 19u: *low = 32u; *high = 122u; return 1;  /* PrintableString */
+    case 22u: *low = 0u; *high = 127u; return 1;   /* IA5String */
+    case 26u: *low = 32u; *high = 126u; return 1;  /* VisibleString */
+    default: return 0;
+  }
+}
+
+/* 30.5.2-30.5.4: bits per character, and 30.5.4 b)'s renumbering when it applies.
+ *
+ * a) keeps the natural code value when it fits in `b` bits; b) renumbers the permitted
+ * characters 0..N-1 in canonical order. Doing the fit test explicitly is what makes
+ * IA5String cost 7 bits unaligned while a FROM("0".."9") alphabet costs 4. */
+static void per_char_bits(const emit_ctx *c, const bcir_emit_node *node, unsigned *bits,
+                          const uint8_t **map, unsigned *map_len) {
+  unsigned low = 0, high = 0, count, widest = 0, i;
+  const char *alphabet = 0;
+  unsigned alphabet_len = 0;
+
+  *map = 0;
+  *map_len = 0;
+  (void)per_known_multiplier(node->universal, &low, &high);
+  if (node->constraint >= 0 && c->plan->constraints[node->constraint].alphabet_len > 0) {
+    alphabet = c->plan->constraints[node->constraint].alphabet;
+    alphabet_len = c->plan->constraints[node->constraint].alphabet_len;
+  } else if (node->universal == 18u) {
+    alphabet = per_numeric_alphabet;
+    alphabet_len = (unsigned)(sizeof(per_numeric_alphabet) - 1u);
+  } else if (node->universal == 19u) {
+    alphabet = per_printable_alphabet;
+    alphabet_len = (unsigned)(sizeof(per_printable_alphabet) - 1u);
+  }
+
+  count = alphabet ? alphabet_len : (high - low + 1u);
+  *bits = bits_for_range((uint64_t)count);
+  if (c->per_aligned && *bits) {
+    /* 30.5.7's ALIGNED rounding: up to the next power of two. */
+    unsigned rounded = 1u;
+    while (rounded < *bits) rounded <<= 1;
+    *bits = rounded;
+  }
+  if (!alphabet) {
+    if (high <= ((*bits >= 32u) ? 0xFFFFFFFFu : ((1u << *bits) - 1u))) return;  /* 30.5.4 a) */
+    /* The renumbering is the contiguous range itself, so it needs no table. Represented by
+     * a null map with a base, which is why `per_emit_payload` subtracts rather than searches
+     * when `map` is null and the range does not start at zero -- see the caller. */
+    *map = 0;
+    return;
+  }
+  for (i = 0; i < alphabet_len; i++)
+    if ((uint8_t)alphabet[i] > widest) widest = (uint8_t)alphabet[i];
+  if (widest <= ((*bits >= 32u) ? 0xFFFFFFFFu : ((1u << *bits) - 1u))) return;  /* 30.5.4 a) */
+  *map = (const uint8_t *)alphabet;                                            /* 30.5.4 b) */
+  *map_len = alphabet_len;
+}
+
+static int per_node(emit_ctx *c, uint32_t node_index, uint32_t depth) {
+  const bcir_emit_node *node = &c->plan->nodes[node_index];
+  uint8_t byte = 0;
+  uint32_t count = 0, i;
+  const uint8_t *data = NULL;
+
+  if (depth > c->max_depth) return ctx_fail(c, BCIR_EMIT_TOO_DEEP);
+  switch ((bcir_emit_kind)node->kind) {
+    case BCIR_EMIT_BOOLEAN:                              /* 12: one bit, no alignment */
+      if (!rd_u8(c, &byte)) return 0;
+      put_bit(c, byte ? 1 : 0);
+      return 1;
+    case BCIR_EMIT_NULL:
+      return 1;                                          /* 18: no encoding at all */
+    case BCIR_EMIT_INTEGER: {
+      const bcir_emit_bound *low, *high;
+      int extensible = 0, negative = 0, inside = 1, overflow = 0;
+      uint64_t magnitude = 0;
+
+      if (!rd_u8(c, &byte) || !rd_take(c, byte, &data)) return 0;
+      per_value_bounds(c, node, &low, &high, &extensible);
+      if (low->present || high->present) {
+        if (!per_int_magnitude(c, data, byte, &negative, &magnitude)) return 0;
+      }
+      if (extensible) {
+        /* 13.1: one bit saying whether the value is inside the extension root. Outside,
+         * 13.2's constrained forms do not apply and the value goes unconstrained. */
+        if (low->present &&
+            per_compare(negative, magnitude, low->negative, low->magnitude) < 0)
+          inside = 0;
+        if (high->present &&
+            per_compare(negative, magnitude, high->negative, high->magnitude) > 0)
+          inside = 0;
+        put_bit(c, inside ? 0 : 1);
+        if (!inside) return per_unconstrained_int(c, data, byte);
+      }
+      if (low->present && high->present) {                       /* 13.2.2 */
+        uint64_t offset, span;
+        if (per_compare(negative, magnitude, low->negative, low->magnitude) < 0 ||
+            per_compare(negative, magnitude, high->negative, high->magnitude) > 0)
+          return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+        offset = per_difference(negative, magnitude, low->negative, low->magnitude,
+                                &overflow);
+        if (overflow) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+        span = per_difference(high->negative, high->magnitude, low->negative,
+                              low->magnitude, &overflow);
+        if (overflow) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+        /* `span + 1` wrapping to zero IS the 2^64 range sentinel, not an error. */
+        return per_constrained(c, offset, span + 1u);
+      }
+      if (low->present) {                                        /* 13.2.3 */
+        uint64_t offset;
+        if (per_compare(negative, magnitude, low->negative, low->magnitude) < 0)
+          return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+        offset = per_difference(negative, magnitude, low->negative, low->magnitude,
+                                &overflow);
+        if (overflow) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+        return per_semi_constrained(c, offset);
+      }
+      return per_unconstrained_int(c, data, byte);                /* 13.2.4 */
+    }
+    case BCIR_EMIT_ENUMERATED: {
+      /* 14.1: an ENUMERATED encodes its INDEX into the root sorted ascending -- not its
+       * value (X.690 8.4) and not its identifier (X.697 22.2). Three rules, three readings
+       * of one field, which is why the plan carries the numbers as well as the names. */
+      int negative = 0;
+      uint64_t magnitude = 0;
+      int64_t value;
+      uint32_t position = 0, k;
+      int found = 0;
+
+      if (!rd_u8(c, &byte) || !rd_take(c, byte, &data)) return 0;
+      if (!per_int_magnitude(c, data, byte, &negative, &magnitude)) return 0;
+      value = negative ? -(int64_t)magnitude : (int64_t)magnitude;
+      /* The index is the count of DISTINCT numbers below this one. Counted rather than
+       * sorted for the same reason the CHOICE index is: a scan needs no scratch. */
+      for (k = 0; k < node->enum_count; k++) {
+        int64_t other = c->plan->enums[node->first_enum + k].number;
+        if (other == value) { found = 1; continue; }
+        if (other < value) {
+          uint32_t j;
+          int duplicate = 0;
+          for (j = 0; j < k; j++)
+            if (c->plan->enums[node->first_enum + j].number == other) { duplicate = 1; break; }
+          if (!duplicate) position++;
+        }
+      }
+      if (!found) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+      if (node->extensible) put_bit(c, 0);               /* 14.3 */
+      {
+        uint32_t distinct = 0;
+        for (k = 0; k < node->enum_count; k++) {
+          uint32_t j;
+          int duplicate = 0;
+          for (j = 0; j < k; j++)
+            if (c->plan->enums[node->first_enum + j].number ==
+                c->plan->enums[node->first_enum + k].number) { duplicate = 1; break; }
+          if (!duplicate) distinct++;
+        }
+        return per_constrained(c, position, distinct);   /* 14.2 */
+      }
+    }
+    case BCIR_EMIT_OCTETSTRING: {
+      uint64_t lower = 0, upper = 0;
+      int has_upper = 0, extensible = 0;
+      per_payload pay;
+      if (!rd_u32(c, &count) || !rd_take(c, count, &data)) return 0;
+      per_size_bounds(c, node, &lower, &has_upper, &upper, &extensible);
+      if (extensible) {
+        int inside = count >= lower && (!has_upper || count <= upper);
+        put_bit(c, inside ? 0 : 1);                      /* 17.3 */
+        if (!inside) { lower = 0; has_upper = 0; }
+      }
+      if (has_upper && lower == upper) {
+        if (count != upper) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+        if (upper == 0) return 1;                        /* 17.5 */
+        if (upper <= 2u) { put_bit_octets(c, data, count); return 1; }   /* 17.6: unaligned */
+        if (upper < PER_64K) { per_align(c); put_bit_octets(c, data, count); return 1; }
+      }
+      pay.kind = PER_PAY_OCTETS;
+      pay.data = data;
+      pay.char_bits = 0; pay.char_map = 0; pay.char_map_len = 0; pay.align_chars = 0;
+      pay.element_node = 0; pay.depth = depth;
+      return per_length_and_payload(c, count, lower, has_upper, upper, &pay);   /* 17.8 */
+    }
+    case BCIR_EMIT_STRING: {
+      uint64_t lower = 0, upper = 0;
+      int has_upper = 0, extensible = 0;
+      unsigned low = 0, high = 0;
+      per_payload pay;
+      if (!rd_u32(c, &count) || !rd_take(c, count, &data)) return 0;
+      if (!per_known_multiplier(node->universal, &low, &high)) {
+        /* 30.6: everything else is its X.690 octets behind an unconstrained length. The
+         * stream already carries UTF-8, which is UTF8String's X.690 spelling. */
+        pay.kind = PER_PAY_OCTETS;
+        pay.data = data;
+        pay.char_bits = 0; pay.char_map = 0; pay.char_map_len = 0; pay.align_chars = 0;
+        pay.element_node = 0; pay.depth = depth;
+        return per_length_and_payload(c, count, 0, 0, 0, &pay);
+      }
+      per_size_bounds(c, node, &lower, &has_upper, &upper, &extensible);
+      if (extensible) {
+        /* 30.4. The permitted ALPHABET still applies outside the root: 10.3.11 makes an
+         * extensible alphabet not PER-visible at all, and a non-extensible one is
+         * unaffected by a SIZE marker. */
+        int inside = count >= lower && (!has_upper || count <= upper);
+        put_bit(c, inside ? 0 : 1);
+        if (!inside) { lower = 0; has_upper = 0; }
+      }
+      pay.kind = PER_PAY_CHARS;
+      pay.data = data;
+      per_char_bits(c, node, &pay.char_bits, &pay.char_map, &pay.char_map_len);
+      /* 30.5.6/30.5.7: align only when the whole field could exceed 16 bits. */
+      pay.align_chars = (!has_upper) || (upper * pay.char_bits > 16u);
+      pay.element_node = 0; pay.depth = depth;
+      if (has_upper && lower == upper && upper < PER_64K) {
+        if (count != upper) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+        if (count) return per_emit_payload(c, &pay, 0, count);   /* 30.5.6 */
+        return 1;
+      }
+      return per_length_and_payload(c, count, lower, has_upper, upper, &pay);   /* 30.5.7 */
+    }
+    case BCIR_EMIT_OID: {
+      size_t size = 0;
+      per_payload pay;
+      if (!rd_u32(c, &count) || !rd_take(c, count, &data)) return 0;
+      if (!oid_octets(c, data, count, 1, &size)) return 0;
+      /* 24's payload is the X.690 body, which `oid_octets` writes to the OUTPUT rather than
+       * to a buffer. Encoding it through the bit writer therefore needs it materialized,
+       * and the plan states no bound on an OID's length -- so it is built into a fixed
+       * scratch and a longer one is refused rather than silently truncated. */
+      {
+        uint8_t body[128];
+        emit_ctx sub = *c;
+        size_t k;
+        if (size > sizeof(body)) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+        sub.out = body;
+        sub.out_cap = sizeof(body);
+        sub.written = 0;
+        sub.bit_count = 0;
+        if (!oid_octets(&sub, data, count, 0, NULL)) return ctx_fail(c, sub.status);
+        for (k = sub.written; k < size; k++) body[k] = 0;
+        pay.kind = PER_PAY_OCTETS;
+        pay.data = body;
+        pay.char_bits = 0; pay.char_map = 0; pay.char_map_len = 0; pay.align_chars = 0;
+        pay.element_node = 0; pay.depth = depth;
+        return per_length_and_payload(c, (uint64_t)size, 0, 0, 0, &pay);
+      }
+    }
+    case BCIR_EMIT_SEQUENCE: {
+      /* 19.1's extension bit, then 19.2's presence bitmap, then 19.4's components.
+       *
+       * The bitmap precedes ALL the components while the value stream INTERLEAVES a
+       * presence octet with each value, so the bits cannot be collected first: after
+       * reading component 0's flag the next stream octet is its value. Same shape as OER's
+       * preamble and the same answer -- the width comes from the plan and no value can
+       * change it, so the slots are reserved and each bit is patched as its flag is read. */
+      size_t bitmap_at;
+      uint32_t seen = 0;
+      if (node->extensible) put_bit(c, 0);
+      bitmap_at = c->bit_count;
+      for (i = 0; i < node->member_count; i++) {
+        const bcir_emit_member *m = &c->plan->members[node->first_member + i];
+        if (m->optional || m->has_default) put_bit(c, 0);
+      }
+      for (i = 0; i < node->member_count; i++) {
+        const bcir_emit_member *m = &c->plan->members[node->first_member + i];
+        int present = 1;
+        /* 19.5 is CANONICAL-PER's; BASIC-PER leaves the sender free, which is the only
+         * difference between the two profiles for the schemas this plan compiles. */
+        if (!member_present(c, m, c->per_canonical, depth + 1, &present)) return 0;
+        if (m->optional || m->has_default) {
+          patch_bit(c, bitmap_at + seen, present);
+          seen++;
+          if (!present) continue;
+        }
+        if (!per_node(c, m->node, depth + 1)) return 0;
+      }
+      return 1;
+    }
+    case BCIR_EMIT_SEQUENCE_OF: {
+      uint64_t lower = 0, upper = 0;
+      int has_upper = 0, extensible = 0;
+      per_payload pay;
+      if (!rd_u32(c, &count)) return 0;
+      if (node->element < 0) return ctx_fail(c, BCIR_EMIT_PLAN_MALFORMED);
+      if (!bound_elements(c, (uint32_t)node->element, count)) return 0;
+      per_size_bounds(c, node, &lower, &has_upper, &upper, &extensible);
+      if (extensible) {
+        int inside = count >= lower && (!has_upper || count <= upper);
+        put_bit(c, inside ? 0 : 1);                      /* 20.4 */
+        if (!inside) { lower = 0; has_upper = 0; }
+      }
+      pay.kind = PER_PAY_ELEMENTS;
+      pay.data = 0;
+      pay.char_bits = 0; pay.char_map = 0; pay.char_map_len = 0; pay.align_chars = 0;
+      pay.element_node = (uint32_t)node->element;
+      pay.depth = depth + 1;
+      if (has_upper && lower == upper && upper < PER_64K) {
+        if (count != upper) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);   /* 20.5 */
+        return per_emit_payload(c, &pay, 0, count);
+      }
+      return per_length_and_payload(c, count, lower, has_upper, upper, &pay);   /* 20.6 */
+    }
+    case BCIR_EMIT_CHOICE: {
+      uint64_t position = 0;
+      if (!rd_u32(c, &count)) return 0;
+      if (count >= node->member_count) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+      per_choice_position(c, node, count, &position);
+      if (node->extensible) put_bit(c, 0);               /* 23.5 */
+      if (node->member_count > 1) {                      /* 23.4: one alternative, no index */
+        if (!per_constrained(c, position, (uint64_t)node->member_count)) return 0;
+      }
+      return per_node(c, c->plan->members[node->first_member + count].node, depth + 1);
+    }
+    default:
+      return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+  }
+}
+
 /* --- the entry point ------------------------------------------------------------------------ */
 
 bcir_emit_status bcir_emit(const bcir_emit_plan *plan, bcir_emit_rules rules,
@@ -1573,6 +2285,9 @@ bcir_emit_status bcir_emit(const bcir_emit_plan *plan, bcir_emit_rules rules,
   c.max_depth = max_depth;
   c.status = BCIR_EMIT_OK;
   c.fail_offset = 0;
+  c.bit_count = 0;
+  c.per_aligned = (rules == BCIR_EMIT_CPER_ALIGNED || rules == BCIR_EMIT_BPER_ALIGNED);
+  c.per_canonical = (rules == BCIR_EMIT_CPER_ALIGNED || rules == BCIR_EMIT_CPER_UNALIGNED);
 
   if (rules == BCIR_EMIT_DER) {
     /* Pass one: content lengths into the scratch, output suppressed. */
@@ -1603,6 +2318,16 @@ bcir_emit_status bcir_emit(const bcir_emit_plan *plan, bcir_emit_rules rules,
     ok = jer_node(&c, plan->root, 0);
   } else if (rules == BCIR_EMIT_COER) {
     ok = oer_node(&c, plan->root, 0);
+  } else if (rules == BCIR_EMIT_CPER_ALIGNED || rules == BCIR_EMIT_CPER_UNALIGNED ||
+             rules == BCIR_EMIT_BPER_ALIGNED || rules == BCIR_EMIT_BPER_UNALIGNED) {
+    ok = per_node(&c, plan->root, 0);
+    /* 11.1.3.1/11.1.4: only the OUTERMOST value is padded out to whole octets, which is why
+     * this happens here rather than inside `per_node`. An empty field-list still occupies
+     * ONE octet: a value carrying no information -- a NULL, or an INTEGER pinned to a single
+     * value -- is still a value, and a zero-octet encoding would be indistinguishable from
+     * no encoding at all. */
+    if (ok && c.bit_count == 0) put(&c, 0x00);
+    else if (ok) c.written = (c.bit_count + 7u) >> 3;
   } else {
     return BCIR_EMIT_UNSUPPORTED;
   }

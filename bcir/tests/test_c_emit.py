@@ -133,8 +133,15 @@ _CORPUS = (
     ("content past the three-octet length", _seq(Component("v", _S)), {"v": "y" * 70000}),
 )
 
+#: Every rule the twin serves, paired with the driver's spelling. PER is four rows: the
+#: ALIGNED/UNALIGNED split is a real cost trade and CANONICAL/BASIC decides §19.5's DEFAULT
+#: rule, so collapsing them would put one number in the table for two encodings.
 _RULES = ((EmitRules.DER, "der"), (EmitRules.BER, "ber"), (EmitRules.JER, "jer"),
-          (EmitRules.COER, "coer"))
+          (EmitRules.COER, "coer"),
+          (EmitRules.CANONICAL_PER_ALIGNED, "cper-a"),
+          (EmitRules.CANONICAL_PER_UNALIGNED, "cper-u"),
+          (EmitRules.BASIC_PER_ALIGNED, "bper-a"),
+          (EmitRules.BASIC_PER_UNALIGNED, "bper-u"))
 
 
 def _available() -> bool:

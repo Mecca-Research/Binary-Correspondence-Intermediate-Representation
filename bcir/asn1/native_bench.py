@@ -179,16 +179,23 @@ ENCODE_OPS: dict[str, EncodeOp] = {
         False, reason="X.696: the type fixes the layout; CANONICAL-OER is the row E2 "
                       "measures, and BASIC-OER's non-canonical spellings are a decoder's "
                       "problem rather than a distinct encode cost"),
+    # Four rows rather than one. X.691's ALIGNED/UNALIGNED split is a real cost trade —
+    # ALIGNED pads so multi-octet fields start on octet boundaries, UNALIGNED never pads —
+    # and CANONICAL/BASIC decides §19.5's DEFAULT rule. One row for the pair would report
+    # one number for two encodings, which is the error §6.2 warns about one level up.
     "CANONICAL-PER-ALIGNED": EncodeOp(
-        False,
+        False, native_op="cper-a",
         reason="X.691: the type fixes field widths, the extension bit and the presence "
                "bitmap, so a value alone determines no octets"),
     "CANONICAL-PER-UNALIGNED": EncodeOp(
-        False, reason="X.691: the type fixes the bit layout (see the aligned entry)"),
+        False, native_op="cper-u",
+        reason="X.691: the type fixes the bit layout (see the aligned entry)"),
     "BASIC-PER-ALIGNED": EncodeOp(
-        False, reason="X.691: the type fixes the bit layout (see the aligned entry)"),
+        False, native_op="bper-a",
+        reason="X.691: the type fixes the bit layout (see the aligned entry)"),
     "BASIC-PER-UNALIGNED": EncodeOp(
-        False, reason="X.691: the type fixes the bit layout (see the aligned entry)"),
+        False, native_op="bper-u",
+        reason="X.691: the type fixes the bit layout (see the aligned entry)"),
 }
 
 

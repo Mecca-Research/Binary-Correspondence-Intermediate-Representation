@@ -111,7 +111,15 @@ typedef enum bcir_emit_rules {
   BCIR_EMIT_DER = 0,
   BCIR_EMIT_BER = 1,
   BCIR_EMIT_JER = 2,
-  BCIR_EMIT_COER = 3
+  BCIR_EMIT_COER = 3,
+  /* X.691 is FOUR rows, not one. The ALIGNED/UNALIGNED split is a real cost trade --
+   * ALIGNED pads so multi-octet fields start on octet boundaries (cheaper to read, larger
+   * on the wire), UNALIGNED never pads -- and CANONICAL/BASIC decides 19.5's DEFAULT rule.
+   * Collapsing them would put one number in the cost table for two encodings. */
+  BCIR_EMIT_CPER_ALIGNED = 4,
+  BCIR_EMIT_CPER_UNALIGNED = 5,
+  BCIR_EMIT_BPER_ALIGNED = 6,
+  BCIR_EMIT_BPER_UNALIGNED = 7
 } bcir_emit_rules;
 
 typedef enum bcir_emit_kind {

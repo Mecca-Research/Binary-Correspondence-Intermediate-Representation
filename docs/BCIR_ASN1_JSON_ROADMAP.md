@@ -524,6 +524,19 @@ needs one pass and no scratch. On this rail BER encodes at **0.65×** DER's medi
 CANONICAL-OER at **0.44×**; the gap is a property of the encodings rather than of the
 implementation, which is what makes it worth recording at all.
 
+**And a cost the standard predicts in the other direction.** With PER's four rows measured
+natively, the ordering inverts against wire size: PER produces the *smallest* documents and
+costs the *most* to write — roughly **2.3× DER** on this host, with the four variants within
+3% of each other. Part of that is X.691 itself, whose unit of composition is a bit-field
+rather than an octet (§10.5), so an encoder shifts where the octet-aligned rules copy.
+
+**Part of it is this implementation, and saying which is which matters.** `bcir_emit`'s PER
+writer emits one bit at a time. A word-at-a-time writer would close some of the gap and none
+of §10.5. So the honest claim is the *ordering* — the compact encoding is the expensive one
+to produce — and not the multiple, which is why the multiple is written here beside its host
+rather than asserted in a test. §8's rule again: shared CI gates validity and trend evidence,
+not timing thresholds.
+
 *Three defects found by building the twin, none of them reachable from E1:*
 
 1. **A silent 64-bit truncation.** The first `put_int_decimal` accumulated into a `uint64_t`,

@@ -322,22 +322,33 @@ def test_the_encode_and_decode_absences_are_different_absences():
 # --- E2: the native encode column ------------------------------------------------------------
 
 
-def test_the_encode_column_is_measured_natively_and_covers_oer():
-    """The payoff of E1/E2: an OER encode number, which the DECODE table can never hold.
+def test_the_encode_column_is_measured_natively_and_covers_oer_and_per():
+    """The payoff of E1/E2: OER **and PER** encode numbers the DECODE table can never hold.
 
-    X.696 §6.2 denies OER a schema-free decode forever. It says nothing about the write
-    side, and `bcir_emit` encodes it through a plan like every other candidate — so the
-    encode column reaches a row the decode column is permanently barred from.
+    X.696 §6.2 denies OER a schema-free decode forever, and X.691 §7.2 denies PER one for a
+    different reason — a PER encoding is not self-delimiting at all. Both clauses are about
+    *reading*. They say nothing about the write side, where an encoder is handed the type
+    either way, so the encode column reaches two rows the decode column is permanently
+    barred from.
+
+    PER contributes **four** rows rather than one: ALIGNED/UNALIGNED is a real cost trade and
+    CANONICAL/BASIC decides §19.5's DEFAULT rule, so one row for the pair would report one
+    number for two encodings.
     """
     if not native_available():
         return
     samples, skipped = run_native_encode_bench(_RECORD, _VALUE)
-    assert set(samples) >= {"DER", "BER", "JER", "COER"}, sorted(samples)
+    assert set(samples) >= {
+        "DER", "BER", "JER", "COER",
+        "CANONICAL-PER-ALIGNED", "CANONICAL-PER-UNALIGNED",
+        "BASIC-PER-ALIGNED", "BASIC-PER-UNALIGNED",
+    }, sorted(samples)
     for name, rounds in samples.items():
         assert len(rounds) >= MIN_SAMPLES, f"{name}: {len(rounds)} rounds"
         assert all(value >= 0 for value in rounds)
-    # PER is skipped for a stated reason rather than missing silently.
-    assert any("PER" in name for name in skipped)
+    # Whatever is still skipped is skipped for a STATED reason rather than missing silently.
+    for name in skipped:
+        assert ENCODE_OPS[name].reason, name
 
 
 def test_ber_encodes_faster_than_der_because_the_standard_says_it_may():

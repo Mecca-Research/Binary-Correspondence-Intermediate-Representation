@@ -13,10 +13,11 @@
  * candidate -- and timing a full decode against a structural scan would compare unlike work
  * and call the difference an encoding cost.
  *
- * WHAT IT REFUSES TO MEASURE. PER has no entry here and cannot have one: X.691 7.2 says a
- * PER encoding is not self-delimiting, so there IS no schema-free structural pass to time.
- * OER has none either, for the simpler reason that no C implementation exists yet. Both
- * absences are reported to the driver rather than filled in, because a table row invented
+ * WHAT IT REFUSES TO MEASURE. PER has no DECODE entry here and cannot have one: X.691 7.2
+ * says a PER encoding is not self-delimiting, so there IS no schema-free structural pass to
+ * time. That is a law rather than a gap, and it does not bind the ENCODE side -- an encoder
+ * is handed the type either way, which is why PER has four encode rows and no decode row.
+ * The absence is reported to the driver rather than filled in, because a table row invented
  * from a Python timing is exactly what J6's refusal exists to prevent.
  *
  * THE PROTOCOL, which is the part that makes the numbers comparable:
@@ -45,6 +46,7 @@
  *
  *   rounds <warmup> <rounds> <iterations>
  *   case <label> <op> <hex>        op is der | ber | jer | xer
+ *   encase <label> <op> <plan-hex> <hex>   op adds coer | {c,b}per-{a,u}
  *   run
  *
  * Output:
@@ -256,6 +258,10 @@ int main(void) {
       else if (strcmp(c->op, "ber") == 0) c->rules = BCIR_EMIT_BER;
       else if (strcmp(c->op, "jer") == 0) c->rules = BCIR_EMIT_JER;
       else if (strcmp(c->op, "coer") == 0) c->rules = BCIR_EMIT_COER;
+      else if (strcmp(c->op, "cper-a") == 0) c->rules = BCIR_EMIT_CPER_ALIGNED;
+      else if (strcmp(c->op, "cper-u") == 0) c->rules = BCIR_EMIT_CPER_UNALIGNED;
+      else if (strcmp(c->op, "bper-a") == 0) c->rules = BCIR_EMIT_BPER_ALIGNED;
+      else if (strcmp(c->op, "bper-u") == 0) c->rules = BCIR_EMIT_BPER_UNALIGNED;
       else { printf("unsupported %s no-native-encoder\n", c->op); return 2; }
 
       plan_len = unhex(plan_hex, plan_text, sizeof(plan_text));
