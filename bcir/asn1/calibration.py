@@ -234,17 +234,81 @@ class CalibrationRecord:
             raise Asn1Error(
                 f"calibration for {self.target!r} cannot be frozen into a cost table:\n  - "
                 + "\n  - ".join(problems))
+        # Never narrower than the clock. See `observed_quantum` for the aarch64 record that
+        # forced this: forty-one identical samples are not a precise measurement when the
+        # timer only ticks every 52 ns.
+        quantum = self.observed_quantum()
         rows = tuple(
             CostRow(candidate=row.candidate, octets=row.octets,
-                    encode=row.encode_interval(), decode=row.decode_interval())
+                    encode=_at_least_resolution(row.encode_interval(), quantum),
+                    decode=_at_least_resolution(row.decode_interval(), quantum))
             for row in self.rows if row.complete())
         return EncodingCostTable(target=self.target, cal_gen=self.cal_gen,
                                  provenance="measured", rows=rows)
+
+    def observed_quantum(self) -> float:
+        """The granularity this host's clock actually delivered, estimated from the samples.
+
+        **Why this is not paranoia.** The first aarch64 calibration taken with this harness
+        came back with every distinct value in the whole record — 104, 156, 208, 260, 417 —
+        within 0.02 of an exact multiple of 52.083 ns, which is the period of the 19.2 MHz
+        ARM architectural timer. Those figures are 2, 3, 4, 5 and 8 *timer ticks*, and the
+        ±1 ns wobble on some of them is rounding. Forty-one rounds of a two-tick measurement
+        all read 104 not because the cost is known to the nanosecond but because the clock
+        cannot say anything else.
+
+        An order-statistic interval over identical samples is `[104, 104]`, which is a claim
+        of perfect precision. `select_certified` decides significance by `Interval.overlaps`,
+        so on that record DER-encode (3 ticks) and JER-encode (4 ticks) are "significantly
+        different" on the strength of one unit of clock resolution. `table()` widens by this
+        figure so that cannot happen.
+
+        Estimated by fitting rather than assumed, because the answer is a property of the
+        host: the largest quantum that explains every observed value to within 5% of a tick.
+        A host with a fine clock returns ~1 ns and nothing is widened, which is what the x86
+        container does.
+        """
+        values = sorted({v for row in self.rows
+                         for axis in (row.encode_ns, row.decode_ns) for v in axis})
+        if len(values) < 2:
+            return 1.0
+        best = 1.0
+        # Hundredths of a nanosecond, up to 200 ns. Wide enough for the 19.2 MHz timer and
+        # anything slower a phone or an embedded target is likely to expose.
+        for hundredths in range(100, 20001):
+            quantum = hundredths / 100.0
+            worst = max(min(v % quantum, quantum - (v % quantum)) / quantum for v in values)
+            if worst <= 0.05:
+                best = quantum
+        return best
 
     def incomplete(self) -> tuple[str, ...]:
         """Candidates measured on one axis only, with why the other is missing being a
         property of the standard rather than of this run. Reported, never filled in."""
         return tuple(row.candidate for row in self.rows if not row.complete())
+
+
+def _at_least_resolution(interval: Interval, quantum: float) -> Interval:
+    """Widen an interval that is narrower than the clock that produced it.
+
+    An interval is a claim about where the true median lies. When every sample reads the same
+    tick, the order statistic reports `[v, v]` — and the honest statement is that the value
+    lies somewhere within one tick of `v`. Widening symmetrically says that, and leaves an
+    already-wider interval untouched: this corrects a false precision, it does not inflate a
+    real measurement.
+
+    `low` and `high` stop being observed samples here, which is a real cost — `Interval`'s
+    docstring notes that being observed is what makes it reportable without a model. The
+    trade is deliberate: a bound that is honest about the instrument beats a bound that is
+    literally a sample and overstates what the instrument could see.
+    """
+    if quantum <= 1.0 or (interval.high - interval.low) >= quantum:
+        return interval
+    half = quantum / 2.0
+    return Interval(low=max(0, int(interval.median - half)),
+                    high=int(interval.median + half + 0.5),
+                    median=interval.median, samples=interval.samples,
+                    coverage_ppm=interval.coverage_ppm)
 
 
 _REQUIRED = ("target", "arch", "tenancy", "cal_gen", "rows")
@@ -293,7 +357,15 @@ def render(records: list[CalibrationRecord]) -> str:
     lines: list[str] = []
     for record in records:
         verdict = "ADMITTED" if record.admissible() else "REFUSED"
-        lines.append(f"{record.target} [{record.arch}] cal_gen={record.cal_gen} {verdict}")
+        quantum = record.observed_quantum()
+        clock = ""
+        if quantum > 1.0:
+            # Say it here, because the intervals below are the raw evidence and several of
+            # them will be a single repeated value. That is the clock talking, not certainty.
+            clock = (f"  clock ~{quantum:.1f}ns ({1e3 / quantum:.1f} MHz); intervals below "
+                     f"are RAW and table() widens to this")
+        lines.append(f"{record.target} [{record.arch}] cal_gen={record.cal_gen} {verdict}"
+                     + clock)
         for problem in record.refusals():
             lines.append(f"    refused: {problem}")
         for row in record.rows:

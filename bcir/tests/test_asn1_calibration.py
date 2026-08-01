@@ -196,3 +196,62 @@ def test_the_repository_store_loads_and_admits_only_what_it_should():
         assert record.corpus in ("", corpus_digest()), (
             f"{record.target} measured corpus {record.corpus} but this revision compiles "
             f"{corpus_digest()}")
+
+
+def _ticked(ticks: int, quantum: int = 52, n: int = MIN_SAMPLES) -> tuple[int, ...]:
+    """Samples from a clock that only resolves `quantum` ns: every read is the same tick."""
+    return tuple([ticks * quantum] * n)
+
+
+def test_a_coarse_clock_is_detected_from_the_samples_themselves():
+    """The finding the first real aarch64 calibration produced.
+
+    Every distinct value in that record — 104, 156, 208, 260, 417 — sat within 0.02 of an
+    exact multiple of 52.083 ns, the period of the 19.2 MHz ARM architectural timer. Those
+    are 2, 3, 4, 5 and 8 *ticks*. No field records the clock; it is inferred from the numbers,
+    which is what makes the check work on a record taken before anyone thought to measure it.
+    """
+    rows = (CandidateRow("BER", 24, _ticked(2), _ticked(2)),
+            CandidateRow("DER", 24, _ticked(3), _ticked(2)),
+            CandidateRow("JER", 71, _ticked(4), _ticked(8)))
+    assert 50 <= _record(rows=rows).observed_quantum() <= 54
+
+    # A host with a fine clock must not be penalised: dense, non-multiple samples estimate
+    # ~1 ns and nothing downstream is widened.
+    fine = (CandidateRow("BER", 24, (204, 207, 211, 206, 209, 203, 212),
+                         (201, 205, 208, 202, 210, 206, 213)),)
+    assert _record(rows=fine).observed_quantum() == 1.0
+
+
+def test_a_table_interval_is_never_narrower_than_the_clock_that_produced_it():
+    """Forty-one identical samples are not a precise measurement on a 52 ns clock.
+
+    `select_certified` decides significance by `Interval.overlaps`. Left alone, two candidates
+    one tick apart would be "significantly different" on the strength of one unit of clock
+    resolution — so the table widens, and the one-tick pair becomes correctly indistinguishable
+    while a genuine four-tick gap stays disjoint.
+    """
+    rows = (CandidateRow("BER", 24, _ticked(2), _ticked(2)),
+            CandidateRow("DER", 24, _ticked(3), _ticked(2)),
+            CandidateRow("JER", 71, _ticked(4), _ticked(8)))
+    table = {row.candidate: row for row in _record(rows=rows).table().rows}
+
+    ber, der, jer = table["BER"].encode, table["DER"].encode, table["JER"].decode
+    assert ber.high - ber.low >= 50, f"a degenerate interval survived: {ber}"
+    assert ber.overlaps(der), (
+        "one tick apart must read as indistinguishable, not as a significant difference")
+    assert not ber.overlaps(jer), (
+        f"a six-tick gap must survive widening: {ber} against {jer}")
+    # The median is the measurement and must not move.
+    assert table["BER"].encode.median == 104
+
+
+def test_widening_leaves_an_already_honest_interval_alone():
+    """This corrects a false precision; it does not inflate a real measurement."""
+    spread = (CandidateRow("BER", 24, (100, 180, 260, 140, 220, 160, 240),
+                           (100, 180, 260, 140, 220, 160, 240)),)
+    record = _record(rows=spread)
+    original = spread[0].encode_interval()
+    widened = record.table().rows[0].encode
+    assert (widened.low, widened.high) == (original.low, original.high), (
+        f"an interval already wider than the clock was altered: {original} -> {widened}")
