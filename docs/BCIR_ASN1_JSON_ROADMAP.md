@@ -494,8 +494,28 @@ value stream. It is byte-identical to E1's reference across 152 cases × 4 candi
 here; X.696 §6.2 bars it from the decode table permanently. `CostRow` needs both axes, so
 OER still has no two-axis row — `run_native_encode_bench` returns the number it *does* have
 and `measured_table` declines to invent the half it does not, which is the same discipline
-§6.2 applies one level up. PER is in neither column: encodable given a plan, but `bcir_emit`
-has no bit-oriented writer, and that is an ordinary gap rather than a law.
+§6.2 applies one level up.
+
+**PER joined the encode column on the Python rail** once the plan carried what X.691 reads
+(§6.2.1–§6.2.3). It is **four** rows rather than one: the ALIGNED/UNALIGNED split is a real
+cost trade — ALIGNED pads so multi-octet fields start on octet boundaries, UNALIGNED never
+pads — and the CANONICAL/BASIC split decides §19.5's DEFAULT rule. `_emit_per` is
+byte-identical to `encode_per` across all four over 268 cases including every constrained
+one. The §11 field arithmetic is *imported* from the oracle rather than retyped: those
+functions read no schema at all, and a second copy of §11 here would let the parity test
+compare two implementations of the same misunderstanding. What E1 supplies independently is
+the schema-directed half — bounds, extension markers, enumerations and alternative order out
+of a **descriptor** — which is exactly what the C twin must then reproduce.
+
+Building it found two things. The first is a **fifth value-mapping disagreement**: `codec`,
+`encode_jer` and `encode_oer` all take a CHOICE value as an `(alternative, value)` pair, and
+`encode_per` takes a single-entry mapping and refuses the pair. Same family as the NULL
+disagreement §6.2 already records, and invisible for the same reason — only driving every
+encoder from one input exposes it. The second is that **§19.2's presence bitmap has OER's
+problem**: it precedes all the components while the neutral stream interleaves a presence
+octet with each value, so collecting the bits first desynchronizes the reader. It takes
+OER's answer too — the bitmap's width comes from the plan and no value can change it, so the
+slots are reserved and each bit is patched as its flag is read.
 
 **A cost difference the standard predicts, now measured.** §10.1 forbids DER the indefinite
 length form, so a DER encoder must know each constructed length before writing its header —
