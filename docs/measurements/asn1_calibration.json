@@ -1,0 +1,17 @@
+{
+  "_comment": [
+    "J6 target calibration records: one per measured target, each the evidence a frozen",
+    "EncodingCostTable was built from. bcir/asn1/calibration.py decides admissibility;",
+    "tools/silicon/measure_asn1_calibration.sh produces a record on a declared target.",
+    "",
+    "EMPTY IS A LEGITIMATE STATE, and it is the current one. No target has yet produced an",
+    "admissible calibration, so select_certified raises UnmeasuredTarget for every timing",
+    "objective rather than selecting on a table nobody measured -- which is the behaviour",
+    "J6 designed for and not a gap to be filled with a convenient number.",
+    "",
+    "The session container cannot fill it: it is a shared cloud runner, and a shared runner",
+    "is refused for timing thresholds by the same rule that governs the SIMD store. The",
+    "first admissible record is expected from a pinned dedicated aarch64 target."
+  ],
+  "targets": []
+}

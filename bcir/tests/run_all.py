@@ -353,6 +353,7 @@ _MODULES = [
     "bcir.tests.test_asn1_surface",
     "bcir.tests.test_asn1_manifest",
     "bcir.tests.test_asn1_certified",
+    "bcir.tests.test_asn1_calibration",
     "bcir.tests.test_asn1_native_bench",
     "bcir.tests.test_c_jer",
     "bcir.tests.test_c_oer",

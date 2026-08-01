@@ -323,9 +323,11 @@ def run_native_encode_bench(kind, value, *, warmup: int = 2, rounds: int = MIN_S
     a schema-free harness could not have.
 
     **This column is not the decode column's mirror, and the difference is the point.**
-    CANONICAL-OER appears here and can never appear in the decode table (X.696 §6.2), while
-    PER appears in neither: it is encodable given a plan, but `bcir_emit` has no bit-oriented
-    writer, which is an ordinary gap rather than a law.
+    CANONICAL-OER appears here and can never appear in the decode table (X.696 §6.2). PER
+    appears here too, in all four ALIGNED/UNALIGNED x CANONICAL/BASIC rows, and can never
+    appear in the decode table either (X.691 §7.2). An earlier version of this paragraph said
+    PER appeared in neither column because `bcir_emit` had no bit-oriented writer; it has one,
+    so the only rows missing from the encode column now are the ones a *law* keeps out.
     """
     from .encode_plan import compile_encode_plan
     from .emit import flatten
