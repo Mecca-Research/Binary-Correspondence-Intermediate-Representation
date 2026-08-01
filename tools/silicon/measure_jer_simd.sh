@@ -55,7 +55,9 @@ usage: measure_jer_simd.sh [options]
   --host NAME      a name a reader can look up ("Samsung S24+ (SM-S926B), SD 8 Gen 3").
                    Required: "linux" is not a host, and the record is a claim about a
                    specific machine.
-  --pin N          run every round on CPU N (taskset). Strongly recommended on big.LITTLE.
+  --pin N          run every round on CPU N (sched_setaffinity). Strongly recommended
+                   on big.LITTLE, where the largest and smallest core differ by more
+                   than the advantage being measured.
   --rounds N       measured rounds per candidate (default 41; the reader needs at least the
                    minimum an order-statistic interval covers a median with).
   --iterations N   iterations per round; the round's figure is their MEDIAN (default 64).
@@ -123,23 +125,39 @@ for source in "${C}/bcir_jer.c" "${C}/bcir_runtime.c"; do
 done
 "${CXX}" "${tmp}"/*.o -o "${tmp}/bench"
 
+# Pinning goes through python's `os.sched_setaffinity` rather than `taskset`. python3 is
+# already required here, while taskset lives in util-linux -- a separate package on Termux,
+# and the phone is the host this most needs to work on. `os.execv` replaces the interpreter
+# so nothing sits between the affinity call and the measurement.
+PIN_HELPER="${tmp}/pin.py"
+cat >"${PIN_HELPER}" <<'PYPIN'
+import os
+import sys
+
+cpu, program = int(sys.argv[1]), sys.argv[2]
+os.sched_setaffinity(0, {cpu})
+os.execv(program, [program])
+PYPIN
+
 RUN=("${tmp}/bench")
 PIN_STATE="not requested"
 if [ -n "${PIN}" ]; then
-  if command -v taskset >/dev/null 2>&1 && taskset -c "${PIN}" true 2>/dev/null; then
-    RUN=(taskset -c "${PIN}" "${tmp}/bench")
-    PIN_STATE="taskset -c ${PIN}"
+  if python3 -c 'import os; os.sched_setaffinity(0, os.sched_getaffinity(0))' 2>/dev/null; then
+    RUN=(python3 "${PIN_HELPER}" "${PIN}" "${tmp}/bench")
+    PIN_STATE="sched_setaffinity cpu ${PIN}"
   else
     # Recorded rather than fatal. The reader decides on the OBSERVED CPUs, so a kernel that
-    # refused the affinity request still produces an honest record -- it simply will not be
-    # admissible if the rounds then wandered.
-    PIN_STATE="requested cpu ${PIN}, but taskset is unavailable or was refused"
+    # refuses affinity still produces an honest record -- it simply will not be admissible
+    # if the rounds then wandered, which is the correct outcome rather than a lost run.
+    PIN_STATE="requested cpu ${PIN}, but this platform has no sched_setaffinity"
     echo "[measure] warning: ${PIN_STATE}" >&2
   fi
 fi
 
 TIERS="$(printf 'tiers\n' | "${RUN[@]}")"
-TIER_NAME="$(printf '%s' "${TIERS}" | awk '{print $3}')"
+# `tiers <available> <name> <compiled>`; read splits it without needing awk, which Termux
+# does not carry in its base install.
+read -r _kw _available TIER_NAME _compiled <<<"${TIERS}"
 echo "[measure] resolved tier: ${TIER_NAME} (${TIERS})" >&2
 
 # The document is the one 7.3 measures: an all-ASCII claim graph, which is the shape a JER
@@ -157,9 +175,11 @@ PYDOC
 
 echo "[measure] ${ROUNDS} interleaved rounds x ${ITERATIONS} iterations per candidate" >&2
 {
-  for _ in $(seq 1 "${ROUNDS}"); do
+  round=0
+  while [ "${round}" -lt "${ROUNDS}" ]; do
     printf 'bench scalar 1 %s %s\n' "${ITERATIONS}" "${DOC_HEX}"
     printf 'bench auto 1 %s %s\n' "${ITERATIONS}" "${DOC_HEX}"
+    round=$((round + 1))
   done
 } | "${RUN[@]}" > "${tmp}/samples.txt"
 
