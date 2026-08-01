@@ -692,7 +692,7 @@ errata admission.
 | **J2 — schema-plan compiler** · **DELIVERED** | Deterministic descriptor, bound derivation, instruction compilation, version/hash contract, and first `channel.json` schema | Met: [`jer_plan.py`](../bcir/asn1/jer_plan.py) regenerates byte-identically, refuses a bare ENUMERATED, an open type, a duplicate JSON member name and an undiscriminable UNWRAPPED choice at compile time, and its plan-driven trace equals the direct one |
 | **J3 — scalar C twin** | **Landed.** [`bcir_jer.{h,c}`](../runtime/c/bcir_jer.c): allocation-free bounded scanner, whole-document UTF-8 check, ECMA-404 parser driving a caller's event sink, §4.2 diagnostics, §3.3 unframing, and the twelfth fuzz target | Python/C error-class, byte-offset, required-capacity and event-trace parity in [`test_c_jer.py`](../bcir/tests/test_c_jer.py); `-O0 == -O3` over 667 cases in `check_runtime.sh` `#jer`; freestanding `-Werror` under C11 and C23; ASan/UBSan fuzz green |
 | **J4 — law and execution lowering** | **Landed.** Part 1 the transfer-syntax rail and generalized R24 (§5.3); part 2 the commuting projection [`dialect.py`](../bcir/asn1/dialect.py) and StreamPack over JER; part 3 the [`manifest.py`](../bcir/asn1/manifest.py) schemas for `channel.json`, `DeviceManifest` and the §6.2 selection envelope, with §5.4's two sinks | **§7.1's two laws hold** over all 26 law fixtures; **§5.4's commutation holds** over all nine built-in channels — `JER -> typed value -> claims` equals `JER -> direct builder`, both fed by one event walk; native StreamPack octets survive the JER round trip (§6.3) |
-| **J5 — hosted SIMD rail** | **Landed, gate PARTIALLY met** ([`bcir_jer_simd.cpp`](../runtime/cpp/bcir_jer_simd.cpp)): a C++17 UTF-8 accept-scanner behind the scalar C ABI, with SSE2/AVX2/NEON tiers, runtime detection and scalar fallback | **Corpus and trace: met.** Every tier returns an identical status *and* byte offset to `bcir_jer_validate_utf8` over 489 documents — including multi-byte sequences straddling every offset in a 32-octet block and invalid sequences at every offset. **No unsupported-CPU fault: met.** A tier the CPU does not advertise, or this build did not compile, degrades to scalar rather than faulting or refusing. **Advantage on at least two hosts: UNMET, and now DECIDABLE rather than asserted.** [`jer_simd_hosts.json`](../docs/measurements/jer_simd_hosts.json) holds one record per measured machine and [`simd_hosts.py`](../bcir/asn1/simd_hosts.py) decides admissibility against §8 — dedicated tenancy, a vector tier, enough rounds for an order-statistic interval, and every round on one CPU. Two admissible hosts on two ARCHITECTURES close it; §7.3.2 records what a big.LITTLE phone changes. Covers **UTF-8 validation only**; the structural index is a separate build and §7.4 says why it is not the same shape. See §7.3 |
+| **J5 — hosted SIMD rail** | **Landed, gate PARTIALLY met** ([`bcir_jer_simd.cpp`](../runtime/cpp/bcir_jer_simd.cpp)): a C++17 UTF-8 accept-scanner behind the scalar C ABI, with SSE2/AVX2/NEON tiers, runtime detection and scalar fallback | **Corpus and trace: met, on two materially different aarch64 implementations.** Every tier returns an identical status *and* byte offset to `bcir_jer_validate_utf8` over 489 documents — including multi-byte sequences straddling every offset in a 32-octet block and invalid sequences at every offset — on x86-64, on CI's Ampere/Cobalt **server** ARM runners, and under Termux on a Snapdragon 8 Gen 3 **phone** (`tiers 3 neon 1,0,0,1`). `#jersimd` also cross-compiles the tier this host cannot run and disassembles it, so a tier that silently degraded to scalar fails where nothing executes it — see §7.3.3. **No unsupported-CPU fault: met.** A tier the CPU does not advertise, or this build did not compile, degrades to scalar rather than faulting or refusing. **Advantage on at least two hosts: UNMET at 1 of 2, and decided from evidence rather than asserted.** [`jer_simd_hosts.json`](../docs/measurements/jer_simd_hosts.json) holds one record per measured machine and [`simd_hosts.py`](../bcir/asn1/simd_hosts.py) decides admissibility against §8 — dedicated tenancy, a vector tier, enough rounds for an order-statistic interval, and every round on one CPU. **The Samsung S24+ record is ADMITTED**: NEON, pinned to cpu7, 41 rounds per candidate, vector `[886, 937]` ns strictly below scalar `[9739, 9739]` ns — **10.4×**. The remaining host must be x86 *and* dedicated; the shared cloud container is refused and kept in the store as a worked example of why. §7.3.0 has the numbers, §7.3.2 what a big.LITTLE phone changes. Covers **UTF-8 validation only**; the structural index is a separate build and §7.4 says why it is not the same shape. See §7.3 |
 | **J6 — certified K_BCIR choice** | **Landed on the Python oracle** ([`certified.py`](../bcir/asn1/certified.py)): distribution-free prediction intervals from order statistics, a frozen generation-tagged cost table with declared provenance, §6.2's certificate, and a production select that **refuses** an oracle table for any timing objective. The native microbench protocol and RCSP integration remain open | Exact sizes decide wire-size objectives with no timing consulted; repeatability is a refusal rather than an average; legality-first and canonical-or-excluded precede every comparison; deterministic selection on two tables, each certificate bound to the table digest it read — [`test_asn1_certified.py`](../bcir/tests/test_asn1_certified.py) |
 | **J7 — driver experiment** | Userspace/simulator driver specification ingest, generated views, and sequential BCIR-Linux module comparison | D0–D3 driver gates, signed modules, direct/Linux trace parity, teardown/restart tests, and controlled performance evidence |
 
@@ -813,6 +813,41 @@ offset. It is not a second *measured host*: §8 refuses timing thresholds on sha
 ("shared CI gates validity and trend evidence, not noisy timing thresholds"), so a
 controlled rig is what closes this clause.
 
+#### 7.3.0 The aarch64 measurement, and what it cost to be admissible
+
+| ≈29 KB all-ASCII claim graph | scalar | vector | speedup |
+|---|---|---|---|
+| Samsung S24+, Snapdragon 8 Gen 3, **NEON**, pinned to cpu7 | 9739 ns | 937 ns | **10.4×** |
+| x86-64, **AVX2** (the table above) | 28470 ns | 1029 ns | 27.7× |
+
+`python3 -m bcir.asn1.simd_hosts` **admits** the S24+ record: dedicated, tier `neon`, 41
+rounds per candidate, every round on cpu7, and a vector interval `[886, 937]` strictly below
+a scalar interval `[9739, 9739]`. That is **one of the two hosts** the clause needs.
+
+**NEON's 10.4× against AVX2's 27.7× is the expected shape, not a disappointment.** NEON is 16
+octets wide and AVX2 is 32, and the ASCII-run kernel's whole job is to answer *"are these all
+ASCII"* per block — so halving the block roughly halves the run each vector step skips. The
+Cortex-X4's *scalar* rail is also nearly 3× faster than the x86 figure (9739 ns against
+28470 ns), which shrinks the headroom a vector pass can win back. Both ratios are what a
+reader should expect on that silicon, which is why every figure now carries its host.
+
+**The phone produced a cleaner measurement than the cloud container did**, which is worth
+recording because it inverts the intuition that a handset is the noisy environment. Pinned to
+the big core, on mains, 37 of 41 scalar rounds landed on *exactly* 9739 ns — a degenerate
+order-statistic interval. The shared x86 container came back bimodal at roughly 500 and
+2500 ns and is refused. **Contention, not silicon class, is what makes a timing unusable**,
+and §8's `shared`/`dedicated` split is aimed at precisely that rather than at hardware
+prestige.
+
+**NEON is now also proven correct on a phone-class core**, which CI could not have shown.
+GitHub's ARM runners are Ampere/Cobalt *server* parts; a Snapdragon 8 Gen 3 is a
+Cortex-X4/A720/A520 cluster with different pipeline widths and a different memory system.
+Running the gate under Termux on a Samsung S24+ reports `tiers 3 neon 1,0,0,1` — NEON
+compiled and resolved, no x86 tier present — and the same **489 documents × 5 tiers agree
+with the scalar rail on status and offset**, with 40 distinct rejection offsets exercised.
+That is the corpus-and-trace clause met on a second, materially different aarch64
+implementation rather than on a second instance of the same one.
+
 #### 7.3.1 The clause is now decidable, and the store is the authority
 
 The rule used to live only in this prose, which meant "is it met yet" was a question you
@@ -853,6 +888,36 @@ advantage being measured**. Three consequences:
 3. **Thermal throttling needs no new machinery.** It is monotone drift, and the runbook
    interleaves scalar and vector rounds so a downward frequency ramp is spread evenly across
    both — the same argument `bcir_asn1_bench.c` already makes for its own round-robin.
+
+#### 7.3.3 Every host compiles every tier
+
+The differential can only exercise the tiers the running CPU *has*, so an x86 developer
+editing the NEON path got no feedback until CI — and an aarch64 one got none on SSE2/AVX2.
+That is how a tier rots.
+
+Clang carries every backend, so `#jersimd` now **cross-compiles the other architecture's
+tier** on whichever host it runs. Compile-only needs no sysroot: the file includes clang's
+own `stdint`/`arm_neon` headers and nothing from libc.
+
+**"It compiled" is deliberately not the check.** With `BCIR_SIMD_ARM` never defined the file
+still compiles — to scalar, silently — which is exactly the failure worth catching and
+precisely the one no run on an x86 host could show. So the object is disassembled and the
+tier's own instructions must appear: `umaxv`/`uminv` over a `.16b` register for NEON,
+`pmovmskb`/`pcmpgt` for x86. Deliberately breaking the ARM guard makes the gate fail while
+every other check on that host still passes, which is what says the check has teeth.
+
+The NEON kernel it proves present is two vector instructions, and that is the design rather
+than a shortfall:
+
+```
+ldr   q0, [x10, x11]      load 16 octets
+umaxv b0, v0.16b          horizontal max across all 16
+tbz   w13, #0x7, ...      bit 7 clear => all 16 are ASCII, continue the run
+ldrsb w12, [x10, x11]     otherwise hand off to the scalar rail
+```
+
+*"Vector says WHERE, scalar says WHAT"* needs exactly a horizontal reduction and a bit
+test.
 
 Correctness runs first and a failure aborts before anything is timed: a number from a build
 that disagrees with the scalar rail is not a weak measurement, it is a measurement of the

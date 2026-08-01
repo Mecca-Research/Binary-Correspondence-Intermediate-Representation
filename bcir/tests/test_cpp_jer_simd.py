@@ -387,3 +387,59 @@ def test_a_bulk_work_charge_reproduces_the_scalar_failure_point_in_closed_form()
             assert f"needs {ceiling + 1}" in str(error), (ceiling, str(error))
             checked += 1
     assert checked > 40, f"only {checked} ceilings actually failed; the fixture is too cheap"
+
+
+# --- every host compiles every tier ------------------------------------------------------
+
+
+#: The instructions each tier is actually built on, as they appear in a disassembly. NEON's
+#: `umaxv`/`uminv` are the horizontal reduction the ASCII-run kernel uses — sixteen octets
+#: reduced to one, then a bit-7 test — and x86's `pmovmskb`/`pcmpgt` are its counterpart.
+_CROSS_TIER = {
+    "aarch64-linux-gnu": ("umaxv", "uminv"),
+    "x86_64-linux-gnu": ("pmovmskb", "pcmpgt"),
+}
+
+
+def _other_target() -> str:
+    import platform
+
+    return ("x86_64-linux-gnu" if platform.machine() in ("aarch64", "arm64")
+            else "aarch64-linux-gnu")
+
+
+def test_the_tier_this_host_cannot_run_still_compiles_and_is_not_secretly_scalar():
+    """The gap every other test here leaves open, and how a tier rots.
+
+    The differential can only exercise the tiers *this* CPU has. An x86 developer editing
+    the NEON path gets no feedback until CI, and an aarch64 one gets none on SSE2/AVX2.
+
+    Clang carries every backend, so the other architecture's tier can be **compiled** here
+    even though it cannot be run — and compile-only needs no sysroot, because the file
+    includes clang's own `stdint`/`arm_neon` headers and nothing from libc.
+
+    **"It compiled" is deliberately not the check.** If `BCIR_SIMD_ARM` were never defined
+    the file would still compile — to scalar, silently — which is exactly the failure worth
+    catching and precisely the one no run on this host could show. So the object is
+    disassembled and the tier's own instructions must appear in it.
+    """
+    compiler = shutil.which("clang++")
+    objdump = shutil.which("llvm-objdump") or shutil.which("objdump")
+    if compiler is None or objdump is None:
+        return
+    target = _other_target()
+    with tempfile.TemporaryDirectory() as tmp:
+        obj = os.path.join(tmp, "cross.o")
+        built = subprocess.run(
+            [compiler, f"--target={target}", "-std=c++17", "-O2", "-Wall", "-Wextra",
+             "-Werror", "-ffreestanding", "-I", _C, "-I", _CPP,
+             "-c", os.path.join(_CPP, "bcir_jer_simd.cpp"), "-o", obj],
+            capture_output=True, text=True)
+        if built.returncode != 0:
+            # A clang without the other backend. Skipped rather than failed: the cross build
+            # is extra reach, and CI runs the tier natively either way.
+            return
+        disasm = subprocess.run([objdump, "-d", obj], capture_output=True, text=True).stdout
+    assert any(needle in disasm for needle in _CROSS_TIER[target]), (
+        f"{target} compiled without any of {_CROSS_TIER[target]}: the tier fell back to "
+        f"scalar rather than building, and no run on this host would have shown it")

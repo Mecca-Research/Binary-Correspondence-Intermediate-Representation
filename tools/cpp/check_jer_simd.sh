@@ -135,4 +135,52 @@ print("  ok: %d distinct rejection offsets exercised" % len(offsets))
 CHECKPY
 
 echo "  ok: no unsupported-CPU fault (every tier answered; unavailable tiers degraded)"
+
+# --- every host compiles every tier -----------------------------------------------------------
+#
+# The differential above can only exercise the tiers THIS CPU has. An x86 developer editing
+# the NEON path therefore gets no feedback at all until CI, and an aarch64 one gets none on
+# the SSE2/AVX2 path -- which is how a tier rots.
+#
+# Clang carries every backend, so the other architecture's tier can be COMPILED here even
+# though it cannot be run. Compile-only needs no sysroot: the file includes clang's own
+# stdint/arm_neon headers and nothing from libc.
+#
+# "It compiled" is deliberately NOT the check. If `BCIR_SIMD_ARM` were false the file would
+# still compile -- to scalar, silently, which is exactly the failure worth catching. So the
+# object is disassembled and the tier's OWN instructions must appear in it. `umaxv`/`uminv`
+# over a `.16b` register are NEON-only, and they are the horizontal reduction the ASCII-run
+# kernel is built on; `pmovmskb`/`pcmpgt` are the x86 equivalent.
+cross_target=""
+cross_needle=""
+case "$(uname -m)" in
+  aarch64|arm64) cross_target="x86_64-linux-gnu"; cross_needle="pmovmskb|pcmpgt" ;;
+  *)             cross_target="aarch64-linux-gnu"; cross_needle="umaxv|uminv" ;;
+esac
+
+if "${CXX}" --target="${cross_target}" -std=c++17 -O2 -Wall -Wextra -Werror -ffreestanding \
+     -I "${C}" -I "${CPP}" -c "${CPP}/bcir_jer_simd.cpp" -o "${tmp}/cross.o" 2>"${tmp}/cross.log"
+then
+  disasm=""
+  for tool in llvm-objdump objdump; do
+    if command -v "${tool}" >/dev/null 2>&1; then
+      disasm="$("${tool}" -d "${tmp}/cross.o" 2>/dev/null || true)"
+      [ -n "${disasm}" ] && break
+    fi
+  done
+  if [ -z "${disasm}" ]; then
+    echo "  note: ${cross_target} tier compiles, but no disassembler to prove it is not scalar"
+  elif printf '%s' "${disasm}" | grep -qE "${cross_needle}"; then
+    echo "  ok: the ${cross_target} tier compiles here AND emits its own SIMD instructions"
+  else
+    echo "FAIL: ${cross_target} compiled without any ${cross_needle} instruction -- the tier"
+    echo "      fell back to scalar rather than building, which no run on this host would show"
+    exit 1
+  fi
+else
+  # A clang without the other backend, or a gcc that cannot retarget. Skipped rather than
+  # failed: the cross build is extra reach, and CI runs the tier natively either way.
+  echo "  note: ${CXX} cannot target ${cross_target}; the other tier is unchecked here"
+fi
+
 echo "  note: J5's two-host advantage clause is NOT checked here -- see docs 7.3"

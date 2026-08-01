@@ -193,3 +193,10 @@ def test_the_recorded_clause_state_matches_what_the_store_actually_supports():
             f"and the J5 row, which still record it as unmet")
     assert "two-host clause is not met" in text.lower(), (
         "§7.3 no longer records the clause as unmet, but the store does not close it")
+    # The J5 row spells the tally as prose, and prose drifts. Pinning the COUNT means adding
+    # a host record cannot quietly leave the summary row claiming less — or more — than the
+    # evidence supports.
+    tally = f"UNMET at {len(verdict.admitted)} of 2"
+    assert tally in text, (
+        f"the J5 row does not say {tally!r}; the store admits "
+        f"{len(verdict.admitted)} host(s) ({list(verdict.admitted)}) and the row must match")
