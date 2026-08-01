@@ -188,14 +188,20 @@ def test_the_recorded_clause_state_matches_what_the_store_actually_supports():
     with open(roadmap, encoding="utf-8") as handle:
         text = handle.read()
     if verdict.met:
-        raise AssertionError(
-            f"the store now closes J5's advantage clause ({verdict.reason}) — update §7.3 "
-            f"and the J5 row, which still record it as unmet")
+        # The clause is closed, so the prose must say so — in both places, because a summary
+        # row that lags the section under it is how a reader ends up with the wrong picture.
+        assert "two-host clause is MET" in text, (
+            f"the store closes J5's advantage clause ({verdict.reason}) but §7.3 does not "
+            f"say so")
+        assert "Advantage on at least two hosts: MET" in text, (
+            "the J5 row still records the advantage clause as unmet")
+        for host in verdict.admitted:
+            assert host.split(" (")[0].split(",")[0] in text, (
+                f"§7.3 names no measurement for the admitted host {host!r}; an admitted "
+                f"record a reader cannot find in the prose is evidence nobody will check")
+        return
     assert "two-host clause is not met" in text.lower(), (
         "§7.3 no longer records the clause as unmet, but the store does not close it")
-    # The J5 row spells the tally as prose, and prose drifts. Pinning the COUNT means adding
-    # a host record cannot quietly leave the summary row claiming less — or more — than the
-    # evidence supports.
     tally = f"UNMET at {len(verdict.admitted)} of 2"
     assert tally in text, (
         f"the J5 row does not say {tally!r}; the store admits "
