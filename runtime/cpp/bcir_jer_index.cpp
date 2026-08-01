@@ -146,11 +146,31 @@ size_t whitespace_run_neon(const uint8_t *data, size_t len) {
 }
 #endif
 
-/* Tier dispatch, then the scalar finish that makes the bound exact. */
+/* The narrowest block any tier below uses. AVX2 reads 32 but finishes its remainder at 16, so
+ * 16 is the width below which NO tier can make progress. */
+constexpr size_t kNarrowestBlock = 16;
+
+/* Tier dispatch, then the scalar finish that makes the bound exact.
+ *
+ * THE SHORT-RUN GUARD, and why it is exact rather than a heuristic. A vector helper can only
+ * advance if its first whole block is entirely whitespace, so it can only advance if the
+ * octet at `kNarrowestBlock - 1` is whitespace. Testing that one octet first therefore skips
+ * the call in exactly the cases where the call would have returned 0 -- it can never skip a
+ * run the vector pass would have advanced through, so the answer is unchanged at every tier.
+ *
+ * It is worth a line because the common case needs it. Ordinary indentation is a handful of
+ * octets, so a document can hold hundreds of runs that no block ever fits. Without the guard
+ * each one pays two calls and eight constant broadcasts to be told nothing, and measurement
+ * put the vector tier BELOW this file's own scalar tier on pretty-printed input -- an
+ * "optimization" that made the ordinary document slower. The broadcasts cannot be hoisted out
+ * of the loop because `target("avx2")` code cannot inline into an un-attributed caller, so
+ * the fix is to not make the call. */
 size_t whitespace_run(bcir_jer_simd_tier tier, const uint8_t *data, size_t len, size_t pos) {
   const uint8_t *from = data + pos;
   size_t span = len - pos;
   size_t run;
+  if (span < kNarrowestBlock || !is_space(from[kNarrowestBlock - 1]))
+    tier = BCIR_JER_SIMD_SCALAR;
   switch (tier) {
 #if defined(BCIR_INDEX_X86)
     case BCIR_JER_SIMD_AVX2: run = whitespace_run_avx2(from, span); break;
