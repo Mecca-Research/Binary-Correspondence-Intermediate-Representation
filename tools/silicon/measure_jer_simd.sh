@@ -103,6 +103,14 @@ if [ -z "${CXX}" ] || [ -z "${CC}" ]; then
   exit 2
 fi
 
+# Echo a file to stderr with a prefix. A shell loop rather than `sed`, because this is
+# cosmetic and `set -e` would otherwise abort the whole measurement over a missing package.
+# Nothing here should fail for a reason unrelated to what is being measured.
+indent() {
+  local prefix="$1" line
+  while IFS= read -r line; do printf '%s%s\n' "${prefix}" "${line}" >&2; done <"$2"
+}
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 
@@ -110,10 +118,10 @@ echo "[measure] correctness first: the SIMD gate must pass before anything is ti
 if ! CXX="${CXX}" CC="${CC}" bash "${ROOT}/tools/cpp/check_jer_simd.sh" >"${tmp}/gate.txt" 2>&1; then
   echo "[measure] REFUSED: the SIMD gate failed on this host. A timing from a build that" >&2
   echo "          disagrees with the scalar rail is a number attached to the wrong answer." >&2
-  sed 's/^/          /' "${tmp}/gate.txt" >&2
+  indent "          " "${tmp}/gate.txt"
   exit 1
 fi
-sed 's/^/  /' "${tmp}/gate.txt" >&2
+indent "  " "${tmp}/gate.txt"
 
 echo "[measure] building the bench driver" >&2
 for source in "${CPP}/bcir_jer_simd.cpp" "${CPP}/test_jer_simd.cpp"; do
