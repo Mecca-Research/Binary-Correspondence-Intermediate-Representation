@@ -813,6 +813,32 @@ offset. It is not a second *measured host*: §8 refuses timing thresholds on sha
 ("shared CI gates validity and trend evidence, not noisy timing thresholds"), so a
 controlled rig is what closes this clause.
 
+#### 7.3.0 The aarch64 measurement, and what it cost to be admissible
+
+| ≈29 KB all-ASCII claim graph | scalar | vector | speedup |
+|---|---|---|---|
+| Samsung S24+, Snapdragon 8 Gen 3, **NEON**, pinned to cpu7 | 9739 ns | 937 ns | **10.4×** |
+| x86-64, **AVX2** (the table above) | 28470 ns | 1029 ns | 27.7× |
+
+`python3 -m bcir.asn1.simd_hosts` **admits** the S24+ record: dedicated, tier `neon`, 41
+rounds per candidate, every round on cpu7, and a vector interval `[886, 937]` strictly below
+a scalar interval `[9739, 9739]`. That is **one of the two hosts** the clause needs.
+
+**NEON's 10.4× against AVX2's 27.7× is the expected shape, not a disappointment.** NEON is 16
+octets wide and AVX2 is 32, and the ASCII-run kernel's whole job is to answer *"are these all
+ASCII"* per block — so halving the block roughly halves the run each vector step skips. The
+Cortex-X4's *scalar* rail is also nearly 3× faster than the x86 figure (9739 ns against
+28470 ns), which shrinks the headroom a vector pass can win back. Both ratios are what a
+reader should expect on that silicon, which is why every figure now carries its host.
+
+**The phone produced a cleaner measurement than the cloud container did**, which is worth
+recording because it inverts the intuition that a handset is the noisy environment. Pinned to
+the big core, on mains, 37 of 41 scalar rounds landed on *exactly* 9739 ns — a degenerate
+order-statistic interval. The shared x86 container came back bimodal at roughly 500 and
+2500 ns and is refused. **Contention, not silicon class, is what makes a timing unusable**,
+and §8's `shared`/`dedicated` split is aimed at precisely that rather than at hardware
+prestige.
+
 **NEON is now also proven correct on a phone-class core**, which CI could not have shown.
 GitHub's ARM runners are Ampere/Cobalt *server* parts; a Snapdragon 8 Gen 3 is a
 Cortex-X4/A720/A520 cluster with different pipeline widths and a different memory system.
