@@ -813,6 +813,15 @@ offset. It is not a second *measured host*: §8 refuses timing thresholds on sha
 ("shared CI gates validity and trend evidence, not noisy timing thresholds"), so a
 controlled rig is what closes this clause.
 
+**NEON is now also proven correct on a phone-class core**, which CI could not have shown.
+GitHub's ARM runners are Ampere/Cobalt *server* parts; a Snapdragon 8 Gen 3 is a
+Cortex-X4/A720/A520 cluster with different pipeline widths and a different memory system.
+Running the gate under Termux on a Samsung S24+ reports `tiers 3 neon 1,0,0,1` — NEON
+compiled and resolved, no x86 tier present — and the same **489 documents × 5 tiers agree
+with the scalar rail on status and offset**, with 40 distinct rejection offsets exercised.
+That is the corpus-and-trace clause met on a second, materially different aarch64
+implementation rather than on a second instance of the same one.
+
 #### 7.3.1 The clause is now decidable, and the store is the authority
 
 The rule used to live only in this prose, which meant "is it met yet" was a question you
@@ -853,6 +862,36 @@ advantage being measured**. Three consequences:
 3. **Thermal throttling needs no new machinery.** It is monotone drift, and the runbook
    interleaves scalar and vector rounds so a downward frequency ramp is spread evenly across
    both — the same argument `bcir_asn1_bench.c` already makes for its own round-robin.
+
+#### 7.3.3 Every host compiles every tier
+
+The differential can only exercise the tiers the running CPU *has*, so an x86 developer
+editing the NEON path got no feedback until CI — and an aarch64 one got none on SSE2/AVX2.
+That is how a tier rots.
+
+Clang carries every backend, so `#jersimd` now **cross-compiles the other architecture's
+tier** on whichever host it runs. Compile-only needs no sysroot: the file includes clang's
+own `stdint`/`arm_neon` headers and nothing from libc.
+
+**"It compiled" is deliberately not the check.** With `BCIR_SIMD_ARM` never defined the file
+still compiles — to scalar, silently — which is exactly the failure worth catching and
+precisely the one no run on an x86 host could show. So the object is disassembled and the
+tier's own instructions must appear: `umaxv`/`uminv` over a `.16b` register for NEON,
+`pmovmskb`/`pcmpgt` for x86. Deliberately breaking the ARM guard makes the gate fail while
+every other check on that host still passes, which is what says the check has teeth.
+
+The NEON kernel it proves present is two vector instructions, and that is the design rather
+than a shortfall:
+
+```
+ldr   q0, [x10, x11]      load 16 octets
+umaxv b0, v0.16b          horizontal max across all 16
+tbz   w13, #0x7, ...      bit 7 clear => all 16 are ASCII, continue the run
+ldrsb w12, [x10, x11]     otherwise hand off to the scalar rail
+```
+
+*"Vector says WHERE, scalar says WHAT"* needs exactly a horizontal reduction and a bit
+test.
 
 Correctness runs first and a failure aborts before anything is timed: a number from a build
 that disagrees with the scalar rail is not a weak measurement, it is a measurement of the
