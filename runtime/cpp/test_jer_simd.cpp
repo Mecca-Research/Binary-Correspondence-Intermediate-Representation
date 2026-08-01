@@ -7,13 +7,14 @@
  *
  *   tiers                        report which tiers this build has and this CPU allows
  *   utf8 <tier> <hex>            validate at a pinned tier; `-` spells the empty document
- *   bench <tier> <rounds> <iterations> <hex>   per-round median nanoseconds
+ *   bench <tier> <rounds> <iterations> <hex>   per-round median nanoseconds, and the CPU
+ *                                              each round ran on (-1 where unavailable)
  *
  * Output:
  *
  *   tiers <available> <name> <compiled-scalar,sse2,avx2,neon>
  *   ok <status> <offset>         status and byte offset, exactly as the scalar rail gives
- *   sample <tier> <round> <ns>
+ *   sample <tier> <round> <ns> <cpu>
  *===----------------------------------------------------------------------===*/
 #include <cstdio>
 #include <cstdlib>
@@ -21,6 +22,12 @@
 #include <ctime>
 
 #include "bcir_jer_simd.h"
+
+/* `sched_getcpu` is glibc/bionic, so the CPU a round ran on is Linux-only. Included outside
+ * the anonymous namespace because it is a system header. */
+#if defined(__linux__)
+#include <sched.h>
+#endif
 
 namespace {
 
@@ -59,6 +66,25 @@ uint64_t now_ns() {
   return static_cast<uint64_t>(t.tv_sec) * 1000000000u + static_cast<uint64_t>(t.tv_nsec);
 }
 
+/* Which CPU the calling thread is on right now, or -1 where the host cannot say.
+ *
+ * Reported per round because the first DEDICATED aarch64 host available for J5's advantage
+ * clause is a phone, and a phone is big.LITTLE: a Snapdragon 8 Gen 3 pairs one Cortex-X4
+ * with four A720s and three A520s, and the same code on the largest and the smallest core
+ * differs by more than the SIMD advantage being measured. Without this the scheduler's
+ * choice is an INVISIBLE variable; with it, "every round on cpu7" is evidence a reader can
+ * check, and a run that migrated says so instead of quietly averaging two machines.
+ *
+ * -1 means UNKNOWN and must never read as "did not migrate": an absent measurement passing
+ * for a clean one is the failure this whole line of reporting exists to stop. */
+int current_cpu() {
+#if defined(__linux__)
+  return sched_getcpu();
+#else
+  return -1;
+#endif
+}
+
 int cmp_u64(const void *a, const void *b) {
   uint64_t x = *static_cast<const uint64_t *>(a), y = *static_cast<const uint64_t *>(b);
   return x < y ? -1 : (x > y ? 1 : 0);
@@ -80,6 +106,7 @@ int main() {
   static unsigned char data[kMaxBytes];
   static uint64_t batch[kMaxIterations];
   static uint64_t rounds_ns[kMaxRounds];
+  static int rounds_cpu[kMaxRounds];
   uint64_t sink = 0;
 
   while (std::fgets(line, static_cast<int>(sizeof(line)), stdin) != nullptr) {
@@ -154,10 +181,11 @@ int main() {
         /* The per-round MEDIAN, not the mean: one preempted iteration must not move the
          * round, and `timespec_get` granularity quantizes a short iteration to zero. */
         rounds_ns[r] = batch[iterations / 2];
+        rounds_cpu[r] = current_cpu();
       }
       for (long r = 0; r < rounds; r++)
-        std::printf("sample %s %ld %llu\n", tier_name, r,
-                    static_cast<unsigned long long>(rounds_ns[r]));
+        std::printf("sample %s %ld %llu %d\n", tier_name, r,
+                    static_cast<unsigned long long>(rounds_ns[r]), rounds_cpu[r]);
       continue;
     }
   }

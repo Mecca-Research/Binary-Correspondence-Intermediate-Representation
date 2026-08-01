@@ -692,7 +692,7 @@ errata admission.
 | **J2 — schema-plan compiler** · **DELIVERED** | Deterministic descriptor, bound derivation, instruction compilation, version/hash contract, and first `channel.json` schema | Met: [`jer_plan.py`](../bcir/asn1/jer_plan.py) regenerates byte-identically, refuses a bare ENUMERATED, an open type, a duplicate JSON member name and an undiscriminable UNWRAPPED choice at compile time, and its plan-driven trace equals the direct one |
 | **J3 — scalar C twin** | **Landed.** [`bcir_jer.{h,c}`](../runtime/c/bcir_jer.c): allocation-free bounded scanner, whole-document UTF-8 check, ECMA-404 parser driving a caller's event sink, §4.2 diagnostics, §3.3 unframing, and the twelfth fuzz target | Python/C error-class, byte-offset, required-capacity and event-trace parity in [`test_c_jer.py`](../bcir/tests/test_c_jer.py); `-O0 == -O3` over 667 cases in `check_runtime.sh` `#jer`; freestanding `-Werror` under C11 and C23; ASan/UBSan fuzz green |
 | **J4 — law and execution lowering** | **Landed.** Part 1 the transfer-syntax rail and generalized R24 (§5.3); part 2 the commuting projection [`dialect.py`](../bcir/asn1/dialect.py) and StreamPack over JER; part 3 the [`manifest.py`](../bcir/asn1/manifest.py) schemas for `channel.json`, `DeviceManifest` and the §6.2 selection envelope, with §5.4's two sinks | **§7.1's two laws hold** over all 26 law fixtures; **§5.4's commutation holds** over all nine built-in channels — `JER -> typed value -> claims` equals `JER -> direct builder`, both fed by one event walk; native StreamPack octets survive the JER round trip (§6.3) |
-| **J5 — hosted SIMD rail** | **Landed, gate PARTIALLY met** ([`bcir_jer_simd.cpp`](../runtime/cpp/bcir_jer_simd.cpp)): a C++17 UTF-8 accept-scanner behind the scalar C ABI, with SSE2/AVX2/NEON tiers, runtime detection and scalar fallback | **Corpus and trace: met.** Every tier returns an identical status *and* byte offset to `bcir_jer_validate_utf8` over 489 documents — including multi-byte sequences straddling every offset in a 32-octet block and invalid sequences at every offset. **No unsupported-CPU fault: met.** A tier the CPU does not advertise, or this build did not compile, degrades to scalar rather than faulting or refusing. **Advantage on at least two hosts: UNMET — the measurement is single-host.** Covers **UTF-8 validation only**; the structural index is a separate build and §7.4 says why it is not the same shape. See §7.3 |
+| **J5 — hosted SIMD rail** | **Landed, gate PARTIALLY met** ([`bcir_jer_simd.cpp`](../runtime/cpp/bcir_jer_simd.cpp)): a C++17 UTF-8 accept-scanner behind the scalar C ABI, with SSE2/AVX2/NEON tiers, runtime detection and scalar fallback | **Corpus and trace: met.** Every tier returns an identical status *and* byte offset to `bcir_jer_validate_utf8` over 489 documents — including multi-byte sequences straddling every offset in a 32-octet block and invalid sequences at every offset. **No unsupported-CPU fault: met.** A tier the CPU does not advertise, or this build did not compile, degrades to scalar rather than faulting or refusing. **Advantage on at least two hosts: UNMET, and now DECIDABLE rather than asserted.** [`jer_simd_hosts.json`](../docs/measurements/jer_simd_hosts.json) holds one record per measured machine and [`simd_hosts.py`](../bcir/asn1/simd_hosts.py) decides admissibility against §8 — dedicated tenancy, a vector tier, enough rounds for an order-statistic interval, and every round on one CPU. Two admissible hosts on two ARCHITECTURES close it; §7.3.2 records what a big.LITTLE phone changes. Covers **UTF-8 validation only**; the structural index is a separate build and §7.4 says why it is not the same shape. See §7.3 |
 | **J6 — certified K_BCIR choice** | **Landed on the Python oracle** ([`certified.py`](../bcir/asn1/certified.py)): distribution-free prediction intervals from order statistics, a frozen generation-tagged cost table with declared provenance, §6.2's certificate, and a production select that **refuses** an oracle table for any timing objective. The native microbench protocol and RCSP integration remain open | Exact sizes decide wire-size objectives with no timing consulted; repeatability is a refusal rather than an average; legality-first and canonical-or-excluded precede every comparison; deterministic selection on two tables, each certificate bound to the table digest it read — [`test_asn1_certified.py`](../bcir/tests/test_asn1_certified.py) |
 | **J7 — driver experiment** | Userspace/simulator driver specification ingest, generated views, and sequential BCIR-Linux module comparison | D0–D3 driver gates, signed modules, direct/Linux trace parity, teardown/restart tests, and controlled performance evidence |
 
@@ -811,8 +811,55 @@ The aarch64 CI lane is a second *machine*, and the NEON path is proven **correct
 `tiers 3 neon` resolves and all 489 documents agree with the scalar rail on status and
 offset. It is not a second *measured host*: §8 refuses timing thresholds on shared runners
 ("shared CI gates validity and trend evidence, not noisy timing thresholds"), so a
-controlled rig is what closes this clause. A test reads this row and fails if the
-single-host limitation is dropped without one appearing.
+controlled rig is what closes this clause.
+
+#### 7.3.1 The clause is now decidable, and the store is the authority
+
+The rule used to live only in this prose, which meant "is it met yet" was a question you
+answered by reading. It is now a function of evidence:
+[`docs/measurements/jer_simd_hosts.json`](measurements/jer_simd_hosts.json) holds one record
+per machine somebody ran [`tools/silicon/measure_jer_simd.sh`](../tools/silicon/measure_jer_simd.sh)
+on, and [`simd_hosts.py`](../bcir/asn1/simd_hosts.py) decides admissibility against §8's
+rules — `python3 -m bcir.asn1.simd_hosts` prints the verdict. A record is admissible only
+when it declares a **dedicated** machine, resolves to a **vector** tier, carries enough
+rounds for an order-statistic interval, and ran every round on **one CPU**. Two admissible
+hosts on two **architectures**, each with a vector interval strictly below its scalar
+interval, close the clause; nothing else does.
+
+Two architectures rather than two machines is the load-bearing reading. A vector rail can be
+fast on the ISA it was written for and a wash on another, and NEON is the path no x86 host
+exercises at all — so two x86 boxes agreeing is the same evidence twice.
+
+**The advantage is disjoint intervals, never a ratio.** `certified`'s distribution-free
+order statistics already exist for this: a median speedup with no spread beside it is a
+number that happens to be true of one run, and a normal-theory interval would assume a
+distribution timing data does not have.
+
+#### 7.3.2 What a phone changes, and what it does not
+
+The first *dedicated* aarch64 machine within reach is a handset rather than a Raspberry Pi,
+and the runbook is written for one. A Snapdragon 8 Gen 3 is big.LITTLE — one Cortex-X4, four
+A720s, three A520s — and **the difference between the largest and smallest core exceeds the
+advantage being measured**. Three consequences:
+
+1. **Which CPU each round ran on is now recorded.** `test_jer_simd.cpp`'s bench reports
+   `sched_getcpu()` per round, and a record whose rounds span more than one CPU is refused:
+   that is two machines averaged, not one machine measured. `--pin N` asks for a core and
+   the record says whether the kernel agreed.
+2. **A migrating run refuses itself even without that check.** Migration makes the samples
+   bimodal, the interval widens to span both modes, and the overlap test then reports no
+   advantage. The protocol degrades to *unproven* rather than to *wrong* — asserted by a
+   test, because a safety property nobody checks is a hope.
+3. **Thermal throttling needs no new machinery.** It is monotone drift, and the runbook
+   interleaves scalar and vector rounds so a downward frequency ramp is spread evenly across
+   both — the same argument `bcir_asn1_bench.c` already makes for its own round-robin.
+
+Correctness runs first and a failure aborts before anything is timed: a number from a build
+that disagrees with the scalar rail is not a weak measurement, it is a measurement of the
+wrong answer.
+
+A test compares this section against the store and fails if the store ever closes the clause
+while the prose still says otherwise — so the evidence leads and the paragraph follows.
 
 ### 7.4 The structural index is a different problem from the UTF-8 rail
 
