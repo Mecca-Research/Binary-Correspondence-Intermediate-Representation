@@ -12,15 +12,11 @@
 
 /* --- diagnostics ------------------------------------------------------------------------- */
 
+/* The header owns the definition, so the core and any accelerator driving the cursor write a
+ * diagnostic the same way. This is the local name for it. */
 static bcir_jer_status fail(bcir_jer_diag *diag, bcir_jer_status status, size_t offset,
                             uint64_t needed) {
-  if (diag != 0) {
-    diag->status = status;
-    diag->offset = offset;
-    diag->needed = needed;
-    diag->sink_code = 0;
-  }
-  return status;
+  return bcir_jer_diag_set(diag, status, offset, needed);
 }
 
 static void clear(bcir_jer_diag *diag) {
@@ -341,11 +337,10 @@ bcir_jer_status bcir_jer_unescape(const uint8_t *data, size_t len,
  * copy to drift. */
 typedef bcir_jer_scan_cursor scan_ctx;
 
+/* 4.3's charge, defined in the header so the hosted index inlines the same arithmetic instead
+ * of paying a cross-module call for every octet. This is the local name for it. */
 static bcir_jer_status spend(scan_ctx *ctx, uint64_t amount, size_t offset) {
-  ctx->work += amount;
-  if (ctx->work > ctx->limits->work)
-    return fail(ctx->diag, BCIR_JER_WORK_EXCEEDED, offset, ctx->work);
-  return BCIR_JER_OK;
+  return bcir_jer_scan_charge(ctx, amount, offset);
 }
 
 /* From the opening quote to just past the closing one, counting DECODED octets so the

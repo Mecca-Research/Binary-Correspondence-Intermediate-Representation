@@ -3,7 +3,7 @@
  * See bcir_jer_index.h for why this exists and what it deliberately is not.
  *
  * Every semantic decision below is `bcir_jer_scan`'s, reached through the exported cursor:
- * `bcir_jer_scan_spend` charges 4.3's budget, `bcir_jer_scan_string_token` and
+ * `bcir_jer_scan_charge` charges 4.3's budget, `bcir_jer_scan_string_token` and
  * `bcir_jer_scan_number_token` consume a token under 4.3's limits, and
  * `bcir_jer_scan_literal_token` recognises `true`/`false`/`null`. What this file owns is the
  * ORDER those are called in and the container bookkeeping -- the part a vector pass can help
@@ -39,8 +39,22 @@ constexpr uint8_t kTab = 0x09;
 constexpr uint8_t kLineFeed = 0x0A;
 constexpr uint8_t kReturn = 0x0D;
 
+/* The same four octets as a bit position each, DERIVED from the names above rather than
+ * written out again -- the membership test below is then one shift and one mask instead of
+ * four compares, without introducing a second spelling of the set that could drift. It is
+ * worth it because this predicate runs on every octet of every document, on both the main
+ * loop's dispatch and the scalar finish of every run. */
+constexpr uint64_t kSpaceBits = (1ull << kSpace) | (1ull << kTab) | (1ull << kLineFeed) |
+                                (1ull << kReturn);
+
+/* The `c <= kSpace` guard is what keeps the shift in range, so it must really be the largest
+ * of the four. Checked here rather than assumed: adding a whitespace octet above SPACE would
+ * otherwise shift by more than 63 and read whatever the hardware felt like. */
+static_assert(kSpace > kTab && kSpace > kLineFeed && kSpace > kReturn,
+              "kSpace must be the largest member for the mask test to be in range");
+
 inline bool is_space(uint8_t c) {
-  return c == kSpace || c == kTab || c == kLineFeed || c == kReturn;
+  return c <= kSpace && ((kSpaceBits >> c) & 1u) != 0;
 }
 
 inline bool is_digit(uint8_t c) { return c >= '0' && c <= '9'; }
@@ -150,37 +164,57 @@ size_t whitespace_run_neon(const uint8_t *data, size_t len) {
  * 16 is the width below which NO tier can make progress. */
 constexpr size_t kNarrowestBlock = 16;
 
-/* Tier dispatch, then the scalar finish that makes the bound exact.
+/* The run length at `pos`, with the tier resolved AT COMPILE TIME.
  *
- * THE SHORT-RUN GUARD, and why it is exact rather than a heuristic. A vector helper can only
- * advance if its first whole block is entirely whitespace, so it can only advance if the
- * octet at `kNarrowestBlock - 1` is whitespace. Testing that one octet first therefore skips
- * the call in exactly the cases where the call would have returned 0 -- it can never skip a
- * run the vector pass would have advanced through, so the answer is unchanged at every tier.
+ * WHY THE TIER IS A TEMPLATE PARAMETER AND NOT AN ARGUMENT. It used to be an argument, and
+ * the `switch` on it ran once per whitespace RUN. That cost more than the bulk charge saved:
+ * a pretty-printed document is mostly one- and eight-octet runs, and paying a branch to
+ * choose a width for each of them put the rebuilt dispatch at 0.83x of `bcir_jer_scan` on
+ * exactly the documents people actually have. Hoisting the choice to the caller -- one switch
+ * per DOCUMENT rather than per run -- measured 1.04x on the same input, with nothing else
+ * changed.
  *
- * It is worth a line because the common case needs it. Ordinary indentation is a handful of
- * octets, so a document can hold hundreds of runs that no block ever fits. Without the guard
- * each one pays two calls and eight constant broadcasts to be told nothing, and measurement
- * put the vector tier BELOW this file's own scalar tier on pretty-printed input -- an
- * "optimization" that made the ordinary document slower. The broadcasts cannot be hoisted out
- * of the loop because `target("avx2")` code cannot inline into an un-attributed caller, so
- * the fix is to not make the call. */
-size_t whitespace_run(bcir_jer_simd_tier tier, const uint8_t *data, size_t len, size_t pos) {
+ * That is worth recording precisely, because the obvious diagnosis was wrong. The suspected
+ * cause was the token-scanner calls failing to inline across the module boundary, and a
+ * whole-program LTO build settles it: LTO inlines everything and moves this case not at all.
+ * The cost was the per-run branch, not the call.
+ *
+ * THE SHORT-RUN GUARD: walk one block scalar FIRST, and go wide only if still in whitespace.
+ *
+ * A vector helper cannot advance unless its first whole block is entirely whitespace, so a
+ * run shorter than `kNarrowestBlock` can never reach it. Walking those octets scalar before
+ * deciding costs a document of short runs exactly what the scalar tier costs -- the walk is
+ * the work that tier would do anyway -- while a long run pays at most `kNarrowestBlock`
+ * iterations once before going wide, which against a run long enough to matter is nothing.
+ *
+ * An earlier version instead PROBED the octet at `kNarrowestBlock - 1` and skipped the call
+ * when it was not whitespace. Also exact, and it did fix the original regression, but it is a
+ * test the scalar tier does not pay, so it left the vector tier at 0.79-0.83x of this file's
+ * own scalar tier on pretty-printed input -- an accelerator still losing to the thing it
+ * accelerates, just by less. Doing the work instead of predicting it has no such asymmetry.
+ *
+ * Either way the answer is unchanged at every tier: octets below the block are settled by the
+ * same scalar comparison in both, and the vector pass only ever sees a position it could
+ * legitimately have started from. */
+template <bcir_jer_simd_tier Tier>
+inline size_t whitespace_run(const uint8_t *data, size_t len, size_t pos) {
   const uint8_t *from = data + pos;
   size_t span = len - pos;
-  size_t run;
-  if (span < kNarrowestBlock || !is_space(from[kNarrowestBlock - 1]))
-    tier = BCIR_JER_SIMD_SCALAR;
-  switch (tier) {
+  size_t run = 0;
+  if constexpr (Tier != BCIR_JER_SIMD_SCALAR) {
+    while (run < span && run < kNarrowestBlock && is_space(from[run])) run++;
+    if (run == kNarrowestBlock) {
+      /* Octets [0, kNarrowestBlock) are known whitespace, so the wide scan starts past them. */
 #if defined(BCIR_INDEX_X86)
-    case BCIR_JER_SIMD_AVX2: run = whitespace_run_avx2(from, span); break;
-    case BCIR_JER_SIMD_SSE2: run = whitespace_run_sse2(from, span); break;
+      if constexpr (Tier == BCIR_JER_SIMD_AVX2) run += whitespace_run_avx2(from + run, span - run);
+      if constexpr (Tier == BCIR_JER_SIMD_SSE2) run += whitespace_run_sse2(from + run, span - run);
 #endif
 #if defined(BCIR_INDEX_ARM)
-    case BCIR_JER_SIMD_NEON: run = whitespace_run_neon(from, span); break;
+      if constexpr (Tier == BCIR_JER_SIMD_NEON) run += whitespace_run_neon(from + run, span - run);
 #endif
-    default: run = 0; break;
+    }
   }
+  /* Makes the block-boundary bound exact. Also the whole of the scalar tier. */
   while (run < span && is_space(from[run])) run++;
   return run;
 }
@@ -189,9 +223,13 @@ size_t whitespace_run(bcir_jer_simd_tier tier, const uint8_t *data, size_t len, 
 
 namespace {
 
-bcir_jer_status index_scan(bcir_jer_simd_tier tier, const uint8_t *data, size_t len,
-                           const bcir_jer_limits *limits, bcir_jer_level *stack,
-                           size_t stack_entries, uint64_t *nodes, bcir_jer_diag *diag) {
+/* One instantiation per tier, so the width is a compile-time fact inside the loop rather than
+ * a branch taken per whitespace run. See `whitespace_run` for the measurement that forced
+ * this shape. */
+template <bcir_jer_simd_tier Tier>
+bcir_jer_status index_scan(const uint8_t *data, size_t len, const bcir_jer_limits *limits,
+                           bcir_jer_level *stack, size_t stack_entries, uint64_t *nodes,
+                           bcir_jer_diag *diag) {
   bcir_jer_scan_cursor cursor;
   size_t pos = 0;
   uint32_t depth = 0;
@@ -229,19 +267,19 @@ bcir_jer_status index_scan(bcir_jer_simd_tier tier, const uint8_t *data, size_t 
        * Getting this wrong is quiet: reporting the run's START would still refuse the same
        * documents and still hand a caller the wrong octet, which is precisely the failure
        * 4.2's offset contract exists to prevent. */
-      size_t run = whitespace_run(tier, data, len, pos);
+      size_t run = whitespace_run<Tier>(data, len, pos);
       uint64_t ceiling = limits->work;
       if (static_cast<uint64_t>(run) > ceiling - cursor.work) {
         size_t failing = static_cast<size_t>(ceiling - cursor.work);
-        return bcir_jer_scan_spend(&cursor, (ceiling - cursor.work) + 1, pos + failing);
+        return bcir_jer_scan_charge(&cursor, (ceiling - cursor.work) + 1, pos + failing);
       }
-      st = bcir_jer_scan_spend(&cursor, static_cast<uint64_t>(run), pos);
+      st = bcir_jer_scan_charge(&cursor, static_cast<uint64_t>(run), pos);
       if (st != BCIR_JER_OK) return st;
       pos += run;
       continue;
     }
 
-    st = bcir_jer_scan_spend(&cursor, 1, pos);
+    st = bcir_jer_scan_charge(&cursor, 1, pos);
     if (st != BCIR_JER_OK) return st;
 
     if (byte == '{' || byte == '[') {
@@ -303,7 +341,7 @@ bcir_jer_status index_scan(bcir_jer_simd_tier tier, const uint8_t *data, size_t 
        * what keeps the non-JSON `NaN` and `Infinity` literals out of the bounded path. */
       size_t taken = bcir_jer_scan_literal_token(data, len, pos);
       if (taken == 0) return fail(diag, BCIR_JER_MALFORMED, pos, 0);
-      st = bcir_jer_scan_spend(&cursor, static_cast<uint64_t>(taken), pos);
+      st = bcir_jer_scan_charge(&cursor, static_cast<uint64_t>(taken), pos);
       if (st != BCIR_JER_OK) return st;
       pos += taken;
       counted++;
@@ -315,14 +353,40 @@ bcir_jer_status index_scan(bcir_jer_simd_tier tier, const uint8_t *data, size_t 
   return BCIR_JER_OK;
 }
 
+/* The ONE tier branch, taken per document. Every case below is a distinct instantiation of the
+ * loop above, so nothing inside it re-decides the width. Only tiers this build compiled are
+ * instantiated; `dispatch`'s callers have already degraded anything else to scalar. */
+bcir_jer_status dispatch(bcir_jer_simd_tier tier, const uint8_t *data, size_t len,
+                         const bcir_jer_limits *limits, bcir_jer_level *stack,
+                         size_t stack_entries, uint64_t *nodes, bcir_jer_diag *diag) {
+  switch (tier) {
+#if defined(BCIR_INDEX_X86)
+    case BCIR_JER_SIMD_AVX2:
+      return index_scan<BCIR_JER_SIMD_AVX2>(data, len, limits, stack, stack_entries, nodes,
+                                            diag);
+    case BCIR_JER_SIMD_SSE2:
+      return index_scan<BCIR_JER_SIMD_SSE2>(data, len, limits, stack, stack_entries, nodes,
+                                            diag);
+#endif
+#if defined(BCIR_INDEX_ARM)
+    case BCIR_JER_SIMD_NEON:
+      return index_scan<BCIR_JER_SIMD_NEON>(data, len, limits, stack, stack_entries, nodes,
+                                            diag);
+#endif
+    default:
+      return index_scan<BCIR_JER_SIMD_SCALAR>(data, len, limits, stack, stack_entries, nodes,
+                                              diag);
+  }
+}
+
 }  // namespace
 
 extern "C" bcir_jer_status bcir_jer_index_scan(const uint8_t *data, size_t len,
                                                const bcir_jer_limits *limits,
                                                bcir_jer_level *stack, size_t stack_entries,
                                                uint64_t *nodes, bcir_jer_diag *diag) {
-  return index_scan(bcir_jer_simd_tier_available(), data, len, limits, stack, stack_entries,
-                    nodes, diag);
+  return dispatch(bcir_jer_simd_tier_available(), data, len, limits, stack, stack_entries,
+                  nodes, diag);
 }
 
 extern "C" bcir_jer_status bcir_jer_index_scan_at(bcir_jer_simd_tier tier, const uint8_t *data,
@@ -334,5 +398,5 @@ extern "C" bcir_jer_status bcir_jer_index_scan_at(bcir_jer_simd_tier tier, const
    * who pins a width still gets an answer instead of a question about the machine. */
   if (!bcir_jer_simd_tier_compiled(tier) || tier > bcir_jer_simd_tier_available())
     tier = BCIR_JER_SIMD_SCALAR;
-  return index_scan(tier, data, len, limits, stack, stack_entries, nodes, diag);
+  return dispatch(tier, data, len, limits, stack, stack_entries, nodes, diag);
 }
