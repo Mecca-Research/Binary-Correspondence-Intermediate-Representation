@@ -9,14 +9,20 @@
  * mid-run is exactly the case a bulk charge could get subtly wrong -- same verdict, wrong
  * octet. Sweeping the ceiling walks the failure point across every position in the document.
  *
+ * Every TIER this build compiled is compared, not just the widest the CPU advertises, so one
+ * machine exercises the scalar finish, the 16-octet block and the 32-octet block against the
+ * same corpus. A tier that silently degraded to scalar would otherwise pass by not running.
+ *
  * Input, one command per line:
  *
  *   both <work> <hex>     `work` 0 keeps the default ceiling; `-` spells the empty document
+ *   tiers                 report the available tier, its name, and which tiers are compiled
  *
  * Output:
  *
- *   both <status> <offset> <needed> <nodes> | <status> <offset> <needed> <nodes>
- *          ^ bcir_jer_scan                     ^ bcir_jer_index_scan
+ *   both <status> <offset> <needed> <nodes> | <per-tier answer> | <per-tier answer> ...
+ *          ^ bcir_jer_scan                    ^ one field group per compiled tier, ascending
+ *   tiers <available> <name> <c0,c1,c2,c3>
  *===----------------------------------------------------------------------===*/
 #include <cstdio>
 #include <cstring>
@@ -66,14 +72,24 @@ int main() {
     unsigned long work = 0;
     long len;
     if (std::sscanf(line, "%31s", op) != 1) continue;
+    if (std::strcmp(op, "tiers") == 0) {
+      bcir_jer_simd_tier best = bcir_jer_simd_tier_available();
+      std::printf("tiers %d %s %d,%d,%d,%d\n", static_cast<int>(best),
+                  bcir_jer_simd_tier_name(best),
+                  bcir_jer_simd_tier_compiled(BCIR_JER_SIMD_SCALAR),
+                  bcir_jer_simd_tier_compiled(BCIR_JER_SIMD_SSE2),
+                  bcir_jer_simd_tier_compiled(BCIR_JER_SIMD_AVX2),
+                  bcir_jer_simd_tier_compiled(BCIR_JER_SIMD_NEON));
+      continue;
+    }
     if (std::strcmp(op, "both") != 0) continue;
     if (std::sscanf(line, "%31s %lu %s", op, &work, hex) != 3) {
-      std::printf("both -1 0 0 0 | -1 0 0 0\n");
+      std::printf("error\n");
       continue;
     }
     len = unhex(hex, data, sizeof(data));
     if (len < 0) {
-      std::printf("both -1 0 0 0 | -1 0 0 0\n");
+      std::printf("error\n");
       continue;
     }
 
@@ -84,25 +100,33 @@ int main() {
     if (work != 0 && static_cast<uint64_t>(work) < limits.work) limits.work = work;
 
     bcir_jer_diag scalar_diag;
-    bcir_jer_diag index_diag;
     uint64_t scalar_nodes = 0;
-    uint64_t index_nodes = 0;
     bcir_jer_status scalar_status = bcir_jer_scan(
         data, static_cast<size_t>(len), &limits, scalar_stack, kMaxDepth, &scalar_nodes,
         &scalar_diag);
-    bcir_jer_status index_status = bcir_jer_index_scan(
-        data, static_cast<size_t>(len), &limits, index_stack, kMaxDepth, &index_nodes,
-        &index_diag);
-
-    std::printf("both %d %llu %llu %llu | %d %llu %llu %llu\n",
+    std::printf("both %d %llu %llu %llu",
                 static_cast<int>(scalar_status),
                 static_cast<unsigned long long>(scalar_diag.offset),
                 static_cast<unsigned long long>(scalar_diag.needed),
-                static_cast<unsigned long long>(scalar_nodes),
-                static_cast<int>(index_status),
-                static_cast<unsigned long long>(index_diag.offset),
-                static_cast<unsigned long long>(index_diag.needed),
-                static_cast<unsigned long long>(index_nodes));
+                static_cast<unsigned long long>(scalar_nodes));
+
+    /* Ascending, and only the tiers this build actually contains -- a tier that is not here
+     * must not be reported as agreeing. */
+    for (int t = BCIR_JER_SIMD_SCALAR; t <= BCIR_JER_SIMD_NEON; t++) {
+      bcir_jer_simd_tier tier = static_cast<bcir_jer_simd_tier>(t);
+      bcir_jer_diag index_diag;
+      uint64_t index_nodes = 0;
+      bcir_jer_status index_status;
+      if (!bcir_jer_simd_tier_compiled(tier) || tier > bcir_jer_simd_tier_available()) continue;
+      index_status = bcir_jer_index_scan_at(
+          tier, data, static_cast<size_t>(len), &limits, index_stack, kMaxDepth, &index_nodes,
+          &index_diag);
+      std::printf(" | %d %llu %llu %llu", static_cast<int>(index_status),
+                  static_cast<unsigned long long>(index_diag.offset),
+                  static_cast<unsigned long long>(index_diag.needed),
+                  static_cast<unsigned long long>(index_nodes));
+    }
+    std::printf("\n");
   }
   return 0;
 }

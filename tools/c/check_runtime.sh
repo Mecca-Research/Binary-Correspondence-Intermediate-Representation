@@ -3938,18 +3938,11 @@ fi
 # warning-clean under C++17, and the C core still freestanding with the cursor exported. The
 # equivalence differential itself lives in test_cpp_jer_index.py, where it can sweep 4.3's
 # work ceiling across every failure position.
-echo "[c-runtime] hosted structural index: the cursor seam builds clean (#jerindex)"
-if "${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Werror -I "${C}" -I "${ROOT}/runtime/cpp" \
-     -c "${ROOT}/runtime/cpp/bcir_jer_index.cpp" -o "${tmp}/bcir_jer_index.o" 2>/dev/null; then
-  echo "  ok: bcir_jer_index.cpp is warning-clean under C++17"
-  for std in c11 c23; do
-    "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Werror -I "${C}" \
-      -c "${C}/bcir_jer.c" -o /dev/null \
-      || { echo "  FAIL: exporting the scan cursor cost bcir_jer.c its freestanding build"; exit 1; }
-  done
-  echo "  ok: the C core stays freestanding-clean with the cursor exported"
+echo "[c-runtime] hosted structural index: the cursor seam and its vector pass (#jerindex)"
+if bash "${ROOT}/tools/cpp/check_jer_index.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+  echo "  PASS hosted structural index (freestanding core preserved, tier is real not scalar)"
 else
-  echo "  note: no C++17 compiler; the hosted index is optional by design"
+  echo "  FAIL: the hosted structural index did not build, or a tier degraded to scalar"; exit 1
 fi
 
 echo "[c-runtime] hosted SIMD rail: scalar-identical status/offset at every tier (#jersimd)"

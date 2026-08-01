@@ -15,10 +15,12 @@ dispatch is vectorizable. The token scanners are where the semantics live: §4.3
 between differential-testing one loop and differential-testing a parser, and the reason §4.1's
 "no second semantics rail" survives the optimization.
 
-**This rail is still scalar, and that is the point of landing it first.** A differential that
-only begins to exist alongside the optimization cannot tell you which of the two broke it. The
-seam is proven sufficient here — the rebuilt loop reproduces `bcir_jer_scan`'s status, offset,
-`needed` and node count over the whole corpus — *before* any SIMD is introduced.
+**The seam was proven scalar first, and the scalar tier is still swept.** A differential that
+only begins to exist alongside the optimization cannot tell you which of the two broke it, so
+the rebuilt loop was shown to reproduce `bcir_jer_scan`'s status, offset, `needed` and node
+count over the whole corpus while there was still only one variable. The vector pass then
+arrived under that harness, and **every tier this build compiled is compared** — a tier that
+degraded to scalar would otherwise pass by never running.
 
 Skips cleanly when no C++ compiler is visible.
 """
@@ -35,6 +37,7 @@ _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
 _CPP = os.path.join(_ROOT, "runtime", "cpp")
 _CXX_SOURCES = [os.path.join(_CPP, "bcir_jer_index.cpp"),
+                os.path.join(_CPP, "bcir_jer_simd.cpp"),
                 os.path.join(_CPP, "test_jer_index.cpp")]
 _C_SOURCES = [os.path.join(_C, "bcir_jer.c"), os.path.join(_C, "bcir_runtime.c")]
 
@@ -125,7 +128,7 @@ def _corpus() -> list[tuple[str, bytes]]:
     return cases
 
 
-def test_the_rebuilt_dispatch_answers_exactly_as_the_scalar_scan_does():
+def test_the_rebuilt_dispatch_answers_exactly_as_the_scalar_scan_does_at_every_tier():
     """The claim the whole design rests on: same status, same offset, same `needed`, same nodes.
 
     **Identical, not equivalent.** §4.2's contract is a stable code *and* a byte offset, so an
@@ -137,26 +140,47 @@ def test_the_rebuilt_dispatch_answers_exactly_as_the_scalar_scan_does():
     those identical — the charge is uniform and positional, so with `w` spent against ceiling
     `L` the first octet to exceed is at `L - w` with `needed = L + 1` — and sweeping walks
     that failure point through every position, including inside the bulk call.
+
+    Every compiled tier answers, and all of them are checked against the scalar rail. A vector
+    block scan that ran off the end of a run, or stopped a block early and reported the wrong
+    octet, shows up here and nowhere else.
     """
     if not _available():
         return
     cases = _corpus()
-    lines = [f"both {cap} {octets.hex() or '-'}"
-             for _label, octets in cases for cap in _WORK_CAPS]
+    lines = ["tiers"] + [f"both {cap} {octets.hex() or '-'}"
+                         for _label, octets in cases for cap in _WORK_CAPS]
     with tempfile.TemporaryDirectory() as tmp:
         replies = _drive(_build(tmp), lines)
+    header, replies = replies[0], replies[1:]
+    assert header.startswith("tiers "), header
+    # `tiers <available> <name> <c0,c1,c2,c3>`. Every tier this build compiled *and* this CPU
+    # advertises must answer on every line; deriving the count from the build rather than
+    # hard-coding it keeps the assertion honest on a host with no SIMD at all.
+    available = int(header.split()[1])
+    compiled = [int(flag) for flag in header.split()[3].split(",")]
+    expected_tiers = sum(1 for tier, flag in enumerate(compiled) if flag and tier <= available)
+    assert expected_tiers >= 1, header
     assert len(replies) == len(cases) * len(_WORK_CAPS), (
         f"{len(replies)} replies for {len(cases) * len(_WORK_CAPS)} comparisons")
     index = 0
+    tiers_seen = 0
     for label, _octets in cases:
         for cap in _WORK_CAPS:
             reply = replies[index]
             index += 1
-            scalar, rebuilt = reply.split("|")
-            assert scalar.split()[1:] == rebuilt.split(), (
-                f"{label} at work<={cap}: scalar {scalar.strip()!r} against index "
-                f"{rebuilt.strip()!r}")
-    assert index > 5000, f"the sweep collapsed to {index} comparisons"
+            scalar, *rebuilt = reply.split("|")
+            assert len(rebuilt) == expected_tiers, (
+                f"{label} at work<={cap}: {len(rebuilt)} tier(s) answered, but the build "
+                f"reports {expected_tiers} runnable ({header}); a tier that skips the corpus "
+                f"is a tier nothing shows correct")
+            tiers_seen = max(tiers_seen, len(rebuilt))
+            for group in rebuilt:
+                assert scalar.split()[1:] == group.split(), (
+                    f"{label} at work<={cap} [{header}]: scalar {scalar.strip()!r} against "
+                    f"index {group.strip()!r}")
+    assert index * tiers_seen > 5000, (
+        f"the sweep collapsed to {index} documents x {tiers_seen} tier(s)")
 
 
 def test_the_sweep_actually_exercises_a_budget_failure_inside_a_bulk_charge():
@@ -175,10 +199,11 @@ def test_the_sweep_actually_exercises_a_budget_failure_inside_a_bulk_charge():
                          [f"both {cap} {document.hex()}" for cap in caps])
     exceeded = 0
     for cap, reply in zip(caps, replies):
-        scalar, rebuilt = reply.split("|")
+        scalar, *rebuilt = reply.split("|")
         fields = scalar.split()
         status, offset, needed = int(fields[1]), int(fields[2]), int(fields[3])
-        assert scalar.split()[1:] == rebuilt.split(), f"work<={cap}: {reply}"
+        for group in rebuilt:
+            assert scalar.split()[1:] == group.split(), f"work<={cap}: {reply}"
         if status == 0:
             continue
         exceeded += 1
@@ -213,3 +238,38 @@ def test_the_index_reuses_the_token_scanners_rather_than_reimplementing_them():
         assert invented not in body, (
             f"the index references {invented!r}, which suggests it decides a §4.3 limit or a "
             f"UTF-8 question itself; that is the second semantics rail §4.1 forbids")
+    # Tier resolution belongs to the SIMD rail. A second CPU probe here would be a second
+    # thing that can be wrong about the machine, and J5's "no unsupported-CPU fault" clause
+    # would then hold on one rail and not the other.
+    for probed in ("__builtin_cpu_supports", "__builtin_cpu_init", "cpuid", "getauxval"):
+        assert probed not in body, (
+            f"the index calls {probed!r} rather than deferring to bcir_jer_simd_tier_available")
+    assert "bcir_jer_simd_tier_available" in body, "the index does not defer tier resolution"
+
+
+def test_the_vector_pass_and_the_scalar_predicate_share_one_whitespace_set():
+    """The vector's four constants and `is_space` must be the *same* four constants.
+
+    This is the drift §8's table actually warns about — not a slow vector pass, but one that
+    quietly means something else. ECMA-404 clause 4 admits SPACE, TAB, LF and CR and nothing
+    else; a vector pass that additionally matched FORM FEED would accept documents the scalar
+    rail refuses, and would do it only for runs long enough to reach a wide block.
+
+    So the source is checked for a *named* set used by both, rather than each spelling the
+    octets out where they could diverge one at a time.
+    """
+    source = open(os.path.join(_CPP, "bcir_jer_index.cpp"), encoding="utf-8").read()
+    body = "\n".join(line for line in source.splitlines()
+                     if not line.strip().startswith("*") and "/*" not in line)
+    names = ("kSpace", "kTab", "kLineFeed", "kReturn")
+    for name in names:
+        # Once to define it, once in `is_space`, and once per vector width present.
+        assert body.count(name) >= 3, (
+            f"{name} appears {body.count(name)} time(s); the vector pass and the scalar "
+            f"predicate are meant to share it rather than each spell the octet out")
+    # The literal octets may appear only where the four names are bound.
+    for literal in ("0x20", "0x09", "0x0A", "0x0D"):
+        holders = [line for line in body.splitlines() if literal in line]
+        assert len(holders) <= 1, (
+            f"{literal} is written on {len(holders)} lines; a second spelling of the "
+            f"whitespace set is exactly how the tiers come to disagree:\n" + "\n".join(holders))
