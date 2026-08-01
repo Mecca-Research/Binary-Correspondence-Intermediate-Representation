@@ -494,8 +494,28 @@ value stream. It is byte-identical to E1's reference across 152 cases × 4 candi
 here; X.696 §6.2 bars it from the decode table permanently. `CostRow` needs both axes, so
 OER still has no two-axis row — `run_native_encode_bench` returns the number it *does* have
 and `measured_table` declines to invent the half it does not, which is the same discipline
-§6.2 applies one level up. PER is in neither column: encodable given a plan, but `bcir_emit`
-has no bit-oriented writer, and that is an ordinary gap rather than a law.
+§6.2 applies one level up.
+
+**PER joined the encode column on the Python rail** once the plan carried what X.691 reads
+(§6.2.1–§6.2.3). It is **four** rows rather than one: the ALIGNED/UNALIGNED split is a real
+cost trade — ALIGNED pads so multi-octet fields start on octet boundaries, UNALIGNED never
+pads — and the CANONICAL/BASIC split decides §19.5's DEFAULT rule. `_emit_per` is
+byte-identical to `encode_per` across all four over 268 cases including every constrained
+one. The §11 field arithmetic is *imported* from the oracle rather than retyped: those
+functions read no schema at all, and a second copy of §11 here would let the parity test
+compare two implementations of the same misunderstanding. What E1 supplies independently is
+the schema-directed half — bounds, extension markers, enumerations and alternative order out
+of a **descriptor** — which is exactly what the C twin must then reproduce.
+
+Building it found two things. The first is a **fifth value-mapping disagreement**: `codec`,
+`encode_jer` and `encode_oer` all take a CHOICE value as an `(alternative, value)` pair, and
+`encode_per` takes a single-entry mapping and refuses the pair. Same family as the NULL
+disagreement §6.2 already records, and invisible for the same reason — only driving every
+encoder from one input exposes it. The second is that **§19.2's presence bitmap has OER's
+problem**: it precedes all the components while the neutral stream interleaves a presence
+octet with each value, so collecting the bits first desynchronizes the reader. It takes
+OER's answer too — the bitmap's width comes from the plan and no value can change it, so the
+slots are reserved and each bit is patched as its flag is read.
 
 **A cost difference the standard predicts, now measured.** §10.1 forbids DER the indefinite
 length form, so a DER encoder must know each constructed length before writing its header —
@@ -503,6 +523,19 @@ two passes, or a shift. §8.1.3.6 lets BER leave the length open and close with 
 needs one pass and no scratch. On this rail BER encodes at **0.65×** DER's median and
 CANONICAL-OER at **0.44×**; the gap is a property of the encodings rather than of the
 implementation, which is what makes it worth recording at all.
+
+**And a cost the standard predicts in the other direction.** With PER's four rows measured
+natively, the ordering inverts against wire size: PER produces the *smallest* documents and
+costs the *most* to write — roughly **2.3× DER** on this host, with the four variants within
+3% of each other. Part of that is X.691 itself, whose unit of composition is a bit-field
+rather than an octet (§10.5), so an encoder shifts where the octet-aligned rules copy.
+
+**Part of it is this implementation, and saying which is which matters.** `bcir_emit`'s PER
+writer emits one bit at a time. A word-at-a-time writer would close some of the gap and none
+of §10.5. So the honest claim is the *ordering* — the compact encoding is the expensive one
+to produce — and not the multiple, which is why the multiple is written here beside its host
+rather than asserted in a test. §8's rule again: shared CI gates validity and trend evidence,
+not timing thresholds.
 
 *Three defects found by building the twin, none of them reachable from E1:*
 
@@ -588,12 +621,48 @@ exists to catch.
 root from the additions and X.690 does not — one plan cannot describe both until the emitter
 that needs the split exists. Everything else X.691 reads is now in the descriptor.
 
-#### 6.2.3 What three bugs in one place are actually evidence of
+#### 6.2.3 Plan version 5 — the DEFAULT a sender must not send
 
-All three were found by *adding a construct to the corpus*, not by reading the code. Each had
+A **fourth** defect, and the only one that hit every emitter at once. X.690 §11.5 forbids
+DER an encoding for a component whose value equals its default; X.696 §31.9 and X.697's
+CJER say the same; X.691 §19.5 says it for CANONICAL-PER. Versions 1–4 emitted it:
+
+```
+SEQUENCE { a INTEGER, b BOOLEAN DEFAULT FALSE }, value { a 1, b FALSE }
+  plan-driven DER : 30 06 02 01 01 01 01 00     <- what shipped
+  oracle DER      : 30 03 02 01 01               <- what X.690 11.5 requires
+```
+
+The corpus supplied `{"a": 1, "b": TRUE}` against `DEFAULT FALSE` — a default component
+that *differed* — and never one that matched.
+
+**This one could not go in the value stream**, which is what makes it interesting. The
+stream is format-neutral by design, and the rule is not: plain BER keeps the freedom, since
+X.690 clause 11 is titled *"Restrictions on BER employed by both CER and DER"*. Deciding
+presence once, neutrally, would have taken that freedom away silently and the BER row of the
+cost table would have stopped measuring BER.
+
+So version 5 records the DEFAULT **in neutral-stream octets** and each candidate applies its
+own law. The comparison is a memcmp against a constant the plan carries, which is sound
+because the stream is a *canonical* form of a value — minimal two's complement, UTF-8,
+components in plan order — so byte identity is value identity. The freestanding twin
+therefore needs no value model of its own to answer a question three encoding rules ask it.
+
+Deciding to omit means the component's octets must still be **consumed**: the stream
+describes it, and leaving it unread would leave a suffix `emit` correctly refuses. That is
+what `_skip_node` is for, and its C counterpart carries a budget of `default_len + 1` — a
+value that has already outrun the default cannot match it, and the early exit also bounds a
+`SEQUENCE OF` whose elements consume no stream octets, the same unbounded-count shape the
+fuzzer found once already.
+
+#### 6.2.4 What four bugs in one place are actually evidence of
+
+All four were found by *adding a construct to the corpus*, not by reading the code. Each had
 survived every parity test, every fuzz run and every `-O0 == -O3` differential, because the
-corpus contained no constrained type and no ENUMERATED — and **a construct absent from the
-corpus is untested however many tests run over it.**
+corpus contained no constrained type, no ENUMERATED, and no DEFAULT component whose value
+equalled its default — and **a construct absent from the corpus is untested however many
+tests run over it.** The fourth is the sharpest case: the corpus *did* carry a DEFAULT
+component. It carried the one value for which the rule does not fire.
 
 The dual-rail differential made it worse rather than better in one specific way: the C twin's
 expectations come from E1's Python emitter, while E1's parity with the oracle is asserted

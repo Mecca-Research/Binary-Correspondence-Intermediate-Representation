@@ -60,6 +60,18 @@ _CORPUS = (
      {"a": 1}),
     ("a default present", _seq(Component("a", _I), Component("b", _B, default=False)),
      {"a": 1, "b": True}),
+    # The row whose absence hid a bug in every emitter for four plan versions: X.690 §11.5,
+    # X.696 §31.9 and CJER all require a component EQUAL to its default to be omitted, and
+    # the corpus only ever supplied one that differed.
+    ("a default supplied but equal to the default",
+     _seq(Component("a", _I), Component("b", _B, default=False)), {"a": 1, "b": False}),
+    ("an integer default supplied and equal",
+     _seq(Component("a", _I), Component("b", _I, default=7)), {"a": 1, "b": 7}),
+    ("a string default supplied and equal",
+     _seq(Component("a", _I), Component("b", _S, default="hi")), {"a": 1, "b": "hi"}),
+    ("twelve defaults, every other one equal",
+     _seq(*[Component(f"c{i}", _I, default=i) for i in range(12)]),
+     {f"c{i}": (i if i % 2 else 99) for i in range(12)}),
     # Twelve optionals is more than one OER preamble octet, which is where a bitmap that
     # forgot to carry into a second octet stops agreeing with the oracle.
     ("twelve optionals, alternate present",
@@ -282,16 +294,23 @@ def test_a_choice_value_must_name_exactly_one_alternative():
 
 
 def test_every_emitter_consumes_the_identical_stream():
-    """The property the whole comparison rests on: one input, four emitters, no adapters."""
+    """The property the whole comparison rests on: one input, every emitter, no adapters.
+
+    The count is asserted against `EmitRules` rather than written out, so adding a candidate
+    puts it under this rule automatically instead of leaving it to be remembered. It is the
+    single most load-bearing property here: hand DER its own octets and JER a Python object
+    and the harness measures the adapters rather than the encodings.
+    """
     for label, kind, value in _CORPUS:
         plan = _plan(kind, label)
         stream = flatten(plan, value)
         outputs = {rules: emit(plan, stream, rules=rules) for rules in EmitRules}
-        assert len(outputs) == 4
+        assert len(outputs) == len(EmitRules)
         # Distinct octets from one input is the point; DER and BER may coincide only when
         # there is no constructed length to leave open, which this corpus never hits.
         assert outputs[EmitRules.DER] != outputs[EmitRules.JER]
         assert outputs[EmitRules.DER] != outputs[EmitRules.COER]
+        assert outputs[EmitRules.DER] != outputs[EmitRules.CANONICAL_PER_UNALIGNED]
 
 
 # --- constraints: the bug this found, and what still stands between the plan and PER ---------
@@ -511,7 +530,7 @@ def test_what_still_stands_between_this_plan_and_a_per_emitter():
     from bcir.asn1.encode_plan import PLAN_VERSION
     from bcir.asn1.per import PerRules, PerVariant, encode_per
 
-    assert PLAN_VERSION == 4, "plan version moved; re-derive what this test asserts"
+    assert PLAN_VERSION == 5, "plan version moved; re-derive what this test asserts"
 
     # The extension marker: two SEQUENCEs differing only there encode differently under PER,
     # and the plan now tells them apart. This is the fix, asserted as one.
@@ -551,3 +570,301 @@ def test_what_still_stands_between_this_plan_and_a_per_emitter():
         raise AssertionError(
             "the plan now compiles extension additions; that was the last PER prerequisite, "
             "so build the emitter rather than deleting this test")
+
+
+# --- plan version 5: the DEFAULT omission rule --------------------------------------------
+
+
+def test_a_component_equal_to_its_default_is_omitted_by_the_rules_that_require_it():
+    """The fourth defect of the same family, and the one that hit every emitter at once.
+
+    X.690 §11.5 forbids DER an encoding for a component whose value equals its default;
+    X.696 §31.9 and X.697's CJER say the same. Versions 1–4 emitted it, because the neutral
+    value stream carries only a *presence* flag and presence was taken as the whole answer.
+
+    The corpus supplied `{"a": 1, "b": True}` against `DEFAULT FALSE` — a default component
+    that *differed* — and never one that matched. One row, four plan versions, three wrong
+    emitters.
+    """
+    kind = _seq(Component("a", _I), Component("b", _B, default=False))
+    plan = _plan(kind, "d")
+    equal, differing, absent = {"a": 1, "b": False}, {"a": 1, "b": True}, {"a": 1}
+    # Supplying the default is indistinguishable from omitting it, which is the rule.
+    for rules in (EmitRules.DER, EmitRules.JER, EmitRules.COER):
+        assert (emit(plan, flatten(plan, equal), rules=rules)
+                == emit(plan, flatten(plan, absent), rules=rules)), rules
+        assert (emit(plan, flatten(plan, differing), rules=rules)
+                != emit(plan, flatten(plan, absent), rules=rules)), rules
+    # And each against its own oracle, which is what makes the claim more than internal.
+    assert emit(plan, flatten(plan, equal), rules=EmitRules.DER) == \
+        encode_tlv(kind.encode(equal))
+    assert emit(plan, flatten(plan, equal), rules=EmitRules.JER) == encode_jer(kind, equal)
+    assert emit(plan, flatten(plan, equal), rules=EmitRules.COER) == encode_oer(kind, equal)
+
+
+def test_ber_keeps_the_freedom_der_gives_up():
+    """The rule is per-candidate, and BER is the candidate that does not have it.
+
+    X.690 clause 11 is titled *"Restrictions on BER employed by both CER and DER"*, so
+    §11.5's ban binds DER and leaves plain BER free to send the component. If this emitter
+    applied the rule everywhere, that freedom would vanish silently — and the BER row of the
+    cost table would stop measuring BER.
+
+    This is the same seam §8.1.3.6 opens for the length form: two candidates that differ
+    exactly where the standard says they may.
+    """
+    kind = _seq(Component("a", _I), Component("b", _B, default=False))
+    plan = _plan(kind, "d")
+    equal = flatten(plan, {"a": 1, "b": False})
+    absent = flatten(plan, {"a": 1})
+    assert emit(plan, equal, rules=EmitRules.BER) != emit(plan, absent, rules=EmitRules.BER)
+    assert emit(plan, equal, rules=EmitRules.DER) == emit(plan, absent, rules=EmitRules.DER)
+
+
+def test_the_default_is_compared_as_stream_octets_which_is_a_canonical_form():
+    """Why byte identity in the stream is *value* identity, checked rather than asserted.
+
+    The comparison is a memcmp against a constant the plan carries, which is only sound
+    because the neutral stream is canonical: an integer is minimal two's complement, a
+    string is UTF-8, a boolean is 0 or 1, a SEQUENCE's components are in plan order. Two
+    Python values that are `==` therefore flatten to identical octets.
+
+    If that ever stopped holding, a default would compare unequal and the component would be
+    emitted — a valid document of a different value, which is the failure mode this whole
+    line of fixes is about.
+    """
+    from bcir.asn1.emit import flatten_value
+
+    for kind, one, two in (
+            (_I, 7, 7),
+            (_I, -(2 ** 70), -(2 ** 70)),
+            (_B, False, False),
+            (_S, "café", "café"),
+            (_O, b"\x00\xff", bytes([0, 255])),
+            (SequenceOf(_I, "S"), [1, 2, 3], (1, 2, 3)),
+    ):
+        node = _plan(_seq(Component("v", kind)), "c").root.members[0].node
+        assert flatten_value(node, one) == flatten_value(node, two), kind
+
+
+def test_a_default_too_large_for_the_format_is_refused_not_truncated():
+    """A truncated default compares unequal, which silently re-admits the component."""
+    from bcir.asn1.encode_plan import DEFAULT_MAX
+
+    kind = _seq(Component("a", _I),
+                Component("b", _S, default="x" * (DEFAULT_MAX + 1)))
+    try:
+        compile_encode_plan(kind, module="Test", type_name="wide")
+    except Asn1Error as error:
+        assert "§11.5" in str(error) and str(DEFAULT_MAX) in str(error), error
+    else:
+        raise AssertionError("a DEFAULT past the format's limit compiled")
+
+
+def test_the_skip_walks_exactly_as_far_as_the_flattener_wrote():
+    """The comparison needs a second reading of the stream grammar, so it is pinned.
+
+    `_skip_node` mirrors `_flatten_node`. A wrong answer does not corrupt an encoding
+    quietly — it desynchronizes the reader and `emit` refuses the leftovers — but "loudly
+    wrong" is not the same as "right", and every shape the flattener writes is walked here.
+    """
+    from bcir.asn1.emit import _Reader, _skip_node
+
+    shapes = (
+        (_I, 2 ** 70), (_B, True), (_N, NULL), (_O, b"\x01\x02"), (_S, "hi"),
+        (_OID, Oid((1, 3, 6, 1))), (SequenceOf(_I, "S"), [1, 2, 3]),
+        (_seq(Component("x", _I), Component("y", _B, optional=True), name="In"), {"x": 1}),
+        (_CHOICE, ("txt", "z")),
+    )
+    for kind, value in shapes:
+        node = _plan(_seq(Component("v", kind)), "s").root.members[0].node
+        from bcir.asn1.emit import flatten_value
+        stream = flatten_value(node, value)
+        reader = _Reader(stream)
+        _skip_node(node, reader)
+        assert reader.at == len(stream), f"{kind}: skipped {reader.at} of {len(stream)}"
+
+
+# --- X.691: the PER column ---------------------------------------------------------------
+
+
+#: `encode_per` and the neutral stream spell a CHOICE differently, which is a *value
+#: mapping* difference of exactly the kind the NULL test already pins — see
+#: `test_the_oracle_s_per_spells_a_choice_differently_from_every_other_encoder`.
+def _per_value(value):
+    if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str):
+        return {value[0]: _per_value(value[1])}
+    if isinstance(value, dict):
+        return {name: _per_value(inner) for name, inner in value.items()}
+    return value
+
+
+def _per_pairs():
+    from bcir.asn1.per import PerRules, PerVariant
+    return (
+        (EmitRules.CANONICAL_PER_ALIGNED, PerRules.CANONICAL, PerVariant.ALIGNED),
+        (EmitRules.CANONICAL_PER_UNALIGNED, PerRules.CANONICAL, PerVariant.UNALIGNED),
+        (EmitRules.BASIC_PER_ALIGNED, PerRules.BASIC, PerVariant.ALIGNED),
+        (EmitRules.BASIC_PER_UNALIGNED, PerRules.BASIC, PerVariant.UNALIGNED),
+    )
+
+
+def test_the_plan_driven_per_matches_the_oracle_in_all_four_variants():
+    """The PER column, against `encode_per`, over the whole corpus.
+
+    Four rows rather than one: X.691's ALIGNED/UNALIGNED split is a genuine cost trade —
+    ALIGNED pads so multi-octet fields start on octet boundaries, UNALIGNED never pads — and
+    the CANONICAL/BASIC split decides §19.5's DEFAULT rule. Collapsing them would put one
+    number in the cost table for two different encodings.
+    """
+    from bcir.asn1.per import encode_per
+
+    for label, kind, value in _CORPUS:
+        plan = _plan(kind, label)
+        stream = flatten(plan, value)
+        for rules, per_rules, variant in _per_pairs():
+            assert emit(plan, stream, rules=rules) == encode_per(
+                kind, _per_value(value), rules=per_rules,
+                variant=variant), f"{label} / {rules.value}"
+
+
+def test_per_reads_the_constraints_the_plan_now_carries():
+    """The reason plan version 3 existed, cashed out.
+
+    PER is the candidate for which a subtype constraint is not a validation rule but the
+    *width*: `INTEGER (0..255)` is eight bits with no length determinant where the
+    unconstrained type costs a determinant plus a two's-complement field. Version 2 could
+    not have driven this at all — the two schemas compiled to one plan with one digest.
+    """
+    from bcir.asn1.constraints import Extensible, PermittedAlphabet, Size, ValueRange
+    from bcir.asn1.per import encode_per
+
+    cases = (
+        ("a constrained integer", Primitive(
+            Universal.INTEGER, "I", constraint=ValueRange(0, 255)), 42),
+        ("a semi-constrained integer", Primitive(
+            Universal.INTEGER, "I", constraint=ValueRange(0, None)), 300),
+        ("an extensible integer, inside the root", Primitive(
+            Universal.INTEGER, "I", constraint=Extensible(ValueRange(0, 255))), 42),
+        ("an extensible integer, outside the root", Primitive(
+            Universal.INTEGER, "I", constraint=Extensible(ValueRange(0, 255))), 4000),
+        ("a fixed-size octet string", Primitive(
+            Universal.OCTET_STRING, "O", constraint=Size(ValueRange(3, 3))), b"abc"),
+        ("a two-octet string, §17.6's unaligned case", Primitive(
+            Universal.OCTET_STRING, "O", constraint=Size(ValueRange(2, 2))), b"ab"),
+        ("a size range", Primitive(
+            Universal.OCTET_STRING, "O", constraint=Size(ValueRange(1, 4))), b"abc"),
+        ("a permitted alphabet", Primitive(
+            Universal.IA5_STRING, "A", constraint=PermittedAlphabet(
+                ValueRange("0", "9"))), "019"),
+        ("a NumericString, whose repertoire X.680 §43 fixes", Primitive(
+            Universal.NUMERIC_STRING, "N"), "42"),
+        ("an unconstrained IA5String", Primitive(Universal.IA5_STRING, "A"), "hi"),
+    )
+    for label, kind, value in cases:
+        outer = _seq(Component("v", kind))
+        plan = _plan(outer, label)
+        stream = flatten(plan, {"v": value})
+        for rules, per_rules, variant in _per_pairs():
+            assert emit(plan, stream, rules=rules) == encode_per(
+                outer, {"v": value}, rules=per_rules,
+                variant=variant), f"{label} / {rules.value}"
+
+    # And the point of it all: the constrained form really is narrower.
+    bounded = _plan(_seq(Component("v", Primitive(
+        Universal.INTEGER, "I", constraint=ValueRange(0, 255)))), "b")
+    free = _plan(_seq(Component("v", _I)), "f")
+    narrow = emit(bounded, flatten(bounded, {"v": 42}),
+                  rules=EmitRules.CANONICAL_PER_UNALIGNED)
+    wide = emit(free, flatten(free, {"v": 42}), rules=EmitRules.CANONICAL_PER_UNALIGNED)
+    assert len(narrow) < len(wide), (narrow.hex(), wide.hex())
+
+
+def test_the_four_per_rows_are_four_encodings_and_not_four_names_for_one():
+    """If they came out identical the cost table would carry four rows for one measurement.
+
+    ALIGNED and UNALIGNED must differ wherever padding falls, and CANONICAL and BASIC must
+    differ on §19.5's DEFAULT rule — the same seam §8.1.3.6 opens between BER and DER.
+    """
+    from bcir.asn1.constraints import ValueRange
+
+    # §11.5.7.2's one-octet case pads under ALIGNED and does not under UNALIGNED.
+    kind = _seq(Component("f", _B), Component("v", Primitive(
+        Universal.INTEGER, "I", constraint=ValueRange(0, 255))))
+    plan = _plan(kind, "a")
+    stream = flatten(plan, {"f": True, "v": 42})
+    assert (emit(plan, stream, rules=EmitRules.CANONICAL_PER_ALIGNED)
+            != emit(plan, stream, rules=EmitRules.CANONICAL_PER_UNALIGNED))
+
+    # §19.5: CANONICAL-PER omits a DEFAULT component equal to its default; BASIC-PER may
+    # send it, and this is the whole difference between the two profiles for these schemas.
+    defaulted = _seq(Component("a", _I), Component("b", _B, default=False))
+    plan = _plan(defaulted, "d")
+    equal = flatten(plan, {"a": 1, "b": False})
+    for aligned, unaligned in ((EmitRules.CANONICAL_PER_ALIGNED,
+                                EmitRules.BASIC_PER_ALIGNED),
+                               (EmitRules.CANONICAL_PER_UNALIGNED,
+                                EmitRules.BASIC_PER_UNALIGNED)):
+        assert emit(plan, equal, rules=aligned) != emit(plan, equal, rules=unaligned)
+
+
+def test_a_choice_index_follows_the_canonical_tag_order_not_the_source_order():
+    """§23.2, which is the one place the plan's member order is not the encoding order.
+
+    A CHOICE's alternatives are sorted into X.680 §8.6 canonical tag order to assign the
+    index, so a schema that declares `[1] first, [0] second` encodes them 1 and 0. Reading
+    the plan's own order would produce a document that decodes to the *other alternative* —
+    the quietest possible failure, since both are valid.
+    """
+    from bcir.asn1.per import encode_per
+
+    # Declared out of tag order on purpose.
+    backwards = Choice((Component("late", _I, tag=7), Component("early", _S, tag=2)),
+                       name="C")
+    kind = _seq(Component("v", backwards, tag=5, explicit=True))
+    plan = _plan(kind, "c")
+    for name, value in (("late", 7), ("early", "hi")):
+        stream = flatten(plan, {"v": (name, value)})
+        for rules, per_rules, variant in _per_pairs():
+            assert emit(plan, stream, rules=rules) == encode_per(
+                kind, {"v": {name: value}}, rules=per_rules,
+                variant=variant), f"{name} / {rules.value}"
+
+    # The claim, made directly: the plan's order and the encoding's order differ here.
+    node = plan.root.members[0].node
+    from bcir.asn1.emit import _per_alternatives
+    assert [m.name for m in node.members] == ["late", "early"]
+    assert [m.name for m in _per_alternatives(node)] == ["early", "late"]
+
+
+def test_the_oracle_s_per_spells_a_choice_differently_from_every_other_encoder():
+    """A fifth value-mapping disagreement, pinned rather than papered over.
+
+    `codec`, `encode_jer` and `encode_oer` all take a CHOICE value as the `(alternative,
+    value)` pair this model uses. **`encode_per` takes a single-entry mapping** and refuses
+    the pair. Like the NULL disagreement above, this lives in the value mapping rather than
+    in any encoding, and it is invisible until something drives every encoder from one
+    input — which is exactly what a matched cost comparison does.
+
+    The neutral stream has nothing to disagree about: a CHOICE contributes an index, and
+    all five plan-driven emitters read the same one.
+    """
+    from bcir.asn1.per import PerVariant, encode_per
+
+    kind = _seq(Component("v", _CHOICE, tag=5, explicit=True))
+    pair = {"v": ("num", 7)}
+    mapping = {"v": {"num": 7}}
+    assert encode_per(kind, mapping, variant=PerVariant.UNALIGNED)
+    try:
+        encode_per(kind, pair, variant=PerVariant.UNALIGNED)
+    except Asn1Error as error:
+        assert "single-entry mapping" in str(error), error
+    else:
+        raise AssertionError("encode_per accepted the pair spelling; unify the two")
+    # The other three take the pair, and the plan-driven rail takes it for all five rules.
+    assert encode_tlv(kind.encode(pair))
+    assert encode_oer(kind, pair)
+    plan = _plan(kind, "c")
+    stream = flatten(plan, pair)
+    for rules in EmitRules:
+        assert emit(plan, stream, rules=rules), rules

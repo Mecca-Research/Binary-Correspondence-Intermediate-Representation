@@ -455,22 +455,23 @@ def _alphabet_of(kind: Primitive) -> str | None:
         alphabet = constraint.alphabet()
         if alphabet:
             return "".join(sorted(set(alphabet)))
-    if kind.universal == Universal.NUMERIC_STRING:
-        return _NUMERIC_ALPHABET
-    if kind.universal == Universal.PRINTABLE_STRING:
-        return _PRINTABLE_ALPHABET
-    return None
+    return default_alphabet(kind.universal)
 
 
-def _char_bits(kind: Primitive, variant: PerVariant) -> tuple[int, dict[str, int], dict[int, str]]:
+def char_bits_for(universal: int, alphabet: str | None,
+                  variant: PerVariant) -> tuple[int, dict[str, int], dict[int, str]]:
     """§30.5.2-§30.5.4: bits per character, and the value map in force.
 
     §30.5.4 a) keeps the natural code value when it fits in `b` bits; otherwise b) renumbers
     the permitted characters 0..N-1 in canonical order. Doing the fit test explicitly is
     what makes IA5String cost 7 bits unaligned while a `FROM("0".."9")` alphabet costs 4.
+
+    Takes the effective alphabet rather than a type, so the oracle (which reads a live
+    `Primitive`) and E1's plan-driven emitter (which reads a descriptor) share ONE
+    definition of the §30.5 arithmetic. The schema-reading half — deciding *what* the
+    effective alphabet is — is where the two legitimately differ.
     """
-    alphabet = _alphabet_of(kind)
-    low, high = _KNOWN_MULTIPLIER[kind.universal]
+    low, high = _KNOWN_MULTIPLIER[universal]
     if alphabet is None:
         count = high - low + 1
         bits = bits_for_range(count)
@@ -488,6 +489,24 @@ def _char_bits(kind: Primitive, variant: PerVariant) -> tuple[int, dict[str, int
         return bits, {}, {}
     forward = {ch: index for index, ch in enumerate(alphabet)}
     return bits, forward, {v: k for k, v in forward.items()}
+
+
+def default_alphabet(universal: int) -> str | None:
+    """The repertoire X.680 §43 fixes for a type whose constraint restricts nothing.
+
+    Only NumericString and PrintableString have one: their full ranges are not contiguous,
+    so §30.5.4 b)'s renumbering needs the canonical order written out. Every other
+    known-multiplier type's range is contiguous and `char_bits_for` derives it.
+    """
+    if universal == Universal.NUMERIC_STRING:
+        return _NUMERIC_ALPHABET
+    if universal == Universal.PRINTABLE_STRING:
+        return _PRINTABLE_ALPHABET
+    return None
+
+
+def _char_bits(kind: Primitive, variant: PerVariant) -> tuple[int, dict[str, int], dict[int, str]]:
+    return char_bits_for(kind.universal, _alphabet_of(kind), variant)
 
 
 def _value_bounds(kind: Primitive) -> tuple[tuple[object, object], bool]:

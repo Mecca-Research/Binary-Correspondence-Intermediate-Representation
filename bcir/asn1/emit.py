@@ -38,12 +38,23 @@ from .tags import Asn1Error, TagClass, Universal
 
 
 class EmitRules(enum.Enum):
-    """The candidates this harness can emit through a plan."""
+    """The candidates this harness can emit through a plan.
+
+    PER is FOUR rows, not one. X.691's ALIGNED/UNALIGNED split is a genuine cost trade
+    rather than a setting — ALIGNED pads so multi-octet fields start on octet boundaries
+    (cheaper to read, larger on the wire), UNALIGNED never pads — and the CANONICAL/BASIC
+    split decides §19.5's DEFAULT rule. Collapsing them would put one number in the table
+    for two different encodings.
+    """
 
     DER = "der"
     BER = "ber"
     JER = "jer"
     COER = "coer"
+    CANONICAL_PER_ALIGNED = "cper-a"
+    CANONICAL_PER_UNALIGNED = "cper-u"
+    BASIC_PER_ALIGNED = "bper-a"
+    BASIC_PER_UNALIGNED = "bper-u"
 
 
 _TAG_CLASS_BITS = {
@@ -110,6 +121,18 @@ def flatten(plan: EncodePlan, value) -> bytes:
     return bytes(writer.out)
 
 
+def flatten_value(node: EncodeNode, value, path: str = "") -> bytes:
+    """Project one value against ONE node, rather than against a whole plan.
+
+    The plan compiler uses this to record a DEFAULT in stream form. Exposed here rather than
+    reimplemented there because the recorded default is compared against a slice of a real
+    stream, and two spellings of "what a value looks like" would eventually disagree.
+    """
+    writer = _Writer()
+    _flatten_node(node, value, writer, path or node.type_name)
+    return bytes(writer.out)
+
+
 def _flatten_node(node: EncodeNode, value, writer: _Writer, path: str) -> None:
     kind = node.kind
     if kind == "boolean":
@@ -156,6 +179,72 @@ def _flatten_node(node: EncodeNode, value, writer: _Writer, path: str) -> None:
         _flatten_node(chosen[0].node, inner, writer, f"{path}/{name}")
     else:
         raise Asn1Error(f"{path}: no flattening rule for plan kind {kind!r}")
+
+
+# --- the DEFAULT omission rule, which is per-candidate ------------------------------------------
+
+
+def _skip_node(node: EncodeNode, reader: _Reader) -> None:
+    """Advance the reader past exactly one node's value, emitting nothing.
+
+    The mirror of `_flatten_node`, and the only way to ask "what octets does this member
+    occupy" without producing them. A wrong answer here does not corrupt an encoding
+    quietly: it desynchronizes the reader, and `emit` refuses a stream with anything left
+    over.
+    """
+    kind = node.kind
+    if kind == "boolean":
+        reader.u8()
+    elif kind in ("integer", "enumerated"):
+        reader.take(reader.u8())
+    elif kind == "null":
+        return
+    elif kind in ("octetstring", "string", "oid"):
+        reader.blob()
+    elif kind == "sequence":
+        for member in node.members:
+            if (member.optional or member.has_default) and not reader.u8():
+                continue
+            _skip_node(member.node, reader)
+    elif kind == "sequence-of":
+        for _ in range(reader.u32()):
+            _skip_node(node.element, reader)
+    elif kind == "choice":
+        index = reader.u32()
+        chosen = [m for m in node.members if m.index == index]
+        if not chosen:
+            raise Asn1Error(f"CHOICE index {index} is outside the plan's alternatives")
+        _skip_node(chosen[0].node, reader)
+    else:
+        raise Asn1Error(f"no skip rule for plan kind {kind!r}")
+
+
+def _present(member, reader: _Reader, *, omit_default: bool) -> bool:
+    """Read a component's presence octet and apply the candidate's DEFAULT rule.
+
+    X.690 §11.5 forbids DER an encoding for a component whose value equals its default;
+    X.696 §31.9 and X.697's CJER say the same, and X.691 §19.5 says it for CANONICAL-PER.
+    **Plain BER and BASIC-PER do not** — they leave it to the sender, which is precisely the
+    implementation freedom the canonical rules exist to remove. So this is not a property of
+    the value and cannot live in the format-neutral stream; every candidate asks it
+    separately, and `omit_default` is which answer this one gives.
+
+    When the rule applies and the value matches, the component's octets are *consumed and
+    discarded*: the stream still describes it, and leaving it unread would leave a suffix
+    `emit` correctly refuses.
+    """
+    if not (member.optional or member.has_default):
+        return True
+    if not reader.u8():
+        return False
+    if not (omit_default and member.has_default and member.default_stream):
+        return True
+    start = reader.at
+    _skip_node(member.node, reader)
+    if reader.data[start:reader.at] == member.default_stream:
+        return False
+    reader.at = start
+    return True
 
 
 # --- X.690: DER and BER ---------------------------------------------------------------------
@@ -231,7 +320,11 @@ def _emit_x690(node: EncodeNode, reader: _Reader, *, indefinite: bool) -> bytes:
         content = bytearray()
         if kind == "sequence":
             for member in node.members:
-                if (member.optional or member.has_default) and not reader.u8():
+                # X.690 §11 is titled "Restrictions on BER employed by both CER and DER", so
+                # §11.5's ban on encoding a component equal to its default binds DER and
+                # leaves BER free. That is the same seam §8.1.3.6 opens for the length form,
+                # and it is why the two candidates are not aliases.
+                if not _present(member, reader, omit_default=not indefinite):
                     continue
                 content += _member_x690(member, reader, indefinite=indefinite)
         else:
@@ -322,7 +415,10 @@ def _emit_jer(node: EncodeNode, reader: _Reader) -> str:
     if kind == "sequence":
         parts = []
         for member in node.members:
-            if (member.optional or member.has_default) and not reader.u8():
+            # This row is CJER: `encode_jer` defaults to CANONICAL-JER, which omits a
+            # component equal to its default. BASIC-JER emits it, and the two really do
+            # differ -- the oracle produces `{"a":1,"b":false}` under BASIC.
+            if not _present(member, reader, omit_default=True):
                 continue
             # §22.2: the member's IDENTIFIER is what a JER document carries — the whole
             # reason this emitter cannot be schema-free.
@@ -478,7 +574,10 @@ def _emit_oer(node: EncodeNode, reader: _Reader) -> bytes:
         present: dict[int, bool] = {}
         for member in node.members:
             if member.optional or member.has_default:
-                here = bool(reader.u8())
+                # §31.9: a DEFAULT component is encoded as ABSENT when it equals its
+                # default, and the preamble bit must say so too -- writing a 1 and then no
+                # field would misalign every component after it.
+                here = _present(member, reader, omit_default=True)
                 present[member.index] = here
                 bits.append(1 if here else 0)
                 if not here:
@@ -517,6 +616,292 @@ def _emit_oer(node: EncodeNode, reader: _Reader) -> bytes:
     raise Asn1Error(f"no OER rule for plan kind {kind!r}")
 
 
+# --- X.691: PER, ALIGNED and UNALIGNED ---------------------------------------------------------
+#
+# **The bit arithmetic is imported, not retyped.** §11's field encoders — a constrained whole
+# number's five cases, the semi-constrained and unconstrained forms, the one/two-octet and
+# fragmented length determinants — read no schema at all: they take an integer and a pair of
+# bounds. Writing them a second time here would create a second definition of §11 free to
+# drift from the one the oracle uses, and the parity test would then be comparing two
+# implementations of the same misunderstanding.
+#
+# What E1 must supply independently is the half that *is* schema-directed: reading bounds,
+# extension markers, enumerations and alternative order out of a DESCRIPTOR rather than out of
+# a live `Asn1Type`. That is the whole claim being tested, and it is what the C twin then has
+# to reproduce with no Python in reach.
+
+
+#: Canonical tag order for X.691 §23.2, as the plan spells a class.
+_TAG_CLASS_ORDER = {"universal": 0, "application": 1, "context": 2, "private": 3}
+
+
+def _per_effective_tag(member) -> tuple[int, int]:
+    """§23.2's sort key for one CHOICE alternative: its outer tag, class first.
+
+    A tagged alternative uses its own tag. An UNTAGGED one uses the tag of its type, and
+    §23.3 gives an untagged nested CHOICE the smallest tag among *its* alternatives — which
+    is why this recurses rather than reading one field.
+    """
+    if member.tag is not None:
+        return (_TAG_CLASS_ORDER[member.tag_class], member.tag)
+    return _per_base_tag(member.node)
+
+
+def _per_base_tag(node: EncodeNode) -> tuple[int, int]:
+    if node.kind == "choice":
+        return min(_per_effective_tag(m) for m in node.members)
+    # Everything else the plan compiles carries a universal tag, and X.690 Table 1 puts the
+    # UNIVERSAL class first, which is why it sorts as 0.
+    return (0, node.universal)
+
+
+def _per_alternatives(node: EncodeNode) -> tuple:
+    """The alternatives in §23.2's canonical order — which is what assigns the index."""
+    return tuple(sorted(node.members, key=_per_effective_tag))
+
+
+def _per_value_bounds(node: EncodeNode):
+    """§13.1: the extension ROOT's value bounds, and whether an extension bit is emitted."""
+    constraint = node.constraint
+    if constraint is None:
+        return (None, None), False
+    return (constraint.root_value_low, constraint.root_value_high), constraint.value_extensible
+
+
+def _per_size_bounds(node: EncodeNode) -> tuple[int, int | None, bool]:
+    """§17.3/§20.4/§30.4's `(lb, ub, extensible)`, in §11.9's shape.
+
+    §11.9.1 makes `lb` default to zero rather than to "unknown": a length is a count, and a
+    count has a floor whether or not the schema wrote one down.
+    """
+    constraint = node.constraint
+    if constraint is None:
+        return 0, None, False
+    low = 0 if constraint.root_size_low is None else int(constraint.root_size_low)
+    high = None if constraint.root_size_high is None else int(constraint.root_size_high)
+    return low, high, constraint.size_extensible
+
+
+def _emit_per(node: EncodeNode, reader: _Reader, writer, rules) -> None:
+    """One node's field-list. `writer` is `per.BitWriter`, whose variant carries the padding rule."""
+    # §11.9.3.4's normally small LENGTH is deliberately absent: it spells §19.8's extension
+    # ADDITION bitmap, and `_compile_members` refuses an extension addition outright. An
+    # imported name with no call site would look like coverage this rail does not have.
+    from .per import (
+        _64K, _encode_constrained, _encode_integer_root, _encode_length_and_payload,
+        _KNOWN_MULTIPLIER,
+    )
+
+    kind = node.kind
+    if kind == "boolean":
+        writer.put_bit(1 if reader.u8() else 0)          # §12: one bit, no alignment
+        return
+    if kind == "null":
+        return                                            # §18: no encoding at all
+    if kind == "integer":
+        value = int.from_bytes(reader.take(reader.u8()), "big", signed=True)
+        (low, high), extensible = _per_value_bounds(node)
+        if extensible:
+            # §13.1: one bit saying whether the value is inside the extension root. Outside,
+            # §13.2's constrained forms do not apply and the value goes unconstrained.
+            inside = ((low is None or value >= low) and (high is None or value <= high))
+            writer.put_bit(0 if inside else 1)
+            if not inside:
+                from .per import _encode_unconstrained
+                _encode_unconstrained(writer, value)
+                return
+        _encode_integer_root(writer, value, low, high)    # §13.2
+        return
+    if kind == "enumerated":
+        value = int.from_bytes(reader.take(reader.u8()), "big", signed=True)
+        # §14.1: an ENUMERATED encodes its INDEX into the root sorted ascending, not its
+        # value and not its identifier. Three rules, three different readings of one field.
+        numbers = sorted({number for _name, number in node.enumeration})
+        if value not in numbers:
+            raise Asn1Error(f"{value} is not an enumeration value of this type (X.691 §14.1)")
+        if node.extensible:
+            writer.put_bit(0)                             # §14.3
+        _encode_constrained(writer, numbers.index(value), 0, len(numbers) - 1)   # §14.2
+        return
+    if kind == "octetstring":
+        data = reader.blob()
+        _per_octets(writer, node, data)
+        return
+    if kind == "string":
+        text = reader.blob().decode("utf-8")
+        if node.universal in _KNOWN_MULTIPLIER:
+            _per_known_multiplier(writer, node, text)     # §30.5
+            return
+        # §30.6: everything else is its X.690 octets behind an unconstrained length.
+        from .values import encode_string
+        octets = encode_string(node.universal, text)
+        _encode_length_and_payload(
+            writer, len(octets), 0, None,
+            lambda start, stop: (writer.align(), writer.put_octets(octets[start:stop])))
+        return
+    if kind == "oid":
+        octets = _oid_octets(reader.blob().decode("ascii"))
+        _encode_length_and_payload(                       # §24
+            writer, len(octets), 0, None,
+            lambda start, stop: (writer.align(), writer.put_octets(octets[start:stop])))
+        return
+    if kind == "sequence":
+        # §19.1: the extension bit. This plan refuses extension additions, so the type is
+        # extensible with none present and the bit is always zero — but it must still be
+        # THERE, because a decoder built from the same schema reads one.
+        if node.extensible:
+            writer.put_bit(0)
+        # §19.2's presence bitmap precedes ALL the components, but the neutral stream
+        # INTERLEAVES a presence octet with each value — so the bits cannot simply be
+        # collected first: after reading component 0's flag the next stream octet is its
+        # value, not component 1's flag. This is the shape OER's preamble already has, and
+        # it takes the same answer: the bitmap's WIDTH comes from the plan and no value can
+        # change it, so the slots are reserved and each bit is patched as its flag is read.
+        # Collecting first desynchronizes the reader, which is how this was found.
+        optional = [m for m in node.members if m.optional or m.has_default]
+        bitmap_at, seen = len(writer.bits), 0
+        for _ in optional:
+            writer.put_bit(0)
+        for member in node.members:
+            # §19.5 is CANONICAL-PER's, and matches what `_present` already decides for the
+            # canonical X.690/OER rows; BASIC-PER leaves the sender free.
+            here = _present(member, reader, omit_default=_per_canonical(rules))
+            if member.optional or member.has_default:
+                if here:
+                    writer.bits[bitmap_at + seen] = 1
+                seen += 1
+                if not here:
+                    continue
+            _emit_per(member.node, reader, writer, rules)  # §19.4
+        return
+    if kind == "sequence-of":
+        count = reader.u32()
+        lower, upper, extensible = _per_size_bounds(node)
+        if extensible:
+            inside = count >= lower and (upper is None or count <= upper)
+            writer.put_bit(0 if inside else 1)            # §20.4
+            if not inside:
+                lower, upper = 0, None
+        if upper is not None and lower == upper and upper < _64K:
+            if count != upper:
+                raise Asn1Error(f"expected exactly {upper} components (X.691 §20.5)")
+            for _ in range(count):
+                _emit_per(node.element, reader, writer, rules)
+            return
+        # The elements are consumed from the stream in order, so a fragmenting callback
+        # cannot revisit them: the stream is read once, and each slice is emitted as it is
+        # reached. `_encode_length_and_payload` calls `emit` with strictly advancing,
+        # contiguous ranges, which is exactly what makes that safe.
+        def emit_range(start: int, stop: int) -> None:
+            for _ in range(stop - start):
+                _emit_per(node.element, reader, writer, rules)
+
+        _encode_length_and_payload(writer, count, lower, upper, emit_range)   # §20.6
+        return
+    if kind == "choice":
+        index = reader.u32()
+        chosen = [m for m in node.members if m.index == index]
+        if not chosen:
+            raise Asn1Error(f"CHOICE index {index} is outside the plan's alternatives")
+        order = _per_alternatives(node)
+        position = order.index(chosen[0])
+        if node.extensible:
+            writer.put_bit(0)                             # §23.5
+        if len(order) > 1:                                # §23.4: one alternative, no index
+            _encode_constrained(writer, position, 0, len(order) - 1)   # §23.6/§23.7
+        _emit_per(chosen[0].node, reader, writer, rules)
+        return
+    raise Asn1Error(f"no PER rule for plan kind {kind!r}")
+
+
+def _per_canonical(rules) -> bool:
+    return rules in (EmitRules.CANONICAL_PER_ALIGNED, EmitRules.CANONICAL_PER_UNALIGNED)
+
+
+#: The four rules `_emit_per` serves. A frozenset of enum members rather than a lookup into
+#: `per`, so deciding *whether* a rule is PER costs no import at all.
+_PER_RULES = frozenset({
+    EmitRules.CANONICAL_PER_ALIGNED, EmitRules.CANONICAL_PER_UNALIGNED,
+    EmitRules.BASIC_PER_ALIGNED, EmitRules.BASIC_PER_UNALIGNED,
+})
+
+
+def _per_variant(rules):
+    """§11.1.3 vs §11.1.4's padding rule, as `per.PerVariant`.
+
+    Resolved lazily because §8's import quarantine keeps research organs off the simple
+    path: a module-level import of the PER codec would make every importer of this harness
+    pay for it whether or not it ever emits a PER row.
+    """
+    from .per import PerVariant
+
+    return (PerVariant.ALIGNED
+            if rules in (EmitRules.CANONICAL_PER_ALIGNED, EmitRules.BASIC_PER_ALIGNED)
+            else PerVariant.UNALIGNED)
+
+
+def _per_octets(writer, node: EncodeNode, data: bytes) -> None:
+    """§17: octet strings. A fixed short length stays unaligned; the rest take a length."""
+    from .per import _64K, _encode_length_and_payload
+
+    lower, upper, extensible = _per_size_bounds(node)
+    count = len(data)
+    if extensible:
+        inside = count >= lower and (upper is None or count <= upper)
+        writer.put_bit(0 if inside else 1)                # §17.3
+        if not inside:
+            lower, upper = 0, None
+    if upper is not None and lower == upper:
+        if count != upper:
+            raise Asn1Error(f"octet string is {count} octets, fixed size is {upper}")
+        if upper == 0:
+            return                                         # §17.5
+        if upper <= 2:                                     # §17.6: NOT octet-aligned
+            writer.put_octets(data)
+            return
+        if upper < _64K:                                   # §17.7
+            writer.align()
+            writer.put_octets(data)
+            return
+    _encode_length_and_payload(                            # §17.8
+        writer, count, lower, upper,
+        lambda start, stop: (writer.align(), writer.put_octets(data[start:stop])))
+
+
+def _per_known_multiplier(writer, node: EncodeNode, text: str) -> None:
+    """§30.5: one of the known-multiplier character types."""
+    from .per import _64K, _encode_length_and_payload, char_bits_for, default_alphabet
+
+    alphabet = node.constraint.alphabet if node.constraint else ""
+    effective = alphabet or default_alphabet(node.universal)
+    bits, forward, _ = char_bits_for(node.universal, effective, writer.variant)
+    lower, upper, extensible = _per_size_bounds(node)
+    count = len(text)
+    if extensible:
+        # §30.4. The permitted ALPHABET still applies outside the root: §10.3.11 makes an
+        # extensible alphabet not PER-visible at all, and a non-extensible one is unaffected
+        # by a SIZE marker.
+        inside = count >= lower and (upper is None or count <= upper)
+        writer.put_bit(0 if inside else 1)
+        if not inside:
+            lower, upper = 0, None
+
+    def emit_range(start: int, stop: int) -> None:
+        # §30.5.6/§30.5.7: align only when the whole field could exceed 16 bits.
+        if upper is None or upper * bits > 16:
+            writer.align()
+        for character in text[start:stop]:
+            writer.put_bits(forward[character] if forward else ord(character), bits)
+
+    if upper is not None and lower == upper and upper < _64K:
+        if count != upper:
+            raise Asn1Error(f"string is {count} characters, fixed size is {upper}")
+        if count:
+            emit_range(0, count)                           # §30.5.6
+        return
+    _encode_length_and_payload(writer, count, lower, upper, emit_range)   # §30.5.7
+
+
 # --- the one entry point ---------------------------------------------------------------------
 
 
@@ -534,6 +919,14 @@ def emit(plan: EncodePlan, stream: bytes, *, rules: EmitRules = EmitRules.DER) -
         out = _emit_jer(plan.root, reader).encode("utf-8")
     elif rules is EmitRules.COER:
         out = _emit_oer(plan.root, reader)
+    elif rules in _PER_RULES:
+        from .per import BitWriter
+
+        writer = BitWriter(_per_variant(rules))
+        _emit_per(plan.root, reader, writer, rules)
+        # §11.1.3.1/§11.1.4: only the OUTERMOST value is padded out to whole octets, which
+        # is why this happens here and not inside `_emit_per`.
+        out = writer.to_bytes()
     else:
         raise Asn1Error(f"no emitter for {rules!r}")
     if reader.at != len(stream):

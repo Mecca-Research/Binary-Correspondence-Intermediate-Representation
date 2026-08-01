@@ -81,6 +81,24 @@ _CORPUS = (
      {"a": 1}),
     ("a default present", _seq(Component("a", _I), Component("b", _B, default=False)),
      {"a": 1, "b": True}),
+    # Version 5's rows. Their absence hid a bug in every emitter for four plan versions:
+    # X.690 §11.5, X.696 §31.9 and CJER require a component EQUAL to its default to be
+    # omitted, and both rails emitted it.
+    ("a default supplied but equal to the default",
+     _seq(Component("a", _I), Component("b", _B, default=False)), {"a": 1, "b": False}),
+    ("an integer default supplied and equal",
+     _seq(Component("a", _I), Component("b", _I, default=7)), {"a": 1, "b": 7}),
+    ("a string default supplied and equal",
+     _seq(Component("a", _I), Component("b", _S, default="hi")), {"a": 1, "b": "hi"}),
+    ("a SEQUENCE OF default supplied and equal",
+     _seq(Component("a", _I), Component("b", SequenceOf(_I, "S"), default=[1, 2])),
+     {"a": 1, "b": [1, 2]}),
+    ("a SEQUENCE OF default supplied and differing",
+     _seq(Component("a", _I), Component("b", SequenceOf(_I, "S"), default=[1, 2])),
+     {"a": 1, "b": [1, 3]}),
+    ("twelve defaults, every other one equal",
+     _seq(*[Component(f"c{i}", _I, default=i) for i in range(12)]),
+     {f"c{i}": (i if i % 2 else 99) for i in range(12)}),
     ("twelve optionals, alternate present",
      _seq(*[Component(f"c{i}", _I, optional=True) for i in range(12)]),
      {f"c{i}": i for i in range(0, 12, 2)}),
@@ -115,8 +133,15 @@ _CORPUS = (
     ("content past the three-octet length", _seq(Component("v", _S)), {"v": "y" * 70000}),
 )
 
+#: Every rule the twin serves, paired with the driver's spelling. PER is four rows: the
+#: ALIGNED/UNALIGNED split is a real cost trade and CANONICAL/BASIC decides §19.5's DEFAULT
+#: rule, so collapsing them would put one number in the table for two encodings.
 _RULES = ((EmitRules.DER, "der"), (EmitRules.BER, "ber"), (EmitRules.JER, "jer"),
-          (EmitRules.COER, "coer"))
+          (EmitRules.COER, "coer"),
+          (EmitRules.CANONICAL_PER_ALIGNED, "cper-a"),
+          (EmitRules.CANONICAL_PER_UNALIGNED, "cper-u"),
+          (EmitRules.BASIC_PER_ALIGNED, "bper-a"),
+          (EmitRules.BASIC_PER_UNALIGNED, "bper-u"))
 
 
 def _available() -> bool:

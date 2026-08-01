@@ -67,8 +67,14 @@ extern "C" {
  * X.697 22.2 spells an enumerated value as the IDENTIFIER of its item, which cannot be
  * derived from the number version 3 had -- so the JER emitter wrote a bare number a JER
  * decoder cannot map back. X.691 19.1/23.5/14.3 each emit a leading bit for the extension
- * marker, so two schemas differing only there encode differently under PER. */
-#define BCIR_EMIT_PLAN_VERSION 4
+ * marker, so two schemas differing only there encode differently under PER.
+ *
+ * Version 5 adds the member's DEFAULT value in stream form, and is a bug fix in all three
+ * emitters at once. X.690 11.5 forbids DER an encoding for a component equal to its default;
+ * X.696 31.9 and X.697's CJER say the same. Versions 1-4 emitted it, because the neutral
+ * value stream carries a presence flag and the rule is per-CANDIDATE -- plain BER leaves the
+ * sender free -- so it cannot live in the stream. */
+#define BCIR_EMIT_PLAN_VERSION 5
 
 /* The deepest plan this reader will accept, matching the plan compiler's own limit. */
 #define BCIR_EMIT_MAX_PLAN_DEPTH 32
@@ -76,6 +82,11 @@ extern "C" {
 /* The longest member name stored. A longer one is REFUSED, never truncated: a truncated
  * JER identifier is a document that decodes to a different value. */
 #define BCIR_EMIT_NAME_MAX 48
+
+/* The longest DEFAULT value stored, in neutral-stream octets. A longer one is REFUSED,
+ * never truncated: a truncated default compares unequal and silently re-admits a component
+ * X.690 11.5 requires omitted. Matches the plan compiler's own limit. */
+#define BCIR_EMIT_DEFAULT_MAX 32
 
 /* The longest permitted alphabet stored, in octets. X.691 30.5 makes the alphabet decide
  * bits-per-character, so a truncated one encodes a different document rather than a
@@ -100,7 +111,15 @@ typedef enum bcir_emit_rules {
   BCIR_EMIT_DER = 0,
   BCIR_EMIT_BER = 1,
   BCIR_EMIT_JER = 2,
-  BCIR_EMIT_COER = 3
+  BCIR_EMIT_COER = 3,
+  /* X.691 is FOUR rows, not one. The ALIGNED/UNALIGNED split is a real cost trade --
+   * ALIGNED pads so multi-octet fields start on octet boundaries (cheaper to read, larger
+   * on the wire), UNALIGNED never pads -- and CANONICAL/BASIC decides 19.5's DEFAULT rule.
+   * Collapsing them would put one number in the cost table for two encodings. */
+  BCIR_EMIT_CPER_ALIGNED = 4,
+  BCIR_EMIT_CPER_UNALIGNED = 5,
+  BCIR_EMIT_BPER_ALIGNED = 6,
+  BCIR_EMIT_BPER_UNALIGNED = 7
 } bcir_emit_rules;
 
 typedef enum bcir_emit_kind {
@@ -125,6 +144,12 @@ typedef struct bcir_emit_member {
   uint8_t tag_class; /* 0x00 universal, 0x40 application, 0x80 context, 0xC0 private */
   int32_t tag;       /* -1 when the component keeps its base tag */
   uint32_t node;     /* index into the node table */
+  /* The DEFAULT value in neutral-stream octets, empty when there is none. Stored as stream
+   * octets because the stream is a CANONICAL form of a value -- minimal two's complement,
+   * UTF-8, components in plan order -- so byte identity is value identity and the twin
+   * needs no value model of its own to decide the question 11.5 asks. */
+  uint8_t default_stream[BCIR_EMIT_DEFAULT_MAX];
+  uint8_t default_len;
 } bcir_emit_member;
 
 /* One constraint bound. Sign and magnitude rather than a signed word, because the range a

@@ -3626,6 +3626,14 @@ CASES = [
     (seq(Component("a", I), Component("b", I, optional=True)), {"a": 1, "b": 2}),
     (seq(Component("a", I), Component("b", I, optional=True)), {"a": 1}),
     (seq(Component("a", I), Component("b", B, default=False)), {"a": 1}),
+    # Version 5: a DEFAULT component whose value EQUALS the default must be OMITTED (X.690
+    # 11.5, X.696 31.9, CJER). Every row above supplies one that differs, which is exactly
+    # how three emitters shipped emitting it.
+    (seq(Component("a", I), Component("b", B, default=False)), {"a": 1, "b": False}),
+    (seq(Component("a", I), Component("b", I, default=7)), {"a": 1, "b": 7}),
+    (seq(Component("a", I), Component("b", S, default="hi")), {"a": 1, "b": "hi"}),
+    (seq(*[Component("c%d" % i, I, default=i) for i in range(12)]),
+     dict(("c%d" % i, (i if i % 2 else 99)) for i in range(12))),
     (seq(*[Component("c%d" % i, I, optional=True) for i in range(12)]),
      dict(("c%d" % i, i) for i in range(0, 12, 2))),
     (seq(*[Component("c%d" % i, I, optional=True) for i in range(12)]), {}),
@@ -3676,7 +3684,7 @@ for index, (kind, value) in enumerate(CASES):
     plan = compile_encode_plan(kind, module="Gate", type_name="c%d" % index)
     stream = flatten(plan, value)
     print("plan %s" % plan.serialize().hex())
-    for rules in ("der", "ber", "jer", "coer"):
+    for rules in ("der", "ber", "jer", "coer", "cper-a", "cper-u", "bper-a", "bper-u"):
         print("emit %s %s" % (rules, stream.hex() or "-"))
 EMITPY
     "${tmp}/test_emit_O0" < "${tmp}/emit_cases.txt" > "${tmp}/emit_O0.txt"
@@ -3690,7 +3698,7 @@ EMITPY
       echo "  FAIL: the encoder refused a case from its own reference corpus"
       exit 1
     fi
-    echo "  ok: -O0 == -O3 over ${emit_cases} encode cases (4 candidates x 1 plan each)"
+    echo "  ok: -O0 == -O3 over ${emit_cases} encode cases (8 candidates x 1 plan each)"
   fi
 else
   echo "  FAIL: the plan-driven ASN.1 encoder does not build warning-clean"
