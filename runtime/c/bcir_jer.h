@@ -199,9 +199,47 @@ typedef struct bcir_jer_scan_cursor {
 void bcir_jer_scan_begin(bcir_jer_scan_cursor *cursor, const bcir_jer_limits *limits,
                          bcir_jer_diag *diag);
 
+/* How a diagnostic is recorded -- the ONE definition of it, so that the core, the hosted
+ * index, and anything else driving the cursor cannot disagree about what 4.2's contract
+ * writes. `bcir_jer.c`'s own `fail` is this function. */
+static inline bcir_jer_status bcir_jer_diag_set(bcir_jer_diag *diag, bcir_jer_status status,
+                                                size_t offset, uint64_t needed) {
+  if (diag != 0) {
+    diag->status = status;
+    diag->offset = offset;
+    diag->needed = needed;
+    diag->sink_code = 0;
+  }
+  return status;
+}
+
 /* Charge `amount` units at `offset`. BCIR_JER_WORK_EXCEEDED carries the exact octet at which
  * the budget ran out, which is why an accelerator that skips a run must still charge for it:
- * the charge is observable output, not an implementation detail. */
+ * the charge is observable output, not an implementation detail.
+ *
+ * INLINE, AND WHY THAT MATTERS. This is the per-octet operation, and `bcir_jer_scan` gets it
+ * for free because the charge lives in its own translation unit. An accelerator reaching it
+ * through the ABI pays a CALL PER OCTET, and measurement put the rebuilt dispatch at 0.53x
+ * of the scalar rail on dense documents for exactly that reason -- a loss that had nothing
+ * to do with the dispatch being rebuilt. Inlining is the fix. A second copy of 4.3's budget
+ * arithmetic in the accelerator would also have been "fast", and would have been the bug
+ * this seam exists to prevent, so the definition moved here rather than being duplicated:
+ * `bcir_jer.c`'s `spend` is this function, and `bcir_jer_scan_spend` is this function behind
+ * an argument check.
+ *
+ * The caller must have a cursor with a non-null `limits`; `bcir_jer_scan_spend` is the
+ * checked entry for callers that cannot guarantee it. */
+static inline bcir_jer_status bcir_jer_scan_charge(bcir_jer_scan_cursor *cursor,
+                                                   uint64_t amount, size_t offset) {
+  cursor->work += amount;
+  if (cursor->work > cursor->limits->work)
+    return bcir_jer_diag_set(cursor->diag, BCIR_JER_WORK_EXCEEDED, offset, cursor->work);
+  return BCIR_JER_OK;
+}
+
+/* The checked, out-of-line entry. Same charge, plus the argument validation a caller crossing
+ * the ABI may need; kept so the cursor stays usable from a translation unit that would rather
+ * not inline anything. */
 bcir_jer_status bcir_jer_scan_spend(bcir_jer_scan_cursor *cursor, uint64_t amount,
                                     size_t offset);
 

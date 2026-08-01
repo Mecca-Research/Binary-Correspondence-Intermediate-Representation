@@ -230,7 +230,7 @@ def test_the_index_reuses_the_token_scanners_rather_than_reimplementing_them():
     source = open(os.path.join(_CPP, "bcir_jer_index.cpp"), encoding="utf-8").read()
     body = "\n".join(line for line in source.splitlines()
                      if not line.strip().startswith("*") and "/*" not in line)
-    for required in ("bcir_jer_scan_spend", "bcir_jer_scan_string_token",
+    for required in ("bcir_jer_scan_charge", "bcir_jer_scan_string_token",
                      "bcir_jer_scan_number_token", "bcir_jer_scan_literal_token"):
         assert required in body, f"the index does not go through {required}"
     for invented in ("0xD800", "0xDC00", "\\\\u", "string_bytes", "number_bytes",

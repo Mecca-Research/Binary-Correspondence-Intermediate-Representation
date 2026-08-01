@@ -60,6 +60,47 @@ def test_validation_scripts_use_operation_private_tempdirs() -> None:
         assert not fixed_names.search(text), relative
 
 
+def test_no_gate_pipes_a_writer_into_an_early_exiting_reader_under_pipefail() -> None:
+    """A gate that reports a MATCH as a failure is worse than no gate.
+
+    `printf '%s' "$blob" | grep -q PATTERN` looks exact and is a trap. `grep -q` exits at the
+    first match, the writer then takes SIGPIPE, and under `set -o pipefail` the pipeline's
+    status becomes 141 — so *finding* the pattern fails the check. It stays invisible while
+    the blob fits the 64 KiB pipe buffer, which means it surfaces when some unrelated object
+    grows rather than when the thing under test changes.
+
+    This is not hypothetical: it fired on `#jerindex` the moment per-tier instantiation made
+    the disassembly exceed the buffer, and reported "the tier fell back to scalar" about an
+    object that contained four NEON instructions.
+
+    The fix in both gates is to write to a file and grep the file, so this refuses the shape
+    rather than trusting everyone to remember.
+
+    Scoped to **whole-object disassembly**, which is the writer that is unbounded and grows
+    with the code under test. The same shape appears about seventy times elsewhere in `tools/`
+    piping a version string, a `find` result, or one function's body out of a `.s` file; those
+    writers cannot fill a 64 KiB buffer, so they are a latent footgun rather than a live bug
+    and are deliberately left alone rather than churned into a large unrelated diff.
+    """
+    offender = re.compile(r"\|\s*(?:grep\s+-[a-zA-Z]*q|head\b)")
+    unbounded = re.compile(r"objdump|disasm")
+    seen = 0
+    for script in sorted((_ROOT / "tools").rglob("*.sh")):
+        text = script.read_text(encoding="utf-8")
+        if "pipefail" not in text or "objdump" not in text:
+            continue
+        seen += 1
+        for number, line in enumerate(text.splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#") or not unbounded.search(line):
+                continue
+            assert not offender.search(line), (
+                f"{script.relative_to(_ROOT)}:{number} pipes disassembly into an "
+                f"early-exiting reader under `pipefail`; a match will SIGPIPE the writer and "
+                f"be reported as a failure. Write to a file and read the file.\n  {stripped}")
+    assert seen >= 2, f"expected the two SIMD gates to disassemble; found {seen}"
+
+
 def test_workflow_dependencies_are_sha_pinned_and_tokens_are_read_only() -> None:
     sha = re.compile(r"^[0-9a-f]{40}$")
     for workflow in sorted((_ROOT / ".github/workflows").glob("*.yml")):
