@@ -3932,6 +3932,26 @@ fi
 # scalar rail over 489 documents, and that an unavailable tier degrades rather than faults.
 # The two-host advantage clause of J5's gate is deliberately NOT checked on a shared runner;
 # 8 refuses "noisy timing thresholds" there. Self-skips if no C++ compiler is present.
+# The hosted structural index (#jerindex, J5's second half): `bcir_jer_index_scan` rebuilds
+# `bcir_jer_scan`'s DISPATCH on the exported cursor and reuses its token scanners verbatim, so
+# it is a second dispatch loop rather than a second scanner. Checked here as a build gate --
+# warning-clean under C++17, and the C core still freestanding with the cursor exported. The
+# equivalence differential itself lives in test_cpp_jer_index.py, where it can sweep 4.3's
+# work ceiling across every failure position.
+echo "[c-runtime] hosted structural index: the cursor seam builds clean (#jerindex)"
+if "${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Werror -I "${C}" -I "${ROOT}/runtime/cpp" \
+     -c "${ROOT}/runtime/cpp/bcir_jer_index.cpp" -o "${tmp}/bcir_jer_index.o" 2>/dev/null; then
+  echo "  ok: bcir_jer_index.cpp is warning-clean under C++17"
+  for std in c11 c23; do
+    "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Werror -I "${C}" \
+      -c "${C}/bcir_jer.c" -o /dev/null \
+      || { echo "  FAIL: exporting the scan cursor cost bcir_jer.c its freestanding build"; exit 1; }
+  done
+  echo "  ok: the C core stays freestanding-clean with the cursor exported"
+else
+  echo "  note: no C++17 compiler; the hosted index is optional by design"
+fi
+
 echo "[c-runtime] hosted SIMD rail: scalar-identical status/offset at every tier (#jersimd)"
 if bash "${ROOT}/tools/cpp/check_jer_simd.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
   echo "  PASS hosted SIMD rail (same corpus + same trace at every tier, no unsupported-CPU fault)"

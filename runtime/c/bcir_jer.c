@@ -336,11 +336,10 @@ bcir_jer_status bcir_jer_unescape(const uint8_t *data, size_t len,
  * through rather than accumulated by the caller afterwards: 4.3 asks for a ceiling on TOTAL
  * work, and a budget only checked between tokens is no ceiling on a single enormous one. */
 
-typedef struct scan_ctx {
-  const bcir_jer_limits *limits;
-  uint64_t work;
-  bcir_jer_diag *diag;
-} scan_ctx;
+/* The public cursor under its internal name. Declared in the header so a hosted accelerator
+ * can drive the same token scanners this file's own outer loop drives -- one definition, no
+ * copy to drift. */
+typedef bcir_jer_scan_cursor scan_ctx;
 
 static bcir_jer_status spend(scan_ctx *ctx, uint64_t amount, size_t offset) {
   ctx->work += amount;
@@ -504,6 +503,47 @@ static size_t match_literal(const uint8_t *data, size_t len, size_t pos,
 }
 
 /* --- stage 1: the bounding pass ------------------------------------------------------------- */
+
+/* --- the cursor, exported ------------------------------------------------------------------
+ *
+ * Thin by design. Each of these forwards to the static the outer loop below already calls,
+ * so a hosted accelerator and this file cannot disagree about what a string token is, what a
+ * number's digit limit is, or what an octet costs. Anything thicker here would be the start
+ * of the second semantics rail 4.1 forbids.
+ */
+
+void bcir_jer_scan_begin(bcir_jer_scan_cursor *cursor, const bcir_jer_limits *limits,
+                         bcir_jer_diag *diag) {
+  if (cursor == 0) return;
+  cursor->limits = limits;
+  cursor->work = 0;
+  cursor->diag = diag;
+}
+
+bcir_jer_status bcir_jer_scan_spend(bcir_jer_scan_cursor *cursor, uint64_t amount,
+                                    size_t offset) {
+  if (cursor == 0 || cursor->limits == 0) return BCIR_JER_INVALID;
+  return spend(cursor, amount, offset);
+}
+
+bcir_jer_status bcir_jer_scan_string_token(const uint8_t *data, size_t len, size_t pos,
+                                           bcir_jer_scan_cursor *cursor, size_t *end) {
+  if (cursor == 0 || cursor->limits == 0 || end == 0) return BCIR_JER_INVALID;
+  if (data == 0 && len != 0) return BCIR_JER_INVALID;
+  return scan_string(data, len, pos, cursor, end);
+}
+
+bcir_jer_status bcir_jer_scan_number_token(const uint8_t *data, size_t len, size_t pos,
+                                           bcir_jer_scan_cursor *cursor, size_t *end) {
+  if (cursor == 0 || cursor->limits == 0 || end == 0) return BCIR_JER_INVALID;
+  if (data == 0 && len != 0) return BCIR_JER_INVALID;
+  return scan_number(data, len, pos, cursor, end);
+}
+
+size_t bcir_jer_scan_literal_token(const uint8_t *data, size_t len, size_t pos) {
+  if (data == 0) return 0;
+  return match_literal(data, len, pos, 0);
+}
 
 bcir_jer_status bcir_jer_scan(const uint8_t *data, size_t len,
                               const bcir_jer_limits *limits,

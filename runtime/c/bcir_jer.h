@@ -172,6 +172,50 @@ typedef struct bcir_jer_level {
 /* The octets a `limits->depth`-deep document needs for its container stack. */
 size_t bcir_jer_stack_bytes(const bcir_jer_limits *limits);
 
+/* --- the bounding pass's cursor, for a hosted accelerator ---------------------------------
+ *
+ * `bcir_jer_scan`'s outer loop is a DISPATCH: skip whitespace, recognise a structural octet,
+ * or hand off to a token scanner. A hosted SIMD pass can accelerate that dispatch -- finding
+ * the next octet that is not whitespace, or the end of a plain string body -- and nothing
+ * else. The token scanners are where the SEMANTICS live: 4.3's string_bytes and
+ * number_digits limits, escape validity, the exponent ceiling, and the work charged for each.
+ *
+ * Reimplementing those in a second file is the "second semantics rail" 4.1 forbids and 8's
+ * table names as the risk. So they are exposed here and an accelerator reuses them VERBATIM.
+ * That is what makes a hosted structural index a second DISPATCH LOOP rather than a second
+ * SCANNER -- the difference between differential-testing one loop and differential-testing a
+ * parser.
+ *
+ * These are the same functions `bcir_jer_scan` itself calls. There is no copy to drift.
+ */
+typedef struct bcir_jer_scan_cursor {
+  const bcir_jer_limits *limits;
+  /* 4.3's budget, spent as octets are examined. One unit per octet plus one per structural
+   * event, so a pathological input cannot buy unbounded work with few bytes. */
+  uint64_t work;
+  bcir_jer_diag *diag;
+} bcir_jer_scan_cursor;
+
+void bcir_jer_scan_begin(bcir_jer_scan_cursor *cursor, const bcir_jer_limits *limits,
+                         bcir_jer_diag *diag);
+
+/* Charge `amount` units at `offset`. BCIR_JER_WORK_EXCEEDED carries the exact octet at which
+ * the budget ran out, which is why an accelerator that skips a run must still charge for it:
+ * the charge is observable output, not an implementation detail. */
+bcir_jer_status bcir_jer_scan_spend(bcir_jer_scan_cursor *cursor, uint64_t amount,
+                                    size_t offset);
+
+/* One string token, `pos` at its opening quote; `*end` receives the offset past the close. */
+bcir_jer_status bcir_jer_scan_string_token(const uint8_t *data, size_t len, size_t pos,
+                                           bcir_jer_scan_cursor *cursor, size_t *end);
+
+/* One number token, `pos` at its first octet (`-` or a digit). */
+bcir_jer_status bcir_jer_scan_number_token(const uint8_t *data, size_t len, size_t pos,
+                                           bcir_jer_scan_cursor *cursor, size_t *end);
+
+/* `true`, `false` or `null` at `pos`: the octets it consumes, or 0 when none matches. */
+size_t bcir_jer_scan_literal_token(const uint8_t *data, size_t len, size_t pos);
+
 bcir_jer_status bcir_jer_scan(const uint8_t *data, size_t len,
                               const bcir_jer_limits *limits,
                               bcir_jer_level *stack, size_t stack_entries,
