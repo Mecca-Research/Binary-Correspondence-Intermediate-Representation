@@ -692,7 +692,7 @@ errata admission.
 | **J2 — schema-plan compiler** · **DELIVERED** | Deterministic descriptor, bound derivation, instruction compilation, version/hash contract, and first `channel.json` schema | Met: [`jer_plan.py`](../bcir/asn1/jer_plan.py) regenerates byte-identically, refuses a bare ENUMERATED, an open type, a duplicate JSON member name and an undiscriminable UNWRAPPED choice at compile time, and its plan-driven trace equals the direct one |
 | **J3 — scalar C twin** | **Landed.** [`bcir_jer.{h,c}`](../runtime/c/bcir_jer.c): allocation-free bounded scanner, whole-document UTF-8 check, ECMA-404 parser driving a caller's event sink, §4.2 diagnostics, §3.3 unframing, and the twelfth fuzz target | Python/C error-class, byte-offset, required-capacity and event-trace parity in [`test_c_jer.py`](../bcir/tests/test_c_jer.py); `-O0 == -O3` over 667 cases in `check_runtime.sh` `#jer`; freestanding `-Werror` under C11 and C23; ASan/UBSan fuzz green |
 | **J4 — law and execution lowering** | **Landed.** Part 1 the transfer-syntax rail and generalized R24 (§5.3); part 2 the commuting projection [`dialect.py`](../bcir/asn1/dialect.py) and StreamPack over JER; part 3 the [`manifest.py`](../bcir/asn1/manifest.py) schemas for `channel.json`, `DeviceManifest` and the §6.2 selection envelope, with §5.4's two sinks | **§7.1's two laws hold** over all 26 law fixtures; **§5.4's commutation holds** over all nine built-in channels — `JER -> typed value -> claims` equals `JER -> direct builder`, both fed by one event walk; native StreamPack octets survive the JER round trip (§6.3) |
-| **J5 — hosted SIMD rail** | **Landed, gate MET for UTF-8 validation** ([`bcir_jer_simd.cpp`](../runtime/cpp/bcir_jer_simd.cpp)): a C++17 UTF-8 accept-scanner behind the scalar C ABI, with SSE2/AVX2/NEON tiers, runtime detection and scalar fallback | **Corpus and trace: met, on two materially different aarch64 implementations.** Every tier returns an identical status *and* byte offset to `bcir_jer_validate_utf8` over 489 documents — including multi-byte sequences straddling every offset in a 32-octet block and invalid sequences at every offset — on x86-64, on CI's Ampere/Cobalt **server** ARM runners, and under Termux on a Snapdragon 8 Gen 3 **phone** (`tiers 3 neon 1,0,0,1`). `#jersimd` also cross-compiles the tier this host cannot run and disassembles it, so a tier that silently degraded to scalar fails where nothing executes it — see §7.3.3. **No unsupported-CPU fault: met.** A tier the CPU does not advertise, or this build did not compile, degrades to scalar rather than faulting or refusing. **Advantage on at least two hosts: MET.** [`jer_simd_hosts.json`](../docs/measurements/jer_simd_hosts.json) holds one record per measured machine and [`simd_hosts.py`](../bcir/asn1/simd_hosts.py) decides admissibility against §8 — dedicated tenancy *corroborated by the host's own steal and throttling counters*, a vector tier, enough rounds for an order-statistic interval, and every round on one CPU. **Two hosts on two architectures are admitted**: Samsung S24+ / Snapdragon 8 Gen 3 on NEON at **10.4×** (`[886, 937]` ns against `[9739, 9739]`), and the Claude Code cloud container on x86-64 AVX2 at **23.2×** (`[552, 554]` against `[12807, 12818]`). A test fails if the store and this table ever disagree. §7.3 has the numbers and the mis-diagnosis that delayed them. Covers **UTF-8 validation only**; the structural index is a separate build and §7.4 says why it is not the same shape. See §7.3 |
+| **J5 — hosted SIMD rail** | **Landed, gate MET for UTF-8 validation** ([`bcir_jer_simd.cpp`](../runtime/cpp/bcir_jer_simd.cpp)): a C++17 UTF-8 accept-scanner behind the scalar C ABI, with SSE2/AVX2/NEON tiers, runtime detection and scalar fallback | **Corpus and trace: met, on two materially different aarch64 implementations.** Every tier returns an identical status *and* byte offset to `bcir_jer_validate_utf8` over 489 documents — including multi-byte sequences straddling every offset in a 32-octet block and invalid sequences at every offset — on x86-64, on CI's Ampere/Cobalt **server** ARM runners, and under Termux on a Snapdragon 8 Gen 3 **phone** (`tiers 3 neon 1,0,0,1`). `#jersimd` also cross-compiles the tier this host cannot run and disassembles it, so a tier that silently degraded to scalar fails where nothing executes it — see §7.3.3. **No unsupported-CPU fault: met.** A tier the CPU does not advertise, or this build did not compile, degrades to scalar rather than faulting or refusing. **Advantage on at least two hosts: MET.** [`jer_simd_hosts.json`](../docs/measurements/jer_simd_hosts.json) holds one record per measured machine and [`simd_hosts.py`](../bcir/asn1/simd_hosts.py) decides admissibility against §8 — dedicated tenancy *corroborated by the host's own steal and throttling counters*, a vector tier, enough rounds for an order-statistic interval, and every round on one CPU. **Two hosts on two architectures are admitted**: Samsung S24+ / Snapdragon 8 Gen 3 on NEON at **10.4×** (`[886, 937]` ns against `[9739, 9739]`), and the Claude Code cloud container on x86-64 AVX2 at **23.2×** (`[552, 554]` against `[12807, 12818]`). A test fails if the store and this table ever disagree. §7.3 has the numbers and the mis-diagnosis that delayed them. Covers **UTF-8 validation only**; the structural index is a separate build and §7.4 says why it is not the same shape. Its **seam is now landed** ([`bcir_jer_index.cpp`](../runtime/cpp/bcir_jer_index.cpp)): `bcir_jer_scan_cursor` exports the dispatch's state so the index rebuilds *only the dispatch* and reuses the token scanners verbatim, proven identical to `bcir_jer_scan` in status, offset, `needed` and node count across fifteen work ceilings per document. The rail is still scalar — the vector block scan behind it is not started. See §7.4.1 |
 | **J6 — certified K_BCIR choice** | **Landed on the Python oracle** ([`certified.py`](../bcir/asn1/certified.py)): distribution-free prediction intervals from order statistics, a frozen generation-tagged cost table with declared provenance, §6.2's certificate, and a production select that **refuses** an oracle table for any timing objective. The native microbench protocol and RCSP integration remain open | Exact sizes decide wire-size objectives with no timing consulted; repeatability is a refusal rather than an average; legality-first and canonical-or-excluded precede every comparison; deterministic selection on two tables, each certificate bound to the table digest it read — [`test_asn1_certified.py`](../bcir/tests/test_asn1_certified.py) |
 | **J7 — driver experiment** | Userspace/simulator driver specification ingest, generated views, and sequential BCIR-Linux module comparison | D0–D3 driver gates, signed modules, direct/Linux trace parity, teardown/restart tests, and controlled performance evidence |
 
@@ -983,8 +983,42 @@ Two consequences for any structural index:
    corpus, scalar fallback, and differential fuzzing against `bcir_jer_scan`'s events,
    diagnostics, offsets *and* work accounting.
 
-That second option is the real shape of the work, and it is not a follow-on to the UTF-8
-rail — it is a J3-sized build of its own. It is **not started**.
+   *This overstated the choice.* Both options assume the state `bcir_jer_scan` carries is
+   indivisible, so that reaching it means either breaching §4.1's layering or duplicating
+   the whole scanner. It is not: the state splits at a seam, and §7.4.1 records where.
+
+### 7.4.1 The seam: a second dispatch loop, not a second scanner
+
+`bcir_jer_scan`'s loop is a **dispatch** — skip whitespace, recognise a structural octet, or
+hand off to a token scanner — wrapped around token scanners that hold the semantics: §4.3's
+`string_bytes` and `number_digits` limits, escape validity, the exponent ceiling. Only the
+dispatch is vectorizable. Nothing about finding the next non-whitespace octet requires
+knowing what a valid `\u` escape is.
+
+So `bcir_jer.h` exports the dispatch's state as `bcir_jer_scan_cursor` — the limits, the work
+spent, the diagnostic sink — with four entry points onto the existing scanners
+(`bcir_jer_scan_spend`, `..._string_token`, `..._number_token`, `..._literal_token`). They are
+thin forwards to statics that already existed; no semantics moved, and the freestanding core
+stays freestanding under C11 and C23.
+
+`runtime/cpp/bcir_jer_index.cpp` then rebuilds **only the dispatch**. That is what makes it a
+second dispatch loop rather than the second scanner consequence 2 predicted, and it changes
+what §8's table has to cover: the differential still needs the same C ABI, the same corpus, a
+scalar fallback and fuzzing against status, offset, `needed` and node count — but the surface
+under test is one loop, not a parser. §4.1's "no second semantics rail" survives the
+optimization instead of being spent on it.
+
+**The landed rail is scalar, deliberately.** A differential that only begins to exist
+alongside the optimization cannot tell you which of the two broke it. So the seam is proven
+sufficient first: the rebuilt loop reproduces `bcir_jer_scan`'s status, offset, `needed` and
+node count over the corpus, at fifteen work ceilings per document, including ceilings that
+fail *inside* a bulk whitespace charge — the one place the two rails compute the answer
+differently rather than identically. A structural test reads the source and refuses it if it
+names a §4.3 limit or a UTF-8 boundary of its own.
+
+**What remains** is the vector step itself: `whitespace_run` is the single function the tier
+dispatch replaces, and consequence 1's closed form is what lets a block-at-a-time scan charge
+exactly. The seam is landed and green; the SIMD block scan behind it is **not started**.
 
 ## 8. Validation and performance method
 
