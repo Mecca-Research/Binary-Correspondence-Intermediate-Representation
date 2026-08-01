@@ -169,11 +169,18 @@ fi
 
 # Contention accounting, sampled ACROSS the measured rounds. `--tenancy dedicated` is a claim
 # about the machine; these two counters are the machine's own record of whether it held.
+#
+# UNREADABLE IS `na`, NEVER 0. Android restricts /proc access, so on the phone -- the target
+# this most needs to be right on -- /proc/stat may simply not be readable. Reporting 0 there
+# would say "the counter was checked and did not move", which is a stronger claim than "the
+# counter could not be checked" and the wrong one. `calibration.py` treats a null counter as
+# *unreported* and declines to refuse on it, precisely so an honest unknown cannot be
+# laundered into a clean bill of health.
 read_contention() {
-  local steal=0 throttled=0
+  local steal="na" throttled="na"
   if [ -r /proc/stat ]; then
     while read -r name _u _n _s _i _w _q _sq st _rest; do
-      [ "${name}" = "cpu" ] && { steal="${st:-0}"; break; }
+      [ "${name}" = "cpu" ] && { steal="${st:-na}"; break; }
     done </proc/stat
   fi
   for f in /sys/fs/cgroup/cpu.stat /sys/fs/cgroup/cpu/cpu.stat; do
@@ -215,9 +222,23 @@ else
 fi
 
 read -r STEAL_AFTER THROTTLED_AFTER <<<"$(read_contention)"
-STEAL_DELTA=$((STEAL_AFTER - STEAL_BEFORE))
-THROTTLED_DELTA=$((THROTTLED_AFTER - THROTTLED_BEFORE))
+
+# A delta only exists if BOTH ends were readable. If either was not, the answer is "unknown",
+# which travels as `na` and becomes null in the record.
+delta() {
+  case "$1|$2" in
+    na\|*|*\|na) printf 'na\n' ;;
+    *) printf '%s\n' "$(( $2 - $1 ))" ;;
+  esac
+}
+STEAL_DELTA="$(delta "${STEAL_BEFORE}" "${STEAL_AFTER}")"
+THROTTLED_DELTA="$(delta "${THROTTLED_BEFORE}" "${THROTTLED_AFTER}")"
 echo "[calibrate] contention during the rounds: steal ${STEAL_DELTA} ticks, throttled ${THROTTLED_DELTA} us" >&2
+if [ "${STEAL_DELTA}" = "na" ] || [ "${THROTTLED_DELTA}" = "na" ]; then
+  echo "[calibrate] note: a counter was unreadable on this host (common on Android). It is" >&2
+  echo "            recorded as null -- unreported, not zero -- so the reader will not treat" >&2
+  echo "            an unchecked counter as evidence the declaration held." >&2
+fi
 
 # The counters are stamped into the record AFTER the rounds, because a delta is only knowable
 # once they are over. Rewriting the two fields here keeps the measurement and the accounting
@@ -226,7 +247,12 @@ python3 - "${tmp}/record.json" "${STEAL_DELTA}" "${THROTTLED_DELTA}" <<'PYSTAMP'
 import json
 import sys
 
-path, steal, throttled = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+def counter(text):
+    """`na` -> null. An unreadable counter is unreported, which is not the same as zero."""
+    return None if text == "na" else int(text)
+
+
+path, steal, throttled = sys.argv[1], counter(sys.argv[2]), counter(sys.argv[3])
 with open(path, encoding="utf-8") as handle:
     body = "".join(line for line in handle if not line.startswith("#"))
 record = json.loads(body)
