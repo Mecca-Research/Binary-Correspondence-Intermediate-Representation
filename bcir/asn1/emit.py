@@ -110,6 +110,18 @@ def flatten(plan: EncodePlan, value) -> bytes:
     return bytes(writer.out)
 
 
+def flatten_value(node: EncodeNode, value, path: str = "") -> bytes:
+    """Project one value against ONE node, rather than against a whole plan.
+
+    The plan compiler uses this to record a DEFAULT in stream form. Exposed here rather than
+    reimplemented there because the recorded default is compared against a slice of a real
+    stream, and two spellings of "what a value looks like" would eventually disagree.
+    """
+    writer = _Writer()
+    _flatten_node(node, value, writer, path or node.type_name)
+    return bytes(writer.out)
+
+
 def _flatten_node(node: EncodeNode, value, writer: _Writer, path: str) -> None:
     kind = node.kind
     if kind == "boolean":
@@ -156,6 +168,72 @@ def _flatten_node(node: EncodeNode, value, writer: _Writer, path: str) -> None:
         _flatten_node(chosen[0].node, inner, writer, f"{path}/{name}")
     else:
         raise Asn1Error(f"{path}: no flattening rule for plan kind {kind!r}")
+
+
+# --- the DEFAULT omission rule, which is per-candidate ------------------------------------------
+
+
+def _skip_node(node: EncodeNode, reader: _Reader) -> None:
+    """Advance the reader past exactly one node's value, emitting nothing.
+
+    The mirror of `_flatten_node`, and the only way to ask "what octets does this member
+    occupy" without producing them. A wrong answer here does not corrupt an encoding
+    quietly: it desynchronizes the reader, and `emit` refuses a stream with anything left
+    over.
+    """
+    kind = node.kind
+    if kind == "boolean":
+        reader.u8()
+    elif kind in ("integer", "enumerated"):
+        reader.take(reader.u8())
+    elif kind == "null":
+        return
+    elif kind in ("octetstring", "string", "oid"):
+        reader.blob()
+    elif kind == "sequence":
+        for member in node.members:
+            if (member.optional or member.has_default) and not reader.u8():
+                continue
+            _skip_node(member.node, reader)
+    elif kind == "sequence-of":
+        for _ in range(reader.u32()):
+            _skip_node(node.element, reader)
+    elif kind == "choice":
+        index = reader.u32()
+        chosen = [m for m in node.members if m.index == index]
+        if not chosen:
+            raise Asn1Error(f"CHOICE index {index} is outside the plan's alternatives")
+        _skip_node(chosen[0].node, reader)
+    else:
+        raise Asn1Error(f"no skip rule for plan kind {kind!r}")
+
+
+def _present(member, reader: _Reader, *, omit_default: bool) -> bool:
+    """Read a component's presence octet and apply the candidate's DEFAULT rule.
+
+    X.690 §11.5 forbids DER an encoding for a component whose value equals its default;
+    X.696 §31.9 and X.697's CJER say the same, and X.691 §19.5 says it for CANONICAL-PER.
+    **Plain BER and BASIC-PER do not** — they leave it to the sender, which is precisely the
+    implementation freedom the canonical rules exist to remove. So this is not a property of
+    the value and cannot live in the format-neutral stream; every candidate asks it
+    separately, and `omit_default` is which answer this one gives.
+
+    When the rule applies and the value matches, the component's octets are *consumed and
+    discarded*: the stream still describes it, and leaving it unread would leave a suffix
+    `emit` correctly refuses.
+    """
+    if not (member.optional or member.has_default):
+        return True
+    if not reader.u8():
+        return False
+    if not (omit_default and member.has_default and member.default_stream):
+        return True
+    start = reader.at
+    _skip_node(member.node, reader)
+    if reader.data[start:reader.at] == member.default_stream:
+        return False
+    reader.at = start
+    return True
 
 
 # --- X.690: DER and BER ---------------------------------------------------------------------
@@ -231,7 +309,11 @@ def _emit_x690(node: EncodeNode, reader: _Reader, *, indefinite: bool) -> bytes:
         content = bytearray()
         if kind == "sequence":
             for member in node.members:
-                if (member.optional or member.has_default) and not reader.u8():
+                # X.690 §11 is titled "Restrictions on BER employed by both CER and DER", so
+                # §11.5's ban on encoding a component equal to its default binds DER and
+                # leaves BER free. That is the same seam §8.1.3.6 opens for the length form,
+                # and it is why the two candidates are not aliases.
+                if not _present(member, reader, omit_default=not indefinite):
                     continue
                 content += _member_x690(member, reader, indefinite=indefinite)
         else:
@@ -322,7 +404,10 @@ def _emit_jer(node: EncodeNode, reader: _Reader) -> str:
     if kind == "sequence":
         parts = []
         for member in node.members:
-            if (member.optional or member.has_default) and not reader.u8():
+            # This row is CJER: `encode_jer` defaults to CANONICAL-JER, which omits a
+            # component equal to its default. BASIC-JER emits it, and the two really do
+            # differ -- the oracle produces `{"a":1,"b":false}` under BASIC.
+            if not _present(member, reader, omit_default=True):
                 continue
             # §22.2: the member's IDENTIFIER is what a JER document carries — the whole
             # reason this emitter cannot be schema-free.
@@ -478,7 +563,10 @@ def _emit_oer(node: EncodeNode, reader: _Reader) -> bytes:
         present: dict[int, bool] = {}
         for member in node.members:
             if member.optional or member.has_default:
-                here = bool(reader.u8())
+                # §31.9: a DEFAULT component is encoded as ABSENT when it equals its
+                # default, and the preamble bit must say so too -- writing a 1 and then no
+                # field would misalign every component after it.
+                here = _present(member, reader, omit_default=True)
                 present[member.index] = here
                 bits.append(1 if here else 0)
                 if not here:

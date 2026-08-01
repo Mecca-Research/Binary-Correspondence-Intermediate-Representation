@@ -3626,6 +3626,14 @@ CASES = [
     (seq(Component("a", I), Component("b", I, optional=True)), {"a": 1, "b": 2}),
     (seq(Component("a", I), Component("b", I, optional=True)), {"a": 1}),
     (seq(Component("a", I), Component("b", B, default=False)), {"a": 1}),
+    # Version 5: a DEFAULT component whose value EQUALS the default must be OMITTED (X.690
+    # 11.5, X.696 31.9, CJER). Every row above supplies one that differs, which is exactly
+    # how three emitters shipped emitting it.
+    (seq(Component("a", I), Component("b", B, default=False)), {"a": 1, "b": False}),
+    (seq(Component("a", I), Component("b", I, default=7)), {"a": 1, "b": 7}),
+    (seq(Component("a", I), Component("b", S, default="hi")), {"a": 1, "b": "hi"}),
+    (seq(*[Component("c%d" % i, I, default=i) for i in range(12)]),
+     dict(("c%d" % i, (i if i % 2 else 99)) for i in range(12))),
     (seq(*[Component("c%d" % i, I, optional=True) for i in range(12)]),
      dict(("c%d" % i, i) for i in range(0, 12, 2))),
     (seq(*[Component("c%d" % i, I, optional=True) for i in range(12)]), {}),

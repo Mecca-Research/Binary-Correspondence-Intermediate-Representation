@@ -60,6 +60,18 @@ _CORPUS = (
      {"a": 1}),
     ("a default present", _seq(Component("a", _I), Component("b", _B, default=False)),
      {"a": 1, "b": True}),
+    # The row whose absence hid a bug in every emitter for four plan versions: X.690 §11.5,
+    # X.696 §31.9 and CJER all require a component EQUAL to its default to be omitted, and
+    # the corpus only ever supplied one that differed.
+    ("a default supplied but equal to the default",
+     _seq(Component("a", _I), Component("b", _B, default=False)), {"a": 1, "b": False}),
+    ("an integer default supplied and equal",
+     _seq(Component("a", _I), Component("b", _I, default=7)), {"a": 1, "b": 7}),
+    ("a string default supplied and equal",
+     _seq(Component("a", _I), Component("b", _S, default="hi")), {"a": 1, "b": "hi"}),
+    ("twelve defaults, every other one equal",
+     _seq(*[Component(f"c{i}", _I, default=i) for i in range(12)]),
+     {f"c{i}": (i if i % 2 else 99) for i in range(12)}),
     # Twelve optionals is more than one OER preamble octet, which is where a bitmap that
     # forgot to carry into a second octet stops agreeing with the oracle.
     ("twelve optionals, alternate present",
@@ -511,7 +523,7 @@ def test_what_still_stands_between_this_plan_and_a_per_emitter():
     from bcir.asn1.encode_plan import PLAN_VERSION
     from bcir.asn1.per import PerRules, PerVariant, encode_per
 
-    assert PLAN_VERSION == 4, "plan version moved; re-derive what this test asserts"
+    assert PLAN_VERSION == 5, "plan version moved; re-derive what this test asserts"
 
     # The extension marker: two SEQUENCEs differing only there encode differently under PER,
     # and the plan now tells them apart. This is the fix, asserted as one.
@@ -551,3 +563,116 @@ def test_what_still_stands_between_this_plan_and_a_per_emitter():
         raise AssertionError(
             "the plan now compiles extension additions; that was the last PER prerequisite, "
             "so build the emitter rather than deleting this test")
+
+
+# --- plan version 5: the DEFAULT omission rule --------------------------------------------
+
+
+def test_a_component_equal_to_its_default_is_omitted_by_the_rules_that_require_it():
+    """The fourth defect of the same family, and the one that hit every emitter at once.
+
+    X.690 §11.5 forbids DER an encoding for a component whose value equals its default;
+    X.696 §31.9 and X.697's CJER say the same. Versions 1–4 emitted it, because the neutral
+    value stream carries only a *presence* flag and presence was taken as the whole answer.
+
+    The corpus supplied `{"a": 1, "b": True}` against `DEFAULT FALSE` — a default component
+    that *differed* — and never one that matched. One row, four plan versions, three wrong
+    emitters.
+    """
+    kind = _seq(Component("a", _I), Component("b", _B, default=False))
+    plan = _plan(kind, "d")
+    equal, differing, absent = {"a": 1, "b": False}, {"a": 1, "b": True}, {"a": 1}
+    # Supplying the default is indistinguishable from omitting it, which is the rule.
+    for rules in (EmitRules.DER, EmitRules.JER, EmitRules.COER):
+        assert (emit(plan, flatten(plan, equal), rules=rules)
+                == emit(plan, flatten(plan, absent), rules=rules)), rules
+        assert (emit(plan, flatten(plan, differing), rules=rules)
+                != emit(plan, flatten(plan, absent), rules=rules)), rules
+    # And each against its own oracle, which is what makes the claim more than internal.
+    assert emit(plan, flatten(plan, equal), rules=EmitRules.DER) == \
+        encode_tlv(kind.encode(equal))
+    assert emit(plan, flatten(plan, equal), rules=EmitRules.JER) == encode_jer(kind, equal)
+    assert emit(plan, flatten(plan, equal), rules=EmitRules.COER) == encode_oer(kind, equal)
+
+
+def test_ber_keeps_the_freedom_der_gives_up():
+    """The rule is per-candidate, and BER is the candidate that does not have it.
+
+    X.690 clause 11 is titled *"Restrictions on BER employed by both CER and DER"*, so
+    §11.5's ban binds DER and leaves plain BER free to send the component. If this emitter
+    applied the rule everywhere, that freedom would vanish silently — and the BER row of the
+    cost table would stop measuring BER.
+
+    This is the same seam §8.1.3.6 opens for the length form: two candidates that differ
+    exactly where the standard says they may.
+    """
+    kind = _seq(Component("a", _I), Component("b", _B, default=False))
+    plan = _plan(kind, "d")
+    equal = flatten(plan, {"a": 1, "b": False})
+    absent = flatten(plan, {"a": 1})
+    assert emit(plan, equal, rules=EmitRules.BER) != emit(plan, absent, rules=EmitRules.BER)
+    assert emit(plan, equal, rules=EmitRules.DER) == emit(plan, absent, rules=EmitRules.DER)
+
+
+def test_the_default_is_compared_as_stream_octets_which_is_a_canonical_form():
+    """Why byte identity in the stream is *value* identity, checked rather than asserted.
+
+    The comparison is a memcmp against a constant the plan carries, which is only sound
+    because the neutral stream is canonical: an integer is minimal two's complement, a
+    string is UTF-8, a boolean is 0 or 1, a SEQUENCE's components are in plan order. Two
+    Python values that are `==` therefore flatten to identical octets.
+
+    If that ever stopped holding, a default would compare unequal and the component would be
+    emitted — a valid document of a different value, which is the failure mode this whole
+    line of fixes is about.
+    """
+    from bcir.asn1.emit import flatten_value
+
+    for kind, one, two in (
+            (_I, 7, 7),
+            (_I, -(2 ** 70), -(2 ** 70)),
+            (_B, False, False),
+            (_S, "café", "café"),
+            (_O, b"\x00\xff", bytes([0, 255])),
+            (SequenceOf(_I, "S"), [1, 2, 3], (1, 2, 3)),
+    ):
+        node = _plan(_seq(Component("v", kind)), "c").root.members[0].node
+        assert flatten_value(node, one) == flatten_value(node, two), kind
+
+
+def test_a_default_too_large_for_the_format_is_refused_not_truncated():
+    """A truncated default compares unequal, which silently re-admits the component."""
+    from bcir.asn1.encode_plan import DEFAULT_MAX
+
+    kind = _seq(Component("a", _I),
+                Component("b", _S, default="x" * (DEFAULT_MAX + 1)))
+    try:
+        compile_encode_plan(kind, module="Test", type_name="wide")
+    except Asn1Error as error:
+        assert "§11.5" in str(error) and str(DEFAULT_MAX) in str(error), error
+    else:
+        raise AssertionError("a DEFAULT past the format's limit compiled")
+
+
+def test_the_skip_walks_exactly_as_far_as_the_flattener_wrote():
+    """The comparison needs a second reading of the stream grammar, so it is pinned.
+
+    `_skip_node` mirrors `_flatten_node`. A wrong answer does not corrupt an encoding
+    quietly — it desynchronizes the reader and `emit` refuses the leftovers — but "loudly
+    wrong" is not the same as "right", and every shape the flattener writes is walked here.
+    """
+    from bcir.asn1.emit import _Reader, _skip_node
+
+    shapes = (
+        (_I, 2 ** 70), (_B, True), (_N, NULL), (_O, b"\x01\x02"), (_S, "hi"),
+        (_OID, Oid((1, 3, 6, 1))), (SequenceOf(_I, "S"), [1, 2, 3]),
+        (_seq(Component("x", _I), Component("y", _B, optional=True), name="In"), {"x": 1}),
+        (_CHOICE, ("txt", "z")),
+    )
+    for kind, value in shapes:
+        node = _plan(_seq(Component("v", kind)), "s").root.members[0].node
+        from bcir.asn1.emit import flatten_value
+        stream = flatten_value(node, value)
+        reader = _Reader(stream)
+        _skip_node(node, reader)
+        assert reader.at == len(stream), f"{kind}: skipped {reader.at} of {len(stream)}"

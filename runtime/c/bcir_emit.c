@@ -338,6 +338,20 @@ static bcir_emit_status plan_read_node(plan_build *b, uint32_t *out_index, uint3
     if (!plan_field(&b->r, "exp", &start, &len) || len != 1)
       return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
     m->explicit_tag = (uint8_t)(b->r.text[start] == '1');
+    if (!plan_field(&b->r, "dval", &start, &len))
+      return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+    m->default_len = 0;
+    if (!(len == 1 && b->r.text[start] == '-')) {
+      if ((len & 1u) != 0) return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+      if (len / 2 > BCIR_EMIT_DEFAULT_MAX) return plan_fail(b, BCIR_EMIT_PLAN_TOO_BIG);
+      for (n = 0; n < len; n += 2) {
+        int hi = plan_hex_nibble(b->r.text[start + n]);
+        int lo = plan_hex_nibble(b->r.text[start + n + 1]);
+        if (hi < 0 || lo < 0) return plan_fail(b, BCIR_EMIT_PLAN_MALFORMED);
+        m->default_stream[n / 2] = (uint8_t)((hi << 4) | lo);
+      }
+      m->default_len = (uint8_t)(len / 2);
+    }
     plan_next_line(&b->r);
 
     status = plan_read_node(b, &child, depth + 1);
@@ -461,6 +475,104 @@ static void put(emit_ctx *c, uint8_t byte) {
 static void put_bytes(emit_ctx *c, const uint8_t *data, size_t len) {
   size_t i;
   for (i = 0; i < len; i++) put(c, data[i]);
+}
+
+
+/* --- the DEFAULT omission rule, which is per-candidate ------------------------------------- */
+
+static int emit_memeq(const uint8_t *a, const uint8_t *b, size_t len) {
+  size_t i;
+  for (i = 0; i < len; i++)
+    if (a[i] != b[i]) return 0;
+  return 1;
+}
+
+/* Advance past exactly one node's value, emitting nothing -- the mirror of the flattener.
+ *
+ * `limit` is an absolute stream offset past which it stops early. This is only ever called
+ * to compare against a DEFAULT of at most BCIR_EMIT_DEFAULT_MAX octets, so a value that has
+ * already outrun the default cannot match it and there is nothing to gain by walking the
+ * rest. That also bounds a SEQUENCE OF whose elements consume NO stream octets -- the same
+ * unbounded-count shape the fuzzer found once already. */
+static int skip_node(emit_ctx *c, uint32_t node_index, uint32_t depth, size_t limit) {
+  const bcir_emit_node *node = &c->plan->nodes[node_index];
+  uint8_t byte = 0;
+  uint32_t count = 0, i;
+  const uint8_t *data = NULL;
+
+  if (depth > c->max_depth) return ctx_fail(c, BCIR_EMIT_TOO_DEEP);
+  if (c->at >= limit) return 1;
+  switch ((bcir_emit_kind)node->kind) {
+    case BCIR_EMIT_BOOLEAN:
+      return rd_u8(c, &byte);
+    case BCIR_EMIT_INTEGER:
+    case BCIR_EMIT_ENUMERATED:
+      return rd_u8(c, &byte) && rd_take(c, byte, &data);
+    case BCIR_EMIT_NULL:
+      return 1;
+    case BCIR_EMIT_OCTETSTRING:
+    case BCIR_EMIT_STRING:
+    case BCIR_EMIT_OID:
+      return rd_u32(c, &count) && rd_take(c, count, &data);
+    case BCIR_EMIT_SEQUENCE:
+      for (i = 0; i < node->member_count; i++) {
+        const bcir_emit_member *m = &c->plan->members[node->first_member + i];
+        if (m->optional || m->has_default) {
+          if (!rd_u8(c, &byte)) return 0;
+          if (!byte) continue;
+        }
+        if (!skip_node(c, m->node, depth + 1, limit)) return 0;
+        if (c->at >= limit) return 1;
+      }
+      return 1;
+    case BCIR_EMIT_SEQUENCE_OF:
+      if (!rd_u32(c, &count)) return 0;
+      if (node->element < 0) return ctx_fail(c, BCIR_EMIT_PLAN_MALFORMED);
+      for (i = 0; i < count; i++) {
+        if (!skip_node(c, (uint32_t)node->element, depth + 1, limit)) return 0;
+        if (c->at >= limit) return 1;
+      }
+      return 1;
+    case BCIR_EMIT_CHOICE:
+      if (!rd_u32(c, &count)) return 0;
+      if (count >= node->member_count) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+      return skip_node(c, c->plan->members[node->first_member + count].node, depth + 1,
+                       limit);
+    default:
+      return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+  }
+}
+
+/* Read a component's presence octet and apply the candidate's DEFAULT rule.
+ *
+ * X.690 11.5 forbids DER an encoding for a component whose value equals its default; X.696
+ * 31.9 and X.697's CJER say the same. PLAIN BER DOES NOT -- 11 is titled "Restrictions on
+ * BER employed by both CER and DER", so the freedom is BER's, which is why `omit_default` is
+ * a parameter rather than a constant. The rule is therefore per-CANDIDATE and cannot live in
+ * the format-neutral value stream, which carries only a presence flag.
+ *
+ * When the rule applies and the value matches, the component's octets are CONSUMED and
+ * discarded: the stream still describes it, and leaving it unread would leave a suffix
+ * `bcir_emit` correctly refuses as STREAM_LONG. */
+static int member_present(emit_ctx *c, const bcir_emit_member *m, int omit_default,
+                          uint32_t depth, int *present) {
+  size_t start;
+  uint8_t byte = 0;
+
+  *present = 1;
+  if (!(m->optional || m->has_default)) return 1;
+  if (!rd_u8(c, &byte)) return 0;
+  if (!byte) { *present = 0; return 1; }
+  if (!omit_default || !m->has_default || m->default_len == 0) return 1;
+  start = c->at;
+  if (!skip_node(c, m->node, depth, start + (size_t)m->default_len + 1)) return 0;
+  if (c->at - start == (size_t)m->default_len &&
+      emit_memeq(c->stream + start, m->default_stream, m->default_len)) {
+    *present = 0;
+    return 1;
+  }
+  c->at = start;
+  return 1;
 }
 
 /* --- X.690 primitives ---------------------------------------------------------------------- */
@@ -682,10 +794,9 @@ static size_t der_measure_content(emit_ctx *c, uint32_t node_index, uint32_t dep
     case BCIR_EMIT_SEQUENCE:
       for (i = 0; i < node->member_count; i++) {
         const bcir_emit_member *m = &c->plan->members[node->first_member + i];
-        if (m->optional || m->has_default) {
-          if (!rd_u8(c, &byte)) return 0;
-          if (!byte) continue;
-        }
+        int present = 1;
+        if (!member_present(c, m, 1, depth + 1, &present)) return 0;
+        if (!present) continue;
         content += der_measure_member(c, m, depth + 1);
         if (c->status != BCIR_EMIT_OK && c->status != BCIR_EMIT_SCRATCH_SHORT) return 0;
       }
@@ -782,10 +893,9 @@ static int der_write_content(emit_ctx *c, uint32_t node_index, uint32_t depth) {
     case BCIR_EMIT_SEQUENCE:
       for (i = 0; i < node->member_count; i++) {
         const bcir_emit_member *m = &c->plan->members[node->first_member + i];
-        if (m->optional || m->has_default) {
-          if (!rd_u8(c, &byte)) return 0;
-          if (!byte) continue;
-        }
+        int present = 1;
+        if (!member_present(c, m, 1, depth + 1, &present)) return 0;
+        if (!present) continue;
         if (!der_write_member(c, m, depth + 1)) return 0;
       }
       return 1;
@@ -926,10 +1036,9 @@ static int ber_content(emit_ctx *c, uint32_t node_index, uint32_t depth) {
     case BCIR_EMIT_SEQUENCE:
       for (i = 0; i < node->member_count; i++) {
         const bcir_emit_member *m = &c->plan->members[node->first_member + i];
-        if (m->optional || m->has_default) {
-          if (!rd_u8(c, &byte)) return 0;
-          if (!byte) continue;
-        }
+        int present = 1;
+        if (!member_present(c, m, 0, depth + 1, &present)) return 0;
+        if (!present) continue;
         if (!ber_member(c, m, depth + 1)) return 0;
       }
       return 1;
@@ -1149,10 +1258,9 @@ static int jer_node(emit_ctx *c, uint32_t node_index, uint32_t depth) {
       put(c, '{');
       for (i = 0; i < node->member_count; i++) {
         const bcir_emit_member *m = &c->plan->members[node->first_member + i];
-        if (m->optional || m->has_default) {
-          if (!rd_u8(c, &byte)) return 0;
-          if (!byte) continue;
-        }
+        int present = 1;
+        if (!member_present(c, m, 1, depth + 1, &present)) return 0;
+        if (!present) continue;
         if (!first) put(c, ',');
         first = 0;
         /* 22.2: the member's IDENTIFIER is what a JER document carries -- the whole reason
@@ -1378,8 +1486,13 @@ static int oer_node(emit_ctx *c, uint32_t node_index, uint32_t depth) {
 
       for (i = 0; i < node->member_count; i++) {
         const bcir_emit_member *m = &c->plan->members[node->first_member + i];
+        int present = 1;
+        /* 31.9: a DEFAULT component equal to its default is ABSENT, and the PREAMBLE bit
+         * must say so too -- writing a 1 and then no field would misalign every component
+         * after it. */
+        if (!member_present(c, m, 1, depth + 1, &present)) return 0;
         if (m->optional || m->has_default) {
-          if (!rd_u8(c, &byte)) return 0;
+          byte = (uint8_t)present;
           if (byte && c->out) {
             /* Guarded exactly as `put` is: count always, write only where there is room.
              * A short buffer drops these bits along with everything else past the cap, and

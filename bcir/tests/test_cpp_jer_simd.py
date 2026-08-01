@@ -233,10 +233,18 @@ def test_one_multi_byte_octet_no_longer_costs_the_whole_document():
     its entire acceleration: 1.00x. The runs now ALTERNATE, so the ASCII either side of a
     short multi-byte stretch is still vectorized.
 
-    This is asserted as a *ratio against the all-ASCII case* rather than an absolute
-    speedup, because that is the property that regressed before: an early accent must not
-    collapse the document to scalar. A generous bound, since the claim is "the cliff is
-    gone", not "the number is exactly this".
+    This is asserted as a **ratio of ratios** — the accented document's speedup against the
+    all-ASCII document's, both measured in the same run — and that shape is the point rather
+    than a convenience. An absolute `early_gain > 2.0` was here first and failed under
+    `-j 2` while the same binary measured well past it standalone: contention inflates the
+    scalar and vector medians together, so a fixed multiple is a claim about the runner.
+    Dividing one gain by the other cancels whatever the host is doing to both.
+
+    §8 settles this: shared CI gates *"validity and trend evidence, not noisy timing
+    thresholds"*, and the absolute numbers live in §7.3 with the host that produced them.
+    The claim kept here is the one the defect actually violated — an early accent must not
+    collapse the document to scalar — which at 1.00× versus a clean document's 25× fails
+    this by a factor of twenty whatever else the machine is doing.
     """
     if not _available():
         return
@@ -246,12 +254,11 @@ def test_one_multi_byte_octet_no_longer_costs_the_whole_document():
         early = _ascii_document().replace(b'"add"', '"café"'.encode(), 1)
         clean_gain = _median_ns(binary, "scalar", clean) / _median_ns(binary, "auto", clean)
         early_gain = _median_ns(binary, "scalar", early) / _median_ns(binary, "auto", early)
-    assert early_gain > 2.0, (
-        f"one multi-byte octet dropped the speedup to {early_gain:.2f}x; the alternating "
-        f"walk regressed to a single hand-off")
     assert early_gain > clean_gain * 0.4, (
         f"an early accent cost {clean_gain:.1f}x -> {early_gain:.1f}x; the two should be "
-        f"close, because only the short multi-byte run goes scalar")
+        f"close, because only the short multi-byte run goes scalar. The pre-fix behaviour "
+        f"handed everything from the first non-ASCII octet to the end of the document to "
+        f"the scalar rail, which put this ratio at roughly 1/{clean_gain:.0f}")
 
 
 def test_multi_byte_text_does_not_regress_against_the_scalar_rail():

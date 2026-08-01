@@ -588,12 +588,48 @@ exists to catch.
 root from the additions and X.690 does not — one plan cannot describe both until the emitter
 that needs the split exists. Everything else X.691 reads is now in the descriptor.
 
-#### 6.2.3 What three bugs in one place are actually evidence of
+#### 6.2.3 Plan version 5 — the DEFAULT a sender must not send
 
-All three were found by *adding a construct to the corpus*, not by reading the code. Each had
+A **fourth** defect, and the only one that hit every emitter at once. X.690 §11.5 forbids
+DER an encoding for a component whose value equals its default; X.696 §31.9 and X.697's
+CJER say the same; X.691 §19.5 says it for CANONICAL-PER. Versions 1–4 emitted it:
+
+```
+SEQUENCE { a INTEGER, b BOOLEAN DEFAULT FALSE }, value { a 1, b FALSE }
+  plan-driven DER : 30 06 02 01 01 01 01 00     <- what shipped
+  oracle DER      : 30 03 02 01 01               <- what X.690 11.5 requires
+```
+
+The corpus supplied `{"a": 1, "b": TRUE}` against `DEFAULT FALSE` — a default component
+that *differed* — and never one that matched.
+
+**This one could not go in the value stream**, which is what makes it interesting. The
+stream is format-neutral by design, and the rule is not: plain BER keeps the freedom, since
+X.690 clause 11 is titled *"Restrictions on BER employed by both CER and DER"*. Deciding
+presence once, neutrally, would have taken that freedom away silently and the BER row of the
+cost table would have stopped measuring BER.
+
+So version 5 records the DEFAULT **in neutral-stream octets** and each candidate applies its
+own law. The comparison is a memcmp against a constant the plan carries, which is sound
+because the stream is a *canonical* form of a value — minimal two's complement, UTF-8,
+components in plan order — so byte identity is value identity. The freestanding twin
+therefore needs no value model of its own to answer a question three encoding rules ask it.
+
+Deciding to omit means the component's octets must still be **consumed**: the stream
+describes it, and leaving it unread would leave a suffix `emit` correctly refuses. That is
+what `_skip_node` is for, and its C counterpart carries a budget of `default_len + 1` — a
+value that has already outrun the default cannot match it, and the early exit also bounds a
+`SEQUENCE OF` whose elements consume no stream octets, the same unbounded-count shape the
+fuzzer found once already.
+
+#### 6.2.4 What four bugs in one place are actually evidence of
+
+All four were found by *adding a construct to the corpus*, not by reading the code. Each had
 survived every parity test, every fuzz run and every `-O0 == -O3` differential, because the
-corpus contained no constrained type and no ENUMERATED — and **a construct absent from the
-corpus is untested however many tests run over it.**
+corpus contained no constrained type, no ENUMERATED, and no DEFAULT component whose value
+equalled its default — and **a construct absent from the corpus is untested however many
+tests run over it.** The fourth is the sharpest case: the corpus *did* carry a DEFAULT
+component. It carried the one value for which the rule does not fire.
 
 The dual-rail differential made it worse rather than better in one specific way: the C twin's
 expectations come from E1's Python emitter, while E1's parity with the oracle is asserted

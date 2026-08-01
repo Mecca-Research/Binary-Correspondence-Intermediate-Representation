@@ -63,8 +63,14 @@ from .constraints import (
 from .schema import Asn1Type, Choice, Primitive, Sequence, SequenceOf
 from .tags import Asn1Error, TagClass, Universal
 
-PLAN_VERSION = 4
+PLAN_VERSION = 5
 PLAN_COMPILER = "bcir-encode-plan/1"
+
+#: The longest DEFAULT value recorded, in neutral-stream octets. Stated rather than
+#: unbounded for §5.1's reason; a longer default is refused, never truncated, because a
+#: truncated default would compare unequal and silently re-admit the component X.690 §11.5
+#: requires omitted.
+DEFAULT_MAX = 32
 
 #: The widest bound this plan will record, both signs. A descriptor is read by a
 #: freestanding C twin with no bignum, so the format states its arithmetic range rather than
@@ -119,6 +125,20 @@ class EncodeMember:
     tag_class: str
     explicit: bool
     node: "EncodeNode"
+    #: The DEFAULT value, flattened into the neutral stream, or empty when there is none.
+    #:
+    #: **Recorded because omission is a rule, not a caller's choice.** X.690 §11.5 forbids
+    #: DER an encoding for a component equal to its default; X.696 §31.9 and CJER say the
+    #: same; X.691 §19.5 says it for CANONICAL-PER. Plain BER and BASIC-PER leave it to the
+    #: sender, which is exactly the implementation freedom the canonical rules remove — so
+    #: the fact is per-CANDIDATE and cannot live in the format-neutral value stream.
+    #:
+    #: Stored as stream octets rather than as a Python value because **the stream is a
+    #: canonical form**: an integer is minimal two's complement, a string is UTF-8, a
+    #: boolean is 0 or 1, an OID is dotted ASCII, and a SEQUENCE's components are in plan
+    #: order. Byte identity in the stream is therefore value identity, and the emitters
+    #: compare octets instead of re-deriving an equality rule per type.
+    default_stream: bytes = b""
 
 
 @dataclass(frozen=True)
@@ -256,7 +276,8 @@ def _serialize_node(node: EncodeNode, path: str, out: list[str]) -> None:
             f"opt={'1' if member.optional else '0'} "
             f"def={'1' if member.has_default else '0'} "
             f"tag={'-' if member.tag is None else member.tag} "
-            f"class={member.tag_class} exp={'1' if member.explicit else '0'}")
+            f"class={member.tag_class} exp={'1' if member.explicit else '0'} "
+            f"dval={member.default_stream.hex() or '-'}")
         _serialize_node(member.node, f"{here}/{member.name}", out)
     if node.element is not None:
         _serialize_node(node.element, f"{here}[]", out)
@@ -434,6 +455,7 @@ def _compile_members(kind, path: str, depth: int) -> tuple[EncodeMember, ...]:
         # sentinel. Re-deriving it here from `default is not None` would call a component
         # whose declared default IS None undefaulted, and X.690 §11.5 makes that the
         # difference between emitting the component and omitting it.
+        node = _compile_node(component.type, f"{path}/{component.name}", depth + 1)
         out.append(EncodeMember(
             name=component.name, identifier=component.name, index=index,
             optional=bool(getattr(component, "optional", False)),
@@ -441,8 +463,36 @@ def _compile_members(kind, path: str, depth: int) -> tuple[EncodeMember, ...]:
             tag=component.tag,
             tag_class=_TAG_CLASS_NAME[getattr(component, "tag_class", TagClass.CONTEXT)],
             explicit=bool(getattr(component, "explicit", False)),
-            node=_compile_node(component.type, f"{path}/{component.name}", depth + 1)))
+            node=node,
+            default_stream=_record_default(component, node,
+                                           f"{path}/{component.name}")))
     return tuple(out)
+
+
+def _record_default(component, node: EncodeNode, path: str) -> bytes:
+    """The DEFAULT value in neutral-stream octets, so an emitter can compare and omit.
+
+    Flattened here at COMPILE time rather than in each emitter, for the reason a descriptor
+    exists at all: the comparison then costs a memcmp against a constant the plan carries,
+    and the freestanding twin needs no value model of its own to decide a question three
+    encoding rules ask it.
+
+    `emit` is imported lazily because it imports this module; the alternative — a second
+    copy of the stream grammar living here — is exactly the duplication that would let the
+    recorded default and the emitted value disagree about what a value looks like.
+    """
+    if not component.has_default:
+        return b""
+    from .emit import flatten_value
+
+    octets = flatten_value(node, component.default, path)
+    if len(octets) > DEFAULT_MAX:
+        raise Asn1Error(
+            f"{path}: the DEFAULT value occupies {len(octets)} stream octets, past the "
+            f"{DEFAULT_MAX} this plan format records. Truncating it would make the "
+            f"comparison unequal and silently re-admit a component X.690 §11.5 requires "
+            f"omitted, so it is refused instead")
+    return octets
 
 
 
