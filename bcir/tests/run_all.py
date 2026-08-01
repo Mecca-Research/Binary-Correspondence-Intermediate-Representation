@@ -336,6 +336,7 @@ _MODULES = [
     "bcir.tests.test_asn1_xer",
     "bcir.tests.test_c_xer",
     "bcir.tests.test_asn1_ecn",
+    "bcir.tests.test_asn1_ecn_user",
     "bcir.tests.test_asn1_jer",
     "bcir.tests.test_asn1_selection",
     "bcir.tests.test_asn1_jer_bounded",

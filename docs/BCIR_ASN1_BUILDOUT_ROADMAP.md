@@ -53,7 +53,7 @@ rule.
 | X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references; cross-module tag-default nuance (§9.8) excluded |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
-| X.692 | 8825-3:2021 | ECN | **part 1 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; user-defined encodings (cl. 19-25) held behind the §6 reduction gate |
+| X.692 | 8825-3:2021 | ECN | **parts 1 and 2 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. The ECN surface syntax is still not parsed |
 | X.693 | 8825-4:2021 | XER | **built** — BASIC-XER + CXER (CXER out, both in; validated against Annex A.3/A.4); EXTENDED-XER by design excluded |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
@@ -344,7 +344,7 @@ default. This front-end lowers one module at a time, so the two coincide. Also
 `ObjectFromObject` (§15) and the self-referential link fields of §13.2 b), whose column set
 is deliberately infinite.
 
-### G. X.692 ECN · **BUILT-IN MODEL LANDED; USER-DEFINED CLASSES CUT**
+### G. X.692 ECN · **BUILT-IN MODEL LANDED; USER-DEFINED HALF REOPENED ON EVIDENCE**
 
 The Encoding Control Notation: a language for **defining encodings**, in which encoding
 classes are declared, encoding objects realize them, and encoding object sets are
@@ -356,14 +356,48 @@ realization. BCIR's contribution is that ECN never specified how to *choose* amo
 legal object sets — it is a notation, not an optimizer — and BCIR has the optimizer.
 
 The Python oracle contains the ECN class/object/object-set model, EDM/ELM, the built-in
-BER and PER object sets, and the one-object-per-class checks. It does not parse or lower
-user-defined encoding classes, and no ECN representation has been added to MLIR.
+BER and PER object sets, and the one-object-per-class checks. It now also contains the
+user-defined half: bit-level encoding spaces with stated widths, justification within a
+space, `#PAD` fields that carry no abstract value, transmission order chosen by the object
+rather than the type, `INT-TO-INT` and `INT-TO-BITS` transforms with an inverse each, and
+`#OUTER`. What it still does **not** do is parse the ECN surface syntax — the model is the
+semantics that syntax denotes, reachable from Python, which is the posture part one already
+took for EDM/ELM. No ECN representation has been added to MLIR.
 
-The §6 reduction gate has now fired and is signed off: the fixed
+The §6 reduction gate fired and was signed off: the fixed
 DER/PER/OER/BCIR-canonical-JER candidate set already demonstrates cost-governed
-selection. User-defined ECN classes, `#TRANSFORM`, and `#OUTER` lowering are closed,
-not active prerequisites. Reopening them requires an approved measured workload and a
-proof that ordinary BCIR lowering contracts cannot express it.
+selection, so user-defined ECN classes, `#TRANSFORM`, and `#OUTER` lowering were closed
+as not active prerequisites. Reopening them required an approved measured workload **and**
+a proof that ordinary BCIR lowering contracts cannot express it.
+
+**Both conditions are now met, and the second one is executed rather than asserted.**
+The approval is the project owner's and was given. The proof is not something approval can
+supply, so it is built as evidence: `legacy_frame_workload()` is a fixed-layout frame header
+with a length field scaled in 4-octet units, a flag that is active low, two reserved bits,
+and the length transmitted before the version — every part of which real link-layer and
+IP-family headers do. `refuted_by()` then runs all five fixed candidates against the same
+abstract value and reports what each produces:
+
+| Candidate | Octets | |
+|---|---|---|
+| user-defined ECN | `aa00` | 2 |
+| DER | `30090201050101ff020128` | 11 |
+| CANONICAL-PER-ALIGNED | `ba00` | 2 |
+| CANONICAL-PER-UNALIGNED | `ba00` | 2 |
+| COER | `05ff28` | 3 |
+| CJER | `{"version":5,...}` | 46 |
+
+The sharpest line in that table is canonical PER. It produces **exactly the same number of
+octets** and still not the same octets, so the gap is not compactness — at equal size the
+fixed set cannot reach the layout, because a layout is not a size question. The reason is
+structural: DER, PER, OER and JER all encode *the abstract value*, and given 40 they write
+40. A field that transmits 40 as `1010` because it is scaled in 4-octet units is asking for
+the encoded value to be a declared function of the abstract one, which is what `#TRANSFORM`
+is and what no constraint tightening or canonical-variant choice in the fixed set produces.
+
+A test pins this as the live gate: it **fails if any fixed candidate ever produces the target
+octets**, because that is the day the expressiveness argument is false and this section is
+wrong.
 
 ### H. K_BCIR encoding selection · **MEASUREMENT HARNESS BUILT; CERTIFIED RAIL OPEN**
 

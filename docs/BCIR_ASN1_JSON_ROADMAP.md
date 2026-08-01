@@ -46,7 +46,9 @@ This program does **not**:
 - equate CRC or SHA-256 integrity with artifact authenticity;
 - promise secure live driver replacement from schema compatibility alone; or
 - revive user-defined ECN encodings without a measured workload that the fixed candidate
-  set cannot express.
+  set cannot express. *(This condition has since been met and the half is built: the
+  workload is a scaled-length frame header, and all five candidates are executed against it
+  rather than argued about. See §2's ECN row and the build-out roadmap's section G.)*
 
 ## 2. Source-backed baseline through PR #670
 
@@ -64,7 +66,7 @@ repository inventories remain generated in [`STATUS.md`](STATUS.md).
 | Deterministic JER emission | **Landed as a BCIR profile** | `JerRules.CANONICAL` fixes BCIR choices; X.697 defines no standard canonical JER variant, so this profile has no standards OID |
 | X.680/X.681/X.682/X.683 schema rail | **Landed within the documented subset** | Front-end, information objects, constraints, open-type table resolution, and parameterization feed the shared schema model |
 | Other encoding candidates | **Landed on their stated rails** | DER/BER, canonical PER aligned/unaligned, COER/OER, and CXER/XER are recorded in the ASN.1 build-out roadmap; their C coverage differs by format |
-| ECN | **Part 1 landed** | [`ecn.py`](../bcir/asn1/ecn.py) models classes, objects, object sets, EDM/ELM, and built-in BER/PER sets; it does not parse or lower user-defined encoding classes |
+| ECN | **Parts 1 and 2 landed** | [`ecn.py`](../bcir/asn1/ecn.py) models classes, objects, object sets, EDM/ELM, and built-in BER/PER sets. [`ecn_user.py`](../bcir/asn1/ecn_user.py) adds the user-defined half: bit-level encoding spaces, justification, `#PAD`, object-chosen transmission order, `INT-TO-INT`/`INT-TO-BITS` transforms with inverses, and `#OUTER`. The §6 gate's reopening condition is met **and executed** — a scaled-length frame header that none of DER, canonical PER aligned/unaligned, COER or CJER reproduces, with canonical PER landing on the same octet count and different octets, so the gap is expressiveness and not size. A test fails if any candidate ever matches. The ECN surface syntax is still not parsed, and no ECN representation exists in MLIR |
 | JER bounded reader in C (J3) | **Landed on the C rail** | [`bcir_jer.c`](../runtime/c/bcir_jer.c) runs the same three stages in the same order — §4.3's limits in one octet pass, §7.6.2's encoding, then the grammar — with **no allocation, no recursion and no floating point**: the container stack and decode scratch are the caller's, and a number event hands back the raw token rather than a parsed double. Canonical-byte validation (§3.2) and schema legality stay on the Python rail and are deliberately *not* reimplemented, because a second definition of canonicality is free to drift from the encoder that is the actual definition. Building it found three defects in J1's rail; see §7.2 |
 | JER schema plan (J2) | **Landed on the Python oracle** | [`jer_plan.py`](../bcir/asn1/jer_plan.py) compiles a root type into the §5.1 descriptor — identity and source hash, family/profile/instruction hash, sorted member dispatch, required/default/extension metadata, recursion bounds and static capacity. **Static capacity is `None` almost everywhere**, and that is a property of JER rather than of the compiler: §7.2.2 l) and h) hide integer and string constraints from a JER encoder, so only BOOLEAN, NULL, ENUMERATED and a single-size BIT STRING (§7.2.1 a) are derivable. J3's C interface must therefore take its capacity from the caller |
 | Encoding selection harness | **Landed as measurement evidence** | [`selection.py`](../bcir/asn1/selection.py) measures exact wire size and Python-oracle timing for a fixed candidate set; it is not a native K_BCIR table or selection certificate |
@@ -696,10 +698,25 @@ errata admission.
 | **J6 — certified K_BCIR choice** | **Landed on the Python oracle** ([`certified.py`](../bcir/asn1/certified.py)): distribution-free prediction intervals from order statistics, a frozen generation-tagged cost table with declared provenance, §6.2's certificate, and a production select that **refuses** an oracle table for any timing objective. The native microbench protocol and RCSP integration remain open | Exact sizes decide wire-size objectives with no timing consulted; repeatability is a refusal rather than an average; legality-first and canonical-or-excluded precede every comparison; deterministic selection on two tables, each certificate bound to the table digest it read — [`test_asn1_certified.py`](../bcir/tests/test_asn1_certified.py) |
 | **J7 — driver experiment** | Userspace/simulator driver specification ingest, generated views, and sequential BCIR-Linux module comparison | D0–D3 driver gates, signed modules, direct/Linux trace parity, teardown/restart tests, and controlled performance evidence |
 
-User-defined ECN classes are closed after the J0 sign-off. The built-in sets and ordinary
-BCIR lowering contracts are sufficient for the measured fixed-candidate result. Reopening
-ECN requires a written workload, a missing expressiveness proof, and approval separate
-from the JER implementation.
+User-defined ECN classes were closed after the J0 sign-off: the built-in sets and ordinary
+BCIR lowering contracts are sufficient for the measured fixed-candidate result, and
+reopening ECN required a written workload, a missing-expressiveness proof, and approval
+separate from the JER implementation.
+
+**All three are now on the record and the half is built** ([`ecn_user.py`](../bcir/asn1/ecn_user.py)).
+The workload is a fixed-layout frame header whose length field is scaled in 4-octet units,
+whose flag is active low, which carries two reserved bits, and which transmits the length
+before the version. The proof is executed rather than written: all five fixed candidates run
+against the same abstract value, and none reproduces the octets. Canonical PER is the case
+worth reading — it lands on the *same octet count* and different octets, so the gap is
+expressiveness and not compactness. The structural reason is that DER, PER, OER and JER all
+encode the abstract value, while the header needs the transmitted value to be a declared
+function of it; that function is `#TRANSFORM`, and no constraint tightening or
+canonical-variant choice in the fixed set produces one.
+
+The closure this replaces was correct on the evidence it had. What changed is the evidence,
+not the standard — and the test that carries it fails if a fixed candidate ever matches,
+so the paragraph cannot outlive the fact.
 
 ### 7.1 J4's bidirectionality extension
 
@@ -1191,7 +1208,7 @@ gates are proven.
 | Schema constraints are mistaken for memory safety | Preserve BCIR laws, ownership rules, checked arithmetic, effect verification, and sanitizers |
 | JSON enters the driver data plane | Architecture gate rejects JER in interrupt/DMA/submission paths |
 | Measurement becomes legality | Two-truth quarantine and a certificate that records legality independently of costs |
-| ECN scope returns without evidence | Reopen only with an approved workload and missing-expressiveness proof |
+| ECN scope returns without evidence | Reopen only with an approved workload and missing-expressiveness proof. **Both are on the record**; the proof is a test that runs all five fixed candidates and fails if any ever reproduces the target octets, so the justification cannot silently rot |
 | Integrity is described as authenticity | Keep BCAB CRC/SHA and future signature/loader policy separate |
 | Physical register layout is “optimized” illegally | Device schema fixes MMIO facts; optimize only access schedules and declared packet variants |
 | JER-as-program-representation forks a second IR | J4's §7.1 gate: the projection must reproduce the existing `bcir.*` dialect exactly, in both directions |
