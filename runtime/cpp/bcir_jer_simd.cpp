@@ -33,9 +33,14 @@
  * exact octet at which the budget ran out. A vector pass that skipped a run without charging
  * for it would accept documents the scalar rail rejects. A bulk charge IS exact, though:
  * the charge is one unit per octet at that octet's own position, so a crossing run's failure
- * point is arithmetic rather than a re-walk. What still differs from the UTF-8 rail is the
- * layering -- bcir_jer_scan holds its state internally, so accelerating it needs a stage-2
- * parser rather than a wrapper. Not solved here; see the roadmap 7.4.
+ * point is arithmetic rather than a re-walk.
+ *
+ * The remaining difference is layering, and it is now solved rather than open: `bcir_jer_scan`
+ * holds its state internally, so it cannot be WRAPPED the way this file wraps the validator.
+ * `bcir_jer_scan_cursor` exports that state instead, and `bcir_jer_index.cpp` rebuilds only
+ * the DISPATCH on top of it -- a second dispatch loop, not the stage-2 second scanner this
+ * comment used to predict. It reuses this file's tier detection rather than repeating it.
+ * See roadmap 7.4.1.
  *===----------------------------------------------------------------------===*/
 #include "bcir_jer_simd.h"
 
