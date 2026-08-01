@@ -76,16 +76,21 @@ if "${CXX}" --target="${cross_target}" -std=c++17 -O2 -Wall -Wextra -Werror -ffr
      -I "${C}" -I "${CPP}" -c "${CPP}/bcir_jer_index.cpp" -o "${tmp}/cross.o" \
      2>"${tmp}/cross.log"
 then
-  disasm=""
+  # Disassemble to a FILE and grep the file. Never `printf "$disasm" | grep -q`: `grep -q`
+  # exits at the first match, the writer takes SIGPIPE, and under `set -o pipefail` that
+  # becomes exit 141 for the whole pipeline -- a MATCH reported as a failure. It hides while
+  # the disassembly fits the 64 KiB pipe buffer and appears when it does not, so it surfaces
+  # as the object grows rather than as a change in what is being tested.
+  : > "${tmp}/cross.asm"
   for tool in llvm-objdump objdump; do
     if command -v "${tool}" >/dev/null 2>&1; then
-      disasm="$("${tool}" -d "${tmp}/cross.o" 2>/dev/null || true)"
-      [ -n "${disasm}" ] && break
+      "${tool}" -d "${tmp}/cross.o" > "${tmp}/cross.asm" 2>/dev/null || true
+      [ -s "${tmp}/cross.asm" ] && break
     fi
   done
-  if [ -z "${disasm}" ]; then
+  if [ ! -s "${tmp}/cross.asm" ]; then
     echo "  note: ${cross_target} tier compiles, but no disassembler to prove it is not scalar"
-  elif printf '%s' "${disasm}" | grep -qE "${cross_needle}"; then
+  elif grep -qE "${cross_needle}" "${tmp}/cross.asm"; then
     echo "  ok: the ${cross_target} whitespace pass compiles here AND emits its own SIMD"
   else
     echo "FAIL: ${cross_target} compiled without any ${cross_needle} instruction -- the tier"
