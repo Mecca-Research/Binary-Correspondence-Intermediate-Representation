@@ -314,7 +314,17 @@ class CalibrationRecord:
             worst = max(min(v % quantum, quantum - (v % quantum)) / quantum for v in values)
             if worst <= 0.05:
                 best = quantum
-        return best
+        # The fit alone is not enough, and the second aarch64 record is why. Once the harness
+        # timed in groups the underlying granularity became 52.083/8 ≈ 6.5 ns — a real limit,
+        # but not an integer, so the reported whole-nanosecond figures (39, 45, 52, 58, 65)
+        # are near-multiples of nothing and the fit reports ~1 ns. The GAPS still show it: the
+        # smallest distance between two distinct samples anywhere in the record is 6.
+        #
+        # So take whichever is larger. The fit catches a coarse clock whose multiples survive
+        # rounding, the gap catches one whose multiples do not, and neither alone caught both
+        # of the records this repository has actually taken.
+        gap = min((b - a for a, b in zip(values, values[1:]) if b > a), default=1)
+        return max(best, float(gap))
 
     def incomplete(self) -> tuple[str, ...]:
         """Candidates measured on one axis only, with why the other is missing being a
