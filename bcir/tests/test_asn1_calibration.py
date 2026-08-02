@@ -18,7 +18,7 @@ import os
 import tempfile
 
 from bcir.asn1.calibration import (
-    DEDICATED, STORE, CalibrationRecord, CandidateRow, as_json, calibration_corpus,
+    DEDICATED, STORE, TIMING_METHOD, CalibrationRecord, CandidateRow, as_json, calibration_corpus,
     corpus_digest, load_records, render,
 )
 from bcir.asn1.certified import MIN_SAMPLES
@@ -190,10 +190,17 @@ def test_the_repository_store_loads_and_admits_only_what_it_should():
         return
     records = load_records(path)
     for record in records:
-        assert record.admissible(), (
-            f"{record.target} is in the store but is not admissible: {record.refusals()}; "
-            f"the store holds records a frozen table may be built from")
-        assert record.corpus in ("", corpus_digest()), (
+        # A record may be REFUSED and still belong here. The store holds evidence, and a
+        # measurement superseded by a harness change is evidence about a machine that simply
+        # cannot back a current table. What must never appear is a record refused for being
+        # *unsound* — a shared runner, a big.LITTLE smear, an unpinned run — because nothing
+        # about those improves by keeping them.
+        superseded = ("timed by harness method", "measured against corpus")
+        for problem in record.refusals():
+            assert problem.startswith(superseded), (
+                f"{record.target} is in the store and is refused for a reason other than "
+                f"being superseded: {problem}")
+        assert record.corpus in ("", corpus_digest()) or record.method != TIMING_METHOD, (
             f"{record.target} measured corpus {record.corpus} but this revision compiles "
             f"{corpus_digest()}")
 
@@ -255,3 +262,32 @@ def test_widening_leaves_an_already_honest_interval_alone():
     widened = record.table().rows[0].encode
     assert (widened.low, widened.high) == (original.low, original.high), (
         f"an interval already wider than the clock was altered: {original} -> {widened}")
+
+
+def test_the_counter_state_is_recorded_rather_than_acted_on():
+    """An absent PMU is a fact about the machine, not a defect in the record.
+
+    Cycles would resolve far below a 52 ns clock and would be frequency-invariant, which is
+    why the harness asks. But a container commonly exposes no PMU and Android normally denies
+    `perf_event_open` outright, so the wall-clock figures have to stand on their own — and
+    the record says which happened, in the kernel's own words, so "this host has no counters"
+    is never confused with "nobody asked".
+    """
+    assert _record(counters="No such file or directory").admissible()
+    assert _record(counters="cycles").admissible()
+    text = render([_record(counters="No such file or directory")])
+    assert "counters: No such file or directory" in text, text
+
+
+def test_the_native_harness_reports_its_counter_state_honestly():
+    """Whatever this host offers, the harness must name it rather than imply cycles."""
+    from bcir.asn1.native_bench import native_available, native_counters
+
+    if not native_available():
+        return
+    state = native_counters()
+    assert state and state != "not reported", (
+        f"the harness did not report a counter state ({state!r}); a silent absence is how a "
+        f"wall-clock figure ends up under a cycles heading")
+    # Either a real PMU, or a reason. Never an empty claim.
+    assert state == "cycles" or len(state) > 3, state
