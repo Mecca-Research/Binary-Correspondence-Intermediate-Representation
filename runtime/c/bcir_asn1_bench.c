@@ -31,9 +31,14 @@
  *      last; interleaving spreads that drift evenly across all of them, so it becomes noise
  *      in every sample rather than a bias in one. This is the single most important line in
  *      the file.
- *   4. Per-round MEDIAN of many iterations. `timespec_get` has coarse granularity on some
- *      hosts, so a single iteration can quantize to zero; the median of a batch is stable
- *      and needs no calibration of the clock itself.
+ *   4. Per-round MEDIAN of timed GROUPS. `timespec_get` has coarse granularity on some
+ *      hosts -- 52 ns on a Snapdragon 8 Gen 3, whose userspace clock is the 19.2 MHz ARM
+ *      architectural timer -- so timing one iteration at a time rounds every sample to a
+ *      tick, and a median of quantized samples stays quantized. Each span therefore covers
+ *      a GROUP of iterations and is divided by the group size, which spreads the clock's
+ *      error across the group; the median is taken over the groups, so a preempted span
+ *      still moves one group rather than the round, and needs no calibration of the clock
+ *      itself.
  *   5. Every round's figure is emitted. The driver computes the interval from the order
  *      statistics -- this program does no statistics at all, so a change in how the interval
  *      is derived never requires re-running the measurement.
@@ -71,6 +76,75 @@
 #define MAX_ROUNDS 256
 #define MAX_DEPTH 64
 #define SCRATCH (1 << 16)
+
+/* --- target hardware counters ------------------------------------------------------------
+ *
+ * WHY A CYCLE COUNT AND NOT JUST A CLOCK. Two reasons, and the first one is now measured
+ * rather than hypothetical. A wall-clock figure is only as fine as the clock: on a Snapdragon
+ * 8 Gen 3 userspace reads the 19.2 MHz architectural timer, so the finest thing it can say is
+ * 52 ns, and a 104 ns cost is "two ticks". A cycle counter runs at core frequency and resolves
+ * far below that. Second, a cycle count is frequency-INVARIANT: DVFS and thermal ramp move
+ * nanoseconds and leave cycles alone, which is exactly the drift the interleaving above is
+ * fighting.
+ *
+ * WHY IT IS OPTIONAL AND SAYS SO. `perf_event_open` needs a PMU the kernel is willing to
+ * expose. A container commonly has none -- the syscall returns ENOENT with no PMU attached --
+ * and Android normally sets perf_event_paranoid to 3, which denies it outright. So this is
+ * probed, never assumed, and the driver is TOLD which happened. A harness that silently
+ * reported nanoseconds under a "cycles" heading would be the same class of error as a table
+ * built from an unmeasured target, which is the thing this whole phase exists to prevent.
+ */
+#if defined(__linux__)
+#define BCIR_BENCH_COUNTERS 1
+#include <errno.h>
+#include <linux/perf_event.h>
+#include <sys/ioctl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+/* Declared here rather than by defining _GNU_SOURCE at the top of the file. This translation
+ * unit deliberately reaches the clock through ISO C11 `timespec_get` with no POSIX feature
+ * macros, and turning them on for the whole file to obtain one prototype would change what
+ * every other header exposes. */
+extern long syscall(long number, ...);
+extern int ioctl(int fd, unsigned long request, ...);
+
+static int cycles_fd = -1;
+static const char *counters_state = "not attempted";
+
+static void counters_open(void) {
+  struct perf_event_attr attr;
+  memset(&attr, 0, sizeof attr);
+  attr.type = PERF_TYPE_HARDWARE;
+  attr.size = sizeof attr;
+  attr.config = PERF_COUNT_HW_CPU_CYCLES;
+  attr.disabled = 1;
+  /* User-space only. Kernel and hypervisor cycles are not this parser's cost, and counting
+   * them would make the figure depend on what else the machine was doing. */
+  attr.exclude_kernel = 1;
+  attr.exclude_hv = 1;
+  cycles_fd = (int)syscall(__NR_perf_event_open, &attr, 0, -1, -1, 0);
+  if (cycles_fd < 0) {
+    counters_state = strerror(errno);
+    return;
+  }
+  ioctl(cycles_fd, PERF_EVENT_IOC_RESET, 0);
+  ioctl(cycles_fd, PERF_EVENT_IOC_ENABLE, 0);
+  counters_state = "cycles";
+}
+
+static uint64_t now_cycles(void) {
+  uint64_t value = 0;
+  if (cycles_fd < 0) return 0;
+  if (read(cycles_fd, &value, sizeof value) != (ssize_t)sizeof value) return 0;
+  return value;
+}
+#else
+static int cycles_fd = -1;
+static const char *counters_state = "not linux";
+static void counters_open(void) {}
+static uint64_t now_cycles(void) { return 0; }
+#endif
 
 static uint64_t now_ns(void) {
   /* ISO C11 timespec_get, matching bcir_microbench.c: no POSIX feature macros, and the
@@ -191,7 +265,9 @@ int main(void) {
   static char hex[MAX_LINE];
   static bench_case cases[MAX_CASES];
   static uint64_t rounds_ns[MAX_CASES][MAX_ROUNDS];
+  static uint64_t rounds_cycles[MAX_CASES][MAX_ROUNDS];
   static uint64_t batch[4096];
+  static uint64_t cycle_batch[4096];
   size_t n_cases = 0;
   long warmup = 2, rounds = 11, iterations = 64;
   uint64_t sink = 0;
@@ -285,6 +361,11 @@ int main(void) {
     if (strcmp(op, "run") == 0) break;
   }
 
+  /* Probed once, before anything is timed, so every round shares one counter -- and before
+   * the empty-corpus exit, so a caller can ask what this host offers without supplying one. */
+  counters_open();
+  printf("counters %s\n", counters_state);
+
   if (n_cases == 0) {
     printf("done 0\n");
     return 0;
@@ -301,22 +382,48 @@ int main(void) {
    * round equally, instead of biasing whichever one was scheduled last. */
   for (long r = 0; r < rounds; r++) {
     for (size_t i = 0; i < n_cases; i++) {
-      for (long it = 0; it < iterations; it++) {
+      /* GROUPS, not single iterations, and this is the difference between a number and a
+       * tick count.
+       *
+       * Timing each iteration on its own means every sample is rounded to whatever the
+       * clock's period is -- and a median of quantized samples is still quantized, so the
+       * batch median inherits the rounding rather than averaging it out. The first aarch64
+       * calibration taken with this harness showed it plainly: every distinct figure in the
+       * record, 104/156/208/260/417, was an exact multiple of 52.083 ns, the period of the
+       * 19.2 MHz ARM architectural timer. Those were 2, 3, 4, 5 and 8 TICKS. A cost this
+       * short simply cannot be resolved one iteration at a time on that clock.
+       *
+       * Timing a GROUP of `group` iterations in one span and dividing spreads the clock's
+       * error over the whole group, so the resolution improves by a factor of `group`. The
+       * median is then taken over the groups, which keeps the property the per-iteration
+       * version was written for: one preempted span moves one group, not the round.
+       *
+       * `group` is chosen so there are enough groups for that median to mean something. It
+       * is a pure resolution win with no change to what is being measured -- the same work,
+       * the same order, the same interleaving. */
+      long group = iterations / 8;
+      long groups;
+      if (group < 1) group = 1;
+      groups = iterations / group;
+      for (long g = 0; g < groups; g++) {
+        uint64_t c0 = now_cycles();
         uint64_t t0 = now_ns();
-        sink += do_work(&cases[i]);
-        batch[it] = now_ns() - t0;
+        for (long it = 0; it < group; it++) sink += do_work(&cases[i]);
+        batch[g] = (now_ns() - t0) / (uint64_t)group;
+        cycle_batch[g] = (now_cycles() - c0) / (uint64_t)group;
       }
-      qsort(batch, (size_t)iterations, sizeof(batch[0]), cmp_u64);
-      /* The median of the batch, not the mean: one preempted iteration must not move the
-       * round's figure, and the clock's granularity quantizes short iterations to zero. */
-      rounds_ns[i][r] = batch[iterations / 2];
+      qsort(batch, (size_t)groups, sizeof(batch[0]), cmp_u64);
+      qsort(cycle_batch, (size_t)groups, sizeof(cycle_batch[0]), cmp_u64);
+      rounds_ns[i][r] = batch[groups / 2];
+      rounds_cycles[i][r] = cycle_batch[groups / 2];
     }
   }
 
   for (size_t i = 0; i < n_cases; i++)
     for (long r = 0; r < rounds; r++)
-      printf("sample %s %s %ld %llu\n", cases[i].label, cases[i].op, r,
-             (unsigned long long)rounds_ns[i][r]);
+      printf("sample %s %s %ld %llu %llu\n", cases[i].label, cases[i].op, r,
+             (unsigned long long)rounds_ns[i][r],
+             (unsigned long long)rounds_cycles[i][r]);
   printf("done %lu\n", (unsigned long)n_cases);
   /* Consume the sink so no call above is dead. */
   if (sink == 0xFFFFFFFFFFFFFFFFull) printf("sink %llu\n", (unsigned long long)sink);

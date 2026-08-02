@@ -44,6 +44,19 @@ DEDICATED = "dedicated"
 #: Where admitted records live, one per measured target.
 STORE = "docs/measurements/asn1_calibration.json"
 
+#: How the harness timed the rounds. Bumped when that CHANGES, not when the code moves.
+#:
+#: 1 — each iteration timed on its own, per-round median of the batch. Sound on a fine clock
+#:     and quantized on a coarse one: on a 19.2 MHz timer every sample rounds to a 52 ns tick
+#:     and the median of quantized samples stays quantized.
+#: 2 — iterations timed in GROUPS and divided by the group size, per-round median over the
+#:     groups. The clock's error is spread across the group, so resolution improves by the
+#:     group size while a preempted span still moves one group rather than the round.
+#:
+#: Recorded per record and compared, for the same reason the corpus digest is: two targets
+#: measured by different methods produce two tables that look identical and are not.
+TIMING_METHOD = 2
+
 
 def calibration_corpus():
     """The ONE schema and value every target calibrates against.
@@ -156,6 +169,14 @@ class CalibrationRecord:
     #: catch two targets that measured *different* corpora, and an absent digest proves
     #: nothing either way.
     corpus: str = ""
+    #: What the native harness reported about this host's performance counters: `"cycles"`
+    #: when a PMU was attached, otherwise the kernel's own reason it was not. Recorded rather
+    #: than acted on — an absent counter is a fact about the machine, not a defect in the
+    #: record, and the wall-clock figures stand on their own.
+    counters: str = ""
+    #: `TIMING_METHOD` as it stood when the rounds were run. 0 means a record written before
+    #: the field existed, which is reported rather than guessed at.
+    method: int = 0
     notes: str = ""
 
     def refusals(self) -> tuple[str, ...]:
@@ -211,6 +232,12 @@ class CalibrationRecord:
             out.append(
                 "no candidate has BOTH axes, so no CostRow can be built and the table would "
                 "be empty")
+        if self.method and self.method != TIMING_METHOD:
+            out.append(
+                f"timed by harness method {self.method}, but this revision measures with "
+                f"method {TIMING_METHOD}: the rounds were produced a different way, so the "
+                f"figures are not comparable to a current table however similar they look. "
+                f"Re-measure the target")
         if self.corpus and self.corpus != corpus_digest():
             out.append(
                 f"measured against corpus {self.corpus} but this revision compiles "
@@ -344,6 +371,8 @@ def load_records(path: str) -> list[CalibrationRecord]:
             steal_ticks=entry.get("steal_ticks"),
             throttled_usec=entry.get("throttled_usec"),
             corpus=entry.get("corpus", ""),
+            counters=entry.get("counters", ""),
+            method=int(entry.get("method", 0)),
             notes=entry.get("notes", "")))
     return records
 
@@ -364,8 +393,9 @@ def render(records: list[CalibrationRecord]) -> str:
             # them will be a single repeated value. That is the clock talking, not certainty.
             clock = (f"  clock ~{quantum:.1f}ns ({1e3 / quantum:.1f} MHz); intervals below "
                      f"are RAW and table() widens to this")
+        counters = f"  counters: {record.counters}" if record.counters else ""
         lines.append(f"{record.target} [{record.arch}] cal_gen={record.cal_gen} {verdict}"
-                     + clock)
+                     + clock + counters)
         for problem in record.refusals():
             lines.append(f"    refused: {problem}")
         for row in record.rows:
@@ -389,7 +419,7 @@ def measure(*, target: str, arch: str, tenancy: str, cal_gen: int, cpus, steal_t
     decode costs", which is the same mistake this project refuses one level down in the SIMD
     rail.
     """
-    from .native_bench import run_native_bench, run_native_encode_bench
+    from .native_bench import native_counters, run_native_bench, run_native_encode_bench
 
     kind, value = calibration_corpus()
     decode_samples, _skipped = run_native_bench(kind, value, **kwargs)
@@ -423,7 +453,8 @@ def measure(*, target: str, arch: str, tenancy: str, cal_gen: int, cpus, steal_t
     return CalibrationRecord(
         target=target, arch=arch, tenancy=tenancy, cal_gen=cal_gen, rows=rows,
         cpus=tuple(cpus), steal_ticks=steal_ticks, throttled_usec=throttled_usec,
-        corpus=corpus_digest(), notes=notes)
+        corpus=corpus_digest(), counters=native_counters(), method=TIMING_METHOD,
+        notes=notes)
 
 
 def as_json(record: CalibrationRecord) -> str:
@@ -432,7 +463,8 @@ def as_json(record: CalibrationRecord) -> str:
         "target": record.target, "arch": record.arch, "tenancy": record.tenancy,
         "cal_gen": record.cal_gen, "cpus": list(record.cpus),
         "steal_ticks": record.steal_ticks, "throttled_usec": record.throttled_usec,
-        "corpus": record.corpus, "notes": record.notes,
+        "corpus": record.corpus, "counters": record.counters, "method": record.method,
+        "notes": record.notes,
         "rows": [{"candidate": r.candidate, "octets": r.octets,
                   "encode_ns": list(r.encode_ns), "decode_ns": list(r.decode_ns)}
                  for r in record.rows],

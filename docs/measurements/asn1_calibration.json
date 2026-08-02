@@ -9,7 +9,13 @@
     "",
     "steal_ticks/throttled_usec are null on Android, where /proc/stat is restricted. Null",
     "means UNREPORTED, not zero -- the reader declines to refuse on a counter nobody could",
-    "read, rather than treating an unchecked counter as evidence the declaration held."
+    "read, rather than treating an unchecked counter as evidence the declaration held.",
+    "",
+    "The S24+ record below is method 1 -- each iteration timed on its own -- which is what",
+    "exposed the 52 ns quantization. The harness now times in GROUPS (method 2), so this",
+    "record is refused against the current revision until the target is re-measured. That",
+    "refusal is the mechanism working: the numbers are real, they were simply produced a",
+    "different way, and a table cannot mix the two."
   ],
   "targets": [
     {
@@ -625,7 +631,9 @@
             208
           ]
         }
-      ]
+      ],
+      "method": 1,
+      "counters": ""
     }
   ]
 }

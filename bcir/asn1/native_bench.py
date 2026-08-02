@@ -253,6 +253,9 @@ class NativeSamples:
     op: str
     octets: int
     decode_ns: tuple[int, ...]
+    #: Cycles per round, when the host exposed a PMU. Empty when it did not — an absent
+    #: counter is reported by its absence rather than filled in from the clock.
+    decode_cycles: tuple[int, ...] = ()
 
 
 def run_native_bench(kind, value, *, warmup: int = 2, rounds: int = MIN_SAMPLES + 4,
@@ -377,6 +380,30 @@ def run_native_encode_bench(kind, value, *, warmup: int = 2, rounds: int = MIN_S
     return {name: tuple(samples) for name, samples in sorted(per_case.items())}, skipped
 
 
+def native_counters() -> str:
+    """What the native harness reports about this host's performance counters.
+
+    `"cycles"` when a PMU was attached; otherwise the reason it was not, in the kernel's own
+    words — `"No such file or directory"` on a container with no PMU exposed, or a permission
+    error where `perf_event_paranoid` denies it. Reported so a calibration record can say
+    which, because "this host has no counters" and "nobody asked" are different facts and only
+    one of them is about the machine.
+    """
+    if not native_available():
+        return "no compiler"
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = build_harness(tmp)
+        if binary is None:
+            return "harness did not build"
+        proc = subprocess.run([binary], input="rounds 0 1 1\nrun\n", capture_output=True,
+                              text=True, timeout=600)
+    for row in proc.stdout.splitlines():
+        parts = row.split(maxsplit=1)
+        if parts and parts[0] == "counters":
+            return parts[1] if len(parts) > 1 else "unknown"
+    return "not reported"
+
+
 def measured_table(kind, value, *, target: str, cal_gen: int,
                    candidates=ALL_CANDIDATES, **kwargs) -> EncodingCostTable:
     """A `provenance="measured"` table — containing only what was natively measured.
@@ -420,6 +447,7 @@ def measured_table(kind, value, *, target: str, cal_gen: int,
 
 __all__ = [
     "ENCODE_OPS", "NATIVE_OPS", "EncodeOp", "NativeOp", "NativeSamples", "build_harness",
-    "measured_table", "native_available", "observed_encode_partition", "run_native_bench",
+    "measured_table", "native_available", "native_counters", "observed_encode_partition",
+    "run_native_bench",
     "run_native_encode_bench",
 ]
