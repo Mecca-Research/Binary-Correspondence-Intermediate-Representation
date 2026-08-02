@@ -55,6 +55,13 @@ STORE = "docs/measurements/asn1_calibration.json"
 #:
 #: Recorded per record and compared, for the same reason the corpus digest is: two targets
 #: measured by different methods produce two tables that look identical and are not.
+#:
+#: The change from 1 to 2 was verified on the real code path rather than argued: the bench was
+#: rebuilt with `now_ns` rounded down to a 52 ns tick — what the 19.2 MHz timer does — and
+#: driven both ways over the same corpus. Method 1 produced 52 and 104, exact tick multiples,
+#: reproducing the S24+ record's pattern; method 2 produced 58 and 65, off-tick, estimating a
+#: ~7 ns quantum. That is the group size (64/8 = 8) doing what it was designed to do, measured
+#: on a host whose own clock is far too fine to show the problem.
 TIMING_METHOD = 2
 
 
