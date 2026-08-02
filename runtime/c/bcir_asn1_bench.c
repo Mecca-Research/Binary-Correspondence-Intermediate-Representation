@@ -60,6 +60,18 @@
  *   unsupported <op> <reason>            an op this build cannot measure
  *   done <cases>
  *===----------------------------------------------------------------------===*/
+/* Before any system header, so glibc exposes `syscall` for the counter probe below.
+ *
+ * The alternative -- declaring `syscall` and `ioctl` locally -- is what this file did first,
+ * and it broke under Termux: glibc types ioctl's request as `unsigned long` and bionic types
+ * it as `int`, so a local prototype matches one libc and collides with the other. Letting each
+ * libc declare its own functions is the only version that is right on both, and a benchmark
+ * that does not build on the target is a benchmark that cannot measure it.
+ *
+ * This does not change how the clock is read: `now_ns` still uses ISO C11 `timespec_get`
+ * rather than POSIX `clock_gettime`, matching the rest of the repository's measurement. */
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -102,12 +114,6 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-/* Declared here rather than by defining _GNU_SOURCE at the top of the file. This translation
- * unit deliberately reaches the clock through ISO C11 `timespec_get` with no POSIX feature
- * macros, and turning them on for the whole file to obtain one prototype would change what
- * every other header exposes. */
-extern long syscall(long number, ...);
-extern int ioctl(int fd, unsigned long request, ...);
 
 static int cycles_fd = -1;
 static const char *counters_state = "not attempted";
