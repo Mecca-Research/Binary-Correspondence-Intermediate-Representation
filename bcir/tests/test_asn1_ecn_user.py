@@ -18,9 +18,10 @@ from __future__ import annotations
 
 from bcir.asn1.ecn import CONCATENATION
 from bcir.asn1.ecn_user import (
-    BitWriter, BoolSpec, ConcatenationSpec, FIXED_CANDIDATES, IntForm, IntSpec, IntToBits,
-    IntToInt, Justification, OuterSpec, PadSpec, UserEncodingObject, encode_with_user,
-    legacy_frame_objects, legacy_frame_workload, refuted_by,
+    BitWriter, BoolSpec, ConcatenationSpec, FIXED_CANDIDATES, IntForm, IntOp, IntSpec,
+    IntToBits, IntToInt, Justification, OuterSpec, PadSpec, TransformChain,
+    UserEncodingObject, encode_with_user, legacy_frame_objects, legacy_frame_workload,
+    refuted_by,
 )
 from bcir.asn1.tags import Asn1Error
 
@@ -87,33 +88,113 @@ def test_the_gap_is_expressiveness_and_not_compactness():
         assert octets != expected
 
 
-def test_an_int_to_int_transform_is_invertible_or_it_is_refused():
-    """A transform that lost information would be a lossy channel, not an encoding rule.
+def test_table_6_decides_reversibility_per_operation_not_by_blanket_rule():
+    """§24.3 Table 6, "Reversal of INT-TO-INT transforms", in force rather than paraphrased.
 
-    The scaled field can carry 40 because 40 is a whole number of 4-octet units. It cannot
-    carry 41, and the refusal is the point: rounding would give 40 and 41 the same encoding,
-    and a decoder could not tell which was sent.
+    The first version of this module refused any value a transform could not invert, on the
+    reasoning that a lossy transform is not an encoding rule. Table 6 disagrees, and it is the
+    authority: `modulo:n` is **Never reversible** and is a perfectly legal transform, while
+    `divide:n` is reversible exactly when the "Value is a multiple of n".
+
+    So the old refusal was the right rule for `divide` and the wrong rule for everything else,
+    which is the sort of thing only reading the text settles.
     """
-    scale4 = IntToInt(offset=0, scale=4, name="OCTETS-TO-UNITS")
+    scale4 = IntToInt(op=IntOp.DIVIDE, operand=4, name="OCTETS-TO-UNITS")
     assert scale4.apply(40) == 10
     assert scale4.inverse(10) == 40
     for value in range(0, 61, 4):
-        assert scale4.inverse(scale4.apply(value)) == value
+        assert scale4.reversible(value) and scale4.inverse(scale4.apply(value)) == value
+    # Table 6's condition on divide, stated as a condition rather than as an exception.
+    assert not scale4.reversible(41), "divide:4 is reversible only for multiples of 4"
+
+    # Never reversible, and still legal to apply.
+    modulo = IntToInt(op=IntOp.MODULO, operand=3)
+    assert modulo.apply(10) == 1                      # §24.3.8: i - ((i divide:n) multiply:n)
+    assert not modulo.reversible(10)
     try:
-        scale4.apply(41)
+        modulo.inverse(1)
     except Asn1Error as error:
-        assert "invertible" in str(error), error
+        assert "Never reversible" in str(error), error
     else:
-        raise AssertionError("a non-representable value was silently rounded")
+        raise AssertionError("modulo claimed an inverse Table 6 says it does not have")
+
+    for always in (IntOp.INCREMENT, IntOp.DECREMENT, IntOp.MULTIPLY, IntOp.NEGATE):
+        assert IntToInt(op=always, operand=2).reversible(7), always
 
 
-def test_an_offset_transform_round_trips_the_n_minus_one_idiom():
-    """`n - 1` in a 4-bit field expresses 1..16, which is why so many headers do it."""
-    minus_one = IntToInt(offset=1, scale=1, name="LENGTH-MINUS-ONE")
-    assert minus_one.apply(1) == 0
-    assert minus_one.apply(16) == 15
+def test_divide_truncates_toward_zero_as_the_clause_defines_not_as_python_floors():
+    """§24.3.7, which is a real trap for an implementation written in Python.
+
+    The clause: `divide:n` produces "the integer value that is closest to the mathematical
+    result, but is no further from zero than that result... so a value of -1 with `divide:2`
+    will give zero". Python's `//` floors, so `-1 // 2` is -1. An implementation that reached
+    for the obvious operator would be wrong for every negative value.
+    """
+    half = IntToInt(op=IntOp.DIVIDE, operand=2)
+    assert half.apply(-1) == 0, "§24.3.7 gives 0; Python's // would give -1"
+    assert half.apply(-5) == -2 and -5 // 2 == -3
+    assert half.apply(7) == 3
+
+
+def test_one_object_specifies_precisely_one_operation():
+    """§24.3.5, and the reason `TransformChain` exists at all.
+
+    "any given encoding object to specify precisely one arithmetic operation. General
+    arithmetic can, however, be defined by the use of an ordered list of transforms" — and
+    §22.4.1.1 declares the property `&Encoder-transforms #TRANSFORM ORDERED OPTIONAL`, so the
+    order is part of the specification rather than an artefact of storage.
+
+    The `n - 1` idiom that lets a 4-bit field express 1..16 is `decrement:1`; a field both
+    offset and scaled is a two-element chain.
+    """
+    minus_one = IntToInt(op=IntOp.DECREMENT, operand=1, name="LENGTH-MINUS-ONE")
+    assert minus_one.apply(1) == 0 and minus_one.apply(16) == 15
     for value in range(1, 17):
         assert minus_one.inverse(minus_one.apply(value)) == value
+
+    chain = TransformChain((IntToInt(op=IntOp.SUBTRACT_LOWER_BOUND, operand=5),
+                            IntToInt(op=IntOp.DIVIDE, operand=4)))
+    assert chain.apply(45) == 10
+    assert chain.inverse(10) == 45
+    # Reversibility is checked on the value each step actually sees: 45 reaches divide:4 as
+    # 40, which is a multiple; 46 reaches it as 41, which is not.
+    assert chain.reversible(45) and not chain.reversible(46)
+
+
+def test_subtract_lower_bound_is_confined_to_the_first_position():
+    """§24.3.9 — a statement about the LIST, so it is enforced on the list.
+
+    "The transform for the value `subtract:lower-bound` shall only be used as the first of an
+    ordered list of transforms". A single transform cannot know its own position, which is
+    why this lives in `TransformChain` rather than in `IntToInt`.
+    """
+    first = TransformChain((IntToInt(op=IntOp.SUBTRACT_LOWER_BOUND, operand=1),
+                            IntToInt(op=IntOp.MULTIPLY, operand=2)))
+    assert first.apply(3) == 4
+    try:
+        TransformChain((IntToInt(op=IntOp.MULTIPLY, operand=2),
+                        IntToInt(op=IntOp.SUBTRACT_LOWER_BOUND, operand=1)))
+    except Asn1Error as error:
+        assert "24.3.9" in str(error), error
+    else:
+        raise AssertionError("subtract:lower-bound was accepted in a non-initial position")
+
+
+def test_the_operand_ranges_are_the_clauses_own():
+    """§24.3.1: increment/decrement take INTEGER (1..MAX), multiply/divide/modulo (2..MAX).
+
+    A multiply by 1 is not a transform and the notation does not admit one, so the bound is a
+    property of the specification rather than a convenience check.
+    """
+    for op in (IntOp.MULTIPLY, IntOp.DIVIDE, IntOp.MODULO):
+        try:
+            IntToInt(op=op, operand=1)
+        except Asn1Error as error:
+            assert "2..MAX" in str(error), error
+        else:
+            raise AssertionError(f"{op} accepted an operand below its §24.3.1 floor")
+    for op in (IntOp.INCREMENT, IntOp.DECREMENT):
+        assert IntToInt(op=op, operand=1).apply(5) in (4, 6)
 
 
 def test_int_to_bits_round_trips():

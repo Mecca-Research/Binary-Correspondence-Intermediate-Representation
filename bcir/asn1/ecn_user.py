@@ -26,15 +26,28 @@ alignment choice, or canonical-variant selection in the fixed set produces it. T
 performance argument or a size argument; it is an expressiveness one, which is the only kind
 the gate accepts.
 
-CITATION HONESTY. Part one cites sub-clauses exactly (§9.6.7, §18.1.7, §18.2.5.1) because
-each was checked against the text. The text of clauses 19–25 was **not** available when this
-module was written. So it cites at the granularity the repository has already established —
-clauses 19–25 are the user-defined encodings, of which 20–23 are the defined syntax, and
-`#TRANSFORM`/`#OUTER`/`#CONDITIONAL-INT`/`#CONDITIONAL-REPETITION` are the encoding-procedure
-classes part one already declares — and describes every other rule in its own words rather
-than attaching a sub-clause number it cannot support. A precise-looking citation that is
-wrong is worse in this repository than an honest description, because the whole point of the
-correspondence is that a reader can check it.
+CITATIONS ARE NOW CHECKED AGAINST THE TEXT. The first version of this module was written
+without Rec. ITU-T X.692 (02/2021) in hand and said so, citing at clause granularity and
+describing the rest in its own words. The text has since been read, and the pass found the
+clause-level attributions correct — 19 is mapping values, 20-23 the defined syntax, 24
+`#TRANSFORM`, 25 `#OUTER` — and two genuine SEMANTIC divergences:
+
+* **One object, one operation.** §24.3.5 permits "any given encoding object to specify
+  precisely one arithmetic operation. General arithmetic can, however, be defined by the use
+  of an ordered list of transforms", and §22.4.1.1 declares the property as
+  `&Encoder-transforms #TRANSFORM ORDERED OPTIONAL`. The old `IntToInt(offset=, scale=)`
+  fused two operations into one object. It is now `IntOp` plus `TransformChain`.
+* **Reversibility is per transform, not a blanket rule.** The old code refused any value a
+  transform could not invert, reasoning that a lossy transform is not an encoding rule. Table
+  6 disagrees: `modulo:n` is **Never reversible** and is still legal, while `divide:n` is
+  reversible exactly when the "Value is a multiple of n". So `reversible()` now *reports* per
+  Table 6 and only a caller needing a reversible chain refuses — which, pleasingly, means the
+  old refusal was the right rule for `divide` and the wrong rule for everything else.
+
+Two smaller things the text settled: §24.3.7 defines `divide:n` to truncate toward zero, so
+`-1 divide:2` is 0 where Python's `//` gives -1; and §24.3.9 confines `subtract:lower-bound`
+to the first position in a list, which is a statement about the LIST and is therefore enforced
+in `TransformChain` rather than in the transform.
 
 WHAT IS DELIBERATELY NOT HERE. The ECN *surface syntax* is not parsed: there is no
 `EncodingObjectDefinition` grammar reading `WITH SYNTAX`-style defined syntax from text. The
@@ -131,16 +144,65 @@ class BitWriter:
         return bytes(out)
 
 
-# --- clause 21's #TRANSFORM: the encoded value as a function of the abstract one ----------
+# --- clause 24's #TRANSFORM: the encoded value as a function of the abstract one ----------
+
+class IntOp(Enum):
+    """§24.3.1's `&int-to-int` CHOICE. Exactly one of these per encoding object.
+
+    §24.3.5 is explicit: giving a value to `INT-TO-INT` permits "any given encoding object to
+    specify **precisely one** arithmetic operation. General arithmetic can, however, be
+    defined by the use of an ordered list of transforms". That ORDERED list is not a
+    convenience — §22.4.1.1 declares the encoding-space property as
+    `&Encoder-transforms #TRANSFORM ORDERED OPTIONAL`, so composition is a property of the
+    *list*, never of a single object.
+
+    **This corrects the first version of this module**, which fused an offset and a scale into
+    one `IntToInt(offset=, scale=)`. That is two operations in one object, which §24.3.5
+    forbids; the same encoding is now `(SUBTRACT or DECREMENT) then DIVIDE` as a chain.
+    """
+
+    INCREMENT = "increment"
+    DECREMENT = "decrement"
+    MULTIPLY = "multiply"
+    DIVIDE = "divide"
+    NEGATE = "negate"
+    MODULO = "modulo"
+    SUBTRACT_LOWER_BOUND = "subtract"
+
+
+#: Table 6, "Reversal of INT-TO-INT transforms", verbatim in force rather than paraphrased.
+#: `None` means always reversible; a callable is the condition on the abstract value.
+#:
+#: The two interesting rows are the ones a designer would guess wrong. `divide:n` is reversible
+#: only when the "Value is a multiple of n" — which is why refusing a non-multiple is the
+#: standard's rule and not this module's caution. And `modulo:n` is **Never reversible** and is
+#: still a perfectly legal transform, which is why reversibility cannot be a precondition on
+#: applying one.
+_REVERSAL = {
+    IntOp.INCREMENT: None,
+    IntOp.DECREMENT: None,
+    IntOp.MULTIPLY: None,
+    IntOp.DIVIDE: lambda value, n: value % n == 0,
+    IntOp.NEGATE: None,
+    IntOp.MODULO: lambda value, n: False,
+    IntOp.SUBTRACT_LOWER_BOUND: None,
+}
+
 
 @dataclass(frozen=True)
 class Transform:
-    """Base for the value transformations a `#TRANSFORM` encoding object applies.
+    """Base for the value transformations a `#TRANSFORM` encoding object applies (clause 24).
 
     This is the mechanism the whole reopening rests on. Every rule in the fixed candidate set
     encodes the abstract value; a transform makes the *transmitted* value a declared function
-    of it, and `inverse` is what keeps that honest — a transform with no inverse would be an
-    encoding a decoder cannot undo, which is a lossy channel rather than an encoding rule.
+    of it.
+
+    **Reversibility is a property of the transform, not a requirement on all of them.** Clause
+    24 states it per transform: §24.4.6 and §24.5.6 say `bool-to-bool` and `bool-to-int` are
+    "defined to be reversible for all abstract values", §24.9.6 says `bits-to-int` "shall not
+    be used where reversible transforms are required", and Table 6 gives `int-to-int` a
+    per-operation condition including **Never reversible** for `modulo:n`. So `reversible()`
+    reports, and only a caller that needs a reversible chain refuses on it.
     """
 
     name: str = ""
@@ -151,50 +213,107 @@ class Transform:
     def inverse(self, value):
         raise NotImplementedError
 
+    def reversible(self, value) -> bool:
+        """Whether this transform can be undone for `value`. See Table 6 for `int-to-int`."""
+        return True
+
 
 @dataclass(frozen=True)
 class IntToInt(Transform):
-    """`INT-TO-INT`: an affine map on an integer, `(value - offset) // scale`.
+    """§24.3 `INT-TO-INT`: exactly one arithmetic operation on an integer.
 
-    The shape real headers actually use. IPv4's IHL is a length in 4-octet units; a great many
-    link-layer length fields transmit `n - 1` so that a 4-bit field can express 1..16. Both are
-    this transform with different constants.
+    §24.3.6 gives `increment`, `decrement`, `multiply` and `negate` "their normal mathematical
+    meaning". §24.3.7 defines `divide:n` to produce "the integer value that is closest to the
+    mathematical result, but is no further from zero than that result" — truncation toward
+    zero, so -1 with `divide:2` gives zero. §24.3.8 defines `modulo:n` in terms of divide then
+    multiply.
 
-    `scale` must divide the value exactly. A transform that rounded would make two abstract
-    values share one encoding, so a decoder could not recover which was sent — and an encoding
-    rule that cannot be inverted is not an encoding rule.
+    The operand ranges are §24.3.1's: `increment`/`decrement` take `INTEGER (1..MAX)`, while
+    `multiply`, `divide` and `modulo` take `INTEGER (2..MAX)` — a multiplier of 1 is not a
+    transform and the notation does not admit one.
     """
 
-    offset: int = 0
-    scale: int = 1
+    op: IntOp = IntOp.INCREMENT
+    operand: int = 1
 
     def __post_init__(self) -> None:
-        if self.scale == 0:
-            raise Asn1Error("ECN: an INT-TO-INT transform cannot scale by zero")
+        floor = {IntOp.INCREMENT: 1, IntOp.DECREMENT: 1,
+                 IntOp.MULTIPLY: 2, IntOp.DIVIDE: 2, IntOp.MODULO: 2}.get(self.op)
+        if floor is not None and self.operand < floor:
+            raise Asn1Error(
+                f"ECN: §24.3.1 constrains {self.op.value} to INTEGER ({floor}..MAX); "
+                f"got {self.operand}")
 
     def apply(self, value: int) -> int:
-        shifted = value - self.offset
-        if shifted % self.scale:
-            raise Asn1Error(
-                f"ECN: {value} is not expressible under this INT-TO-INT transform: "
-                f"({value} - {self.offset}) is not a multiple of {self.scale}, so the "
-                f"transform would not be invertible for it")
-        return shifted // self.scale
+        if self.op is IntOp.INCREMENT:
+            return value + self.operand
+        if self.op is IntOp.DECREMENT:
+            return value - self.operand
+        if self.op is IntOp.MULTIPLY:
+            return value * self.operand
+        if self.op is IntOp.DIVIDE:
+            # §24.3.7: truncate toward zero, which is NOT Python's floor division for
+            # negatives. `-1 divide:2` is 0, and `-1 // 2` would be -1.
+            quotient = abs(value) // self.operand
+            return -quotient if value < 0 else quotient
+        if self.op is IntOp.NEGATE:
+            return -value
+        if self.op is IntOp.MODULO:
+            # §24.3.8: i - ((i divide:n) multiply:n), using this clause's own divide.
+            divided = IntToInt(op=IntOp.DIVIDE, operand=self.operand).apply(value)
+            return value - divided * self.operand
+        # §24.3.9: subtract:lower-bound, whose operand is the source's lower bound.
+        return value - self.operand
 
     def inverse(self, value: int) -> int:
-        return value * self.scale + self.offset
+        if self.op is IntOp.INCREMENT:
+            return value - self.operand
+        if self.op is IntOp.DECREMENT:
+            return value + self.operand
+        if self.op is IntOp.MULTIPLY:
+            return value // self.operand
+        if self.op is IntOp.DIVIDE:
+            return value * self.operand
+        if self.op is IntOp.NEGATE:
+            return -value
+        if self.op is IntOp.MODULO:
+            raise Asn1Error(
+                "ECN: Table 6 lists modulo:n as Never reversible; there is no inverse to take")
+        return value + self.operand
+
+    def reversible(self, value: int) -> bool:
+        condition = _REVERSAL[self.op]
+        return True if condition is None else condition(value, self.operand)
 
 
 @dataclass(frozen=True)
 class IntToBits(Transform):
-    """`INT-TO-BITS`: an integer as a fixed-width bit field, so a later object sees bits."""
+    """§24.8 `INT-TO-BITS`: an integer as a bitstring.
+
+    §24.8.1's properties are `&int-to-bits-encoded-as ENUMERATED {positive-int,
+    twos-complement} DEFAULT twos-complement`, a `&int-to-bits-unit Unit DEFAULT bit`, and a
+    `&int-to-bits-size ResultSize DEFAULT variable`. §24.8.10: "The most significant bit shall
+    be at the leading end of the bitstring."
+
+    Only the fixed-size `positive-int` case is built here, which is the one the workload needs;
+    the default is `twos-complement`, so an object relying on the default is refused rather
+    than silently encoded as unsigned.
+    """
 
     width: int = 0
+    encoded_as: str = "positive-int"
+
+    def __post_init__(self) -> None:
+        if self.encoded_as != "positive-int":
+            raise Asn1Error(
+                f"ECN: only §24.8's positive-int form is implemented; {self.encoded_as!r} "
+                f"(the DEFAULT is twos-complement) would need a signed width rule")
 
     def apply(self, value: int) -> tuple[int, ...]:
         if value < 0 or (self.width and value >> self.width):
             raise Asn1Error(
                 f"ECN: {value} does not fit an INT-TO-BITS transform of width {self.width}")
+        # §24.8.10: most significant bit at the leading end.
         return tuple((value >> shift) & 1 for shift in range(self.width - 1, -1, -1))
 
     def inverse(self, value: tuple[int, ...]) -> int:
@@ -202,6 +321,54 @@ class IntToBits(Transform):
         for bit in value:
             out = (out << 1) | (1 if bit else 0)
         return out
+
+
+@dataclass(frozen=True)
+class TransformChain:
+    """§24.3.5's "ordered list of transforms" — how general arithmetic is actually expressed.
+
+    §22.4.1.1 declares the encoding-space properties as `&Encoder-transforms #TRANSFORM
+    ORDERED OPTIONAL`, so the order is part of the specification rather than an artefact of
+    how a tool stores them. Reversing runs the chain backwards, which is the only reading that
+    makes a decoder recover the abstract value.
+
+    §24.3.9 is enforced here because it is a statement about the LIST rather than about any
+    one object: `subtract:lower-bound` "shall only be used as the first of an ordered list of
+    transforms".
+    """
+
+    transforms: tuple[Transform, ...] = ()
+
+    def __post_init__(self) -> None:
+        for index, transform in enumerate(self.transforms):
+            if (isinstance(transform, IntToInt)
+                    and transform.op is IntOp.SUBTRACT_LOWER_BOUND and index != 0):
+                raise Asn1Error(
+                    f"ECN: §24.3.9 — subtract:lower-bound shall only be used as the first of "
+                    f"an ordered list of transforms; it is at position {index}")
+
+    def apply(self, value):
+        for transform in self.transforms:
+            value = transform.apply(value)
+        return value
+
+    def inverse(self, value):
+        for transform in reversed(self.transforms):
+            value = transform.inverse(value)
+        return value
+
+    def reversible(self, value) -> bool:
+        """Whether the WHOLE chain can be undone for `value`.
+
+        Checked stepwise on the intermediate values, because Table 6's conditions are about
+        the value each transform actually sees — `divide:4` is reversible for 40 and not for
+        41, and which of those reaches it depends on everything before it in the list.
+        """
+        for transform in self.transforms:
+            if not transform.reversible(value):
+                return False
+            value = transform.apply(value)
+        return True
 
 
 # --- clauses 20-23's defined syntax, as the properties it denotes -------------------------
@@ -424,8 +591,11 @@ def legacy_frame_objects():
 
     spec = ConcatenationSpec(
         fields={
-            "payloadOctets": IntSpec(width=4, transform=IntToInt(offset=0, scale=4,
-                                                                 name="OCTETS-TO-UNITS")),
+            # §24.3.5: one object, one operation. A field scaled in 4-octet units is a
+            # single `divide:4`; had it also carried an offset it would be a two-element
+            # chain, which is exactly why `TransformChain` exists.
+            "payloadOctets": IntSpec(width=4, transform=TransformChain(
+                (IntToInt(op=IntOp.DIVIDE, operand=4, name="OCTETS-TO-UNITS"),))),
             "version": IntSpec(width=3),
             "urgent": BoolSpec(true_value=0, false_value=1),
             "reserved": PadSpec(width=2),
@@ -487,8 +657,8 @@ def refuted_by(asn1_type, value, target: bytes) -> dict:
 
 
 __all__ = [
-    "BitWriter", "BoolSpec", "ConcatenationSpec", "FIXED_CANDIDATES", "IntForm", "IntSpec",
-    "IntToBits", "IntToInt", "Justification", "OuterSpec", "PadSpec", "Transform",
-    "UserEncodingObject", "encode_with_user", "legacy_frame_objects",
+    "BitWriter", "BoolSpec", "ConcatenationSpec", "FIXED_CANDIDATES", "IntForm", "IntOp",
+    "IntSpec", "IntToBits", "IntToInt", "Justification", "OuterSpec", "PadSpec", "Transform",
+    "TransformChain", "UserEncodingObject", "encode_with_user", "legacy_frame_objects",
     "legacy_frame_workload", "refuted_by",
 ]
