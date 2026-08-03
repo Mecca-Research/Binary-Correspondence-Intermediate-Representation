@@ -16,7 +16,10 @@
 # It reads. It does not configure anything, load anything, or write to /dev/mem: a probe that
 # changed the machine would be measuring a machine that no longer exists.
 #
-# Portable to Termux on purpose, which is why there is no awk, seq, sed or taskset here.
+# LINUX ONLY, by subject rather than by preference: every field below is read from /proc
+# or /sys, so there is nothing on another kernel for this to describe. It is portable to
+# Termux on purpose -- no awk, seq, sed or taskset -- because the constrained hosts are
+# exactly the ones whose limits need recording.
 set -uo pipefail          # NOT -e: a probe's job is to report a failure, not to die of one.
 
 emit() { printf '  "%s": %s,\n' "$1" "$2"; }

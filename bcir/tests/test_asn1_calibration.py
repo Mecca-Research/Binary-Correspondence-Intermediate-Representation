@@ -306,8 +306,13 @@ def test_the_capability_probe_runs_and_reports_what_blocks_measurement():
     import json
     import shutil
     import subprocess
+    import sys
 
-    if shutil.which("bash") is None:
+    # Linux only, and not merely for convenience: every field this probe reports comes from
+    # /proc or /sys, so there is nothing on another kernel for it to describe. Guarding on
+    # `bash` is not enough — Windows runners carry Git Bash, which happily runs the script and
+    # finds none of the paths it exists to read.
+    if not sys.platform.startswith("linux") or shutil.which("bash") is None:
         return
     probe = os.path.join(_ROOT, "tools", "silicon", "probe_capabilities.sh")
     assert os.path.exists(probe), "the capability probe is missing"
