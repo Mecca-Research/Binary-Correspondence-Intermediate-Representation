@@ -53,7 +53,7 @@ rule.
 | X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references; cross-module tag-default nuance (§9.8) excluded |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
-| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, eleven statically decidable X.692 rules). Still refused: §22.1's replacement *notation* (needs §22.1.2.2/§22.1.2.4's parameterization) and §21.3.6's `container` |
+| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, twenty-two statically decidable X.692 rules). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. Still refused: §22.1's replacement *notation* and §16.5/§16.3's constructor *structure* notation (both need §22.1.2.2/§22.1.2.4-style parameterization or structure grammar) and §21.3.6/§21.7.8's `container` |
 | X.693 | 8825-4:2021 | XER | **built** — BASIC-XER + CXER (CXER out, both in; validated against Annex A.3/A.4); EXTENDED-XER by design excluded |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
@@ -479,23 +479,72 @@ exhaustiveness across would pick the wrong encoding for every fixed-size string 
 common case, not an edge. §21.13.4 a) also turns on the lower bound being **zero** where
 §21.11.4 a) turned on one *existing*, because an X.680 size always has one.
 
-Three of §21.7's eight repetition-space determinations are built, and they are the three that
-describe how real repeated formats work: a count field (`field-to-be-set` / `field-to-be-used`)
-and a terminator (`pattern` — this is the NUL-terminated string, and it is why the group
-carries a `Pattern` at all). The other five are refused by name: `flag-to-be-set` and
+Five of §21.7's eight repetition-space determinations are built: a count field
+(`field-to-be-set` / `field-to-be-used`), a terminator (`pattern` — this is the NUL-terminated
+string, and it is why the group carries a `Pattern` at all), §21.7.10's identification handle,
+and §21.7.11's fixed count. The other three are refused by name: `flag-to-be-set` and
 `flag-to-be-used` put a continuation flag **inside the repeated element** (§21.7.6/§21.7.7),
-which needs the element's own structure; `container` and `handle` need containment and §22.9.
+which needs the element's own structure; `container` needs containment.
 
 §23.8's `#NUL` and §23.15's `#TAG` needed nothing new and are built. `#NUL` is the one category
 where `VALUE-PADDING` *is* the value encoding, since X.680's NULL carries no information;
 `#TAG` is §20.2's composition — "preceded by one or more instances of a class in the tag
 category" — which is exactly how BER's identifier octet relates to its contents.
 
-**Two things are still refused at the surface, and both name what they need.** §22.1's
-replacement *notation* needs §22.1.2.2's parameterized encoding structures and §22.1.2.4's
-parameterized encoding objects — X.683's parameterization applied to ECN, which does not
-exist here; the semantics are built and reachable from Python. §21.3.6's `container`
+**The constructor categories, and the one mechanism four clauses were waiting on.** §22.9's
+identification handle is what ECN offers *instead of* a discriminant field, and four separate
+clauses depend on it: §21.5.7 for optionality, §21.6.6 for alternatives, §21.7.10 for
+repetition end, §22.10.2.1 for a randomly ordered concatenation. Every one of those was
+previously refused with the words "§22.9's identification handles are not built". Building the
+handle turned all four on at once — which is why §23.1's `#ALTERNATIVES`, §23.11's `#OPTIONAL`,
+§22.5, §22.6, §22.10 and §21.16 arrive together rather than one clause at a time.
+
+A handle is not a field. §22.9.1.4's three parts are a name, "the bit positions that form the
+handle", and "the possible bit patterns ... occurring in the encodings produced by this
+encoding object" — so it is a *declaration about bits that are there anyway*, which is how
+BER's tag and IPv4's version nibble actually discriminate. Three readings shaped the
+implementation:
+
+- **§22.9.1.5 puts position zero after pre-alignment**, and after any §22.12 bit reversal. So
+  the window is into the encoding *space*, not into the padding that precedes it, and the
+  §22.9.3.1 check has to run against the written buffer rather than against the value.
+- **§22.9.1.6 makes the positions a set**, "not necessarily contiguous, and not necessarily in
+  ascending order in the ECN specification", ordered "from the zero position ... upwards". A
+  handle can be bits 0, 3 and 7 written in any order.
+- **§21.16's six alternatives all reduce to integer ranges.** The question the four consuming
+  clauses ask is disjointness, and that is not answerable by enumerating 2^n patterns — so
+  `HandleValueSet` normalizes to inclusive ranges, and `tag:any` (§21.16.5) is *refused* until
+  a tag number resolves it rather than defaulting to a set that matches nothing.
+
+Two determination enums arrived with them, and they diverge for the reason §21.3 and §21.4 do.
+§21.5.1 lists five values; §21.6.1 lists three. A CHOICE always encodes exactly one
+alternative, so neither `container` nor `pointer` has anything to say about which one it was.
+§22.6.1.1's ordering property has the same shape of difference — `{textual, tag}` where
+§22.10.1.1's has `{textual, tag, random}`.
+
+**Two stale refusals fell out.** §22.1.1.7 c) and d)'s `REPLACE OPTIONALS` and `REPLACE
+NON-OPTIONALS` were refused with "the optionality category is not built on this rail"; it is,
+so they now select. §22.1.3.4 then supplied the rule the obvious implementation gets wrong: a
+replaced optional component is replaced "with a **non-optional** instantiation", and the actual
+parameter de-references to the component "**except for any class in the optionality
+category**". `REPLACE OPTIONALS` removes optionality rather than wrapping it.
+
+R25 grew to twenty-two rules for the same slice: §22.9.1.6, §22.9.1.9, §22.9.2.1 and §22.9.2.3
+over handles, the eight parallel restrictions of §22.5.2 and §22.6.2, §22.5.2.4's start-pointer
+requirement, §22.6.1.1's two-valued ordering and §22.10.2.1's handle prerequisite. §22.9.2.1 and
+§22.9.2.3 are the two that could only ever live here: both relate one `EXHIBITS HANDLE` clause
+to every other in the module, so no object-local check reaches them.
+
+**What is still refused at the surface, and what each needs.** §22.1's replacement *notation*
+needs §22.1.2.2's parameterized encoding structures and §22.1.2.4's parameterized encoding
+objects — X.683's parameterization applied to ECN, which does not exist here; the semantics are
+built and reachable from Python. §16.5's `AlternativesStructure` and §16.3's `OPTIONAL` field
+marker are the *structure* half of the constructor categories: the objects parse and run, and
+the structures they apply to are still assembled in Python. §21.3.6's and §21.7.8's `container`
 determination needs a containment relationship this rail's flat concatenation does not have.
+`EXHIBITS HANDLE` itself now parses, with all six §21.16 value-set alternatives, and reaches
+the module digest — `SYNTAX_VERSION` moved to 4 for that, since a handle changes what a decoder
+reads and two specifications differing only in one must not share a name.
 
 **The plan-v6 question, answered.** The open question was whether an ECN encoding is a sixth
 column in [`encode_plan`](../bcir/asn1/encode_plan.py), carried by a version 6 of that

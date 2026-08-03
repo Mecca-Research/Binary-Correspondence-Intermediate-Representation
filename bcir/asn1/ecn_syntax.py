@@ -68,6 +68,7 @@ from .ecn_user import (
     RESULT_SIZE_FIXED_TO_MAX, RESULT_SIZE_VARIABLE, BitsToBits, BitsToChar,
     BitsToCompositeBits, BitsToInt, BitToBits, BoolToBool, BoolToInt, CharsToCompositeChar,
     CharToBits, CompositeBitsToBits, CompositeBitsToOctets, CompositeCharToChars,
+    HandleValueSet, IdentificationHandle,
     IntSelector, IntSpec, IntToBits, IntToBool, IntToChars, IntToInt, IntegerBounds,
     Justification, OctetsToCompositeBits, OuterSpec,
     PadSpec, Padding, Pattern, PreAlignment, RangeCondition, ReplaceAction, Replacement,
@@ -79,7 +80,7 @@ from .tags import Asn1Error
 
 #: The serialization's version. Its own counter, not `encode_plan`'s: see this module's
 #: `serialize` for why an ECN encoding is a separate compilation rather than a plan version.
-SYNTAX_VERSION = 3
+SYNTAX_VERSION = 4
 SYNTAX_COMPILER = "bcir-ecn-syntax/1"
 
 #: The bit-field and constructor classes whose defined syntax clause 23 gives, restricted to
@@ -99,9 +100,18 @@ _BUILTIN_CLASSES = {
 #: Property groups that clause 23 gives every bit-field class and this repository has not
 #: built. Recognized so the refusal can cite; never silently dropped.
 _UNSUPPORTED_KEYWORDS = {
-    "EXHIBITS": "§22.9's identification handles are read only by ORDER random and by the "
-                "alternatives category, neither of which is built",
     "CONTAINED": "§22.11's contained-type specification is not implemented",
+    # §23.1's `#ALTERNATIVES` and §23.11's `#OPTIONAL` are built in `ecn_user` and reachable
+    # from Python; what this grammar cannot read is the STRUCTURE side of them. §16.5's
+    # AlternativesStructure is a second constructor shape beside the concatenation this parser
+    # models, and an optional component is a field marked `OPTIONAL` in one — both are
+    # structure notation rather than object notation, which is why the objects arrived first.
+    "ALTERNATIVE": "§23.1's alternatives objects are built, but §16.5's AlternativesStructure "
+                   "is a constructor shape this grammar does not read; assemble "
+                   "`AlternativesSpec` in Python",
+    "PRESENCE": "§23.11's optionality objects are built, but marking a structure field "
+                "OPTIONAL is §16.3 structure notation this grammar does not read; assemble "
+                "`OptionalSpec` in Python",
     # §22.1's replacement SEMANTICS are built in `ecn_user` and reachable from Python. What
     # this grammar cannot read is the notation around them: §22.1.2.2 makes the `WITH`
     # structures parameterized encoding structures with a single encoding class parameter, and
@@ -942,6 +952,90 @@ def _parse_value_padding_tail(cursor: _Cursor, module: "EcnModule") -> ValuePadd
     return None
 
 
+def _parse_handle_tail(cursor: _Cursor) -> "IdentificationHandle | None":
+    """§22.9.1.2's `[EXHIBITS HANDLE &exhibited-handle AT &Handle-positions
+    [AS &handle-value-set]]`.
+
+    It sits between `VALUE-PADDING` and `BIT-REVERSAL` because §23.3.3.1's encoder actions put
+    it there — value padding and justification, **identification handle**, bit reversal — and
+    this grammar follows that list rather than a second order of its own.
+
+    `AT` is inside the outer bracket rather than in one of its own, so a handle always has
+    positions. `AS` is optional, and its DEFAULT is §21.16.5's `tag:any`, which only a `#TAG`
+    object can resolve — so omitting it anywhere else is a refusal that arrives at write time
+    with §22.9.1.9's words rather than a silent match-nothing.
+    """
+    _refuse_unsupported(cursor)
+    if not cursor.accept_words("EXHIBITS", "HANDLE"):
+        return None
+    named = cursor.next().text
+    cursor.expect("AT")
+    positions = _parse_int_list(cursor)
+    value_set = HandleValueSet.tag_any()
+    if cursor.accept("AS"):
+        value_set = _parse_handle_value_set(cursor)
+    return IdentificationHandle(name=named, positions=positions, value_set=value_set)
+
+
+def _parse_handle_value_set(cursor: _Cursor) -> HandleValueSet:
+    """§21.16.1's CHOICE, written as its ASN.1 value notation: `bits:'01'B`, `number:5`,
+    `tag:any`, `range:{4, 7}`, `ranges:{{0, 1}, {6, 7}}`.
+
+    `bits:` and `octets:` reuse `Pattern`'s spellings, because §21.10 and §21.16 write a
+    BIT STRING and an OCTET STRING the same way — the difference between them is what the
+    bits are *for*, not how they are written.
+    """
+    if cursor.peek() == "ranges:":
+        cursor.next()
+        cursor.expect("{")
+        pairs = [_parse_int_pair(cursor)]
+        while cursor.accept(","):
+            pairs.append(_parse_int_pair(cursor))
+        cursor.expect("}")
+        return HandleValueSet.of_ranges(pairs)
+    if cursor.peek() == "range:":
+        cursor.next()
+        low, high = _parse_int_pair(cursor)
+        return HandleValueSet.of_range(low, high)
+    token = cursor.next()
+    alternative, _, body = token.text.partition(":")
+    if alternative == "tag" and body == "any":
+        return HandleValueSet.tag_any()
+    if alternative == "bits":
+        if not (body.startswith("'") and body.endswith("'B")):
+            raise Asn1Error(
+                f"ECN: {token} — §21.16.1's `bits` alternative is a BIT STRING like '1010'B")
+        return HandleValueSet.from_bits(body[1:-2])
+    if alternative == "octets":
+        if not (body.startswith("'") and body.endswith("'H")):
+            raise Asn1Error(
+                f"ECN: {token} — §21.16.1's `octets` alternative is a hex string like 'FF'H")
+        try:
+            return HandleValueSet.from_octets(bytes.fromhex(body[1:-2]))
+        except ValueError:
+            raise Asn1Error(f"ECN: {token} is not a hex string") from None
+    if alternative == "number":
+        try:
+            return HandleValueSet.of_number(int(body))
+        except ValueError:
+            raise Asn1Error(
+                f"ECN: §21.16.1's `number` alternative is an INTEGER (0..MAX); got "
+                f"{token}") from None
+    raise Asn1Error(
+        f"ECN: {token} names no alternative of §21.16.1's HandleValueSet "
+        f"(bits, octets, number, tag, range, ranges)")
+
+
+def _parse_int_pair(cursor: _Cursor) -> tuple[int, int]:
+    """§21.16.1's `SEQUENCE {low INTEGER(0..MAX), high INTEGER(0..MAX)}`."""
+    values = _parse_int_list(cursor)
+    if len(values) != 2:
+        raise Asn1Error(
+            f"ECN: §21.16.1 gives a range a `low` and a `high`; {list(values)} has "
+            f"{len(values)}")
+    return values[0], values[1]
+
+
 def _parse_reversal_tail(cursor: _Cursor) -> ReversalSpecification:
     """Clause 23's `[BIT-REVERSAL &bit-reversal]`, which every bit-field class ends with."""
     _refuse_unsupported(cursor)
@@ -972,6 +1066,7 @@ def _parse_bool_body(cursor: _Cursor, name: str, module: "EcnModule") -> BoolSpe
             "ECN: §23.3.2.3 — at most one of TRUE-PATTERN and FALSE-PATTERN may be "
             "`different:any`; §21.10.9 needs the other one to differ from")
     padding = _parse_value_padding_tail(cursor, module)
+    exhibits = _parse_handle_tail(cursor)
     reversal = _parse_reversal_tail(cursor)
     _finish(cursor, name)
     true_bits = true_pattern.bit_sequence()
@@ -990,7 +1085,7 @@ def _parse_bool_body(cursor: _Cursor, name: str, module: "EcnModule") -> BoolSpe
         true_value=_bits_to_int(_place(true_bits, width, padding)),
         false_value=_bits_to_int(_place(false_bits, width, padding)),
         pre_alignment=common.pre_alignment, start_pointer=common.start_pointer,
-        space_determinant=common.space.determinant,
+        space_determinant=common.space.determinant, exhibits=exhibits,
         bit_reversal=reversal, reversal_unit=common.space.unit)
 
 
@@ -1046,6 +1141,7 @@ def _parse_conditional_int_body(cursor: _Cursor, name: str,
             raise Asn1Error(
                 f"ECN: {token} names no alternative of §23.7.1's &encoding ENUMERATED") from None
     padding = _parse_value_padding_tail(cursor, module)
+    exhibits = _parse_handle_tail(cursor)
     reversal = _parse_reversal_tail(cursor)
     _finish(cursor, name)
     # §23.7.2.7's `subtract:lower-bound` rule relates the transforms to the CONDITION, so it
@@ -1054,7 +1150,7 @@ def _parse_conditional_int_body(cursor: _Cursor, name: str,
         spec=IntSpec(width=common.space.width, form=form, transform=chain,
                      pre_alignment=common.pre_alignment, value_padding=padding,
                      start_pointer=common.start_pointer,
-                     space_determinant=common.space.determinant,
+                     space_determinant=common.space.determinant, exhibits=exhibits,
                      bit_reversal=reversal, reversal_unit=common.space.unit),
         conditions=conditions)
 
@@ -1132,8 +1228,10 @@ def _parse_pad_body(cursor: _Cursor, name: str, module: "EcnModule") -> PadSpec:
         # §23.12.2.2: with a positive ENCODING-SPACE SIZE the pattern "shall not be of zero
         # length, and is replicated and truncated to fill the encoding space".
         pattern.require_non_null(f"{name}'s PAD-PATTERN")
+    exhibits = _parse_handle_tail(cursor)
     _finish(cursor, name)
-    return PadSpec(width=common.space.width, padding=padding, pattern=pattern)  # noqa: E501
+    return PadSpec(width=common.space.width, padding=padding, pattern=pattern,
+                   exhibits=exhibits)
 
 
 def _parse_outer_body(cursor: _Cursor, name: str) -> OuterSpec:
@@ -1434,6 +1532,7 @@ def _describe(spec) -> str:
                 f"transform {_chain(spec.transform)} "
                 f"pre {_pre(spec.pre_alignment)} pad {_pad(spec.value_padding)} "
                 f"ptr {_ref(spec.start_pointer)} det {_det(spec.space_determinant)} "
+                f"handle {_handle(spec.exhibits)} "
                 f"rev {spec.bit_reversal.value}:{spec.reversal_unit}")
     if isinstance(spec, ConditionalIntSpec):
         conditions = "/".join(
@@ -1450,16 +1549,21 @@ def _describe(spec) -> str:
                 f"pre {_pre(spec.pre_alignment)}")
     if isinstance(spec, BoolSpec):
         return (f"bool width {spec.width} true {spec.true_value} false {spec.false_value} "
-                f"pre {_pre(spec.pre_alignment)}")
+                f"pre {_pre(spec.pre_alignment)} handle {_handle(spec.exhibits)}")
     if isinstance(spec, PadSpec):
         return (f"pad width {spec.width} padding {spec.padding.value} "
-                f"pattern {_pattern(spec.pattern)}")
+                f"pattern {_pattern(spec.pattern)} handle {_handle(spec.exhibits)}")
     if isinstance(spec, OuterSpec):
         return (f"outer boundary {spec.boundary_bits} padding {spec.padding.value} "
                 f"pattern {_pattern(spec.pattern)}")
     if isinstance(spec, ConcatenationSpec):
+        group = spec.concatenation
         return (f"concatenation order {'/'.join(spec.transmission_order())} "
-                f"replace {_replacement(spec.replacement)}")
+                f"replace {_replacement(spec.replacement)} "
+                f"group {'-' if group is None else group.order.value}:"
+                f"{'-' if group is None else group.alignment.value}:"
+                f"{'-' if group is None else group.handle_id} "
+                f"handle {_handle(spec.exhibits)}")
     raise Asn1Error(f"ECN: {type(spec).__name__} has no canonical serialization")
 
 
@@ -1530,6 +1634,15 @@ def _pad(padding: ValuePadding | None) -> str:
     return (f"{padding.justification.side.value}:{padding.justification.offset}:"
             f"{padding.pre_padding.value}:{_pattern(padding.pre_pattern)}:"
             f"{padding.post_padding.value}:{_pattern(padding.post_pattern)}:{tail}")
+
+
+def _handle(handle: "IdentificationHandle | None") -> str:
+    """§22.9's group, in the digest. A handle changes what a decoder reads, so two modules
+    differing only in one are two specifications and have to hash differently."""
+    if handle is None:
+        return "-"
+    positions = "/".join(str(position) for position in handle.ordered())
+    return f"{handle.name}@{positions}={handle.value_set.describe()}"
 
 
 def _pattern(pattern: Pattern | None) -> str:

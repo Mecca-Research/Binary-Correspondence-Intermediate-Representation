@@ -579,6 +579,297 @@ class SizeBounds:
                      if not condition.needs_comparison() and self.satisfies(condition))
 
 
+class OptionalityDetermination(Enum):
+    """§21.5.1's `OptionalityDetermination ::= ENUMERATED {field-to-be-set, field-to-be-used,
+    container, handle, pointer}`.
+
+    §21.5.3: it "specifies the way in which a decoder determines whether an optional component
+    is present in an encoding". Five answers, and they are the five ways real formats say
+    "this field may not be here": a presence bit written by the encoder (`field-to-be-set`),
+    a presence bit the application supplies (`field-to-be-used`), running out of container
+    (`container`), recognizing what comes next (`handle`), and a pointer that is zero when the
+    thing is absent (`pointer`, §21.5.9).
+
+    §21.5.2 makes `field-to-be-set` the default, as it is for every other determination type.
+    """
+
+    FIELD_TO_BE_SET = "field-to-be-set"
+    FIELD_TO_BE_USED = "field-to-be-used"
+    CONTAINER = "container"
+    HANDLE = "handle"
+    POINTER = "pointer"
+
+
+class AlternativeDetermination(Enum):
+    """§21.6.1's `AlternativeDetermination ::= ENUMERATED {field-to-be-set, field-to-be-used,
+    handle}`.
+
+    §21.6.3: how "a decoder determines which alternative is present in an encoding of a class
+    in the alternatives category". Three, not five — a CHOICE always encodes exactly one
+    alternative, so neither `container` nor `pointer` has anything to say here, and §21.6.1
+    simply does not list them.
+
+    The conceptual value the first two carry is §22.6.3.2's `alternative-index`: zero for the
+    first alternative, one for the next, in whatever order `ORDER` fixes. That indirection is
+    what lets a two-bit selector field and a CHOICE of four be related without either knowing
+    the other's spelling.
+    """
+
+    FIELD_TO_BE_SET = "field-to-be-set"
+    FIELD_TO_BE_USED = "field-to-be-used"
+    HANDLE = "handle"
+
+
+class ComponentOrder(Enum):
+    """The order property §22.6 and §22.10 both carry — with **different value sets**.
+
+    §22.10.1.1 declares concatenation's as `ENUMERATED {textual, tag, random}`; §22.6.1.1
+    declares the alternatives one as `ENUMERATED {textual, tag}` and stops there. One
+    enumeration covers both because the three values mean the same thing in each
+    (§22.6.3.4 and §22.10.3.1–§22.10.3.3 are worded identically), and `random` is refused at
+    the point of use rather than by having two nearly identical types.
+
+    `RANDOM` is the one with a prerequisite: §22.10.2.1 makes it require an identification
+    handle exhibited by *every* component, with disjoint value sets — an encoder free to
+    reorder is only decodable if each component announces which one it is.
+    """
+
+    TEXTUAL = "textual"
+    TAG = "tag"
+    RANDOM = "random"
+
+
+class ConcatenationAlignment(Enum):
+    """§22.10.1.1's `&concatenation-alignment ENUMERATED {none, aligned} DEFAULT aligned`.
+
+    **The default is `aligned`**, which is worth stating because it is the only defaulted
+    property in clause 22 that inserts bits when nobody asked. §22.10.2.2: "If `ALIGNMENT` is
+    `aligned`, then the pre-alignment specification assumes the default value unless set" —
+    and §22.2.1.1's default unit is one bit, so the default-on-default is a no-op. A
+    concatenation only gains padding here when it also states a pre-alignment unit.
+    """
+
+    NONE = "none"
+    ALIGNED = "aligned"
+
+
+class HandleValueKind(Enum):
+    """§21.16.1's `HandleValueSet` CHOICE, by alternative name."""
+
+    BITS = "bits"
+    OCTETS = "octets"
+    NUMBER = "number"
+    TAG_ANY = "tag"
+    RANGE = "range"
+    RANGES = "ranges"
+
+
+@dataclass(frozen=True)
+class HandleValueSet:
+    """§21.16's `HandleValueSet`: the bit patterns an exhibited handle is allowed to take.
+
+    §21.16.2: it "is used to specify the set of bit patterns (the handle value set)
+    characterizing the encodings produced by an encoding object that exhibits an identification
+    handle". Six alternatives, which reduce to two ideas — a single pattern (`bits`, `octets`,
+    `number`, and `tag:any` once its tag number is known) and a set of integer ranges (`range`,
+    `ranges`).
+
+    **Everything here is expressed as ranges over the conceptual handle field's integer
+    value**, because that is the only representation in which the question the clause actually
+    asks — "are these two sets disjoint?" (§21.5.7, §21.6.6, §21.7.10, §22.10.2.1) — is
+    answerable without enumerating 2^n patterns. §22.9.1.7 fixes the integer reading: "the bit
+    in the conceptual handle field nearest to the zero position is the high-order bit", and the
+    number "is right-justified within this field".
+
+    `tag:any` is the one alternative that carries no set of its own. §21.16.5 makes its value
+    "determined by the number specified in an ECN encoding structure for a class in the tag
+    category, or by the tag number mapped from an ASN.1 tag construction" — so it is resolved
+    against a tag number before it can be tested, and `ranges_over` refuses it rather than
+    guessing. §22.9.1.9 confines it to `#TAG` objects for the same reason.
+    """
+
+    kind: HandleValueKind = HandleValueKind.TAG_ANY
+    #: The literal bits, most significant first, for `bits` and `octets`.
+    bits: tuple[int, ...] = ()
+    #: The `number` alternative's value.
+    number: int = 0
+    #: Inclusive `(low, high)` pairs for `range` and `ranges`.
+    ranges: tuple[tuple[int, int], ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.kind is HandleValueKind.NUMBER and self.number < 0:
+            raise Asn1Error(
+                f"ECN: §21.16.1 constrains the `number` alternative to INTEGER (0..MAX); "
+                f"got {self.number}")
+        if self.kind in (HandleValueKind.RANGE, HandleValueKind.RANGES):
+            if not self.ranges:
+                raise Asn1Error(
+                    "ECN: §21.16.1 gives `ranges` SIZE(1..MAX), and `range` is a single "
+                    "SEQUENCE; an empty handle value set matches no encoding at all")
+            if self.kind is HandleValueKind.RANGE and len(self.ranges) != 1:
+                raise Asn1Error(
+                    f"ECN: §21.16.1's `range` alternative is one SEQUENCE {{low, high}}; "
+                    f"{len(self.ranges)} were given, which is the `ranges` alternative")
+            for low, high in self.ranges:
+                if low < 0:
+                    raise Asn1Error(
+                        f"ECN: §21.16.1 constrains a range's bounds to INTEGER (0..MAX); "
+                        f"got low {low}")
+                if high < low:
+                    raise Asn1Error(
+                        f"ECN: §21.16.6/§21.16.7 require high greater than or equal to low; "
+                        f"got {low}..{high}")
+
+    @classmethod
+    def from_bits(cls, spelling: str) -> "HandleValueSet":
+        """§21.16.4's `bits` alternative, written as a BIT STRING's `'0101'B` body."""
+        for character in spelling:
+            if character not in "01":
+                raise Asn1Error(
+                    f"ECN: a handle value set's `bits` alternative is a BIT STRING; "
+                    f"{character!r} is not a bit")
+        return cls(HandleValueKind.BITS, tuple(int(c) for c in spelling))
+
+    @classmethod
+    def from_octets(cls, data: bytes) -> "HandleValueSet":
+        """§21.16.4's `octets` alternative: the octet string's own bits."""
+        return cls(HandleValueKind.OCTETS,
+                   tuple((byte >> shift) & 1 for byte in data for shift in range(7, -1, -1)))
+
+    @classmethod
+    def of_number(cls, number: int) -> "HandleValueSet":
+        return cls(HandleValueKind.NUMBER, number=number)
+
+    @classmethod
+    def tag_any(cls) -> "HandleValueSet":
+        """§21.16.5's `tag:any`, which is also §22.9.1.1's DEFAULT for the property."""
+        return cls(HandleValueKind.TAG_ANY)
+
+    @classmethod
+    def of_range(cls, low: int, high: int) -> "HandleValueSet":
+        return cls(HandleValueKind.RANGE, ranges=((low, high),))
+
+    @classmethod
+    def of_ranges(cls, pairs) -> "HandleValueSet":
+        return cls(HandleValueKind.RANGES, ranges=tuple((low, high) for low, high in pairs))
+
+    def resolve_tag(self, tag_number: int) -> "HandleValueSet":
+        """§21.16.5 / §22.9.1.9: give `tag:any` the tag number that determines its value.
+
+        The clause also makes a *stated* set that disagrees with the tag number an error
+        rather than an override: "If, however, a value is specified by `HandleValueSet` and
+        differs from that assigned in an ECN specification of a tag class or in an ASN.1 tag
+        that maps to an ECN tag, that is an ECN specification error." So a non-`tag:any` set
+        is checked here instead of being replaced.
+        """
+        if self.kind is not HandleValueKind.TAG_ANY:
+            if not self.contains_number(tag_number):
+                raise Asn1Error(
+                    f"ECN: §22.9.1.9 — this #TAG object's handle value set does not admit its "
+                    f"own tag number {tag_number}; a stated set that differs from the tag "
+                    f"number is an ECN specification error, not an override")
+            return self
+        return HandleValueSet.of_number(tag_number)
+
+    def contains_number(self, value: int) -> bool:
+        """Membership without a field width, for checks that have no encoding in hand."""
+        if self.kind is HandleValueKind.NUMBER:
+            return value == self.number
+        if self.kind in (HandleValueKind.BITS, HandleValueKind.OCTETS):
+            return value == _int_of_bits(self.bits)
+        if self.kind in (HandleValueKind.RANGE, HandleValueKind.RANGES):
+            return any(low <= value <= high for low, high in self.ranges)
+        raise Asn1Error(
+            "ECN: §21.16.5 — a `tag:any` handle value set has no value of its own until a tag "
+            "number determines it; resolve it against the #TAG object's number first")
+
+    def ranges_over(self, width: int) -> tuple[tuple[int, int], ...]:
+        """This set as inclusive integer ranges over a `width`-bit conceptual handle field.
+
+        Where the two width rules live. §21.16.4 and §22.9.1.8 are separate sentences saying
+        the same thing from opposite sides: a `bits` or `octets` value "shall have the same
+        number of bits as those specified for the identification handle by `AT`", and a
+        `number` or range bound that "cannot be encoded within the number of bits specified
+        for the identification handle" is a specification error. Both are checked here rather
+        than at construction, because the width belongs to the *handle* and the set is written
+        without it.
+        """
+        if width < 0:
+            raise Asn1Error(f"ECN: a handle field cannot be {width} bits wide")
+        limit = 1 << width
+        if self.kind in (HandleValueKind.BITS, HandleValueKind.OCTETS):
+            if len(self.bits) != width:
+                raise Asn1Error(
+                    f"ECN: §22.9.1.8 — a `{self.kind.value}` handle value has to have the same "
+                    f"number of bits as the handle's AT positions; the value is "
+                    f"{len(self.bits)} bits and the handle is {width}")
+            point = _int_of_bits(self.bits)
+            return ((point, point),)
+        if self.kind is HandleValueKind.NUMBER:
+            if self.number >= limit:
+                raise Asn1Error(
+                    f"ECN: §22.9.1.7 / §21.16.4 — the handle value {self.number} does not fit "
+                    f"the {width}-bit conceptual handle field")
+            return ((self.number, self.number),)
+        if self.kind is HandleValueKind.TAG_ANY:
+            raise Asn1Error(
+                "ECN: §21.16.5 — a `tag:any` handle value set is determined by a tag number; "
+                "it has no range until it is resolved against the #TAG object's number")
+        for low, high in self.ranges:
+            if high >= limit:
+                raise Asn1Error(
+                    f"ECN: §21.16.4 — the range bound {high} does not fit the {width}-bit "
+                    f"conceptual handle field")
+        return _normalize_ranges(self.ranges)
+
+    def contains(self, value: int, width: int) -> bool:
+        """§22.9.2.2's membership test, over the conceptual handle field's integer value."""
+        return any(low <= value <= high for low, high in self.ranges_over(width))
+
+    def disjoint_from(self, other: "HandleValueSet", width: int) -> bool:
+        """§21.5.7 / §21.6.6 / §21.7.10 / §22.10.2.1's disjointness, at a given width."""
+        mine = self.ranges_over(width)
+        theirs = other.ranges_over(width)
+        return not any(low <= other_high and other_low <= high
+                       for low, high in mine for other_low, other_high in theirs)
+
+    def describe(self) -> str:  # pragma: no cover - diagnostics only
+        if self.kind in (HandleValueKind.BITS, HandleValueKind.OCTETS):
+            return f"{self.kind.value}:'{''.join(str(bit) for bit in self.bits)}'B"
+        if self.kind is HandleValueKind.NUMBER:
+            return f"number:{self.number}"
+        if self.kind is HandleValueKind.TAG_ANY:
+            return "tag:any"
+        body = ", ".join(f"{low}..{high}" for low, high in self.ranges)
+        return f"{self.kind.value}:{{{body}}}"
+
+
+def _int_of_bits(bits: tuple[int, ...]) -> int:
+    """The integer a conceptual handle field denotes, per §22.9.1.7's high-order-first rule."""
+    value = 0
+    for bit in bits:
+        value = (value << 1) | (1 if bit else 0)
+    return value
+
+
+def _normalize_ranges(
+        ranges: tuple[tuple[int, int], ...]) -> tuple[tuple[int, int], ...]:
+    """Sorted, coalesced, non-overlapping — so disjointness is a linear scan and not a set.
+
+    §21.16.7 lets `ranges` be any set of ranges and does not require them to be disjoint from
+    each other, only that each has `high` at least `low`. Coalescing them here means the
+    disjointness test between two *different* sets never has to reason about a set that
+    overlaps itself.
+    """
+    out: list[tuple[int, int]] = []
+    for low, high in sorted(ranges):
+        if out and low <= out[-1][1] + 1:
+            out[-1] = (out[-1][0], max(out[-1][1], high))
+        else:
+            out.append((low, high))
+    return tuple(out)
+
+
 class RepetitionSpaceDetermination(Enum):
     """§21.7.1's eight ways a decoder finds the end of a repetition.
 

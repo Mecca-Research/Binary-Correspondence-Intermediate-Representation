@@ -340,6 +340,7 @@ _MODULES = [
     "bcir.tests.test_asn1_ecn_syntax",
     "bcir.tests.test_asn1_ecn_transform",
     "bcir.tests.test_asn1_ecn_repetition",
+    "bcir.tests.test_asn1_ecn_constructors",
     "bcir.tests.test_asn1_ecn_law_parity",
     "bcir.tests.test_asn1_jer",
     "bcir.tests.test_asn1_selection",

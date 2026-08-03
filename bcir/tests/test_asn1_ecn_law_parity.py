@@ -18,7 +18,8 @@ import os
 import re
 
 from bcir.asn1.ecn_user import (
-    Comparison, EncodingSpaceDetermination, IntegerBounds, Padding, RangeCondition,
+    AlternativeDetermination, Comparison, ComponentOrder, EncodingSpaceDetermination,
+    HandleValueKind, IntegerBounds, OptionalityDetermination, Padding, RangeCondition,
     ReplaceAction, ReversalSpecification, UnusedBitsDetermination,
 )
 
@@ -147,6 +148,48 @@ def test_replace_has_four_actions_because_component_is_a_synonym():
     assert _oracle(ReplaceAction) == expected
 
 
+def test_the_constructor_determinations_are_five_and_three_for_the_same_reason():
+    """§21.5.1 and §21.6.1 share their first two values and diverge after, like §21.3/§21.4.
+
+    An optional component can be absent because a container ran out (§21.5.6) or because a
+    pointer is zero (§21.5.9). A CHOICE alternative can be neither: exactly one alternative is
+    always encoded, so there is no "ran out" and no "not there". §21.6.1 lists three values
+    where §21.5.1 lists five, and one shared enum would let an object state something the
+    notation cannot express.
+    """
+    optionality = {"field_to_be_set": 0, "field_to_be_used": 1, "container": 2,
+                   "handle": 3, "pointer": 4}
+    alternative = {"field_to_be_set": 0, "field_to_be_used": 1, "handle": 2}
+    assert _cases("EcnOptionalityDetermination") == optionality
+    assert _oracle(OptionalityDetermination) == optionality
+    assert _cases("EcnAlternativeDetermination") == alternative
+    assert _oracle(AlternativeDetermination) == alternative
+
+
+def test_component_order_is_one_enum_whose_third_value_two_clauses_disagree_about():
+    """§22.10.1.1 declares `{textual, tag, random}`; §22.6.1.1 declares `{textual, tag}`.
+
+    Two enums here would be the safer-looking choice and the wrong one: §22.6.3.4 and
+    §22.10.3.1–§22.10.3.3 define `textual` and `tag` in identical words, so two types would
+    assert a difference that the text does not make. The real difference is *admissibility*,
+    which is a law — and R25 carries it, with a fixture.
+    """
+    expected = {"textual": 0, "tag": 1, "random": 2}
+    assert _cases("EcnComponentOrder") == expected
+    assert _oracle(ComponentOrder) == expected
+    verify = open(_VERIFY_PASS, encoding="utf-8").read()
+    assert "ENUMERATED {textual, tag}" in verify
+
+
+def test_the_handle_value_set_alternatives_match_the_choice_they_come_from():
+    """§21.16.1's CHOICE, in its own order. `tag` is the DEFAULT of §22.9.1.1's property, and
+    it is the only one that carries no value of its own — §21.16.5 makes it "determined by the
+    number specified in an ECN encoding structure for a class in the tag category"."""
+    expected = {"bits": 0, "octets": 1, "number": 2, "tag": 3, "range": 4, "ranges": 5}
+    assert _cases("EcnHandleValueKind") == expected
+    assert _oracle(HandleValueKind) == expected
+
+
 # --- the ops and the laws ---------------------------------------------------------------
 
 def test_law_rail_declares_every_op_the_oracle_module_needs():
@@ -194,9 +237,50 @@ def test_every_r25_law_has_a_fixture_that_trips_it():
         ("23.7.2.7", "applies the INT-TO-INT transform"),
         ("21.11.5", "requires a Comparison"),
         ("21.11.5", "does not admit a Comparison or a comparator"),
+        ("22.9.1.6", "a set of integer values"),
+        ("22.9.1.9", "encoding object of the #TAG class"),
+        ("22.9.2.1", "different bit positions"),
+        ("22.9.2.3", "requires one pre-alignment unit per handle"),
+        ("22.5.2.3", "forbids USING for `handle` and `pointer`"),
+        ("22.5.2.4", "requires one in the same encoding object"),
+        ("22.5.2.6", "22.5.2.6 admits them only for"),
+        ("22.6.2.2", "admits HANDLE only for `handle`"),
+        ("22.6.1.1", "22.6.1.1 declares"),
+        ("22.10.2.1", "22.10.2.1 requires the encoding objects applied to all"),
     ):
         assert needle in verify, f"R25 does not enforce {citation}: {needle!r}"
         assert needle in fixture, f"no fixture witnesses {citation}: {needle!r}"
+
+
+def test_every_attribute_and_enum_the_fixture_uses_is_declared_in_the_ods():
+    """A fixture that names an attribute the dialect does not declare fails at PARSE time.
+
+    Which is a worse failure than it sounds, and it is here because it has already happened
+    once: a `-verify-diagnostics` run that cannot parse its input reports "expected error not
+    produced" for every case in the file, so one typo looks like the whole law regressing, and
+    the real cause is a line the diagnostic never mentions. The MLIR job is the only place
+    that catches it, and it is the slowest job in CI.
+
+    So this reads the fixture and the ODS and checks the two agree about names — the part of
+    that failure that is decidable without a build.
+    """
+    ecn_td = open(_ECN_TD, encoding="utf-8").read()
+    attrs_td = open(_ATTRS_TD, encoding="utf-8").read()
+    body = "\n".join(line for line in open(_FIXTURE, encoding="utf-8").read().split("\n")
+                     if not line.lstrip().startswith("//"))
+
+    declared = set(re.findall(r"\$(\w+)", ecn_td))
+    for used in sorted(set(re.findall(r"[{,]\s*(\w+)\s*=", body))):
+        assert used in declared, f"{used!r} is not an argument of any bcir.ecn.* op"
+
+    # `#bcir.<mnemonic><case>` — the attribute mnemonic and one of its enum's spellings.
+    enums = {mnemonic: enum for enum, mnemonic in
+             re.findall(r"def BCIR_\w+Attr\s*:\s*BCIR_EnumAttr<BCIR_(\w+),\s*\"(\w+)\">",
+                        attrs_td)}
+    for mnemonic, case in re.findall(r"#bcir\.(\w+)<(\w+)>", body):
+        assert mnemonic in enums, f"#bcir.{mnemonic} is not a declared attribute mnemonic"
+        assert case in _cases(enums[mnemonic]), \
+            f"{case!r} is not a case of BCIR_{enums[mnemonic]}"
 
 
 def test_the_fixture_carries_the_positive_cases_too():

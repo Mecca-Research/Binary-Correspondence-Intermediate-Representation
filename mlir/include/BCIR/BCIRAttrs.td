@@ -340,4 +340,56 @@ def BCIR_EcnReplace : BCIR_Enum<"EcnReplace", "ECN replacement action (X.692 22.
   I32EnumAttrCase<"NonOptionals", 3, "non_optionals">]>;
 def BCIR_EcnReplaceAttr : BCIR_EnumAttr<BCIR_EcnReplace, "ecn_replace">;
 
+// 21.5.1 and 21.6.1: the two constructor-category determinations. Like 21.3/21.4 above they
+// share their first two values and are still two enums, because the rest of each is what it
+// is FOR. An optional component can be absent because a container ran out or because a
+// pointer is zero; a CHOICE alternative can be neither -- exactly one alternative is always
+// encoded, so 21.6.1 lists three values where 21.5.1 lists five.
+def BCIR_EcnOptionalityDetermination
+    : BCIR_Enum<"EcnOptionalityDetermination",
+                "ECN optionality determination (X.692 21.5)", [
+  I32EnumAttrCase<"FieldToBeSet", 0, "field_to_be_set">,
+  I32EnumAttrCase<"FieldToBeUsed", 1, "field_to_be_used">,
+  I32EnumAttrCase<"Container", 2, "container">,
+  I32EnumAttrCase<"Handle", 3, "handle">,
+  I32EnumAttrCase<"Pointer", 4, "pointer">]>;
+def BCIR_EcnOptionalityDeterminationAttr
+    : BCIR_EnumAttr<BCIR_EcnOptionalityDetermination, "ecn_optionality_determination">;
+
+def BCIR_EcnAlternativeDetermination
+    : BCIR_Enum<"EcnAlternativeDetermination",
+                "ECN alternative determination (X.692 21.6)", [
+  I32EnumAttrCase<"FieldToBeSet", 0, "field_to_be_set">,
+  I32EnumAttrCase<"FieldToBeUsed", 1, "field_to_be_used">,
+  I32EnumAttrCase<"Handle", 2, "handle">]>;
+def BCIR_EcnAlternativeDeterminationAttr
+    : BCIR_EnumAttr<BCIR_EcnAlternativeDetermination, "ecn_alternative_determination">;
+
+// 22.10.1.1's `{textual, tag, random}`. 22.6.1.1 declares the alternatives' ordering as
+// `{textual, tag}` -- two values, not three -- so `random` on an alternatives object is a
+// fault R25 catches rather than a value the enum cannot hold. One enum, because the three
+// values mean the same thing in both clauses; 22.6.3.4 and 22.10.3.1-.3 are worded alike.
+def BCIR_EcnComponentOrder
+    : BCIR_Enum<"EcnComponentOrder", "ECN component order (X.692 22.6, 22.10)", [
+  I32EnumAttrCase<"Textual", 0, "textual">,
+  I32EnumAttrCase<"Tag", 1, "tag">,
+  I32EnumAttrCase<"Random", 2, "random">]>;
+def BCIR_EcnComponentOrderAttr
+    : BCIR_EnumAttr<BCIR_EcnComponentOrder, "ecn_component_order">;
+
+// 21.16.1's HandleValueSet CHOICE, by alternative. `tag` is 21.16.5's `tag:any`, whose value
+// "shall only be used when specifying the handle identification for the encoding of a class
+// in the tag category" (22.9.1.9) -- which is a law about the pair (kind, class) and so is
+// R25's to check rather than the attribute's.
+def BCIR_EcnHandleValueKind
+    : BCIR_Enum<"EcnHandleValueKind", "ECN handle value set (X.692 21.16)", [
+  I32EnumAttrCase<"Bits", 0, "bits">,
+  I32EnumAttrCase<"Octets", 1, "octets">,
+  I32EnumAttrCase<"Number", 2, "number">,
+  I32EnumAttrCase<"TagAny", 3, "tag">,
+  I32EnumAttrCase<"Range", 4, "range">,
+  I32EnumAttrCase<"Ranges", 5, "ranges">]>;
+def BCIR_EcnHandleValueKindAttr
+    : BCIR_EnumAttr<BCIR_EcnHandleValueKind, "ecn_handle_value_kind">;
+
 #endif // BCIR_ATTRS

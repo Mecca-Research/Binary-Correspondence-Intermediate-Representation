@@ -19,7 +19,8 @@ from bcir.asn1.ecn_syntax import (
     EcnModule, frame_header_module, frame_header_source, parse_module, tokenize,
 )
 from bcir.asn1.ecn_user import (
-    IntSpec, PadSpec, encode_with_user, legacy_frame_objects, legacy_frame_workload,
+    HandleValueKind, IntSpec, PadSpec, encode_with_user, legacy_frame_objects,
+    legacy_frame_workload,
 )
 from bcir.asn1.encode_plan import compile_encode_plan
 from bcir.asn1.tags import Asn1Error
@@ -82,6 +83,59 @@ def test_the_module_hashes_and_the_hash_moves_only_when_the_encoding_does():
     assert respaced.sha256() == digest
 
 
+def test_the_handle_notation_parses_and_reaches_the_digest():
+    """§22.9.1.2's `[EXHIBITS HANDLE &exhibited-handle AT &Handle-positions
+    [AS &handle-value-set]]`, with §21.16.1's six value-set alternatives.
+
+    The digest half is the point. A handle changes what a *decoder* reads and nothing an
+    encoder writes, so a serialization that skipped it would give two genuinely different
+    specifications one name — which is the failure mode a content-addressed descriptor exists
+    to prevent. `SYNTAX_VERSION` moved to 4 for exactly this reason.
+    """
+    # §23.7.1's WITH SYNTAX puts EXHIBITS HANDLE after the value encoding and before
+    # BIT-REVERSAL, following §23.3.3.1's encoder-action order. `plainVersion` is the only
+    # object whose body ends with `ENCODING positive-int`, so this substitution is unique.
+    def with_handle(clause: str):
+        return parse_module(frame_header_source().replace(
+            "ENCODING positive-int\n  }", f"ENCODING positive-int\n      {clause}\n  }}"))
+
+    for clause, kind in (
+        ("EXHIBITS HANDLE kind AT { 0, 1 } AS bits:'01'B", HandleValueKind.BITS),
+        ("EXHIBITS HANDLE kind AT { 0, 1 } AS number:2", HandleValueKind.NUMBER),
+        ("EXHIBITS HANDLE kind AT { 0, 1 } AS range:{0, 1}", HandleValueKind.RANGE),
+        ("EXHIBITS HANDLE kind AT { 0, 1 } AS ranges:{{0, 0}, {3, 3}}",
+         HandleValueKind.RANGES),
+        ("EXHIBITS HANDLE kind AT { 0, 1 }", HandleValueKind.TAG_ANY),
+    ):
+        module = with_handle(clause)
+        handle = module.conditional_int("plainVersion").spec.exhibits
+        assert handle is not None and handle.name == "kind", clause
+        assert handle.positions == (0, 1), clause
+        assert handle.value_set.kind is kind, clause
+        assert module.sha256() != frame_header_module().sha256(), clause
+
+    # Two different value sets are two different specifications.
+    assert (with_handle("EXHIBITS HANDLE kind AT { 0, 1 } AS range:{0, 1}").sha256()
+            != with_handle("EXHIBITS HANDLE kind AT { 0, 1 } AS range:{2, 3}").sha256())
+    # §22.9.1.6 makes the positions a SET, so writing them backwards is the same handle.
+    assert (with_handle("EXHIBITS HANDLE kind AT { 1, 0 } AS number:2").sha256()
+            == with_handle("EXHIBITS HANDLE kind AT { 0, 1 } AS number:2").sha256())
+
+
+def test_a_handle_value_set_the_choice_does_not_define_is_refused():
+    """§21.16.1 has six alternatives, and a seventh spelling would otherwise become
+    `tag:any` by default — a set that matches nothing and says so only at write time."""
+    try:
+        parse_module(frame_header_source().replace(
+            "ENCODING positive-int\n  }",
+            "ENCODING positive-int\n      "
+            "EXHIBITS HANDLE kind AT { 0, 1 } AS integer:3\n  }"))
+    except Asn1Error as error:
+        assert "21.16.1" in str(error), error
+    else:
+        raise AssertionError("an unknown HandleValueSet alternative was accepted")
+
+
 # --- the grammar itself ---------------------------------------------------------------------
 
 def test_a_comment_ends_at_the_next_pair_of_hyphens_as_x680_says():
@@ -132,9 +186,12 @@ def test_an_unimplemented_property_group_is_refused_by_name_and_never_skipped():
     space = "ENCODING-SPACE SIZE 3 MULTIPLE OF bit"
     cases = [
         # Groups this repository has not built. Each names what it would need.
-        (space, f'{space} EXHIBITS HANDLE "h" AT 0', "22.9"),
         (space, "REPLACE STRUCTURE WITH #Repl", "22.1.2"),
         (space, f"{space} CONTAINED BY x", "22.11"),
+        # §23.1 and §23.11's OBJECTS are built; their STRUCTURE notation is not, and the
+        # refusal says which half is missing rather than which clause exists.
+        (space, f"{space} ALTERNATIVE DETERMINED BY handle", "16.5"),
+        (space, f"{space} PRESENCE DETERMINED BY field-to-be-set USING p", "16.3"),
         # Groups that ARE built, written in a way the clause forbids. These are the more
         # interesting half: a parser that only refused what it had not implemented would
         # accept every one of them.
