@@ -20,7 +20,7 @@ Restating it in terms of what this repository already has changes the work consi
 and for the better:
 
 > **BCIR already has a serialized IR.** The `bcir.*` MLIR dialect plus MLIR bytecode is a
-> schema-bound, machine-first program representation with a verifier (R1–R24), an optimizer
+> schema-bound, machine-first program representation with a verifier (R1–R25), an optimizer
 > (K_BCIR), and a lowering path to machine code. The proposal is therefore **not** "invent a
 > program representation". It is **"add a third serialization of the IR BCIR already has,
 > in JER, and prove the projection commutes"** — which is the same shape as the existing
@@ -44,7 +44,7 @@ law to satisfy.
 
 **What is actually novel in the proposal** is the combination: a *standards-bound* schema
 (ASN.1, with a canonical byte form and a registry), a *cost-governed* selection stage
-(K_BCIR over the twelve-axis vector), and a *verifier* (R1–R24) applied to a program
+(K_BCIR over the twelve-axis vector), and a *verifier* (R1–R25) applied to a program
 representation rather than to data. That combination does not exist elsewhere, and it is
 worth pursuing. The individual pieces should be borrowed, not reinvented.
 
@@ -86,7 +86,7 @@ the schema, divide by zero, deadlock, or leak.
 
 The accurate claim is: *a schema-bound representation makes an entire class of errors —
 syntax and structural malformation — unrepresentable, and moves the remaining classes to
-the verifier where BCIR already checks them (R1–R24).* That is a strong claim. It should be
+the verifier where BCIR already checks them (R1–R25).* That is a strong claim. It should be
 made instead of the stronger one.
 
 ### 3.3 "Programs can safely alter themselves at runtime"
@@ -259,7 +259,7 @@ staged model:
 ```text
 running program
   -> emits a candidate subtree as canonical JER            (data, not code)
-  -> schema validation + R1-R24 verification               (legality, not cost)
+  -> schema validation + R1-R25 verification               (legality, not cost)
   -> K_BCIR selection over the candidate set               (cost, gated by legality)
   -> compilation to a native artifact                      (offline-equivalent path)
   -> signing + trusted-loader admission                    (authority)
@@ -271,7 +271,7 @@ Every arrow is an existing or already-planned BCIR stage. The properties that ma
 "safe" are **not** properties of JSON:
 
 - **W^X**: the emitting program never writes executable memory. It writes *data*.
-- **Verification precedes admission**: a subtree that fails R1–R24 is never compiled.
+- **Verification precedes admission**: a subtree that fails R1–R25 is never compiled.
 - **Signing separates integrity from authority** — the JSON roadmap §6.3 already insists on
   this distinction, and self-modification is where conflating them would be fatal.
 - **Generation-tagged handles and quiescence** are the same requirements the driver roadmap

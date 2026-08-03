@@ -256,4 +256,88 @@ def BCIR_Asn1TagAttr : BCIR_Attr<"Asn1Tag", "asn1_tag"> {
   let assemblyFormat = "`<` struct(params) `>`";
 }
 
+// --- X.692 ECN (ISO/IEC 8825-3:2021) -------------------------------------------------
+//
+// The clause 21 property types that a law can actually check. Each is an ENUMERATED in the
+// specification with a stated default, and the integer values here are ASSIGNED IN THE
+// CLAUSE'S OWN ORDER so that a reader comparing the two documents sees the same list. The
+// oracle twin is bcir/asn1/ecn_user.py, and bcir/tests/test_asn1_law_parity.py reads BOTH
+// this file and that module, so the two cannot drift apart silently.
+
+// 21.9.1. 21.9.2 makes `zero` the default, which is why it takes 0 -- an attribute that is
+// absent and one that is present with the default then agree.
+def BCIR_EcnPadding : BCIR_Enum<"EcnPadding", "ECN padding (X.692 21.9)", [
+  I32EnumAttrCase<"Zero", 0, "zero">,
+  I32EnumAttrCase<"One", 1, "one">,
+  I32EnumAttrCase<"Pattern", 2, "pattern">,
+  I32EnumAttrCase<"EncoderOption", 3, "encoder_option">]>;
+def BCIR_EcnPaddingAttr : BCIR_EnumAttr<BCIR_EcnPadding, "ecn_padding">;
+
+// 21.14.1, in the enumeration's own order. NOTE that 21.14.6 describes these four in a
+// DIFFERENT order while claiming to use this one; 22.12.3.2 agrees with the order below and
+// with what the names say, so 21.14.6's listing is the outlier. See the oracle's
+// ReversalSpecification docstring -- the discrepancy is recorded, not silently resolved.
+def BCIR_EcnReversal : BCIR_Enum<"EcnReversal", "ECN bit reversal (X.692 21.14)", [
+  I32EnumAttrCase<"NoReversal", 0, "no_reversal">,
+  I32EnumAttrCase<"ReverseBitsInUnits", 1, "reverse_bits_in_units">,
+  I32EnumAttrCase<"ReverseHalfUnits", 2, "reverse_half_units">,
+  I32EnumAttrCase<"ReverseBitsInHalfUnits", 3, "reverse_bits_in_half_units">]>;
+def BCIR_EcnReversalAttr : BCIR_EnumAttr<BCIR_EcnReversal, "ecn_reversal">;
+
+// 21.3.1 and 21.4, which share their first two values and differ in the third. They are two
+// enums rather than one because the third value is what each is FOR: an encoding space can
+// be bounded by a container, and an unused-bit count can be unnecessary, and neither
+// statement makes sense about the other.
+def BCIR_EcnSpaceDetermination
+    : BCIR_Enum<"EcnSpaceDetermination", "ECN encoding space determination (X.692 21.3)", [
+  I32EnumAttrCase<"FieldToBeSet", 0, "field_to_be_set">,
+  I32EnumAttrCase<"FieldToBeUsed", 1, "field_to_be_used">,
+  I32EnumAttrCase<"Container", 2, "container">]>;
+def BCIR_EcnSpaceDeterminationAttr
+    : BCIR_EnumAttr<BCIR_EcnSpaceDetermination, "ecn_space_determination">;
+
+def BCIR_EcnUnusedBits
+    : BCIR_Enum<"EcnUnusedBits", "ECN unused-bits determination (X.692 21.4)", [
+  I32EnumAttrCase<"FieldToBeSet", 0, "field_to_be_set">,
+  I32EnumAttrCase<"FieldToBeUsed", 1, "field_to_be_used">,
+  I32EnumAttrCase<"NotNeeded", 2, "not_needed">]>;
+def BCIR_EcnUnusedBitsAttr : BCIR_EnumAttr<BCIR_EcnUnusedBits, "ecn_unused_bits">;
+
+// 21.11.1. The first five are 21.11.4's bound SHAPES and partition the space of bounds --
+// its NOTE says "exactly one predicate will be satisfied" -- while the last three take a
+// 21.12 Comparison and an integer comparator (21.11.5) and overlap freely.
+def BCIR_EcnRangeCondition
+    : BCIR_Enum<"EcnRangeCondition", "ECN range condition (X.692 21.11)", [
+  I32EnumAttrCase<"UnboundedOrNoLowerBound", 0, "unbounded_or_no_lower_bound">,
+  I32EnumAttrCase<"SemiBoundedWithNegatives", 1, "semi_bounded_with_negatives">,
+  I32EnumAttrCase<"BoundedWithNegatives", 2, "bounded_with_negatives">,
+  I32EnumAttrCase<"SemiBoundedWithoutNegatives", 3, "semi_bounded_without_negatives">,
+  I32EnumAttrCase<"BoundedWithoutNegatives", 4, "bounded_without_negatives">,
+  I32EnumAttrCase<"TestLowerBound", 5, "test_lower_bound">,
+  I32EnumAttrCase<"TestUpperBound", 6, "test_upper_bound">,
+  I32EnumAttrCase<"TestRange", 7, "test_range">]>;
+def BCIR_EcnRangeConditionAttr
+    : BCIR_EnumAttr<BCIR_EcnRangeCondition, "ecn_range_condition">;
+
+// 21.12.1. 21.12.2 is the one clause 21 type with NO default value, which is why nothing
+// here is marked as one.
+def BCIR_EcnComparison : BCIR_Enum<"EcnComparison", "ECN comparison (X.692 21.12)", [
+  I32EnumAttrCase<"EqualTo", 0, "equal_to">,
+  I32EnumAttrCase<"NotEqualTo", 1, "not_equal_to">,
+  I32EnumAttrCase<"GreaterThan", 2, "greater_than">,
+  I32EnumAttrCase<"LessThan", 3, "less_than">,
+  I32EnumAttrCase<"GreaterThanOrEqualTo", 4, "greater_than_or_equal_to">,
+  I32EnumAttrCase<"LessThanOrEqualTo", 5, "less_than_or_equal_to">]>;
+def BCIR_EcnComparisonAttr : BCIR_EnumAttr<BCIR_EcnComparison, "ecn_comparison">;
+
+// 22.1.1.7's replacement actions. COMPONENT is absent because 22.1.1.8 makes it "a synonym
+// for" ALL COMPONENTS: two spellings of one action are one case here, so the law cannot be
+// written to treat them differently.
+def BCIR_EcnReplace : BCIR_Enum<"EcnReplace", "ECN replacement action (X.692 22.1)", [
+  I32EnumAttrCase<"Structure", 0, "structure">,
+  I32EnumAttrCase<"AllComponents", 1, "all_components">,
+  I32EnumAttrCase<"Optionals", 2, "optionals">,
+  I32EnumAttrCase<"NonOptionals", 3, "non_optionals">]>;
+def BCIR_EcnReplaceAttr : BCIR_EnumAttr<BCIR_EcnReplace, "ecn_replace">;
+
 #endif // BCIR_ATTRS

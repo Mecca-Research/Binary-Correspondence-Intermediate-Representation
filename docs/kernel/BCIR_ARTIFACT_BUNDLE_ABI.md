@@ -238,7 +238,7 @@ artifact. No schema-specific C reconstruction path is claimed.
 
 ## 8. Binary compatibility strategy
 
-- BCIR semantics and R1–R24 are source/IR contracts.
+- BCIR semantics and R1–R25 are source/IR contracts.
 - StreamPack is the target-neutral executable plan and remains independently versioned.
 - BCAB is the target-image selection envelope and remains independently versioned.
 - ELF/COFF/PE/Mach-O/WASM/JVM/SPIR-V and platform calling conventions remain owned by their

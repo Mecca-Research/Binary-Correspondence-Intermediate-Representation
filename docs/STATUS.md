@@ -6,15 +6,15 @@
 
 | Metric | Value |
 |---|---|
-| Static Python `test_*` function inventory | **2972** across 233 files |
-| Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **126** |
+| Static Python `test_*` function inventory | **3004** across 234 files |
+| Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **132** |
 | Static registered-pass inventory | **37** |
-| Static MLIR fixture inventory (`mlir/test/`) | **116** files; 268 `expected-error` markers |
+| Static MLIR fixture inventory (`mlir/test/`) | **117** files; 283 `expected-error` markers |
 | Static runtime C source/header inventory (`runtime/c/`) | **297** files |
-| Verifier-law negative-fixture tag inventory | **R1–R24** (24/24 present) |
+| Verifier-law negative-fixture tag inventory | **R1–R25** (25/25 present) |
 | Registered hardware-channel inventory | **9** (cpu, fpga, gpu, memory, storage) |
 
-## Verifier-law negative-fixture inventory (R1–R24)
+## Verifier-law negative-fixture inventory (R1–R25)
 
 This is a static inventory, not evidence that the suite was executed. A check mark means the
 law tag appears in a negative `-verify-diagnostics` fixture under
@@ -27,9 +27,9 @@ R18 in `verify_callgraph.mlir`). R19/R20 (synchronous timing / clock-domain cros
 to absent, so they are vacuous over the entire scalar/C subset (the non-disturbance invariant) —
 their negative cases live in `verify_timing_lifetime.mlir`.
 
-| R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15 | R16 | R17 | R18 | R19 | R20 | R21 | R22 | R23 | R24 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15 | R16 | R17 | R18 | R19 | R20 | R21 | R22 | R23 | R24 | R25 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ## Hardware channel / target matrix
 

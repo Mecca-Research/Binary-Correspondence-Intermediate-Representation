@@ -129,15 +129,26 @@ def test_an_unimplemented_property_group_is_refused_by_name_and_never_skipped():
     exactly the class of defect the triple-rail design exists to catch — so they are
     recognized, cited and refused.
     """
-    cases = {
-        "START-POINTER ptr": "22.3",
-        "ENCODING-SPACE SIZE 3 DETERMINED BY field-to-be-set": "21.3",
-        "ENCODING-SPACE SIZE 3 VALUE-PADDING UNUSED BITS": "22.8.2.2",
-        "BIT-REVERSAL reverse": "22.12",
-    }
-    for clause_text, citation in cases.items():
-        source = frame_header_source().replace(
-            "ENCODING-SPACE SIZE 3 MULTIPLE OF bit", clause_text)
+    space = "ENCODING-SPACE SIZE 3 MULTIPLE OF bit"
+    cases = [
+        # Groups this repository has not built. Each names what it would need.
+        (space, f'{space} EXHIBITS HANDLE "h" AT 0', "22.9"),
+        (space, "REPLACE STRUCTURE WITH #Repl", "22.1.2"),
+        (space, f"{space} CONTAINED BY x", "22.11"),
+        # Groups that ARE built, written in a way the clause forbids. These are the more
+        # interesting half: a parser that only refused what it had not implemented would
+        # accept every one of them.
+        (space, f"{space} DETERMINED BY field-to-be-set", "21.3.4"),
+        (space, f"{space} DETERMINED BY container USING x", "21.3.6"),
+        (space, f"ALIGNED TO ANY octet {space}", "22.2.2.2"),
+        ("ENCODING positive-int",
+         "ENCODING positive-int BIT-REVERSAL reverse-half-units", "22.12.2.3"),
+        ("ENCODING positive-int",
+         "ENCODING positive-int BIT-REVERSAL sideways", "21.14.1"),
+    ]
+    for target, clause_text, citation in cases:
+        source = frame_header_source().replace(target, clause_text)
+        assert source != frame_header_source(), target
         try:
             parse_module(source)
         except Asn1Error as error:

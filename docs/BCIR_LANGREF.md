@@ -163,7 +163,7 @@ is a hard parity failure). The supported surface and ownership discipline are
 [`CFRONT_GUIDE.md`](languages/CFRONT_GUIDE.md) and
 [`C_MEMORY_DISCIPLINE.md`](languages/C_MEMORY_DISCIPLINE.md).
 
-## 10. Verifier laws (R1–R24)
+## 10. Verifier laws (R1–R25)
 
 R1 registry uniqueness · R2 registry resolution · R3 domain legality ·
 R4 phase-DAG legality · R5 hazard legality · R6 lane legality · R7 bounds
@@ -191,7 +191,7 @@ swaps are never silent. Encoded as IR via the `bcir.verify.*` op family. The
 runnable full set lives in `bcir/verify`, one entry point per correspondence
 artifact — `verify(module)` R1–R8(static), `verify_plan` R8–R9, `verify_pack`
 R10–R11, `verify_lowering` R12, `verify_provenance` R13 — and the MLIR-native
-`-bcir-verify` pass enforces the structurally checkable form of all of R1–R24
+`-bcir-verify` pass enforces the structurally checkable form of all of R1–R25
 on the dialect.
 
 **Timing + lifetime laws (R19/R20/R21).** Three further laws over the
@@ -255,8 +255,30 @@ form mandatory for constructed CER encodings, so a CER artifact is not byte-stab
 to X.690. `bcir.asn1.transcode` names one value in two syntaxes.
 
 JER *instruction* legality and compiled-descriptor identity are still future work in
-[`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md); the ECN surfaces remain
-oracle-only and do not silently become R24-visible.
+[`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md).
+
+**X.692 ECN encoding-definition legality (R25).** Over the `bcir.ecn.*` operations, which
+mirror [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py)'s `EcnModule`: a module holds encoding
+classes assigned from built-in ones (clause 11), one §16.5 concatenation structure whose
+textual order is the transmission order, and the encoding objects that realize those classes.
+
+R25 exists for a sharper version of R24's reason. An encoding definition module is written
+once and applied to *many* types, so a fault that only fires on the right value can sit in one
+indefinitely. Every rule below is a statement about the specification, decidable with no value
+in hand: §9.5.2's one object per class in a set; §21.11.5's Comparison required by the last
+three range conditions and forbidden to the first five; §22.2.2.2's `ALIGNED TO ANY` requiring
+a start pointer; §22.8.2.2's `USING` present **if and only if** the determination is not
+`not-needed`, with §22.8.2.3 and §22.8.2.5 confining each transform list to one determination;
+§22.12.2.3 and §21.14.5 on the unit a bit reversal divides; §23.7.2.4's one of `IF`/`IF-ALL`/
+`ELSE`; §23.7.2.7's `subtract:lower-bound` only under a condition that guarantees a lower
+bound; and §22.1.2.8's `REPLACE STRUCTURE` forbidding `INSERT AT HEAD` and requiring
+`ENCODED BY`. Negative fixtures are in `mlir/test/passes/verify_ecn.mlir`, one per rule, with
+two positive modules so an over-firing law is caught too.
+
+The bit-level *values* — patterns, widths, transform operands — stay in the oracle, for the
+same reason the ASN.1 ops carry a type's shape and not its values: "this pattern is 0101" is
+not a proposition that can be false. What the IR holds is every property whose *combination*
+with another property can be.
 
 **Shape + dtype laws (R22/R23) — the D2 promotion.** The E3–E6 `check_*` validators'
 "structurally valid tensors" guarantee, made law over the `gem.*` tensor claims:
@@ -327,7 +349,7 @@ oracle's `verify.verify_timing` / `verify.verify_lifetime` (run through
 `verify.verify_smart_lowering` alongside R14–R17 and R22), each with a negative
 `-verify-diagnostics` case in `mlir/test/passes/verify_timing_lifetime.mlir`, so the
 generated status ([`STATUS.md`](STATUS.md)) now reports the first-class set as
-**R1–R24**. R21 detection runs on both driver rails; it is *advisory* by default
+**R1–R25**. R21 detection runs on both driver rails; it is *advisory* by default
 (surfaced, never gates), and the `bcir-cc` / `bcir-cfront` drivers expose a `--r21`
 policy — `advisory` (default) · `fallback` (route the unit to the LLVM backend,
 exit 2) · `reject` (a hard verify error, exit 1) — so a detected use-after-free /
@@ -1106,7 +1128,7 @@ provenance and license pins live in
 This reference defines semantics; an implementation must name the profile it supports
 and reject work outside it. The current profiles are:
 
-- **MLIR law profile:** ODS/TableGen dialects plus `-bcir-verify` R1–R24 and the
+- **MLIR law profile:** ODS/TableGen dialects plus `-bcir-verify` R1–R25 and the
   documented optimizer/GEM passes. A successful parse is not a lowering guarantee.
 - **Python oracle profile:** executable semantic, planning, GEM, model, and codec
   reference. It is the differential oracle, not an alternative normative syntax.

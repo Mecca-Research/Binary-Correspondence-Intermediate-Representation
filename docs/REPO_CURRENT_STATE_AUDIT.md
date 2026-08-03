@@ -36,7 +36,7 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     variadics), M5 ETL, telemetry/calibration (T1–T4: stable signal IDs and explicit metric
     semantics, strict UART frame ABI with sequence evidence,
     derived metrics, and OTLP/Prometheus-text/Redfish serialization adapters), StreamPack ABI
-    (v1 frozen, v2/v3 append-only), the **R1–R24** verifier, lowering (the single-claim
+    (v1 frozen, v2/v3 append-only), the **R1–R25** verifier, lowering (the single-claim
     elementwise LLVM AOT/JIT/WASM subset /
     stackify / per-target llc / portable C23 kernels / Area-B library wraps), the
     Phase 13–26 learned organs (calibration, portfolio + replay gate, MoE gate, search
@@ -61,7 +61,7 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
   without allocating competing kind IDs.
 - **`mlir/`** — the law: the ODS/TableGen dialect family (op count in
     [`STATUS.md`](STATUS.md)), the compiled `bcir-opt` with `-bcir-verify`
-    (**R1–R24**), the full deterministic optimizer core in C++23 (`-bcir-cost-model`
+    (**R1–R25**), the full deterministic optimizer core in C++23 (`-bcir-cost-model`
     cost+fusion/CSE → `-bcir-plan` coupled min-plus → `-bcir-overlap` (max,+) →
     `-bcir-rcsp`/`-bcir-rcsp-plan` constrained search, plus the bundle/compose/
     schedule/async/power/allocator passes and the gem tensor-op cost + lowering
@@ -95,7 +95,7 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
 1. The oracle runs the whole correspondence chain end to end, deterministically
    (integer/Q-fixed), with worked-example parity pinned (`vector_add` AVX-512
    cool Θ → vec16, score **7808**; under a 700 thermal/power cap → vec8, **9472**).
-2. Verifier laws **R1–R24** run on the law rail and have a negative fixture per law
+2. Verifier laws **R1–R25** run on the law rail and have a negative fixture per law
    (`bcir/verify` and the MLIR `-bcir-verify` pass; static negative-fixture inventory generated in
    [`STATUS.md`](STATUS.md)). R19/R20 (timing) and R21 (lifetime) ride optional claim
    metadata and are vacuous over the scalar/C subset — the non-disturbance invariant.
@@ -194,7 +194,7 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     strict no-normalization UTF-8 references, causal fixed/entropy/learned patches, local/global/local
     BLT, joint AR/block diffusion, exact BLT-S/BLT-DV verification, selective-SSM MambaByte, and
     exact-shape global-only transplantation have dependency-free contracts and hosted probes. Exact
-    parameter/cache/state sizes plus analytic lower bounds feed R1–R24-verified claims and
+    parameter/cache/state sizes plus analytic lower bounds feed R1–R25-verified claims and
     StreamPack. The one-thread gate proves finite gradients, tiny loss reduction, deterministic
     reports, failure-atomic transplant, and exact verified-generation ids. It imports no upstream
     code/assets and claims no useful model, checkpoint format, native decoder, or GPU kernel.
@@ -204,7 +204,7 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     proved source decompositions; bounded Thunder-style segmentation, Pareto tokenizer evidence,
     and prefix-stable float32/FSQ time-series coding are dependency-free. A one-thread hosted gate
     trains two fixed-binary-interface growth stages while copied rows and the earlier dense block
-    remain bit-identical. Dense growth lowers through R1–R24-verified claims/StreamPack. No external
+    remain bit-identical. Dense growth lowers through R1–R25-verified claims/StreamPack. No external
     source/assets, universal-tokenizer claim, glyph/PCA artifact, LoRA execution, useful model, or
     native kernel entered the tree.
 21. **Binary compatibility now has an explicit selection envelope.** BCAB preserves standard
