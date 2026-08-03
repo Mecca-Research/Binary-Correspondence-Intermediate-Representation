@@ -1,0 +1,381 @@
+"""X.692 part three: the defined syntax read from text, and where an ECN encoding belongs.
+
+Two things are checked here, and they are the same question from two sides.
+
+The first is that `bcir/asn1/BCIR-FrameHeader.ecn` — the §6 gate's workload written in the
+notation X.692 defines — produces the octets the Python-assembled objects produce. That is a
+second opinion rather than a second spelling: the parser walks clause 23's bracket grammar and
+resolves clause 11's class assignments, and if it and `legacy_frame_objects()` ever disagree,
+one of them has misread the specification.
+
+The second is the **plan-v6 question**: whether an ECN encoding is a sixth column in
+`encode_plan`, carried by a version 6 of that descriptor. The answer is no, and the tests below
+are the evidence rather than the assertion — an `EncodePlan` compiled from the frame header's
+ASN.1 type has no slot for the wire order or for the `reserved` bits, because both are
+properties of an encoding structure and neither is a property of a type.
+"""
+
+from bcir.asn1.ecn_syntax import (
+    EcnModule, frame_header_module, frame_header_source, parse_module, tokenize,
+)
+from bcir.asn1.ecn_user import (
+    IntSpec, PadSpec, encode_with_user, legacy_frame_objects, legacy_frame_workload,
+)
+from bcir.asn1.encode_plan import compile_encode_plan
+from bcir.asn1.tags import Asn1Error
+
+
+def _encode_from_text(module: EcnModule, value: dict) -> bytes:
+    return encode_with_user(module.object_set(), "#Frame-header", value, outer=module.outer())
+
+
+# --- the round trip -------------------------------------------------------------------------
+
+def test_the_written_specification_produces_the_octets_the_assembled_objects_do():
+    """The gate's workload, from text, byte for byte.
+
+    `legacy_frame_workload()` states the target independently of either path — it is the
+    layout a real header uses, with the expected octets derived by hand in its docstring — so
+    this is three-way agreement rather than two implementations agreeing with each other.
+    """
+    from bcir.asn1.ecn import CONCATENATION
+
+    _kind, value, expected = legacy_frame_workload()
+    assert _encode_from_text(frame_header_module(), value) == expected
+    assert encode_with_user(legacy_frame_objects(), CONCATENATION, value,
+                            outer=frame_header_module().outer()) == expected
+
+
+def test_the_transform_survives_the_round_trip_and_is_not_a_constant():
+    """A scaled length is only a transform if it moves with the value.
+
+    Encoding one value correctly can be luck — a 4-bit field holding 1010 is also what a
+    plain `10` would write. Three values pin the `divide:4`.
+    """
+    module = frame_header_module()
+    for payload, nibble in ((0, 0b0000), (40, 0b1010), (60, 0b1111)):
+        octets = _encode_from_text(
+            module, {"version": 0, "urgent": False, "payloadOctets": payload})
+        assert octets[0] >> 4 == nibble, (payload, octets.hex())
+
+
+def test_the_module_hashes_and_the_hash_moves_only_when_the_encoding_does():
+    """A specification with no canonical form cannot name an artifact. This is that form.
+
+    Reordering the *source* must not change the digest where the order carries no meaning,
+    and changing a width must change it. Both directions are checked, because a digest that
+    only ever changes is as useless as one that never does.
+    """
+    module = frame_header_module()
+    digest = module.sha256()
+    assert len(digest) == 64
+    assert frame_header_module().sha256() == digest
+
+    widened = parse_module(frame_header_source().replace(
+        "ENCODING-SPACE SIZE 3 MULTIPLE OF bit", "ENCODING-SPACE SIZE 4 MULTIPLE OF bit"))
+    assert widened.sha256() != digest
+
+    # Whitespace and comments are not the specification.
+    respaced = parse_module(
+        "\n".join(line for line in frame_header_source().split("\n")
+                  if not line.strip().startswith("--")))
+    assert respaced.sha256() == digest
+
+
+# --- the grammar itself ---------------------------------------------------------------------
+
+def test_a_comment_ends_at_the_next_pair_of_hyphens_as_x680_says():
+    """X.680 §12.6: a comment terminates "with a pair of hyphens or at the end of the line".
+
+    Written as a test because it is the kind of rule an implementation quietly gets wrong in
+    the permissive direction, and a comment that swallows the rest of a line would silently
+    drop an encoding property.
+    """
+    assert [token.text for token in tokenize("a -- note -- b")] == ["a", "b"]
+    assert [token.text for token in tokenize("a -- note\nb")] == ["a", "b"]
+
+
+def test_a_value_notation_and_its_alternative_are_one_token():
+    """`bits:'0'B` is one `Pattern` value, not a name and a string."""
+    assert [token.text for token in tokenize("TRUE-PATTERN bits:'0'B")] == [
+        "TRUE-PATTERN", "bits:'0'B"]
+    assert [token.text for token in tokenize("{ a, b }")] == ["{", "a", ",", "b", "}"]
+
+
+def test_the_defined_syntax_is_read_in_the_order_the_with_syntax_gives_it():
+    """§20.5's bracket structure is load-bearing, so keywords are not order-free.
+
+    `MULTIPLE OF` is nested inside `SIZE`, which is nested inside `ENCODING-SPACE`, in every
+    clause 23 `WITH SYNTAX`. A parser that accepted properties in any order would accept
+    specifications the notation does not admit — and then have to invent what they mean. Here
+    the two are swapped, and the refusal names the keyword that was expected first.
+    """
+    source = frame_header_source().replace(
+        "ENCODING-SPACE SIZE 3 MULTIPLE OF bit",
+        "MULTIPLE OF bit ENCODING-SPACE SIZE 3")
+    try:
+        parse_module(source)
+    except Asn1Error as error:
+        assert "ENCODING-SPACE" in str(error), error
+    else:
+        raise AssertionError("properties were accepted out of the syntax's order")
+
+
+def test_an_unimplemented_property_group_is_refused_by_name_and_never_skipped():
+    """The failure a permissive parser causes is silent wrong octets, not a crash.
+
+    Each group below is one this repository has not built. Accepting and ignoring any of them
+    would produce an encoding that does not match the specification it was handed, which is
+    exactly the class of defect the triple-rail design exists to catch — so they are
+    recognized, cited and refused.
+    """
+    cases = {
+        "START-POINTER ptr": "22.3",
+        "ENCODING-SPACE SIZE 3 DETERMINED BY field-to-be-set": "21.3",
+        "ENCODING-SPACE SIZE 3 VALUE-PADDING UNUSED BITS": "22.8.2.2",
+        "BIT-REVERSAL reverse": "22.12",
+    }
+    for clause_text, citation in cases.items():
+        source = frame_header_source().replace(
+            "ENCODING-SPACE SIZE 3 MULTIPLE OF bit", clause_text)
+        try:
+            parse_module(source)
+        except Asn1Error as error:
+            assert citation in str(error), (clause_text, str(error))
+        else:
+            raise AssertionError(f"{clause_text!r} was accepted and ignored")
+
+
+def test_an_integer_object_goes_through_conditional_int_because_the_clause_says_so():
+    """§23.6.1 gives `#INT` two properties, and neither is an encoding space.
+
+    An `#INT` object names `#CONDITIONAL-INT` objects; §23.7.1 is where the space, the
+    transforms and the value encoding live. Letting `#INT` carry them directly would be
+    inventing syntax, which is the thing the citation pass was for.
+    """
+    source = frame_header_source().replace(
+        "versionField #Version ::= { ENCODING plainVersion }",
+        "versionField #Version ::= { ENCODING-SPACE SIZE 3 MULTIPLE OF bit }")
+    try:
+        parse_module(source)
+    except Asn1Error as error:
+        assert "23.6.2.2" in str(error), error
+    else:
+        raise AssertionError("#INT carried an encoding space of its own")
+
+
+def test_one_object_per_class_is_enforced_where_the_set_is_formed_not_where_text_is_read():
+    """§9.5.2 governs "encoding object set construction", and a module is not a set.
+
+    The frame header's module holds two `#CONDITIONAL-INT` objects, which is legal because
+    neither enters the set — §23.6.1 reaches them by name from an `#INT` object. Two objects
+    for a class the *structure* names is the violation, and that is what is refused.
+    """
+    module = frame_header_module()
+    conditionals = [name for name, (cls, _spec) in module.objects.items()
+                    if cls == "#CONDITIONAL-INT"]
+    assert len(conditionals) == 2, conditionals
+    assert "#CONDITIONAL-INT" not in module.object_set()
+
+    source = frame_header_source().replace(
+        "  pduOuter #OUTER ::= {",
+        "  secondVersion #Version ::= { ENCODING plainVersion }\n  pduOuter #OUTER ::= {")
+    try:
+        parse_module(source).object_set()
+    except Asn1Error as error:
+        assert "9.5.2" in str(error), error
+    else:
+        raise AssertionError("a class in the structure carried two objects")
+
+
+def test_a_transmission_order_that_differs_from_the_type_comes_from_the_structure():
+    """§22.10.1.1's `&concatenation-order` is `{textual, tag, random}` and nothing else.
+
+    So the wire order is not a property of the concatenation object — §22.10.3.1 reads
+    `textual` from "the ASN.1 type specification **or the ECN structure definition**". Moving
+    the field in the §16.5 structure moves it on the wire; the object does not change.
+    """
+    module = frame_header_module()
+    assert module.concatenation().transmission_order() == (
+        "payloadOctets", "version", "urgent", "reserved")
+
+    reordered = parse_module(frame_header_source().replace(
+        "      payloadOctets  #Scaled-length,\n      version        #Version,",
+        "      version        #Version,\n      payloadOctets  #Scaled-length,"))
+    assert reordered.concatenation().transmission_order() == (
+        "version", "payloadOctets", "urgent", "reserved")
+    _kind, value, expected = legacy_frame_workload()
+    assert _encode_from_text(reordered, value) != expected
+
+
+def test_order_tag_and_order_random_are_refused_with_what_they_would_require():
+    for order, citation in (("tag", "22.10.2.4"), ("random", "22.10.2.1")):
+        source = frame_header_source().replace(
+            "CONCATENATION ORDER textual", f"CONCATENATION ORDER {order}")
+        try:
+            parse_module(source)
+        except Asn1Error as error:
+            assert citation in str(error), (order, str(error))
+        else:
+            raise AssertionError(f"ORDER {order} was accepted without its prerequisites")
+
+
+def test_a_nested_encoding_structure_is_refused_rather_than_flattened():
+    """§16.2.1 admits a field that is itself a structure; this rail walks one flat level.
+
+    Flattening it would put a nested structure's fields into its parent's transmission order,
+    which is a different encoding from the one written.
+    """
+    source = frame_header_source().replace(
+        "      reserved       #Reserved",
+        "      reserved       #Reserved { inner #Reserved }")
+    try:
+        parse_module(source)
+    except Asn1Error as error:
+        assert "16.2.1" in str(error), error
+    else:
+        raise AssertionError("a nested structure was flattened into its parent")
+
+
+# --- the plan-v6 question --------------------------------------------------------------------
+
+def test_the_write_plan_holds_the_type_and_therefore_cannot_hold_this_encoding():
+    """**The plan-v6 answer, as evidence.**
+
+    `encode_plan` describes an ASN.1 *type* — tag, members, enumeration, constraint,
+    extensibility — and five emitters read the same node and apply their own rule. The
+    question was whether an ECN encoding is a sixth such rule, carried by a version 6 of that
+    descriptor.
+
+    It is not, and the frame header shows why twice over. Its wire order puts `payloadOctets`
+    first, where the plan's members are in the schema's order and `EncodeMember.index` is that
+    order; and its `reserved` bits correspond to no ASN.1 component, so there is no member for
+    them to be a property of. Both facts belong to a §16.5 encoding structure. Carrying them
+    on `EncodeNode` would make a node's meaning depend on which candidate read it, which is
+    the one thing that plan's design rules out.
+
+    So an ECN encoding is a *third compilation* of the same schema, with its own version
+    counter — the same argument `encode_plan`'s docstring already makes for why a write plan
+    is not a read plan.
+    """
+    kind, _value, _expected = legacy_frame_workload()
+    plan = compile_encode_plan(kind, module="FrameEncodings", type_name="FrameHeader")
+    module = frame_header_module()
+
+    schema_order = tuple(member.name for member in plan.root.members)
+    wire_order = module.concatenation().transmission_order()
+    assert schema_order == ("version", "urgent", "payloadOctets")
+    assert wire_order[:3] != schema_order
+
+    assert "reserved" not in schema_order
+    assert "reserved" in wire_order
+    assert isinstance(module.concatenation().fields["reserved"], PadSpec)
+
+    # And the plan is the same plan whichever candidate reads it, which is the property that
+    # leaves the ECN facts with nowhere in it to live.
+    assert b"reserved" not in plan.serialize()
+    assert plan.sha256() == compile_encode_plan(
+        kind, module="FrameEncodings", type_name="FrameHeader").sha256()
+
+
+def test_the_two_descriptors_version_independently():
+    """A third compilation gets a third counter, and the digests are not interchangeable."""
+    from bcir.asn1.ecn_syntax import SYNTAX_VERSION
+    from bcir.asn1.encode_plan import PLAN_VERSION
+
+    kind, _value, _expected = legacy_frame_workload()
+    plan = compile_encode_plan(kind, module="FrameEncodings", type_name="FrameHeader")
+    module = frame_header_module()
+    assert plan.serialize().startswith(f"plan-version {PLAN_VERSION}".encode())
+    assert module.serialize().startswith(f"ecn-syntax-version {SYNTAX_VERSION}".encode())
+    assert module.sha256() != plan.sha256()
+
+
+def test_the_transform_is_still_what_no_fixed_candidate_reproduces():
+    """The gate's reopening condition, restated against the text-driven path.
+
+    `test_asn1_ecn_user.py` runs this against the Python-assembled objects. Running it here
+    too means the *specification* is what no candidate matches, not one particular way of
+    building it — so the day a candidate does match, both fail rather than one.
+    """
+    from bcir.asn1.ecn_user import refuted_by
+
+    kind, value, expected = legacy_frame_workload()
+    assert _encode_from_text(frame_header_module(), value) == expected
+    for name, (octets, note) in refuted_by(kind, value, expected).items():
+        assert octets != expected, (name, note)
+
+
+# --- refusals that keep the parser honest -----------------------------------------------------
+
+def test_a_module_without_an_end_is_refused():
+    try:
+        parse_module("M ENCODING-DEFINITIONS ::= BEGIN")
+    except Asn1Error as error:
+        assert "END" in str(error), error
+    else:
+        raise AssertionError("a truncated module parsed")
+
+
+def test_a_class_this_rail_cannot_execute_is_named_rather_than_ignored():
+    source = frame_header_source().replace("#Reserved      ::= #PAD",
+                                           "#Reserved      ::= #BITS")
+    try:
+        parse_module(source)
+    except Asn1Error as error:
+        assert "#BITS" in str(error), error
+    else:
+        raise AssertionError("an unimplemented encoding class parsed")
+
+
+def test_a_transform_reference_that_names_nothing_is_refused():
+    source = frame_header_source().replace("TRANSFORMS { octetsToUnits }",
+                                           "TRANSFORMS { noSuchTransform }")
+    try:
+        parse_module(source)
+    except Asn1Error as error:
+        assert "24.2.4.1" in str(error), error
+    else:
+        raise AssertionError("a dangling transform reference parsed")
+
+
+def test_only_one_transform_clause_may_be_used_per_object():
+    """§24.1.1's WITH SYNTAX carries the comment "Only one of the following clauses can be
+    used", and a second one silently winning would make the first dead text."""
+    source = frame_header_source().replace(
+        "{ INT-TO-INT divide:4 }", "{ INT-TO-INT divide:4 INT-TO-BITS SIZE 4 }")
+    try:
+        parse_module(source)
+    except Asn1Error as error:
+        assert "24.1.1" in str(error), error
+    else:
+        raise AssertionError("two transform clauses parsed into one object")
+
+
+def test_the_operand_spellings_are_the_clauses_own():
+    """§24.3.1 gives `negate` and `subtract` ENUMERATED operands, not integers."""
+    for body, wanted in (("INT-TO-INT negate:0", "negate:value"),
+                         ("INT-TO-INT subtract:4", "subtract:lower-bound")):
+        source = frame_header_source().replace("INT-TO-INT divide:4", body)
+        try:
+            parse_module(source)
+        except Asn1Error as error:
+            assert wanted in str(error), (body, str(error))
+        else:
+            raise AssertionError(f"{body!r} parsed with the wrong operand form")
+    assert parse_module(frame_header_source().replace(
+        "INT-TO-INT divide:4", "INT-TO-INT negate:value")).sha256()
+
+
+def test_a_self_delimiting_encoding_space_is_refused_with_what_it_would_need():
+    """§21.2.2's DEFAULT is `self-delimiting-values`, which §21.2.7 defines by matching every
+    candidate encoding rather than by a width. Defaulting to it silently would make an object
+    that states no SIZE encode nothing at all."""
+    source = frame_header_source().replace("ENCODING-SPACE SIZE 3 MULTIPLE OF bit",
+                                           "ENCODING-SPACE")
+    try:
+        parse_module(source)
+    except Asn1Error as error:
+        assert "21.2" in str(error), error
+    else:
+        raise AssertionError("an encoding space with no stated size parsed")

@@ -1,0 +1,75 @@
+-- BCIR-FrameHeader.ecn — the §6 gate's workload, as an X.692 encoding definition module.
+--
+-- This is the same encoding `ecn_user.legacy_frame_objects()` assembles in Python, written
+-- in the notation X.692 actually defines. Both produce 0xAA 0x00 for the abstract value
+-- {version 5, urgent TRUE, payloadOctets 40}, and a test fails if they ever diverge — which
+-- is what makes the parser a second opinion rather than a second spelling.
+--
+-- The layout is a fixed-format frame header of the kind that predates every ASN.1 encoding
+-- rule: a length carried in 4-octet units, transmitted BEFORE the fields it describes, an
+-- active-low urgency flag, and two reserved bits that belong to the octets and to no
+-- abstract component. No candidate in the fixed set reproduces it; see `refuted_by()`.
+
+FrameEncodings ENCODING-DEFINITIONS ::= BEGIN
+
+  -- 9.5.2 permits an encoding object SET at most one object per encoding class, so two
+  -- integer fields of different widths cannot both be #INT. Clause 11's class assignment is
+  -- how the notation says that: each field gets a class, each class gets one object.
+  #Scaled-length ::= #INT
+  #Version       ::= #INT
+  #Active-low    ::= #BOOL
+  #Reserved      ::= #PAD
+  #Frame-header  ::= #CONCATENATION
+
+  -- 16.5's ConcatenationStructure. Its TEXTUAL order is the wire order: 22.10.1.1 gives the
+  -- concatenation object only {textual, tag, random}, and 22.10.3.1 reads `textual' from
+  -- "the ASN.1 type specification OR THE ECN STRUCTURE DEFINITION". This is that definition,
+  -- and it is why the length can precede the version it measures.
+  FrameHeader-structure ::= #Frame-header {
+      payloadOctets  #Scaled-length,
+      version        #Version,
+      urgent         #Active-low,
+      reserved       #Reserved
+  }
+
+  -- 24.3.5: precisely one arithmetic operation per encoding object. A field scaled in
+  -- 4-octet units is one `divide:4'; an offset as well would be a second object in the
+  -- ordered list, not another property of this one.
+  octetsToUnits #TRANSFORM ::= { INT-TO-INT divide:4 }
+
+  -- 23.6.1 gives #INT no encoding properties of its own — it names #CONDITIONAL-INT
+  -- objects, which is where 23.7.1 puts the encoding space and the transforms.
+  scaledLength #CONDITIONAL-INT ::= {
+      ELSE
+      ENCODING-SPACE SIZE 4 MULTIPLE OF bit
+      TRANSFORMS { octetsToUnits }
+      ENCODING positive-int
+  }
+  lengthField #Scaled-length ::= { ENCODING scaledLength }
+
+  plainVersion #CONDITIONAL-INT ::= {
+      ELSE
+      ENCODING-SPACE SIZE 3 MULTIPLE OF bit
+      ENCODING positive-int
+  }
+  versionField #Version ::= { ENCODING plainVersion }
+
+  -- Active low. DER fixes TRUE at 0xFF and PER writes a 1 bit; neither can be talked into
+  -- this, which is 23.3.1's TRUE-PATTERN / FALSE-PATTERN doing the work.
+  urgentFlag #Active-low ::= {
+      ENCODING-SPACE SIZE 1 MULTIPLE OF bit
+      TRUE-PATTERN bits:'0'B
+      FALSE-PATTERN bits:'1'B
+  }
+
+  -- 23.12: the pad category. 21.9.2 defaults PAD-PATTERN's padding to `zero'.
+  reservedBits #Reserved ::= { ENCODING-SPACE SIZE 2 MULTIPLE OF bit }
+
+  -- 22.10.2.2 would have `aligned' pre-align every component; these fields are packed.
+  frameHeader #Frame-header ::= { CONCATENATION ORDER textual ALIGNMENT none }
+
+  -- 21.9.3 names this use of Padding: the post-padding of a PDU. The four fields are ten
+  -- bits, so the last octet is completed here and nowhere else.
+  pduOuter #OUTER ::= { MULTIPLE OF octet POST-PADDING zero }
+
+END

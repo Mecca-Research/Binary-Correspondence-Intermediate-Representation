@@ -18,9 +18,11 @@ from __future__ import annotations
 
 from bcir.asn1.ecn import CONCATENATION
 from bcir.asn1.ecn_user import (
-    BitWriter, BoolSpec, ConcatenationSpec, FIXED_CANDIDATES, IntForm, IntSpec, IntToBits,
-    IntToInt, Justification, OuterSpec, PadSpec, UserEncodingObject, encode_with_user,
-    legacy_frame_objects, legacy_frame_workload, refuted_by,
+    UNIT_OCTET, BitWriter, BoolSpec, ConcatenationSpec, FIXED_CANDIDATES, IntForm, IntOp,
+    IntSpec, IntToBits, IntToInt, Justification, OuterSpec, PadSpec, Padding, Pattern,
+    PreAlignment, TransformChain, ValuePadding,
+    UserEncodingObject, encode_with_user, legacy_frame_objects, legacy_frame_workload,
+    refuted_by,
 )
 from bcir.asn1.tags import Asn1Error
 
@@ -87,33 +89,113 @@ def test_the_gap_is_expressiveness_and_not_compactness():
         assert octets != expected
 
 
-def test_an_int_to_int_transform_is_invertible_or_it_is_refused():
-    """A transform that lost information would be a lossy channel, not an encoding rule.
+def test_table_6_decides_reversibility_per_operation_not_by_blanket_rule():
+    """§24.3 Table 6, "Reversal of INT-TO-INT transforms", in force rather than paraphrased.
 
-    The scaled field can carry 40 because 40 is a whole number of 4-octet units. It cannot
-    carry 41, and the refusal is the point: rounding would give 40 and 41 the same encoding,
-    and a decoder could not tell which was sent.
+    The first version of this module refused any value a transform could not invert, on the
+    reasoning that a lossy transform is not an encoding rule. Table 6 disagrees, and it is the
+    authority: `modulo:n` is **Never reversible** and is a perfectly legal transform, while
+    `divide:n` is reversible exactly when the "Value is a multiple of n".
+
+    So the old refusal was the right rule for `divide` and the wrong rule for everything else,
+    which is the sort of thing only reading the text settles.
     """
-    scale4 = IntToInt(offset=0, scale=4, name="OCTETS-TO-UNITS")
+    scale4 = IntToInt(op=IntOp.DIVIDE, operand=4, name="OCTETS-TO-UNITS")
     assert scale4.apply(40) == 10
     assert scale4.inverse(10) == 40
     for value in range(0, 61, 4):
-        assert scale4.inverse(scale4.apply(value)) == value
+        assert scale4.reversible(value) and scale4.inverse(scale4.apply(value)) == value
+    # Table 6's condition on divide, stated as a condition rather than as an exception.
+    assert not scale4.reversible(41), "divide:4 is reversible only for multiples of 4"
+
+    # Never reversible, and still legal to apply.
+    modulo = IntToInt(op=IntOp.MODULO, operand=3)
+    assert modulo.apply(10) == 1                      # §24.3.8: i - ((i divide:n) multiply:n)
+    assert not modulo.reversible(10)
     try:
-        scale4.apply(41)
+        modulo.inverse(1)
     except Asn1Error as error:
-        assert "invertible" in str(error), error
+        assert "Never reversible" in str(error), error
     else:
-        raise AssertionError("a non-representable value was silently rounded")
+        raise AssertionError("modulo claimed an inverse Table 6 says it does not have")
+
+    for always in (IntOp.INCREMENT, IntOp.DECREMENT, IntOp.MULTIPLY, IntOp.NEGATE):
+        assert IntToInt(op=always, operand=2).reversible(7), always
 
 
-def test_an_offset_transform_round_trips_the_n_minus_one_idiom():
-    """`n - 1` in a 4-bit field expresses 1..16, which is why so many headers do it."""
-    minus_one = IntToInt(offset=1, scale=1, name="LENGTH-MINUS-ONE")
-    assert minus_one.apply(1) == 0
-    assert minus_one.apply(16) == 15
+def test_divide_truncates_toward_zero_as_the_clause_defines_not_as_python_floors():
+    """§24.3.7, which is a real trap for an implementation written in Python.
+
+    The clause: `divide:n` produces "the integer value that is closest to the mathematical
+    result, but is no further from zero than that result... so a value of -1 with `divide:2`
+    will give zero". Python's `//` floors, so `-1 // 2` is -1. An implementation that reached
+    for the obvious operator would be wrong for every negative value.
+    """
+    half = IntToInt(op=IntOp.DIVIDE, operand=2)
+    assert half.apply(-1) == 0, "§24.3.7 gives 0; Python's // would give -1"
+    assert half.apply(-5) == -2 and -5 // 2 == -3
+    assert half.apply(7) == 3
+
+
+def test_one_object_specifies_precisely_one_operation():
+    """§24.3.5, and the reason `TransformChain` exists at all.
+
+    "any given encoding object to specify precisely one arithmetic operation. General
+    arithmetic can, however, be defined by the use of an ordered list of transforms" — and
+    §22.4.1.1 declares the property `&Encoder-transforms #TRANSFORM ORDERED OPTIONAL`, so the
+    order is part of the specification rather than an artefact of storage.
+
+    The `n - 1` idiom that lets a 4-bit field express 1..16 is `decrement:1`; a field both
+    offset and scaled is a two-element chain.
+    """
+    minus_one = IntToInt(op=IntOp.DECREMENT, operand=1, name="LENGTH-MINUS-ONE")
+    assert minus_one.apply(1) == 0 and minus_one.apply(16) == 15
     for value in range(1, 17):
         assert minus_one.inverse(minus_one.apply(value)) == value
+
+    chain = TransformChain((IntToInt(op=IntOp.SUBTRACT_LOWER_BOUND, operand=5),
+                            IntToInt(op=IntOp.DIVIDE, operand=4)))
+    assert chain.apply(45) == 10
+    assert chain.inverse(10) == 45
+    # Reversibility is checked on the value each step actually sees: 45 reaches divide:4 as
+    # 40, which is a multiple; 46 reaches it as 41, which is not.
+    assert chain.reversible(45) and not chain.reversible(46)
+
+
+def test_subtract_lower_bound_is_confined_to_the_first_position():
+    """§24.3.9 — a statement about the LIST, so it is enforced on the list.
+
+    "The transform for the value `subtract:lower-bound` shall only be used as the first of an
+    ordered list of transforms". A single transform cannot know its own position, which is
+    why this lives in `TransformChain` rather than in `IntToInt`.
+    """
+    first = TransformChain((IntToInt(op=IntOp.SUBTRACT_LOWER_BOUND, operand=1),
+                            IntToInt(op=IntOp.MULTIPLY, operand=2)))
+    assert first.apply(3) == 4
+    try:
+        TransformChain((IntToInt(op=IntOp.MULTIPLY, operand=2),
+                        IntToInt(op=IntOp.SUBTRACT_LOWER_BOUND, operand=1)))
+    except Asn1Error as error:
+        assert "24.3.9" in str(error), error
+    else:
+        raise AssertionError("subtract:lower-bound was accepted in a non-initial position")
+
+
+def test_the_operand_ranges_are_the_clauses_own():
+    """§24.3.1: increment/decrement take INTEGER (1..MAX), multiply/divide/modulo (2..MAX).
+
+    A multiply by 1 is not a transform and the notation does not admit one, so the bound is a
+    property of the specification rather than a convenience check.
+    """
+    for op in (IntOp.MULTIPLY, IntOp.DIVIDE, IntOp.MODULO):
+        try:
+            IntToInt(op=op, operand=1)
+        except Asn1Error as error:
+            assert "2..MAX" in str(error), error
+        else:
+            raise AssertionError(f"{op} accepted an operand below its §24.3.1 floor")
+    for op in (IntOp.INCREMENT, IntOp.DECREMENT):
+        assert IntToInt(op=op, operand=1).apply(5) in (4, 6)
 
 
 def test_int_to_bits_round_trips():
@@ -197,11 +279,93 @@ def test_twos_complement_and_positive_int_are_different_objects():
 
 def test_left_justification_moves_a_narrow_value_within_its_space():
     out = BitWriter()
-    IntSpec(width=8, justification=Justification.LEFT).write(0b101, out)
+    IntSpec(width=8, value_padding=ValuePadding(
+        justification=Justification.left())).write(0b101, out)
     assert out.octets() == bytes((0b10100000,))
     out = BitWriter()
-    IntSpec(width=8, justification=Justification.RIGHT).write(0b101, out)
+    IntSpec(width=8, value_padding=ValuePadding(
+        justification=Justification.right())).write(0b101, out)
     assert out.octets() == bytes((0b00000101,))
+
+
+def test_the_justification_offset_is_a_property_the_clause_gives_and_a_flag_cannot():
+    """§21.8.1 is `CHOICE {left INTEGER(0..MAX), right INTEGER(0..MAX)}` — the offset is real.
+
+    §22.8.3.4 splits the "b" padding bits as `n` before and `b-n` after for `left:n`, and
+    §22.8.3.3 the other way round for `right:n`. A bare LEFT/RIGHT flag can only spell the
+    two zero-offset cases, so a field sitting two bits in from the top of its space was
+    unreachable before the offset was carried.
+    """
+    out = BitWriter()
+    IntSpec(width=8, value_padding=ValuePadding(
+        justification=Justification.left(2))).write(0b101, out)
+    #  2 bits pre-padding, the 3-bit value, then the remaining 3 as post-padding.
+    assert out.octets() == bytes((0b00101000,))
+    out = BitWriter()
+    IntSpec(width=8, value_padding=ValuePadding(
+        justification=Justification.right(2))).write(0b101, out)
+    assert out.octets() == bytes((0b00010100,))
+
+
+def test_an_offset_wider_than_the_padding_is_refused_by_the_clause_that_bounds_it():
+    """§22.8.2.1: the justification offset "shall be less than or equal to" the padding count.
+
+    Checked against "b" rather than at construction, because "b" is not known until a value
+    is encoded: `left:5` is fine for a 3-bit value in an 8-bit space and impossible for a
+    7-bit one, and the object is the same object.
+    """
+    spec = IntSpec(width=8, value_padding=ValuePadding(justification=Justification.left(5)))
+    out = BitWriter()
+    spec.write(0b101, out)                      # b = 5, so left:5 exactly fits.
+    assert out.octets() == bytes((0b00000101,))
+    try:
+        spec.write(0b1111111, BitWriter())      # b = 1.
+    except Asn1Error as error:
+        assert "22.8.2.1" in str(error), error
+    else:
+        raise AssertionError("an offset wider than the available padding was accepted")
+
+
+def test_the_padding_bits_come_from_the_clause_21_9_padding_value():
+    """§21.9.4/§21.9.5/§21.9.6 give `zero`, `one` and `pattern` their meanings.
+
+    §22.8.3.5 sets each side "with the leading bit of the pattern as the first inserted bit
+    in each case", so the two sides start the pattern afresh rather than sharing a phase.
+    """
+    out = BitWriter()
+    IntSpec(width=8, value_padding=ValuePadding(
+        justification=Justification.left(), post_padding=Padding.ONE)).write(0b101, out)
+    assert out.octets() == bytes((0b10111111,))
+    out = BitWriter()
+    IntSpec(width=8, value_padding=ValuePadding(
+        justification=Justification.left(4), pre_padding=Padding.PATTERN,
+        pre_pattern=Pattern.from_bits("10"), post_padding=Padding.PATTERN,
+        post_pattern=Pattern.from_bits("10"))).write(0b1, out)
+    #  Pre: 1010 (the pattern replicated). Value: 1. Post: 101 — the pattern from its start
+    #  again, truncated, not continued from where the pre-padding left off.
+    assert out.octets() == bytes((0b10101101,))
+
+
+def test_a_pattern_shorter_than_the_run_is_replicated_from_its_leading_bit():
+    """§22.2.3.3: "the pattern shall be re-used, most significant bit first"."""
+    assert Pattern.from_bits("110").fill(8) == (1, 1, 0, 1, 1, 0, 1, 1)
+    assert Pattern.from_bits("110").fill(2) == (1, 1)
+    assert Pattern.from_octets(b"\xF0").fill(4) == (1, 1, 1, 1)
+
+
+def test_an_encoder_option_pattern_denotes_a_length_and_not_a_bit_sequence():
+    """§21.10.8 and §21.10.9 leave the value to the encoder, so there is nothing to return.
+
+    Refused rather than defaulted: two conforming encoders may write different bits here and
+    both be right, so a rail that picked one would be reporting a choice as a fact.
+    """
+    for pattern in (Pattern.any_of_length(4), Pattern.different_any()):
+        try:
+            pattern.bit_sequence()
+        except Asn1Error as error:
+            assert "encoder" in str(error), error
+        else:
+            raise AssertionError(f"{pattern} produced bits it does not determine")
 
 
 def test_an_encoding_that_ends_mid_octet_needs_an_outer_object_to_complete_it():
@@ -226,8 +390,10 @@ def test_an_encoding_that_ends_mid_octet_needs_an_outer_object_to_complete_it():
 def test_the_outer_object_controls_the_pad_value():
     objects = {CONCATENATION: UserEncodingObject(
         CONCATENATION, ConcatenationSpec(fields={"a": IntSpec(width=3)}))}
-    zeros = encode_with_user(objects, CONCATENATION, {"a": 5}, outer=OuterSpec(pad_value=0))
-    ones = encode_with_user(objects, CONCATENATION, {"a": 5}, outer=OuterSpec(pad_value=1))
+    zeros = encode_with_user(objects, CONCATENATION, {"a": 5},
+                             outer=OuterSpec(padding=Padding.ZERO))
+    ones = encode_with_user(objects, CONCATENATION, {"a": 5},
+                            outer=OuterSpec(padding=Padding.ONE))
     assert zeros == bytes((0b10100000,))
     assert ones == bytes((0b10111111,))
 
@@ -239,7 +405,7 @@ def test_pad_fields_take_no_value_from_the_abstract_type():
     value. A fixed-layout header does, and the value dict must not have to mention it.
     """
     spec = ConcatenationSpec(
-        fields={"a": IntSpec(width=4), "rr": PadSpec(width=4, value=0b1111)},
+        fields={"a": IntSpec(width=4), "rr": PadSpec(width=4, padding=Padding.ONE)},
         order=("a", "rr"), padding=("rr",))
     objects = {CONCATENATION: UserEncodingObject(CONCATENATION, spec)}
     assert encode_with_user(objects, CONCATENATION, {"a": 5}) == bytes((0b01011111,))
@@ -268,7 +434,8 @@ def test_a_class_with_no_object_in_the_set_is_refused():
 def test_alignment_happens_where_the_object_says_and_nowhere_else():
     """Aligned PER aligns by its own rules; a user-defined object aligns where it is told."""
     spec = ConcatenationSpec(
-        fields={"a": IntSpec(width=3), "b": IntSpec(width=8, align_before=True)},
+        fields={"a": IntSpec(width=3),
+                "b": IntSpec(width=8, pre_alignment=PreAlignment(unit=UNIT_OCTET))},
         order=("a", "b"))
     objects = {CONCATENATION: UserEncodingObject(CONCATENATION, spec)}
     assert encode_with_user(objects, CONCATENATION, {"a": 0b101, "b": 0xC3}) == bytes(
