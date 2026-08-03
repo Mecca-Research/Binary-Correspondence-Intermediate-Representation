@@ -82,14 +82,15 @@ from .ecn_props import (
     UNIT_BIT, UNIT_DWORD32, UNIT_MAX, UNIT_NAMES, UNIT_NIBBLE, UNIT_OCTET,
     UNIT_REPETITIONS, UNIT_WORD16, Comparison, IntForm, IntegerBounds, Justification,
     JustificationSide, Padding, Pattern, PatternKind, RangeCondition,
-    ReversalSpecification, _padding_bits, check_unit,
+    RepetitionSpaceDetermination, ReversalSpecification, SizeBounds, SizeRangeCondition,
+    _padding_bits, check_unit,
 )
 from .ecn_transform import (
     RESULT_SIZE_FIXED_TO_MAX, RESULT_SIZE_VARIABLE, BitsToBits, BitsToChar,
     BitsToCompositeBits, BitsToInt, BitToBits, BoolToBool, BoolToInt, CharsToCompositeChar,
-    CharToBits, Composite, CompositeBitsToBits, CompositeBitsToOctets, CompositeCharToChars,
-    IntOp, IntToBits, IntToBool, IntToChars, IntToInt, OctetsToCompositeBits, Transform,
-    TransformChain,
+    CharToBits, CompositeBitsToBits, CompositeBitsToOctets, CompositeCharToChars,
+    Composite, IntOp, IntToBits, IntToBool, IntToChars, IntToInt, OctetsToCompositeBits,
+    Transform, TransformChain,
 )
 from .tags import Asn1Error
 
@@ -1168,6 +1169,315 @@ class OuterSpec:
             out.reverse_all(self.bit_reversal, self.reversal_unit)
 
 
+# --- clause 22.7 and clause 23.13/23.14: repetition ----------------------------------------
+
+@dataclass(frozen=True)
+class RepetitionSpace:
+    """§22.7's repetition space: how a decoder finds the end of a repetition.
+
+    §21.7.3 is the sentence that places this group: it "**replaces** use of an encoding
+    property of type `EncodingSpaceDetermination` in the encoding of repetitions". So a
+    repetition does not have a §22.4 encoding space with a §21.3 determinant — it has this,
+    with §21.7's eight-valued determination, and the two are siblings rather than one being a
+    special case of the other.
+
+    Three determinations are built, and they are the three that describe how essentially every
+    real repeated format works:
+
+    * `field-to-be-set` — a count field, written by the encoder from the number of repetitions.
+    * `field-to-be-used` — the same field, supplied by the application and *checked*.
+    * `pattern` — §22.7.1.1's `&termination-pattern`, emitted after the last element. This is
+      the NUL-terminated string, and it is why the group carries a `Pattern` at all.
+
+    The other five are refused with what each would need. `flag-to-be-set` and `flag-to-be-used`
+    (§21.7.6/§21.7.7) put a continuation flag **inside the repeated element**, which needs the
+    element's own structure to have a field reserved for it. `container` (§21.7.8) and `handle`
+    need containment and §22.9's identification handles.
+    """
+
+    determination: RepetitionSpaceDetermination = RepetitionSpaceDetermination.FIELD_TO_BE_SET
+    #: §22.7.1.1's `&main-reference REFERENCE OPTIONAL` — the count field.
+    reference: str = ""
+    #: The `MULTIPLE OF` unit the count is in. §21.1.5 admits `repetitions` here and only
+    #: here: "the associated count gives the number of repetitions in the encoding".
+    unit: int = UNIT_REPETITIONS
+    #: §22.7.1.1's `&termination-pattern`, for the `pattern` determination.
+    termination_pattern: Pattern | None = None
+    encoder_transforms: "TransformChain | None" = None
+    decoder_transforms: "TransformChain | None" = None
+
+    _BUILT = (RepetitionSpaceDetermination.FIELD_TO_BE_SET,
+              RepetitionSpaceDetermination.FIELD_TO_BE_USED,
+              RepetitionSpaceDetermination.PATTERN,
+              RepetitionSpaceDetermination.NOT_NEEDED)
+
+    def __post_init__(self) -> None:
+        if self.determination not in RepetitionSpace._BUILT:
+            needs = {
+                RepetitionSpaceDetermination.FLAG_TO_BE_SET:
+                    "§21.7.6 puts a continuation flag INSIDE the repeated element, which needs "
+                    "the element's structure to reserve a field for it",
+                RepetitionSpaceDetermination.FLAG_TO_BE_USED:
+                    "§21.7.7 reads a continuation flag from inside the repeated element",
+                RepetitionSpaceDetermination.CONTAINER:
+                    "§21.7.8 needs a container with a length determinant, or #OUTER",
+                RepetitionSpaceDetermination.HANDLE:
+                    "§22.9's identification handles are not built",
+            }[self.determination]
+            raise Asn1Error(
+                f"ECN: the repetition-space determination `{self.determination.value}` is not "
+                f"implemented — {needs}")
+        if self.determination is RepetitionSpaceDetermination.PATTERN:
+            if self.termination_pattern is None:
+                raise Asn1Error(
+                    "ECN: §22.7.1.1's `pattern` determination ends the repetition with the "
+                    "&termination-pattern, and none is set")
+            self.termination_pattern.require_non_null("the termination pattern")
+        elif self.determination is not RepetitionSpaceDetermination.NOT_NEEDED:
+            if not self.reference:
+                raise Asn1Error(
+                    f"ECN: §21.7.4/§21.7.5 — `{self.determination.value}` requires a USING "
+                    f"reference to the field carrying the count")
+        check_unit(self.unit, allow_repetitions=True)
+
+    def count_in_units(self, repetitions: int, space_bits: int) -> int:
+        """§21.7.4's "size (in repetition space units)".
+
+        §21.1.5 is what makes this two cases rather than one: with `repetitions` as the unit
+        the count IS the number of elements, and with any other unit it is the space's size in
+        those units. A format carrying "how many" and one carrying "how many octets" are both
+        ordinary, and they are not the same number.
+        """
+        if self.unit == UNIT_REPETITIONS:
+            return repetitions
+        if space_bits % self.unit:
+            raise Asn1Error(
+                f"ECN: a {space_bits}-bit repetition space is not a whole number of "
+                f"{self.unit}-bit units, so no determinant can state its size")
+        return space_bits // self.unit
+
+    def record(self, out: "BitWriter", repetitions: int, space_bits: int) -> None:
+        """Set or check the count field, after the elements have been written."""
+        if self.determination in (RepetitionSpaceDetermination.NOT_NEEDED,
+                                  RepetitionSpaceDetermination.PATTERN):
+            return
+        count = self.count_in_units(repetitions, space_bits)
+        if self.determination is RepetitionSpaceDetermination.FIELD_TO_BE_SET:
+            out.patch(self.reference,
+                      _determinant_value(self.encoder_transforms, count,
+                                         f"REPETITION-SPACE USING {self.reference}"))
+            return
+        carried = out.value_of(self.reference)
+        recovered = (carried if self.decoder_transforms is None
+                     else self.decoder_transforms.apply(carried))
+        if recovered != count:
+            raise Asn1Error(
+                f"ECN: §21.7.5 — the field {self.reference!r} carries {carried}, which reduces "
+                f"to {recovered} repetition-space units, but the encoding used {count}")
+
+    def terminate(self, out: "BitWriter") -> None:
+        """Emit §22.7.1.1's termination pattern, if that is how this space ends."""
+        if self.determination is RepetitionSpaceDetermination.PATTERN:
+            for bit in self.termination_pattern.bit_sequence():
+                out.put_bit(bit)
+
+
+@dataclass(frozen=True)
+class ConditionalRepetitionSpec:
+    """§23.14's `#CONDITIONAL-REPETITION`: a repetition encoding guarded by the SIZE bounds.
+
+    The integer story again, one clause over. §23.13.3.1 selects "the first
+    `#CONDITIONAL-REPETITION` encoding object in `ENCODING(S)` whose conditions are satisfied",
+    and §21.13.3 makes those conditions tests on the *effective size constraint* — so an object
+    set encodes `SEQUENCE (SIZE(4)) OF` with no length field and `SEQUENCE OF` with one, from
+    the schema.
+    """
+
+    element: object = None
+    space: RepetitionSpace = field(default_factory=RepetitionSpace)
+    pre_alignment: PreAlignment | None = None
+    #: `(SizeRangeCondition, Comparison | None, comparator | None)`, all of which must hold.
+    conditions: tuple = ()
+
+    def __post_init__(self) -> None:
+        if self.element is None:
+            raise Asn1Error(
+                "ECN: a #CONDITIONAL-REPETITION object encodes a repeated element")
+
+    def applies(self, bounds: SizeBounds) -> bool:
+        return all(bounds.satisfies(condition, comparison, comparator)
+                   for condition, comparison, comparator in self.conditions)
+
+    def write(self, values, out: "BitWriter") -> None:
+        if self.pre_alignment is not None:
+            self.pre_alignment.apply(out)
+        start = out.bit_length
+        for value in values:
+            self.element.write(value, out)
+        self.space.terminate(out)
+        self.space.record(out, len(values), out.bit_length - start)
+
+
+@dataclass(frozen=True)
+class RepetitionSpec:
+    """§23.13's `#REPETITION`: the conditional encodings and the type's size bounds.
+
+    §23.13.2.2 permits exactly one of `REPETITION-ENCODING` and `REPETITION-ENCODINGS`, and
+    §23.13.2's NOTE gives the reason the singular exists at all — it avoids "a double
+    curly-bracket (`{{`) in the common case of a single encoding object", and using the plural
+    for one object "is deprecated but is allowed". A syntactic convenience, not a semantic
+    distinction, so only the list is modelled.
+
+    §23.13.2.3 is a real ordering rule and is enforced: "If an encoding object in the
+    `REPETITION-ENCODINGS` ordered list is defined using `IF` or `IF-ALL`, then all **preceding**
+    encoding objects in that list shall be defined using `IF` or `IF-ALL`." An unconditional
+    object matches everything, so anything after it is unreachable — the clause forbids writing
+    dead alternatives rather than leaving them to be discovered.
+    """
+
+    encodings: tuple = ()
+    bounds: SizeBounds = field(default_factory=SizeBounds)
+
+    def __post_init__(self) -> None:
+        seen_unconditional = False
+        for index, candidate in enumerate(self.encodings):
+            if seen_unconditional and candidate.conditions:
+                raise Asn1Error(
+                    f"ECN: §23.13.2.3 — a conditional #CONDITIONAL-REPETITION object at "
+                    f"position {index} follows an unconditional one, which always matches; "
+                    f"every object preceding a conditional one shall itself be conditional")
+            if not candidate.conditions:
+                seen_unconditional = True
+
+    def select(self) -> ConditionalRepetitionSpec:
+        for candidate in self.encodings:
+            if candidate.applies(self.bounds):
+                return candidate
+        raise Asn1Error(
+            f"ECN: §23.13.3.1 — no #CONDITIONAL-REPETITION object's conditions are satisfied "
+            f"by {self.bounds}; the clause makes that an ECN specification error")
+
+    def write(self, values, out: "BitWriter") -> None:
+        self.select().write(values, out)
+
+
+# --- clause 23's string, null and tag categories -------------------------------------------
+
+@dataclass(frozen=True)
+class StringSpec:
+    """§23.2's `#BITS`, §23.9's `#OCTETS` and §23.4's `#CHARS`, which share one shape.
+
+    **None of the three has an `ENCODING-SPACE` group**, and noticing that is the whole point.
+    Their `WITH SYNTAX` gives pre-alignment, a start pointer, `VALUE-REVERSAL`, `TRANSFORMS`,
+    and `REPETITION-ENCODING(S)` — so a string's size comes from the *repetition* machinery of
+    §22.7, not from a stated width. That is why these three could not be built before
+    repetition was, and why they are one class here rather than three.
+
+    `value_reversal` is §23.2.1's `&value-reversal BOOLEAN DEFAULT FALSE`, which reverses the
+    order of the *elements* — distinct from §22.12's bit reversal, which reverses bits within
+    a unit. A format that sends a string backwards and a format that sends each octet's bits
+    backwards are different formats, and ECN spells them with different properties.
+    """
+
+    #: How one element encodes: a bit, an octet or a character.
+    element: object = None
+    repetition: RepetitionSpec = None
+    transform: "Transform | None" = None
+    value_reversal: bool = False
+    pre_alignment: PreAlignment | None = None
+    start_pointer: StartPointer | None = None
+
+    def __post_init__(self) -> None:
+        if self.repetition is None:
+            raise Asn1Error(
+                "ECN: §23.2.1 gives a string category no ENCODING-SPACE; its size comes from "
+                "the §22.7 repetition space, so a REPETITION-ENCODING is required")
+
+    def write(self, value, out: "BitWriter") -> None:
+        if self.pre_alignment is not None:
+            self.pre_alignment.apply(out)
+        if self.start_pointer is not None:
+            self.start_pointer.record(out)
+        if self.transform is not None:
+            value = self.transform.apply(value)
+        elements = list(value.elements if isinstance(value, Composite) else value)
+        if self.value_reversal:
+            elements.reverse()
+        self.repetition.write(elements, out)
+
+
+@dataclass(frozen=True)
+class BitFieldSpec:
+    """One element of a `#BITS` repetition: a bitstring written as it stands.
+
+    §23.2's repeated element is a *bit*, and §24.15's composite makes it a bitstring of the
+    composite's unit — so after a transform has run, a string's elements are tuples of bits
+    rather than integers. This writes those, which `IntSpec` cannot: an `IntSpec` takes an
+    abstract integer and chooses bits for it, where here the bits already are the value.
+    """
+
+    width: int = 0
+
+    def write(self, value, out: "BitWriter") -> None:
+        bits = tuple(value)
+        if self.width and len(bits) != self.width:
+            raise Asn1Error(
+                f"ECN: this bit-field element is {self.width} bits wide; the value carries "
+                f"{len(bits)}")
+        for bit in bits:
+            out.put_bit(bit)
+
+
+@dataclass(frozen=True)
+class NullSpec:
+    """§23.8's `#NUL`: a class with exactly one abstract value.
+
+    It has an encoding space like any bit-field class, and nothing to put in it — X.680's NULL
+    carries no information, so every bit of the space is padding. That makes it the one
+    category where `VALUE-PADDING` is the entire value encoding.
+    """
+
+    width: int = 0
+    padding: Padding = Padding.ZERO
+    pattern: Pattern | None = None
+    pre_alignment: PreAlignment | None = None
+    start_pointer: StartPointer | None = None
+
+    def write(self, _value, out: "BitWriter") -> None:
+        if self.pre_alignment is not None:
+            self.pre_alignment.apply(out)
+        if self.start_pointer is not None:
+            self.start_pointer.record(out)
+        for bit in _padding_bits(self.padding, self.pattern, self.width, "a #NUL object"):
+            out.put_bit(bit)
+
+
+@dataclass(frozen=True)
+class TagSpec:
+    """§23.15's `#TAG`: an identifier written ahead of what it tags.
+
+    §20.2 is why this class is not like the others: "The defined syntax for each category can
+    also be used to define encoding objects for structures which are classes of that category,
+    **preceded by one or more instances of a class in the tag category**." A tag is a prefix
+    that composes with any bit-field encoding rather than a category of its own value — which
+    is exactly how BER's identifier octet relates to its contents.
+    """
+
+    width: int
+    number: int = 0
+    form: IntForm = IntForm.POSITIVE_INT
+    #: What the tag precedes. `None` writes the tag alone, which §20.2's composition allows.
+    tagged: object = None
+    pre_alignment: PreAlignment | None = None
+    value_padding: ValuePadding | None = None
+
+    def write(self, value, out: "BitWriter") -> None:
+        IntSpec(width=self.width, form=self.form, pre_alignment=self.pre_alignment,
+                value_padding=self.value_padding).write(self.number, out)
+        if self.tagged is not None:
+            self.tagged.write(value, out)
+
+
 # --- the encoding object, and applying a set of them --------------------------------------
 
 @dataclass(frozen=True)
@@ -1340,7 +1650,10 @@ __all__ = [
     "PatternKind", "PreAlignment", "RangeCondition", "ReplaceAction",
     "Replacement", "ReplacementStructure", "HeadEndStructure",
     "ReversalSpecification",
-    "SpaceDeterminant", "StartPointer", "Transform", "TransformChain", "UnusedBits",
+    "BitFieldSpec", "ConditionalRepetitionSpec", "NullSpec", "RepetitionSpaceDetermination",
+    "RepetitionSpace", "RepetitionSpec", "SizeBounds", "SizeRangeCondition",
+    "SpaceDeterminant", "StartPointer", "StringSpec", "TagSpec", "Transform",
+    "TransformChain", "UnusedBits",
     "UnusedBitsDetermination", "UserEncodingObject", "ValuePadding", "check_unit",
     "encode_with_user", "legacy_frame_objects", "legacy_frame_workload", "refuted_by",
 ]
