@@ -44,9 +44,10 @@ include = ["bcir*"]
 # The ASN.1 modules are SOURCE, not documentation: `bcir/asn1/BCIR-StreamPack.asn1` is
 # what the X.680 front-end compiles into the projection's type model, and the RFC 5280
 # excerpt is what the third-party conformance test reads. An sdist/wheel without them
-# installs a package whose own tests cannot run.
+# installs a package whose own tests cannot run. `*.ecn` is the same for X.692's encoding
+# definition modules: `BCIR-FrameHeader.ecn` is the specification the ECN gate encodes.
 [tool.setuptools.package-data]
-"bcir.asn1" = ["*.asn1"]
+"bcir.asn1" = ["*.asn1", "*.ecn"]
 "bcir.frontends.asn1" = ["testdata/*.asn1"]
 
 # --- ruff ---------------------------------------------------------------------------

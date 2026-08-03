@@ -53,7 +53,7 @@ rule.
 | X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references; cross-module tag-default nuance (§9.8) excluded |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
-| X.692 | 8825-3:2021 | ECN | **parts 1 and 2 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. The ECN surface syntax is still not parsed |
+| X.692 | 8825-3:2021 | ECN | **parts 1 and 2 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed |
 | X.693 | 8825-4:2021 | XER | **built** — BASIC-XER + CXER (CXER out, both in; validated against Annex A.3/A.4); EXTENDED-XER by design excluded |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
@@ -360,9 +360,47 @@ BER and PER object sets, and the one-object-per-class checks. It now also contai
 user-defined half: bit-level encoding spaces with stated widths, justification within a
 space, `#PAD` fields that carry no abstract value, transmission order chosen by the object
 rather than the type, `INT-TO-INT` and `INT-TO-BITS` transforms with an inverse each, and
-`#OUTER`. What it still does **not** do is parse the ECN surface syntax — the model is the
-semantics that syntax denotes, reachable from Python, which is the posture part one already
-took for EDM/ELM. No ECN representation has been added to MLIR.
+`#OUTER`. It now also **parses the ECN surface syntax**: [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py)
+reads clause 20's defined syntax — the bracket-optional keyword grammar that clause 23's
+`WITH SYNTAX` statements spell out — from an `ENCODING-DEFINITIONS` module, resolving clause
+11's class assignments and §16.5's `ConcatenationStructure`, and
+[`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) is this section's own workload
+written in that notation. It produces `aa00` byte-for-byte against the Python-assembled
+objects, which makes it a second opinion rather than a second spelling. No ECN representation
+has been added to MLIR.
+
+**Reading the `WITH SYNTAX` text corrected three more things**, all in the same direction as
+the earlier citation pass — properties that had been collapsed into flags:
+
+- §22.2 and §22.8 are property *groups*. An `align_before: bool` is `ALIGNED TO NEXT octet
+  PADDING zero` with the unit, the padding and the pattern all frozen, where §22.2.1.1 gives
+  all three; legacy layouts align to nibbles and to 16-bit words and pad with ones.
+- §21.8.1's `Justification` is `CHOICE {left INTEGER(0..MAX), right INTEGER(0..MAX)}`, and the
+  **offset** had been dropped. §22.8.3.3/§22.8.3.4 split the padding as `b-n`/`n`, so a field
+  sitting two bits in from the top of its space was simply unreachable before.
+- §22.10.1.1 gives a concatenation object only `{textual, tag, random}` — there is no property
+  naming a component order. §22.10.3.1 reads `textual` from "the ASN.1 type specification **or
+  the ECN structure definition**", so the free order tuple is really the §16.5 structure's, and
+  the module now states that source instead of implying it.
+
+Every property group the repository has not built — `REPLACE`, `START-POINTER`, `IF`/`IF-ALL`
+conditions, `DETERMINED BY`, `USING`, `UNUSED BITS`, `EXHIBITS HANDLE`, `BIT-REVERSAL` — is
+recognized by the parser and refused with the clause that defines it. Skipping an unimplemented
+keyword would emit octets the handed specification does not describe, which is precisely the
+defect class the triple-rail design exists to catch.
+
+**The plan-v6 question, answered.** The open question was whether an ECN encoding is a sixth
+column in [`encode_plan`](../bcir/asn1/encode_plan.py), carried by a version 6 of that
+descriptor. It is not, and the workload is the evidence: `encode_plan` describes an ASN.1
+*type*, and its five emitters read the same node and apply their own rule to it. The frame
+header's wire order puts `payloadOctets` first where the plan's members are in schema order,
+and its `reserved` bits correspond to no ASN.1 component at all. `EncodeNode` has a slot for
+neither, because both are properties of an encoding *structure*. Carrying them would make a
+node's meaning depend on which candidate read it — the one thing that plan's design rules out.
+So an ECN encoding is a **third compilation** of the same schema, with its own version counter
+and its own digest, by the same argument `encode_plan` already makes for why a write plan is
+not a read plan. That digest is the practical gain: until now an ECN specification could not be
+hashed, compared or named, and two of them could only be diffed as Python source.
 
 The §6 reduction gate fired and was signed off: the fixed
 DER/PER/OER/BCIR-canonical-JER candidate set already demonstrates cost-governed

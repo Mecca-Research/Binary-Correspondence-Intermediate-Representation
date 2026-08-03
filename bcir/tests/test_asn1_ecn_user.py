@@ -18,8 +18,9 @@ from __future__ import annotations
 
 from bcir.asn1.ecn import CONCATENATION
 from bcir.asn1.ecn_user import (
-    BitWriter, BoolSpec, ConcatenationSpec, FIXED_CANDIDATES, IntForm, IntOp, IntSpec,
-    IntToBits, IntToInt, Justification, OuterSpec, PadSpec, TransformChain,
+    UNIT_OCTET, BitWriter, BoolSpec, ConcatenationSpec, FIXED_CANDIDATES, IntForm, IntOp,
+    IntSpec, IntToBits, IntToInt, Justification, OuterSpec, PadSpec, Padding, Pattern,
+    PreAlignment, TransformChain, ValuePadding,
     UserEncodingObject, encode_with_user, legacy_frame_objects, legacy_frame_workload,
     refuted_by,
 )
@@ -278,11 +279,93 @@ def test_twos_complement_and_positive_int_are_different_objects():
 
 def test_left_justification_moves_a_narrow_value_within_its_space():
     out = BitWriter()
-    IntSpec(width=8, justification=Justification.LEFT).write(0b101, out)
+    IntSpec(width=8, value_padding=ValuePadding(
+        justification=Justification.left())).write(0b101, out)
     assert out.octets() == bytes((0b10100000,))
     out = BitWriter()
-    IntSpec(width=8, justification=Justification.RIGHT).write(0b101, out)
+    IntSpec(width=8, value_padding=ValuePadding(
+        justification=Justification.right())).write(0b101, out)
     assert out.octets() == bytes((0b00000101,))
+
+
+def test_the_justification_offset_is_a_property_the_clause_gives_and_a_flag_cannot():
+    """§21.8.1 is `CHOICE {left INTEGER(0..MAX), right INTEGER(0..MAX)}` — the offset is real.
+
+    §22.8.3.4 splits the "b" padding bits as `n` before and `b-n` after for `left:n`, and
+    §22.8.3.3 the other way round for `right:n`. A bare LEFT/RIGHT flag can only spell the
+    two zero-offset cases, so a field sitting two bits in from the top of its space was
+    unreachable before the offset was carried.
+    """
+    out = BitWriter()
+    IntSpec(width=8, value_padding=ValuePadding(
+        justification=Justification.left(2))).write(0b101, out)
+    #  2 bits pre-padding, the 3-bit value, then the remaining 3 as post-padding.
+    assert out.octets() == bytes((0b00101000,))
+    out = BitWriter()
+    IntSpec(width=8, value_padding=ValuePadding(
+        justification=Justification.right(2))).write(0b101, out)
+    assert out.octets() == bytes((0b00010100,))
+
+
+def test_an_offset_wider_than_the_padding_is_refused_by_the_clause_that_bounds_it():
+    """§22.8.2.1: the justification offset "shall be less than or equal to" the padding count.
+
+    Checked against "b" rather than at construction, because "b" is not known until a value
+    is encoded: `left:5` is fine for a 3-bit value in an 8-bit space and impossible for a
+    7-bit one, and the object is the same object.
+    """
+    spec = IntSpec(width=8, value_padding=ValuePadding(justification=Justification.left(5)))
+    out = BitWriter()
+    spec.write(0b101, out)                      # b = 5, so left:5 exactly fits.
+    assert out.octets() == bytes((0b00000101,))
+    try:
+        spec.write(0b1111111, BitWriter())      # b = 1.
+    except Asn1Error as error:
+        assert "22.8.2.1" in str(error), error
+    else:
+        raise AssertionError("an offset wider than the available padding was accepted")
+
+
+def test_the_padding_bits_come_from_the_clause_21_9_padding_value():
+    """§21.9.4/§21.9.5/§21.9.6 give `zero`, `one` and `pattern` their meanings.
+
+    §22.8.3.5 sets each side "with the leading bit of the pattern as the first inserted bit
+    in each case", so the two sides start the pattern afresh rather than sharing a phase.
+    """
+    out = BitWriter()
+    IntSpec(width=8, value_padding=ValuePadding(
+        justification=Justification.left(), post_padding=Padding.ONE)).write(0b101, out)
+    assert out.octets() == bytes((0b10111111,))
+    out = BitWriter()
+    IntSpec(width=8, value_padding=ValuePadding(
+        justification=Justification.left(4), pre_padding=Padding.PATTERN,
+        pre_pattern=Pattern.from_bits("10"), post_padding=Padding.PATTERN,
+        post_pattern=Pattern.from_bits("10"))).write(0b1, out)
+    #  Pre: 1010 (the pattern replicated). Value: 1. Post: 101 — the pattern from its start
+    #  again, truncated, not continued from where the pre-padding left off.
+    assert out.octets() == bytes((0b10101101,))
+
+
+def test_a_pattern_shorter_than_the_run_is_replicated_from_its_leading_bit():
+    """§22.2.3.3: "the pattern shall be re-used, most significant bit first"."""
+    assert Pattern.from_bits("110").fill(8) == (1, 1, 0, 1, 1, 0, 1, 1)
+    assert Pattern.from_bits("110").fill(2) == (1, 1)
+    assert Pattern.from_octets(b"\xF0").fill(4) == (1, 1, 1, 1)
+
+
+def test_an_encoder_option_pattern_denotes_a_length_and_not_a_bit_sequence():
+    """§21.10.8 and §21.10.9 leave the value to the encoder, so there is nothing to return.
+
+    Refused rather than defaulted: two conforming encoders may write different bits here and
+    both be right, so a rail that picked one would be reporting a choice as a fact.
+    """
+    for pattern in (Pattern.any_of_length(4), Pattern.different_any()):
+        try:
+            pattern.bit_sequence()
+        except Asn1Error as error:
+            assert "encoder" in str(error), error
+        else:
+            raise AssertionError(f"{pattern} produced bits it does not determine")
 
 
 def test_an_encoding_that_ends_mid_octet_needs_an_outer_object_to_complete_it():
@@ -307,8 +390,10 @@ def test_an_encoding_that_ends_mid_octet_needs_an_outer_object_to_complete_it():
 def test_the_outer_object_controls_the_pad_value():
     objects = {CONCATENATION: UserEncodingObject(
         CONCATENATION, ConcatenationSpec(fields={"a": IntSpec(width=3)}))}
-    zeros = encode_with_user(objects, CONCATENATION, {"a": 5}, outer=OuterSpec(pad_value=0))
-    ones = encode_with_user(objects, CONCATENATION, {"a": 5}, outer=OuterSpec(pad_value=1))
+    zeros = encode_with_user(objects, CONCATENATION, {"a": 5},
+                             outer=OuterSpec(padding=Padding.ZERO))
+    ones = encode_with_user(objects, CONCATENATION, {"a": 5},
+                            outer=OuterSpec(padding=Padding.ONE))
     assert zeros == bytes((0b10100000,))
     assert ones == bytes((0b10111111,))
 
@@ -320,7 +405,7 @@ def test_pad_fields_take_no_value_from_the_abstract_type():
     value. A fixed-layout header does, and the value dict must not have to mention it.
     """
     spec = ConcatenationSpec(
-        fields={"a": IntSpec(width=4), "rr": PadSpec(width=4, value=0b1111)},
+        fields={"a": IntSpec(width=4), "rr": PadSpec(width=4, padding=Padding.ONE)},
         order=("a", "rr"), padding=("rr",))
     objects = {CONCATENATION: UserEncodingObject(CONCATENATION, spec)}
     assert encode_with_user(objects, CONCATENATION, {"a": 5}) == bytes((0b01011111,))
@@ -349,7 +434,8 @@ def test_a_class_with_no_object_in_the_set_is_refused():
 def test_alignment_happens_where_the_object_says_and_nowhere_else():
     """Aligned PER aligns by its own rules; a user-defined object aligns where it is told."""
     spec = ConcatenationSpec(
-        fields={"a": IntSpec(width=3), "b": IntSpec(width=8, align_before=True)},
+        fields={"a": IntSpec(width=3),
+                "b": IntSpec(width=8, pre_alignment=PreAlignment(unit=UNIT_OCTET))},
         order=("a", "b"))
     objects = {CONCATENATION: UserEncodingObject(CONCATENATION, spec)}
     assert encode_with_user(objects, CONCATENATION, {"a": 0b101, "b": 0xC3}) == bytes(
