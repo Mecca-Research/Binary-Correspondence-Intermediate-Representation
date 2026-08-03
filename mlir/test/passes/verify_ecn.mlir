@@ -81,7 +81,7 @@ bcir.ecn.module @TwoObjects {
   bcir.ecn.object @first attributes {
     encoding_class = @Version, space_size = 3 : i64, space_unit = 1 : i64
   } { }
-  // expected-error@+1 {{R25: ECN object second and first both realize @Version}}
+  // expected-error@+1 {{R25: ECN object second and first both realize Version}}
   bcir.ecn.object @second attributes {
     encoding_class = @Version, space_size = 4 : i64, space_unit = 1 : i64
   } { }
@@ -94,8 +94,8 @@ bcir.ecn.module @TwoObjects {
 // map's iteration order, and a fixture that pinned it would be testing the container.
 // expected-error@below {{is circular}}
 bcir.ecn.module @CircularClass {
-  bcir.ecn.class @A attributes { base = "@B" }
-  bcir.ecn.class @B attributes { base = "@A" }
+  bcir.ecn.class @A attributes { base = "B" }
+  bcir.ecn.class @B attributes { base = "A" }
 }
 
 // -----

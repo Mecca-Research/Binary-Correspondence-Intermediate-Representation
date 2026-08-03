@@ -254,10 +254,10 @@ echo "[passes] R22/R23 gem shape/dtype seam laws (D2 promotion: matmul->activati
 # faults decidable from the TYPE alone, before any value exists (a SET with duplicate component
 # tags is undecodable for every value it could hold), which is exactly why they belong on the
 # law rail rather than in the oracle's encoder.
-"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_asn1.mlir" \
-  && echo "  PASS verify_asn1.mlir" || { echo "  FAIL verify_asn1.mlir"; fail=1; }
-"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_ecn.mlir" \
-  && echo "  PASS verify_ecn.mlir" || { echo "  FAIL verify_ecn.mlir"; fail=1; }
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_asn1.mlir" 2>"${ERR}" \
+  && echo "  PASS verify_asn1.mlir" || { echo "  FAIL verify_asn1.mlir"; cat "${ERR}"; fail=1; }
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_ecn.mlir" 2>"${ERR}" \
+  && echo "  PASS verify_ecn.mlir" || { echo "  FAIL verify_ecn.mlir"; cat "${ERR}"; fail=1; }
 echo "[passes] bcir.creg_read/write round-trip (D1.3: x86-64 control-register access parses/prints identically)"
 if [ -n "${FC}" ]; then
   "${BO}" "${T}/creg_roundtrip.mlir" 2>"${ERR}" | "${BO}" | "${FC}" "${T}/creg_roundtrip.mlir" \

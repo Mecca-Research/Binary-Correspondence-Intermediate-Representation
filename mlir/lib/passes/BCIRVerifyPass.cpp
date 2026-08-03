@@ -2156,22 +2156,38 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       });
       // A class assignment chain that loops names no category, so no object could
       // realize it and nothing downstream could pick an encoder.
+      //
+      // Reported ONCE per module rather than once per participating class: every member of
+      // a cycle is on the same cycle, so N diagnostics would describe one fault N times --
+      // and a -verify-diagnostics fixture cannot spell "one error per class in a cycle whose
+      // length the test does not control".
+      llvm::SmallVector<StringRef, 4> cyclic;
       for (auto &entry : classBase) {
-        llvm::SmallPtrSet<const void *, 8> seen;
-        StringRef current = entry.first();
+        llvm::StringSet<> seen;
+        StringRef current = entry.getKey();
         while (true) {
           auto it = classBase.find(current);
           if (it == classBase.end())
             break;  // resolved to a built-in, or to a name this module does not assign
-          if (!seen.insert(it->second.data()).second) {
-            m.emitError("R25: the ECN class assignment for ")
-                << entry.first() << " is circular; a class that is its own base names "
-                << "no encoding category";
-            ok = false;
+          if (!seen.insert(current).second) {
+            cyclic.push_back(entry.getKey());
             break;
           }
           current = it->second;
         }
+      }
+      if (!cyclic.empty()) {
+        std::sort(cyclic.begin(), cyclic.end());
+        std::string names;
+        for (StringRef name : cyclic) {
+          if (!names.empty())
+            names += ", ";
+          names += name.str();
+        }
+        m.emitError("R25: the ECN class assignment for ")
+            << names << " is circular; a class that is its own base names no encoding "
+            << "category, so no object could realize it";
+        ok = false;
       }
     });
 

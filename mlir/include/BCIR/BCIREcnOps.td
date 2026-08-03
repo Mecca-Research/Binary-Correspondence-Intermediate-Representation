@@ -37,6 +37,10 @@
 #ifndef BCIR_ECN_OPS
 #define BCIR_ECN_OPS
 
+// Explicit rather than relying on another ops file having pulled it in first:
+// every enum attribute below is defined there, and TableGen include guards make
+// this idempotent.
+include "BCIR/BCIRAttrs.td"
 include "BCIR/BCIRDialect.td"
 include "mlir/IR/SymbolInterfaces.td"
 
@@ -70,7 +74,7 @@ def BCIR_EcnClassOp : BCIR_Op<"ecn.class", [Symbol]> {
     category and no object could realize it.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name, StrAttr:$base);
-  let assemblyFormat = "$sym_name attr-dict";
+  let assemblyFormat = "$sym_name attr-dict-with-keyword";
 }
 
 def BCIR_EcnStructureOp : BCIR_Op<"ecn.structure", [Symbol, NoTerminator]> {
