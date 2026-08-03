@@ -80,10 +80,11 @@ from enum import Enum
 
 from .ecn_props import (
     UNIT_BIT, UNIT_DWORD32, UNIT_MAX, UNIT_NAMES, UNIT_NIBBLE, UNIT_OCTET,
-    UNIT_REPETITIONS, UNIT_WORD16, Comparison, IntForm, IntegerBounds, Justification,
-    JustificationSide, Padding, Pattern, PatternKind, RangeCondition,
-    RepetitionSpaceDetermination, ReversalSpecification, SizeBounds, SizeRangeCondition,
-    _padding_bits, check_unit,
+    UNIT_REPETITIONS, UNIT_WORD16, AlternativeDetermination, Comparison, ComponentOrder,
+    ConcatenationAlignment, HandleValueKind, HandleValueSet, IntForm, IntegerBounds,
+    Justification, JustificationSide, OptionalityDetermination, Padding, Pattern, PatternKind,
+    RangeCondition, RepetitionSpaceDetermination, ReversalSpecification, SizeBounds,
+    SizeRangeCondition, _padding_bits, check_unit,
 )
 from .ecn_transform import (
     RESULT_SIZE_FIXED_TO_MAX, RESULT_SIZE_VARIABLE, BitsToBits, BitsToChar,
@@ -412,6 +413,426 @@ class StartPointer:
                                      f"START-POINTER {self.reference}"))
 
 
+# --- clause 22.9: identification handles, and the three determinations that read them ------
+
+@dataclass(frozen=True)
+class IdentificationHandle:
+    """§22.9's `EXHIBITS HANDLE ... AT ... AS ...`: bits an encoding announces itself by.
+
+    §22.9.1.4 gives the three parts: "the name of the handle", "the bit positions that form
+    the handle", and "the possible bit patterns ... occurring in the encodings produced by this
+    encoding object (the handle value set)".
+
+    **This is the mechanism ECN offers instead of a discriminant field.** Everything else in
+    clause 22 that resolves a choice — optionality, alternatives, repetition end, random
+    concatenation order — can also be resolved by *looking at the bits that are there anyway*,
+    which is how BER's tag, IP's version nibble and a hundred other formats actually work. A
+    handle is a declaration that a particular window into this object's own encoding is a
+    reliable discriminator, plus a statement of what it can hold.
+
+    Two subtleties in the positions, both of which change the answer:
+
+    * §22.9.1.5 measures them "in the final encoding, **after any pre-alignment has been
+      applied**, and after any encoder bit-reversal actions have occurred, except those
+      bit-reversals that result from ... `#OUTER`". So position zero is where this object's
+      encoding *space* starts, not where its pre-alignment padding starts, and a §22.12
+      reversal has already moved the bits by the time the handle is read.
+    * §22.9.1.6 makes them "a set of integer values (not necessarily contiguous, and not
+      necessarily in ascending order in the ECN specification)" which "shall be ordered by
+      encoders and decoders from the zero position ... upwards". A handle can therefore be
+      bits 0, 3 and 7 written in any order, and the conceptual field is always their
+      ascending-order concatenation.
+
+    §22.9.1.7 then reads that field as an integer with "the bit ... nearest to the zero
+    position" as the high-order bit.
+    """
+
+    name: str = "default-handle"
+    #: §22.9.1.1's `&Handle-positions INTEGER (0..MAX) OPTIONAL`, in the order written.
+    positions: tuple[int, ...] = ()
+    value_set: HandleValueSet = field(default_factory=HandleValueSet.tag_any)
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise Asn1Error(
+                "ECN: §22.9.1.1 gives &exhibited-handle a DEFAULT of \"default-handle\"; a "
+                "handle with an empty name cannot be the one §22.10.2.1 names by default")
+        if not self.positions:
+            raise Asn1Error(
+                "ECN: §22.9.1.2's syntax makes `AT` part of `EXHIBITS HANDLE` rather than an "
+                "optional tail; a handle with no positions is a zero-bit field that no value "
+                "set could characterize")
+        for position in self.positions:
+            if position < 0:
+                raise Asn1Error(
+                    f"ECN: §22.9.1.1 constrains &Handle-positions to INTEGER (0..MAX); "
+                    f"got {position}")
+        if len(set(self.positions)) != len(self.positions):
+            raise Asn1Error(
+                f"ECN: §22.9.1.6 calls the positions \"a set of integer values\"; "
+                f"{sorted(self.positions)} repeats one, and a bit cannot appear twice in the "
+                f"conceptual handle field")
+
+    @property
+    def width(self) -> int:
+        """The conceptual handle field's width — the number of positions, not their span."""
+        return len(self.positions)
+
+    def ordered(self) -> tuple[int, ...]:
+        """§22.9.1.6's ordering: "from the zero position ... upwards"."""
+        return tuple(sorted(self.positions))
+
+    def resolved_for(self, value_set: "HandleValueSet | None") -> "IdentificationHandle":
+        """This handle with `tag:any` replaced by a concrete set, for §22.9.1.9's `#TAG` case."""
+        if value_set is None or value_set is self.value_set:
+            return self
+        return replace(self, value_set=value_set)
+
+    def value_in(self, out: "BitWriter", start: int) -> int:
+        """The conceptual handle field's value, read out of what has just been written."""
+        value = 0
+        for position in self.ordered():
+            index = start + position
+            if index >= out.bit_length:
+                raise Asn1Error(
+                    f"ECN: the handle {self.name!r} names bit {position} of an encoding that "
+                    f"is only {out.bit_length - start} bits long; §22.9.1.5 counts positions "
+                    f"in the final encoding of the object exhibiting the handle")
+            value = (value << 1) | out.bit_at(index)
+        return value
+
+    def check(self, out: "BitWriter", start: int,
+              value_set: "HandleValueSet | None" = None) -> int:
+        """§22.9.3.1, the one encoder action a handle has.
+
+        "The encoder shall check that the value of the identification handle occurring in the
+        encoding produced is a member of the specified handle value set, and shall diagnose a
+        specification or application error otherwise." Not a hint and not a decoder-only
+        concern: an object whose encodings can leave its declared set has made every
+        determination that reads the handle unsound, and §22.9.2.2 says so from the other side.
+        """
+        effective = value_set if value_set is not None else self.value_set
+        value = self.value_in(out, start)
+        if not effective.contains(value, self.width):
+            raise Asn1Error(
+                f"ECN: §22.9.3.1 — this encoding puts {value} in the handle {self.name!r}, "
+                f"which declares {effective.describe()}; an encoder shall diagnose a value "
+                f"outside its own handle value set rather than transmit it")
+        return value
+
+
+def _exhibited(spec) -> "IdentificationHandle | None":
+    """The handle an arbitrary spec exhibits, with a `#TAG`'s `tag:any` already resolved.
+
+    §22.9.1.9 and §21.16.5 make `tag:any` mean "whatever this tag class's number is", so a
+    `#TAG` object's declared set is not usable until the number is folded in. Every caller
+    that compares handles across objects — the disjointness rules — needs the resolved form,
+    so resolution happens here rather than at each of the four call sites.
+    """
+    handle = getattr(spec, "exhibits", None)
+    if handle is None:
+        return None
+    if isinstance(spec, TagSpec):
+        return handle.resolved_for(handle.value_set.resolve_tag(spec.number))
+    if handle.value_set.kind is HandleValueKind.TAG_ANY:
+        raise Asn1Error(
+            f"ECN: §22.9.1.9 — the handle value set shall not be specified as `tag:any` "
+            f"unless the specification is for an encoding object of the #TAG class; "
+            f"{type(spec).__name__} is not one")
+    return handle
+
+
+def _component_tag(spec) -> "int | None":
+    """The component-tag §22.6.2.10 and §22.10.2.4 both name, or `None` if there is not one.
+
+    Both clauses word it the same way — the component "shall start with an encoding class in
+    the tag category. The tag number associated with this class is called the component-tag" —
+    so one function answers for alternatives and for concatenations alike. An `#OPTIONAL`
+    wrapper is transparent to it: §23.11.3.2 says the replacement of an optional component
+    covers "the entire component (including any classes in the tag category, but excluding
+    classes in the optionality category)", which is the same statement that the tag is inside
+    the optionality wrapper rather than outside it.
+    """
+    if isinstance(spec, TagSpec):
+        return spec.number
+    if isinstance(spec, OptionalSpec) and spec.component is not None:
+        return _component_tag(spec.component)
+    return None
+
+
+def _exhibit(spec, out: "BitWriter", start: int) -> None:
+    """Run §22.9.3.1's check for whatever handle `spec` exhibits, if it exhibits one.
+
+    Routed through `_exhibited` rather than reading `spec.exhibits` directly so that a `#TAG`
+    object's `tag:any` is resolved and every other category's is refused with §22.9.1.9's own
+    words, instead of failing later as "this set has no range".
+    """
+    handle = _exhibited(spec)
+    if handle is not None:
+        handle.check(out, start)
+
+
+class HandleRegistry:
+    """§22.9.2.1 and §22.9.2.3: the two rules that are about a *specification*, not an object.
+
+    Neither can be checked where a handle is written, because both relate one `EXHIBITS
+    HANDLE` clause to every other one sharing its name. §22.9.2.1: "In any ECN specification,
+    all identification handles with the same name shall specify the same set of bit
+    positions." §22.9.2.3: "All encoding objects that exhibit the same identification handle
+    shall either have no pre-alignment specification, or shall align to the same pre-alignment
+    unit", whose NOTE gives the reason — "so that decoders can move to the alignment position
+    before looking for the handle".
+
+    **"No pre-alignment specification" and "align to bit" are treated as one case here**, and
+    that is a reading rather than a quotation: §22.2.1.1's default unit is `bit`, and aligning
+    to a one-bit boundary inserts nothing, so the two are the same operation written two ways.
+    Refusing their mixture would reject specifications that differ only in whether they spelled
+    a default out.
+    """
+
+    def __init__(self) -> None:
+        self._positions: dict[str, tuple[int, ...]] = {}
+        self._alignment: dict[str, int] = {}
+        self._sets: dict[str, list[tuple[str, HandleValueSet]]] = {}
+
+    def declare(self, handle: IdentificationHandle, *, where: str,
+                alignment_unit: "int | None" = None) -> None:
+        unit = UNIT_BIT if alignment_unit is None else alignment_unit
+        positions = handle.ordered()
+        seen = self._positions.get(handle.name)
+        if seen is not None and seen != positions:
+            raise Asn1Error(
+                f"ECN: §22.9.2.1 — all identification handles named {handle.name!r} shall "
+                f"specify the same set of bit positions; {where} says {list(positions)} where "
+                f"an earlier one said {list(seen)}")
+        aligned = self._alignment.get(handle.name)
+        if aligned is not None and aligned != unit:
+            raise Asn1Error(
+                f"ECN: §22.9.2.3 — objects exhibiting {handle.name!r} shall align to the same "
+                f"pre-alignment unit so a decoder can reach the handle; {where} aligns to "
+                f"{unit} where an earlier one aligned to {aligned}")
+        self._positions[handle.name] = positions
+        self._alignment[handle.name] = unit
+        self._sets.setdefault(handle.name, []).append((where, handle.value_set))
+
+    def require_disjoint(self, name: str, clause: str) -> None:
+        """§21.5.7 / §21.6.6 / §21.7.10 / §22.10.2.1's shared "shall all be disjoint"."""
+        entries = self._sets.get(name, ())
+        width = len(self._positions.get(name, ()))
+        for index, (where, value_set) in enumerate(entries):
+            for other_where, other_set in entries[index + 1:]:
+                if not value_set.disjoint_from(other_set, width):
+                    raise Asn1Error(
+                        f"ECN: {clause} — the handle value sets of the objects exhibiting "
+                        f"{name!r} shall all be disjoint; {where} declares "
+                        f"{value_set.describe()} and {other_where} declares "
+                        f"{other_set.describe()}, which overlap")
+
+
+def _handles_of(named_specs, *, handle_id: str, clause: str, what: str,
+                alignment_unit: "int | None" = None) -> HandleRegistry:
+    """Collect and validate the handles a handle-driven determination depends on.
+
+    One helper for four clauses because they ask for exactly the same three things: every
+    participant exhibits the named handle, they agree about its positions, and their value
+    sets are disjoint. What differs between §21.5.7, §21.6.6, §21.7.10 and §22.10.2.1 is only
+    *which* objects participate, which is the caller's business.
+    """
+    registry = HandleRegistry()
+    for name, spec in named_specs:
+        handle = _exhibited(spec)
+        if handle is None or handle.name != handle_id:
+            exhibits = "none" if handle is None else repr(handle.name)
+            raise Asn1Error(
+                f"ECN: {clause} — {what} determined by the handle {handle_id!r} requires every "
+                f"participant to exhibit it; {name!r} exhibits {exhibits}")
+        registry.declare(handle, where=repr(name), alignment_unit=alignment_unit)
+    registry.require_disjoint(handle_id, clause)
+    return registry
+
+
+@dataclass(frozen=True)
+class Optionality:
+    """§22.5's `PRESENCE` group: how a decoder learns whether an optional component is there.
+
+    §22.5.1.6 is unusual and is enforced: this specification "is considered set if the
+    `PRESENCE` keyword is used, and **it is mandatory for it to be set** in all places in the
+    defined syntax where it is allowed. Defaulting all other parts of this defined syntax
+    (e.g., use of `PRESENCE` alone) would not satisfy the above constraints." So an
+    `#OPTIONAL` object without this group is not an object taking defaults — it is incomplete.
+
+    The five determinations divide by *who owns the fact*. `field-to-be-set` has the encoder
+    write a presence bit; `field-to-be-used` has the application supply one and the encoder
+    check it (§22.5.3.4: "It is an application error if this condition is not met, and encoding
+    shall not proceed"); `container` says absence is the container running out; `handle` says
+    absence is recognizing what comes next; `pointer` says a start pointer of zero means
+    absent (§21.5.9).
+    """
+
+    determination: OptionalityDetermination = OptionalityDetermination.FIELD_TO_BE_SET
+    #: §22.5.1.1's `&optionality-reference REFERENCE OPTIONAL`.
+    reference: str = ""
+    encoder_transforms: "TransformChain | None" = None
+    decoder_transforms: "TransformChain | None" = None
+    handle_id: str = "default-handle"
+    #: Whether `HANDLE` was written, which §22.5.2.2 constrains independently of its value —
+    #: the property has a DEFAULT, so "absent" and "set to the default" are different facts.
+    handle_set: bool = False
+
+    def __post_init__(self) -> None:
+        by_handle = self.determination is OptionalityDetermination.HANDLE
+        if self.handle_set and not by_handle:
+            raise Asn1Error(
+                f"ECN: §22.5.2.2 — HANDLE shall not be specified unless DETERMINED BY is "
+                f"`handle`; this object says `{self.determination.value}`")
+        uses_field = self.determination in (OptionalityDetermination.FIELD_TO_BE_SET,
+                                            OptionalityDetermination.FIELD_TO_BE_USED,
+                                            OptionalityDetermination.CONTAINER)
+        if self.reference and not uses_field:
+            raise Asn1Error(
+                f"ECN: §22.5.2.3 — USING shall not be specified if DETERMINED BY is `handle` "
+                f"or `pointer`; this object says `{self.determination.value}`")
+        if uses_field and not self.reference:
+            raise Asn1Error(
+                f"ECN: §21.5.4/§21.5.5/§21.5.6 — `{self.determination.value}` requires a USING "
+                f"reference to the field that carries the presence information")
+        if (self.encoder_transforms is not None
+                and self.determination is not OptionalityDetermination.FIELD_TO_BE_SET):
+            raise Asn1Error(
+                "ECN: §22.5.2.6 — ENCODER-TRANSFORMS shall be present only if DETERMINED BY "
+                "is set to (or defaults to) `field-to-be-set`")
+        if (self.decoder_transforms is not None
+                and self.determination is not OptionalityDetermination.FIELD_TO_BE_USED):
+            raise Asn1Error(
+                "ECN: §22.5.2.8 — DECODER-TRANSFORMS shall be present only if DETERMINED BY "
+                "is set to `field-to-be-used`")
+
+    def record(self, out: "BitWriter", present: bool) -> None:
+        """§22.5.3.2–§22.5.3.7, given the `element-is-present` the application implied.
+
+        The conceptual value is a **boolean** (§22.5.3.2), and §22.5.2.7 makes the first
+        transform's source boolean to match. With no transforms the boolean itself is what
+        goes in the field, and `int(present)` is the bridge to an auxiliary field that holds
+        an integer — a `#BOOL` auxiliary field would encode the same one bit, so the two
+        spellings agree on the octets.
+        """
+        if self.determination is OptionalityDetermination.FIELD_TO_BE_SET:
+            carried = _determinant_value(self.encoder_transforms, present,
+                                         f"PRESENCE USING {self.reference}")
+            out.patch(self.reference, int(carried))
+            return
+        if self.determination is OptionalityDetermination.FIELD_TO_BE_USED:
+            # §22.5.3.4: the encoder CHECKS. The application owns this field's value, and a
+            # disagreement is its error rather than something to correct silently.
+            carried = out.value_of(self.reference)
+            recovered = (carried if self.decoder_transforms is None
+                         else self.decoder_transforms.apply(carried))
+            if bool(recovered) != present:
+                raise Asn1Error(
+                    f"ECN: §22.5.3.4 — the field {self.reference!r} carries {carried}, which "
+                    f"reduces to `element-is-present` {bool(recovered)}, but the component is "
+                    f"{'present' if present else 'absent'}")
+            return
+        # §22.5.3.5 (container), §22.5.3.6 (handle) and §22.5.3.7 (pointer) all say there is
+        # no further encoder action here. The container's own end, the handle's bits and the
+        # start pointer's zero are already in the encoding by the time this runs.
+
+
+@dataclass(frozen=True)
+class AlternativeSelection:
+    """§22.6's `ALTERNATIVE` group: how a decoder learns which alternative was encoded.
+
+    §22.6.3.2's conceptual value is an integer, `alternative-index`, and §22.6.3.3 fixes it:
+    "zero for the first alternative, one for the next, and so on, where the order of the
+    alternatives is determined by `ORDER`". That indirection is the whole design — a two-bit
+    selector field and a four-way CHOICE are related through an index neither of them spells,
+    so the same `#ALTERNATIVES` object works over a differently-named CHOICE.
+
+    §22.6.1.1 declares `&alternative-ordering ENUMERATED {textual, tag}` — **two values, not
+    concatenation's three**. `random` would be meaningless here: a CHOICE encodes exactly one
+    alternative, so there is no order to randomize.
+    """
+
+    determination: AlternativeDetermination = AlternativeDetermination.FIELD_TO_BE_SET
+    reference: str = ""
+    encoder_transforms: "TransformChain | None" = None
+    decoder_transforms: "TransformChain | None" = None
+    handle_id: str = "default-handle"
+    handle_set: bool = False
+    ordering: ComponentOrder = ComponentOrder.TEXTUAL
+
+    def __post_init__(self) -> None:
+        by_handle = self.determination is AlternativeDetermination.HANDLE
+        if self.handle_set and not by_handle:
+            raise Asn1Error(
+                f"ECN: §22.6.2.2 — HANDLE shall not be specified unless DETERMINED BY is "
+                f"`handle`; this object says `{self.determination.value}`")
+        if by_handle and self.reference:
+            raise Asn1Error(
+                "ECN: §22.6.2.3 — USING shall not be specified if DETERMINED BY is `handle`")
+        if not by_handle and not self.reference:
+            raise Asn1Error(
+                f"ECN: §21.6.4/§21.6.5 — `{self.determination.value}` requires a USING "
+                f"reference to the field that carries the alternative's identity")
+        if (self.encoder_transforms is not None
+                and self.determination is not AlternativeDetermination.FIELD_TO_BE_SET):
+            raise Asn1Error(
+                "ECN: §22.6.2.5 — ENCODER-TRANSFORMS shall be present only if DETERMINED BY "
+                "is set to (or defaults to) `field-to-be-set`")
+        if (self.decoder_transforms is not None
+                and self.determination is not AlternativeDetermination.FIELD_TO_BE_USED):
+            raise Asn1Error(
+                "ECN: §22.6.2.7 — DECODER-TRANSFORMS shall be present only if DETERMINED BY "
+                "is set to `field-to-be-used`")
+        if self.ordering is ComponentOrder.RANDOM:
+            raise Asn1Error(
+                "ECN: §22.6.1.1 declares &alternative-ordering as ENUMERATED {textual, tag}; "
+                "`random` belongs to §22.10's concatenation order, where there are several "
+                "components to permute")
+
+    def record(self, out: "BitWriter", index: int) -> None:
+        """§22.6.3.5–§22.6.3.7, given the `alternative-index` the ordering produced."""
+        if self.determination is AlternativeDetermination.FIELD_TO_BE_SET:
+            out.patch(self.reference,
+                      _determinant_value(self.encoder_transforms, index,
+                                         f"ALTERNATIVE USING {self.reference}"))
+            return
+        if self.determination is AlternativeDetermination.FIELD_TO_BE_USED:
+            carried = out.value_of(self.reference)
+            recovered = (carried if self.decoder_transforms is None
+                         else self.decoder_transforms.apply(carried))
+            if recovered != index:
+                raise Asn1Error(
+                    f"ECN: §22.6.3.6 — the field {self.reference!r} carries {carried}, which "
+                    f"reduces to alternative-index {recovered}, but the alternative being "
+                    f"encoded has index {index}")
+            return
+        # §22.6.3.7: `handle` needs no encoder action. The alternative's own encoding already
+        # carries the bits, and §22.9.3.1 has checked they are in its declared set.
+
+
+@dataclass(frozen=True)
+class Concatenation:
+    """§22.10's `CONCATENATION` group: component order, inter-component alignment, handle.
+
+    §22.10.2.6 is why this can be `None` on a spec and still mean something definite: "This
+    specification is considered set if the `CONCATENATION` keyword is used. If it is not set
+    then encoders and decoders act as if it was set with each encoding property taking its
+    default value." So an absent group is `textual`, `aligned`, `default-handle` — and since
+    §22.2.1.1's default alignment unit is one bit, `aligned` on its own inserts nothing.
+
+    `random` is the value with a prerequisite. §22.10.2.1: it makes `HANDLE` "assume the
+    default value of `default-handle` if not set", requires "the encoding objects applied to
+    **all** components" to exhibit that handle, and requires their value sets to be disjoint.
+    §22.10.3.3 then lets the encoder "determine the order of concatenation without constraint"
+    — which, like §21.9.7's `encoder-option` padding, means the encoding has no unique octets.
+    """
+
+    order: ComponentOrder = ComponentOrder.TEXTUAL
+    alignment: ConcatenationAlignment = ConcatenationAlignment.ALIGNED
+    handle_id: str = "default-handle"
+
+
 # --- the bit-level output the fixed candidate set never needed ---------------------------
 
 class BitWriter:
@@ -439,6 +860,22 @@ class BitWriter:
 
     def put_bit(self, bit: int) -> None:
         self._bits.append(1 if bit else 0)
+
+    def bit_at(self, index: int) -> int:
+        """One written bit, for §22.9's handles to read back out of the encoding.
+
+        Reading is what makes a handle different from every other property group: the others
+        decide what to write, and this one *inspects what was written*. §22.9.1.5 places the
+        positions "in the final encoding, after any pre-alignment has been applied, and after
+        any encoder bit-reversal actions have occurred" — so the check has to happen against
+        the buffer rather than against the value the object started with.
+        """
+        if not 0 <= index < len(self._bits):
+            raise Asn1Error(
+                f"ECN: bit {index} is outside the {len(self._bits)}-bit encoding written so "
+                f"far; §22.9.1.5 counts handle positions within the encoding that exhibits "
+                f"the handle")
+        return self._bits[index]
 
     # --- auxiliary fields: the mechanism every REFERENCE in clause 22 needs ----------------
     #
@@ -630,6 +1067,9 @@ class IntSpec:
     bit_reversal: ReversalSpecification = ReversalSpecification.NO_REVERSAL
     #: The `MULTIPLE OF` unit §22.12.3.1 divides the space into. Only read when reversing.
     reversal_unit: int = UNIT_BIT
+    #: §22.9's group. Checked after the space is written, which §22.9.1.5's "final encoding"
+    #: and step g) of §23.3.3.1's order both require.
+    exhibits: "IdentificationHandle | None" = None
 
     def __post_init__(self) -> None:
         # §22.12.2.2/§22.12.2.3 relate the reversal to the space's unit, so the pair is
@@ -642,6 +1082,8 @@ class IntSpec:
         # b) Pre-alignment and padding.
         if self.pre_alignment is not None:
             self.pre_alignment.apply(out)
+        # §22.9.1.5 puts position zero here: after pre-alignment, at the start of the space.
+        handle_start = out.bit_length
         # c) Start pointer. Measured here, after this element's own pre-alignment, which is
         #    exactly where §22.3.3.1 puts the second end of the span.
         if self.start_pointer is not None:
@@ -692,6 +1134,9 @@ class IntSpec:
         #    against the width this object actually wrote rather than against the declared one.
         if self.space_determinant is not None:
             self.space_determinant.record(out, len(space_bits))
+        # g) Identification handle. §22.9.3.1's check runs against the bits as written, which
+        #    is why it comes after the reversal rather than against `encoded`.
+        _exhibit(self, out, handle_start)
 
 
 @dataclass(frozen=True)
@@ -738,6 +1183,7 @@ class BoolSpec:
     space_determinant: SpaceDeterminant | None = None
     bit_reversal: ReversalSpecification = ReversalSpecification.NO_REVERSAL
     reversal_unit: int = UNIT_BIT
+    exhibits: "IdentificationHandle | None" = None
 
     def __post_init__(self) -> None:
         # §22.12.2.2/§22.12.2.3 relate the reversal to the space's unit, so the pair is
@@ -749,6 +1195,7 @@ class BoolSpec:
     def write(self, value: bool, out: BitWriter) -> None:
         if self.pre_alignment is not None:
             self.pre_alignment.apply(out)
+        handle_start = out.bit_length
         if self.start_pointer is not None:
             self.start_pointer.record(out)
         pattern = self.true_value if value else self.false_value
@@ -763,6 +1210,7 @@ class BoolSpec:
             out.put_bit(bit)
         if self.space_determinant is not None:
             self.space_determinant.record(out, len(space_bits))
+        _exhibit(self, out, handle_start)
 
 
 @dataclass(frozen=True)
@@ -884,10 +1332,17 @@ class PadSpec:
     width: int
     padding: Padding = Padding.ZERO
     pattern: Pattern | None = None
+    exhibits: "IdentificationHandle | None" = None
 
     def write(self, _value, out: BitWriter) -> None:
+        handle_start = out.bit_length
         for bit in _padding_bits(self.padding, self.pattern, self.width, "a #PAD object"):
             out.put_bit(bit)
+        # §23.12.1's `#PAD` carries the identification-handle group like every other
+        # bit-field category, and it is the one place a handle is *entirely* determined by
+        # the specification: pad bits take no abstract value, so a #PAD object's handle value
+        # set is a constant the specifier wrote down twice.
+        _exhibit(self, out, handle_start)
 
 
 class ReplaceAction(Enum):
@@ -1018,9 +1473,11 @@ class Replacement:
     has a `REPLACE STRUCTURE` clause, it shall not have an `INSERT AT HEAD` clause and shall
     have an `ENCODED BY` clause."
 
-    `REPLACE OPTIONALS` and `REPLACE NON-OPTIONALS` are refused rather than approximated:
-    §22.1.1.7 c) and d) sort components by whether they are optional, and the optionality
-    category is not built here, so "which components are optional" has no answer to sort by.
+    `REPLACE OPTIONALS` and `REPLACE NON-OPTIONALS` sort components by whether they are
+    optional (§22.1.1.7 c) and d)), and became answerable when §23.11's optionality category
+    was built: a component is optional exactly when its encoding object is an `OptionalSpec`.
+    They were refused before that with those words, which is why `selects` is a method here
+    rather than a condition inlined at the one call site.
     """
 
     action: ReplaceAction
@@ -1030,12 +1487,15 @@ class Replacement:
     #: textual order of the original components".
     head_end: "HeadEndStructure | None" = None
 
+    def selects(self, spec) -> bool:
+        """§22.1.1.7 b)–d): whether this action replaces the component encoded by `spec`."""
+        if self.action is ReplaceAction.OPTIONALS:
+            return isinstance(spec, OptionalSpec)
+        if self.action is ReplaceAction.NON_OPTIONALS:
+            return not isinstance(spec, OptionalSpec)
+        return True
+
     def __post_init__(self) -> None:
-        if self.action in (ReplaceAction.OPTIONALS, ReplaceAction.NON_OPTIONALS):
-            raise Asn1Error(
-                f"ECN: §22.1.1.7 sorts REPLACE {self.action.value.upper()} by whether each "
-                f"component is optional, and the optionality category is not built on this "
-                f"rail, so there is nothing to sort by")
         if self.action is ReplaceAction.STRUCTURE:
             if self.head_end is not None:
                 raise Asn1Error(
@@ -1066,9 +1526,74 @@ class ConcatenationSpec:
     #: §22.1's group. Applied when the fields are laid out, not when they are written, so a
     #: replacement is visible to `transmission_order` and therefore to the digest.
     replacement: Replacement | None = None
+    #: §22.10's group. `None` is §22.10.2.6's "act as if it was set with each encoding
+    #: property taking its default value", which is `textual`, `aligned`, `default-handle`.
+    concatenation: "Concatenation | None" = None
+    #: §22.2's group, which a `#CONCATENATION` object uses for **two** things: its own
+    #: pre-alignment, and — per §22.10.3.5 — the alignment applied before each component when
+    #: `ALIGNMENT` is `aligned`. §23.5.1 declares only one such group, so the two uses share it.
+    pre_alignment: PreAlignment | None = None
+    exhibits: "IdentificationHandle | None" = None
+
+    def __post_init__(self) -> None:
+        group = self.concatenation or Concatenation()
+        if group.order is ComponentOrder.RANDOM:
+            # §22.10.2.1's prerequisite, checked when the object is written rather than when
+            # it first encodes something: an object that can never be decoded is invalid on
+            # its own terms.
+            _handles_of(self._laid_out(), handle_id=group.handle_id,
+                        clause="§22.10.2.1", what="a concatenation whose ORDER is `random`",
+                        alignment_unit=self._component_alignment())
+        elif group.order is ComponentOrder.TAG:
+            self._tag_order()
+
+    def _component_alignment(self) -> "int | None":
+        """The unit §22.10.3.5 aligns each component to, or `None` when `ALIGNMENT` is `none`."""
+        group = self.concatenation or Concatenation()
+        if group.alignment is ConcatenationAlignment.NONE or self.pre_alignment is None:
+            return None
+        return self.pre_alignment.unit
+
+    def _tag_order(self) -> tuple[tuple[str, object], ...]:
+        """§22.10.3.2's ordering: "the order shall be that of the tag numbers ... lowest first".
+
+        §22.10.2.4 and §22.10.2.5 are the preconditions, and both are checked: every component
+        "shall start with an encoding class in the tag category", and "the component-tags of
+        each alternative shall be distinct". A duplicate tag is the one that matters — the
+        order would be arbitrary between the two, and so would the decoder's reading.
+        """
+        laid_out = self._laid_out()
+        tagged: list[tuple[int, str, object]] = []
+        for name, spec in laid_out:
+            number = _component_tag(spec)
+            if number is None:
+                raise Asn1Error(
+                    f"ECN: §22.10.2.4 — when ORDER is `tag`, every component shall start with "
+                    f"an encoding class in the tag category; {name!r} does not")
+            tagged.append((number, name, spec))
+        numbers = [number for number, _name, _spec in tagged]
+        if len(set(numbers)) != len(numbers):
+            raise Asn1Error(
+                f"ECN: §22.10.2.5 — the component-tags shall be distinct; {sorted(numbers)} "
+                f"repeats one, so `ORDER tag` would not fix an order")
+        return tuple((name, spec) for _number, name, spec in sorted(tagged))
 
     def transmission_order(self) -> tuple[str, ...]:
-        return tuple(name for name, _spec in self._laid_out())
+        return tuple(name for name, _spec in self._ordered())
+
+    def _ordered(self) -> tuple[tuple[str, object], ...]:
+        """The components in the order §22.10.3.1–§22.10.3.3 puts them on the wire.
+
+        `random` is implemented as "the textual order", and that is *a* conforming choice
+        rather than *the* one: §22.10.3.3 lets the encoder "determine the order of
+        concatenation without constraint", so an encoding using it has no unique octets — the
+        same hazard §21.9.7's `encoder-option` padding carries, and worth the same warning to
+        anything comparing this rail's output byte for byte against a twin.
+        """
+        group = self.concatenation or Concatenation()
+        if group.order is ComponentOrder.TAG:
+            return self._tag_order()
+        return self._laid_out()
 
     def _laid_out(self) -> tuple[tuple[str, object], ...]:
         """The fields as they actually appear, replacement expanded.
@@ -1103,13 +1628,42 @@ class ConcatenationSpec:
         heads: list[tuple[str, object]] = []
         body: list[tuple[str, object]] = []
         for name in names:
+            spec = self.fields[name]
+            # §22.1.1.7 c) and d) replace only the optional or only the non-optional
+            # components; everything the action does not select passes through untouched, and
+            # takes no head-end insertion either — §22.1.3.6 orders the insertions by "the
+            # components being replaced", so a component that is not replaced contributes none.
+            if not self.replacement.selects(spec):
+                body.append((name, spec))
+                continue
             if self.replacement.head_end is not None:
                 heads.extend(self.replacement.head_end.expand(name))
-            body.extend(self.replacement.structure.expand(name, self.fields[name]))
+            # §22.1.3.4 strips the optionality class: the component is replaced "with a
+            # **non-optional** instantiation of the replacement structure", and the actual
+            # parameter "shall de-reference to the entire original optional component
+            # (including any classes in the tag category) **except for any class in the
+            # optionality category**". So replacing an optional component makes it mandatory,
+            # and its PRESENCE determinant has nothing left to determine — which surfaces as
+            # an unset auxiliary field rather than as silence.
+            if isinstance(spec, OptionalSpec):
+                spec = spec.component
+            body.extend(self.replacement.structure.expand(name, spec))
         return tuple(heads) + tuple(body)
 
     def write(self, value: dict, out: BitWriter) -> None:
-        for name, spec in self._laid_out():
+        if self.pre_alignment is not None:
+            self.pre_alignment.apply(out)
+        handle_start = out.bit_length
+        group = self.concatenation or Concatenation()
+        aligned = group.alignment is ConcatenationAlignment.ALIGNED
+        for name, spec in self._ordered():
+            # §22.10.3.5: with `ALIGNMENT aligned` the concatenation's own pre-alignment
+            # specification runs before *each* component, and §22.10.3.5's exception folds
+            # `ALIGNED TO ANY` down to `ALIGNED TO NEXT` here — NOTE 1 gives the reason,
+            # "there can only be a single start pointer for ALIGNED TO ANY". NOTE 2 then puts
+            # the component's own pre-alignment after this, which is where each spec runs it.
+            if aligned and self.pre_alignment is not None:
+                self.pre_alignment.apply(out)
             # An auxiliary field's bits are reserved where it sits and written later, by
             # whichever determinant references it. §22.8.3.7's NOTE describes exactly this
             # suspension, and it is the only way a length can precede what it measures in a
@@ -1120,6 +1674,12 @@ class ConcatenationSpec:
             if name in self.padding:
                 out.mark_start(name)
                 spec.write(None, out)
+                continue
+            if isinstance(spec, OptionalSpec):
+                # §23.11 makes absence the component's own business, so a missing key is a
+                # value rather than the fault it is for a mandatory component.
+                out.mark_start(name)
+                spec.write(value.get(name), out)
                 continue
             if name not in value:
                 raise Asn1Error(
@@ -1132,6 +1692,7 @@ class ConcatenationSpec:
             if isinstance(value[name], int) and not isinstance(value[name], bool):
                 out.record_value(name, value[name])
             spec.write(value[name], out)
+        _exhibit(self, out, handle_start)
 
 
 @dataclass(frozen=True)
@@ -1181,18 +1742,22 @@ class RepetitionSpace:
     with §21.7's eight-valued determination, and the two are siblings rather than one being a
     special case of the other.
 
-    Three determinations are built, and they are the three that describe how essentially every
-    real repeated format works:
+    Five determinations are built, and they cover how essentially every real repeated format
+    works:
 
     * `field-to-be-set` — a count field, written by the encoder from the number of repetitions.
     * `field-to-be-used` — the same field, supplied by the application and *checked*.
     * `pattern` — §22.7.1.1's `&termination-pattern`, emitted after the last element. This is
       the NUL-terminated string, and it is why the group carries a `Pattern` at all.
+    * `handle` — §21.7.10's identification handle, exhibited by the repeated element and by
+      whatever can follow it. §22.7.3.11 gives the encoder no action for it beyond §22.9.3.1's
+      own check, which is why this became buildable the moment handles did.
+    * `not-needed` — §21.7.11's fixed count, which the abstract syntax already carries.
 
-    The other five are refused with what each would need. `flag-to-be-set` and `flag-to-be-used`
-    (§21.7.6/§21.7.7) put a continuation flag **inside the repeated element**, which needs the
-    element's own structure to have a field reserved for it. `container` (§21.7.8) and `handle`
-    need containment and §22.9's identification handles.
+    The remaining three are refused with what each would need. `flag-to-be-set` and
+    `flag-to-be-used` (§21.7.6/§21.7.7) put a continuation flag **inside the repeated
+    element**, which needs the element's own structure to have a field reserved for it;
+    `container` (§21.7.8) needs containment.
     """
 
     determination: RepetitionSpaceDetermination = RepetitionSpaceDetermination.FIELD_TO_BE_SET
@@ -1205,10 +1770,13 @@ class RepetitionSpace:
     termination_pattern: Pattern | None = None
     encoder_transforms: "TransformChain | None" = None
     decoder_transforms: "TransformChain | None" = None
+    #: §21.7.10's identification handle, for the `handle` determination.
+    handle_id: str = "default-handle"
 
     _BUILT = (RepetitionSpaceDetermination.FIELD_TO_BE_SET,
               RepetitionSpaceDetermination.FIELD_TO_BE_USED,
               RepetitionSpaceDetermination.PATTERN,
+              RepetitionSpaceDetermination.HANDLE,
               RepetitionSpaceDetermination.NOT_NEEDED)
 
     def __post_init__(self) -> None:
@@ -1221,8 +1789,6 @@ class RepetitionSpace:
                     "§21.7.7 reads a continuation flag from inside the repeated element",
                 RepetitionSpaceDetermination.CONTAINER:
                     "§21.7.8 needs a container with a length determinant, or #OUTER",
-                RepetitionSpaceDetermination.HANDLE:
-                    "§22.9's identification handles are not built",
             }[self.determination]
             raise Asn1Error(
                 f"ECN: the repetition-space determination `{self.determination.value}` is not "
@@ -1233,6 +1799,11 @@ class RepetitionSpace:
                     "ECN: §22.7.1.1's `pattern` determination ends the repetition with the "
                     "&termination-pattern, and none is set")
             self.termination_pattern.require_non_null("the termination pattern")
+        elif self.determination is RepetitionSpaceDetermination.HANDLE:
+            if self.reference:
+                raise Asn1Error(
+                    "ECN: §21.7.10's `handle` determination reads the identification handle "
+                    "the elements already exhibit; it takes no USING reference to a count")
         elif self.determination is not RepetitionSpaceDetermination.NOT_NEEDED:
             if not self.reference:
                 raise Asn1Error(
@@ -1258,8 +1829,11 @@ class RepetitionSpace:
 
     def record(self, out: "BitWriter", repetitions: int, space_bits: int) -> None:
         """Set or check the count field, after the elements have been written."""
+        # §22.7.3.11: "If DETERMINED BY is `handle` there is no further action needed by the
+        # encoder." The elements' own §22.9.3.1 checks have already run by the time this does.
         if self.determination in (RepetitionSpaceDetermination.NOT_NEEDED,
-                                  RepetitionSpaceDetermination.PATTERN):
+                                  RepetitionSpaceDetermination.PATTERN,
+                                  RepetitionSpaceDetermination.HANDLE):
             return
         count = self.count_in_units(repetitions, space_bits)
         if self.determination is RepetitionSpaceDetermination.FIELD_TO_BE_SET:
@@ -1303,6 +1877,19 @@ class ConditionalRepetitionSpec:
         if self.element is None:
             raise Asn1Error(
                 "ECN: a #CONDITIONAL-REPETITION object encodes a repeated element")
+        if self.space.determination is RepetitionSpaceDetermination.HANDLE:
+            # §21.7.10 requires the handle from two sides: "the encoding object applied to the
+            # component being repeated, **and** the encoding object applied to each possible
+            # (taking account of optionality) following encoding class". Only the first is
+            # visible here — what follows a repetition belongs to the enclosing structure — so
+            # this checks the element and the enclosing concatenation is where the other half
+            # would go. Half a rule enforced is worth more than none, and the half that is
+            # missing is named rather than silently skipped.
+            _handles_of((("the repeated element", self.element),),
+                        handle_id=self.space.handle_id, clause="§21.7.10",
+                        what="a repetition whose end is",
+                        alignment_unit=None if self.pre_alignment is None
+                        else self.pre_alignment.unit)
 
     def applies(self, bounds: SizeBounds) -> bool:
         return all(bounds.satisfies(condition, comparison, comparator)
@@ -1386,6 +1973,7 @@ class StringSpec:
     value_reversal: bool = False
     pre_alignment: PreAlignment | None = None
     start_pointer: StartPointer | None = None
+    exhibits: "IdentificationHandle | None" = None
 
     def __post_init__(self) -> None:
         if self.repetition is None:
@@ -1396,6 +1984,7 @@ class StringSpec:
     def write(self, value, out: "BitWriter") -> None:
         if self.pre_alignment is not None:
             self.pre_alignment.apply(out)
+        handle_start = out.bit_length
         if self.start_pointer is not None:
             self.start_pointer.record(out)
         if self.transform is not None:
@@ -1404,6 +1993,7 @@ class StringSpec:
         if self.value_reversal:
             elements.reverse()
         self.repetition.write(elements, out)
+        _exhibit(self, out, handle_start)
 
 
 @dataclass(frozen=True)
@@ -1442,14 +2032,17 @@ class NullSpec:
     pattern: Pattern | None = None
     pre_alignment: PreAlignment | None = None
     start_pointer: StartPointer | None = None
+    exhibits: "IdentificationHandle | None" = None
 
     def write(self, _value, out: "BitWriter") -> None:
         if self.pre_alignment is not None:
             self.pre_alignment.apply(out)
+        handle_start = out.bit_length
         if self.start_pointer is not None:
             self.start_pointer.record(out)
         for bit in _padding_bits(self.padding, self.pattern, self.width, "a #NUL object"):
             out.put_bit(bit)
+        _exhibit(self, out, handle_start)
 
 
 @dataclass(frozen=True)
@@ -1470,12 +2063,243 @@ class TagSpec:
     tagged: object = None
     pre_alignment: PreAlignment | None = None
     value_padding: ValuePadding | None = None
+    #: §22.9's group, and the **only** category where `tag:any` is legal (§22.9.1.9). A tag is
+    #: a discriminator by construction, so a `#TAG` object exhibiting a handle usually has
+    #: nothing to state: the number it writes is the handle value.
+    exhibits: "IdentificationHandle | None" = None
 
     def write(self, value, out: "BitWriter") -> None:
-        IntSpec(width=self.width, form=self.form, pre_alignment=self.pre_alignment,
+        # Pre-alignment is applied here rather than handed to the inner `IntSpec` so that the
+        # handle's position zero can be taken afterwards. §22.9.1.5 puts the positions "after
+        # any pre-alignment has been applied", and the octets are identical either way.
+        if self.pre_alignment is not None:
+            self.pre_alignment.apply(out)
+        handle_start = out.bit_length
+        IntSpec(width=self.width, form=self.form,
                 value_padding=self.value_padding).write(self.number, out)
         if self.tagged is not None:
             self.tagged.write(value, out)
+        # Checked over the tag *and* what it tags, because §22.9.1.5 counts positions in the
+        # final encoding of the object exhibiting the handle — which lets a handle reach a bit
+        # of the tagged content, as BER's constructed flag effectively does.
+        _exhibit(self, out, handle_start)
+
+
+# --- clause 23.1 and 23.11: the constructor categories -------------------------------------
+
+@dataclass(frozen=True)
+class OptionalSpec:
+    """§23.11's `#OPTIONAL`: a component that may or may not be in the encoding.
+
+    **This is the category the rest of the module has been refusing to need.** Until now every
+    field a `#CONCATENATION` object named had to be in the value, because "a user-defined
+    encoding has no optionality unless an `#OPTIONAL` object supplies it" — this is that
+    object. §23.11.2.1: "This syntax is used to define the encoding of a class in the
+    optionality category."
+
+    Its shape is small and its consequences are not. An `#OPTIONAL` object owns only §22.5's
+    `PRESENCE` group plus replacement, pre-alignment and a start pointer; the *component's*
+    own encoding object still encodes the component. What this adds is the fact that a decoder
+    needs and the component itself cannot carry: whether it is there at all.
+
+    §22.5.1.6 makes `PRESENCE` mandatory rather than defaulted, and that is enforced in
+    `__post_init__` — an `#OPTIONAL` object without it is not one taking defaults, it is one
+    that never said how absence is detected.
+
+    Absence writes nothing here. §23.11.3.1 lists pre-alignment among the encoder actions, but
+    aligning before a component that is not going to be encoded would put bits in the stream
+    that no decoder is looking for, and §22.10.2.7 shows the clause thinking in the same terms
+    when it forbids pre-alignment on a concatenation that "has no bits in its encoding".
+    """
+
+    #: The encoding object for the component itself, when it is present.
+    component: object = None
+    #: §22.5's group. No default, because §22.5.1.6 gives it none.
+    presence: "Optionality | None" = None
+    pre_alignment: PreAlignment | None = None
+    start_pointer: StartPointer | None = None
+    replacement: Replacement | None = None
+    exhibits: "IdentificationHandle | None" = None
+
+    def __post_init__(self) -> None:
+        if self.component is None:
+            raise Asn1Error(
+                "ECN: an #OPTIONAL object wraps the encoding of the component it makes "
+                "optional; there is nothing here to encode when the component is present")
+        if self.presence is None:
+            raise Asn1Error(
+                "ECN: §22.5.1.6 — the PRESENCE specification is mandatory wherever the defined "
+                "syntax allows it, and defaulting every part of it "
+                "\"would not satisfy the above constraints\"; this #OPTIONAL object states "
+                "none, so nothing says how a decoder detects absence")
+        if self.presence.determination is OptionalityDetermination.POINTER:
+            if self.start_pointer is None:
+                raise Asn1Error(
+                    "ECN: §22.5.2.4 — if DETERMINED BY is `pointer`, there shall be a "
+                    "START-POINTER specification in the same encoding object")
+            # §22.5.2.4's NOTE stays a diagnostic rather than a rule: "A start pointer
+            # specification normally also needs a pre-alignment specification with ALIGNED TO
+            # ANY". `normally` is not `shall`, and it is the ANY case that makes the pointer
+            # carry information a fixed layout would not need.
+        if self.replacement is not None:
+            if self.replacement.action is not ReplaceAction.STRUCTURE:
+                raise Asn1Error(
+                    "ECN: §23.11.1 gives `#OPTIONAL` structure-only replacement — only "
+                    "`&#Replacement-structure`, with no COMPONENT, OPTIONALS or NON-OPTIONALS "
+                    "actions; those belong to the concatenation category")
+            raise Asn1Error(
+                "ECN: §23.11.3.2's REPLACE STRUCTURE hands \"the entire component (including "
+                "any classes in the tag category, but excluding classes in the optionality "
+                "category)\" to the replacement structure as its actual parameter, and the "
+                "component \"becomes a mandatory component\". That is X.683 parameterization "
+                "applied to an optional class, which is not built; applying the replacement "
+                "object to the component's own class expresses the same encoding")
+
+    def write(self, value, out: "BitWriter") -> None:
+        present = value is not None
+        if not present:
+            if self.presence.determination is OptionalityDetermination.POINTER:
+                # §21.5.9: "If that field is zero, then this component is absent." Zero is
+                # available as a sentinel because the pointer field is itself encoded before
+                # the offset it measures, so a genuine offset is never zero.
+                out.patch(self.start_pointer.reference, 0)
+            self.presence.record(out, False)
+            return
+        if self.pre_alignment is not None:
+            self.pre_alignment.apply(out)
+        handle_start = out.bit_length
+        if self.start_pointer is not None:
+            self.start_pointer.record(out)
+        self.component.write(value, out)
+        self.presence.record(out, True)
+        _exhibit(self, out, handle_start)
+
+
+@dataclass(frozen=True)
+class AlternativesSpec:
+    """§23.1's `#ALTERNATIVES`: a construction of which exactly one component is encoded.
+
+    The CHOICE, and the first category in this module whose encoder has to *decide* something
+    about structure rather than about bits. §22.6.3.2: the encoder "shall determine which
+    alternative the application wishes to be encoded, and shall create a conceptual integer
+    value `alternative-index` to identify that alternative".
+
+    §22.6.3.3 defines that index positionally — zero for the first, one for the next — and
+    §22.6.3.4 says which order counts: `textual` is "the textual order in the ASN.1 type
+    specification or the ECN structure definition", `tag` is "the order of the tag numbers in
+    the component-tags (lowest tag number first)". So renaming an alternative changes nothing
+    and reordering the ECN structure changes the wire format, which is the right way round for
+    a notation whose job is to describe a layout.
+
+    §23.1.2.3 is worth stating because the obvious implementation gets it wrong: this object
+    "does not exhibit an identification handle unless `EXHIBITS HANDLE` is set (**even if the
+    components of the defined construction exhibit an identification handle**)". The
+    alternatives' handles are what `DETERMINED BY handle` reads; they are not inherited.
+    """
+
+    #: Alternative name -> the encoding object for that alternative.
+    alternatives: dict = field(default_factory=dict)
+    #: §22.6's group. Defaults to `field-to-be-set`, which then needs a `USING` reference.
+    selection: "AlternativeSelection | None" = None
+    #: Names in textual order. Empty means "the order of `alternatives`".
+    order: tuple[str, ...] = ()
+    pre_alignment: PreAlignment | None = None
+    start_pointer: StartPointer | None = None
+    exhibits: "IdentificationHandle | None" = None
+
+    def __post_init__(self) -> None:
+        if not self.alternatives:
+            raise Asn1Error(
+                "ECN: an #ALTERNATIVES object encodes a construction in the alternatives "
+                "category, and a construction with no alternatives has no encodings")
+        if self.selection is None:
+            raise Asn1Error(
+                "ECN: §22.6.2.9 — the ALTERNATIVE specification \"is mandatory for it to be "
+                "set in all places in the defined syntax where it is allowed\"; this "
+                "#ALTERNATIVES object states none")
+        if self.order:
+            missing = set(self.alternatives) - set(self.order)
+            extra = set(self.order) - set(self.alternatives)
+            if missing or extra:
+                raise Asn1Error(
+                    f"ECN: this #ALTERNATIVES object states a textual order that does not "
+                    f"match its alternatives (missing {sorted(missing)}, unknown "
+                    f"{sorted(extra)})")
+        if self.selection.ordering is ComponentOrder.TAG:
+            self._tag_order()
+        if self.selection.determination is AlternativeDetermination.HANDLE:
+            # §21.6.6: the handle "shall be exhibited by the encoding objects applied to each
+            # of the alternatives ... The handle value sets specified by those encoding
+            # objects shall all be disjoint." Both halves are checked; without the second the
+            # decoder's §22.6.4.4 lookup would have more than one answer.
+            _handles_of(tuple(self._textual()), handle_id=self.selection.handle_id,
+                        clause="§21.6.6", what="an alternatives construction",
+                        alignment_unit=None if self.pre_alignment is None
+                        else self.pre_alignment.unit)
+
+    def _textual(self):
+        names = self.order or tuple(self.alternatives)
+        return [(name, self.alternatives[name]) for name in names]
+
+    def _tag_order(self) -> tuple[str, ...]:
+        """§22.6.3.4's `tag` ordering, with §22.6.2.10 and §22.6.2.11 as its preconditions."""
+        tagged: list[tuple[int, str]] = []
+        for name, spec in self._textual():
+            number = _component_tag(spec)
+            if number is None:
+                raise Asn1Error(
+                    f"ECN: §22.6.2.10 — when ORDER is `tag`, every alternative shall start "
+                    f"with an encoding class in the tag category; {name!r} does not")
+            tagged.append((number, name))
+        numbers = [number for number, _name in tagged]
+        if len(set(numbers)) != len(numbers):
+            raise Asn1Error(
+                f"ECN: §22.6.2.11 — the component-tags of each alternative shall be distinct; "
+                f"{sorted(numbers)} repeats one")
+        return tuple(name for _number, name in sorted(tagged))
+
+    def ordering(self) -> tuple[str, ...]:
+        """The alternatives in the order §22.6.3.3 counts them from."""
+        if self.selection.ordering is ComponentOrder.TAG:
+            return self._tag_order()
+        return tuple(name for name, _spec in self._textual())
+
+    def index_of(self, name: str) -> int:
+        """§22.6.3.3's `alternative-index`."""
+        order = self.ordering()
+        if name not in order:
+            raise Asn1Error(
+                f"ECN: {name!r} is not one of this #ALTERNATIVES object's alternatives "
+                f"({', '.join(order)})")
+        return order.index(name)
+
+    def write(self, value, out: "BitWriter") -> None:
+        """Encode the chosen alternative.
+
+        `value` is the pair `(name, value)` or a single-key mapping, which is what a CHOICE
+        value is: the alternative's identity is part of the value and not something the
+        encoding object can recover from the payload.
+        """
+        if isinstance(value, dict):
+            if len(value) != 1:
+                raise Asn1Error(
+                    f"ECN: a class in the alternatives category encodes exactly one "
+                    f"alternative; this value carries {len(value)}")
+            name, chosen = next(iter(value.items()))
+        else:
+            name, chosen = value
+        index = self.index_of(name)
+        if self.pre_alignment is not None:
+            self.pre_alignment.apply(out)
+        handle_start = out.bit_length
+        if self.start_pointer is not None:
+            self.start_pointer.record(out)
+        self.alternatives[name].write(chosen, out)
+        # d) Alternative determination, after the alternative is written — the field it sets
+        #    is earlier in the encoding, which is exactly what §22.6.3.5's NOTE describes as
+        #    the encoder having to "suspend the encoding of that field".
+        self.selection.record(out, index)
+        _exhibit(self, out, handle_start)
 
 
 # --- the encoding object, and applying a set of them --------------------------------------

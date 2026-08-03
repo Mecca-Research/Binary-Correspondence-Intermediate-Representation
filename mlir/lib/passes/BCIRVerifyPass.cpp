@@ -2189,6 +2189,78 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
             << "category, so no object could realize it";
         ok = false;
       }
+      // 22.9.2.1 and 22.9.2.3, the two handle rules that are about an ECN SPECIFICATION and
+      // not about any one object -- so no object-local check could ever reach them, and the
+      // oracle only sees them when two objects meet in one construction.
+      //
+      // 22.9.2.1: "In any ECN specification, all identification handles with the same name
+      // shall specify the same set of bit positions."
+      // 22.9.2.3: objects exhibiting one handle "shall either have no pre-alignment
+      // specification, or shall align to the same pre-alignment unit", whose NOTE gives the
+      // reason -- "so that decoders can move to the alignment position before looking for
+      // the handle". "No pre-alignment" and "align to bit" are one case here, since 22.2.1.1
+      // defaults the unit to `bit` and aligning to one bit inserts nothing.
+      //
+      // 22.9.1.9 lives here too, and for a related reason: `tag:any` "shall not be specified
+      // ... unless the specification is for an encoding object of the #TAG class", and which
+      // category an object's class belongs to is a fact about the CLASS ASSIGNMENTS, not
+      // about the object. Resolving the chain is what clause 11 makes `#Version ::= #INT`
+      // mean, so a class assigned from a class assigned from #TAG is still a tag class.
+      auto resolvesToTag = [&](StringRef cls) {
+        llvm::StringSet<> seen;
+        StringRef current = cls;
+        while (seen.insert(current).second) {
+          auto it = classBase.find(current);
+          if (it == classBase.end())
+            return current == "#TAG";  // a built-in, or a name this module does not assign
+          current = it->second;
+        }
+        return false;  // circular; already reported above
+      };
+      llvm::StringMap<std::pair<llvm::SmallVector<int64_t, 8>, StringRef>> handlePositions;
+      llvm::StringMap<std::pair<int64_t, StringRef>> handleAlignment;
+      m.walk([&](EcnObjectOp o) {
+        if (o.getHandleValueKind().has_value() &&
+            *o.getHandleValueKind() == EcnHandleValueKind::TagAny &&
+            !resolvesToTag(o.getEncodingClass())) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " states the handle value set `tag:any` for "
+              << o.getEncodingClass() << "; X.692 22.9.1.9 admits it only for an "
+              << "encoding object of the #TAG class, whose tag number determines the value";
+          ok = false;
+        }
+        auto named = o.getExhibitedHandle();
+        if (!named)
+          return;
+        llvm::SmallVector<int64_t, 8> positions;
+        if (auto stated = o.getHandlePositions())
+          positions.assign(stated->begin(), stated->end());
+        std::sort(positions.begin(), positions.end());
+        auto seen = handlePositions.find(*named);
+        if (seen != handlePositions.end() && seen->second.first != positions) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " gives the identification handle " << *named
+              << " different bit positions from " << seen->second.second
+              << "; X.692 22.9.2.1 requires all handles of one name to specify the same set";
+          ok = false;
+        } else if (seen == handlePositions.end()) {
+          handlePositions[*named] = {positions, o.getSymName()};
+        }
+        int64_t unit = o.getAlignUnit().value_or(1);
+        if (unit == 0)
+          unit = 1;
+        auto aligned = handleAlignment.find(*named);
+        if (aligned != handleAlignment.end() && aligned->second.first != unit) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " aligns to " << unit << " where " << aligned->second.second
+              << " aligns to " << aligned->second.first << ", and both exhibit " << *named
+              << "; X.692 22.9.2.3 requires one pre-alignment unit per handle so a decoder "
+              << "can reach the handle's position";
+          ok = false;
+        } else if (aligned == handleAlignment.end()) {
+          handleAlignment[*named] = {unit, o.getSymName()};
+        }
+      });
     });
 
     root->walk([&](EcnStructureOp s) {
@@ -2348,6 +2420,124 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
               << "restricts the encoding to classes with one";
           ok = false;
         }
+      }
+      // 22.9.1.6: the positions in AT are "a set of integer values". A repeated position
+      // would put one bit twice into the conceptual handle field, which is not a narrower
+      // handle -- it is one whose width does not match any value set that could describe it.
+      if (auto positions = o.getHandlePositions()) {
+        llvm::SmallVector<int64_t, 8> sorted(positions->begin(), positions->end());
+        std::sort(sorted.begin(), sorted.end());
+        if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " repeats a handle position; X.692 22.9.1.6 calls the "
+              << "list in AT \"a set of integer values\", and a bit cannot appear twice in "
+              << "the conceptual handle field";
+          ok = false;
+        }
+      }
+      // 22.5.2.2/.3/.6/.8 and 22.6.2.2/.3/.5/.7 -- eight rules of one shape. Each is a way
+      // to write a property that would never be read, which is worse than an error because
+      // the specification reads as though it were.
+      if (auto determination = o.getOptionalityDetermination()) {
+        bool byHandle = *determination == EcnOptionalityDetermination::Handle;
+        bool usesField =
+            *determination == EcnOptionalityDetermination::FieldToBeSet ||
+            *determination == EcnOptionalityDetermination::FieldToBeUsed ||
+            *determination == EcnOptionalityDetermination::Container;
+        if (o.getOptionalityHandleSet() && !byHandle) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " sets PRESENCE HANDLE with DETERMINED BY "
+              << stringifyEcnOptionalityDetermination(*determination)
+              << "; X.692 22.5.2.2 admits HANDLE only for `handle`";
+          ok = false;
+        }
+        if (o.getOptionalityReference() && !usesField) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " sets PRESENCE USING with DETERMINED BY "
+              << stringifyEcnOptionalityDetermination(*determination)
+              << "; X.692 22.5.2.3 forbids USING for `handle` and `pointer`";
+          ok = false;
+        }
+        if (o.getOptionalityEncoderTransforms() &&
+            *determination != EcnOptionalityDetermination::FieldToBeSet) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " sets PRESENCE ENCODER-TRANSFORMS with DETERMINED BY "
+              << stringifyEcnOptionalityDetermination(*determination)
+              << "; X.692 22.5.2.6 admits them only for `field-to-be-set`";
+          ok = false;
+        }
+        if (o.getOptionalityDecoderTransforms() &&
+            *determination != EcnOptionalityDetermination::FieldToBeUsed) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " sets PRESENCE DECODER-TRANSFORMS with DETERMINED BY "
+              << stringifyEcnOptionalityDetermination(*determination)
+              << "; X.692 22.5.2.8 admits them only for `field-to-be-used`";
+          ok = false;
+        }
+        // 22.5.2.4: "If DETERMINED BY is `pointer`, there shall be a START-POINTER
+        // specification in the same encoding object." 21.5.9 reads that field's zero as
+        // absence, so without one nothing distinguishes absent from present.
+        if (*determination == EcnOptionalityDetermination::Pointer && !o.getStartPointer()) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " determines presence by `pointer` with no START-POINTER; "
+              << "X.692 22.5.2.4 requires one in the same encoding object";
+          ok = false;
+        }
+      }
+      if (auto determination = o.getAlternativeDetermination()) {
+        bool byHandle = *determination == EcnAlternativeDetermination::Handle;
+        if (o.getAlternativeHandleSet() && !byHandle) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " sets ALTERNATIVE HANDLE with DETERMINED BY "
+              << stringifyEcnAlternativeDetermination(*determination)
+              << "; X.692 22.6.2.2 admits HANDLE only for `handle`";
+          ok = false;
+        }
+        if (o.getAlternativeReference() && byHandle) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " sets ALTERNATIVE USING with DETERMINED BY `handle`; "
+              << "X.692 22.6.2.3 forbids it";
+          ok = false;
+        }
+        if (o.getAlternativeEncoderTransforms() &&
+            *determination != EcnAlternativeDetermination::FieldToBeSet) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " sets ALTERNATIVE ENCODER-TRANSFORMS with DETERMINED BY "
+              << stringifyEcnAlternativeDetermination(*determination)
+              << "; X.692 22.6.2.5 admits them only for `field-to-be-set`";
+          ok = false;
+        }
+        if (o.getAlternativeDecoderTransforms() &&
+            *determination != EcnAlternativeDetermination::FieldToBeUsed) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " sets ALTERNATIVE DECODER-TRANSFORMS with DETERMINED BY "
+              << stringifyEcnAlternativeDetermination(*determination)
+              << "; X.692 22.6.2.7 admits them only for `field-to-be-used`";
+          ok = false;
+        }
+      }
+      // 22.6.1.1 declares &alternative-ordering as ENUMERATED {textual, tag} -- two values.
+      // 22.10.1.1's concatenation order has three. `random` on an alternatives object would
+      // permute a set with exactly one member in it.
+      if (o.getAlternativeOrdering().has_value() &&
+          *o.getAlternativeOrdering() == EcnComponentOrder::Random) {
+        o.emitError("R25: ECN object ")
+            << o.getSymName() << " orders its alternatives `random`; X.692 22.6.1.1 declares "
+            << "that property as ENUMERATED {textual, tag}, and a class in the alternatives "
+            << "category encodes exactly one alternative";
+        ok = false;
+      }
+      // 22.10.2.1: `ORDER random` "assumes the default value of `default-handle` if not
+      // set", and requires the objects applied to ALL components to exhibit it. An encoder
+      // free to reorder is decodable only if each component announces which one it is.
+      if (o.getConcatenationOrder().has_value() &&
+          *o.getConcatenationOrder() == EcnComponentOrder::Random &&
+          !o.getExhibitedHandle()) {
+        o.emitError("R25: ECN object ")
+            << o.getSymName() << " orders its components `random` with no identification "
+            << "handle; X.692 22.10.2.1 requires the encoding objects applied to all "
+            << "components to exhibit one, with disjoint handle value sets";
+        ok = false;
       }
     });
 

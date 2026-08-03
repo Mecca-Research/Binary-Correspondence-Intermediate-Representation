@@ -142,6 +142,23 @@ def BCIR_EcnObjectOp : BCIR_Op<"ecn.object", [Symbol, NoTerminator]> {
     Replacement (22.1): `replace` with `replacement_structure`, `replacement_object` and
     `head_end`. R25 enforces 22.1.2.8 and 23.3.2.2's "if REPLACE is set, then no other
     encoding property group shall be set", which every category restates.
+
+    Identification handle (22.9): `exhibited_handle` names it, `handle_positions` is 22.9.1.6's
+    set of bit positions, and `handle_value_kind` is which 21.16 alternative states the value
+    set. The VALUE is not here, for the same reason no pattern is: "this handle admits 4..7"
+    is not a proposition a law can falsify. What R25 checks is 22.9.1.6 (the positions are a
+    SET), 22.9.2.1 (all handles of one name agree about them) and 22.9.2.3 (their objects
+    agree about pre-alignment) -- three statements about a whole module that no single-object
+    check could reach, which is exactly the kind of fault this rail exists for.
+
+    Optionality (22.5) and alternative (22.6) determination, each with its reference, its two
+    transform flags and its HANDLE marker. R25 enforces 22.5.2.2/.3/.6/.8 and
+    22.6.2.2/.3/.5/.7 -- eight rules of one shape, each a way to write a property that would
+    never be read.
+
+    Concatenation (22.10): `concatenation_order`. 22.10.2.1 makes `random` require an
+    identification handle on every component, which is a statement about the structure rather
+    than about this object, so R25 checks the marker's presence and the oracle checks the sets.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name,
                        FlatSymbolRefAttr:$encoding_class,
@@ -168,6 +185,27 @@ def BCIR_EcnObjectOp : BCIR_Op<"ecn.object", [Symbol, NoTerminator]> {
                        OptionalAttr<FlatSymbolRefAttr>:$replacement_structure,
                        OptionalAttr<FlatSymbolRefAttr>:$replacement_object,
                        OptionalAttr<FlatSymbolRefAttr>:$head_end,
+                       // 22.9
+                       OptionalAttr<StrAttr>:$exhibited_handle,
+                       OptionalAttr<DenseI64ArrayAttr>:$handle_positions,
+                       OptionalAttr<BCIR_EcnHandleValueKindAttr>:$handle_value_kind,
+                       // 22.5
+                       OptionalAttr<BCIR_EcnOptionalityDeterminationAttr>
+                           :$optionality_determination,
+                       OptionalAttr<StrAttr>:$optionality_reference,
+                       UnitAttr:$optionality_encoder_transforms,
+                       UnitAttr:$optionality_decoder_transforms,
+                       UnitAttr:$optionality_handle_set,
+                       // 22.6
+                       OptionalAttr<BCIR_EcnAlternativeDeterminationAttr>
+                           :$alternative_determination,
+                       OptionalAttr<StrAttr>:$alternative_reference,
+                       UnitAttr:$alternative_encoder_transforms,
+                       UnitAttr:$alternative_decoder_transforms,
+                       UnitAttr:$alternative_handle_set,
+                       OptionalAttr<BCIR_EcnComponentOrderAttr>:$alternative_ordering,
+                       // 22.10
+                       OptionalAttr<BCIR_EcnComponentOrderAttr>:$concatenation_order,
                        // 23.7 / 24.3.9
                        UnitAttr:$subtracts_lower_bound,
                        // 23.7.2.2's ELSE, distinct from "no IF was written" only in intent.

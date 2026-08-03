@@ -130,17 +130,21 @@ def test_a_pattern_determination_with_no_pattern_is_refused():
         determination=RepetitionSpaceDetermination.PATTERN))
 
 
-def test_the_five_unbuilt_determinations_each_name_what_they_would_need():
-    """§21.7.1 gives eight; three are built. The other five are refused by name rather than
+def test_the_three_unbuilt_determinations_each_name_what_they_would_need():
+    """§21.7.1 gives eight; five are built. The other three are refused by name rather than
     approximated, and each message says what is missing — a continuation flag lives *inside*
-    the repeated element (§21.7.6), a container needs containment (§21.7.8)."""
+    the repeated element (§21.7.6), a container needs containment (§21.7.8).
+
+    `handle` used to be on this list and is not any more: §22.9's identification handles are
+    built, and §22.7.3.11 gives the encoder no action for that determination beyond the check
+    the handle itself already performs."""
     for determination, citation in (
         (RepetitionSpaceDetermination.FLAG_TO_BE_SET, "21.7.6"),
         (RepetitionSpaceDetermination.FLAG_TO_BE_USED, "21.7.7"),
         (RepetitionSpaceDetermination.CONTAINER, "21.7.8"),
-        (RepetitionSpaceDetermination.HANDLE, "22.9"),
     ):
         _refuses(citation, lambda d=determination: RepetitionSpace(determination=d))
+    RepetitionSpace(determination=RepetitionSpaceDetermination.HANDLE)
 
 
 def test_field_to_be_used_checks_the_applications_count():

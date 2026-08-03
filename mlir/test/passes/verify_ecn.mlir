@@ -284,3 +284,217 @@ bcir.ecn.module @ShapeWithComparison {
     }
   }
 }
+
+// -----
+
+// (18 -- POSITIVE) the constructor categories, with the handle machinery each of them reads.
+// Two alternatives exhibiting one handle at one set of positions, an optional component whose
+// presence is a field the encoder sets, and a concatenation ordered `random` -- which is legal
+// exactly because a handle is exhibited (22.10.2.1).
+bcir.ecn.module @Constructors {
+  bcir.ecn.class @Kind    attributes { base = "#INT" }
+  bcir.ecn.class @Label   attributes { base = "#TAG" }
+  bcir.ecn.class @Label2  attributes { base = "Label" }
+  bcir.ecn.class @AltA    attributes { base = "#INT" }
+  bcir.ecn.class @AltB    attributes { base = "#INT" }
+  bcir.ecn.class @Choice  attributes { base = "#ALTERNATIVES" }
+  bcir.ecn.class @Maybe   attributes { base = "#OPTIONAL" }
+  bcir.ecn.class @Whole   attributes { base = "#CONCATENATION" }
+
+  bcir.ecn.structure @S attributes { encoding_class = @Whole } {
+    bcir.ecn.field { name = "present", encoding_class = @Kind, auxiliary }
+    bcir.ecn.field { name = "body",    encoding_class = @Choice }
+    bcir.ecn.field { name = "extra",   encoding_class = @Maybe }
+  }
+
+  // 22.9.1.9's accepting half, through a clause 11 assignment chain: @Label2 is assigned
+  // from @Label which is assigned from #TAG, and 21.16.5 makes `tag:any` legal for all three.
+  bcir.ecn.object @label attributes {
+    encoding_class = @Label2, space_size = 8 : i64, space_unit = 1 : i64,
+    exhibited_handle = "tagnum", handle_positions = array<i64: 0, 1, 2, 3>,
+    handle_value_kind = #bcir.ecn_handle_value_kind<tag>
+  } { }
+  bcir.ecn.object @altA attributes {
+    encoding_class = @AltA, space_size = 8 : i64, space_unit = 1 : i64,
+    exhibited_handle = "kind", handle_positions = array<i64: 0, 1>,
+    handle_value_kind = #bcir.ecn_handle_value_kind<range>
+  } { }
+  bcir.ecn.object @altB attributes {
+    encoding_class = @AltB, space_size = 8 : i64, space_unit = 1 : i64,
+    exhibited_handle = "kind", handle_positions = array<i64: 1, 0>,
+    handle_value_kind = #bcir.ecn_handle_value_kind<range>
+  } { }
+  bcir.ecn.object @choice attributes {
+    encoding_class = @Choice,
+    alternative_determination = #bcir.ecn_alternative_determination<handle>,
+    alternative_handle_set,
+    alternative_ordering = #bcir.ecn_component_order<textual>
+  } { }
+  bcir.ecn.object @maybe attributes {
+    encoding_class = @Maybe,
+    optionality_determination = #bcir.ecn_optionality_determination<field_to_be_set>,
+    optionality_reference = "present",
+    optionality_encoder_transforms
+  } { }
+  bcir.ecn.object @whole attributes {
+    encoding_class = @Whole,
+    concatenation_order = #bcir.ecn_component_order<random>,
+    exhibited_handle = "kind", handle_positions = array<i64: 0, 1>,
+    handle_value_kind = #bcir.ecn_handle_value_kind<ranges>
+  } { }
+}
+
+// -----
+
+// (19) 22.9.2.1: "all identification handles with the same name shall specify the same set of
+// bit positions". Order does not matter -- 22.9.1.6 makes the list a SET, ordered from zero
+// upwards by encoders and decoders alike -- so this trips on the members, not the spelling.
+bcir.ecn.module @HandlePositionsDisagree {
+  bcir.ecn.class @A attributes { base = "#INT" }
+  bcir.ecn.class @B attributes { base = "#INT" }
+  bcir.ecn.object @a attributes {
+    encoding_class = @A, space_size = 8 : i64, space_unit = 1 : i64,
+    exhibited_handle = "kind", handle_positions = array<i64: 0, 1>,
+    handle_value_kind = #bcir.ecn_handle_value_kind<number>
+  } { }
+  // expected-error@+1 {{R25: ECN object b gives the identification handle kind different bit positions}}
+  bcir.ecn.object @b attributes {
+    encoding_class = @B, space_size = 8 : i64, space_unit = 1 : i64,
+    exhibited_handle = "kind", handle_positions = array<i64: 0, 2>,
+    handle_value_kind = #bcir.ecn_handle_value_kind<number>
+  } { }
+}
+
+// -----
+
+// (20) 22.9.2.3, whose NOTE gives the reason: a decoder "needs to move to the alignment
+// position before looking for the handle", and cannot if two objects disagree about where
+// that is.
+bcir.ecn.module @HandleAlignmentDisagrees {
+  bcir.ecn.class @A attributes { base = "#INT" }
+  bcir.ecn.class @B attributes { base = "#INT" }
+  bcir.ecn.object @a attributes {
+    encoding_class = @A, space_size = 8 : i64, space_unit = 1 : i64, align_unit = 8 : i64,
+    exhibited_handle = "kind", handle_positions = array<i64: 0>,
+    handle_value_kind = #bcir.ecn_handle_value_kind<number>
+  } { }
+  // expected-error@+1 {{X.692 22.9.2.3 requires one pre-alignment unit per handle}}
+  bcir.ecn.object @b attributes {
+    encoding_class = @B, space_size = 8 : i64, space_unit = 1 : i64, align_unit = 4 : i64,
+    exhibited_handle = "kind", handle_positions = array<i64: 0>,
+    handle_value_kind = #bcir.ecn_handle_value_kind<number>
+  } { }
+}
+
+// -----
+
+// (21) 22.9.1.6: the positions in AT are "a set of integer values", so a repeat puts one bit
+// twice into the conceptual handle field.
+bcir.ecn.module @HandleRepeatsAPosition {
+  bcir.ecn.class @A attributes { base = "#INT" }
+  // expected-error@+1 {{X.692 22.9.1.6 calls the list in AT "a set of integer values"}}
+  bcir.ecn.object @a attributes {
+    encoding_class = @A, space_size = 8 : i64, space_unit = 1 : i64,
+    exhibited_handle = "kind", handle_positions = array<i64: 2, 0, 2>,
+    handle_value_kind = #bcir.ecn_handle_value_kind<number>
+  } { }
+}
+
+// -----
+
+// (22) 22.9.1.9: `tag:any` takes its value from a tag number, so only a #TAG object has one.
+bcir.ecn.module @TagAnyOnANonTagClass {
+  bcir.ecn.class @A attributes { base = "#INT" }
+  // expected-error@+1 {{X.692 22.9.1.9 admits it only for an encoding object of the #TAG class}}
+  bcir.ecn.object @a attributes {
+    encoding_class = @A, space_size = 8 : i64, space_unit = 1 : i64,
+    exhibited_handle = "kind", handle_positions = array<i64: 0, 1>,
+    handle_value_kind = #bcir.ecn_handle_value_kind<tag>
+  } { }
+}
+
+// -----
+
+// (23) 22.5.2.3: USING says which field carries the presence information, and `handle` reads
+// bits that are already there. The two cannot both be how absence is detected.
+bcir.ecn.module @PresenceHandleWithUsing {
+  bcir.ecn.class @M attributes { base = "#OPTIONAL" }
+  // expected-error@+1 {{X.692 22.5.2.3 forbids USING for `handle` and `pointer`}}
+  bcir.ecn.object @m attributes {
+    encoding_class = @M,
+    optionality_determination = #bcir.ecn_optionality_determination<handle>,
+    optionality_reference = "p"
+  } { }
+}
+
+// -----
+
+// (24) 22.5.2.6: a transform list on the wrong determination never runs, which reads as
+// though it did.
+bcir.ecn.module @PresenceTransformsThatNeverRun {
+  bcir.ecn.class @M attributes { base = "#OPTIONAL" }
+  // expected-error@+1 {{X.692 22.5.2.6 admits them only for `field-to-be-set`}}
+  bcir.ecn.object @m attributes {
+    encoding_class = @M,
+    optionality_determination = #bcir.ecn_optionality_determination<field_to_be_used>,
+    optionality_reference = "p",
+    optionality_encoder_transforms
+  } { }
+}
+
+// -----
+
+// (25) 22.5.2.4: 21.5.9 reads a start pointer's zero as absence, so `pointer` without one
+// leaves nothing to distinguish absent from present.
+bcir.ecn.module @PointerPresenceWithoutAPointer {
+  bcir.ecn.class @M attributes { base = "#OPTIONAL" }
+  // expected-error@+1 {{X.692 22.5.2.4 requires one in the same encoding object}}
+  bcir.ecn.object @m attributes {
+    encoding_class = @M,
+    optionality_determination = #bcir.ecn_optionality_determination<pointer>
+  } { }
+}
+
+// -----
+
+// (26) 22.6.2.2, the alternatives twin of 22.5.2.2.
+bcir.ecn.module @AlternativeHandleWithoutHandle {
+  bcir.ecn.class @C attributes { base = "#ALTERNATIVES" }
+  // expected-error@+1 {{X.692 22.6.2.2 admits HANDLE only for `handle`}}
+  bcir.ecn.object @c attributes {
+    encoding_class = @C,
+    alternative_determination = #bcir.ecn_alternative_determination<field_to_be_set>,
+    alternative_reference = "k",
+    alternative_handle_set
+  } { }
+}
+
+// -----
+
+// (27) 22.6.1.1 declares the alternatives' ordering as ENUMERATED {textual, tag} -- two
+// values where 22.10.1.1 has three. One enum holds both, so this is a law rather than a
+// parse failure, and that is the honest place for it: the two clauses genuinely share three
+// meanings and differ only in which are admissible.
+bcir.ecn.module @RandomAlternatives {
+  bcir.ecn.class @C attributes { base = "#ALTERNATIVES" }
+  // expected-error@+1 {{X.692 22.6.1.1 declares that property as ENUMERATED}}
+  bcir.ecn.object @c attributes {
+    encoding_class = @C,
+    alternative_determination = #bcir.ecn_alternative_determination<field_to_be_set>,
+    alternative_reference = "k",
+    alternative_ordering = #bcir.ecn_component_order<random>
+  } { }
+}
+
+// -----
+
+// (28) 22.10.2.1: an encoder free to reorder is decodable only if each component announces
+// which one it is.
+bcir.ecn.module @RandomOrderWithoutAHandle {
+  bcir.ecn.class @W attributes { base = "#CONCATENATION" }
+  // expected-error@+1 {{X.692 22.10.2.1 requires the encoding objects applied to all}}
+  bcir.ecn.object @w attributes {
+    encoding_class = @W,
+    concatenation_order = #bcir.ecn_component_order<random>
+  } { }
+}

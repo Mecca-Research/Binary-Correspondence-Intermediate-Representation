@@ -811,7 +811,13 @@ def test_head_end_insertions_go_to_the_front_as_a_block_in_component_order():
 
 
 def test_the_replacement_restrictions_are_the_ones_that_relate_two_clauses():
-    """§22.1.2.8 and §22.1.1.7 c)/d), both about combinations rather than single properties."""
+    """§22.1.2.8, about a combination rather than a single property.
+
+    §22.1.1.7 c) and d) used to be refused here too, because sorting components by whether
+    they are optional had nothing to sort by. §23.11's optionality category supplied it, so
+    the two actions now select rather than refuse — `test_asn1_ecn_constructors.py` covers
+    them, including §22.1.3.4's rule that a replaced optional component becomes mandatory.
+    """
     bare = ReplacementStructure("#Bare", ("value",), "value")
     try:
         Replacement(ReplaceAction.STRUCTURE, bare)
@@ -820,12 +826,7 @@ def test_the_replacement_restrictions_are_the_ones_that_relate_two_clauses():
     else:
         raise AssertionError("REPLACE STRUCTURE with no ENCODED BY was accepted")
     for action in (ReplaceAction.OPTIONALS, ReplaceAction.NON_OPTIONALS):
-        try:
-            Replacement(action, bare)
-        except Asn1Error as error:
-            assert "22.1.1.7" in str(error), error
-        else:
-            raise AssertionError(f"REPLACE {action.value} was accepted with no optionality")
+        assert Replacement(action, bare).action is action
 
 
 def test_a_replacement_will_not_add_a_second_determinant_to_a_field_that_has_one():
