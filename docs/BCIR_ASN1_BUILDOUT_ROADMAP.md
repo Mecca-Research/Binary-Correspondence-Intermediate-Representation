@@ -451,6 +451,22 @@ The complete dependency and driver boundary are in
 [`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md). X.681/X.683 are no longer a
 sequencing fork: both are already built within their documented subset.
 
+## 5.1 Access limits on the remaining phases
+
+Everything left in H and beyond is blocked on **access** rather than on code, and the limits
+are now measured rather than assumed. [`BCIR_TARGET_ACCESS.md`](BCIR_TARGET_ACCESS.md) records
+them in full; the short version is that neither available host has a hardware PMU, cpufreq
+control, CPU isolation, kernel headers, or any device-binding path.
+
+The session container is the misleading one: it runs as root with `cap_sys_module`,
+`cap_sys_rawio` and `cap_perfmon`, and still cannot count a cycle or load a module, because
+those capabilities are permissions to use hardware surfaces the hypervisor never exposed.
+Granting more privilege would change nothing.
+
+What this does **not** block is worth stating as plainly: the Python oracle, the MLIR law
+rail, the C twins, the differential and fuzz gates, the cross-ABI sweep, and all remaining
+ECN work run here unimpeded. The blocked set is exactly *measurement* and *device* evidence.
+
 ## 6. Stop conditions and decision boundaries
 
 - **Phase A's X.509 stop condition — TRIGGERED, and measured.** §4 A said: *"if the

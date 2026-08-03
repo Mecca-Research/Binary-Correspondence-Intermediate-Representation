@@ -3938,6 +3938,18 @@ fi
 # warning-clean under C++17, and the C core still freestanding with the cursor exported. The
 # equivalence differential itself lives in test_cpp_jer_index.py, where it can sweep 4.3's
 # work ceiling across every failure position.
+# Target ABI portability (#targetabi). The freestanding core is compiled for triples this
+# host cannot run -- Android's among them -- and no source may hand-declare a libc function.
+# #699 shipped a bench that did not build under Termux because it did exactly that, and the
+# existing cross-compile gates target aarch64-linux-GNU, which is the right architecture and
+# the wrong libc.
+echo "[c-runtime] target ABI: the freestanding core builds for Android and 32-bit (#targetabi)"
+if bash "${ROOT}/tools/c/check_target_abi.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+  echo "  PASS target ABI sweep (freestanding core portable; no hand-declared libc prototypes)"
+else
+  echo "  FAIL: the freestanding core is not portable, or a source declares a libc function"; exit 1
+fi
+
 echo "[c-runtime] hosted structural index: the cursor seam and its vector pass (#jerindex)"
 if bash "${ROOT}/tools/cpp/check_jer_index.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
   echo "  PASS hosted structural index (freestanding core preserved, tier is real not scalar)"

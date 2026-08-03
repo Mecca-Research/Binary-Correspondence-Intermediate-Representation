@@ -291,3 +291,41 @@ def test_the_native_harness_reports_its_counter_state_honestly():
         f"wall-clock figure ends up under a cycles heading")
     # Either a real PMU, or a reason. Never an empty claim.
     assert state == "cycles" or len(state) > 3, state
+
+
+def test_the_capability_probe_runs_and_reports_what_blocks_measurement():
+    """The access limits are a checkable artifact, not a paragraph someone has to trust.
+
+    `docs/BCIR_TARGET_ACCESS.md` states which capability each blocked phase needs. The probe
+    is what decides whether a given host has it — so it has to run anywhere, emit parseable
+    JSON, and distinguish the two failure modes that look identical from a distance:
+    `perf_event_paranoid` is a POLICY that can be granted, `hardware_pmu` is a surface that
+    has to be provisioned. This container has the policy and not the surface, which is why
+    running as root with CAP_PERFMON still counts no cycles.
+    """
+    import json
+    import shutil
+    import subprocess
+    import sys
+
+    # Linux only, and not merely for convenience: every field this probe reports comes from
+    # /proc or /sys, so there is nothing on another kernel for it to describe. Guarding on
+    # `bash` is not enough — Windows runners carry Git Bash, which happily runs the script and
+    # finds none of the paths it exists to read.
+    if not sys.platform.startswith("linux") or shutil.which("bash") is None:
+        return
+    probe = os.path.join(_ROOT, "tools", "silicon", "probe_capabilities.sh")
+    assert os.path.exists(probe), "the capability probe is missing"
+    proc = subprocess.run(["bash", probe], capture_output=True, text=True, timeout=600)
+    assert proc.returncode == 0, proc.stderr[:800]
+    record = json.loads(proc.stdout)
+
+    # Policy and surface are separate fields on purpose; collapsing them would hide the
+    # distinction this whole document exists to draw.
+    for field in ("perf_event_paranoid", "hardware_pmu", "cpufreq_exposed", "kernel_headers",
+                  "can_pin_cpu", "observed_clock_tick_ns", "arch", "virtualization"):
+        assert field in record, f"the probe does not report {field}"
+    assert isinstance(record["hardware_pmu"], bool), record["hardware_pmu"]
+    # Pinning is the one capability every admitted calibration record depends on, so a host
+    # that cannot pin cannot produce one at all.
+    assert isinstance(record["can_pin_cpu"], bool)

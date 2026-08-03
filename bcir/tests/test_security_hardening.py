@@ -101,6 +101,34 @@ def test_no_gate_pipes_a_writer_into_an_early_exiting_reader_under_pipefail() ->
     assert seen >= 2, f"expected the two SIMD gates to disassemble; found {seen}"
 
 
+def test_no_source_hand_declares_a_libc_function() -> None:
+    """The #699 bug, refused by shape rather than caught on a phone.
+
+    A native bench needed a prototype for `syscall`, which glibc hides behind a feature macro,
+    so it declared `syscall` and `ioctl` itself. bionic types ioctl's request parameter as
+    `int` where glibc uses `unsigned long`, so the local prototype matched one libc and the
+    compiler on the other was right to reject it — and the whole file failed to build under
+    Termux, aborting both aarch64 calibration runs.
+
+    Only a libc knows its own signatures. A source that needs a prototype takes it from the
+    system header. This is enforced here as well as in `#targetabi` because the suite runs in
+    places the shell gate may not, and it is the one part of that failure a machine with no
+    bionic sysroot can detect at all.
+    """
+    declaration = re.compile(r"^\s*extern\s+[a-zA-Z_][\w \t*]*\([^;]*\)\s*;")
+    offenders = []
+    for pattern in ("runtime/c/*.c", "runtime/c/*.h", "runtime/cpp/*.cpp", "runtime/cpp/*.h"):
+        for path in sorted(_ROOT.glob(pattern)):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if 'extern "C"' in line or line.strip().startswith(("*", "//")):
+                    continue
+                if declaration.match(line):
+                    offenders.append(f"{path.relative_to(_ROOT)}:{number}: {line.strip()}")
+    assert not offenders, (
+        "a source declares a function the system header should declare; only that libc knows "
+        "its own signatures (see #699):\n  " + "\n  ".join(offenders))
+
+
 def test_workflow_dependencies_are_sha_pinned_and_tokens_are_read_only() -> None:
     sha = re.compile(r"^[0-9a-f]{40}$")
     for workflow in sorted((_ROOT / ".github/workflows").glob("*.yml")):
