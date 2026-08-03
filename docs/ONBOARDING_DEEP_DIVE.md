@@ -37,7 +37,7 @@ kernel internals unless a measured decision gate says otherwise.
 | Rail | Role | Key property |
 |---|---|---|
 | `bcir/` | Executable Python conformance oracle plus opt-in hosted adapters | Default/core behavior is dependency-free; hosted model execution is import-quarantined |
-| `mlir/` | ODS/TableGen/C++ law rail | R1–R24, native optimizer/GEM passes, IRDL projection, and partial lowering |
+| `mlir/` | ODS/TableGen/C++ law rail | R1–R25, native optimizer/GEM passes, IRDL projection, and partial lowering |
 | `runtime/c/` | Production C compiler/runtime rail | Freestanding execution plus hosted compiler/model tools and direct RuntimeChannel hooks |
 
 `runtime/cpp/` is a narrow orchestration seam above the C ABI. It does not redefine
@@ -64,7 +64,7 @@ source / ROP / MAP / binary record / model
                      │
                      ▼
 BCIR-0..2: semantic claims + shaped resources + placement candidates
-                     │  verify legality (R1–R24 where applicable)
+                     │  verify legality (R1–R25 where applicable)
                      ▼
 BCIR-3: K_BCIR legal realization + budgeted plan
                      │
@@ -95,7 +95,7 @@ boundary with rollback available.
   contracts, and optional timing/lifetime metadata.
 - A `Phase` is a dependency node; event-triggered phases make asynchronous entry
   explicit.
-- R1–R24 cover registry, resolution, domains, DAGs, hazards, lanes, bounds, costs,
+- R1–R25 cover registry, resolution, domains, DAGs, hazards, lanes, bounds, costs,
   plans, stream provenance/generation, lowering/provenance, smart lowering, accuracy,
   call graphs, timing/CDC/lifetime, and GEM shape/dtype seams.
 

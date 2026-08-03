@@ -34,6 +34,7 @@ include "BCIR/BCIRTransducerOps.td"
 include "BCIR/BCIRParseOps.td"
 include "BCIR/BCIRBinaryFormatOps.td"
 include "BCIR/BCIRAsn1Ops.td"
+include "BCIR/BCIREcnOps.td"
 
 // Phase 8: async dependency tokens.
 include "BCIR/BCIRAsyncOps.td"

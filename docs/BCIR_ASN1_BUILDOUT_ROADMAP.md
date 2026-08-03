@@ -53,7 +53,7 @@ rule.
 | X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references; cross-module tag-default nuance (§9.8) excluded |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
-| X.692 | 8825-3:2021 | ECN | **parts 1 and 2 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed |
+| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, eleven statically decidable X.692 rules). Still refused: §22.1's replacement *notation* (needs §22.1.2.2/§22.1.2.4's parameterization) and §21.3.6's `container` |
 | X.693 | 8825-4:2021 | XER | **built** — BASIC-XER + CXER (CXER out, both in; validated against Annex A.3/A.4); EXTENDED-XER by design excluded |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
@@ -388,6 +388,56 @@ conditions, `DETERMINED BY`, `USING`, `UNUSED BITS`, `EXHIBITS HANDLE`, `BIT-REV
 recognized by the parser and refused with the clause that defines it. Skipping an unimplemented
 keyword would emit octets the handed specification does not describe, which is precisely the
 defect class the triple-rail design exists to catch.
+
+**The remaining property groups are built, and ECN is now on the law rail.** Six clauses
+that the first surface pass refused by name are implemented:
+
+- **§21.3 determinant-based encoding spaces**, **§22.3 start pointers** and **§22.8 `UNUSED
+  BITS` with a field reference** all run off one mechanism, because they are one problem.
+  §22.8.3.7's NOTE states it: "the encoding of the `USING` reference ... appears earlier in
+  the encoding than the encoding of this field, and an encoder will need to **suspend** the
+  encoding of that field until the value to be determined". So `BitWriter` reserves an
+  auxiliary field's bits where it sits and patches them when the determinant is known — one
+  pass, no re-derivation of encoder's-option choices a second pass would have to reproduce.
+  An auxiliary field nobody sets is a refusal, not zeros.
+- **§21.11 `IF`/`IF-ALL` range conditions** with §21.12's `Comparison`. This is the clause
+  that makes an ECN integer encoding *schema-directed*: §23.6.3.1 selects "the first
+  `#CONDITIONAL-INT` encoding object whose conditions are satisfied", and §21.11.3 tests the
+  **bounds of the type** rather than any value — so one object set encodes `INTEGER (0..255)`
+  in eight bits and `INTEGER (0..65535)` in sixteen with no value involved in the choice.
+- **§22.12 bit reversal**, all four `ReversalSpecification` values, over the encoding space's
+  contents including value padding and excluding pre-alignment (§22.12.1.4's NOTE 2), with
+  `#OUTER`'s different subject: §22.12.3.1 divides "the entire encoding (after any `PADDING`
+  has been applied)".
+- **§22.1 `REPLACE`** semantics: all five actions' restrictions, instantiation of a
+  single-class-parameter structure around the replaced field (§22.1.3.1, §22.1.3.5), and
+  §22.1.3.6's head-end insertions hoisted to the front **as a block, in component order** —
+  not interleaved with the components they belong to, which is the reading that first
+  suggests itself and is what makes them useful as location determinants.
+
+**A seventh divergence, and it is in the text rather than in the code.** §21.14.1 lists
+`ReversalSpecification` as `{no-reversal, reverse-bits-in-units, reverse-half-units,
+reverse-bits-in-half-units}`. §21.14.6 then describes four actions "in the order of
+enumerations listed above" and gives a *different* order. §22.12.3.2 agrees with §21.14.1 and
+with what the names say, so §21.14.6's listing is the outlier — recorded on both rails rather
+than silently resolved, because the other reading produces well-formed octets of the wrong
+shape and a parity test is the only thing that would catch it.
+
+**ECN is on the law rail as R25.** `mlir/include/BCIR/BCIREcnOps.td` gives `bcir.ecn.module`,
+`.class`, `.structure`, `.field`, `.object` and `.condition`; `BCIRVerifyPass.cpp` enforces
+eleven statically decidable X.692 rules over them. R25 exists for a sharper version of R24's
+reason: an encoding definition module is written once and applied to *many* types, so a fault
+that only fires on the right value can sit in one indefinitely. The bit-level values stay in
+the oracle — "this pattern is 0101" is not a proposition that can be false — and what the IR
+holds is every property whose *combination* with another can be. `verify_ecn.mlir` carries one
+negative fixture per rule plus two positive modules, and `test_asn1_ecn_law_parity.py` reads
+the ODS directly and pins each rule to the fixture that trips it.
+
+**Two things are still refused at the surface, and both name what they need.** §22.1's
+replacement *notation* needs §22.1.2.2's parameterized encoding structures and §22.1.2.4's
+parameterized encoding objects — X.683's parameterization applied to ECN, which does not
+exist here; the semantics are built and reachable from Python. §21.3.6's `container`
+determination needs a containment relationship this rail's flat concatenation does not have.
 
 **The plan-v6 question, answered.** The open question was whether an ECN encoding is a sixth
 column in [`encode_plan`](../bcir/asn1/encode_plan.py), carried by a version 6 of that

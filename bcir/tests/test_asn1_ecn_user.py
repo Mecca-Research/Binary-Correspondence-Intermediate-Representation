@@ -18,9 +18,12 @@ from __future__ import annotations
 
 from bcir.asn1.ecn import CONCATENATION
 from bcir.asn1.ecn_user import (
-    UNIT_OCTET, BitWriter, BoolSpec, ConcatenationSpec, FIXED_CANDIDATES, IntForm, IntOp,
-    IntSpec, IntToBits, IntToInt, Justification, OuterSpec, PadSpec, Padding, Pattern,
-    PreAlignment, TransformChain, ValuePadding,
+    UNIT_OCTET, AuxIntSpec, BitWriter, BoolSpec, Comparison, ConcatenationSpec,
+    ConditionalIntSpec, EncodingSpaceDetermination, FIXED_CANDIDATES, HeadEndStructure,
+    IntForm, IntOp, IntSelector, IntSpec, IntToBits, IntToInt, IntegerBounds, Justification,
+    OuterSpec, PadSpec, Padding, Pattern, PreAlignment, RangeCondition, ReplaceAction,
+    Replacement, ReplacementStructure, ReversalSpecification, SpaceDeterminant, StartPointer,
+    TransformChain, UnusedBits, UnusedBitsDetermination, ValuePadding,
     UserEncodingObject, encode_with_user, legacy_frame_objects, legacy_frame_workload,
     refuted_by,
 )
@@ -451,3 +454,386 @@ def test_a_boolean_object_may_be_active_low():
     BoolSpec().write(False, out)
     out.align()
     assert out.octets() == bytes((0b01100000,))
+
+
+# --- the determinant groups: 21.3, 22.3 and 22.8's UNUSED BITS --------------------------
+
+def _concat(fields: dict, order: tuple, padding: tuple = ()) -> dict:
+    spec = ConcatenationSpec(fields=fields, order=order, padding=padding)
+    return {"#C": UserEncodingObject("#C", spec)}
+
+
+def test_a_length_field_can_precede_what_it_measures_because_the_writer_suspends_it():
+    """§22.8.3.7's NOTE is the whole mechanism, stated by the specification itself.
+
+    "The encoding of the USING reference in this case appears earlier in the encoding than
+    the encoding of this field, and an encoder will need to **suspend** the encoding of that
+    field until the value to be encoded has been determined by the encoding of this field."
+
+    A single forward pass cannot do that and a re-running two-pass encoder would have to
+    reproduce every encoder's-option choice the first pass made. Reserving and patching is
+    what makes one pass sufficient.
+    """
+    objects = _concat(
+        {"len": AuxIntSpec(width=8),
+         "payload": IntSpec(width=16,
+                            space_determinant=SpaceDeterminant(reference="len", unit=8))},
+        ("len", "payload"))
+    assert encode_with_user(objects, "#C", {"payload": 0xBEEF}) == bytes((2, 0xBE, 0xEF))
+
+
+def test_a_determinant_that_nobody_sets_is_a_refusal_and_not_zeros():
+    """An auxiliary field exists to carry a determinant. One with none is a length nobody
+    computed, and transmitting zeros for it would be a well-formed document of a lie."""
+    objects = _concat({"len": AuxIntSpec(width=8), "payload": IntSpec(width=8)},
+                      ("len", "payload"))
+    try:
+        encode_with_user(objects, "#C", {"payload": 1})
+    except Asn1Error as error:
+        assert "reserved and never set" in str(error), error
+    else:
+        raise AssertionError("an unset determinant was transmitted as zeros")
+
+
+def test_field_to_be_used_checks_the_applications_value_rather_than_writing_one():
+    """§21.3.5 reads a field "whose value may be set from the abstract syntax", and
+    §21.3.5's conforming-encoder rule makes a disagreement an error rather than a fix-up.
+
+    The two determinations are opposite relationships to the same field: `field-to-be-set`
+    computes, `field-to-be-used` verifies. An implementation that quietly wrote the right
+    value here would be overriding the application.
+    """
+    spec = IntSpec(width=16, space_determinant=SpaceDeterminant(
+        determination=EncodingSpaceDetermination.FIELD_TO_BE_USED,
+        reference="declared", unit=8))
+    objects = _concat({"declared": IntSpec(width=8), "payload": spec},
+                      ("declared", "payload"))
+    assert encode_with_user(objects, "#C", {"declared": 2, "payload": 1}) == bytes(
+        (2, 0, 1))
+    try:
+        encode_with_user(objects, "#C", {"declared": 3, "payload": 1})
+    except Asn1Error as error:
+        assert "21.3.5" in str(error), error
+    else:
+        raise AssertionError("a determinant disagreeing with the encoding was accepted")
+
+
+def test_a_start_pointer_measures_from_its_own_field_and_not_from_the_encoding():
+    """§22.3.3.1 fixes both ends, and neither is the obvious one.
+
+    It counts "from the start of the encoding of the START-POINTER field (after any
+    pre-alignment of that field) to the start of the encoding of the element with the
+    start-pointer specification (after any pre-alignment of that element)". So two elements
+    pointing at two different pointer fields get offsets measured from *different* origins,
+    and pre-alignment padding is outside the span at both ends.
+    """
+    objects = _concat(
+        {"ptr": AuxIntSpec(width=8), "gap": PadSpec(width=8),
+         "body": IntSpec(width=8, start_pointer=StartPointer(reference="ptr", unit=8))},
+        ("ptr", "gap", "body"), padding=("gap",))
+    assert encode_with_user(objects, "#C", {"body": 0x7F}) == bytes((2, 0, 0x7F))
+
+
+def test_unused_bits_records_the_padding_the_justification_actually_inserted():
+    """§22.8.3.7: the encoder applies the transforms "to the value `b`" — the count of
+    padding bits this encoding produced, not the space's width or the value's."""
+    objects = _concat(
+        {"unused": AuxIntSpec(width=4),
+         "v": IntSpec(width=12, value_padding=ValuePadding(
+             justification=Justification.left(),
+             unused_bits=UnusedBits(UnusedBitsDetermination.FIELD_TO_BE_SET, "unused")))},
+        ("unused", "v"))
+    #  0b101 is three bits in a twelve-bit space, so b = 9 and the field carries 9.
+    assert encode_with_user(objects, "#C", {"v": 0b101}) == bytes((0x9A, 0x00))
+    #  A wider value leaves less padding, and the determinant moves with it.
+    assert encode_with_user(objects, "#C", {"v": 0b101010})[0] >> 4 == 6
+
+
+def test_the_unused_bits_restrictions_reject_a_transform_list_that_would_never_run():
+    """§22.8.2.2, §22.8.2.3 and §22.8.2.5 are three ways to write something meaningless.
+
+    A transform list on the wrong determination is worse than an error, because it reads as
+    though it ran. All three are checked on the group itself, so they hold however it was
+    built — the surface parser is not the only way in.
+    """
+    chain = TransformChain((IntToInt(op=IntOp.MULTIPLY, operand=2),))
+    for kwargs, citation in (
+        ({"determination": UnusedBitsDetermination.NOT_NEEDED, "reference": "x"}, "22.8.2.2"),
+        ({"determination": UnusedBitsDetermination.FIELD_TO_BE_SET}, "22.8.2.2"),
+        ({"determination": UnusedBitsDetermination.FIELD_TO_BE_USED, "reference": "x",
+          "encoder_transforms": chain}, "22.8.2.3"),
+        ({"determination": UnusedBitsDetermination.FIELD_TO_BE_SET, "reference": "x",
+          "decoder_transforms": chain}, "22.8.2.5"),
+    ):
+        try:
+            UnusedBits(**kwargs)
+        except Asn1Error as error:
+            assert citation in str(error), (kwargs, str(error))
+        else:
+            raise AssertionError(f"{kwargs} was accepted")
+
+
+def test_a_determinant_transform_must_be_reversible_where_a_value_transform_need_not_be():
+    """§22.8.2.4 and §22.3.2.3 both say it, and it is stricter than the value path.
+
+    Table 6 lets `modulo:n` be a legal, never-reversible transform on a *value*. On a
+    *determinant* it is not: a length a decoder cannot invert is a length nobody can read.
+    """
+    spec = IntSpec(width=8, space_determinant=SpaceDeterminant(
+        reference="len", unit=1,
+        encoder_transforms=TransformChain((IntToInt(op=IntOp.MODULO, operand=3),))))
+    objects = _concat({"len": AuxIntSpec(width=8), "v": spec}, ("len", "v"))
+    try:
+        encode_with_user(objects, "#C", {"v": 1})
+    except Asn1Error as error:
+        assert "22.8.2.4" in str(error) or "22.3.2.3" in str(error), error
+    else:
+        raise AssertionError("an irreversible determinant transform was accepted")
+
+
+# --- 21.11 range conditions ---------------------------------------------------------------
+
+def test_an_integer_encoding_is_chosen_by_the_types_bounds_and_not_by_the_value():
+    """§21.11.3 and §23.6.3.1 together are what makes ECN schema-directed.
+
+    The conditions test "the bounds of the integer", and the encoder applies "the first
+    #CONDITIONAL-INT encoding object whose conditions are satisfied". So the same object set
+    and the same value produce different widths for differently-bounded types — which is the
+    opposite of how every fixed rule in the candidate set behaves.
+    """
+    narrow = ConditionalIntSpec(IntSpec(width=8), (
+        (RangeCondition.TEST_RANGE, Comparison.LESS_THAN_OR_EQUAL_TO, 256),))
+    wide = ConditionalIntSpec(IntSpec(width=16), ())
+    assert IntSelector((narrow, wide), IntegerBounds(0, 255)).select().width == 8
+    assert IntSelector((narrow, wide), IntegerBounds(0, 65535)).select().width == 16
+    assert IntSelector((narrow, wide), IntegerBounds()).select().width == 16
+
+
+def test_falling_off_the_end_of_the_encodings_is_a_refusal_not_a_default():
+    """§23.6.3.1: "It is an ECN specification error if none of the conditional encodings have
+    conditions that are satisfied." A default here would encode a type the specification
+    never described."""
+    only = ConditionalIntSpec(IntSpec(width=8), (
+        (RangeCondition.BOUNDED_WITHOUT_NEGATIVES, None, None),))
+    try:
+        IntSelector((only,), IntegerBounds(low=-5, high=5)).select()
+    except Asn1Error as error:
+        assert "23.6.3.1" in str(error), error
+    else:
+        raise AssertionError("an unmatched selection fell back on a default")
+
+
+def test_the_five_shape_conditions_partition_as_the_clause_note_says():
+    """§21.11.4's NOTE: "For any given set of bounds, exactly one predicate will be
+    satisfied." The five are hand-written, so this asserts the property rather than trusting
+    it — a partition that stopped covering would make selection silently pick nothing."""
+    cases = {
+        IntegerBounds(): RangeCondition.UNBOUNDED_OR_NO_LOWER_BOUND,
+        IntegerBounds(high=9): RangeCondition.UNBOUNDED_OR_NO_LOWER_BOUND,
+        IntegerBounds(low=-1): RangeCondition.SEMI_BOUNDED_WITH_NEGATIVES,
+        IntegerBounds(low=-1, high=9): RangeCondition.BOUNDED_WITH_NEGATIVES,
+        IntegerBounds(low=0): RangeCondition.SEMI_BOUNDED_WITHOUT_NEGATIVES,
+        IntegerBounds(low=0, high=9): RangeCondition.BOUNDED_WITHOUT_NEGATIVES,
+    }
+    for bounds, shape in cases.items():
+        assert bounds.exactly_one_shape() is shape, bounds
+
+
+def test_a_missing_bound_fails_a_comparison_rather_than_standing_in_as_an_infinity():
+    """§21.11.4's shapes are how a specification asks whether a bound exists at all.
+
+    Treating an absent lower bound as negative infinity would make `test-lower-bound
+    less-than 0` true for an unbounded INTEGER, which is exactly the reading
+    `unbounded-or-no-lower-bound` exists to distinguish.
+    """
+    unbounded = IntegerBounds()
+    assert not unbounded.satisfies(
+        RangeCondition.TEST_LOWER_BOUND, Comparison.LESS_THAN, 0)
+    assert not unbounded.satisfies(
+        RangeCondition.TEST_LOWER_BOUND, Comparison.GREATER_THAN, 0)
+    assert unbounded.satisfies(RangeCondition.UNBOUNDED_OR_NO_LOWER_BOUND)
+
+
+def test_the_comparison_is_required_and_forbidden_by_the_same_clause():
+    """§21.11.5 works in both directions, and the second is the one an implementation drops."""
+    bounds = IntegerBounds(0, 9)
+    try:
+        bounds.satisfies(RangeCondition.TEST_RANGE)
+    except Asn1Error as error:
+        assert "requires" in str(error), error
+    else:
+        raise AssertionError("test-range was evaluated with nothing to compare against")
+    try:
+        bounds.satisfies(RangeCondition.BOUNDED_WITHOUT_NEGATIVES, Comparison.EQUAL_TO, 3)
+    except Asn1Error as error:
+        assert "does not admit" in str(error), error
+    else:
+        raise AssertionError("a bound shape was given a comparison it cannot use")
+
+
+def test_subtract_lower_bound_needs_a_condition_that_guarantees_one():
+    """§23.7.2.7 relates the transforms to the CONDITION, so neither alone can check it.
+
+    Subtracting a bound that may not exist is not a narrower encoding; it is an undefined
+    one. Four of §21.11.4's shapes guarantee a lower bound and `unbounded-or-no-lower-bound`
+    is precisely the one that does not.
+    """
+    subtracting = IntSpec(width=8, transform=TransformChain(
+        (IntToInt(op=IntOp.SUBTRACT_LOWER_BOUND, operand=0),)))
+    assert ConditionalIntSpec(subtracting, (
+        (RangeCondition.BOUNDED_WITHOUT_NEGATIVES, None, None),)).conditions
+    try:
+        ConditionalIntSpec(subtracting, (
+            (RangeCondition.UNBOUNDED_OR_NO_LOWER_BOUND, None, None),))
+    except Asn1Error as error:
+        assert "23.7.2.7" in str(error), error
+    else:
+        raise AssertionError("subtract:lower-bound was allowed with no bound to subtract")
+
+
+# --- 22.12 bit reversal --------------------------------------------------------------------
+
+def test_the_four_reversals_do_what_their_names_say_and_not_what_21_14_6_lists():
+    """§22.12.3.2 and the names agree; §21.14.6's a/b/c/d listing does not.
+
+    §21.14.6 claims to describe the four "in the order of enumerations listed above" and then
+    gives a different order. This pins the reading both other passages support, so that a
+    future reader who finds §21.14.6 first cannot renumber one rail against the other.
+    """
+    source = (1, 1, 0, 1, 0, 0, 0, 0)
+    assert ReversalSpecification.NO_REVERSAL.apply(source, 8) == source
+    assert ReversalSpecification.REVERSE_BITS_IN_UNITS.apply(source, 8) == tuple(
+        reversed(source))
+    assert ReversalSpecification.REVERSE_HALF_UNITS.apply(source, 8) == (
+        0, 0, 0, 0, 1, 1, 0, 1)
+    assert ReversalSpecification.REVERSE_BITS_IN_HALF_UNITS.apply(source, 8) == (
+        1, 0, 1, 1, 0, 0, 0, 0)
+
+
+def test_a_reversal_over_a_unit_that_cannot_be_halved_or_reversed_is_refused():
+    """§22.12.2.3 (one bit is the identity) and §21.14.5 (an odd unit has no half).
+
+    Both are checked when the object is BUILT rather than when it writes, because an object
+    that could never encode anything is wrong the moment it is written down.
+    """
+    try:
+        IntSpec(width=8, bit_reversal=ReversalSpecification.REVERSE_BITS_IN_UNITS)
+    except Asn1Error as error:
+        assert "22.12.2.3" in str(error), error
+    else:
+        raise AssertionError("a one-bit reversal was accepted")
+    try:
+        IntSpec(width=15, bit_reversal=ReversalSpecification.REVERSE_HALF_UNITS,
+                reversal_unit=5)
+    except Asn1Error as error:
+        assert "21.14.5" in str(error), error
+    else:
+        raise AssertionError("a half of an odd unit was accepted")
+
+
+def test_reversal_covers_the_value_padding_and_not_the_pre_alignment():
+    """§22.12.1.4's NOTE 2 draws the line, and it is not where an implementation would guess.
+
+    Reversal "applies to the contents of an encoding space or repetition space (including any
+    value pre-padding or post-padding), but does not apply to any pre-alignment padding". So
+    the alignment bits stay put while the space's contents turn over.
+    """
+    out = BitWriter()
+    out.put_bits(0b1, 1)                      # something to align away from
+    IntSpec(width=8, pre_alignment=PreAlignment(unit=UNIT_OCTET, padding=Padding.ONE),
+            bit_reversal=ReversalSpecification.REVERSE_BITS_IN_UNITS,
+            reversal_unit=8).write(0b11010000, out)
+    #  The 7 pre-alignment ones survive as written; only the value's octet is reversed.
+    assert out.octets() == bytes((0b11111111, 0b00001011))
+
+
+def test_the_outer_reversal_runs_over_the_whole_padded_encoding():
+    """§22.12.3.1 gives `#OUTER` a different subject from a field's own reversal: "the entire
+    encoding (after any PADDING has been applied) shall be divided into MULTIPLE OF units"."""
+    objects = _concat({"a": IntSpec(width=4)}, ("a",))
+    plain = encode_with_user(objects, "#C", {"a": 0b1011}, outer=OuterSpec())
+    reversed_ = encode_with_user(objects, "#C", {"a": 0b1011}, outer=OuterSpec(
+        bit_reversal=ReversalSpecification.REVERSE_BITS_IN_UNITS, reversal_unit=8))
+    assert plain == bytes((0b10110000,))
+    assert reversed_ == bytes((0b00001101,))
+
+
+# --- 22.1 replacement ---------------------------------------------------------------------
+
+def test_replacement_instantiates_a_structure_around_every_component():
+    """§22.1.3.4 and §22.1.3.5: each component becomes an instantiation of the replacement
+    structure, and the abstract value still reaches the field that took the parameter's place.
+
+    This is the TLV shape, built out of ECN rather than assumed: a length field per component,
+    set from the component's own encoding space.
+    """
+    tlv = ReplacementStructure(
+        name="#Length-prefixed", order=("length", "value"), dummy="value",
+        auxiliary={"length": AuxIntSpec(width=8)},
+        determinant=SpaceDeterminant(reference="length", unit=8))
+    spec = ConcatenationSpec(
+        fields={"a": IntSpec(width=16), "b": IntSpec(width=8)}, order=("a", "b"),
+        replacement=Replacement(ReplaceAction.ALL_COMPONENTS, tlv))
+    assert spec.transmission_order() == ("a$length", "a", "b$length", "b")
+    objects = {"#C": UserEncodingObject("#C", spec)}
+    assert encode_with_user(objects, "#C", {"a": 0xBEEF, "b": 0x2A}) == bytes(
+        (2, 0xBE, 0xEF, 1, 0x2A))
+
+
+def test_head_end_insertions_go_to_the_front_as_a_block_in_component_order():
+    """§22.1.3.6 puts them "before all components", "in the same textual order as the
+    components being replaced" — not interleaved with the components they belong to.
+
+    That is what makes them useful: a block of location determinants at a fixed offset is
+    something a decoder can read before it knows any component's size.
+    """
+    head = HeadEndStructure(name="#Offsets", order=("at",),
+                            auxiliary={"at": AuxIntSpec(width=8)})
+    spec = ConcatenationSpec(
+        fields={"a": IntSpec(width=8, start_pointer=StartPointer(reference="a^at", unit=8)),
+                "b": IntSpec(width=8, start_pointer=StartPointer(reference="b^at", unit=8))},
+        order=("a", "b"),
+        replacement=Replacement(ReplaceAction.ALL_COMPONENTS,
+                                ReplacementStructure("#Bare", ("value",), "value"),
+                                head_end=head))
+    assert spec.transmission_order() == ("a^at", "b^at", "a", "b")
+    objects = {"#C": UserEncodingObject("#C", spec)}
+    #  Each offset is measured from its OWN pointer field (22.3.3.1), so both are 2.
+    assert encode_with_user(objects, "#C", {"a": 0x11, "b": 0x22}) == bytes(
+        (2, 2, 0x11, 0x22))
+
+
+def test_the_replacement_restrictions_are_the_ones_that_relate_two_clauses():
+    """§22.1.2.8 and §22.1.1.7 c)/d), both about combinations rather than single properties."""
+    bare = ReplacementStructure("#Bare", ("value",), "value")
+    try:
+        Replacement(ReplaceAction.STRUCTURE, bare)
+    except Asn1Error as error:
+        assert "22.1.2.8" in str(error), error
+    else:
+        raise AssertionError("REPLACE STRUCTURE with no ENCODED BY was accepted")
+    for action in (ReplaceAction.OPTIONALS, ReplaceAction.NON_OPTIONALS):
+        try:
+            Replacement(action, bare)
+        except Asn1Error as error:
+            assert "22.1.1.7" in str(error), error
+        else:
+            raise AssertionError(f"REPLACE {action.value} was accepted with no optionality")
+
+
+def test_a_replacement_will_not_add_a_second_determinant_to_a_field_that_has_one():
+    """§21.2's NOTE calls a disagreement between two determinations an error, so two are
+    refused rather than raced — the second one would silently win."""
+    tlv = ReplacementStructure(
+        name="#Length-prefixed", order=("length", "value"), dummy="value",
+        auxiliary={"length": AuxIntSpec(width=8)},
+        determinant=SpaceDeterminant(reference="length", unit=8))
+    already = IntSpec(width=8, space_determinant=SpaceDeterminant(reference="other", unit=8))
+    spec = ConcatenationSpec(fields={"a": already}, order=("a",),
+                             replacement=Replacement(ReplaceAction.ALL_COMPONENTS, tlv))
+    try:
+        spec.transmission_order()
+    except Asn1Error as error:
+        assert "already carries" in str(error), error
+    else:
+        raise AssertionError("a field took two encoding-space determinants")

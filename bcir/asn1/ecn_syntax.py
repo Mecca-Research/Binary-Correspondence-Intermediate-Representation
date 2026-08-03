@@ -63,15 +63,19 @@ import hashlib
 from dataclasses import dataclass, field
 
 from .ecn_user import (
-    UNIT_NAMES, BoolSpec, ConcatenationSpec, IntForm, IntOp, IntSpec, IntToBits, IntToInt,
-    Justification, OuterSpec, PadSpec, Padding, Pattern, PreAlignment, TransformChain,
-    UserEncodingObject, ValuePadding, check_unit,
+    UNIT_BIT, UNIT_NAMES, AuxIntSpec, BoolSpec, Comparison, ConcatenationSpec,
+    ConditionalIntSpec, EncodingSpaceDetermination, HeadEndStructure, IntForm, IntOp,
+    IntSelector, IntSpec, IntToBits, IntToInt, IntegerBounds, Justification, OuterSpec,
+    PadSpec, Padding, Pattern, PreAlignment, RangeCondition, ReplaceAction, Replacement,
+    ReplacementStructure, ReversalSpecification, SpaceDeterminant, StartPointer,
+    TransformChain, UnusedBits, UnusedBitsDetermination, UserEncodingObject, ValuePadding,
+    check_unit,
 )
 from .tags import Asn1Error
 
 #: The serialization's version. Its own counter, not `encode_plan`'s: see this module's
 #: `serialize` for why an ECN encoding is a separate compilation rather than a plan version.
-SYNTAX_VERSION = 1
+SYNTAX_VERSION = 2
 SYNTAX_COMPILER = "bcir-ecn-syntax/1"
 
 #: The bit-field and constructor classes whose defined syntax clause 23 gives, restricted to
@@ -91,13 +95,19 @@ _BUILTIN_CLASSES = {
 #: Property groups that clause 23 gives every bit-field class and this repository has not
 #: built. Recognized so the refusal can cite; never silently dropped.
 _UNSUPPORTED_KEYWORDS = {
-    "REPLACE": "§22.1's replacement specification needs parameterized encoding structures",
-    "START-POINTER": "§22.3's start pointer needs a REFERENCE to another field",
-    "IF": "§21.11's RangeCondition needs the bounds of the ASN.1 type at object-application time",
-    "IF-ALL": "§21.11's RangeCondition needs the bounds of the ASN.1 type at object-application time",
-    "EXHIBITS": "§22.9's identification handles are only read by ORDER random / alternatives",
-    "BIT-REVERSAL": "§22.12's ReversalSpecification is not implemented",
+    "EXHIBITS": "§22.9's identification handles are read only by ORDER random and by the "
+                "alternatives category, neither of which is built",
     "CONTAINED": "§22.11's contained-type specification is not implemented",
+    # §22.1's replacement SEMANTICS are built in `ecn_user` and reachable from Python. What
+    # this grammar cannot read is the notation around them: §22.1.2.2 makes the `WITH`
+    # structures parameterized encoding structures with a single encoding class parameter, and
+    # §22.1.2.4 makes the `ENCODED BY` objects parameterized encoding objects whose governor is
+    # that structure instantiated with the dummy. That is X.683's parameterization applied to
+    # ECN, and `#Length-prefixed{#D} ::= ...` is not a shape this parser reads.
+    "REPLACE": "§22.1.2.2 and §22.1.2.4 build a replacement from a PARAMETERIZED encoding "
+               "structure and a PARAMETERIZED encoding object (X.683 applied to ECN), which "
+               "this grammar does not read; the replacement semantics themselves are built, "
+               "so assemble `Replacement` in Python",
 }
 
 
@@ -262,6 +272,10 @@ def _parse_unit(cursor: _Cursor, *, allow_repetitions: bool = False) -> int:
 
 
 _PADDING_NAMES = {value.value: value for value in Padding}
+_SPACE_DETERMINATIONS = {value.value: value for value in EncodingSpaceDetermination}
+_REVERSALS = {value.value: value for value in ReversalSpecification}
+_RANGE_CONDITIONS = {value.value: value for value in RangeCondition}
+_COMPARISONS = {value.value: value for value in Comparison}
 
 
 def _parse_padding(cursor: _Cursor) -> Padding:
@@ -345,12 +359,12 @@ def _parse_pre_alignment(cursor: _Cursor) -> PreAlignment:
 
         [ALIGNED TO [NEXT] [ANY] &unit [PADDING &padding [PATTERN &pattern]]]
     """
-    if cursor.accept("ANY"):
-        raise Asn1Error(
-            "ECN: §22.2.2.2 makes `ALIGNED TO ANY` require a START-POINTER clause, and "
-            "§22.3's start pointers are not implemented; `ALIGNED TO NEXT` is what this rail "
-            "encodes")
-    cursor.accept("NEXT")  # §22.2.2.1: NEXT is assumed when neither is written.
+    # §22.2.2.1: at most one of NEXT and ANY, and NEXT is assumed when neither is written.
+    # §22.2.2.2 then ties ANY to the start-pointer group, which the caller checks once it has
+    # parsed both — the requirement relates two groups, so neither alone can enforce it.
+    if cursor.accept("NEXT") and cursor.accept("ANY"):
+        raise Asn1Error("ECN: §22.2.2.1 — at most one of NEXT and ANY shall be specified")
+    any_offset = cursor.accept("ANY")
     unit = _parse_unit(cursor)
     padding = Padding.ZERO
     pattern: Pattern | None = None
@@ -358,10 +372,11 @@ def _parse_pre_alignment(cursor: _Cursor) -> PreAlignment:
         padding = _parse_padding(cursor)
         if cursor.accept("PATTERN"):
             pattern = _parse_pattern(cursor)
-    return PreAlignment(unit=unit, padding=padding, pattern=pattern)
+    return PreAlignment(unit=unit, padding=padding, pattern=pattern,
+                        encoder_chosen_offset=any_offset)
 
 
-def _parse_value_padding(cursor: _Cursor) -> ValuePadding:
+def _parse_value_padding(cursor: _Cursor, module: "EcnModule") -> ValuePadding:
     """§22.8.1.2's group, entered on `VALUE-PADDING` having been accepted.
 
         [VALUE-PADDING [JUSTIFIED &j] [PRE-PADDING &p [PATTERN &pp]]
@@ -381,15 +396,44 @@ def _parse_value_padding(cursor: _Cursor) -> ValuePadding:
         post_padding = _parse_padding(cursor)
         if cursor.accept("PATTERN"):
             post_pattern = _parse_pattern(cursor)
+    unused: UnusedBits | None = None
     if cursor.accept_words("UNUSED", "BITS"):
-        raise Asn1Error(
-            "ECN: §22.8.2.2 makes `USING` mandatory for every UNUSED BITS determination but "
-            "`not-needed`, and a reference to another field is the auxiliary-field machinery "
-            "this rail does not build; omit the group to get §22.8.4.1's not-needed case, "
-            "where the decoder derives the padding count from the space and the value")
+        unused = _parse_unused_bits(cursor, module)
     return ValuePadding(justification=justification, pre_padding=pre_padding,
                         pre_pattern=pre_pattern, post_padding=post_padding,
-                        post_pattern=post_pattern)
+                        post_pattern=post_pattern, unused_bits=unused)
+
+
+_UNUSED_DETERMINATIONS = {value.value: value for value in UnusedBitsDetermination}
+
+
+def _parse_unused_bits(cursor: _Cursor, module: "EcnModule") -> UnusedBits:
+    """§22.8.1.2's `UNUSED BITS` sub-group, entered on the two keywords having been accepted.
+
+        [UNUSED BITS [DETERMINED BY &d]
+                     [USING &ref [ENCODER-TRANSFORMS &e] [DECODER-TRANSFORMS &d]]]
+    """
+    determination = UnusedBitsDetermination.FIELD_TO_BE_SET  # §22.8.1.1's DEFAULT.
+    if cursor.accept_words("DETERMINED", "BY"):
+        token = cursor.next()
+        try:
+            determination = _UNUSED_DETERMINATIONS[token.text]
+        except KeyError:
+            raise Asn1Error(
+                f"ECN: {token} names no value of §21.4's UnusedBitsDetermination "
+                f"({', '.join(sorted(_UNUSED_DETERMINATIONS))})") from None
+    reference = ""
+    encoder = decoder = None
+    if cursor.accept("USING"):
+        reference = cursor.next().text
+        if cursor.accept("ENCODER-TRANSFORMS"):
+            encoder = TransformChain(module.transform_list(_parse_reference_list(cursor)))
+        if cursor.accept("DECODER-TRANSFORMS"):
+            decoder = TransformChain(module.transform_list(_parse_reference_list(cursor)))
+    # UnusedBits itself enforces §22.8.2.2/§22.8.2.3/§22.8.2.5, which is where those rules
+    # belong: they constrain the combination and hold however the object was built.
+    return UnusedBits(determination=determination, reference=reference,
+                      encoder_transforms=encoder, decoder_transforms=decoder)
 
 
 @dataclass(frozen=True)
@@ -405,6 +449,7 @@ class _EncodingSpace:
 
     size: int | None = None
     unit: int = 1
+    determinant: SpaceDeterminant | None = None
 
     @property
     def width(self) -> int:
@@ -416,7 +461,7 @@ class _EncodingSpace:
         return self.size * self.unit
 
 
-def _parse_encoding_space(cursor: _Cursor) -> _EncodingSpace:
+def _parse_encoding_space(cursor: _Cursor, module: "EcnModule") -> _EncodingSpace:
     """Entered on `ENCODING-SPACE` having been accepted. §22.4.1.2's bracket nesting."""
     size: int | None = None
     unit = 1
@@ -440,15 +485,35 @@ def _parse_encoding_space(cursor: _Cursor) -> _EncodingSpace:
             raise Asn1Error("ECN: §21.2.1 constrains EncodingSpaceSize to (-3..MAX)")
         if cursor.accept_words("MULTIPLE", "OF"):
             unit = _parse_unit(cursor)
+    determination = None
     if cursor.accept_words("DETERMINED", "BY"):
-        raise Asn1Error(
-            "ECN: §21.3's EncodingSpaceDetermination selects a determinant field, and this "
-            "rail writes only the fixed-size case; omit DETERMINED BY")
+        token = cursor.next()
+        try:
+            determination = _SPACE_DETERMINATIONS[token.text]
+        except KeyError:
+            raise Asn1Error(
+                f"ECN: {token} names no value of §21.3.1's EncodingSpaceDetermination "
+                f"({', '.join(sorted(_SPACE_DETERMINATIONS))})") from None
+    determinant = None
     if cursor.accept("USING"):
+        reference = cursor.next().text
+        encoder = decoder = None
+        if cursor.accept("ENCODER-TRANSFORMS"):
+            encoder = TransformChain(module.transform_list(_parse_reference_list(cursor)))
+        if cursor.accept("DECODER-TRANSFORMS"):
+            decoder = TransformChain(module.transform_list(_parse_reference_list(cursor)))
+        determinant = SpaceDeterminant(
+            determination=determination or EncodingSpaceDetermination.FIELD_TO_BE_SET,
+            reference=reference, unit=unit, encoder_transforms=encoder,
+            decoder_transforms=decoder)
+    elif determination is not None:
+        # §21.3.4 and §21.3.5 both "require the specification of a REFERENCE"; §21.3.6's
+        # `container` requires one too, or #OUTER. So a determination with no USING names no
+        # field, and there is nothing for the encoder to set or the decoder to read.
         raise Asn1Error(
-            "ECN: §21.3.4's `USING` is a REFERENCE to a field carrying the length, which "
-            "needs the auxiliary-field machinery this rail does not build")
-    return _EncodingSpace(size=size, unit=unit)
+            f"ECN: §21.3.4/§21.3.5 — `DETERMINED BY {determination.value}` requires a USING "
+            f"reference to the field carrying the length")
+    return _EncodingSpace(size=size, unit=unit, determinant=determinant)
 
 
 # --- clause 24's #TRANSFORM ----------------------------------------------------------------
@@ -521,6 +586,104 @@ def _parse_transform_body(cursor: _Cursor, name: str):
 
 # --- clause 23's bit-field classes ---------------------------------------------------------
 
+def _parse_start_pointer(cursor: _Cursor, module: "EcnModule") -> StartPointer:
+    """§22.3.1.2's group, entered on `START-POINTER` having been accepted.
+
+        [START-POINTER &ref [MULTIPLE OF &unit] [ENCODER-TRANSFORMS &transforms]]
+    """
+    reference = cursor.next().text
+    unit = UNIT_BIT  # §22.3.1.1's DEFAULT.
+    if cursor.accept_words("MULTIPLE", "OF"):
+        unit = _parse_unit(cursor)
+    transforms = None
+    if cursor.accept("ENCODER-TRANSFORMS"):
+        transforms = TransformChain(module.transform_list(_parse_reference_list(cursor)))
+    return StartPointer(reference=reference, unit=unit, encoder_transforms=transforms)
+
+
+def _parse_bit_reversal(cursor: _Cursor) -> ReversalSpecification:
+    """§22.12.1.2's `[BIT-REVERSAL &bit-reversal]`."""
+    token = cursor.next()
+    try:
+        return _REVERSALS[token.text]
+    except KeyError:
+        raise Asn1Error(
+            f"ECN: {token} names no value of §21.14.1's ReversalSpecification "
+            f"({', '.join(sorted(_REVERSALS))})") from None
+
+
+def _parse_conditions(cursor: _Cursor, all_of: bool):
+    """§23.7.1's `[IF &c [&comparison &comparator]]` and `[IF-ALL {..} [{..} {..}]]`.
+
+    §23.7.2.2 gives `IF-ALL` either one list or three: "shall be used with three lists if one
+    or more of the size-range-conditions require a comparison, and shall be used with one list
+    otherwise", and the three "shall be interpreted as a list of predicates using the values
+    in corresponding positions in the three lists". So the three-list form is transposed here
+    into one list of triples, which is what the clause says it means.
+    """
+    if not all_of:
+        condition = _named(cursor.next(), _RANGE_CONDITIONS, "§21.11.1's RangeCondition")
+        if condition.needs_comparison():
+            comparison = _named(cursor.next(), _COMPARISONS, "§21.12.1's Comparison")
+            token = cursor.next()
+            try:
+                return ((condition, comparison, int(token.text)),)
+            except ValueError:
+                raise Asn1Error(
+                    f"ECN: §21.11.5 gives {condition.value} an integer comparator; "
+                    f"got {token}") from None
+        return ((condition, None, None),)
+    conditions = [_named(Token(name, 0), _RANGE_CONDITIONS, "§21.11.1's RangeCondition")
+                  for name in _parse_reference_list(cursor)]
+    if cursor.peek() != "{":
+        if any(condition.needs_comparison() for condition in conditions):
+            raise Asn1Error(
+                "ECN: §23.7.2.2 — IF-ALL shall be used with three lists if one or more of "
+                "the conditions requires a comparison")
+        return tuple((condition, None, None) for condition in conditions)
+    comparisons = [_named(Token(name, 0), _COMPARISONS, "§21.12.1's Comparison")
+                   for name in _parse_reference_list(cursor)]
+    comparators = []
+    for text in _parse_reference_list(cursor):
+        try:
+            comparators.append(int(text))
+        except ValueError:
+            raise Asn1Error(
+                f"ECN: §21.11.5's comparator is an integer; got {text!r}") from None
+    if not len(comparisons) == len(comparators):
+        raise Asn1Error(
+            f"ECN: §23.7.2.2's three lists are read by position, so the comparison list "
+            f"({len(comparisons)}) and the comparator list ({len(comparators)}) have to "
+            f"match")
+    if len(comparisons) > len(conditions):
+        raise Asn1Error(
+            f"ECN: §23.7.2.2 gives {len(conditions)} conditions but {len(comparisons)} "
+            f"comparisons; a comparison with no condition in the same position tests nothing")
+    # §23.7.2.2: "size-range-conditions that do not require a comparison or comparator (if
+    # any) shall follow all those that require a comparison, and shall have no corresponding
+    # entry in the second and third lists." So the short lists are a prefix, not a sparse map.
+    out = []
+    for index, condition in enumerate(conditions):
+        has = index < len(comparisons)
+        if condition.needs_comparison() != has:
+            raise Asn1Error(
+                f"ECN: §23.7.2.2 — {condition.value} at position {index} "
+                f"{'needs' if condition.needs_comparison() else 'admits'} no comparison in "
+                f"that position; conditions taking one come first")
+        out.append((condition, comparisons[index] if has else None,
+                    comparators[index] if has else None))
+    return tuple(out)
+
+
+def _named(token, table: dict, what: str):
+    try:
+        return table[token.text]
+    except KeyError:
+        raise Asn1Error(
+            f"ECN: {token} names no value of {what} "
+            f"({', '.join(sorted(table))})") from None
+
+
 @dataclass(frozen=True)
 class _CommonGroups:
     """The groups clause 23 gives every bit-field class, parsed once."""
@@ -528,6 +691,8 @@ class _CommonGroups:
     pre_alignment: PreAlignment | None = None
     space: _EncodingSpace = field(default_factory=_EncodingSpace)
     value_padding: ValuePadding | None = None
+    start_pointer: StartPointer | None = None
+    bit_reversal: ReversalSpecification = ReversalSpecification.NO_REVERSAL
 
 
 def _refuse_unsupported(cursor: _Cursor) -> None:
@@ -540,7 +705,8 @@ def _refuse_unsupported(cursor: _Cursor) -> None:
             f"describe")
 
 
-def _parse_common(cursor: _Cursor, *, space_required: bool) -> _CommonGroups:
+def _parse_common(cursor: _Cursor, module: "EcnModule", *,
+                  space_required: bool) -> _CommonGroups:
     """§23.x's shared prefix and suffix, in the order the WITH SYNTAX gives them.
 
     The order is not this parser's convenience. §23.3.3.1 lists the encoder actions —
@@ -553,21 +719,40 @@ def _parse_common(cursor: _Cursor, *, space_required: bool) -> _CommonGroups:
     if cursor.accept_words("ALIGNED", "TO"):
         pre_alignment = _parse_pre_alignment(cursor)
     _refuse_unsupported(cursor)
+    start_pointer = None
+    if cursor.accept("START-POINTER"):
+        start_pointer = _parse_start_pointer(cursor, module)
+    if (pre_alignment is not None and pre_alignment.encoder_chosen_offset
+            and start_pointer is None):
+        raise Asn1Error(
+            "ECN: §22.2.2.2 — if `ALIGNED TO ANY` is specified, then the encoding object "
+            "specification shall include the START-POINTER clause; nothing else could tell a "
+            "decoder how many bits the encoder chose to insert")
+    _refuse_unsupported(cursor)
     space = _EncodingSpace()
     if cursor.accept("ENCODING-SPACE"):
-        space = _parse_encoding_space(cursor)
+        space = _parse_encoding_space(cursor, module)
     elif space_required:
         raise Asn1Error(
             "ECN: clause 23's WITH SYNTAX gives `ENCODING-SPACE` without brackets for this "
             "class, so it is mandatory rather than optional")
-    return _CommonGroups(pre_alignment=pre_alignment, space=space)
+    return _CommonGroups(pre_alignment=pre_alignment, space=space,
+                         start_pointer=start_pointer)
 
 
-def _parse_value_padding_tail(cursor: _Cursor) -> ValuePadding | None:
+def _parse_value_padding_tail(cursor: _Cursor, module: "EcnModule") -> ValuePadding | None:
     _refuse_unsupported(cursor)
     if cursor.accept("VALUE-PADDING"):
-        return _parse_value_padding(cursor)
+        return _parse_value_padding(cursor, module)
     return None
+
+
+def _parse_reversal_tail(cursor: _Cursor) -> ReversalSpecification:
+    """Clause 23's `[BIT-REVERSAL &bit-reversal]`, which every bit-field class ends with."""
+    _refuse_unsupported(cursor)
+    if cursor.accept("BIT-REVERSAL"):
+        return _parse_bit_reversal(cursor)
+    return ReversalSpecification.NO_REVERSAL
 
 
 def _finish(cursor: _Cursor, what: str) -> None:
@@ -578,9 +763,9 @@ def _finish(cursor: _Cursor, what: str) -> None:
             f"of the order clause 23 gives its property groups")
 
 
-def _parse_bool_body(cursor: _Cursor, name: str) -> BoolSpec:
+def _parse_bool_body(cursor: _Cursor, name: str, module: "EcnModule") -> BoolSpec:
     """§23.3.1's `#BOOL`, restricted to the groups this rail writes."""
-    common = _parse_common(cursor, space_required=True)
+    common = _parse_common(cursor, module, space_required=True)
     true_pattern = Pattern.from_bits("1")   # §23.3.1's DEFAULT bits:'1'B
     false_pattern = Pattern.from_bits("0")  # §23.3.1's DEFAULT bits:'0'B
     if cursor.accept("TRUE-PATTERN"):
@@ -591,7 +776,8 @@ def _parse_bool_body(cursor: _Cursor, name: str) -> BoolSpec:
         raise Asn1Error(
             "ECN: §23.3.2.3 — at most one of TRUE-PATTERN and FALSE-PATTERN may be "
             "`different:any`; §21.10.9 needs the other one to differ from")
-    padding = _parse_value_padding_tail(cursor)
+    padding = _parse_value_padding_tail(cursor, module)
+    reversal = _parse_reversal_tail(cursor)
     _finish(cursor, name)
     true_bits = true_pattern.bit_sequence()
     false_bits = false_pattern.bit_sequence()
@@ -608,7 +794,9 @@ def _parse_bool_body(cursor: _Cursor, name: str) -> BoolSpec:
         width=width,
         true_value=_bits_to_int(_place(true_bits, width, padding)),
         false_value=_bits_to_int(_place(false_bits, width, padding)),
-        pre_alignment=common.pre_alignment)
+        pre_alignment=common.pre_alignment, start_pointer=common.start_pointer,
+        space_determinant=common.space.determinant,
+        bit_reversal=reversal, reversal_unit=common.space.unit)
 
 
 def _place(bits: tuple[int, ...], width: int, padding: ValuePadding | None) -> tuple[int, ...]:
@@ -628,12 +816,25 @@ _INT_ENCODINGS = {
 }
 
 
-def _parse_conditional_int_body(cursor: _Cursor, name: str, module: "EcnModule") -> IntSpec:
-    """§23.7.1's `#CONDITIONAL-INT`, which is where an integer's encoding actually lives."""
-    if cursor.peek() in ("IF", "IF-ALL"):
-        _refuse_unsupported(cursor)
-    cursor.accept("ELSE")  # §23.7.1's unconditional alternative.
-    common = _parse_common(cursor, space_required=True)
+def _parse_conditional_int_body(cursor: _Cursor, name: str,
+                                module: "EcnModule") -> ConditionalIntSpec:
+    """§23.7.1's `#CONDITIONAL-INT`, which is where an integer's encoding actually lives.
+
+    §23.7.2.4: "At most one of `IF`, `IF-ALL` and `ELSE` shall be present", and §23.7.2.2
+    makes `ELSE` and the omission of all three mean the same thing — no condition.
+    """
+    conditions = ()
+    if cursor.accept("IF"):
+        conditions = _parse_conditions(cursor, all_of=False)
+    elif cursor.accept("IF-ALL"):
+        conditions = _parse_conditions(cursor, all_of=True)
+    elif not cursor.accept("ELSE"):
+        pass
+    if cursor.peek() in ("IF", "IF-ALL", "ELSE"):
+        raise Asn1Error(
+            f"ECN: §23.7.2.4 — at most one of IF, IF-ALL and ELSE shall be present; {name} "
+            f"has a second")
+    common = _parse_common(cursor, module, space_required=True)
     chain: TransformChain | None = None
     if cursor.accept("TRANSFORMS"):
         chain = TransformChain(module.transform_list(_parse_reference_list(cursor)))
@@ -649,21 +850,45 @@ def _parse_conditional_int_body(cursor: _Cursor, name: str, module: "EcnModule")
         except KeyError:
             raise Asn1Error(
                 f"ECN: {token} names no alternative of §23.7.1's &encoding ENUMERATED") from None
-    padding = _parse_value_padding_tail(cursor)
+    padding = _parse_value_padding_tail(cursor, module)
+    reversal = _parse_reversal_tail(cursor)
     _finish(cursor, name)
-    return IntSpec(width=common.space.width, form=form, transform=chain,
-                   pre_alignment=common.pre_alignment, value_padding=padding)
+    # §23.7.2.7's `subtract:lower-bound` rule relates the transforms to the CONDITION, so it
+    # is checked by ConditionalIntSpec where both are in hand rather than here.
+    return ConditionalIntSpec(
+        spec=IntSpec(width=common.space.width, form=form, transform=chain,
+                     pre_alignment=common.pre_alignment, value_padding=padding,
+                     start_pointer=common.start_pointer,
+                     space_determinant=common.space.determinant,
+                     bit_reversal=reversal, reversal_unit=common.space.unit),
+        conditions=conditions)
 
 
-def _parse_int_body(cursor: _Cursor, name: str, module: "EcnModule") -> IntSpec:
+def _parse_int_body(cursor: _Cursor, name: str, module: "EcnModule"):
     """§23.6.1's `#INT`: `[ENCODINGS &Integer-encodings] [ENCODING &integer-encoding]`.
 
     §23.6.2.2: "Exactly one of ENCODING and ENCODINGS shall be set." Both name
-    `#CONDITIONAL-INT` objects, and §23.6.3.1 says the encoder applies the first whose
-    conditions hold — with `IF` unimplemented every object here is unconditional, so a list of
-    more than one would have no way to reach the second and is refused rather than silently
-    truncated.
+    `#CONDITIONAL-INT` objects, and §23.6.3.1 selects "the first ... whose conditions are
+    satisfied" against the bounds of the type the object set is applied to.
+
+    `BOUNDS` is this rail's stand-in for those bounds, and it is a **deviation stated rather
+    than hidden**. In X.692 the bounds arrive from the ASN.1 type through an encoding link
+    module (clause 14), which this rail does not have — a value dict is what it links against.
+    Writing them on the `#INT` object keeps §21.11's predicates testable against real numbers;
+    it does not make them a property the notation gives that object.
     """
+    if cursor.accept("AUXILIARY"):
+        # A DEVIATION, stated. X.692 has no keyword for "this field is auxiliary" because
+        # §22.1.2.6's classification comes from the encoding link module: a structure field
+        # with no ASN.1 component behind it is auxiliary, and clause 14's ELM is what decides
+        # that. This rail links against a value dict rather than an ASN.1 type, so the fact
+        # has nowhere else to be written. It is spelled on the object, where the width already
+        # lives, and named here rather than inferred from "the value did not carry it" —
+        # which would make a typo in a field name silently produce a determinant field.
+        common = _parse_common(cursor, module, space_required=True)
+        _finish(cursor, name)
+        return AuxIntSpec(width=common.space.width, form=IntForm.POSITIVE_INT,
+                          pre_alignment=common.pre_alignment)
     single = cursor.accept("ENCODING")
     plural = not single and cursor.accept("ENCODINGS")
     if not (single or plural):
@@ -677,19 +902,33 @@ def _parse_int_body(cursor: _Cursor, name: str, module: "EcnModule") -> IntSpec:
         raise Asn1Error(
             f"ECN: §23.6.2.2 — {name} sets both ENCODING and ENCODINGS; exactly one is "
             f"permitted")
+    bounds = IntegerBounds()
+    if cursor.accept("BOUNDS"):
+        bounds = IntegerBounds(_parse_bound(cursor), _parse_bound(cursor))
     _finish(cursor, name)
-    if len(names) != 1:
+    encodings = tuple(module.conditional_int(reference) for reference in names)
+    if plural and len(encodings) == 1:
         raise Asn1Error(
-            f"ECN: {name} lists {len(names)} #CONDITIONAL-INT objects. \u00a723.6.3.1 selects "
-            f"'the first ... whose conditions are satisfied', and IF/IF-ALL conditions are "
-            f"not implemented, so every object here is unconditional and nothing past the "
-            f"first could ever be selected")
-    return module.conditional_int(names[0])
+            f"ECN: §23.6.2.2 gives ENCODINGS a list; {name} lists one object, which is what "
+            f"ENCODING spells")
+    return IntSelector(encodings=encodings, bounds=bounds)
 
 
-def _parse_pad_body(cursor: _Cursor, name: str) -> PadSpec:
+def _parse_bound(cursor: _Cursor) -> int | None:
+    """One bound, `-` for absent. §21.11.4 turns on EXISTENCE, so absent is not a number."""
+    token = cursor.next()
+    if token.text == "-":
+        return None
+    try:
+        return int(token.text)
+    except ValueError:
+        raise Asn1Error(
+            f"ECN: a bound is an integer, or `-` for none; got {token}") from None
+
+
+def _parse_pad_body(cursor: _Cursor, name: str, module: "EcnModule") -> PadSpec:
     """§23.12.1's `#PAD`."""
-    common = _parse_common(cursor, space_required=True)
+    common = _parse_common(cursor, module, space_required=True)
     pattern: Pattern | None = None
     padding = Padding.ZERO
     if cursor.accept("PAD-PATTERN"):
@@ -699,7 +938,7 @@ def _parse_pad_body(cursor: _Cursor, name: str) -> PadSpec:
         # length, and is replicated and truncated to fill the encoding space".
         pattern.require_non_null(f"{name}'s PAD-PATTERN")
     _finish(cursor, name)
-    return PadSpec(width=common.space.width, padding=padding, pattern=pattern)
+    return PadSpec(width=common.space.width, padding=padding, pattern=pattern)  # noqa: E501
 
 
 def _parse_outer_body(cursor: _Cursor, name: str) -> OuterSpec:
@@ -730,7 +969,7 @@ def _parse_concatenation_body(cursor: _Cursor, name: str, module: "EcnModule"
     textual order, are the encoding structure's. So the object is parsed for its own
     properties and the structure supplies the rest.
     """
-    common = _parse_common(cursor, space_required=False)
+    common = _parse_common(cursor, module, space_required=False)
     if common.space.size is not None:
         raise Asn1Error(
             f"ECN: §21.2.8 forbids `fixed-to-max` for a concatenation, and a stated SIZE on "
@@ -833,7 +1072,7 @@ class EcnModule:
             out.append(self.transforms[name])
         return tuple(out)
 
-    def conditional_int(self, name: str) -> IntSpec:
+    def conditional_int(self, name: str) -> ConditionalIntSpec:
         entry = self.objects.get(name)
         if entry is None or self.builtin_of(entry[0]) != "conditional-int":
             raise Asn1Error(
@@ -960,7 +1199,22 @@ def _describe(spec) -> str:
     if isinstance(spec, IntSpec):
         return (f"int width {spec.width} form {spec.form.value} "
                 f"transform {_chain(spec.transform)} "
-                f"pre {_pre(spec.pre_alignment)} pad {_pad(spec.value_padding)}")
+                f"pre {_pre(spec.pre_alignment)} pad {_pad(spec.value_padding)} "
+                f"ptr {_ref(spec.start_pointer)} det {_det(spec.space_determinant)} "
+                f"rev {spec.bit_reversal.value}:{spec.reversal_unit}")
+    if isinstance(spec, ConditionalIntSpec):
+        conditions = "/".join(
+            f"{condition.value}"
+            + (f":{comparison.value}:{comparator}" if comparison is not None else "")
+            for condition, comparison, comparator in spec.conditions) or "-"
+        return f"conditional-int if {conditions} then {_describe(spec.spec)}"
+    if isinstance(spec, IntSelector):
+        chosen = "/".join(_name_of_condition(entry) for entry in spec.encodings) or "-"
+        return (f"int-selector bounds {_bound(spec.bounds.low)}..{_bound(spec.bounds.high)} "
+                f"encodings {chosen}")
+    if isinstance(spec, AuxIntSpec):
+        return (f"aux width {spec.width} form {spec.form.value} "
+                f"pre {_pre(spec.pre_alignment)}")
     if isinstance(spec, BoolSpec):
         return (f"bool width {spec.width} true {spec.true_value} false {spec.false_value} "
                 f"pre {_pre(spec.pre_alignment)}")
@@ -971,8 +1225,42 @@ def _describe(spec) -> str:
         return (f"outer boundary {spec.boundary_bits} padding {spec.padding.value} "
                 f"pattern {_pattern(spec.pattern)}")
     if isinstance(spec, ConcatenationSpec):
-        return f"concatenation order {'/'.join(spec.transmission_order())}"
+        return (f"concatenation order {'/'.join(spec.transmission_order())} "
+                f"replace {_replacement(spec.replacement)}")
     raise Asn1Error(f"ECN: {type(spec).__name__} has no canonical serialization")
+
+
+def _name_of_condition(entry: ConditionalIntSpec) -> str:
+    return _describe(entry).replace(" ", "~")
+
+
+def _bound(value: int | None) -> str:
+    return "-" if value is None else str(value)
+
+
+def _ref(pointer) -> str:
+    if pointer is None:
+        return "-"
+    return (f"{pointer.reference}:{pointer.unit}:"
+            f"{_chain(pointer.encoder_transforms)}")
+
+
+def _det(determinant) -> str:
+    if determinant is None:
+        return "-"
+    return (f"{determinant.determination.value}:{determinant.reference}:{determinant.unit}:"
+            f"{_chain(determinant.encoder_transforms)}:"
+            f"{_chain(determinant.decoder_transforms)}")
+
+
+def _replacement(replacement) -> str:
+    if replacement is None:
+        return "-"
+    structure = replacement.structure
+    head = replacement.head_end
+    return (f"{replacement.action.value}:{structure.name}:"
+            f"{'/'.join(structure.order)}:{structure.dummy}:{_det(structure.determinant)}:"
+            f"{'-' if head is None else head.name + '/' + '/'.join(head.order)}")
 
 
 def _chain(chain) -> str:
@@ -987,15 +1275,20 @@ def _pre(pre_alignment: PreAlignment | None) -> str:
     if pre_alignment is None:
         return "-"
     return (f"{pre_alignment.unit}:{pre_alignment.padding.value}:"
-            f"{_pattern(pre_alignment.pattern)}")
+            f"{_pattern(pre_alignment.pattern)}:"
+            f"{'any' if pre_alignment.encoder_chosen_offset else 'next'}")
 
 
 def _pad(padding: ValuePadding | None) -> str:
     if padding is None:
         return "-"
+    unused = padding.unused_bits
+    tail = "-" if unused is None else (
+        f"{unused.determination.value}:{unused.reference}:"
+        f"{_chain(unused.encoder_transforms)}:{_chain(unused.decoder_transforms)}")
     return (f"{padding.justification.side.value}:{padding.justification.offset}:"
             f"{padding.pre_padding.value}:{_pattern(padding.pre_pattern)}:"
-            f"{padding.post_padding.value}:{_pattern(padding.post_pattern)}")
+            f"{padding.post_padding.value}:{_pattern(padding.post_pattern)}:{tail}")
 
 
 def _pattern(pattern: Pattern | None) -> str:
@@ -1095,9 +1388,9 @@ def _parse_assignment(cursor: _Cursor, module: EcnModule) -> None:
     elif builtin == "int":
         spec = _parse_int_body(inner, name, module)
     elif builtin == "bool":
-        spec = _parse_bool_body(inner, name)
+        spec = _parse_bool_body(inner, name, module)
     elif builtin == "pad":
-        spec = _parse_pad_body(inner, name)
+        spec = _parse_pad_body(inner, name, module)
     elif builtin == "outer":
         spec = _parse_outer_body(inner, name)
     else:

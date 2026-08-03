@@ -17,7 +17,7 @@ GEM schedule, target lowering, and provenance as one auditable chain.
 
 Every program in this roadmap obeys these invariants:
 
-1. **Legality precedes optimization.** R1–R24 and device-specific laws reject illegal
+1. **Legality precedes optimization.** R1–R25 and device-specific laws reject illegal
    candidates before K_BCIR prices them.
 2. **One semantic truth, multiple realizations.** Python is the executable oracle; MLIR is
    the compiled law rail; C is the freestanding/hosted realization rail. A new rail earns
@@ -65,7 +65,7 @@ The normative semantics and artifact contract are in
 
 | Area | Landed baseline | Boundary that remains |
 |---|---|---|
-| Law and optimizer | R1–R24, twelve-axis cost vectors, exact planning, RCSP/Pareto, overlap pricing, replay/provenance, frozen learned priors | Additional laws require a demonstrated semantic gap and dual-rail negative coverage |
+| Law and optimizer | R1–R25, twelve-axis cost vectors, exact planning, RCSP/Pareto, overlap pricing, replay/provenance, frozen learned priors | Additional laws require a demonstrated semantic gap and dual-rail negative coverage |
 | GEM and StreamPack | Hydration, scheduling, execution, strict v1–v3 codecs, C/Python byte parity, operator disassembly/hexdump | Hardware command packets and per-device execution are not implied |
 | C compiler | Broad driver-oriented C23 subset, twin lowering, Clang differentials, target ABI matrix, project/link/fallback modes | Not complete ISO C23; unsupported constructs route to the resident compiler |
 | C memory/runtime | Freestanding/hosted/driver classes, allocator injection, failure tests, direct RuntimeChannel v1 | No out-of-process transport or resident hardware binding |
@@ -250,7 +250,7 @@ protobuf, gRPC, BMC, or UART delivery. Normative details live in
 
 | Milestone | Current state | Exit evidence |
 |---|---|---|
-| Foundation law/parity | Landed | R1–R24 negative coverage, generated differentials, deterministic replay |
+| Foundation law/parity | Landed | R1–R25 negative coverage, generated differentials, deterministic replay |
 | C/runtime memory discipline | Landed baseline | Strict hosted/freestanding builds, allocation-failure campaign, sanitizers, idempotent teardown |
 | Pre-driver machine edge | Partial landed | Ordinary x86 edge and MC1/MC2 baselines; paranoid/reset and hardware binding remain explicit |
 | UART direct package | Open | D0–D2 schema/assembler/verifier/simulator/direct parity, faults, cancellation, saturation, replay |

@@ -21,6 +21,8 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringSwitch.h"
 
 #include <algorithm>
@@ -2116,6 +2118,251 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
             << p.getSymName() << " of " << p.getNative()
             << " is not marked additive; an ASN.1 projection is a SECOND transfer "
                "syntax, never a replacement for a frozen wire format";
+        ok = false;
+      }
+    });
+
+    // ------------------------------------------------------------------------
+    // R25: X.692 ECN encoding-definition legality.
+    //
+    // Oracle twin: bcir/asn1/ecn_user.py + ecn_syntax.py. Same posture as R24 and the
+    // same reason for it, sharpened by what ECN is: an encoding definition module is
+    // written once and applied to many types, so a fault that only fires on the right
+    // value can sit in one for a long time. Every check below is a statement about the
+    // SPECIFICATION, decidable with no value in hand.
+    //
+    // Vacuous for IR with no bcir.ecn.* operation.
+    root->walk([&](EcnModuleOp m) {
+      // 9.5.2: "any set can contain only one encoding object of a given encoding class.
+      // Thus there is no ambiguity when an encoding object set is applied to a type."
+      // The ambiguity is the point -- two objects for one class do not make a stricter
+      // specification, they make an undefined one.
+      llvm::StringMap<StringRef> objectForClass;
+      llvm::StringMap<StringRef> classBase;
+      m.walk([&](EcnClassOp c) { classBase[c.getSymName()] = c.getBase(); });
+      m.walk([&](EcnObjectOp o) {
+        StringRef cls = o.getEncodingClass();
+        auto it = objectForClass.find(cls);
+        if (it != objectForClass.end()) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " and " << it->second << " both realize " << cls
+              << "; X.692 9.5.2 permits an encoding object set at most one object per "
+                 "encoding class. Assign a class per field (clause 11's "
+                 "`#Version ::= #INT`) when two fields encode differently";
+          ok = false;
+        } else {
+          objectForClass[cls] = o.getSymName();
+        }
+      });
+      // A class assignment chain that loops names no category, so no object could
+      // realize it and nothing downstream could pick an encoder.
+      for (auto &entry : classBase) {
+        llvm::SmallPtrSet<const void *, 8> seen;
+        StringRef current = entry.first();
+        while (true) {
+          auto it = classBase.find(current);
+          if (it == classBase.end())
+            break;  // resolved to a built-in, or to a name this module does not assign
+          if (!seen.insert(it->second.data()).second) {
+            m.emitError("R25: the ECN class assignment for ")
+                << entry.first() << " is circular; a class that is its own base names "
+                << "no encoding category";
+            ok = false;
+            break;
+          }
+          current = it->second;
+        }
+      }
+    });
+
+    root->walk([&](EcnStructureOp s) {
+      // 16.3.1's NamedField identifies a field within its structure, and every clause 22
+      // REFERENCE names one. Two fields with one name make every such reference
+      // ambiguous, which is the same family of fault as two components sharing a tag.
+      llvm::StringSet<> names;
+      s.walk([&](EcnFieldOp f) {
+        if (!names.insert(f.getName()).second) {
+          f.emitError("R25: the ECN structure ")
+              << s.getSymName() << " names the field " << f.getName() << " twice; a "
+              << "clause 22 REFERENCE to it would name two fields";
+          ok = false;
+        }
+      });
+    });
+
+    root->walk([&](EcnObjectOp o) {
+      // 22.2.2.2: "If ALIGNED TO ANY is specified, then the encoding object
+      // specification shall include the START-POINTER clause." Nothing else can tell a
+      // decoder how many bits an encoder chose to insert.
+      if (o.getAlignAny() && !o.getStartPointer()) {
+        o.emitError("R25: ECN object ")
+            << o.getSymName() << " specifies ALIGNED TO ANY without a START-POINTER; "
+            << "X.692 22.2.2.2 requires one, because the number of inserted bits is the "
+            << "encoder's choice and only the start pointer records it";
+        ok = false;
+      }
+      // 21.3.4 and 21.3.5 both "require the specification of a REFERENCE" to the field
+      // carrying the length; 21.3.6's `container` requires one too, or #OUTER. So a
+      // determination with no reference names no field at all.
+      if (o.getSpaceDetermination().has_value() != o.getSpaceReference().has_value()) {
+        o.emitError("R25: ECN object ")
+            << o.getSymName()
+            << " states an encoding-space determination without a USING reference, or a "
+            << "reference with no determination; X.692 21.3.4/21.3.5 require both";
+        ok = false;
+      }
+      // 22.8.2.2: "USING shall be specified if and only if DETERMINED BY is not
+      // `not-needed`." Both directions, which is what makes it an `if and only if`.
+      if (o.getUnusedDetermination().has_value()) {
+        bool notNeeded = *o.getUnusedDetermination() == EcnUnusedBits::NotNeeded;
+        if (notNeeded == o.getUnusedReference().has_value()) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " sets UNUSED BITS DETERMINED BY "
+              << stringifyEcnUnusedBits(*o.getUnusedDetermination())
+              << (notNeeded ? " with a USING reference" : " with no USING reference")
+              << "; X.692 22.8.2.2 requires USING if and only if the determination is "
+              << "not `not-needed`";
+          ok = false;
+        }
+        // 22.8.2.3 and 22.8.2.5 confine each transform list to one determination. A list
+        // on the wrong one never runs, which reads as though it did.
+        if (o.getUnusedEncoderTransforms() &&
+            *o.getUnusedDetermination() != EcnUnusedBits::FieldToBeSet) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " gives UNUSED BITS ENCODER-TRANSFORMS to "
+              << stringifyEcnUnusedBits(*o.getUnusedDetermination())
+              << "; X.692 22.8.2.3 permits them only with `field-to-be-set`";
+          ok = false;
+        }
+        if (o.getUnusedDecoderTransforms() &&
+            *o.getUnusedDetermination() != EcnUnusedBits::FieldToBeUsed) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " gives UNUSED BITS DECODER-TRANSFORMS to "
+              << stringifyEcnUnusedBits(*o.getUnusedDetermination())
+              << "; X.692 22.8.2.5 permits them only with `field-to-be-used`";
+          ok = false;
+        }
+      }
+      // 22.12.2.3 and 21.14.5, both about the unit the reversal divides the space into.
+      if (o.getReversal().has_value() && *o.getReversal() != EcnReversal::NoReversal) {
+        int64_t unit = o.getSpaceUnit().value_or(1);
+        if (unit <= 1) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " sets BIT-REVERSAL over a " << unit
+              << "-bit unit; X.692 22.12.2.3 forbids it unless MULTIPLE OF is greater "
+              << "than one bit, since reversing one bit is the identity";
+          ok = false;
+        } else if ((*o.getReversal() == EcnReversal::ReverseHalfUnits ||
+                    *o.getReversal() == EcnReversal::ReverseBitsInHalfUnits) &&
+                   (unit % 2) != 0) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " sets "
+              << stringifyEcnReversal(*o.getReversal()) << " over an odd " << unit
+              << "-bit unit; X.692 21.14.5 needs an even Unit, because an odd one has no "
+              << "half";
+          ok = false;
+        }
+      }
+      // 22.1.2.8, which relates the action, the head-end insertion and ENCODED BY.
+      if (o.getReplace().has_value()) {
+        if (*o.getReplace() == EcnReplace::Structure) {
+          if (o.getHeadEnd()) {
+            o.emitError("R25: ECN object ")
+                << o.getSymName() << " has both REPLACE STRUCTURE and INSERT AT HEAD; "
+                << "X.692 22.1.2.8 forbids the combination";
+            ok = false;
+          }
+          if (!o.getReplacementObject()) {
+            o.emitError("R25: ECN object ")
+                << o.getSymName() << " has REPLACE STRUCTURE with no ENCODED BY; X.692 "
+                << "22.1.2.8 requires one";
+            ok = false;
+          }
+        }
+        if (!o.getReplacementStructure()) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " sets REPLACE with no WITH structure";
+          ok = false;
+        }
+        // 23.3.2.2, 23.7.2.5, 23.12.2.3 -- every category states it: "If REPLACE is set,
+        // then no other encoding property group shall be set."
+        if (o.getAlignUnit() || o.getStartPointer() || o.getSpaceSize() ||
+            o.getUnusedDetermination().has_value() || o.getReversal().has_value()) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " sets REPLACE and another encoding property group; "
+              << "X.692 states in every category (23.3.2.2, 23.7.2.5, 23.12.2.3) that if "
+              << "REPLACE is set, no other group shall be";
+          ok = false;
+        }
+      }
+      // 23.7.2.4: "At most one of IF, IF-ALL and ELSE shall be present."
+      bool hasConditions = false;
+      o.walk([&](EcnConditionOp) { hasConditions = true; });
+      if (hasConditions && o.getUnconditional()) {
+        o.emitError("R25: ECN object ")
+            << o.getSymName() << " has both a condition and ELSE; X.692 23.7.2.4 permits "
+            << "at most one of IF, IF-ALL and ELSE";
+        ok = false;
+      }
+      // 23.7.2.7: `subtract:lower-bound` "shall be included only if the IF or IF-ALL
+      // condition restricts the application of this encoding to classes of the integer
+      // category with a lower bound". Four of 21.11.4's five shapes guarantee one, and
+      // `test-lower-bound` does by construction -- a bound that does not exist compares
+      // against nothing. `unbounded-or-no-lower-bound` is precisely the one that does not.
+      if (o.getSubtractsLowerBound()) {
+        bool guaranteed = false;
+        o.walk([&](EcnConditionOp c) {
+          switch (c.getCondition()) {
+          case EcnRangeCondition::SemiBoundedWithNegatives:
+          case EcnRangeCondition::BoundedWithNegatives:
+          case EcnRangeCondition::SemiBoundedWithoutNegatives:
+          case EcnRangeCondition::BoundedWithoutNegatives:
+          case EcnRangeCondition::TestLowerBound:
+            guaranteed = true;
+            break;
+          default:
+            break;
+          }
+        });
+        if (!guaranteed) {
+          o.emitError("R25: ECN object ")
+              << o.getSymName() << " applies the INT-TO-INT transform "
+              << "`subtract:lower-bound` under no condition guaranteeing a lower bound; "
+              << "X.692 23.7.2.7 permits it only where the IF or IF-ALL condition "
+              << "restricts the encoding to classes with one";
+          ok = false;
+        }
+      }
+    });
+
+    root->walk([&](EcnConditionOp c) {
+      // 21.11.5, in both directions: the last three RangeConditions "shall be provided"
+      // with a Comparison and an integer comparator, and for the others "these shall not
+      // be provided". A comparison on a shape condition tests nothing; a shape on
+      // `test-range` has nothing to compare against.
+      bool needs = c.getCondition() == EcnRangeCondition::TestLowerBound ||
+                   c.getCondition() == EcnRangeCondition::TestUpperBound ||
+                   c.getCondition() == EcnRangeCondition::TestRange;
+      bool has = c.getComparison().has_value();
+      // Two messages rather than one with a ternary, so each is greppable: a diagnostic
+      // assembled from fragments cannot be pinned by a fixture or found in a log.
+      if (needs && !has) {
+        c.emitError("R25: the ECN range condition ")
+            << stringifyEcnRangeCondition(c.getCondition())
+            << " requires a Comparison and an integer comparator (X.692 21.11.5)";
+        ok = false;
+      } else if (!needs && has) {
+        c.emitError("R25: the ECN range condition ")
+            << stringifyEcnRangeCondition(c.getCondition())
+            << " does not admit a Comparison or a comparator (X.692 21.11.5); the first "
+            << "five conditions test the SHAPE of the bounds and have nothing to compare";
+        ok = false;
+      }
+      if (has != c.getComparator().has_value()) {
+        c.emitError("R25: the ECN range condition ")
+            << stringifyEcnRangeCondition(c.getCondition())
+            << " states a Comparison without its comparator, or the reverse; X.692 "
+            << "21.11.5 provides them together";
         ok = false;
       }
     });
