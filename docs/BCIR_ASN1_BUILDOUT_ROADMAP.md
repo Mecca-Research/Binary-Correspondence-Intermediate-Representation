@@ -433,6 +433,34 @@ holds is every property whose *combination* with another can be. `verify_ecn.mli
 negative fixture per rule plus two positive modules, and `test_asn1_ecn_law_parity.py` reads
 the ODS directly and pins each rule to the fixture that trips it.
 
+**Clause 24 is complete: all nineteen transforms.** The first pass built two — `int-to-int`
+and a fixed-width `int-to-bits`. The rest are now here, and reading them turned up structure
+worth stating. They fall into three groups, not one: eleven *value* transforms, three
+*composite constructors* (§24.14–§24.16) that turn a string into §24.2.1's transform composite,
+and three *collapsers* (§24.17–§24.19) that put one back. Every value transform states the
+composite rule in the same words — §24.4.4 is representative — so it is implemented once in
+`Transform.apply` and each transform writes only the scalar case; eleven hand-written loops
+would be eleven chances to differ in a way no test distinguishes.
+
+Three clause readings are worth recording because the obvious implementation gets each wrong:
+
+- **§24.7.13 pads in front of the sign.** It pre-fixes the pad to §24.7.9's representation,
+  which already carries the `-`. So `-7` in a four-character field with zero padding is `00-7`,
+  not the `-007` every printf produces. Nothing in clause 24 says the pad goes after the sign,
+  and saying so would have taken a sentence.
+- **§24.8.17 fills with the sign bit, not with zero.** A two's-complement encoding widened to
+  a fixed size "shall have bits prefixed **equal in value to the original leading bit**";
+  zero-extending would change the sign.
+- **§24.10.10.2 and §24.11.6.2 check different things.** `char-to-bits` requires distinct
+  *characters*; `bits-to-char` requires distinct characters **and** distinct bitstrings. The
+  asymmetry is deliberate: two characters sharing a bitstring is lossy but well defined, while
+  two identical source bitstrings make the transform not a function.
+
+The module layering moved to make room. Clause 21's property types are now
+[`ecn_props.py`](../bcir/asn1/ecn_props.py) and clause 24 is
+[`ecn_transform.py`](../bcir/asn1/ecn_transform.py), with `ecn_user` re-exporting both — a
+file-layout decision, not a change to the public surface.
+
 **Two things are still refused at the surface, and both name what they need.** §22.1's
 replacement *notation* needs §22.1.2.2's parameterized encoding structures and §22.1.2.4's
 parameterized encoding objects — X.683's parameterization applied to ECN, which does not

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from bcir.asn1.ecn import CONCATENATION
 from bcir.asn1.ecn_user import (
-    UNIT_OCTET, AuxIntSpec, BitWriter, BoolSpec, Comparison, ConcatenationSpec,
+    UNIT_BIT, UNIT_OCTET, AuxIntSpec, BitWriter, BoolSpec, Comparison, ConcatenationSpec,
     ConditionalIntSpec, EncodingSpaceDetermination, FIXED_CANDIDATES, HeadEndStructure,
     IntForm, IntOp, IntSelector, IntSpec, IntToBits, IntToInt, IntegerBounds, Justification,
     OuterSpec, PadSpec, Padding, Pattern, PreAlignment, RangeCondition, ReplaceAction,
@@ -202,7 +202,14 @@ def test_the_operand_ranges_are_the_clauses_own():
 
 
 def test_int_to_bits_round_trips():
-    transform = IntToBits(width=4, name="INT-TO-BITS")
+    """§24.8's fixed-width `positive-int` form, which the frame header's neighbours use.
+
+    The width is now `SIZE × MULTIPLE OF` (§24.8.14) rather than a single `width=`, because
+    the clause gives three size arms and only one of them is a bit count — see
+    `test_asn1_ecn_transform.py` for the other two.
+    """
+    transform = IntToBits(name="INT-TO-BITS", encoded_as=IntForm.POSITIVE_INT, size=4,
+                          unit=UNIT_BIT)
     assert transform.apply(10) == (1, 0, 1, 0)
     assert transform.inverse((1, 0, 1, 0)) == 10
     try:

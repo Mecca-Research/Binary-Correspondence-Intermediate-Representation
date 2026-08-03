@@ -65,7 +65,11 @@ from dataclasses import dataclass, field
 from .ecn_user import (
     UNIT_BIT, UNIT_NAMES, AuxIntSpec, BoolSpec, Comparison, ConcatenationSpec,
     ConditionalIntSpec, EncodingSpaceDetermination, HeadEndStructure, IntForm, IntOp,
-    IntSelector, IntSpec, IntToBits, IntToInt, IntegerBounds, Justification, OuterSpec,
+    RESULT_SIZE_FIXED_TO_MAX, RESULT_SIZE_VARIABLE, BitsToBits, BitsToChar,
+    BitsToCompositeBits, BitsToInt, BitToBits, BoolToBool, BoolToInt, CharsToCompositeChar,
+    CharToBits, CompositeBitsToBits, CompositeBitsToOctets, CompositeCharToChars,
+    IntSelector, IntSpec, IntToBits, IntToBool, IntToChars, IntToInt, IntegerBounds,
+    Justification, OctetsToCompositeBits, OuterSpec,
     PadSpec, Padding, Pattern, PreAlignment, RangeCondition, ReplaceAction, Replacement,
     ReplacementStructure, ReversalSpecification, SpaceDeterminant, StartPointer,
     TransformChain, UnusedBits, UnusedBitsDetermination, UserEncodingObject, ValuePadding,
@@ -75,7 +79,7 @@ from .tags import Asn1Error
 
 #: The serialization's version. Its own counter, not `encode_plan`'s: see this module's
 #: `serialize` for why an ECN encoding is a separate compilation rather than a plan version.
-SYNTAX_VERSION = 2
+SYNTAX_VERSION = 3
 SYNTAX_COMPILER = "bcir-ecn-syntax/1"
 
 #: The bit-field and constructor classes whose defined syntax clause 23 gives, restricted to
@@ -521,6 +525,95 @@ def _parse_encoding_space(cursor: _Cursor, module: "EcnModule") -> _EncodingSpac
 _INT_OP_NAMES = {op.value: op for op in IntOp}
 
 
+_INT_FORMS = {"positive-int": IntForm.POSITIVE_INT,
+              "twos-complement": IntForm.TWOS_COMPLEMENT}
+
+
+def _parse_int_form(cursor: _Cursor) -> IntForm:
+    """X.690 §8.3.2/§8.3.3's two integer encodings, which §24.8.9 and §24.9.5 both name."""
+    token = cursor.next()
+    if token.text in ("reverse-positive-int", "reverse-twos-complement"):
+        raise Asn1Error(
+            f"ECN: §23.7.1 admits `{token.text}`, whose bits run from the least significant "
+            f"end; this rail writes the forward forms only")
+    try:
+        return _INT_FORMS[token.text]
+    except KeyError:
+        raise Asn1Error(
+            f"ECN: {token} is neither positive-int nor twos-complement") from None
+
+
+def _parse_result_size(cursor: _Cursor) -> int:
+    """§21.15.1's `ResultSize ::= INTEGER {variable(-1), fixed-to-max(0)} (-1..MAX)`."""
+    token = cursor.next()
+    if token.text == "variable":
+        return RESULT_SIZE_VARIABLE
+    if token.text == "fixed-to-max":
+        return RESULT_SIZE_FIXED_TO_MAX
+    try:
+        size = int(token.text)
+    except ValueError:
+        raise Asn1Error(
+            f"ECN: {token} is not a ResultSize; §21.15.1 names `variable` and `fixed-to-max` "
+            f"and admits any positive count") from None
+    if size < RESULT_SIZE_VARIABLE:
+        raise Asn1Error(f"ECN: §21.15.1 constrains ResultSize to (-1..MAX); got {size}")
+    return size
+
+
+def _parse_boolean(cursor: _Cursor) -> bool:
+    token = cursor.next()
+    if token.text not in ("TRUE", "FALSE"):
+        raise Asn1Error(f"ECN: a BOOLEAN is TRUE or FALSE; got {token}")
+    return token.text == "TRUE"
+
+
+def _parse_int_list(cursor: _Cursor) -> tuple[int, ...]:
+    out = []
+    for text in _parse_reference_list(cursor):
+        try:
+            out.append(int(text))
+        except ValueError:
+            raise Asn1Error(f"ECN: {text!r} is not an INTEGER") from None
+    return tuple(out)
+
+
+def _parse_char_list(cursor: _Cursor) -> tuple[str, ...]:
+    """§24.10.10.1's `CHAR-LIST`: an ordered list of `UniversalString (SIZE(1))` values."""
+    out = []
+    for text in _parse_reference_list(cursor):
+        if not (text.startswith('"') and text.endswith('"') and len(text) == 3):
+            raise Asn1Error(
+                f"ECN: §24.10.1 declares CHAR-LIST as UniversalString (SIZE(1)), so each "
+                f"entry is one quoted character; got {text!r}")
+        out.append(text[1])
+    return tuple(out)
+
+
+def _parse_bits_list(cursor: _Cursor) -> tuple[tuple[int, ...], ...]:
+    """An ordered list of BIT STRING values, each written `'0101'B`."""
+    out = []
+    for text in _parse_reference_list(cursor):
+        if not (text.startswith("'") and text.endswith("'B")):
+            raise Asn1Error(
+                f"ECN: each entry of a BITS-LIST is a BIT STRING like '1010'B; got {text!r}")
+        out.append(Pattern.from_bits(text[1:-2]).bit_sequence())
+    return tuple(out)
+
+
+def _parse_int_to_bits(cursor: _Cursor) -> dict:
+    """§24.8.2's `[INT-TO-BITS [AS &as] [SIZE &size] [MULTIPLE OF &unit]]`."""
+    encoded_as = IntForm.TWOS_COMPLEMENT        # §24.8.1's DEFAULT
+    size, unit = RESULT_SIZE_VARIABLE, UNIT_BIT
+    if cursor.accept("AS"):
+        encoded_as = _parse_int_form(cursor)
+    if cursor.accept("SIZE"):
+        size = _parse_result_size(cursor)
+    if cursor.accept_words("MULTIPLE", "OF"):
+        unit = _parse_unit(cursor)
+    return {"encoded_as": encoded_as, "size": size, "unit": unit}
+
+
 def _parse_transform_body(cursor: _Cursor, name: str):
     """§24.1.1's `WITH SYNTAX`, whose comment says "Only one of the following clauses can be
     used" — so this reads exactly one and refuses a second."""
@@ -556,27 +649,129 @@ def _parse_transform_body(cursor: _Cursor, name: str):
                 ) from None
         transform = IntToInt(name=name, op=op, operand=operand)
     elif cursor.accept("INT-TO-BITS"):
-        encoded_as = "twos-complement"  # §24.8.1's DEFAULT.
-        size = 0
+        transform = IntToBits(name=name, **_parse_int_to_bits(cursor))
+    elif cursor.accept("BOOL-TO-BOOL"):
+        # §24.4.5: "There is only one value ... AS logical:not, which may be omitted."
+        if cursor.accept("AS"):
+            token = cursor.next()
+            if token.text != "logical:not":
+                raise Asn1Error(
+                    f"ECN: §24.4.1's &bool-to-bool CHOICE has the single alternative "
+                    f"`logical:not`; got {token}")
+        transform = BoolToBool(name=name)
+    elif cursor.accept_words("BOOL-TO-INT", "AS"):
+        token = cursor.next()
+        if token.text not in ("true-zero", "true-one"):
+            raise Asn1Error(
+                f"ECN: §24.5.1's &bool-to-int is ENUMERATED {{true-zero, true-one}}; "
+                f"got {token}")
+        transform = BoolToInt(name=name, true_zero=token.text == "true-zero")
+    elif cursor.accept("INT-TO-BOOL"):
+        zero_true = False
+        true_is = false_is = None
+        if cursor.accept("AS"):
+            token = cursor.next()
+            if token.text not in ("zero-true", "zero-false"):
+                raise Asn1Error(
+                    f"ECN: §24.6.1's &int-to-bool is ENUMERATED {{zero-true, zero-false}}; "
+                    f"got {token}")
+            zero_true = token.text == "zero-true"
+        if cursor.accept("TRUE-IS"):
+            true_is = _parse_int_list(cursor)
+        if cursor.accept("FALSE-IS"):
+            false_is = _parse_int_list(cursor)
+        # §24.6.4: "Either one of AS, TRUE-IS and FALSE-IS is set, or both TRUE-IS and
+        # FALSE-IS are set (and AS is not set), or none are set."
+        if zero_true and (true_is is not None or false_is is not None):
+            raise Asn1Error(
+                "ECN: §24.6.4 — AS shall not be set alongside TRUE-IS or FALSE-IS")
+        transform = IntToBool(name=name, zero_true=zero_true, true_is=true_is,
+                              false_is=false_is)
+    elif cursor.accept("INT-TO-CHARS"):
+        size = RESULT_SIZE_VARIABLE
+        plus_sign = False
+        pad_with_spaces = False
+        if cursor.accept("SIZE"):
+            size = _parse_result_size(cursor)
+        if cursor.accept("PLUS-SIGN"):
+            plus_sign = _parse_boolean(cursor)
+        if cursor.accept("PADDING"):
+            token = cursor.next()
+            if token.text not in ("spaces", "zeros"):
+                raise Asn1Error(
+                    f"ECN: §24.7.1's &int-to-chars-pad is ENUMERATED {{spaces, zeros}}; "
+                    f"got {token}")
+            pad_with_spaces = token.text == "spaces"
+        transform = IntToChars(name=name, size=size, plus_sign=plus_sign,
+                               pad_with_spaces=pad_with_spaces)
+    elif cursor.accept("BITS-TO-INT"):
+        decoded = IntForm.TWOS_COMPLEMENT
+        if cursor.accept("AS"):
+            decoded = _parse_int_form(cursor)
+        transform = BitsToInt(name=name, decoded_assuming=decoded)
+    elif cursor.accept("CHAR-TO-BITS"):
+        encoded_as = "compact"                     # §24.10.1's DEFAULT
+        chars = ()
+        bit_values = ()
+        size, unit = RESULT_SIZE_VARIABLE, UNIT_BIT
         if cursor.accept("AS"):
             encoded_as = cursor.next().text
+        if cursor.accept("CHAR-LIST"):
+            chars = _parse_char_list(cursor)
+        if cursor.accept("BITS-LIST"):
+            bit_values = _parse_bits_list(cursor)
         if cursor.accept("SIZE"):
-            token = cursor.next()
-            try:
-                size = int(token.text)
-            except ValueError:
-                raise Asn1Error(
-                    f"ECN: §24.8's ResultSize is `variable` or a fixed count; {token} is "
-                    f"neither, and `variable` has no width for this rail to write") from None
-        unit = 1
+            size = _parse_result_size(cursor)
         if cursor.accept_words("MULTIPLE", "OF"):
             unit = _parse_unit(cursor)
-        transform = IntToBits(name=name, width=size * unit, encoded_as=encoded_as)
+        transform = CharToBits(name=name, encoded_as=encoded_as, chars=chars,
+                               bit_values=bit_values, size=size, unit=unit)
+    elif cursor.accept("BITS-TO-CHAR"):
+        decoded_assuming = "iso10646"              # §24.11.1's DEFAULT
+        chars = ()
+        bit_values = ()
+        if cursor.accept("AS"):
+            decoded_assuming = cursor.next().text
+        if cursor.accept("BITS-LIST"):
+            bit_values = _parse_bits_list(cursor)
+        if cursor.accept("CHAR-LIST"):
+            chars = _parse_char_list(cursor)
+        transform = BitsToChar(name=name, decoded_assuming=decoded_assuming, chars=chars,
+                               bit_values=bit_values)
+    elif cursor.accept("BIT-TO-BITS"):
+        zero = Pattern.from_bits("0")              # §24.12.1's DEFAULTs
+        one = Pattern.from_bits("1")
+        if cursor.accept("ZERO-PATTERN"):
+            zero = _parse_pattern(cursor)
+        if cursor.accept("ONE-PATTERN"):
+            one = _parse_pattern(cursor)
+        transform = BitToBits(name=name, zero_pattern=zero, one_pattern=one)
+    elif cursor.accept("BITS-TO-BITS"):
+        cursor.expect("SOURCE-LIST")
+        sources = _parse_bits_list(cursor)
+        cursor.expect("RESULT-LIST")
+        results = _parse_bits_list(cursor)
+        transform = BitsToBits(name=name, source_values=sources, result_values=results)
+    elif cursor.accept("CHARS-TO-COMPOSITE-CHAR"):
+        transform = CharsToCompositeChar(name=name)
+    elif cursor.accept("BITS-TO-COMPOSITE-BITS"):
+        unit = UNIT_BIT                            # §24.15.2's DEFAULT
+        if cursor.accept("UNIT"):
+            unit = _parse_unit(cursor)
+        transform = BitsToCompositeBits(name=name, unit=unit)
+    elif cursor.accept("OCTETS-TO-COMPOSITE-BITS"):
+        transform = OctetsToCompositeBits(name=name)
+    elif cursor.accept("COMPOSITE-CHAR-TO-CHARS"):
+        transform = CompositeCharToChars(name=name)
+    elif cursor.accept("COMPOSITE-BITS-TO-BITS"):
+        transform = CompositeBitsToBits(name=name)
+    elif cursor.accept("COMPOSITE-BITS-TO-OCTETS"):
+        transform = CompositeBitsToOctets(name=name)
     else:
         token = cursor.peek()
         raise Asn1Error(
-            f"ECN: {token!r} starts no #TRANSFORM clause this rail implements; §24.1.1 "
-            f"defines seventeen and INT-TO-INT (§24.3) and INT-TO-BITS (§24.8) are built")
+            f"ECN: {token!r} starts no #TRANSFORM clause; §24.1.1's WITH SYNTAX defines "
+            f"nineteen and all of them are read here")
     if not cursor.eof():
         raise Asn1Error(
             f"ECN: §24.1.1's WITH SYNTAX says only one transform clause can be used, and "
@@ -1195,7 +1390,45 @@ def _describe(spec) -> str:
     if isinstance(spec, IntToInt):
         return f"int-to-int {spec.op.value} {spec.operand}"
     if isinstance(spec, IntToBits):
-        return f"int-to-bits {spec.encoded_as} {spec.width}"
+        return (f"int-to-bits {spec.encoded_as.value} size {spec.size} unit {spec.unit} "
+                f"bounds {_bound(None if spec.bounds is None else spec.bounds[0])}.."
+                f"{_bound(None if spec.bounds is None else spec.bounds[1])}")
+    if isinstance(spec, BoolToBool):
+        return "bool-to-bool logical:not"
+    if isinstance(spec, BoolToInt):
+        return f"bool-to-int {'true-zero' if spec.true_zero else 'true-one'}"
+    if isinstance(spec, IntToBool):
+        return (f"int-to-bool {'zero-true' if spec.zero_true else 'zero-false'} "
+                f"true {_ints(spec.true_is)} false {_ints(spec.false_is)}")
+    if isinstance(spec, IntToChars):
+        return (f"int-to-chars size {spec.size} plus {int(spec.plus_sign)} "
+                f"pad {'spaces' if spec.pad_with_spaces else 'zeros'}")
+    if isinstance(spec, BitsToInt):
+        return f"bits-to-int {spec.decoded_assuming.value}"
+    if isinstance(spec, CharToBits):
+        return (f"char-to-bits {spec.encoded_as} alphabet {spec.alphabet or '-'} "
+                f"chars {'/'.join(spec.chars) or '-'} bits {_bits_list(spec.bit_values)} "
+                f"size {spec.size} unit {spec.unit}")
+    if isinstance(spec, BitsToChar):
+        return (f"bits-to-char {spec.decoded_assuming} bits {_bits_list(spec.bit_values)} "
+                f"chars {'/'.join(spec.chars) or '-'}")
+    if isinstance(spec, BitToBits):
+        return (f"bit-to-bits zero {_pattern(spec.zero_pattern)} "
+                f"one {_pattern(spec.one_pattern)}")
+    if isinstance(spec, BitsToBits):
+        return (f"bits-to-bits source {_bits_list(spec.source_values)} "
+                f"result {_bits_list(spec.result_values)}")
+    if isinstance(spec, BitsToCompositeBits):
+        return f"bits-to-composite-bits unit {spec.unit}"
+    # The four property-free composite transforms (24.14, 24.16, 24.17, 24.18, 24.19) carry
+    # nothing but their identity, which the name already is.
+    for kind, mnemonic in ((CharsToCompositeChar, "chars-to-composite-char"),
+                           (OctetsToCompositeBits, "octets-to-composite-bits"),
+                           (CompositeCharToChars, "composite-char-to-chars"),
+                           (CompositeBitsToBits, "composite-bits-to-bits"),
+                           (CompositeBitsToOctets, "composite-bits-to-octets")):
+        if isinstance(spec, kind):
+            return mnemonic
     if isinstance(spec, IntSpec):
         return (f"int width {spec.width} form {spec.form.value} "
                 f"transform {_chain(spec.transform)} "
@@ -1236,6 +1469,14 @@ def _name_of_condition(entry: ConditionalIntSpec) -> str:
 
 def _bound(value: int | None) -> str:
     return "-" if value is None else str(value)
+
+
+def _ints(values) -> str:
+    return "-" if values is None else ("/".join(str(v) for v in values) or "-")
+
+
+def _bits_list(values) -> str:
+    return "/".join("".join(str(bit) for bit in bits) for bits in values) or "-"
 
 
 def _ref(pointer) -> str:

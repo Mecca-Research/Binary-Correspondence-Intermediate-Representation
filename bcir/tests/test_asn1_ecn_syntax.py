@@ -390,3 +390,66 @@ def test_a_self_delimiting_encoding_space_is_refused_with_what_it_would_need():
         assert "21.2" in str(error), error
     else:
         raise AssertionError("an encoding space with no stated size parsed")
+
+
+# --- clause 24's nineteen transforms, from text ---------------------------------------------
+
+_ALL_TRANSFORMS = """
+Transforms ENCODING-DEFINITIONS ::= BEGIN
+  t01 #TRANSFORM ::= { INT-TO-INT divide:4 }
+  t02 #TRANSFORM ::= { BOOL-TO-BOOL AS logical:not }
+  t03 #TRANSFORM ::= { BOOL-TO-INT AS true-zero }
+  t04 #TRANSFORM ::= { INT-TO-BOOL TRUE-IS { 7 } FALSE-IS { 0 } }
+  t05 #TRANSFORM ::= { INT-TO-CHARS SIZE 4 PLUS-SIGN TRUE PADDING spaces }
+  t06 #TRANSFORM ::= { INT-TO-BITS AS positive-int SIZE 1 MULTIPLE OF octet }
+  t07 #TRANSFORM ::= { BITS-TO-INT AS positive-int }
+  t08 #TRANSFORM ::= { CHAR-TO-BITS AS mapped CHAR-LIST { "a", "b" } BITS-LIST { '0'B, '1'B } }
+  t09 #TRANSFORM ::= { BITS-TO-CHAR AS iso10646 }
+  t10 #TRANSFORM ::= { BIT-TO-BITS ZERO-PATTERN bits:'00'B ONE-PATTERN bits:'11'B }
+  t11 #TRANSFORM ::= { BITS-TO-BITS SOURCE-LIST { '0'B, '1'B } RESULT-LIST { '1'B, '0'B } }
+  t12 #TRANSFORM ::= { CHARS-TO-COMPOSITE-CHAR }
+  t13 #TRANSFORM ::= { BITS-TO-COMPOSITE-BITS UNIT octet }
+  t14 #TRANSFORM ::= { OCTETS-TO-COMPOSITE-BITS }
+  t15 #TRANSFORM ::= { COMPOSITE-CHAR-TO-CHARS }
+  t16 #TRANSFORM ::= { COMPOSITE-BITS-TO-BITS }
+  t17 #TRANSFORM ::= { COMPOSITE-BITS-TO-OCTETS }
+END
+"""
+
+
+def test_every_transform_clause_24_defines_is_reachable_from_the_notation():
+    """A transform the model can execute but the notation cannot express is half-built.
+
+    §24.1.1's `WITH SYNTAX` lists the clauses; each one here is a separate branch of the
+    parser, and this is what stops a branch from being written and never exercised.
+    """
+    module = parse_module(_ALL_TRANSFORMS)
+    assert len(module.transforms) == 17
+    assert module.transforms["t03"].apply(True) == 0        # BOOL-TO-INT AS true-zero
+    assert module.transforms["t05"].apply(7) == "  +7"      # INT-TO-CHARS
+    assert module.transforms["t10"].apply(1) == (1, 1)      # BIT-TO-BITS
+
+
+def test_every_transform_has_a_canonical_serialization():
+    """The digest is the point of the surface module, so a transform with no serialized form
+    silently drops out of it — and two specifications differing only there would hash alike."""
+    module = parse_module(_ALL_TRANSFORMS)
+    text = module.serialize().decode()
+    for name in module.transforms:
+        assert f"transform {name} " in text, name
+    assert len(module.sha256()) == 64
+
+    # And the digest moves when a transform's properties do.
+    other = parse_module(_ALL_TRANSFORMS.replace("AS true-zero", "AS true-one"))
+    assert other.sha256() != module.sha256()
+
+
+def test_a_transform_clause_the_notation_does_not_define_is_refused_by_name():
+    """§24.1.1 defines nineteen and all of them are read, so an unknown keyword is a typo
+    rather than an unimplemented feature — and the message says so."""
+    try:
+        parse_module(_ALL_TRANSFORMS.replace("INT-TO-INT divide:4", "INT-TO-FROBNICATE 4"))
+    except Asn1Error as error:
+        assert "24.1.1" in str(error) and "nineteen" in str(error), error
+    else:
+        raise AssertionError("an undefined transform clause parsed")
