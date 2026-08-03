@@ -461,6 +461,36 @@ The module layering moved to make room. Clause 21's property types are now
 [`ecn_transform.py`](../bcir/asn1/ecn_transform.py), with `ecn_user` re-exporting both — a
 file-layout decision, not a change to the public surface.
 
+**Repetition, and the categories that turn out to need it.** The plan for this slice was
+"clause 23's remaining bit-field categories", and reading them changed it. §23.2's `#BITS`,
+§23.9's `#OCTETS` and §23.4's `#CHARS` have **no `ENCODING-SPACE` group at all** — their
+`WITH SYNTAX` gives pre-alignment, a start pointer, `VALUE-REVERSAL`, `TRANSFORMS` and
+`REPETITION-ENCODING(S)`, so a string's size comes from §22.7's repetition space and not from a
+stated width. §21.7.3 says the same thing from the other side: `RepetitionSpaceDetermination`
+"**replaces** use of an encoding property of type `EncodingSpaceDetermination` in the encoding
+of repetitions". Sibling, not subtype. So the three string categories could not be built before
+repetition was, and they arrive together with §21.13, §22.7, §23.13 and §23.14.
+
+**§21.13 is §21.11's sibling and their NOTEs disagree, deliberately.** §21.11.4's says "For any
+given set of bounds, exactly one predicate will be satisfied"; §21.13.4's says "Only the
+`fixed-size` case overlaps with other predicates". A fixed size *is* an upper bound with a
+lower bound, so `SIZE(4)` genuinely satisfies two shapes. Carrying the integer sibling's
+exhaustiveness across would pick the wrong encoding for every fixed-size string — which is the
+common case, not an edge. §21.13.4 a) also turns on the lower bound being **zero** where
+§21.11.4 a) turned on one *existing*, because an X.680 size always has one.
+
+Three of §21.7's eight repetition-space determinations are built, and they are the three that
+describe how real repeated formats work: a count field (`field-to-be-set` / `field-to-be-used`)
+and a terminator (`pattern` — this is the NUL-terminated string, and it is why the group
+carries a `Pattern` at all). The other five are refused by name: `flag-to-be-set` and
+`flag-to-be-used` put a continuation flag **inside the repeated element** (§21.7.6/§21.7.7),
+which needs the element's own structure; `container` and `handle` need containment and §22.9.
+
+§23.8's `#NUL` and §23.15's `#TAG` needed nothing new and are built. `#NUL` is the one category
+where `VALUE-PADDING` *is* the value encoding, since X.680's NULL carries no information;
+`#TAG` is §20.2's composition — "preceded by one or more instances of a class in the tag
+category" — which is exactly how BER's identifier octet relates to its contents.
+
 **Two things are still refused at the surface, and both name what they need.** §22.1's
 replacement *notation* needs §22.1.2.2's parameterized encoding structures and §22.1.2.4's
 parameterized encoding objects — X.683's parameterization applied to ECN, which does not

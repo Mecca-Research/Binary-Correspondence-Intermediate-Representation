@@ -491,3 +491,113 @@ class Justification:
         if self.side is JustificationSide.LEFT:
             return self.offset, padding_bits - self.offset
         return padding_bits - self.offset, self.offset
+
+class SizeRangeCondition(Enum):
+    """§21.13.1's `SizeRangeCondition`: §21.11's sibling, over the **size** constraint.
+
+    §21.13.3: it "is used to test properties of the bounds in an effective size constraint
+    associated with a class in the repetition or characterstring category". So where
+    `RangeCondition` asks about an integer's *value* bounds, this asks about a string's or a
+    repetition's *length* bounds.
+
+    **The two NOTEs differ, and that is the interesting part.** §21.11.4's says "For any given
+    set of bounds, exactly one predicate will be satisfied" — the five shapes partition.
+    §21.13.4's says "Only the `fixed-size` case overlaps with other predicates" — so these five
+    do **not** partition, and `fixed-size` deliberately co-occurs with `ub-with-zero-lb` (for
+    `SIZE(0)`) and with `ub-with-non-zero-lb` (for any other fixed size). An implementation
+    that assumed the sibling's exhaustiveness here would pick the wrong encoding whenever a
+    size is fixed, which is the common case.
+    """
+
+    NO_UB_WITH_ZERO_LB = "no-ub-with-zero-lb"
+    UB_WITH_ZERO_LB = "ub-with-zero-lb"
+    NO_UB_WITH_NON_ZERO_LB = "no-ub-with-non-zero-lb"
+    UB_WITH_NON_ZERO_LB = "ub-with-non-zero-lb"
+    FIXED_SIZE = "fixed-size"
+    TEST_LOWER_BOUND = "test-lower-bound"
+    TEST_UPPER_BOUND = "test-upper-bound"
+    TEST_RANGE = "test-range"
+
+    def needs_comparison(self) -> bool:
+        """§21.13.5, worded identically to §21.11.5: the last three take a Comparison."""
+        return self in (SizeRangeCondition.TEST_LOWER_BOUND,
+                        SizeRangeCondition.TEST_UPPER_BOUND,
+                        SizeRangeCondition.TEST_RANGE)
+
+
+@dataclass(frozen=True)
+class SizeBounds:
+    """The effective size constraint §21.13 tests. `high=None` is "no upper bound".
+
+    A size has a lower bound always — X.680 sizes are `INTEGER (0..MAX)` constrained — so
+    `low` is an int rather than an optional, and §21.13.4 a) turns on it being *zero* where
+    §21.11.4 a) turned on a bound *existing*. Another place the two siblings diverge.
+    """
+
+    low: int = 0
+    high: int | None = None
+
+    def satisfies(self, condition: SizeRangeCondition,
+                  comparison: "Comparison | None" = None,
+                  comparator: int | None = None) -> bool:
+        """§21.13.4's five shapes and §21.13.5's three comparisons."""
+        if condition.needs_comparison() != (comparison is not None):
+            raise Asn1Error(
+                f"ECN: §21.13.5 — {condition.value} "
+                f"{'requires' if condition.needs_comparison() else 'does not admit'} a "
+                f"Comparison and an integer comparator")
+        if comparison is not None:
+            if comparator is None:
+                raise Asn1Error(
+                    f"ECN: §21.13.5 gives {condition.value} a Comparison *and* an integer "
+                    f"comparator; the comparator is missing")
+            if condition is SizeRangeCondition.TEST_LOWER_BOUND:
+                return comparison.holds(self.low, comparator)
+            if condition is SizeRangeCondition.TEST_UPPER_BOUND:
+                return self.high is not None and comparison.holds(self.high, comparator)
+            if self.high is None:
+                return False
+            return comparison.holds(self.high - self.low + 1, comparator)
+        has_high = self.high is not None
+        if condition is SizeRangeCondition.NO_UB_WITH_ZERO_LB:
+            return not has_high and self.low == 0
+        if condition is SizeRangeCondition.UB_WITH_ZERO_LB:
+            return has_high and self.low == 0
+        if condition is SizeRangeCondition.NO_UB_WITH_NON_ZERO_LB:
+            return not has_high and self.low != 0
+        if condition is SizeRangeCondition.UB_WITH_NON_ZERO_LB:
+            return has_high and self.low != 0
+        return has_high and self.high == self.low          # §21.13.4 e)
+
+    def shapes(self) -> tuple[SizeRangeCondition, ...]:
+        """Every §21.13.4 shape these bounds satisfy — plural, unlike §21.11.4's.
+
+        §21.13.4's NOTE says `fixed-size` overlaps, so this returns a tuple where the integer
+        sibling returns one value. Asserting a single answer here would fail on `SIZE(4)`.
+        """
+        return tuple(condition for condition in SizeRangeCondition
+                     if not condition.needs_comparison() and self.satisfies(condition))
+
+
+class RepetitionSpaceDetermination(Enum):
+    """§21.7.1's eight ways a decoder finds the end of a repetition.
+
+    §21.7.3 says what it is for: it "specifies the way in which a decoder determines the end of
+    the encoding space in an encoding of a class in the repetition category. It **replaces**
+    use of an encoding property of type `EncodingSpaceDetermination`" — so this is §21.3's
+    counterpart and not an extension of it, which is why the two are separate enums with
+    different members rather than one with eight.
+
+    Five of the eight are recognizable protocol shapes: a count field (`field-to-be-set` /
+    `field-to-be-used`), a terminator (`pattern`), a per-element continuation flag
+    (`flag-to-be-set` / `flag-to-be-used`), a container, and an identification handle.
+    """
+
+    FIELD_TO_BE_SET = "field-to-be-set"
+    FIELD_TO_BE_USED = "field-to-be-used"
+    FLAG_TO_BE_SET = "flag-to-be-set"
+    FLAG_TO_BE_USED = "flag-to-be-used"
+    CONTAINER = "container"
+    PATTERN = "pattern"
+    HANDLE = "handle"
+    NOT_NEEDED = "not-needed"
