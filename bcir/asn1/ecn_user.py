@@ -100,6 +100,20 @@ from .tags import Asn1Error
 # nineteen transforms -- and not a change to the public surface.
 
 
+#: The name a `container` determination's REFERENCE takes when the container is the PDU.
+#:
+#: §21.3.6, §21.5.6 and §21.7.8 each offer two forms — "a REFERENCE to another field whose
+#: encoding class (the container) has a length determinant", "or of a specification that the
+#: end of the PDU determines the end ... (**using `OUTER`**)". The notation does **not** give
+#: the second one a keyword: §22.4.1.2's syntax is `USING &encoding-space-reference` in every
+#: case, and §22.4.1.6 says that reference is "to an auxiliary field or to a field carrying
+#: abstract values, **or to a container**, depending on the value of `DETERMINED BY`". So the
+#: PDU is simply the outermost container and clause 25's `#OUTER` is what names it — which is
+#: why this is a reserved reference rather than a flag on the group, and why the surface
+#: grammar needed no new keyword to read it.
+OUTER_CONTAINER = "#OUTER"
+
+
 # --- clause 22's property groups: the encoder actions, in the stated order -----------------
 
 @dataclass(frozen=True)
@@ -339,21 +353,36 @@ class SpaceDeterminant:
     decoder_transforms: "TransformChain | None" = None
 
     def __post_init__(self) -> None:
-        if self.determination is EncodingSpaceDetermination.CONTAINER:
-            raise Asn1Error(
-                "ECN: §21.3.6's `container` determination needs a field whose encoding class "
-                "has a length determinant and whose contents include this encoding space, or "
-                "the end of the PDU through #OUTER. Containment is a structural relationship "
-                "this rail's flat concatenation does not have, so it is refused rather than "
-                "approximated by `the rest of the encoding`")
         if not self.reference:
             raise Asn1Error(
-                "ECN: §21.3.4/§21.3.5 — both determinations require a REFERENCE to the field "
-                "carrying the length")
+                "ECN: §21.3.4/§21.3.5/§21.3.6 — every determination requires a REFERENCE; "
+                "§22.4.1.6 says it is one \"to an auxiliary field or to a field carrying "
+                "abstract values, or to a container, depending on the value of DETERMINED BY\"")
+        if (self.determination is EncodingSpaceDetermination.CONTAINER
+                and (self.encoder_transforms is not None
+                     or self.decoder_transforms is not None)):
+            # §22.4.2.3 and §22.4.2.4 confine the transform lists to the two field
+            # determinations, and the reason is structural rather than a restriction: a
+            # container's end is a position, not a number carried through a field, so there is
+            # nothing for a transform to convert.
+            raise Asn1Error(
+                "ECN: §22.4.2.3/§22.4.2.4 — a `container` determination reads no field's "
+                "value, so there is nothing for ENCODER-TRANSFORMS or DECODER-TRANSFORMS to "
+                "convert; §21.3.4 and §21.3.5 are the determinations that carry a length")
         check_unit(self.unit, allow_repetitions=False)
 
     def record(self, out: "BitWriter", space_bits: int) -> None:
         """§21.3.4's set, or §21.3.5's use, given the space this field actually took."""
+        if self.determination is EncodingSpaceDetermination.CONTAINER:
+            # §21.3.6 gives the encoder nothing to write: "The encoding space terminates when
+            # the specified container terminates or when the end of the PDU is encountered."
+            # What it does give the encoder is a rule to CHECK — "This specification can only
+            # be used if the encoding space of the element being encoded is the last encoding
+            # to be placed in the container" — and that is what this registers. The check
+            # itself fires when the container closes, because until then there is no end to
+            # compare against.
+            out.claim_container_end(self.reference, "the ENCODING-SPACE of this element")
+            return
         if space_bits % self.unit:
             raise Asn1Error(
                 f"ECN: a {space_bits}-bit encoding space is not a whole number of "
@@ -733,9 +762,16 @@ class Optionality:
                     f"reduces to `element-is-present` {bool(recovered)}, but the component is "
                     f"{'present' if present else 'absent'}")
             return
-        # §22.5.3.5 (container), §22.5.3.6 (handle) and §22.5.3.7 (pointer) all say there is
-        # no further encoder action here. The container's own end, the handle's bits and the
-        # start pointer's zero are already in the encoding by the time this runs.
+        if self.determination is OptionalityDetermination.CONTAINER and present:
+            # §22.5.3.5 gives the encoder no value to write and one thing to *detect*: it must
+            # "cease encoding if the application requests the encoding of further components
+            # in the USING container when the conceptual value `element-is-present` is false".
+            # §21.5.6's NOTE generalizes it — "no further encodings are to be placed in the
+            # container" — so a present component determined this way still has to be the last
+            # thing in it, or the absence of the next one is undetectable.
+            out.claim_container_end(self.reference, "an optional component whose presence")
+        # §22.5.3.6 (handle) and §22.5.3.7 (pointer) say there is no further encoder action.
+        # The handle's bits and the start pointer's zero are already in the encoding.
 
 
 @dataclass(frozen=True)
@@ -812,6 +848,168 @@ class AlternativeSelection:
 
 
 @dataclass(frozen=True)
+class ContainedType:
+    """§22.11's `CONTENTS-ENCODING` group: which rules encode a type held inside another.
+
+    §22.11.1.3 states the purpose in two halves, and the second is the one with teeth: "to
+    determine the encoding of a contained type, **and whether an ASN.1 `ENCODED BY` contents
+    constraint associated with that contained type shall be overridden**". So this group is
+    where an ECN specification and an X.682 clause 11 contents constraint meet, and it says
+    which of them wins.
+
+    **§22.11.2's decision is a four-way table, not a default.** Written out, because the
+    obvious two-way reading ("use CONTENTS-ENCODING if set") gets half of it wrong:
+
+    | `CONTENTS-ENCODING` | `ENCODED BY` | `OVERRIDE` | what encodes the contained type |
+    |---|---|---|---|
+    | not set | absent  | —     | the set applied to the container (§22.11.2.1) |
+    | not set | present | —     | the rules `ENCODED BY` names (§22.11.2.1) |
+    | set     | absent  | —     | this group's combined set (§22.11.2.2) |
+    | set     | present | TRUE  | this group's combined set (§22.11.2.2) |
+    | set     | present | FALSE | **the set applied to the containing type** (§22.11.2.2) |
+
+    The last row is the surprise: an ECN specification that states `CONTENTS-ENCODING` and
+    meets an `ENCODED BY` it did not ask to override falls back to the *container's* set, not
+    to its own and not to the `ENCODED BY` rules. §22.11.1.5's "considered set if the
+    `CONTENTS-ENCODING` keyword is used" is what makes the first column a fact about the
+    notation rather than about whether `primary` happens to be empty.
+
+    §22.11.1.4's combination is §9.23.2's, quoted there in full: the combined set is formed
+    "by adding to the first set encoding objects for any encoding class for which the first
+    set is lacking an encoding object and the second set contains one". A left-biased merge —
+    primary wins, `COMPLETED BY` fills gaps, and never the other way round.
+    """
+
+    #: §22.11.1.1's `&Primary-encoding-object-set #ENCODINGS OPTIONAL`.
+    primary: dict = field(default_factory=dict)
+    #: `COMPLETED BY` — §9.23.1's second set. `None` is "not supplied", which is different
+    #: from an empty one only in what a diagnostic can say about it.
+    secondary: "dict | None" = None
+    #: §22.11.1.1's `&over-ride-encoded-by BOOLEAN DEFAULT FALSE`.
+    override: bool = False
+
+    def combined(self) -> dict:
+        """§13.2 / §9.23.2's combined encoding object set."""
+        out = dict(self.primary)
+        for cls, obj in (self.secondary or {}).items():
+            out.setdefault(cls, obj)
+        return out
+
+    def select(self, *, encoded_by: "dict | None", containing: dict) -> dict:
+        """§22.11.2's table, given the ASN.1 contents constraint and the container's own set.
+
+        `encoded_by` is the rules an X.682 §11 `ENCODED BY` names, or `None` when the contents
+        constraint states none. `containing` is "the combined encoding object set applied to
+        the containing type", which is what two of the five rows fall back to.
+        """
+        if encoded_by is None or self.override:
+            return self.combined()
+        # §22.11.2.2's last clause: "Otherwise the combined encoding set applied to the
+        # containing type shall be applied to the contained type." Not the ENCODED BY rules,
+        # and not this group's — the container's.
+        return containing
+
+
+@dataclass(frozen=True)
+class ContainerSpec:
+    """A bit-field class whose encoding space holds another type's complete encoding.
+
+    X.680 spells this `OCTET STRING (CONTAINING Inner)` and X.682 clause 11 gives it the
+    `ENCODED BY` half; §22.11 is ECN's side of the same relationship. What makes it a distinct
+    class here rather than a property on `IntSpec` is that the contained type is encoded by a
+    **different object set** — §22.11.2.2's whole point — so it is a separate encoding that
+    happens to be placed inside this one.
+
+    **The contained encoding gets its own reference scope — and not its own bit buffer.**
+    §9.24.2's application point moves into the contained type, so a start pointer or an
+    auxiliary field reaching across the boundary would be measuring an offset in one encoding
+    against a field in another, which no clause defines; an auxiliary field left unset inside
+    is therefore refused *inside*, with its own diagnostic. The bits, though, go straight into
+    the containing encoding, because the relationship §21.3.6 measures — "the last encoding
+    placed in the container" — is a question about offsets in one stream. An implementation
+    that isolated the buffer too would make that rule unanswerable, which is how this started
+    and why the distinction is written down.
+
+    `contained_by_container` is the *other* direction — this class as the container that
+    §21.3.6's, §21.5.6's and §21.7.8's `container` determinations point at. Both directions
+    exist in the clause and they are not the same relationship: one is "my contents are
+    another type", the other is "my end is what bounds a component".
+    """
+
+    #: The encoding class of the contained type, looked up in whichever set §22.11.2 selects.
+    contained_class: object = None
+    #: §22.11's group. `None` is §22.11.1.5's "not set", which selects the container's own set.
+    contents: "ContainedType | None" = None
+    #: The X.682 §11 `ENCODED BY` rules, when the contents constraint names any.
+    encoded_by: "dict | None" = None
+    #: The container's own encoding space, in bits, when it is stated rather than determined.
+    width: int = 0
+    pre_alignment: PreAlignment | None = None
+    start_pointer: StartPointer | None = None
+    space_determinant: SpaceDeterminant | None = None
+    #: Components written *after* the contained value, inside this container. Present so the
+    #: "last encoding in the container" rule has something to be violated by.
+    trailer: object = None
+    exhibits: "IdentificationHandle | None" = None
+    #: The name this container answers to for a `container` determination's REFERENCE.
+    name: str = "container"
+
+    def __post_init__(self) -> None:
+        if self.contained_class is None:
+            raise Asn1Error(
+                "ECN: a container class encodes a contained type; §22.11.1.3 makes this "
+                "group's purpose \"to determine the encoding of a contained type\", and there "
+                "is none here")
+
+    def objects_for(self, containing: dict) -> dict:
+        """§22.11.2's selection, resolved against the set applied to this container."""
+        if self.contents is None:
+            # §22.11.2.1: with the group unset, an ENCODED BY wins outright and otherwise the
+            # container's own set is used. Note this is the one row where the ENCODED BY rules
+            # are applied *directly* rather than being something to override.
+            return self.encoded_by if self.encoded_by is not None else containing
+        return self.contents.select(encoded_by=self.encoded_by, containing=containing)
+
+    def write(self, value, out: "BitWriter") -> None:
+        if self.pre_alignment is not None:
+            self.pre_alignment.apply(out)
+        handle_start = out.bit_length
+        if self.start_pointer is not None:
+            self.start_pointer.record(out)
+        containing = out.objects()
+        objects = self.objects_for(containing)
+        obj = objects.get(self.contained_class)
+        if obj is None:
+            named = getattr(self.contained_class, "name", self.contained_class)
+            fell_back = objects is containing
+            raise Asn1Error(
+                f"ECN: §9.5.1 — the encoding object set §22.11.2 selected for this contained "
+                f"type has no object for {named!r}"
+                + (", and the set it selected is the one applied to the containing type "
+                   "(§22.11.2's fallback), which is where an ENCODED BY that OVERRIDE did "
+                   "not claim sends it" if fell_back else ""))
+        out.open_container(self.name)
+        scope = out.push_reference_scope()
+        # §9.24.2's application point moves with the set, so a container nested inside this
+        # contained type inherits *this* type's set as "the set applied to the containing
+        # type" — not the PDU's. Restored by `pop_reference_scope`, which saves it alongside
+        # the reference tables for exactly this reason.
+        out.set_objects(objects)
+        obj.spec.write(value, out)
+        out.pop_reference_scope(scope, "the contained type")
+        if self.trailer is not None:
+            self.trailer.write(value, out)
+        size = out.close_container(self.name)
+        if self.width and size > self.width:
+            raise Asn1Error(
+                f"ECN: the container's contents are {size} bits and its stated encoding space "
+                f"is {self.width}")
+        if self.space_determinant is not None:
+            self.space_determinant.record(out, size)
+        _exhibit(self, out, handle_start)
+
+
+@dataclass(frozen=True)
 class Concatenation:
     """§22.10's `CONCATENATION` group: component order, inter-component alignment, handle.
 
@@ -857,9 +1055,29 @@ class BitWriter:
         self._starts: dict[str, int] = {}
         #: Abstract values of ordinary fields, which §21.3.5's `field-to-be-used` reads.
         self._values: dict[str, int] = {}
+        #: Open container scopes, innermost last: `(name, bit offset where its contents began)`.
+        #: §21.3.6, §21.5.6 and §21.7.8 all end something "when the specified container
+        #: terminates", and a stack is what lets a container inside a container mean what it
+        #: says.
+        self._containers: list[tuple[str, int]] = []
+        #: Claims that an element's extent runs to a container's end: `name -> (offset, what)`.
+        #: An empty name is §21.3.6's `OUTER` form, whose container is the PDU.
+        self._container_claims: dict[str, tuple[int, str]] = {}
+        #: The encoding object set in force. §22.11.2 twice falls back to "the combined
+        #: encoding object set applied to the containing type", and §9.24's application point
+        #: is what travels with an encoding — so the set lives with the writer rather than
+        #: being re-derived at each nesting level from a structure's field table, which is a
+        #: different namespace and would answer a different question.
+        self._objects: dict = {}
 
     def put_bit(self, bit: int) -> None:
         self._bits.append(1 if bit else 0)
+
+    def set_objects(self, objects: dict) -> None:
+        self._objects = objects
+
+    def objects(self) -> dict:
+        return self._objects
 
     def bit_at(self, index: int) -> int:
         """One written bit, for §22.9's handles to read back out of the encoding.
@@ -964,6 +1182,102 @@ class BitWriter:
                 f"the ASN.1 specification, not an auxiliary field the encoder sets")
         return self._values[name]
 
+    # --- containment: the relationship §21.3.6, §21.5.6 and §21.7.8 all end something with ---
+    #
+    # Three clauses phrase it identically — "a REFERENCE to another field whose encoding class
+    # (the container) has a length determinant and whose contents include this encoding space,
+    # or ... that the end of the PDU determines the end" — and all three add the same rule:
+    # the contained element has to be the LAST thing in the container. That rule is the whole
+    # of the encoder's work for these determinations. §21.3.6's NOTE says why it is worth
+    # checking rather than trusting: "It is an ECN encoder's error ... if additional encodings
+    # are placed in the container", and the symptom otherwise is a decoder reading one field's
+    # bits as another's.
+
+    def open_container(self, name: str) -> None:
+        if any(open_name == name for open_name, _at in self._containers):
+            raise Asn1Error(
+                f"ECN: the container {name!r} is already open; a container cannot contain "
+                f"itself, and two with one name make every REFERENCE to it ambiguous")
+        self._containers.append((name, len(self._bits)))
+
+    def close_container(self, name: str) -> int:
+        """End the innermost container, checking any claim made against it. Returns its size."""
+        if not self._containers or self._containers[-1][0] != name:
+            raise Asn1Error(
+                f"ECN: {name!r} is not the innermost open container, so closing it would "
+                f"cross a containment boundary")
+        _name, at = self._containers.pop()
+        claim = self._container_claims.pop(name, None)
+        if claim is not None:
+            offset, what = claim
+            if offset != len(self._bits):
+                raise Asn1Error(
+                    f"ECN: §21.3.6/§21.5.6/§21.7.8 — {what} is determined by the container "
+                    f"{name!r}, so it has to be the last encoding placed in it; "
+                    f"{len(self._bits) - offset} further bits were written inside {name!r} "
+                    f"afterwards. The three clauses word this rule identically; which one "
+                    f"applies is what the description above names")
+        return len(self._bits) - at
+
+    def claim_container_end(self, name: str, what: str) -> None:
+        """Register that `what` just ended, and that its end must be its container's end."""
+        if name != OUTER_CONTAINER:
+            if not any(open_name == name for open_name, _at in self._containers):
+                raise Asn1Error(
+                    f"ECN: a `container` determination names {name!r}, which is not an open "
+                    f"container here; §21.3.6's REFERENCE is to a field \"whose contents "
+                    f"include this encoding space\"")
+        elif self._containers:
+            raise Asn1Error(
+                f"ECN: this element is determined by {OUTER_CONTAINER}, the end of the PDU, "
+                f"but it sits inside the container {self._containers[-1][0]!r}; the PDU's end "
+                f"is not this element's container's end, and §21.3.6's rule is about the "
+                f"container that immediately holds it")
+        self._container_claims[name] = (len(self._bits), what)
+
+    def open_containers(self) -> tuple[str, ...]:
+        return tuple(name for name, _at in self._containers)
+
+    def push_reference_scope(self) -> tuple:
+        """§9.24.2's application point moving into a contained type.
+
+        "The combined encoding object set is applied to a generated encoding structure, and it
+        is the encodings defined for the abstract values of **this** encoding structure that
+        encode the abstract values of the ASN.1 type." A contained type is encoded by its own
+        object set, so its REFERENCEs resolve among its own fields — a start pointer inside it
+        measuring to a field of the container would be an offset in one encoding against a
+        field in another, which no clause defines.
+
+        The encoding object set is saved and restored with them, because §9.24.2 moves the
+        *application point* and not merely the name resolution: a container nested inside a
+        contained type inherits that type's set as §22.11.2's "set applied to the containing
+        type", and reading the PDU's would answer a question one level too far out.
+
+        What is scoped is those tables, and deliberately not the bit buffer. The
+        contained encoding's bits are placed in the containing one, so the containment
+        relationship §21.3.6 measures — "the last encoding placed in the container" — is a
+        question about offsets in a single stream, and isolating those would make it
+        unanswerable.
+        """
+        saved = (self._slots, self._patched, self._starts, self._values, self._objects)
+        self._slots, self._patched, self._starts, self._values = {}, set(), {}, {}
+        return saved
+
+    def pop_reference_scope(self, saved: tuple, what: str) -> None:
+        missing = self.unpatched()
+        if missing:
+            raise Asn1Error(
+                f"ECN: {what}'s auxiliary field{'s' if len(missing) > 1 else ''} "
+                f"{', '.join(repr(name) for name in missing)} "
+                f"{'were' if len(missing) > 1 else 'was'} never set. §9.24.2 moves the "
+                f"application point into a contained type, so its determinants resolve inside "
+                f"it and cannot be supplied by the container")
+        self._slots, self._patched, self._starts, self._values, self._objects = saved
+
+    def outer_claim(self) -> "tuple[int, str] | None":
+        """The `#OUTER` claim, for `encode_with_user` to check against the whole PDU."""
+        return self._container_claims.get(OUTER_CONTAINER)
+
     def unpatched(self) -> tuple[str, ...]:
         """Reserved fields nobody set. Every one is a determinant that was never determined."""
         return tuple(sorted(set(self._slots) - self._patched))
@@ -1002,6 +1316,15 @@ class BitWriter:
     @property
     def bit_length(self) -> int:
         return len(self._bits)
+
+    def bits(self) -> tuple[int, ...]:
+        """The written bits, whatever their number.
+
+        Distinct from `octets()`, which refuses a partial octet: a contained type's encoding
+        is placed *inside* another and has no reason to end on an octet boundary, so the whole
+        -octets rule belongs to the PDU and not to every encoding on the way to it.
+        """
+        return tuple(self._bits)
 
     def octets(self) -> bytes:
         """The written bits as octets.
@@ -1534,6 +1857,12 @@ class ConcatenationSpec:
     #: `ALIGNMENT` is `aligned`. §23.5.1 declares only one such group, so the two uses share it.
     pre_alignment: PreAlignment | None = None
     exhibits: "IdentificationHandle | None" = None
+    #: The name this structure answers to as a *container*, if it is one. §22.5.2.10 says the
+    #: `container` reference "shall be to a concatenation or to a repetition (or to a bitstring
+    #: or octetstring with a contained type) in which the element being encoded is a
+    #: component" — so a plain concatenation is a legitimate container, and naming it is how a
+    #: REFERENCE reaches it. Empty means "not referred to as a container", which costs nothing.
+    container_name: str = ""
 
     def __post_init__(self) -> None:
         group = self.concatenation or Concatenation()
@@ -1654,6 +1983,8 @@ class ConcatenationSpec:
         if self.pre_alignment is not None:
             self.pre_alignment.apply(out)
         handle_start = out.bit_length
+        if self.container_name:
+            out.open_container(self.container_name)
         group = self.concatenation or Concatenation()
         aligned = group.alignment is ConcatenationAlignment.ALIGNED
         for name, spec in self._ordered():
@@ -1692,6 +2023,8 @@ class ConcatenationSpec:
             if isinstance(value[name], int) and not isinstance(value[name], bool):
                 out.record_value(name, value[name])
             spec.write(value[name], out)
+        if self.container_name:
+            out.close_container(self.container_name)
         _exhibit(self, out, handle_start)
 
 
@@ -1777,6 +2110,7 @@ class RepetitionSpace:
               RepetitionSpaceDetermination.FIELD_TO_BE_USED,
               RepetitionSpaceDetermination.PATTERN,
               RepetitionSpaceDetermination.HANDLE,
+              RepetitionSpaceDetermination.CONTAINER,
               RepetitionSpaceDetermination.NOT_NEEDED)
 
     def __post_init__(self) -> None:
@@ -1787,8 +2121,6 @@ class RepetitionSpace:
                     "the element's structure to reserve a field for it",
                 RepetitionSpaceDetermination.FLAG_TO_BE_USED:
                     "§21.7.7 reads a continuation flag from inside the repeated element",
-                RepetitionSpaceDetermination.CONTAINER:
-                    "§21.7.8 needs a container with a length determinant, or #OUTER",
             }[self.determination]
             raise Asn1Error(
                 f"ECN: the repetition-space determination `{self.determination.value}` is not "
@@ -1829,6 +2161,13 @@ class RepetitionSpace:
 
     def record(self, out: "BitWriter", repetitions: int, space_bits: int) -> None:
         """Set or check the count field, after the elements have been written."""
+        if self.determination is RepetitionSpaceDetermination.CONTAINER:
+            # §22.7.3.6: "there is no further encoder action". §21.7.8's NOTE is the rule that
+            # remains — "This specification can only be used if the encoding of the
+            # (repetition category) class is the last encoding to be placed in the container"
+            # — and it is checked when the container closes.
+            out.claim_container_end(self.reference, "a repetition whose end")
+            return
         # §22.7.3.11: "If DETERMINED BY is `handle` there is no further action needed by the
         # encoder." The elements' own §22.9.3.1 checks have already run by the time this does.
         if self.determination in (RepetitionSpaceDetermination.NOT_NEEDED,
@@ -2335,7 +2674,25 @@ def encode_with_user(objects, cls, value, *, outer: OuterSpec | None = None) -> 
             f"ECN: no user-defined encoding object for "
             f"{getattr(cls, 'name', cls)!r} (9.5.1)")
     out = BitWriter()
+    out.set_objects(objects)
     obj.spec.write(value, out)
+    still_open = out.open_containers()
+    if still_open:  # pragma: no cover - every writer closes what it opens
+        raise Asn1Error(
+            f"ECN: the container{'s' if len(still_open) > 1 else ''} "
+            f"{', '.join(repr(name) for name in still_open)} "
+            f"{'were' if len(still_open) > 1 else 'was'} opened and never closed")
+    # §21.3.6's second form: "a specification that the end of the PDU determines the end of
+    # the encoding space (using OUTER)". Its check can only run here, because the PDU's end is
+    # what this function is producing — and it runs BEFORE `#OUTER` pads, since padding to an
+    # octet boundary is not "further encodings placed in the container".
+    claim = out.outer_claim()
+    if claim is not None and claim[0] != out.bit_length:
+        raise Asn1Error(
+            f"ECN: §21.3.6 — {claim[1]} is determined by {OUTER_CONTAINER}, the end of the "
+            f"PDU, so it "
+            f"has to be the last encoding in it; {out.bit_length - claim[0]} further bits "
+            f"follow")
     # Every auxiliary field is a determinant, and a determinant nobody wrote is not zero — it
     # is a length, an offset or an unused-bit count that no clause ever produced. Checked
     # before `#OUTER` runs, since a reversal there would relocate the reserved bits.
@@ -2478,6 +2835,14 @@ __all__ = [
     "RepetitionSpace", "RepetitionSpec", "SizeBounds", "SizeRangeCondition",
     "SpaceDeterminant", "StartPointer", "StringSpec", "TagSpec", "Transform",
     "TransformChain", "UnusedBits",
+    # The constructor categories and the identification handle four clauses read (§21.5,
+    # §21.6, §21.16, §22.5, §22.6, §22.9, §22.10, §23.1, §23.11).
+    "AlternativeDetermination", "AlternativeSelection", "AlternativesSpec",
+    "ComponentOrder", "Concatenation", "ConcatenationAlignment", "HandleRegistry",
+    "HandleValueKind", "HandleValueSet", "IdentificationHandle", "Optionality",
+    "OptionalityDetermination", "OptionalSpec",
+    # Containment, in both directions (§22.11, §21.3.6/§21.5.6/§21.7.8).
+    "ContainedType", "ContainerSpec", "OUTER_CONTAINER",
     "UnusedBitsDetermination", "UserEncodingObject", "ValuePadding", "check_unit",
     "encode_with_user", "legacy_frame_objects", "legacy_frame_workload", "refuted_by",
 ]

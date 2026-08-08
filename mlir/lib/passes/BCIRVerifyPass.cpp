@@ -2539,6 +2539,32 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
             << "components to exhibit one, with disjoint handle value sets";
         ok = false;
       }
+      // 22.11.1.2 brackets both `COMPLETED BY` and `OVERRIDE` inside `CONTENTS-ENCODING`, and
+      // 22.11.1.5 makes the group set "if the CONTENTS-ENCODING keyword is used". So either
+      // tail without the keyword is a property nothing will ever read -- and `OVERRIDE` is
+      // the one that matters, because a reader would take it for a statement about the ASN.1
+      // ENCODED BY when 22.11.2.1 gives that constraint outright precedence in this case.
+      if ((o.getContentsCompletedBy() || o.getContentsOverride()) &&
+          !o.getContentsEncoding()) {
+        o.emitError("R25: ECN object ")
+            << o.getSymName() << " sets COMPLETED BY or OVERRIDE without CONTENTS-ENCODING; "
+            << "X.692 22.11.1.2 brackets both inside it, and 22.11.1.5 makes the group set "
+            << "only when the CONTENTS-ENCODING keyword is used";
+        ok = false;
+      }
+      // 21.3.6/21.5.6/21.7.8's `container` determination reads no field's value, so a
+      // transform list on it never runs. 22.4.2.3 and 22.4.2.4 confine the lists to the two
+      // field determinations; the same shape as the eight rules above, one clause over.
+      if (o.getSpaceDetermination().has_value() &&
+          *o.getSpaceDetermination() == EcnSpaceDetermination::Container &&
+          (o.getUnusedEncoderTransforms() || o.getUnusedDecoderTransforms())) {
+        o.emitError("R25: ECN object ")
+            << o.getSymName() << " gives transforms to a `container` encoding-space "
+            << "determination; X.692 22.4.2.3/22.4.2.4 admit them only for `field-to-be-set` "
+            << "and `field-to-be-used`, because a container's end is a position and not a "
+            << "value carried through a field";
+        ok = false;
+      }
     });
 
     root->walk([&](EcnConditionOp c) {

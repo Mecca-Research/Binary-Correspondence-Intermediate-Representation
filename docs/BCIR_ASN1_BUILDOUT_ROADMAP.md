@@ -53,7 +53,7 @@ rule.
 | X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references; cross-module tag-default nuance (§9.8) excluded |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
-| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, twenty-two statically decidable X.692 rules). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. Still refused: §22.1's replacement *notation* and §16.5/§16.3's constructor *structure* notation (both need §22.1.2.2/§22.1.2.4-style parameterization or structure grammar) and §21.3.6/§21.7.8's `container` |
+| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, twenty-five statically decidable X.692 rules). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. §22.11's contained types and §21.3.6/§21.5.6/§21.7.8's `container` determination are built too. Still refused: §22.1's replacement *notation* and §16.5/§16.3's constructor *structure* notation (both need §22.1.2.2/§22.1.2.4-style parameterization or structure grammar), and §21.7.6/§21.7.7's per-element continuation flag |
 | X.693 | 8825-4:2021 | XER | **built** — BASIC-XER + CXER (CXER out, both in; validated against Annex A.3/A.4); EXTENDED-XER by design excluded |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
@@ -535,16 +535,51 @@ requirement, §22.6.1.1's two-valued ordering and §22.10.2.1's handle prerequis
 §22.9.2.3 are the two that could only ever live here: both relate one `EXHIBITS HANDLE` clause
 to every other in the module, so no object-local check reaches them.
 
+**Containment is two relationships, and reading them as one is the mistake.** §22.11's
+`CONTENTS-ENCODING` is *"my contents are another type"* — an `OCTET STRING (CONTAINING Inner)`
+whose contents are encoded by a **different object set**. §21.3.6's, §21.5.6's and §21.7.8's
+`container` determination is *"my end is what bounds a component"*. Both are built, and they
+needed different machinery.
+
+§22.11.2 is a **five-row table**, and the last row is the one a two-way reading gets wrong:
+`CONTENTS-ENCODING` set, an `ENCODED BY` contents constraint present, and `OVERRIDE` left FALSE
+falls back to *the set applied to the containing type* — not to this group's own set, and not
+to the `ENCODED BY` rules. §22.11.1.4's combination is §9.23.2's: a **left-biased** merge where
+`COMPLETED BY` fills gaps and never overrides, which is what makes
+`COMPLETED BY PER-BASIC-UNALIGNED` safe under a handful of specialized objects.
+
+The `container` determination's encoder actions are nil — §22.7.3.6 says "there is no further
+encoder action" outright — and what each clause *does* give the encoder is a rule to **check**:
+the element must be the last encoding placed in the container. §21.3.6's NOTE says why that is
+worth checking rather than trusting, and the symptom otherwise is a decoder reading one field's
+bits as another's.
+
+**The notation has no `OUTER` keyword**, which is the reading that shaped the model. §21.3.6
+calls the second form "a specification that the end of the PDU determines the end of the
+encoding space (using `OUTER`)", but §22.4.1.2's syntax is `USING &encoding-space-reference` in
+every case and §22.4.1.6 calls that reference one "to an auxiliary field or to a field carrying
+abstract values, **or to a container**". So the PDU is simply the outermost container and
+clause 25's `#OUTER` names it — a reserved reference, and the grammar needed nothing new.
+
+One implementation decision is worth recording because the first attempt got it backwards. A
+contained type gets its own **reference scope** and not its own bit buffer: §9.24.2 moves the
+application point into it, so its `REFERENCE`s resolve among its own fields, but its bits go
+straight into the containing encoding — because "the last encoding placed in the container" is
+a question about offsets in one stream, and isolating the buffer made that rule unanswerable.
+
 **What is still refused at the surface, and what each needs.** §22.1's replacement *notation*
 needs §22.1.2.2's parameterized encoding structures and §22.1.2.4's parameterized encoding
 objects — X.683's parameterization applied to ECN, which does not exist here; the semantics are
 built and reachable from Python. §16.5's `AlternativesStructure` and §16.3's `OPTIONAL` field
 marker are the *structure* half of the constructor categories: the objects parse and run, and
-the structures they apply to are still assembled in Python. §21.3.6's and §21.7.8's `container`
-determination needs a containment relationship this rail's flat concatenation does not have.
-`EXHIBITS HANDLE` itself now parses, with all six §21.16 value-set alternatives, and reaches
-the module digest — `SYNTAX_VERSION` moved to 4 for that, since a handle changes what a decoder
-reads and two specifications differing only in one must not share a name.
+the structures they apply to are still assembled in Python. `EXHIBITS HANDLE` itself now parses,
+with all six §21.16 value-set alternatives, and reaches the module digest — `SYNTAX_VERSION`
+moved to 4 for that, since a handle changes what a decoder reads and two specifications
+differing only in one must not share a name.
+
+Two of §21.7's eight repetition-space determinations remain: `flag-to-be-set` and
+`flag-to-be-used` put a continuation flag **inside the repeated element** (§21.7.6/§21.7.7),
+which needs the element's own structure to reserve a field for it.
 
 **The plan-v6 question, answered.** The open question was whether an ECN encoding is a sixth
 column in [`encode_plan`](../bcir/asn1/encode_plan.py), carried by a version 6 of that

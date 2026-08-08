@@ -159,6 +159,15 @@ def BCIR_EcnObjectOp : BCIR_Op<"ecn.object", [Symbol, NoTerminator]> {
     Concatenation (22.10): `concatenation_order`. 22.10.2.1 makes `random` require an
     identification handle on every component, which is a statement about the structure rather
     than about this object, so R25 checks the marker's presence and the oracle checks the sets.
+
+    Contained type (22.11): `contents_encoding` marks the group set -- 22.11.1.5 makes that a
+    fact about whether the keyword was written, which is why it is a UnitAttr and not the
+    emptiness of an object set. `contents_completed_by` and `contents_override` are the two
+    optional tails. The object SETS are not here, for the same reason no pattern is: "this set
+    contains an object for #Foo" is a fact about another module, and 22.11.2's table is about
+    which set applies, not what is in it. What R25 checks is the pair -- 22.11.1.2 brackets
+    both tails inside `CONTENTS-ENCODING`, so either one without it is a property that can
+    never be read.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name,
                        FlatSymbolRefAttr:$encoding_class,
@@ -206,6 +215,10 @@ def BCIR_EcnObjectOp : BCIR_Op<"ecn.object", [Symbol, NoTerminator]> {
                        OptionalAttr<BCIR_EcnComponentOrderAttr>:$alternative_ordering,
                        // 22.10
                        OptionalAttr<BCIR_EcnComponentOrderAttr>:$concatenation_order,
+                       // 22.11
+                       UnitAttr:$contents_encoding,
+                       UnitAttr:$contents_completed_by,
+                       UnitAttr:$contents_override,
                        // 23.7 / 24.3.9
                        UnitAttr:$subtracts_lower_bound,
                        // 23.7.2.2's ELSE, distinct from "no IF was written" only in intent.
