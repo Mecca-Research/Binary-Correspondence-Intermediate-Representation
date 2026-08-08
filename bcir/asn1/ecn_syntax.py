@@ -1163,16 +1163,26 @@ def _parse_int_body(cursor: _Cursor, name: str, module: "EcnModule"):
     satisfied" against the bounds of the type the object set is applied to.
 
     `BOUNDS` is this rail's stand-in for those bounds, and it is a **deviation stated rather
-    than hidden**. In X.692 the bounds arrive from the ASN.1 type through an encoding link
-    module (clause 14), which this rail does not have — a value dict is what it links against.
-    Writing them on the `#INT` object keeps §21.11's predicates testable against real numbers;
-    it does not make them a property the notation gives that object.
+    than hidden** — now a *fallback* rather than the only source. In X.692 the bounds arrive
+    from the ASN.1 type through the encoding link module — **clause 12**, whose own NOTE
+    separates it from clause 14's encoding *definition* module: "There are two top-level
+    productions in ECN, the `ELMDefinition` specified in this clause and the `EDMDefinition`
+    specified in clause 14."
+
+    [`ecn_link.py`](ecn_link.py) builds that link: `LinkedStructure.bounds_for` reads the
+    bounds off the ASN.1 component's own constraint, which is where §21.11.3 and §23.7.2.6's
+    NOTE both put them. `BOUNDS` remains accepted because a specification written against this
+    rail may still have no ASN.1 type in hand — a value dict is what it links against then —
+    but where there is a link, the link is authoritative and this clause is redundant.
     """
     if cursor.accept("AUXILIARY"):
         # A DEVIATION, stated. X.692 has no keyword for "this field is auxiliary" because
         # §22.1.2.6's classification comes from the encoding link module: a structure field
-        # with no ASN.1 component behind it is auxiliary, and clause 14's ELM is what decides
-        # that. This rail links against a value dict rather than an ASN.1 type, so the fact
+        # with no ASN.1 component behind it is auxiliary, and clause 12's ELM is what decides
+        # that. §19.3.1 says the same thing from clause 19's side -- a target structure "has
+        # fields corresponding to the components of the type, but also has added fields for
+        # determinants" -- which is why `MatchingFields.added` in ecn_mapping.py names them
+        # too. This rail links against a value dict rather than an ASN.1 type, so the fact
         # has nowhere else to be written. It is spelled on the object, where the width already
         # lives, and named here rather than inferred from "the value did not carry it" —
         # which would make a typo in a field name silently produce a determinant field.
