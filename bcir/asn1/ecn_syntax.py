@@ -65,7 +65,8 @@ from dataclasses import dataclass, field, replace
 from .ecn_encode import USE_SET, ComponentEncoding, EncodeStructure, GovernorCategory
 from .ecn_param import (
     ActualKind, ActualParameter, ActualParameterList, AssignmentKind, GovernorKind, Parameter,
-    ParameterizedAssignment, ParameterKind, ParameterList, ReplacementParameterization,
+    ParameterizedAssignment, ParameterizedReference, ParameterKind, ParameterList,
+    ReplacementParameterization, bare_use,
 )
 from .ecn_user import (
     AlternativeDetermination, AlternativeSelection, AlternativesSpec, ComponentOrder,
@@ -142,7 +143,12 @@ _UNSUPPORTED_KEYWORDS = {
     # constructor. The refusal for that is written where the field is read, not here, because
     # it is about a field's shape rather than about a property group.
 
-    # §22.1's replacement SEMANTICS are built in `ecn_user`, and its PARAMETERIZATION model —
+    # §22.1's REPLACE left this table when its defined syntax became readable. What remains
+    # of that clause is §22.1.2.7's INSERT AT HEAD structure, refused where it is resolved
+    # rather than here, and §22.1.1.7 e)'s second replacement group.
+    #
+    # (Historic note kept because the citation moved twice.) §22.1's replacement SEMANTICS are
+    # built in `ecn_user`, and its PARAMETERIZATION model —
     # what a dummy may stand for, which actual fits, and §22.1.2's rules about the definitions
     # a REPLACE names — is built in `ecn_param`. Both are reachable from Python. What this
     # grammar cannot read is the notation: §22.1.2.2 makes the `WITH` structures parameterized
@@ -154,15 +160,6 @@ _UNSUPPORTED_KEYWORDS = {
     # C.1 rewrites X.683 §8.3's `ParameterList` to use `{<` and `>}`, so an X.683 parser reads
     # the one spelling ECN does not have and refuses the only one it does. (This comment said
     # `{#D}` — ASN.1's braces — until Annex C was read for slice F.)
-    "REPLACE": "§22.1.1.2/§22.1.1.4/§22.1.1.6's defined syntax is not read here. The "
-               "parameterized structures and objects it names now PARSE — see `{<`/`>}` "
-               "above — and §22.1.2's restrictions on them are checked as they are declared. "
-               "What is missing is §17.5.1's `ENCODE STRUCTURE { <field> <object>, ... } "
-               "WITH <object set>`, which is how an ENCODED BY object says which object "
-               "encodes each field of the replacement structure; without it §22.1.3.5's "
-               "\"set according to the specification in the replacement structure encoding "
-               "object\" has nothing to read. Assemble `Replacement` in Python until that "
-               "lands",
 }
 
 
@@ -955,6 +952,8 @@ class _CommonGroups:
     value_padding: ValuePadding | None = None
     start_pointer: StartPointer | None = None
     bit_reversal: ReversalSpecification = ReversalSpecification.NO_REVERSAL
+    #: §22.1's group, which §23.3.3.1 puts FIRST among the encoder actions.
+    replacement: "Replacement | None" = None
 
 
 def _refuse_unsupported(cursor: _Cursor) -> None:
@@ -968,7 +967,7 @@ def _refuse_unsupported(cursor: _Cursor) -> None:
 
 
 def _parse_common(cursor: _Cursor, module: "EcnModule", *,
-                  space_required: bool) -> _CommonGroups:
+                  space_required: bool, owner: str = "this object") -> _CommonGroups:
     """§23.x's shared prefix and suffix, in the order the WITH SYNTAX gives them.
 
     The order is not this parser's convenience. §23.3.3.1 lists the encoder actions —
@@ -976,6 +975,12 @@ def _parse_common(cursor: _Cursor, module: "EcnModule", *,
     handle, bit reversal — and the syntax follows that order, so reading it in the same order
     keeps one sequence rather than two that have to be kept in step.
     """
+    _refuse_unsupported(cursor)
+    # §23.3.3.1 lists replacement first among the encoder actions, and the defined syntax
+    # follows that order, so it is read first here too.
+    replacement = None
+    if cursor.accept("REPLACE"):
+        replacement = _parse_replace(cursor, module, owner)
     _refuse_unsupported(cursor)
     pre_alignment = None
     if cursor.accept_words("ALIGNED", "TO"):
@@ -999,7 +1004,7 @@ def _parse_common(cursor: _Cursor, module: "EcnModule", *,
             "ECN: clause 23's WITH SYNTAX gives `ENCODING-SPACE` without brackets for this "
             "class, so it is mandatory rather than optional")
     return _CommonGroups(pre_alignment=pre_alignment, space=space,
-                         start_pointer=start_pointer)
+                         start_pointer=start_pointer, replacement=replacement)
 
 
 def _parse_value_padding_tail(cursor: _Cursor, module: "EcnModule") -> ValuePadding | None:
@@ -1321,6 +1326,139 @@ def _parse_outer_body(cursor: _Cursor, name: str) -> OuterSpec:
     return OuterSpec(boundary_bits=boundary, padding=padding, pattern=pattern)
 
 
+def _structure_fields(assignment, owner: str) -> tuple:
+    """The `(field, class)` pairs inside a parameterized structure's stored body.
+
+    F2 keeps a parameterized body as raw tokens on purpose — §9.7 makes instantiation a
+    substitution, so there is nothing to resolve until a reference supplies actuals. A
+    `REPLACE` is that reference, so this is where the tokens finally become fields.
+    """
+    body = list(assignment.body)
+    if len(body) < 2 or body[1] != "{":
+        raise Asn1Error(
+            f"ECN: §16.2.12 — {assignment.name} is named as a replacement structure by "
+            f"{owner}, and its body is not a constructor with a field list")
+    fields = []
+    inner = _Cursor([Token(text, 0) for text in body[2:-1]], f"the structure {assignment.name}")
+    while not inner.eof():
+        if inner.accept(","):
+            continue
+        member = inner.next().text
+        if inner.eof() or inner.peek() == ",":
+            raise Asn1Error(
+                f"ECN: §16.3.1's NamedField is an identifier followed by an EncodingStructure; "
+                f"{member!r} in {assignment.name} has no class")
+        fields.append((member, inner.next().text))
+    if not fields:
+        raise Asn1Error(f"ECN: the replacement structure {assignment.name} has no fields")
+    return tuple(fields)
+
+
+def _read_encode_structure(assignment, *, component_names: tuple, owner: str) -> EncodeStructure:
+    """§17.5.1's `EncodeStructure` out of a parameterized object's stored body."""
+    inner = _Cursor([Token(text, 0) for text in assignment.body], f"the object {owner}")
+    if not inner.accept_words("ENCODE", "STRUCTURE"):
+        raise Asn1Error(
+            f"ECN: §22.1.3.5 sets a replacement structure's other fields \"according to the "
+            f"specification in the replacement structure encoding object\", and §17.5.1's "
+            f"ENCODE STRUCTURE is that specification; {owner} states none")
+    written = []
+    body = _Cursor(_collect_braced(inner), f"the ENCODE STRUCTURE body of {owner}")
+    while not body.eof():
+        if body.accept(","):
+            continue
+        member = body.next().text
+        if body.eof() or body.peek() == ",":
+            raise Asn1Error(
+                f"ECN: §17.5.10's ComponentEncoding is an identifier followed by a "
+                f"TagAndElementEncoding; {member!r} in {owner} has no encoding")
+        element = body.next().text
+        if body.peek() == "{<":
+            _parse_actual_parameter_list(body)
+        written.append(ComponentEncoding(
+            identifier=member, element=USE_SET if element == "USE-SET" else element))
+    combined = ""
+    if inner.accept("WITH"):
+        combined = inner.next().text
+    return EncodeStructure(governor=GovernorCategory.CONCATENATION,
+                           component_names=component_names, components=tuple(written),
+                           combined=combined)
+
+
+#: §22.1.1.7's five actions, keyed by the words that appear between `REPLACE` and `WITH`.
+#: `COMPONENT` and `ALL COMPONENTS` are one entry because §22.1.1.8 says so — "REPLACE
+#: COMPONENT is a synonym for REPLACE ALL COMPONENTS" — and a synonym is not a sixth action.
+_REPLACE_ACTIONS = {
+    ("STRUCTURE",): ReplaceAction.STRUCTURE,
+    ("COMPONENT",): ReplaceAction.ALL_COMPONENTS,
+    ("ALL", "COMPONENTS"): ReplaceAction.ALL_COMPONENTS,
+    ("OPTIONALS",): ReplaceAction.OPTIONALS,
+    ("NON-OPTIONALS",): ReplaceAction.NON_OPTIONALS,
+}
+
+
+def _parse_replace(cursor: _Cursor, module: "EcnModule", owner: str) -> Replacement:
+    """§22.1.1.2, §22.1.1.4 and §22.1.1.6's defined syntax, which are one shape with three
+    lengths::
+
+        REPLACE [STRUCTURE | COMPONENT | ALL COMPONENTS | OPTIONALS | NON-OPTIONALS]
+            WITH &#Replacement-structure
+            [ENCODED BY &replacement-structure-encoding-object
+                [INSERT AT HEAD &#Head-end-structure]]
+
+    §22.1.2.1 is the rule that makes reading it easy and writing it hard: "exactly one of the
+    permitted syntaxes between `REPLACE` and `WITH` shall be used". So the words before `WITH`
+    are a closed set of five, `COMPONENT` and `ALL COMPONENTS` being one of them by §22.1.1.8,
+    and anything else is a fault rather than an unrecognized extension.
+
+    **The names here are bare.** §22.1.2.2 and §22.1.2.4 close with the same sentence — "only
+    the ... name shall be given. They shall not have any parameter list in this use of the
+    names" — so the structure written `#Length-prefixed{<#D>}` where it is *defined* is
+    `#Length-prefixed` here. `ecn_param.bare_use` is what refuses the copied spelling, and it
+    refuses C.3's `{<>}` too: that is a legal `ParameterizedReference` elsewhere and still "a
+    parameter list in this use of the name".
+    """
+    words = []
+    while cursor.peek() not in (None, "WITH"):
+        words.append(cursor.next().text)
+    action = _REPLACE_ACTIONS.get(tuple(words))
+    if action is None:
+        written = " ".join(words) or "nothing"
+        raise Asn1Error(
+            f"ECN: §22.1.2.1 — exactly one of the permitted syntaxes shall be used between "
+            f"REPLACE and WITH; {owner} writes {written}. §22.1.1.7 lists them: STRUCTURE, "
+            f"COMPONENT (a synonym for ALL COMPONENTS per §22.1.1.8), ALL COMPONENTS, "
+            f"OPTIONALS, NON-OPTIONALS")
+    cursor.expect("WITH")
+    structure = module.replacement_structure(
+        bare_use(_parse_bare_reference(cursor), clause="§22.1.2.2"), owner)
+
+    encoded_by = None
+    head_end = None
+    if cursor.accept_words("ENCODED", "BY"):
+        encoded_by = bare_use(_parse_bare_reference(cursor), clause="§22.1.2.4")
+        if cursor.accept_words("INSERT", "AT"):
+            cursor.expect("HEAD")
+            head_end = module.head_end_structure(
+                bare_use(_parse_bare_reference(cursor), clause="§22.1.2.7"), owner)
+    return Replacement(action=action,
+                       structure=module.replacement_with_encodings(structure, encoded_by, owner),
+                       head_end=head_end)
+
+
+def _parse_bare_reference(cursor: _Cursor) -> ParameterizedReference:
+    """A name, plus any actual parameter list written after it — so `bare_use` can refuse one.
+
+    Reading the list rather than refusing the `{<` outright is what lets the message name the
+    clause instead of the token: a reader who copied `#Length-prefixed{<#D>}` from its own
+    definition has made a specific mistake that §22.1.2.2 has a specific sentence about.
+    """
+    name = cursor.next().text
+    if cursor.peek() == "{<":
+        return ParameterizedReference(name, _parse_actual_parameter_list(cursor))
+    return ParameterizedReference(name)
+
+
 def _parse_alternatives_body(cursor: _Cursor, name: str, module: "EcnModule"
                              ) -> AlternativesSpec:
     """§23.1's `#ALTERNATIVES`, whose alternatives come from the §16.3 structure.
@@ -1507,7 +1645,7 @@ def _parse_concatenation_body(cursor: _Cursor, name: str, module: "EcnModule"
     """
     if cursor.peek() == "ENCODE":
         return _parse_encode_structure(cursor, name, module)
-    common = _parse_common(cursor, module, space_required=False)
+    common = _parse_common(cursor, module, space_required=False, owner=name)
     if common.space.size is not None:
         raise Asn1Error(
             f"ECN: §21.2.8 forbids `fixed-to-max` for a concatenation, and a stated SIZE on "
@@ -1546,7 +1684,7 @@ def _parse_concatenation_body(cursor: _Cursor, name: str, module: "EcnModule"
         field_name for field_name, class_name in structure
         if isinstance(fields[field_name], PadSpec))
     return ConcatenationSpec(fields=fields, order=tuple(name for name, _ in structure),
-                             padding=padding)
+                             padding=padding, replacement=common.replacement)
 
 
 def _parse_parameter(text: str) -> Parameter:
@@ -1770,6 +1908,128 @@ class EcnModule:
                 f"{shapes[category]}; {self.structure_name} is "
                 f"{shapes[self.structure_category]}")
         return self.structure
+
+    def replacement_structure(self, name: str, owner: str) -> ParameterizedAssignment:
+        """The `WITH` structure a `REPLACE` names, checked to be one §22.1.2.2 admits.
+
+        §22.1.2.2: "The `WITH` replacement structures shall be parameterized encoding
+        structures with a single encoding class parameter." Both halves are checked here
+        because both can fail from the text alone — the name may not be parameterized at all,
+        or may be parameterized over the wrong thing.
+        """
+        assignment = self.parameterized.get(name)
+        if assignment is None:
+            raise Asn1Error(
+                f"ECN: §22.1.2.2 — the WITH replacement structure shall be a parameterized "
+                f"encoding structure; {owner} names {name}, which this module does not declare "
+                f"as one")
+        if assignment.kind is not AssignmentKind.ENCODING_CLASS:
+            raise Asn1Error(
+                f"ECN: §22.1.2.2 — {name} is a {assignment.kind.value}, not a parameterized "
+                f"encoding structure")
+        if assignment.parameters.kinds() != (ParameterKind.ENCODING_CLASS,):
+            raise Asn1Error(
+                f"ECN: §22.1.2.2 — the WITH replacement structures shall have a single "
+                f"encoding class parameter; {name} has {len(assignment.parameters)}")
+        return assignment
+
+    def head_end_structure(self, name: str, owner: str) -> HeadEndStructure:
+        """§22.1.2.7's `INSERT AT HEAD` structure, which this rail cannot yet *declare*.
+
+        The semantics are built — `ecn_user.HeadEndStructure` and §22.1.3.6's hoisting are
+        exercised from Python. What is missing is a place to put the declaration: §22.1.2.7's
+        structure "shall not have dummy parameters", so it is an ordinary encoding structure,
+        and this module holds exactly one of those as its application point (`_parse_structure`
+        refuses a second).
+
+        Worth separating the two facts rather than blaming the clause: §13.2 walks one
+        application point, but nothing in clause 16 says a module declares only one
+        *structure*. Lifting that is a change to what `EcnModule.structure` is, which is a
+        different slice from this one.
+        """
+        raise Asn1Error(
+            f"ECN: §22.1.2.7's INSERT AT HEAD structure is an ordinary encoding structure "
+            f"with no dummy parameters, and this module already declares its one structure as "
+            f"the §13.2 application point; {owner} cannot also declare {name}. The hoisting "
+            f"semantics (§22.1.3.6) are built — assemble `HeadEndStructure` in Python until a "
+            f"module can hold a second structure")
+
+    def replacement_with_encodings(self, assignment: ParameterizedAssignment,
+                                   encoded_by: str | None, owner: str) -> ReplacementStructure:
+        """Turn a parameterized structure and its `ENCODED BY` object into a
+        `ReplacementStructure` — the step §22.1 has never been able to take from text.
+
+        §22.1.3.5's second sentence is the whole job: "Values of other fields in the
+        replacement structure shall be set according to the specification in the **replacement
+        structure encoding object**." §17.5.1's `EncodeStructure` is that specification, which
+        is why this could not be built until it was — and why the refusal used to cite
+        §22.1.2.6, which classifies the auxiliary fields and never says how they are encoded.
+
+        §22.1.2.6 does supply the *classification*: "All fields of the replacement structure
+        that are not part of the encoding class parameter are auxiliary fields". So the dummy
+        field is the one whose class IS the structure's parameter, and every other field is
+        auxiliary — which is a computation over the two lists rather than a declaration, the
+        same shape `ecn_link.auxiliary_fields` already uses for §22.1.2.6's other half.
+        """
+        dummy = assignment.parameters.names()[0]
+        fields = _structure_fields(assignment, owner)
+        holes = [member for member, class_name in fields if class_name == dummy]
+        if len(holes) != 1:
+            raise Asn1Error(
+                f"ECN: §22.1.2.2 — {assignment.name} has a single encoding class parameter "
+                f"{dummy}, so exactly one of its fields is the hole; {len(holes)} use it")
+        auxiliary_names = [member for member, class_name in fields if class_name != dummy]
+
+        if encoded_by is None:
+            if auxiliary_names:
+                raise Asn1Error(
+                    f"ECN: §22.1.2.6 — the auxiliary fields {auxiliary_names} \"shall be set "
+                    f"by the encoding of the replacement structure\", and {owner} states no "
+                    f"ENCODED BY object to set them")
+            auxiliary = {}
+        else:
+            auxiliary = self._encoded_by_specs(encoded_by, assignment, fields, dummy, owner)
+        return ReplacementStructure(
+            name=assignment.name, order=tuple(member for member, _ in fields),
+            dummy=holes[0], auxiliary=auxiliary)
+
+    def _encoded_by_specs(self, encoded_by: str, assignment: ParameterizedAssignment,
+                          fields: tuple, dummy: str, owner: str) -> dict:
+        """§22.1.1.9's object, read as §17.5.1's `EncodeStructure` over the same fields."""
+        obj = self.parameterized.get(encoded_by)
+        if obj is None or obj.kind is not AssignmentKind.ENCODING_OBJECT:
+            raise Asn1Error(
+                f"ECN: §22.1.2.4 — the ENCODED BY encoding objects shall be parameterized "
+                f"encoding objects for the WITH encoding structures; {owner} names "
+                f"{encoded_by}, which this module does not declare as one")
+        if obj.governor != assignment.name:
+            raise Asn1Error(
+                f"ECN: §22.1.2.4 — the ENCODED BY object's governor is the corresponding WITH "
+                f"structure; {encoded_by} is governed by {obj.governor} and {owner} pairs it "
+                f"with {assignment.name}")
+        encode = _read_encode_structure(
+            obj, component_names=tuple(member for member, _ in fields), owner=encoded_by)
+        specs = {}
+        for member, class_name in fields:
+            if class_name == dummy:
+                continue
+            chosen = encode.encoding_for(member)
+            if chosen in ("", USE_SET) or chosen == encode.combined:
+                # §17.5.6's USE-SET: the combined set, which on this rail is the module's own.
+                specs[member] = self.spec_for_class(class_name, member)
+                continue
+            if chosen not in self.objects:
+                raise Asn1Error(
+                    f"ECN: §17.5.13 — the EncodingObject for {member!r} shall be governed by "
+                    f"the corresponding encoding class; {chosen!r} is not an encoding object "
+                    f"in this module")
+            governor, spec = self.objects[chosen]
+            if governor != class_name:
+                raise Asn1Error(
+                    f"ECN: §17.5.13 — {member!r} has class {class_name} and {chosen!r} is "
+                    f"governed by {governor}")
+            specs[member] = spec
+        return specs
 
     def optional_wrapped(self, field_name: str, spec):
         """§16.5.3 and §16.5.4: wrap a component's encoding in its `OptionalClass` object.

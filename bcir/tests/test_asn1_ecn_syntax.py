@@ -23,7 +23,9 @@ from bcir.asn1.ecn_user import (
     legacy_frame_workload,
 )
 from bcir.asn1.ecn_param import ParameterKind
-from bcir.asn1.ecn_user import AlternativesSpec, OptionalityDetermination, OptionalSpec
+from bcir.asn1.ecn_user import (
+    AlternativesSpec, OptionalityDetermination, OptionalSpec, ReplaceAction,
+)
 from bcir.asn1.encode_plan import compile_encode_plan
 from bcir.asn1.tags import Asn1Error
 
@@ -189,8 +191,10 @@ def test_an_unimplemented_property_group_is_refused_by_name_and_never_skipped():
     space = "ENCODING-SPACE SIZE 3 MULTIPLE OF bit"
     cases = [
         # Groups this repository has not built. Each names what it would need.
-        (space, "REPLACE STRUCTURE WITH #Repl", "22.1.2"),
         (space, f"{space} CONTAINED BY x", "22.11"),
+        # `REPLACE` used to be here. Its defined syntax is read now, and the fixture above
+        # still fails — for a *different* reason: §22.1.2.2 refuses a WITH structure the
+        # module never declared. Kept below as a REPLACE test rather than an unimplemented one.
         # §23.11's `PRESENCE` and §23.1's `ALTERNATIVE` both used to sit here and no longer
         # do: §16.5's `ConcatComponentPresence` and §16.3's `AlternativesStructure` are built,
         # so both keywords are read rather than refused. See
@@ -651,39 +655,7 @@ def test_a_parameterized_assignment_reaches_the_digest_governors_and_all():
     assert b"{<#ENCODINGS:D>}" in governed.serialize()
 
 
-def test_replace_is_still_refused_but_the_refusal_names_the_right_clause_now():
-    """The parameterized structures and objects §22.1 names now parse, and §22.1.2's
-    restrictions on them are checked. What is left is **§17.5.1's `EncodeStructure`** — the
-    `{ ENCODE STRUCTURE { <field> <object>, ... } WITH <object set> }` object body — because
-    that is how an `ENCODED BY` object says which object encodes each field of the replacement
-    structure, and without it §22.1.3.5's "set according to the specification in the
-    replacement structure encoding object" has nothing to read.
 
-    D.3.2.3 is where this is visible rather than inferred. Its worked replacement writes
-
-        optional-with-determinant-encoding
-        {<#Element, #ENCODINGS:Sequence2-combined-encoding-object-set>}
-        #Optional-with-determinant{<#Element>} ::= {
-            ENCODE STRUCTURE {
-                determinant determinant-encoding,
-                component   USE-SET OPTIONAL-ENCODING if-component-present-encoding{<determinant>} }
-            WITH Sequence2-combined-encoding-object-set }
-
-    — every piece of Annex C this slice built (`{< >}`, an `#ENCODINGS` governor, a governor
-    instantiated with the object's own dummy) and one whole object-body form it did not. The
-    refusal said §22.1.2.6 until that example was read; §22.1.2.6 classifies the auxiliary
-    fields, which is a different statement from saying how they are encoded.
-    """
-    space = "ENCODING-SPACE SIZE 3 MULTIPLE OF bit"
-    source = frame_header_source().replace(space, f"{space} REPLACE STRUCTURE WITH #X")
-    try:
-        parse_module(source)
-    except Asn1Error as error:
-        assert "17.5.1" in str(error), str(error)
-        assert "ENCODE STRUCTURE" in str(error), str(error)
-        assert "{<" in str(error), "the refusal should point at what now parses"
-    else:
-        raise AssertionError("REPLACE was accepted and ignored")
 
 
 # --- §17.5.1's EncodeStructure, as a #CONCATENATION object body ---------------------------
@@ -978,3 +950,132 @@ def test_a_marked_component_does_not_change_its_structures_own_category():
     assert module.require_structure() == module.structure
     # And the marker still did its job, so the fix did not simply drop it.
     assert isinstance(module.concatenation().fields["reserved"], OptionalSpec)
+
+
+# --- §22.1's REPLACE defined syntax, read from module text --------------------------------
+
+def _replace_module(clause: str) -> str:
+    """A module whose concatenation object performs a replacement.
+
+    Every piece §22.1 needs is written out: a parameterized `WITH` structure with a single
+    encoding class parameter (§22.1.2.2), an `ENCODED BY` object governed by that structure
+    instantiated with its own dummy (§22.1.2.4), and an §17.5.1 `ENCODE STRUCTURE` body naming
+    an object per field — which is the specification §22.1.3.5 says the auxiliary values are
+    "set according to".
+    """
+    return f"""BCIR-Rep ENCODING-DEFINITIONS ::= BEGIN
+  #Len   ::= #INT
+  #Val   ::= #INT
+  #Join  ::= #CONCATENATION
+  Payload-structure ::= #Join {{ body #Val }}
+  #Length-prefixed{{<#D>}} ::= #CONCATENATION {{ length #Len, value #D }}
+  lenCond #CONDITIONAL-INT ::= {{ ELSE ENCODING-SPACE SIZE 8 MULTIPLE OF bit
+                                  ENCODING positive-int }}
+  lenEnc #Len ::= {{ ENCODING lenCond }}
+  valCond #CONDITIONAL-INT ::= {{ ELSE ENCODING-SPACE SIZE 16 MULTIPLE OF bit
+                                  ENCODING positive-int }}
+  valEnc #Val ::= {{ ENCODING valCond }}
+  lp-object{{<#D>}} #Length-prefixed{{<#D>}} ::= {{
+      ENCODE STRUCTURE {{ length lenEnc, value USE-SET }} WITH combined }}
+  joinObj #Join ::= {{ {clause} CONCATENATION ORDER textual ALIGNMENT none }}
+END
+"""
+
+
+def _replace_refuses(citation: str, clause: str) -> None:
+    try:
+        parse_module(_replace_module(clause))
+    except Asn1Error as error:
+        assert citation in str(error), (citation, str(error))
+        return
+    raise AssertionError(f"expected a refusal citing {citation} for {clause!r}")
+
+
+def test_a_replacement_is_built_from_module_text_end_to_end():
+    """§22.1's defined syntax, finally readable. The chain it closes is three clauses long:
+    §22.1.3.5 says the replacement structure's other fields are "set according to the
+    specification in the **replacement structure encoding object**"; §17.5.1's `ENCODE
+    STRUCTURE` is that specification; and §22.1.2.6 classifies which fields those are — "all
+    fields ... that are not part of the encoding class parameter are auxiliary fields".
+
+    So the dummy field is found by *computation* — the one whose class is the structure's
+    parameter — rather than by declaration, and everything else is auxiliary. The transmission
+    order is the observable proof: the length field is instantiated around the component and
+    written before it.
+    """
+    module = parse_module(_replace_module(
+        "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object"))
+    spec = module.concatenation()
+    replacement = spec.replacement
+    assert replacement.action is ReplaceAction.ALL_COMPONENTS
+    assert replacement.structure.name == "#Length-prefixed"
+    assert replacement.structure.order == ("length", "value")
+    assert replacement.structure.dummy == "value"          # §22.1.2.6, computed not declared
+    assert set(replacement.structure.auxiliary) == {"length"}
+    assert spec.transmission_order() == ("body$length", "body")
+
+
+def test_exactly_one_of_the_permitted_syntaxes_goes_between_replace_and_with():
+    """§22.1.2.1, and it is a closed set of five: §22.1.1.7 lists `STRUCTURE`, `COMPONENT`,
+    `ALL COMPONENTS`, `OPTIONALS` and `NON-OPTIONALS`, with §22.1.1.8 making `COMPONENT` "a
+    synonym for `REPLACE ALL COMPONENTS`" rather than a sixth action.
+
+    Both failure directions are faults: none of the words, and two of them.
+    """
+    for clause in ("REPLACE COMPONENT WITH #Length-prefixed ENCODED BY lp-object",
+                   "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object"):
+        module = parse_module(_replace_module(clause))
+        # §22.1.1.8's synonym really is one action, not two that behave alike.
+        assert module.concatenation().replacement.action is ReplaceAction.ALL_COMPONENTS
+
+    _replace_refuses("22.1.2.1", "REPLACE WITH #Length-prefixed ENCODED BY lp-object")
+    _replace_refuses("22.1.2.1",
+                     "REPLACE STRUCTURE ALL COMPONENTS WITH #Length-prefixed "
+                     "ENCODED BY lp-object")
+
+
+def test_inside_replace_both_names_are_bare():
+    """§22.1.2.2 and §22.1.2.4 close with the same sentence — "only the ... name shall be
+    given. They shall not have any parameter list in this use of the names."
+
+    So the structure written `#Length-prefixed{<#D>}` where it is *defined* is
+    `#Length-prefixed` here, and copying the definition's spelling is the mistake. C.3's
+    `{<>}` is refused too: a legal `ParameterizedReference` elsewhere, still a parameter list
+    in this use of the name.
+    """
+    _replace_refuses("22.1.2.2",
+                     "REPLACE ALL COMPONENTS WITH #Length-prefixed{<#D>} ENCODED BY lp-object")
+    _replace_refuses("22.1.2.4",
+                     "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object{<>}")
+
+
+def test_the_with_structure_and_the_encoded_by_object_are_both_checked_against_the_clause():
+    """§22.1.2.2 wants a *parameterized* structure with a single encoding class parameter, and
+    §22.1.2.4 wants an object whose governor is that structure. A plain concatenation class is
+    neither, and naming one is the natural mistake — it is the class the replacement will be
+    applied *to*."""
+    _replace_refuses("22.1.2.2", "REPLACE ALL COMPONENTS WITH #Join ENCODED BY lp-object")
+    _replace_refuses("22.1.2.4",
+                     "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY valEnc")
+
+
+def test_auxiliary_fields_with_nothing_to_set_them_are_refused_by_name():
+    """§22.1.2.6: the auxiliary fields "shall be set by the encoding of the replacement
+    structure". A `WITH` and no `ENCODED BY` leaves `length` unwritten, and an encoder that
+    proceeded would emit a field it had no value for."""
+    _replace_refuses("22.1.2.6", "REPLACE ALL COMPONENTS WITH #Length-prefixed")
+
+
+def test_insert_at_head_is_refused_for_a_reason_about_this_rail_not_the_clause():
+    """§22.1.2.7's head-end structure "shall not have dummy parameters", so it is an ordinary
+    encoding structure — and this module already declares its one ordinary structure as the
+    §13.2 application point.
+
+    Worth separating the two facts rather than blaming the clause: §13.2 walks one application
+    point, but nothing in clause 16 says a module declares only one *structure*. The hoisting
+    semantics (§22.1.3.6) are built and exercised from Python; what is missing is a place to
+    put the declaration.
+    """
+    _replace_refuses("22.1.2.7",
+                     "REPLACE STRUCTURE WITH #Length-prefixed ENCODED BY lp-object "
+                     "INSERT AT HEAD #Head")
