@@ -62,6 +62,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 
+from .ecn_encode import USE_SET, ComponentEncoding, EncodeStructure, GovernorCategory
 from .ecn_param import (
     ActualKind, ActualParameter, ActualParameterList, AssignmentKind, GovernorKind, Parameter,
     ParameterizedAssignment, ParameterKind, ParameterList, ReplacementParameterization,
@@ -1301,14 +1302,100 @@ def _parse_outer_body(cursor: _Cursor, name: str) -> OuterSpec:
     return OuterSpec(boundary_bits=boundary, padding=padding, pattern=pattern)
 
 
+def _parse_encode_structure(cursor: _Cursor, name: str, module: "EcnModule"
+                            ) -> ConcatenationSpec:
+    """§17.5.1's `EncodeStructure`, as the body of a `#CONCATENATION` object.
+
+    This is the form that says **which object encodes which field**, and it is strictly more
+    expressive than the property-group body beside it. That one reaches every field through
+    §9.5.2's one-object-per-class rule, so two `#INT` fields in a structure necessarily share
+    an encoding; here they need not, because each names its own object.
+
+    `USE-SET` is §17.5.6's "obtained by applying the `CombinedEncodings`", and in this rail the
+    combined set is the one `object_set` forms from the module — so `USE-SET` resolves through
+    `spec_for_class`, which is exactly the old behaviour. That makes the two bodies agree on
+    every field written `USE-SET` and differ only where the specification asked them to.
+
+    §17.5.13 is the check worth having: an object named for a component "shall be governed by
+    the corresponding encoding class". Without it, naming an `#INT` object for a `#BOOL` field
+    would encode a boolean as an integer and produce well-formed octets of the wrong shape.
+    """
+    cursor.expect_words("ENCODE", "STRUCTURE")
+    structure = module.require_structure()
+    classes = dict(structure)
+    written: list[ComponentEncoding] = []
+    inner = _Cursor(_collect_braced(cursor), f"the ENCODE STRUCTURE body of {name}")
+    structure_encoding = None
+    while not inner.eof():
+        if inner.accept(","):
+            continue
+        if inner.accept_words("STRUCTURED", "WITH"):
+            structure_encoding = inner.next().text
+            continue
+        field_name = inner.next().text
+        if inner.eof() or inner.peek() == ",":
+            raise Asn1Error(
+                f"ECN: §17.5.10's ComponentEncoding is an identifier followed by a "
+                f"TagAndElementEncoding; {field_name!r} has no encoding")
+        element = inner.next().text
+        actuals = ()
+        if inner.peek() == "{<":
+            actuals = tuple(
+                actual.text or actual.kind.value
+                for actual in _parse_actual_parameter_list(inner).actuals)
+        optional_encoding = None
+        if inner.accept("OPTIONAL-ENCODING"):
+            optional_encoding = inner.next().text
+        written.append(ComponentEncoding(
+            identifier=field_name,
+            element=USE_SET if element == "USE-SET" else element,
+            optional_encoding=optional_encoding, actuals=actuals))
+    combined = ""
+    if cursor.accept("WITH"):
+        combined = cursor.next().text
+    _finish(cursor, name)
+
+    # §17.5.2 to §17.5.14, checked by the model rather than restated here.
+    encode = EncodeStructure(
+        governor=GovernorCategory.CONCATENATION,
+        component_names=tuple(field_name for field_name, _ in structure),
+        components=tuple(written), structure_encoding=structure_encoding, combined=combined)
+
+    fields = {}
+    for field_name, class_name in structure:
+        chosen = encode.encoding_for(field_name)
+        if chosen == combined or chosen == USE_SET:
+            fields[field_name] = module.spec_for_class(class_name, field_name)
+            continue
+        if chosen not in module.objects:
+            raise Asn1Error(
+                f"ECN: §17.5.13 — the EncodingObject for {field_name!r} shall be governed by "
+                f"the corresponding encoding class; {chosen!r} is not an encoding object in "
+                f"this module")
+        governor, spec = module.objects[chosen]
+        if governor != class_name:
+            raise Asn1Error(
+                f"ECN: §17.5.13 — the EncodingObject for a component \"shall be governed by "
+                f"the corresponding encoding class\"; {field_name!r} has class {class_name} "
+                f"and {chosen!r} is governed by {governor}")
+        fields[field_name] = spec
+    padding = tuple(field_name for field_name, _ in structure
+                    if isinstance(fields[field_name], PadSpec))
+    return ConcatenationSpec(fields=fields, order=tuple(n for n, _ in structure),
+                             padding=padding)
+
+
 def _parse_concatenation_body(cursor: _Cursor, name: str, module: "EcnModule"
                               ) -> ConcatenationSpec:
     """§23.5.1's `#CONCATENATION`, whose components come from the §16.5 structure.
 
     §22.10.1.1 gives this class no property naming its components: the fields, and their
     textual order, are the encoding structure's. So the object is parsed for its own
-    properties and the structure supplies the rest.
+    properties and the structure supplies the rest — unless the body is §17.5.1's
+    `EncodeStructure`, which names an object per component and is read by the branch above.
     """
+    if cursor.peek() == "ENCODE":
+        return _parse_encode_structure(cursor, name, module)
     common = _parse_common(cursor, module, space_required=False)
     if common.space.size is not None:
         raise Asn1Error(
