@@ -682,3 +682,98 @@ def test_replace_is_still_refused_but_the_refusal_names_the_right_clause_now():
         assert "{<" in str(error), "the refusal should point at what now parses"
     else:
         raise AssertionError("REPLACE was accepted and ignored")
+
+
+# --- §17.5.1's EncodeStructure, as a #CONCATENATION object body ---------------------------
+
+_CONCAT_OBJECT = "frameHeader #Frame-header ::= { CONCATENATION ORDER textual ALIGNMENT none }"
+
+
+def _with_object(body: str, *, extra: str = "") -> str:
+    """The gate's module with its `#CONCATENATION` object replaced (and optional additions)."""
+    return frame_header_source().replace(_CONCAT_OBJECT, extra + body)
+
+
+def test_an_encode_structure_of_all_use_sets_describes_the_same_encoding_and_hashes_the_same():
+    """§17.5.6 makes `USE-SET` "obtained by applying the `CombinedEncodings`", and in this rail
+    the combined set is the one the module forms — so a body that says `USE-SET` everywhere is
+    the property-group body written differently.
+
+    The digest agreeing is the assertion that matters. A canonical serialization names *what
+    octets the specification describes*, not how it was spelled, so two spellings of one
+    encoding must collide — the opposite of the `EXHIBITS HANDLE` and parameterized-assignment
+    cases, where the spelling changes what a decoder reads and the hash has to move.
+    """
+    plain = parse_module(frame_header_source())
+    spelled = parse_module(_with_object(
+        "frameHeader #Frame-header ::= { ENCODE STRUCTURE { "
+        "payloadOctets USE-SET, version USE-SET, reserved USE-SET } WITH frame-set }"))
+    assert spelled.concatenation().fields == plain.concatenation().fields
+    assert spelled.concatenation().order == plain.concatenation().order
+    assert spelled.sha256() == plain.sha256()
+
+
+def test_naming_an_object_per_component_is_what_this_body_form_buys():
+    """§9.5.2 permits at most one encoding object per class *in the object set*, so the
+    property-group body reaches every field through its class and two fields of one class
+    necessarily share an encoding. §17.5.10's `ComponentEncoding` names an object directly,
+    which is a different route to the same field and is not bound by the set.
+
+    So a module with two objects for one class is a specification the old body cannot use and
+    this one can. Both halves are asserted, because the point is the contrast.
+    """
+    second = "wideReserved #Reserved ::= { ENCODING-SPACE SIZE 2 MULTIPLE OF bit }\n  "
+    try:
+        parse_module(_with_object(_CONCAT_OBJECT, extra=second)).concatenation()
+    except Asn1Error as error:
+        assert "9.5.2" in str(error), str(error)
+    else:
+        raise AssertionError("two objects for one class should not form a set")
+
+    named = parse_module(_with_object(
+        "frameHeader #Frame-header ::= { ENCODE STRUCTURE { "
+        "payloadOctets USE-SET, version USE-SET, reserved wideReserved } WITH frame-set }",
+        extra=second))
+    assert named.concatenation().fields["reserved"].width == 2
+
+
+def test_an_object_named_for_a_component_must_be_governed_by_that_components_class():
+    """§17.5.13: the `EncodingObject`s "shall be governed by the corresponding encoding classes
+    in the component". Without the check, naming an integer object for a boolean field would
+    encode a boolean as an integer — well-formed octets of the wrong shape, which no later
+    stage would question."""
+    for body, citation in (
+            ("frameHeader #Frame-header ::= { ENCODE STRUCTURE { payloadOctets USE-SET, "
+             "version USE-SET, reserved versionField } WITH frame-set }", "17.5.13"),
+            ("frameHeader #Frame-header ::= { ENCODE STRUCTURE { payloadOctets USE-SET, "
+             "version USE-SET, reserved nosuchobject } WITH frame-set }", "17.5.13"),
+            # §17.5.3: no STRUCTURED WITH and no trailing WITH.
+            ("frameHeader #Frame-header ::= { ENCODE STRUCTURE { payloadOctets USE-SET, "
+             "version USE-SET, reserved USE-SET } }", "17.5.3"),
+            # §17.5.8: the components' own textual order, not the writer's preference.
+            ("frameHeader #Frame-header ::= { ENCODE STRUCTURE { version USE-SET, "
+             "payloadOctets USE-SET, reserved USE-SET } WITH frame-set }", "17.5.8"),
+            # §17.5.10's ComponentEncoding is an identifier AND an encoding.
+            ("frameHeader #Frame-header ::= { ENCODE STRUCTURE { payloadOctets, "
+             "version USE-SET, reserved USE-SET } WITH frame-set }", "17.5.10")):
+        try:
+            parse_module(_with_object(body))
+        except Asn1Error as error:
+            assert citation in str(error), (citation, str(error))
+        else:
+            raise AssertionError(f"{body!r} was accepted")
+
+
+def test_a_component_left_out_is_encoded_by_the_object_set_rather_than_being_an_error():
+    """§17.5.10: a component with no `ComponentEncoding` is encoded by the `CombinedEncodings`,
+    which "shall be present ... and is required, on application to the component, to provide a
+    complete encoding of that component".
+
+    So an incomplete list is a legal specification, not a partial one — which is why
+    §17.5.8's order rule had to be a subsequence test rather than an equality one.
+    """
+    partial = parse_module(_with_object(
+        "frameHeader #Frame-header ::= { ENCODE STRUCTURE { reserved USE-SET } "
+        "WITH frame-set }"))
+    plain = parse_module(frame_header_source())
+    assert partial.concatenation().fields == plain.concatenation().fields
