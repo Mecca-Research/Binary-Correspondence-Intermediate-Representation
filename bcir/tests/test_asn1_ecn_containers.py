@@ -71,31 +71,50 @@ def test_the_combined_set_is_left_biased_and_never_the_other_way_round():
     assert ContainedType(primary={"#A": "mine"}).combined() == {"#A": "mine"}
 
 
-def test_the_five_rows_of_22_11_2_are_each_distinct():
-    """§22.11.2.1 and §22.11.2.2 together are a five-row table, and the last row is the one a
-    two-way reading gets wrong: `CONTENTS-ENCODING` set, an `ENCODED BY` present, and `OVERRIDE`
-    left FALSE falls back to **the set applied to the containing type** — not to this group's
-    own set, and not to the `ENCODED BY` rules either.
+def test_the_five_rows_of_22_11_2_and_the_one_the_text_contradicts_itself_about():
+    """§22.11.2 and §13.2.10.6 are the same table written twice, and **they disagree about the
+    last row**.
+
+    §22.11.2.2's closing sentence: with `CONTENTS-ENCODING` set, an `ENCODED BY` present and
+    `OVERRIDE` left FALSE, "the combined encoding set applied to the **containing type** shall
+    be applied". §13.2.10.6 a) says the opposite for that exact case — an object that "specifies
+    that it should not override an `ENCODED BY`" leaves it that "the `ENCODED BY` specification
+    **shall be used**".
+
+    §13.2.10.6 a) wins here on three counts, and the test asserts that reading so a future
+    change back to the other one has to argue with all three:
+
+    * §22.11.1.3 makes the group's purpose deciding "whether an ASN.1 `ENCODED BY` … shall be
+      **overridden**" — declining to override should leave it standing, where §22.11.2.2's
+      reading discards it.
+    * §22.11.2.1 gives the parallel unset case to the `ENCODED BY`, and §13.2.10.6 a) folds
+      both into one rule.
+    * §13.2.10.6 is the application-point algorithm — what an encoder actually does.
     """
     mine = {"#A": "mine"}
     theirs = {"#A": "encoded-by"}
     outer = {"#A": "container"}
 
-    # §22.11.2.1 — the group is not set at all.
+    # §22.11.2.1 / §13.2.10.6 d) and a) — the group is not set at all. These two clauses agree.
     unset = ContainerSpec(contained_class="#A", contents=None, encoded_by=None)
     assert unset.objects_for(outer) is outer
     named = ContainerSpec(contained_class="#A", contents=None, encoded_by=theirs)
     assert named.objects_for(outer) is theirs
 
-    # §22.11.2.2 — the group is set.
+    # §22.11.2.2 / §13.2.10.6 c) and b) — the group is set, and here too they agree.
     group = ContainedType(primary=mine)
     assert ContainerSpec(contained_class="#A", contents=group,
                          encoded_by=None).objects_for(outer) == mine
-    assert ContainerSpec(contained_class="#A", contents=group,
-                         encoded_by=theirs).objects_for(outer) is outer
     overriding = ContainedType(primary=mine, override=True)
     assert ContainerSpec(contained_class="#A", contents=overriding,
                          encoded_by=theirs).objects_for(outer) == mine
+
+    # THE CONTESTED ROW. §13.2.10.6 a)'s reading: the ENCODED BY stands.
+    assert ContainerSpec(contained_class="#A", contents=group,
+                         encoded_by=theirs).objects_for(outer) is theirs
+    # And explicitly NOT §22.11.2.2's, which would have given the containing type's set.
+    assert ContainerSpec(contained_class="#A", contents=group,
+                         encoded_by=theirs).objects_for(outer) is not outer
 
 
 def test_a_contained_type_is_encoded_by_its_own_set_and_placed_whole():

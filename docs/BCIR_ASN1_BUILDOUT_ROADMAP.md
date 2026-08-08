@@ -541,11 +541,21 @@ whose contents are encoded by a **different object set**. §21.3.6's, §21.5.6's
 `container` determination is *"my end is what bounds a component"*. Both are built, and they
 needed different machinery.
 
-§22.11.2 is a **five-row table**, and the last row is the one a two-way reading gets wrong:
-`CONTENTS-ENCODING` set, an `ENCODED BY` contents constraint present, and `OVERRIDE` left FALSE
-falls back to *the set applied to the containing type* — not to this group's own set, and not
-to the `ENCODED BY` rules. §22.11.1.4's combination is §9.23.2's: a **left-biased** merge where
-`COMPLETED BY` fills gaps and never overrides, which is what makes
+§22.11.2 is a **five-row table, and X.692 contradicts itself about the last row** —
+`CONTENTS-ENCODING` set, an `ENCODED BY` contents constraint present, `OVERRIDE` left FALSE.
+§22.11.2.2's closing sentence sends that case to "the combined encoding set applied to the
+**containing type**"; §13.2.10.6 a) sends the same case to the `ENCODED BY`, saying an object
+that "specifies that it should not override an `ENCODED BY`" leaves it that "the `ENCODED BY`
+specification **shall be used**". §13.2.10.6 a) is taken as correct on three counts: §22.11.1.3
+makes the group's purpose deciding "whether an … `ENCODED BY` … shall be **overridden**", and
+declining to override should leave it standing rather than discard it; §22.11.2.1 gives the
+parallel unset case to the `ENCODED BY` too; and §13.2.10.6 is the application-point algorithm,
+the operative procedure. Recorded rather than silently resolved, in the same style as
+§21.14.6's ordering — the first implementation followed §22.11.2.2 and was corrected when
+clause 13 was read.
+
+§22.11.1.4's combination is §9.23.2's, which §13.2.3 b) states again: a **left-biased** merge
+where `COMPLETED BY` fills gaps and never overrides, which is what makes
 `COMPLETED BY PER-BASIC-UNALIGNED` safe under a handful of specialized objects.
 
 The `container` determination's encoder actions are nil — §22.7.3.6 says "there is no further

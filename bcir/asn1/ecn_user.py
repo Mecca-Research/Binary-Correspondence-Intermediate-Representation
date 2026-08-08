@@ -857,22 +857,45 @@ class ContainedType:
     where an ECN specification and an X.682 clause 11 contents constraint meet, and it says
     which of them wins.
 
-    **§22.11.2's decision is a four-way table, not a default.** Written out, because the
-    obvious two-way reading ("use CONTENTS-ENCODING if set") gets half of it wrong:
+    **§22.11.2's decision is a five-row table, and THE TEXT CONTRADICTS ITSELF ABOUT THE LAST
+    ROW.** Written out because the obvious two-way reading ("use `CONTENTS-ENCODING` if set")
+    gets half of it wrong, and because the disagreement has to be recorded rather than quietly
+    resolved:
 
     | `CONTENTS-ENCODING` | `ENCODED BY` | `OVERRIDE` | what encodes the contained type |
     |---|---|---|---|
-    | not set | absent  | —     | the set applied to the container (§22.11.2.1) |
-    | not set | present | —     | the rules `ENCODED BY` names (§22.11.2.1) |
-    | set     | absent  | —     | this group's combined set (§22.11.2.2) |
-    | set     | present | TRUE  | this group's combined set (§22.11.2.2) |
-    | set     | present | FALSE | **the set applied to the containing type** (§22.11.2.2) |
+    | not set | absent  | —     | the set applied to the container (§22.11.2.1, §13.2.10.6 d) |
+    | not set | present | —     | the rules `ENCODED BY` names (§22.11.2.1, §13.2.10.6 a) |
+    | set     | absent  | —     | this group's combined set (§22.11.2.2, §13.2.10.6 c) |
+    | set     | present | TRUE  | this group's combined set (§22.11.2.2, §13.2.10.6 b) |
+    | set     | present | FALSE | **the rules `ENCODED BY` names** (§13.2.10.6 a) |
 
-    The last row is the surprise: an ECN specification that states `CONTENTS-ENCODING` and
-    meets an `ENCODED BY` it did not ask to override falls back to the *container's* set, not
-    to its own and not to the `ENCODED BY` rules. §22.11.1.5's "considered set if the
-    `CONTENTS-ENCODING` keyword is used" is what makes the first column a fact about the
-    notation rather than about whether `primary` happens to be empty.
+    **The last row is where the two clauses disagree.** §22.11.2.2's closing sentence says
+    "Otherwise the combined encoding set applied to the **containing type** shall be applied to
+    the contained type". §13.2.10.6 a) says the opposite for the same case: an object that
+    "either does not contain a specification of the encoding of the contained type, **or
+    specifies that it should not override an `ENCODED BY`**" leaves it that "the `ENCODED BY`
+    specification **shall be used** for the contained type".
+
+    §13.2.10.6 a) is taken as correct, and three independent readings are why:
+
+    * §22.11.1.3 states this group's *purpose* as deciding "whether an ASN.1 `ENCODED BY`
+      contents constraint … shall be **overridden**". Declining to override should leave the
+      constraint standing; §22.11.2.2's reading would have `OVERRIDE FALSE` discard it outright,
+      which is the opposite of declining.
+    * §22.11.2.1 gives the parallel unset case to the `ENCODED BY`. §13.2.10.6 a) folds both
+      into one rule; §22.11.2.2 would make them differ with no reason stated anywhere.
+    * §13.2.10.6 is the *application-point algorithm* — the operative procedure that says what
+      an encoder actually does — and it cites "(see 22.11)" as though it agreed.
+
+    So `containing` is reached by exactly one row, not two. This is the same family of defect
+    as §21.14.6's ordering, recorded in `ReversalSpecification`: two passages of X.692 that
+    cannot both be followed, resolved by weight of agreement and written down so the reading is
+    auditable rather than assumed.
+
+    §22.11.1.5's "considered set if the `CONTENTS-ENCODING` keyword is used" is what makes the
+    first column a fact about the notation rather than about whether `primary` happens to be
+    empty.
 
     §22.11.1.4's combination is §9.23.2's, quoted there in full: the combined set is formed
     "by adding to the first set encoding objects for any encoding class for which the first
@@ -904,10 +927,13 @@ class ContainedType:
         """
         if encoded_by is None or self.override:
             return self.combined()
-        # §22.11.2.2's last clause: "Otherwise the combined encoding set applied to the
-        # containing type shall be applied to the contained type." Not the ENCODED BY rules,
-        # and not this group's — the container's.
-        return containing
+        # §13.2.10.6 a): an object that "specifies that it should not override an ENCODED BY"
+        # leaves it that "the ENCODED BY specification shall be used for the contained type".
+        # §22.11.2.2's closing sentence says the CONTAINING type's set instead; see the class
+        # docstring for why that sentence is the outlier and this is the reading taken.
+        # `containing` is unused on this path and is kept in the signature because §13.2.10.6 d)
+        # — the group unset with no ENCODED BY — is the one row that does reach it.
+        return encoded_by
 
 
 @dataclass(frozen=True)
@@ -962,11 +988,11 @@ class ContainerSpec:
                 "is none here")
 
     def objects_for(self, containing: dict) -> dict:
-        """§22.11.2's selection, resolved against the set applied to this container."""
+        """§22.11.2 and §13.2.10.6's selection, against the set applied to this container."""
         if self.contents is None:
-            # §22.11.2.1: with the group unset, an ENCODED BY wins outright and otherwise the
-            # container's own set is used. Note this is the one row where the ENCODED BY rules
-            # are applied *directly* rather than being something to override.
+            # §22.11.2.1 and §13.2.10.6 a)/d), which agree here: with the group unset an
+            # ENCODED BY wins outright, and with neither the container's own set is used. That
+            # last case is the ONLY row that reads `containing` — §13.2.10.6 d) in full.
             return self.encoded_by if self.encoded_by is not None else containing
         return self.contents.select(encoded_by=self.encoded_by, containing=containing)
 
