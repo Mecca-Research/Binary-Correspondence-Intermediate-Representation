@@ -136,10 +136,13 @@ _UNSUPPORTED_KEYWORDS = {
     # `{#D}` — ASN.1's braces — until Annex C was read for slice F.)
     "REPLACE": "§22.1.1.2/§22.1.1.4/§22.1.1.6's defined syntax is not read here. The "
                "parameterized structures and objects it names now PARSE — see `{<`/`>}` "
-               "above — and §22.1.2's restrictions on them are checked as they are declared; "
-               "what is missing is the clause that binds an auxiliary field's encoding and "
-               "its determinant to the instantiated one (§22.1.2.6, §22.1.1.9). Assemble "
-               "`Replacement` in Python until that lands",
+               "above — and §22.1.2's restrictions on them are checked as they are declared. "
+               "What is missing is §17.5.1's `ENCODE STRUCTURE { <field> <object>, ... } "
+               "WITH <object set>`, which is how an ENCODED BY object says which object "
+               "encodes each field of the replacement structure; without it §22.1.3.5's "
+               "\"set according to the specification in the replacement structure encoding "
+               "object\" has nothing to read. Assemble `Replacement` in Python until that "
+               "lands",
 }
 
 

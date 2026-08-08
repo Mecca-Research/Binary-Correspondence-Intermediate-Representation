@@ -649,17 +649,36 @@ def test_a_parameterized_assignment_reaches_the_digest_governors_and_all():
     assert b"{<#ENCODINGS:D>}" in governed.serialize()
 
 
-def test_replace_is_still_refused_but_for_a_smaller_reason_than_before():
+def test_replace_is_still_refused_but_the_refusal_names_the_right_clause_now():
     """The parameterized structures and objects §22.1 names now parse, and §22.1.2's
-    restrictions on them are checked. What is left is the binding between an auxiliary field's
-    encoding and the instantiated one (§22.1.2.6, §22.1.1.9) — so the refusal names that,
-    rather than the parameterization it used to name."""
+    restrictions on them are checked. What is left is **§17.5.1's `EncodeStructure`** — the
+    `{ ENCODE STRUCTURE { <field> <object>, ... } WITH <object set> }` object body — because
+    that is how an `ENCODED BY` object says which object encodes each field of the replacement
+    structure, and without it §22.1.3.5's "set according to the specification in the
+    replacement structure encoding object" has nothing to read.
+
+    D.3.2.3 is where this is visible rather than inferred. Its worked replacement writes
+
+        optional-with-determinant-encoding
+        {<#Element, #ENCODINGS:Sequence2-combined-encoding-object-set>}
+        #Optional-with-determinant{<#Element>} ::= {
+            ENCODE STRUCTURE {
+                determinant determinant-encoding,
+                component   USE-SET OPTIONAL-ENCODING if-component-present-encoding{<determinant>} }
+            WITH Sequence2-combined-encoding-object-set }
+
+    — every piece of Annex C this slice built (`{< >}`, an `#ENCODINGS` governor, a governor
+    instantiated with the object's own dummy) and one whole object-body form it did not. The
+    refusal said §22.1.2.6 until that example was read; §22.1.2.6 classifies the auxiliary
+    fields, which is a different statement from saying how they are encoded.
+    """
     space = "ENCODING-SPACE SIZE 3 MULTIPLE OF bit"
     source = frame_header_source().replace(space, f"{space} REPLACE STRUCTURE WITH #X")
     try:
         parse_module(source)
     except Asn1Error as error:
-        assert "22.1.2.6" in str(error), str(error)
+        assert "17.5.1" in str(error), str(error)
+        assert "ENCODE STRUCTURE" in str(error), str(error)
         assert "{<" in str(error), "the refusal should point at what now parses"
     else:
         raise AssertionError("REPLACE was accepted and ignored")

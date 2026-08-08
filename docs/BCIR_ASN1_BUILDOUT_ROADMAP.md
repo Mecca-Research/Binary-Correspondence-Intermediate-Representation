@@ -684,14 +684,34 @@ things fell out of building it:
   different octets. `SYNTAX_VERSION` moved to **5** for the same reason it moved to 4 for
   `EXHIBITS HANDLE`: a name two specifications share is a name that means two things.
 
-**What is still refused at the surface, and what each needs.** §22.1's `REPLACE` *defined
-syntax* (§22.1.1.2/§22.1.1.4/§22.1.1.6) is the last of it, and the refusal now names a much
-smaller gap than it did: the structures and objects it references parse, and §22.1.2's
-restrictions on them are enforced, so what is missing is the binding between an auxiliary
-field's encoding and the instantiated one (§22.1.2.6, §22.1.1.9). §16.3's `AlternativesStructure`
-and §16.5's `OPTIONAL-ENCODING` marker also remain: both need the module to hold a structure
-*tree* rather than the one flat concatenation `EcnModule.structure` models today, which is a
-different change from this one and is why they are not in it.
+**What is still refused at the surface, and D.3.2.3 names it precisely.** The remaining gap
+was recorded as §22.1.2.6's auxiliary-field binding until the annex's worked replacement was
+read, and that example shows the real one. D.3.2.3 writes:
+
+```
+optional-with-determinant-encoding
+{<#Element, #ENCODINGS:Sequence2-combined-encoding-object-set>}
+#Optional-with-determinant{<#Element>} ::= {
+    ENCODE STRUCTURE {
+        determinant determinant-encoding,
+        component   USE-SET OPTIONAL-ENCODING if-component-present-encoding{<determinant>} }
+    WITH Sequence2-combined-encoding-object-set }
+```
+
+Every piece of Annex C this rail now builds is in those five lines — the `{< >}` delimiters, an
+`#ENCODINGS` governor, a governor instantiated with the object's own dummy — and **one whole
+object-body form it does not**: §17.5.1's `EncodeStructure`. That is how an `ENCODED BY` object
+says which object encodes each field of the replacement structure, and without it §22.1.3.5's
+"set according to the specification in the replacement structure encoding object" has nothing
+to read. §22.1.2.6 *classifies* the auxiliary fields; it never says how they are encoded, which
+is why citing it was the wrong answer to "what is missing".
+
+So the order for the remainder is fixed by that example rather than chosen: §17.5.1's
+`EncodeStructure` (with §17.5.3's checkable rule — if `STRUCTURED WITH` is absent then
+`CombinedEncodings` "shall be present ... otherwise the ECN specification is in error"), then
+§16.3's `AlternativesStructure` and §16.5's `OPTIONAL-ENCODING` marker, which the same example
+uses and which need `EcnModule` to hold a structure *tree* rather than the one flat
+concatenation it models today, and only then §22.1's `REPLACE` defined syntax on top of both.
 
 Two of §21.7's eight repetition-space determinations remain: `flag-to-be-set` and
 `flag-to-be-used` put a continuation flag **inside the repeated element** (§21.7.6/§21.7.7),
