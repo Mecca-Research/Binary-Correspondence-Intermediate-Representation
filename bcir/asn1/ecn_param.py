@@ -100,6 +100,35 @@ _REQUIRED_GOVERNOR: dict = {
 }
 
 
+#: The inverse of `_REQUIRED_GOVERNOR`: which dummy kinds each governor admits.
+#:
+#: **Two of the five governors are shared, and that is the fact the notation turns on.** C.1
+#: gives "an ASN.1 value, value set, or fixed-type ordered value list" one governor between
+#: them, and "an encoding object, or an ordered encoding object list" another. So a
+#: `ParameterList` read from text can classify a dummy only when its governor is unshared —
+#: absent, `REFERENCE`, or `#ENCODINGS`. For the other two, the notation is genuinely silent.
+#:
+#: That is not a gap to be filled by guessing. X.683 §9.6 settles it from the other end: the
+#: ACTUAL parameter's form is what has to fit, and this repository already read it that way
+#: for ASN.1 — `frontends/asn1/ast.py` says the governor "is not consulted when substituting
+#: -- §9.6 says the ACTUAL parameter's form is what has to fit". Same clause, same conclusion,
+#: now on the ECN side too.
+_GOVERNOR_KINDS: dict = {}
+for _kind, _governor in _REQUIRED_GOVERNOR.items():
+    _GOVERNOR_KINDS.setdefault(_governor, []).append(_kind)
+_GOVERNOR_KINDS = {governor: tuple(kinds) for governor, kinds in _GOVERNOR_KINDS.items()}
+
+
+def kinds_for(governor: "GovernorKind | None") -> tuple:
+    """The dummy kinds a governor admits — one for three of them, two or three for the rest.
+
+    `GovernorKind.TYPE` admits **none**: C.1's production lists it and C.1's own a)-d) rules
+    never assign it to any kind, so a dummy governed by `Type` is writable and stands for
+    nothing. Returning an empty tuple is how that stays a fact rather than a crash.
+    """
+    return _GOVERNOR_KINDS.get(governor, ())
+
+
 @dataclass(frozen=True)
 class Parameter:
     """C.1's `Parameter`: a `DummyReference` with the `ParamGovernor` its kind requires.
@@ -115,13 +144,23 @@ class Parameter:
     """
 
     dummy: str
-    kind: ParameterKind
+    #: `None` when the notation did not determine it — see `kinds_for`. Callers that need a
+    #: single kind ask `candidates()` and act on its length rather than assuming one.
+    kind: ParameterKind | None = None
     governor: GovernorKind | None = None
     governed_by: str = ""
 
     def __post_init__(self) -> None:
         if not self.dummy:
             raise Asn1Error("ECN: C.1 — a Parameter needs a DummyReference")
+        self._check_governor_names()
+        if self.kind is None:
+            if not kinds_for(self.governor):
+                governor = "no governor" if self.governor is None else self.governor.value
+                raise Asn1Error(
+                    f"ECN: C.1 — {governor} stands for no dummy kind, so {self.dummy} "
+                    f"denotes nothing")
+            return
         required = _REQUIRED_GOVERNOR[self.kind]
         if required is None and self.governor is not None:
             raise Asn1Error(
@@ -132,6 +171,7 @@ class Parameter:
             raise Asn1Error(
                 f"ECN: C.1 — a dummy standing for {self.kind.value} shall be governed by "
                 f"{required.value}; {self.dummy} is governed by {got}")
+    def _check_governor_names(self) -> None:
         names = self.governor in (GovernorKind.ENCODING_CLASS_FIELD_TYPE,
                                   GovernorKind.DEFINED_OR_BUILTIN_ENCODING_CLASS,
                                   GovernorKind.TYPE)
@@ -144,6 +184,13 @@ class Parameter:
             raise Asn1Error(
                 f"ECN: C.1 — {governor} is a keyword governor with nothing to name, and "
                 f"{self.dummy} names {self.governed_by!r}")
+
+    def candidates(self) -> tuple:
+        """The kinds this dummy may stand for: one when stated or when its governor is
+        unshared, two or three when C.1 shares that governor between kinds."""
+        if self.kind is not None:
+            return (self.kind,)
+        return kinds_for(self.governor)
 
 
 @dataclass(frozen=True)
@@ -183,8 +230,14 @@ class ParameterList:
     def __len__(self) -> int:
         return len(self.parameters)
 
-    def kinds(self) -> tuple[ParameterKind, ...]:
-        return tuple(parameter.kind for parameter in self.parameters)
+    def kinds(self) -> tuple:
+        """Each parameter's determined kind, or `None` where C.1's shared governor left the
+        notation silent and only the actual parameter can settle it (X.683 §9.6)."""
+        out = []
+        for parameter in self.parameters:
+            candidates = parameter.candidates()
+            out.append(candidates[0] if len(candidates) == 1 else None)
+        return tuple(out)
 
     def names(self) -> tuple[str, ...]:
         return tuple(parameter.dummy for parameter in self.parameters)
@@ -192,6 +245,20 @@ class ParameterList:
     def render(self) -> str:
         """The list as ECN writes it — `{< ... >}`, never `{ ... }`."""
         return "{<" + ", ".join(self.names()) + ">}"
+
+    def render_declaration(self) -> str:
+        """`render` plus each `Governor ":"` prefix, for a canonical serialization.
+
+        The bare form is what a *use* looks like; a declaration carries governors, and two
+        declarations differing only in one declare different things. A digest built on `render`
+        would give those two the same name.
+        """
+        parts = []
+        for parameter in self.parameters:
+            governor = parameter.governed_by or (
+                parameter.governor.value if parameter.governor is not None else "")
+            parts.append(f"{governor}:{parameter.dummy}" if governor else parameter.dummy)
+        return "{<" + ", ".join(parts) + ">}"
 
 
 # --- C.4: the actual parameter list --------------------------------------------------------
@@ -308,13 +375,15 @@ def check_actuals(parameters: ParameterList, actuals: ActualParameterList,
             f"ECN: X.683 9.6 — {what} supplies {len(actuals)} actual parameter(s) to a "
             f"definition with {len(parameters)} dummy parameter(s)")
     for parameter, actual in zip(parameters.parameters, actuals.actuals):
-        accepted = _ACCEPTED_ACTUALS[parameter.kind]
+        candidates = parameter.candidates()
+        accepted = {kind for candidate in candidates
+                    for kind in _ACCEPTED_ACTUALS[candidate]}
         if actual.kind not in accepted:
-            names = " or ".join(kind.value for kind in accepted)
+            names = " or ".join(sorted(kind.value for kind in accepted))
+            stands_for = " or ".join(candidate.value for candidate in candidates)
             raise Asn1Error(
-                f"ECN: C.4 — the dummy {parameter.dummy} stands for {parameter.kind.value}, "
-                f"so its actual shall use the {names} alternative; {actual.kind.value} was "
-                f"supplied")
+                f"ECN: C.4 — the dummy {parameter.dummy} stands for {stands_for}, so its "
+                f"actual shall use the {names} alternative; {actual.kind.value} was supplied")
 
 
 # --- C.2: the three parameterized assignments ----------------------------------------------
@@ -508,7 +577,8 @@ class ReplacementParameterization:
             raise Asn1Error(
                 "ECN: §22.1.2.5 — an ENCODED BY object may have another (but only one) dummy "
                 f"parameter that is a REFERENCE parameter; {references} were declared")
-        unexpected = [kind.value for kind in extra
+        unexpected = [("an undetermined kind" if kind is None else kind.value)
+                      for kind in extra
                       if kind not in (ParameterKind.ENCODING_OBJECT_SET,
                                       ParameterKind.IDENTIFIER)]
         if unexpected:
@@ -630,5 +700,5 @@ __all__ = [
     "ActualKind", "ActualParameter", "ActualParameterList", "AssignmentKind", "GovernorKind",
     "Parameter", "ParameterKind", "ParameterList", "ParameterizedAssignment",
     "ParameterizedReference", "ReplacementParameterization", "bare_use", "check_actuals",
-    "resolve_component",
+    "kinds_for", "resolve_component",
 ]

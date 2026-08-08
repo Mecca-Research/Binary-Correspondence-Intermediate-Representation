@@ -62,6 +62,10 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 
+from .ecn_param import (
+    ActualKind, ActualParameter, ActualParameterList, AssignmentKind, GovernorKind, Parameter,
+    ParameterizedAssignment, ParameterKind, ParameterList, ReplacementParameterization,
+)
 from .ecn_user import (
     UNIT_BIT, UNIT_NAMES, AuxIntSpec, BoolSpec, Comparison, ConcatenationSpec,
     ConditionalIntSpec, EncodingSpaceDetermination, HeadEndStructure, IntForm, IntOp,
@@ -80,7 +84,7 @@ from .tags import Asn1Error
 
 #: The serialization's version. Its own counter, not `encode_plan`'s: see this module's
 #: `serialize` for why an ECN encoding is a separate compilation rather than a plan version.
-SYNTAX_VERSION = 4
+SYNTAX_VERSION = 5
 SYNTAX_COMPILER = "bcir-ecn-syntax/1"
 
 #: The bit-field and constructor classes whose defined syntax clause 23 gives, restricted to
@@ -130,11 +134,12 @@ _UNSUPPORTED_KEYWORDS = {
     # C.1 rewrites X.683 §8.3's `ParameterList` to use `{<` and `>}`, so an X.683 parser reads
     # the one spelling ECN does not have and refuses the only one it does. (This comment said
     # `{#D}` — ASN.1's braces — until Annex C was read for slice F.)
-    "REPLACE": "§22.1.2.2 and §22.1.2.4 build a replacement from a PARAMETERIZED encoding "
-               "structure and a PARAMETERIZED encoding object (Annex C's X.683 applied to "
-               "ECN, with `{<`/`>}` delimiters), which this grammar does not read; the "
-               "semantics are in `ecn_user` and the parameterization model in `ecn_param`, "
-               "so assemble `Replacement` in Python",
+    "REPLACE": "§22.1.1.2/§22.1.1.4/§22.1.1.6's defined syntax is not read here. The "
+               "parameterized structures and objects it names now PARSE — see `{<`/`>}` "
+               "above — and §22.1.2's restrictions on them are checked as they are declared; "
+               "what is missing is the clause that binds an auxiliary field's encoding and "
+               "its determinant to the instantiated one (§22.1.2.6, §22.1.1.9). Assemble "
+               "`Replacement` in Python until that lands",
 }
 
 
@@ -145,6 +150,16 @@ _UNSUPPORTED_KEYWORDS = {
 #: comma. `:` is NOT here: §21.8's `left:2` and §24.3.1's `divide:4` are single tokens, since
 #: the CHOICE alternative and its value are one value notation.
 _PUNCTUATION = "{},"
+
+#: Annex C.1 and C.4's parameter-list brackets, which are **two characters**:
+#: `ParameterList ::= "{<" Parameter "," + ">}"`, against X.683 §8.3's `"{" ... "}"`.
+#:
+#: They are lexed as single tokens ahead of `_PUNCTUATION`, and the order matters in both
+#: directions. `{<` has to win over `{` or a parameter list would open an object body; `>` is
+#: not punctuation at all, so `>}` has to win over word accumulation or it would glue itself
+#: to the dummy before it. Nothing else in the ECN surface uses either character — §21.12's
+#: comparisons are spelled `greater-than`, not `>` — so there is no third reading to lose.
+_PARAM_BRACKETS = ("{<", ">}")
 
 
 @dataclass(frozen=True)
@@ -216,6 +231,12 @@ def tokenize(source: str) -> list[Token]:
                 word_line = line
             word += source[index:end]
             index = end
+            continue
+        bracket = next((b for b in _PARAM_BRACKETS if source.startswith(b, index)), None)
+        if bracket is not None:
+            flush()
+            tokens.append(Token(bracket, line))
+            index += len(bracket)
             continue
         if character in _PUNCTUATION:
             flush()
@@ -1326,6 +1347,112 @@ def _parse_concatenation_body(cursor: _Cursor, name: str, module: "EcnModule"
                              padding=padding)
 
 
+def _parse_parameter(text: str) -> Parameter:
+    """X.683 §8.3's `Parameter ::= [ParamGovernor ":"] DummyReference`, as C.1 governs it.
+
+    `:` is not punctuation in this lexer — §21.8's `left:2` and §24.3.1's `divide:4` are single
+    tokens — so a governed parameter arrives whole and splits here. That is a happy accident of
+    ECN's own value notation rather than a design, and it is worth saying: if `:` were ever
+    made punctuation for some other clause, this function is what would break.
+
+    The governor determines the dummy's kind only when C.1 does not share it (see
+    `ecn_param.kinds_for`). A shared governor leaves `kind` `None`, which is not a gap: X.683
+    §9.6 settles it from the actual parameter's form instead.
+    """
+    governor_text, _, dummy = text.rpartition(":")
+    if not dummy:
+        raise Asn1Error(f"ECN: X.683 8.3 — {text!r} is a governor with no DummyReference")
+    if not governor_text:
+        # C.1 a): "an encoding class, in which case there shall be no ParamGovernor".
+        return Parameter(dummy, ParameterKind.ENCODING_CLASS)
+    if governor_text == "REFERENCE":
+        return Parameter(dummy, ParameterKind.IDENTIFIER, GovernorKind.REFERENCE)
+    if governor_text == "#ENCODINGS":
+        return Parameter(dummy, ParameterKind.ENCODING_OBJECT_SET, GovernorKind.ENCODINGS)
+    if not governor_text.startswith("#"):
+        raise Asn1Error(
+            f"ECN: C.1's Governor is `EncodingClassFieldType | REFERENCE | "
+            f"DefinedOrBuiltinEncodingClass | #ENCODINGS | Type`; {governor_text!r} is none of "
+            f"them. (`Type` is in that production and in none of C.1's a)-d) rules, so a "
+            f"dummy governed by an ASN.1 type stands for nothing and is refused here.)")
+    if ".&" in governor_text:
+        # C.1 b): a type extracted from an encoding class governs a value, a value set or a
+        # fixed-type ordered value list — three kinds, one governor, so the kind stays open.
+        return Parameter(dummy, None, GovernorKind.ENCODING_CLASS_FIELD_TYPE, governor_text)
+    # C.1 c): an encoding class governs an encoding object or an ordered encoding object list.
+    return Parameter(dummy, None, GovernorKind.DEFINED_OR_BUILTIN_ENCODING_CLASS,
+                     governor_text)
+
+
+def _parse_parameter_list(cursor: _Cursor) -> ParameterList:
+    """C.1's `ParameterList ::= "{<" Parameter "," + ">}"`."""
+    cursor.expect("{<")
+    parameters: list[Parameter] = []
+    while not cursor.accept(">}"):
+        if cursor.accept(","):
+            continue
+        if cursor.eof():
+            raise Asn1Error("ECN: C.1 — a parameter list opened with `{<` has no `>}`")
+        parameters.append(_parse_parameter(cursor.next().text))
+    return ParameterList(tuple(parameters))
+
+
+def _parse_actual(text: str, parameter: Parameter | None) -> ActualParameter:
+    """One entry of C.4's `ActualParameterList`, classified as far as spelling allows.
+
+    C.4's a)-h) run from the dummy's kind to the actual's alternative, so the actual's own
+    spelling settles only the cases ECN gave a distinct shape: `STRUCTURE` and `OUTER` are
+    keywords, a `#` opens a class reference, and a `.` makes §15.3.1's `ComponentIdList`. A
+    bare name is none of those, and what it denotes depends on the dummy it is being supplied
+    to — which is X.683 §9.6's direction of fit, so `parameter` is consulted rather than
+    guessed at.
+    """
+    if text == "STRUCTURE":
+        return ActualParameter(ActualKind.STRUCTURE)
+    if text == "OUTER":
+        return ActualParameter(ActualKind.OUTER)
+    if text.startswith("#"):
+        return ActualParameter(ActualKind.ENCODING_CLASS, text)
+    if "." in text:
+        return ActualParameter(ActualKind.COMPONENT_ID_LIST, text)
+    candidates = () if parameter is None else parameter.candidates()
+    bare = {
+        ParameterKind.IDENTIFIER: ActualKind.IDENTIFIER,
+        ParameterKind.ENCODING_OBJECT: ActualKind.ENCODING_OBJECT,
+        ParameterKind.ENCODING_OBJECT_SET: ActualKind.ENCODING_OBJECT_SET,
+    }
+    resolved = {bare[kind] for kind in candidates if kind in bare}
+    if len(resolved) == 1:
+        return ActualParameter(next(iter(resolved)), text)
+    raise Asn1Error(
+        f"ECN: C.4 — {text!r} is a bare name, which is the spelling shared by an identifier, "
+        f"an encoding object and an encoding object set; the dummy it is supplied to does not "
+        f"narrow it to one, so nothing here can say which alternative was meant")
+
+
+def _parse_actual_parameter_list(cursor: _Cursor,
+                                 parameters: ParameterList | None = None
+                                 ) -> ActualParameterList:
+    """C.4's `ActualParameterList ::= "{<" ActualParameter "," + ">}"`, and C.3's empty form.
+
+    Empty is accepted here and refused by `ParameterList`, which is C.3's doing: it makes
+    `Reference "{<" ">}"` a way to *name* a definition, so the same two brackets mean "no
+    actuals" here and are not a parameter list at all there.
+    """
+    cursor.expect("{<")
+    actuals: list[ActualParameter] = []
+    while not cursor.accept(">}"):
+        if cursor.accept(","):
+            continue
+        if cursor.eof():
+            raise Asn1Error("ECN: C.4 — an actual parameter list opened with `{<` has no `>}`")
+        supplied = None
+        if parameters is not None and len(actuals) < len(parameters):
+            supplied = parameters.parameters[len(actuals)]
+        actuals.append(_parse_actual(cursor.next().text, supplied))
+    return ActualParameterList(tuple(actuals))
+
+
 def _parse_reference_list(cursor: _Cursor) -> tuple[str, ...]:
     """`{ ref, ref, ... }` — X.681's object set / ordered list notation."""
     cursor.expect("{")
@@ -1362,6 +1489,16 @@ class EcnModule:
     objects: dict[str, tuple[str, object]] = field(default_factory=dict)
     #: Object reference -> the transform it defines.
     transforms: dict[str, object] = field(default_factory=dict)
+    #: C.2's parameterized assignments, by name. Held UNINSTANTIATED, which is X.683 §9.7's
+    #: doing: instantiation is substitution of actuals for dummies, so there is nothing to
+    #: resolve until a reference supplies them, and any body built for a dummy now would be
+    #: wrong for some later actual. `frontends/asn1/ast.py` keeps ASN.1's the same way.
+    #:
+    #: These live beside `structure` rather than in it. A §22.1 replacement structure is a
+    #: separate definition that a REPLACE instantiates *around* a component — it is not the
+    #: application point §13.2 walks, and putting it in `structure` would make the module look
+    #: like it declared two.
+    parameterized: dict[str, object] = field(default_factory=dict)
 
     def builtin_of(self, class_name: str) -> str:
         """The built-in class a name resolves to, following clause 11's assignments."""
@@ -1485,6 +1622,18 @@ class EcnModule:
         ]
         for defined in sorted(self.classes):
             out.append(f"class {defined} from {self.classes[defined]}")
+        for defined in sorted(self.parameterized):
+            assignment = self.parameterized[defined]
+            governor = assignment.governor or "-"
+            if assignment.governor_actuals is not None:
+                governor += assignment.governor_actuals.render()
+            # The BODY is in the digest, not just the signature. Two modules whose replacement
+            # structures differ only inside the braces describe different octets, and a name
+            # they shared would be a name that meant two things.
+            out.append(
+                f"parameterized {defined} {assignment.kind.value} "
+                f"{assignment.parameters.render_declaration()} governor {governor} "
+                f"body {' '.join(assignment.body)}")
         if self.structure:
             out.append(f"structure {self.structure_name} fields {len(self.structure)}")
             for index, (field_name, class_name) in enumerate(self.structure):
@@ -1722,9 +1871,96 @@ def _collect_braced(cursor: _Cursor) -> list[Token]:
         body.append(token)
 
 
+def _parse_parameterized(cursor: _Cursor, module: EcnModule, name: str) -> None:
+    """C.2's three parameterized assignments, told apart by what follows the parameter list.
+
+    C.2 adds them to X.683 §8.2 as `ParameterizedEncodingClassAssignment`,
+    `ParameterizedEncodingObjectAssignment` and `ParameterizedEncodingObjectSetAssignment` —
+    three, not X.683's own set, because ECN assigns classes, objects and object sets and leaves
+    types to ASN.1.
+
+    The object form is the one with a governor between the parameter list and the `::=`, and
+    that governor may itself be a parameterized reference — `#New-component{<#Any-class>}` —
+    using a dummy declared to its left. C.2's modification to X.683 §8.4 is what permits that,
+    and it permits it for this form alone; `ParameterizedAssignment` refuses the others.
+
+    The body is collected and NOT parsed. §9.7 makes instantiation a substitution, so a body
+    read against dummies would have to invent an encoding for each one, and any encoding it
+    invented would be wrong for some instantiation.
+    """
+    parameters = _parse_parameter_list(cursor)
+    if name in module.parameterized:
+        raise Asn1Error(f"ECN: {name} is assigned twice in this module")
+
+    if cursor.accept("::="):
+        # No governor: a class assignment (`#Length-prefixed{<#D>} ::= #CONCATENATION {...}`)
+        # or an object-set one, told apart by whether the name is a class reference.
+        kind = (AssignmentKind.ENCODING_CLASS if name.startswith("#")
+                else AssignmentKind.ENCODING_OBJECT_SET)
+        # §16.2.12's `EncodingStructureDefn` is a class followed by a braced field list, so a
+        # class assignment's body is *two* things and taking only the first would leave the
+        # braces to be read as the next assignment. An object set's body is the braces alone.
+        body: list[Token] = []
+        if cursor.peek() != "{":
+            body.append(cursor.next())
+        if cursor.peek() == "{":
+            body.append(Token("{", 0))
+            body.extend(_collect_braced(cursor))
+            body.append(Token("}", 0))
+        if not body:
+            raise Asn1Error(f"ECN: the parameterized assignment {name} has no body")
+        module.parameterized[name] = ParameterizedAssignment(
+            name=name, kind=kind, parameters=parameters,
+            body=tuple(token.text for token in body))
+        return
+
+    governor = cursor.next().text
+    governor_actuals = None
+    if cursor.peek() == "{<":
+        governor_actuals = _parse_actual_parameter_list(cursor)
+    cursor.expect("::=")
+    body = _collect_braced(cursor)
+    module.parameterized[name] = ParameterizedAssignment(
+        name=name, kind=AssignmentKind.ENCODING_OBJECT, parameters=parameters,
+        governor=governor, governor_actuals=governor_actuals,
+        body=tuple(token.text for token in body))
+    _check_replacement_pair(module, name)
+
+
+def _check_replacement_pair(module: EcnModule, object_name: str) -> None:
+    """§22.1.2.2 and §22.1.2.4, applied when an object's governor is a parameterized structure.
+
+    §22.1.2.4 makes the `ENCODED BY` object's governor "the corresponding `WITH` parameterized
+    encoding structure, instantiated with `#D`", so an object whose governor names a
+    parameterized structure in this module *is* a candidate replacement pair — and the two
+    clauses' restrictions can be checked the moment both halves are present, rather than
+    waiting for a `REPLACE` to name them.
+
+    Checking early is the point. A module may define a replacement pair and apply it from an
+    ELM that this rail never reads, and a pair that could never be instantiated is invalid on
+    its own terms whether or not anything here instantiates it.
+    """
+    assignment = module.parameterized[object_name]
+    structure = module.parameterized.get(assignment.governor)
+    if structure is None or structure.kind is not AssignmentKind.ENCODING_CLASS:
+        return
+    ReplacementParameterization(
+        structure=structure.parameters,
+        encoded_by=assignment.parameters,
+        governor_actuals=assignment.governor_actuals,
+        # §22.1.2.5's biconditional is read off the object's own dummies: a REFERENCE
+        # parameter is present exactly when the group has an INSERT AT HEAD, so the presence
+        # of the dummy is what says the pair expects one.
+        insert_at_head=ParameterKind.IDENTIFIER in assignment.parameters.kinds())
+
+
 def _parse_assignment(cursor: _Cursor, module: EcnModule) -> None:
     head = cursor.next()
     name = head.text
+
+    if cursor.peek() == "{<":
+        _parse_parameterized(cursor, module, name)
+        return
 
     if name.startswith("#"):
         # Clause 11's class assignment: `#My-int ::= #INT`, or a §16.5 structure written

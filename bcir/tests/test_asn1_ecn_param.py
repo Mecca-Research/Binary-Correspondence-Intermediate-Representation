@@ -13,7 +13,7 @@ catches:
 from bcir.asn1.ecn_param import (
     ActualKind, ActualParameter, ActualParameterList, AssignmentKind, GovernorKind, Parameter,
     ParameterizedAssignment, ParameterizedReference, ParameterKind, ParameterList,
-    ReplacementParameterization, bare_use, check_actuals, resolve_component,
+    ReplacementParameterization, bare_use, check_actuals, kinds_for, resolve_component,
 )
 from bcir.asn1.tags import Asn1Error
 
@@ -354,3 +354,51 @@ def test_only_the_first_identifier_searches_and_the_rest_look_inside():
     _refuses("17.5.18", lambda: resolve_component(_nested(), ("length", "flags")))
     _refuses("17.5.16", lambda: resolve_component(_nested(), ("nope",)))
     _refuses("15.3.1", lambda: resolve_component(_nested(), ()))
+
+
+# --- C.1's governors are shared, so the notation cannot always classify a dummy ------------
+
+def test_three_governors_determine_a_kind_and_two_do_not():
+    """C.1 gives "an ASN.1 value, value set, or fixed-type ordered value list" **one** governor
+    between them, and "an encoding object, or an ordered encoding object list" another. So the
+    notation classifies a dummy only when its governor is unshared — absent, `REFERENCE` or
+    `#ENCODINGS`.
+
+    That silence is not a gap to fill by guessing. X.683 §9.6 settles it from the other end —
+    the ACTUAL parameter's form is what has to fit — and this repository already read it that
+    way for ASN.1: `frontends/asn1/ast.py` says the governor "is not consulted when
+    substituting". Same clause, same conclusion, now on the ECN side.
+    """
+    assert kinds_for(None) == (ParameterKind.ENCODING_CLASS,)
+    assert kinds_for(GovernorKind.REFERENCE) == (ParameterKind.IDENTIFIER,)
+    assert kinds_for(GovernorKind.ENCODINGS) == (ParameterKind.ENCODING_OBJECT_SET,)
+    assert len(kinds_for(GovernorKind.ENCODING_CLASS_FIELD_TYPE)) == 3
+    assert len(kinds_for(GovernorKind.DEFINED_OR_BUILTIN_ENCODING_CLASS)) == 2
+    # `Type` is in C.1's production and in none of its a)-d) rules, so a dummy governed by an
+    # ASN.1 type stands for nothing at all — writable, unreachable, and refused rather than
+    # silently admitted.
+    assert kinds_for(GovernorKind.TYPE) == ()
+    _refuses("stands for no dummy kind", lambda: Parameter(
+        "t", None, GovernorKind.TYPE, "INTEGER"))
+
+
+def test_an_undetermined_dummy_accepts_every_actual_its_governor_admits():
+    """A class governor admits an encoding object or an ordered encoding object list, so both
+    actual alternatives fit and neither can be preferred — while an actual belonging to
+    neither is still refused, which is what keeps the relaxation from being "accept anything"."""
+    shared = ParameterList((Parameter(
+        "obj", None, GovernorKind.DEFINED_OR_BUILTIN_ENCODING_CLASS, "#INT"),))
+    assert shared.kinds() == (None,)
+    for kind in (ActualKind.ENCODING_OBJECT, ActualKind.ORDERED_ENCODING_OBJECT_LIST):
+        check_actuals(shared, ActualParameterList((ActualParameter(kind, "x"),)))
+    _refuses("C.4", lambda: check_actuals(shared, ActualParameterList(
+        (ActualParameter(ActualKind.ENCODING_CLASS, "#INT"),))))
+
+
+def test_a_declaration_renders_its_governors_and_a_use_does_not():
+    """The bare form is what §22.1.2.2's "only the … name shall be given" describes; a
+    *declaration* carries governors, and two declarations differing only in one declare
+    different things. A digest built on the bare form would give those two the same name."""
+    params = ParameterList((_class_param(), _object_set_param(), _reference_param()))
+    assert params.render() == "{<#D, set, ref>}"
+    assert params.render_declaration() == "{<#D, #ENCODINGS:set, REFERENCE:ref>}"

@@ -22,6 +22,7 @@ from bcir.asn1.ecn_user import (
     HandleValueKind, IntSpec, PadSpec, encode_with_user, legacy_frame_objects,
     legacy_frame_workload,
 )
+from bcir.asn1.ecn_param import ParameterKind
 from bcir.asn1.encode_plan import compile_encode_plan
 from bcir.asn1.tags import Asn1Error
 
@@ -90,7 +91,8 @@ def test_the_handle_notation_parses_and_reaches_the_digest():
     The digest half is the point. A handle changes what a *decoder* reads and nothing an
     encoder writes, so a serialization that skipped it would give two genuinely different
     specifications one name — which is the failure mode a content-addressed descriptor exists
-    to prevent. `SYNTAX_VERSION` moved to 4 for exactly this reason.
+    to prevent. `SYNTAX_VERSION` moved to 4 for exactly this reason, and to 5 when Annex C's
+    parameterized assignments joined it for the same one.
     """
     # §23.7.1's WITH SYNTAX puts EXHIBITS HANDLE after the value encoding and before
     # BIT-REVERSAL, following §23.3.3.1's encoder-action order. `plainVersion` is the only
@@ -515,3 +517,149 @@ def test_a_transform_clause_the_notation_does_not_define_is_refused_by_name():
         assert "24.1.1" in str(error) and "nineteen" in str(error), error
     else:
         raise AssertionError("an undefined transform clause parsed")
+
+
+# --- Annex C's parameterized assignments, read from module text ---------------------------
+
+def _with_assignments(*lines: str) -> str:
+    """The gate's module with extra assignments before `END`."""
+    return frame_header_source().replace("END", "\n".join(lines) + "\nEND")
+
+
+_LP_STRUCTURE = "#Length-prefixed{<#D>} ::= #CONCATENATION { length #INT, value #D }"
+
+
+def test_ecn_writes_a_parameter_list_with_two_character_brackets():
+    """Annex C.1 rewrites X.683 §8.3's `ParameterList` to `"{<" Parameter "," + ">}"`, and C.4
+    does the same to the actual list.
+
+    A parser that reuses X.683's would accept `{#D}` and reject `{<#D>}` — the only spelling
+    ECN admits — while citing X.683 correctly throughout. So the brackets are lexed as single
+    tokens, and the token stream is asserted directly: `{<` must not decompose into `{`, and
+    `>}` must not glue itself to the dummy before it.
+    """
+    assert [t.text for t in tokenize("#L{<#D>} ::= X")] == [
+        "#L", "{<", "#D", ">}", "::=", "X"]
+    # X.683's own brackets are still just braces, so the wrong spelling parses as something
+    # else entirely rather than as a parameter list — which is exactly why it goes unnoticed.
+    assert "{<" not in [t.text for t in tokenize("#L{#D} ::= X")]
+
+    module = parse_module(_with_assignments(_LP_STRUCTURE))
+    assignment = module.parameterized["#Length-prefixed"]
+    assert assignment.parameters.render() == "{<#D>}"
+    assert assignment.body == ("#CONCATENATION", "{", "length", "#INT", ",", "value", "#D", "}")
+    # §16.2.12's EncodingStructureDefn is a class AND a braced field list, so a body that
+    # stopped at the class would leave the braces to be misread as the next assignment.
+    assert module.structure_name == "FrameHeader-structure"
+
+
+def test_a_governor_may_use_a_dummy_declared_to_its_left_but_only_for_an_object():
+    """C.2 modifies X.683 §8.4 so that in a `ParameterizedEncodingObjectAssignment` "the scope
+    extends to the `DefinedOrBuiltinEncodingClass` which **precedes** the `::=`", and C.2's
+    NOTE gives the shape that needs it. §22.1.2.4 then *requires* that shape: the `ENCODED BY`
+    object's governor is the `WITH` structure "instantiated with `#D`".
+
+    So the two clauses are a matched pair — §22.1.2.4 is unwritable without C.2's extension —
+    and this is the test that reads one written out in full.
+    """
+    module = parse_module(_with_assignments(
+        _LP_STRUCTURE,
+        "lp-object{<#D>} #Length-prefixed{<#D>} ::= { PLACEHOLDER }"))
+    encoded_by = module.parameterized["lp-object"]
+    assert encoded_by.governor == "#Length-prefixed"
+    assert encoded_by.governor_actuals.render() == "{<#D>}"
+
+
+def test_a_replacement_pair_is_checked_as_it_is_declared_not_when_it_is_used():
+    """§22.1.2.2 and §22.1.2.4 restrict the *definitions*, so both can be checked the moment
+    both halves are present. Checking early matters because a module may define a pair and
+    apply it from an ELM this rail never reads: a pair that could never be instantiated is
+    invalid on its own terms whether or not anything here instantiates it."""
+    def refused(citation, *lines):
+        try:
+            parse_module(_with_assignments(*lines))
+        except Asn1Error as error:
+            assert citation in str(error), (citation, str(error))
+            return
+        raise AssertionError(f"expected a refusal citing {citation}")
+
+    # §22.1.2.4: the governor is the structure instantiated with the object's OWN dummy.
+    refused("22.1.2.4", _LP_STRUCTURE,
+            "lp{<#D>} #Length-prefixed{<#Other>} ::= { PLACEHOLDER }")
+    # C.3's `{<>}` is a legal ParameterizedReference and still instantiates with nothing.
+    refused("22.1.2.4", _LP_STRUCTURE, "lp{<#D>} #Length-prefixed{<>} ::= { PLACEHOLDER }")
+    # §22.1.2.2: a single ENCODING CLASS parameter — an object set governor is not one.
+    refused("22.1.2.2", "#Bad{<#ENCODINGS:s>} ::= #CONCATENATION { value #INT }",
+            "o{<#D>} #Bad{<#D>} ::= { PLACEHOLDER }")
+    # §22.1.2.5's biconditional, read off the object's own dummies: a REFERENCE parameter is
+    # present exactly when the group has an INSERT AT HEAD, and this pair declares no head-end.
+    refused("22.1.2.5", _LP_STRUCTURE,
+            "lp{<#D, REFERENCE:at, REFERENCE:also>} #Length-prefixed{<#D>} ::= { P }")
+
+
+def test_the_governor_forms_c1_admits_and_the_one_it_names_nowhere():
+    """C.1's `Governor` is `EncodingClassFieldType | REFERENCE | DefinedOrBuiltinEncodingClass
+    | #ENCODINGS | Type`, and its a)-d) rules assign a dummy kind to every one of those but
+    `Type` — which is therefore writable and stands for nothing."""
+    module = parse_module(_with_assignments(
+        "#Any{<#D, REFERENCE:at, #ENCODINGS:objects, #INT:obj, #INT.&size:v>} ::= "
+        "#CONCATENATION { value #INT }"))
+    params = module.parameterized["#Any"].parameters
+    assert params.names() == ("#D", "at", "objects", "obj", "v")
+    # Only three of the five governors determine a kind; C.1 shares the other two.
+    assert params.kinds() == (ParameterKind.ENCODING_CLASS, ParameterKind.IDENTIFIER,
+                              ParameterKind.ENCODING_OBJECT_SET, None, None)
+
+    for source, citation in (
+            ("#Bad{<INTEGER:v>} ::= #CONCATENATION { value #INT }", "C.1's Governor"),
+            ("#Bad{<#D>} ::= #CONCATENATION { value #INT }\n"
+             "#Bad{<#E>} ::= #CONCATENATION { value #INT }", "assigned twice"),
+            ("#Bad{<#D>} ::= #CONCATENATION { value #INT }\n"
+             "#Worse{<#D", "has no `>}`")):
+        try:
+            parse_module(_with_assignments(source))
+        except Asn1Error as error:
+            assert citation in str(error), (citation, str(error))
+        else:
+            raise AssertionError(f"{source!r} was accepted")
+
+
+def test_a_parameterized_assignment_reaches_the_digest_governors_and_all():
+    """Same argument as the handle's, one clause over. A replacement structure changes what a
+    *decoder* reads, so two modules differing only inside one describe different octets and a
+    name they shared would be a name that meant two things. `SYNTAX_VERSION` moved to 5.
+
+    Governors are in the serialization too: `render` gives the bare form §22.1.2.2 requires at
+    a *use*, and a declaration carries governors that two otherwise-identical modules could
+    differ in.
+    """
+    from bcir.asn1.ecn_syntax import SYNTAX_VERSION
+
+    assert SYNTAX_VERSION == 5
+    base = parse_module(_with_assignments(_LP_STRUCTURE))
+    assert b"parameterized #Length-prefixed" in base.serialize()
+
+    wider = parse_module(_with_assignments(
+        "#Length-prefixed{<#D>} ::= #CONCATENATION { len16 #INT, value #D }"))
+    assert base.sha256() != wider.sha256()
+
+    governed = parse_module(_with_assignments(
+        "#Length-prefixed{<#ENCODINGS:D>} ::= #CONCATENATION { length #INT, value #D }"))
+    assert governed.sha256() != base.sha256()
+    assert b"{<#ENCODINGS:D>}" in governed.serialize()
+
+
+def test_replace_is_still_refused_but_for_a_smaller_reason_than_before():
+    """The parameterized structures and objects §22.1 names now parse, and §22.1.2's
+    restrictions on them are checked. What is left is the binding between an auxiliary field's
+    encoding and the instantiated one (§22.1.2.6, §22.1.1.9) — so the refusal names that,
+    rather than the parameterization it used to name."""
+    space = "ENCODING-SPACE SIZE 3 MULTIPLE OF bit"
+    source = frame_header_source().replace(space, f"{space} REPLACE STRUCTURE WITH #X")
+    try:
+        parse_module(source)
+    except Asn1Error as error:
+        assert "22.1.2.6" in str(error), str(error)
+        assert "{<" in str(error), "the refusal should point at what now parses"
+    else:
+        raise AssertionError("REPLACE was accepted and ignored")
