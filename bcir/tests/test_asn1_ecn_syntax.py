@@ -189,9 +189,13 @@ def test_an_unimplemented_property_group_is_refused_by_name_and_never_skipped():
         (space, "REPLACE STRUCTURE WITH #Repl", "22.1.2"),
         (space, f"{space} CONTAINED BY x", "22.11"),
         # §23.1 and §23.11's OBJECTS are built; their STRUCTURE notation is not, and the
-        # refusal says which half is missing rather than which clause exists.
-        (space, f"{space} ALTERNATIVE DETERMINED BY handle", "16.5"),
-        (space, f"{space} PRESENCE DETERMINED BY field-to-be-set USING p", "16.3"),
+        # refusal says which half is missing rather than which clause exists. §16.2.12 fixes
+        # which clause each half is: `AlternativesStructure` is §16.3 and
+        # `ConcatenationStructure` — whose `ConcatComponentPresence` carries the optional
+        # marker — is §16.5. These two expectations were the other way round until Annex C was
+        # read for slice F, so they are asserted here rather than left to the comment.
+        (space, f"{space} ALTERNATIVE DETERMINED BY handle", "16.3"),
+        (space, f"{space} PRESENCE DETERMINED BY field-to-be-set USING p", "16.5"),
         # Groups that ARE built, written in a way the clause forbids. These are the more
         # interesting half: a parser that only refused what it had not implemented would
         # accept every one of them. `DETERMINED BY container USING x` used to be on the list
