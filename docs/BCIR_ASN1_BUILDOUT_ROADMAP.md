@@ -53,7 +53,7 @@ rule.
 | X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references; cross-module tag-default nuance (§9.8) excluded |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
-| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, twenty-five statically decidable X.692 rules). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. §22.11's contained types and §21.3.6/§21.5.6/§21.7.8's `container` determination are built too, and clause 19's six value mappings are in [`ecn_mapping.py`](../bcir/asn1/ecn_mapping.py). Still refused: §22.1's replacement *notation* and §16.5/§16.3's constructor *structure* notation (both need §22.1.2.2/§22.1.2.4-style parameterization or structure grammar), and §21.7.6/§21.7.7's per-element continuation flag |
+| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, twenty-five statically decidable X.692 rules). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. §22.11's contained types and §21.3.6/§21.5.6/§21.7.8's `container` determination are built too, clause 19's six value mappings are in [`ecn_mapping.py`](../bcir/asn1/ecn_mapping.py), and clause 12's encoding link module with clause 13's application-point algorithm is in [`ecn_link.py`](../bcir/asn1/ecn_link.py) — which retires the `AUXILIARY` and `BOUNDS` stated deviations by deriving both from the link rather than declaring them. Still refused: §22.1's replacement *notation* and §16.5/§16.3's constructor *structure* notation (both need §22.1.2.2/§22.1.2.4-style parameterization or structure grammar), and §21.7.6/§21.7.7's per-element continuation flag |
 | X.693 | 8825-4:2021 | XER | **built** — BASIC-XER + CXER (CXER out, both in; validated against Annex A.3/A.4); EXTENDED-XER by design excluded |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
@@ -605,6 +605,37 @@ exists largely for them:
 gives the target "fields corresponding to the components of the type, **but also … added fields
 for determinants**". Naming those fields rather than inferring them is what keeps a typo in a
 field name from silently becoming a determinant.
+
+**The encoding link module is clause 12, and it retires two stated deviations.** Clause 12's
+own NOTE separates it from the EDM — "There are two top-level productions in ECN, the
+`ELMDefinition` specified in this clause and the `EDMDefinition` specified in clause 14" — and
+this roadmap cited clause 14 for it until the text was read. §12.1.9 gives the ELM one job:
+"the sole function of an ELM is to apply encodings."
+
+[`ecn_link.py`](../bcir/asn1/ecn_link.py) builds §12.2.1's `ENCODE <class>,+ WITH <primary>
+[COMPLETED BY <secondary>]`, §13.2.3's combined set, §13.2.10's application-point resolution,
+and the *link* itself. That link is what the two deviations were standing in for:
+
+- **`AUXILIARY`** was a keyword X.692 does not have, because §22.1.2.6's classification comes
+  from the ELM: a structure field with no ASN.1 component behind it is auxiliary. §19.3.1 says
+  the same from clause 19's side — a structure "has fields corresponding to the components of
+  the type, **but also has added fields for determinants**". `LinkedStructure.auxiliary_fields`
+  now *computes* that set from the two field lists.
+- **`BOUNDS`** was the type's bounds written on the encoding object. §21.11.3 tests "the bounds
+  on the integer values associated with an encoding class", and §23.7.2.6's NOTE insists the
+  condition is tested "on the bounds of the original value". `LinkedStructure.bounds_for` reads
+  them off the ASN.1 component's constraint, and an unconstrained INTEGER answers
+  `unbounded-or-no-lower-bound` — which is an answer, not a gap.
+
+Both keywords stay accepted, because a specification written against this rail may have no
+ASN.1 type in hand. They are fallbacks now rather than the source of truth, which is the
+difference between a deviation and a convenience.
+
+§13.2.10's algorithm is three sentences and worth having exactly: apply an object of the same
+class if the combined set has one (§13.2.10.1); otherwise de-reference the class and recurse
+(§13.2.10.1 a), §13.2.10.7); otherwise "the ECN specification is in error" (§13.2.10.8). The
+de-referencing is what makes clause 11's `#Version ::= #INT` do any work — one object written
+for `#INT` covers every class assigned from it.
 
 **What is still refused at the surface, and what each needs.** §22.1's replacement *notation*
 needs §22.1.2.2's parameterized encoding structures and §22.1.2.4's parameterized encoding
