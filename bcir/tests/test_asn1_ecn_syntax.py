@@ -23,7 +23,7 @@ from bcir.asn1.ecn_user import (
     legacy_frame_workload,
 )
 from bcir.asn1.ecn_param import ParameterKind
-from bcir.asn1.ecn_user import OptionalityDetermination, OptionalSpec
+from bcir.asn1.ecn_user import AlternativesSpec, OptionalityDetermination, OptionalSpec
 from bcir.asn1.encode_plan import compile_encode_plan
 from bcir.asn1.tags import Asn1Error
 
@@ -191,16 +191,14 @@ def test_an_unimplemented_property_group_is_refused_by_name_and_never_skipped():
         # Groups this repository has not built. Each names what it would need.
         (space, "REPLACE STRUCTURE WITH #Repl", "22.1.2"),
         (space, f"{space} CONTAINED BY x", "22.11"),
-        # §23.1's alternatives OBJECTS are built; §16.3's AlternativesStructure is not, and
-        # the refusal says which half is missing rather than which clause exists. §16.2.12
-        # fixes which clause it is: `AlternativesStructure` is §16.3, not §16.5 — the two were
-        # the other way round until Annex C was read for slice F, so this is asserted here
-        # rather than left to the comment.
+        # §23.11's `PRESENCE` and §23.1's `ALTERNATIVE` both used to sit here and no longer
+        # do: §16.5's `ConcatComponentPresence` and §16.3's `AlternativesStructure` are built,
+        # so both keywords are read rather than refused. See
+        # test_an_optional_encoding_marker_pairs_a_component_with_its_optionality_object and
+        # test_an_alternatives_structure_encodes_precisely_one_of_its_named_fields.
         #
-        # §23.11's `PRESENCE` used to sit beside it and no longer does: §16.5's
-        # `ConcatComponentPresence` is built, so the keyword is read rather than refused. See
-        # test_an_optional_encoding_marker_pairs_a_component_with_its_optionality_object.
-        (space, f"{space} ALTERNATIVE DETERMINED BY handle", "16.3"),
+        # What that leaves in this table is `CONTAINED`, plus the groups below that ARE built
+        # and are written in a way their clause forbids.
         # Groups that ARE built, written in a way the clause forbids. These are the more
         # interesting half: a parser that only refused what it had not implemented would
         # accept every one of them. `DETERMINED BY container USING x` used to be on the list
@@ -638,7 +636,8 @@ def test_a_parameterized_assignment_reaches_the_digest_governors_and_all():
     """
     from bcir.asn1.ecn_syntax import SYNTAX_VERSION
 
-    assert SYNTAX_VERSION == 6      # 4 for EXHIBITS HANDLE, 5 for Annex C, 6 for §16.5's marker
+    # 4 for EXHIBITS HANDLE, 5 for Annex C, 6 for §16.5's marker, 7 for §16.3's structure.
+    assert SYNTAX_VERSION == 7
     base = parse_module(_with_assignments(_LP_STRUCTURE))
     assert b"parameterized #Length-prefixed" in base.serialize()
 
@@ -866,3 +865,116 @@ def test_the_marker_reaches_the_digest_because_it_changes_what_a_decoder_reads()
     assert marked.sha256() != parse_module(frame_header_source()).sha256()
     assert b"optional-encoding #Present" in marked.serialize()
     assert b"optional presence field-to-be-set ref flag" in marked.serialize()
+
+
+# --- §16.3's AlternativesStructure, the second constructor shape --------------------------
+
+def _alternatives_module(body: str = "num #Small, flag #Flag",
+                         obj: str = "ALTERNATIVE DETERMINED BY field-to-be-set USING sel",
+                         governor: str = "#Pick") -> str:
+    """A module whose one structure is a §16.3 `AlternativesStructure`.
+
+    Written out rather than patched from the gate's module because the *governor* is what this
+    slice turns on, and a patch would bury it.
+    """
+    return f"""BCIR-Alt ENCODING-DEFINITIONS ::= BEGIN
+  #Small ::= #INT
+  #Flag  ::= #BOOL
+  #Pick  ::= #ALTERNATIVES
+  #Join  ::= #CONCATENATION
+  Choice-structure ::= {governor} {{ {body} }}
+  smallCond #CONDITIONAL-INT ::= {{ ELSE ENCODING-SPACE SIZE 8 MULTIPLE OF bit
+                                    ENCODING positive-int }}
+  smallInt #Small ::= {{ ENCODING smallCond }}
+  flagBit  #Flag  ::= {{ ENCODING-SPACE SIZE 1 MULTIPLE OF bit }}
+  pick #Pick ::= {{ {obj} }}
+END
+"""
+
+
+def test_an_alternatives_structure_encodes_precisely_one_of_its_named_fields():
+    """§16.2.12 names three `EncodingStructureDefn`s and two are read now:
+    `AlternativesStructure` is §16.3 and `ConcatenationStructure` is §16.5.
+
+    They **share their body** — §16.3.1's `NamedField ::= identifier EncodingStructure` is what
+    both are built from — and differ only in what the field list means. §16.3.2: the structure
+    "identifies the presence in an encoding of **precisely one** of the `EncodingStructure`s in
+    its `NamedFields`", against §16.5.2's zero-or-one for each. Same text, opposite semantics,
+    and nothing but the governor's category tells them apart.
+    """
+    module = parse_module(_alternatives_module())
+    spec = next(s for _, s in module.objects.values() if isinstance(s, AlternativesSpec))
+    assert list(spec.alternatives) == ["num", "flag"]
+    assert spec.order == ("num", "flag")
+    assert spec.selection.reference == "sel"
+    assert module.structure_category == "alternatives"
+
+
+def test_the_object_and_the_structure_have_to_agree_on_the_category():
+    """§16.3.3 and §16.5.6 both make their structure "an encoding constructor: when an encoding
+    object set is applied to this structure ... the application point then proceeds to each of
+    the `EncodingStructure`s".
+
+    So the pairing is checked. An `#ALTERNATIVES` object over a concatenation would encode one
+    field where all of them belong — a valid encoding of a *different* type, which is the kind
+    of mistake that produces well-formed octets and no complaint.
+    """
+    try:
+        parse_module(_alternatives_module(governor="#Join"))
+    except Asn1Error as error:
+        assert "16.2.12" in str(error), str(error)
+    else:
+        raise AssertionError("an #ALTERNATIVES object over a concatenation was accepted")
+
+
+def test_the_optional_marker_is_a_concatenation_tail_and_nothing_else():
+    """§16.5.1 hangs `ConcatComponentPresence` off a `ConcatComponent`; §16.3.1's `NamedField`
+    has no such tail. §16.3.2 is the reason rather than an accident of the grammar — an
+    alternatives structure encodes "precisely one" of its fields, so "this one may be absent"
+    would say nothing about it."""
+    try:
+        parse_module(_alternatives_module(body="num #Small, flag #Flag OPTIONAL-ENCODING #Small"))
+    except Asn1Error as error:
+        assert "16.5.1" in str(error), str(error)
+    else:
+        raise AssertionError("an OPTIONAL-ENCODING tail on a NamedField was accepted")
+
+
+def test_alternative_ordering_has_two_values_where_concatenation_has_three():
+    """§22.6.1.1's `&alternative-ordering` is `ENUMERATED {textual, tag}`. `random` is
+    §22.10.1.1's, and it would be meaningless here: a CHOICE encodes exactly one alternative,
+    so there is no order to randomize. The refusal says *that* rather than listing the enum,
+    because a reader who reached for `random` was thinking of the concatenation group.
+    """
+    for clause, citation in (
+            # `random` is refused for not being a value of this type at all...
+            ("ALTERNATIVE DETERMINED BY field-to-be-set USING sel ORDER random", "22.6.1.1"),
+            # ...while `tag` IS one, parses, and is then refused by §22.6.2.10 for a reason
+            # about this module rather than about the enum: "every alternative shall start with
+            # an encoding class in the tag category". Two different failures for two different
+            # words is the evidence that both values are read rather than both rejected.
+            ("ALTERNATIVE DETERMINED BY field-to-be-set USING sel ORDER tag", "22.6.2.10"),
+            # §22.6.2.9 makes the group mandatory, exactly as §22.5.1.6 does for PRESENCE.
+            ("", "22.6.2.9")):
+        try:
+            parse_module(_alternatives_module(obj=clause))
+        except Asn1Error as error:
+            assert citation in str(error), (citation, str(error))
+        else:
+            raise AssertionError(f"{clause!r} was accepted")
+
+
+def test_a_marked_component_does_not_change_its_structures_own_category():
+    """A regression pin, and the bug is worth naming: §16.5.2's check for the *marker's*
+    category reused the variable holding the *structure's*, so one `OPTIONAL-ENCODING` field
+    turned its concatenation into an "optional" structure and every later object was rejected
+    against it.
+
+    The two categories are different facts about different things and now have different names.
+    Asserted through `require_structure`, which is where the damage surfaced.
+    """
+    module = parse_module(_with_optional())
+    assert module.structure_category == "concatenation"
+    assert module.require_structure() == module.structure
+    # And the marker still did its job, so the fix did not simply drop it.
+    assert isinstance(module.concatenation().fields["reserved"], OptionalSpec)

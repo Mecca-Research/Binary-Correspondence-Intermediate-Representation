@@ -68,6 +68,7 @@ from .ecn_param import (
     ParameterizedAssignment, ParameterKind, ParameterList, ReplacementParameterization,
 )
 from .ecn_user import (
+    AlternativeDetermination, AlternativeSelection, AlternativesSpec, ComponentOrder,
     Optionality, OptionalityDetermination, OptionalSpec,
     UNIT_BIT, UNIT_NAMES, AuxIntSpec, BoolSpec, Comparison, ConcatenationSpec,
     ConditionalIntSpec, EncodingSpaceDetermination, HeadEndStructure, IntForm, IntOp,
@@ -86,13 +87,18 @@ from .tags import Asn1Error
 
 #: The serialization's version. Its own counter, not `encode_plan`'s: see this module's
 #: `serialize` for why an ECN encoding is a separate compilation rather than a plan version.
-SYNTAX_VERSION = 6
+SYNTAX_VERSION = 7
 SYNTAX_COMPILER = "bcir-ecn-syntax/1"
 
 #: The bit-field and constructor classes whose defined syntax clause 23 gives, restricted to
 #: the ones `ecn_user` can execute. A class outside this set is refused by name rather than
 #: parsed permissively, so "ECN accepted my specification" and "ECN will encode my
 #: specification" stay the same statement.
+#: §21.6.1's three `AlternativeDetermination` values, and §21.13's `ComponentOrder`, spelled
+#: as the notation spells them.
+_ALTERNATIVE_DETERMINATIONS = {value.value: value for value in AlternativeDetermination}
+_COMPONENT_ORDERS = {value.value: value for value in ComponentOrder}
+
 #: §21.5.1's five `OptionalityDetermination` values, spelled as the notation spells them.
 _OPTIONALITY_DETERMINATIONS = {value.value: value for value in OptionalityDetermination}
 
@@ -109,6 +115,7 @@ _BUILTIN_CLASSES = {
     "#PAD": "pad",
     "#CONCATENATION": "concatenation",
     "#OPTIONAL": "optional",
+    "#ALTERNATIVES": "alternatives",
     "#OUTER": "outer",
 }
 
@@ -128,13 +135,12 @@ _UNSUPPORTED_KEYWORDS = {
     # §16.5 were swapped, and the optional marker was called `OPTIONAL` when §16.5.1 spells it
     # `OPTIONAL-ENCODING` followed by an `OptionalClass`.)
     #
-    # §16.5's half is BUILT now — `PRESENCE` left this table when `#OPTIONAL` objects and the
-    # `ConcatComponentPresence` tail became readable. §16.3's alternatives are still a second
-    # constructor shape beside the concatenation this parser models, and that one needs a
-    # structure TREE rather than the flat field list `EcnModule.structure` holds.
-    "ALTERNATIVE": "§23.1's alternatives objects are built, but §16.3's AlternativesStructure "
-                   "is a constructor shape this grammar does not read; assemble "
-                   "`AlternativesSpec` in Python",
+    # Both halves are BUILT now. `PRESENCE` left this table when `#OPTIONAL` objects and the
+    # `ConcatComponentPresence` tail became readable, and `ALTERNATIVE` left it when §16.3's
+    # AlternativesStructure did. What is still refused is a NESTED structure — §16.2.1 admits
+    # a field whose EncodingStructure is itself a structure, and this rail walks one flat
+    # constructor. The refusal for that is written where the field is read, not here, because
+    # it is about a field's shape rather than about a property group.
 
     # §22.1's replacement SEMANTICS are built in `ecn_user`, and its PARAMETERIZATION model —
     # what a dummy may stand for, which actual fits, and §22.1.2's rules about the definitions
@@ -1315,6 +1321,57 @@ def _parse_outer_body(cursor: _Cursor, name: str) -> OuterSpec:
     return OuterSpec(boundary_bits=boundary, padding=padding, pattern=pattern)
 
 
+def _parse_alternatives_body(cursor: _Cursor, name: str, module: "EcnModule"
+                             ) -> AlternativesSpec:
+    """§23.1's `#ALTERNATIVES`, whose alternatives come from the §16.3 structure.
+
+    The parallel with `_parse_concatenation_body` is exact and so is the difference: both take
+    their field list from the module's one structure, and §16.3.2 makes this one encode
+    "precisely one" of them where §16.5.2 encodes all. Nothing in the OBJECT says which — the
+    structure's governor category does, which is why `require_structure` is asked for the
+    category rather than the object being told.
+
+    §22.6.1.1's `&alternative-ordering` is `ENUMERATED {textual, tag}` — **two values, not
+    concatenation's three**. `random` would be meaningless: a CHOICE encodes exactly one
+    alternative, so there is no order to randomize. The refusal says that rather than listing
+    the enum, because a reader who tried `random` was thinking of §22.10's group.
+    """
+    common = _parse_common(cursor, module, space_required=False)
+    selection = None
+    if cursor.accept("ALTERNATIVE"):
+        cursor.expect_words("DETERMINED", "BY")
+        determination = _named(cursor.next(), _ALTERNATIVE_DETERMINATIONS,
+                               "AlternativeDetermination")
+        reference = ""
+        if cursor.accept("USING"):
+            reference = cursor.next().text
+        handle_id, handle_set = "default-handle", False
+        if cursor.accept("HANDLE"):
+            handle_id, handle_set = cursor.next().text, True
+        ordering = ComponentOrder.TEXTUAL
+        if cursor.accept("ORDER"):
+            written = cursor.next().text
+            if written == ComponentOrder.RANDOM.value:
+                raise Asn1Error(
+                    "ECN: §22.6.1.1's &alternative-ordering is ENUMERATED {textual, tag} — "
+                    "two values, not the concatenation group's three. A CHOICE encodes exactly "
+                    "one alternative, so there is no order to randomize")
+            ordering = _named(Token(written, 0), _COMPONENT_ORDERS, "the alternative ordering")
+        selection = AlternativeSelection(
+            determination=determination, reference=reference, handle_id=handle_id,
+            handle_set=handle_set, ordering=ordering)
+    _finish(cursor, name)
+    structure = module.require_structure(category="alternatives")
+    alternatives = {}
+    for field_name, class_name in structure:
+        alternatives[field_name] = module.optional_wrapped(
+            field_name, module.spec_for_class(class_name, field_name))
+    return AlternativesSpec(alternatives=alternatives,
+                            order=tuple(n for n, _ in structure), selection=selection,
+                            pre_alignment=common.pre_alignment,
+                            start_pointer=common.start_pointer)
+
+
 def _parse_optional_body(cursor: _Cursor, name: str, module: "EcnModule") -> OptionalSpec:
     """§23.11.2.1's `#OPTIONAL` object, whose one required group is §22.5's `PRESENCE`.
 
@@ -1652,6 +1709,10 @@ class EcnModule:
     #: mapping, and widening every field's tuple to carry a mostly-absent fact would touch
     #: every reader of `structure` to express nothing new.
     structure_optional: dict[str, str] = field(default_factory=dict)
+    #: §16.2.12's category for `structure`: `"concatenation"` (§16.5) or `"alternatives"`
+    #: (§16.3). The field list is the same shape either way — §16.3.1's `NamedField` is what
+    #: both are built from — so this is what says whether all of them appear or exactly one.
+    structure_category: str = "concatenation"
 
     def builtin_of(self, class_name: str) -> str:
         """The built-in class a name resolves to, following clause 11's assignments."""
@@ -1686,11 +1747,28 @@ class EcnModule:
                 f"{'undefined' if entry is None else 'a ' + entry[0] + ' object'}")
         return entry[1]
 
-    def require_structure(self) -> tuple[tuple[str, str], ...]:
+    def require_structure(self, category: str = "concatenation"
+                          ) -> tuple[tuple[str, str], ...]:
+        """The module's structure, checked to be the shape the asking object needs.
+
+        §16.3.3 and §16.5.6 both call their structure "an encoding constructor: when an
+        encoding object set is applied to this structure ... the application point then
+        proceeds to each of the `EncodingStructure`s". So the object and the structure have to
+        agree on the category, and the mismatch is worth naming: an `#ALTERNATIVES` object over
+        a concatenation would encode one field where all of them belong, which is a valid
+        encoding of a different type.
+        """
+        shapes = {"concatenation": "a §16.5 ConcatenationStructure",
+                  "alternatives": "a §16.3 AlternativesStructure"}
         if not self.structure:
             raise Asn1Error(
-                "ECN: a #CONCATENATION object takes its components from a §16.5 "
-                "ConcatenationStructure, and this module declares none")
+                f"ECN: an object in the {category} category takes its components from "
+                f"{shapes[category]}, and this module declares none")
+        if self.structure_category != category:
+            raise Asn1Error(
+                f"ECN: §16.2.12 — an object in the {category} category needs "
+                f"{shapes[category]}; {self.structure_name} is "
+                f"{shapes[self.structure_category]}")
         return self.structure
 
     def optional_wrapped(self, field_name: str, spec):
@@ -1812,7 +1890,8 @@ class EcnModule:
                 f"{assignment.parameters.render_declaration()} governor {governor} "
                 f"body {' '.join(assignment.body)}")
         if self.structure:
-            out.append(f"structure {self.structure_name} fields {len(self.structure)}")
+            out.append(f"structure {self.structure_name} {self.structure_category} "
+                       f"fields {len(self.structure)}")
             for index, (field_name, class_name) in enumerate(self.structure):
                 line = f"field {index} name {field_name} class {class_name}"
                 marker = self.structure_optional.get(field_name)
@@ -1909,6 +1988,14 @@ def _describe(spec) -> str:
     if isinstance(spec, OuterSpec):
         return (f"outer boundary {spec.boundary_bits} padding {spec.padding.value} "
                 f"pattern {_pattern(spec.pattern)}")
+    if isinstance(spec, AlternativesSpec):
+        selection = spec.selection
+        return (f"alternatives order {'/'.join(spec.order)} "
+                f"select {selection.determination.value} "
+                f"ref {selection.reference or '-'} "
+                f"handle {selection.handle_id if selection.handle_set else '-'} "
+                f"ordering {selection.ordering.value} "
+                f"pre {_pre(spec.pre_alignment)} exhibits {_handle(spec.exhibits)}")
     if isinstance(spec, OptionalSpec):
         presence = spec.presence
         # The COMPONENT is deliberately not described. An `#OPTIONAL` object in the module's
@@ -2199,6 +2286,8 @@ def _parse_assignment(cursor: _Cursor, module: EcnModule) -> None:
         spec = _parse_outer_body(inner, name)
     elif builtin == "optional":
         spec = _parse_optional_body(inner, name, module)
+    elif builtin == "alternatives":
+        spec = _parse_alternatives_body(inner, name, module)
     else:
         spec = _parse_concatenation_body(inner, name, module)
 
@@ -2211,16 +2300,31 @@ def _parse_assignment(cursor: _Cursor, module: EcnModule) -> None:
 
 
 def _parse_structure(cursor: _Cursor, module: EcnModule, name: str, base: str) -> None:
-    """§16.5's `ConcatenationStructure ::= ConcatenationClass "{" NamedFields "}"`.
+    """§16.2.12's two readable `EncodingStructureDefn`s, told apart by the governor's category.
 
-    §16.3.1's `NamedField ::= identifier EncodingStructure` is the shape read here, with the
-    `EncodingStructure` restricted to a `DefinedEncodingClass` — a field that is itself a
-    nested structure is legal ECN and is refused rather than flattened.
+    §16.2.12 names three — `AlternativesStructure` is **§16.3**, `RepetitionStructure` §16.4
+    and `ConcatenationStructure` **§16.5** — and two of them are read here. They share their
+    body: §16.3.1's `NamedField ::= identifier EncodingStructure`, which is why one function
+    reads both and the category decides what the field list *means*. §16.5.2 adds the
+    `ConcatComponentPresence` tail, and only a concatenation has it: §16.3's alternatives have
+    no optional components, because §16.3.2 says exactly one of them is present anyway.
+
+    That difference in meaning is the whole point. A concatenation's fields all appear; an
+    alternatives structure's "identifies the presence in an encoding of **precisely one** of
+    the `EncodingStructure`s in its `NamedFields`" (§16.3.2). Same text, opposite semantics,
+    and nothing but the governor's category distinguishes them.
+
+    A field that is itself a nested structure stays refused — §16.2.1 admits one and this rail
+    walks one flat constructor.
     """
-    if module.builtin_of(base) != "concatenation":
+    category = module.builtin_of(base)
+    if category not in ("concatenation", "alternatives"):
         raise Asn1Error(
-            f"ECN: §16.5 builds a ConcatenationStructure from a class in the concatenation "
-            f"category; {base} is not one")
+            f"ECN: §16.2.12's EncodingStructureDefn is an AlternativesStructure (§16.3), a "
+            f"RepetitionStructure (§16.4) or a ConcatenationStructure (§16.5); {base} is in "
+            f"the {category} category, which is none of them")
+    if category == "repetition":  # pragma: no cover - unreachable while #REPETITION is absent
+        raise Asn1Error("ECN: §16.4's RepetitionStructure is not built")
     if module.structure:
         raise Asn1Error(
             f"ECN: this module already declares the structure {module.structure_name}; "
@@ -2244,14 +2348,26 @@ def _parse_structure(cursor: _Cursor, module: EcnModule, name: str, base: str) -
                 f"rather than flattened into its parent's field order")
         module.builtin_of(class_name)
         if inner.accept("OPTIONAL-ENCODING"):
-            # §16.5.1's `ConcatComponentPresence ::= OPTIONAL-ENCODING OptionalClass`.
+            # §16.5.1's `ConcatComponentPresence ::= OPTIONAL-ENCODING OptionalClass`, which
+            # is a tail on a `ConcatComponent` and on nothing else. §16.3.1's `NamedField` has
+            # no such tail, and §16.3.2 is why: an alternatives structure has "precisely one"
+            # of its fields present, so "this one may be absent" would say nothing.
+            if category != "concatenation":
+                raise Asn1Error(
+                    f"ECN: §16.5.1's ConcatComponentPresence is a tail on a ConcatComponent; "
+                    f"{field_name!r} is a NamedField of the §16.3 AlternativesStructure "
+                    f"{name}, of which §16.3.2 encodes precisely one")
             optional_class = inner.next().text
-            category = module.builtin_of(optional_class)
-            if category != "optional":
+            # `marker_category`, NOT `category`: that name holds the STRUCTURE's own category
+            # for the whole function and is written to `module.structure_category` at the end.
+            # Reusing it here made one marked field turn its concatenation into an "optional"
+            # structure, which `require_structure` then rejected for every later object.
+            marker_category = module.builtin_of(optional_class)
+            if marker_category != "optional":
                 raise Asn1Error(
                     f"ECN: §16.5.2 — the DefinedEncodingClass in the OptionalClass shall be a "
                     f"class in the optionality category; {optional_class} is in the "
-                    f"{category} category")
+                    f"{marker_category} category")
             module.structure_optional[field_name] = optional_class
         fields.append((field_name, class_name))
     if not fields:
@@ -2263,6 +2379,7 @@ def _parse_structure(cursor: _Cursor, module: EcnModule, name: str, base: str) -
         seen.add(field_name)
     module.structure = tuple(fields)
     module.structure_name = name
+    module.structure_category = category
 
 
 #: The gate's workload as an encoding definition module, shipped as source next to the ASN.1
