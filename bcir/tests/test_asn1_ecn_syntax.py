@@ -194,9 +194,10 @@ def test_an_unimplemented_property_group_is_refused_by_name_and_never_skipped():
         (space, f"{space} PRESENCE DETERMINED BY field-to-be-set USING p", "16.3"),
         # Groups that ARE built, written in a way the clause forbids. These are the more
         # interesting half: a parser that only refused what it had not implemented would
-        # accept every one of them.
+        # accept every one of them. `DETERMINED BY container USING x` used to be on the list
+        # above; §21.3.6 is built, so it parses, and naming a field that is not an open
+        # container is a write-time refusal instead — see test_asn1_ecn_containers.py.
         (space, f"{space} DETERMINED BY field-to-be-set", "21.3.4"),
-        (space, f"{space} DETERMINED BY container USING x", "21.3.6"),
         (space, f"ALIGNED TO ANY octet {space}", "22.2.2.2"),
         ("ENCODING positive-int",
          "ENCODING positive-int BIT-REVERSAL reverse-half-units", "22.12.2.3"),

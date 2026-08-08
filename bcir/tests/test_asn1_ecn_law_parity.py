@@ -247,6 +247,8 @@ def test_every_r25_law_has_a_fixture_that_trips_it():
         ("22.6.2.2", "admits HANDLE only for `handle`"),
         ("22.6.1.1", "22.6.1.1 declares"),
         ("22.10.2.1", "22.10.2.1 requires the encoding objects applied to all"),
+        ("22.11.1.2", "22.11.1.2 brackets both inside it"),
+        ("22.4.2.3", "22.4.2.3/22.4.2.4 admit them only for `field-to-be-set`"),
     ):
         assert needle in verify, f"R25 does not enforce {citation}: {needle!r}"
         assert needle in fixture, f"no fixture witnesses {citation}: {needle!r}"

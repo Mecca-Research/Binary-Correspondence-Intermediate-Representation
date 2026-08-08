@@ -498,3 +498,77 @@ bcir.ecn.module @RandomOrderWithoutAHandle {
     concatenation_order = #bcir.ecn_component_order<random>
   } { }
 }
+
+// -----
+
+// (29 -- POSITIVE) containment in both directions. 22.11's CONTENTS-ENCODING says which rules
+// encode a contained type; 21.3.6's `container` determination says whose end bounds an element.
+// They are different relationships and an object may carry either.
+bcir.ecn.module @Containment {
+  bcir.ecn.class @Wrapper attributes { base = "#OCTETS" }
+  bcir.ecn.class @Tail    attributes { base = "#INT" }
+  bcir.ecn.class @Whole   attributes { base = "#CONCATENATION" }
+
+  bcir.ecn.structure @S attributes { encoding_class = @Whole } {
+    bcir.ecn.field { name = "wrapper", encoding_class = @Wrapper }
+    bcir.ecn.field { name = "tail",    encoding_class = @Tail }
+  }
+
+  bcir.ecn.object @wrapper attributes {
+    encoding_class = @Wrapper, space_size = -2 : i64, space_unit = 8 : i64,
+    space_determination = #bcir.ecn_space_determination<field_to_be_set>,
+    space_reference = "len",
+    contents_encoding, contents_completed_by, contents_override
+  } { }
+  // 21.3.6's other direction: this element's end is its container's, so it carries no
+  // determinant of its own beyond naming the container.
+  bcir.ecn.object @tail attributes {
+    encoding_class = @Tail, space_size = -2 : i64, space_unit = 1 : i64,
+    space_determination = #bcir.ecn_space_determination<container>,
+    space_reference = "wrapper"
+  } { }
+}
+
+// -----
+
+// (30) 22.11.1.2 brackets COMPLETED BY inside CONTENTS-ENCODING, and 22.11.1.5 makes the group
+// set only when that keyword is used. A tail without its head is a property nothing reads.
+bcir.ecn.module @CompletedByWithoutContents {
+  bcir.ecn.class @W attributes { base = "#OCTETS" }
+  // expected-error@+1 {{X.692 22.11.1.2 brackets both inside it}}
+  bcir.ecn.object @w attributes {
+    encoding_class = @W, space_size = 8 : i64, space_unit = 1 : i64,
+    contents_completed_by
+  } { }
+}
+
+// -----
+
+// (31) The same rule for OVERRIDE, and this is the half that matters: a reader would take a
+// bare OVERRIDE for a statement about the ASN.1 ENCODED BY, when 22.11.2.1 gives that
+// constraint outright precedence whenever CONTENTS-ENCODING is unset.
+bcir.ecn.module @OverrideWithoutContents {
+  bcir.ecn.class @W attributes { base = "#OCTETS" }
+  // expected-error@+1 {{X.692 22.11.1.2 brackets both inside it}}
+  bcir.ecn.object @w attributes {
+    encoding_class = @W, space_size = 8 : i64, space_unit = 1 : i64,
+    contents_override
+  } { }
+}
+
+// -----
+
+// (32) 22.4.2.3/22.4.2.4: a container's end is a position, not a value carried through a
+// field, so there is nothing for a transform list to convert.
+bcir.ecn.module @ContainerWithTransforms {
+  bcir.ecn.class @T attributes { base = "#INT" }
+  // expected-error@+1 {{X.692 22.4.2.3/22.4.2.4 admit them only for `field-to-be-set`}}
+  bcir.ecn.object @t attributes {
+    encoding_class = @T, space_size = -2 : i64, space_unit = 1 : i64,
+    space_determination = #bcir.ecn_space_determination<container>,
+    space_reference = "box",
+    unused_determination = #bcir.ecn_unused_bits<field_to_be_set>,
+    unused_reference = "u",
+    unused_encoder_transforms
+  } { }
+}
