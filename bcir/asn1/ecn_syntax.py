@@ -123,7 +123,19 @@ _BUILTIN_CLASSES = {
 #: Property groups that clause 23 gives every bit-field class and this repository has not
 #: built. Recognized so the refusal can cite; never silently dropped.
 _UNSUPPORTED_KEYWORDS = {
-    "CONTAINED": "§22.11's contained-type specification is not implemented",
+    # The last one. §22.11's SEMANTICS are built — `ecn_user.ContainedType` and
+    # `ContainerSpec`, with §9.24.2's reference scoping and §13.2.10.6 a)'s object-set
+    # selection, under 17 tests. What this grammar cannot read is the notation: a contained
+    # type names an ASN.1 type and an encoding object set, and neither has a spelling here.
+    #
+    # Worded as "which half is missing" rather than "not implemented", which is what it said
+    # until the tally at the end of the buildout: `ALTERNATIVE`, `PRESENCE` and `REPLACE` all
+    # left this table by having their notation built on top of semantics that were already
+    # there, and this row was describing the whole clause as absent when only one half is.
+    "CONTAINED": "§22.11's contained types are built in `ecn_user` and reachable from Python "
+                 "(with §9.24.2's reference scoping and §13.2.10.6 a)'s object-set "
+                 "selection); what this grammar does not read is the notation, which names an "
+                 "ASN.1 type and an encoding object set. Assemble `ContainedType` in Python",
     # §23.1's `#ALTERNATIVES` and §23.11's `#OPTIONAL` are built in `ecn_user` and reachable
     # from Python; what this grammar cannot read is the STRUCTURE side of them. §16.2.12 names
     # the three: `AlternativesStructure` is §16.3, `RepetitionStructure` is §16.4 and
