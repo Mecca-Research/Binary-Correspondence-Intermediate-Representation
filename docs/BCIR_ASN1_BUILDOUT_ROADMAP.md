@@ -53,7 +53,7 @@ rule.
 | X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references; cross-module tag-default nuance (§9.8) excluded |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
-| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, twenty-five statically decidable X.692 rules). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. §22.11's contained types and §21.3.6/§21.5.6/§21.7.8's `container` determination are built too, clause 19's six value mappings are in [`ecn_mapping.py`](../bcir/asn1/ecn_mapping.py), and clause 12's encoding link module with clause 13's application-point algorithm is in [`ecn_link.py`](../bcir/asn1/ecn_link.py) — which retires the `AUXILIARY` and `BOUNDS` stated deviations by deriving both from the link rather than declaring them. Annex C's parameterization — X.683 as ECN rewrites it, `{<`/`>}` delimiters and all — is in [`ecn_param.py`](../bcir/asn1/ecn_param.py), together with §22.1.2's rules on the definitions a `REPLACE` names and §17.5.17's breadth-first `ComponentIdList` scan; C.2's three parameterized assignments now parse from module text and reach the digest at `SYNTAX_VERSION` 5. §17.5.1's `EncodeStructure` — the `ENCODE STRUCTURE { <field> <object>, ... } WITH <set>` object body that names an encoding per component — is in [`ecn_encode.py`](../bcir/asn1/ecn_encode.py) and readable from module text. §16.5's `OPTIONAL-ENCODING` component marker and the `#OPTIONAL` objects it names are readable, at `SYNTAX_VERSION` 6. Still refused: §16.3's `AlternativesStructure` (the second constructor shape, which needs a structure tree), §22.1's `REPLACE` defined syntax on top of it, and §21.7.6/§21.7.7's per-element continuation flag |
+| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, twenty-five statically decidable X.692 rules). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. §22.11's contained types and §21.3.6/§21.5.6/§21.7.8's `container` determination are built too, clause 19's six value mappings are in [`ecn_mapping.py`](../bcir/asn1/ecn_mapping.py), and clause 12's encoding link module with clause 13's application-point algorithm is in [`ecn_link.py`](../bcir/asn1/ecn_link.py) — which retires the `AUXILIARY` and `BOUNDS` stated deviations by deriving both from the link rather than declaring them. Annex C's parameterization — X.683 as ECN rewrites it, `{<`/`>}` delimiters and all — is in [`ecn_param.py`](../bcir/asn1/ecn_param.py), together with §22.1.2's rules on the definitions a `REPLACE` names and §17.5.17's breadth-first `ComponentIdList` scan; C.2's three parameterized assignments now parse from module text and reach the digest at `SYNTAX_VERSION` 5. §17.5.1's `EncodeStructure` — the `ENCODE STRUCTURE { <field> <object>, ... } WITH <set>` object body that names an encoding per component — is in [`ecn_encode.py`](../bcir/asn1/ecn_encode.py) and readable from module text. §16.5's `OPTIONAL-ENCODING` marker with its `#OPTIONAL` objects, and §16.3's `AlternativesStructure` with its `#ALTERNATIVES` objects, are both readable — at `SYNTAX_VERSION` 7. Still refused: §22.1's `REPLACE` defined syntax on top of them, §16.2.1's nested structures, §16.4's `RepetitionStructure`, and §21.7.6/§21.7.7's per-element continuation flag |
 | X.693 | 8825-4:2021 | XER | **built** — BASIC-XER + CXER (CXER out, both in; validated against Annex A.3/A.4); EXTENDED-XER by design excluded |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
@@ -764,9 +764,44 @@ the same argument that moved it to 4 for `EXHIBITS HANDLE` and 5 for Annex C, an
 opposite of §17.5's all-`USE-SET` `EncodeStructure`, which is a second spelling of one encoding
 and deliberately hashes the same.
 
-Left after this: §16.3's `AlternativesStructure` — the second constructor shape, which needs
-`EcnModule` to hold a structure *tree* rather than the one flat concatenation it models today —
-and then §22.1's `REPLACE` defined syntax on top of §17.5 and §16.3 together.
+**§16.3's `AlternativesStructure` is built too, and it did not need the structure tree.**
+§16.2.12 names three `EncodingStructureDefn`s — `AlternativesStructure` (§16.3),
+`RepetitionStructure` (§16.4), `ConcatenationStructure` (§16.5) — and the two that are read
+**share their body**: §16.3.1's `NamedField ::= identifier EncodingStructure` is what both are
+built from. What differs is meaning, not shape. §16.3.2 has the structure identify "the presence
+in an encoding of **precisely one** of the `EncodingStructure`s in its `NamedFields`", against
+§16.5.2's zero-or-one for each. Same text, opposite semantics, and nothing but the governor's
+category tells them apart — so one function reads both and `structure_category` records which.
+
+The tree was the anticipated cost and it turned out to be the wrong thing to buy: nesting is
+what needs a tree, and nesting is a separate refusal (§16.2.1) that neither §16.3 nor §16.5
+requires. Both are readable flat.
+
+Three consequences worth keeping:
+
+- **The object and the structure must agree on the category.** §16.3.3 and §16.5.6 both make
+  their structure "an encoding constructor" the application point proceeds through, so an
+  `#ALTERNATIVES` object over a concatenation would encode one field where all of them belong —
+  a valid encoding of a *different* type, which is the kind of mistake that produces well-formed
+  octets and no complaint.
+- **The `OPTIONAL-ENCODING` tail is a concatenation's alone.** §16.5.1 hangs
+  `ConcatComponentPresence` off a `ConcatComponent`; §16.3.1's `NamedField` has no such tail,
+  and §16.3.2 is the reason rather than an accident of the grammar.
+- **§22.6.1.1's `&alternative-ordering` is `ENUMERATED {textual, tag}` — two values where
+  §22.10.1.1's concatenation group has three.** `random` would be meaningless: a CHOICE encodes
+  exactly one alternative, so there is no order to randomize.
+
+`SYNTAX_VERSION` moved to **7**. `ALTERNATIVE` left the unimplemented-keyword table with
+`PRESENCE`; what remains there is `CONTAINED`, plus the groups that *are* built and are refused
+when written in a way their clause forbids.
+
+**One bug this slice introduced and its own tests caught.** §16.5.2's check for the *marker's*
+category reused the variable holding the *structure's*, so a single `OPTIONAL-ENCODING` field
+turned its concatenation into an "optional" structure and every later object was rejected
+against it. Two different facts about two different things, now with two different names, and a
+regression test asserts the structure's category survives a marked component.
+
+Left after this: §22.1's `REPLACE` defined syntax, on top of §17.5 and §16.3 together.
 
 Two of §21.7's eight repetition-space determinations remain: `flag-to-be-set` and
 `flag-to-be-used` put a continuation flag **inside the repeated element** (§21.7.6/§21.7.7),
