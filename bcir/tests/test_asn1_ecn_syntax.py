@@ -23,6 +23,7 @@ from bcir.asn1.ecn_user import (
     legacy_frame_workload,
 )
 from bcir.asn1.ecn_param import ParameterKind
+from bcir.asn1.ecn_user import OptionalityDetermination, OptionalSpec
 from bcir.asn1.encode_plan import compile_encode_plan
 from bcir.asn1.tags import Asn1Error
 
@@ -190,14 +191,16 @@ def test_an_unimplemented_property_group_is_refused_by_name_and_never_skipped():
         # Groups this repository has not built. Each names what it would need.
         (space, "REPLACE STRUCTURE WITH #Repl", "22.1.2"),
         (space, f"{space} CONTAINED BY x", "22.11"),
-        # §23.1 and §23.11's OBJECTS are built; their STRUCTURE notation is not, and the
-        # refusal says which half is missing rather than which clause exists. §16.2.12 fixes
-        # which clause each half is: `AlternativesStructure` is §16.3 and
-        # `ConcatenationStructure` — whose `ConcatComponentPresence` carries the optional
-        # marker — is §16.5. These two expectations were the other way round until Annex C was
-        # read for slice F, so they are asserted here rather than left to the comment.
+        # §23.1's alternatives OBJECTS are built; §16.3's AlternativesStructure is not, and
+        # the refusal says which half is missing rather than which clause exists. §16.2.12
+        # fixes which clause it is: `AlternativesStructure` is §16.3, not §16.5 — the two were
+        # the other way round until Annex C was read for slice F, so this is asserted here
+        # rather than left to the comment.
+        #
+        # §23.11's `PRESENCE` used to sit beside it and no longer does: §16.5's
+        # `ConcatComponentPresence` is built, so the keyword is read rather than refused. See
+        # test_an_optional_encoding_marker_pairs_a_component_with_its_optionality_object.
         (space, f"{space} ALTERNATIVE DETERMINED BY handle", "16.3"),
-        (space, f"{space} PRESENCE DETERMINED BY field-to-be-set USING p", "16.5"),
         # Groups that ARE built, written in a way the clause forbids. These are the more
         # interesting half: a parser that only refused what it had not implemented would
         # accept every one of them. `DETERMINED BY container USING x` used to be on the list
@@ -635,7 +638,7 @@ def test_a_parameterized_assignment_reaches_the_digest_governors_and_all():
     """
     from bcir.asn1.ecn_syntax import SYNTAX_VERSION
 
-    assert SYNTAX_VERSION == 5
+    assert SYNTAX_VERSION == 6      # 4 for EXHIBITS HANDLE, 5 for Annex C, 6 for §16.5's marker
     base = parse_module(_with_assignments(_LP_STRUCTURE))
     assert b"parameterized #Length-prefixed" in base.serialize()
 
@@ -777,3 +780,89 @@ def test_a_component_left_out_is_encoded_by_the_object_set_rather_than_being_an_
         "WITH frame-set }"))
     plain = parse_module(frame_header_source())
     assert partial.concatenation().fields == plain.concatenation().fields
+
+
+# --- §16.5's ConcatComponentPresence, and the #OPTIONAL object it names --------------------
+
+_STRUCTURE_CLASS = "  #Frame-header  ::= #CONCATENATION"
+_PRESENCE_OBJECT = (
+    "  presenceBit #Present ::= { PRESENCE DETERMINED BY field-to-be-set USING flag }\n")
+
+
+def _with_optional(marker: str = "#Present", presence: str = _PRESENCE_OBJECT) -> str:
+    """The gate's module with `reserved` marked `OPTIONAL-ENCODING`.
+
+    Declaration order is load-bearing and worth seeing: the class has to precede the structure
+    that references it, and the object has to precede the `#CONCATENATION` object that forms
+    the set — which is where §9.5.1 is checked.
+    """
+    return (frame_header_source()
+            .replace(_STRUCTURE_CLASS, "  #Present ::= #OPTIONAL\n" + _STRUCTURE_CLASS)
+            .replace("reserved       #Reserved",
+                     f"reserved       #Reserved OPTIONAL-ENCODING {marker}")
+            .replace(_CONCAT_OBJECT, presence + _CONCAT_OBJECT))
+
+
+def test_an_optional_encoding_marker_pairs_a_component_with_its_optionality_object():
+    """§16.5.1's `ConcatComponentPresence ::= OPTIONAL-ENCODING OptionalClass`, and §16.5.4:
+    "the mechanism used to determine whether there is an encoding of the corresponding
+    `EncodingStructure` is specified by the encoding object which encodes the `OptionalClass`".
+
+    So the pairing has two owners and neither can do it alone — the mechanism is the
+    `#OPTIONAL` object's, the component is the structure's. `optional_wrapped` is the one place
+    that knows both, which is why it takes a field name and a spec rather than living on either.
+    """
+    module = parse_module(_with_optional())
+    reserved = module.concatenation().fields["reserved"]
+    assert isinstance(reserved, OptionalSpec)
+    assert reserved.presence.determination is OptionalityDetermination.FIELD_TO_BE_SET
+    assert reserved.presence.reference == "flag"
+    # §16.5.3: an UNMARKED component "shall appear precisely once in the encoding", so it is
+    # returned untouched — which is what makes the wrap safe to attempt on every field.
+    assert not isinstance(module.concatenation().fields["version"], OptionalSpec)
+    # The component's own encoding survives inside the wrapper rather than being replaced.
+    assert reserved.component.width == 2
+
+
+def test_the_optional_class_must_be_in_the_optionality_category():
+    """§16.5.2: "the `DefinedEncodingClass` in the `OptionalClass` shall be a class in the
+    optionality category". A class from any other category names an object that cannot say
+    whether the component is present, which is the one thing the marker exists to supply."""
+    try:
+        parse_module(_with_optional(marker="#Version"))
+    except Asn1Error as error:
+        assert "16.5.2" in str(error), str(error)
+    else:
+        raise AssertionError("a non-optionality OptionalClass was accepted")
+
+
+def test_an_optional_object_that_never_says_how_absence_is_detected_is_refused():
+    """§22.5.1.6: the `PRESENCE` specification "is mandatory for it to be set in all places in
+    the defined syntax where it is allowed. Defaulting all other parts of this defined syntax
+    (e.g., use of `PRESENCE` alone) would not satisfy the above constraints."
+
+    So an `#OPTIONAL` object with no `PRESENCE` is not one taking defaults — it is one that
+    never said how a decoder detects absence, and there is no default that could stand in.
+    """
+    try:
+        parse_module(_with_optional(presence="  presenceBit #Present ::= { }\n"))
+    except Asn1Error as error:
+        assert "22.5.1.6" in str(error), str(error)
+    else:
+        raise AssertionError("an #OPTIONAL object with no PRESENCE was accepted")
+
+
+def test_the_marker_reaches_the_digest_because_it_changes_what_a_decoder_reads():
+    """A component that may be absent is read differently from one that is always there, so two
+    modules differing only in the marker describe different octets. `SYNTAX_VERSION` moved to 6
+    for the same reason it moved to 4 for `EXHIBITS HANDLE` and 5 for Annex C.
+
+    This is the *opposite* of §17.5's all-`USE-SET` `EncodeStructure`, which is a second
+    spelling of one encoding and deliberately hashes the same. Both are asserted, because the
+    distinction between "spelled differently" and "means something different" is the entire
+    basis of the digest.
+    """
+    marked = parse_module(_with_optional())
+    assert marked.sha256() != parse_module(frame_header_source()).sha256()
+    assert b"optional-encoding #Present" in marked.serialize()
+    assert b"optional presence field-to-be-set ref flag" in marked.serialize()

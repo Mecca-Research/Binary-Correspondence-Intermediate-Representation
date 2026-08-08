@@ -60,7 +60,7 @@ module is where it gets its stated source.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .ecn_encode import USE_SET, ComponentEncoding, EncodeStructure, GovernorCategory
 from .ecn_param import (
@@ -68,6 +68,7 @@ from .ecn_param import (
     ParameterizedAssignment, ParameterKind, ParameterList, ReplacementParameterization,
 )
 from .ecn_user import (
+    Optionality, OptionalityDetermination, OptionalSpec,
     UNIT_BIT, UNIT_NAMES, AuxIntSpec, BoolSpec, Comparison, ConcatenationSpec,
     ConditionalIntSpec, EncodingSpaceDetermination, HeadEndStructure, IntForm, IntOp,
     RESULT_SIZE_FIXED_TO_MAX, RESULT_SIZE_VARIABLE, BitsToBits, BitsToChar,
@@ -85,13 +86,21 @@ from .tags import Asn1Error
 
 #: The serialization's version. Its own counter, not `encode_plan`'s: see this module's
 #: `serialize` for why an ECN encoding is a separate compilation rather than a plan version.
-SYNTAX_VERSION = 5
+SYNTAX_VERSION = 6
 SYNTAX_COMPILER = "bcir-ecn-syntax/1"
 
 #: The bit-field and constructor classes whose defined syntax clause 23 gives, restricted to
 #: the ones `ecn_user` can execute. A class outside this set is refused by name rather than
 #: parsed permissively, so "ECN accepted my specification" and "ECN will encode my
 #: specification" stay the same statement.
+#: §21.5.1's five `OptionalityDetermination` values, spelled as the notation spells them.
+_OPTIONALITY_DETERMINATIONS = {value.value: value for value in OptionalityDetermination}
+
+#: A stand-in for the component an `#OPTIONAL` object will wrap. `OptionalSpec` refuses a
+#: `None` component, so the object cannot be built without one; this is what it holds between
+#: being parsed and being paired with the field §16.5's structure marks `OPTIONAL-ENCODING`.
+_PENDING_COMPONENT = object()
+
 _BUILTIN_CLASSES = {
     "#TRANSFORM": "transform",
     "#CONDITIONAL-INT": "conditional-int",
@@ -99,6 +108,7 @@ _BUILTIN_CLASSES = {
     "#BOOL": "bool",
     "#PAD": "pad",
     "#CONCATENATION": "concatenation",
+    "#OPTIONAL": "optional",
     "#OUTER": "outer",
 }
 
@@ -117,12 +127,15 @@ _UNSUPPORTED_KEYWORDS = {
     # (These two citations were each other's until Annex C was read for slice F: §16.3 and
     # §16.5 were swapped, and the optional marker was called `OPTIONAL` when §16.5.1 spells it
     # `OPTIONAL-ENCODING` followed by an `OptionalClass`.)
+    #
+    # §16.5's half is BUILT now — `PRESENCE` left this table when `#OPTIONAL` objects and the
+    # `ConcatComponentPresence` tail became readable. §16.3's alternatives are still a second
+    # constructor shape beside the concatenation this parser models, and that one needs a
+    # structure TREE rather than the flat field list `EcnModule.structure` holds.
     "ALTERNATIVE": "§23.1's alternatives objects are built, but §16.3's AlternativesStructure "
                    "is a constructor shape this grammar does not read; assemble "
                    "`AlternativesSpec` in Python",
-    "PRESENCE": "§23.11's optionality objects are built, but marking a structure component "
-                "`OPTIONAL-ENCODING` is §16.5's ConcatComponentPresence, structure notation "
-                "this grammar does not read; assemble `OptionalSpec` in Python",
+
     # §22.1's replacement SEMANTICS are built in `ecn_user`, and its PARAMETERIZATION model —
     # what a dummy may stand for, which actual fits, and §22.1.2's rules about the definitions
     # a REPLACE names — is built in `ecn_param`. Both are reachable from Python. What this
@@ -1302,6 +1315,46 @@ def _parse_outer_body(cursor: _Cursor, name: str) -> OuterSpec:
     return OuterSpec(boundary_bits=boundary, padding=padding, pattern=pattern)
 
 
+def _parse_optional_body(cursor: _Cursor, name: str, module: "EcnModule") -> OptionalSpec:
+    """§23.11.2.1's `#OPTIONAL` object, whose one required group is §22.5's `PRESENCE`.
+
+    `component` is left unset here and filled by the structure that marks a component
+    `OPTIONAL-ENCODING` with this class. §16.5.4 is why: "the mechanism used to determine
+    whether there is an encoding of the corresponding `EncodingStructure` is specified by the
+    encoding object which encodes the `OptionalClass`" — the mechanism is this object's, the
+    component is the structure's, and neither knows the other until they are paired.
+
+    §22.5.1.6 makes `PRESENCE` mandatory rather than defaulted, and `OptionalSpec` enforces it;
+    the refusal for an `#OPTIONAL` object that states none belongs there rather than here,
+    because it is true of one however it was built.
+    """
+    common = _parse_common(cursor, module, space_required=False)
+    presence = None
+    if cursor.accept("PRESENCE"):
+        cursor.expect_words("DETERMINED", "BY")
+        determination = _named(cursor.next(), _OPTIONALITY_DETERMINATIONS,
+                               "OptionalityDetermination")
+        reference = ""
+        if cursor.accept("USING"):
+            reference = cursor.next().text
+        handle_id, handle_set = "default-handle", False
+        if cursor.accept("HANDLE"):
+            handle_id, handle_set = cursor.next().text, True
+        presence = Optionality(determination=determination, reference=reference,
+                               handle_id=handle_id, handle_set=handle_set)
+    _finish(cursor, name)
+    if presence is None:
+        raise Asn1Error(
+            f"ECN: §22.5.1.6 — the PRESENCE specification \"is mandatory for it to be set in "
+            f"all places in the defined syntax where it is allowed\"; the #OPTIONAL object "
+            f"{name} states none, so nothing says how a decoder detects absence")
+    # `component` is a placeholder until §16.5's structure pairs this object with a field;
+    # `OptionalSpec` refuses a `None` one, so the pairing cannot be skipped by accident.
+    return OptionalSpec(component=_PENDING_COMPONENT, presence=presence,
+                        pre_alignment=common.pre_alignment,
+                        start_pointer=common.start_pointer)
+
+
 def _parse_encode_structure(cursor: _Cursor, name: str, module: "EcnModule"
                             ) -> ConcatenationSpec:
     """§17.5.1's `EncodeStructure`, as the body of a `#CONCATENATION` object.
@@ -1365,7 +1418,8 @@ def _parse_encode_structure(cursor: _Cursor, name: str, module: "EcnModule"
     for field_name, class_name in structure:
         chosen = encode.encoding_for(field_name)
         if chosen == combined or chosen == USE_SET:
-            fields[field_name] = module.spec_for_class(class_name, field_name)
+            fields[field_name] = module.optional_wrapped(
+                field_name, module.spec_for_class(class_name, field_name))
             continue
         if chosen not in module.objects:
             raise Asn1Error(
@@ -1378,7 +1432,7 @@ def _parse_encode_structure(cursor: _Cursor, name: str, module: "EcnModule"
                 f"ECN: §17.5.13 — the EncodingObject for a component \"shall be governed by "
                 f"the corresponding encoding class\"; {field_name!r} has class {class_name} "
                 f"and {chosen!r} is governed by {governor}")
-        fields[field_name] = spec
+        fields[field_name] = module.optional_wrapped(field_name, spec)
     padding = tuple(field_name for field_name, _ in structure
                     if isinstance(fields[field_name], PadSpec))
     return ConcatenationSpec(fields=fields, order=tuple(n for n, _ in structure),
@@ -1429,7 +1483,8 @@ def _parse_concatenation_body(cursor: _Cursor, name: str, module: "EcnModule"
     structure = module.require_structure()
     fields = {}
     for field_name, class_name in structure:
-        fields[field_name] = module.spec_for_class(class_name, field_name)
+        fields[field_name] = module.optional_wrapped(
+            field_name, module.spec_for_class(class_name, field_name))
     padding = tuple(
         field_name for field_name, class_name in structure
         if isinstance(fields[field_name], PadSpec))
@@ -1589,6 +1644,14 @@ class EcnModule:
     #: application point §13.2 walks, and putting it in `structure` would make the module look
     #: like it declared two.
     parameterized: dict[str, object] = field(default_factory=dict)
+    #: §16.5.1's `ConcatComponentPresence`: field name -> the optionality class marking it.
+    #:
+    #: A sidecar rather than a third element of `structure`'s tuples, and deliberately.
+    #: §16.5.3 makes the marker's ABSENCE meaningful — "the `EncodingStructure` in that named
+    #: field shall appear precisely once in the encoding" — so the common case is the empty
+    #: mapping, and widening every field's tuple to carry a mostly-absent fact would touch
+    #: every reader of `structure` to express nothing new.
+    structure_optional: dict[str, str] = field(default_factory=dict)
 
     def builtin_of(self, class_name: str) -> str:
         """The built-in class a name resolves to, following clause 11's assignments."""
@@ -1629,6 +1692,30 @@ class EcnModule:
                 "ECN: a #CONCATENATION object takes its components from a §16.5 "
                 "ConcatenationStructure, and this module declares none")
         return self.structure
+
+    def optional_wrapped(self, field_name: str, spec):
+        """§16.5.3 and §16.5.4: wrap a component's encoding in its `OptionalClass` object.
+
+        §16.5.3 gives the unmarked case first — "If `ConcatComponentPresence` is absent from a
+        `Component`, then the `EncodingStructure` in that named field shall appear precisely
+        once in the encoding" — so an unmarked field is returned untouched, which is what makes
+        this safe to call on every field rather than only on the marked ones.
+
+        §16.5.4 gives the marked case: "the mechanism used to determine whether there is an
+        encoding of the corresponding `EncodingStructure` is specified by the encoding object
+        which encodes the `OptionalClass`". So the mechanism is the `#OPTIONAL` object's and
+        the component is the structure's, and this is the one place that knows both.
+        """
+        optional_class = self.structure_optional.get(field_name)
+        if optional_class is None:
+            return spec
+        wrapper = self.spec_for_class(optional_class, field_name)
+        if not isinstance(wrapper, OptionalSpec):
+            raise Asn1Error(
+                f"ECN: §16.5.4 — the presence of {field_name!r} is determined by the object "
+                f"encoding {optional_class}, and that object is a "
+                f"{type(wrapper).__name__} rather than an #OPTIONAL one")
+        return replace(wrapper, component=spec)
 
     def spec_for_class(self, class_name: str, field_name: str):
         """§9.5.2: the module's one object for `class_name`.
@@ -1727,7 +1814,11 @@ class EcnModule:
         if self.structure:
             out.append(f"structure {self.structure_name} fields {len(self.structure)}")
             for index, (field_name, class_name) in enumerate(self.structure):
-                out.append(f"field {index} name {field_name} class {class_name}")
+                line = f"field {index} name {field_name} class {class_name}"
+                marker = self.structure_optional.get(field_name)
+                if marker is not None:
+                    line += f" optional-encoding {marker}"
+                out.append(line)
         for name in sorted(self.transforms):
             out.append(f"transform {name} {_describe(self.transforms[name])}")
         for name in sorted(self.objects):
@@ -1818,6 +1909,16 @@ def _describe(spec) -> str:
     if isinstance(spec, OuterSpec):
         return (f"outer boundary {spec.boundary_bits} padding {spec.padding.value} "
                 f"pattern {_pattern(spec.pattern)}")
+    if isinstance(spec, OptionalSpec):
+        presence = spec.presence
+        # The COMPONENT is deliberately not described. An `#OPTIONAL` object in the module's
+        # object table has not been paired with one yet (§16.5.4 pairs them), and the component
+        # it will wrap is already in the digest as its own structure field — describing it here
+        # would put the same encoding in twice and make the hash depend on where it was read.
+        return (f"optional presence {presence.determination.value} "
+                f"ref {presence.reference or '-'} "
+                f"handle {presence.handle_id if presence.handle_set else '-'} "
+                f"pre {_pre(spec.pre_alignment)} ptr {_ref(spec.start_pointer)}")
     if isinstance(spec, ConcatenationSpec):
         group = spec.concatenation
         return (f"concatenation order {'/'.join(spec.transmission_order())} "
@@ -2096,6 +2197,8 @@ def _parse_assignment(cursor: _Cursor, module: EcnModule) -> None:
         spec = _parse_pad_body(inner, name, module)
     elif builtin == "outer":
         spec = _parse_outer_body(inner, name)
+    elif builtin == "optional":
+        spec = _parse_optional_body(inner, name, module)
     else:
         spec = _parse_concatenation_body(inner, name, module)
 
@@ -2140,6 +2243,16 @@ def _parse_structure(cursor: _Cursor, module: EcnModule, name: str, base: str) -
                 f"this rail walks one flat concatenation, so a nested structure is refused "
                 f"rather than flattened into its parent's field order")
         module.builtin_of(class_name)
+        if inner.accept("OPTIONAL-ENCODING"):
+            # §16.5.1's `ConcatComponentPresence ::= OPTIONAL-ENCODING OptionalClass`.
+            optional_class = inner.next().text
+            category = module.builtin_of(optional_class)
+            if category != "optional":
+                raise Asn1Error(
+                    f"ECN: §16.5.2 — the DefinedEncodingClass in the OptionalClass shall be a "
+                    f"class in the optionality category; {optional_class} is in the "
+                    f"{category} category")
+            module.structure_optional[field_name] = optional_class
         fields.append((field_name, class_name))
     if not fields:
         raise Asn1Error(f"ECN: the structure {name} has no fields")
