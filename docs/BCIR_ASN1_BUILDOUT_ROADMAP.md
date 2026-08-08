@@ -53,7 +53,7 @@ rule.
 | X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references; cross-module tag-default nuance (§9.8) excluded |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
-| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, twenty-five statically decidable X.692 rules). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. §22.11's contained types and §21.3.6/§21.5.6/§21.7.8's `container` determination are built too. Still refused: §22.1's replacement *notation* and §16.5/§16.3's constructor *structure* notation (both need §22.1.2.2/§22.1.2.4-style parameterization or structure grammar), and §21.7.6/§21.7.7's per-element continuation flag |
+| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, twenty-five statically decidable X.692 rules). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. §22.11's contained types and §21.3.6/§21.5.6/§21.7.8's `container` determination are built too, and clause 19's six value mappings are in [`ecn_mapping.py`](../bcir/asn1/ecn_mapping.py). Still refused: §22.1's replacement *notation* and §16.5/§16.3's constructor *structure* notation (both need §22.1.2.2/§22.1.2.4-style parameterization or structure grammar), and §21.7.6/§21.7.7's per-element continuation flag |
 | X.693 | 8825-4:2021 | XER | **built** — BASIC-XER + CXER (CXER out, both in; validated against Annex A.3/A.4); EXTENDED-XER by design excluded |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
@@ -576,6 +576,35 @@ contained type gets its own **reference scope** and not its own bit buffer: §9.
 application point into it, so its `REFERENCE`s resolve among its own fields, but its bits go
 straight into the containing encoding — because "the last encoding placed in the container" is
 a question about offsets in one stream, and isolating the buffer made that rule unanswerable.
+
+**Clause 19's six value mappings are built, and they answer a different question from
+everything else in the ECN half.** Clauses 21–25 say how a value becomes bits; §19.1.1 says
+*which* value the fields of one encoding structure hand to the fields of another. That is what
+lets an ASN.1 `INTEGER` be encoded as a concatenation of fields, or a four-way CHOICE as a
+compact integer — neither of which is a transform on bits. §19.1.7's production lists **six**,
+not the five its own table of contents suggests: `MappingIntToBits` is §19.7.
+
+Three sentences in the clause are traps, and [`ecn_mapping.py`](../bcir/asn1/ecn_mapping.py)
+exists largely for them:
+
+- **§19.5.5 orders `TRUE` before `FALSE`.** Every programming language orders booleans the
+  other way — Python's `sorted([True, False])` is `[False, True]` — so an ordering derived from
+  the host's comparison is exactly backwards, and backwards *silently*: both directions produce
+  well-formed encodings that differ only in what the bits mean. This is the most dangerous
+  sentence in clause 19 and `BooleanOrdering` states it once, in longhand, so no later
+  "simplification" into `sorted(...)` can pass review.
+- **§19.4.6 requires reversibility where the value path does not.** Table 6 lets `modulo:n` be
+  legal and lossy when a transform is *encoding* a value; a mapping a decoder cannot undo loses
+  the value instead. The same asymmetry §22.3.2.3 and §22.8.2.4 impose on determinants.
+- **§19.5.11 and §19.5.12 are not symmetric, and neither is an error.** A destination ordering
+  shorter than the source means some abstract values cannot be encoded; a longer one means some
+  encodings will never be generated. Both are conforming, so both are *reported* rather than
+  refused — only asking to map a value past the end fails.
+
+§19.3's `FIELDS` mapping is the `AUXILIARY` deviation seen from the clause's own side: §19.3.1
+gives the target "fields corresponding to the components of the type, **but also … added fields
+for determinants**". Naming those fields rather than inferring them is what keeps a typo in a
+field name from silently becoming a determinant.
 
 **What is still refused at the surface, and what each needs.** §22.1's replacement *notation*
 needs §22.1.2.2's parameterized encoding structures and §22.1.2.4's parameterized encoding
