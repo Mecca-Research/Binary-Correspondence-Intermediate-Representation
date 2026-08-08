@@ -344,6 +344,7 @@ _MODULES = [
     "bcir.tests.test_asn1_ecn_containers",
     "bcir.tests.test_asn1_ecn_mapping",
     "bcir.tests.test_asn1_ecn_link",
+    "bcir.tests.test_asn1_ecn_param",
     "bcir.tests.test_asn1_ecn_law_parity",
     "bcir.tests.test_asn1_jer",
     "bcir.tests.test_asn1_selection",

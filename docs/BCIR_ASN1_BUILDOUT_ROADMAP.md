@@ -53,7 +53,7 @@ rule.
 | X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references; cross-module tag-default nuance (§9.8) excluded |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
-| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, twenty-five statically decidable X.692 rules). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. §22.11's contained types and §21.3.6/§21.5.6/§21.7.8's `container` determination are built too, clause 19's six value mappings are in [`ecn_mapping.py`](../bcir/asn1/ecn_mapping.py), and clause 12's encoding link module with clause 13's application-point algorithm is in [`ecn_link.py`](../bcir/asn1/ecn_link.py) — which retires the `AUXILIARY` and `BOUNDS` stated deviations by deriving both from the link rather than declaring them. Still refused: §22.1's replacement *notation* and §16.5/§16.3's constructor *structure* notation (both need §22.1.2.2/§22.1.2.4-style parameterization or structure grammar), and §21.7.6/§21.7.7's per-element continuation flag |
+| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, twenty-five statically decidable X.692 rules). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. §22.11's contained types and §21.3.6/§21.5.6/§21.7.8's `container` determination are built too, clause 19's six value mappings are in [`ecn_mapping.py`](../bcir/asn1/ecn_mapping.py), and clause 12's encoding link module with clause 13's application-point algorithm is in [`ecn_link.py`](../bcir/asn1/ecn_link.py) — which retires the `AUXILIARY` and `BOUNDS` stated deviations by deriving both from the link rather than declaring them. Annex C's parameterization — X.683 as ECN rewrites it, `{<`/`>}` delimiters and all — is in [`ecn_param.py`](../bcir/asn1/ecn_param.py), together with §22.1.2's rules on the definitions a `REPLACE` names and §17.5.17's breadth-first `ComponentIdList` scan. Still refused: the *notation* for §22.1's replacement and for §16.3/§16.5's constructor structures — grammar rather than model, now that the model is built — and §21.7.6/§21.7.7's per-element continuation flag |
 | X.693 | 8825-4:2021 | XER | **built** — BASIC-XER + CXER (CXER out, both in; validated against Annex A.3/A.4); EXTENDED-XER by design excluded |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
@@ -637,15 +637,46 @@ class if the combined set has one (§13.2.10.1); otherwise de-reference the clas
 de-referencing is what makes clause 11's `#Version ::= #INT` do any work — one object written
 for `#INT` covers every class assigned from it.
 
+**Annex C is a rewrite of X.683, not a reference to it** — and the rewrite is two characters
+wide on each side. [`ecn_param.py`](../bcir/asn1/ecn_param.py) is that model: C.1's
+`ParameterList ::= "{<" Parameter "," + ">}"` against X.683 §8.3's `"{" ... "}"`, the five
+things a dummy may stand for and the governor each one requires, C.4's ten actual-parameter
+alternatives against its eight correspondence rules, and §22.1.2's rules about the definitions
+a `REPLACE` names. An implementation that reuses the X.683 parser it already has accepts
+`#Length-prefixed{#D}` and refuses `#Length-prefixed{<#D>}` — the one spelling ECN admits —
+while citing X.683 correctly throughout.
+
+Three readings in there are worth carrying:
+
+- **C.1's NOTE forbids `DummyGovernor`s in ECN.** X.683 lets one dummy govern another; the
+  identical text is an error here, so the check belongs to the *list* rather than to the
+  parameter — a governor is only a dummy governor relative to its siblings.
+- **C.3 gives `{<>}` a meaning opposite to `{< ... >}`'s.** `ParameterizedReference ::=
+  Reference | Reference "{<" ">}"` makes an empty actual list a legal way to *name* a
+  definition, while C.1's `"," +` makes an empty parameter list not a `ParameterList` at all.
+  The two productions share their delimiters and disagree about zero.
+- **§17.5.17's scan is breadth-first.** A `ComponentIdList`'s first identifier is resolved "by
+  the first match in a scan (in textual order) of the outer-level identifiers, then by a scan
+  of the second level identifiers, and so on". The obvious recursive walk is depth-first, and
+  the two disagree exactly when an inner name shadows an outer one — at which point both still
+  name a real field, so nothing fails and the encoding simply points elsewhere.
+
+**Two citations in this repository were each other's,** and reading §16.2.12 is what caught it:
+`AlternativesStructure` is **§16.3**, `RepetitionStructure` is §16.4, and
+`ConcatenationStructure` — the shape this rail's parser models — is **§16.5**. The optional
+component marker is §16.5.1's own `ConcatComponentPresence`, spelled `OPTIONAL-ENCODING`
+followed by an `OptionalClass`, not `OPTIONAL`. Both refusal messages and the test that pins
+them are corrected; the same class of error as the ELM's "clause 14", found the same way.
+
 **What is still refused at the surface, and what each needs.** §22.1's replacement *notation*
-needs §22.1.2.2's parameterized encoding structures and §22.1.2.4's parameterized encoding
-objects — X.683's parameterization applied to ECN, which does not exist here; the semantics are
-built and reachable from Python. §16.5's `AlternativesStructure` and §16.3's `OPTIONAL` field
-marker are the *structure* half of the constructor categories: the objects parse and run, and
-the structures they apply to are still assembled in Python. `EXHIBITS HANDLE` itself now parses,
-with all six §21.16 value-set alternatives, and reaches the module digest — `SYNTAX_VERSION`
-moved to 4 for that, since a handle changes what a decoder reads and two specifications
-differing only in one must not share a name.
+and §16.3's `AlternativesStructure` / §16.5's `OPTIONAL-ENCODING` marker are all still
+Python-assembled. Their semantics are built (`ecn_user`) and now so is their parameterization
+model (`ecn_param`); what remains is the grammar — `{<`/`>}` in the lexer, parameter lists on
+structure and object assignments, and the `REPLACE ... WITH ... ENCODED BY ... INSERT AT HEAD`
+defined syntax. `EXHIBITS HANDLE` itself now parses, with all six §21.16 value-set
+alternatives, and reaches the module digest — `SYNTAX_VERSION` moved to 4 for that, since a
+handle changes what a decoder reads and two specifications differing only in one must not share
+a name.
 
 Two of §21.7's eight repetition-space determinations remain: `flag-to-be-set` and
 `flag-to-be-used` put a continuation flag **inside the repeated element** (§21.7.6/§21.7.7),

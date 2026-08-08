@@ -102,25 +102,38 @@ _BUILTIN_CLASSES = {
 _UNSUPPORTED_KEYWORDS = {
     "CONTAINED": "§22.11's contained-type specification is not implemented",
     # §23.1's `#ALTERNATIVES` and §23.11's `#OPTIONAL` are built in `ecn_user` and reachable
-    # from Python; what this grammar cannot read is the STRUCTURE side of them. §16.5's
-    # AlternativesStructure is a second constructor shape beside the concatenation this parser
-    # models, and an optional component is a field marked `OPTIONAL` in one — both are
-    # structure notation rather than object notation, which is why the objects arrived first.
-    "ALTERNATIVE": "§23.1's alternatives objects are built, but §16.5's AlternativesStructure "
+    # from Python; what this grammar cannot read is the STRUCTURE side of them. §16.2.12 names
+    # the three: `AlternativesStructure` is §16.3, `RepetitionStructure` is §16.4 and
+    # `ConcatenationStructure` — the one this parser models — is §16.5. So alternatives are a
+    # second constructor shape beside the concatenation, and an optional component is §16.5's
+    # own `ConcatComponentPresence` tail on a `ConcatComponent`. Both are structure notation
+    # rather than object notation, which is why the objects arrived first.
+    #
+    # (These two citations were each other's until Annex C was read for slice F: §16.3 and
+    # §16.5 were swapped, and the optional marker was called `OPTIONAL` when §16.5.1 spells it
+    # `OPTIONAL-ENCODING` followed by an `OptionalClass`.)
+    "ALTERNATIVE": "§23.1's alternatives objects are built, but §16.3's AlternativesStructure "
                    "is a constructor shape this grammar does not read; assemble "
                    "`AlternativesSpec` in Python",
-    "PRESENCE": "§23.11's optionality objects are built, but marking a structure field "
-                "OPTIONAL is §16.3 structure notation this grammar does not read; assemble "
-                "`OptionalSpec` in Python",
-    # §22.1's replacement SEMANTICS are built in `ecn_user` and reachable from Python. What
-    # this grammar cannot read is the notation around them: §22.1.2.2 makes the `WITH`
-    # structures parameterized encoding structures with a single encoding class parameter, and
-    # §22.1.2.4 makes the `ENCODED BY` objects parameterized encoding objects whose governor is
-    # that structure instantiated with the dummy. That is X.683's parameterization applied to
-    # ECN, and `#Length-prefixed{#D} ::= ...` is not a shape this parser reads.
+    "PRESENCE": "§23.11's optionality objects are built, but marking a structure component "
+                "`OPTIONAL-ENCODING` is §16.5's ConcatComponentPresence, structure notation "
+                "this grammar does not read; assemble `OptionalSpec` in Python",
+    # §22.1's replacement SEMANTICS are built in `ecn_user`, and its PARAMETERIZATION model —
+    # what a dummy may stand for, which actual fits, and §22.1.2's rules about the definitions
+    # a REPLACE names — is built in `ecn_param`. Both are reachable from Python. What this
+    # grammar cannot read is the notation: §22.1.2.2 makes the `WITH` structures parameterized
+    # encoding structures with a single encoding class parameter, and §22.1.2.4 makes the
+    # `ENCODED BY` objects parameterized encoding objects whose governor is that structure
+    # instantiated with the dummy.
+    #
+    # The shape is `#Length-prefixed{<#D>} ::= ...`, and the delimiters are the point: Annex
+    # C.1 rewrites X.683 §8.3's `ParameterList` to use `{<` and `>}`, so an X.683 parser reads
+    # the one spelling ECN does not have and refuses the only one it does. (This comment said
+    # `{#D}` — ASN.1's braces — until Annex C was read for slice F.)
     "REPLACE": "§22.1.2.2 and §22.1.2.4 build a replacement from a PARAMETERIZED encoding "
-               "structure and a PARAMETERIZED encoding object (X.683 applied to ECN), which "
-               "this grammar does not read; the replacement semantics themselves are built, "
+               "structure and a PARAMETERIZED encoding object (Annex C's X.683 applied to "
+               "ECN, with `{<`/`>}` delimiters), which this grammar does not read; the "
+               "semantics are in `ecn_user` and the parameterization model in `ecn_param`, "
                "so assemble `Replacement` in Python",
 }
 
