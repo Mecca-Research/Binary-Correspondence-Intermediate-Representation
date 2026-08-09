@@ -226,11 +226,15 @@ def test_an_element_bounded_by_a_container_must_be_the_last_thing_in_it():
         determination=EncodingSpaceDetermination.CONTAINER, reference="box"))
     inner = ConcatenationSpec(fields={"v": tail}, order=("v",))
     contents = ContainedType(primary={"#I": UserEncodingObject("#I", inner)})
-    ok = ContainerSpec(contained_class="#I", contents=contents, name="box")
+    # `box` states its encoding space, which is what transmits its END -- §21.3.6 locates the
+    # element there, so a container with no determinant and no stated width is not a boundary a
+    # decoder could find. That is orthogonal to the rule under test here, and the fixture used
+    # to omit it; `inner` is one 8-bit field, so eight bits is the exact fill.
+    ok = ContainerSpec(contained_class="#I", contents=contents, name="box", width=8)
     assert encode_with_user(_concat({"w": ok}, ("w",)), "#C", {"w": {"v": 7}}) == bytes((7,))
 
     # The same element, with two more octets written inside the container after it.
-    late = ContainerSpec(contained_class="#I", contents=contents, name="box",
+    late = ContainerSpec(contained_class="#I", contents=contents, name="box", width=24,
                          trailer=PadSpec(width=16))
     _refuses("21.3.6", lambda: encode_with_user(
         _concat({"w": late}, ("w",)), "#C", {"w": {"v": 7}}))
@@ -435,3 +439,61 @@ def test_only_one_encoding_can_be_the_last_one_in_a_container():
     # Both absent, or the first present and the second absent: one position, no conflict.
     assert encode_with_user(both, "#C", {}) == b""
     assert encode_with_user(both, "#C", {"o": 1}) == bytes((1,))
+
+
+def test_a_container_reference_needs_a_determinant_unless_it_is_the_pdu():
+    """§21.3.6 locates an element's end at its container's end -- so something must SAY where
+    that end is (review, PR #707).
+
+    The name merely being open was the whole test, so a bare named ConcatenationSpec, or a
+    ContainerSpec with neither a space determinant nor a stated width, was accepted as the
+    boundary although a decoder has nothing to find it with.
+
+    The PDU is the exception, and it is why this could not be enforced on the container's own
+    properties alone: the outermost structure's extent comes from whatever delivered the
+    octets, so a reference to it is legitimate with no determinant. Depth cannot tell the PDU
+    from a container that is merely the PDU's first field -- both open at depth one and at bit
+    zero -- so the writer is told which spec is the root instead.
+    """
+    optional = OptionalSpec(
+        component=IntSpec(width=8),
+        presence=Optionality(determination=OptionalityDetermination.CONTAINER,
+                             reference="frame"))
+
+    # The PDU itself, named: legitimate, determinant or no determinant.
+    pdu = ConcatenationSpec(fields={"a": IntSpec(width=8), "o": optional},
+                            order=("a", "o"), container_name="frame")
+    assert encode_with_user(_objects(pdu), "#C", {"a": 1, "o": 2}) == bytes((1, 2))
+
+    # The SAME named concatenation one level down is not the PDU, and carries no determinant
+    # of its own, so its end is not a boundary a decoder could locate.
+    nested = ConcatenationSpec(fields={"inner": pdu}, order=("inner",))
+    _refuses("carries no length determinant", lambda: encode_with_user(
+        _objects(nested), "#C", {"inner": {"a": 1, "o": 2}}))
+
+
+def test_outer_is_reachable_from_inside_the_pdus_own_named_container():
+    """A named outermost structure is still the PDU (review, PR #707).
+
+    `#OUTER` was refused whenever ANY container was open, so merely giving the top-level
+    ConcatenationSpec a `container_name` broke a field that the otherwise identical unnamed PDU
+    encoded fine. A container NESTED inside it is still refused -- the PDU's end is not that
+    element's container's end, which is what §21.3.6 is about.
+    """
+    optional = OptionalSpec(
+        component=IntSpec(width=8),
+        presence=Optionality(determination=OptionalityDetermination.CONTAINER,
+                             reference=OUTER_CONTAINER))
+
+    unnamed = ConcatenationSpec(fields={"a": IntSpec(width=8), "o": optional},
+                                order=("a", "o"))
+    named = ConcatenationSpec(fields={"a": IntSpec(width=8), "o": optional},
+                              order=("a", "o"), container_name="frame")
+    # Naming the PDU must not change what its fields may be determined by.
+    assert encode_with_user(_objects(unnamed), "#C", {"a": 1, "o": 2}) == bytes((1, 2))
+    assert encode_with_user(_objects(named), "#C", {"a": 1, "o": 2}) == bytes((1, 2))
+
+    # One level down, #OUTER is a different container's end and stays refused.
+    nested = ConcatenationSpec(fields={"inner": named}, order=("inner",))
+    _refuses("end of the PDU", lambda: encode_with_user(
+        _objects(nested), "#C", {"inner": {"a": 1, "o": 2}}))

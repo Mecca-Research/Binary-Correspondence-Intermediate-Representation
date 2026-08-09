@@ -1029,7 +1029,8 @@ class ContainerSpec:
         # §21.3.6's determination is only usable when something does.
         out.open_container(
             self.name,
-            locatable=bool(self.space_determinant is not None or self.width))
+            locatable=bool(self.space_determinant is not None or self.width),
+            is_pdu=out.is_root_spec(self))
         scope = out.push_reference_scope()
         # §9.24.2's application point moves with the set, so a container nested inside this
         # contained type inherits *this* type's set as "the set applied to the containing
@@ -1107,7 +1108,12 @@ class BitWriter:
         #: §21.3.6, §21.5.6 and §21.7.8 all end something "when the specified container
         #: terminates", and a stack is what lets a container inside a container mean what it
         #: says.
-        self._containers: list[tuple[str, int, bool]] = []
+        self._containers: list[tuple[str, int, bool, bool]] = []
+        #: The outermost spec being written. Set by `encode_with_user` before it calls
+        #: that spec's `write`, because identity against it is the only reliable way to
+        #: tell the PDU from a container that merely happens to open first: a container
+        #: that is the PDU's first field also opens at depth one and at bit zero.
+        self._root_spec: object = None
         #: Claims that an element's extent runs to a container's end: `name -> (offset, what)`.
         #: An empty name is §21.3.6's `OUTER` form, whose container is the PDU.
         self._container_claims: dict[str, tuple[int, str]] = {}
@@ -1241,8 +1247,21 @@ class BitWriter:
     # are placed in the container", and the symptom otherwise is a decoder reading one field's
     # bits as another's.
 
-    def open_container(self, name: str, *, locatable: bool = False) -> None:
+    def set_root_spec(self, spec: object) -> None:
+        """Name the outermost spec, so `open_container` can recognise the PDU."""
+        self._root_spec = spec
+
+    def is_root_spec(self, spec: object) -> bool:
+        return self._root_spec is not None and spec is self._root_spec
+
+    def open_container(self, name: str, *, locatable: bool = False,
+                       is_pdu: bool = False) -> None:
         """Open `name`. `locatable` says a decoder can find this container's END.
+
+        `is_pdu` marks the outermost structure. The PDU's end is known from OUTSIDE the
+        encoding -- whatever delivered the octets knows how many there were -- so it is
+        locatable however it was specified, which is why a reference to a bare named
+        outermost ConcatenationSpec is legitimate while the same spec nested is not.
 
         §21.3.6's REFERENCE is to a field "whose contents include this encoding space", and the
         determination works by reading the container's end -- so it is only usable when the
@@ -1251,11 +1270,11 @@ class BitWriter:
         and a `container` determination naming one asks a decoder to find a boundary nothing
         told it about.
         """
-        if any(open_name == name for open_name, _at, _loc in self._containers):
+        if any(open_name == name for open_name, _at, _loc, _pdu in self._containers):
             raise Asn1Error(
                 f"ECN: the container {name!r} is already open; a container cannot contain "
                 f"itself, and two with one name make every REFERENCE to it ambiguous")
-        self._containers.append((name, len(self._bits), locatable))
+        self._containers.append((name, len(self._bits), locatable or is_pdu, is_pdu))
 
     def close_container(self, name: str) -> int:
         """End the innermost container, checking any claim made against it. Returns its size."""
@@ -1263,7 +1282,7 @@ class BitWriter:
             raise Asn1Error(
                 f"ECN: {name!r} is not the innermost open container, so closing it would "
                 f"cross a containment boundary")
-        _name, at, _locatable = self._containers.pop()
+        _name, at, _locatable, _is_pdu = self._containers.pop()
         claim = self._container_claims.pop(name, None)
         if claim is not None:
             offset, what = claim
@@ -1279,11 +1298,25 @@ class BitWriter:
     def claim_container_end(self, name: str, what: str) -> None:
         """Register that `what` just ended, and that its end must be its container's end."""
         if name != OUTER_CONTAINER:
-            if not any(open_name == name for open_name, _at, _loc in self._containers):
+            found = [entry for entry in self._containers if entry[0] == name]
+            if not found:
                 raise Asn1Error(
                     f"ECN: a `container` determination names {name!r}, which is not an open "
                     f"container here; §21.3.6's REFERENCE is to a field \"whose contents "
                     f"include this encoding space\"")
+            if not found[-1][2]:
+                # §21.3.6 locates this element's end at the container's end, so the
+                # determination is only usable when the encoding says where that end IS. The
+                # name being open used to be the whole test, so a bare named ConcatenationSpec
+                # -- or a ContainerSpec with neither a space determinant nor a stated width --
+                # was accepted as the boundary although a decoder has nothing to find it with.
+                # The PDU is exempt and marked as such when it opens: its extent comes from
+                # whatever delivered the octets.
+                raise Asn1Error(
+                    f"ECN: a `container` determination names {name!r}, which is not the PDU and "
+                    f"carries no length determinant and no stated encoding space; §21.3.6 "
+                    f"locates this element's end at that container's end, and nothing in the "
+                    f"encoding says where it is. Give it a space determinant or a stated width")
             # KNOWN LIMITATION (review, PR #707), and the SAME missing fact as the #OUTER
             # branch below. §21.3.6 locates this element's end at the container's end, so the
             # determination is only usable when the encoding transmits where that end is -- a
@@ -1296,16 +1329,13 @@ class BitWriter:
             # ConcatenationSpec that is NOT the PDU, which is the reported defect; enforcing on
             # the capability alone would instead reject the PDU case, which is worse, because
             # that one is correct and common.
-        elif self._containers:
-            # KNOWN LIMITATION (review, PR #707). Giving the top-level ConcatenationSpec a
-            # `container_name` makes `_containers` non-empty, so a field determined by #OUTER is
-            # refused here even though the otherwise identical UNNAMED PDU encodes it fine -- a
-            # named outermost structure is still the PDU. The fix needs the writer to know
-            # WHICH open container is the PDU, and depth cannot answer it: a container that is
-            # the PDU's first field also opens at depth one and at bit zero. Left refusing
-            # rather than relaxed on a guess, because the failure modes are not symmetric --
-            # a false rejection is a diagnosed refusal, while wrongly admitting #OUTER from
-            # inside a genuine nested container yields an encoding no decoder can read.
+        elif any(not is_pdu for _n, _at, _loc, is_pdu in self._containers):
+            # A field determined by #OUTER sits in the PDU, and the PDU's own container IS the
+            # PDU -- naming the outermost structure does not make it something else. Refusing
+            # whenever ANY container was open meant that merely giving the top-level
+            # ConcatenationSpec a `container_name` broke a field the otherwise identical
+            # unnamed PDU encoded fine. A container nested inside it is still refused: the
+            # PDU's end is not that element's container's end, which is §21.3.6's whole point.
             raise Asn1Error(
                 f"ECN: this element is determined by {OUTER_CONTAINER}, the end of the PDU, "
                 f"but it sits inside the container {self._containers[-1][0]!r}; the PDU's end "
@@ -1330,7 +1360,7 @@ class BitWriter:
         self._container_claims[name] = (here, what)
 
     def open_containers(self) -> tuple[str, ...]:
-        return tuple(name for name, _at, _loc in self._containers)
+        return tuple(name for name, _at, _loc, _pdu in self._containers)
 
     def push_reference_scope(self) -> tuple:
         """§9.24.2's application point moving into a contained type.
@@ -2117,9 +2147,11 @@ class ConcatenationSpec:
             self.pre_alignment.apply(out)
         handle_start = out.bit_length
         if self.container_name:
-            # A named concatenation is addressable but NOT locatable: it carries no length
-            # determinant of its own, so a decoder cannot find where it ends.
-            out.open_container(self.container_name, locatable=False)
+            # A named concatenation is addressable but carries no length determinant of its
+            # own, so a decoder cannot find where it ends -- UNLESS it is the PDU, whose
+            # extent comes from whatever delivered the octets.
+            out.open_container(self.container_name, locatable=False,
+                               is_pdu=out.is_root_spec(self))
         group = self.concatenation or Concatenation()
         aligned = group.alignment is ConcatenationAlignment.ALIGNED
         for name, spec in self._ordered():
@@ -2914,6 +2946,10 @@ def encode_with_user(objects, cls, value, *, outer: OuterSpec | None = None) -> 
             f"{getattr(cls, 'name', cls)!r} (9.5.1)")
     out = BitWriter()
     out.set_objects(objects)
+    # §21.3.6 and the #OUTER rule both need to know which structure is the PDU, and only the
+    # driver knows: depth and offset cannot tell it from a container that is the PDU's first
+    # field, since both open at depth one and at bit zero.
+    out.set_root_spec(obj.spec)
     obj.spec.write(value, out)
     still_open = out.open_containers()
     if still_open:  # pragma: no cover - every writer closes what it opens
