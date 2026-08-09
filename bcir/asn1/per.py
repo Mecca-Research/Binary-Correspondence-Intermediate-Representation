@@ -243,19 +243,30 @@ def _decode_constrained(reader: BitReader, lower: int, upper: int) -> int:
     if range_ == 1:
         return lower
     if reader.variant is PerVariant.UNALIGNED:
-        return lower + reader.get_bits(bits_for_range(range_))
-    if range_ <= 255:
-        return lower + reader.get_bits(bits_for_range(range_))
-    if range_ == 256:
+        offset = reader.get_bits(bits_for_range(range_))
+    elif range_ <= 255:
+        offset = reader.get_bits(bits_for_range(range_))
+    elif range_ == 256:
         reader.align()
-        return lower + reader.get_bits(8)
-    if range_ <= _64K:
+        offset = reader.get_bits(8)
+    elif range_ <= _64K:
         reader.align()
-        return lower + reader.get_bits(16)
-    length_upper = max(1, ((range_ - 1).bit_length() + 7) // 8)
-    octets = _decode_constrained(reader, 1, length_upper)
-    reader.align()
-    return lower + int.from_bytes(reader.get_octets(octets), "big")
+        offset = reader.get_bits(16)
+    else:
+        length_upper = max(1, ((range_ - 1).bit_length() + 7) // 8)
+        octets = _decode_constrained(reader, 1, length_upper)
+        reader.align()
+        offset = int.from_bytes(reader.get_octets(octets), "big")
+    # §11.5.3: the offset names a value in [0, range). A range that is not a power of two
+    # leaves the widest bit patterns UNUSED, and a conforming encoder never writes one -- so
+    # reading one back is a malformed encoding, not a value. Rejecting here is what keeps the
+    # decoder inside the schema's value set: without it UNALIGNED `c0` for INTEGER (0..2)
+    # decoded to 3, a number the type does not contain, at a trust boundary.
+    if offset >= range_:
+        raise Asn1Error(
+            f"PER 11.5.3: constrained value offset {offset} is outside the range's "
+            f"{range_} values (a bit pattern no conforming encoder produces)")
+    return lower + offset
 
 
 def _encode_normally_small(writer: BitWriter, value: int) -> None:
@@ -289,13 +300,27 @@ def _encode_semi_constrained(writer: BitWriter, value: int, lower: int) -> None:
 
 def _decode_semi_constrained(reader: BitReader, lower: int) -> int:
     octets = _decode_unconstrained_length(reader)
+    if octets == 0:
+        # §11.7.4 encodes the offset into "the minimum number of octets", and the minimum for
+        # an offset of zero is one octet holding zero -- never none. See _decode_unconstrained.
+        raise Asn1Error("PER 11.7.4: a semi-constrained whole number needs at least one "
+                        "contents octet; a zero length determinant is malformed")
     reader.align()
     return lower + int.from_bytes(reader.get_octets(octets), "big")
 
 
 def _encode_unconstrained(writer: BitWriter, value: int) -> None:
-    """§11.8: 2's-complement into the minimum octets, with a length determinant."""
-    octets = max(1, (value.bit_length() + 8) // 8)
+    """§11.8: 2's-complement into the minimum octets, with a length determinant.
+
+    The octet count is the two's-complement minimum, which is NOT `bit_length() + 8 // 8` for
+    a negative value: `bit_length` reports the MAGNITUDE's width, so it over-counts at exactly
+    the signed boundaries where the magnitude needs the extra bit but the two's-complement
+    value does not. -128 came out as two octets (`ff80`) where one (`80`) is the minimum, and
+    -32768 as three. Since `encode_per` defaults to CANONICAL-PER and §11.8 asks for the
+    minimum form, that was a non-canonical encoding from the canonical encoder. Biasing a
+    negative by one before measuring is what makes the boundary land on the right side.
+    """
+    octets = (value + (1 if value < 0 else 0)).bit_length() // 8 + 1
     _encode_unconstrained_length(writer, octets)
     writer.align()
     writer.put_octets(value.to_bytes(octets, "big", signed=True))
@@ -303,6 +328,13 @@ def _encode_unconstrained(writer: BitWriter, value: int) -> None:
 
 def _decode_unconstrained(reader: BitReader) -> int:
     octets = _decode_unconstrained_length(reader)
+    if octets == 0:
+        # §11.8.2: the value occupies "the minimum number of octets", and there is no
+        # two's-complement spelling of any integer in zero octets. Python would have read
+        # int.from_bytes(b"", signed=True) as 0, so b"\x00" decoded as a valid zero whose real
+        # encoding is b"\x01\x00" -- a second spelling admitted at the trust boundary.
+        raise Asn1Error("PER 11.8.2: an unconstrained whole number needs at least one "
+                        "contents octet; a zero length determinant is malformed")
     reader.align()
     return int.from_bytes(reader.get_octets(octets), "big", signed=True)
 
@@ -368,11 +400,19 @@ def _encode_length_and_payload(
     """
     if upper is not None:
         # §11.9.3.3: constrained, ub < 64K -- the length is a constrained whole number and
-        # there is never fragmentation.
+        # there is never fragmentation. `_encode_constrained` refuses a count outside
+        # [lower, upper], so the bound is enforced on this path already.
         _encode_constrained(writer, count, lower, upper)
         if count:
             emit(0, count)
         return
+    # The unconstrained forms carry no bound, so nothing below would notice a count under
+    # `lower` -- and `_length_bounds` reaches here for SIZE(5..MAX) and for any ub at or past
+    # 64K, where the LOWER endpoint is still part of the type. Checking it is what stops
+    # `OCTET STRING (SIZE(5..MAX))` from emitting a one-octet value.
+    if count < lower:
+        raise Asn1Error(
+            f"PER 11.9: {count} unit(s) is below the size constraint's lower bound {lower}")
     start = 0
     while True:
         remaining = count - start
@@ -401,6 +441,19 @@ def _decode_length_and_payload(
         if count:
             consume(count)
         return count
+    total = _decode_unconstrained_count(reader, consume)
+    # The mirror of the encoder's check: the unconstrained forms carry no bound, so a peer
+    # can spell a count below the type's declared lower endpoint and nothing above would
+    # notice. Admitting it would put a value outside the ASN.1 type into the caller's hands.
+    if total < lower:
+        raise Asn1Error(
+            f"PER 11.9: decoded {total} unit(s), below the size constraint's lower bound "
+            f"{lower}")
+    return total
+
+
+def _decode_unconstrained_count(reader: BitReader, consume) -> int:
+    """§11.9.3.6-§11.9.3.8's unconstrained determinant, looping over any fragments."""
     total = 0
     while True:
         reader.align()
@@ -1167,12 +1220,18 @@ def decode_per(
         raise Asn1Error("PER: expected bytes")
     reader = BitReader(bytes(data), variant)
     value = _decode(reader, kind, rules)
-    # §11.1.3.1/§11.1.4: an EMPTY field-list is not zero octets, it is "a single octet with
-    # all bits set to 0" -- so a type that encodes to nothing (a NULL, an INTEGER pinned to
-    # one value) legitimately consumes no bits while occupying one octet. Without the
-    # floor, that one octet reads as trailing garbage and the decode fails on a correct
-    # encoding.
-    consumed_octets = max(1, (reader.pos + 7) // 8)
+    if reader.pos == 0:
+        # §11.1.3.1/§11.1.4: an EMPTY field-list is not zero octets, it is "a single octet
+        # with all bits set to 0" -- so a type that encodes to nothing (a NULL, an INTEGER
+        # pinned to one value) consumes no bits while still occupying one octet. Saying only
+        # "at least one octet" let BOTH b"" and an arbitrary b"\xff" through, which is two
+        # more spellings of a value whose complete encoding the clause fixes exactly.
+        if len(data) != 1 or data[0] != 0:
+            raise Asn1Error(
+                f"PER 11.1.4: the complete encoding of an empty field-list is exactly one "
+                f"zero octet; got {bytes(data)!r}")
+        return value
+    consumed_octets = (reader.pos + 7) // 8
     if consumed_octets < len(data):
         raise Asn1Error(
             f"PER: {len(data) - consumed_octets} trailing octet(s) after the encoding")

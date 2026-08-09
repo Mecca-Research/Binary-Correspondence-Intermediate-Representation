@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from ..model import (Domain, Lane, Module, Opcode, StrideClass,
+from ..model import (Claim, Domain, Lane, Module, Opcode, StrideClass,
                      phase_graph_has_cycle, topological_phase_ids)
 
 
@@ -1204,7 +1204,7 @@ def verify_shape(module: Module) -> list[Diagnostic]:
     carries the same law structurally over the gem op shape attrs (`verifyR22` in `-bcir-verify`)."""
     diags: list[Diagnostic] = []
     for ph in module.phases:
-        writer: dict[int, "Claim"] = {}
+        writer: dict[int, Claim] = {}
         for claim in ph.claims:
             if claim.op.startswith("gem."):
                 for rid in claim.rd:
