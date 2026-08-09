@@ -321,6 +321,12 @@ def run_native_bench(kind, value, *, warmup: int = 2, rounds: int = MIN_SAMPLES 
 #: reads the header would follow the renumber instead of catching it.
 _OER_INTEGER, _OER_BOOLEAN, _OER_NULL, _OER_FIXED_OCTETS, _OER_VAR_OCTETS = 0, 1, 2, 3, 4
 
+#: `bcir_per_kind` and `bcir_per_bounds`. Separate from the OER constants above because
+#: the two enums are different tables that happen to start the same way, and one shared
+#: name would make a renumbering on either side silently rebind the other.
+_PER_INTEGER, _PER_BOOLEAN, _PER_NULL, _PER_FIXED_OCTETS, _PER_VAR_OCTETS = 0, 1, 2, 3, 4
+_PER_UNCONSTRAINED, _PER_SEMI, _PER_CONSTRAINED = 0, 1, 2
+
 
 def oer_fields_for(plan) -> bytes:
     """The `bcir_oer_field[]` a schema-directed decode needs, built from the write plan.
@@ -370,11 +376,61 @@ def oer_fields_for(plan) -> bytes:
 #: missing *build*, not a law: X.691 7.2 bars a schema-FREE decode and says nothing against a
 #: schema-directed one. Recorded as a gap so it reads as buildable work rather than as
 #: another clause.
+def per_fields_for(plan) -> str:
+    """The `bcir_per_field[]` a schema-directed PER decode needs, as the harness spells it.
+
+    A text plan (`kind:bounds:lb:ub:fixed:optional`, comma separated) rather than the packed
+    octets `oer_fields_for` emits, because PER's field carries two signed 64-bit bounds and a
+    packed record would be sixteen bytes of endian-sensitive layout for a benchmark argument.
+    The C harness parses the same spelling `test_per_plan.c` does, so one format serves the
+    differential and the bench.
+
+    **Refuses rather than approximates**, exactly as the OER mapping does: a member this
+    cannot map raises rather than guessing a field, since a decode timed against the wrong
+    field array is a real number for the wrong work.
+    """
+    root = plan.root
+    if root.kind != "sequence":
+        raise Asn1Error(
+            f"X.691 18: the schema-directed decode arm decodes a SEQUENCE; this plan's root "
+            f"is {root.kind!r}")
+    fields = []
+    for member in root.members:
+        node = member.node
+        optional = 1 if getattr(member, "optional", False) else 0
+        low = getattr(node, "low", None)
+        high = getattr(node, "high", None)
+        if node.kind == "integer":
+            # §13.2 decides the shape from the TYPE's constraint, never from the octets.
+            if low is not None and high is not None:
+                fields.append(f"{_PER_INTEGER}:{_PER_CONSTRAINED}:{low}:{high}:0:{optional}")
+            elif low is not None:
+                fields.append(f"{_PER_INTEGER}:{_PER_SEMI}:{low}:0:0:{optional}")
+            else:
+                fields.append(f"{_PER_INTEGER}:{_PER_UNCONSTRAINED}:0:0:0:{optional}")
+        elif node.kind == "boolean":
+            fields.append(f"{_PER_BOOLEAN}:0:0:0:0:{optional}")
+        elif node.kind == "null":
+            fields.append(f"{_PER_NULL}:0:0:0:0:{optional}")
+        elif node.kind in ("string", "octetstring"):
+            width = getattr(node, "fixed_size", None)
+            if width:
+                fields.append(f"{_PER_FIXED_OCTETS}:0:0:0:{width}:{optional}")
+            else:
+                bound = getattr(node, "max_size", 0) or 0
+                fields.append(f"{_PER_VAR_OCTETS}:0:0:0:{bound}:{optional}")
+        else:
+            raise Asn1Error(
+                f"X.691: the schema-directed decode arm has no field kind for a {node.kind!r} "
+                f"member; the plan-driven PER decoder states its subset rather than guessing")
+    return ",".join(fields)
+
+
 DIRECTED_DECODE_OPS: dict[str, str | None] = {
     "COER": "coer-d",
     "BASIC-OER": None,
-    "CANONICAL-PER-ALIGNED": None,
-    "CANONICAL-PER-UNALIGNED": None,
+    "CANONICAL-PER-ALIGNED": "per-d-aligned",
+    "CANONICAL-PER-UNALIGNED": "per-d-unaligned",
     "BASIC-PER-ALIGNED": None,
     "BASIC-PER-UNALIGNED": None,
     "DER": None,
@@ -386,8 +442,8 @@ DIRECTED_DECODE_OPS: dict[str, str | None] = {
 _DIRECTED_REASONS: dict[str, str] = {
     "BASIC-OER": "X.696: BASIC-OER's non-canonical spellings are what the CANONICAL-OER "
                  "decoder already accepts; a separate row would time the same decoder twice",
-    "CANONICAL-PER-ALIGNED": "bcir_per.h is a bit reader, not a plan-driven decoder — a GAP, "
-                             "not a law (X.691 7.2 bars only the schema-FREE decode)",
+    "BASIC-PER-ALIGNED": "X.691: BASIC-PER's encodings are what the canonical decoder already "
+                         "accepts, so a separate row would time the same decoder twice",
     "DER": "already has a schema-free decode row; the schema-free table is where X.690 "
            "candidates belong, because they can be walked without a type",
 }
@@ -415,7 +471,12 @@ def run_native_directed_decode_bench(kind, value, *, warmup: int = 2,
     skipped: dict[str, str] = {}
     try:
         plan = compile_encode_plan(kind, module="bench", type_name="Bench")
+        # Two field tables, because the two decoders take different ones: X.696's is
+        # octet-oriented with a width and a sign, X.691's bit-oriented with two bounds. Both
+        # are built from the SAME plan, so a schema either has a directed decode on both rails
+        # or on neither, and a candidate never silently borrows the other's shape.
         fields = oer_fields_for(plan)
+        per_fields = per_fields_for(plan)
         stream = flatten(plan, value)
     except Asn1Error as error:
         raise Asn1Error(f"no schema-directed decode table exists for this schema: "
@@ -445,7 +506,8 @@ def run_native_directed_decode_bench(kind, value, *, warmup: int = 2,
         if binary is None:
             raise Asn1Error("no C compiler; a schema-directed decode table cannot be produced")
         lines = [f"rounds {warmup} {rounds} {iterations}"]
-        lines += [f"dircase {name} {op} {fields.hex()} {octets.hex()}"
+        lines += [f"dircase {name} {op} "
+                  f"{per_fields if op.startswith('per-d') else fields.hex()} {octets.hex()}"
                   for name, op, octets in cases]
         lines.append("run")
         proc = subprocess.run([binary], input="\n".join(lines) + "\n",
