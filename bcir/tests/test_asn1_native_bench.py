@@ -431,8 +431,13 @@ def test_the_two_decode_tables_answer_different_questions_and_cannot_be_confused
     # The rows are disjoint, and that is the clause rather than a coincidence: X.696 §6.2
     # bars OER from the schema-free table, and the X.690/X.697 candidates have no
     # plan-driven decoder in the C rail to put them in the directed one.
-    assert {r.candidate for r in directed.rows} == {"COER"}
-    assert "COER" not in {r.candidate for r in free.rows}
+    directed_names = {r.candidate for r in directed.rows}
+    free_names = {r.candidate for r in free.rows}
+    assert directed_names == {"COER", "CANONICAL-PER-ALIGNED", "CANONICAL-PER-UNALIGNED"}
+    # Disjoint, and that is the clause rather than a coincidence: every candidate here is one
+    # X.696 §6.2 or X.691 §7.2 denies a schema-free decode, so none of them can appear in a
+    # table built by walking octets without a type.
+    assert not (directed_names & free_names), directed_names & free_names
 
 
 def test_oer_gains_a_two_axis_row_it_could_never_have_had():
@@ -489,17 +494,28 @@ def test_the_directed_table_reports_why_each_candidate_is_absent():
     """Nine of ten candidates have no schema-directed row, and the reasons are *different
     kinds* of reason — which is why they are recorded per candidate rather than as one note.
 
-    PER's absence is a **gap**: `bcir_per.h` is a bit reader, and X.691 §7.2 bars only the
-    schema-*free* decode, so a plan-driven PER decoder is buildable work. OER's presence and
-    DER's absence are both **laws**. A single "not supported" would flatten the two.
+    This test used to assert that PER's absence was a **gap** — `bcir_per.h` was a bit reader,
+    and X.691 §7.2 bars only the schema-*free* decode, so a plan-driven PER decoder was
+    buildable work rather than a prohibition. It was built, so PER is no longer absent at all
+    and the remaining reasons are of two kinds:
+
+    * **A law.** DER belongs in the schema-free table, because X.690 candidates can be walked
+      without a type. That will never move.
+    * **A duplicate.** BASIC-PER and BASIC-OER encode what the canonical decoders already
+      accept, so a row for either would time the same decoder twice and report it as a second
+      measurement.
+
+    The distinction is why the reasons are recorded per candidate rather than as one note: a
+    single "not supported" would have flattened a gap that closed into laws that cannot.
     """
     if not native_available():
         return
     _, skipped = run_native_directed_decode_bench(_RECORD, _VALUE)
-    assert "COER" not in skipped
-    assert "GAP" in skipped["CANONICAL-PER-ALIGNED"], (
-        "PER's absence is buildable work and the message must say so")
+    for present in ("COER", "CANONICAL-PER-ALIGNED", "CANONICAL-PER-UNALIGNED"):
+        assert present not in skipped, f"{present} has a directed decoder now"
     assert "schema-free" in skipped["DER"]
+    assert "same decoder twice" in skipped["BASIC-PER-ALIGNED"]
+    assert "same decoder twice" in skipped["BASIC-OER"]
 
 
 def test_the_gate_and_the_harness_link_the_same_sources():
