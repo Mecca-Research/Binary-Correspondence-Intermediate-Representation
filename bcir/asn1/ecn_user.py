@@ -2171,25 +2171,23 @@ class RepetitionSpace:
     #: §21.7.10's identification handle, for the `handle` determination.
     handle_id: str = "default-handle"
 
-    _BUILT = (RepetitionSpaceDetermination.FIELD_TO_BE_SET,
-              RepetitionSpaceDetermination.FIELD_TO_BE_USED,
-              RepetitionSpaceDetermination.PATTERN,
-              RepetitionSpaceDetermination.HANDLE,
-              RepetitionSpaceDetermination.CONTAINER,
-              RepetitionSpaceDetermination.NOT_NEEDED)
+    #: All eight of §21.7.1's determinations are built. `flag-to-be-set` and `flag-to-be-used`
+    #: were the last two, and what they needed was not more machinery but the RIGHT machinery:
+    #: every other determination writes its determinant *outside* the repeated elements, where
+    #: a flat name map suffices, while §21.7.6's flag is "a field that is part of the repeated
+    #: element" — so N elements carry N fields of one name, and a name-keyed patch cannot say
+    #: which it means. `ConditionalRepetitionSpec.write` gives each element its own reference
+    #: scope, which is §9.24.2's mechanism reused rather than a second one invented.
+    _BUILT = tuple(RepetitionSpaceDetermination)
 
     def __post_init__(self) -> None:
-        if self.determination not in RepetitionSpace._BUILT:
-            needs = {
-                RepetitionSpaceDetermination.FLAG_TO_BE_SET:
-                    "§21.7.6 puts a continuation flag INSIDE the repeated element, which needs "
-                    "the element's structure to reserve a field for it",
-                RepetitionSpaceDetermination.FLAG_TO_BE_USED:
-                    "§21.7.7 reads a continuation flag from inside the repeated element",
-            }[self.determination]
+        if self.determination in (RepetitionSpaceDetermination.FLAG_TO_BE_SET,
+                                  RepetitionSpaceDetermination.FLAG_TO_BE_USED) and (
+                not self.reference):
             raise Asn1Error(
-                f"ECN: the repetition-space determination `{self.determination.value}` is not "
-                f"implemented — {needs}")
+                f"ECN: §21.7.6 and §21.7.7 both \"require the specification of a REFERENCE to "
+                f"a field that is part of the repeated element\"; "
+                f"`{self.determination.value}` names none, so there is no flag to set or read")
         if self.determination is RepetitionSpaceDetermination.PATTERN:
             if self.termination_pattern is None:
                 raise Asn1Error(
@@ -2224,6 +2222,43 @@ class RepetitionSpace:
                 f"{self.unit}-bit units, so no determinant can state its size")
         return space_bits // self.unit
 
+    def flag(self, out: "BitWriter", *, more: bool) -> None:
+        """§21.7.6's set, or §21.7.7's check, for one element's continuation flag.
+
+        The two clauses split exactly as §21.3.4 and §21.3.5 do for a length: `flag-to-be-set`
+        has the encoder *write* the field, `flag-to-be-used` has it come "from the abstract
+        syntax ... or ... some other encoder actions" and the encoder only **check** it —
+        §21.7.7's "a conforming encoder shall not produce encodings in which the decoder's
+        transforms of this field do not correctly identify the last element".
+
+        §21.7.6's rule about a field set twice needs nothing here: `BitWriter.patch` already
+        refuses a second write, quoting the very sentence — "if a field is set more than once
+        through the use of `field-to-be-set` or `flag-to-be-set` ... encoders shall not
+        generate encodings in this case" — which was written against a clause nothing could
+        yet reach.
+        """
+        if self.determination is RepetitionSpaceDetermination.FLAG_TO_BE_SET:
+            # Through `ENCODER-TRANSFORMS`, like every other determinant this rail sets:
+            # `UnusedBits.record` and `SpaceDeterminant.record` both go through
+            # `_determinant_value`, and a flag is not a different kind of thing. Patching the
+            # raw boolean would make an active-low continuation bit — a `BoolToInt` with
+            # `true_zero` — emit the complement of what its specification asks for, and it
+            # would do so silently, since nothing downstream re-derives the flag.
+            out.patch(self.reference,
+                      _determinant_value(self.encoder_transforms, int(more),
+                                         f"the continuation flag {self.reference}"))
+            return
+        carried = out.value_of(self.reference)
+        recovered = (carried if self.decoder_transforms is None
+                     else self.decoder_transforms.apply(carried))
+        if bool(recovered) != more:
+            raise Asn1Error(
+                f"ECN: §21.7.7 — the flag {self.reference!r} carries {carried}, which reduces "
+                f"to {'more elements follow' if recovered else 'this is the last element'}, "
+                f"and this element "
+                f"{'is not the last' if more else 'is the last'}; a conforming encoder shall "
+                f"not produce an encoding whose flag misidentifies the end of the repetition")
+
     def record(self, out: "BitWriter", repetitions: int, space_bits: int) -> None:
         """Set or check the count field, after the elements have been written."""
         if self.determination is RepetitionSpaceDetermination.CONTAINER:
@@ -2238,6 +2273,13 @@ class RepetitionSpace:
         if self.determination in (RepetitionSpaceDetermination.NOT_NEEDED,
                                   RepetitionSpaceDetermination.PATTERN,
                                   RepetitionSpaceDetermination.HANDLE):
+            return
+        # §21.7.6 and §21.7.7 carry no count at all: the end of the repetition is announced by
+        # a flag inside each element, which `flag` has already set or checked per element. There
+        # is nothing left for a determinant outside them to say, and reading `reference` here
+        # would look for the count field in a name that belongs to the elements.
+        if self.determination in (RepetitionSpaceDetermination.FLAG_TO_BE_SET,
+                                  RepetitionSpaceDetermination.FLAG_TO_BE_USED):
             return
         count = self.count_in_units(repetitions, space_bits)
         if self.determination is RepetitionSpaceDetermination.FIELD_TO_BE_SET:
@@ -2303,8 +2345,26 @@ class ConditionalRepetitionSpec:
         if self.pre_alignment is not None:
             self.pre_alignment.apply(out)
         start = out.bit_length
-        for value in values:
+        flagged = self.space.determination in (
+            RepetitionSpaceDetermination.FLAG_TO_BE_SET,
+            RepetitionSpaceDetermination.FLAG_TO_BE_USED)
+        for index, value in enumerate(values):
+            if not flagged:
+                self.element.write(value, out)
+                continue
+            # §21.7.6 and §21.7.7 put the continuation flag INSIDE the repeated element, so
+            # each element carries its own — and every other determination in clause 21.7 puts
+            # its determinant outside, which is why they all work against one flat name map and
+            # these two could not. Each element gets its own reference scope, so `reference`
+            # resolves to *this* element's field; the scope is §9.24.2's, reused rather than a
+            # second mechanism invented for one clause.
+            saved = out.push_reference_scope()
             self.element.write(value, out)
+            # "A boolean value which is false if the element is the last in the repetition, and
+            # is true otherwise" — so the flag says *continues*, not *ends*, and the last
+            # element is the one carrying zero.
+            self.space.flag(out, more=index < len(values) - 1)
+            out.pop_reference_scope(saved, f"the repeated element at index {index}")
         self.space.terminate(out)
         self.space.record(out, len(values), out.bit_length - start)
 

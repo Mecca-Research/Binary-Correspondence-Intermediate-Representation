@@ -281,3 +281,125 @@ def test_a_tag_is_a_prefix_that_composes_with_what_it_tags():
     writer = BitWriter()
     TagSpec(width=8, number=0x30).write(None, writer)
     assert writer.octets() == bytes((0x30,))
+
+
+# --- §21.7.6 and §21.7.7: the continuation flag inside the repeated element ----------------
+
+
+def _flagged(determination, flag_spec):
+    """A repetition whose end is announced by a flag that is a field OF each element."""
+    element = ConcatenationSpec(fields={"more": flag_spec, "v": _OCTET}, order=("more", "v"))
+    space = RepetitionSpace(determination=determination, reference="more")
+    return StringSpec(
+        element=element,
+        repetition=RepetitionSpec((ConditionalRepetitionSpec(element=element, space=space),),
+                                  SizeBounds(0, None)))
+
+
+def test_flag_to_be_set_writes_a_continuation_flag_into_every_element():
+    """§21.7.6, the last determination in clause 21.7 to be built.
+
+    "A REFERENCE to a field **that is part of the repeated element**, and that will be set by
+    the encoder to identify the last element of the repetition ... from a boolean value which
+    is false if the element is the last in the repetition, and is true otherwise."
+
+    So the flag says *continues*, not *ends*, and the last element is the one carrying zero.
+    The octets are the assertion because that polarity is the whole content of the clause and
+    an implementation that inverted it would still round-trip against itself.
+    """
+    writer = BitWriter()
+    _flagged(RepetitionSpaceDetermination.FLAG_TO_BE_SET, AuxIntSpec(width=8)).write(
+        [{"v": 7}, {"v": 8}, {"v": 9}], writer)
+    assert writer.octets() == bytes((1, 7, 1, 8, 0, 9))
+
+    # One element is the degenerate case and it is the last one, so its flag is zero.
+    writer = BitWriter()
+    _flagged(RepetitionSpaceDetermination.FLAG_TO_BE_SET, AuxIntSpec(width=8)).write(
+        [{"v": 7}], writer)
+    assert writer.octets() == bytes((0, 7))
+
+
+def test_the_flag_is_resolved_per_element_and_not_across_the_repetition():
+    """Why this determination needed a mechanism the other seven did not.
+
+    Every other §21.7 determination writes its determinant **outside** the repeated elements,
+    where `BitWriter`'s name-keyed patch is enough. §21.7.6's flag is inside them, so N
+    elements carry N fields of one name — and a name-keyed patch cannot say which it means.
+
+    Each element gets its own reference scope, which is §9.24.2's mechanism reused rather than
+    a second one invented. The proof is that three elements each get their own flag rather
+    than the first one being patched three times, which `patch` would refuse outright.
+    """
+    writer = BitWriter()
+    _flagged(RepetitionSpaceDetermination.FLAG_TO_BE_SET, AuxIntSpec(width=8)).write(
+        [{"v": 1}, {"v": 2}, {"v": 3}, {"v": 4}], writer)
+    assert writer.octets() == bytes((1, 1, 1, 2, 1, 3, 0, 4))
+
+
+def test_flag_to_be_used_checks_the_flag_rather_than_writing_it():
+    """§21.7.7 splits from §21.7.6 exactly as §21.3.5 splits from §21.3.4.
+
+    The field's value "may be set from the abstract syntax ... or may be set by some other
+    encoder actions", so the encoder does not write it — it **checks** it: "a conforming
+    encoder shall not produce encodings in which the decoder's transforms of this field do not
+    correctly identify the last element of the repetition."
+    """
+    spec = _flagged(RepetitionSpaceDetermination.FLAG_TO_BE_USED, _OCTET)
+    writer = BitWriter()
+    spec.write([{"more": 1, "v": 7}, {"more": 0, "v": 8}], writer)
+    assert writer.octets() == bytes((1, 7, 0, 8))
+
+    # A flag that says "more follow" on the last element is the encoding §21.7.7 forbids.
+    try:
+        spec.write([{"more": 1, "v": 7}, {"more": 1, "v": 8}], BitWriter())
+    except Asn1Error as error:
+        assert "21.7.7" in str(error), str(error)
+    else:
+        raise AssertionError("a flag that misidentifies the last element was accepted")
+
+
+def test_a_continuation_flag_needs_a_field_to_live_in():
+    """§21.7.6 and §21.7.7 both "require the specification of a REFERENCE to a field that is
+    part of the repeated element", so a flag determination with no reference names nothing."""
+    for determination in (RepetitionSpaceDetermination.FLAG_TO_BE_SET,
+                          RepetitionSpaceDetermination.FLAG_TO_BE_USED):
+        try:
+            RepetitionSpace(determination=determination)
+        except Asn1Error as error:
+            assert "21.7.6" in str(error), str(error)
+        else:
+            raise AssertionError(f"{determination.value} was accepted with no REFERENCE")
+
+
+def test_every_repetition_space_determination_is_now_built():
+    """§21.7.1 lists eight and all eight encode. The tuple is asserted whole rather than by
+    membership, so a determination added to the enum without an encoder action fails here."""
+    assert set(RepetitionSpace._BUILT) == set(RepetitionSpaceDetermination)
+
+
+def test_a_continuation_flag_goes_through_its_encoder_transforms():
+    """§22.7.1.1 gives the repetition space `ENCODER-TRANSFORMS`, and a flag is a determinant
+    like any other — `UnusedBits.record` and `SpaceDeterminant.record` both set theirs through
+    `_determinant_value`, and this one was patching the raw boolean.
+
+    An active-low continuation bit is the case that shows it: `BoolToInt(true_zero=True)` maps
+    "more follow" to 0, so a two-element repetition writes 0 then 1 rather than 1 then 0. The
+    old code emitted the complement of what the specification asked for, and silently, since
+    nothing downstream re-derives the flag from the octets.
+
+    Found by review on the pull request, not by the tests here, which is why it now has one.
+    """
+    from bcir.asn1.ecn_user import BoolToInt, TransformChain
+
+    element = ConcatenationSpec(fields={"more": AuxIntSpec(width=8), "v": _OCTET},
+                                order=("more", "v"))
+    space = RepetitionSpace(determination=RepetitionSpaceDetermination.FLAG_TO_BE_SET,
+                            reference="more",
+                            encoder_transforms=TransformChain((BoolToInt(true_zero=True),)))
+    spec = StringSpec(
+        element=element,
+        repetition=RepetitionSpec((ConditionalRepetitionSpec(element=element, space=space),),
+                                  SizeBounds(0, None)))
+    writer = BitWriter()
+    spec.write([{"v": 7}, {"v": 8}], writer)
+    assert writer.octets() == bytes((0, 7, 1, 8))
