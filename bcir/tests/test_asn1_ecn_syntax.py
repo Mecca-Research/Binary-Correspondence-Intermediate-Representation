@@ -692,29 +692,40 @@ def test_a_nested_structure_reaches_the_digest_under_its_path():
     assert b"field 0 name head class #Join nested" in narrow.serialize()
 
 
-def test_encoding_a_nested_structure_is_refused_rather_than_given_its_parents_object():
-    """Reading the notation is not encoding it, and this rail says which it has done.
+def test_a_nested_structure_is_encoded_at_its_own_level():
+    """§16.5.6, built. This asserted the *refusal* until the per-level application was.
 
-    §16.5.6's application point "proceeds to each of the `EncodingStructure`s" — one object per
-    level. This rail builds one object from one flat field list, so applying that object to a
-    parent whose field is a whole structure would give the nested fields the *parent's*
-    encoding: well-formed octets of the wrong shape, which is exactly what the old outright
-    refusal was protecting against. The protection survives the notation becoming readable.
+    "The application point then proceeds to each of the `EncodingStructure`s in its named
+    fields" — one object per level. The octets are the assertion, because the hazard the old
+    refusal guarded against produced well-formed octets of the wrong shape: an inner object
+    handed the outer field list would encode the parent's components in the child's position,
+    which no decoder could report.
+
+    Each level needs its own class, and that is §9.5.2 rather than a limitation here: a set
+    holds at most one object per encoding class, so two constructor levels that encode
+    differently are two classes by construction.
     """
-    source = (_NEST % "Outer ::= #Join { head #Join { a #Len }, tail #Val }").replace(
-        "END",
-        """  cond #CONDITIONAL-INT ::= { ELSE ENCODING-SPACE SIZE 8 MULTIPLE OF bit
-                              ENCODING positive-int }
-  lenEnc #Len ::= { ENCODING cond }
-  valEnc #Val ::= { ENCODING cond }
+    from bcir.asn1.ecn_user import encode_with_user
+
+    module = parse_module("""M ENCODING-DEFINITIONS ::= BEGIN
+  #A ::= #INT
+  #B ::= #INT
+  #Inner ::= #CONCATENATION
+  #Join  ::= #CONCATENATION
+  Outer ::= #Join { head #Inner { a #A, b #B }, tail #B }
+  ca #CONDITIONAL-INT ::= { ELSE ENCODING-SPACE SIZE 8 MULTIPLE OF bit ENCODING positive-int }
+  aEnc #A ::= { ENCODING ca }
+  bEnc #B ::= { ENCODING ca }
+  innerObj #Inner ::= { CONCATENATION ORDER textual ALIGNMENT none }
   joinObj #Join ::= { CONCATENATION ORDER textual ALIGNMENT none }
-END""")
-    try:
-        parse_module(source)
-    except Asn1Error as error:
-        assert "16.5.6" in str(error) and "nests" in str(error), str(error)
-    else:
-        raise AssertionError("an object was applied to a structure it cannot encode")
+END
+""")
+    assert encode_with_user(module.object_set(), "#Join",
+                            {"head": {"a": 1, "b": 2}, "tail": 3}) == bytes((1, 2, 3))
+    # The nested structure keeps its own two fields; they are not flattened into the parent's
+    # transmission order, which is the other half of what §16.5.6 says.
+    assert module.structures["Outer"].fields == (("head", "#Inner"), ("tail", "#B"))
+    assert module.structures["Outer"].nested["head"].fields == (("a", "#A"), ("b", "#B"))
 
 
 # --- the plan-v6 question --------------------------------------------------------------------
@@ -1437,7 +1448,11 @@ def test_the_object_and_the_structure_have_to_agree_on_the_category():
     try:
         parse_module(_alternatives_module(governor="#Join"))
     except Asn1Error as error:
-        assert "16.2.12" in str(error), str(error)
+        # §16.5.6 now, not §16.2.12: since §16.2.1's nesting, "the module's structure" and
+        # "the structure this object governs" are different questions, and an object whose
+        # class governs no structure at all is caught before any category is compared. The
+        # mismatch this test names is still refused — it is just named more precisely.
+        assert "16.5.6" in str(error) and "#Pick" in str(error), str(error)
     else:
         raise AssertionError("an #ALTERNATIVES object over a concatenation was accepted")
 
