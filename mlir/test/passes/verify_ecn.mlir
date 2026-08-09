@@ -572,3 +572,71 @@ bcir.ecn.module @ContainerWithTransforms {
     unused_encoder_transforms
   } { }
 }
+
+// -----
+// Annex C.1's ParameterList is POSITIONAL: an actual parameter is matched to a dummy by
+// position, not by name. Three lists of different lengths therefore describe no parameter
+// list at all -- there is no rule that would say which dummy the second kind belongs to.
+bcir.ecn.module @ParameterListsDisagree {
+  // expected-error@+1 {{Annex C.1's ParameterList is positional}}
+  bcir.ecn.parameterized @Wrap attributes {
+    kind = "ParameterizedEncodingObjectAssignment",
+    dummies = ["D", "E"], parameter_kinds = ["encoding-class"], governors = [""]
+  }
+}
+
+// -----
+// C.1 admits an encoding-class dummy with NO governor and requires an EncodingClassFieldType
+// for a value. A value dummy governed by nothing names a parameter no actual could satisfy,
+// which is decidable from the operation alone -- no instantiation has to be attempted.
+bcir.ecn.module @ValueDummyUngoverned {
+  // expected-error@+1 {{Annex C.1 governs that with EncodingClassFieldType}}
+  bcir.ecn.parameterized @Wrap attributes {
+    kind = "ParameterizedEncodingObjectAssignment",
+    dummies = ["V"], parameter_kinds = ["value"], governors = [""]
+  }
+}
+
+// -----
+// The mirror of the case above: an encoding-class dummy takes no governor, so one that states
+// a governor is as wrong as a value dummy that omits it. Both directions are checked because
+// C.1's table is a pairing rather than a minimum.
+bcir.ecn.module @ClassDummyOvergoverned {
+  // expected-error@+1 {{Annex C.1 governs that with nothing}}
+  bcir.ecn.parameterized @Wrap attributes {
+    kind = "ParameterizedEncodingClassAssignment",
+    dummies = ["D"], parameter_kinds = ["encoding-class"],
+    governors = ["DefinedOrBuiltinEncodingClass"]
+  }
+}
+
+// -----
+// X.683 9.7 instantiates by substituting an actual for a dummy, so a name that means two
+// dummies substitutes unpredictably -- the same family of fault as two structure fields
+// sharing a name.
+bcir.ecn.module @DuplicateDummy {
+  // expected-error@+1 {{declares the dummy D twice}}
+  bcir.ecn.parameterized @Wrap attributes {
+    kind = "ParameterizedEncodingObjectAssignment",
+    dummies = ["D", "D"],
+    parameter_kinds = ["encoding-class", "encoding-class"],
+    governors = ["", ""]
+  }
+}
+
+// -----
+// A well-formed parameterized assignment, so the rules above are shown to reject something
+// rather than everything: C.2's object form with one encoding-class dummy, which is exactly
+// what 22.1.2.2 requires of a WITH replacement structure.
+bcir.ecn.module @ParameterizedOk {
+  bcir.ecn.parameterized @Length_prefixed attributes {
+    kind = "ParameterizedEncodingObjectAssignment",
+    dummies = ["D"], parameter_kinds = ["encoding-class"], governors = [""]
+  }
+  bcir.ecn.parameterized @Widened attributes {
+    kind = "ParameterizedEncodingObjectSetAssignment",
+    dummies = ["N", "Obj"],
+    parameter_kinds = ["value", "encoding-object"],
+    governors = ["EncodingClassFieldType", "DefinedOrBuiltinEncodingClass"]
+  }
+}

@@ -1029,6 +1029,32 @@ correctly and the serialization dropped it. Same failure as slice H2a's `&repeti
 found the same way: by asking whether two modules that differ only in the new thing differ in
 their digest.
 
+**R25 covers Annex C parameterization, and the ECN refusal list is empty.** `bcir.ecn.parameterized`
+carries C.2's three assignments — a class, an object and an object set, since ECN assigns those
+and leaves types to ASN.1 — with the dummies as three parallel lists rather than nested
+operations. C.1's `ParameterList` is **positional**: an actual is matched to a dummy by position
+rather than by name, so the position *is* the identity, and a nested operation would invite a
+pass with no reason to know better to reorder it.
+
+The body is deliberately absent, for the reason `EcnModule.parameterized` holds C.2's
+assignments uninstantiated: X.683 §9.7 makes instantiation a substitution, so a body read
+against dummies would have to invent an encoding for each one and any it invented would be
+wrong for some instantiation.
+
+R25 checks C.1's governor table, which is closed and decidable from the operation alone — an
+encoding class takes none, a value / value set / ordered value list an `EncodingClassFieldType`,
+an identifier a `REFERENCE`, an object or ordered object list a `DefinedOrBuiltinEncodingClass`,
+and an object set the reserved word `#ENCODINGS` — plus positional agreement across the three
+lists and distinct dummy names (§9.7 substitutes by dummy, so a name meaning two substitutes
+unpredictably).
+
+**The parity guard earned itself on the commit that introduced it.** The C++ table said
+`DefinedOrBuiltinEncodingClass` governs an object *set*; §18.1.2 governs that notation with the
+reserved word `#ENCODINGS`, because a set is not an object of some class. The oracle had it
+right and the law rail had it wrong, and the test that reads both tables out of their own
+sources found it on its first run — which is the entire argument for reading them rather than
+mirroring them into a third list.
+
 **§23.4's `#CHARS` stayed unreadable, and the reason is stated.** It shares the same
 `WITH SYNTAX`, but its repeated element is a *character* whose width comes from the ASN.1
 type's character set through clause 12's link, where §23.2's bit and §23.9's octet are
@@ -1349,7 +1375,7 @@ sentence in a standard rather than a preference.
 | **CXER** | X.693 | **out** | complete | — |
 | **JER** | X.697 | in | clauses 20–41, §7.2 constraint visibility, cl. 14–19 encoding instructions with cl. 13 precedence | cl. 10–11 assignment syntax (X.680 surface) — **low**, it is notation not encoding |
 | **BCIR canonical JER** | *BCIR-private* | **out** | complete; versioned, carries **no** standards OID | — |
-| **ECN** | X.692 | both | cl. 9–25 model, EDM/ELM, the seven built-in object sets, the user-defined half, multi-structure modules with §22.1.2.7's `INSERT AT HEAD`, and clause 20's defined syntax read from module text | one named refusal (§G) — **low**; clause 21.7's eight repetition-space determinations and clause 22's five replacement actions are both complete, and §22.11's contained-type notation, §18.1's encoding object sets, §16.4's `RepetitionStructure` and §16.5.6's per-level application are all **built**. What remains is R25's Annex C parameterization coverage, which is on the MLIR rail rather than in the parser |
+| **ECN** | X.692 | both | cl. 9–25 model, EDM/ELM, the seven built-in object sets, the user-defined half, multi-structure modules with §22.1.2.7's `INSERT AT HEAD`, and clause 20's defined syntax read from module text | **no named refusals** — clause 21.7's eight repetition-space determinations, clause 22's five replacement actions, §22.11's contained-type notation, §18.1's encoding object sets, §16.4's `RepetitionStructure`, §16.5.6's per-level application and R25's Annex C parameterization coverage are all built. What is left is scope deliberately excluded and recorded as such: §23.4's `#CHARS`, whose element width comes from the ASN.1 character set through clause 12's link |
 
 ### 9.2 Excluded by design, with the sentence that excludes them
 

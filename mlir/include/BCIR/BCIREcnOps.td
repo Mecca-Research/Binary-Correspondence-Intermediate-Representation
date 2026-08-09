@@ -77,6 +77,39 @@ def BCIR_EcnClassOp : BCIR_Op<"ecn.class", [Symbol]> {
   let assemblyFormat = "$sym_name attr-dict-with-keyword";
 }
 
+def BCIR_EcnParameterizedOp : BCIR_Op<"ecn.parameterized", [Symbol]> {
+  let summary = "An Annex C parameterized assignment and its dummy parameters";
+  let description = [{
+    Annex C rewrites X.683 for ECN, and C.2 gives three parameterized assignments rather than
+    X.683's own set: a class, an object and an object set. ECN assigns those three and leaves
+    types to ASN.1, which is what `kind` records.
+
+    The dummies are held as three parallel lists rather than as nested operations. C.1's
+    `ParameterList` is positional -- an actual parameter is matched to a dummy by position,
+    not by name -- so the position IS the identity, and a nested operation would invite it to
+    be reordered by a pass that had no reason to know better.
+
+    `governors` carries C.1's `Governor` for each dummy, or the empty string where the kind
+    takes none. That pairing is the rule R25 checks: C.1 admits an encoding-class dummy with
+    no governor, requires an `EncodingClassFieldType` for a value, a value set or an ordered
+    value list, requires a `REFERENCE` for an identifier, and requires a
+    `DefinedOrBuiltinEncodingClass` for an object or an ordered object list, and the
+    reserved word `#ENCODINGS` for an object set -- 18.1.2 governs that notation with the
+    word rather than with a class, since a set is not an object of some class.
+    A dummy governed by the wrong thing names a parameter no actual could satisfy, and that is
+    decidable from the operation alone.
+
+    The BODY is deliberately absent. X.683 9.7 makes instantiation a substitution, so a body
+    read against dummies would have to invent an encoding for each one and any encoding it
+    invented would be wrong for some instantiation -- the same reason
+    `ecn_syntax.EcnModule.parameterized` holds C.2's assignments uninstantiated.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, StrAttr:$kind,
+                       StrArrayAttr:$dummies, StrArrayAttr:$parameter_kinds,
+                       StrArrayAttr:$governors);
+  let assemblyFormat = "$sym_name attr-dict-with-keyword";
+}
+
 def BCIR_EcnStructureOp : BCIR_Op<"ecn.structure", [Symbol, NoTerminator]> {
   let summary = "A 16.5 ConcatenationStructure: named fields in textual order";
   let description = [{

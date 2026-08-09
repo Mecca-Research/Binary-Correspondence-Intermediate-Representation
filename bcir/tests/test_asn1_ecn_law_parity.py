@@ -196,7 +196,7 @@ def test_law_rail_declares_every_op_the_oracle_module_needs():
     """`EcnModule`'s parts must all be nameable in the IR, or the projection has a hole."""
     text = open(_ECN_TD, encoding="utf-8").read()
     for mnemonic in ("ecn.module", "ecn.class", "ecn.structure", "ecn.field", "ecn.object",
-                     "ecn.condition"):
+                     "ecn.condition", "ecn.parameterized"):
         assert f'BCIR_Op<"{mnemonic}"' in text, mnemonic
 
 
@@ -307,3 +307,31 @@ def test_both_rails_agree_that_r25_is_vacuous_without_ecn_operations():
     """
     verify = open(_VERIFY_PASS, encoding="utf-8").read()
     assert "Vacuous for IR with no bcir.ecn.* operation." in verify
+
+
+def test_r25_governs_dummies_the_way_annex_c_does_in_the_oracle():
+    """The law rail's Annex C.1 table and the oracle's are the same table.
+
+    `ecn_param._REQUIRED_GOVERNOR` is what the Python rail checks a parameter list against;
+    `BCIRVerifyPass.cpp`'s R25 rule is what the law rail checks the same thing against. Two
+    hand-written copies of one closed table is exactly the kind of pair that drifts silently —
+    a kind added to the enum, a governor renamed — and the drift would show as a module the
+    oracle refuses and the rail accepts, or the reverse.
+
+    Read out of the C++ source rather than mirrored here, so the assertion fails when either
+    side moves rather than when someone remembers to update a third list.
+    """
+    import re
+    from pathlib import Path
+
+    from bcir.asn1.ecn_param import _REQUIRED_GOVERNOR
+
+    source = Path(__file__).resolve().parents[2] / "mlir/lib/passes/BCIRVerifyPass.cpp"
+    text = source.read_text(encoding="utf-8")
+    block = text[text.index('{"encoding-class", ""}'):]
+    block = block[:block.index("};")]
+    in_rule = dict(re.findall(r'\{"([a-z-]+)",\s*"([A-Za-z#]*)"\}', block))
+
+    in_oracle = {kind.value: ("" if governor is None else governor.value)
+                 for kind, governor in _REQUIRED_GOVERNOR.items()}
+    assert in_rule == in_oracle, (in_rule, in_oracle)
