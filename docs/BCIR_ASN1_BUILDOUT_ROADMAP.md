@@ -888,6 +888,36 @@ order is: `#CONDITIONAL-REPETITION`, then the string classes, then `CONTENTS-ENC
   mandatory for `#CONDITIONAL-INT`. §23.14.2.5's flat prohibition on `SIZE fixed-to-max` is
   checked where it is written.
 
+**Step two is built: §23.2's `#BITS` and §23.9's `#OCTETS` read from module text**, at
+`SYNTAX_VERSION` 10, and an `#OCTETS` field now encodes end to end from an EDM — a count field
+written by §22.7's repetition space, then the octets, with the length prefix stated by no
+property of the object itself.
+
+**Neither class has an `ENCODING-SPACE` group, and that is the structural fact.** §23.2.1 and
+§23.9.1 give pre-alignment, a start pointer, `VALUE-REVERSAL`, `TRANSFORMS`,
+`REPETITION-ENCODING(S)`, a handle and `CONTENTS-ENCODING` — so a string's size comes from the
+§22.7 repetition space of the `#CONDITIONAL-REPETITION` objects it names, which is why these
+could not be read until §23.14 was, and why one function reads both clauses.
+
+`PendingConditionalRepetition.bind` earned its shape here: the *same* `#CONDITIONAL-REPETITION`
+object gives a `#BITS` class 1-bit elements and an `#OCTETS` class 8-bit ones, because
+§23.2.2.1 b) and §23.9.2.1 b) put the element on the class rather than in the object. Deferring
+it was right rather than merely tidy.
+
+**§23.4's `#CHARS` stayed unreadable, and the reason is stated.** It shares the same
+`WITH SYNTAX`, but its repeated element is a *character* whose width comes from the ASN.1
+type's character set through clause 12's link, where §23.2's bit and §23.9's octet are
+intrinsic to the class. It is also not on the path to §22.11: that group appears in §23.2.1's
+and §23.9.1's syntax and in no other class's, so `CONTENTS-ENCODING` is now one slice away, on
+classes that exist.
+
+**Two tests this slice invalidated, both rewritten rather than deleted.**
+`test_a_class_this_rail_cannot_execute_is_named_rather_than_ignored` used `#BITS` as its
+example of an unspellable class; it uses `#CHARS` now, which is the one that is still true of,
+and the `#BITS` case became a test that a string class refuses an `ENCODING-SPACE` by name. And
+the pinned `_UNREADABLE_CLASSES` set shrank again — the third time that assertion has turned a
+table edit into a deliberate one.
+
 **Two decisions worth keeping.** The parser yields a `PendingConditionalRepetition`, not a
 `ConditionalRepetitionSpec`: §23.14.1's syntax carries no element, because §23.2.2.1 b) has the
 *referencing* class supply it ("the bits are then considered as a repetition of bit"). Inventing
@@ -1194,7 +1224,7 @@ sentence in a standard rather than a preference.
 | **CXER** | X.693 | **out** | complete | — |
 | **JER** | X.697 | in | clauses 20–41, §7.2 constraint visibility, cl. 14–19 encoding instructions with cl. 13 precedence | cl. 10–11 assignment syntax (X.680 surface) — **low**, it is notation not encoding |
 | **BCIR canonical JER** | *BCIR-private* | **out** | complete; versioned, carries **no** standards OID | — |
-| **ECN** | X.692 | both | cl. 9–25 model, EDM/ELM, the seven built-in object sets, the user-defined half, multi-structure modules with §22.1.2.7's `INSERT AT HEAD`, and clause 20's defined syntax read from module text | six named refusals (§G) — **low to medium**; §22.11's contained-type *notation* is the highest of them, and is three slices rather than one (§23.14's `#CONDITIONAL-REPETITION`, then §23.2/§23.4/§23.9's string classes, then the group itself) |
+| **ECN** | X.692 | both | cl. 9–25 model, EDM/ELM, the seven built-in object sets, the user-defined half, multi-structure modules with §22.1.2.7's `INSERT AT HEAD`, and clause 20's defined syntax read from module text | six named refusals (§G) — **low to medium**; §22.11's contained-type *notation* is the highest of them, and is now **one** slice: §23.14's `#CONDITIONAL-REPETITION` and §23.2/§23.9's string classes, which carry the group, both read from module text |
 
 ### 9.2 Excluded by design, with the sentence that excludes them
 

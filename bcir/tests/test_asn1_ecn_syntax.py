@@ -417,11 +417,16 @@ def test_a_builtin_class_this_grammar_cannot_spell_is_not_called_undefined():
     #
     # The set SHRINKS as classes become readable, which is why it is pinned exactly rather
     # than by membership: §23.14's `#CONDITIONAL-REPETITION` left it when its defined syntax
-    # was built, and this assertion is what made that a deliberate edit instead of a silent
-    # one. §23.2/§23.4/§23.9's string classes are next, and then the table is down to
-    # §23.13's `#REPETITION`, §23.8's `#NUL` and §23.15's `#TAG`.
+    # was built, then §23.2's `#BITS` and §23.9's `#OCTETS` when theirs was, and this
+    # assertion is what made each of those a deliberate edit instead of a silent one.
+    #
+    # §23.4's `#CHARS` shares the string classes' WITH SYNTAX and stayed: its repeated element
+    # is a character, whose width comes from the ASN.1 type's character set through clause
+    # 12's link, where §23.2's bit and §23.9's octet are intrinsic to the class. It is also
+    # not on the path to §22.11, whose group appears in §23.2.1's and §23.9.1's syntax and in
+    # no other class's.
     assert set(_UNREADABLE_CLASSES) == {
-        "#BITS", "#CHARS", "#OCTETS", "#NUL", "#TAG", "#REPETITION",
+        "#CHARS", "#NUL", "#TAG", "#REPETITION",
     }
 
 
@@ -764,15 +769,170 @@ def test_a_module_without_an_end_is_refused():
         raise AssertionError("a truncated module parsed")
 
 
+_STRING = """M ENCODING-DEFINITIONS ::= BEGIN
+  #Count   ::= #INT
+  #Payload ::= #OCTETS
+  #Frame   ::= #CONCATENATION
+  Frame-structure ::= #Frame { n #Count, s #Payload }
+  cntObj #Count ::= { AUXILIARY ENCODING-SPACE SIZE 8 MULTIPLE OF bit }
+  rep #CONDITIONAL-REPETITION ::= { ELSE REPETITION-SPACE DETERMINED BY field-to-be-set USING n }
+  payObj #Payload ::= { %s REPETITION-ENCODING rep }
+  frameObj #Frame ::= { CONCATENATION ORDER textual ALIGNMENT none }
+END
+"""
+
+
+def test_an_octetstring_class_encodes_from_module_text_end_to_end():
+    """§23.9's `#OCTETS`, written down and run — step two of the three reaching §22.11.
+
+    The octets are the proof rather than the parse tree: §23.9.2.1 b) has the value
+    "considered as a repetition of an octet", §22.7's space writes the count, and the result is
+    a length-prefixed octet string that no property of the object states directly. Every part
+    of that came from a different clause, which is why the assertion is on bytes.
+    """
+    from bcir.asn1.ecn_user import encode_with_user
+
+    module = parse_module(_STRING % "")
+    assert encode_with_user(module.object_set(), "#Frame", {"s": [1, 2, 3]}) == bytes(
+        (3, 1, 2, 3))
+    # The count is the number of REPETITIONS, so an empty string is one zero octet.
+    assert encode_with_user(module.object_set(), "#Frame", {"s": []}) == bytes((0,))
+
+    spec = module.objects["payObj"][1]
+    # §23.9.2.1 b)'s element is intrinsic to the class and never written in the object.
+    assert spec.element.width == 8
+    assert len(spec.repetition.encodings) == 1
+
+
+def test_the_repeated_element_comes_from_the_class_not_the_repetition_object():
+    """The seam `PendingConditionalRepetition.bind` exists for, now exercised.
+
+    §23.14.1's syntax carries no element; §23.2.2.1 b) and §23.9.2.1 b) supply it, one bit or
+    one octet according to which class names the object. So the *same* `#CONDITIONAL-REPETITION`
+    object gives a `#BITS` class 1-bit elements and an `#OCTETS` class 8-bit ones, and that is
+    what makes deferring it right rather than merely tidy.
+    """
+    shared = """M ENCODING-DEFINITIONS ::= BEGIN
+  #B ::= #BITS
+  #O ::= #OCTETS
+  rep #CONDITIONAL-REPETITION ::= { ELSE REPETITION-SPACE DETERMINED BY not-needed }
+  bObj #B ::= { REPETITION-ENCODING rep }
+  oObj #O ::= { REPETITION-ENCODING rep }
+END
+"""
+    module = parse_module(shared)
+    assert module.objects["bObj"][1].element.width == 1
+    assert module.objects["oObj"][1].element.width == 8
+
+
+def test_a_string_class_must_say_how_its_repetition_is_encoded():
+    """§23.2.2.1 d) and §23.9.2.1 d): one of `REPETITION-ENCODING`/`REPETITION-ENCODINGS`.
+
+    Neither is optional in effect, because the class has no `ENCODING-SPACE` to fall back on —
+    an object setting neither describes a value with no size, which is not a smaller encoding
+    but no encoding at all.
+    """
+    try:
+        # The `%s` slot goes with the clause being removed, so this fixture takes no argument.
+        parse_module(_STRING.replace("{ %s REPETITION-ENCODING rep }", "{ }"))
+    except Asn1Error as error:
+        assert "23.2.2.1" in str(error), str(error)
+    else:
+        raise AssertionError("a string class with no repetition encoding was accepted")
+
+
+def test_both_repetition_spellings_may_not_be_set_at_once():
+    """§23.13.2.2 permits exactly one, and §23.2.2.1's NOTE says why the singular exists at
+    all: to avoid "a double curly-bracket" for one object. A convenience, not a second
+    meaning."""
+    try:
+        parse_module(_STRING.replace(
+            "REPETITION-ENCODING rep }",
+            "REPETITION-ENCODING rep REPETITION-ENCODINGS { rep } }") % "")
+    except Asn1Error as error:
+        assert "23.13.2.2" in str(error), str(error)
+    else:
+        raise AssertionError("both repetition spellings were accepted")
+
+
+def test_a_repetition_reference_must_name_a_conditional_repetition_object():
+    """A `#BITS` object that took its size from something which never described a repetition
+    would produce octets nothing in the module specifies."""
+    try:
+        parse_module(_STRING.replace("REPETITION-ENCODING rep", "REPETITION-ENCODING cntObj")
+                     % "")
+    except Asn1Error as error:
+        assert "23.2.2.1" in str(error) and "cntObj" in str(error), str(error)
+    else:
+        raise AssertionError("a non-repetition object was accepted as a repetition encoding")
+
+
+def test_value_reversal_reaches_the_digest():
+    """§23.2.1's `&value-reversal` reverses the order of the *elements*, where §22.12's bit
+    reversal reverses bits within a unit. Two different formats, two different properties, and
+    a module that sets one describes different octets from a module that does not.
+    """
+    plain = parse_module(_STRING % "")
+    reversed_ = parse_module(_STRING % "VALUE-REVERSAL TRUE")
+    assert plain.sha256() != reversed_.sha256()
+    assert b"value-reversal 1" in reversed_.serialize()
+
+
+def test_the_contained_type_group_is_refused_where_its_clause_puts_it():
+    """§22.11.1.2's group appears in §23.2.1's and §23.9.1's `WITH SYNTAX` and nowhere else.
+
+    So this is the first place it can be written on the class that actually carries it — and
+    it is still refused, because the group is slice three. What matters is that the refusal
+    now arrives on the right keyword and from the right class, which is what PR #721's rekey
+    was for: before that, `CONTENTS-ENCODING` here would have produced whatever error the next
+    group happened to raise.
+    """
+    try:
+        parse_module(_STRING.replace("REPETITION-ENCODING rep }",
+                                     "REPETITION-ENCODING rep CONTENTS-ENCODING mySet }") % "")
+    except Asn1Error as error:
+        assert "22.11" in str(error), str(error)
+    else:
+        raise AssertionError("CONTENTS-ENCODING was accepted before it is built")
+
+
 def test_a_class_this_rail_cannot_execute_is_named_rather_than_ignored():
+    """This used `#BITS` until §23.2's notation was built.
+
+    `#CHARS` replaces it because the assertion is about a class the grammar *cannot spell* —
+    and §23.4's is the one that is still true of. Its element is a character, whose width comes
+    from the ASN.1 type's character set through clause 12's link; §23.2's bit and §23.9's octet
+    are intrinsic to the class, which is why those two became readable and this one did not.
+    """
+    source = frame_header_source().replace("#Reserved      ::= #PAD",
+                                           "#Reserved      ::= #CHARS")
+    try:
+        parse_module(source)
+    except Asn1Error as error:
+        assert "#CHARS" in str(error) and "23.4" in str(error), error
+    else:
+        raise AssertionError("an unimplemented encoding class parsed")
+
+
+def test_a_string_class_has_no_encoding_space_and_says_so():
+    """§23.2.1 and §23.9.1 give the string categories no `ENCODING-SPACE` group at all.
+
+    Their size comes from the §22.7 repetition space of the `#CONDITIONAL-REPETITION` objects
+    they name, which is the whole reason they could not be read until §23.14 was. Writing a
+    width on one is not a small mistake — it is asking for a group the class does not have —
+    so it is refused by name rather than ignored.
+
+    This is what the `#BITS` half of the test above became once §23.2 was readable: the class
+    is no longer unspellable, and the fault moved to the group.
+    """
     source = frame_header_source().replace("#Reserved      ::= #PAD",
                                            "#Reserved      ::= #BITS")
     try:
         parse_module(source)
     except Asn1Error as error:
-        assert "#BITS" in str(error), error
+        assert "ENCODING-SPACE" in str(error) and "23.2.1" in str(error), error
     else:
-        raise AssertionError("an unimplemented encoding class parsed")
+        raise AssertionError("a string class accepted an ENCODING-SPACE")
 
 
 def test_a_transform_reference_that_names_nothing_is_refused():
@@ -1010,8 +1170,9 @@ def test_a_parameterized_assignment_reaches_the_digest_governors_and_all():
     # 4 for EXHIBITS HANDLE, 5 for Annex C, 6 for §16.5's marker, 7 for §16.3's structure,
     # 8 for a module holding several structures — the serialization emits every one of them,
     # so a module that gains a §22.1.2.7 head-end structure no longer hashes as it did — and
-    # 9 for §23.14's `#CONDITIONAL-REPETITION`, a kind of object the digest can now contain.
-    assert SYNTAX_VERSION == 9
+    # 9 for §23.14's `#CONDITIONAL-REPETITION`, a kind of object the digest can now contain,
+    # and 10 for §23.2's `#BITS` and §23.9's `#OCTETS`, which add two more.
+    assert SYNTAX_VERSION == 10
     base = parse_module(_with_assignments(_LP_STRUCTURE))
     assert b"parameterized #Length-prefixed" in base.serialize()
 
