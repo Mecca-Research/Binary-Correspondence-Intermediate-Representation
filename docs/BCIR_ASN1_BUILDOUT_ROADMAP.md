@@ -53,7 +53,7 @@ rule.
 | X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references; cross-module tag-default nuance (§9.8) excluded |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
-| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, twenty-five statically decidable X.692 rules). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. §22.11's contained types and §21.3.6/§21.5.6/§21.7.8's `container` determination are built too, clause 19's six value mappings are in [`ecn_mapping.py`](../bcir/asn1/ecn_mapping.py), and clause 12's encoding link module with clause 13's application-point algorithm is in [`ecn_link.py`](../bcir/asn1/ecn_link.py) — which retires the `AUXILIARY` and `BOUNDS` stated deviations by deriving both from the link rather than declaring them. Annex C's parameterization — X.683 as ECN rewrites it, `{<`/`>}` delimiters and all — is in [`ecn_param.py`](../bcir/asn1/ecn_param.py), together with §22.1.2's rules on the definitions a `REPLACE` names and §17.5.17's breadth-first `ComponentIdList` scan; C.2's three parameterized assignments now parse from module text and reach the digest at `SYNTAX_VERSION` 5. §17.5.1's `EncodeStructure` — the `ENCODE STRUCTURE { <field> <object>, ... } WITH <set>` object body that names an encoding per component — is in [`ecn_encode.py`](../bcir/asn1/ecn_encode.py) and readable from module text. §16.5's `OPTIONAL-ENCODING` marker with its `#OPTIONAL` objects, and §16.3's `AlternativesStructure` with its `#ALTERNATIVES` objects, are both readable — at `SYNTAX_VERSION` 7. §22.1's `REPLACE` defined syntax reads from module text too, so a replacement is a specification rather than a Python assembly, and `_UNSUPPORTED_KEYWORDS` is down to one row. Still refused, each for a stated reason: §22.11's contained-type *notation* (its semantics are built), §22.1.2.7's `INSERT AT HEAD` (a second ordinary structure, which a module has no room for) and §22.1.1.7 e)'s second replacement group, §16.2.1's nested structures, §16.4's `RepetitionStructure`, §21.7.6/§21.7.7's per-element continuation flag, and R25's law-rail coverage of parameterization |
+| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, statically decidable X.692 rules citing 43 distinct subclauses, 27 of them fixture-pinned). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. §22.11's contained types and §21.3.6/§21.5.6/§21.7.8's `container` determination are built too, clause 19's six value mappings are in [`ecn_mapping.py`](../bcir/asn1/ecn_mapping.py), and clause 12's encoding link module with clause 13's application-point algorithm is in [`ecn_link.py`](../bcir/asn1/ecn_link.py) — which retires the `AUXILIARY` and `BOUNDS` stated deviations by deriving both from the link rather than declaring them. Annex C's parameterization — X.683 as ECN rewrites it, `{<`/`>}` delimiters and all — is in [`ecn_param.py`](../bcir/asn1/ecn_param.py), together with §22.1.2's rules on the definitions a `REPLACE` names and §17.5.17's breadth-first `ComponentIdList` scan; C.2's three parameterized assignments now parse from module text and reach the digest. §17.5.1's `EncodeStructure` — the `ENCODE STRUCTURE { <field> <object>, ... } WITH <set>` object body that names an encoding per component — is in [`ecn_encode.py`](../bcir/asn1/ecn_encode.py) and readable from module text. §16.5's `OPTIONAL-ENCODING` marker with its `#OPTIONAL` objects, and §16.3's `AlternativesStructure` with its `#ALTERNATIVES` objects, are both readable — at `SYNTAX_VERSION` 7. §22.1's `REPLACE` defined syntax reads from module text too, so a replacement is a specification rather than a Python assembly, and `_UNSUPPORTED_KEYWORDS` is down to one row. Still refused, each for a stated reason: §22.11's contained-type *notation* (its semantics are built), §22.1.2.7's `INSERT AT HEAD` (a second ordinary structure, which a module has no room for) and §22.1.1.7 e)'s second replacement group, §16.2.1's nested structures, §16.4's `RepetitionStructure`, §21.7.6/§21.7.7's per-element continuation flag, and R25's law-rail coverage of parameterization |
 | X.693 | 8825-4:2021 | XER | **built** — BASIC-XER + CXER (CXER out, both in; validated against Annex A.3/A.4); EXTENDED-XER by design excluded |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
@@ -288,7 +288,7 @@ the native StreamPack version (v1/v2/v3 is a function of content; the module's o
 reserved `stride_k` the projection omits by design, and the CRC. Proven byte-identical
 on all 12 corpus programs and on all three native versions.
 
-### E. X.697 JER · **PYTHON ORACLE BUILT; NATIVE COMPILATION OPEN**
+### E. X.697 JER · **BUILT, ORACLE AND NATIVE**
 
 `bcir/asn1/jer.py` implements X.697 clauses 20–41 and the ARRAY, BASE64, NAME,
 OBJECT, TEXT, and UNWRAPPED instructions with clause 13 precedence. The conformance
@@ -303,10 +303,15 @@ numeric validation.
 
 X.697 defines no canonical variant. BCIR's deterministic emit mode is the private,
 versioned **BCIR canonical JER profile**, carries no standards OID, and must not be
-described as CJER. The C scalar parser, generated schema descriptors, MLIR
-family/profile representation, direct claim lowering, optional hosted SIMD scanner,
-and native K_BCIR measurements remain open in
-[`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md).
+described as CJER.
+
+This paragraph used to end by listing six things as open — the C scalar parser, generated
+schema descriptors, the MLIR family/profile representation, direct claim lowering, the hosted
+SIMD scanner, and native K_BCIR measurements. **All six have since landed** as J2, J3, J4
+parts 1 and 3, J5 and J6 respectively; see the phase table in
+[`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md), which is where their exit gates are
+recorded. J7, the driver experiment, is the only phase still open, and it is blocked on
+hardware access rather than on design (§5.1).
 
 ### F. X.681 information objects + X.683 parameterization · **BUILT**
 
@@ -425,7 +430,12 @@ shape and a parity test is the only thing that would catch it.
 
 **ECN is on the law rail as R25.** `mlir/include/BCIR/BCIREcnOps.td` gives `bcir.ecn.module`,
 `.class`, `.structure`, `.field`, `.object` and `.condition`; `BCIRVerifyPass.cpp` enforces
-eleven statically decidable X.692 rules over them. R25 exists for a sharper version of R24's
+statically decidable X.692 rules over them, citing **43 distinct subclauses** as of the ECN
+build-out's close — 27 of those checks are pinned to the fixture that trips them by
+[`test_asn1_ecn_law_parity.py`](../bcir/tests/test_asn1_ecn_law_parity.py), because a law with
+no witness is a claim rather than a check. (This sentence said "eleven" from the slice that
+introduced R25 until the closing audit; the count below in the slice-C paragraph is *history*
+and is left alone deliberately.) R25 exists for a sharper version of R24's
 reason: an encoding definition module is written once and applied to *many* types, so a fault
 that only fires on the right value can sit in one indefinitely. The bit-level values stay in
 the oracle — "this pattern is 0101" is not a proposition that can be false — and what the IR
@@ -881,7 +891,7 @@ A test pins this as the live gate: it **fails if any fixed candidate ever produc
 octets**, because that is the day the expressiveness argument is false and this section is
 wrong.
 
-### H. K_BCIR encoding selection · **MEASUREMENT HARNESS BUILT; CERTIFIED RAIL OPEN**
+### H. K_BCIR encoding selection · **CERTIFIED RAIL BUILT; TARGET CALIBRATION OPEN**
 
 Encoding rules become a candidate dimension in the optimizer. Given an abstract value,
 a target profile H, live Θ, and an RCSP budget, `K_BCIR` selects the encoding rules the
@@ -917,9 +927,12 @@ reproduces today's DER exactly (the degenerate case, pinning that nothing regres
 
 ## 5. Sequencing recommendation after PR #670
 
-Phases A–F and the reduced, built-in part of G are landed on their documented rails.
-Phase H has exact wire-size evidence and a Python measurement harness, but not native
-target calibration or a K_BCIR certificate. The next sequence is therefore:
+Phases A–F and **all** of G are landed on their documented rails. Phase H has exact
+wire-size evidence, a Python measurement harness, a native measured table
+([`native_bench.py`](../bcir/asn1/native_bench.py)) and §6.2's certificate
+([`certified.py`](../bcir/asn1/certified.py)); what it still lacks is target hardware
+counters and a native *encode* column. The sequence below is recorded as written and is
+**complete through step 7** — every item landed as J1–J6:
 
 1. harden the JER oracle with pre-parse limits and byte-exact canonical validation;
 2. compile schemas/instructions into deterministic descriptors;
