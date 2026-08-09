@@ -1025,7 +1025,11 @@ class ContainerSpec:
                 + (", and the set it selected is the one applied to the containing type "
                    "(§22.11.2's fallback), which is where an ENCODED BY that OVERRIDE did "
                    "not claim sends it" if fell_back else ""))
-        out.open_container(self.name)
+        # A stated width or a space determinant is what transmits this container's END, and
+        # §21.3.6's determination is only usable when something does.
+        out.open_container(
+            self.name,
+            locatable=bool(self.space_determinant is not None or self.width))
         scope = out.push_reference_scope()
         # §9.24.2's application point moves with the set, so a container nested inside this
         # contained type inherits *this* type's set as "the set applied to the containing
@@ -1037,10 +1041,17 @@ class ContainerSpec:
         if self.trailer is not None:
             self.trailer.write(value, out)
         size = out.close_container(self.name)
-        if self.width and size > self.width:
+        if self.width and size != self.width:
+            # A STATED encoding space is a width, not a ceiling. Only the overrun was checked,
+            # so a 16-bit container holding an 8-bit encoding emitted eight bits: the following
+            # field then started an octet early, and a space determinant recorded 8 rather than
+            # the declared 16. Refused rather than zero-filled, because nothing on this spec
+            # declares a padding pattern and inventing one would be choosing an encoding on the
+            # module's behalf -- §23's padding notation is how a module asks for the short fill.
             raise Asn1Error(
                 f"ECN: the container's contents are {size} bits and its stated encoding space "
-                f"is {self.width}")
+                f"is {self.width}; a stated space is the exact width the container occupies, "
+                f"so the contents must fill it")
         if self.space_determinant is not None:
             self.space_determinant.record(out, size)
         _exhibit(self, out, handle_start)
@@ -1096,7 +1107,7 @@ class BitWriter:
         #: §21.3.6, §21.5.6 and §21.7.8 all end something "when the specified container
         #: terminates", and a stack is what lets a container inside a container mean what it
         #: says.
-        self._containers: list[tuple[str, int]] = []
+        self._containers: list[tuple[str, int, bool]] = []
         #: Claims that an element's extent runs to a container's end: `name -> (offset, what)`.
         #: An empty name is §21.3.6's `OUTER` form, whose container is the PDU.
         self._container_claims: dict[str, tuple[int, str]] = {}
@@ -1230,12 +1241,21 @@ class BitWriter:
     # are placed in the container", and the symptom otherwise is a decoder reading one field's
     # bits as another's.
 
-    def open_container(self, name: str) -> None:
-        if any(open_name == name for open_name, _at in self._containers):
+    def open_container(self, name: str, *, locatable: bool = False) -> None:
+        """Open `name`. `locatable` says a decoder can find this container's END.
+
+        §21.3.6's REFERENCE is to a field "whose contents include this encoding space", and the
+        determination works by reading the container's end -- so it is only usable when the
+        encoding actually transmits where that end is. A ContainerSpec carrying a
+        `space_determinant` or a stated `width` does; a bare named ConcatenationSpec does not,
+        and a `container` determination naming one asks a decoder to find a boundary nothing
+        told it about.
+        """
+        if any(open_name == name for open_name, _at, _loc in self._containers):
             raise Asn1Error(
                 f"ECN: the container {name!r} is already open; a container cannot contain "
                 f"itself, and two with one name make every REFERENCE to it ambiguous")
-        self._containers.append((name, len(self._bits)))
+        self._containers.append((name, len(self._bits), locatable))
 
     def close_container(self, name: str) -> int:
         """End the innermost container, checking any claim made against it. Returns its size."""
@@ -1243,7 +1263,7 @@ class BitWriter:
             raise Asn1Error(
                 f"ECN: {name!r} is not the innermost open container, so closing it would "
                 f"cross a containment boundary")
-        _name, at = self._containers.pop()
+        _name, at, _locatable = self._containers.pop()
         claim = self._container_claims.pop(name, None)
         if claim is not None:
             offset, what = claim
@@ -1259,11 +1279,23 @@ class BitWriter:
     def claim_container_end(self, name: str, what: str) -> None:
         """Register that `what` just ended, and that its end must be its container's end."""
         if name != OUTER_CONTAINER:
-            if not any(open_name == name for open_name, _at in self._containers):
+            if not any(open_name == name for open_name, _at, _loc in self._containers):
                 raise Asn1Error(
                     f"ECN: a `container` determination names {name!r}, which is not an open "
                     f"container here; §21.3.6's REFERENCE is to a field \"whose contents "
                     f"include this encoding space\"")
+            # KNOWN LIMITATION (review, PR #707), and the SAME missing fact as the #OUTER
+            # branch below. §21.3.6 locates this element's end at the container's end, so the
+            # determination is only usable when the encoding transmits where that end is -- a
+            # `space_determinant` or a stated `width`. `open_container` now carries that
+            # capability, but it cannot yet be ENFORCED: the outermost structure is the PDU,
+            # whose end is known from outside the encoding, so a reference to it is legitimate
+            # with no determinant of its own. Distinguishing the PDU from a container that
+            # merely happens to be first needs the writer to be told which spec is the root --
+            # depth and offset cannot tell them apart. Until then this admits a bare named
+            # ConcatenationSpec that is NOT the PDU, which is the reported defect; enforcing on
+            # the capability alone would instead reject the PDU case, which is worse, because
+            # that one is correct and common.
         elif self._containers:
             # KNOWN LIMITATION (review, PR #707). Giving the top-level ConcatenationSpec a
             # `container_name` makes `_containers` non-empty, so a field determined by #OUTER is
@@ -1298,7 +1330,7 @@ class BitWriter:
         self._container_claims[name] = (here, what)
 
     def open_containers(self) -> tuple[str, ...]:
-        return tuple(name for name, _at in self._containers)
+        return tuple(name for name, _at, _loc in self._containers)
 
     def push_reference_scope(self) -> tuple:
         """§9.24.2's application point moving into a contained type.
@@ -2085,7 +2117,9 @@ class ConcatenationSpec:
             self.pre_alignment.apply(out)
         handle_start = out.bit_length
         if self.container_name:
-            out.open_container(self.container_name)
+            # A named concatenation is addressable but NOT locatable: it carries no length
+            # determinant of its own, so a decoder cannot find where it ends.
+            out.open_container(self.container_name, locatable=False)
         group = self.concatenation or Concatenation()
         aligned = group.alignment is ConcatenationAlignment.ALIGNED
         for name, spec in self._ordered():
