@@ -180,6 +180,84 @@ def test_the_defined_syntax_is_read_in_the_order_the_with_syntax_gives_it():
         raise AssertionError("properties were accepted out of the syntax's order")
 
 
+def test_the_contained_type_group_is_refused_on_the_keyword_the_clause_actually_uses():
+    """A refusal that fires on the wrong token is not a refusal.
+
+    §22.11.1.2 spells the group `CONTENTS-ENCODING`, and §22.11.1.5 makes that keyword the
+    thing the specification is "considered set" by. The refusal table was keyed on
+    `CONTAINED`, which is **not an ECN keyword at all** — X.692 uses the word only in prose,
+    as in "contained type". So the careful §22.11 citation could only be produced by writing a
+    word no ECN module contains, and the real keyword fell through to whatever the next
+    group's error happened to be: writing `CONTENTS-ENCODING` on a `#PAD` object produced a
+    complaint that `ENCODING-SPACE` is mandatory, which points at an unrelated clause.
+
+    Both halves are asserted, because fixing one without the other would leave the parser
+    answering a question nobody asked.
+    """
+    space = "ENCODING-SPACE SIZE 3 MULTIPLE OF bit"
+
+    real = frame_header_source().replace(space, f"{space} CONTENTS-ENCODING mySet", 1)
+    try:
+        parse_module(real)
+    except Asn1Error as error:
+        assert "22.11" in str(error), str(error)
+        # And it says why the notation is further off than one slice: §22.11.1.2 hangs the
+        # group off the string categories, and neither of those classes is readable yet.
+        assert "#OCTETS" in str(error), str(error)
+    else:
+        raise AssertionError("the real §22.11 keyword was not refused")
+
+    # The word that is not a keyword gets no special treatment. It parses as an ordinary
+    # reference and fails on the grammar, rather than borrowing §22.11's citation.
+    invented = frame_header_source().replace(space, f"{space} CONTAINED BY x", 1)
+    try:
+        parse_module(invented)
+    except Asn1Error as error:
+        assert "22.11" not in str(error), (
+            "`CONTAINED` is prose in X.692, not notation; it must not claim §22.11's citation")
+    else:
+        raise AssertionError("`CONTAINED BY x` parsed as though it meant something")
+
+
+def test_a_builtin_class_this_grammar_cannot_spell_is_not_called_undefined():
+    """Seven X.692 classes were being reported as though they did not exist.
+
+    `builtin_of`'s general message — "is not a built-in encoding class and no assignment
+    defines it" — is right for a typo and **false** for these: X.692 defines every one, and
+    `ecn_user` implements every one. A reader who wrote `#OCTETS` has not misspelled anything;
+    they have reached a class this parser has not been taught to spell. Two different mistakes
+    with two different fixes, and they were indistinguishable.
+
+    The message also carries the build order, which is the thing that is easy to get wrong
+    from outside: §23.2/§23.4/§23.9's string classes take their size from §22.7's repetition
+    space rather than from an `ENCODING-SPACE`, so their `WITH SYNTAX` is written in terms of
+    `REPETITION-ENCODING(S)` and §23.14's `#CONDITIONAL-REPETITION` has to come first.
+    """
+    from bcir.asn1.ecn_syntax import _UNREADABLE_CLASSES
+
+    def refusal(class_name: str) -> str:
+        try:
+            parse_module(f"M ENCODING-DEFINITIONS ::= BEGIN\n  #X ::= {class_name}\nEND\n")
+        except Asn1Error as error:
+            return str(error)
+        raise AssertionError(f"{class_name} was accepted")
+
+    for class_name, (clause, spec) in _UNREADABLE_CLASSES.items():
+        message = refusal(class_name)
+        assert clause in message and spec in message, (class_name, message)
+        assert "is not a built-in encoding class" not in message, (class_name, message)
+
+    # A genuine typo still gets the general message, or the new one would have swallowed it.
+    assert "is not a built-in encoding class" in refusal("#NONSENSE")
+
+    # The seven are the ones `ecn_user` builds. A class in neither table would be a class this
+    # repository has not modelled at all, and there is no such thing in clause 23 today.
+    assert set(_UNREADABLE_CLASSES) == {
+        "#BITS", "#CHARS", "#OCTETS", "#NUL", "#TAG",
+        "#REPETITION", "#CONDITIONAL-REPETITION",
+    }
+
+
 def test_an_unimplemented_property_group_is_refused_by_name_and_never_skipped():
     """The failure a permissive parser causes is silent wrong octets, not a crash.
 
@@ -191,7 +269,11 @@ def test_an_unimplemented_property_group_is_refused_by_name_and_never_skipped():
     space = "ENCODING-SPACE SIZE 3 MULTIPLE OF bit"
     cases = [
         # Groups this repository has not built. Each names what it would need.
-        (space, f"{space} CONTAINED BY x", "22.11"),
+        #
+        # `CONTENTS-ENCODING`, not `CONTAINED`: this fixture said the latter until it was
+        # checked against the text. See
+        # test_the_contained_type_group_is_refused_on_the_keyword_the_clause_actually_uses.
+        (space, f"{space} CONTENTS-ENCODING mySet", "22.11"),
         # `REPLACE` used to be here. Its defined syntax is read now, and the fixture above
         # still fails — for a *different* reason: §22.1.2.2 refuses a WITH structure the
         # module never declared. Kept below as a REPLACE test rather than an unimplemented one.
@@ -201,8 +283,8 @@ def test_an_unimplemented_property_group_is_refused_by_name_and_never_skipped():
         # test_an_optional_encoding_marker_pairs_a_component_with_its_optionality_object and
         # test_an_alternatives_structure_encodes_precisely_one_of_its_named_fields.
         #
-        # What that leaves in this table is `CONTAINED`, plus the groups below that ARE built
-        # and are written in a way their clause forbids.
+        # What that leaves in this table is `CONTENTS-ENCODING`, plus the groups below that
+        # ARE built and are written in a way their clause forbids.
         # Groups that ARE built, written in a way the clause forbids. These are the more
         # interesting half: a parser that only refused what it had not implemented would
         # accept every one of them. `DETERMINED BY container USING x` used to be on the list

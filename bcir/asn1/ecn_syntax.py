@@ -120,22 +120,51 @@ _BUILTIN_CLASSES = {
     "#OUTER": "outer",
 }
 
+#: X.692's built-in encoding classes whose SEMANTICS this repository builds and whose
+#: notation this grammar cannot yet read.
+#:
+#: They exist so the diagnostic can tell two very different mistakes apart. `builtin_of`'s
+#: general message — "is not a built-in encoding class and no assignment defines it" — is
+#: correct for a typo and **wrong** for these seven: X.692 defines every one of them, and
+#: `ecn_user` implements every one of them. A reader who wrote `#OCTETS` has not misspelled
+#: anything; they have reached a class this parser has not been taught to spell, which is a
+#: different problem with a different fix.
+#:
+#: The order below is the order they have to be built in. §23.2/§23.4/§23.9's string classes
+#: take their size from §22.7's repetition space rather than from an `ENCODING-SPACE`, so
+#: their `WITH SYNTAX` is written in terms of `REPETITION-ENCODING(S)` — which means
+#: §23.14's `#CONDITIONAL-REPETITION` has to be readable before any of the three can be.
+_UNREADABLE_CLASSES = {
+    "#CONDITIONAL-REPETITION": ("§23.14", "`ecn_user.ConditionalRepetitionSpec`"),
+    "#REPETITION": ("§23.13", "`ecn_user.RepetitionSpec`"),
+    "#BITS": ("§23.2", "`ecn_user.StringSpec`"),
+    "#CHARS": ("§23.4", "`ecn_user.StringSpec`"),
+    "#OCTETS": ("§23.9", "`ecn_user.StringSpec`"),
+    "#NUL": ("§23.8", "`ecn_user.NullSpec`"),
+    "#TAG": ("§23.15", "`ecn_user.TagSpec`"),
+}
+
 #: Property groups that clause 23 gives every bit-field class and this repository has not
 #: built. Recognized so the refusal can cite; never silently dropped.
 _UNSUPPORTED_KEYWORDS = {
     # The last one. §22.11's SEMANTICS are built — `ecn_user.ContainedType` and
     # `ContainerSpec`, with §9.24.2's reference scoping and §13.2.10.6 a)'s object-set
-    # selection, under 17 tests. What this grammar cannot read is the notation: a contained
-    # type names an ASN.1 type and an encoding object set, and neither has a spelling here.
+    # selection, under 17 tests. What this grammar cannot read is the notation.
     #
-    # Worded as "which half is missing" rather than "not implemented", which is what it said
-    # until the tally at the end of the buildout: `ALTERNATIVE`, `PRESENCE` and `REPLACE` all
-    # left this table by having their notation built on top of semantics that were already
-    # there, and this row was describing the whole clause as absent when only one half is.
-    "CONTAINED": "§22.11's contained types are built in `ecn_user` and reachable from Python "
-                 "(with §9.24.2's reference scoping and §13.2.10.6 a)'s object-set "
-                 "selection); what this grammar does not read is the notation, which names an "
-                 "ASN.1 type and an encoding object set. Assemble `ContainedType` in Python",
+    # **This row was keyed on `CONTAINED` until it was checked against the text, and
+    # `CONTAINED` is not an ECN keyword at all** — X.692 uses the word only in prose, as in
+    # "contained type". §22.11.1.2 spells the group `CONTENTS-ENCODING`, and §22.11.1.5 makes
+    # that keyword the thing the specification is "considered set" by. So the careful citation
+    # below could only ever be produced by writing a word no ECN module contains, while the
+    # real keyword fell through to whatever the next group's error happened to be. A refusal
+    # that fires on the wrong token is not a refusal.
+    "CONTENTS-ENCODING":
+        "§22.11's contained types are built in `ecn_user` and reachable from Python (with "
+        "§9.24.2's reference scoping and §13.2.10.6 a)'s object-set selection); what this "
+        "grammar does not read is the notation. §22.11.1.2 hangs the group off the string "
+        "categories — §23.2's #BITS and §23.9's #OCTETS — and neither of those classes is "
+        "readable here yet, so this notation is two slices away rather than one. Assemble "
+        "`ContainedType` in Python",
     # §23.1's `#ALTERNATIVES` and §23.11's `#OPTIONAL` are built in `ecn_user` and reachable
     # from Python; what this grammar cannot read is the STRUCTURE side of them. §16.2.12 names
     # the three: `AlternativesStructure` is §16.3, `RepetitionStructure` is §16.4 and
@@ -1966,6 +1995,15 @@ class EcnModule:
                 raise Asn1Error(f"ECN: the class assignment for {current} is circular")
             seen.add(current)
             if current not in self.classes:
+                unreadable = _UNREADABLE_CLASSES.get(current)
+                if unreadable is not None:
+                    clause, spec = unreadable
+                    raise Asn1Error(
+                        f"ECN: {clause} defines {current} and {spec} builds it; what this "
+                        f"grammar cannot yet read is its notation. It is named here rather "
+                        f"than left to the general message, because \"not a built-in encoding "
+                        f"class\" would be false — the class exists in X.692 and on this rail, "
+                        f"and only its spelling is missing")
                 raise Asn1Error(
                     f"ECN: {current} is not a built-in encoding class and no assignment "
                     f"defines it")

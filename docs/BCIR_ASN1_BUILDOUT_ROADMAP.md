@@ -846,6 +846,32 @@ A structure that is neither the application point nor claimed by anything is ref
 the first moment every claim has been seen, so a `REPLACE` may still be written after the
 structure it names.
 
+**Two misdirected diagnostics, both found by reading §22.11 against the parser.** The next
+slice was meant to be §22.11's contained-type notation. Checking the keyword first turned up
+that the notation had not been reachable at all, and that the plan for it was wrong.
+
+- **The refusal was keyed on a word X.692 does not use.** `_UNSUPPORTED_KEYWORDS` held
+  `CONTAINED`; §22.11.1.2 spells the group `CONTENTS-ENCODING`, and §22.11.1.5 makes that
+  keyword the thing the specification is "considered set" by. X.692 uses "contained" only in
+  prose ("contained type"). So the careful §22.11 citation could only be produced by writing a
+  word no ECN module contains, while the real keyword fell through to the next group's error —
+  writing `CONTENTS-ENCODING` on a `#PAD` object complained that `ENCODING-SPACE` is mandatory,
+  which points at an unrelated clause. A refusal that fires on the wrong token is not a
+  refusal, and its own fixture had been pinning the wrong word too.
+- **Seven built-in classes were reported as though they did not exist.** `#BITS`, `#CHARS`,
+  `#OCTETS`, `#NUL`, `#TAG`, `#REPETITION` and `#CONDITIONAL-REPETITION` each got "is not a
+  built-in encoding class and no assignment defines it" — true for a typo, false for these:
+  X.692 defines every one and `ecn_user` implements every one. `_UNREADABLE_CLASSES` names them
+  with their clause and their spec, so "you misspelled it" and "this parser cannot spell it
+  yet" stop being the same message.
+
+**And the priority was wrong.** §22.11's notation was listed as the highest single remaining
+item. It is three slices, in a forced order: §22.11.1.2 hangs the group off §23.2's `#BITS` and
+§23.9's `#OCTETS`, and those string classes take their size from §22.7's repetition space rather
+than from an `ENCODING-SPACE` — so their `WITH SYNTAX` is written in terms of
+`REPETITION-ENCODING(S)`, and §23.14's `#CONDITIONAL-REPETITION` has to be readable first. The
+order is: `#CONDITIONAL-REPETITION`, then the string classes, then `CONTENTS-ENCODING`.
+
 **A stale test this slice found.** `test_a_nested_encoding_structure_is_refused_rather_than_flattened`
 asserted `"16.2.1" in str(error)`, and the error it actually got was §16.2.**12**'s — a
 different rule about a different fault, matching on a substring. It had been passing for the
@@ -1143,7 +1169,7 @@ sentence in a standard rather than a preference.
 | **CXER** | X.693 | **out** | complete | — |
 | **JER** | X.697 | in | clauses 20–41, §7.2 constraint visibility, cl. 14–19 encoding instructions with cl. 13 precedence | cl. 10–11 assignment syntax (X.680 surface) — **low**, it is notation not encoding |
 | **BCIR canonical JER** | *BCIR-private* | **out** | complete; versioned, carries **no** standards OID | — |
-| **ECN** | X.692 | both | cl. 9–25 model, EDM/ELM, the seven built-in object sets, the user-defined half, multi-structure modules with §22.1.2.7's `INSERT AT HEAD`, and clause 20's defined syntax read from module text | six named refusals (§G) — **low to medium**; §22.11's contained-type *notation* is the highest of them |
+| **ECN** | X.692 | both | cl. 9–25 model, EDM/ELM, the seven built-in object sets, the user-defined half, multi-structure modules with §22.1.2.7's `INSERT AT HEAD`, and clause 20's defined syntax read from module text | six named refusals (§G) — **low to medium**; §22.11's contained-type *notation* is the highest of them, and is three slices rather than one (§23.14's `#CONDITIONAL-REPETITION`, then §23.2/§23.4/§23.9's string classes, then the group itself) |
 
 ### 9.2 Excluded by design, with the sentence that excludes them
 
