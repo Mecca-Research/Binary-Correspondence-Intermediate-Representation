@@ -1170,7 +1170,7 @@ A test pins this as the live gate: it **fails if any fixed candidate ever produc
 octets**, because that is the day the expressiveness argument is false and this section is
 wrong.
 
-### H. K_BCIR encoding selection · **CERTIFIED RAIL AND BOTH DECODE TABLES BUILT; TARGET CALIBRATION OPEN**
+### H. K_BCIR encoding selection · **CERTIFIED RAIL, BOTH DECODE TABLES AND BOTH GATES BUILT; TARGET CALIBRATION OPEN**
 
 Encoding rules become a candidate dimension in the optimizer. Given an abstract value,
 a target profile H, live Θ, and an RCSP budget, `K_BCIR` selects the encoding rules the
@@ -1264,8 +1264,11 @@ reproduces today's DER exactly (the degenerate case, pinning that nothing regres
 Phases A–F and **all** of G are landed on their documented rails. Phase H has exact
 wire-size evidence, a Python measurement harness, a native measured table
 ([`native_bench.py`](../bcir/asn1/native_bench.py)) and §6.2's certificate
-([`certified.py`](../bcir/asn1/certified.py)); what it still lacks is target hardware
-counters and a native *encode* column. The sequence below is recorded as written and is
+([`certified.py`](../bcir/asn1/certified.py)). The native **encode** column is built and the
+schema-directed decode table carries three rows, so both of phase H's gates are answered on
+this host; what it still lacks is **target hardware counters** — and that is the one remaining
+item in the whole ASN.1 build-out, because it is the one thing no amount of software can
+supply. The sequence below is recorded as written and is
 **complete through step 7** — every item landed as J1–J6:
 
 1. harden the JER oracle with pre-parse limits and byte-exact canonical validation;
