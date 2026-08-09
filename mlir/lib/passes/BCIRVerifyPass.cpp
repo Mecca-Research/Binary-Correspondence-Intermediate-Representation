@@ -2278,7 +2278,12 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           {"identifier", "REFERENCE"},
           {"encoding-object", "DefinedOrBuiltinEncodingClass"},
           {"ordered-encoding-object-list", "DefinedOrBuiltinEncodingClass"},
-          {"encoding-object-set", "DefinedOrBuiltinEncodingClass"},
+          // C.1 governs an object SET with the reserved word #ENCODINGS, not with a class:
+          // 18.1.2 says the EncodingObjectSet notation is "governed by the reserved word
+          // #ENCODINGS", and a set is not an object of some class. This row said
+          // DefinedOrBuiltinEncodingClass until the parity test read both tables and found
+          // them disagreeing on exactly this entry.
+          {"encoding-object-set", "#ENCODINGS"},
       };
       auto dummies = p.getDummies();
       auto kinds = p.getParameterKinds();

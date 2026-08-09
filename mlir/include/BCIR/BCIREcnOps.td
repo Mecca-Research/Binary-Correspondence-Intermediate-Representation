@@ -93,7 +93,9 @@ def BCIR_EcnParameterizedOp : BCIR_Op<"ecn.parameterized", [Symbol]> {
     takes none. That pairing is the rule R25 checks: C.1 admits an encoding-class dummy with
     no governor, requires an `EncodingClassFieldType` for a value, a value set or an ordered
     value list, requires a `REFERENCE` for an identifier, and requires a
-    `DefinedOrBuiltinEncodingClass` for an object, an ordered object list or an object set.
+    `DefinedOrBuiltinEncodingClass` for an object or an ordered object list, and the
+    reserved word `#ENCODINGS` for an object set -- 18.1.2 governs that notation with the
+    word rather than with a class, since a set is not an object of some class.
     A dummy governed by the wrong thing names a parameter no actual could satisfy, and that is
     decidable from the operation alone.
 
