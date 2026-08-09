@@ -53,7 +53,7 @@ rule.
 | X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references; cross-module tag-default nuance (§9.8) excluded |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
-| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, statically decidable X.692 rules citing 43 distinct subclauses, 27 of them fixture-pinned). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. §22.11's contained types and §21.3.6/§21.5.6/§21.7.8's `container` determination are built too, clause 19's six value mappings are in [`ecn_mapping.py`](../bcir/asn1/ecn_mapping.py), and clause 12's encoding link module with clause 13's application-point algorithm is in [`ecn_link.py`](../bcir/asn1/ecn_link.py) — which retires the `AUXILIARY` and `BOUNDS` stated deviations by deriving both from the link rather than declaring them. Annex C's parameterization — X.683 as ECN rewrites it, `{<`/`>}` delimiters and all — is in [`ecn_param.py`](../bcir/asn1/ecn_param.py), together with §22.1.2's rules on the definitions a `REPLACE` names and §17.5.17's breadth-first `ComponentIdList` scan; C.2's three parameterized assignments now parse from module text and reach the digest. §17.5.1's `EncodeStructure` — the `ENCODE STRUCTURE { <field> <object>, ... } WITH <set>` object body that names an encoding per component — is in [`ecn_encode.py`](../bcir/asn1/ecn_encode.py) and readable from module text. §16.5's `OPTIONAL-ENCODING` marker with its `#OPTIONAL` objects, and §16.3's `AlternativesStructure` with its `#ALTERNATIVES` objects, are both readable — at `SYNTAX_VERSION` 7. §22.1's `REPLACE` defined syntax reads from module text too, so a replacement is a specification rather than a Python assembly, and `_UNSUPPORTED_KEYWORDS` is down to one row. Still refused, each for a stated reason: §22.11's contained-type *notation* (its semantics are built), §22.1.2.7's `INSERT AT HEAD` (a second ordinary structure, which a module has no room for) and §22.1.1.7 e)'s second replacement group, §16.2.1's nested structures, §16.4's `RepetitionStructure`, §21.7.6/§21.7.7's per-element continuation flag, and R25's law-rail coverage of parameterization |
+| X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, statically decidable X.692 rules citing 43 distinct subclauses, 27 of them fixture-pinned). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. §22.11's contained types and §21.3.6/§21.5.6/§21.7.8's `container` determination are built too, clause 19's six value mappings are in [`ecn_mapping.py`](../bcir/asn1/ecn_mapping.py), and clause 12's encoding link module with clause 13's application-point algorithm is in [`ecn_link.py`](../bcir/asn1/ecn_link.py) — which retires the `AUXILIARY` and `BOUNDS` stated deviations by deriving both from the link rather than declaring them. Annex C's parameterization — X.683 as ECN rewrites it, `{<`/`>}` delimiters and all — is in [`ecn_param.py`](../bcir/asn1/ecn_param.py), together with §22.1.2's rules on the definitions a `REPLACE` names and §17.5.17's breadth-first `ComponentIdList` scan; C.2's three parameterized assignments now parse from module text and reach the digest. §17.5.1's `EncodeStructure` — the `ENCODE STRUCTURE { <field> <object>, ... } WITH <set>` object body that names an encoding per component — is in [`ecn_encode.py`](../bcir/asn1/ecn_encode.py) and readable from module text. §16.5's `OPTIONAL-ENCODING` marker with its `#OPTIONAL` objects, and §16.3's `AlternativesStructure` with its `#ALTERNATIVES` objects, are both readable. §22.1's `REPLACE` defined syntax reads from module text too, so a replacement is a specification rather than a Python assembly, and `_UNSUPPORTED_KEYWORDS` is down to one row. **A module now declares more than one encoding structure** — `EcnModule.structures` holds a `Structure` each — which made §22.1.2.7's `INSERT AT HEAD` readable from text, and §16.2.1's nested structures parse and reach the digest under their path, at `SYNTAX_VERSION` 8. Still refused, each for a stated reason: §22.11's contained-type *notation* (its semantics are built), §22.1.1.7 e)'s second replacement group, §16.4's `RepetitionStructure`, §21.7.6/§21.7.7's per-element continuation flag, R25's law-rail coverage of Annex C parameterization (the ECN dialect has `ecn.module`, `.class`, `.structure`, `.field`, `.object` and `.condition`, and no operation carrying a dummy parameter), and §16.5.6's per-level *application* of a nested structure — its notation is read, and an object applied to a structure that nests one is refused rather than given the parent's encoding |
 | X.693 | 8825-4:2021 | XER | **built** — BASIC-XER + CXER (CXER out, both in; validated against Annex A.3/A.4); EXTENDED-XER by design excluded |
 | X.694 | 8825-5:2021 | Mapping W3C XML Schema into ASN.1 | out of scope (see §7) |
 | X.695 | 8825-6 | Registration of PER encoding instructions | follows X.691 |
@@ -805,6 +805,53 @@ Three consequences worth keeping:
 `PRESENCE`; what remains there is `CONTAINED`, plus the groups that *are* built and are refused
 when written in a way their clause forbids.
 
+**A module holds more than one encoding structure, at `SYNTAX_VERSION` 8.** The single flat
+structure on `EcnModule` became `structures: dict[str, Structure]`, and two refusals fell out of
+that one change because both had the same cause.
+
+The cause was a misread. The repository took "one structure per module" off **§13.2**, which
+says the *link* walks one application point — nothing in clause 16 caps how many structures a
+module may **declare**. The two are different facts, and conflating them made §22.1.2.7's
+`INSERT AT HEAD` unreachable from text: that clause needs a second ordinary structure to exist,
+so its semantics sat in `ecn_user.HeadEndStructure` with no syntax able to reach them. The
+dialect had it right all along — `BCIR_EcnModuleOp`'s `applies_to` is optional precisely because
+"an EDM that named its application point would be claiming a binding the notation puts
+elsewhere".
+
+- **§22.1.2.7 reads from module text**, with each of its three sentences a check: the structure
+  has no dummy parameters (so a parameterized name is refused — the one property separating it
+  from the `WITH` structure §22.1.2.2 requires to *be* parameterized), it is not the application
+  point itself, and every field is auxiliary with an encoding object under §9.5.2.
+- **§16.2.1's nested structures parse**, recursively and by the same function, since the nested
+  production *is* the top-level one. A nested definition is named by its path (`Outer.head`) and
+  reaches the digest under it, so two structures each nesting a `head` keep their own.
+
+Two things this slice deliberately did **not** do, both stated rather than left to be discovered:
+
+- **Which structure is the application point is a repository convention: the first declared.**
+  §12.1's ELM is what binds a type to a structure, and an `ENCODING-DEFINITIONS` module alone
+  never says which of its structures is applied. First-declared rather than sole-declared is
+  forced by timing — clause 23's objects resolve their structure *while the module is still
+  being parsed*, so a rule needing the whole module ("the one nothing else claims") would answer
+  differently depending on how far the reader had got. A test pins the convention and says it is
+  the assertion to change when an ELM section becomes readable.
+- **Reading a nested structure is not encoding one.** §16.5.6's application point "proceeds to
+  each of the `EncodingStructure`s" — one object per level — and this rail builds one object from
+  one flat field list. Applying that object to a parent whose field is a whole structure would
+  give the nested fields the *parent's* encoding: well-formed octets of the wrong shape. So the
+  notation is read and the application is refused by name, which keeps the protection the old
+  outright refusal provided.
+
+A structure that is neither the application point nor claimed by anything is refused at `END` —
+the first moment every claim has been seen, so a `REPLACE` may still be written after the
+structure it names.
+
+**A stale test this slice found.** `test_a_nested_encoding_structure_is_refused_rather_than_flattened`
+asserted `"16.2.1" in str(error)`, and the error it actually got was §16.2.**12**'s — a
+different rule about a different fault, matching on a substring. It had been passing for the
+wrong reason; the replacement asserts the nesting is read, hashed under its path, and refused
+only where it would encode.
+
 **One bug this slice introduced and its own tests caught.** §16.5.2's check for the *marker's*
 category reused the variable holding the *structure's*, so a single `OPTIONAL-ENCODING` field
 turned its concatenation into an "optional" structure and every later object was rejected
@@ -1096,7 +1143,7 @@ sentence in a standard rather than a preference.
 | **CXER** | X.693 | **out** | complete | — |
 | **JER** | X.697 | in | clauses 20–41, §7.2 constraint visibility, cl. 14–19 encoding instructions with cl. 13 precedence | cl. 10–11 assignment syntax (X.680 surface) — **low**, it is notation not encoding |
 | **BCIR canonical JER** | *BCIR-private* | **out** | complete; versioned, carries **no** standards OID | — |
-| **ECN** | X.692 | both | cl. 9–25 model, EDM/ELM, the seven built-in object sets, the user-defined half, and clause 20's defined syntax read from module text | seven named refusals (§G) — **low to medium**; §22.11's contained-type *notation* is the highest of them |
+| **ECN** | X.692 | both | cl. 9–25 model, EDM/ELM, the seven built-in object sets, the user-defined half, multi-structure modules with §22.1.2.7's `INSERT AT HEAD`, and clause 20's defined syntax read from module text | six named refusals (§G) — **low to medium**; §22.11's contained-type *notation* is the highest of them |
 
 ### 9.2 Excluded by design, with the sentence that excludes them
 
