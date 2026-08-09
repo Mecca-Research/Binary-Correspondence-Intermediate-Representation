@@ -173,6 +173,35 @@ def test_a_contained_encoding_wider_than_its_container_is_refused():
         _concat({"w": spec}, ("w",)), "#C", {"w": {"a": 1, "b": 2}}))
 
 
+def test_a_contained_encoding_narrower_than_its_container_is_refused_too():
+    """A STATED encoding space is a width, not a ceiling (review, PR #707).
+
+    Only the overrun was checked, so a 16-bit container holding an 8-bit encoding emitted
+    eight bits: the following field then started an octet early, and a space determinant
+    recorded 8 rather than the declared 16. Refused rather than zero-filled, because nothing
+    on the spec declares a padding pattern and inventing one would choose an encoding on the
+    module's behalf.
+    """
+    inner = ConcatenationSpec(fields={"a": IntSpec(width=8)}, order=("a",))
+    narrow = ContainerSpec(
+        contained_class="#I", width=16,
+        contents=ContainedType(primary={"#I": UserEncodingObject("#I", inner)}))
+    _refuses("must fill it", lambda: encode_with_user(
+        _concat({"w": narrow}, ("w",)), "#C", {"w": {"a": 1}}))
+
+    # An exact fill is what the stated width asks for, and still encodes.
+    exact = ContainerSpec(
+        contained_class="#I", width=8,
+        contents=ContainedType(primary={"#I": UserEncodingObject("#I", inner)}))
+    assert encode_with_user(_concat({"w": exact}, ("w",)), "#C", {"w": {"a": 1}}) == bytes((1,))
+
+    # A container with NO stated width is determined rather than fixed, and is unaffected.
+    free = ContainerSpec(
+        contained_class="#I",
+        contents=ContainedType(primary={"#I": UserEncodingObject("#I", inner)}))
+    assert encode_with_user(_concat({"w": free}, ("w",)), "#C", {"w": {"a": 1}}) == bytes((1,))
+
+
 # --- §21.3.6: the other direction ------------------------------------------------------------
 
 def test_a_container_determination_needs_no_transforms_because_it_reads_no_field():
