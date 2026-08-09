@@ -550,8 +550,8 @@ class Parser:
                 return ast.Builtin("INTEGER", self.parse_named_numbers())
             if tok.text == "ENUMERATED":
                 self.take()
-                named, extensible = self.parse_enumerations()
-                return ast.Builtin("ENUMERATED", named, extensible)
+                named, extensible, additions = self.parse_enumerations()
+                return ast.Builtin("ENUMERATED", named, extensible, additions)
             if tok.text == "BIT":
                 self.take()
                 self.expect("reserved", "STRING")
@@ -777,9 +777,15 @@ class Parser:
         return tuple(out)
 
     def parse_enumerations(self):
-        """§20.1: enumeration items may be bare identifiers, and `...` may appear."""
+        """§20.1: enumeration items may be bare identifiers, and `...` may appear.
+
+        Returns `(root, extensible, additions)`. The split is kept because X.691 §14 gives an
+        item after the marker a different encoding from one before it; flattening the two made
+        an extension item indistinguishable from a root value downstream.
+        """
         self.expect_punct("{")
         out: list[ast.NamedNumber] = []
+        additions: list[ast.NamedNumber] = []
         extensible = False
         next_implicit = 0
         while True:
@@ -792,14 +798,15 @@ class Parser:
                     number = self.parse_signed_number()
                     self.expect_punct(")")
                 else:
-                    # §20.1: an item without a number takes the next unused value.
+                    # §20.1: an item without a number takes the next unused value, counted
+                    # across the root AND the additions -- the marker does not restart it.
                     number = next_implicit
-                out.append(ast.NamedNumber(item, number))
-                next_implicit = max((n.number for n in out), default=-1) + 1
+                (additions if extensible else out).append(ast.NamedNumber(item, number))
+                next_implicit = max((n.number for n in out + additions), default=-1) + 1
             if not self.accept("punct", ","):
                 break
         self.expect_punct("}")
-        return tuple(out), extensible
+        return tuple(out), extensible, tuple(additions)
 
     def parse_signed_number(self) -> int:
         negative = bool(self.accept("punct", "-"))

@@ -501,8 +501,12 @@ class Lowerer:
         universal = UNIVERSAL_OF.get(node.name)
         if universal is None:
             raise Asn1SemanticError(f"{label}: unknown built-in type {node.name!r}")
-        if node.named:
-            self.enumerations[label] = {n.name: n.number for n in node.named}
+        if node.named or node.extension_named:
+            # The module-level side table answers "what does this DEFAULT identifier mean",
+            # which an extension item can be as legitimately as a root one -- so both halves
+            # go in here, unlike the codec-facing lists below.
+            self.enumerations[label] = {n.name: n.number
+                                        for n in node.named + node.extension_named}
         if universal == Universal.ENUMERATED:
             # Carry the enumeration ONTO the type, not just into the module-level side
             # table. The side table answers "what does this DEFAULT identifier mean"; PER
@@ -512,7 +516,9 @@ class Lowerer:
             return Primitive(
                 int(universal), node.name,
                 enumeration=tuple((n.name, n.number) for n in node.named),
-                enum_extensible=bool(node.extensible))
+                enum_extensible=bool(node.extensible),
+                enum_extension=tuple((n.name, n.number)
+                                     for n in node.extension_named) or None)
         return Primitive(int(universal), node.name)
 
     def _components(self, nodes, label: str, choice: bool = False):

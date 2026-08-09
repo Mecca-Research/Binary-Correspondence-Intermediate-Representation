@@ -171,7 +171,9 @@ AnnexA4 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
 END
 """
 
-_A4_RECORD = {"a": 253, "b": True, "c": {"e": True}, "g": "123", "h": True}
+# The CHOICE component is the `(alternative, value)` pair every rail in this
+# projection uses -- PER used to be the one encoder that demanded a mapping.
+_A4_RECORD = {"a": 253, "b": True, "c": ("e", True), "g": "123", "h": True}
 
 _A3_ALIGNED = bytes.fromhex(
     "40c04a6f686e5008536d697468000033"

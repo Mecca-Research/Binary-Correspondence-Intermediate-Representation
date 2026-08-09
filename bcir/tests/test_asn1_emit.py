@@ -837,31 +837,33 @@ def test_a_choice_index_follows_the_canonical_tag_order_not_the_source_order():
     assert [m.name for m in _per_alternatives(node)] == ["early", "late"]
 
 
-def test_the_oracle_s_per_spells_a_choice_differently_from_every_other_encoder():
-    """A fifth value-mapping disagreement, pinned rather than papered over.
+def test_every_oracle_encoder_now_spells_a_choice_the_same_way():
+    """The disagreement this test used to pin, unified — deliberately, with this as witness.
 
-    `codec`, `encode_jer` and `encode_oer` all take a CHOICE value as the `(alternative,
-    value)` pair this model uses. **`encode_per` takes a single-entry mapping** and refuses
-    the pair. Like the NULL disagreement above, this lives in the value mapping rather than
-    in any encoding, and it is invisible until something drives every encoder from one
-    input — which is exactly what a matched cost comparison does.
+    It formerly asserted that `encode_per` took a single-entry MAPPING and refused the
+    `(alternative, value)` pair that `codec`, `encode_jer` and `encode_oer` all take, and it
+    said in as many words: "unify the two". Review on PR #662 reported the same thing from the
+    other side — a CHOICE decoded on one rail could not be re-encoded on PER, which defeats
+    the point of a schema-level abstract value shared across the rules.
 
-    The neutral stream has nothing to disagree about: a CHOICE contributes an index, and
-    all five plan-driven emitters read the same one.
+    So the pair is now what every encoder takes and what `decode_per` returns. The mapping is
+    still accepted, because it costs nothing and callers wrote it, but it is no longer the
+    only spelling PER understands — and both must produce the same octets, or "accepted" would
+    just be a second, quieter disagreement.
     """
-    from bcir.asn1.per import PerVariant, encode_per
+    from bcir.asn1.per import PerVariant, decode_per, encode_per
 
     kind = _seq(Component("v", _CHOICE, tag=5, explicit=True))
     pair = {"v": ("num", 7)}
     mapping = {"v": {"num": 7}}
-    assert encode_per(kind, mapping, variant=PerVariant.UNALIGNED)
-    try:
-        encode_per(kind, pair, variant=PerVariant.UNALIGNED)
-    except Asn1Error as error:
-        assert "single-entry mapping" in str(error), error
-    else:
-        raise AssertionError("encode_per accepted the pair spelling; unify the two")
-    # The other three take the pair, and the plan-driven rail takes it for all five rules.
+
+    from_pair = encode_per(kind, pair, variant=PerVariant.UNALIGNED)
+    from_mapping = encode_per(kind, mapping, variant=PerVariant.UNALIGNED)
+    assert from_pair == from_mapping, "the two spellings must not encode differently"
+    # And the round trip returns the pair, so PER's output feeds the other rails unchanged.
+    assert decode_per(from_pair, kind, variant=PerVariant.UNALIGNED) == pair
+
+    # The other three took the pair all along; the plan-driven rail takes it for all five.
     assert encode_tlv(kind.encode(pair))
     assert encode_oer(kind, pair)
     plan = _plan(kind, "c")

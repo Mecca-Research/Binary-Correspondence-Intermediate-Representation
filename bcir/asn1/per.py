@@ -243,19 +243,30 @@ def _decode_constrained(reader: BitReader, lower: int, upper: int) -> int:
     if range_ == 1:
         return lower
     if reader.variant is PerVariant.UNALIGNED:
-        return lower + reader.get_bits(bits_for_range(range_))
-    if range_ <= 255:
-        return lower + reader.get_bits(bits_for_range(range_))
-    if range_ == 256:
+        offset = reader.get_bits(bits_for_range(range_))
+    elif range_ <= 255:
+        offset = reader.get_bits(bits_for_range(range_))
+    elif range_ == 256:
         reader.align()
-        return lower + reader.get_bits(8)
-    if range_ <= _64K:
+        offset = reader.get_bits(8)
+    elif range_ <= _64K:
         reader.align()
-        return lower + reader.get_bits(16)
-    length_upper = max(1, ((range_ - 1).bit_length() + 7) // 8)
-    octets = _decode_constrained(reader, 1, length_upper)
-    reader.align()
-    return lower + int.from_bytes(reader.get_octets(octets), "big")
+        offset = reader.get_bits(16)
+    else:
+        length_upper = max(1, ((range_ - 1).bit_length() + 7) // 8)
+        octets = _decode_constrained(reader, 1, length_upper)
+        reader.align()
+        offset = int.from_bytes(reader.get_octets(octets), "big")
+    # §11.5.3: the offset names a value in [0, range). A range that is not a power of two
+    # leaves the widest bit patterns UNUSED, and a conforming encoder never writes one -- so
+    # reading one back is a malformed encoding, not a value. Rejecting here is what keeps the
+    # decoder inside the schema's value set: without it UNALIGNED `c0` for INTEGER (0..2)
+    # decoded to 3, a number the type does not contain, at a trust boundary.
+    if offset >= range_:
+        raise Asn1Error(
+            f"PER 11.5.3: constrained value offset {offset} is outside the range's "
+            f"{range_} values (a bit pattern no conforming encoder produces)")
+    return lower + offset
 
 
 def _encode_normally_small(writer: BitWriter, value: int) -> None:
@@ -289,13 +300,27 @@ def _encode_semi_constrained(writer: BitWriter, value: int, lower: int) -> None:
 
 def _decode_semi_constrained(reader: BitReader, lower: int) -> int:
     octets = _decode_unconstrained_length(reader)
+    if octets == 0:
+        # §11.7.4 encodes the offset into "the minimum number of octets", and the minimum for
+        # an offset of zero is one octet holding zero -- never none. See _decode_unconstrained.
+        raise Asn1Error("PER 11.7.4: a semi-constrained whole number needs at least one "
+                        "contents octet; a zero length determinant is malformed")
     reader.align()
     return lower + int.from_bytes(reader.get_octets(octets), "big")
 
 
 def _encode_unconstrained(writer: BitWriter, value: int) -> None:
-    """§11.8: 2's-complement into the minimum octets, with a length determinant."""
-    octets = max(1, (value.bit_length() + 8) // 8)
+    """§11.8: 2's-complement into the minimum octets, with a length determinant.
+
+    The octet count is the two's-complement minimum, which is NOT `bit_length() + 8 // 8` for
+    a negative value: `bit_length` reports the MAGNITUDE's width, so it over-counts at exactly
+    the signed boundaries where the magnitude needs the extra bit but the two's-complement
+    value does not. -128 came out as two octets (`ff80`) where one (`80`) is the minimum, and
+    -32768 as three. Since `encode_per` defaults to CANONICAL-PER and §11.8 asks for the
+    minimum form, that was a non-canonical encoding from the canonical encoder. Biasing a
+    negative by one before measuring is what makes the boundary land on the right side.
+    """
+    octets = (value + (1 if value < 0 else 0)).bit_length() // 8 + 1
     _encode_unconstrained_length(writer, octets)
     writer.align()
     writer.put_octets(value.to_bytes(octets, "big", signed=True))
@@ -303,6 +328,13 @@ def _encode_unconstrained(writer: BitWriter, value: int) -> None:
 
 def _decode_unconstrained(reader: BitReader) -> int:
     octets = _decode_unconstrained_length(reader)
+    if octets == 0:
+        # §11.8.2: the value occupies "the minimum number of octets", and there is no
+        # two's-complement spelling of any integer in zero octets. Python would have read
+        # int.from_bytes(b"", signed=True) as 0, so b"\x00" decoded as a valid zero whose real
+        # encoding is b"\x01\x00" -- a second spelling admitted at the trust boundary.
+        raise Asn1Error("PER 11.8.2: an unconstrained whole number needs at least one "
+                        "contents octet; a zero length determinant is malformed")
     reader.align()
     return int.from_bytes(reader.get_octets(octets), "big", signed=True)
 
@@ -368,11 +400,19 @@ def _encode_length_and_payload(
     """
     if upper is not None:
         # §11.9.3.3: constrained, ub < 64K -- the length is a constrained whole number and
-        # there is never fragmentation.
+        # there is never fragmentation. `_encode_constrained` refuses a count outside
+        # [lower, upper], so the bound is enforced on this path already.
         _encode_constrained(writer, count, lower, upper)
         if count:
             emit(0, count)
         return
+    # The unconstrained forms carry no bound, so nothing below would notice a count under
+    # `lower` -- and `_length_bounds` reaches here for SIZE(5..MAX) and for any ub at or past
+    # 64K, where the LOWER endpoint is still part of the type. Checking it is what stops
+    # `OCTET STRING (SIZE(5..MAX))` from emitting a one-octet value.
+    if count < lower:
+        raise Asn1Error(
+            f"PER 11.9: {count} unit(s) is below the size constraint's lower bound {lower}")
     start = 0
     while True:
         remaining = count - start
@@ -401,6 +441,19 @@ def _decode_length_and_payload(
         if count:
             consume(count)
         return count
+    total = _decode_unconstrained_count(reader, consume)
+    # The mirror of the encoder's check: the unconstrained forms carry no bound, so a peer
+    # can spell a count below the type's declared lower endpoint and nothing above would
+    # notice. Admitting it would put a value outside the ASN.1 type into the caller's hands.
+    if total < lower:
+        raise Asn1Error(
+            f"PER 11.9: decoded {total} unit(s), below the size constraint's lower bound "
+            f"{lower}")
+    return total
+
+
+def _decode_unconstrained_count(reader: BitReader, consume) -> int:
+    """§11.9.3.6-§11.9.3.8's unconstrained determinant, looping over any fragments."""
     total = 0
     while True:
         reader.align()
@@ -638,6 +691,7 @@ def _decode_octets(reader: BitReader, kind) -> bytes:
 def _encode_known_multiplier(writer: BitWriter, kind: Primitive, text: str) -> None:
     """§30.5: one of the six known-multiplier types."""
     bits, forward, _ = _char_bits(kind, writer.variant)
+    _low, _high = _KNOWN_MULTIPLIER[kind.universal]
     lower, upper, extensible = _size_bounds(kind)
     count = len(text)
     if extensible:
@@ -657,7 +711,20 @@ def _encode_known_multiplier(writer: BitWriter, kind: Primitive, text: str) -> N
         elif upper is None:
             writer.align()
         for ch in text[start:stop]:
-            writer.put_bits(forward[ch] if forward else ord(ch), bits)
+            if forward:
+                writer.put_bits(forward[ch], bits)
+                continue
+            # §30.5.4 a)'s NATURAL code path. `forward` is empty here, so nothing consulted
+            # the type's repertoire and the only test was whether the code fit `bits` -- which
+            # let an unconstrained VisibleString carry the control characters below space and
+            # DEL, though _KNOWN_MULTIPLIER states its range as 32..126. The permitted-alphabet
+            # path (b) never had the gap, because renumbering can only spell what it listed.
+            code = ord(ch)
+            if not _low <= code <= _high:
+                raise Asn1Error(
+                    f"{kind.name}: character {ch!r} (code {code}) is outside the type's "
+                    f"repertoire {_low}..{_high}")
+            writer.put_bits(code, bits)
 
     if upper is not None and lower == upper and upper < _64K:
         if count != upper:
@@ -670,6 +737,7 @@ def _encode_known_multiplier(writer: BitWriter, kind: Primitive, text: str) -> N
 
 def _decode_known_multiplier(reader: BitReader, kind: Primitive) -> str:
     bits, _, back = _char_bits(kind, reader.variant)
+    low, high = _KNOWN_MULTIPLIER[kind.universal]
     lower, upper, extensible = _size_bounds(kind)
     if extensible and reader.get_bit():
         lower, upper = 0, None
@@ -680,7 +748,19 @@ def _decode_known_multiplier(reader: BitReader, kind: Primitive) -> str:
             reader.align()
         for _ in range(count):
             raw = reader.get_bits(bits)
-            out.append(back[raw] if back else chr(raw))
+            if back:
+                out.append(back[raw])
+                continue
+            # The decoding half of the same §30.5.4 a) gap: the natural-code path built a
+            # character from any code the bit-field could hold, so a peer could send 0x7f to
+            # an unconstrained VisibleString and get DEL back out of a type whose repertoire
+            # stops at 126. Checked here rather than after the fact so the reader stops at
+            # the offending character.
+            if not low <= raw <= high:
+                raise Asn1Error(
+                    f"{kind.name}: character code {raw} is outside the type's repertoire "
+                    f"{low}..{high}")
+            out.append(chr(raw))
 
     if upper is not None and lower == upper and upper < _64K:
         if upper:
@@ -706,10 +786,30 @@ def _encode_primitive(writer: BitWriter, kind: Primitive, value) -> None:
         return
     if universal == Universal.ENUMERATED:                # §14
         indices = kind.enum_indices()
-        if int(value) not in indices:
+        # `int(value)` accepted anything Python could coerce -- "1", 1.9 and True all landed
+        # on an enumerator and were encoded as it, silently changing the abstract value on the
+        # wire. The same guard INTEGER above and X.696's ENUMERATED encoder already use.
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise Asn1Error(
+                f"{kind.name}: expected int, got {type(value).__name__}")
+        if value not in indices:
+            # §14.3 gives an item declared after the `...` its own encoding: the extension bit
+            # is ONE and the value is a normally small index into the additions, not a §14.2
+            # index into the root. The lowering used to put both halves in one list, so `b` in
+            # `ENUMERATED { a(0), ..., b(1) }` was encoded with a zero extension bit and the
+            # root index 1 -- octets whose abstract meaning is a different enumerator. The two
+            # lists are separate now, and until §14.3's form is built this is a refusal by
+            # name rather than an encoding that is quietly wrong. The decoder already refuses
+            # the mirror case, so neither direction invents an answer.
+            for name, number in (kind.enum_extension or ()):
+                if number == value:
+                    raise Asn1Error(
+                        f"{kind.name}: {name}({number}) is an extension addition; X.691 14.3's "
+                        f"encoding for one is not built, and encoding it as a root value would "
+                        f"mean a different enumerator")
             raise Asn1Error(
                 f"{kind.name}: {value} is not an enumeration value of this type")
-        index = indices[int(value)]
+        index = indices[value]
         if kind.enum_extensible:                         # §14.3
             writer.put_bit(0)
         _encode_constrained(writer, index, 0, len(indices) - 1)   # §14.2
@@ -752,7 +852,13 @@ def _decode_primitive(reader: BitReader, kind: Primitive):
     if universal == Universal.BOOLEAN:
         return bool(reader.get_bit())
     if universal == Universal.NULL:
-        return None
+        # The projection's abstract-value mapping uses `codec.NULL` for ASN.1 NULL and
+        # reserves Python `None` for ABSENCE, which is what DER and OER both return. Returning
+        # `None` here collapsed the two, so a PER-decoded NULL could not be handed to another
+        # rail's encoder and a present NULL component read the same as a missing one.
+        from .codec import NULL
+
+        return NULL
     if universal == Universal.INTEGER:
         return _decode_integer(reader, kind)
     if universal == Universal.ENUMERATED:
@@ -935,7 +1041,18 @@ def _decode_sequence(reader: BitReader, kind, rules: PerRules) -> dict:
             if comp.has_default:
                 out[comp.name] = comp.default
             continue
-        out[comp.name] = _decode(reader, comp.type, rules)
+        decoded = _decode(reader, comp.type, rules)
+        if (comp.has_default and rules is PerRules.CANONICAL
+                and decoded == comp.default and type(decoded) is type(comp.default)):
+            # §18.2's canonical rule: a DEFAULT component whose value IS the default shall be
+            # omitted, so its presence bit is zero. The encoder already omits it (`_supplied`),
+            # and a decoder that accepted the long spelling anyway left CANONICAL-PER with two
+            # encodings of one abstract value -- which is the property the digest rests on.
+            # BASIC-PER permits either spelling, so this is gated on the rule set.
+            raise Asn1Error(
+                f"{kind.name}: CANONICAL-PER 18.2 omits {comp.name!r} when it equals its "
+                f"DEFAULT ({comp.default!r}), but it was present in the encoding")
+        out[comp.name] = decoded
     if not has_additions:
         for comp in additions:
             if comp.has_default:
@@ -961,8 +1078,11 @@ def _decode_sequence(reader: BitReader, kind, rules: PerRules) -> dict:
             # recoverable: the octets are skipped, not misparsed.
             continue
         comp = additions[index]
-        inner = BitReader(b"".join(chunks), reader.variant)
+        wrapper = b"".join(chunks)
+        inner = BitReader(wrapper, reader.variant)
         decoded = _decode(inner, comp.type, rules)
+        # §19.9 wraps the addition as a COMPLETE encoding, so §11.1 governs its contents too.
+        _check_complete(inner, wrapper, f"PER 19.9 ({comp.name})")
         if comp.group is not None:
             out.update(decoded)                          # the bracket's members are flat
         else:
@@ -989,11 +1109,40 @@ def _decode_normally_small_length(reader: BitReader) -> int:
     return _decode_unconstrained_length(reader)
 
 
+def _canonical_set_of_order(items: list, kind, variant: PerVariant, rules: PerRules) -> list:
+    """A SET OF's components in the order a canonical encoding places them.
+
+    SET OF is UNORDERED as an abstract value, so a canonical encoding has to fix an order or
+    two peers holding the same set produce different octets -- and the byte-identity and
+    digest properties this projection rests on evaporate. The PER encoder preserved the
+    caller's list order, exactly as it does for the ORDERED SEQUENCE OF, so `[1, 2]` and
+    `[2, 1]` produced different supposedly-CANONICAL bytes for the same value.
+
+    The comparison is the one both sibling canonical rails already use -- X.690 §11.6 for DER
+    (`_sorted_set_of`) and X.696 §31.8 for OER: ascending as octet strings, the shorter padded
+    at its trailing end with zero bits. Each element is encoded on its own to get the string
+    to compare, which is also what makes the order independent of where in the field-list the
+    SET OF happens to sit.
+    """
+    encoded = []
+    for item in items:
+        one = BitWriter(variant)
+        _encode(one, kind.element, item, rules)
+        encoded.append((one.to_bytes(), item))
+    width = max((len(raw) for raw, _item in encoded), default=0)
+    # `key=` rather than a plain sort, so two elements with equal encodings never fall through
+    # to comparing the VALUES -- which need not be orderable at all.
+    encoded.sort(key=lambda entry: entry[0].ljust(width, b"\x00"))
+    return [item for _raw, item in encoded]
+
+
 def _encode_sequence_of(writer: BitWriter, kind, value, rules: PerRules) -> None:
     """§20: a count (unless fixed), then the components' field-lists concatenated."""
     if not isinstance(value, (list, tuple)):
         raise Asn1Error(f"{kind.name}: expected a list")
     items = list(value)
+    if isinstance(kind, SetOf) and rules is PerRules.CANONICAL:
+        items = _canonical_set_of_order(items, kind, writer.variant, rules)
     lower, upper, extensible = _size_bounds(kind)
     if extensible:
         # §20.4: one bit, set when the COUNT is outside the extension root; outside, the
@@ -1034,11 +1183,28 @@ def _decode_sequence_of(reader: BitReader, kind, rules: PerRules) -> list:
     return out
 
 
+def _choice_parts(kind, value) -> tuple[str, object]:
+    """The `(alternative, value)` pair out of either shape a caller may hold.
+
+    `schema.Choice` says a CHOICE value IS an `(alternative_name, value)` pair, and that is
+    what DER and OER both encode from and decode to. PER accepted only a single-entry mapping,
+    so a CHOICE decoded on one rail could not be re-encoded on this one -- which defeats the
+    point of a schema-level abstract value shared across the rules. Both shapes are accepted
+    here; `_decode_choice` returns the pair, so a PER round-trip now agrees with the others.
+    """
+    if isinstance(value, tuple) and len(value) == 2:
+        return value[0], value[1]
+    if isinstance(value, dict) and len(value) == 1:
+        (name, inner), = value.items()
+        return name, inner
+    raise Asn1Error(
+        f"{kind.name}: a CHOICE value is an (alternative, value) pair -- a single-entry "
+        f"mapping is also accepted; got {type(value).__name__}")
+
+
 def _encode_choice(writer: BitWriter, kind, value, rules: PerRules) -> None:
     """§23: an index over the alternatives, then the chosen alternative's fields."""
-    if not isinstance(value, dict) or len(value) != 1:
-        raise Asn1Error(f"{kind.name}: a CHOICE value is a single-entry mapping")
-    (name, inner), = value.items()
+    name, inner = _choice_parts(kind, value)
     root, additions = _split_root(kind)
     for index, comp in enumerate(root):
         if comp.name == name:
@@ -1069,7 +1235,7 @@ def _encode_choice(writer: BitWriter, kind, value, rules: PerRules) -> None:
     raise Asn1Error(f"{kind.name}: {name!r} is not an alternative of this CHOICE")
 
 
-def _decode_choice(reader: BitReader, kind, rules: PerRules) -> dict:
+def _decode_choice(reader: BitReader, kind, rules: PerRules) -> tuple:
     root, additions = _split_root(kind)
     if kind.extensible and reader.get_bit():              # §23.8
         index = _decode_normally_small(reader)
@@ -1084,18 +1250,46 @@ def _decode_choice(reader: BitReader, kind, rules: PerRules) -> dict:
             raise Asn1Error(
                 f"{kind.name}: extension alternative {index} is unknown to this version")
         comp = additions[index]
-        inner = BitReader(b"".join(chunks), reader.variant)
-        return {comp.name: _decode(inner, comp.type, rules)}
+        wrapper = b"".join(chunks)
+        inner = BitReader(wrapper, reader.variant)
+        chosen = _decode(inner, comp.type, rules)
+        # §23.8 wraps the alternative as a COMPLETE encoding, same as §19.9 does for a
+        # SEQUENCE addition, so §11.1 governs its contents here too.
+        _check_complete(inner, wrapper, f"PER 23.8 ({comp.name})")
+        return (comp.name, chosen)
     index = 0
     if len(root) > 1:
         index = _decode_constrained(reader, 0, len(root) - 1)
     if not 0 <= index < len(root):
         raise Asn1Error(f"{kind.name}: CHOICE index {index} is out of range")
     comp = root[index]
-    return {comp.name: _decode(reader, comp.type, rules)}
+    return (comp.name, _decode(reader, comp.type, rules))
+
+
+def _resolve(kind: Asn1Type) -> Asn1Type:
+    """Follow a front-end forward reference to the type it actually names.
+
+    `compile_module` represents a RECURSIVE definition with a lazy placeholder that forwards
+    `encode`/`decode` to its target once the module is complete. The tag-first rails never
+    notice it, because they go through those methods; PER dispatches on the schema CLASS, so
+    the placeholder fell off the end of the chain and
+    `Node ::= SEQUENCE { value INTEGER, next Node OPTIONAL }` encoded only while `next` was
+    absent -- supplying a nested node raised "no encoding for schema type _LazyType".
+
+    Resolved here rather than in the front-end, because the placeholder has to STAY lazy until
+    the module finishes building. The depth cap catches a reference cycle that never reaches a
+    concrete type; a directly self-defined type is already refused where it is resolved.
+    """
+    for _ in range(64):
+        resolved = getattr(kind, "_resolved", None)
+        if resolved is None:
+            return kind
+        kind = resolved()
+    raise Asn1Error("PER: forward references nested deeper than 64 -- a reference cycle")
 
 
 def _encode(writer: BitWriter, kind: Asn1Type, value, rules: PerRules) -> None:
+    kind = _resolve(kind)
     if isinstance(kind, Primitive):
         _encode_primitive(writer, kind, value)
     elif isinstance(kind, (Sequence, Set)):
@@ -1120,6 +1314,7 @@ def _encode(writer: BitWriter, kind: Asn1Type, value, rules: PerRules) -> None:
 
 
 def _decode(reader: BitReader, kind: Asn1Type, rules: PerRules):
+    kind = _resolve(kind)
     if isinstance(kind, Primitive):
         return _decode_primitive(reader, kind)
     if isinstance(kind, (Sequence, Set)):
@@ -1167,21 +1362,38 @@ def decode_per(
         raise Asn1Error("PER: expected bytes")
     reader = BitReader(bytes(data), variant)
     value = _decode(reader, kind, rules)
-    # §11.1.3.1/§11.1.4: an EMPTY field-list is not zero octets, it is "a single octet with
-    # all bits set to 0" -- so a type that encodes to nothing (a NULL, an INTEGER pinned to
-    # one value) legitimately consumes no bits while occupying one octet. Without the
-    # floor, that one octet reads as trailing garbage and the decode fails on a correct
-    # encoding.
-    consumed_octets = max(1, (reader.pos + 7) // 8)
+    _check_complete(reader, bytes(data), "PER")
+    return value
+
+
+def _check_complete(reader: BitReader, data: bytes, where: str) -> None:
+    """§11.1: `data` is exactly the complete encoding `reader` has just consumed.
+
+    Used for the outermost value AND for the contents of every open-type wrapper, because
+    §19.9 and §23.8 wrap an extension addition as "a complete encoding" -- the same clause,
+    so the same rule. Applying it only at the outermost level left the extension wrapper as a
+    place where a peer could append octets or set the pad bits and still hand the caller the
+    same component value, which is a second spelling admitted at a trust boundary.
+    """
+    if reader.pos == 0:
+        # §11.1.3.1/§11.1.4: an EMPTY field-list is not zero octets, it is "a single octet
+        # with all bits set to 0" -- so a type that encodes to nothing (a NULL, an INTEGER
+        # pinned to one value) consumes no bits while still occupying one octet. Saying only
+        # "at least one octet" let BOTH b"" and an arbitrary b"\xff" through, which is two
+        # more spellings of a value whose complete encoding the clause fixes exactly.
+        if len(data) != 1 or data[0] != 0:
+            raise Asn1Error(
+                f"{where} 11.1.4: the complete encoding of an empty field-list is exactly "
+                f"one zero octet; got {data!r}")
+        return
+    consumed_octets = (reader.pos + 7) // 8
     if consumed_octets < len(data):
         raise Asn1Error(
-            f"PER: {len(data) - consumed_octets} trailing octet(s) after the encoding")
-    if reader.pos % 8:
-        # The pad bits of §11.1 must be zero, exactly as `BitReader.align` requires.
-        while reader.pos % 8:
-            if reader.get_bit():
-                raise Asn1Error("PER: non-zero trailing pad bit")
-    return value
+            f"{where}: {len(data) - consumed_octets} trailing octet(s) after the encoding")
+    # The pad bits of §11.1 must be zero, exactly as `BitReader.align` requires.
+    while reader.pos % 8:
+        if reader.get_bit():
+            raise Asn1Error(f"{where}: non-zero trailing pad bit")
 
 
 __all__ = [

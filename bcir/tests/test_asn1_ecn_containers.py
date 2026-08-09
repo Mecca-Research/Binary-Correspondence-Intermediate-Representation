@@ -358,3 +358,51 @@ def test_a_concatenation_is_a_container_a_reference_can_name():
     # And an unnamed concatenation is not reachable by that reference, which the message says.
     anonymous = ConcatenationSpec(fields={"o": optional}, order=("o",))
     _refuses("21.3.6", lambda: encode_with_user(_objects(anonymous), "#C", {"o": 1}))
+
+
+def test_an_absent_container_determined_component_still_ends_its_container():
+    """§21.5.6 read the other way round: ABSENCE is what the trailing bits would deny.
+
+    The test above covers a PRESENT component followed by a mandatory one. The absent case was
+    the one that slipped through, and it is the more dangerous of the two: presence is read
+    back from whether any bits remain in the container, so a following component's bits are
+    exactly the evidence a decoder uses to conclude this component is PRESENT. The encoder
+    guarded its container-end claim on `present`, so `absent o` followed by mandatory `z`
+    emitted happily and produced an encoding that decodes to something else entirely.
+    """
+    optional = OptionalSpec(
+        component=IntSpec(width=8),
+        presence=Optionality(determination=OptionalityDetermination.CONTAINER,
+                             reference=OUTER_CONTAINER))
+    trailing = _concat({"o": optional, "z": IntSpec(width=8)}, ("o", "z"))
+    _refuses("21.3.6", lambda: encode_with_user(trailing, "#C", {"o": 1, "z": 2}))
+    _refuses("21.3.6", lambda: encode_with_user(trailing, "#C", {"z": 2}))
+
+    # With nothing after it the component is the container's end either way, which is the
+    # whole point of the determination -- so both presence states must still encode.
+    alone = _concat({"a": IntSpec(width=8), "o": optional}, ("a", "o"))
+    assert encode_with_user(alone, "#C", {"a": 1, "o": 2}) == bytes((1, 2))
+    assert encode_with_user(alone, "#C", {"a": 1}) == bytes((1,))
+
+
+def test_only_one_encoding_can_be_the_last_one_in_a_container():
+    """The claims were a name-keyed dict, so a second one silently replaced the first.
+
+    `close_container` then validated only the survivor, and an encoding where bits followed the
+    FIRST claimant was accepted with that violation unexamined. Two claims at the same position
+    are not a conflict -- that is one absent component following another, with nothing written
+    in between -- and are still allowed.
+    """
+    optional = OptionalSpec(
+        component=IntSpec(width=8),
+        presence=Optionality(determination=OptionalityDetermination.CONTAINER,
+                             reference=OUTER_CONTAINER))
+    both = _concat({"o": optional, "p": optional}, ("o", "p"))
+
+    # `o` absent claims at bit 0; `p` present writes eight bits and claims at bit 8. Two
+    # claimants, two positions: bits followed the first, which is what its rule forbids.
+    _refuses("only ONE encoding", lambda: encode_with_user(both, "#C", {"p": 2}))
+
+    # Both absent, or the first present and the second absent: one position, no conflict.
+    assert encode_with_user(both, "#C", {}) == b""
+    assert encode_with_user(both, "#C", {"o": 1}) == bytes((1,))
