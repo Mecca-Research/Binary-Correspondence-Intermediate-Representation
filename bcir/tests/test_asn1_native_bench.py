@@ -18,13 +18,18 @@ Skips cleanly when no C compiler is visible, exactly as the other native tests d
 from __future__ import annotations
 
 import os
+import pathlib
 
-from bcir.asn1.certified import MIN_SAMPLES, EncodingCostTable, UnmeasuredTarget, select_certified
+from bcir.asn1.certified import (
+    MIN_SAMPLES, CostRow, EncodingCostTable, UnmeasuredTarget, interval_of,
+    select_certified,
+)
 from bcir.asn1.codec import decode_one, encode_der, encode_tlv
 from bcir.asn1.jer import encode_jer
 from bcir.asn1.native_bench import (
     ENCODE_OPS, NATIVE_OPS, NativeOp, build_harness, measured_table, native_available,
-    observed_encode_partition, run_native_bench, run_native_encode_bench,
+    directed_decode_table, observed_encode_partition, oer_fields_for, run_native_bench,
+    run_native_directed_decode_bench, run_native_encode_bench,
 )
 from bcir.asn1.schema import Component, Primitive, Sequence
 from bcir.asn1.selection import ALL_CANDIDATES, Objective, measure_one
@@ -400,3 +405,122 @@ def test_oer_has_an_encode_row_but_still_no_two_axis_row():
     table = measured_table(_RECORD, _VALUE, target="host", cal_gen=1)
     assert "COER" not in {row.candidate for row in table.rows}
     assert NATIVE_OPS["COER"].permanent and ENCODE_OPS["COER"].native_op == "coer"
+
+
+# --- the schema-directed decode table, which is a second table and not a column ------------
+
+def test_the_two_decode_tables_answer_different_questions_and_cannot_be_confused():
+    """`measured_table` asks *can these octets be walked with no type in hand* — a
+    trust-boundary cost. `directed_decode_table` asks *what does decode cost in deployment,
+    where the type is always known*. Both are true and neither substitutes for the other.
+
+    `decode_kind` is inside the table's digest rather than beside it, so a certificate bound
+    to one can never be mistaken for a certificate bound to the other. Same argument that
+    moves ECN's `SYNTAX_VERSION` when a spelling changes what a decoder reads.
+    """
+    if not native_available():
+        return
+    directed = directed_decode_table(_RECORD, _VALUE, target="host", cal_gen=1)
+    free = measured_table(_RECORD, _VALUE, target="host", cal_gen=1)
+
+    assert directed.decode_kind == "schema-directed"
+    assert free.decode_kind == "schema-free"
+    assert directed.digest() != free.digest(), (
+        "two tables answering different questions must not share a digest")
+
+    # The rows are disjoint, and that is the clause rather than a coincidence: X.696 §6.2
+    # bars OER from the schema-free table, and the X.690/X.697 candidates have no
+    # plan-driven decoder in the C rail to put them in the directed one.
+    assert {r.candidate for r in directed.rows} == {"COER"}
+    assert "COER" not in {r.candidate for r in free.rows}
+
+
+def test_oer_gains_a_two_axis_row_it_could_never_have_had():
+    """The point of the whole exercise. `CostRow` needs an encode *and* a decode interval;
+    CANONICAL-OER has always had the encode number and never a decode one, because §6.2 denies
+    it a schema-free decode permanently. A schema-directed decode closes the row."""
+    if not native_available():
+        return
+    row = next(r for r in directed_decode_table(
+        _RECORD, _VALUE, target="host", cal_gen=1).rows if r.candidate == "COER")
+    assert row.encode.median > 0 and row.decode.median > 0
+    assert row.octets == len(_named("COER")[0].encode(_RECORD, _VALUE))
+
+
+def test_a_table_is_exactly_one_of_the_two_kinds():
+    """Not a flag with a default that could drift — a value the constructor checks."""
+    rows = (CostRow(candidate="COER", octets=9,
+                    encode=interval_of([10] * MIN_SAMPLES),
+                    decode=interval_of([10] * MIN_SAMPLES)),)
+    EncodingCostTable(target="t", cal_gen=1, provenance="measured", rows=rows,
+                      decode_kind="schema-directed")
+    try:
+        EncodingCostTable(target="t", cal_gen=1, provenance="measured", rows=rows,
+                          decode_kind="whichever")
+    except Asn1Error as error:
+        assert "schema-free or schema-directed" in str(error), str(error)
+    else:
+        raise AssertionError("an unnamed decode_kind was accepted")
+
+
+def test_the_field_array_refuses_a_member_it_cannot_map():
+    """A decode timed against the wrong field array is a real number for the wrong work,
+    which is worse than no number. §X.696's kinds are enumerated, so anything outside them is
+    an `Asn1Error` naming the member rather than a guessed field."""
+    from bcir.asn1.encode_plan import compile_encode_plan
+
+    plan = compile_encode_plan(_RECORD, module="bench", type_name="Bench")
+    fields = oer_fields_for(plan)
+    # Eight octets per member, and _RECORD has two.
+    assert len(fields) == 16
+    assert fields[0] == 0            # BCIR_OER_INTEGER for `id`
+    assert fields[8] == 4            # BCIR_OER_VAR_OCTETS for `name`
+
+    nested = Sequence((Component("inner", _RECORD),))
+    try:
+        oer_fields_for(compile_encode_plan(nested, module="b", type_name="B"))
+    except Asn1Error as error:
+        assert "no field kind" in str(error), str(error)
+    else:
+        raise AssertionError("an unmappable member was silently given a field kind")
+
+
+def test_the_directed_table_reports_why_each_candidate_is_absent():
+    """Nine of ten candidates have no schema-directed row, and the reasons are *different
+    kinds* of reason — which is why they are recorded per candidate rather than as one note.
+
+    PER's absence is a **gap**: `bcir_per.h` is a bit reader, and X.691 §7.2 bars only the
+    schema-*free* decode, so a plan-driven PER decoder is buildable work. OER's presence and
+    DER's absence are both **laws**. A single "not supported" would flatten the two.
+    """
+    if not native_available():
+        return
+    _, skipped = run_native_directed_decode_bench(_RECORD, _VALUE)
+    assert "COER" not in skipped
+    assert "GAP" in skipped["CANONICAL-PER-ALIGNED"], (
+        "PER's absence is buildable work and the message must say so")
+    assert "schema-free" in skipped["DER"]
+
+
+def test_the_gate_and_the_harness_link_the_same_sources():
+    """`native_bench._SOURCES` and `check_runtime.sh`'s `#asn1bench` link line are two lists
+    that must agree, and nothing made them.
+
+    They drifted the moment `bcir_oer.c` joined one of them: the Python harness built fine and
+    the C gate failed with an undefined reference to `bcir_oer_decode_sequence` — a link error,
+    minutes into a slow gate, for a one-word omission. This asserts the agreement in the fast
+    tier instead.
+    """
+    import re
+
+    from bcir.asn1.native_bench import _SOURCES
+
+    gate = pathlib.Path(__file__).resolve().parents[2] / "tools" / "c" / "check_runtime.sh"
+    text = gate.read_text()
+    start = text.index("bcir_asn1_bench.c")
+    # The link line runs to the -o that names the binary.
+    line = text[start:text.index('-o "${tmp}/asn1_bench"', start)]
+    linked = set(re.findall(r"bcir_[a-z0-9_]+\.c", line))
+    assert linked == set(_SOURCES), (
+        f"the #asn1bench gate links {sorted(linked)} and native_bench._SOURCES has "
+        f"{sorted(_SOURCES)}; they must be the same set")

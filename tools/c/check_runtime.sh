@@ -3802,7 +3802,7 @@ fi
 echo "[c-runtime] native ASN.1 decode microbench: strict-warning build (#asn1bench)"
 if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
      "${C}/bcir_asn1_bench.c" "${C}/bcir_asn1.c" "${C}/bcir_jer.c" "${C}/bcir_xer.c" \
-     "${C}/bcir_runtime.c" "${C}/bcir_emit.c" -o "${tmp}/asn1_bench"; then
+     "${C}/bcir_runtime.c" "${C}/bcir_emit.c" "${C}/bcir_oer.c" -o "${tmp}/asn1_bench"; then
   printf 'rounds 1 7 8\ncase DER der 3009020102040461\ncase JER jer 7b2261223a317d\nrun\n' \
     > "${tmp}/bench_cases.txt"
   if "${tmp}/asn1_bench" < "${tmp}/bench_cases.txt" | grep -q '^done 2$'; then

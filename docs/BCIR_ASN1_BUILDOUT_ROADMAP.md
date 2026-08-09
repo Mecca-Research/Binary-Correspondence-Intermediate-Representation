@@ -891,7 +891,7 @@ A test pins this as the live gate: it **fails if any fixed candidate ever produc
 octets**, because that is the day the expressiveness argument is false and this section is
 wrong.
 
-### H. K_BCIR encoding selection · **CERTIFIED RAIL BUILT; TARGET CALIBRATION OPEN**
+### H. K_BCIR encoding selection · **CERTIFIED RAIL AND BOTH DECODE TABLES BUILT; TARGET CALIBRATION OPEN**
 
 Encoding rules become a candidate dimension in the optimizer. Given an abstract value,
 a target profile H, live Θ, and an RCSP budget, `K_BCIR` selects the encoding rules the
@@ -915,6 +915,30 @@ Gate: on a bandwidth-capped Θ the optimizer selects UNALIGNED PER over DER and 
 selection is certified; on a decode-latency-capped Θ it selects OER; with no budget it
 reproduces today's DER exactly (the degenerate case, pinning that nothing regresses).
 
+> **The decode-latency gate needed a second table, not a faster clock.** As first written,
+> that gate could never pass: it asks the optimizer to select OER, and OER can never hold a
+> row in the schema-free decode table — X.696 §6.2 denies it a schema-free decode
+> *permanently*, and `CostRow` needs both axes. The blocker was a category error in the
+> table, not missing hardware.
+>
+> `directed_decode_table` is the fix: a **second** table whose `decode` interval is a
+> schema-**directed** measurement, built on `bcir_oer.c`'s plan-driven decoder and the
+> harness's `dircase` arm. CANONICAL-OER now has the two-axis row it could never have had.
+> The two tables are never merged — the schema-free one asks *can untrusted octets be walked
+> with no type in hand*, the directed one asks *what does decode cost in deployment, where the
+> type is always known* — and `EncodingCostTable.decode_kind` is inside the digest, so a
+> certificate bound to one cannot be mistaken for a certificate bound to the other.
+> `COST_TABLE_VERSION` moved to 2 for exactly that reason.
+>
+> **What the gate can and cannot yet show.** The directed table has **one row**, because
+> `bcir_oer.c` is the only plan-driven decoder in the C rail. So "selects OER" is true and
+> *vacuous*: there is nothing to select against. Closing it properly needs a plan-driven PER
+> decoder — `bcir_per.h` has the bit reader (`get_bits`, `constrained`, `length`) and no
+> whole-value decode. That is a **gap, not a law**: X.691 §7.2 bars only the schema-*free*
+> decode and says nothing against a schema-directed one. **Priority: high** — it is the one
+> remaining piece that turns phase H's second gate from answerable into answered, and it needs
+> no hardware.
+>
 > **Measurement status (`bcir/asn1/selection.py`).** Two of the three hold today. The
 > no-budget case reproduces DER exactly, and the bandwidth case selects
 > CANONICAL-PER-UNALIGNED at 84 octets against DER's 136 — decided by arithmetic, so it
