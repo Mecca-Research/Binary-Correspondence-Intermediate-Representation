@@ -2339,12 +2339,48 @@ class StringSpec:
     pre_alignment: PreAlignment | None = None
     start_pointer: StartPointer | None = None
     exhibits: "IdentificationHandle | None" = None
+    #: §22.11's `CONTENTS-ENCODING` group, which §23.2.1's and §23.9.1's `WITH SYNTAX` put on
+    #: **this** class. `None` is §22.11.1.5's "not set".
+    #:
+    #: It lives here rather than on `ContainerSpec` because the two model different things and
+    #: only one of them is what those clauses describe. `ContainerSpec` is the **fixed-width**
+    #: container — it has a stated `width` and no repetition — where a `#BITS` or `#OCTETS`
+    #: object legitimately has *both* a repetition space (how the elements are delimited) and
+    #: a contents encoding (what produces them). Routing §23.9's class through `ContainerSpec`
+    #: would have had to invent a width the clause does not give it.
+    contents: "ContainedType | None" = None
+    #: The X.682 §11 `ENCODED BY` rules, when the contents constraint names any. Present for
+    #: the same reason it is on `ContainerSpec`: §22.11.2's table is a decision *between* this
+    #: and the group above, so neither is meaningful without the other in hand.
+    encoded_by: "dict | None" = None
+    #: The encoding class of the contained type, looked up in whichever set §22.11.2 selects.
+    contained_class: object = None
 
     def __post_init__(self) -> None:
         if self.repetition is None:
             raise Asn1Error(
                 "ECN: §23.2.1 gives a string category no ENCODING-SPACE; its size comes from "
                 "the §22.7 repetition space, so a REPETITION-ENCODING is required")
+        if (self.contents is not None or self.encoded_by is not None) and (
+                self.contained_class is None):
+            raise Asn1Error(
+                "ECN: §22.11.1.3 makes this group's purpose \"to determine the encoding of a "
+                "contained type\", and this object names no contained class for it to "
+                "determine the encoding of")
+
+    def contained_objects(self, containing: dict) -> dict:
+        """§22.11.2 and §13.2.10.6's five-row selection, for a string class.
+
+        The same decision `ContainerSpec.objects_for` makes, and deliberately the same code
+        path through `ContainedType.select`: the table is a property of §22.11, not of which
+        class the group happens to be written on, and two copies of a five-row table where one
+        row already contradicts §22.11.2.2 is two places for that reading to drift.
+        """
+        if self.contents is None:
+            # §22.11.2.1 and §13.2.10.6 a)/d): with the group unset an ENCODED BY wins
+            # outright, and with neither the container's own set is used.
+            return self.encoded_by if self.encoded_by is not None else containing
+        return self.contents.select(encoded_by=self.encoded_by, containing=containing)
 
     def write(self, value, out: "BitWriter") -> None:
         if self.pre_alignment is not None:

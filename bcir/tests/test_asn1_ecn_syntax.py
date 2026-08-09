@@ -15,6 +15,8 @@ ASN.1 type has no slot for the wire order or for the `reserved` bits, because bo
 properties of an encoding structure and neither is a property of a type.
 """
 
+from dataclasses import replace
+
 from bcir.asn1.ecn_syntax import (
     EcnModule, frame_header_module, frame_header_source, parse_module, tokenize,
 )
@@ -180,38 +182,94 @@ def test_the_defined_syntax_is_read_in_the_order_the_with_syntax_gives_it():
         raise AssertionError("properties were accepted out of the syntax's order")
 
 
-def test_the_contained_type_group_is_refused_on_the_keyword_the_clause_actually_uses():
-    """A refusal that fires on the wrong token is not a refusal.
+_CONTENTS = """M ENCODING-DEFINITIONS ::= BEGIN
+  #Inner   ::= #INT
+  #Payload ::= #OCTETS
+  cond #CONDITIONAL-INT ::= { ELSE ENCODING-SPACE SIZE 8 MULTIPLE OF bit ENCODING positive-int }
+  innerEnc #Inner ::= { ENCODING cond }
+  innerSet #ENCODINGS ::= { innerEnc }
+  rep #CONDITIONAL-REPETITION ::= { ELSE REPETITION-SPACE DETERMINED BY not-needed }
+  payObj #Payload ::= { REPETITION-ENCODING rep %s }
+END
+"""
 
-    §22.11.1.2 spells the group `CONTENTS-ENCODING`, and §22.11.1.5 makes that keyword the
-    thing the specification is "considered set" by. The refusal table was keyed on
-    `CONTAINED`, which is **not an ECN keyword at all** — X.692 uses the word only in prose,
-    as in "contained type". So the careful §22.11 citation could only be produced by writing a
-    word no ECN module contains, and the real keyword fell through to whatever the next
-    group's error happened to be: writing `CONTENTS-ENCODING` on a `#PAD` object produced a
-    complaint that `ENCODING-SPACE` is mandatory, which points at an unrelated clause.
 
-    Both halves are asserted, because fixing one without the other would leave the parser
-    answering a question nobody asked.
+def test_an_encoding_object_set_is_assigned_by_union_or_by_builtin_name():
+    """§18.1.1's `EncodingObjectSetAssignment`, which §22.11 needed before it could exist.
+
+    Two forms, both in §18.1.1's `EncodingObjectSet`: §18.1.5's braced union of objects and
+    other sets, and §18.2.1's seven built-in names. The parser has to tell an object-set
+    assignment from an object assignment, and §18.1.2 says what does it — "the
+    EncodingObjectSet notation is **governed by the reserved word #ENCODINGS**".
     """
-    space = "ENCODING-SPACE SIZE 3 MULTIPLE OF bit"
+    module = parse_module(_CONTENTS % "CONTENTS-ENCODING innerSet CONTAINING #Inner")
+    assert sorted(module.object_sets["innerSet"]) == ["#Inner"]
 
-    real = frame_header_source().replace(space, f"{space} CONTENTS-ENCODING mySet", 1)
+    # §18.2.1's built-in names resolve to the sets X.690 and X.691 define.
+    builtin = parse_module("""M ENCODING-DEFINITIONS ::= BEGIN
+  derSet #ENCODINGS ::= DER
+END
+""")
+    assert len(builtin.object_sets["derSet"]) > 1
+
+
+def test_a_set_may_not_hold_two_objects_of_one_class():
+    """§18.1.7: "Encoding objects forming an encoding object set shall all be of distinct
+    encoding classes".
+
+    The rule has teeth precisely where §22.11.2 hands the set to a contained type: two objects
+    for one class make §9.5.2's lookup ambiguous at the point nothing could recover from it.
+    """
+    source = _CONTENTS.replace("innerSet #ENCODINGS ::= { innerEnc }",
+                               "twin #Inner ::= { ENCODING cond }\n"
+                               "  innerSet #ENCODINGS ::= { innerEnc | twin }")
     try:
-        parse_module(real)
+        parse_module(source % "CONTENTS-ENCODING innerSet CONTAINING #Inner")
     except Asn1Error as error:
-        assert "22.11" in str(error), str(error)
-        # And it says why the notation is further off than one slice: §22.11.1.2 hangs the
-        # group off the string categories, and neither of those classes is readable yet.
-        assert "#OCTETS" in str(error), str(error)
+        assert "18.1.7" in str(error) and "#Inner" in str(error), str(error)
     else:
-        raise AssertionError("the real §22.11 keyword was not refused")
+        raise AssertionError("a set held two objects of one class")
 
-    # The word that is not a keyword gets no special treatment. It parses as an ordinary
-    # reference and fails on the grammar, rather than borrowing §22.11's citation.
-    invented = frame_header_source().replace(space, f"{space} CONTAINED BY x", 1)
+
+def test_completed_by_fills_gaps_and_never_overrides():
+    """§18.1.8 sends the braced spec through §13.2 as `PrimaryEncodings`, and §9.23.2 makes
+    that combination left-biased: the completion supplies "an encoding object for any encoding
+    class for which the first set is lacking one". Never the other way round.
+    """
+    source = _CONTENTS.replace(
+        "innerSet #ENCODINGS ::= { innerEnc }",
+        "other #Other ::= { ENCODING cond }\n"
+        "  fallbackSet #ENCODINGS ::= { other }\n"
+        "  innerSet #ENCODINGS ::= { innerEnc } COMPLETED BY fallbackSet").replace(
+        "#Inner   ::= #INT", "#Inner   ::= #INT\n  #Other   ::= #INT")
+    module = parse_module(source % "CONTENTS-ENCODING innerSet CONTAINING #Inner")
+    assert sorted(module.object_sets["innerSet"]) == ["#Inner", "#Other"]
+    # The primary's own object survives the merge -- it is not replaced by the completion.
+    assert module.object_sets["innerSet"]["#Inner"].name == "innerEnc"
+
+
+def test_an_object_set_reaches_the_digest():
+    """Two modules assigning different sets describe different octets for a contained type."""
+    narrow = parse_module(_CONTENTS % "CONTENTS-ENCODING innerSet CONTAINING #Inner")
+    assert b"object-set innerSet #Inner=innerEnc" in narrow.serialize()
+
+
+def test_the_contained_type_group_reads_on_the_keyword_the_clause_actually_uses():
+    """§22.11.1.2 spells the group `CONTENTS-ENCODING`, and it is built on that word.
+
+    This asserted a *refusal* until the group was built, and the refusal itself was keyed on
+    `CONTAINED` until that was checked against the text — a word X.692 uses only in prose, as
+    in "contained type". The test survives the group being built because what it was really
+    pinning is the keyword: `CONTENTS-ENCODING` is read, and `CONTAINED` still means nothing.
+    """
+    module = parse_module(_CONTENTS % "CONTENTS-ENCODING innerSet CONTAINING #Inner")
+    spec = module.objects["payObj"][1]
+    assert sorted(spec.contents.primary) == ["#Inner"]
+    assert spec.contained_class == "#Inner"
+
+    # The word that is not a keyword is still not one.
     try:
-        parse_module(invented)
+        parse_module(_CONTENTS % "CONTAINED BY innerSet")
     except Asn1Error as error:
         assert "22.11" not in str(error), (
             "`CONTAINED` is prose in X.692, not notation; it must not claim §22.11's citation")
@@ -219,165 +277,58 @@ def test_the_contained_type_group_is_refused_on_the_keyword_the_clause_actually_
         raise AssertionError("`CONTAINED BY x` parsed as though it meant something")
 
 
-_REP = """M ENCODING-DEFINITIONS ::= BEGIN
-  #Len ::= #INT
-  %s
-END
-"""
+def test_the_contained_type_group_makes_22_11_2s_choice():
+    """§22.11.2's five-row table, reached from module text for the first time.
 
-
-def test_a_conditional_repetition_object_reads_from_module_text():
-    """§23.14.1's defined syntax — step one of the three that reach §22.11's notation.
-
-    The chain is forced: §22.11.1.2 hangs the contained-type group off §23.2's `#BITS` and
-    §23.9's `#OCTETS`, those string classes take their size from §22.7's repetition space
-    rather than from an `ENCODING-SPACE`, and their `WITH SYNTAX` is therefore written in terms
-    of `REPETITION-ENCODING(S)` — which names objects of this class.
-
-    Read by the same helpers as §23.7's `#CONDITIONAL-INT` on purpose: §23.14.2.1 repeats
-    §23.7.2.2's three-list rule verbatim and §23.14.2.2 repeats §23.7.2.4's "at most one of
-    IF, IF-ALL and ELSE". What differs is the vocabulary — §21.13's `SizeRangeCondition` tests
-    a *size* where §21.11's tests an integer's *value* — and the space group.
+    The row that matters is the last one, where §22.11.2.2 and §13.2.10.6 a) contradict each
+    other: with the group set, an `ENCODED BY` present and `OVERRIDE FALSE`, §13.2.10.6 a) says
+    the `ENCODED BY` stands. `ecn_user.ContainedType.select` is where that reading lives, and
+    routing the string class through it rather than copying the table is the point — one place
+    for a disagreement this repository had to resolve by weight of agreement.
     """
-    module = parse_module(_REP % (
-        "fixed #CONDITIONAL-REPETITION ::= { IF fixed-size "
-        "REPETITION-SPACE SIZE 0 DETERMINED BY not-needed }\n"
-        "  counted #CONDITIONAL-REPETITION ::= { ELSE REPETITION-SPACE SIZE 8 "
-        "MULTIPLE OF bit DETERMINED BY field-to-be-set USING count }"))
+    encoded_by = {"#Inner": "from-ENCODED-BY"}
+    containing = {"#Inner": "from-the-container"}
 
-    fixed_class, fixed = module.objects["fixed"]
-    assert fixed_class == "#CONDITIONAL-REPETITION"
-    assert [c.value for c, _, _ in fixed.conditions] == ["fixed-size"]
-    assert fixed.space.determination.value == "not-needed"
+    override = parse_module(
+        _CONTENTS % "CONTENTS-ENCODING innerSet OVERRIDE TRUE CONTAINING #Inner"
+    ).objects["payObj"][1]
+    declines = parse_module(
+        _CONTENTS % "CONTENTS-ENCODING innerSet CONTAINING #Inner"
+    ).objects["payObj"][1]
 
-    _, counted = module.objects["counted"]
-    assert counted.conditions == ()        # §23.14.2.1: ELSE means no condition.
-    assert counted.space.determination.value == "field-to-be-set"
-    assert counted.space.reference == "count"
-
-
-def test_the_size_condition_vocabulary_is_not_the_integer_ones():
-    """§21.11 and §21.13 are siblings with different predicates, and mixing them is a fault.
-
-    §21.11.4's NOTE says its five partition ("exactly one predicate will be satisfied");
-    §21.13.4's says only `fixed-size` overlaps. So the two sets are not interchangeable, and a
-    parser that read one table for both would let a `#CONDITIONAL-REPETITION` select on a
-    predicate that cannot hold for a size.
-
-    `fixed-size` is §21.13's and not §21.11's, which makes it the sharpest probe in the pair.
-    """
-    ok = parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { IF fixed-size "
-                              "REPETITION-SPACE DETERMINED BY not-needed }"))
-    assert ok.objects["r"][1].conditions[0][0].value == "fixed-size"
-
-    # And an integer-only predicate is refused here, citing §21.13 rather than §21.11.
-    try:
-        parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { IF no-lb-no-ub "
-                             "REPETITION-SPACE DETERMINED BY not-needed }"))
-    except Asn1Error as error:
-        assert "21.13" in str(error), str(error)
-    else:
-        raise AssertionError("a §21.11 predicate was accepted where §21.13's belong")
+    # OVERRIDE TRUE: this group's set wins (§22.11.2.2, §13.2.10.6 b).
+    assert sorted(override.contained_objects(containing)) == ["#Inner"]
+    assert override.contained_objects(containing) is not encoded_by
+    # OVERRIDE FALSE with an ENCODED BY present: §13.2.10.6 a) leaves the ENCODED BY standing.
+    declines = replace(declines, encoded_by=encoded_by)
+    assert declines.contained_objects(containing) == encoded_by
 
 
-def test_the_repetition_space_is_mandatory_and_replaces_the_encoding_space():
-    """§21.7.3 makes the two exclusive, not nested.
+def test_a_contents_encoding_group_must_name_the_type_it_encodes():
+    """§22.11.1.3: the group's purpose is "to determine the encoding of a contained type".
 
-    "The repetition space **replaces** use of an encoding property of type
-    `EncodingSpaceDetermination` in the encoding of repetitions" — so a
-    `#CONDITIONAL-REPETITION` has one and never the other. §23.14.1 gives `REPETITION-SPACE`
-    without brackets, which is the same reading that makes `ENCODING-SPACE` mandatory for
-    `#CONDITIONAL-INT`.
+    X.692 takes that type from the ASN.1 `CONTAINING` constraint through clause 12's link. No
+    ELM section is readable here, so the class is written beside the group — a **deviation,
+    stated**, of the same shape and for the same reason as `#INT`'s `BOUNDS` and `AUXILIARY`.
+    Omitting it is refused rather than defaulted: a contained type nobody named is a set
+    applied to nothing.
     """
     try:
-        parse_module(_REP % "r #CONDITIONAL-REPETITION ::= { ELSE }")
+        parse_module(_CONTENTS % "CONTENTS-ENCODING innerSet")
     except Asn1Error as error:
-        assert "23.14.1" in str(error) and "mandatory" in str(error), str(error)
+        assert "22.11.1.3" in str(error) and "CONTAINING" in str(error), str(error)
     else:
-        raise AssertionError("a #CONDITIONAL-REPETITION with no REPETITION-SPACE was accepted")
+        raise AssertionError("a contents encoding with no contained type was accepted")
 
+
+def test_the_contents_group_names_a_set_the_module_assigns():
+    """§18.1.1's reference has to resolve, or the group selects from nothing."""
     try:
-        parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { ELSE "
-                             "ENCODING-SPACE SIZE 8 MULTIPLE OF bit "
-                             "REPETITION-SPACE DETERMINED BY not-needed }"))
+        parse_module(_CONTENTS % "CONTENTS-ENCODING noSuchSet CONTAINING #Inner")
     except Asn1Error as error:
-        assert "21.7.3" in str(error), str(error)
+        assert "18.1.1" in str(error) and "noSuchSet" in str(error), str(error)
     else:
-        raise AssertionError("an ENCODING-SPACE was accepted on a repetition class")
-
-
-def test_the_one_size_the_clause_forbids_outright_is_refused():
-    """§23.14.2.5: "REPETITION-SPACE SIZE shall not be fixed-to-max".
-
-    Unusual among clause 23's rules in being unconditional rather than a constraint on a
-    combination, which is why it gets its own test.
-    """
-    try:
-        parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { ELSE REPETITION-SPACE "
-                             "SIZE fixed-to-max DETERMINED BY not-needed }"))
-    except Asn1Error as error:
-        assert "23.14.2.5" in str(error), str(error)
-    else:
-        raise AssertionError("SIZE fixed-to-max was accepted")
-
-
-def test_at_most_one_of_if_if_all_and_else():
-    """§23.14.2.2, the same rule §23.7.2.4 states for `#CONDITIONAL-INT`."""
-    try:
-        parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { IF fixed-size ELSE "
-                             "REPETITION-SPACE DETERMINED BY not-needed }"))
-    except Asn1Error as error:
-        assert "23.14.2.2" in str(error), str(error)
-    else:
-        raise AssertionError("both IF and ELSE were accepted")
-
-
-def test_a_conditional_repetition_reaches_the_digest_including_its_stated_size():
-    """A property the parser reads and neither keeps nor acts on is a property it dropped.
-
-    `ecn_user.RepetitionSpace` has no slot for §22.7.1.1's `&repetition-space-size` — that
-    class models how a decoder finds the **end** of a repetition, where the size is a property
-    of the space itself — so the pending record holds it and the serialization emits it. Two
-    modules differing only in a stated size describe different encodings and must not hash
-    alike, which is the whole reason to record something not yet written.
-    """
-    narrow = parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { ELSE REPETITION-SPACE "
-                                  "SIZE 8 MULTIPLE OF bit DETERMINED BY field-to-be-set "
-                                  "USING count }"))
-    wide = parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { ELSE REPETITION-SPACE "
-                                "SIZE 16 MULTIPLE OF bit DETERMINED BY field-to-be-set "
-                                "USING count }"))
-    assert narrow.sha256() != wide.sha256()
-    assert b"conditional-repetition if - size 8" in narrow.serialize()
-
-
-def test_the_element_is_supplied_by_whichever_class_names_the_object():
-    """Why the parser yields a pending record rather than a `ConditionalRepetitionSpec`.
-
-    §23.14.1's syntax carries no element: §23.2.2.1 b) has a `#BITS` object consider its value
-    "as a repetition of bit", and §23.9's and §23.4's classes say the same of octets and
-    characters, so the repeated element belongs to whichever class *names* this object in its
-    `REPETITION-ENCODING(S)`.
-
-    Defaulting the element to something here would have spent
-    `ConditionalRepetitionSpec.__post_init__`'s refusal — "a #CONDITIONAL-REPETITION object
-    encodes a repeated element" — to make the parser tidier. `bind` is the seam instead, and
-    the refusal survives for the case it was written for.
-    """
-    from bcir.asn1.ecn_user import BitFieldSpec, ConditionalRepetitionSpec
-
-    module = parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { ELSE REPETITION-SPACE "
-                                  "DETERMINED BY not-needed }"))
-    pending = module.objects["r"][1]
-    bound = pending.bind(BitFieldSpec(width=1))
-    assert isinstance(bound, ConditionalRepetitionSpec)
-    assert bound.space is pending.space
-    try:
-        ConditionalRepetitionSpec(element=None, space=pending.space)
-    except Asn1Error as error:
-        assert "encodes a repeated element" in str(error)
-    else:
-        raise AssertionError("an element-less spec was accepted")
+        raise AssertionError("an undefined object set was accepted")
 
 
 def test_a_builtin_class_this_grammar_cannot_spell_is_not_called_undefined():
@@ -440,12 +391,10 @@ def test_an_unimplemented_property_group_is_refused_by_name_and_never_skipped():
     """
     space = "ENCODING-SPACE SIZE 3 MULTIPLE OF bit"
     cases = [
-        # Groups this repository has not built. Each names what it would need.
-        #
-        # `CONTENTS-ENCODING`, not `CONTAINED`: this fixture said the latter until it was
-        # checked against the text. See
-        # test_the_contained_type_group_is_refused_on_the_keyword_the_clause_actually_uses.
-        (space, f"{space} CONTENTS-ENCODING mySet", "22.11"),
+        # `CONTENTS-ENCODING` used to be here. It is built now — §18.1's object-set
+        # assignments and §23.2/§23.9's string classes are what it was waiting on — so the
+        # table holds no unbuilt group at all, and every case below is one that IS built and
+        # is written in a way its clause forbids.
         # `REPLACE` used to be here. Its defined syntax is read now, and the fixture above
         # still fails — for a *different* reason: §22.1.2.2 refuses a WITH structure the
         # module never declared. Kept below as a REPLACE test rather than an unimplemented one.
@@ -455,8 +404,9 @@ def test_an_unimplemented_property_group_is_refused_by_name_and_never_skipped():
         # test_an_optional_encoding_marker_pairs_a_component_with_its_optionality_object and
         # test_an_alternatives_structure_encodes_precisely_one_of_its_named_fields.
         #
-        # What that leaves in this table is `CONTENTS-ENCODING`, plus the groups below that
-        # ARE built and are written in a way their clause forbids.
+        # What that leaves is groups that ARE built and are refused where a clause forbids
+        # the way they were written — which is the more interesting half anyway: a parser that
+        # only refused what it had not implemented would accept every one of them.
         # Groups that ARE built, written in a way the clause forbids. These are the more
         # interesting half: a parser that only refused what it had not implemented would
         # accept every one of them. `DETERMINED BY container USING x` used to be on the list
@@ -878,24 +828,6 @@ def test_value_reversal_reaches_the_digest():
     assert b"value-reversal 1" in reversed_.serialize()
 
 
-def test_the_contained_type_group_is_refused_where_its_clause_puts_it():
-    """§22.11.1.2's group appears in §23.2.1's and §23.9.1's `WITH SYNTAX` and nowhere else.
-
-    So this is the first place it can be written on the class that actually carries it — and
-    it is still refused, because the group is slice three. What matters is that the refusal
-    now arrives on the right keyword and from the right class, which is what PR #721's rekey
-    was for: before that, `CONTENTS-ENCODING` here would have produced whatever error the next
-    group happened to raise.
-    """
-    try:
-        parse_module(_STRING.replace("REPETITION-ENCODING rep }",
-                                     "REPETITION-ENCODING rep CONTENTS-ENCODING mySet }") % "")
-    except Asn1Error as error:
-        assert "22.11" in str(error), str(error)
-    else:
-        raise AssertionError("CONTENTS-ENCODING was accepted before it is built")
-
-
 def test_a_class_this_rail_cannot_execute_is_named_rather_than_ignored():
     """This used `#BITS` until §23.2's notation was built.
 
@@ -1171,8 +1103,9 @@ def test_a_parameterized_assignment_reaches_the_digest_governors_and_all():
     # 8 for a module holding several structures — the serialization emits every one of them,
     # so a module that gains a §22.1.2.7 head-end structure no longer hashes as it did — and
     # 9 for §23.14's `#CONDITIONAL-REPETITION`, a kind of object the digest can now contain,
-    # and 10 for §23.2's `#BITS` and §23.9's `#OCTETS`, which add two more.
-    assert SYNTAX_VERSION == 10
+    # 10 for §23.2's `#BITS` and §23.9's `#OCTETS`, which add two more, and 11 for §18.1's
+    # encoding object sets plus §22.11's CONTENTS-ENCODING group on the string classes.
+    assert SYNTAX_VERSION == 11
     base = parse_module(_with_assignments(_LP_STRUCTURE))
     assert b"parameterized #Length-prefixed" in base.serialize()
 

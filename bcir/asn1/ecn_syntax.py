@@ -62,6 +62,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field, replace
 
+from .ecn import BuiltinEncodingObjectSet
 from .ecn_encode import USE_SET, ComponentEncoding, EncodeStructure, GovernorCategory
 from .ecn_param import (
     ActualKind, ActualParameter, ActualParameterList, AssignmentKind, GovernorKind, Parameter,
@@ -72,7 +73,8 @@ from .ecn_user import (
     AlternativeDetermination, AlternativeSelection, AlternativesSpec, ComponentOrder,
     Optionality, OptionalityDetermination, OptionalSpec,
     UNIT_BIT, UNIT_NAMES, UNIT_REPETITIONS, AuxIntSpec, BoolSpec, Comparison, ConcatenationSpec,
-    ConditionalIntSpec, ConditionalRepetitionSpec, EncodingSpaceDetermination,
+    ConditionalIntSpec, ConditionalRepetitionSpec, ContainedType,
+    EncodingSpaceDetermination,
     HeadEndStructure, IntForm, IntOp,
     RESULT_SIZE_FIXED_TO_MAX, RESULT_SIZE_VARIABLE, BitsToBits, BitsToChar,
     BitsToCompositeBits, BitsToInt, BitToBits, BoolToBool, BoolToInt, CharsToCompositeChar,
@@ -91,7 +93,7 @@ from .tags import Asn1Error
 
 #: The serialization's version. Its own counter, not `encode_plan`'s: see this module's
 #: `serialize` for why an ECN encoding is a separate compilation rather than a plan version.
-SYNTAX_VERSION = 10
+SYNTAX_VERSION = 11
 SYNTAX_COMPILER = "bcir-ecn-syntax/1"
 
 #: The bit-field and constructor classes whose defined syntax clause 23 gives, restricted to
@@ -159,24 +161,10 @@ _UNREADABLE_CLASSES = {
 #: Property groups that clause 23 gives every bit-field class and this repository has not
 #: built. Recognized so the refusal can cite; never silently dropped.
 _UNSUPPORTED_KEYWORDS = {
-    # The last one. §22.11's SEMANTICS are built — `ecn_user.ContainedType` and
-    # `ContainerSpec`, with §9.24.2's reference scoping and §13.2.10.6 a)'s object-set
-    # selection, under 17 tests. What this grammar cannot read is the notation.
-    #
-    # **This row was keyed on `CONTAINED` until it was checked against the text, and
-    # `CONTAINED` is not an ECN keyword at all** — X.692 uses the word only in prose, as in
-    # "contained type". §22.11.1.2 spells the group `CONTENTS-ENCODING`, and §22.11.1.5 makes
-    # that keyword the thing the specification is "considered set" by. So the careful citation
-    # below could only ever be produced by writing a word no ECN module contains, while the
-    # real keyword fell through to whatever the next group's error happened to be. A refusal
-    # that fires on the wrong token is not a refusal.
-    "CONTENTS-ENCODING":
-        "§22.11's contained types are built in `ecn_user` and reachable from Python (with "
-        "§9.24.2's reference scoping and §13.2.10.6 a)'s object-set selection); what this "
-        "grammar does not read is the notation. §22.11.1.2 hangs the group off the string "
-        "categories — §23.2's #BITS and §23.9's #OCTETS — and neither of those classes is "
-        "readable here yet, so this notation is two slices away rather than one. Assemble "
-        "`ContainedType` in Python",
+    # §22.11's `CONTENTS-ENCODING` left this table when §18.1's object-set assignments and
+    # §23.2/§23.9's string classes made it writable. It was the last row keyed on a group
+    # this rail did not build; what remains below are groups that ARE built and are refused
+    # where a clause forbids the way they were written.
     # §23.1's `#ALTERNATIVES` and §23.11's `#OPTIONAL` are built in `ecn_user` and reachable
     # from Python; what this grammar cannot read is the STRUCTURE side of them. §16.2.12 names
     # the three: `AlternativesStructure` is §16.3, `RepetitionStructure` is §16.4 and
@@ -1454,6 +1442,85 @@ def _parse_conditional_int_body(cursor: _Cursor, name: str,
 _STRING_ELEMENT_BITS = {"bits": 1, "octets": 8}
 
 
+#: §18.2.1's `BuiltinEncodingObjectSetReference`. Held as names rather than as the sets
+#: themselves so the module is not charged with building seven object sets it may never name.
+_BUILTIN_OBJECT_SETS = {value.value for value in BuiltinEncodingObjectSet}
+
+
+def _parse_object_set_assignment(cursor: _Cursor, module: "EcnModule", name: str) -> None:
+    """§18.1.1's `EncodingObjectSetAssignment`, entered on `#ENCODINGS ::=` having been seen.
+
+    §18.1.5's `EncodingObjectSetSpec` is `"{" EncodingObjects UnionMark* "}"` with
+    `UnionMark ::= "|" | UNION`, and §18.1.6 lets the members be objects **or other sets** —
+    so a set is built by union, and both spellings of the mark mean the same thing.
+
+    §18.1.7 is the rule with teeth and it is checked here: "Encoding objects forming an
+    encoding object set shall all be of distinct encoding classes". A set with two objects for
+    one class would make §9.5.2's lookup ambiguous at the point §22.11.2 hands it to a
+    contained type, which is exactly where nothing could recover.
+
+    §18.1.8's `CompletionClause` — `COMPLETED BY` — makes the braced spec `PrimaryEncodings`
+    and the *assigned* set the §13.2 combination of the two. A left-biased merge, same as
+    §9.23.2's, which `ecn_user.ContainedType.combined` already spells.
+    """
+    if cursor.peek() == "{":
+        primary = _parse_object_set_spec(cursor, module, name)
+    else:
+        token = cursor.next()
+        if token.text not in _BUILTIN_OBJECT_SETS:
+            raise Asn1Error(
+                f"ECN: §18.1.1's EncodingObjectSet is a DefinedOrBuiltinEncodingObjectSet or "
+                f"an §18.1.5 EncodingObjectSetSpec; {token} is neither a `{{` nor one of "
+                f"§18.2.1's {', '.join(sorted(_BUILTIN_OBJECT_SETS))}")
+        from .ecn import builtin_object_set
+
+        primary = {obj.encoding_class.name: obj
+                   for obj in builtin_object_set(
+                       BuiltinEncodingObjectSet(token.text)).objects}
+    if cursor.accept_words("COMPLETED", "BY"):
+        secondary = _parse_object_set_spec(cursor, module, name) if cursor.peek() == "{" \
+            else module.object_set_named(cursor.next().text, name)
+        combined = dict(primary)
+        for class_name, obj in secondary.items():
+            # §18.1.8 -> §13.2 -> §9.23.2: the completion fills gaps and never overrides.
+            combined.setdefault(class_name, obj)
+        primary = combined
+    module.object_sets[name] = primary
+
+
+def _parse_object_set_spec(cursor: _Cursor, module: "EcnModule", owner: str) -> dict:
+    """§18.1.5's braced union of objects and sets."""
+    cursor.expect("{")
+    out: dict = {}
+    while True:
+        token = cursor.next()
+        if token.text == "}":
+            break
+        if token.text in ("|", "UNION"):
+            continue
+        if token.text in module.object_sets:
+            members = module.object_sets[token.text].items()
+        elif token.text in module.objects:
+            class_name, spec = module.objects[token.text]
+            members = ((class_name, module.encoding_object(token.text)),)
+        else:
+            raise Asn1Error(
+                f"ECN: §18.1.6 — an EncodingObjectSetSpec is built from encoding objects or "
+                f"encoding object sets; {owner} names {token.text!r}, which this module "
+                f"defines as neither")
+        for class_name, obj in members:
+            if class_name in out:
+                raise Asn1Error(
+                    f"ECN: §18.1.7 — the encoding objects forming a set shall all be of "
+                    f"distinct encoding classes, and {owner} has two for {class_name}")
+            out[class_name] = obj
+    if not out:
+        raise Asn1Error(
+            f"ECN: §18.1.5 gives an EncodingObjectSetSpec one or more members; {owner} has "
+            f"none, and §9.5.1 makes an empty set unable to encode anything")
+    return out
+
+
 def _parse_string_body(cursor: _Cursor, name: str, module: "EcnModule",
                        category: str) -> StringSpec:
     """§23.2.1's `#BITS` and §23.9.1's `#OCTETS`, which share one `WITH SYNTAX`.
@@ -1505,7 +1572,31 @@ def _parse_string_body(cursor: _Cursor, name: str, module: "EcnModule",
     if cursor.accept("BOUNDS"):
         bounds = SizeBounds(_parse_bound(cursor), _parse_bound(cursor))
     exhibits = _parse_handle_tail(cursor)
-    _refuse_unsupported(cursor)          # §22.11's CONTENTS-ENCODING, which is the next slice.
+    contents = None
+    contained_class = None
+    if cursor.accept("CONTENTS-ENCODING"):
+        # §22.11.1.2's group, on the class §23.2.1 and §23.9.1 actually put it on.
+        primary = module.object_set_named(cursor.next().text, name)
+        secondary = None
+        if cursor.accept_words("COMPLETED", "BY"):
+            secondary = module.object_set_named(cursor.next().text, name)
+        override = False
+        if cursor.accept("OVERRIDE"):
+            override = _parse_boolean(cursor)
+        contents = ContainedType(primary=primary, secondary=secondary, override=override)
+        # §22.11.1.3 makes the group's purpose deciding "the encoding of a contained type", so
+        # the object has to say which class that type is. X.692 takes it from the ASN.1
+        # `CONTAINING` constraint through clause 12's link; with no ELM section readable, this
+        # rail spells it beside the group -- a DEVIATION, stated, of the same shape and for the
+        # same reason as `#INT`'s `BOUNDS` and `AUXILIARY`.
+        if not cursor.accept("CONTAINING"):
+            raise Asn1Error(
+                f"ECN: §22.11.1.3 makes this group's purpose \"to determine the encoding of a "
+                f"contained type\", and {name} names none. X.680 spells the contained type in "
+                f"the ASN.1 `CONTAINING` constraint and clause 12's link carries it here; with "
+                f"no ELM section readable, write `CONTAINING <class>` after the group")
+        contained_class = cursor.next().text
+        module.builtin_of(contained_class)
     _finish(cursor, name)
     element = IntSpec(width=_STRING_ELEMENT_BITS[category])
     encodings = tuple(module.pending_repetition(reference, name).bind(element)
@@ -1514,7 +1605,8 @@ def _parse_string_body(cursor: _Cursor, name: str, module: "EcnModule",
                       repetition=RepetitionSpec(encodings=encodings, bounds=bounds),
                       transform=chain, value_reversal=value_reversal,
                       pre_alignment=common.pre_alignment,
-                      start_pointer=common.start_pointer, exhibits=exhibits)
+                      start_pointer=common.start_pointer, exhibits=exhibits,
+                      contents=contents, contained_class=contained_class)
 
 
 def _parse_int_body(cursor: _Cursor, name: str, module: "EcnModule"):
@@ -2167,6 +2259,8 @@ class EcnModule:
     claimed: set = field(default_factory=set)
     #: Object reference -> `(class name, spec)`.
     objects: dict[str, tuple[str, object]] = field(default_factory=dict)
+    #: §18.1's `EncodingObjectSetAssignment`s: set reference -> class name -> object.
+    object_sets: dict[str, dict] = field(default_factory=dict)
     #: Object reference -> the transform it defines.
     transforms: dict[str, object] = field(default_factory=dict)
     #: C.2's parameterized assignments, by name. Held UNINSTANTIATED, which is X.683 §9.7's
@@ -2286,6 +2380,21 @@ class EcnModule:
                 f"ECN: §23.6.1 gives #INT's ENCODING a #CONDITIONAL-INT object; {name!r} is "
                 f"{'undefined' if entry is None else 'a ' + entry[0] + ' object'}")
         return entry[1]
+
+    def object_set_named(self, name: str, owner: str) -> dict:
+        """§18.1's `encodingobjectsetreference`, resolved to an `encode_with_user` set.
+
+        §18.2.1's seven built-in names resolve through `ecn.builtin_object_set`; anything else
+        is an `EncodingObjectSetSpec` this module assigned. Kept separate from `objects`
+        because §18.1.3 forbids recursive definition *of a set reference* and a set is not an
+        object — a name that meant both would make §18.1.7's distinct-classes rule unanswerable.
+        """
+        if name in self.object_sets:
+            return self.object_sets[name]
+        raise Asn1Error(
+            f"ECN: §18.1.1 — {owner} names the encoding object set {name!r}, and this module "
+            f"assigns no such set; §18.2.1's built-in names are "
+            f"{', '.join(sorted(_BUILTIN_OBJECT_SETS))}")
 
     def pending_repetition(self, name: str, owner: str) -> "PendingConditionalRepetition":
         """The §23.14 object a string class names in its `REPETITION-ENCODING(S)`.
@@ -2540,6 +2649,11 @@ class EcnModule:
             for class_name, spec in applied.items()
         }
 
+    def encoding_object(self, name: str) -> UserEncodingObject:
+        """One named object, in the shape a §18.1 set holds it."""
+        class_name, spec = self.objects[name]
+        return UserEncodingObject(class_name, spec, name)
+
     def _name_of(self, spec) -> str:
         for name, (_class_name, candidate) in self.objects.items():
             if candidate is spec:
@@ -2600,6 +2714,14 @@ class EcnModule:
         # point alone would call them the same specification.
         for structure in self.structures.values():
             out.extend(_structure_lines(structure))
+        for name in sorted(self.object_sets):
+            # By CLASS and object name, sorted: §18.1.5's union has no textual order that
+            # survives it, and two modules writing the same members in different orders assign
+            # the same set. §18.1.7's distinct-classes rule is what makes the class a key.
+            members = " ".join(
+                f"{cls}={getattr(obj, 'name', '') or '-'}"
+                for cls, obj in sorted(self.object_sets[name].items()))
+            out.append(f"object-set {name} {members}")
         for name in sorted(self.transforms):
             out.append(f"transform {name} {_describe(self.transforms[name])}")
         for name in sorted(self.objects):
@@ -2727,11 +2849,21 @@ def _describe(spec) -> str:
         # object the same specification, so two modules that differ only in which spelling
         # they chose describe the same octets and must hash alike.
         encodings = "/".join(_describe(e) for e in spec.repetition.encodings) or "-"
+        if spec.contents is None:
+            contents = "-"
+        else:
+            # §22.11.1.5 makes "the keyword is used" the thing that sets the specification, so
+            # a group naming an empty set is not the same as no group and must not hash alike.
+            contents = (f"primary:{','.join(sorted(spec.contents.primary)) or '-'}"
+                        f"/secondary:"
+                        f"{','.join(sorted(spec.contents.secondary or {})) or '-'}"
+                        f"/override:{int(spec.contents.override)}")
         return (f"string element {spec.element.width} "
                 f"value-reversal {int(spec.value_reversal)} "
                 f"transform {'-' if spec.transform is None else _describe(spec.transform)} "
                 f"bounds {_bound(spec.repetition.bounds.low)}.."
-                f"{_bound(spec.repetition.bounds.high)} repetition {encodings}")
+                f"{_bound(spec.repetition.bounds.high)} repetition {encodings} "
+                f"contents {contents} containing {spec.contained_class or '-'}")
     if isinstance(spec, ConditionalRepetitionSpec):
         # A bound repetition, which is what a string class holds after `bind`. The element is
         # the class's own and already on the line above, so this describes the space alone.
@@ -3051,6 +3183,16 @@ def _parse_assignment(cursor: _Cursor, module: EcnModule) -> None:
         return
 
     class_name = cursor.next().text
+    if class_name == "#ENCODINGS":
+        # §18.1.1: `encodingobjectsetreference #ENCODINGS "::=" EncodingObjectSet`. Told from
+        # an object assignment by the governor alone, which is what §18.1.2 says governs the
+        # notation — "the EncodingObjectSet notation is governed by the reserved word
+        # #ENCODINGS".
+        cursor.expect("::=")
+        if name in module.object_sets:
+            raise Asn1Error(f"ECN: the encoding object set {name} is assigned twice")
+        _parse_object_set_assignment(cursor, module, name)
+        return
     cursor.expect("::=")
     body = _collect_braced(cursor)
     inner = _Cursor(body, f"the encoding object {name}")
