@@ -1194,8 +1194,9 @@ def test_a_parameterized_assignment_reaches_the_digest_governors_and_all():
     # 9 for §23.14's `#CONDITIONAL-REPETITION`, a kind of object the digest can now contain,
     # 10 for §23.2's `#BITS` and §23.9's `#OCTETS`, which add two more, 11 for §18.1's
     # encoding object sets plus §22.11's CONTENTS-ENCODING group on the string classes, and
-    # 12 for §16.4's RepetitionStructure, whose §16.4.2 Size every structure line now carries.
-    assert SYNTAX_VERSION == 12
+    # 12 for §16.4's RepetitionStructure, whose §16.4.2 Size every structure line now carries,
+    # and 13 for §22.1.1.7 e)'s paired group, which two modules can differ in alone.
+    assert SYNTAX_VERSION == 13
     base = parse_module(_with_assignments(_LP_STRUCTURE))
     assert b"parameterized #Length-prefixed" in base.serialize()
 
@@ -1547,6 +1548,87 @@ def _replace_refuses(citation: str, clause: str) -> None:
         assert citation in str(error), (citation, str(error))
         return
     raise AssertionError(f"expected a refusal citing {citation} for {clause!r}")
+
+
+def test_the_second_replacement_group_gives_optionals_a_different_action():
+    """§22.1.1.7 e), the last of the five and the only one that is two groups.
+
+    "All its components ... are to be replaced, with **different** replacement actions for
+    optionals and for non-optionals." §22.1.1.2 spells it as a tail — `AND OPTIONALS WITH
+    &#Replacement-structure2 [ENCODED BY ...2 [INSERT AT HEAD ...2]]` — so the second group
+    repeats the first's whole shape, which is why it is a `Replacement` in its own right
+    rather than extra fields on the first.
+
+    Every component is then covered by exactly one of the two: `selects` partitions on
+    optionality, so `rules()` never has to say which it tried first.
+    """
+    module = parse_module(_replace_module(
+        "REPLACE NON-OPTIONALS WITH #Length-prefixed ENCODED BY lp-object "
+        "AND OPTIONALS WITH #Length-prefixed ENCODED BY lp-object"))
+    replacement = module.objects["joinObj"][1].replacement
+    assert replacement.action is ReplaceAction.NON_OPTIONALS
+    assert replacement.paired is not None
+    assert replacement.paired.action is ReplaceAction.OPTIONALS
+    assert [rule.action for rule in replacement.rules()] == [
+        ReplaceAction.NON_OPTIONALS, ReplaceAction.OPTIONALS]
+
+
+def test_the_second_replacement_group_reaches_the_digest():
+    """Two modules differing only in the tail describe different octets.
+
+    Worth its own test because the first version of this slice did **not** hash them apart:
+    `_replacement` stopped at the first group, so a module that replaced its optionals with a
+    second structure and one that left them alone produced the same digest. A property read and
+    neither kept nor acted on is a property dropped, and here it was one the parser had read
+    correctly all along.
+    """
+    without = parse_module(_replace_module(
+        "REPLACE NON-OPTIONALS WITH #Length-prefixed ENCODED BY lp-object"))
+    with_pair = parse_module(_replace_module(
+        "REPLACE NON-OPTIONALS WITH #Length-prefixed ENCODED BY lp-object "
+        "AND OPTIONALS WITH #Length-prefixed ENCODED BY lp-object"))
+    assert without.sha256() != with_pair.sha256()
+    assert b"and-optionals" in with_pair.serialize()
+
+
+def test_the_second_group_hangs_off_non_optionals_and_only_off_that():
+    """§22.1.1.2's syntax has one slot for the tail and it is on the non-optionals group.
+
+    The mirrored spelling is not a second way to say the same thing — it is a specification
+    the notation cannot express, so it is refused where it is written rather than normalized.
+    Both halves of the pairing are checked, in the parser and again in `Replacement`, because
+    the notation is not the only way to build one: `ecn_user` assembles them from Python too.
+    """
+    for action in ("OPTIONALS", "ALL COMPONENTS", "STRUCTURE"):
+        _replace_refuses("22.1.1.2",
+                         f"REPLACE {action} WITH #Length-prefixed ENCODED BY lp-object "
+                         f"AND OPTIONALS WITH #Length-prefixed ENCODED BY lp-object")
+
+
+def test_a_paired_replacement_is_refused_from_python_too():
+    """The same three rules, at the model rather than at the notation.
+
+    §22.1.1.7 e) is a rule about the *combination*, and `Replacement.__post_init__` is where
+    combinations are checked — so a pair assembled in Python gets the same refusals a parsed
+    one does, including the chain §22.1.1.2 gives no slot for.
+    """
+    from bcir.asn1.ecn_user import Replacement
+
+    module = parse_module(_replace_module(
+        "REPLACE NON-OPTIONALS WITH #Length-prefixed ENCODED BY lp-object "
+        "AND OPTIONALS WITH #Length-prefixed ENCODED BY lp-object"))
+    good = module.objects["joinObj"][1].replacement
+
+    for kwargs, cite in (
+            ({"action": ReplaceAction.OPTIONALS, "paired": good.paired}, "22.1.1.7"),
+            ({"action": ReplaceAction.NON_OPTIONALS, "paired": good}, "22.1.1.2"),
+    ):
+        try:
+            Replacement(structure=good.structure, **kwargs)
+        except Asn1Error as error:
+            assert cite in str(error), (kwargs, str(error))
+        else:
+            raise AssertionError(f"an illegal pairing was accepted: {kwargs}")
 
 
 def test_a_replacement_is_built_from_module_text_end_to_end():
