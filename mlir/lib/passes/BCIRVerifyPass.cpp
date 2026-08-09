@@ -2263,6 +2263,67 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       });
     });
 
+    root->walk([&](EcnParameterizedOp p) {
+      // Annex C.1 pairs every dummy parameter with the governor its kind requires, and the
+      // pairing is a closed table: an encoding class takes none, a value / value set /
+      // ordered value list takes an EncodingClassFieldType, an identifier takes a REFERENCE,
+      // and an object / ordered object list / object set takes a
+      // DefinedOrBuiltinEncodingClass. A dummy governed by anything else names a parameter no
+      // actual could ever satisfy, which is decidable from the operation alone.
+      static const llvm::StringMap<llvm::StringRef> required = {
+          {"encoding-class", ""},
+          {"value", "EncodingClassFieldType"},
+          {"value-set", "EncodingClassFieldType"},
+          {"ordered-value-list", "EncodingClassFieldType"},
+          {"identifier", "REFERENCE"},
+          {"encoding-object", "DefinedOrBuiltinEncodingClass"},
+          {"ordered-encoding-object-list", "DefinedOrBuiltinEncodingClass"},
+          {"encoding-object-set", "DefinedOrBuiltinEncodingClass"},
+      };
+      auto dummies = p.getDummies();
+      auto kinds = p.getParameterKinds();
+      auto governors = p.getGovernors();
+      // C.1's ParameterList is POSITIONAL -- an actual is matched to a dummy by position --
+      // so three lists of different lengths do not describe a parameter list at all.
+      if (dummies.size() != kinds.size() || dummies.size() != governors.size()) {
+        p.emitError("R25: ")
+            << p.getSymName() << " has " << dummies.size() << " dummies, " << kinds.size()
+            << " kinds and " << governors.size() << " governors; Annex C.1's ParameterList "
+            << "is positional, so the three lists describe one parameter each or nothing";
+        ok = false;
+        return;
+      }
+      llvm::StringSet<> seen;
+      for (size_t i = 0; i < dummies.size(); ++i) {
+        auto dummy = llvm::cast<StringAttr>(dummies[i]).getValue();
+        auto kind = llvm::cast<StringAttr>(kinds[i]).getValue();
+        auto governor = llvm::cast<StringAttr>(governors[i]).getValue();
+        if (!seen.insert(dummy).second) {
+          p.emitError("R25: ") << p.getSymName() << " declares the dummy " << dummy
+                               << " twice; X.683 9.7 instantiates by substituting for a "
+                               << "dummy, and a name that means two of them substitutes "
+                               << "unpredictably";
+          ok = false;
+        }
+        auto found = required.find(kind);
+        if (found == required.end()) {
+          p.emitError("R25: ") << p.getSymName() << "'s dummy " << dummy << " has kind "
+                               << kind << ", which is none of Annex C.1's eight";
+          ok = false;
+          continue;
+        }
+        if (found->second != governor) {
+          p.emitError("R25: ")
+              << p.getSymName() << "'s dummy " << dummy << " is a " << kind
+              << " and Annex C.1 governs that with "
+              << (found->second.empty() ? "nothing" : found->second) << ", not "
+              << (governor.empty() ? "nothing" : governor)
+              << "; no actual parameter could satisfy it";
+          ok = false;
+        }
+      }
+    });
+
     root->walk([&](EcnStructureOp s) {
       // 16.3.1's NamedField identifies a field within its structure, and every clause 22
       // REFERENCE names one. Two fields with one name make every such reference
