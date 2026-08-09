@@ -155,6 +155,17 @@ add_target jer "X.697 bounded JER reader" "-max_len=4096" \
 add_target oer "X.696 OER decoder" "-max_len=4096" \
   "${C}/fuzz_oer.c" "${C}/bcir_oer.c"
 
+# X.691's PLAN-DRIVEN decoder, the OER target's opposite number one Recommendation over. The
+# `per` target above covers clause 11's primitives; this one covers the walk that composes
+# them, which is a separate surface because it is what turns a field table into cursor
+# movement. It went in without a fuzzer and two defects lived there: an octet string that did
+# not begin on an octet boundary was reported at the octet CONTAINING it -- a plausible index
+# for the wrong bytes -- and 16.6's short string was refused outright in ALIGNED PER. Both are
+# now pinned by bcir/tests/test_c_per_plan.py; this target covers the arbitrary-octet half.
+# ALIGNED and UNALIGNED are driven separately because they differ at every field boundary.
+add_target perplan "X.691 plan-driven PER decoder" "-max_len=4096" \
+  "${C}/fuzz_per_plan.c" "${C}/bcir_per.c" "${C}/bcir_per_plan.c"
+
 # The plan-driven ENCODER (E2). Its descriptor is fuzzed alongside its value stream, for the
 # same reason the OER target fuzzes its plan: a descriptor and a value that came from
 # different places is the ordinary case, not the exotic one. Two hangs were found this way

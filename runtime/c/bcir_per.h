@@ -101,7 +101,14 @@ bcir_per_status bcir_per_unconstrained(bcir_per_reader *r, int64_t *out);
 /* 11.6: a normally small non-negative whole number. */
 bcir_per_status bcir_per_normally_small(bcir_per_reader *r, uint64_t *out);
 
-/* 11.9.3.4: a normally small LENGTH. Note the n-1 bias, which 11.6 does not have. */
+/* 11.9.3.4: a normally small LENGTH. Note the n-1 bias, which 11.6 does not have.
+ *
+ * CAVEAT for a future caller: on the 11.9.3.4 escape this delegates to bcir_per_length and
+ * DISCARDS its `more` flag, so a count that named a 16K fragment rather than the final piece
+ * is returned as though it were final. No decode path calls this today -- it exists for
+ * primitive parity with per.py, driven only by test_per.c and fuzz_per.c -- and wiring it into
+ * one without surfacing `more` would truncate a fragmented length silently, which is exactly
+ * what 11.9.3.8.3's loop exists to prevent. Expose the flag before that first real caller. */
 bcir_per_status bcir_per_normally_small_length(bcir_per_reader *r, uint64_t *out);
 
 /* 11.9: one length determinant.
