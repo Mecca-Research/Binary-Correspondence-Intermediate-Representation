@@ -403,3 +403,39 @@ def test_a_continuation_flag_goes_through_its_encoder_transforms():
     writer = BitWriter()
     spec.write([{"v": 7}, {"v": 8}], writer)
     assert writer.octets() == bytes((0, 7, 1, 8))
+
+
+def test_a_boolean_field_is_a_legal_continuation_flag():
+    """§21.7.7 reads a **boolean** from the referenced field, so a boolean field is its most
+    natural spelling — and it used to fail.
+
+    `ConcatenationSpec.write` recorded abstract values for `field-to-be-used` and excluded
+    booleans, which was right while §21.3.5 was the only reader: that clause reads a *length*
+    and a boolean is not one. §21.7.7 is the reader that wants exactly a boolean, so a
+    `BoolSpec` flag raised §21.3.5's "carries no abstract value" instead of validating.
+
+    Found by review on PR #728. The tests there used an integer flag, which is why they
+    passed.
+    """
+    from bcir.asn1.ecn_user import BoolSpec
+
+    element = ConcatenationSpec(fields={"more": BoolSpec(width=8), "v": _OCTET},
+                                order=("more", "v"))
+    space = RepetitionSpace(determination=RepetitionSpaceDetermination.FLAG_TO_BE_USED,
+                            reference="more")
+    spec = StringSpec(
+        element=element,
+        repetition=RepetitionSpec((ConditionalRepetitionSpec(element=element, space=space),),
+                                  SizeBounds(0, None)))
+    writer = BitWriter()
+    spec.write([{"more": True, "v": 7}, {"more": False, "v": 8}], writer)
+    assert writer.octets() == bytes((1, 7, 0, 8))
+
+    # And the check still fires: a boolean saying "more follow" on the last element is the
+    # encoding §21.7.7 forbids, exactly as it is for an integer flag.
+    try:
+        spec.write([{"more": True, "v": 7}, {"more": True, "v": 8}], BitWriter())
+    except Asn1Error as error:
+        assert "21.7.7" in str(error), str(error)
+    else:
+        raise AssertionError("a boolean flag misidentifying the last element was accepted")

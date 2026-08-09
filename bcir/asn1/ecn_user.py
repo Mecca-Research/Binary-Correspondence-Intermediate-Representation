@@ -2085,8 +2085,16 @@ class ConcatenationSpec:
             out.mark_start(name)
             # Recorded before writing so §21.3.5's `field-to-be-used` can read the abstract
             # value rather than re-derive it from bits it would have to un-transform.
-            if isinstance(value[name], int) and not isinstance(value[name], bool):
-                out.record_value(name, value[name])
+            #
+            # Booleans are recorded too, as their integer value. They were excluded while
+            # §21.3.5 was the only reader, and reasonably: that clause reads a *length*, and a
+            # boolean is not one. §21.7.7 reads a **boolean** by definition — "the encoding
+            # specification determines how a decoder is to obtain a boolean value from the
+            # value of this field" — so the natural spelling of a continuation flag is a
+            # boolean field, and excluding it made that spelling fail with §21.3.5's words
+            # about a field that "carries no abstract value".
+            if isinstance(value[name], (int, bool)):
+                out.record_value(name, int(value[name]))
             spec.write(value[name], out)
         if self.container_name:
             out.close_container(self.container_name)
