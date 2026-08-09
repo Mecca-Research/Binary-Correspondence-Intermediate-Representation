@@ -872,6 +872,31 @@ than from an `ENCODING-SPACE` — so their `WITH SYNTAX` is written in terms of
 `REPETITION-ENCODING(S)`, and §23.14's `#CONDITIONAL-REPETITION` has to be readable first. The
 order is: `#CONDITIONAL-REPETITION`, then the string classes, then `CONTENTS-ENCODING`.
 
+**Step one is built: §23.14's `#CONDITIONAL-REPETITION` reads from module text**, at
+`SYNTAX_VERSION` 9. It is deliberately read by §23.7's helpers, because §23.14.2.1 repeats
+§23.7.2.2's three-list rule verbatim and §23.14.2.2 repeats §23.7.2.4's "at most one of `IF`,
+`IF-ALL` and `ELSE`". Two things genuinely differ, and both are the point:
+
+- **The predicate vocabulary is §21.13's, not §21.11's.** They are siblings over different
+  quantities — a *size* against an integer's *value* — and §21.11.4's NOTE says its five
+  partition where §21.13.4's says only `fixed-size` overlaps. One table for both would let a
+  specification select on a predicate that cannot hold, so there are two tables and the
+  refusal cites the clause whose vocabulary was expected.
+- **`REPETITION-SPACE` replaces `ENCODING-SPACE` rather than varying it.** §21.7.3 says so in
+  as many words, so an object carrying both is refused; and §23.14.1 gives `REPETITION-SPACE`
+  no brackets, which makes it mandatory on the same reading that makes `ENCODING-SPACE`
+  mandatory for `#CONDITIONAL-INT`. §23.14.2.5's flat prohibition on `SIZE fixed-to-max` is
+  checked where it is written.
+
+**Two decisions worth keeping.** The parser yields a `PendingConditionalRepetition`, not a
+`ConditionalRepetitionSpec`: §23.14.1's syntax carries no element, because §23.2.2.1 b) has the
+*referencing* class supply it ("the bits are then considered as a repetition of bit"). Inventing
+a placeholder element would have spent `ConditionalRepetitionSpec.__post_init__`'s refusal to
+make the parser tidier, so `bind` is the seam and the refusal survives. And §22.7.1.1's
+`&repetition-space-size` has no slot on `ecn_user.RepetitionSpace` — that class models how a
+decoder finds the **end** of a repetition — so the pending record holds it and the digest emits
+it. A property read and neither kept nor acted on is a property dropped.
+
 **A stale test this slice found.** `test_a_nested_encoding_structure_is_refused_rather_than_flattened`
 asserted `"16.2.1" in str(error)`, and the error it actually got was §16.2.**12**'s — a
 different rule about a different fault, matching on a substring. It had been passing for the

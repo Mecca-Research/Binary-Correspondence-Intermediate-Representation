@@ -219,6 +219,167 @@ def test_the_contained_type_group_is_refused_on_the_keyword_the_clause_actually_
         raise AssertionError("`CONTAINED BY x` parsed as though it meant something")
 
 
+_REP = """M ENCODING-DEFINITIONS ::= BEGIN
+  #Len ::= #INT
+  %s
+END
+"""
+
+
+def test_a_conditional_repetition_object_reads_from_module_text():
+    """§23.14.1's defined syntax — step one of the three that reach §22.11's notation.
+
+    The chain is forced: §22.11.1.2 hangs the contained-type group off §23.2's `#BITS` and
+    §23.9's `#OCTETS`, those string classes take their size from §22.7's repetition space
+    rather than from an `ENCODING-SPACE`, and their `WITH SYNTAX` is therefore written in terms
+    of `REPETITION-ENCODING(S)` — which names objects of this class.
+
+    Read by the same helpers as §23.7's `#CONDITIONAL-INT` on purpose: §23.14.2.1 repeats
+    §23.7.2.2's three-list rule verbatim and §23.14.2.2 repeats §23.7.2.4's "at most one of
+    IF, IF-ALL and ELSE". What differs is the vocabulary — §21.13's `SizeRangeCondition` tests
+    a *size* where §21.11's tests an integer's *value* — and the space group.
+    """
+    module = parse_module(_REP % (
+        "fixed #CONDITIONAL-REPETITION ::= { IF fixed-size "
+        "REPETITION-SPACE SIZE 0 DETERMINED BY not-needed }\n"
+        "  counted #CONDITIONAL-REPETITION ::= { ELSE REPETITION-SPACE SIZE 8 "
+        "MULTIPLE OF bit DETERMINED BY field-to-be-set USING count }"))
+
+    fixed_class, fixed = module.objects["fixed"]
+    assert fixed_class == "#CONDITIONAL-REPETITION"
+    assert [c.value for c, _, _ in fixed.conditions] == ["fixed-size"]
+    assert fixed.space.determination.value == "not-needed"
+
+    _, counted = module.objects["counted"]
+    assert counted.conditions == ()        # §23.14.2.1: ELSE means no condition.
+    assert counted.space.determination.value == "field-to-be-set"
+    assert counted.space.reference == "count"
+
+
+def test_the_size_condition_vocabulary_is_not_the_integer_ones():
+    """§21.11 and §21.13 are siblings with different predicates, and mixing them is a fault.
+
+    §21.11.4's NOTE says its five partition ("exactly one predicate will be satisfied");
+    §21.13.4's says only `fixed-size` overlaps. So the two sets are not interchangeable, and a
+    parser that read one table for both would let a `#CONDITIONAL-REPETITION` select on a
+    predicate that cannot hold for a size.
+
+    `fixed-size` is §21.13's and not §21.11's, which makes it the sharpest probe in the pair.
+    """
+    ok = parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { IF fixed-size "
+                              "REPETITION-SPACE DETERMINED BY not-needed }"))
+    assert ok.objects["r"][1].conditions[0][0].value == "fixed-size"
+
+    # And an integer-only predicate is refused here, citing §21.13 rather than §21.11.
+    try:
+        parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { IF no-lb-no-ub "
+                             "REPETITION-SPACE DETERMINED BY not-needed }"))
+    except Asn1Error as error:
+        assert "21.13" in str(error), str(error)
+    else:
+        raise AssertionError("a §21.11 predicate was accepted where §21.13's belong")
+
+
+def test_the_repetition_space_is_mandatory_and_replaces_the_encoding_space():
+    """§21.7.3 makes the two exclusive, not nested.
+
+    "The repetition space **replaces** use of an encoding property of type
+    `EncodingSpaceDetermination` in the encoding of repetitions" — so a
+    `#CONDITIONAL-REPETITION` has one and never the other. §23.14.1 gives `REPETITION-SPACE`
+    without brackets, which is the same reading that makes `ENCODING-SPACE` mandatory for
+    `#CONDITIONAL-INT`.
+    """
+    try:
+        parse_module(_REP % "r #CONDITIONAL-REPETITION ::= { ELSE }")
+    except Asn1Error as error:
+        assert "23.14.1" in str(error) and "mandatory" in str(error), str(error)
+    else:
+        raise AssertionError("a #CONDITIONAL-REPETITION with no REPETITION-SPACE was accepted")
+
+    try:
+        parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { ELSE "
+                             "ENCODING-SPACE SIZE 8 MULTIPLE OF bit "
+                             "REPETITION-SPACE DETERMINED BY not-needed }"))
+    except Asn1Error as error:
+        assert "21.7.3" in str(error), str(error)
+    else:
+        raise AssertionError("an ENCODING-SPACE was accepted on a repetition class")
+
+
+def test_the_one_size_the_clause_forbids_outright_is_refused():
+    """§23.14.2.5: "REPETITION-SPACE SIZE shall not be fixed-to-max".
+
+    Unusual among clause 23's rules in being unconditional rather than a constraint on a
+    combination, which is why it gets its own test.
+    """
+    try:
+        parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { ELSE REPETITION-SPACE "
+                             "SIZE fixed-to-max DETERMINED BY not-needed }"))
+    except Asn1Error as error:
+        assert "23.14.2.5" in str(error), str(error)
+    else:
+        raise AssertionError("SIZE fixed-to-max was accepted")
+
+
+def test_at_most_one_of_if_if_all_and_else():
+    """§23.14.2.2, the same rule §23.7.2.4 states for `#CONDITIONAL-INT`."""
+    try:
+        parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { IF fixed-size ELSE "
+                             "REPETITION-SPACE DETERMINED BY not-needed }"))
+    except Asn1Error as error:
+        assert "23.14.2.2" in str(error), str(error)
+    else:
+        raise AssertionError("both IF and ELSE were accepted")
+
+
+def test_a_conditional_repetition_reaches_the_digest_including_its_stated_size():
+    """A property the parser reads and neither keeps nor acts on is a property it dropped.
+
+    `ecn_user.RepetitionSpace` has no slot for §22.7.1.1's `&repetition-space-size` — that
+    class models how a decoder finds the **end** of a repetition, where the size is a property
+    of the space itself — so the pending record holds it and the serialization emits it. Two
+    modules differing only in a stated size describe different encodings and must not hash
+    alike, which is the whole reason to record something not yet written.
+    """
+    narrow = parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { ELSE REPETITION-SPACE "
+                                  "SIZE 8 MULTIPLE OF bit DETERMINED BY field-to-be-set "
+                                  "USING count }"))
+    wide = parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { ELSE REPETITION-SPACE "
+                                "SIZE 16 MULTIPLE OF bit DETERMINED BY field-to-be-set "
+                                "USING count }"))
+    assert narrow.sha256() != wide.sha256()
+    assert b"conditional-repetition if - size 8" in narrow.serialize()
+
+
+def test_the_element_is_supplied_by_whichever_class_names_the_object():
+    """Why the parser yields a pending record rather than a `ConditionalRepetitionSpec`.
+
+    §23.14.1's syntax carries no element: §23.2.2.1 b) has a `#BITS` object consider its value
+    "as a repetition of bit", and §23.9's and §23.4's classes say the same of octets and
+    characters, so the repeated element belongs to whichever class *names* this object in its
+    `REPETITION-ENCODING(S)`.
+
+    Defaulting the element to something here would have spent
+    `ConditionalRepetitionSpec.__post_init__`'s refusal — "a #CONDITIONAL-REPETITION object
+    encodes a repeated element" — to make the parser tidier. `bind` is the seam instead, and
+    the refusal survives for the case it was written for.
+    """
+    from bcir.asn1.ecn_user import BitFieldSpec, ConditionalRepetitionSpec
+
+    module = parse_module(_REP % ("r #CONDITIONAL-REPETITION ::= { ELSE REPETITION-SPACE "
+                                  "DETERMINED BY not-needed }"))
+    pending = module.objects["r"][1]
+    bound = pending.bind(BitFieldSpec(width=1))
+    assert isinstance(bound, ConditionalRepetitionSpec)
+    assert bound.space is pending.space
+    try:
+        ConditionalRepetitionSpec(element=None, space=pending.space)
+    except Asn1Error as error:
+        assert "encodes a repeated element" in str(error)
+    else:
+        raise AssertionError("an element-less spec was accepted")
+
+
 def test_a_builtin_class_this_grammar_cannot_spell_is_not_called_undefined():
     """Seven X.692 classes were being reported as though they did not exist.
 
@@ -250,11 +411,17 @@ def test_a_builtin_class_this_grammar_cannot_spell_is_not_called_undefined():
     # A genuine typo still gets the general message, or the new one would have swallowed it.
     assert "is not a built-in encoding class" in refusal("#NONSENSE")
 
-    # The seven are the ones `ecn_user` builds. A class in neither table would be a class this
-    # repository has not modelled at all, and there is no such thing in clause 23 today.
+    # These are the ones `ecn_user` builds and this grammar cannot yet spell. A class in
+    # neither table would be one this repository has not modelled at all, and there is no such
+    # thing in clause 23 today.
+    #
+    # The set SHRINKS as classes become readable, which is why it is pinned exactly rather
+    # than by membership: §23.14's `#CONDITIONAL-REPETITION` left it when its defined syntax
+    # was built, and this assertion is what made that a deliberate edit instead of a silent
+    # one. §23.2/§23.4/§23.9's string classes are next, and then the table is down to
+    # §23.13's `#REPETITION`, §23.8's `#NUL` and §23.15's `#TAG`.
     assert set(_UNREADABLE_CLASSES) == {
-        "#BITS", "#CHARS", "#OCTETS", "#NUL", "#TAG",
-        "#REPETITION", "#CONDITIONAL-REPETITION",
+        "#BITS", "#CHARS", "#OCTETS", "#NUL", "#TAG", "#REPETITION",
     }
 
 
@@ -842,8 +1009,9 @@ def test_a_parameterized_assignment_reaches_the_digest_governors_and_all():
 
     # 4 for EXHIBITS HANDLE, 5 for Annex C, 6 for §16.5's marker, 7 for §16.3's structure,
     # 8 for a module holding several structures — the serialization emits every one of them,
-    # so a module that gains a §22.1.2.7 head-end structure no longer hashes as it did.
-    assert SYNTAX_VERSION == 8
+    # so a module that gains a §22.1.2.7 head-end structure no longer hashes as it did — and
+    # 9 for §23.14's `#CONDITIONAL-REPETITION`, a kind of object the digest can now contain.
+    assert SYNTAX_VERSION == 9
     base = parse_module(_with_assignments(_LP_STRUCTURE))
     assert b"parameterized #Length-prefixed" in base.serialize()
 
