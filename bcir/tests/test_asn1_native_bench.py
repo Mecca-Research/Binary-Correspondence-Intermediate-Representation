@@ -524,3 +524,65 @@ def test_the_gate_and_the_harness_link_the_same_sources():
     assert linked == set(_SOURCES), (
         f"the #asn1bench gate links {sorted(linked)} and native_bench._SOURCES has "
         f"{sorted(_SOURCES)}; they must be the same set")
+
+
+def test_the_directed_table_now_has_something_to_select_against():
+    """The whole point of the plan-driven PER decoder.
+
+    PR #719 built `directed_decode_table` as a second table because X.696 §6.2 denies OER a
+    schema-free decode permanently, and `CostRow` needs both axes. It had **one** row, which
+    made "selects OER on decode latency" true and *vacuous*: a selection over one candidate is
+    not a selection.
+
+    X.691 §7.2 bars only the schema-**free** decode of PER, so the missing rows were a gap in
+    this repository rather than a prohibition in the standard — and closing it needed no
+    hardware, which is why it outranked every other phase-H item.
+    """
+    from bcir.asn1.native_bench import directed_decode_table
+
+    if not native_available():
+        return
+    table = directed_decode_table(_RECORD, _VALUE, target="host", cal_gen=1)
+    assert table.decode_kind == "schema-directed"
+    names = {row.candidate for row in table.rows}
+    assert "COER" in names
+    assert {"CANONICAL-PER-ALIGNED", "CANONICAL-PER-UNALIGNED"} <= names, names
+    # Every row carries BOTH axes, which is what the schema-free table could never give OER.
+    for row in table.rows:
+        assert row.encode.median > 0 and row.decode.median > 0, row
+
+
+def test_the_two_per_variants_are_timed_separately_because_they_differ_everywhere():
+    """ALIGNED and UNALIGNED are one field table and two decoders.
+
+    `bcir_per_align` is the only difference at a field boundary — but it is at *every*
+    boundary, so a rail that timed one and reported it for both would be reporting a number it
+    never measured. They get separate rows and separate ops for that reason.
+    """
+    from bcir.asn1.native_bench import DIRECTED_DECODE_OPS
+
+    assert DIRECTED_DECODE_OPS["CANONICAL-PER-ALIGNED"] == "per-d-aligned"
+    assert DIRECTED_DECODE_OPS["CANONICAL-PER-UNALIGNED"] == "per-d-unaligned"
+    assert DIRECTED_DECODE_OPS["CANONICAL-PER-ALIGNED"] != \
+        DIRECTED_DECODE_OPS["CANONICAL-PER-UNALIGNED"]
+
+
+def test_the_per_field_table_refuses_a_member_it_cannot_map():
+    """Same discipline as `oer_fields_for`: a member outside the stated subset raises rather
+    than becoming a guessed field, because a decode timed against the wrong field array is a
+    real number for the wrong work."""
+    from bcir.asn1.native_bench import per_fields_for
+    from bcir.asn1.encode_plan import compile_encode_plan
+
+    plan = compile_encode_plan(_RECORD, module="t", type_name="T")
+    text = per_fields_for(plan)
+    # kind:bounds:lb:ub:fixed:optional, one per member, and nothing else.
+    assert all(len(field.split(":")) == 6 for field in text.split(",")), text
+
+    nested = Sequence((Component("inner", _RECORD),), name="Outer")
+    try:
+        per_fields_for(compile_encode_plan(nested, module="t", type_name="Outer"))
+    except Asn1Error as error:
+        assert "no field kind" in str(error), str(error)
+    else:
+        raise AssertionError("a member outside the stated subset was mapped anyway")
