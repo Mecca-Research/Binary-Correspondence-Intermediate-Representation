@@ -54,7 +54,7 @@ from .tags import Asn1Error
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
 _SOURCES = ["bcir_asn1_bench.c", "bcir_asn1.c", "bcir_jer.c", "bcir_xer.c",
-            "bcir_runtime.c", "bcir_emit.c", "bcir_oer.c"]
+            "bcir_runtime.c", "bcir_emit.c", "bcir_oer.c", "bcir_per.c", "bcir_per_plan.c"]
 
 
 @dataclass(frozen=True)
