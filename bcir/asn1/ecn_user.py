@@ -2238,7 +2238,15 @@ class RepetitionSpace:
         yet reach.
         """
         if self.determination is RepetitionSpaceDetermination.FLAG_TO_BE_SET:
-            out.patch(self.reference, int(more))
+            # Through `ENCODER-TRANSFORMS`, like every other determinant this rail sets:
+            # `UnusedBits.record` and `SpaceDeterminant.record` both go through
+            # `_determinant_value`, and a flag is not a different kind of thing. Patching the
+            # raw boolean would make an active-low continuation bit — a `BoolToInt` with
+            # `true_zero` — emit the complement of what its specification asks for, and it
+            # would do so silently, since nothing downstream re-derives the flag.
+            out.patch(self.reference,
+                      _determinant_value(self.encoder_transforms, int(more),
+                                         f"the continuation flag {self.reference}"))
             return
         carried = out.value_of(self.reference)
         recovered = (carried if self.decoder_transforms is None

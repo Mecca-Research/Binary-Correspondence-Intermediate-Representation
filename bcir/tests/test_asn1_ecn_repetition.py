@@ -375,3 +375,31 @@ def test_every_repetition_space_determination_is_now_built():
     """§21.7.1 lists eight and all eight encode. The tuple is asserted whole rather than by
     membership, so a determination added to the enum without an encoder action fails here."""
     assert set(RepetitionSpace._BUILT) == set(RepetitionSpaceDetermination)
+
+
+def test_a_continuation_flag_goes_through_its_encoder_transforms():
+    """§22.7.1.1 gives the repetition space `ENCODER-TRANSFORMS`, and a flag is a determinant
+    like any other — `UnusedBits.record` and `SpaceDeterminant.record` both set theirs through
+    `_determinant_value`, and this one was patching the raw boolean.
+
+    An active-low continuation bit is the case that shows it: `BoolToInt(true_zero=True)` maps
+    "more follow" to 0, so a two-element repetition writes 0 then 1 rather than 1 then 0. The
+    old code emitted the complement of what the specification asked for, and silently, since
+    nothing downstream re-derives the flag from the octets.
+
+    Found by review on the pull request, not by the tests here, which is why it now has one.
+    """
+    from bcir.asn1.ecn_user import BoolToInt, TransformChain
+
+    element = ConcatenationSpec(fields={"more": AuxIntSpec(width=8), "v": _OCTET},
+                                order=("more", "v"))
+    space = RepetitionSpace(determination=RepetitionSpaceDetermination.FLAG_TO_BE_SET,
+                            reference="more",
+                            encoder_transforms=TransformChain((BoolToInt(true_zero=True),)))
+    spec = StringSpec(
+        element=element,
+        repetition=RepetitionSpec((ConditionalRepetitionSpec(element=element, space=space),),
+                                  SizeBounds(0, None)))
+    writer = BitWriter()
+    spec.write([{"v": 7}, {"v": 8}], writer)
+    assert writer.octets() == bytes((0, 7, 1, 8))
