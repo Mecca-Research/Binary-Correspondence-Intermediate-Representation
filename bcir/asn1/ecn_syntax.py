@@ -71,8 +71,9 @@ from .ecn_param import (
 from .ecn_user import (
     AlternativeDetermination, AlternativeSelection, AlternativesSpec, ComponentOrder,
     Optionality, OptionalityDetermination, OptionalSpec,
-    UNIT_BIT, UNIT_NAMES, AuxIntSpec, BoolSpec, Comparison, ConcatenationSpec,
-    ConditionalIntSpec, EncodingSpaceDetermination, HeadEndStructure, IntForm, IntOp,
+    UNIT_BIT, UNIT_NAMES, UNIT_REPETITIONS, AuxIntSpec, BoolSpec, Comparison, ConcatenationSpec,
+    ConditionalIntSpec, ConditionalRepetitionSpec, EncodingSpaceDetermination,
+    HeadEndStructure, IntForm, IntOp,
     RESULT_SIZE_FIXED_TO_MAX, RESULT_SIZE_VARIABLE, BitsToBits, BitsToChar,
     BitsToCompositeBits, BitsToInt, BitToBits, BoolToBool, BoolToInt, CharsToCompositeChar,
     CharToBits, CompositeBitsToBits, CompositeBitsToOctets, CompositeCharToChars,
@@ -80,7 +81,8 @@ from .ecn_user import (
     IntSelector, IntSpec, IntToBits, IntToBool, IntToChars, IntToInt, IntegerBounds,
     Justification, OctetsToCompositeBits, OuterSpec,
     PadSpec, Padding, Pattern, PreAlignment, RangeCondition, ReplaceAction, Replacement,
-    ReplacementStructure, ReversalSpecification, SpaceDeterminant, StartPointer,
+    ReplacementStructure, RepetitionSpace, RepetitionSpaceDetermination, ReversalSpecification,
+    SizeRangeCondition, SpaceDeterminant, StartPointer,
     TransformChain, UnusedBits, UnusedBitsDetermination, UserEncodingObject, ValuePadding,
     check_unit,
 )
@@ -88,7 +90,7 @@ from .tags import Asn1Error
 
 #: The serialization's version. Its own counter, not `encode_plan`'s: see this module's
 #: `serialize` for why an ECN encoding is a separate compilation rather than a plan version.
-SYNTAX_VERSION = 8
+SYNTAX_VERSION = 9
 SYNTAX_COMPILER = "bcir-ecn-syntax/1"
 
 #: The bit-field and constructor classes whose defined syntax clause 23 gives, restricted to
@@ -118,6 +120,7 @@ _BUILTIN_CLASSES = {
     "#OPTIONAL": "optional",
     "#ALTERNATIVES": "alternatives",
     "#OUTER": "outer",
+    "#CONDITIONAL-REPETITION": "conditional-repetition",
 }
 
 #: X.692's built-in encoding classes whose SEMANTICS this repository builds and whose
@@ -135,7 +138,9 @@ _BUILTIN_CLASSES = {
 #: their `WITH SYNTAX` is written in terms of `REPETITION-ENCODING(S)` — which means
 #: §23.14's `#CONDITIONAL-REPETITION` has to be readable before any of the three can be.
 _UNREADABLE_CLASSES = {
-    "#CONDITIONAL-REPETITION": ("§23.14", "`ecn_user.ConditionalRepetitionSpec`"),
+    # `#CONDITIONAL-REPETITION` was the first row here and is now in `_BUILTIN_CLASSES`:
+    # §23.14.1's defined syntax reads, which is step one of the three this table's ordering
+    # note describes.
     "#REPETITION": ("§23.13", "`ecn_user.RepetitionSpec`"),
     "#BITS": ("§23.2", "`ecn_user.StringSpec`"),
     "#CHARS": ("§23.4", "`ecn_user.StringSpec`"),
@@ -384,6 +389,12 @@ _PADDING_NAMES = {value.value: value for value in Padding}
 _SPACE_DETERMINATIONS = {value.value: value for value in EncodingSpaceDetermination}
 _REVERSALS = {value.value: value for value in ReversalSpecification}
 _RANGE_CONDITIONS = {value.value: value for value in RangeCondition}
+
+#: §21.13.1's `SizeRangeCondition`, which §23.14's `IF`/`IF-ALL` test instead of §21.11's.
+#: A separate table rather than a merged one: §21.11.4's NOTE says its five predicates
+#: partition, and §21.13.4's says only `fixed-size` overlaps — so accepting one clause's names
+#: where the other's belong would let a specification select on a predicate that cannot hold.
+_SIZE_RANGE_CONDITIONS = {value.value: value for value in SizeRangeCondition}
 _COMPARISONS = {value.value: value for value in Comparison}
 
 
@@ -912,8 +923,13 @@ def _parse_bit_reversal(cursor: _Cursor) -> ReversalSpecification:
             f"({', '.join(sorted(_REVERSALS))})") from None
 
 
-def _parse_conditions(cursor: _Cursor, all_of: bool):
+def _parse_conditions(cursor: _Cursor, all_of: bool, *, table=None, clause: str = "§21.11.1"):
     """§23.7.1's `[IF &c [&comparison &comparator]]` and `[IF-ALL {..} [{..} {..}]]`.
+
+    `table` selects which clause's predicates the names are read against — §21.11's
+    `RangeCondition` for `#CONDITIONAL-INT`, §21.13's `SizeRangeCondition` for
+    `#CONDITIONAL-REPETITION`. §23.14.2.1 repeats §23.7.2.2's three-list rule word for word,
+    which is why one function reads both and only the vocabulary differs.
 
     §23.7.2.2 gives `IF-ALL` either one list or three: "shall be used with three lists if one
     or more of the size-range-conditions require a comparison, and shall be used with one list
@@ -921,8 +937,10 @@ def _parse_conditions(cursor: _Cursor, all_of: bool):
     in corresponding positions in the three lists". So the three-list form is transposed here
     into one list of triples, which is what the clause says it means.
     """
+    table = _RANGE_CONDITIONS if table is None else table
+    what = f"{clause}'s {'SizeRangeCondition' if table is _SIZE_RANGE_CONDITIONS else 'RangeCondition'}"
     if not all_of:
-        condition = _named(cursor.next(), _RANGE_CONDITIONS, "§21.11.1's RangeCondition")
+        condition = _named(cursor.next(), table, what)
         if condition.needs_comparison():
             comparison = _named(cursor.next(), _COMPARISONS, "§21.12.1's Comparison")
             token = cursor.next()
@@ -933,7 +951,7 @@ def _parse_conditions(cursor: _Cursor, all_of: bool):
                     f"ECN: §21.11.5 gives {condition.value} an integer comparator; "
                     f"got {token}") from None
         return ((condition, None, None),)
-    conditions = [_named(Token(name, 0), _RANGE_CONDITIONS, "§21.11.1's RangeCondition")
+    conditions = [_named(Token(name, 0), table, what)
                   for name in _parse_reference_list(cursor)]
     if cursor.peek() != "{":
         if any(condition.needs_comparison() for condition in conditions):
@@ -1207,6 +1225,170 @@ _INT_ENCODINGS = {
     "positive-int": IntForm.POSITIVE_INT,
     "twos-complement": IntForm.TWOS_COMPLEMENT,
 }
+
+
+_REPETITION_DETERMINATIONS = {value.value: value for value in RepetitionSpaceDetermination}
+
+_REPETITION_ALIGNMENTS = {"none": False, "aligned": True}
+
+
+def _parse_repetition_space(cursor: _Cursor, module: "EcnModule") -> tuple[str, RepetitionSpace]:
+    """§22.7.1.2's `REPETITION-SPACE [SIZE ..] [DETERMINED BY ..] [USING ..] [PATTERN ..]`.
+
+    §22.4's encoding space's sibling, not its special case. §21.7.3 is explicit: this group
+    "**replaces** use of an encoding property of type `EncodingSpaceDetermination` in the
+    encoding of repetitions", so the two have different determination vocabularies and one
+    parser for both would have to accept each clause's names in the other's place.
+
+    `REPETITION-SPACE` carries no brackets in §23.14.1's `WITH SYNTAX`, so it is mandatory —
+    the same reading that makes `ENCODING-SPACE` mandatory for `#CONDITIONAL-INT`.
+    """
+    size = "self-delimiting-values"          # §23.14.1's DEFAULT.
+    unit = UNIT_REPETITIONS
+    if cursor.accept("SIZE"):
+        token = cursor.next()
+        if token.text == "fixed-to-max":
+            raise Asn1Error(
+                f"ECN: §23.14.2.5 — the REPETITION-SPACE SIZE shall not be `fixed-to-max`; "
+                f"{token} is one of the few property values a clause forbids outright rather "
+                f"than conditions")
+        size = token.text
+        if cursor.accept_words("MULTIPLE", "OF"):
+            unit = _parse_unit(cursor)
+    if size == "self-delimiting-values" and unit == UNIT_REPETITIONS:
+        # §23.14.2.6: with that pair "the number of repetitions shall be constrained by bounds
+        # to a single value". The bounds come from the type through clause 12, which this
+        # object cannot see, so the rule is recorded here and checked where the bounds are.
+        pass
+    determination = RepetitionSpaceDetermination.FIELD_TO_BE_SET   # §23.14.1's DEFAULT.
+    handle_id = "default-handle"
+    if cursor.accept_words("DETERMINED", "BY"):
+        token = cursor.next()
+        try:
+            determination = _REPETITION_DETERMINATIONS[token.text]
+        except KeyError:
+            raise Asn1Error(
+                f"ECN: {token} names no value of §21.7.1's RepetitionSpaceDetermination "
+                f"({', '.join(sorted(_REPETITION_DETERMINATIONS))})") from None
+        if cursor.accept("HANDLE"):
+            handle_id = cursor.next().text
+    reference = ""
+    encoder = decoder = None
+    if cursor.accept("USING"):
+        reference = cursor.next().text
+        if cursor.accept("ENCODER-TRANSFORMS"):
+            encoder = TransformChain(module.transform_list(_parse_reference_list(cursor)))
+        if cursor.accept("DECODER-TRANSFORMS"):
+            decoder = TransformChain(module.transform_list(_parse_reference_list(cursor)))
+    pattern = None
+    if cursor.accept("PATTERN"):
+        pattern = _parse_pattern(cursor)
+    return size, RepetitionSpace(
+        determination=determination, reference=reference, unit=unit,
+        termination_pattern=pattern, encoder_transforms=encoder,
+        decoder_transforms=decoder, handle_id=handle_id)
+
+
+@dataclass(frozen=True)
+class PendingConditionalRepetition:
+    """§23.14's object body, read, with its element still to come.
+
+    `ecn_user.ConditionalRepetitionSpec` requires an `element` — the encoding of the thing
+    being repeated — and a `#CONDITIONAL-REPETITION` assignment does not carry one. That is
+    the clause's doing, not an omission here: §23.2.2.1 b) has a `#BITS` object consider its
+    value "as a repetition of bit", and §23.9's and §23.4's classes say the same of octets and
+    characters, so the element belongs to whichever class *names* this object in its
+    `REPETITION-ENCODING(S)`.
+
+    So the notation is read now and bound later, and `bind` is the seam. Holding a pending
+    record rather than defaulting the element keeps `ConditionalRepetitionSpec.__post_init__`'s
+    refusal intact: an object with no element is a fault when it is applied, and inventing a
+    placeholder here would spend that check to make a parser tidier.
+    """
+
+    conditions: tuple = ()
+    space: RepetitionSpace = field(default_factory=RepetitionSpace)
+    pre_alignment: PreAlignment | None = None
+    #: §23.14.1's `[ALIGNMENT &repetition-alignment]`, `ENUMERATED {none, aligned}`.
+    aligned: bool = False
+    #: §22.7.1.1's `&repetition-space-size`, as written. Held HERE rather than on
+    #: `RepetitionSpace`, which has no slot for it: that class models how a decoder finds the
+    #: **end** of a repetition, and the size is a property of the space itself. Recorded rather
+    #: than dropped — a parser that read a property and neither kept nor acted on it would be
+    #: accepting specifications it cannot honour — and it reaches the digest, so two modules
+    #: differing only in a stated size never hash alike. Binding it into a written encoding is
+    #: the string classes' job (§23.2.2.1 b), which is the slice after this one.
+    size: str = "self-delimiting-values"
+
+    def bind(self, element) -> ConditionalRepetitionSpec:
+        """The spec this becomes once the referencing class supplies the repeated element."""
+        return ConditionalRepetitionSpec(
+            element=element, space=self.space, pre_alignment=self.pre_alignment,
+            conditions=self.conditions)
+
+
+def _parse_conditional_repetition_body(cursor: _Cursor, name: str,
+                                       module: "EcnModule") -> PendingConditionalRepetition:
+    """§23.14.1's `#CONDITIONAL-REPETITION`, which is where a repetition's encoding lives.
+
+    The same shape as §23.7's `#CONDITIONAL-INT` one clause over, and deliberately read by the
+    same helpers: §23.14.2.1 repeats §23.7.2.2's three-list rule verbatim and §23.14.2.2
+    repeats §23.7.2.4's "at most one of IF, IF-ALL and ELSE". What differs is the vocabulary —
+    §21.13's `SizeRangeCondition` tests the *size* bounds where §21.11's tests an integer's
+    *value* bounds — and the space group, which §21.7.3 makes a replacement for §22.4's rather
+    than a variant of it.
+    """
+    conditions = ()
+    if cursor.accept("IF"):
+        conditions = _parse_conditions(cursor, all_of=False,
+                                       table=_SIZE_RANGE_CONDITIONS, clause="§21.13.1")
+    elif cursor.accept("IF-ALL"):
+        conditions = _parse_conditions(cursor, all_of=True,
+                                       table=_SIZE_RANGE_CONDITIONS, clause="§21.13.1")
+    elif not cursor.accept("ELSE"):
+        pass
+    if cursor.peek() in ("IF", "IF-ALL", "ELSE"):
+        raise Asn1Error(
+            f"ECN: §23.14.2.2 — at most one of IF, IF-ALL and ELSE shall be present; {name} "
+            f"has a second")
+    # §23.14.1 gives REPLACE, ALIGNED TO and START-POINTER in that order before the space,
+    # which is `_parse_common`'s order because §23.3.3.1's encoder actions are what both
+    # follow. `space_required=False`: this class has a REPETITION-SPACE instead, and demanding
+    # an ENCODING-SPACE here would ask for the group §21.7.3 says it replaces.
+    common = _parse_common(cursor, module, space_required=False, owner=name)
+    if common.space.size is not None or common.space.determinant is not None:
+        raise Asn1Error(
+            f"ECN: §21.7.3 — the repetition space \"replaces use of an encoding property of "
+            f"type EncodingSpaceDetermination in the encoding of repetitions\"; {name} writes "
+            f"an ENCODING-SPACE, and §23.14.1's WITH SYNTAX gives this class REPETITION-SPACE")
+    if not cursor.accept("REPETITION-SPACE"):
+        raise Asn1Error(
+            f"ECN: §23.14.1's WITH SYNTAX gives `REPETITION-SPACE` without brackets, so it is "
+            f"mandatory rather than optional; {name} has none")
+    size, space = _parse_repetition_space(cursor, module)
+    aligned = False
+    if cursor.accept("ALIGNMENT"):
+        aligned = _named(cursor.next(), _REPETITION_ALIGNMENTS,
+                         "§23.14.1's &repetition-alignment ENUMERATED {none, aligned}")
+    # §23.14.1 puts VALUE-PADDING, EXHIBITS HANDLE and BIT-REVERSAL after the alignment, in
+    # §23.3.3.1's order again. They are read so the grammar is complete and refused where the
+    # spec has no slot for them, rather than left to be a syntax error about a stray word.
+    padding = _parse_value_padding_tail(cursor, module)
+    exhibits = _parse_handle_tail(cursor)
+    reversal = _parse_reversal_tail(cursor)
+    for written, what in ((padding, "VALUE-PADDING"), (exhibits, "EXHIBITS HANDLE"),
+                          (reversal if reversal is not ReversalSpecification.NO_REVERSAL
+                           else None, "BIT-REVERSAL")):
+        if written is not None:
+            raise Asn1Error(
+                f"ECN: §23.14.1 gives {name} a `{what}` group and "
+                f"`ecn_user.ConditionalRepetitionSpec` has no slot for it; the group is read "
+                f"and refused rather than dropped, because an encoder that ignored it would "
+                f"write octets the specification does not describe")
+    _finish(cursor, name)
+    return PendingConditionalRepetition(
+        conditions=conditions, space=space, pre_alignment=common.pre_alignment,
+        aligned=aligned, size=size)
 
 
 def _parse_conditional_int_body(cursor: _Cursor, name: str,
@@ -2447,6 +2629,23 @@ def _describe(spec) -> str:
             + (f":{comparison.value}:{comparator}" if comparison is not None else "")
             for condition, comparison, comparator in spec.conditions) or "-"
         return f"conditional-int if {conditions} then {_describe(spec.spec)}"
+    if isinstance(spec, PendingConditionalRepetition):
+        # Every property that reaches the octets, including the ones whose values are §23.14.1
+        # DEFAULTs: a module that states `DETERMINED BY field-to-be-set` and one that lets it
+        # default describe the same encoding and must hash the same, which they do because the
+        # parser resolves the default before this sees it.
+        conditions = "/".join(
+            f"{condition.value}"
+            + (f":{comparison.value}:{comparator}" if comparison is not None else "")
+            for condition, comparison, comparator in spec.conditions) or "-"
+        space = spec.space
+        pattern = "-" if space.termination_pattern is None else _describe(
+            space.termination_pattern)
+        return (f"conditional-repetition if {conditions} size {spec.size} space "
+                f"{space.determination.value} unit {space.unit} "
+                f"reference {space.reference or '-'} handle {space.handle_id} "
+                f"pattern {pattern} aligned {int(spec.aligned)} "
+                f"pre-alignment {'-' if spec.pre_alignment is None else _describe(spec.pre_alignment)}")
     if isinstance(spec, IntSelector):
         chosen = "/".join(_name_of_condition(entry) for entry in spec.encodings) or "-"
         return (f"int-selector bounds {_bound(spec.bounds.low)}..{_bound(spec.bounds.high)} "
@@ -2752,6 +2951,8 @@ def _parse_assignment(cursor: _Cursor, module: EcnModule) -> None:
 
     if builtin == "conditional-int":
         spec = _parse_conditional_int_body(inner, name, module)
+    elif builtin == "conditional-repetition":
+        spec = _parse_conditional_repetition_body(inner, name, module)
     elif builtin == "int":
         spec = _parse_int_body(inner, name, module)
     elif builtin == "bool":
