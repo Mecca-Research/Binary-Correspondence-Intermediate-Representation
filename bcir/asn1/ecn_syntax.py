@@ -1854,7 +1854,8 @@ def _parse_bare_reference(cursor: _Cursor) -> ParameterizedReference:
     return ParameterizedReference(name)
 
 
-def _parse_alternatives_body(cursor: _Cursor, name: str, module: "EcnModule"
+def _parse_alternatives_body(cursor: _Cursor, name: str, module: "EcnModule",
+                             governor: str = ""
                              ) -> AlternativesSpec:
     """§23.1's `#ALTERNATIVES`, whose alternatives come from the §16.3 structure.
 
@@ -1894,11 +1895,10 @@ def _parse_alternatives_body(cursor: _Cursor, name: str, module: "EcnModule"
             determination=determination, reference=reference, handle_id=handle_id,
             handle_set=handle_set, ordering=ordering)
     _finish(cursor, name)
-    structure = module.require_structure(category="alternatives")
-    alternatives = {}
-    for field_name, class_name in structure:
-        alternatives[field_name] = module.optional_wrapped(
-            field_name, module.spec_for_class(class_name, field_name))
+    own = module.structure_for_class(governor, "alternatives")
+    structure = own.fields
+    alternatives = {field_name: module.field_spec(own, field_name, class_name)
+                    for field_name, class_name in structure}
     return AlternativesSpec(alternatives=alternatives,
                             order=tuple(n for n, _ in structure), selection=selection,
                             pre_alignment=common.pre_alignment,
@@ -2029,7 +2029,8 @@ def _parse_encode_structure(cursor: _Cursor, name: str, module: "EcnModule"
                              padding=padding)
 
 
-def _parse_concatenation_body(cursor: _Cursor, name: str, module: "EcnModule"
+def _parse_concatenation_body(cursor: _Cursor, name: str, module: "EcnModule",
+                              governor: str = ""
                               ) -> ConcatenationSpec:
     """§23.5.1's `#CONCATENATION`, whose components come from the §16.5 structure.
 
@@ -2070,11 +2071,10 @@ def _parse_concatenation_body(cursor: _Cursor, name: str, module: "EcnModule"
             "(§22.10.2.4) and `random` needs disjoint identification handles (§22.10.2.1). "
             "`textual` is built, and §22.10.3.1 takes it from the ECN structure definition")
     _finish(cursor, name)
-    structure = module.require_structure()
-    fields = {}
-    for field_name, class_name in structure:
-        fields[field_name] = module.optional_wrapped(
-            field_name, module.spec_for_class(class_name, field_name))
+    own = module.structure_for_class(governor, "concatenation")
+    structure = own.fields
+    fields = {field_name: module.field_spec(own, field_name, class_name)
+              for field_name, class_name in structure}
     padding = tuple(
         field_name for field_name, class_name in structure
         if isinstance(fields[field_name], PadSpec))
@@ -2225,6 +2225,10 @@ class Structure:
     name: str
     #: §16.2.12's category: `"concatenation"` (§16.5) or `"alternatives"` (§16.3).
     category: str
+    #: The `ConcatenationClass`/`AlternativesClass`/`RepetitionClass` governing it. §16.5.6
+    #: pairs an encoding object with the structure "applied to **this** structure", and the
+    #: class is what makes the pairing findable from the object's side.
+    base: str = ""
     fields: tuple[tuple[str, str], ...] = ()
     #: §16.5.1's `ConcatComponentPresence`: field name -> the optionality class marking it.
     #:
@@ -2402,6 +2406,59 @@ class EcnModule:
             f"assigns no such set; §18.2.1's built-in names are "
             f"{', '.join(sorted(_BUILTIN_OBJECT_SETS))}")
 
+    def structure_for_class(self, class_name: str, category: str) -> "Structure":
+        """The structure an object of `class_name` is applied to (§16.5.6, §16.3.3).
+
+        Before §16.2.1's nesting there was one structure and one constructor object, so
+        "the module's structure" and "the structure this object governs" were the same thing
+        and `require_structure` could answer both. With a nested field they part company: a
+        module has an object for the outer class and one for the nested class, and each is
+        applied to its own level. An inner object handed the outer field list would encode the
+        parent's components in the child's position — well-formed octets of the wrong shape.
+
+        Searched depth-first from the application point, because §16.5.6 sends the application
+        point *into* the named fields, so the outer structure is reached before its children.
+        """
+        shapes = {"concatenation": "a §16.5 ConcatenationStructure",
+                  "alternatives": "a §16.3 AlternativesStructure"}
+
+        def walk(structure: "Structure"):
+            yield structure
+            for name, _cls in structure.fields:
+                inner = structure.nested.get(name)
+                if inner is not None:
+                    yield from walk(inner)
+
+        if not self.structures:
+            raise Asn1Error(
+                f"ECN: an object in the {category} category takes its components from "
+                f"{shapes[category]}, and this module declares none")
+        for structure in walk(self.application_structure()):
+            if structure.base == class_name:
+                if structure.category != category:
+                    raise Asn1Error(
+                        f"ECN: §16.2.12 — an object in the {category} category needs "
+                        f"{shapes[category]}; {structure.name} is "
+                        f"{shapes[structure.category]}")
+                return structure
+        raise Asn1Error(
+            f"ECN: §16.5.6 applies an encoding object to the structure its class governs, and "
+            f"no structure reachable from this module's §13.2 application point is governed "
+            f"by {class_name}")
+
+    def field_spec(self, structure: "Structure", field_name: str, class_name: str):
+        """One field's encoding, descending into a §16.2.1 nested structure when there is one.
+
+        §16.5.6 is the sentence this implements: a concatenation "is an encoding constructor:
+        when an encoding object is applied to this structure ... the application point then
+        **proceeds to each of the `EncodingStructure`s in its named fields**". §16.3.3 says the
+        same for alternatives. So a nested field is encoded by the object applied to the
+        *nested* structure — one object per level — which `structure_for_class` found for that
+        object when its own body was read. Here the field simply takes it.
+        """
+        return self.optional_wrapped(
+            field_name, self.spec_for_class(class_name, field_name), structure=structure)
+
     def pending_repetition(self, name: str, owner: str) -> "PendingConditionalRepetition":
         """The §23.14 object a string class names in its `REPETITION-ENCODING(S)`.
 
@@ -2439,7 +2496,6 @@ class EcnModule:
             raise Asn1Error(
                 f"ECN: §16.2.12 — an object in the {category} category needs "
                 f"{shapes[category]}; {applied.name} is {shapes[applied.category]}")
-        _refuse_nested_application(applied)
         return applied.fields
 
     def replacement_structure(self, name: str, owner: str) -> ParameterizedAssignment:
@@ -2500,7 +2556,6 @@ class EcnModule:
             raise Asn1Error(
                 f"ECN: §22.1.2.7 — {name} is this module's §13.2 application point, and "
                 f"{owner} would insert it before the components of the structure it *is*")
-        _refuse_nested_application(declared)
         self.claimed.add(name)
         auxiliary = {
             field_name: self.optional_wrapped(
@@ -2645,10 +2700,14 @@ class EcnModule:
             applied[class_name] = self.spec_for_class(class_name, _field_name)
         for name, (class_name, spec) in self.objects.items():
             if isinstance(spec, (ConcatenationSpec, OuterSpec)):
-                if class_name in applied:
+                if applied.get(class_name) not in (None, spec):
                     raise Asn1Error(
                         f"ECN: §9.5.2 permits a set at most one object per class, and "
                         f"{class_name} already has one; {name} would be a second")
+                # `is not spec` rather than `in applied`: since §16.2.1's nesting, a field of
+                # the application structure may itself carry a constructor class, so the loop
+                # above legitimately adds the very object this loop is about to. §9.5.2 forbids
+                # a SECOND object for a class, not the same one reached two ways.
                 applied[class_name] = spec
         return {
             class_name: UserEncodingObject(class_name, spec, self._name_of(spec))
@@ -2737,28 +2796,6 @@ class EcnModule:
 
     def sha256(self) -> str:
         return hashlib.sha256(self.serialize()).hexdigest()
-
-
-def _refuse_nested_application(structure: "Structure") -> None:
-    """A structure with a §16.2.1 nested field is read, hashed — and not yet *encoded*.
-
-    §16.5.6's application point "proceeds to each of the `EncodingStructure`s", one level at a
-    time, so a nested field is encoded by an object applied to the nested structure and not by
-    the object applied to its parent. This rail builds one object per structure from a flat
-    field list, and applying that object to a parent whose field is a whole structure would
-    give the nested field the *parent's* encoding — well-formed octets in the wrong shape,
-    which is the failure mode this package refuses everywhere else rather than emits.
-
-    So the notation is read and reaches the digest, and the application is refused by name.
-    Recognized rather than skipped, for the same reason `_UNSUPPORTED_KEYWORDS` is.
-    """
-    nested = sorted(structure.nested)
-    if nested:
-        raise Asn1Error(
-            f"ECN: {structure.name} nests an EncodingStructure at {nested}, and §16.5.6 "
-            f"applies an encoding object to each level in turn — this rail applies one object "
-            f"to one flat field list, so it reads the nesting and refuses to encode it rather "
-            f"than give the nested fields their parent's encoding")
 
 
 def _structure_lines(structure: "Structure") -> list[str]:
@@ -3230,9 +3267,9 @@ def _parse_assignment(cursor: _Cursor, module: EcnModule) -> None:
     elif builtin == "optional":
         spec = _parse_optional_body(inner, name, module)
     elif builtin == "alternatives":
-        spec = _parse_alternatives_body(inner, name, module)
+        spec = _parse_alternatives_body(inner, name, module, class_name)
     else:
-        spec = _parse_concatenation_body(inner, name, module)
+        spec = _parse_concatenation_body(inner, name, module, class_name)
 
     # §9.5.2 is NOT checked here, and the clause is why: the rule is about "encoding object
     # SET construction", and a module is not a set. A `#CONDITIONAL-INT` object is reached by
@@ -3373,7 +3410,7 @@ def _read_structure(cursor: _Cursor, module: EcnModule, name: str, base: str,
             f"ECN: the structure {name} nests deeper than {_MAX_STRUCTURE_DEPTH} levels; "
             f"§16.2.1 sets no limit and this one is the reader's, so that a runaway module "
             f"fails with this sentence rather than a stack overflow")
-    structure = Structure(name=name, category=category)
+    structure = Structure(name=name, category=category, base=base)
     if category == "repetition":
         return _read_repetition_structure(cursor, module, structure, depth=depth)
     body = _collect_braced(cursor)

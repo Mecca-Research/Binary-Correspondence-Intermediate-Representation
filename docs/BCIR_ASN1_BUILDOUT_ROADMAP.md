@@ -957,6 +957,30 @@ are the only productions that bracket with parentheses, and they arrived with th
 is deliberately *not* punctuation — a bare `.` is a token nothing else in ECN wants, so
 `0..MAX` arrives as one word and is split where it is read.
 
+**§16.5.6's per-level application is built**, and the nested notation from slice H1 now
+encodes. "The application point then proceeds to each of the `EncodingStructure`s in its named
+fields" — one object per level.
+
+The blocker was not the descent but the *pairing*. Before nesting there was one structure and
+one constructor object, so "the module's structure" and "the structure this object governs"
+were the same question and `require_structure` answered both. With a nested field they part
+company: a module has an object for the outer class and one for the inner, and an inner object
+handed the outer field list would encode the parent's components in the child's position.
+`Structure` now records the class governing it, and `structure_for_class` walks from the
+application point to find the level an object belongs to — which also makes the two objects
+resolvable in either declaration order, since each reads only its own fields.
+
+A first attempt at this shipped `field_spec` alone and was reverted: it removed the refusal
+without fixing the pairing, so the inner object's body tried to resolve the outer structure —
+including itself — and failed §9.5.2 with "0 objects in this module". The refusal was worth
+more than the half-fix.
+
+One guard needed widening with it. `object_set` refused a second constructor object per class
+by testing `class_name in applied`, which was right when no field could carry a constructor
+class; a nested field legitimately does, so the loop above now adds the very object the second
+loop is about to. §9.5.2 forbids a **second** object for a class, not the same one reached two
+ways.
+
 **§23.4's `#CHARS` stayed unreadable, and the reason is stated.** It shares the same
 `WITH SYNTAX`, but its repeated element is a *character* whose width comes from the ASN.1
 type's character set through clause 12's link, where §23.2's bit and §23.9's octet are
@@ -1277,7 +1301,7 @@ sentence in a standard rather than a preference.
 | **CXER** | X.693 | **out** | complete | — |
 | **JER** | X.697 | in | clauses 20–41, §7.2 constraint visibility, cl. 14–19 encoding instructions with cl. 13 precedence | cl. 10–11 assignment syntax (X.680 surface) — **low**, it is notation not encoding |
 | **BCIR canonical JER** | *BCIR-private* | **out** | complete; versioned, carries **no** standards OID | — |
-| **ECN** | X.692 | both | cl. 9–25 model, EDM/ELM, the seven built-in object sets, the user-defined half, multi-structure modules with §22.1.2.7's `INSERT AT HEAD`, and clause 20's defined syntax read from module text | four named refusals (§G) — **low to medium**; §22.11's contained-type notation, §18.1's encoding object sets and §16.4's `RepetitionStructure` are all **built**. What remains: §22.1.1.7 e)'s second replacement group, §21.7.6/§21.7.7's continuation flag, R25's Annex C parameterization coverage, and §16.5.6's per-level application of a nested structure |
+| **ECN** | X.692 | both | cl. 9–25 model, EDM/ELM, the seven built-in object sets, the user-defined half, multi-structure modules with §22.1.2.7's `INSERT AT HEAD`, and clause 20's defined syntax read from module text | three named refusals (§G) — **low to medium**; §22.11's contained-type notation, §18.1's encoding object sets, §16.4's `RepetitionStructure` and §16.5.6's per-level application are all **built**. What remains: §22.1.1.7 e)'s second replacement group, §21.7.6/§21.7.7's continuation flag, and R25's Annex C parameterization coverage |
 
 ### 9.2 Excluded by design, with the sentence that excludes them
 
