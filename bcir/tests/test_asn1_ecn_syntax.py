@@ -300,21 +300,139 @@ def test_order_tag_and_order_random_are_refused_with_what_they_would_require():
             raise AssertionError(f"ORDER {order} was accepted without its prerequisites")
 
 
-def test_a_nested_encoding_structure_is_refused_rather_than_flattened():
-    """§16.2.1 admits a field that is itself a structure; this rail walks one flat level.
+_NEST = """BCIR-Nest ENCODING-DEFINITIONS ::= BEGIN
+  #Len  ::= #INT
+  #Val  ::= #INT
+  #Join ::= #CONCATENATION
+  %s
+END
+"""
 
-    Flattening it would put a nested structure's fields into its parent's transmission order,
-    which is a different encoding from the one written.
+
+def test_the_application_point_is_the_first_structure_declared():
+    """A repository convention, asserted as one — because X.692 puts the choice out of reach.
+
+    §12.1's encoding link module binds an ASN.1 type to an encoding structure; an
+    `ENCODING-DEFINITIONS` module on its own *defines* structures and never says which is
+    applied. So the rule here is declaration order, and this pins it: when an ELM section
+    becomes readable, this is the assertion that should change.
+
+    First-declared rather than sole-declared is forced by timing. §23's objects resolve their
+    structure while the module is still being parsed, so a rule needing the whole module — "the
+    one nothing else claims" — would answer differently depending on how far the reader had got.
+
+    Order-sensitivity is the convention's real cost, so it is shown rather than described:
+    declaring the head-end structure first makes *it* the application point, and the structure
+    the object needs becomes the one nothing reaches.
     """
-    source = frame_header_source().replace(
-        "      reserved       #Reserved",
-        "      reserved       #Reserved { inner #Reserved }")
+    clause = ("REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
+              "INSERT AT HEAD Head-structure")
+    module = parse_module(_replace_module_with_head(clause))
+    assert list(module.structures) == ["Payload-structure", "Head-structure"]
+    assert module.structure_name == "Payload-structure"
+    assert module.structure == (("body", "#Val"),)
+
+    swapped = _replace_module(clause).replace(
+        "  Payload-structure ::= #Join { body #Val }",
+        "  Head-structure ::= #Join { offset #Len }\n"
+        "  Payload-structure ::= #Join { body #Val }")
+    try:
+        parse_module(swapped)
+    except Asn1Error as error:
+        # `Head-structure` is now the application point, so `Payload-structure` is the one
+        # nothing reaches — and the INSERT AT HEAD names the application point besides.
+        assert "22.1.2.7" in str(error), str(error)
+    else:
+        raise AssertionError("declaration order did not decide the application point")
+
+
+def test_a_structure_nothing_reaches_is_refused_at_the_modules_end():
+    """A declared structure that is neither the application point nor named by anything has
+    written octets nobody emits.
+
+    Checked at `END` rather than at the declaration, because that is the first moment every
+    claim has been seen — a `REPLACE ... INSERT AT HEAD` may appear after the structure it
+    names, and refusing at the declaration would reject a legal module for being ordered
+    inconveniently.
+    """
+    try:
+        parse_module(_NEST % "First ::= #Join { a #Len }\n  Orphan ::= #Join { b #Val }")
+    except Asn1Error as error:
+        assert "Orphan" in str(error) and "22.1.2.7" in str(error), str(error)
+    else:
+        raise AssertionError("a structure nothing reaches was accepted")
+
+
+def test_the_nesting_depth_guard_is_the_readers_own_and_says_so():
+    """§16.2.1 sets no depth limit, so this one is not a conformance rule and the message says
+    which kind of limit it is. Its job is to turn a runaway module into a sentence instead of a
+    `RecursionError` raised somewhere inside the tokenizer.
+    """
+    from bcir.asn1.ecn_syntax import _MAX_STRUCTURE_DEPTH
+
+    levels = _MAX_STRUCTURE_DEPTH + 2
+    nest = ("Deep ::= #Join " + "{ f #Join " * levels + "{ x #Len }" + " }" * levels)
+    try:
+        parse_module(_NEST % nest)
+    except Asn1Error as error:
+        assert "16.2.1" in str(error) and "reader" in str(error), str(error)
+    else:
+        raise AssertionError("an unbounded nesting depth was accepted")
+
+
+def test_a_nested_encoding_structure_is_read_as_a_definition_not_flattened():
+    """§16.2.1: "An `EncodingStructure` is either a `DefinedEncodingClass` or an
+    `EncodingStructureDefn`" — so a field may be a whole structure, and this reads one.
+
+    The load-bearing assertion is that `head` stays a *single* field of `Outer`. Flattening
+    would put `a` and `b` into `Outer`'s own transmission order, which is a different encoding
+    from the one written, and it is the failure this refused outright before rather than risk.
+    """
+    module = parse_module(_NEST % "Outer ::= #Join { head #Join { a #Len, b #Val }, tail #Val }")
+    outer = module.structures["Outer"]
+    assert outer.fields == (("head", "#Join"), ("tail", "#Val"))
+    inner = outer.nested["head"]
+    assert inner.fields == (("a", "#Len"), ("b", "#Val"))
+    # The nested definition is named by its path, so two structures nesting a `head` each keep
+    # their own in the digest instead of colliding on the bare field name.
+    assert inner.name == "Outer.head"
+    assert inner.category == "concatenation"
+
+
+def test_a_nested_structure_reaches_the_digest_under_its_path():
+    """Two modules differing only inside a nested body describe different octets."""
+    narrow = parse_module(_NEST % "Outer ::= #Join { head #Join { a #Len }, tail #Val }")
+    wide = parse_module(_NEST % "Outer ::= #Join { head #Join { a #Len, b #Val }, tail #Val }")
+    assert narrow.sha256() != wide.sha256()
+    assert b"structure Outer.head concatenation fields 1" in narrow.serialize()
+    # The parent's field line says the field carries a definition, so a reader of the digest
+    # cannot mistake a nested `#Join` field for a plain reference to a `#Join` class.
+    assert b"field 0 name head class #Join nested" in narrow.serialize()
+
+
+def test_encoding_a_nested_structure_is_refused_rather_than_given_its_parents_object():
+    """Reading the notation is not encoding it, and this rail says which it has done.
+
+    §16.5.6's application point "proceeds to each of the `EncodingStructure`s" — one object per
+    level. This rail builds one object from one flat field list, so applying that object to a
+    parent whose field is a whole structure would give the nested fields the *parent's*
+    encoding: well-formed octets of the wrong shape, which is exactly what the old outright
+    refusal was protecting against. The protection survives the notation becoming readable.
+    """
+    source = (_NEST % "Outer ::= #Join { head #Join { a #Len }, tail #Val }").replace(
+        "END",
+        """  cond #CONDITIONAL-INT ::= { ELSE ENCODING-SPACE SIZE 8 MULTIPLE OF bit
+                              ENCODING positive-int }
+  lenEnc #Len ::= { ENCODING cond }
+  valEnc #Val ::= { ENCODING cond }
+  joinObj #Join ::= { CONCATENATION ORDER textual ALIGNMENT none }
+END""")
     try:
         parse_module(source)
     except Asn1Error as error:
-        assert "16.2.1" in str(error), error
+        assert "16.5.6" in str(error) and "nests" in str(error), str(error)
     else:
-        raise AssertionError("a nested structure was flattened into its parent")
+        raise AssertionError("an object was applied to a structure it cannot encode")
 
 
 # --- the plan-v6 question --------------------------------------------------------------------
@@ -640,8 +758,10 @@ def test_a_parameterized_assignment_reaches_the_digest_governors_and_all():
     """
     from bcir.asn1.ecn_syntax import SYNTAX_VERSION
 
-    # 4 for EXHIBITS HANDLE, 5 for Annex C, 6 for §16.5's marker, 7 for §16.3's structure.
-    assert SYNTAX_VERSION == 7
+    # 4 for EXHIBITS HANDLE, 5 for Annex C, 6 for §16.5's marker, 7 for §16.3's structure,
+    # 8 for a module holding several structures — the serialization emits every one of them,
+    # so a module that gains a §22.1.2.7 head-end structure no longer hashes as it did.
+    assert SYNTAX_VERSION == 8
     base = parse_module(_with_assignments(_LP_STRUCTURE))
     assert b"parameterized #Length-prefixed" in base.serialize()
 
@@ -1066,16 +1186,105 @@ def test_auxiliary_fields_with_nothing_to_set_them_are_refused_by_name():
     _replace_refuses("22.1.2.6", "REPLACE ALL COMPONENTS WITH #Length-prefixed")
 
 
-def test_insert_at_head_is_refused_for_a_reason_about_this_rail_not_the_clause():
-    """§22.1.2.7's head-end structure "shall not have dummy parameters", so it is an ordinary
-    encoding structure — and this module already declares its one ordinary structure as the
-    §13.2 application point.
+def _replace_module_with_head(
+        clause: str, *, head: str = "Head-structure ::= #Join { offset #Len }") -> str:
+    """`_replace_module`, plus a second ordinary structure for `INSERT AT HEAD` to name."""
+    return _replace_module(clause).replace(
+        "  #Length-prefixed", f"  {head}\n  #Length-prefixed")
 
-    Worth separating the two facts rather than blaming the clause: §13.2 walks one application
-    point, but nothing in clause 16 says a module declares only one *structure*. The hoisting
-    semantics (§22.1.3.6) are built and exercised from Python; what is missing is a place to
-    put the declaration.
+
+def test_insert_at_head_reads_a_second_structure_from_module_text():
+    """§22.1.2.7, which was refused until a module could hold two ordinary structures.
+
+    The old refusal blamed §13.2 for a limit §13.2 does not impose. The link walks one
+    *application point*; nothing in clause 16 caps how many structures a module may **declare**.
+    Separating the two is the whole of this change, and the clause became readable with its
+    semantics untouched — `ecn_user.HeadEndStructure` and §22.1.3.6's hoisting are as they were.
+
+    §22.1.2.7's own sentences are what the assertions check: the structure has no dummy
+    parameters (it is an ordinary `EncodingStructureDefn`), and "all their fields are auxiliary
+    fields", each with an encoding object taken from the module under §9.5.2.
+    """
+    module = parse_module(_replace_module_with_head(
+        "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
+        "INSERT AT HEAD Head-structure"))
+
+    assert list(module.structures) == ["Payload-structure", "Head-structure"]
+    # The first declaration is the application point; the second is reached by being named.
+    assert module.structure_name == "Payload-structure"
+    assert module.claimed == {"Head-structure"}
+
+    head_end = module.objects["joinObj"][1].replacement.head_end
+    assert head_end.name == "Head-structure"
+    assert head_end.order == ("offset",)
+    assert set(head_end.auxiliary) == {"offset"}
+    # §22.1.3.6 hoists the head-end fields before the component's own, under its name.
+    assert [name for name, _ in head_end.expand("body")] == ["body^offset"]
+
+
+def test_a_head_end_structure_reaches_the_digest():
+    """Two modules differing only in the head-end structure describe different octets.
+
+    This is why `SYNTAX_VERSION` moved to 8 rather than the serialization gaining a field
+    quietly: before this change the digest covered *the* structure, and a module with two of
+    them would have hashed as though the second were not there.
+    """
+    clause = ("REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
+              "INSERT AT HEAD Head-structure")
+    narrow = parse_module(_replace_module_with_head(clause))
+    wide = parse_module(_replace_module_with_head(
+        clause, head="Head-structure ::= #Join { offset #Len, extra #Len }"))
+    assert narrow.sha256() != wide.sha256()
+    assert b"structure Head-structure concatenation fields 1" in narrow.serialize()
+
+
+def test_the_head_end_structure_may_not_be_the_application_point_itself():
+    """§22.1.2.7 inserts a structure *before the components of* the one being replaced, so
+    naming that same structure would insert it before itself.
+
+    Reachable only because both names now resolve: with one structure per module the reference
+    could not even be written down.
     """
     _replace_refuses("22.1.2.7",
-                     "REPLACE STRUCTURE WITH #Length-prefixed ENCODED BY lp-object "
-                     "INSERT AT HEAD #Head")
+                     "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
+                     "INSERT AT HEAD Payload-structure")
+
+
+def test_a_parameterized_structure_is_not_a_head_end_structure():
+    """§22.1.2.7's first sentence, and the one property separating the two structures a
+    `REPLACE` names: the `WITH` structure **shall** be parameterized (§22.1.2.2) and the
+    `INSERT AT HEAD` structure **shall not** be.
+
+    So `#Length-prefixed` is a legal `WITH` and an illegal `INSERT AT HEAD`, and the same name
+    in the two positions is the sharpest test of it.
+    """
+    _replace_refuses("22.1.2.7",
+                     "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
+                     "INSERT AT HEAD #Length-prefixed")
+
+
+def test_insert_at_head_still_may_not_ride_on_replace_structure():
+    """§22.1.2.8 outlives the change that made §22.1.2.7 readable.
+
+    Worth its own test because the two used to be indistinguishable from outside: `REPLACE
+    STRUCTURE ... INSERT AT HEAD` was refused by §22.1.2.7 for being unreadable, and now gets
+    as far as §22.1.2.8, which forbids the *combination*. A rule that only ever fired behind
+    another one is a rule nobody has checked.
+    """
+    try:
+        parse_module(_replace_module_with_head(
+            "REPLACE STRUCTURE WITH #Length-prefixed ENCODED BY lp-object "
+            "INSERT AT HEAD Head-structure"))
+    except Asn1Error as error:
+        assert "22.1.2.8" in str(error), str(error)
+    else:
+        raise AssertionError("REPLACE STRUCTURE accepted an INSERT AT HEAD")
+
+
+def test_a_head_end_structure_no_module_declares_is_named_in_the_refusal():
+    """The reference resolves against `structures`, so a typo is a missing name rather than an
+    unsupported clause — which is what it looked like before.
+    """
+    _replace_refuses("22.1.2.7",
+                     "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
+                     "INSERT AT HEAD Hed-structure")

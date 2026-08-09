@@ -88,7 +88,7 @@ from .tags import Asn1Error
 
 #: The serialization's version. Its own counter, not `encode_plan`'s: see this module's
 #: `serialize` for why an ECN encoding is a separate compilation rather than a plan version.
-SYNTAX_VERSION = 7
+SYNTAX_VERSION = 8
 SYNTAX_COMPILER = "bcir-ecn-syntax/1"
 
 #: The bit-field and constructor classes whose defined syntax clause 23 gives, restricted to
@@ -1822,8 +1822,45 @@ def _parse_reference_list(cursor: _Cursor) -> tuple[str, ...]:
 # --- the module -----------------------------------------------------------------------------
 
 @dataclass
+class Structure:
+    """One §16.2.12 `EncodingStructureDefn`: a governing class and its `NamedField`s.
+
+    Split out of `EcnModule` because a module declares **more than one**. §16.2.12 has always
+    admitted that — nothing in clause 16 limits a module to a single structure — and the
+    repository read the limit off §13.2 instead, which says something different: the *link*
+    walks one application point. Conflating the two is what made §22.1.2.7's `INSERT AT HEAD`
+    unreachable from text, since that clause needs a second ordinary structure to exist.
+
+    `fields` holds `(field name, class name)` in textual order. A field whose `EncodingStructure`
+    is itself an `EncodingStructureDefn` (§16.2.1) keeps its class name here — the class is what
+    gives the nested structure its category — and the nested definition goes in `nested` under
+    the same field name. It is deliberately NOT flattened into `fields`: §16.5.6's application
+    point "proceeds to each of the `EncodingStructure`s", one level at a time, and a flattened
+    field list would put a grandchild where a child belongs.
+    """
+
+    name: str
+    #: §16.2.12's category: `"concatenation"` (§16.5) or `"alternatives"` (§16.3).
+    category: str
+    fields: tuple[tuple[str, str], ...] = ()
+    #: §16.5.1's `ConcatComponentPresence`: field name -> the optionality class marking it.
+    #:
+    #: A sidecar rather than a third element of `fields`'s tuples, and deliberately. §16.5.3
+    #: makes the marker's ABSENCE meaningful — "the `EncodingStructure` in that named field
+    #: shall appear precisely once in the encoding" — so the common case is the empty mapping,
+    #: and widening every field's tuple to carry a mostly-absent fact would touch every reader
+    #: of `fields` to express nothing new.
+    optional: dict[str, str] = field(default_factory=dict)
+    #: §16.2.1's nested definitions: field name -> the `Structure` written inside it.
+    nested: dict[str, "Structure"] = field(default_factory=dict)
+
+    def names(self) -> tuple[str, ...]:
+        return tuple(name for name, _ in self.fields)
+
+
+@dataclass
 class EcnModule:
-    """A parsed `ENCODING-DEFINITIONS` module: classes, one structure, and the objects.
+    """A parsed `ENCODING-DEFINITIONS` module: classes, its structures, and the objects.
 
     Mutable during parsing because assignments resolve references to earlier ones — an
     `#INT` object names a `#CONDITIONAL-INT` object, and a `#CONCATENATION` object reads the
@@ -1834,9 +1871,12 @@ class EcnModule:
     name: str = ""
     #: A defined class name -> the built-in class it was assigned from (clause 11).
     classes: dict[str, str] = field(default_factory=dict)
-    #: The §16.5 concatenation structure: `(field name, class name)` in textual order.
-    structure: tuple[tuple[str, str], ...] = ()
-    structure_name: str = ""
+    #: Every §16.2.12 structure the module declares, in declaration order.
+    structures: dict[str, Structure] = field(default_factory=dict)
+    #: Structures some other construct has taken responsibility for — today, the §22.1.2.7
+    #: head-end structures a `REPLACE ... INSERT AT HEAD` names. Recorded so `check_structures`
+    #: can tell a deliberate second declaration from one nothing reaches.
+    claimed: set = field(default_factory=set)
     #: Object reference -> `(class name, spec)`.
     objects: dict[str, tuple[str, object]] = field(default_factory=dict)
     #: Object reference -> the transform it defines.
@@ -1851,18 +1891,71 @@ class EcnModule:
     #: application point §13.2 walks, and putting it in `structure` would make the module look
     #: like it declared two.
     parameterized: dict[str, object] = field(default_factory=dict)
-    #: §16.5.1's `ConcatComponentPresence`: field name -> the optionality class marking it.
-    #:
-    #: A sidecar rather than a third element of `structure`'s tuples, and deliberately.
-    #: §16.5.3 makes the marker's ABSENCE meaningful — "the `EncodingStructure` in that named
-    #: field shall appear precisely once in the encoding" — so the common case is the empty
-    #: mapping, and widening every field's tuple to carry a mostly-absent fact would touch
-    #: every reader of `structure` to express nothing new.
-    structure_optional: dict[str, str] = field(default_factory=dict)
-    #: §16.2.12's category for `structure`: `"concatenation"` (§16.5) or `"alternatives"`
-    #: (§16.3). The field list is the same shape either way — §16.3.1's `NamedField` is what
-    #: both are built from — so this is what says whether all of them appear or exactly one.
-    structure_category: str = "concatenation"
+
+    # --- §13.2's one application point, among the module's several structures ---------------
+
+    def application_structure(self) -> Structure:
+        """The structure §13.2 walks: **the first one the module declares.**
+
+        This is a repository convention and is written down as one, because X.692 puts the
+        choice somewhere this text cannot see it. §12.1's encoding link module is what binds an
+        ASN.1 type to an encoding structure; an `ENCODING-DEFINITIONS` module on its own
+        *defines* structures and says nothing about which is applied. `ecn_link.py` already
+        models that half, and when an ELM section becomes readable it — not declaration order —
+        is what should answer this.
+
+        First-declared rather than sole-declared is forced by when the question is asked:
+        §23's objects resolve their structure **while the module is still being parsed**, so a
+        rule needing to see the whole module ("the one nothing else claims") would give
+        different answers depending on where the reader had got to. First-declared is stable
+        from the moment it is read.
+        """
+        if not self.structures:
+            raise Asn1Error(
+                "ECN: this module declares no encoding structure, and §16.2.12's "
+                "EncodingStructureDefn is what an encoding object in a constructor category "
+                "takes its components from")
+        return next(iter(self.structures.values()))
+
+    @property
+    def structure(self) -> tuple[tuple[str, str], ...]:
+        """The application point's fields — `()` when the module declares none.
+
+        Kept as a property under the old name because every reader of it wanted the
+        application point specifically, and saying so at each of those sites would repeat the
+        §13.2 argument rather than state it once here.
+        """
+        return self.application_structure().fields if self.structures else ()
+
+    @property
+    def structure_name(self) -> str:
+        return self.application_structure().name if self.structures else ""
+
+    @property
+    def structure_category(self) -> str:
+        return self.application_structure().category if self.structures else "concatenation"
+
+    @property
+    def structure_optional(self) -> dict[str, str]:
+        return self.application_structure().optional if self.structures else {}
+
+    def check_structures(self) -> None:
+        """Every declared structure is either the application point or claimed by something.
+
+        A module that declares a structure nothing reaches has written octets nobody emits,
+        and the mistake is nearly always a misspelled `INSERT AT HEAD` reference — the name is
+        right there in the module, so the declaration looks used. Run once at `END`, which is
+        the first moment every claim has been seen.
+        """
+        application = next(iter(self.structures), None)
+        orphans = [name for name in self.structures
+                   if name != application and name not in self.claimed]
+        if orphans:
+            raise Asn1Error(
+                f"ECN: {orphans} are declared and never reached. This module applies "
+                f"{application} at its §13.2 application point, and a further structure is "
+                f"reachable only by being named — §22.1.2.7's INSERT AT HEAD is the one "
+                f"construct that names one today")
 
     def builtin_of(self, class_name: str) -> str:
         """The built-in class a name resolves to, following clause 11's assignments."""
@@ -1910,16 +2003,17 @@ class EcnModule:
         """
         shapes = {"concatenation": "a §16.5 ConcatenationStructure",
                   "alternatives": "a §16.3 AlternativesStructure"}
-        if not self.structure:
+        if not self.structures:
             raise Asn1Error(
                 f"ECN: an object in the {category} category takes its components from "
                 f"{shapes[category]}, and this module declares none")
-        if self.structure_category != category:
+        applied = self.application_structure()
+        if applied.category != category:
             raise Asn1Error(
                 f"ECN: §16.2.12 — an object in the {category} category needs "
-                f"{shapes[category]}; {self.structure_name} is "
-                f"{shapes[self.structure_category]}")
-        return self.structure
+                f"{shapes[category]}; {applied.name} is {shapes[applied.category]}")
+        _refuse_nested_application(applied)
+        return applied.fields
 
     def replacement_structure(self, name: str, owner: str) -> ParameterizedAssignment:
         """The `WITH` structure a `REPLACE` names, checked to be one §22.1.2.2 admits.
@@ -1946,25 +2040,47 @@ class EcnModule:
         return assignment
 
     def head_end_structure(self, name: str, owner: str) -> HeadEndStructure:
-        """§22.1.2.7's `INSERT AT HEAD` structure, which this rail cannot yet *declare*.
+        """§22.1.2.7's `INSERT AT HEAD` structure, read from the module that declares it.
 
-        The semantics are built — `ecn_user.HeadEndStructure` and §22.1.3.6's hoisting are
-        exercised from Python. What is missing is a place to put the declaration: §22.1.2.7's
-        structure "shall not have dummy parameters", so it is an ordinary encoding structure,
-        and this module holds exactly one of those as its application point (`_parse_structure`
-        refuses a second).
+        The clause is three sentences and each one is a check here. "The `INSERT AT HEAD`
+        encoding structures shall not have dummy parameters" — so the name must be an ordinary
+        §16.2.12 declaration and not one of C.2's parameterized assignments, which is the
+        property that separates this from the `WITH` replacement structure §22.1.2.2 requires
+        to *be* parameterized. "All their fields are auxiliary fields, and shall be set by the
+        `ENCODED BY` encoding object" — so every field needs an encoding object in this module,
+        which `spec_for_class` supplies under §9.5.2's one-per-class law, and `HeadEndStructure`
+        re-checks the totality of the mapping from the other side.
 
-        Worth separating the two facts rather than blaming the clause: §13.2 walks one
-        application point, but nothing in clause 16 says a module declares only one
-        *structure*. Lifting that is a change to what `EcnModule.structure` is, which is a
-        different slice from this one.
+        This refused until a module could hold more than one structure. The refusal blamed
+        §13.2 for a limit §13.2 does not impose: the link walks one application point, which
+        says nothing about how many structures a module may *declare*. `Structure` and
+        `EcnModule.structures` separate the two, and the clause became readable with no change
+        to its semantics — `ecn_user.HeadEndStructure` and §22.1.3.6's hoisting are as they
+        were, and now have a syntax that reaches them.
         """
-        raise Asn1Error(
-            f"ECN: §22.1.2.7's INSERT AT HEAD structure is an ordinary encoding structure "
-            f"with no dummy parameters, and this module already declares its one structure as "
-            f"the §13.2 application point; {owner} cannot also declare {name}. The hoisting "
-            f"semantics (§22.1.3.6) are built — assemble `HeadEndStructure` in Python until a "
-            f"module can hold a second structure")
+        if name in self.parameterized:
+            raise Asn1Error(
+                f"ECN: §22.1.2.7 — the INSERT AT HEAD encoding structures shall not have "
+                f"dummy parameters, and {name} is a parameterized assignment. That is the one "
+                f"property separating it from the WITH replacement structure, which §22.1.2.2 "
+                f"requires to be parameterized")
+        declared = self.structures.get(name)
+        if declared is None:
+            raise Asn1Error(
+                f"ECN: §22.1.2.7 — {owner} inserts {name} at the head, and this module "
+                f"declares no such encoding structure")
+        if name == next(iter(self.structures)):
+            raise Asn1Error(
+                f"ECN: §22.1.2.7 — {name} is this module's §13.2 application point, and "
+                f"{owner} would insert it before the components of the structure it *is*")
+        _refuse_nested_application(declared)
+        self.claimed.add(name)
+        auxiliary = {
+            field_name: self.optional_wrapped(
+                field_name, self.spec_for_class(class_name, field_name), structure=declared)
+            for field_name, class_name in declared.fields
+        }
+        return HeadEndStructure(name=name, order=declared.names(), auxiliary=auxiliary)
 
     def replacement_with_encodings(self, assignment: ParameterizedAssignment,
                                    encoded_by: str | None, owner: str) -> ReplacementStructure:
@@ -2043,7 +2159,7 @@ class EcnModule:
             specs[member] = spec
         return specs
 
-    def optional_wrapped(self, field_name: str, spec):
+    def optional_wrapped(self, field_name: str, spec, *, structure: "Structure | None" = None):
         """§16.5.3 and §16.5.4: wrap a component's encoding in its `OptionalClass` object.
 
         §16.5.3 gives the unmarked case first — "If `ConcatComponentPresence` is absent from a
@@ -2056,7 +2172,12 @@ class EcnModule:
         which encodes the `OptionalClass`". So the mechanism is the `#OPTIONAL` object's and
         the component is the structure's, and this is the one place that knows both.
         """
-        optional_class = self.structure_optional.get(field_name)
+        # `structure` defaults to the application point, which is what both §23 constructor
+        # objects walk. A head-end structure passes its own: the markers belong to the
+        # structure being walked, and reading them off the application point would apply one
+        # structure's optionality to another's fields.
+        marked = self.structure_optional if structure is None else structure.optional
+        optional_class = marked.get(field_name)
         if optional_class is None:
             return spec
         wrapper = self.spec_for_class(optional_class, field_name)
@@ -2161,15 +2282,12 @@ class EcnModule:
                 f"parameterized {defined} {assignment.kind.value} "
                 f"{assignment.parameters.render_declaration()} governor {governor} "
                 f"body {' '.join(assignment.body)}")
-        if self.structure:
-            out.append(f"structure {self.structure_name} {self.structure_category} "
-                       f"fields {len(self.structure)}")
-            for index, (field_name, class_name) in enumerate(self.structure):
-                line = f"field {index} name {field_name} class {class_name}"
-                marker = self.structure_optional.get(field_name)
-                if marker is not None:
-                    line += f" optional-encoding {marker}"
-                out.append(line)
+        # Every declared structure, in declaration order, and the application point first
+        # because that is the order they were read in. Two modules that differ only in a
+        # head-end structure describe different octets, so a digest covering the application
+        # point alone would call them the same specification.
+        for structure in self.structures.values():
+            out.extend(_structure_lines(structure))
         for name in sorted(self.transforms):
             out.append(f"transform {name} {_describe(self.transforms[name])}")
         for name in sorted(self.objects):
@@ -2179,6 +2297,53 @@ class EcnModule:
 
     def sha256(self) -> str:
         return hashlib.sha256(self.serialize()).hexdigest()
+
+
+def _refuse_nested_application(structure: "Structure") -> None:
+    """A structure with a §16.2.1 nested field is read, hashed — and not yet *encoded*.
+
+    §16.5.6's application point "proceeds to each of the `EncodingStructure`s", one level at a
+    time, so a nested field is encoded by an object applied to the nested structure and not by
+    the object applied to its parent. This rail builds one object per structure from a flat
+    field list, and applying that object to a parent whose field is a whole structure would
+    give the nested field the *parent's* encoding — well-formed octets in the wrong shape,
+    which is the failure mode this package refuses everywhere else rather than emits.
+
+    So the notation is read and reaches the digest, and the application is refused by name.
+    Recognized rather than skipped, for the same reason `_UNSUPPORTED_KEYWORDS` is.
+    """
+    nested = sorted(structure.nested)
+    if nested:
+        raise Asn1Error(
+            f"ECN: {structure.name} nests an EncodingStructure at {nested}, and §16.5.6 "
+            f"applies an encoding object to each level in turn — this rail applies one object "
+            f"to one flat field list, so it reads the nesting and refuses to encode it rather "
+            f"than give the nested fields their parent's encoding")
+
+
+def _structure_lines(structure: "Structure") -> list[str]:
+    """One structure's lines, and its nested ones under a dotted path.
+
+    Nested structures are emitted after the field that carries them rather than inline,
+    because a nested body is a definition and the field is a reference to it — flattening the
+    two would let a module with a nested `#Header` and one with a sibling `#Header` hash the
+    same.
+    """
+    out = [f"structure {structure.name} {structure.category} "
+           f"fields {len(structure.fields)}"]
+    for index, (field_name, class_name) in enumerate(structure.fields):
+        line = f"field {index} name {field_name} class {class_name}"
+        marker = structure.optional.get(field_name)
+        if marker is not None:
+            line += f" optional-encoding {marker}"
+        if field_name in structure.nested:
+            line += " nested"
+        out.append(line)
+    for field_name, _class in structure.fields:
+        inner = structure.nested.get(field_name)
+        if inner is not None:
+            out.extend(_structure_lines(inner))
+    return out
 
 
 def _describe(spec) -> str:
@@ -2398,6 +2563,7 @@ def parse_module(source: str) -> EcnModule:
         if cursor.eof():
             raise Asn1Error("ECN: the module has no END")
         if cursor.accept("END"):
+            module.check_structures()
             break
         _parse_assignment(cursor, module)
     if not cursor.eof():
@@ -2586,9 +2752,23 @@ def _parse_structure(cursor: _Cursor, module: EcnModule, name: str, base: str) -
     the `EncodingStructure`s in its `NamedFields`" (§16.3.2). Same text, opposite semantics,
     and nothing but the governor's category distinguishes them.
 
-    A field that is itself a nested structure stays refused — §16.2.1 admits one and this rail
-    walks one flat constructor.
+    A module may now declare several, and a field may nest one (§16.2.1). Both were refused
+    together and for one reason — `EcnModule` held a single flat structure — so both are read
+    by the same recursion here.
     """
+    module.structures[name] = _read_structure(cursor, module, name, base, depth=0)
+
+
+#: §16.2.1 puts no depth limit on nesting, and neither does any other clause. This one is the
+#: repository's, and it exists so a pathological module fails with a sentence instead of a
+#: `RecursionError` from somewhere in the tokenizer. Deep enough that no specification a human
+#: wrote will meet it.
+_MAX_STRUCTURE_DEPTH = 16
+
+
+def _read_structure(cursor: _Cursor, module: EcnModule, name: str, base: str,
+                    *, depth: int) -> Structure:
+    """One `EncodingStructureDefn` body, and any nested inside it."""
     category = module.builtin_of(base)
     if category not in ("concatenation", "alternatives"):
         raise Asn1Error(
@@ -2597,10 +2777,12 @@ def _parse_structure(cursor: _Cursor, module: EcnModule, name: str, base: str) -
             f"the {category} category, which is none of them")
     if category == "repetition":  # pragma: no cover - unreachable while #REPETITION is absent
         raise Asn1Error("ECN: §16.4's RepetitionStructure is not built")
-    if module.structure:
+    if depth > _MAX_STRUCTURE_DEPTH:
         raise Asn1Error(
-            f"ECN: this module already declares the structure {module.structure_name}; "
-            f"one application point is what §13.2 walks")
+            f"ECN: the structure {name} nests deeper than {_MAX_STRUCTURE_DEPTH} levels; "
+            f"§16.2.1 sets no limit and this one is the reader's, so that a runaway module "
+            f"fails with this sentence rather than a stack overflow")
+    structure = Structure(name=name, category=category)
     body = _collect_braced(cursor)
     inner = _Cursor(body, f"the encoding structure {name}")
     fields: list[tuple[str, str]] = []
@@ -2613,12 +2795,14 @@ def _parse_structure(cursor: _Cursor, module: EcnModule, name: str, base: str) -
                 f"ECN: §16.3.1's NamedField is an identifier followed by an EncodingStructure; "
                 f"{field_name!r} has no class")
         class_name = inner.next().text
-        if inner.peek() == "{":
-            raise Asn1Error(
-                f"ECN: {field_name!r} is a nested EncodingStructure. §16.2.1 admits them and "
-                f"this rail walks one flat concatenation, so a nested structure is refused "
-                f"rather than flattened into its parent's field order")
         module.builtin_of(class_name)
+        if inner.peek() == "{":
+            # §16.2.1: "An `EncodingStructure` is either a `DefinedEncodingClass` or an
+            # `EncodingStructureDefn`". The nested form is the same production as the top-level
+            # one, so it is read by the same function -- and its governor is the class already
+            # taken, which is what gives the nested body its own category.
+            structure.nested[field_name] = _read_structure(
+                inner, module, f"{name}.{field_name}", class_name, depth=depth + 1)
         if inner.accept("OPTIONAL-ENCODING"):
             # §16.5.1's `ConcatComponentPresence ::= OPTIONAL-ENCODING OptionalClass`, which
             # is a tail on a `ConcatComponent` and on nothing else. §16.3.1's `NamedField` has
@@ -2631,16 +2815,16 @@ def _parse_structure(cursor: _Cursor, module: EcnModule, name: str, base: str) -
                     f"{name}, of which §16.3.2 encodes precisely one")
             optional_class = inner.next().text
             # `marker_category`, NOT `category`: that name holds the STRUCTURE's own category
-            # for the whole function and is written to `module.structure_category` at the end.
-            # Reusing it here made one marked field turn its concatenation into an "optional"
-            # structure, which `require_structure` then rejected for every later object.
+            # for the whole function. Reusing it here made one marked field turn its
+            # concatenation into an "optional" structure, which `require_structure` then
+            # rejected for every later object.
             marker_category = module.builtin_of(optional_class)
             if marker_category != "optional":
                 raise Asn1Error(
                     f"ECN: §16.5.2 — the DefinedEncodingClass in the OptionalClass shall be a "
                     f"class in the optionality category; {optional_class} is in the "
                     f"{marker_category} category")
-            module.structure_optional[field_name] = optional_class
+            structure.optional[field_name] = optional_class
         fields.append((field_name, class_name))
     if not fields:
         raise Asn1Error(f"ECN: the structure {name} has no fields")
@@ -2649,9 +2833,8 @@ def _parse_structure(cursor: _Cursor, module: EcnModule, name: str, base: str) -
         if field_name in seen:
             raise Asn1Error(f"ECN: the structure {name} names {field_name!r} twice")
         seen.add(field_name)
-    module.structure = tuple(fields)
-    module.structure_name = name
-    module.structure_category = category
+    structure.fields = tuple(fields)
+    return structure
 
 
 #: The gate's workload as an encoding definition module, shipped as source next to the ASN.1
@@ -2678,6 +2861,6 @@ def frame_header_module() -> EcnModule:
 
 
 __all__ = [
-    "FRAME_HEADER_MODULE", "SYNTAX_COMPILER", "SYNTAX_VERSION", "EcnModule", "Token",
-    "frame_header_module", "frame_header_source", "parse_module", "tokenize",
+    "FRAME_HEADER_MODULE", "SYNTAX_COMPILER", "SYNTAX_VERSION", "EcnModule", "Structure",
+    "Token", "frame_header_module", "frame_header_source", "parse_module", "tokenize",
 ]
