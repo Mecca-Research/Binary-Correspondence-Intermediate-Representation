@@ -87,6 +87,14 @@
 #define MAX_CASES 32
 #define MAX_BYTES (1 << 16)
 #define MAX_LINE (MAX_BYTES * 2 + 64)
+
+/* The scanf field width for a MAX_LINE token buffer, spelled as a literal because the
+ * preprocessor cannot stringify an arithmetic expression into one. Every %s below carries it.
+ * An unbounded %s is safe only while its buffer is as large as `line`, which is an invariant
+ * nothing enforced -- `fields_hex` was a tenth the size and a plan of about a hundred members
+ * wrote past its end. A width states the bound at the call instead of assuming it. */
+#define MAX_LINE_SCAN "131135"
+_Static_assert(MAX_LINE == 131136, "MAX_LINE_SCAN must remain MAX_LINE - 1");
 #define MAX_ROUNDS 256
 #define MAX_DEPTH 64
 #define SCRATCH (1 << 16)
@@ -342,7 +350,7 @@ int main(void) {
         return 2;
       }
       c = &cases[n_cases];
-      if (sscanf(line, "%31s %63s %15s %s", op, c->label, c->op, hex) != 4) {
+      if (sscanf(line, "%31s %63s %15s %" MAX_LINE_SCAN "s", op, c->label, c->op, hex) != 4) {
         printf("unsupported case malformed\n");
         return 2;
       }
@@ -373,12 +381,19 @@ int main(void) {
       long flen, vlen;
       unsigned char fbuf[MAX_PLAN_MEMBERS * 8];
       /* Its own buffer: `plan_hex` belongs to the encase arm, and a field array is not a
-       * plan. Sized for the record form (8 octets -> 16 hex digits per field). */
-      static char fields_hex[MAX_PLAN_MEMBERS * 16 + 2];
+       * plan. Sized at MAX_LINE like every other token buffer here, NOT at the record form's
+       * 16 hex digits per field: the `per-d` arms below read a TEXT plan through this same
+       * buffer, and X.691's field carries two signed 64-bit bounds, so one field can spell
+       * ~45 characters rather than 16. At the record-form size a plan of about a hundred
+       * members overran it -- a write past the end of a static buffer, from a plan a caller
+       * could reasonably write. A token scanned out of `line` cannot exceed `line`, so
+       * matching MAX_LINE is what makes the width below sufficient rather than merely large. */
+      static char fields_hex[MAX_LINE];
       size_t i;
       if (n_cases >= MAX_CASES) { printf("unsupported dircase too-many\n"); return 2; }
       c = &cases[n_cases];
-      if (sscanf(line, "%31s %63s %15s %s %s", op, c->label, c->op, fields_hex, hex) != 5) {
+      if (sscanf(line, "%31s %63s %15s %" MAX_LINE_SCAN "s %" MAX_LINE_SCAN "s",
+                 op, c->label, c->op, fields_hex, hex) != 5) {
         printf("unsupported dircase malformed\n");
         return 2;
       }
@@ -451,7 +466,8 @@ int main(void) {
 
       if (n_cases >= MAX_CASES) { printf("unsupported case too-many\n"); return 2; }
       c = &cases[n_cases];
-      if (sscanf(line, "%31s %63s %15s %s %s", op, c->label, c->op, plan_hex, hex) != 5) {
+      if (sscanf(line, "%31s %63s %15s %" MAX_LINE_SCAN "s %" MAX_LINE_SCAN "s",
+                 op, c->label, c->op, plan_hex, hex) != 5) {
         printf("unsupported encase malformed\n");
         return 2;
       }

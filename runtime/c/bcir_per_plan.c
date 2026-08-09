@@ -10,8 +10,9 @@ static bcir_per_status per_preamble(bcir_per_reader *r, const bcir_per_field *fi
   for (i = 0; i < count; ++i) {
     out[i].present = 1;
     out[i].integer = 0;
-    out[i].offset = 0;
+    out[i].offset = BCIR_PER_NO_OFFSET;
     out[i].length = 0;
+    out[i].bit_offset = 0;
   }
   for (i = 0; i < count; ++i) {
     unsigned bit;
@@ -55,7 +56,15 @@ static bcir_per_status per_octets(bcir_per_reader *r, const bcir_per_field *f, i
   if (f->kind == BCIR_PER_K_FIXED_OCTETS) {
     octets = f->fixed_len;
   } else {
-    st = bcir_per_length(r, 0, (int64_t)f->fixed_len, f->fixed_len != 0, &octets, &more);
+    /* 11.9.3.3's constrained length form applies only when `ub` is BELOW 64K; at or above it,
+     * 11.9.1 says the upper bound stops being usable as a constraint and the unconstrained
+     * forms of 11.9.3.6 to 11.9.3.8 apply instead. The test belongs here rather than inside
+     * bcir_per_length, which takes `has_ub` at face value -- per.py applies it at its call
+     * sites for the same reason. Without it a SIZE bound of 64K or more made this read a
+     * constrained whole number where the encoder had written a single-octet determinant, and
+     * every such string was refused: a decode failure on conforming input. */
+    int has_ub = (f->fixed_len != 0u && f->fixed_len < 65536u);
+    st = bcir_per_length(r, 0, (int64_t)f->fixed_len, has_ub, &octets, &more);
     if (st != BCIR_PER_OK) return st;
     /* 11.9.3.8's fragmentation moves in 16K blocks. A plan-driven fast path is for the
      * bounded fields a driver reads, so a fragmented string is refused by name rather than
@@ -70,8 +79,13 @@ static bcir_per_status per_octets(bcir_per_reader *r, const bcir_per_field *f, i
     size_t here = base_bit - bcir_per_bits_left(r);
     uint64_t bits = octets * 8u;
     if (bits > bcir_per_bits_left(r)) return BCIR_PER_TRUNCATED;
-    if (here % 8u != 0u && aligned) return BCIR_PER_MALFORMED;
-    out->offset = here / 8u;
+    /* A string that does not start on an octet boundary is ORDINARY here, not a fault: 16.6
+     * leaves one of two octets or fewer unaligned even in the ALIGNED variant, and UNALIGNED
+     * never aligns one at all. So it is reported rather than refused -- and reported so that
+     * it cannot be mistaken for a slice, since rounding `here` down to the octet containing it
+     * would name plausible-looking bytes that are off by `here % 8` bits. See the header. */
+    out->bit_offset = here;
+    out->offset = (here % 8u == 0u) ? here / 8u : BCIR_PER_NO_OFFSET;
     out->length = (size_t)octets;
     /* Skip the body without copying it: the caller owns the buffer, and a decoder that copied
      * would be choosing an allocation policy on its behalf. */
@@ -121,8 +135,10 @@ bcir_per_status bcir_per_decode_sequence(const uint8_t *data, size_t len,
         st = per_integer(&reader, f, &out[i].integer);
         break;
       case BCIR_PER_K_BOOLEAN: {
-        /* X.691 15: one bit, and no alignment in either variant. */
-        unsigned bit;
+        /* X.691 15: one bit, and no alignment in either variant. Initialised because the
+         * assignment below runs before `st` is tested, and reading an indeterminate value is
+         * undefined behaviour even where the result is then thrown away. */
+        unsigned bit = 0u;
         st = bcir_per_get_bit(&reader, &bit);
         out[i].integer = (int64_t)bit;
         break;

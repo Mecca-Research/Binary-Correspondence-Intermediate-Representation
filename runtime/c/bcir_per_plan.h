@@ -67,12 +67,31 @@ typedef struct bcir_per_field {
   uint8_t optional;       /* participates in 18.2's preamble */
 } bcir_per_field;
 
-/* One decoded root component. `offset`/`length` bound a string INSIDE the caller's buffer. */
+/* An octet index that names nothing, for a string that does not START on an octet boundary
+ * and therefore has no octet slice to name. Spelled like bcir_oer.h's BCIR_OER_NO_OFFSET. */
+#define BCIR_PER_NO_OFFSET ((size_t)-1)
+
+/* One decoded root component. `offset`/`length` bound a string INSIDE the caller's buffer.
+ *
+ * WHY THERE IS A BIT OFFSET AS WELL. In UNALIGNED PER a string begins wherever the previous
+ * field left the cursor, which is usually not an octet boundary -- 15's BOOLEAN is one bit and
+ * 11.5.6's constrained integer is as many bits as its range needs. 16.6 puts a string of two
+ * octets or fewer in a bit-field with NO alignment in the ALIGNED variant too, so this is not
+ * a UNALIGNED-only shape. Such a string has no byte slice: its octets straddle the buffer's,
+ * and reconstructing them is a shift the caller must do.
+ *
+ * So `bit_offset` is always exact, and `offset` is the octet index ONLY when the string starts
+ * on an octet boundary. Otherwise `offset` is BCIR_PER_NO_OFFSET, because the alternative --
+ * rounding the bit offset down to the octet containing it -- names a slice that is off by a
+ * few bits and looks entirely plausible. A caller that reads `offset` and ignores `bit_offset`
+ * then gets the wrong bytes with no indication, which is the one outcome worth engineering
+ * against. `length` is the octet COUNT either way. */
 typedef struct bcir_per_value {
   int present;
   int64_t integer;        /* INTEGER and BOOLEAN */
-  size_t offset;          /* octet-string start, inside `data` */
-  size_t length;
+  size_t offset;          /* octet-string start inside `data`, or BCIR_PER_NO_OFFSET */
+  size_t length;          /* octet-string length, in octets */
+  size_t bit_offset;      /* octet-string start in BITS from `data`; always exact */
 } bcir_per_value;
 
 /* Decode one SEQUENCE against `fields`, writing `count` results into `out`.

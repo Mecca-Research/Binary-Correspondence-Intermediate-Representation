@@ -9,8 +9,11 @@
  * every property bcir_per_field carries. A test can therefore build any schema the decoder
  * claims to support, and a schema it does NOT claim produces a refusal rather than a misread.
  *
- * Output is "OK <endbit> <n> <v0> <v1> ..." where each value is `present:integer:offset:length`,
- * or "ERR <status>".
+ * Output is "OK <endbit> <n> <v0> <v1> ..." where each value is
+ * `present:integer:offset:length:bitoffset`, or "ERR <status>". `offset` is printed as -1 for
+ * BCIR_PER_NO_OFFSET -- a string that starts mid-octet has no octet slice, and `bitoffset` is
+ * the one that locates it. The differential compares that, so a decoder that lost the
+ * sub-octet position could not pass by reporting a plausible byte index.
  *===----------------------------------------------------------------------===*/
 #include <stdio.h>
 #include <string.h>
@@ -82,9 +85,14 @@ int main(void) {
                                     values, &endbit);
       if (st != BCIR_PER_OK) { printf("ERR %d\n", (int)st); continue; }
       printf("OK %zu %zu", endbit, count);
-      for (i = 0; i < count; ++i)
-        printf(" %d:%lld:%zu:%zu", values[i].present, (long long)values[i].integer,
-               values[i].offset, values[i].length);
+      for (i = 0; i < count; ++i) {
+        if (values[i].offset == BCIR_PER_NO_OFFSET)
+          printf(" %d:%lld:-1:%zu:%zu", values[i].present, (long long)values[i].integer,
+                 values[i].length, values[i].bit_offset);
+        else
+          printf(" %d:%lld:%zu:%zu:%zu", values[i].present, (long long)values[i].integer,
+                 values[i].offset, values[i].length, values[i].bit_offset);
+      }
       printf("\n");
     }
   }
