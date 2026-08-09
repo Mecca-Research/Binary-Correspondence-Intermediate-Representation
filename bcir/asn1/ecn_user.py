@@ -762,14 +762,25 @@ class Optionality:
                     f"reduces to `element-is-present` {bool(recovered)}, but the component is "
                     f"{'present' if present else 'absent'}")
             return
-        if self.determination is OptionalityDetermination.CONTAINER and present:
+        if self.determination is OptionalityDetermination.CONTAINER:
             # §22.5.3.5 gives the encoder no value to write and one thing to *detect*: it must
             # "cease encoding if the application requests the encoding of further components
             # in the USING container when the conceptual value `element-is-present` is false".
             # §21.5.6's NOTE generalizes it — "no further encodings are to be placed in the
             # container" — so a present component determined this way still has to be the last
             # thing in it, or the absence of the next one is undetectable.
-            out.claim_container_end(self.reference, "an optional component whose presence")
+            #
+            # The claim is registered whether the component is PRESENT OR ABSENT, and the
+            # absent case is the one that matters most. Presence is read back from whether any
+            # bits remain in the container, so if an absent component let the encoder carry on,
+            # a following mandatory component's bits would be exactly the evidence a decoder
+            # uses to conclude this one is PRESENT. Guarding on `present` therefore accepted
+            # `absent o` followed by mandatory `z` and produced an encoding no decoder can read
+            # as what it means. Either way the container has to end here.
+            out.claim_container_end(
+                self.reference,
+                f"an optional component that is {'present' if present else 'absent'} and whose "
+                f"presence")
         # §22.5.3.6 (handle) and §22.5.3.7 (pointer) say there is no further encoder action.
         # The handle's bits and the start pointer's zero are already in the encoding.
 
@@ -1254,12 +1265,37 @@ class BitWriter:
                     f"container here; §21.3.6's REFERENCE is to a field \"whose contents "
                     f"include this encoding space\"")
         elif self._containers:
+            # KNOWN LIMITATION (review, PR #707). Giving the top-level ConcatenationSpec a
+            # `container_name` makes `_containers` non-empty, so a field determined by #OUTER is
+            # refused here even though the otherwise identical UNNAMED PDU encodes it fine -- a
+            # named outermost structure is still the PDU. The fix needs the writer to know
+            # WHICH open container is the PDU, and depth cannot answer it: a container that is
+            # the PDU's first field also opens at depth one and at bit zero. Left refusing
+            # rather than relaxed on a guess, because the failure modes are not symmetric --
+            # a false rejection is a diagnosed refusal, while wrongly admitting #OUTER from
+            # inside a genuine nested container yields an encoding no decoder can read.
             raise Asn1Error(
                 f"ECN: this element is determined by {OUTER_CONTAINER}, the end of the PDU, "
                 f"but it sits inside the container {self._containers[-1][0]!r}; the PDU's end "
                 f"is not this element's container's end, and §21.3.6's rule is about the "
                 f"container that immediately holds it")
-        self._container_claims[name] = (len(self._bits), what)
+        here = len(self._bits)
+        previous = self._container_claims.get(name)
+        if previous is not None and previous[0] != here:
+            # Two elements cannot each be the last encoding in one container at DIFFERENT
+            # positions: bits followed the first claimant, which is exactly what its rule
+            # forbids. The claims used to be a name-keyed dict, so the second silently replaced
+            # the first and `close_container` then validated only the survivor -- the encoding
+            # was accepted with the earlier violation unexamined.
+            #
+            # Two claims at the SAME position are not a conflict and are kept: that is an
+            # absent container-determined component following another, where nothing was
+            # written in between and the container genuinely ends at one place for both.
+            raise Asn1Error(
+                f"ECN: {what} claims the end of the container {name!r}, but "
+                f"{previous[1]} already claimed it {here - previous[0]} bits earlier; "
+                f"§21.3.6/§21.5.6/§21.7.8 let only ONE encoding be the last one in a container")
+        self._container_claims[name] = (here, what)
 
     def open_containers(self) -> tuple[str, ...]:
         return tuple(name for name, _at in self._containers)
