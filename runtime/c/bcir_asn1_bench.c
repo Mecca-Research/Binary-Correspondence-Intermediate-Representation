@@ -81,6 +81,7 @@
 #include "bcir_emit.h"
 #include "bcir_jer.h"
 #include "bcir_oer.h"
+#include "bcir_per_plan.h"
 #include "bcir_xer.h"
 
 #define MAX_CASES 32
@@ -193,7 +194,7 @@ static long unhex(const char *text, unsigned char *out, size_t cap) {
 
 typedef struct bench_case {
   char label[64];
-  char op[8];
+  char op[16];
   unsigned char data[MAX_BYTES];
   size_t len;
   /* An ENCODE case carries a descriptor as well as a value; `encode` selects the arm. The
@@ -208,8 +209,15 @@ typedef struct bench_case {
    * The schema-free arm measures whether untrusted octets can be walked WITHOUT a type; the
    * two are different costs and are never averaged into one row. */
   int directed;
+  /* Which plan-driven decoder answers this case. OER and PER both have one now, and they take
+   * different field tables -- X.696's is octet-oriented with a width and a sign, X.691's is
+   * bit-oriented with two bounds -- so the case carries both arrays rather than a union that
+   * would need a tag to read safely anyway. */
+  int directed_per;
+  int per_aligned;
   size_t field_count;
   bcir_oer_field fields[MAX_PLAN_MEMBERS];
+  bcir_per_field per_fields[MAX_PLAN_MEMBERS];
   bcir_emit_rules rules;
   bcir_emit_plan plan;
   bcir_emit_node nodes[MAX_PLAN_NODES];
@@ -223,11 +231,22 @@ typedef struct bench_case {
  * dead code measures nothing, and at -O2 that is exactly what would happen. */
 static uint64_t do_work(const bench_case *c) {
   uint64_t sink = 0;
+  if (c->directed && c->directed_per) {
+    /* X.691's plan-driven decoder. `aligned` is on the CALL rather than on a field because
+     * `bcir_per_align` is the only difference between the two variants at a field boundary --
+     * and it is at every boundary, so one table serves both. */
+    bcir_per_value out[MAX_PLAN_MEMBERS];
+    size_t end_bit = 0;
+    sink += (uint64_t)bcir_per_decode_sequence(c->data, c->len, c->per_fields,
+                                               c->field_count, c->per_aligned, 0,
+                                               out, &end_bit);
+    sink += end_bit;
+    return sink;
+  }
   if (c->directed) {
-    /* The schema-directed decoder. `bcir_oer_decode_sequence` is the only plan-driven
-     * decoder the C rail has: bcir_per.h exposes a bit READER (get_bits, constrained,
-     * length) but no plan-driven whole-value decode, so PER has no row here yet and the
-     * Python side refuses to invent one. */
+    /* X.696's. The two decoders are timed through the same `dircase` verb because they answer
+     * the same question -- what does decode cost with the type in hand -- and a table that
+     * mixed them with the schema-free arm would be averaging two different questions. */
     bcir_oer_value out[MAX_PLAN_MEMBERS];
     bcir_oer_diag diag;
     size_t end = 0;
@@ -323,7 +342,7 @@ int main(void) {
         return 2;
       }
       c = &cases[n_cases];
-      if (sscanf(line, "%31s %63s %7s %s", op, c->label, c->op, hex) != 4) {
+      if (sscanf(line, "%31s %63s %15s %s", op, c->label, c->op, hex) != 4) {
         printf("unsupported case malformed\n");
         return 2;
       }
@@ -359,19 +378,54 @@ int main(void) {
       size_t i;
       if (n_cases >= MAX_CASES) { printf("unsupported dircase too-many\n"); return 2; }
       c = &cases[n_cases];
-      if (sscanf(line, "%31s %63s %7s %s %s", op, c->label, c->op, fields_hex, hex) != 5) {
+      if (sscanf(line, "%31s %63s %15s %s %s", op, c->label, c->op, fields_hex, hex) != 5) {
         printf("unsupported dircase malformed\n");
         return 2;
       }
-      flen = unhex(fields_hex, fbuf, sizeof(fbuf));
       vlen = unhex(hex, c->data, sizeof(c->data));
-      if (flen < 0 || vlen < 0 || (flen % 8) != 0 ||
-          (size_t)(flen / 8) > MAX_PLAN_MEMBERS) {
+      if (vlen < 0) { printf("unsupported dircase bad-hex\n"); return 2; }
+      c->directed = 1;
+      c->len = (size_t)vlen;
+
+      if (strncmp(c->op, "per-d", 5) == 0) {
+        /* X.691's field carries two signed 64-bit bounds, so the plan arrives as text --
+         * `kind:bounds:lb:ub:fixed:optional`, comma separated, the same spelling
+         * test_per_plan.c reads. Sixteen bytes of endian-sensitive record would be the
+         * alternative, for a benchmark argument. */
+        char *tok = fields_hex;
+        c->directed_per = 1;
+        c->per_aligned = (strcmp(c->op, "per-d-aligned") == 0);
+        c->field_count = 0;
+        while (tok != 0 && *tok != '\0' && c->field_count < MAX_PLAN_MEMBERS) {
+          int kind, bounds, optional;
+          long long lb, ub;
+          unsigned fixed;
+          char *comma = strchr(tok, ',');
+          if (comma != 0) *comma = '\0';
+          if (sscanf(tok, "%d:%d:%lld:%lld:%u:%d",
+                     &kind, &bounds, &lb, &ub, &fixed, &optional) != 6) {
+            printf("unsupported dircase bad-plan\n");
+            return 2;
+          }
+          c->per_fields[c->field_count].kind = (bcir_per_kind)kind;
+          c->per_fields[c->field_count].bounds = (bcir_per_bounds)bounds;
+          c->per_fields[c->field_count].lb = (int64_t)lb;
+          c->per_fields[c->field_count].ub = (int64_t)ub;
+          c->per_fields[c->field_count].fixed_len = (uint32_t)fixed;
+          c->per_fields[c->field_count].optional = (uint8_t)optional;
+          c->field_count++;
+          tok = (comma != 0) ? comma + 1 : 0;
+        }
+        if (c->field_count == 0) { printf("unsupported dircase bad-plan\n"); return 2; }
+        n_cases++;
+        continue;
+      }
+
+      flen = unhex(fields_hex, fbuf, sizeof(fbuf));
+      if (flen < 0 || (flen % 8) != 0 || (size_t)(flen / 8) > MAX_PLAN_MEMBERS) {
         printf("unsupported dircase bad-hex\n");
         return 2;
       }
-      c->directed = 1;
-      c->len = (size_t)vlen;
       c->field_count = (size_t)(flen / 8);
       for (i = 0; i < c->field_count; i++) {
         const unsigned char *r = fbuf + i * 8;
@@ -397,7 +451,7 @@ int main(void) {
 
       if (n_cases >= MAX_CASES) { printf("unsupported case too-many\n"); return 2; }
       c = &cases[n_cases];
-      if (sscanf(line, "%31s %63s %7s %s %s", op, c->label, c->op, plan_hex, hex) != 5) {
+      if (sscanf(line, "%31s %63s %15s %s %s", op, c->label, c->op, plan_hex, hex) != 5) {
         printf("unsupported encase malformed\n");
         return 2;
       }
