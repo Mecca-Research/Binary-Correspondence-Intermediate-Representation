@@ -93,7 +93,7 @@ from .tags import Asn1Error
 
 #: The serialization's version. Its own counter, not `encode_plan`'s: see this module's
 #: `serialize` for why an ECN encoding is a separate compilation rather than a plan version.
-SYNTAX_VERSION = 11
+SYNTAX_VERSION = 12
 SYNTAX_COMPILER = "bcir-ecn-syntax/1"
 
 #: The bit-field and constructor classes whose defined syntax clause 23 gives, restricted to
@@ -126,6 +126,7 @@ _BUILTIN_CLASSES = {
     "#CONDITIONAL-REPETITION": "conditional-repetition",
     "#BITS": "bits",
     "#OCTETS": "octets",
+    "#REPETITION": "repetition",
 }
 
 #: X.692's built-in encoding classes whose SEMANTICS this repository builds and whose
@@ -146,7 +147,6 @@ _UNREADABLE_CLASSES = {
     # `#CONDITIONAL-REPETITION` was the first row here and is now in `_BUILTIN_CLASSES`:
     # §23.14.1's defined syntax reads, which is step one of the three this table's ordering
     # note describes.
-    "#REPETITION": ("§23.13", "`ecn_user.RepetitionSpec`"),
     # §23.4's `#CHARS` shares §23.2's and §23.9's `WITH SYNTAX` and stays here for one
     # reason: its repeated element is a *character*, whose width comes from the ASN.1 type's
     # character set through clause 12's link. §23.2's bit and §23.9's octet are intrinsic to
@@ -210,7 +210,10 @@ _UNSUPPORTED_KEYWORDS = {
 #: `payloadOctets  #INT,` lexes as three tokens without the source needing spaces around the
 #: comma. `:` is NOT here: §21.8's `left:2` and §24.3.1's `divide:4` are single tokens, since
 #: the CHOICE alternative and its value are one value notation.
-_PUNCTUATION = "{},"
+#: §16.2.10's `Bounds` and `Size` are the only productions that bracket with parentheses, and
+#: they arrived with §16.4. Adding them here rather than lexing `(SIZE` as one word keeps the
+#: grammar reading tokens instead of prefixes, which is what every other bracket already does.
+_PUNCTUATION = "{},()"
 
 #: Annex C.1 and C.4's parameter-list brackets, which are **two characters**:
 #: `ParameterList ::= "{<" Parameter "," + ">}"`, against X.683 §8.3's `"{" ... "}"`.
@@ -2233,6 +2236,9 @@ class Structure:
     optional: dict[str, str] = field(default_factory=dict)
     #: §16.2.1's nested definitions: field name -> the `Structure` written inside it.
     nested: dict[str, "Structure"] = field(default_factory=dict)
+    #: §16.4.1's trailing `Size`, which §16.4.2 makes "bounds on the number of repetitions".
+    #: Only a repetition structure has one; §16.3 and §16.5 have no such tail.
+    size: "SizeBounds | None" = None
 
     def names(self) -> tuple[str, ...]:
         return tuple(name for name, _ in self.fields)
@@ -2763,8 +2769,10 @@ def _structure_lines(structure: "Structure") -> list[str]:
     two would let a module with a nested `#Header` and one with a sibling `#Header` hash the
     same.
     """
+    size = "-" if structure.size is None else (
+        f"{_bound(structure.size.low)}..{_bound(structure.size.high)}")
     out = [f"structure {structure.name} {structure.category} "
-           f"fields {len(structure.fields)}"]
+           f"fields {len(structure.fields)} size {size}"]
     for index, (field_name, class_name) in enumerate(structure.fields):
         line = f"field {index} name {field_name} class {class_name}"
         marker = structure.optional.get(field_name)
@@ -3263,23 +3271,111 @@ def _parse_structure(cursor: _Cursor, module: EcnModule, name: str, base: str) -
 _MAX_STRUCTURE_DEPTH = 16
 
 
+def _read_repetition_structure(cursor: _Cursor, module: EcnModule, structure: "Structure",
+                               *, depth: int) -> "Structure":
+    """§16.4.1's `RepetitionClass "{" identifier? EncodingStructure "}" Size?`.
+
+    The third `EncodingStructureDefn`, and the one shaped unlike the other two. §16.3 and
+    §16.5 take a *list* of `NamedField`s; this takes exactly one `EncodingStructure`, and its
+    identifier is **optional** — §16.4.2 has the structure identify "repeated occurrences of
+    the `EncodingStructure` in the production", so there is only ever one thing to name.
+
+    That optional identifier is already load-bearing elsewhere: §17.5.11 makes it a
+    biconditional — an `EncodeStructure`'s identifier "is omitted if and only if the governing
+    encoding constructor is a class in the repetition category with no identifier on the
+    repeated element" — which `ecn_encode.EncodeStructure.unnamed_element` has checked since
+    slice G1, against a structure no module could write until now.
+
+    §16.4.2's `Size` is bounds on the *number of repetitions*, not on a value, which is why it
+    lands in `SizeBounds` rather than `IntegerBounds`.
+    """
+    body = _collect_braced(cursor)
+    inner = _Cursor(body, f"the repetition structure {structure.name}")
+    first = inner.next().text
+    if inner.eof():
+        # `{ #Class }` — no identifier, which §17.5.11 makes a fact an EncodeStructure must
+        # match rather than a shorthand.
+        field_name, class_name = "", first
+    else:
+        field_name, class_name = first, inner.next().text
+    module.builtin_of(class_name)
+    if inner.peek() == "{":
+        structure.nested[field_name] = _read_structure(
+            inner, module, f"{structure.name}.{field_name or '<element>'}", class_name,
+            depth=depth + 1)
+    if not inner.eof():
+        raise Asn1Error(
+            f"ECN: §16.4.1 gives a RepetitionStructure one EncodingStructure between its "
+            f"braces, optionally named; {structure.name} has more")
+    structure.fields = ((field_name, class_name),)
+    if cursor.peek() == "(":
+        structure.size = _parse_structure_size(cursor, structure.name)
+    return structure
+
+
+def _parse_structure_size(cursor: _Cursor, owner: str) -> SizeBounds:
+    """§16.2.10's `Size ::= "(" SIZE "(" EffectiveRange ")" ")"`.
+
+    §16.2.11 constrains it twice over and both are checked: "MIN shall not be used in `Size`"
+    and the `SignedNumber` "shall be non-negative when used in `Size`". A count of repetitions
+    has a floor at zero that a value range does not, which is the whole reason the clause says
+    it separately.
+    """
+    cursor.expect("(")
+    cursor.expect("SIZE")
+    cursor.expect("(")
+
+    def bound(token: Token, *, upper: bool) -> int | None:
+        if token.text == "MAX":
+            if not upper:
+                raise Asn1Error(f"ECN: §16.2.10 puts MAX in the upper position; {owner}")
+            return None
+        if token.text == "MIN":
+            raise Asn1Error(
+                f"ECN: §16.2.11 — MIN shall not be used in a Size, and {owner} uses one; a "
+                f"count of repetitions is bounded below by zero already")
+        try:
+            value = int(token.text)
+        except ValueError:
+            raise Asn1Error(f"ECN: §16.2.10's EffectiveRange is numeric; got {token}") from None
+        if value < 0:
+            raise Asn1Error(
+                f"ECN: §16.2.11 — a SignedNumber shall be non-negative when used in a Size; "
+                f"{owner} writes {value}")
+        return value
+
+    # `..` is not punctuation in this lexer, so `0..MAX` arrives as ONE word. Split here
+    # rather than widening `_PUNCTUATION` again: a bare `.` is a token nothing else in ECN
+    # wants, and making it one would break every identifier a later clause spells with a dot.
+    token = cursor.next()
+    if ".." in token.text:
+        low_text, _, high_text = token.text.partition("..")
+        low = bound(Token(low_text, token.line), upper=False)
+        high = bound(Token(high_text, token.line), upper=True)
+    else:
+        low = high = bound(token, upper=False)
+    cursor.expect(")")
+    cursor.expect(")")
+    return SizeBounds(low, high)
+
+
 def _read_structure(cursor: _Cursor, module: EcnModule, name: str, base: str,
                     *, depth: int) -> Structure:
     """One `EncodingStructureDefn` body, and any nested inside it."""
     category = module.builtin_of(base)
-    if category not in ("concatenation", "alternatives"):
+    if category not in ("concatenation", "alternatives", "repetition"):
         raise Asn1Error(
             f"ECN: §16.2.12's EncodingStructureDefn is an AlternativesStructure (§16.3), a "
             f"RepetitionStructure (§16.4) or a ConcatenationStructure (§16.5); {base} is in "
             f"the {category} category, which is none of them")
-    if category == "repetition":  # pragma: no cover - unreachable while #REPETITION is absent
-        raise Asn1Error("ECN: §16.4's RepetitionStructure is not built")
     if depth > _MAX_STRUCTURE_DEPTH:
         raise Asn1Error(
             f"ECN: the structure {name} nests deeper than {_MAX_STRUCTURE_DEPTH} levels; "
             f"§16.2.1 sets no limit and this one is the reader's, so that a runaway module "
             f"fails with this sentence rather than a stack overflow")
     structure = Structure(name=name, category=category)
+    if category == "repetition":
+        return _read_repetition_structure(cursor, module, structure, depth=depth)
     body = _collect_braced(cursor)
     inner = _Cursor(body, f"the encoding structure {name}")
     fields: list[tuple[str, str]] = []
