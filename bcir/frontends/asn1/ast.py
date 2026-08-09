@@ -106,10 +106,17 @@ class Builtin:
     """A built-in type named by its X.680 keyword, e.g. INTEGER or UTF8String."""
 
     name: str
-    #: NamedNumbers for INTEGER (§19.1), ENUMERATED (§20.1), BIT STRING (§22.1).
+    #: NamedNumbers for INTEGER (§19.1), ENUMERATED (§20.1), BIT STRING (§22.1). For an
+    #: extensible ENUMERATED this is the extension ROOT only -- the items after the marker
+    #: live in `extension_named`, because X.691 §14 encodes the two differently.
     named: tuple[NamedNumber, ...] = ()
     #: True when an ENUMERATED carries an extension marker `...` (§20.1).
     extensible: bool = False
+    #: §20.1: the enumeration items declared AFTER the `...`. Kept apart from `named` so a
+    #: codec cannot mistake one for a root value; BER/DER/OER encode the value either way,
+    #: but X.691 §14.2 encodes a root INDEX and §14.3 an extension index, so merging the two
+    #: lists gave an extension item the index -- and therefore the meaning -- of a root one.
+    extension_named: tuple[NamedNumber, ...] = ()
 
 
 @dataclass(frozen=True)

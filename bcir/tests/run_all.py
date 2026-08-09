@@ -334,6 +334,7 @@ _MODULES = [
     "bcir.tests.test_asn1_per",
     "bcir.tests.test_asn1_per_strictness",
     "bcir.tests.test_asn1_per_canonical",
+    "bcir.tests.test_asn1_per_value_model",
     "bcir.tests.test_asn1_objects",
     "bcir.tests.test_asn1_xer",
     "bcir.tests.test_c_xer",

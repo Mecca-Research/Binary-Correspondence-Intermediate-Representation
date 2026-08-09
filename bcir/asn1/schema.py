@@ -170,6 +170,11 @@ class Primitive(Asn1Type):
     #: statement about the data, not licence to guess at it.
     encoded_by: tuple | None = None
     enumeration: tuple[tuple[str, int], ...] | None = None
+    #: §20.1's items declared AFTER the `...`. Held apart from `enumeration`, which is the
+    #: extension ROOT: X.691 §14.2 encodes a root value as an INDEX into the sorted root, so
+    #: an extension item placed in that list would be encoded as -- and would mean -- a
+    #: different enumerator. Invisible to BER/DER/OER, which encode the value itself.
+    enum_extension: tuple[tuple[str, int], ...] | None = None
     #: True when the "Enumerations" production carried an extension marker (X.680 §20.1).
     #: X.691 §10.3.22 a) makes such a type extensible for PER, which adds the §14.3 bit.
     enum_extensible: bool = False
