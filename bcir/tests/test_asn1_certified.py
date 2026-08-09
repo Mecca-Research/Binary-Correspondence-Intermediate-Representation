@@ -268,6 +268,96 @@ def test_a_frozen_table_is_content_addressed_and_names_no_candidate_twice():
         raise AssertionError("a table named a candidate twice")
 
 
+def test_a_decode_latency_verdict_says_which_decode_question_it_answered():
+    """Two honest tables, one target, two different winners — and the certificate says why.
+
+    Before the schema-directed table existed, `target` + `cal_gen` + `provenance` pinned a
+    decode-latency verdict completely. They no longer do: a schema-free decoder pays to
+    discover the structure from the octets and a schema-directed one is handed the plan, so
+    the same candidate can win one and lose the other at the same target on the same host.
+    `decode_kind` is what keeps the two verdicts from looking like a contradiction.
+
+    Both candidates here are canonical, so law 2 removes neither and the flip really is the
+    intervals talking. A pair including BER would have proved nothing — BER is excluded
+    before any number is read, and DER would have won both tables by default.
+    """
+    fixed = _iv(1, 1, 1, 950_000)
+    free = EncodingCostTable(target="host", cal_gen=1, provenance="measured", rows=(
+        CostRow("DER", octets=3, encode=fixed, decode=_iv(90, 100, 110, 950_000)),
+        CostRow("COER", octets=3, encode=fixed, decode=_iv(280, 300, 320, 950_000)),
+    ))
+    # The same two candidates, measured the other way: being handed the plan reverses them.
+    directed = EncodingCostTable(
+        target="host", cal_gen=1, provenance="measured", decode_kind="schema-directed",
+        rows=(
+            CostRow("DER", octets=3, encode=fixed, decode=_iv(280, 300, 320, 950_000)),
+            CostRow("COER", octets=3, encode=fixed, decode=_iv(90, 100, 110, 950_000)),
+        ))
+
+    pair = _only("DER", "COER")
+    a = select_certified(_INT, 42, free, objective=Objective.DECODE_LATENCY,
+                         candidates=pair)
+    b = select_certified(_INT, 42, directed, objective=Objective.DECODE_LATENCY,
+                         candidates=pair)
+
+    # Legality-first, so both admit the same candidates; only the verdict moves.
+    assert a.admitted == b.admitted == ("DER", "COER")
+    assert a.selected == "DER" and b.selected == "COER", (a.selected, b.selected)
+    assert a.decode_kind == "schema-free"
+    assert b.decode_kind == "schema-directed"
+    assert a.digest() != b.digest()
+    # And the label is not decoration on the side: it is inside the serialized form, so a
+    # reader who checks the digest is checking the decode kind too.
+    assert b"schema-directed" in b.serialize()
+
+
+def test_a_wire_size_verdict_records_the_decode_kind_it_did_not_use():
+    """Recorded unconditionally, exactly as `provenance` is.
+
+    A wire-size decision reads no interval, so `decode_kind` is inert to it — and it is
+    still stamped, because the field describes the *table the certificate is bound to*
+    rather than the arithmetic that produced this particular answer. A field that appeared
+    only on the certificates that consulted it would make its absence ambiguous.
+    """
+    certificate = select_certified(_INT, 42, _oracle_table(),
+                                   objective=Objective.WIRE_SIZE)
+    assert certificate.provenance == "oracle"
+    assert certificate.decode_kind == "schema-free"
+
+
+def test_the_two_decode_kinds_cannot_meet_inside_one_table():
+    """Why `select_certified` gates provenance and does *not* gate the decode kind.
+
+    An oracle table needs a guard at the point a timing is read, because its numbers are
+    the wrong kind of evidence for every candidate in it. A decode kind needs no such
+    guard: it is a property of the whole table, so there is no such thing as a table with
+    one schema-free row and one schema-directed row to be caught mixing them. Comparing
+    across the kinds would take two tables, and a certificate binds to one digest.
+
+    What is left is a caller pointing a decode-latency objective at a table that simply
+    does not hold the candidate — and that is the missing-row law, which already refuses.
+    """
+    fixed = _iv(1, 1, 1, 950_000)
+    directed = EncodingCostTable(
+        target="host", cal_gen=1, provenance="measured", decode_kind="schema-directed",
+        rows=(CostRow("COER", octets=3, encode=fixed, decode=_iv(9, 10, 11, 950_000)),))
+    try:
+        select_certified(_INT, 42, directed, objective=Objective.DECODE_LATENCY)
+    except UnmeasuredTarget as error:
+        # Named, so the repair is obvious: measure those candidates the directed way, or
+        # narrow the candidate set to what this table actually answers for.
+        assert "no measured row" in str(error)
+    else:
+        raise AssertionError(
+            "a directed table holding one candidate must refuse a decision over all of them")
+    # Narrowed to what the table holds, the same call decides.
+    certificate = select_certified(_INT, 42, directed,
+                                   objective=Objective.DECODE_LATENCY,
+                                   candidates=_only("COER"))
+    assert certificate.selected == "COER"
+    assert certificate.decode_kind == "schema-directed"
+
+
 def test_a_table_must_declare_an_honest_provenance():
     """`measured`, `modeled` and `oracle` are different claims and only one is evidence."""
     try:

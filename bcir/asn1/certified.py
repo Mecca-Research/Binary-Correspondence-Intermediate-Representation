@@ -48,7 +48,12 @@ from .selection import ALL_CANDIDATES, Candidate, Measurement, Objective, measur
 from .tags import Asn1Error
 
 #: Bumped when a table's shape changes in a way an older reader would misread.
-COST_TABLE_VERSION = 1
+#: Bumped to 2 when `decode_kind` joined the table. A schema-free and a schema-directed table
+#: describe *different questions* about the same candidates, so they must never share a digest
+#: — the same argument that moves ECN's `SYNTAX_VERSION` when a spelling changes what a decoder
+#: reads. A certificate carries the digest of the table it read, so the discriminator has to be
+#: inside the digest rather than beside it.
+COST_TABLE_VERSION = 2
 
 #: A table with fewer samples than this is refused at construction. Not a statistical
 #: threshold so much as a floor below which an order-statistic interval covers almost
@@ -155,8 +160,23 @@ class EncodingCostTable:
     provenance: str
     rows: tuple[CostRow, ...]
     version: int = COST_TABLE_VERSION
+    #: WHICH decode question this table's `decode` interval answers.
+    #:
+    #: `schema-free` is a structural scan with no type in hand — the trust-boundary cost, and
+    #: the only one X.690 and X.697 candidates can be measured under. `schema-directed` is the
+    #: deployment cost, with the plan already compiled, and it is the only way X.696 6.2 lets
+    #: OER be decoded at all.
+    #:
+    #: They are never merged. Averaging a structural scan with a plan-driven decode would give
+    #: one number for two different pieces of work, which is the error 6.2 spends a paragraph
+    #: on — so this is a discriminator, not a flag, and it is inside `digest`.
+    decode_kind: str = "schema-free"
 
     def __post_init__(self) -> None:
+        if self.decode_kind not in ("schema-free", "schema-directed"):
+            raise Asn1Error(
+                f"decode_kind {self.decode_kind!r} must be schema-free or schema-directed; "
+                f"the two answer different questions and a table is exactly one of them")
         if self.provenance not in ("measured", "modeled", "oracle"):
             raise Asn1Error(
                 f"cost table provenance {self.provenance!r} must be measured, modeled or "
@@ -197,6 +217,14 @@ class Certificate:
     Every field is something a reader can check rather than trust: identities are content
     addresses, the verdict is separate from the costs, and the tie-break rule is named so a
     third party can re-run the decision and get the same answer.
+
+    `provenance` and `decode_kind` are both *copied down* from the table rather than left to
+    be looked up through `table_digest`, and for the same reason: a verdict has to say what
+    kind of truth it read on its own face. `decode_kind` earns that place because it is the
+    one field that can make two otherwise identical certificates — same schema, same value,
+    same target, same `cal_gen`, same `measured` provenance — disagree about who wins on
+    decode latency. A schema-free decode pays to discover the structure; a schema-directed
+    one is handed it. Both numbers are real, and neither answers the other's question.
     """
 
     version: int
@@ -206,6 +234,8 @@ class Certificate:
     target: str
     cal_gen: int
     provenance: str
+    #: Which decode question the table's `decode` column answered (X.691 §7.2, X.696 §6.2).
+    decode_kind: str
     table_digest: str
     admitted: tuple[str, ...]
     refused: tuple[tuple[str, str], ...]
@@ -317,7 +347,8 @@ def select_certified(kind, value, table: EncodingCostTable, *,
     common = dict(version=COST_TABLE_VERSION, schema_digest=schema_digest,
                   value_digest=value_digest, objective=objective.value,
                   target=table.target, cal_gen=table.cal_gen,
-                  provenance=table.provenance, table_digest=table.digest(),
+                  provenance=table.provenance, decode_kind=table.decode_kind,
+                  table_digest=table.digest(),
                   admitted=tuple(c.name for c, _ in emittable),
                   refused=tuple(sorted(refused)), tie_break=TIE_BREAK)
 
@@ -360,6 +391,15 @@ def select_certified(kind, value, table: EncodingCostTable, *,
             f"decided here, and an oracle timing must not stand in for the missing "
             f"measurement")
 
+    # `table.decode_kind` is recorded on the certificate and NOT gated here, which is a
+    # deliberate asymmetry with the provenance refusal above. Provenance needs a guard
+    # because an oracle table's numbers are the wrong *kind of evidence* for any candidate.
+    # A decode kind is not: both columns are honest measurements, they just answer
+    # different questions, and the two kinds cannot meet inside one table -- `decode_kind`
+    # is a property of the table, so every row in it was measured the same way. Comparing
+    # across the two would take two tables, and a certificate binds to exactly one digest.
+    # The residual hazard is the caller who narrows `candidates` to whatever a partial
+    # table happens to hold; that is the missing-row law's job, and it fires above.
     field_name = "encode" if objective is Objective.ENCODE_LATENCY else "decode"
     scored = [(table.row(c.name), m) for c, m in emittable]
     best_row = min(scored, key=lambda pair: getattr(pair[0], field_name).median)[0]

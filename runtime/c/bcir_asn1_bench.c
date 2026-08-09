@@ -80,6 +80,7 @@
 #include "bcir_asn1.h"
 #include "bcir_emit.h"
 #include "bcir_jer.h"
+#include "bcir_oer.h"
 #include "bcir_xer.h"
 
 #define MAX_CASES 32
@@ -201,6 +202,14 @@ typedef struct bench_case {
    * one process against a decode number measured in another reintroduces exactly the drift
    * the interleaving exists to remove. */
   int encode;
+  /* A SCHEMA-DIRECTED decode case (`dircase`). Distinct from `encode` and from the
+   * schema-free decode arm because it answers a third question: what does decode cost when
+   * the type is already in hand, which is the only way X.696 6.2 lets OER be decoded at all.
+   * The schema-free arm measures whether untrusted octets can be walked WITHOUT a type; the
+   * two are different costs and are never averaged into one row. */
+  int directed;
+  size_t field_count;
+  bcir_oer_field fields[MAX_PLAN_MEMBERS];
   bcir_emit_rules rules;
   bcir_emit_plan plan;
   bcir_emit_node nodes[MAX_PLAN_NODES];
@@ -214,6 +223,20 @@ typedef struct bench_case {
  * dead code measures nothing, and at -O2 that is exactly what would happen. */
 static uint64_t do_work(const bench_case *c) {
   uint64_t sink = 0;
+  if (c->directed) {
+    /* The schema-directed decoder. `bcir_oer_decode_sequence` is the only plan-driven
+     * decoder the C rail has: bcir_per.h exposes a bit READER (get_bits, constrained,
+     * length) but no plan-driven whole-value decode, so PER has no row here yet and the
+     * Python side refuses to invent one. */
+    bcir_oer_value out[MAX_PLAN_MEMBERS];
+    bcir_oer_diag diag;
+    size_t end = 0;
+    int canonical = 0;
+    sink += (uint64_t)bcir_oer_decode_sequence(c->data, c->len, 0, c->fields,
+                                               c->field_count, out, &end, &canonical, &diag);
+    sink += end + (uint64_t)canonical;
+    return sink;
+  }
   if (c->encode) {
     /* The plan-driven encoder (E2). Every candidate goes through the same descriptor and
      * the same neutral value stream, so what is timed is the ENCODING and not an adapter. */
@@ -317,6 +340,48 @@ int main(void) {
         return 2;
       }
       c->len = (size_t)len;
+      n_cases++;
+      continue;
+    }
+
+    if (strcmp(op, "dircase") == 0) {
+      /* dircase <label> <op> <fields-hex> <octets-hex>
+       *
+       * The field array is built in Python from the same encode plan, so the mapping from an
+       * ASN.1 type to X.696's field kinds lives beside the plan semantics rather than being
+       * re-derived here from a second parse of the descriptor. */
+      bench_case *c;
+      long flen, vlen;
+      unsigned char fbuf[MAX_PLAN_MEMBERS * 8];
+      /* Its own buffer: `plan_hex` belongs to the encase arm, and a field array is not a
+       * plan. Sized for the record form (8 octets -> 16 hex digits per field). */
+      static char fields_hex[MAX_PLAN_MEMBERS * 16 + 2];
+      size_t i;
+      if (n_cases >= MAX_CASES) { printf("unsupported dircase too-many\n"); return 2; }
+      c = &cases[n_cases];
+      if (sscanf(line, "%31s %63s %7s %s %s", op, c->label, c->op, fields_hex, hex) != 5) {
+        printf("unsupported dircase malformed\n");
+        return 2;
+      }
+      flen = unhex(fields_hex, fbuf, sizeof(fbuf));
+      vlen = unhex(hex, c->data, sizeof(c->data));
+      if (flen < 0 || vlen < 0 || (flen % 8) != 0 ||
+          (size_t)(flen / 8) > MAX_PLAN_MEMBERS) {
+        printf("unsupported dircase bad-hex\n");
+        return 2;
+      }
+      c->directed = 1;
+      c->len = (size_t)vlen;
+      c->field_count = (size_t)(flen / 8);
+      for (i = 0; i < c->field_count; i++) {
+        const unsigned char *r = fbuf + i * 8;
+        c->fields[i].kind = (bcir_oer_kind)r[0];
+        c->fields[i].width = r[1];
+        c->fields[i].is_signed = r[2];
+        c->fields[i].optional = r[3];
+        c->fields[i].fixed_len = (uint32_t)r[4] | ((uint32_t)r[5] << 8) |
+                                 ((uint32_t)r[6] << 16) | ((uint32_t)r[7] << 24);
+      }
       n_cases++;
       continue;
     }

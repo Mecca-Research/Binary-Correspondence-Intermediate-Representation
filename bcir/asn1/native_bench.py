@@ -54,7 +54,7 @@ from .tags import Asn1Error
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
 _SOURCES = ["bcir_asn1_bench.c", "bcir_asn1.c", "bcir_jer.c", "bcir_xer.c",
-            "bcir_runtime.c", "bcir_emit.c"]
+            "bcir_runtime.c", "bcir_emit.c", "bcir_oer.c"]
 
 
 @dataclass(frozen=True)
@@ -316,6 +316,152 @@ def run_native_bench(kind, value, *, warmup: int = 2, rounds: int = MIN_SAMPLES 
 
 
 
+#: X.696's field kinds, as `bcir_oer.h` numbers them. Duplicated here rather than parsed out
+#: of the header because a silent renumber on either side must break a test, and a test that
+#: reads the header would follow the renumber instead of catching it.
+_OER_INTEGER, _OER_BOOLEAN, _OER_NULL, _OER_FIXED_OCTETS, _OER_VAR_OCTETS = 0, 1, 2, 3, 4
+
+
+def oer_fields_for(plan) -> bytes:
+    """The `bcir_oer_field[]` a schema-directed decode needs, built from the write plan.
+
+    Eight octets per field — kind, width, is_signed, optional, then a little-endian
+    `fixed_len` — so the C side parses a fixed record instead of re-deriving X.696's field
+    kinds from a second pass over the descriptor. The mapping lives here because this is where
+    the plan's semantics already live.
+
+    **Refuses rather than approximates.** A member this cannot map is an `Asn1Error` naming the
+    kind, not a guessed field: a decode timed against the wrong field array would be a real
+    number for the wrong work, which is worse than no number at all.
+    """
+    root = plan.root
+    if root.kind != "sequence":
+        raise Asn1Error(
+            f"X.696 16.1: the schema-directed decode arm decodes a SEQUENCE; this plan's root "
+            f"is {root.kind!r}")
+    out = bytearray()
+    for member in root.members:
+        node = member.node
+        optional = 1 if getattr(member, "optional", False) else 0
+        if node.kind == "integer":
+            # 10.4's variable-size form: width 0 means a length determinant then the octets.
+            out += bytes((_OER_INTEGER, 0, 1, optional, 0, 0, 0, 0))
+        elif node.kind == "boolean":
+            out += bytes((_OER_BOOLEAN, 0, 0, optional, 0, 0, 0, 0))
+        elif node.kind == "null":
+            out += bytes((_OER_NULL, 0, 0, optional, 0, 0, 0, 0))
+        elif node.kind in ("string", "octetstring"):
+            # 14.2/27: a length determinant then that many octets.
+            out += bytes((_OER_VAR_OCTETS, 0, 0, optional, 0, 0, 0, 0))
+        else:
+            raise Asn1Error(
+                f"X.696: the schema-directed decode arm has no field kind for a "
+                f"{node.kind!r} member ({member.name!r}); add one to `oer_fields_for` rather "
+                f"than letting the timing describe different work than the plan does")
+    return bytes(out)
+
+
+#: Which candidates have a plan-driven decoder in the C rail, and why the others do not.
+#:
+#: **This is a different partition from `ENCODE_OPS`, and the asymmetry is the point.**
+#: `bcir_oer.c` is a plan-driven whole-SEQUENCE decoder, so CANONICAL-OER has a row.
+#: `bcir_per.h` exposes a bit READER — `bcir_per_get_bits`, `bcir_per_constrained`,
+#: `bcir_per_length` — and no plan-driven whole-value decode, so PER has none. That is a
+#: missing *build*, not a law: X.691 7.2 bars a schema-FREE decode and says nothing against a
+#: schema-directed one. Recorded as a gap so it reads as buildable work rather than as
+#: another clause.
+DIRECTED_DECODE_OPS: dict[str, str | None] = {
+    "COER": "coer-d",
+    "BASIC-OER": None,
+    "CANONICAL-PER-ALIGNED": None,
+    "CANONICAL-PER-UNALIGNED": None,
+    "BASIC-PER-ALIGNED": None,
+    "BASIC-PER-UNALIGNED": None,
+    "DER": None,
+    "BER": None,
+    "JER": None,
+    "JER-BCIR-CANONICAL": None,
+}
+
+_DIRECTED_REASONS: dict[str, str] = {
+    "BASIC-OER": "X.696: BASIC-OER's non-canonical spellings are what the CANONICAL-OER "
+                 "decoder already accepts; a separate row would time the same decoder twice",
+    "CANONICAL-PER-ALIGNED": "bcir_per.h is a bit reader, not a plan-driven decoder — a GAP, "
+                             "not a law (X.691 7.2 bars only the schema-FREE decode)",
+    "DER": "already has a schema-free decode row; the schema-free table is where X.690 "
+           "candidates belong, because they can be walked without a type",
+}
+
+
+def run_native_directed_decode_bench(kind, value, *, warmup: int = 2,
+                                     rounds: int = MIN_SAMPLES + 4, iterations: int = 64,
+                                     candidates=ALL_CANDIDATES
+                                     ) -> tuple[dict[str, tuple[int, ...]], dict[str, str]]:
+    """Time the native **schema-directed** decode of `value` under every candidate that has one.
+
+    This is deliberately NOT a column of the schema-free table, and merging the two would be
+    the error 6.2 spends a paragraph on. They answer different questions:
+
+    * the schema-free decode asks *can untrusted octets be walked with no type in hand* — a
+      trust-boundary cost, and the reason DER/BER/JER/XER are the rows that have one;
+    * the schema-directed decode asks *what does decode cost in deployment, where the type is
+      always known* — which is the only question X.696 6.2 lets OER answer at all.
+
+    One value, one plan, one set of octets per candidate, so what is timed is the decoder.
+    """
+    from .emit import flatten
+    from .encode_plan import compile_encode_plan
+
+    skipped: dict[str, str] = {}
+    try:
+        plan = compile_encode_plan(kind, module="bench", type_name="Bench")
+        fields = oer_fields_for(plan)
+        stream = flatten(plan, value)
+    except Asn1Error as error:
+        raise Asn1Error(f"no schema-directed decode table exists for this schema: "
+                        f"{error}") from None
+
+    cases: list[tuple[str, str, bytes]] = []
+    for candidate in candidates:
+        op = DIRECTED_DECODE_OPS.get(candidate.name, None)
+        if op is None:
+            skipped[candidate.name] = _DIRECTED_REASONS.get(
+                candidate.name, "no plan-driven decoder in the C rail for this candidate")
+            continue
+        try:
+            octets = candidate.encode(kind, value)
+        except Asn1Error as error:
+            skipped[candidate.name] = f"the oracle cannot encode this value: {error}"
+            continue
+        if not octets:
+            skipped[candidate.name] = "the oracle produced no octets for this candidate"
+            continue
+        cases.append((candidate.name, op, octets))
+    if not cases:
+        return {}, skipped
+
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = build_harness(tmp)
+        if binary is None:
+            raise Asn1Error("no C compiler; a schema-directed decode table cannot be produced")
+        lines = [f"rounds {warmup} {rounds} {iterations}"]
+        lines += [f"dircase {name} {op} {fields.hex()} {octets.hex()}"
+                  for name, op, octets in cases]
+        lines.append("run")
+        proc = subprocess.run([binary], input="\n".join(lines) + "\n",
+                              capture_output=True, text=True, timeout=600)
+        if proc.returncode != 0:
+            raise Asn1Error(f"the native bench refused the directed corpus: "
+                            f"{proc.stdout.strip()}")
+
+    per_case: dict[str, list[int]] = {}
+    for line in proc.stdout.splitlines():
+        parts = line.split()
+        if parts and parts[0] == "sample":
+            per_case.setdefault(parts[1], []).append(int(parts[4]))
+    return ({name: tuple(values) for name, values in sorted(per_case.items())}, skipped)
+
+
 def run_native_encode_bench(kind, value, *, warmup: int = 2, rounds: int = MIN_SAMPLES + 4,
                             iterations: int = 64, candidates=ALL_CANDIDATES
                             ) -> tuple[dict[str, tuple[int, ...]], dict[str, str]]:
@@ -402,6 +548,50 @@ def native_counters() -> str:
         if parts and parts[0] == "counters":
             return parts[1] if len(parts) > 1 else "unknown"
     return "not reported"
+
+
+def directed_decode_table(kind, value, *, target: str, cal_gen: int,
+                          candidates=ALL_CANDIDATES, **bench) -> EncodingCostTable:
+    """The **schema-directed** decode table — a second table, never a column of the first.
+
+    `measured_table` answers *can these octets be walked with no type in hand, and what does
+    that cost*. This one answers *what does decode cost in deployment, where the type is always
+    known*. Both are true; neither substitutes for the other; and `EncodingCostTable.decode_kind`
+    keeps a certificate from confusing them, because it is inside the table's digest.
+
+    **This is the table X.696 6.2 leaves room for.** CANONICAL-OER can never appear in the
+    schema-free table — the clause is explicit that the octets cannot be walked without the
+    type — and it appears here for exactly the same reason, from the other side.
+
+    A row still needs BOTH axes, so a candidate is included only when it has a schema-directed
+    decode *and* a native encode. That is not a formality: a row with one axis measured and the
+    other copied is the under-claim `measured_table` used to make before `bcir_emit` landed.
+    """
+    decode_samples, skipped = run_native_directed_decode_bench(
+        kind, value, candidates=candidates, **bench)
+    if not decode_samples:
+        raise Asn1Error(
+            "no candidate has a schema-directed decode on this rail, so the table would be "
+            f"empty; the reasons are: {skipped}")
+    encode_samples, _ = run_native_encode_bench(kind, value, candidates=candidates, **bench)
+
+    rows: list[CostRow] = []
+    for candidate in candidates:
+        name = candidate.name
+        decode_ns = decode_samples.get(name)
+        encode_ns = encode_samples.get(name)
+        if decode_ns is None or encode_ns is None:
+            continue
+        octets = candidate.encode(kind, value)
+        rows.append(CostRow(candidate=name, octets=len(octets),
+                            encode=interval_of(list(encode_ns)),
+                            decode=interval_of(list(decode_ns))))
+    if not rows:
+        raise Asn1Error(
+            "every schema-directed decode row lacked its encode axis, so no two-axis row "
+            "closes; CostRow needs both and a copied axis is not a measurement")
+    return EncodingCostTable(target=target, cal_gen=cal_gen, provenance="measured",
+                             rows=tuple(rows), decode_kind="schema-directed")
 
 
 def measured_table(kind, value, *, target: str, cal_gen: int,
