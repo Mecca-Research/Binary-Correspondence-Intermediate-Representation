@@ -930,6 +930,17 @@ reproduces today's DER exactly (the degenerate case, pinning that nothing regres
 > certificate bound to one cannot be mistaken for a certificate bound to the other.
 > `COST_TABLE_VERSION` moved to 2 for exactly that reason.
 >
+> The label is also **copied onto the certificate**, next to `provenance` and for the same
+> reason: a verdict has to say what kind of truth it read without the reader having to fetch
+> the table. It is the one field that can make two otherwise identical certificates — same
+> schema, value, target, `cal_gen` and `measured` provenance — name different decode-latency
+> winners. `select_certified` records it and deliberately does **not** gate on it: unlike an
+> oracle provenance, whose numbers are the wrong kind of evidence for every candidate, both
+> decode columns are honest measurements, and the two kinds cannot meet inside one table
+> because `decode_kind` is a property of the table rather than of a row. The one residual
+> case — a decode-latency objective pointed at a table that does not hold the candidate — is
+> already the missing-row refusal's job.
+>
 > **What the gate can and cannot yet show.** The directed table has **one row**, because
 > `bcir_oer.c` is the only plan-driven decoder in the C rail. So "selects OER" is true and
 > *vacuous*: there is nothing to select against. Closing it properly needs a plan-driven PER

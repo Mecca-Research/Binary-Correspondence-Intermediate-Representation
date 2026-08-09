@@ -217,6 +217,14 @@ class Certificate:
     Every field is something a reader can check rather than trust: identities are content
     addresses, the verdict is separate from the costs, and the tie-break rule is named so a
     third party can re-run the decision and get the same answer.
+
+    `provenance` and `decode_kind` are both *copied down* from the table rather than left to
+    be looked up through `table_digest`, and for the same reason: a verdict has to say what
+    kind of truth it read on its own face. `decode_kind` earns that place because it is the
+    one field that can make two otherwise identical certificates — same schema, same value,
+    same target, same `cal_gen`, same `measured` provenance — disagree about who wins on
+    decode latency. A schema-free decode pays to discover the structure; a schema-directed
+    one is handed it. Both numbers are real, and neither answers the other's question.
     """
 
     version: int
@@ -226,6 +234,8 @@ class Certificate:
     target: str
     cal_gen: int
     provenance: str
+    #: Which decode question the table's `decode` column answered (X.691 §7.2, X.696 §6.2).
+    decode_kind: str
     table_digest: str
     admitted: tuple[str, ...]
     refused: tuple[tuple[str, str], ...]
@@ -337,7 +347,8 @@ def select_certified(kind, value, table: EncodingCostTable, *,
     common = dict(version=COST_TABLE_VERSION, schema_digest=schema_digest,
                   value_digest=value_digest, objective=objective.value,
                   target=table.target, cal_gen=table.cal_gen,
-                  provenance=table.provenance, table_digest=table.digest(),
+                  provenance=table.provenance, decode_kind=table.decode_kind,
+                  table_digest=table.digest(),
                   admitted=tuple(c.name for c, _ in emittable),
                   refused=tuple(sorted(refused)), tie_break=TIE_BREAK)
 
@@ -380,6 +391,15 @@ def select_certified(kind, value, table: EncodingCostTable, *,
             f"decided here, and an oracle timing must not stand in for the missing "
             f"measurement")
 
+    # `table.decode_kind` is recorded on the certificate and NOT gated here, which is a
+    # deliberate asymmetry with the provenance refusal above. Provenance needs a guard
+    # because an oracle table's numbers are the wrong *kind of evidence* for any candidate.
+    # A decode kind is not: both columns are honest measurements, they just answer
+    # different questions, and the two kinds cannot meet inside one table -- `decode_kind`
+    # is a property of the table, so every row in it was measured the same way. Comparing
+    # across the two would take two tables, and a certificate binds to exactly one digest.
+    # The residual hazard is the caller who narrows `candidates` to whatever a partial
+    # table happens to hold; that is the missing-row law's job, and it fires above.
     field_name = "encode" if objective is Objective.ENCODE_LATENCY else "decode"
     scored = [(table.row(c.name), m) for c, m in emittable]
     best_row = min(scored, key=lambda pair: getattr(pair[0], field_name).median)[0]
