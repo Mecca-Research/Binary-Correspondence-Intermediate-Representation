@@ -331,6 +331,86 @@ def test_the_contents_group_names_a_set_the_module_assigns():
         raise AssertionError("an undefined object set was accepted")
 
 
+_REPSTRUCT = """M ENCODING-DEFINITIONS ::= BEGIN
+  #Item ::= #INT
+  #Rep  ::= #REPETITION
+  %s
+END
+"""
+
+
+def test_a_repetition_structure_reads_with_and_without_its_identifier():
+    """§16.4.1's `RepetitionClass "{" identifier? EncodingStructure "}" Size?`.
+
+    The third `EncodingStructureDefn`, and the one shaped unlike the other two: §16.3 and
+    §16.5 take a *list* of `NamedField`s, this takes exactly one `EncodingStructure` whose
+    identifier is **optional** — §16.4.2 has it identify "repeated occurrences of the
+    `EncodingStructure`", so there is only ever one thing to name.
+
+    That optional identifier has been load-bearing since slice G1 without a structure able to
+    exercise it: §17.5.11 makes an `EncodeStructure`'s identifier omitted "if and only if the
+    governing encoding constructor is a class in the repetition category with no identifier on
+    the repeated element". `ecn_encode.EncodeStructure.unnamed_element` has checked that
+    biconditional against a structure no module could write until now.
+    """
+    named = parse_module(_REPSTRUCT % "Items ::= #Rep { item #Item } (SIZE (0..MAX))")
+    assert named.structures["Items"].category == "repetition"
+    assert named.structures["Items"].fields == (("item", "#Item"),)
+
+    bare = parse_module(_REPSTRUCT % "Bare ::= #Rep { #Item } (SIZE (4))")
+    assert bare.structures["Bare"].fields == (("", "#Item"),)
+
+    # §16.4.1's `Size?` really is optional.
+    assert parse_module(_REPSTRUCT % "Plain ::= #Rep { item #Item }").structures[
+        "Plain"].size is None
+
+
+def test_the_repetition_size_bounds_the_number_of_repetitions():
+    """§16.4.2: the `Size` specifies "bounds on the number of repetitions" — a count, not a
+    value, which is why it lands in `SizeBounds` and not `IntegerBounds`.
+
+    §16.2.10 gives both the range and the fixed form, and §16.2.11 constrains the range twice:
+    "MIN shall not be used in `Size`" and the number "shall be non-negative when used in
+    `Size`". Both are refused, because a count of repetitions has a floor at zero that a value
+    range does not — which is the whole reason the clause says it separately.
+    """
+    from bcir.asn1.ecn_user import SizeBounds
+
+    assert parse_module(_REPSTRUCT % "A ::= #Rep { i #Item } (SIZE (0..MAX))").structures[
+        "A"].size == SizeBounds(0, None)
+    assert parse_module(_REPSTRUCT % "B ::= #Rep { i #Item } (SIZE (4))").structures[
+        "B"].size == SizeBounds(4, 4)
+
+    for text, cite in (("C ::= #Rep { i #Item } (SIZE (MIN..4))", "16.2.11"),
+                       ("D ::= #Rep { i #Item } (SIZE (-1..4))", "16.2.11")):
+        try:
+            parse_module(_REPSTRUCT % text)
+        except Asn1Error as error:
+            assert cite in str(error), (text, str(error))
+        else:
+            raise AssertionError(f"{text!r} was accepted")
+
+
+def test_a_repetition_structure_holds_exactly_one_encoding_structure():
+    """§16.4.1 brackets a single `EncodingStructure`, not a list. A second is not a longer
+    repetition — it is a concatenation written under the wrong class."""
+    try:
+        parse_module(_REPSTRUCT % "E ::= #Rep { a #Item, b #Item }")
+    except Asn1Error as error:
+        assert "16.4.1" in str(error), str(error)
+    else:
+        raise AssertionError("a repetition structure took two elements")
+
+
+def test_the_repetition_size_reaches_the_digest():
+    """Two modules differing only in the bound on the repetition count describe different
+    octets: §23.14's `#CONDITIONAL-REPETITION` selects on exactly those bounds (§23.2.2.3)."""
+    narrow = parse_module(_REPSTRUCT % "F ::= #Rep { i #Item } (SIZE (4))")
+    wide = parse_module(_REPSTRUCT % "F ::= #Rep { i #Item } (SIZE (0..MAX))")
+    assert narrow.sha256() != wide.sha256()
+    assert b"structure F repetition fields 1 size 4..4" in narrow.serialize()
+
+
 def test_a_builtin_class_this_grammar_cannot_spell_is_not_called_undefined():
     """Seven X.692 classes were being reported as though they did not exist.
 
@@ -376,9 +456,7 @@ def test_a_builtin_class_this_grammar_cannot_spell_is_not_called_undefined():
     # 12's link, where §23.2's bit and §23.9's octet are intrinsic to the class. It is also
     # not on the path to §22.11, whose group appears in §23.2.1's and §23.9.1's syntax and in
     # no other class's.
-    assert set(_UNREADABLE_CLASSES) == {
-        "#CHARS", "#NUL", "#TAG", "#REPETITION",
-    }
+    assert set(_UNREADABLE_CLASSES) == {"#CHARS", "#NUL", "#TAG"}
 
 
 def test_an_unimplemented_property_group_is_refused_by_name_and_never_skipped():
@@ -1103,9 +1181,10 @@ def test_a_parameterized_assignment_reaches_the_digest_governors_and_all():
     # 8 for a module holding several structures — the serialization emits every one of them,
     # so a module that gains a §22.1.2.7 head-end structure no longer hashes as it did — and
     # 9 for §23.14's `#CONDITIONAL-REPETITION`, a kind of object the digest can now contain,
-    # 10 for §23.2's `#BITS` and §23.9's `#OCTETS`, which add two more, and 11 for §18.1's
-    # encoding object sets plus §22.11's CONTENTS-ENCODING group on the string classes.
-    assert SYNTAX_VERSION == 11
+    # 10 for §23.2's `#BITS` and §23.9's `#OCTETS`, which add two more, 11 for §18.1's
+    # encoding object sets plus §22.11's CONTENTS-ENCODING group on the string classes, and
+    # 12 for §16.4's RepetitionStructure, whose §16.4.2 Size every structure line now carries.
+    assert SYNTAX_VERSION == 12
     base = parse_module(_with_assignments(_LP_STRUCTURE))
     assert b"parameterized #Length-prefixed" in base.serialize()
 

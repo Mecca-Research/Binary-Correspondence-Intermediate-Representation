@@ -935,6 +935,28 @@ clause 12's link. No ELM section is readable here, so the class is written besid
 Omitting it is refused rather than defaulted: a contained type nobody named is a set applied to
 nothing.
 
+**§16.4's `RepetitionStructure` is built**, at `SYNTAX_VERSION` 12 — the third and last of
+§16.2.12's `EncodingStructureDefn`s, and the one shaped unlike the other two. §16.3 and §16.5
+take a *list* of `NamedField`s; §16.4.1 takes exactly one `EncodingStructure` between its
+braces, whose identifier is **optional**, followed by an optional `Size`.
+
+That optional identifier had been load-bearing since slice G1 with no structure able to
+exercise it. §17.5.11 makes an `EncodeStructure`'s identifier omitted "if and only if the
+governing encoding constructor is a class in the repetition category with no identifier on the
+repeated element", and `ecn_encode.EncodeStructure.unnamed_element` has checked that
+biconditional against a structure no module could write. It can now.
+
+§16.4.2's `Size` is bounds on the **number of repetitions** rather than on a value, which is
+why it lands in `SizeBounds`; §16.2.11 constrains it twice and both are refused — "MIN shall
+not be used in `Size`" and the number "shall be non-negative when used in `Size`". It reaches
+the digest because §23.2.2.3 has §23.14's `#CONDITIONAL-REPETITION` select on exactly those
+bounds.
+
+One lexer change came with it: `(` and `)` are punctuation now. §16.2.10's `Bounds` and `Size`
+are the only productions that bracket with parentheses, and they arrived with this clause. `..`
+is deliberately *not* punctuation — a bare `.` is a token nothing else in ECN wants, so
+`0..MAX` arrives as one word and is split where it is read.
+
 **§23.4's `#CHARS` stayed unreadable, and the reason is stated.** It shares the same
 `WITH SYNTAX`, but its repeated element is a *character* whose width comes from the ASN.1
 type's character set through clause 12's link, where §23.2's bit and §23.9's octet are
@@ -1255,7 +1277,7 @@ sentence in a standard rather than a preference.
 | **CXER** | X.693 | **out** | complete | — |
 | **JER** | X.697 | in | clauses 20–41, §7.2 constraint visibility, cl. 14–19 encoding instructions with cl. 13 precedence | cl. 10–11 assignment syntax (X.680 surface) — **low**, it is notation not encoding |
 | **BCIR canonical JER** | *BCIR-private* | **out** | complete; versioned, carries **no** standards OID | — |
-| **ECN** | X.692 | both | cl. 9–25 model, EDM/ELM, the seven built-in object sets, the user-defined half, multi-structure modules with §22.1.2.7's `INSERT AT HEAD`, and clause 20's defined syntax read from module text | five named refusals (§G) — **low to medium**; §22.11's contained-type notation is **built**, together with §18.1's encoding object sets. What remains: §22.1.1.7 e)'s second replacement group, §16.4's `RepetitionStructure`, §21.7.6/§21.7.7's continuation flag, R25's Annex C parameterization coverage, and §16.5.6's per-level application of a nested structure |
+| **ECN** | X.692 | both | cl. 9–25 model, EDM/ELM, the seven built-in object sets, the user-defined half, multi-structure modules with §22.1.2.7's `INSERT AT HEAD`, and clause 20's defined syntax read from module text | four named refusals (§G) — **low to medium**; §22.11's contained-type notation, §18.1's encoding object sets and §16.4's `RepetitionStructure` are all **built**. What remains: §22.1.1.7 e)'s second replacement group, §21.7.6/§21.7.7's continuation flag, R25's Annex C parameterization coverage, and §16.5.6's per-level application of a nested structure |
 
 ### 9.2 Excluded by design, with the sentence that excludes them
 
