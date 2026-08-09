@@ -1835,6 +1835,25 @@ class Replacement:
     #: (constructor) class performing the replacement", one per replaced component, "in the
     #: textual order of the original components".
     head_end: "HeadEndStructure | None" = None
+    #: §22.1.1.7 e)'s second group — `REPLACE NON-OPTIONALS WITH ... AND OPTIONALS WITH ...`,
+    #: which replaces "all its components ... with **different** replacement actions for
+    #: optionals and for non-optionals".
+    #:
+    #: A whole `Replacement` rather than extra fields here, because §22.1.1.2 gives the second
+    #: group its own structure, its own `ENCODED BY` and its own `INSERT AT HEAD`. Nesting one
+    #: inside the other also makes the pairing checkable in one place: every rule §22.1.1.7 e)
+    #: states is about the *combination*, and a flat pair of siblings would have nowhere to
+    #: state them.
+    paired: "Replacement | None" = None
+
+    def rules(self) -> tuple:
+        """This replacement, and the one §22.1.1.7 e) pairs with it.
+
+        A component takes the first rule that selects it. The two never overlap — §22.1.1.7 e)
+        pairs `NON-OPTIONALS` with `OPTIONALS` and `selects` partitions on exactly that — so
+        "first" is well defined without depending on which is tried first.
+        """
+        return (self, self.paired) if self.paired is not None else (self,)
 
     def selects(self, spec) -> bool:
         """§22.1.1.7 b)–d): whether this action replaces the component encoded by `spec`."""
@@ -1854,6 +1873,23 @@ class Replacement:
                 raise Asn1Error(
                     "ECN: §22.1.2.8 — an encoding object with a REPLACE STRUCTURE clause "
                     "shall have an ENCODED BY clause")
+        if self.paired is None:
+            return
+        # §22.1.1.7 e) names the pair in one direction only, and §22.1.1.2's syntax has no slot
+        # for the reverse: the tail is spelled `AND OPTIONALS WITH` and hangs off a first group
+        # that replaced the non-optionals. The mirrored spelling is not a second way to say the
+        # same thing — it is a specification the notation cannot express.
+        if self.action is not ReplaceAction.NON_OPTIONALS:
+            raise Asn1Error(
+                f"ECN: §22.1.1.7 e) pairs a second replacement group with REPLACE "
+                f"NON-OPTIONALS; this one is REPLACE {self.action.value}")
+        if self.paired.action is not ReplaceAction.OPTIONALS:
+            raise Asn1Error(
+                f"ECN: §22.1.1.2 spells the second group `AND OPTIONALS WITH`, so its action "
+                f"is OPTIONALS; this one is {self.paired.action.value}")
+        if self.paired.paired is not None:
+            raise Asn1Error(
+                "ECN: §22.1.1.2 gives one `AND OPTIONALS` tail, not a chain of them")
 
 
 @dataclass(frozen=True)
@@ -1988,11 +2024,14 @@ class ConcatenationSpec:
             # components; everything the action does not select passes through untouched, and
             # takes no head-end insertion either — §22.1.3.6 orders the insertions by "the
             # components being replaced", so a component that is not replaced contributes none.
-            if not self.replacement.selects(spec):
+            # §22.1.1.7 e) may pair a second group with the first, so the component takes
+            # whichever rule selects it rather than the one rule there used to be.
+            rule = next((r for r in self.replacement.rules() if r.selects(spec)), None)
+            if rule is None:
                 body.append((name, spec))
                 continue
-            if self.replacement.head_end is not None:
-                heads.extend(self.replacement.head_end.expand(name))
+            if rule.head_end is not None:
+                heads.extend(rule.head_end.expand(name))
             # §22.1.3.4 strips the optionality class: the component is replaced "with a
             # **non-optional** instantiation of the replacement structure", and the actual
             # parameter "shall de-reference to the entire original optional component
@@ -2002,7 +2041,7 @@ class ConcatenationSpec:
             # an unset auxiliary field rather than as silence.
             if isinstance(spec, OptionalSpec):
                 spec = spec.component
-            body.extend(self.replacement.structure.expand(name, spec))
+            body.extend(rule.structure.expand(name, spec))
         return tuple(heads) + tuple(body)
 
     def write(self, value: dict, out: BitWriter) -> None:

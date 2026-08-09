@@ -1006,6 +1006,28 @@ the end is announced inside the elements, so no determinant outside them carries
 closes with the multiple-set rule — "if a field is set more than once through the use of
 `field-to-be-set` or `flag-to-be-set` ... encoders shall not generate encodings in this case" —
 and `BitWriter.patch` already refuses a second write, quoting that very sentence.
+**§22.1.1.7 e)'s second replacement group is built**, at `SYNTAX_VERSION` 13 — the last of
+the five replacement actions and the only one that is two groups. "All its components ... are
+to be replaced, with **different** replacement actions for optionals and for non-optionals."
+
+§22.1.1.2 spells it as a *tail*: `AND OPTIONALS WITH &#Replacement-structure2 [ENCODED BY ...2
+[INSERT AT HEAD ...2]]`. The second group repeats the first's whole shape, so it is a
+`Replacement` in its own right rather than extra fields on the first, and a component takes the
+first rule that `selects` it — well defined without an ordering assumption, because
+`NON-OPTIONALS` and `OPTIONALS` partition.
+
+The pairing runs one way only. §22.1.1.2 hangs the tail off a first group that replaced the
+non-optionals, and gives one tail rather than a chain; the mirrored spelling is not a second way
+to say the same thing but a specification the notation cannot express. Both are refused in the
+parser *and* in `Replacement.__post_init__`, because `ecn_user` assembles replacements from
+Python too and §22.1.1.7 e) is a rule about the combination.
+
+**A digest bug this slice introduced and its own test caught.** The first version left
+`_replacement` stopping at the first group, so a module that replaced its optionals with a
+second structure and one that left them alone hashed alike — the parser had read the tail
+correctly and the serialization dropped it. Same failure as slice H2a's `&repetition-space-size`,
+found the same way: by asking whether two modules that differ only in the new thing differ in
+their digest.
 
 **§23.4's `#CHARS` stayed unreadable, and the reason is stated.** It shares the same
 `WITH SYNTAX`, but its repeated element is a *character* whose width comes from the ASN.1
