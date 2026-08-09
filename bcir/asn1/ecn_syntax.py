@@ -93,7 +93,7 @@ from .tags import Asn1Error
 
 #: The serialization's version. Its own counter, not `encode_plan`'s: see this module's
 #: `serialize` for why an ECN encoding is a separate compilation rather than a plan version.
-SYNTAX_VERSION = 12
+SYNTAX_VERSION = 13
 SYNTAX_COMPILER = "bcir-ecn-syntax/1"
 
 #: The bit-field and constructor classes whose defined syntax clause 23 gives, restricted to
@@ -1836,9 +1836,36 @@ def _parse_replace(cursor: _Cursor, module: "EcnModule", owner: str) -> Replacem
             cursor.expect("HEAD")
             head_end = module.head_end_structure(
                 bare_use(_parse_bare_reference(cursor), clause="§22.1.2.7"), owner)
+    paired = None
+    if cursor.accept_words("AND", "OPTIONALS"):
+        # §22.1.1.7 e): "all its components ... are to be replaced, with different replacement
+        # actions for optionals and for non-optionals". §22.1.1.2 spells it as a TAIL on the
+        # first group — `[AND OPTIONALS WITH &#Replacement-structure2 [ENCODED BY ...2
+        # [INSERT AT HEAD ...2]]]` — so the second group repeats the first's shape entirely,
+        # which is why this reads it with the same three steps rather than a reduced form.
+        if action is not ReplaceAction.NON_OPTIONALS:
+            raise Asn1Error(
+                f"ECN: §22.1.1.2 hangs `AND OPTIONALS` off a first group that replaced the "
+                f"non-optionals; {owner} writes REPLACE {action.value}, which leaves the "
+                f"optionals already covered or already excluded")
+        cursor.expect("WITH")
+        second = module.replacement_structure(
+            bare_use(_parse_bare_reference(cursor), clause="§22.1.2.2"), owner)
+        second_object = None
+        second_head = None
+        if cursor.accept_words("ENCODED", "BY"):
+            second_object = bare_use(_parse_bare_reference(cursor), clause="§22.1.2.4")
+            if cursor.accept_words("INSERT", "AT"):
+                cursor.expect("HEAD")
+                second_head = module.head_end_structure(
+                    bare_use(_parse_bare_reference(cursor), clause="§22.1.2.7"), owner)
+        paired = Replacement(
+            action=ReplaceAction.OPTIONALS,
+            structure=module.replacement_with_encodings(second, second_object, owner),
+            head_end=second_head)
     return Replacement(action=action,
                        structure=module.replacement_with_encodings(structure, encoded_by, owner),
-                       head_end=head_end)
+                       head_end=head_end, paired=paired)
 
 
 def _parse_bare_reference(cursor: _Cursor) -> ParameterizedReference:
@@ -3014,13 +3041,23 @@ def _det(determinant) -> str:
 
 
 def _replacement(replacement) -> str:
+    """One replacement group, and §22.1.1.7 e)'s paired one after it.
+
+    The pair is emitted rather than folded in, because a module that replaces its optionals
+    with a second structure describes different octets from one that leaves them alone — and
+    the two differ *only* in the tail, so a serialization that stopped at the first group would
+    hash them alike.
+    """
     if replacement is None:
         return "-"
     structure = replacement.structure
     head = replacement.head_end
-    return (f"{replacement.action.value}:{structure.name}:"
-            f"{'/'.join(structure.order)}:{structure.dummy}:{_det(structure.determinant)}:"
-            f"{'-' if head is None else head.name + '/' + '/'.join(head.order)}")
+    own = (f"{replacement.action.value}:{structure.name}:"
+           f"{'/'.join(structure.order)}:{structure.dummy}:{_det(structure.determinant)}:"
+           f"{'-' if head is None else head.name + '/' + '/'.join(head.order)}")
+    if replacement.paired is None:
+        return own
+    return f"{own}+and-optionals+{_replacement(replacement.paired)}"
 
 
 def _chain(chain) -> str:
