@@ -904,6 +904,37 @@ object gives a `#BITS` class 1-bit elements and an `#OCTETS` class 8-bit ones, b
 §23.2.2.1 b) and §23.9.2.1 b) put the element on the class rather than in the object. Deferring
 it was right rather than merely tidy.
 
+**Step three is built: §22.11's `CONTENTS-ENCODING` reads from module text**, at
+`SYNTAX_VERSION` 11, and `_UNSUPPORTED_KEYWORDS` now holds **no unbuilt group at all** — every
+row left is a group that *is* built and is refused where a clause forbids the way it was
+written.
+
+It needed two things that scoping turned up, both larger than "parse a keyword":
+
+- **§18.1's `EncodingObjectSetAssignment`, because the group takes two `#ENCODINGS`
+  references** and this parser had no named object sets — only the single implicit set a
+  module forms from its objects. Both of §18.1.1's forms read: §18.1.5's braced union (with
+  `|` and `UNION` as the same mark, and §18.1.7's distinct-classes rule enforced) and §18.2.1's
+  seven built-in names through `ecn.builtin_object_set`. §18.1.8's `COMPLETED BY` sends the
+  braced spec through §13.2 as `PrimaryEncodings`, left-biased per §9.23.2 — the completion
+  fills gaps and never overrides. §18.1.2 is what tells an object-set assignment from an
+  object one: the notation is "governed by the reserved word `#ENCODINGS`".
+- **A modelling decision in `ecn_user`, which slices H2a and H2b deliberately avoided.**
+  §22.11's group is in §23.2.1's and §23.9.1's `WITH SYNTAX`, so it lands on the `StringSpec`
+  those clauses produce — but contained-type semantics lived on `ContainerSpec`, a different
+  class with a stated `width` and no repetition. `StringSpec` gains `contents`, `encoded_by`
+  and `contained_class`, and `contained_objects` routes through the *same*
+  `ContainedType.select`. Two copies of a five-row table where one row already contradicts
+  §22.11.2.2 would be two places for that reading to drift. `ContainerSpec` stays what it
+  models: the fixed-width container.
+
+**One deviation, stated.** §22.11.1.3 makes the group's purpose deciding "the encoding of a
+contained type", and X.692 takes that type from the ASN.1 `CONTAINING` constraint through
+clause 12's link. No ELM section is readable here, so the class is written beside the group as
+`CONTAINING <class>` — the same shape and the same reason as `#INT`'s `BOUNDS` and `AUXILIARY`.
+Omitting it is refused rather than defaulted: a contained type nobody named is a set applied to
+nothing.
+
 **§23.4's `#CHARS` stayed unreadable, and the reason is stated.** It shares the same
 `WITH SYNTAX`, but its repeated element is a *character* whose width comes from the ASN.1
 type's character set through clause 12's link, where §23.2's bit and §23.9's octet are
@@ -1224,7 +1255,7 @@ sentence in a standard rather than a preference.
 | **CXER** | X.693 | **out** | complete | — |
 | **JER** | X.697 | in | clauses 20–41, §7.2 constraint visibility, cl. 14–19 encoding instructions with cl. 13 precedence | cl. 10–11 assignment syntax (X.680 surface) — **low**, it is notation not encoding |
 | **BCIR canonical JER** | *BCIR-private* | **out** | complete; versioned, carries **no** standards OID | — |
-| **ECN** | X.692 | both | cl. 9–25 model, EDM/ELM, the seven built-in object sets, the user-defined half, multi-structure modules with §22.1.2.7's `INSERT AT HEAD`, and clause 20's defined syntax read from module text | six named refusals (§G) — **low to medium**; §22.11's contained-type *notation* is the highest of them, and is now **one** slice: §23.14's `#CONDITIONAL-REPETITION` and §23.2/§23.9's string classes, which carry the group, both read from module text |
+| **ECN** | X.692 | both | cl. 9–25 model, EDM/ELM, the seven built-in object sets, the user-defined half, multi-structure modules with §22.1.2.7's `INSERT AT HEAD`, and clause 20's defined syntax read from module text | five named refusals (§G) — **low to medium**; §22.11's contained-type notation is **built**, together with §18.1's encoding object sets. What remains: §22.1.1.7 e)'s second replacement group, §16.4's `RepetitionStructure`, §21.7.6/§21.7.7's continuation flag, R25's Annex C parameterization coverage, and §16.5.6's per-level application of a nested structure |
 
 ### 9.2 Excluded by design, with the sentence that excludes them
 
