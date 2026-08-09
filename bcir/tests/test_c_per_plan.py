@@ -33,8 +33,6 @@ import shutil
 import subprocess
 import tempfile
 
-import pytest
-
 from bcir.asn1.constraints import Size, ValueRange
 from bcir.asn1.per import PerVariant, encode_per
 from bcir.asn1.schema import Component, Primitive, Sequence
@@ -198,8 +196,7 @@ def _cases() -> list[tuple[str, str, dict, list[str], list[tuple[str, object]]]]
     return cases
 
 
-@pytest.mark.parametrize("variant", [PerVariant.UNALIGNED, PerVariant.ALIGNED])
-def test_plan_decoder_agrees_with_the_python_encoder(variant: PerVariant) -> None:
+def test_plan_decoder_agrees_with_the_python_encoder() -> None:
     """Every field the C twin reports equals what the Python rail encoded.
 
     Strings are compared by their BYTES, read from the position the twin reported -- which is
@@ -208,47 +205,49 @@ def test_plan_decoder_agrees_with_the_python_encoder(variant: PerVariant) -> Non
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
-            pytest.skip("no C compiler available")
+            return                                   # no C compiler on this host
 
-        aligned = 1 if variant is PerVariant.ALIGNED else 0
         cases = _cases()
-        lines, encoded = [], []
-        for _label, schema, plan, value in cases:
-            raw = encode_per(schema, value, variant=variant)
-            lines.append(f"sequence {raw.hex()} {aligned} 0 {','.join(plan)}")
-            encoded.append(raw)
+        # Both variants in one test rather than two parametrized ones: run_all.py calls each
+        # test function with no arguments, so the campaign carries its own axis.
+        for variant, aligned in ((PerVariant.UNALIGNED, 0), (PerVariant.ALIGNED, 1)):
+            lines, encoded = [], []
+            for _label, schema, plan, value in cases:
+                raw = encode_per(schema, value, variant=variant)
+                lines.append(f"sequence {raw.hex()} {aligned} 0 {','.join(plan)}")
+                encoded.append(raw)
 
-        out = _run(binary, lines)
-        assert len(out) == len(cases), f"{len(cases)} cases in, {len(out)} answers out"
+            out = _run(binary, lines)
+            assert len(out) == len(cases), f"{len(cases)} cases in, {len(out)} answers out"
 
-        for (label, schema, _plan, value), raw, line in zip(cases, encoded, out):
-            where = f"{label} {variant.value}"
-            _endbit, values = _parse(line)
-            assert len(values) == len(schema.components), where
-            for component, got in zip(schema.components, values):
-                present, integer, offset, length, bit_offset = got
-                expected = value.get(component.name, None)
-                if component.name not in value:
-                    assert present == 0, f"{where}: {component.name} absent but reported present"
-                    continue
-                assert present == 1, f"{where}: {component.name} present but reported absent"
-                if isinstance(expected, bool):
-                    assert integer == int(expected), f"{where}: {component.name}"
-                elif isinstance(expected, int):
-                    assert integer == expected, f"{where}: {component.name}"
-                elif isinstance(expected, bytes):
-                    assert length == len(expected), f"{where}: {component.name} length"
-                    # The bit offset must LOCATE the string, whatever the octet index says.
-                    assert _bits(raw, bit_offset, length) == expected, (
-                        f"{where}: {component.name} does not live at bit {bit_offset}")
-                    # And the octet index must be honest: present only when it is exact.
-                    if bit_offset % 8 == 0:
-                        assert offset == bit_offset // 8, f"{where}: {component.name} offset"
-                        assert raw[offset:offset + length] == expected, where
-                    else:
-                        assert offset == -1, (
-                            f"{where}: {component.name} starts at bit {bit_offset}, which is "
-                            f"no octet slice, yet an octet index {offset} was reported")
+            for (label, schema, _plan, value), raw, line in zip(cases, encoded, out):
+                where = f"{label} {variant.value}"
+                _endbit, values = _parse(line)
+                assert len(values) == len(schema.components), where
+                for component, got in zip(schema.components, values):
+                    present, integer, offset, length, bit_offset = got
+                    expected = value.get(component.name, None)
+                    if component.name not in value:
+                        assert present == 0, f"{where}: {component.name} absent but reported present"
+                        continue
+                    assert present == 1, f"{where}: {component.name} present but reported absent"
+                    if isinstance(expected, bool):
+                        assert integer == int(expected), f"{where}: {component.name}"
+                    elif isinstance(expected, int):
+                        assert integer == expected, f"{where}: {component.name}"
+                    elif isinstance(expected, bytes):
+                        assert length == len(expected), f"{where}: {component.name} length"
+                        # The bit offset must LOCATE the string, whatever the octet index says.
+                        assert _bits(raw, bit_offset, length) == expected, (
+                            f"{where}: {component.name} does not live at bit {bit_offset}")
+                        # And the octet index must be honest: present only when it is exact.
+                        if bit_offset % 8 == 0:
+                            assert offset == bit_offset // 8, f"{where}: {component.name} offset"
+                            assert raw[offset:offset + length] == expected, where
+                        else:
+                            assert offset == -1, (
+                                f"{where}: {component.name} starts at bit {bit_offset}, which is "
+                                f"no octet slice, yet an octet index {offset} was reported")
 
 
 def test_a_string_that_starts_mid_octet_reports_no_octet_index() -> None:
@@ -262,7 +261,7 @@ def test_a_string_that_starts_mid_octet_reports_no_octet_index() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
-            pytest.skip("no C compiler available")
+            return                                   # no C compiler on this host
 
         schema = Sequence((Component("flag", _FLAG), Component("s", _octets(3))), name="R")
         plan = f"{_field(_BOOLEAN)},{_field(_FIXED_OCTETS, fixed=3)}"
@@ -280,8 +279,7 @@ def test_a_string_that_starts_mid_octet_reports_no_octet_index() -> None:
         assert raw[0:3] != b"abc", "this record must not be accidentally octet-aligned"
 
 
-@pytest.mark.parametrize("variant", [PerVariant.UNALIGNED, PerVariant.ALIGNED])
-def test_the_length_determinant_switches_form_at_64k(variant: PerVariant) -> None:
+def test_the_length_determinant_switches_form_at_64k() -> None:
     """X.691 11.9.3.3's constrained length form applies only when `ub` is BELOW 64K.
 
     At or above it, 11.9.1 says the upper bound stops being usable as a constraint and the
@@ -296,28 +294,29 @@ def test_the_length_determinant_switches_form_at_64k(variant: PerVariant) -> Non
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
-            pytest.skip("no C compiler available")
+            return                                   # no C compiler on this host
 
-        aligned = 1 if variant is PerVariant.ALIGNED else 0
         payload = b"abcd"
         bounds = (255, 65535, 65536, 70000)
-        lines, raws = [], []
-        for ub in bounds:
-            node = Primitive(Universal.OCTET_STRING, "OCTET STRING",
-                             constraint=Size(ValueRange(0, ub)))
-            schema = Sequence((Component("s", node),), name="R")
-            raw = encode_per(schema, {"s": payload}, variant=variant)
-            lines.append(f"sequence {raw.hex()} {aligned} 0 "
-                         f"{_field(_VAR_OCTETS, fixed=ub)}")
-            raws.append(raw)
+        for variant, aligned in ((PerVariant.UNALIGNED, 0), (PerVariant.ALIGNED, 1)):
+            lines, raws = [], []
+            for ub in bounds:
+                node = Primitive(Universal.OCTET_STRING, "OCTET STRING",
+                                 constraint=Size(ValueRange(0, ub)))
+                schema = Sequence((Component("s", node),), name="R")
+                raw = encode_per(schema, {"s": payload}, variant=variant)
+                lines.append(f"sequence {raw.hex()} {aligned} 0 "
+                             f"{_field(_VAR_OCTETS, fixed=ub)}")
+                raws.append(raw)
 
-        for ub, raw, line in zip(bounds, raws, _run(binary, lines)):
-            where = f"SIZE(0..{ub}) {variant.value}"
-            assert line.startswith("OK"), f"{where}: a conforming encoding was refused ({line})"
-            _endbit, values = _parse(line)
-            _p, _i, _offset, length, bit_offset = values[0]
-            assert length == len(payload), where
-            assert _bits(raw, bit_offset, length) == payload, where
+            for ub, raw, line in zip(bounds, raws, _run(binary, lines)):
+                where = f"SIZE(0..{ub}) {variant.value}"
+                assert line.startswith("OK"), (
+                    f"{where}: a conforming encoding was refused ({line})")
+                _endbit, values = _parse(line)
+                _p, _i, _offset, length, bit_offset = values[0]
+                assert length == len(payload), where
+                assert _bits(raw, bit_offset, length) == payload, where
 
 
 def test_sixteen_six_short_strings_decode_in_both_variants() -> None:
@@ -327,7 +326,7 @@ def test_sixteen_six_short_strings_decode_in_both_variants() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
-            pytest.skip("no C compiler available")
+            return                                   # no C compiler on this host
 
         schema = Sequence((Component("flag", _FLAG), Component("s", _octets(2))), name="R")
         plan = f"{_field(_BOOLEAN)},{_field(_FIXED_OCTETS, fixed=2)}"
