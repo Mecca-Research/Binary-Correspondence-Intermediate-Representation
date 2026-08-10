@@ -33,6 +33,7 @@ from bcir.asn1.ecn_user import (
     PadSpec, RepetitionSpace, RepetitionSpec, SpaceDeterminant, StringSpec,
     UserEncodingObject, encode_with_user,
 )
+from bcir.asn1.ecn_transform import BoolToInt, TransformChain
 from bcir.asn1.tags import Asn1Error
 
 _OCTET = IntSpec(width=8)
@@ -497,3 +498,61 @@ def test_outer_is_reachable_from_inside_the_pdus_own_named_container():
     nested = ConcatenationSpec(fields={"inner": named}, order=("inner",))
     _refuses("end of the PDU", lambda: encode_with_user(
         _objects(nested), "#C", {"inner": {"a": 1, "o": 2}}))
+
+
+def test_a_repetition_is_a_container_a_reference_can_name():
+    """§22.5.2.10 lists a repetition among the things a `container` reference may name.
+
+    The clause says the reference is "to a concatenation or to a repetition (or to a bitstring
+    or octetstring with a contained type) in which the element being encoded is a component",
+    but only ConcatenationSpec carried a `container_name`, so a component inside a repetition
+    that referenced it was told the name was "not an open container" (review, PR #707).
+    """
+    space = RepetitionSpace(determination=RepetitionSpaceDetermination.NOT_NEEDED,
+                            unit=UNIT_REPETITIONS)
+    optional = OptionalSpec(
+        component=IntSpec(width=8),
+        presence=Optionality(determination=OptionalityDetermination.CONTAINER,
+                             reference="items"))
+    element = ConcatenationSpec(fields={"o": optional}, order=("o",))
+
+    def encode(container_name: str):
+        rep = RepetitionSpec(
+            (ConditionalRepetitionSpec(element=element, space=space,
+                                       container_name=container_name),),
+            SizeBounds(1, 1))
+        objects = _concat({"s": StringSpec(element=_OCTET, repetition=rep)}, ("s",))
+        return encode_with_user(objects, "#C", {"s": [{"o": 7}]})
+
+    # Unnamed, the repetition is not reachable by that reference -- the state EVERY repetition
+    # was in, whatever §22.5.2.10 says it may name.
+    _refuses("not an open container", lambda: encode(""))
+
+    # Named, the reference resolves: the component is inside the container it names, and the
+    # end it is determined by is the repetition's. What matters is that the name is FOUND --
+    # the defect was that it never could be.
+    assert encode("items") == bytes((7,))
+
+
+def test_a_container_determined_repetition_takes_no_transforms():
+    """The rule `SpaceDeterminant` already applies one clause over (review, PR #707).
+
+    A container's end is a POSITION, not a number carried through a field, so there is nothing
+    for a transform to convert -- and `RepetitionSpace.record` returns without applying either
+    list. A specification supplying one was accepted while its transforms had no effect on the
+    encoding, which is the part worth refusing. `container` became reachable for repetitions
+    only recently, which is why this check trailed the one it mirrors.
+    """
+    for field_name in ("encoder_transforms", "decoder_transforms"):
+        kwargs = {field_name: TransformChain((BoolToInt(),))}
+        _refuses("nothing for ENCODER-TRANSFORMS", lambda k=kwargs: RepetitionSpace(
+            determination=RepetitionSpaceDetermination.CONTAINER,
+            reference=OUTER_CONTAINER, unit=UNIT_REPETITIONS, **k))
+
+    # The same determination without transforms is untouched, and still encodes.
+    space = RepetitionSpace(determination=RepetitionSpaceDetermination.CONTAINER,
+                            reference=OUTER_CONTAINER, unit=UNIT_REPETITIONS)
+    rep = RepetitionSpec((ConditionalRepetitionSpec(element=_OCTET, space=space),),
+                         SizeBounds(0, None))
+    objects = _concat({"s": StringSpec(element=_OCTET, repetition=rep)}, ("s",))
+    assert encode_with_user(objects, "#C", {"s": [72, 73]}) == b"HI"

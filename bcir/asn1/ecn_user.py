@@ -2298,6 +2298,20 @@ class RepetitionSpace:
                 f"ECN: §21.7.6 and §21.7.7 both \"require the specification of a REFERENCE to "
                 f"a field that is part of the repeated element\"; "
                 f"`{self.determination.value}` names none, so there is no flag to set or read")
+        if (self.determination is RepetitionSpaceDetermination.CONTAINER
+                and (self.encoder_transforms is not None
+                     or self.decoder_transforms is not None)):
+            # The same rule `SpaceDeterminant` already applies one clause over, for the same
+            # structural reason: a container's end is a POSITION, not a number carried through
+            # a field, so there is nothing for a transform to convert. `record` returns without
+            # applying either list, so a specification that supplied one was accepted while its
+            # transforms had no effect on the encoding -- silently, which is the part worth
+            # refusing. The `container` determination became reachable for repetitions only
+            # recently, which is why this check trailed the one it mirrors.
+            raise Asn1Error(
+                "ECN: §21.7.8's `container` determination reads no field's value, so there is "
+                "nothing for ENCODER-TRANSFORMS or DECODER-TRANSFORMS to convert; the "
+                "determinations that carry a count are the ones that take them")
         if self.determination is RepetitionSpaceDetermination.PATTERN:
             if self.termination_pattern is None:
                 raise Asn1Error(
@@ -2428,6 +2442,14 @@ class ConditionalRepetitionSpec:
     pre_alignment: PreAlignment | None = None
     #: `(SizeRangeCondition, Comparison | None, comparator | None)`, all of which must hold.
     conditions: tuple = ()
+    #: The name this repetition answers to for a `container` determination's REFERENCE.
+    #: §22.5.2.10 lists a repetition among the things such a reference may name -- "to a
+    #: concatenation or to a repetition (or to a bitstring or octetstring with a contained
+    #: type) in which the element being encoded is a component" -- but only ConcatenationSpec
+    #: carried a name, so an optional component inside a repetition that referenced it was told
+    #: the name was "not an open container". Empty means unnamed, and therefore unreferenced,
+    #: which is what it was before and costs nothing.
+    container_name: str = ""
 
     def __post_init__(self) -> None:
         if self.element is None:
@@ -2455,6 +2477,16 @@ class ConditionalRepetitionSpec:
         if self.pre_alignment is not None:
             self.pre_alignment.apply(out)
         start = out.bit_length
+        if self.container_name:
+            # A repetition's end is transmitted by its own space determination -- a count
+            # field, a termination pattern, a handle, a continuation flag, or a size the schema
+            # fixes. The one exception is `container`, where the repetition ends where its OWN
+            # container does: that end is not something this repetition declares, so it cannot
+            # in turn bound a component inside it.
+            out.open_container(
+                self.container_name,
+                locatable=self.space.determination
+                is not RepetitionSpaceDetermination.CONTAINER)
         flagged = self.space.determination in (
             RepetitionSpaceDetermination.FLAG_TO_BE_SET,
             RepetitionSpaceDetermination.FLAG_TO_BE_USED)
@@ -2476,6 +2508,8 @@ class ConditionalRepetitionSpec:
             self.space.flag(out, more=index < len(values) - 1)
             out.pop_reference_scope(saved, f"the repeated element at index {index}")
         self.space.terminate(out)
+        if self.container_name:
+            out.close_container(self.container_name)
         self.space.record(out, len(values), out.bit_length - start)
 
 
