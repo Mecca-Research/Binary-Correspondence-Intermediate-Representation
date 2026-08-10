@@ -216,7 +216,7 @@ it), now carried on the dialect as the `#bcir.timing` / `#bcir.lifetime` attribu
   write (reassignment / `alloc`) re-validates.
 
 **ASN.1 encoding-rule legality (R24).** Over the `bcir.asn1.*` schema operations
-(§17's ASN.1 profile, [`BCIR_ASN1_X690_ABI.md`](BCIR_ASN1_X690_ABI.md)). R24 checks the
+(§17's ASN.1 rail and §18's profile, [`BCIR_ASN1_X690_ABI.md`](BCIR_ASN1_X690_ABI.md)). R24 checks the
 faults decidable from the **type alone**, before any value exists — which is why they
 belong on the law rail rather than in the oracle's encoder: a SET whose components
 share a tag is undecodable for every value it could ever hold, and X.680 §24.4/§25.3
@@ -1123,7 +1123,137 @@ derived BCIRQ8 weights remain local cache/build products and must not be committ
 provenance and license pins live in
 [`THIRD_PARTY_MODELS.md`](machine-learning/THIRD_PARTY_MODELS.md).
 
-## 17. Conformance profiles and external-contract boundary
+## 17. ASN.1 in BCIR
+
+ASN.1 is BCIR's **external contract language**. A StreamPack, a BCAB bundle and a
+telemetry frame all cross a boundary where the peer is not BCIR, and X.680's abstract
+syntax plus a named transfer syntax is how that boundary is stated once and checked on
+every rail. This section describes what is built; §18's profile bullet states the
+interoperability boundary, and the exclusions live in
+[`BCIR_ASN1_BUILDOUT_ROADMAP.md`](BCIR_ASN1_BUILDOUT_ROADMAP.md).
+
+### 17.1 Three rails, one specification
+
+The same ASN.1 fact is carried on all three of BCIR's rails, and a disagreement between
+them is a bug in whichever rail is wrong — never a tolerance:
+
+| Rail | Artifact | What it answers |
+|---|---|---|
+| Python oracle | `bcir/asn1/`, `bcir/frontends/asn1/` | what the octets ARE, executably |
+| MLIR law | `bcir.asn1.*` (R24), `bcir.ecn.*` (R25) | what a schema may legally SAY, statically |
+| C twin | `runtime/c/bcir_{asn1,per,per_plan,oer,jer,xer}.c` | what a freestanding driver can READ |
+
+The C twins are differentials, not reimplementations: each is driven by a corpus the
+Python rail encoded, and the gate compares field values, not just exit codes. Two of this
+build's sharper defects were found exactly there — a decoder that reported a mid-octet PER
+string at the octet *containing* it, and an MLIR verifier rule reading a neighbouring
+attribute group — and both were invisible to a gate that compared a rail against itself.
+
+### 17.2 Transfer syntaxes
+
+`#bcir.asn1_rules` names every transfer syntax the repository speaks. **Canonicality is the
+selection criterion**: a rule with no canonical variant may be decoded but never chosen for
+emission, because a selected encoding becomes a digested artifact.
+
+| Recommendation | Rules | Canonical member | C twin |
+|---|---|---|---|
+| X.690 | BER, CER, DER | DER | `bcir_asn1.c` |
+| X.691 | PER aligned/unaligned × basic/canonical | CANONICAL-PER | `bcir_per.c`, `bcir_per_plan.c` |
+| X.696 | OER, COER | COER | `bcir_oer.c` |
+| X.693 | XER, CXER | CXER | `bcir_xer.c` |
+| X.697 | JER | BCIR's canonical JER | `bcir_jer.c` |
+
+`cer` fails the canonicality test despite its name: X.690 §9.1's indefinite-length
+constructed form gives one abstract value more than one octet string.
+
+**Two decode tables, never merged.** X.691 §7.2 and X.696 §6.2 deny PER and OER a
+schema-*free* decode permanently — that is a property of the rules, not a missing feature —
+so the schema-free and schema-directed tables are separate, and a certificate records which
+one a measurement came from (`decode_kind`). Collapsing them would let a rule that cannot be
+walked without a schema appear to compete with one that can.
+
+### 17.3 The front end and the object layer
+
+Module text compiles through `bcir/frontends/asn1/` (the `bcir-asn1c` CLI): X.680 types,
+tags, constraints and extension markers, with unsupported notation failing **closed**.
+
+- **X.681** information objects, object sets, and open types resolved through their
+  associated tables.
+- **X.682** table, component-relation and user-defined constraints. These are deliberately
+  *not* PER-visible (X.691 §10.3.4/§10.3.5), so they narrow no field's width — a verifier
+  reads them, no encoder does.
+- **X.683** parameterization, including the `{<`/`>}` spelling ECN's Annex C rewrites it
+  into.
+
+Constraints are load-bearing rather than advisory: for PER and OER a PER-visible constraint
+*is* the width. `INTEGER (0..255)` occupies eight bits with no length determinant; the same
+type unconstrained costs a determinant plus a minimum-octets two's-complement field.
+
+### 17.4 X.692 ECN — all three parts
+
+ECN is where an encoding stops being a fixed rule and becomes a **specification with its own
+digest**. All three parts are built: the class/object/object-set model with EDM/ELM and the
+seven built-in BER/PER sets (`ecn.py`); the user-defined half — bit-level encoding spaces,
+justification, `#PAD`, stated transmission order, clause 24's nineteen `#TRANSFORM`s and
+`#OUTER` (`ecn_user.py`); and clause 20's defined syntax read from an
+`ENCODING-DEFINITIONS` module (`ecn_syntax.py`), so a specification can be hashed rather
+than assembled in Python.
+
+`_UNSUPPORTED_KEYWORDS` holds **no unbuilt group**. Every row remaining is a group that *is*
+built and is refused where a clause forbids the way it was written — which is the useful
+kind of refusal, since it cites the subclause that says so.
+
+ECN answers a question the other rules cannot: a scaled-length frame header that none of
+DER, canonical PER, COER or CJER reproduces. Canonical PER lands on the same octet *count*
+and different octets, so the gap is expressiveness rather than size — and a test fails if any
+candidate ever matches.
+
+### 17.5 Plans, and why an ECN encoding is not a sixth column
+
+`encode_plan.py` compiles a schema into a deterministic descriptor the C emitter executes,
+and `jer_plan.py`/`graph.py` do the same for the JSON rail. An ECN encoding is **not** a
+sixth column in that plan: the plan describes an ASN.1 *type*, while a frame header's wire
+order and reserved bits are properties of an encoding *structure*. `EncodeNode` has a slot
+for neither, and adding them would make a node's meaning depend on which candidate read it.
+It is a third compilation with its own version counter and its own digest.
+
+### 17.6 Encoding selection, and the two-truth boundary
+
+`K_BCIR` may select encoding rules the way it selects a lane width, governed by three laws
+that this section restates because they are where encoding selection most easily goes wrong:
+
+- **legality first** — an encoding is a candidate only if the abstract value is
+  representable in it. That is a verifier question and never a cost question.
+- **two-truth (§14)** — a measured encode/decode cost is *graded* truth. It informs
+  selection; it never becomes a legality verdict.
+- **canonical or excluded** — see §17.2.
+
+Selections are certified (`certified.py`): a certificate names the evidence, and a frozen
+cost table names measurements rather than a string. On this host both of the selection gates
+are answered, and the two axes disagree — COER wins encode while CANONICAL-PER-ALIGNED wins
+schema-directed decode. A single-row table would have hidden that, which is the reason there
+are two.
+
+### 17.7 The C twins' contract
+
+Each twin is **freestanding** — `<stddef.h>` and `<stdint.h>` only, no allocation, no libc,
+no recursion — and **total**: for any octets and any plan, every entry point returns a status
+and never reads outside the buffer it was given. A width, count or fragment header that would
+run past the end is a diagnosed refusal, not a read.
+
+Nothing is copied. A decoded string is reported as an offset and a length into the caller's
+own buffer, because the caller already owns it and a decoder that copied would be choosing an
+allocation policy on the caller's behalf. Where PER leaves a string on a non-octet boundary —
+X.691 §16.6 permits exactly that, in both variants — the exact bit offset is reported and the
+octet index is withheld, since an index rounded down to the containing octet names plausible
+bytes that are off by a few bits.
+
+The twins are gated under `-Werror` at `-std=c11` and `-std=c2x`, compared at `-O0` against
+`-O3`, and fuzzed under ASan/UBSan with the **plan** fuzzed alongside the octets — a
+descriptor and a document that came from different places is the ordinary case, not the
+exotic one.
+
+## 18. Conformance profiles and external-contract boundary
 
 This reference defines semantics; an implementation must name the profile it supports
 and reject work outside it. The current profiles are:
@@ -1149,15 +1279,20 @@ and reject work outside it. The current profiles are:
   The shared Python schema/oracle additionally implements the documented subsets of
   X.681 information objects, X.682 constraints/table resolution, X.683
   parameterization, canonical aligned/unaligned PER, COER/OER, CXER/XER, Python-oracle
-  JER with all six X.697 instruction families, and ECN's built-in model. Each profile
+  JER with all six X.697 instruction families, and **all three parts of ECN** — the
+  built-in model, the user-defined half, and clause 20's defined syntax read from module
+  text (§17.4). Each profile
   has its own explicit exclusions and C coverage in
   [`BCIR_ASN1_BUILDOUT_ROADMAP.md`](BCIR_ASN1_BUILDOUT_ROADMAP.md); the MLIR
   `asn1_rules` attribute names every one of them, and R24's emission check is stated
   over canonicality rather than over X.690.
   Module text is compiled by the X.680 front end (`bcir/frontends/asn1/`, the
-  `bcir-asn1c` CLI), and unsupported notation fails closed. JER remains JSON text,
-  has no standardized canonical variant, and has no C/MLIR/direct-claims rail yet;
-  [`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md) owns that promotion path.
+  `bcir-asn1c` CLI), and unsupported notation fails closed. JER remains JSON text and has
+  no *standardized* canonical variant — BCIR emits its own, which is why §17.2 names it
+  that way rather than "CJER". It **does** now have all three rails: the scalar C twin
+  (`bcir_jer.c`), the MLIR family/profile inside `asn1_rules`, and the direct-claims plan
+  (`jer_plan.py`); [`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md) owns what
+  remains of that promotion path.
 - **BCAB artifact-bundle profile:** canonical multi-image directory, integrity checks,
   standard payload identity, deterministic compatibility selection, and Python/C/C++/MLIR
   parity. Its additive ASN.1 projection provides DER/BER, COER/OER, and canonical
@@ -1192,7 +1327,7 @@ Conformance is evidenced only by the applicable executed gates. Generated
 does not turn an unexecuted architecture, toolchain, transport, or device path into a
 supported one.
 
-## 18. Thesis
+## 19. Thesis
 
 > BCIR is a registry-first, phase-ordered, lane-typed, cost-governed
 > correspondence IR. K_BCIR is the IR-level optimization calculus that selects
