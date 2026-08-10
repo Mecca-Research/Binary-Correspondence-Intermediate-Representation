@@ -567,6 +567,21 @@ bcir.ecn.module @ContainerWithTransforms {
     encoding_class = @T, space_size = -2 : i64, space_unit = 1 : i64,
     space_determination = #bcir.ecn_space_determination<container>,
     space_reference = "box",
+    space_encoder_transforms
+  } { }
+}
+
+// -----
+// The SAME `container` space determination alongside a value-padding group that legitimately
+// HAS transforms. 22.8.2.3 admits them for `field-to-be-set`, and the two groups are
+// independent -- the oracle permits this combination, and the rule above used to read the
+// UNUSED BITS flags, so it rejected this object for a rule it does not break.
+bcir.ecn.module @ContainerSpaceWithUnusedTransforms {
+  bcir.ecn.class @T attributes { base = "#INT" }
+  bcir.ecn.object @t attributes {
+    encoding_class = @T, space_size = -2 : i64, space_unit = 1 : i64,
+    space_determination = #bcir.ecn_space_determination<container>,
+    space_reference = "box",
     unused_determination = #bcir.ecn_unused_bits<field_to_be_set>,
     unused_reference = "u",
     unused_encoder_transforms

@@ -162,7 +162,10 @@ def BCIR_EcnObjectOp : BCIR_Op<"ecn.object", [Symbol, NoTerminator]> {
     Encoding space (21.2, 22.4): `space_size` in `space_unit`s. `space_determination` and
     `space_reference` are 21.3's determinant; R25 requires the reference exactly when a
     determination is stated, since 21.3.4 and 21.3.5 both "require the specification of a
-    REFERENCE".
+    REFERENCE". `space_encoder_transforms` and `space_decoder_transforms` are 22.4.2.3 and
+    22.4.2.4's lists, which the oracle's `SpaceDeterminant` has always carried and this op
+    could not express -- so R25's rule about them read the UNUSED BITS flags instead, and
+    rejected an object whose value padding legitimately had transforms.
 
     Start pointer (22.3): `start_pointer` names the field carrying this element's offset.
 
@@ -215,6 +218,8 @@ def BCIR_EcnObjectOp : BCIR_Op<"ecn.object", [Symbol, NoTerminator]> {
                        OptionalAttr<I64Attr>:$space_unit,
                        OptionalAttr<BCIR_EcnSpaceDeterminationAttr>:$space_determination,
                        OptionalAttr<StrAttr>:$space_reference,
+                       UnitAttr:$space_encoder_transforms,
+                       UnitAttr:$space_decoder_transforms,
                        // 22.8
                        OptionalAttr<BCIR_EcnUnusedBitsAttr>:$unused_determination,
                        OptionalAttr<StrAttr>:$unused_reference,
