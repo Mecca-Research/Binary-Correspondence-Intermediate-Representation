@@ -689,5 +689,8 @@ jobs:
       - name: No active-doc references to retired trees (allowlist via marker)
         run: python3 tools/docs/check_retired_paths.py
 
+      - name: Summary claims still match the code they summarise
+        run: python3 tools/docs/check_claims.py
+
       - name: Hot/cold import quarantine (research organs stay off the simple path)
         run: python3 tools/perf/import_graph.py --check
