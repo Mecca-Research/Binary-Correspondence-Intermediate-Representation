@@ -2621,9 +2621,16 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       // 21.3.6/21.5.6/21.7.8's `container` determination reads no field's value, so a
       // transform list on it never runs. 22.4.2.3 and 22.4.2.4 confine the lists to the two
       // field determinations; the same shape as the eight rules above, one clause over.
+      //
+      // These are the ENCODING SPACE's own lists. The rule used to read
+      // getUnused*Transforms(), which are 22.8's value-padding lists -- an independent group,
+      // already checked correctly above. So an object combining a `container` space
+      // determination with a valid `UNUSED BITS field-to-be-set` transform was rejected for a
+      // rule it did not break, and the oracle permits exactly that combination. The op had no
+      // attribute for the space group's lists at all, which is why the wrong ones were read.
       if (o.getSpaceDetermination().has_value() &&
           *o.getSpaceDetermination() == EcnSpaceDetermination::Container &&
-          (o.getUnusedEncoderTransforms() || o.getUnusedDecoderTransforms())) {
+          (o.getSpaceEncoderTransforms() || o.getSpaceDecoderTransforms())) {
         o.emitError("R25: ECN object ")
             << o.getSymName() << " gives transforms to a `container` encoding-space "
             << "determination; X.692 22.4.2.3/22.4.2.4 admit them only for `field-to-be-set` "
