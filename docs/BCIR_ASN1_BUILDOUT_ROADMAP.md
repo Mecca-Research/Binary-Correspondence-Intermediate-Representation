@@ -8,6 +8,8 @@ Companion documents: [`BCIR_ASN1_X690_ABI.md`](BCIR_ASN1_X690_ABI.md) is the nor
 contract for what is already built; [`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md)
 owns cross-program ordering. [`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md)
 owns the post-X.697 plan for compiling schema-bound JER into verified BCIR artifacts.
+[`BCIR_ASN1_COMPILER_COMPARISON.md`](BCIR_ASN1_COMPILER_COMPARISON.md) measures this build
+against ffasn1, asn1c and asn1scc, and ranks what is worth importing from each.
 
 ## 0. The thesis: encoding rules are a realization choice
 
