@@ -1155,6 +1155,7 @@ attribute group — and both were invisible to a gate that compared a rail again
 selection criterion**: a rule with no canonical variant may be decoded but never chosen for
 emission, because a selected encoding becomes a digested artifact.
 
+<!-- claim: asn1-c-twins-exist -->
 | Recommendation | Rules | Canonical member | C twin |
 |---|---|---|---|
 | X.690 | BER, CER, DER | DER | `bcir_asn1.c` |
@@ -1279,7 +1280,7 @@ and reject work outside it. The current profiles are:
   The shared Python schema/oracle additionally implements the documented subsets of
   X.681 information objects, X.682 constraints/table resolution, X.683
   parameterization, canonical aligned/unaligned PER, COER/OER, CXER/XER, Python-oracle
-  JER with all six X.697 instruction families, and **all three parts of ECN** — the
+  JER with all six X.697 instruction families, and <!-- claim: ecn-three-parts-built -->**all three parts of ECN** — the
   built-in model, the user-defined half, and clause 20's defined syntax read from module
   text (§17.4). Each profile
   has its own explicit exclusions and C coverage in
@@ -1289,7 +1290,7 @@ and reject work outside it. The current profiles are:
   Module text is compiled by the X.680 front end (`bcir/frontends/asn1/`, the
   `bcir-asn1c` CLI), and unsupported notation fails closed. JER remains JSON text and has
   no *standardized* canonical variant — BCIR emits its own, which is why §17.2 names it
-  that way rather than "CJER". It **does** now have all three rails: the scalar C twin
+  that way rather than "CJER". <!-- claim: jer-has-all-three-rails -->It **does** now have all three rails: the scalar C twin
   (`bcir_jer.c`), the MLIR family/profile inside `asn1_rules`, and the direct-claims plan
   (`jer_plan.py`); [`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md) owns what
   remains of that promotion path.
