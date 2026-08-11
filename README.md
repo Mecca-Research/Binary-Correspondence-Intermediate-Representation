@@ -87,7 +87,7 @@ bash tools/irdl/check_corpus.sh         # round-trip the IRDL projection on stoc
 
 ## Where the law lives
 
-- [`docs/BCIR_LANGREF.md`](docs/BCIR_LANGREF.md) — the normative language reference (levels, laws R1–R23, the equation, and BCIRQ8 v1 artifact ABI).
+- [`docs/BCIR_LANGREF.md`](docs/BCIR_LANGREF.md) — the normative language reference (levels, laws R1–R25, the central equation, BCIRQ8 v1, and ASN.1/ECN contracts).
 - [`docs/BCIR_MASTER_ROADMAP.md`](docs/BCIR_MASTER_ROADMAP.md) — cross-program dependency order, promotion gates, stop conditions, and release policy; history and counts live elsewhere.
 - [`docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md`](docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) — the canonical proof-carrying driver, BCIR-Linux, UAPI, native-kernel, telemetry, and IPC sequence.
 - [`docs/kernel/BCIR_HAM_MEMORY_FABRIC.md`](docs/kernel/BCIR_HAM_MEMORY_FABRIC.md) — the verified semantic-memory/context-shard control plane and the explicit GDS/P2PDMA/CXL/NVMe firmware/kernel boundary.
@@ -98,6 +98,7 @@ bash tools/irdl/check_corpus.sh         # round-trip the IRDL projection on stoc
 - [`docs/PARITY.md`](docs/PARITY.md) — the Python↔MLIR law contract and Python↔C artifact/runtime parity ledger.
 - [`docs/STATUS.md`](docs/STATUS.md) — the generated static inventory of tests, ODS ops, passes, runtime files, and verifier-law fixture tags; it does not claim those gates were executed.
 - [`docs/PERFORMANCE_AUDIT.md`](docs/PERFORMANCE_AUDIT.md) — the bounded TMSAO methodology, fixed bottlenecks, local evidence, and hardware-gated limits.
+- [`docs/research/BCIR_TMSAO_ASN1_JSON_DRIVER_PROPOSAL.md`](docs/research/BCIR_TMSAO_ASN1_JSON_DRIVER_PROPOSAL.md) — the source-backed GEM+ architecture: scoped TMSAO certificates, typed regions, joint planning, ASN.1 integration, C++ migration, native measurement, and driver sequencing.
 - [`docs/languages/C_MEMORY_DISCIPLINE.md`](docs/languages/C_MEMORY_DISCIPLINE.md) — the enforced freestanding/hosted/driver memory classes, allocator and context contracts, direct driver ABI, and driver-gated IPC sequence.
 - [`docs/machine-learning/THIRD_PARTY_MODELS.md`](docs/machine-learning/THIRD_PARTY_MODELS.md) — pinned model provenance, license, and non-redistribution boundary.
 - [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md) — current code and documentation ownership, contract placement, and validation entry points.
