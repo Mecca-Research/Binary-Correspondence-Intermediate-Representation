@@ -588,6 +588,34 @@ def decode_relative_oid_iri(content: bytes) -> str:
         raise Asn1Error(f"RELATIVE-OID-IRI contents are not valid UTF-8: {exc}") from exc
 
 
+# --- X.680 clause 12's digit productions --------------------------------------------------
+#
+# Every numeric field in the two TEXT transfer syntaxes -- XER's XMLSignedNumber, realnumber
+# and XMLObjectIdentifierValue, JER's object-identifier string -- is spelled with these and
+# nothing else. X.680 §12.26 says it outright for an arc: "an arbitrarily long sequence of
+# ISO/IEC 10646 characters in the range 0 (DIGIT ZERO) to 9 (DIGIT NINE)".
+#
+# That has to be checked with a predicate that means the same thing. Python's `str.isdigit()`
+# and a regex `\d` are both Unicode-aware, so they answer True for ARABIC-INDIC DIGIT EIGHT
+# and FULLWIDTH DIGIT FOUR -- characters the production does not contain. Those rails carry
+# UTF-8 by design, so unlike the octet-based rails there is no earlier ASCII decode to catch
+# it, and `int()` then converts them happily: `<S>٤٢</S>` decoded to the INTEGER 42.
+
+def is_ascii_digits(text: str) -> bool:
+    """True when `text` is one or more characters from DIGIT ZERO to DIGIT NINE."""
+    return bool(text) and all("0" <= character <= "9" for character in text)
+
+
+def is_number_form(text: str) -> bool:
+    """§12.8's `number`, and §12.26's arc: ASCII digits, no leading zero unless single.
+
+    "A 'number' shall consist of one or more digits. The first digit shall not be zero
+    unless the 'number' is a single digit." Without the second half `1.2.0840` and
+    `1.2.840` are two spellings of one object identifier.
+    """
+    return is_ascii_digits(text) and (len(text) == 1 or text[0] != "0")
+
+
 # --- 8.23 restricted character strings ---------------------------------------------
 
 #: §8.23.5/§8.23.7/§8.23.8/§8.23.10: how each restricted string maps to octets. The
@@ -793,4 +821,5 @@ __all__ = [
     "encode_generalizedtime", "encode_integer", "encode_oid", "encode_oid_iri",
     "encode_real", "encode_real_decimal", "encode_relative_oid",
     "encode_relative_oid_iri", "encode_string", "encode_time", "encode_utctime",
+    "is_ascii_digits", "is_number_form",
 ]

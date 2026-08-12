@@ -81,7 +81,7 @@ from .schema import (Asn1Type, Choice, Component, OpenType, Primitive, Sequence,
                      SequenceOf, Set, SetOf, _resolve_open_type)
 from .tags import Asn1Error, Universal
 from .tlv import decode_one, encode_tlv
-from .values import BitString
+from .values import BitString, is_number_form
 
 #: §42.2 — the ONE object identifier X.697 assigns, and its object descriptor.
 JER_OID: tuple[int, ...] = (2, 1, 7)
@@ -1026,9 +1026,15 @@ def _decode_primitive(node, kind: Primitive, opts: "_Opts"):
     if universal in (Universal.OBJECT_IDENTIFIER, Universal.RELATIVE_OID):
         text = _want(node, str, kind, "a JSON string", "32")
         parts = text.split(".")
-        if not text or any(not part.isdigit() for part in parts):
+        # §32 borrows X.680 §12.26's arc production: DIGIT ZERO..DIGIT NINE, and no leading
+        # zero unless the arc is a single digit. `str.isdigit()` is Unicode-aware and knows
+        # nothing about leading zeros, so `"1.2.\u0668\u0664\u0660"` and `"1.2.0840"` both
+        # decoded to (1, 2, 840). A JER document is UTF-8 by design, so unlike the
+        # octet-based rails nothing upstream had already restricted this to ASCII.
+        if not text or any(not is_number_form(part) for part in parts):
             raise Asn1Error(
-                f"{kind.name}: {text!r} is not an XMLObjectIdentifierValue (32)")
+                f"{kind.name}: {text!r} is not an XMLObjectIdentifierValue; every arc is "
+                f"DIGIT ZERO..DIGIT NINE with no leading zero (32, X.680 12.26)")
         return tuple(int(part) for part in parts)
 
     if universal in _TEXT_STRINGS:                           # §38.1
