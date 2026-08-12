@@ -46,6 +46,7 @@ from dataclasses import asdict, dataclass
 
 from .selection import ALL_CANDIDATES, Candidate, Measurement, Objective, measure_one
 from .tags import Asn1Error
+from .tlv import encode_tlv
 
 #: Bumped when a table's shape changes in a way an older reader would misread.
 #: Bumped to 2 when `decode_kind` joined the table. A schema-free and a schema-directed table
@@ -308,6 +309,30 @@ TIE_BREAK = ("exact-octets-then-declared-order: candidates whose intervals overl
              "encoded size, then by the order the candidate table declares")
 
 
+#: Domain separator for the digest of a value that has no encoding at all. A certificate is
+#: still issued in that case -- with no winner, recording that nothing could carry it -- so
+#: the digest has to be computable, and it must not be able to collide with the digest of a
+#: value that DOES encode. Hashing the type name under a distinct prefix gives both.
+_UNENCODABLE = b"bcir-asn1-certificate-v1:unencodable:"
+
+
+def _value_digest(kind, value) -> str:
+    """The value's identity: its canonical octets.
+
+    Not `repr(value)`. A SEQUENCE value is a mapping from component name to value, and a
+    Python dict's `repr` reflects INSERTION order, so `{"a": 1, "b": 2}` and
+    `{"b": 2, "a": 1}` -- which encode to the byte-identical `3006800101810102` -- produced
+    two different digests, and therefore two certificates for one value. DER is canonical by
+    construction, so digesting what BCIR digests everywhere else settles it: equal values
+    have equal digests, and distinct values do not collide.
+    """
+    try:
+        return hashlib.sha256(encode_tlv(kind.encode(value))).hexdigest()
+    except Asn1Error:
+        return hashlib.sha256(
+            _UNENCODABLE + type(value).__name__.encode("utf-8")).hexdigest()
+
+
 def select_certified(kind, value, table: EncodingCostTable, *,
                      objective: Objective = Objective.WIRE_SIZE,
                      candidates=ALL_CANDIDATES,
@@ -342,8 +367,15 @@ def select_certified(kind, value, table: EncodingCostTable, *,
         if not candidate.canonical:
             refused.append((candidate.name, "not canonical; decodable but never selected"))
 
+    # The value's identity is its CANONICAL OCTETS, not `repr(value)`. A SEQUENCE value is
+    # a mapping from component name to value, and `repr` of a Python dict reflects insertion
+    # order -- so `{"a": 1, "b": 2}` and `{"b": 2, "a": 1}`, which encode to the byte-
+    # identical `3006800101810102`, produced two different `value_digest`s and therefore two
+    # certificates for one value. Digesting what BCIR actually digests everywhere else
+    # removes the question: DER is canonical by construction, so equal values have equal
+    # digests and unequal values do not collide.
     schema_digest = hashlib.sha256(repr(kind).encode()).hexdigest()
-    value_digest = hashlib.sha256(repr(value).encode()).hexdigest()
+    value_digest = _value_digest(kind, value)
     common = dict(version=COST_TABLE_VERSION, schema_digest=schema_digest,
                   value_digest=value_digest, objective=objective.value,
                   target=table.target, cal_gen=table.cal_gen,
