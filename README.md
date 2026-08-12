@@ -94,6 +94,7 @@ bash tools/irdl/check_corpus.sh         # round-trip the IRDL projection on stoc
 - [`docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md`](docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md) — the detailed ML/model closure program, from low-bit/scheduling/AD gaps through production serving and data organs.
 - [`docs/BCIR_ASN1_X690_ABI.md`](docs/BCIR_ASN1_X690_ABI.md) — ASN.1 / X.690 binary format compatibility: the DER-out/BER-in stance, the `BCIR-StreamPack` ASN.1 module, and the additive DER projection of the frozen StreamPack ABI.
 - [`docs/BCIR_ASN1_BUILDOUT_ROADMAP.md`](docs/BCIR_ASN1_BUILDOUT_ROADMAP.md) — the ASN.1 portfolio beyond X.690: the X.680 front-end, constraints, PER/OER/JER, ECN, and cost-governed encoding-rule selection.
+- [`docs/research/BCIR_GEMPLUS_ROADMAP.md`](docs/research/BCIR_GEMPLUS_ROADMAP.md) — the GEM+ / TMSAO build plan: scope identity, certificate classes, and a comparative performance gate per slice against the measured baseline.
 - [`docs/BCIR_ASN1_COMPILER_COMPARISON.md`](docs/BCIR_ASN1_COMPILER_COMPARISON.md) — BCIR's ASN.1 toolchain against ffasn1, asn1c and asn1scc: capability matrix, confirmed gaps, and a ranked import list.
 - [`docs/PARITY.md`](docs/PARITY.md) — the Python↔MLIR law contract and Python↔C artifact/runtime parity ledger.
 - [`docs/STATUS.md`](docs/STATUS.md) — the generated static inventory of tests, ODS ops, passes, runtime files, and verifier-law fixture tags; it does not claim those gates were executed.
