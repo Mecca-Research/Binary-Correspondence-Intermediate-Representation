@@ -119,6 +119,32 @@ class Asn1Type:
     def base_tag(self) -> Tag:                            # pragma: no cover - abstract
         raise NotImplementedError
 
+    def require_tag(self, tlv: Tlv) -> None:
+        """X.690 §8.1.2: refuse an encoding whose identifier octets are not this type's.
+
+        A schema-DIRECTED decode is told which type to expect, so the tag on the wire is a
+        claim to check, not information to follow. Without this the decoder fell through to
+        the value-directed path and returned whatever the octets happened to spell: an
+        INTEGER schema handed `01 01 ff` returned `True`, and a SEQUENCE schema accepted a
+        SET or a constructed context tag over identical contents. That is not a decode of
+        the requested type -- it is the octets choosing the type, at the exact boundary
+        where untrusted bytes become a value.
+
+        Class and number only. Whether the constructed bit is legal is a per-type question
+        that each `decode` already answers: §8.9.1 requires a SEQUENCE to be constructed,
+        while §8.23.6 lets BER spell a character string either way, so a shared check here
+        would have to be wrong for one of them.
+
+        Types that genuinely have no tag of their own -- CHOICE (§8.13/X.680 §29.1) and an
+        open type (X.681 §14) -- override or do not call this: a CHOICE checks the tag
+        against its alternatives instead, and an open type accepts what it contains.
+        """
+        want = self.base_tag()
+        if tlv.tag.cls is not want.cls or tlv.tag.number != want.number:
+            raise Asn1Error(
+                f"{self.name}: expected {want} but the encoding carries {tlv.tag} "
+                f"(X.690 8.1.2)", tlv.offset)
+
 
 @dataclass
 class Primitive(Asn1Type):
@@ -213,6 +239,7 @@ class Primitive(Asn1Type):
             f"{Tag(TagClass.UNIVERSAL, self.universal)}")
 
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> object:
+        self.require_tag(tlv)
         return from_tlv(tlv, strictness=strictness)
 
 
@@ -355,6 +382,7 @@ class SequenceOf(Asn1Type):
         return Tlv(self.base_tag(), b"", [self.element.encode(v) for v in value])
 
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> list:
+        self.require_tag(tlv)
         if not tlv.constructed:
             raise Asn1Error(
                 f"{self.name} must be constructed (X.690 8.10.1)", tlv.offset)
@@ -395,6 +423,7 @@ class Sequence(Asn1Type):
         return Tlv(self.base_tag(), b"", children)
 
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> dict:
+        self.require_tag(tlv)
         if not tlv.constructed:
             raise Asn1Error(
                 f"{self.name} must be constructed (X.690 8.9.1)", tlv.offset)
@@ -405,6 +434,8 @@ class Sequence(Asn1Type):
             if index < len(children) and _matches_any(children[index], comp):
                 out[comp.name] = comp.type.decode(
                     _strip_tag(comp, children[index]), strictness=strictness)
+                _refuse_present_default(self, comp, out[comp.name], strictness,
+                                        children[index].offset)
                 _resolve_open_type(comp, out, strictness)
                 index += 1
             elif comp.has_default:
@@ -446,6 +477,7 @@ class SetOf(Asn1Type):
         return Tlv(self.base_tag(), b"", _sorted_set_of(children))
 
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> list:
+        self.require_tag(tlv)
         if not tlv.constructed:
             raise Asn1Error(
                 f"{self.name} must be constructed (X.690 8.12.1)", tlv.offset)
@@ -486,6 +518,7 @@ class Set(Asn1Type):
         return Tlv(self.base_tag(), b"", _sorted_set_of(children))
 
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> dict:
+        self.require_tag(tlv)
         if not tlv.constructed:
             raise Asn1Error(
                 f"{self.name} must be constructed (X.690 8.11.1)", tlv.offset)
@@ -496,6 +529,8 @@ class Set(Asn1Type):
                 if _matches_any(child, comp):
                     out[comp.name] = comp.type.decode(
                         _strip_tag(comp, child), strictness=strictness)
+                    _refuse_present_default(self, comp, out[comp.name], strictness,
+                                            child.offset)
                     del remaining[position]
                     break
             else:
@@ -650,6 +685,28 @@ def _matches_any(tlv: Tlv, comp: Component) -> bool:
     if comp.tag is None and isinstance(comp.type, OpenType):
         return True
     return any(_matches(tlv, tag) for tag in comp.expected_tags())
+
+
+def _refuse_present_default(kind, comp: Component, value, strictness: Strictness,
+                            offset: int) -> None:
+    """X.690 §11.5: under DER a component equal to its DEFAULT shall not be encoded.
+
+    The encoders have always honoured this -- `encode` skips such a component -- but the
+    decoders did not, so `30 06 02 01 01 02 01 07` and `30 03 02 01 07` BOTH decoded to
+    the same abstract value under strict DER. Two accepted byte strings for one value is
+    exactly what a canonical encoding exists to prevent, and StreamPack digests the octets
+    it receives, so the looser half of the pair was a second spelling of an attested
+    artifact.
+
+    Only under DER. §11.5 is a clause-11 restriction; BER permits the redundant component
+    and the BER decode path must keep accepting it.
+    """
+    if strictness is not Strictness.DER or not comp.has_default:
+        return
+    if value == comp.default:
+        raise Asn1Error(
+            f"{kind.name}: component {comp.name!r} is present and equal to its DEFAULT "
+            f"{comp.default!r}; DER shall not encode it (X.690 11.5)", offset)
 
 
 def _apply_tag(comp: Component, base: Tlv) -> Tlv:

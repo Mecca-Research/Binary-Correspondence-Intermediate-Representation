@@ -457,6 +457,19 @@ def _decode_fields(kind, data: bytes, offset: int, rules: OerRules) -> tuple[dic
     for comp in components:
         if flags[comp.name]:
             out[comp.name], cursor = decode_value(comp.type, data, cursor, rules=rules)
+            # §31.9: under CANONICAL-OER "each component that is marked DEFAULT shall be
+            # encoded as absent if its value is identical to the default value". The encoder
+            # has always obeyed it; the decoder did not, so `80 01 01 01 07` and `00 01 07`
+            # both decoded to the same abstract value under the CANONICAL rules. A canonical
+            # encoding that admits two spellings of one value is not canonical, and BCIR
+            # digests these octets. BASIC-OER keeps accepting it -- §31 is a clause-31
+            # restriction, not a clause-16 one.
+            if (rules is OerRules.CANONICAL and comp.has_default
+                    and out[comp.name] == comp.default):
+                raise Asn1Error(
+                    f"{kind.name}: component {comp.name!r} is present and equal to its "
+                    f"DEFAULT {comp.default!r}; CANONICAL-OER encodes it as absent "
+                    f"(X.696 31.9)", offset)
         elif comp.has_default:
             out[comp.name] = comp.default                  # absent MEANS the default
     return out, cursor

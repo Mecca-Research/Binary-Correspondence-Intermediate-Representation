@@ -77,14 +77,26 @@ static void w_cstr(wcur *w, const char *s, size_t n) {
 /* Find the child of `parent` carrying context-specific tag `tag`.
  * Sets *found to 0 when the component is absent -- which is the DEFAULT case, not a
  * fault, so the caller supplies the default rather than failing. */
-static bcir_asn1_status sp_find(const uint8_t *der, size_t len,
-                                const bcir_asn1_tlv *parent, uint32_t tag,
-                                bcir_asn1_tlv *out, int *found) {
+/* `want_constructed` is the form the schema's IMPLICIT tag gives this component: X.690
+ * 8.14.4 keeps the base type's constructed bit when a context tag replaces the base tag,
+ * so a component whose base is a string or an INTEGER stays primitive and one whose base
+ * is SEQUENCE OF stays constructed.
+ *
+ * Matching class and number alone let an EXPLICIT encoding through where the schema says
+ * IMPLICIT: `30 05 a1 03 0c 01 78` was accepted for `[1] IMPLICIT UTF8String`, and the
+ * callers below read `node.content` directly -- so `sourcePlan` became the nested TLV's
+ * own bytes `0c 01 78` rather than the string `x`. Attacker-chosen identifier and length
+ * octets end up inside a projected native field that way. */
+static bcir_asn1_status sp_find_form(const uint8_t *der, size_t len,
+                                     const bcir_asn1_tlv *parent, uint32_t tag,
+                                     int want_constructed,
+                                     bcir_asn1_tlv *out, int *found) {
   bcir_asn1_tlv child;
   bcir_asn1_status st = bcir_asn1_first_child(der, len, parent, &child);
   *found = 0;
   while (st == BCIR_ASN1_OK) {
     if (child.cls == BCIR_ASN1_CONTEXT && child.number == tag) {
+      if (child.constructed != want_constructed) return BCIR_ASN1_ERR_FORM;
       *out = child;
       *found = 1;
       return BCIR_ASN1_OK;
@@ -92,6 +104,20 @@ static bcir_asn1_status sp_find(const uint8_t *der, size_t len,
     st = bcir_asn1_next(der, len, parent, &child);
   }
   return (st == BCIR_ASN1_END) ? BCIR_ASN1_OK : st;
+}
+
+/* A component whose base type is primitive (string, INTEGER, BOOLEAN). */
+static bcir_asn1_status sp_find(const uint8_t *der, size_t len,
+                                const bcir_asn1_tlv *parent, uint32_t tag,
+                                bcir_asn1_tlv *out, int *found) {
+  return sp_find_form(der, len, parent, tag, 0, out, found);
+}
+
+/* A component whose base type is SEQUENCE OF, so the implicit tag stays constructed. */
+static bcir_asn1_status sp_find_seq(const uint8_t *der, size_t len,
+                                    const bcir_asn1_tlv *parent, uint32_t tag,
+                                    bcir_asn1_tlv *out, int *found) {
+  return sp_find_form(der, len, parent, tag, 1, out, found);
 }
 
 /* Count the children of a constructed node. */
@@ -168,13 +194,13 @@ static bcir_asn1_status sp_classify(const uint8_t *der, size_t len,
   shape->pipeline_depth = (uint16_t)depth;
   if (depth > 1) needs_v2 = 1;
 
-  st = sp_find(der, len, root, 6, &shape->segments, &shape->has_segments);
+  st = sp_find_seq(der, len, root, 6, &shape->segments, &shape->has_segments);
   if (st != BCIR_ASN1_OK) return st;
-  st = sp_find(der, len, root, 7, &shape->prefetches, &shape->has_prefetches);
+  st = sp_find_seq(der, len, root, 7, &shape->prefetches, &shape->has_prefetches);
   if (st != BCIR_ASN1_OK) return st;
-  st = sp_find(der, len, root, 8, &shape->blocks, &shape->has_blocks);
+  st = sp_find_seq(der, len, root, 8, &shape->blocks, &shape->has_blocks);
   if (st != BCIR_ASN1_OK) return st;
-  st = sp_find(der, len, root, 9, &shape->trace, &shape->has_trace);
+  st = sp_find_seq(der, len, root, 9, &shape->trace, &shape->has_trace);
   if (st != BCIR_ASN1_OK) return st;
 
   shape->n_segments = shape->n_prefetches = shape->n_blocks = shape->n_trace = 0;
@@ -256,7 +282,7 @@ static bcir_asn1_status sp_write_u32arr(const uint8_t *der, size_t len,
   bcir_asn1_tlv node, item;
   int found;
   uint32_t count = 0;
-  bcir_asn1_status st = sp_find(der, len, parent, tag, &node, &found);
+  bcir_asn1_status st = sp_find_seq(der, len, parent, tag, &node, &found);
   if (st != BCIR_ASN1_OK) return st;
   if (!found) { w_u16(w, 0); return BCIR_ASN1_OK; }
   st = sp_count(der, len, &node, &count);
@@ -283,7 +309,7 @@ static bcir_asn1_status sp_write_u64arr_or_one(const uint8_t *der, size_t len,
   bcir_asn1_tlv node, item;
   int found;
   uint32_t count = 0;
-  bcir_asn1_status st = sp_find(der, len, parent, tag, &node, &found);
+  bcir_asn1_status st = sp_find_seq(der, len, parent, tag, &node, &found);
   if (st != BCIR_ASN1_OK) return st;
   if (!found) { w_u16(w, 1); w_u64(w, 1); return BCIR_ASN1_OK; }
   st = sp_count(der, len, &node, &count);
@@ -308,7 +334,7 @@ static bcir_asn1_status sp_write_strarr(const uint8_t *der, size_t len,
   bcir_asn1_tlv node, item;
   int found;
   uint32_t count = 0;
-  bcir_asn1_status st = sp_find(der, len, parent, tag, &node, &found);
+  bcir_asn1_status st = sp_find_seq(der, len, parent, tag, &node, &found);
   if (st != BCIR_ASN1_OK) return st;
   if (!found) { w_u16(w, 0); return BCIR_ASN1_OK; }
   st = sp_count(der, len, &node, &count);

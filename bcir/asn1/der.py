@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from .tags import Asn1Error, TagClass, Universal
 from .tlv import Tlv
-from .values import decode_generalizedtime, decode_utctime
+from .values import decode_generalizedtime, decode_real, decode_utctime
 
 
 @dataclass(frozen=True)
@@ -134,6 +134,17 @@ def _walk_universal(tlv: Tlv, out: list[Violation]) -> None:
             decode_generalizedtime(tlv.content, der=True)
         except Asn1Error as exc:
             out.append(Violation("11.7", str(exc), tlv.offset))
+
+    # 11.3 — the canonical REAL. Clause 8.5 grants a sender three bases, a scaling factor,
+    # a choice of mantissa normalization and three ISO 6093 forms; 11.3 removes all of it.
+    # Checked through the value decoder for the same reason the times are: the restrictions
+    # are stated over the *decoded* fields, and re-implementing them here would give the
+    # checker and the decoder two chances to disagree.
+    if number == Universal.REAL and not tlv.constructed:
+        try:
+            decode_real(tlv.content, der=True)
+        except Asn1Error as exc:
+            out.append(Violation("11.3", str(exc), tlv.offset))
 
 
 def _reencode(tlv: Tlv) -> bytes:

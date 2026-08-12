@@ -186,6 +186,13 @@ def scan(data: bytes, limits: JerLimits = JerLimits()) -> int:
     # rather than document-wide totals -- which is what §4.3's wording asks for.
     counts: list[int] = []
     kinds: list[int] = []
+    # `counts` holds SEPARATORS, not children, so a container with one child has count 0 and
+    # never entered the comma branch where the ceiling was tested. `elements=0` therefore
+    # admitted `[0]` and `members=0` admitted `{"k":0}` -- a resource limit that does not
+    # hold at its own boundary, on the one code path whose entire job is bounding untrusted
+    # input. This records whether the open container has any child at all, so the ceiling is
+    # also tested at the close bracket, where the child count is exactly `count + 1`.
+    nonempty: list[bool] = []
 
     def spend(amount: int, offset: int) -> None:
         nonlocal work
@@ -200,6 +207,8 @@ def scan(data: bytes, limits: JerLimits = JerLimits()) -> int:
         if byte in _WS:
             pos += 1
             continue
+        if nonempty and byte not in b"}]" and byte not in b",:":
+            nonempty[-1] = True
         if byte in b"{[":
             depth += 1
             if depth > limits.depth:
@@ -207,6 +216,7 @@ def scan(data: bytes, limits: JerLimits = JerLimits()) -> int:
                             detail=f"limit is {limits.depth}")
             counts.append(0)
             kinds.append(byte)
+            nonempty.append(False)
             nodes += 1
             if nodes > limits.nodes:
                 raise _fail(JerErrorCode.NODES_EXCEEDED, pos, needed=nodes,
@@ -218,10 +228,17 @@ def scan(data: bytes, limits: JerLimits = JerLimits()) -> int:
                 raise _fail(JerErrorCode.MALFORMED, pos,
                             detail="a closing bracket with nothing open")
             opened = kinds.pop()
-            counts.pop()
+            separators = counts.pop()
+            had_child = nonempty.pop()
             if (opened == 0x7B) != (byte == 0x7D):
                 raise _fail(JerErrorCode.MALFORMED, pos,
                             detail="mismatched brackets")
+            children = separators + 1 if had_child else 0
+            cap = limits.members if opened == 0x7B else limits.elements
+            if children > cap:
+                raise _fail(JerErrorCode.MEMBERS_EXCEEDED if opened == 0x7B
+                            else JerErrorCode.ELEMENTS_EXCEEDED,
+                            pos, needed=children, detail=f"limit is {cap}")
             depth -= 1
             pos += 1
             continue
