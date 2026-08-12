@@ -334,6 +334,8 @@ _MODULES = [
     "bcir.tests.test_asn1_per",
     "bcir.tests.test_asn1_per_strictness",
     "bcir.tests.test_asn1_canonical_bytes",
+    "bcir.tests.test_asn1_text_rails",
+    "bcir.tests.test_certificate_identity",
     "bcir.tests.test_verify_fail_closed",
     "bcir.tests.test_asn1_per_canonical",
     "bcir.tests.test_asn1_per_value_model",

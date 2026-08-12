@@ -81,7 +81,7 @@ from .schema import (Asn1Type, Choice, Component, Module, OpenType, Primitive,
                      Sequence, SequenceOf, Set, SetOf, _resolve_open_type)
 from .tags import Asn1Error, TagClass, Universal
 from .tlv import decode_one, encode_tlv
-from .values import BitString
+from .values import BitString, is_ascii_digits, is_number_form
 
 #: §40.2 — the object identifiers that name these encoding rules.
 BASIC_XER_OID: tuple[int, ...] = (2, 1, 5, 0)
@@ -354,7 +354,7 @@ def _canonical_time(text: str, universal: int) -> str:
     body = text[:-1].replace(",", ".")                       # §9.10.4
     integer, _, fraction = body.partition(".")
     wanted = 14 if universal == Universal.GENERALIZED_TIME else 12
-    if len(integer) != wanted or not integer.isdigit():
+    if len(integer) != wanted or not is_ascii_digits(integer):
         raise Asn1Error(
             f"XER: CXER requires the seconds of a {what} to be present ({clause}.2); "
             f"{text!r} is not the {wanted}-digit form")
@@ -1014,11 +1014,23 @@ class _Reader:
                     raise self.error(
                         f"the numeric escape \"&{entity};\" is forbidden in CXER (9.1.3)")
                 digits = entity[1:]
-                try:
-                    code = (int(digits[1:], 16) if digits[:1] in ("x", "X")
-                            else int(digits, 10))
-                except ValueError:
-                    raise self.error(f"\"&{entity};\" is not a numeric escape") from None
+                # §12.15.8's escape is `&#` + decimal digits or `&#x` + hex digits. Handing
+                # the remainder to `int()` accepted a far wider language: PEP 515
+                # underscores, a leading PLUS SIGN, surrounding whitespace, every Unicode
+                # decimal digit, and -- for the hex form -- a second `0x` prefix, since
+                # `int(s, 16)` strips one. `&#65;`, `&#6_5;`, `&#+65;`, `&# 65 ;`,
+                # `&#\u0666\u0665;`, `&#\uff16\uff15;`, `&#0065;`, `&#x41;` and `&#x0x41;`
+                # were nine accepted spellings of the character `A`.
+                hexform = digits[:1] in ("x", "X")
+                body_digits = digits[1:] if hexform else digits
+                legal = (all(character in "0123456789abcdefABCDEF"
+                             for character in body_digits) and body_digits
+                         if hexform else is_ascii_digits(body_digits))
+                if not legal:
+                    raise self.error(
+                        f"\"&{entity};\" is not a numeric escape; X.680 12.15.8 spells it "
+                        f"with DIGIT ZERO..DIGIT NINE (or hexadecimal digits after \"x\")")
+                code = int(body_digits, 16 if hexform else 10)
                 if not 0 <= code <= 0x10FFFF:
                     raise self.error(f"\"&{entity};\" is not an ISO/IEC 10646 character")
                 out.append(chr(code))
@@ -1167,7 +1179,7 @@ def _decode_primitive(reader: _Reader, kind: Primitive, name: str, rules: XerRul
 def _parse_integer(reader: _Reader, body: str) -> int:
     """X.680 §19.9's `XMLSignedNumber`, which §8.3.6 makes the only integer spelling."""
     digits = body[1:] if body.startswith("-") else body
-    if not digits or not digits.isdigit():
+    if not is_ascii_digits(digits):
         raise reader.error(
             f"{body!r} is not an XMLSignedNumber (X.680 19.9); 8.3.6 admits no other "
             f"spelling of an integer")
@@ -1186,11 +1198,11 @@ def _parse_real(reader: _Reader, body: str) -> float:
     if not marker:
         mantissa, marker, exponent = text.partition("e")
     integer, _dot, fraction = mantissa.partition(".")
-    if not integer.isdigit() or (fraction and not fraction.isdigit()):
+    if not is_ascii_digits(integer) or (fraction and not is_ascii_digits(fraction)):
         raise reader.error(f"{body!r} is not a realnumber (X.680 12.9)")
     if marker:
         signless = exponent[1:] if exponent.startswith("-") else exponent
-        if not signless.isdigit():
+        if not is_ascii_digits(signless):
             raise reader.error(f"{body!r} has no valid exponent (X.680 12.9)")
         if exponent.startswith("+"):
             raise reader.error(f"{body!r} carries a \"+\"; X.680 12.9 admits only \"-\"")
@@ -1222,10 +1234,17 @@ def _parse_hex(reader: _Reader, body: str) -> bytes:
 
 def _parse_oid(reader: _Reader, body: str) -> tuple[int, ...]:
     parts = body.split(".")
-    if not body or any(not part.isdigit() for part in parts):
+    # §12.26 spells the arc out: characters "in the range 0 (DIGIT ZERO) to 9 (DIGIT NINE)",
+    # and "shall not commence with a 0 (DIGIT ZERO) character unless it has only a single
+    # character". `str.isdigit()` answered True for ARABIC-INDIC and FULLWIDTH digits and
+    # said nothing about leading zeros, so `1.2.٨٤٠` and `1.2.0840` both decoded to
+    # (1, 2, 840) -- three spellings of one object identifier. `_parse_integer` above
+    # already applied the leading-zero half; this production needs it just as much.
+    if not body or any(not is_number_form(part) for part in parts):
         raise reader.error(
             f"{body!r} is not an XMLObjectIdentifierValue; 9.8 requires every component "
-            f"to be an XMLNumberForm")
+            f"to be an XMLNumberForm of DIGIT ZERO..DIGIT NINE with no leading zero "
+            f"(X.680 12.26)")
     return tuple(int(part) for part in parts)
 
 

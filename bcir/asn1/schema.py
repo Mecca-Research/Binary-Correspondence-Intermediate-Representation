@@ -30,8 +30,27 @@ from .codec import Strictness, from_tlv, to_tlv
 from .tags import Asn1Error, Tag, TagClass, Universal
 from .tlv import Tlv, decode_one, encode_tlv
 
-#: Sentinel distinguishing "no DEFAULT" from "DEFAULT is None".
-_NO_DEFAULT = object()
+class _NoDefault:
+    """Sentinel distinguishing "no DEFAULT" from "DEFAULT is None".
+
+    A class with a fixed `__repr__` rather than a bare `object()`, because this value is
+    reachable from `repr(schema)` -- it is the default of `Component.default`, so every
+    SEQUENCE and CHOICE component that does not declare a DEFAULT carries it -- and
+    `bcir.asn1.certified` builds a certificate's `schema_digest` as
+    `sha256(repr(kind))`. A bare `object()` reprs as `<object object at 0x7f...>`, so that
+    digest was a function of where CPython happened to place one sentinel in the heap:
+    three runs of the same program over the same schema produced three different
+    certificates. Stable within a process, which is why no test caught it, and different
+    on every run, which is the opposite of what a content address is for.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<no-default>"
+
+
+_NO_DEFAULT = _NoDefault()
 
 
 @dataclass(frozen=True)

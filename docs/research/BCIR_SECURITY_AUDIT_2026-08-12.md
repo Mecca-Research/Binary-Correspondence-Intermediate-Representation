@@ -158,9 +158,11 @@ passed against all fifteen defects.
 
 ## 7. Recommended next
 
-1. **Sweep for the remaining host-parser instances.** Mechanical, and the root cause is now
-   named. Any untrusted text reaching `int()`, `float()`, `datetime` parsing, or a codec
-   without a preceding grammar check is a candidate.
+1. ~~**Sweep for the remaining host-parser instances.**~~ **Done** — see
+   [`BCIR_SECURITY_AUDIT_2026-08-12b.md`](BCIR_SECURITY_AUDIT_2026-08-12b.md). It found five
+   more, all in XER and JER, and refined the rule: the vulnerable predicate is every
+   Unicode-aware host predicate (`str.isdigit()`, a regex `\d`), and it bites only on the
+   TEXT rails, because the octet rails decode contents as ASCII first.
 2. **Close the provenance hash across both rails** — ODS attributes for the memory hierarchy
    and the claim-order fields, plus the matching `hashTargetFromIR`/`hashModuleFromIR` walk.
    This is the P−1 correctness-closure item and it gates any content-addressed TMSAO claim.
