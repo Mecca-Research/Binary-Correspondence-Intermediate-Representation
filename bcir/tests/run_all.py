@@ -334,6 +334,7 @@ _MODULES = [
     "bcir.tests.test_asn1_per",
     "bcir.tests.test_asn1_per_strictness",
     "bcir.tests.test_asn1_canonical_bytes",
+    "bcir.tests.test_execution_scope",
     "bcir.tests.test_gemplus_baseline",
     "bcir.tests.test_asn1_text_rails",
     "bcir.tests.test_certificate_identity",

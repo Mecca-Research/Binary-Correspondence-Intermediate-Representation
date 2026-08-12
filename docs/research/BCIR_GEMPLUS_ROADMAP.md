@@ -165,24 +165,37 @@ TMSAO-2 certificate**, because it is the first to compute a lower bound.
 
 Ordered by dependency, not by size. Each names its gate.
 
-### G0 — `ExecutionScopeV1` and the class ladder
+### G0 — `ExecutionScopeV1` and the class ladder — **LANDED**
 
 *Closes: the audit's open provenance item. Report P0. Unlocks: every later certificate.*
 
-Build the versioned canonical serialization of `S`, widen `hash_module`/`hash_target` **with
-the matching `BCIRVerifyPass.cpp` walk in the same commit**, and add the four certificate
-classes with their required fields.
+`bcir/kbcir/scope.py`. The versioned canonical serialization of `S`, plus the four
+certificate classes and the gap arithmetic.
 
-| Gate | Baseline | Target |
+| Gate | Baseline | Result |
 |---|---|---|
-| `exact` A scope digest separates two plans that differ | collides (score 51,200 vs 1,574,912, one digest) | distinct digests |
-| `exact` Declared claim order changes the digest | collides (3,840 vs 4,352, one digest) | distinct digests |
-| `exact` R13 cross-check agrees across rails | n/a | Python and C++ hashes identical on the corpus |
-| `wall` `static_memory.plan.2048` | 301.02 ms | ≤ 200 ms once identity is computed once |
+| `exact` A scope digest separates two plans that differ | collided (51,200 vs 1,574,912, one digest) | **distinct**, `diff` names `H` |
+| `exact` Declared claim order changes the digest | collided (3,840 vs 4,352, one digest) | **distinct**, `diff` names `P` |
+| `exact` An optimality class is refused over an undeclared model | n/a | TMSAO-1/2 refused without `P`, `H`, `A`, `O` |
+| `exact` Equal scopes serialize to equal bytes | n/a | insertion order and set order both canonical |
 
-**Watch for:** the digest gets *wider*, so it may get slower. If `static_memory.digest.2048`
-regresses, that is outcome (REGRESSION with a stated trade) and G3 is its answer — not a
-reason to narrow the scope back.
+**The design decision worth recording, because the obvious approach was wrong.** The direct
+repair is to add the memory tiers to `hash_target`. That is a *cross-rail* hash:
+`BCIRVerifyPass.cpp` recomputes it field for field for R13, and `TargetCapabilityOp` carries
+no ODS attribute for the tiers, so widening it is a dialect change that must land on both
+rails in one commit or they silently disagree about a content address.
+
+So the two jobs were separated rather than merged. `hash_module`/`hash_target` keep doing
+cross-rail agreement, unchanged and still correct at it; `ExecutionScopeV1` is the complete
+identity certificates bind to, and it *contains* the target hash as one field. The gap closes
+now, R13 keeps working, and the dialect change becomes optional rather than blocking.
+
+**Still open from this slice**, deliberately and separately:
+
+- widening `hash_target` with a `DenseI64ArrayAttr` for the tiers plus the matching C++ walk,
+  so the MLIR rail can recompute the same complete identity. Not required for certificates
+  now that they bind to the scope.
+- the `wall` row `static_memory.plan.2048` (301.02 ms): untouched here, and it is G3's.
 
 ### G1 — one canonical schedule artifact
 
@@ -387,7 +400,7 @@ what is *legal* is outside the architecture entirely.
 ## 6. Order of work
 
 ```
-G0  scope identity + class ladder        <- everything depends on this
+G0  scope identity + class ladder        <- LANDED
 G1  one schedule artifact                <- correctness; unblocks G2, G5
 G3  digest computed once                 <- cheap; makes the rest measurable
 G2  incremental delta pricing            <- largest visible win
