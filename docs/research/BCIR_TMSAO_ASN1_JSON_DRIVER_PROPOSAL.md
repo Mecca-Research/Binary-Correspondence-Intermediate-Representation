@@ -7,6 +7,12 @@
 > implementation exists. Future algorithms, driver behavior, and performance targets are
 > requirements, not current capabilities.
 
+> **Audit status.** The correctness-closure defects this proposal's P0 stage depends on were
+> independently reproduced and largely fixed on 2026-08-12; see
+> [`BCIR_SECURITY_AUDIT_2026-08-12.md`](BCIR_SECURITY_AUDIT_2026-08-12.md). Fifteen defects
+> confirmed, fourteen fixed. The one left open is the provenance digest's coverage, which is a
+> two-rail change and is the first item of the GEM+ scope work.
+
 ## 1. Executive verdict
 
 BCIR does not need its core ripped out. Its strongest foundations remain useful:

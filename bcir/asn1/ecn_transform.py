@@ -538,13 +538,23 @@ class IntToChars(Transform):
     def inverse_one(self, value: str) -> int:
         # Strips SPACE and DIGIT ZERO padding from either side of the sign, so a decoder reads
         # both `00-7` (what §24.7.13 specifies) and `-007` (what most other formats write).
-        # Being liberal here costs nothing: the encoder above emits only the clause's form.
+        # Being liberal about the PADDING costs nothing; being liberal about what counts as a
+        # DIGIT is not the same thing, and that is what handing the remainder to `int()` did.
+        # Python's `int` accepts PEP 515 underscores and every Unicode decimal digit, so
+        # `4_2` and `۴۲` (ARABIC-INDIC FOUR TWO) both arrived as 42 -- character strings that
+        # §24.7.4's repertoire, DIGIT ZERO through DIGIT NINE, does not contain at all. This
+        # is a decoder over bytes a peer chose, so its accepted language has to be the
+        # clause's, not the host language's.
         text = value.strip().lstrip("0") or "0"
-        if text.startswith("-"):
-            return -int(text[1:].lstrip("0") or "0")
-        if text.startswith("+"):
-            return int(text[1:].lstrip("0") or "0")
-        return int(text)
+        sign = 1
+        if text[:1] in ("-", "+"):
+            sign = -1 if text[0] == "-" else 1
+            text = text[1:].lstrip("0") or "0"
+        if not text.isascii() or not text.isdigit():
+            raise Asn1Error(
+                f"ECN: §24.7.4 — {value!r} is not a string of DIGIT ZERO..DIGIT NINE; "
+                f"{text!r} contains a character the repertoire does not hold")
+        return sign * int(text)
 
 
 @dataclass(frozen=True)

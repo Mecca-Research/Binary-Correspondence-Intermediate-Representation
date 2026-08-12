@@ -47,17 +47,37 @@ class Tlv:
     def constructed(self) -> bool:
         return self.tag.constructed
 
-    def flatten_content(self) -> bytes:
+    def flatten_content(self, expect: int | None = None) -> bytes:
         """The concatenated contents of a constructed string encoding (§8.6.4/§8.7.3).
 
         BER lets a bitstring, octetstring or restricted character string be sent as a
         constructed series of fragments; the abstract value is their concatenation.
-        Only meaningful for those types — the caller decides whether the segmentation
-        was legal for the tag in hand.
+
+        `expect` is the universal tag number every segment must carry. §8.7.3.2 builds the
+        segments by "a recursive application of this subclause", so its NOTE 2 can say the
+        tags in the contents octets "are always universal class, number 4" — and §8.6.4.1's
+        NOTE 2 says number 3 for a bitstring. §8.23.3 encodes a character string as
+        `[UNIVERSAL x] IMPLICIT OCTET STRING`, so its segments carry x.
+
+        Passing it is not optional in spirit: without the check a constructed VisibleString
+        holding `02 01 05` — an INTEGER — flattened to the byte 0x05 and became the string
+        "\x05", which a re-encode then laundered into perfectly valid primitive DER. Any
+        octet can be smuggled into any string type that way, including out of a type whose
+        repertoire forbids it. `None` keeps the old unchecked behaviour for a caller that
+        has already established the tags some other way.
         """
         if not self.constructed:
             return self.content
-        return b"".join(child.flatten_content() for child in self.children)
+        parts = []
+        for child in self.children:
+            if expect is not None and not (child.tag.is_universal
+                                           and child.tag.number == expect):
+                raise Asn1Error(
+                    f"a segment of a constructed string carries {child.tag}; every "
+                    f"segment is an encoding of the same type, UNIVERSAL {expect} "
+                    f"(X.690 8.7.3.2)", child.offset)
+            parts.append(child.flatten_content(expect))
+        return b"".join(parts)
 
     def __str__(self) -> str:
         kind = "constructed" if self.constructed else "primitive"

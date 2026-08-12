@@ -22,7 +22,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from ..model import Claim, Lane, Module, Opcode, StrideClass, topological_phase_ids
+from ..model import (ATOMIC_OPCODES, Claim, Lane, Module, Opcode, StrideClass,
+                     topological_phase_ids)
 from .cost import (
     COMPUTE,
     MEMORY,
@@ -141,6 +142,19 @@ def candidates_for(claim: Claim, h: HProfile, resource=None) -> list[Candidate]:
         return [Candidate(Lane.H, 1, "noop", CostVector.zero())]
     if op == Opcode.BARRIER:
         return [Candidate(Lane.H, 1, "barrier", CostVector.of(sync=16))]
+
+    # An ATOMIC read-modify-write has exactly one realization: itself, one element at a
+    # time, on the atomic lane. Candidate generation used to dispatch on `stride_class`
+    # alone, so an ATOMIC_ADD inherited whatever the geometry admitted -- a 16-wide vector
+    # for SCALAR, a gather for RANDOM -- and BOTH verifiers passed the resulting plan
+    # clean, because R9 also only ever compared lane against stride class. A vectorized
+    # read-modify-write is not a faster atomic; it is not an atomic at all, and the lost
+    # ordering and synchronization cost were not priced either.
+    if op in ATOMIC_OPCODES:
+        return [Candidate(Lane.A, 1, "atomic",
+                          _cost(claim, h, 1, 1, tier=(h.mem.tier_for(resource.domain)
+                                                      if resource is not None else None)),
+                          claim.rd, tuple(claim.wr))]
 
     # Memory tier + addressing model come from the (primary) resource, if known.
     tier = h.mem.tier_for(resource.domain) if resource is not None else None

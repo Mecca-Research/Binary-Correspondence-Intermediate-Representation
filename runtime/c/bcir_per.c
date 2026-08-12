@@ -167,8 +167,18 @@ bcir_per_status bcir_per_semi_constrained(bcir_per_reader *r, int64_t lb, int64_
   if (st != BCIR_PER_OK) return st;
   st = read_unsigned_octets(r, (unsigned)count, &offset);
   if (st != BCIR_PER_OK) return st;
-  /* 11.7.4 adds the offset to lb; refuse a sum this twin cannot represent. */
-  if (offset > (uint64_t)INT64_MAX - (uint64_t)(lb < 0 ? 0 : lb)) return BCIR_PER_RANGE;
+  /* 11.7.4 adds the offset to lb; refuse a sum this twin cannot represent.
+   * Clamping a negative lb to 0 threw away headroom the type actually has: with
+   * lb = -1 the representable offsets run to INT64_MAX + 1, so the largest value of
+   * INTEGER (-1..MAX) -- offset 2^63, whose sum is exactly INT64_MAX -- was reported
+   * BCIR_PER_RANGE. A conforming peer's encoding of a value inside the declared type
+   * must not be refused; that is a false rejection, not conservatism. */
+  {
+    uint64_t headroom = (uint64_t)INT64_MAX;
+    if (lb < 0) headroom += (uint64_t)(-(lb + 1)) + 1u;   /* no overflow at INT64_MIN */
+    else        headroom -= (uint64_t)lb;
+    if (offset > headroom) return BCIR_PER_RANGE;
+  }
   *out = (int64_t)((uint64_t)lb + offset);
   return BCIR_PER_OK;
 }

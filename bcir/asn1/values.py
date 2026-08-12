@@ -130,16 +130,22 @@ def encode_real(value: float) -> bytes:
     return prefix + exponent_octets + body
 
 
-def decode_real(content: bytes) -> float:
-    """§8.5: binary (any of base 2/8/16, any exponent form), decimal, and specials."""
+def decode_real(content: bytes, *, der: bool = False) -> float:
+    """§8.5: binary (any of base 2/8/16, any exponent form), decimal, and specials.
+
+    `der` adds clause 11.3, which removes every sender's option §8.5 grants. It is a
+    separate argument rather than the default because the BER-in half of the contract must
+    keep accepting what §8.5 permits -- the point of checking is to say which clause an
+    arriving encoding broke, not to refuse to read it.
+    """
     if not content:
         return 0.0                                        # §8.5.2: plus zero
     first = content[0]
     if first & 0x80:
-        return _decode_real_binary(content)
+        return _decode_real_binary(content, der=der)
     if first & 0x40:
         return _decode_real_special(content)
-    return _decode_real_decimal(content)
+    return _decode_real_decimal(content, der=der)
 
 
 def _decode_real_special(content: bytes) -> float:
@@ -160,7 +166,7 @@ def _decode_real_special(content: bytes) -> float:
         f"0x{octet:02x} is reserved in the SpecialRealValue space (X.690 8.5.9)")
 
 
-def _decode_real_binary(content: bytes) -> float:
+def _decode_real_binary(content: bytes, *, der: bool = False) -> float:
     """§8.5.7: sign, base, binary scaling factor F, and one of four exponent forms."""
     first = content[0]
     sign = -1.0 if first & 0x40 else 1.0
@@ -183,30 +189,135 @@ def _decode_real_binary(content: bytes) -> float:
         count = form + 1
     if pos + count > len(content):
         raise Asn1Error("truncated real exponent octets (X.690 8.5.7.4)")
-    exponent = int.from_bytes(content[pos:pos + count], "big", signed=True)
-    mantissa = int.from_bytes(content[pos + count:], "big") if content[pos + count:] else 0
+    exp_octets = content[pos:pos + count]
+    man_octets = content[pos + count:]
+    exponent = int.from_bytes(exp_octets, "big", signed=True)
+    mantissa = int.from_bytes(man_octets, "big") if man_octets else 0
+    if der:
+        _require_der_binary(base_bits, scale, exp_octets, man_octets)
     # §8.5.7: M = S x N x 2^F, and the encoded value is M x B'^E.
     return sign * mantissa * (2 ** scale) * (float(base) ** exponent)
+
+
+def _require_der_binary(base_bits: int, scale: int, exp_octets: bytes,
+                        man_octets: bytes) -> None:
+    """§11.3.1: base 2, F zero, an ODD mantissa, and both fields in the fewest octets.
+
+    §8.5.4 makes base 8 and 16 "a sender's option", and a sender's option is precisely what
+    DER removes. The mantissa rule is the one with teeth: §11.3.1's NOTE spells out that
+    {M, 2, E} and {M x 2^-n, 2, E + n} are the same real value, so without "M is either 0
+    or is odd" every value has unboundedly many encodings -- `80 01 02` and `80 02 01` are
+    both 4.0. That is a digest collision on a type BCIR digests.
+
+    §8.5.2 gives plus zero NO contents octets, so a binary encoding whose mantissa is zero
+    is a second spelling of a value already spelled exactly once.
+    """
+    if base_bits != 0:
+        raise Asn1Error(
+            f"DER uses base 2; this encoding declares base {(2, 8, 16)[base_bits]} "
+            f"(X.690 11.3.1, and 8.5.4 makes the base a sender's option BER only)")
+    if scale != 0:
+        raise Asn1Error(
+            f"the binary scaling factor F shall be zero; got {scale} (X.690 11.3.1)")
+    if not man_octets or int.from_bytes(man_octets, "big") == 0:
+        raise Asn1Error(
+            "a zero mantissa spells the value zero, which X.690 8.5.2 encodes with no "
+            "contents octets at all (X.690 11.3.1)")
+    if int.from_bytes(man_octets, "big") % 2 == 0:
+        raise Asn1Error(
+            "the mantissa shall be odd, so that one real value has one encoding "
+            "(X.690 11.3.1)")
+    if man_octets[0] == 0x00:
+        raise Asn1Error(
+            "the mantissa is not in the fewest octets necessary (X.690 11.3.1)")
+    if len(exp_octets) > 1 and exp_octets[0] in (0x00, 0xFF) \
+            and (exp_octets[1] & 0x80) == (0x80 if exp_octets[0] == 0xFF else 0x00):
+        raise Asn1Error(
+            "the exponent is not in the fewest octets necessary (X.690 11.3.1)")
 
 
 #: §8.5.8 selects an ISO 6093 number representation in bits 6 to 1.
 _NR_FORMS = {0b000001: "NR1", 0b000010: "NR2", 0b000011: "NR3"}
 
 
-def _decode_real_decimal(content: bytes) -> float:
-    """§8.5.8: an ISO 6093 NR1/NR2/NR3 field in the octets after the first."""
+#: ISO 6093's three number representations, as X.690 §8.5.8 selects them. The grammars are
+#: written out rather than delegated to `float()` because Python's literal grammar is a
+#: STRICT SUPERSET of every one of them: it accepts PEP 515 underscores (`1_0`), the words
+#: `nan`/`inf`/`Infinity`, surrounding whitespace, and -- via `int`/`float`'s Unicode
+#: handling -- non-ASCII decimal digits. Each of those is a byte string that is not a number
+#: in ISO 6093 at all, so accepting it means this decoder and a conforming peer disagree
+#: about what arrived. Two of those disagreements are also second spellings of a value that
+#: X.690 §8.5.9 already encodes exactly once (`NaN`, `inf`), which is what a canonical
+#: encoding exists to prevent.
+_NR1 = re.compile(r"\A[+-]?[0-9]+\Z")
+_NR2 = re.compile(r"\A[+-]?(?:[0-9]+[.,][0-9]*|[0-9]*[.,][0-9]+)\Z")
+_NR3 = re.compile(r"\A[+-]?(?:[0-9]+[.,][0-9]*|[0-9]*[.,][0-9]+)[Ee][+-]?[0-9]+\Z")
+_NR_GRAMMAR = {0b000001: _NR1, 0b000010: _NR2, 0b000011: _NR3}
+
+
+def _decode_real_decimal(content: bytes, *, der: bool = False) -> float:
+    """§8.5.8: an ISO 6093 NR1/NR2/NR3 field in the octets after the first.
+
+    The declared form is enforced, not merely recorded. Reading the selector and then
+    handing the field to a general number parser meant `NR1` -- ISO 6093's *integer* form --
+    accepted `1.5e3`, so the selector carried no information and a peer had three spellings
+    where the clause gives one.
+    """
     form = content[0] & 0b111111
     if form not in _NR_FORMS:
         raise Asn1Error(
             f"ISO 6093 number-representation selector {form:06b} is reserved "
             f"(X.690 8.5.8)")
-    text = content[1:].decode("ascii", errors="strict").strip()
-    if not text:
-        raise Asn1Error("decimal real has an empty ISO 6093 field (X.690 8.5.8)")
     try:
-        return float(text.replace(",", "."))              # ISO 6093 allows the comma
-    except ValueError as exc:
-        raise Asn1Error(f"malformed ISO 6093 {_NR_FORMS[form]} field: {text!r}") from exc
+        raw = content[1:].decode("ascii", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise Asn1Error(
+            "an ISO 6093 field is ASCII; a non-ASCII octet is not a digit "
+            "(X.690 8.5.8)") from exc
+    if not raw:
+        raise Asn1Error("decimal real has an empty ISO 6093 field (X.690 8.5.8)")
+
+    # §11.3.2.2 forbids SPACE outright; ISO 6093 permits leading SPACE otherwise.
+    text = raw if der else raw.lstrip(" ")
+    if der and raw != raw.strip(" "):
+        raise Asn1Error(
+            f"decimal real {raw!r} contains SPACE; DER forbids it (X.690 11.3.2.2)")
+    if not _NR_GRAMMAR[form].match(text):
+        raise Asn1Error(
+            f"{text!r} is not an ISO 6093 {_NR_FORMS[form]} field (X.690 8.5.8)")
+    if der:
+        _require_der_nr3(form, text)
+    return float(text.replace(",", "."))                  # ISO 6093 allows the comma
+
+
+def _require_der_nr3(form: int, text: str) -> None:
+    """§11.3.2's five restrictions on the decimal form a DER encoder may write."""
+    if form != 0b000011:
+        raise Asn1Error(
+            f"DER uses the ISO 6093 NR3 form; this encoding declares "
+            f"{_NR_FORMS[form]} (X.690 11.3.2.1)")
+    if text[0] == "+":
+        raise Asn1Error(
+            "a non-negative decimal real begins with a digit, not PLUS SIGN "
+            "(X.690 11.3.2.3)")
+    mantissa, _, exponent = text.replace(",", ".").partition("E" if "E" in text else "e")
+    digits = mantissa.lstrip("-")
+    whole, _, frac = digits.partition(".")
+    if not whole or whole[0] == "0" or not frac or frac[-1] == "0":
+        raise Asn1Error(
+            f"neither the first nor the last digit of the mantissa may be 0, and the "
+            f"last mantissa digit is immediately followed by FULL STOP; got "
+            f"{mantissa!r} (X.690 11.3.2.4/11.3.2.5)")
+    if exponent == "+0":
+        return                                            # §11.3.2.6: the one legal "+0"
+    if exponent.startswith("+"):
+        raise Asn1Error(
+            f"a non-zero exponent does not use PLUS SIGN; got {exponent!r} "
+            f"(X.690 11.3.2.6)")
+    if exponent.lstrip("-")[0] == "0":
+        raise Asn1Error(
+            f"a non-zero exponent's first digit is not zero; got {exponent!r} "
+            f"(X.690 11.3.2.6)")
 
 
 def encode_real_decimal(value: float) -> bytes:
@@ -532,7 +643,13 @@ def decode_string(tlv: Tlv, *, der: bool = False) -> str:
         raise Asn1Error(
             "DER forbids the constructed form for character strings (X.690 10.2)",
             tlv.offset)
-    octets = tlv.flatten_content() if tlv.constructed else tlv.content
+    # §8.23.3 encodes every character string "as if it had been declared
+    # [UNIVERSAL x] IMPLICIT OCTET STRING", and §8.14.4's implicit tag replaces only the
+    # OUTERMOST tag -- so §8.7.3.2's recursion runs over an octetstring and its NOTE 2
+    # applies verbatim: the segment tags "are always universal class, number 4". That is
+    # exactly what §8.23.5's own worked example encodes (`3a09 04034a6f6e 04026573`).
+    octets = (tlv.flatten_content(Universal.OCTET_STRING) if tlv.constructed
+              else tlv.content)
     if number in (Universal.UNIVERSAL_STRING, Universal.BMP_STRING):
         width = 4 if number == Universal.UNIVERSAL_STRING else 2
         if len(octets) % width:

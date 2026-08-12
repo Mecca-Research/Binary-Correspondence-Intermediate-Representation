@@ -54,7 +54,14 @@ static bcir_asn1_status decode_length(const uint8_t *data, size_t len, size_t po
                                       int *non_minimal, size_t *next) {
   uint8_t initial;
   unsigned count;
-  size_t accumulated = 0u;
+  /* uint64_t, not size_t: BCIR_ASN1_MAX_LENGTH_OCTETS is 8, and on a 32-bit target a
+   * size_t accumulator silently drops the high octets -- an 8-octet length of
+   * 0x0000000100000005 wrapped to 5, so the bound check below passed against a length
+   * SMALLER than the sender declared and the parser walked on. These twins are written
+   * for freestanding embedded targets, where 32-bit size_t is the normal case, so the
+   * accumulator is sized by the format and narrowed to size_t only after the range
+   * check. */
+  uint64_t accumulated = 0u;
   unsigned i;
 
   *indefinite = 0;
@@ -79,11 +86,13 @@ static bcir_asn1_status decode_length(const uint8_t *data, size_t len, size_t po
   count = (unsigned)(initial & 0x7Fu);
   if (count > BCIR_ASN1_MAX_LENGTH_OCTETS) return BCIR_ASN1_ERR_LENGTH;
   if (count > len - pos) return BCIR_ASN1_ERR_TRUNCATED;
-  for (i = 0; i < count; ++i) accumulated = (accumulated << 8) | (size_t)data[pos + i];
+  for (i = 0; i < count; ++i) accumulated = (accumulated << 8) | (uint64_t)data[pos + i];
+  /* A length the host cannot address is a fault, not a truncation. */
+  if (accumulated > (uint64_t)(size_t)-1) return BCIR_ASN1_ERR_LENGTH;
   /* 10.1 minimality: the short form would have sufficed, or a leading zero octet. */
   if (accumulated <= 127u || (count > 1u && data[pos] == 0x00u)) *non_minimal = 1;
   pos += count;
-  *value = accumulated;
+  *value = (size_t)accumulated;
   *next = pos;
   return BCIR_ASN1_OK;
 }
