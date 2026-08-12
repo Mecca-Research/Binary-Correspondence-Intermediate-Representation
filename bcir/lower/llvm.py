@@ -93,6 +93,36 @@ def find_elementwise(module: Module, result: RealizationResult) -> tuple:
 _find_elementwise = find_elementwise
 
 
+def _alias_params(claim) -> str:
+    """The parameter list, with `noalias` only where the RIDs prove it.
+
+    LLVM's `noalias` is an ASSERTION the caller must honour, not a hint: the optimizer
+    reorders loads and stores across it, and violating it is undefined behaviour. This
+    emitter used to write it on all three pointers unconditionally, which is a FALSE
+    assertion the moment a claim writes a resource it also reads --
+
+        Claim(rd=(1, 2), wr=(1,))   ->   A and C are both resource 1
+
+    -- and `A[i] = A[i] + B[i]` is an ordinary in-place graph, not an exotic one. The
+    subset gate accepts it (two reads, one write) and said A, B and C never alias.
+
+    BCIR does not have to infer any of this. A claim DECLARES its read and write RIDs, so
+    disjointness is a fact here rather than an analysis result, which is strictly better
+    information than an alias analysis could recover downstream. Emitting it accurately is
+    also what lets LLVM keep the win: a pointer that really is unaliased still gets the
+    attribute and still gets reordered.
+    """
+    reads = tuple(claim.rd)
+    writes = tuple(claim.wr)
+    rids = (reads[0], reads[1], writes[0])
+    names = ("A", "B", "C")
+    parts = []
+    for index, (name, rid) in enumerate(zip(names, rids)):
+        shared = any(other == rid for position, other in enumerate(rids) if position != index)
+        parts.append(f"ptr {'' if shared else 'noalias '}%{name}")
+    return ", ".join(parts) + ", i64 %n"
+
+
 def emit_kernel_ll(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel",
                    elem: str = "f32", width_override: int | None = None) -> str:
     """Emit a legal LLVM IR kernel. `elem` is "f32" (float) or "i32" (integer, e.g.
@@ -108,6 +138,7 @@ def emit_kernel_ll(module: Module, result: RealizationResult, fn_name: str = "bc
         ety = "float"
         op_ll = _FOP[claim.opcode][0]
 
+    params = _alias_params(claim)
     head = (
         f"; BCIR -> LLVM IR (legal-IR-only). op={claim.op or op_ll} "
         f"lane={cand.lane.name} width={w} elem={ety} (K_BCIR-selected; candidate={cand.name})\n"
@@ -115,7 +146,7 @@ def emit_kernel_ll(module: Module, result: RealizationResult, fn_name: str = "bc
     )
 
     if w == 1:
-        body = f"""define void @{fn_name}(ptr noalias %A, ptr noalias %B, ptr noalias %C, i64 %n) {{
+        body = f"""define void @{fn_name}({params}) {{
 entry:
   %empty = icmp sle i64 %n, 0
   br i1 %empty, label %exit, label %loop
@@ -137,7 +168,7 @@ exit:
 """
     else:
         vty = f"<{w} x {ety}>"
-        body = f"""define void @{fn_name}(ptr noalias %A, ptr noalias %B, ptr noalias %C, i64 %n) {{
+        body = f"""define void @{fn_name}({params}) {{
 entry:
   %empty = icmp sle i64 %n, 0
   br i1 %empty, label %exit, label %loop

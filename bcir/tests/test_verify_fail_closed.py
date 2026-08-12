@@ -285,3 +285,47 @@ def test_replay_refuses_to_return_a_plan_the_manifest_does_not_record() -> None:
     raise AssertionError(
         f"replay returned a plan scoring {got.score} for a manifest recording "
         f"{manifest.score}")
+
+
+# --- the emitter must not assert an alias fact the claim contradicts -------------------------
+
+def test_noalias_is_emitted_only_where_the_rids_prove_it() -> None:
+    """`noalias` is an assertion the caller must honour, not a hint.
+
+    LLVM reorders loads and stores across it and violating it is undefined behaviour, so a
+    blanket `noalias` is not a missed optimization -- it is a false fact handed to the
+    backend. The emitter wrote it on all three pointers unconditionally, which is wrong the
+    moment a claim writes a resource it also reads: `Claim(rd=(1, 2), wr=(1,))` is
+    `A[i] = A[i] + B[i]`, an ordinary in-place graph the subset gate accepts, and A and C
+    were both declared not to alias while both being resource 1.
+
+    BCIR never had to infer this. A claim DECLARES its RIDs, so disjointness is a fact here
+    rather than an analysis result -- which is why the fix loses nothing: a pointer that
+    really is unaliased still gets the attribute.
+    """
+    from bcir.lower.llvm import emit_kernel_ll
+
+    def signature(reads, writes):
+        module = Module(name="alias")
+        for rid in sorted(set(reads) | set(writes)):
+            module.add_resource(Resource(rid=rid, shape=(64,)))
+        module.add_phase(Phase(phase_id=0, claims=[
+            Claim(id=1000, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
+                  count=64, rd=reads, wr=writes, op="vector.add")]))
+        text = emit_kernel_ll(module, optimize(module, _H, _TH, PERF))
+        return next(line for line in text.splitlines() if line.startswith("define"))
+
+    # Disjoint: every pointer keeps the attribute, so the optimization is not lost.
+    disjoint = signature((1, 2), (3,))
+    assert disjoint.count("noalias") == 3, disjoint
+
+    # In place: A and C are one resource, so neither may claim it. B still may.
+    in_place = signature((1, 2), (1,))
+    assert in_place.count("noalias") == 1, in_place
+    assert "ptr %A" in in_place and "ptr %C" in in_place, in_place
+    assert "ptr noalias %B" in in_place, in_place
+
+    # Two reads of one resource: A and B alias each other; only the write is disjoint.
+    shared_reads = signature((1, 1), (2,))
+    assert shared_reads.count("noalias") == 1, shared_reads
+    assert "ptr noalias %C" in shared_reads, shared_reads
