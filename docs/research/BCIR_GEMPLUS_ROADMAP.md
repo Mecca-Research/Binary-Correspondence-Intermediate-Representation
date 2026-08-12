@@ -352,6 +352,56 @@ accuracy certificate; deadlines and backpressure prevent "optimal" plans that th
 
 Gate: new metrics, plus **no regression** on every row above.
 
+### G9 — export declared alias facts to LLVM — **partly landed**
+
+*New, from the [advanced-technique triage](BCIR_ADVANCED_TECHNIQUE_TRIAGE.md). Small, and it
+fixes a false assertion the emitter was making.*
+
+BCIR does not need an alias analysis. Every claim DECLARES its read and write RIDs, its
+`hazard`, its `bounds` and its `volatile` flag — declared aliasing, which is strictly stronger
+than any inferred result. The emitter was discarding all of it and writing `noalias` on every
+pointer unconditionally, which is a *false* fact on any in-place graph: `Claim(rd=(1,2),
+wr=(1,))` is `A[i] = A[i] + B[i]`, and A and C were both declared not to alias while both being
+resource 1. `noalias` is an assertion LLVM reorders across, so that is undefined behaviour, not
+a missed optimization.
+
+| Gate | Before | Status |
+|---|---|---|
+| `exact` No `noalias` on a pointer pair sharing a RID | 3 of 3 on an in-place graph | **landed** — 1 of 3, and the disjoint case still gets all three |
+| `exact` Alias scopes derived from the RID partition | absent | open |
+| `exact` TBAA from the declared element type | absent | open |
+| `exact` `volatile` carried through to LLVM | fenced in BCIR only | open |
+| `ratio` `native.*` | see baseline | must not regress |
+
+The landed half is the correctness half. The rest is upside: LLVM's OoO scheduling, load/store
+reordering and vectorizer all improve on real alias facts, and BCIR is uniquely placed to supply
+them because it has them by declaration rather than by inference.
+
+### G10 — escape analysis and indirect-call target narrowing
+
+*New, from the same triage. Follows G6 — escape analysis over typed regions beats it over the
+opaque claim DAG.*
+
+Neither ThinLTO nor CHA applies directly: a BCIR `Module` is whole-program by construction, so
+there is no link step to be thin about, and there are no vtables. Two underlying capabilities
+are missing and are worth having on their own.
+
+- **Escape analysis.** `bounds_provenance` already records *why* a bounds contract is what it is
+  (`declared_extent`, `recovered_count`, `snapshot_extent`, …). A resource whose provenance is
+  `declared_extent` and whose RID never crosses a call boundary provably does not escape, which
+  licenses stack placement or a bank-local arena slot instead of a heap resource — composing
+  directly with the static-memory arena.
+- **Indirect-call target narrowing.** `callee_sig` already carries a declared callee *type* on
+  `c.call.indirect`. Narrowing it to a single admitted target over BCIR's own declared call graph
+  turns an opaque effect edge into a known one, which unblocks fusion and reordering across it.
+
+| Gate | Target |
+|---|---|
+| `exact` Resources proved non-escaping on the cfront corpus | a stated count, rising |
+| `exact` Indirect edges resolved to exactly one target | a stated count, rising |
+| `ratio` `native.*` | must not regress |
+
+
 ---
 
 ## 4. The sublinearity question, answered precisely
@@ -408,8 +458,15 @@ G4  bounded exact + lower bounds         <- first TMSAO-2 certificate
 G5  schedule-aware + exact memory        <- needs G1
 G7  native measurement repair            <- small, invalidates a current number
 G6  typed regions + semirings            <- architectural
+G9  export declared alias facts          <- PARTLY LANDED; small, fixes a false assertion
 G8  movement as first-class              <- needs G6
+G10 escape analysis + call narrowing     <- needs G6
 ```
+
+The [advanced-technique triage](BCIR_ADVANCED_TECHNIQUE_TRIAGE.md) records why the rest of the
+standard advanced-compiler catalogue is absent: four techniques are already built, five are the
+slices above under other names, and six belong to LLVM — where BCIR's job is to supply the
+declared fact, not to reimplement the pass.
 
 G0 and G1 are prerequisites. G3 is out of dependency order on purpose: it is small, and it
 removes measurement noise that would otherwise contaminate every slice after it.
