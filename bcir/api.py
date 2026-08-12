@@ -30,7 +30,7 @@ from .kbcir.rcsp import Budget, Infeasible, feasible, optimize_constrained
 from .kbcir.weights import PERF, POLICIES
 from .lower.c_kernel import C_OP, compile_and_run_c, emit_header_c, emit_kernel_c
 from .lower.llvm import find_elementwise
-from .verify import verify_c_lowering
+from .verify import verify, verify_c_lowering, verify_plan
 
 _THETAS = {"cool": Theta.cool(), "hot": Theta.hot(), "mem_bound": Theta.mem_bound()}
 
@@ -123,7 +123,14 @@ def build_artifact(program, *, target: str = "", theta: str = "cool",
     hw_width = h.vector_width
     kernel_c = emit_kernel_c(module, result, fn_name, elem, hw_width=hw_width)
     header_c = emit_header_c(fn_name, elem)
-    diags = verify_c_lowering(module, result, kernel_c, elem, hw_width=hw_width)
+    # The WHOLE chain, not just R12. `attested` used to mean "the emitted C matches the
+    # plan", while reading as "this artifact is legal" -- so a module violating R5 (a
+    # volatile access carrying the `unique` hazard) came back `attested=True` with an
+    # empty diagnostic tuple. The lowering can be a faithful rendering of an illegal
+    # plan; that is precisely the case a deployable-artifact API must not bless.
+    diags = (verify(module)
+             + verify_plan(module, result, h)
+             + verify_c_lowering(module, result, kernel_c, elem, hw_width=hw_width))
     manifest = build_manifest(module, h, th, pol)
 
     return KernelArtifact(

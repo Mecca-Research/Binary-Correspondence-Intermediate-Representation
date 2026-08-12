@@ -3,7 +3,7 @@
 from .graph import (Claim, Lifetime, Module, Phase, Resource, Timing,
                     phase_graph_has_cycle, topological_phase_ids)
 from .lanes import Domain, Lane, StrideClass
-from .opcodes import Opcode
+from .opcodes import ATOMIC_OPCODES, Opcode
 
 __all__ = [
     "Claim",
@@ -11,7 +11,7 @@ __all__ = [
     "Lane",
     "Lifetime",
     "Module",
-    "Opcode",
+    "ATOMIC_OPCODES", "Opcode",
     "Phase",
     "Resource",
     "StrideClass",

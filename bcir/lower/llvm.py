@@ -15,13 +15,18 @@ import os
 import subprocess
 import tempfile
 
-from ..model import Module, Opcode
+from ..model import Module, Opcode, StrideClass
 from ..kbcir.realize import Candidate, RealizationResult
 from ..toolchain import resolve_llvm_tools
 
 _FOP = {Opcode.ADD: ("fadd", "+"), Opcode.SUB: ("fsub", "-"), Opcode.MUL: ("fmul", "*")}
 _IOP = {Opcode.ADD: "add", Opcode.SUB: "sub", Opcode.MUL: "mul"}  # integer (e.g. eBPF)
 _NON_EXECUTABLE = {Opcode.NOP, Opcode.PHASE_ENTER, Opcode.PHASE_LEAVE, Opcode.PROV_NOTE}
+
+
+#: The access patterns whose element order the emitted `for (i...) C[i] = A[i] op B[i]`
+#: body actually walks. Anything else needs addressing the emitters do not generate.
+_UNIT_STRIDE_CLASSES = frozenset({StrideClass.UNIT, StrideClass.SCALAR})
 
 
 def find_elementwise(module: Module, result: RealizationResult) -> tuple:
@@ -60,6 +65,26 @@ def find_elementwise(module: Module, result: RealizationResult) -> tuple:
             "2-read/1-write add, sub, or mul claim; "
             f"claim {claim.id} is {claim.opcode.name.lower()} with "
             f"{len(claim.rd)} reads and {len(claim.wr)} writes"
+        )
+    # Both emitters address the operands as `A[i]`, `B[i]`, `C[i]` unconditionally. A claim
+    # declaring `offset=8` or `stride_k=4` was ACCEPTED and then lowered to that same body,
+    # and R12 -- which compares the emitted text against the same subset contract -- called
+    # it clean, so a kernel computing a different function than the claim declares carried a
+    # verified attestation. Refusing is the honest boundary until the addressing is actually
+    # emitted: a subset that says what it does not cover is a subset; one that silently
+    # widens is a miscompile.
+    if claim.offset != 0:
+        raise NotImplementedError(
+            f"the elementwise lowering subset addresses operands from index 0; claim "
+            f"{claim.id} declares offset={claim.offset}, which the emitted body does not "
+            f"apply"
+        )
+    if claim.stride_k != 1 or claim.stride_class not in _UNIT_STRIDE_CLASSES:
+        raise NotImplementedError(
+            f"the elementwise lowering subset emits a unit-stride walk; claim "
+            f"{claim.id} declares stride_k={claim.stride_k} and "
+            f"stride_class={claim.stride_class.name}, which the emitted body does not "
+            f"apply"
         )
     return claim, cand
 

@@ -21,7 +21,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from ..model import (Claim, Domain, Lane, Module, Opcode, StrideClass,
+from ..model import (ATOMIC_OPCODES, Claim, Domain, Lane, Module, Opcode,
+                     StrideClass,
                      phase_graph_has_cycle, topological_phase_ids)
 
 
@@ -50,7 +51,7 @@ _VERIFY = {"none", "bounds", "exact", "hash"}
 _COST_CLASSES = {"latency", "bandwidth", "compute"}
 
 # Opcodes whose semantics are atomic read-modify-write (R5).
-_ATOMIC_OPCODES = {Opcode.ATOMIC_ADD, Opcode.ATOMIC_SUB, Opcode.ATOMIC_XOR, Opcode.CMPXCHG}
+_ATOMIC_OPCODES = ATOMIC_OPCODES
 # Control/provenance opcodes realized on the H lane (legal for any plan).
 _CONTROL_OPCODES = {Opcode.NOP, Opcode.PHASE_ENTER, Opcode.PHASE_LEAVE, Opcode.PROV_NOTE,
                     Opcode.BARRIER}
@@ -474,14 +475,57 @@ def cfront_unit_claim_ids_unique(lowered) -> list[Diagnostic]:
     return diags
 
 
-def verify_plan(module: Module, result) -> list[Diagnostic]:
+
+def _same_realization(chosen, offered) -> bool:
+    """Two candidates denote the same realization.
+
+    Compared field by field rather than by dataclass equality because `optimize` legally
+    rewrites a candidate's *coupled* cost (fusion discounts, thermal derating) while
+    leaving the realization identical -- so `base` is compared and the coupled total is
+    checked separately by R8.
+    """
+    return (chosen.lane is offered.lane and chosen.width == offered.width
+            and chosen.name == offered.name and chosen.base.v == offered.base.v)
+
+
+def _admissible_candidates(module: Module, h) -> dict[int, tuple]:
+    """Re-derive, for each claim, the candidate set the planner may choose from.
+
+    Imported lazily: the verifier is kept free of a hard dependency on the planner so it
+    can be read as an independent statement of the laws, and only this one law needs to
+    reconstruct what the planner would have offered.
+    """
+    from ..kbcir.realize import candidates_for
+
+    out: dict[int, tuple] = {}
+    for phase in module.phases:
+        for claim in phase.claims:
+            resource = (module.resource(claim.primary_rid)
+                        if claim.primary_rid is not None else None)
+            if resource is None and claim.rd:
+                resource = module.resource(claim.rd[0])
+            out[claim.id] = tuple(candidates_for(claim, h, resource))
+    return out
+
+
+def verify_plan(module: Module, result, h=None) -> list[Diagnostic]:
     """K_BCIR plan laws R8 (cost completeness) and R9 (plan legality).
 
     `result` is a `kbcir.realize.RealizationResult` (duck-typed to keep the
     verifier dependency-free).
+
+    `h` is the target profile the plan was made for. Supply it wherever it is known --
+    without it R9 can only ask whether the chosen lane suits the claim's declared
+    geometry, and *any* candidate satisfying that passes. A `Candidate(Lane.U, width=3,
+    name="forged", cost=0)` for a `vector_add` verified clean: a width the hardware
+    cannot issue, a name that denotes no realization, and zero cost. With `h` the law
+    re-derives the candidate set from the module and target and requires the chosen
+    realization to be a member of it, which is what "the plan is legal" has to mean if a
+    certificate is going to rest on it.
     """
     diags: list[Diagnostic] = []
     claims = {c.id: c for ph in module.phases for c in ph.claims}
+    admissible = _admissible_candidates(module, h) if h is not None else None
 
     seen: set[int] = set()
     total = 0
@@ -503,6 +547,33 @@ def verify_plan(module: Module, result) -> list[Diagnostic]:
             diags.append(Diagnostic(
                 "R8", f"claim {step.claim_id}: negative realized cost {step.cost}"))
         total += step.cost
+
+        # R9: the realization has to be one the planner could actually have generated
+        # for this claim on this target -- name, lane, width and base cost together.
+        if admissible is not None:
+            offered = admissible.get(step.claim_id, ())
+            if not any(_same_realization(cand, c) for c in offered):
+                diags.append(Diagnostic(
+                    "R9",
+                    f"claim {step.claim_id}: realization "
+                    f"{cand.name!r}({cand.lane.name}, width {cand.width}) is not among "
+                    f"the {len(offered)} candidate(s) this target admits: "
+                    f"{sorted(c.name for c in offered)}",
+                ))
+
+        # R9: an ATOMIC opcode keeps an atomic realization. Checked before the geometry
+        # rules because it does not depend on them: `stride_class` describes which
+        # elements are touched, and no answer to that question makes a vectorized or
+        # gathered read-modify-write atomic. The geometry check alone passed
+        # ATOMIC_ADD/SCALAR realized as `U vec16` and ATOMIC_ADD/RANDOM as `GGG gather`.
+        if claim.opcode in _ATOMIC_OPCODES and (cand.lane is not Lane.A
+                                                or cand.width != 1):
+            diags.append(Diagnostic(
+                "R9",
+                f"claim {step.claim_id}: atomic opcode {claim.opcode.name} realized as "
+                f"{cand.lane.name} width {cand.width}; an atomic read-modify-write has "
+                f"one realization, A lane width 1",
+            ))
 
         # R9: the chosen realization is legal for the claim's declared geometry.
         if cand.lane == Lane.H:
@@ -543,13 +614,32 @@ def verify_plan(module: Module, result) -> list[Diagnostic]:
     return diags
 
 
-def verify_pack(module: Module, pack) -> list[Diagnostic]:
+def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
     """GEM stream laws R10 (provenance) and R11 (generation validity).
 
     `pack` is a `gem.streampack.StreamPack` (duck-typed).
+
+    `result` is the plan the pack was hydrated from. Supply it wherever it is known.
+    Without it R10 can only ask whether each segment maps back to *some* claim in the
+    module -- it cannot ask whether the pack is the lowering of the plan that was priced
+    and certified. `verify_all` checked plan and pack independently and never proved the
+    one came from the other, so a pack hydrated from a `vec4` plan verified clean against
+    a `scalar` plan: the artifact chain graph -> plan -> pack had no link.
     """
     diags: list[Diagnostic] = []
     claims = {c.id for ph in module.phases for c in ph.claims}
+
+    # R10: coverage. Every claim the module declares needs a segment, or the pack does
+    # not realize the module. An EMPTY pack made every loop below vacuous and verified
+    # clean -- the whole provenance law held trivially over nothing.
+    covered = {s.claim_id for s in pack.segments}
+    for cid in sorted(claims - covered):
+        claim = next(c for ph in module.phases for c in ph.claims if c.id == cid)
+        if claim.opcode in _CONTROL_OPCODES:
+            continue                      # control claims lower to no stream segment
+        diags.append(Diagnostic(
+            "R10", f"claim {cid} has no StreamPack segment; the pack does not realize "
+                   f"the module"))
     segment_ids = [s.claim_id for s in pack.segments]
     trace_ids = [t.claim_id for t in pack.trace_notes]
     prefetch_names = [p.name for p in pack.prefetches]
@@ -598,6 +688,31 @@ def verify_pack(module: Module, pack) -> list[Diagnostic]:
                     "R10",
                     f"segment {seg.name}: prefetch {seg.prefetch!r} feeds no read RID "
                     f"(targets {sorted(tgts)} disjoint from reads {sorted(seg.reads)})"))
+
+    # R10: the pack is the lowering of THIS plan. Segment-to-claim provenance is not
+    # enough on its own: the claim ids can all be right while the realization the pack
+    # encodes is one the plan never chose, and the certificate prices the plan.
+    if result is not None:
+        chosen = {step.claim_id: step.candidate for step in result.steps}
+        for seg in pack.segments:
+            cand = chosen.get(seg.claim_id)
+            if cand is None:
+                diags.append(Diagnostic(
+                    "R10", f"segment {seg.name}: claim {seg.claim_id} is not realized by "
+                           f"the plan this pack is verified against"))
+                continue
+            width = getattr(seg, "width", None)
+            if width is not None and int(width) != int(cand.width):
+                diags.append(Diagnostic(
+                    "R10",
+                    f"segment {seg.name}: width {width} but the plan chose "
+                    f"{cand.name!r} at width {cand.width}"))
+            lane = getattr(seg, "lane", None)
+            if lane is not None and int(lane) != int(cand.lane):
+                diags.append(Diagnostic(
+                    "R10",
+                    f"segment {seg.name}: lane {lane} but the plan chose "
+                    f"{cand.lane.name} ({int(cand.lane)})"))
 
     # R11: generation validity -- the pack's tags match the live registry. A
     # mismatch is a stale pack: rehydrate (keep/patch/repack/replan,
@@ -1543,14 +1658,17 @@ def verify_provenance(portfolio, certificates=(), h=None, table=None,
 
 
 def verify_all(module: Module, result=None, pack=None, ll_text: str | None = None,
-               elem: str = "f32", width_override: int | None = None) -> list[Diagnostic]:
+               elem: str = "f32", width_override: int | None = None,
+               h=None) -> list[Diagnostic]:
     """Run the R1-R12 chain over every artifact provided (R13 attaches to the
-    decision rules, not the module: see `verify_provenance`)."""
+    decision rules, not the module: see `verify_provenance`).
+
+    `h` reaches R9's candidate re-derivation; see `verify_plan`."""
     diags = verify(module)
     if result is not None:
-        diags += verify_plan(module, result)
+        diags += verify_plan(module, result, h)
     if pack is not None:
-        diags += verify_pack(module, pack)
+        diags += verify_pack(module, pack, result)
     if ll_text is not None and result is not None:
         diags += verify_lowering(module, result, ll_text, elem, width_override)
     return diags

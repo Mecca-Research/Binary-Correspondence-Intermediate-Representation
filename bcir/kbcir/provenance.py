@@ -77,6 +77,18 @@ def hash_module(module: Module) -> int:
 
 
 def hash_target(h) -> int:
+    """The target fields R13 hashes.
+
+    INCOMPLETE, knowingly, and `replay` above is what makes that safe rather than silent.
+    The memory hierarchy is not in here and is plan-affecting: multiplying the DRAM tier's
+    bandwidth and latency factors by 32 moves a `vector_add(4096)` score from 51,200 to
+    1,574,912 with this hash unchanged. Widening it is not a Python-side edit --
+    `BCIRVerifyPass.cpp`'s `hashTargetFromIR` recomputes this field for field from the IR
+    for R13's cross-check, and `TargetCapabilityOp` carries no attribute for the tiers, so
+    closing it means new ODS attributes and a matching C++ walk on both rails at once.
+    Tracked with the GEM+ scope work; until then `replay` compares the produced plan, not
+    only this digest, so a collision surfaces as a mismatch instead of a wrong answer.
+    """
     return _fnv(h.name, h.triple, h.cacheline, h.elem_bytes, tuple(sorted(h.lane_widths)),
                 h.warp, h.scalable, h.gather_penalty, h.mem_unit, h.base_overhead,
                 h.thermal_density, h.power_density, h.per_op_heat, h.affinity_domains,
@@ -252,6 +264,16 @@ def replay(manifest: ProvenanceManifest, module: Module, h, theta: Theta,
         raise ProvenanceMismatch(
             f"inputs hash to {fresh.digest}, manifest records {manifest.digest} "
             f"(changed: {fresh.diff(manifest)})")
+    # The OUTCOME too, not only the inputs' digest. A digest is a claim about the inputs;
+    # replaying is a claim about the plan, and the two came apart whenever a plan-affecting
+    # input was missing from the hash -- `replay` handed back a plan scoring 1,574,912 for
+    # a manifest recording 51,200 and raised nothing. Checking here means a future gap in
+    # the input hash surfaces as a loud mismatch rather than as a silently different plan.
+    if fresh.score != manifest.score or fresh.widths != manifest.widths:
+        raise ProvenanceMismatch(
+            f"inputs hash to the manifest's digest but replay produced a DIFFERENT plan: "
+            f"score {fresh.score} vs {manifest.score}, widths {fresh.widths} vs "
+            f"{manifest.widths}. The digest is missing a plan-affecting input.")
     return result
 
 
