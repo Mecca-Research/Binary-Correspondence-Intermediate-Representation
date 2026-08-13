@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -13,6 +14,30 @@ from bcir.channel_plugin import load_manifest
 
 
 _ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_checkout_tools_package_wins_over_an_installed_namesake() -> None:
+    """A generic installed ``tools`` package must not shadow this checkout's tools tree."""
+    with tempfile.TemporaryDirectory() as td:
+        hostile = Path(td) / "tools"
+        hostile.mkdir()
+        (hostile / "__init__.py").write_text("ORIGIN = 'hostile'\n", encoding="utf-8")
+        env = dict(os.environ)
+        env["PYTHONPATH"] = td
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from tools.models import fetch_pinned_model; print(fetch_pinned_model.__file__)",
+            ],
+            cwd=_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert probe.returncode == 0, probe.stderr
+        assert str(_ROOT / "tools/models/fetch_pinned_model.py") in probe.stdout
 
 
 def test_mlir_bootstrap_never_executes_an_unverified_existing_file() -> None:
@@ -26,19 +51,25 @@ def test_mlir_bootstrap_never_executes_an_unverified_existing_file() -> None:
         marker = private / "executed"
         micromamba = private / "micromamba"
         micromamba.write_text(
-            "#!/bin/sh\nprintf reached > \"$BCIR_BOOTSTRAP_MARKER\"\n",
+            '#!/bin/sh\nprintf reached > "$BCIR_BOOTSTRAP_MARKER"\n',
             encoding="utf-8",
         )
         micromamba.chmod(0o700)
         env = dict(os.environ)
-        env.update({
-            "MICROMAMBA": str(micromamba),
-            "MAMBA_ROOT_PREFIX": str(private / "mamba"),
-            "BCIR_BOOTSTRAP_MARKER": str(marker),
-        })
+        env.update(
+            {
+                "MICROMAMBA": str(micromamba),
+                "MAMBA_ROOT_PREFIX": str(private / "mamba"),
+                "BCIR_BOOTSTRAP_MARKER": str(marker),
+            }
+        )
         result = subprocess.run(
             ["bash", str(_ROOT / "tools/local/setup_mlir22.sh")],
-            cwd=_ROOT, env=env, capture_output=True, text=True, timeout=10,
+            cwd=_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         assert result.returncode != 0
         assert "unexpected SHA-256" in result.stderr
@@ -97,7 +128,8 @@ def test_no_gate_pipes_a_writer_into_an_early_exiting_reader_under_pipefail() ->
             assert not offender.search(line), (
                 f"{script.relative_to(_ROOT)}:{number} pipes disassembly into an "
                 f"early-exiting reader under `pipefail`; a match will SIGPIPE the writer and "
-                f"be reported as a failure. Write to a file and read the file.\n  {stripped}")
+                f"be reported as a failure. Write to a file and read the file.\n  {stripped}"
+            )
     assert seen >= 2, f"expected the two SIMD gates to disassemble; found {seen}"
 
 
@@ -126,7 +158,8 @@ def test_no_source_hand_declares_a_libc_function() -> None:
                     offenders.append(f"{path.relative_to(_ROOT)}:{number}: {line.strip()}")
     assert not offenders, (
         "a source declares a function the system header should declare; only that libc knows "
-        "its own signatures (see #699):\n  " + "\n  ".join(offenders))
+        "its own signatures (see #699):\n  " + "\n  ".join(offenders)
+    )
 
 
 def test_workflow_dependencies_are_sha_pinned_and_tokens_are_read_only() -> None:
