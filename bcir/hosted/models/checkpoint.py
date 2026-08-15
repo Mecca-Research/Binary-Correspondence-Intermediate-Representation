@@ -521,6 +521,12 @@ def load_safe_checkpoint(path: os.PathLike | str, model: HostedLlama, optimizer,
         state["scaler_state"], enabled=(device.type == "cuda" and spec.dtype == "float16"))
 
     # Commit only after every externally supplied byte and index has been validated.
+    # Every committed tensor is COPIED off the safetensors file mapping:
+    # ``load_file`` returns mmap-backed views, and a plain ``.to(target)`` is a
+    # no-op alias when the tensor is already on ``target``.  A retained view
+    # keeps the checkpoint file mapped; Windows cannot delete a mapped file, so
+    # generation pruning and TemporaryDirectory cleanup fail with
+    # PermissionError (POSIX unlinks mapped files silently, hiding the leak).
     missing, unexpected = model.load_state_dict(model_values, strict=False)
     allowed_missing = ["lm_head.weight"] if model.spec.tied_embeddings else []
     if list(missing) != allowed_missing or unexpected:  # defensive; prevalidation pins this
@@ -530,9 +536,9 @@ def load_safe_checkpoint(path: os.PathLike | str, model: HostedLlama, optimizer,
     optimizer.state.clear()
     for parameter, state_name, value in restored:
         target = torch.device("cpu") if state_name == "step" else device
-        optimizer.state.setdefault(parameter, {})[state_name] = value.to(target)
+        optimizer.state.setdefault(parameter, {})[state_name] = value.to(target, copy=True)
     return LoadedCheckpoint(
         directory, manifest_digest, global_step, batch_index,
-        float(initial_loss), scaler_state, all_values[cpu_name],
-        tuple(all_values[name] for name in cuda_names), manifest["model_sha256"],
+        float(initial_loss), scaler_state, all_values[cpu_name].clone(),
+        tuple(all_values[name].clone() for name in cuda_names), manifest["model_sha256"],
         manifest["optimizer_sha256"])

@@ -265,6 +265,35 @@ def test_every_checkpoint_write_stage_preserves_the_previous_generation() -> Non
             assert loaded.global_step == 1 and loaded.batch_index == 1
 
 
+def test_loaded_checkpoint_releases_its_file_mappings() -> None:
+    """A successful load must not keep the checkpoint files memory-mapped.
+
+    ``safetensors.torch.load_file`` returns mmap-backed tensors.  If those
+    tensors are committed into optimizer state or returned as RNG snapshots,
+    the mapping outlives the load; Windows cannot delete a mapped file, so
+    checkpoint pruning and every TemporaryDirectory cleanup then fails with
+    PermissionError.  POSIX unlinks mapped files silently, which is why only
+    the Windows lab job catches the regression.
+    """
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        spec, corpus, model, optimizer, initial_loss = _fixture()
+        saved = save_safe_checkpoint(
+            root, model, optimizer, spec=spec, corpus=corpus,
+            global_step=1, batch_index=1, initial_loss=initial_loss)
+        destination, destination_optimizer = _fresh_loader(spec)
+        loaded = load_safe_checkpoint(root, destination, destination_optimizer,
+                                      spec=spec, corpus=corpus,
+                                      device=torch.device("cpu"))
+        # Hold the references exactly the way a resuming trainer does while
+        # the generation directory is deleted out from under them.
+        assert loaded.global_step == 1
+        shutil.rmtree(saved.directory)
+        assert not saved.directory.exists()
+        assert destination_optimizer.state, "optimizer state must stay usable"
+        assert loaded.cpu_rng.numel() > 0, "RNG snapshot must stay usable"
+
+
 def test_checkpoint_corruption_and_malicious_indexes_fail_before_mutation() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         parent = Path(temporary)
@@ -462,6 +491,7 @@ def main() -> int:
         test_requested_device_precision_and_activation_checkpointing_are_explicit,
         test_checkpoint_writes_are_deterministic,
         test_every_checkpoint_write_stage_preserves_the_previous_generation,
+        test_loaded_checkpoint_releases_its_file_mappings,
         test_checkpoint_corruption_and_malicious_indexes_fail_before_mutation,
         test_checkpoint_semantic_state_is_rejected_before_mutation,
         test_token_ids_are_not_coerced_and_deterministic_mode_is_restored,
