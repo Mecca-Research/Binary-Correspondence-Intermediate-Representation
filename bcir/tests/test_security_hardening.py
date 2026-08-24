@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 import shutil
@@ -172,6 +173,25 @@ def test_workflow_dependencies_are_sha_pinned_and_tokens_are_read_only() -> None
         assert dependencies, workflow.name
         for name, revision in dependencies:
             assert sha.fullmatch(revision), f"{workflow.name}: {name}@{revision} is mutable"
+
+
+def test_build_system_excludes_known_vulnerable_setuptools_releases() -> None:
+    """The isolated PEP 517 backend must exclude GHSA-h35f-9h28-mq5c."""
+    text = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    section = re.search(r"(?ms)^\[build-system\]\s*$\n(?P<body>.*?)(?=^\[|\Z)", text)
+    assert section is not None, "pyproject.toml has no [build-system] table"
+    declaration = re.search(r"(?m)^requires\s*=\s*(\[[^\n]+\])\s*$", section.group("body"))
+    assert declaration is not None, "[build-system] has no one-line requires declaration"
+    requirements = ast.literal_eval(declaration.group(1))
+    setuptools = [item for item in requirements if item.startswith("setuptools")]
+    assert len(setuptools) == 1, f"expected one setuptools requirement, found {setuptools!r}"
+    floor_match = re.fullmatch(r"setuptools>=(\d+)\.(\d+)\.(\d+)", setuptools[0])
+    assert floor_match is not None, f"unsupported setuptools requirement: {setuptools[0]!r}"
+    floor = tuple(int(part) for part in floor_match.groups())
+    assert floor >= (83, 0, 0), (
+        f"setuptools floor {floor!r} permits releases affected by "
+        "GHSA-h35f-9h28-mq5c / CVE-2026-59890; require >=83.0.0"
+    )
 
 
 def test_deeply_nested_plugin_json_fails_as_a_boundary_value_error() -> None:
