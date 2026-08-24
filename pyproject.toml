@@ -2,9 +2,9 @@
 # (`mlir/`) and the freestanding C runtime (`runtime/c/`) build separately via CMake
 # (see mlir/CMakePresets.json) — this file governs the Python package only.
 [build-system]
-# Security floor: 83.0.0 fixes GHSA-h35f-9h28-mq5c; it also retains fixes for
-# GHSA-5rjg-fvgr-3xxf and GHSA-cx63-2mw6-8hw5.
-requires = ["setuptools>=83.0.0"]
+# Security floor: 78.1.1 fixes GHSA-5rjg-fvgr-3xxf; it also excludes the
+# GHSA-cx63-2mw6-8hw5 command-injection range below 70.0.0.
+requires = ["setuptools>=78.1.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
