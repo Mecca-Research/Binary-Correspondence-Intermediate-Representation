@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,12 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 REQUIRED_KEYS = ("passed", "security_concerns", "logic_errors", "summary")
+
+
+def _split_reviewer_cmd(text: str) -> list[str]:
+    if not text or not text.strip():
+        return []
+    return shlex.split(text, posix=True)
 
 
 def parse_review(text: str) -> dict[str, Any]:
@@ -134,8 +141,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_check:
         report = self_check()
     else:
-        command = args.command or (
-            os.environ.get("BCIR_INDEPENDENT_REVIEW_CMD", "").split() or None
+        command = args.command or _split_reviewer_cmd(
+            os.environ.get("BCIR_INDEPENDENT_REVIEW_CMD", "")
         )
         report = run_reviewer(command or [], args.root)
     if args.json_out:

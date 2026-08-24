@@ -28,8 +28,12 @@ def _iter_python(root: Path) -> list[Path]:
     return files
 
 
-def _is_true(node: ast.AST) -> bool:
-    return isinstance(node, ast.Constant) and node.value is True
+def _shell_not_provably_false(node: ast.AST, constants: dict[str, Any]) -> bool:
+    if isinstance(node, ast.Constant):
+        return bool(node.value)
+    if isinstance(node, ast.Name) and node.id in constants:
+        return bool(constants[node.id])
+    return True
 
 
 def _resolve_bound_value(value: ast.AST, names: dict[str, str]) -> str | None:
@@ -44,8 +48,9 @@ def _resolve_bound_value(value: ast.AST, names: dict[str, str]) -> str | None:
     return None
 
 
-def _bindings(tree: ast.AST) -> dict[str, str]:
+def _bindings(tree: ast.AST) -> tuple[dict[str, str], dict[str, Any]]:
     names: dict[str, str] = {"os": "os", "subprocess": "subprocess"}
+    constants: dict[str, Any] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -63,20 +68,21 @@ def _bindings(tree: ast.AST) -> dict[str, str]:
                 for alias in node.names:
                     if alias.name in SUBPROCESS_FUNCS:
                         names[alias.asname or alias.name] = f"subprocess.{alias.name}"
-    changed = True
-    while changed:
-        changed = False
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
-                continue
-            target = node.targets[0]
-            if not isinstance(target, ast.Name):
-                continue
-            mapped = _resolve_bound_value(node.value, names)
-            if mapped and names.get(target.id) != mapped:
-                names[target.id] = mapped
-                changed = True
-    return names
+    assigns = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+    ]
+    assigns.sort(key=lambda node: (node.lineno, node.col_offset))
+    for node in assigns:
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            continue
+        target = node.targets[0].id
+        if isinstance(node.value, ast.Constant):
+            constants[target] = node.value.value
+        mapped = _resolve_bound_value(node.value, names)
+        if mapped:
+            names[target] = mapped
+    return names, constants
 
 
 def _call_kind(func: ast.AST, bindings: dict[str, str]) -> str | None:
@@ -98,7 +104,7 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
         scanned += 1
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         rel = str(path.relative_to(root)).replace("\\", "/")
-        bindings = _bindings(tree)
+        bindings, constants = _bindings(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -111,7 +117,7 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
                 })
                 continue
             keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
-            if "shell" in keywords and _is_true(keywords["shell"]):
+            if "shell" in keywords and _shell_not_provably_false(keywords["shell"], constants):
                 findings.append({
                     "path": rel, "line": node.lineno, "rule": "subprocess-shell-true",
                 })

@@ -66,12 +66,15 @@ def test_secret_scan_of_the_current_tree_is_non_vacuous() -> None:
 
 
 def test_dependency_inventory_must_be_asserted_before_advisories() -> None:
-    report = audit_deps(_ROOT)
+    from unittest.mock import patch
+    with patch("tools.security.audit_dependencies.shutil.which", return_value=None):
+        report = audit_deps(_ROOT)
     assert report["inventory_asserted"] is True
     assert report["expected_packages"] >= 1
     assert report["declared"]["runtime"] == []
     assert report["mismatches"] == []
     assert report["state"] == "PASS"
+    assert report["advisory"]["state"] == "UNAVAILABLE/SKIPPED"
 
 
 def test_dependency_inventory_mismatch_fails() -> None:
@@ -229,10 +232,15 @@ def test_secret_scan_flags_windows_archive_traversal() -> None:
 
 
 def test_decoder_require_c_fails_when_c_rail_is_unavailable() -> None:
+    from unittest.mock import patch
     from tools.security.run_decoder_campaign import run_campaign
-    report = run_campaign(_ROOT, mutations=1, seed=1, fuzz_runs=1, fuzz_seconds=1, require_c=True)
-    if report["c_decoder"]["state"] != "PASS":
-        assert report["state"] == "FAIL"
+    skipped = {"state": "UNAVAILABLE/SKIPPED", "reason": "mocked-unavailable"}
+    with patch("tools.security.run_decoder_campaign.run_c_campaign", return_value=skipped):
+        report = run_campaign(
+            _ROOT, mutations=1, seed=1, fuzz_runs=1, fuzz_seconds=1, require_c=True,
+        )
+    assert report["c_decoder"]["state"] == "UNAVAILABLE/SKIPPED"
+    assert report["state"] == "FAIL"
 
 
 def test_boundary_audit_resolves_import_aliases() -> None:
@@ -340,3 +348,62 @@ def test_independent_review_keeps_options_after_command() -> None:
         rc = main(["--json-out", str(_ROOT / "build/validation/security-assurance/review-remainder.json"),
                    "--command", sys.executable, "-c", "print(1)", "--format", "json"])
     assert rc == 1
+
+
+def test_empty_zip_is_inspected_not_unreadable() -> None:
+    import io
+    import zipfile
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w"):
+            pass
+        (root / "empty.zip").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "empty.zip"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["archive_files"] == 1
+        assert not any(item["rule"] == "archive-unreadable" for item in report["findings"])
+        assert report["archives"][0]["status"] == "inspected"
+
+
+def test_boundary_audit_flags_non_literal_shell() -> None:
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "bcir").mkdir()
+        (root / "tools").mkdir()
+        (root / "bcir" / "hostile.py").write_text(
+            "import subprocess\n"
+            "USE_SHELL = True\n"
+            "subprocess.run(['tool'], shell=USE_SHELL)\n",
+            encoding="utf-8",
+        )
+        report = audit_boundaries(root)
+        assert any(item["rule"] == "subprocess-shell-true" for item in report["findings"])
+
+
+def test_boundary_audit_reassignment_does_not_hang() -> None:
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "bcir").mkdir()
+        (root / "tools").mkdir()
+        (root / "bcir" / "hostile.py").write_text(
+            "import os\n"
+            "import subprocess\n"
+            "launch = subprocess.run\n"
+            "launch = os.system\n"
+            "launch('echo hi')\n",
+            encoding="utf-8",
+        )
+        report = audit_boundaries(root)
+        assert any(item["rule"] == "os.system-or-popen" for item in report["findings"])
+
+
+def test_independent_review_preserves_quoted_env_command() -> None:
+    from tools.security.independent_review import _split_reviewer_cmd
+    argv = _split_reviewer_cmd('python -c "print({\'passed\': True})"')
+    assert argv[0] == "python"
+    assert argv[1] == "-c"
+    assert argv[2] == "print({'passed': True})"

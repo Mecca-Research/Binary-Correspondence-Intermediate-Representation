@@ -134,10 +134,14 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
     return findings
 
 
+def _is_zip_bytes(data: bytes) -> bool:
+    return data[:2] == b"PK" and data[2:4] in {b"\x03\x04", b"\x05\x06", b"\x07\x08"}
+
+
 def _archive_members(data: bytes) -> tuple[list[str], bool]:
     names: list[str] = []
     capped = False
-    if data[:4] == b"PK\x03\x04":
+    if _is_zip_bytes(data) or zipfile.is_zipfile(io.BytesIO(data)):
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             for info in archive.infolist():
                 if len(names) >= ARCHIVE_MEMBER_CAP:
