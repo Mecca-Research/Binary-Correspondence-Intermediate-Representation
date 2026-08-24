@@ -88,7 +88,7 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
         for rule, pattern in RULES:
             for match in pattern.finditer(line):
                 value = match.group(0)
-                if PLACEHOLDER.search(value) or PLACEHOLDER.search(line):
+                if PLACEHOLDER.search(value):
                     continue
                 findings.append({
                     "path": path,
@@ -115,7 +115,34 @@ def _scan_archive(rel: str, path: Path, data: bytes) -> tuple[list[dict[str, Any
     try:
         names = _archive_members(path, data)
     except (zipfile.BadZipFile, tarfile.TarError, OSError) as exc:
-        return findings, {"path": rel, "status": "unreadable", "error": type(exc).__name__}
+        findings.append({
+            "path": rel,
+            "line": 0,
+            "rule": "archive-unreadable",
+            "fingerprint": _fingerprint(type(exc).__name__),
+        })
+        return findings, {
+            "path": rel,
+            "status": "unreadable",
+            "error": type(exc).__name__,
+            "extracted": False,
+        }
+    inspectable = (
+        zipfile.is_zipfile(path) or data[:4] == b"PK\x03\x04" or tarfile.is_tarfile(path)
+    )
+    if not inspectable:
+        findings.append({
+            "path": rel,
+            "line": 0,
+            "rule": "archive-unreadable",
+            "fingerprint": _fingerprint("uninspectable"),
+        })
+        return findings, {
+            "path": rel,
+            "status": "unreadable",
+            "error": "no-supported-archive-parser",
+            "extracted": False,
+        }
     unsafe = [
         name for name in names
         if name.startswith("/") or name.startswith("\\") or ".." in Path(name).parts
@@ -216,6 +243,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.allow_gitleaks:
         extra = _try_gitleaks(args.root)
         report["gitleaks"] = extra or {"available": False}
+        if extra and extra.get("returncode") not in (0, None):
+            report["state"] = "FAIL"
+            report["findings"].append({
+                "path": "<gitleaks>",
+                "line": 0,
+                "rule": "gitleaks-nonzero",
+                "fingerprint": _fingerprint(str(extra.get("returncode"))),
+            })
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

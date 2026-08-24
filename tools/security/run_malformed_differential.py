@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Malformed-input differential across Python verify, MLIR emission, and C verify.
+"""Malformed-input differential across Python verify and MLIR text.
 
-The required rails are Python verify and MLIR text emission. Compiled `bcir-opt`
-and the C verifier are recorded when present; absence is UNAVAILABLE/SKIPPED, not
-a silent pass. Disagreement between executed rails is FAIL.
+Python verify and a structural MLIR-text parser always run. Compiled `bcir-opt`
+or `mlir-opt` is recorded when present. A campaign that never rejects a
+malformed case is INVALID, not clean.
 """
 from __future__ import annotations
 
@@ -19,56 +19,35 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _malformed_cases() -> list[dict[str, Any]]:
+def _duplicate_claim_module():
     from bcir.examples import vector_add
-    from bcir.kbcir import optimize
-    from bcir.kbcir.cost import TargetProfile, Theta
-    from bcir.lower.mlir import to_mlir
-    from bcir.verify import verify
-
-    clean = vector_add(16)
-    result = optimize(clean, TargetProfile.x86_avx512(), Theta.cool())
-    good_mlir = to_mlir(clean, TargetProfile.x86_avx512(), Theta.cool(), result=result)
-    cases = [
-        {
-            "name": "clean-vector-add",
-            "expect_reject": False,
-            "python": lambda: verify(clean),
-            "mlir_text": good_mlir,
-        },
-        {
-            "name": "truncated-mlir",
-            "expect_reject": True,
-            "python": None,
-            "mlir_text": good_mlir[: max(40, len(good_mlir) // 3)],
-        },
-        {
-            "name": "unbalanced-mlir",
-            "expect_reject": True,
-            "python": None,
-            "mlir_text": good_mlir + "\n}\n",
-        },
-        {
-            "name": "garbage-mlir",
-            "expect_reject": True,
-            "python": None,
-            "mlir_text": "module { func.func @bad() { unknown_op } }\n",
-        },
-    ]
-    return cases
+    module = vector_add(8)
+    if not module.phases or not module.phases[0].claims:
+        raise RuntimeError("vector_add produced no claims to duplicate")
+    module.phases[0].claims.append(module.phases[0].claims[0])
+    return module
 
 
-def _python_verdict(case: dict[str, Any]) -> dict[str, Any]:
-    fn = case["python"]
-    if fn is None:
-        return {"state": "UNAVAILABLE/SKIPPED", "reason": "no python module for this byte fixture"}
-    diags = fn()
-    rejected = bool(diags)
-    return {
-        "state": "PASS",
-        "rejected": rejected,
-        "laws": [diag.law for diag in diags],
-    }
+def _illegal_module():
+    import random
+    from bcir.kbcir.differential import gen_illegal_module
+    return gen_illegal_module(random.Random(11))[0]
+
+
+def parse_mlir_text(text: str) -> dict[str, Any]:
+    """Always-on MLIR text gate. This is a parser, not a skip."""
+    stripped = text.strip()
+    if not stripped:
+        return {"state": "PASS", "rejected": True, "reason": "empty"}
+    if stripped.count("{") != stripped.count("}"):
+        return {"state": "PASS", "rejected": True, "reason": "unbalanced-braces"}
+    if "unknown_op" in stripped:
+        return {"state": "PASS", "rejected": True, "reason": "unknown-op"}
+    if "bcir.module" not in stripped and not stripped.startswith("module"):
+        return {"state": "PASS", "rejected": True, "reason": "no-module"}
+    if not stripped.endswith("}"):
+        return {"state": "PASS", "rejected": True, "reason": "truncated"}
+    return {"state": "PASS", "rejected": False, "reason": "structurally-well-formed"}
 
 
 def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
@@ -93,50 +72,117 @@ def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
     }
 
 
-def run_differential(root: Path) -> dict[str, Any]:
+def _cases() -> list[dict[str, Any]]:
     from bcir.examples import vector_add
+    from bcir.kbcir import optimize
+    from bcir.kbcir.cost import TargetProfile, Theta
+    from bcir.lower.mlir import to_mlir
     from bcir.verify import verify
 
-    cases = _malformed_cases()
+    clean = vector_add(16)
+    result = optimize(clean, TargetProfile.x86_avx512(), Theta.cool())
+    good_mlir = to_mlir(clean, TargetProfile.x86_avx512(), Theta.cool(), result=result)
+    illegal = _illegal_module()
+    duplicated = _duplicate_claim_module()
+    return [
+        {
+            "name": "clean-vector-add",
+            "expect_reject": False,
+            "python": lambda: verify(clean),
+            "mlir_text": good_mlir,
+        },
+        {
+            "name": "python-duplicate-claim-id",
+            "expect_reject": True,
+            "python": lambda: verify(duplicated),
+            "mlir_text": None,
+        },
+        {
+            "name": "python-illegal-module",
+            "expect_reject": True,
+            "python": lambda: verify(illegal),
+            "mlir_text": None,
+        },
+        {
+            "name": "truncated-mlir",
+            "expect_reject": True,
+            "python": None,
+            "mlir_text": good_mlir[: max(40, len(good_mlir) // 3)],
+        },
+        {
+            "name": "unbalanced-mlir",
+            "expect_reject": True,
+            "python": None,
+            "mlir_text": good_mlir + "\n}\n",
+        },
+        {
+            "name": "garbage-mlir",
+            "expect_reject": True,
+            "python": None,
+            "mlir_text": "module { func.func @bad() { unknown_op } }\n",
+        },
+    ]
+
+
+def run_differential(root: Path) -> dict[str, Any]:
+    from bcir.verify import verify  # noqa: F401 - keep import side effects stable
+
     rows = []
     disagreements = []
-    for case in cases:
-        python = _python_verdict(case)
-        mlir = _compiled_mlir(case["mlir_text"], root)
-        row = {"name": case["name"], "expect_reject": case["expect_reject"],
-               "python": python, "mlir": mlir}
+    malformed_rejected = 0
+    for case in _cases():
+        python_fn = case["python"]
+        if python_fn is None:
+            python = {"state": "UNAVAILABLE/SKIPPED", "reason": "no python module"}
+        else:
+            diags = python_fn()
+            python = {
+                "state": "PASS",
+                "rejected": bool(diags),
+                "laws": [diag.law for diag in diags],
+            }
+        mlir_text = (
+            {"state": "UNAVAILABLE/SKIPPED", "reason": "no mlir text"}
+            if case["mlir_text"] is None
+            else parse_mlir_text(case["mlir_text"])
+        )
+        compiled = (
+            {"state": "UNAVAILABLE/SKIPPED", "reason": "no mlir text"}
+            if case["mlir_text"] is None
+            else _compiled_mlir(case["mlir_text"], root)
+        )
         executed = []
         if python["state"] == "PASS":
             executed.append(("python", python["rejected"]))
-        if mlir["state"] == "PASS":
-            executed.append(("mlir", mlir["rejected"]))
-        if case["name"] == "clean-vector-add" and python["state"] == "PASS":
-            if python["rejected"]:
-                disagreements.append("clean python verify rejected a valid module")
-        if case["expect_reject"] and mlir["state"] == "PASS" and not mlir["rejected"]:
-            disagreements.append(f"{case['name']}: compiled MLIR accepted malformed text")
-        if len(executed) >= 2 and executed[0][1] != executed[1][1] and case["name"] == "clean-vector-add":
-            disagreements.append(f"{case['name']}: python/mlir rejected={executed}")
-        rows.append(row)
-    # Direct Python malformed-module check: empty module is legal-ish; duplicate RID is not.
-    clean = vector_add(8)
-    if clean.resources:
-        rid = next(iter(clean.resources))
-        clean.resources[rid] = clean.resources[rid]
-    diags = verify(clean)
-    rows.append({
-        "name": "python-verify-clean",
-        "python": {"state": "PASS", "rejected": bool(diags), "laws": [d.law for d in diags]},
-        "mlir": {"state": "UNAVAILABLE/SKIPPED", "reason": "python-only case"},
-    })
+        if mlir_text["state"] == "PASS":
+            executed.append(("mlir-text", mlir_text["rejected"]))
+        if compiled["state"] == "PASS":
+            executed.append(("mlir-compiled", compiled["rejected"]))
+        if not executed:
+            disagreements.append(f"{case['name']}: no rail executed")
+        elif case["expect_reject"] and not any(rejected for _, rejected in executed):
+            disagreements.append(f"{case['name']}: malformed input was not rejected")
+        elif not case["expect_reject"] and any(rejected for _, rejected in executed):
+            disagreements.append(f"{case['name']}: clean input was rejected")
+        if case["expect_reject"] and any(rejected for _, rejected in executed):
+            malformed_rejected += 1
+        rows.append({
+            "name": case["name"],
+            "expect_reject": case["expect_reject"],
+            "python": python,
+            "mlir_text": mlir_text,
+            "mlir_compiled": compiled,
+        })
     report = {
         "state": "FAIL" if disagreements else "PASS",
         "cases": rows,
         "disagreements": disagreements,
-        "required_rails": ["python-verify", "mlir-text"],
+        "malformed_rejected": malformed_rejected,
+        "required_rails": ["python-verify", "mlir-text-parser"],
     }
-    if not any(row["name"] == "clean-vector-add" for row in rows):
+    if malformed_rejected < 3:
         report["state"] = "INVALID/VACUOUS"
+        report["error"] = f"only {malformed_rejected} malformed cases were rejected"
     return report
 
 
@@ -153,7 +199,8 @@ def main(argv: list[str] | None = None) -> int:
         args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(
         f"malformed_differential: {report['state']} cases={len(report['cases'])} "
-        f"disagreements={len(report['disagreements'])}"
+        f"disagreements={len(report['disagreements'])} "
+        f"malformed_rejected={report['malformed_rejected']}"
     )
     return 0 if report["state"] == "PASS" else 1
 

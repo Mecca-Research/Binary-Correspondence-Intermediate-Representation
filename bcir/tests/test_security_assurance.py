@@ -88,6 +88,15 @@ def test_dependency_inventory_mismatch_fails() -> None:
         assert report["mismatches"]
 
 
+def test_decoder_campaign_fails_when_a_canonical_seed_is_rejected() -> None:
+    from tools.security.run_decoder_campaign import _probe
+    import random
+    row = _probe("streampack", lambda _data: (_ for _ in ()).throw(ValueError("nope")),
+                 b"seed", random.Random(0), mutations=2)
+    assert row["state"] == "FAIL"
+    assert any(item["kind"] == "seed-rejected" for item in row["findings"])
+
+
 def test_decoder_campaign_hits_required_python_surfaces() -> None:
     rows = run_python_campaign(mutations=8, seed=7)
     names = {row["surface"] for row in rows}
@@ -101,7 +110,48 @@ def test_malformed_differential_runs_required_rails() -> None:
     assert report["state"] == "PASS", report["disagreements"]
     names = {case["name"] for case in report["cases"]}
     assert "clean-vector-add" in names
+    assert "python-duplicate-claim-id" in names
+    assert "python-illegal-module" in names
     assert "truncated-mlir" in names
+    assert report["malformed_rejected"] >= 3
+    duplicate = next(case for case in report["cases"] if case["name"] == "python-duplicate-claim-id")
+    assert duplicate["python"]["rejected"] is True
+    truncated = next(case for case in report["cases"] if case["name"] == "truncated-mlir")
+    assert truncated["mlir_text"]["rejected"] is True
+
+
+def test_secret_scan_does_not_let_a_comment_hide_a_match() -> None:
+    planted = "ghp_" + ("cd" * 18)
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "leak.py").write_text(
+            f'token = "{planted}"  # example fixture\n', encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "leak.py"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "github-token" for item in report["findings"])
+
+
+def test_secret_scan_fails_closed_on_an_unreadable_archive() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "readme.md").write_text("ok\n", encoding="utf-8")
+        (root / "broken.zip").write_bytes(b"PK\x03\x04not-a-zip")
+        subprocess.run(["git", "add", "readme.md", "broken.zip"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "archive-unreadable" for item in report["findings"])
+
+
+def test_dependency_parser_works_without_tomllib() -> None:
+    from tools.security.audit_dependencies import _parse_pyproject_legacy
+    parsed = _parse_pyproject_legacy((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert parsed["runtime"] == []
+    assert parsed["build_system"] == ["setuptools>=83.0.0"]
+    assert "dev" in parsed["optional"]
 
 
 def test_tool_boundaries_scan_is_non_vacuous() -> None:

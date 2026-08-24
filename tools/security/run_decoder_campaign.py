@@ -65,6 +65,7 @@ def _probe(name: str, decode: Callable[[bytes], Any], seed: bytes,
         accepted += 1
     except graceful:
         rejected += 1
+        findings.append({"kind": "seed-rejected", "type": "graceful"})
     except Exception as exc:  # noqa: BLE001 - campaign records unexpected classes
         findings.append({"kind": "ungraceful-seed", "type": type(exc).__name__})
     for _ in range(mutations):
