@@ -61,6 +61,19 @@ def _r5_mlir() -> str:
     )
 
 
+def _r1_mlir() -> str:
+    return (
+        "bcir.module @r1 {\n"
+        "  bcir.registry @RES {\n"
+        "    bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, "
+        "shape = array<i64: 4>, layout = #bcir.layout<soa> }\n"
+        "    bcir.resource @B { rid = 10 : i32, domain_kind = #bcir.domain<ram>, "
+        "shape = array<i64: 4>, layout = #bcir.layout<soa> }\n"
+        "  }\n"
+        "}\n"
+    )
+
+
 def _duplicate_claim_mlir(good: str) -> str:
     for line in good.splitlines():
         if "bcir.claim @" in line and "claim_id =" in line and "reads =" in line:
@@ -88,6 +101,9 @@ def parse_mlir_text(text: str) -> dict[str, Any]:
     claim_ids = re.findall(r"claim_id\s*=\s*(\d+)", stripped)
     if len(claim_ids) != len(set(claim_ids)):
         return {"state": "PASS", "rejected": True, "reason": "duplicate-claim-id"}
+    rids = re.findall(r"\brid\s*=\s*(\d+)", stripped)
+    if len(rids) != len(set(rids)):
+        return {"state": "PASS", "rejected": True, "reason": "duplicate-rid"}
     if re.search(r'op\s*=\s*"atomic\.[^"]+"', stripped) and "hazard<unique>" in stripped:
         return {"state": "PASS", "rejected": True, "reason": "r5-atomic-without-ordered-hazard"}
     return {"state": "PASS", "rejected": False, "reason": "structurally-well-formed"}
@@ -165,6 +181,13 @@ def _cases() -> list[dict[str, Any]]:
             "expect_reject": True,
             "python": lambda: verify(duplicated),
             "mlir_text": _duplicate_claim_mlir(good_mlir),
+            "compile": False,
+        },
+        {
+            "name": "mlir-r1-duplicate-rid",
+            "expect_reject": True,
+            "python": None,
+            "mlir_text": _r1_mlir(),
         },
         {
             "name": "python-illegal-module",
@@ -216,8 +239,8 @@ def run_differential(root: Path, require_bcir_opt: bool = False) -> dict[str, An
             else parse_mlir_text(case["mlir_text"])
         )
         compiled = (
-            {"state": "UNAVAILABLE/SKIPPED", "reason": "no mlir text"}
-            if case["mlir_text"] is None
+            {"state": "UNAVAILABLE/SKIPPED", "reason": "compiled rail not a witness for this case"}
+            if not case.get("compile", True) or case["mlir_text"] is None
             else _compiled_mlir(case["mlir_text"], root)
         )
         if compiled["state"] == "FAIL":
@@ -267,6 +290,7 @@ def run_differential(root: Path, require_bcir_opt: bool = False) -> dict[str, An
             skipped = [
                 row["name"] for row in rows
                 if row["mlir_compiled"]["state"] == "UNAVAILABLE/SKIPPED"
+                and "not a witness" not in str(row["mlir_compiled"].get("reason", ""))
             ]
             if skipped:
                 report["state"] = "FAIL"
@@ -291,6 +315,10 @@ def main(argv: list[str] | None = None) -> int:
         f"disagreements={len(report['disagreements'])} "
         f"malformed_rejected={report['malformed_rejected']}"
     )
+    for item in report.get("disagreements") or []:
+        print(f"  disagreement: {item}")
+    if report.get("error"):
+        print(f"  error: {report['error']}")
     return 0 if report["state"] == "PASS" else 1
 
 

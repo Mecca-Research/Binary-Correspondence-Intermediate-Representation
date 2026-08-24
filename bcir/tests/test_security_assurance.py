@@ -116,6 +116,7 @@ def test_malformed_differential_runs_required_rails() -> None:
     names = {case["name"] for case in report["cases"]}
     assert "clean-vector-add" in names
     assert "python-duplicate-claim-id" in names
+    assert "mlir-r1-duplicate-rid" in names
     assert "python-illegal-module" in names
     assert "truncated-mlir" in names
     assert report["malformed_rejected"] >= 3
