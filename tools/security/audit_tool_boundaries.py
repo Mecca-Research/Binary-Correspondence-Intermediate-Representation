@@ -48,10 +48,37 @@ def _resolve_bound_value(value: ast.AST, names: dict[str, str]) -> str | None:
     return None
 
 
-def _bindings(tree: ast.AST) -> tuple[dict[str, str], dict[str, Any]]:
-    names: dict[str, str] = {"os": "os", "subprocess": "subprocess"}
-    constants: dict[str, Any] = {}
-    for node in ast.walk(tree):
+def _call_kind(func: ast.AST, bindings: dict[str, str]) -> str | None:
+    if isinstance(func, ast.Name):
+        return bindings.get(func.id)
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+        owner = bindings.get(func.value.id)
+        if owner == "os" and func.attr in OS_FUNCS:
+            return f"os.{func.attr}"
+        if owner == "subprocess" and func.attr in SUBPROCESS_FUNCS:
+            return f"subprocess.{func.attr}"
+    return None
+
+
+class _BoundaryVisitor(ast.NodeVisitor):
+    def __init__(self, rel: str) -> None:
+        self.rel = rel
+        self.findings: list[dict[str, Any]] = []
+        self.scopes: list[tuple[dict[str, str], dict[str, Any]]] = [
+            ({"os": "os", "subprocess": "subprocess"}, {}),
+        ]
+
+    def _names(self) -> dict[str, str]:
+        return self.scopes[-1][0]
+
+    def _constants(self) -> dict[str, Any]:
+        return self.scopes[-1][1]
+
+    def _push_scope(self) -> None:
+        self.scopes.append((dict(self._names()), {}))
+
+    def _apply_import(self, node: ast.AST) -> None:
+        names = self._names()
         if isinstance(node, ast.Import):
             for alias in node.names:
                 local = alias.asname or alias.name
@@ -68,35 +95,74 @@ def _bindings(tree: ast.AST) -> tuple[dict[str, str], dict[str, Any]]:
                 for alias in node.names:
                     if alias.name in SUBPROCESS_FUNCS:
                         names[alias.asname or alias.name] = f"subprocess.{alias.name}"
-    assigns = [
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.Assign)
-    ]
-    assigns.sort(key=lambda node: (node.lineno, node.col_offset))
-    for node in assigns:
+
+    def _apply_assign(self, node: ast.Assign) -> None:
         if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
-            continue
+            return
         target = node.targets[0].id
+        constants = self._constants()
         if isinstance(node.value, ast.Constant):
             constants[target] = node.value.value
         else:
             constants.pop(target, None)
-        mapped = _resolve_bound_value(node.value, names)
+        mapped = _resolve_bound_value(node.value, self._names())
         if mapped:
-            names[target] = mapped
-    return names, constants
+            self._names()[target] = mapped
 
+    def _record_call(self, node: ast.Call) -> None:
+        kind = _call_kind(node.func, self._names())
+        if kind is None:
+            return
+        if kind.startswith("os."):
+            self.findings.append({
+                "path": self.rel, "line": node.lineno, "rule": "os.system-or-popen",
+            })
+            return
+        keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+        if "shell" in keywords and _shell_not_provably_false(keywords["shell"], self._constants()):
+            self.findings.append({
+                "path": self.rel, "line": node.lineno, "rule": "subprocess-shell-true",
+            })
+        if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+            if "/tests/" not in f"/{self.rel}" and not self.rel.startswith("bcir/tests/"):
+                self.findings.append({
+                    "path": self.rel, "line": node.lineno, "rule": "subprocess-string-command",
+                })
 
-def _call_kind(func: ast.AST, bindings: dict[str, str]) -> str | None:
-    if isinstance(func, ast.Name):
-        return bindings.get(func.id)
-    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
-        owner = bindings.get(func.value.id)
-        if owner == "os" and func.attr in OS_FUNCS:
-            return f"os.{func.attr}"
-        if owner == "subprocess" and func.attr in SUBPROCESS_FUNCS:
-            return f"subprocess.{func.attr}"
-    return None
+    def visit_Import(self, node: ast.Import) -> None:
+        self._apply_import(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        self._apply_import(node)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        self.generic_visit(node)
+        self._apply_assign(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        self.generic_visit(node)
+        if isinstance(node.target, ast.Name) and node.value is not None:
+            fake = ast.Assign(targets=[node.target], value=node.value)
+            self._apply_assign(fake)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        self.generic_visit(node)
+        self._record_call(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._push_scope()
+        self.generic_visit(node)
+        self.scopes.pop()
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._push_scope()
+        self.generic_visit(node)
+        self.scopes.pop()
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._push_scope()
+        self.generic_visit(node)
+        self.scopes.pop()
 
 
 def audit_boundaries(root: Path) -> dict[str, Any]:
@@ -106,28 +172,9 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
         scanned += 1
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         rel = str(path.relative_to(root)).replace("\\", "/")
-        bindings, constants = _bindings(tree)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            kind = _call_kind(node.func, bindings)
-            if kind is None:
-                continue
-            if kind.startswith("os."):
-                findings.append({
-                    "path": rel, "line": node.lineno, "rule": "os.system-or-popen",
-                })
-                continue
-            keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
-            if "shell" in keywords and _shell_not_provably_false(keywords["shell"], constants):
-                findings.append({
-                    "path": rel, "line": node.lineno, "rule": "subprocess-shell-true",
-                })
-            if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                if "/tests/" not in f"/{rel}" and not rel.startswith("bcir/tests/"):
-                    findings.append({
-                        "path": rel, "line": node.lineno, "rule": "subprocess-string-command",
-                    })
+        visitor = _BoundaryVisitor(rel)
+        visitor.visit(tree)
+        findings.extend(visitor.findings)
     report = {
         "state": "FAIL" if findings else "PASS",
         "scanned_files": scanned,

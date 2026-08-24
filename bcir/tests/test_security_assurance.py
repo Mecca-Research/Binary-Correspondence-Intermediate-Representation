@@ -177,6 +177,7 @@ def test_independent_review_is_fail_closed() -> None:
     assert report["cases"]["unparseable"] == "FAIL"
     assert report["cases"]["empty-output"] == "FAIL"
     assert report["cases"]["undecodable"] == "FAIL"
+    assert report["cases"]["empty-summary"] == "FAIL"
     assert report["cases"]["valid-json"] == "PASS"
     assert report["state"] == "PASS"
 
@@ -468,3 +469,73 @@ def test_boundary_audit_invalidates_reassigned_constants() -> None:
         )
         report = audit_boundaries(root)
         assert any(item["rule"] == "subprocess-shell-true" for item in report["findings"])
+
+
+def test_boundary_audit_uses_call_site_constants() -> None:
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "bcir").mkdir()
+        (root / "tools").mkdir()
+        (root / "bcir" / "hostile.py").write_text(
+            "import os\n"
+            "import subprocess\n"
+            "USE_SHELL = os.getenv('USE_SHELL')\n"
+            "subprocess.run(['tool'], shell=USE_SHELL)\n"
+            "USE_SHELL = False\n",
+            encoding="utf-8",
+        )
+        report = audit_boundaries(root)
+        assert any(item["rule"] == "subprocess-shell-true" for item in report["findings"])
+
+
+def test_secret_scan_flags_quoted_mapping_keys() -> None:
+    key = "api" + "_key"
+    pwd = "pass" + "word"
+    value = "abcd" + "efghijklmnop" + "qrstuvwxyz"
+    horse = "correct-horse-" + "battery-staple"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "creds.json").write_text(
+            '{' + f'"{key}": "{value}"' + '}\n',
+            encoding="utf-8",
+        )
+        (root / "creds.py").write_text(
+            '{' + f"'{pwd}': '{horse}'" + '}\n',
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "creds.json", "creds.py"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert len(report["findings"]) >= 2
+
+
+def test_sevenz_is_binary_not_an_unreadable_archive() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "blob.7z").write_bytes(b"7z\xbc\xaf'\x1cnot-tar")
+        subprocess.run(["git", "add", "blob.7z"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["archive_files"] == 0
+        assert report["binary_files"] >= 1
+        assert not any(item["rule"] == "archive-unreadable" for item in report["findings"])
+
+
+def test_secret_scan_flags_zip_symlink_traversal() -> None:
+    import io
+    import zipfile
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            info = zipfile.ZipInfo("safe")
+            info.create_system = 3
+            info.external_attr = (0o120777 << 16)
+            archive.writestr(info, "../../escape")
+        (root / "links.zip").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "links.zip"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])

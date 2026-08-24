@@ -39,6 +39,8 @@ def parse_review(text: str) -> dict[str, Any]:
         raise ValueError("security_concerns must be a list")
     if not isinstance(payload["logic_errors"], list):
         raise ValueError("logic_errors must be a list")
+    if not isinstance(payload["summary"], str) or not payload["summary"].strip():
+        raise ValueError("summary must be a nonempty string")
     if payload["security_concerns"] or payload["logic_errors"]:
         payload["passed"] = False
     return payload
@@ -125,6 +127,13 @@ def self_check() -> dict[str, Any]:
         cases.append(("unparseable", run_reviewer([python, str(bad)], Path(tmp))))
         cases.append(("empty-output", run_reviewer([python, str(empty)], Path(tmp))))
         cases.append(("undecodable", run_reviewer([python, str(binary)], Path(tmp))))
+        vacuous = Path(tmp) / "vacuous.py"
+        vacuous.write_text(
+            "print('{\"passed\": true, \"security_concerns\": [], "
+            "\"logic_errors\": [], \"summary\": null}')\n",
+            encoding="utf-8",
+        )
+        cases.append(("empty-summary", run_reviewer([python, str(vacuous)], Path(tmp))))
     expected = {
         "missing-command": "FAIL",
         "missing-executable": "FAIL",
@@ -132,6 +141,7 @@ def self_check() -> dict[str, Any]:
         "unparseable": "FAIL",
         "empty-output": "FAIL",
         "undecodable": "FAIL",
+        "empty-summary": "FAIL",
     }
     mismatches = [
         name for name, report in cases if report["state"] != expected[name]

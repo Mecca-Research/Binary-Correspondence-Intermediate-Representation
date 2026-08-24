@@ -27,10 +27,10 @@ BINARY_SUFFIXES = frozenset({
     ".bin", ".o", ".a", ".so", ".dll", ".dylib", ".exe", ".wasm",
     ".bc", ".bcab", ".bcirq8", ".safetensors", ".pt", ".pth", ".onnx",
     ".pdf", ".mp3", ".mp4", ".wav",
-    ".gz", ".bz2", ".xz",
+    ".gz", ".bz2", ".xz", ".7z",
 })
 ARCHIVE_SUFFIXES = frozenset({
-    ".zip", ".whl", ".egg", ".jar", ".7z",
+    ".zip", ".whl", ".egg", ".jar",
     ".tar", ".tgz", ".tar.gz", ".tar.bz2", ".tar.xz",
 })
 TEXT_SAMPLE = 8192
@@ -43,8 +43,8 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("github-fine-grained", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
     ("slack-token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
     ("assignment-secret", re.compile(
-        r"(?i)\b(?:[A-Za-z0-9]+_)*(?:api[_-]?key|secret|password|token|passwd|aws_secret_access_key)(?:_[A-Za-z0-9]+)*"
-        r"\s*[:=]\s*(?:'[^']{12,}'|\"[^\"]{12,}\"|[A-Za-z0-9_/+-]{16,})"
+        r"(?i)['\"]?(?:[A-Za-z0-9]+_)*(?:api[_-]?key|secret|password|token|passwd|aws_secret_access_key)(?:_[A-Za-z0-9]+)*['\"]?"
+        r"\s*[:=]\s*(?:'[^'\s]{12,}'|\"[^\"\s]{12,}\"|[A-Za-z0-9_/+-]{16,})"
     )),
 )
 
@@ -134,6 +134,16 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
     return findings
 
 
+def _zip_symlink_target(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> str | None:
+    unix_mode = info.external_attr >> 16
+    if info.create_system == 3 and (unix_mode & 0o170000) == 0o120000:
+        try:
+            return archive.read(info.filename).decode("utf-8", "replace")
+        except (RuntimeError, UnicodeError, OSError):
+            return None
+    return None
+
+
 def _is_zip_bytes(data: bytes) -> bool:
     return data[:2] == b"PK" and data[2:4] in {b"\x03\x04", b"\x05\x06", b"\x07\x08"}
 
@@ -148,6 +158,12 @@ def _archive_members(data: bytes) -> tuple[list[str], bool]:
                     capped = True
                     break
                 names.append(info.filename)
+                target = _zip_symlink_target(archive, info)
+                if target:
+                    if len(names) >= ARCHIVE_MEMBER_CAP:
+                        capped = True
+                        break
+                    names.append(target)
     else:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
             for member in archive:
