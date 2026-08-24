@@ -79,6 +79,8 @@ def _bindings(tree: ast.AST) -> tuple[dict[str, str], dict[str, Any]]:
         target = node.targets[0].id
         if isinstance(node.value, ast.Constant):
             constants[target] = node.value.value
+        else:
+            constants.pop(target, None)
         mapped = _resolve_bound_value(node.value, names)
         if mapped:
             names[target] = mapped

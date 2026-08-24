@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -29,10 +30,49 @@ def _duplicate_claim_module():
     return module
 
 
-def _illegal_module():
-    import random
-    from bcir.kbcir.differential import gen_illegal_module
-    return gen_illegal_module(random.Random(11))[0]
+def _r5_module():
+    from bcir.model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
+    module = Module(name="r5")
+    module.add_resource(Resource(rid=1, domain=Domain.RAM, shape=(64,)))
+    module.add_phase(Phase(phase_id=0, deps=(), claims=[
+        Claim(
+            id=1, opcode=Opcode.ATOMIC_ADD, lane=Lane.A, stride_class=StrideClass.UNIT,
+            count=64, rd=(1,), wr=(1,), op="atomic.add", domain=Domain.RAM, hazard="unique",
+        ),
+    ]))
+    return module
+
+
+def _r5_mlir() -> str:
+    return (
+        "bcir.module @r5 {\n"
+        "  bcir.registry @RES {\n"
+        "    bcir.resource @T { rid = 1 : i32, domain_kind = #bcir.domain<ram>, "
+        "shape = array<i64: 64>, layout = #bcir.layout<soa> }\n"
+        "  }\n"
+        "  bcir.phase @p0 { id = 0 : i32, deps = [] }\n"
+        "  bcir.claim @c attributes {\n"
+        "    claim_id = 1 : i32, phase = @p0, op = \"atomic.add\", reads = [@T], writes = [@T], "
+        "count = 64 : i64, lane = #bcir.lane<a>, stride_class = #bcir.stride_class<unit>, "
+        "stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, "
+        "verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>\n"
+        "  } { %i = bcir.index_range 0 to 64 step 1 }\n"
+        "}\n"
+    )
+
+
+def _duplicate_claim_mlir(good: str) -> str:
+    match = re.search(r"claim_id\s*=\s*(\d+)", good)
+    cid = match.group(1) if match else "1"
+    extra = (
+        f'  bcir.claim @dup attributes {{ claim_id = {cid} : i32, phase = @p0, '
+        f'op = "vector.add", hazard = #bcir.hazard<unique> }} '
+        f'{{ %i = bcir.index_range 0 to 1 step 1 }}\n'
+    )
+    index = good.rfind("}")
+    if index < 0:
+        return good + extra
+    return good[:index] + extra + good[index:]
 
 
 def parse_mlir_text(text: str) -> dict[str, Any]:
@@ -48,6 +88,11 @@ def parse_mlir_text(text: str) -> dict[str, Any]:
         return {"state": "PASS", "rejected": True, "reason": "no-module"}
     if not stripped.endswith("}"):
         return {"state": "PASS", "rejected": True, "reason": "truncated"}
+    claim_ids = re.findall(r"claim_id\s*=\s*(\d+)", stripped)
+    if len(claim_ids) != len(set(claim_ids)):
+        return {"state": "PASS", "rejected": True, "reason": "duplicate-claim-id"}
+    if re.search(r'op\s*=\s*"atomic\.[^"]+"', stripped) and "hazard<unique>" in stripped:
+        return {"state": "PASS", "rejected": True, "reason": "r5-atomic-without-ordered-hazard"}
     return {"state": "PASS", "rejected": False, "reason": "structurally-well-formed"}
 
 
@@ -109,7 +154,7 @@ def _cases() -> list[dict[str, Any]]:
     clean = vector_add(16)
     result = optimize(clean, TargetProfile.x86_avx512(), Theta.cool())
     good_mlir = to_mlir(clean, TargetProfile.x86_avx512(), Theta.cool(), result=result)
-    illegal = _illegal_module()
+    illegal = _r5_module()
     duplicated = _duplicate_claim_module()
     return [
         {
@@ -122,13 +167,13 @@ def _cases() -> list[dict[str, Any]]:
             "name": "python-duplicate-claim-id",
             "expect_reject": True,
             "python": lambda: verify(duplicated),
-            "mlir_text": None,
+            "mlir_text": _duplicate_claim_mlir(good_mlir),
         },
         {
             "name": "python-illegal-module",
             "expect_reject": True,
             "python": lambda: verify(illegal),
-            "mlir_text": None,
+            "mlir_text": _r5_mlir(),
         },
         {
             "name": "truncated-mlir",

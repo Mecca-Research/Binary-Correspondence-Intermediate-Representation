@@ -43,7 +43,7 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("github-fine-grained", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
     ("slack-token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
     ("assignment-secret", re.compile(
-        r"(?i)\b(?:api[_-]?key|secret|password|token|passwd|aws_secret_access_key)"
+        r"(?i)\b(?:[A-Za-z0-9]+_)*(?:api[_-]?key|secret|password|token|passwd|aws_secret_access_key)(?:_[A-Za-z0-9]+)*"
         r"\s*[:=]\s*(?:'[^']{12,}'|\"[^\"]{12,}\"|[A-Za-z0-9_/+-]{16,})"
     )),
 )
@@ -155,6 +155,11 @@ def _archive_members(data: bytes) -> tuple[list[str], bool]:
                     capped = True
                     break
                 names.append(member.name)
+                if getattr(member, "linkname", ""):
+                    if len(names) >= ARCHIVE_MEMBER_CAP:
+                        capped = True
+                        break
+                    names.append(member.linkname)
     return names, capped
 
 

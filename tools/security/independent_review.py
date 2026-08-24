@@ -53,7 +53,7 @@ def run_reviewer(command: list[str], cwd: Path) -> dict[str, Any]:
         }
     try:
         result = subprocess.run(
-            command, cwd=cwd, capture_output=True, text=True, check=False, timeout=120,
+            command, cwd=cwd, capture_output=True, check=False, timeout=120,
         )
     except FileNotFoundError as exc:
         return {
@@ -67,15 +67,24 @@ def run_reviewer(command: list[str], cwd: Path) -> dict[str, Any]:
             "reason": "reviewer timed out",
             "fail_closed": True,
         }
+    try:
+        stdout = result.stdout.decode("utf-8")
+        stderr = result.stderr.decode("utf-8", "replace")
+    except UnicodeDecodeError as exc:
+        return {
+            "state": "FAIL",
+            "reason": f"reviewer output was not UTF-8: {exc}",
+            "fail_closed": True,
+        }
     if result.returncode != 0:
         return {
             "state": "FAIL",
             "reason": f"reviewer exited {result.returncode}",
             "fail_closed": True,
-            "stderr_tail": result.stderr[-400:],
+            "stderr_tail": stderr[-400:],
         }
     try:
-        payload = parse_review(result.stdout)
+        payload = parse_review(stdout)
     except (ValueError, json.JSONDecodeError) as exc:
         return {
             "state": "FAIL",
@@ -102,6 +111,11 @@ def self_check() -> dict[str, Any]:
         )
         bad.write_text("print('not-json')\n", encoding="utf-8")
         empty.write_text("print('')\n", encoding="utf-8")
+        binary = Path(tmp) / "binary.py"
+        binary.write_text(
+            "import sys\nsys.stdout.buffer.write(b'\\xff\\xfe not-utf8')\n",
+            encoding="utf-8",
+        )
         python = sys.executable
         cases.append(("missing-command", run_reviewer([], Path(tmp))))
         cases.append(("missing-executable", run_reviewer(
@@ -110,12 +124,14 @@ def self_check() -> dict[str, Any]:
         cases.append(("valid-json", run_reviewer([python, str(good)], Path(tmp))))
         cases.append(("unparseable", run_reviewer([python, str(bad)], Path(tmp))))
         cases.append(("empty-output", run_reviewer([python, str(empty)], Path(tmp))))
+        cases.append(("undecodable", run_reviewer([python, str(binary)], Path(tmp))))
     expected = {
         "missing-command": "FAIL",
         "missing-executable": "FAIL",
         "valid-json": "PASS",
         "unparseable": "FAIL",
         "empty-output": "FAIL",
+        "undecodable": "FAIL",
     }
     mismatches = [
         name for name, report in cases if report["state"] != expected[name]

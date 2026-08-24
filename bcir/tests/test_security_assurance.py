@@ -109,7 +109,9 @@ def test_decoder_campaign_hits_required_python_surfaces() -> None:
 
 
 def test_malformed_differential_runs_required_rails() -> None:
-    report = run_differential(_ROOT)
+    from unittest.mock import patch
+    with patch("tools.security.run_malformed_differential.find_bcir_opt", return_value=None):
+        report = run_differential(_ROOT)
     assert report["state"] == "PASS", report["disagreements"]
     names = {case["name"] for case in report["cases"]}
     assert "clean-vector-add" in names
@@ -119,6 +121,10 @@ def test_malformed_differential_runs_required_rails() -> None:
     assert report["malformed_rejected"] >= 3
     duplicate = next(case for case in report["cases"] if case["name"] == "python-duplicate-claim-id")
     assert duplicate["python"]["rejected"] is True
+    assert duplicate["mlir_text"]["rejected"] is True
+    illegal = next(case for case in report["cases"] if case["name"] == "python-illegal-module")
+    assert illegal["python"]["rejected"] is True
+    assert illegal["mlir_text"]["rejected"] is True
     truncated = next(case for case in report["cases"] if case["name"] == "truncated-mlir")
     assert truncated["mlir_text"]["rejected"] is True
 
@@ -170,6 +176,7 @@ def test_independent_review_is_fail_closed() -> None:
     assert report["cases"]["missing-executable"] == "FAIL"
     assert report["cases"]["unparseable"] == "FAIL"
     assert report["cases"]["empty-output"] == "FAIL"
+    assert report["cases"]["undecodable"] == "FAIL"
     assert report["cases"]["valid-json"] == "PASS"
     assert report["state"] == "PASS"
 
@@ -407,3 +414,57 @@ def test_independent_review_preserves_quoted_env_command() -> None:
     assert argv[0] == "python"
     assert argv[1] == "-c"
     assert argv[2] == "print({'passed': True})"
+
+
+def test_secret_scan_flags_qualified_assignment_names() -> None:
+    key = "SECRET" + "_KEY"
+    client = "client" + "_secret"
+    db = "DB_" + "PASSWORD"
+    value = "abcd" + "efghijklmnop" + "qrstuvwxyz"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "cfg.env").write_text(
+            f'{key}="{value}"\n{client}: "{value}"\n{db}={value}\n',
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "cfg.env"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert len(report["findings"]) >= 3
+
+
+def test_secret_scan_flags_tar_link_traversal() -> None:
+    import io
+    import tarfile
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as archive:
+            info = tarfile.TarInfo(name="safe")
+            info.type = tarfile.SYMTYPE
+            info.linkname = "../../escape"
+            archive.addfile(info)
+        (root / "links.tar").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "links.tar"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])
+
+
+def test_boundary_audit_invalidates_reassigned_constants() -> None:
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "bcir").mkdir()
+        (root / "tools").mkdir()
+        (root / "bcir" / "hostile.py").write_text(
+            "import os\n"
+            "import subprocess\n"
+            "USE_SHELL = False\n"
+            "USE_SHELL = os.getenv('USE_SHELL')\n"
+            "subprocess.run(['tool'], shell=USE_SHELL)\n",
+            encoding="utf-8",
+        )
+        report = audit_boundaries(root)
+        assert any(item["rule"] == "subprocess-shell-true" for item in report["findings"])
