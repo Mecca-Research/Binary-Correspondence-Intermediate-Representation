@@ -21,11 +21,12 @@ from tools.security.scan_secrets import scan_tree
 
 
 def test_secret_scan_fails_closed_on_a_planted_text_secret() -> None:
+    planted = "ghp_" + ("ab" * 18)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-        (root / "leak.py").write_text('token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"\n', encoding="utf-8")
-        (root / "blob.bin").write_bytes(b"\x00\x01\x02\xff" + b"AKIAIOSFODNN7EXAMPLE")
+        (root / "leak.py").write_text(f'token = "{planted}"\n', encoding="utf-8")
+        (root / "blob.bin").write_bytes(b"\x00\x01\x02\xff" + b"AKIA" + b"IOSFODNN7EXAMPLE")
         subprocess.run(["git", "add", "leak.py", "blob.bin"], cwd=root, check=True)
         report = scan_tree(root)
         assert report["state"] == "FAIL"
@@ -33,7 +34,9 @@ def test_secret_scan_fails_closed_on_a_planted_text_secret() -> None:
         assert report["binary_files"] >= 1
         rules = {item["rule"] for item in report["findings"]}
         assert "github-token" in rules
-        assert all("ghp_" not in json.dumps(item) for item in report["findings"])
+        dumped = json.dumps(report["findings"])
+        assert planted not in dumped
+        assert "ghp_" not in dumped
 
 
 def test_secret_scan_records_archive_path_traversal_without_extracting() -> None:
