@@ -87,11 +87,16 @@ def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
             capture_output=True, text=True, check=False, timeout=20,
         )
     return {
-        "state": "PASS",
-        "rejected": result.returncode != 0,
+        "state": "FAIL" if _compiled_crash(result.returncode) else "PASS",
+        "rejected": result.returncode != 0 and not _compiled_crash(result.returncode),
         "returncode": result.returncode,
         "tool": opt,
+        "reason": f"signal-or-fatal {result.returncode}" if _compiled_crash(result.returncode) else None,
     }
+
+
+def _compiled_crash(returncode: int) -> bool:
+    return returncode < 0 or returncode >= 0xC0000000
 
 
 def _cases() -> list[dict[str, Any]]:
@@ -173,6 +178,10 @@ def run_differential(root: Path) -> dict[str, Any]:
             if case["mlir_text"] is None
             else _compiled_mlir(case["mlir_text"], root)
         )
+        if compiled["state"] == "FAIL":
+            disagreements.append(
+                f"{case['name']}: compiled verifier crashed rc={compiled.get('returncode')}"
+            )
         executed = []
         if python["state"] == "PASS":
             executed.append(("python", python["rejected"]))

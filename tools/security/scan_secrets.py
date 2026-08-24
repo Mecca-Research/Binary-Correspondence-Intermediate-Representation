@@ -27,13 +27,14 @@ BINARY_SUFFIXES = frozenset({
     ".bin", ".o", ".a", ".so", ".dll", ".dylib", ".exe", ".wasm",
     ".bc", ".bcab", ".bcirq8", ".safetensors", ".pt", ".pth", ".onnx",
     ".pdf", ".mp3", ".mp4", ".wav",
+    ".gz", ".bz2", ".xz",
 })
 ARCHIVE_SUFFIXES = frozenset({
     ".zip", ".whl", ".egg", ".jar", ".7z",
-    ".tar", ".tgz", ".gz", ".bz2", ".xz",
+    ".tar", ".tgz", ".tar.gz", ".tar.bz2", ".tar.xz",
 })
 TEXT_SAMPLE = 8192
-ARCHIVE_MEMBER_CAP = 1 << 20
+ARCHIVE_MEMBER_CAP = 4096
 
 RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("private-key-header", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
@@ -99,7 +100,9 @@ def _git_files(root: Path) -> list[str]:
 
 
 def _kind_for(path: str, data: bytes) -> str:
-    lower = path.lower()
+    lower = path.lower().replace("\\", "/")
+    if any(lower.endswith(suffix) for suffix in (".tar.gz", ".tar.bz2", ".tar.xz", ".tgz")):
+        return "archive"
     if any(lower.endswith(suffix) for suffix in ARCHIVE_SUFFIXES):
         return "archive"
     if any(lower.endswith(suffix) for suffix in BINARY_SUFFIXES):
@@ -131,21 +134,30 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
     return findings
 
 
-def _archive_members(data: bytes) -> list[str]:
+def _archive_members(data: bytes) -> tuple[list[str], bool]:
     names: list[str] = []
+    capped = False
     if data[:4] == b"PK\x03\x04":
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            names = archive.namelist()
+            for info in archive.infolist():
+                if len(names) >= ARCHIVE_MEMBER_CAP:
+                    capped = True
+                    break
+                names.append(info.filename)
     else:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
-            names = [member.name for member in archive.getmembers()]
-    return names
+            for member in archive:
+                if len(names) >= ARCHIVE_MEMBER_CAP:
+                    capped = True
+                    break
+                names.append(member.name)
+    return names, capped
 
 
 def _scan_archive(rel: str, data: bytes) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     try:
-        names = _archive_members(data)
+        names, capped = _archive_members(data)
     except (zipfile.BadZipFile, tarfile.TarError, OSError) as exc:
         findings.append({
             "path": rel,
@@ -159,20 +171,13 @@ def _scan_archive(rel: str, data: bytes) -> tuple[list[dict[str, Any]], dict[str
             "error": type(exc).__name__,
             "extracted": False,
         }
-    inspectable = data[:4] == b"PK\x03\x04" or data[:5] in {b"ustar"} or data[:2] == b"\x1f\x8b"
-    if not names and not inspectable:
+    if capped:
         findings.append({
             "path": rel,
             "line": 0,
-            "rule": "archive-unreadable",
-            "fingerprint": _fingerprint("uninspectable"),
+            "rule": "archive-member-cap",
+            "fingerprint": _fingerprint(str(ARCHIVE_MEMBER_CAP)),
         })
-        return findings, {
-            "path": rel,
-            "status": "unreadable",
-            "error": "no-supported-archive-parser",
-            "extracted": False,
-        }
     unsafe = [name for name in names if _archive_path_unsafe(name)]
     for name in unsafe:
         findings.append({
@@ -183,10 +188,11 @@ def _scan_archive(rel: str, data: bytes) -> tuple[list[dict[str, Any]], dict[str
         })
     return findings, {
         "path": rel,
-        "status": "inspected",
+        "status": "capped" if capped else "inspected",
         "members": len(names),
         "unsafe_members": len(unsafe),
         "extracted": False,
+        "capped": capped,
     }
 
 

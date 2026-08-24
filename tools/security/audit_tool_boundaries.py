@@ -32,6 +32,18 @@ def _is_true(node: ast.AST) -> bool:
     return isinstance(node, ast.Constant) and node.value is True
 
 
+def _resolve_bound_value(value: ast.AST, names: dict[str, str]) -> str | None:
+    if isinstance(value, ast.Name):
+        return names.get(value.id)
+    if isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
+        owner = names.get(value.value.id)
+        if owner == "os" and value.attr in OS_FUNCS:
+            return f"os.{value.attr}"
+        if owner == "subprocess" and value.attr in SUBPROCESS_FUNCS:
+            return f"subprocess.{value.attr}"
+    return None
+
+
 def _bindings(tree: ast.AST) -> dict[str, str]:
     names: dict[str, str] = {"os": "os", "subprocess": "subprocess"}
     for node in ast.walk(tree):
@@ -51,6 +63,19 @@ def _bindings(tree: ast.AST) -> dict[str, str]:
                 for alias in node.names:
                     if alias.name in SUBPROCESS_FUNCS:
                         names[alias.asname or alias.name] = f"subprocess.{alias.name}"
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if not isinstance(target, ast.Name):
+                continue
+            mapped = _resolve_bound_value(node.value, names)
+            if mapped and names.get(target.id) != mapped:
+                names[target.id] = mapped
+                changed = True
     return names
 
 

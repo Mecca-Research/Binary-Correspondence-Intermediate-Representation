@@ -260,3 +260,83 @@ def test_find_bcir_opt_never_returns_stock_mlir_opt() -> None:
     found = find_bcir_opt(_ROOT)
     if found is not None:
         assert Path(found).name.startswith("bcir-opt")
+
+
+def test_compiled_verifier_crash_is_not_a_clean_rejection() -> None:
+    from tools.security.run_malformed_differential import _compiled_crash
+    assert _compiled_crash(-11) is True
+    assert _compiled_crash(0xC0000005) is True
+    assert _compiled_crash(1) is False
+    assert _compiled_crash(0) is False
+
+
+def test_single_file_gzip_is_not_an_unreadable_archive() -> None:
+    import gzip
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "note.gz").write_bytes(gzip.compress(b"hello text"))
+        subprocess.run(["git", "add", "note.gz"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["archive_files"] == 0
+        assert report["binary_files"] >= 1
+        assert not any(item["rule"] == "archive-unreadable" for item in report["findings"])
+
+
+def test_archive_member_cap_fails_closed() -> None:
+    import io
+    import zipfile
+    import tools.security.scan_secrets as secrets
+    old = secrets.ARCHIVE_MEMBER_CAP
+    secrets.ARCHIVE_MEMBER_CAP = 2
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as archive:
+                for index in range(5):
+                    archive.writestr(f"m{index}.txt", "x")
+            (root / "many.zip").write_bytes(buf.getvalue())
+            subprocess.run(["git", "add", "many.zip"], cwd=root, check=True)
+            report = scan_tree(root)
+            assert any(item["rule"] == "archive-member-cap" for item in report["findings"])
+    finally:
+        secrets.ARCHIVE_MEMBER_CAP = old
+
+
+def test_boundary_audit_resolves_assigned_aliases() -> None:
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "bcir").mkdir()
+        (root / "tools").mkdir()
+        # Fixture text only: assigned alias of subprocess.run.
+        (root / "bcir" / "hostile.py").write_text(
+            "import subprocess\n"
+            "launch = subprocess.run\n"
+            "launch(['tool'], shell=True)\n",
+            encoding="utf-8",
+        )
+        report = audit_boundaries(root)
+        assert any(item["rule"] == "subprocess-shell-true" for item in report["findings"])
+
+
+def test_decoder_campaign_fails_when_invalid_input_is_accepted() -> None:
+    from tools.security.run_decoder_campaign import _probe
+    import random
+    row = _probe("streampack", lambda _data: "ok", b"seed", random.Random(0), mutations=0,
+                 invalid=b"\x00")
+    assert row["state"] == "FAIL"
+    assert any(item["kind"] == "invalid-accepted" for item in row["findings"])
+
+
+def test_independent_review_keeps_options_after_command() -> None:
+    from tools.security.independent_review import main
+    import io
+    from contextlib import redirect_stdout
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = main(["--json-out", str(_ROOT / "build/validation/security-assurance/review-remainder.json"),
+                   "--command", sys.executable, "-c", "print(1)", "--format", "json"])
+    assert rc == 1

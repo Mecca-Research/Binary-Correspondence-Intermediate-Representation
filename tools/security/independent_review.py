@@ -125,8 +125,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="independent_review")
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--self-check", action="store_true")
-    parser.add_argument("--command", nargs="*")
     parser.add_argument("--json-out", type=Path)
+    parser.add_argument(
+        "--command", nargs=argparse.REMAINDER,
+        help="reviewer argv; must be last so reviewer flags such as --format are kept",
+    )
     args = parser.parse_args(argv)
     if args.self_check:
         report = self_check()

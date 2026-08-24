@@ -55,7 +55,8 @@ def _mutate(data: bytes, rng: random.Random) -> bytes:
 
 
 def _probe(name: str, decode: Callable[[bytes], Any], seed: bytes,
-           rng: random.Random, mutations: int) -> dict[str, Any]:
+           rng: random.Random, mutations: int,
+           invalid: bytes = b"\x00") -> dict[str, Any]:
     findings: list[dict[str, str]] = []
     accepted = 0
     rejected = 0
@@ -68,6 +69,14 @@ def _probe(name: str, decode: Callable[[bytes], Any], seed: bytes,
         findings.append({"kind": "seed-rejected", "type": "graceful"})
     except Exception as exc:  # noqa: BLE001 - campaign records unexpected classes
         findings.append({"kind": "ungraceful-seed", "type": type(exc).__name__})
+    try:
+        decode(invalid)
+        accepted += 1
+        findings.append({"kind": "invalid-accepted", "type": "none"})
+    except graceful:
+        rejected += 1
+    except Exception as exc:  # noqa: BLE001
+        findings.append({"kind": "ungraceful-invalid", "type": type(exc).__name__})
     for _ in range(mutations):
         try:
             decode(_mutate(seed, rng))
@@ -242,6 +251,14 @@ def main(argv: list[str] | None = None) -> int:
         args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     surfaces = ",".join(f"{item['surface']}:{item['state']}" for item in report["python"])
     print(f"decoder_campaign: {report['state']} python={surfaces} c={report['c_decoder']['state']}")
+    c_report = report["c_decoder"]
+    if c_report["state"] != "PASS":
+        if c_report.get("reason"):
+            print(f"c_reason: {c_report['reason']}")
+        if c_report.get("stdout_tail"):
+            print(c_report["stdout_tail"])
+        if c_report.get("stderr_tail"):
+            print(c_report["stderr_tail"], file=sys.stderr)
     return 0 if report["state"] == "PASS" else 1
 
 
