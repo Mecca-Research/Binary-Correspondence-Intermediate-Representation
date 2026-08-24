@@ -129,6 +129,14 @@ def test_malformed_differential_runs_required_rails() -> None:
     assert truncated["mlir_text"]["rejected"] is True
 
 
+def test_require_bcir_opt_fails_when_the_tool_is_missing() -> None:
+    from unittest.mock import patch
+    with patch("tools.security.run_malformed_differential.find_bcir_opt", return_value=None):
+        report = run_differential(_ROOT, require_bcir_opt=True)
+    assert report["state"] == "FAIL"
+    assert "bcir-opt required" in report["error"]
+
+
 def test_secret_scan_does_not_let_a_comment_hide_a_match() -> None:
     planted = "ghp_" + ("cd" * 18)
     with tempfile.TemporaryDirectory() as tmp:
@@ -537,5 +545,75 @@ def test_secret_scan_flags_zip_symlink_traversal() -> None:
             archive.writestr(info, "../../escape")
         (root / "links.zip").write_bytes(buf.getvalue())
         subprocess.run(["git", "add", "links.zip"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])
+
+
+def test_duplicate_claim_mlir_is_otherwise_complete() -> None:
+    from tools.security.run_malformed_differential import _duplicate_claim_mlir
+    good = (
+        "bcir.module @m {\n"
+        "  bcir.claim @c1 attributes { claim_id = 1 : i32, phase = @p0, "
+        "op = \"vector.add\", reads = [@T], writes = [@O], count = 8 : i64, "
+        "lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, "
+        "stride_k = 1 : i32, domain = #bcir.domain<ram>, "
+        "hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, "
+        "bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 8 step 1 }\n"
+        "}\n"
+    )
+    cloned = _duplicate_claim_mlir(good)
+    assert cloned.count("claim_id = 1") == 2
+    assert "bcir.claim @dup" in cloned
+    assert "reads = [@T]" in cloned.split("bcir.claim @dup", 1)[1]
+    assert "writes = [@O]" in cloned.split("bcir.claim @dup", 1)[1]
+    assert "lane = #bcir.lane<u>" in cloned.split("bcir.claim @dup", 1)[1]
+
+
+def test_boundary_audit_clears_reassigned_process_aliases() -> None:
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "bcir").mkdir()
+        (root / "tools").mkdir()
+        (root / "bcir" / "ok.py").write_text(
+            "import subprocess\n"
+            "launch = subprocess.run\n"
+            "launch = print\n"
+            "launch('safe')\n",
+            encoding="utf-8",
+        )
+        report = audit_boundaries(root)
+        assert report["findings"] == []
+
+
+def test_boundary_audit_flags_getoutput() -> None:
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "bcir").mkdir()
+        (root / "tools").mkdir()
+        (root / "bcir" / "hostile.py").write_text(
+            "import subprocess\n"
+            "subprocess.getoutput('echo hi')\n",
+            encoding="utf-8",
+        )
+        report = audit_boundaries(root)
+        assert any(item["rule"] == "subprocess-shell-true" for item in report["findings"])
+
+
+def test_oversized_zip_symlink_is_rejected_without_full_read() -> None:
+    import io
+    import zipfile
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            info = zipfile.ZipInfo("safe")
+            info.create_system = 3
+            info.external_attr = (0o120777 << 16)
+            archive.writestr(info, "x" * 5000)
+        (root / "biglink.zip").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "biglink.zip"], cwd=root, check=True)
         report = scan_tree(root)
         assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])

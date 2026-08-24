@@ -178,15 +178,26 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
         "FUZZ_MAX_TOTAL_TIME": str(seconds),
         "FUZZ_JOBS": "2",
     })
-    result = subprocess.run(
-        [bash, str(script)],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=max(60, seconds * 4),
-    )
+    target_count = 15
+    jobs = 2
+    timeout = 180 + ((target_count + jobs - 1) // jobs) * seconds
+    try:
+        result = subprocess.run(
+            [bash, str(script)],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "state": "FAIL",
+            "reason": f"C campaign exceeded {timeout}s",
+            "stdout_tail": (exc.stdout or "")[-500:] if isinstance(exc.stdout, str) else "",
+            "stderr_tail": (exc.stderr or "")[-500:] if isinstance(exc.stderr, str) else "",
+        }
     skipped = "skipping" in (result.stdout + result.stderr).lower()
     if skipped and result.returncode == 0:
         return {

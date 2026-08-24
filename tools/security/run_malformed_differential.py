@@ -62,17 +62,14 @@ def _r5_mlir() -> str:
 
 
 def _duplicate_claim_mlir(good: str) -> str:
-    match = re.search(r"claim_id\s*=\s*(\d+)", good)
-    cid = match.group(1) if match else "1"
-    extra = (
-        f'  bcir.claim @dup attributes {{ claim_id = {cid} : i32, phase = @p0, '
-        f'op = "vector.add", hazard = #bcir.hazard<unique> }} '
-        f'{{ %i = bcir.index_range 0 to 1 step 1 }}\n'
-    )
-    index = good.rfind("}")
-    if index < 0:
-        return good + extra
-    return good[:index] + extra + good[index:]
+    for line in good.splitlines():
+        if "bcir.claim @" in line and "claim_id =" in line and "reads =" in line:
+            cloned = re.sub(r"(bcir\.claim\s+)@\S+", r"\1@dup", line, count=1)
+            index = good.rfind("}")
+            if index < 0:
+                return good + cloned + "\n"
+            return good[:index] + cloned + "\n" + good[index:]
+    raise RuntimeError("no complete valid claim to duplicate")
 
 
 def parse_mlir_text(text: str) -> dict[str, Any]:
@@ -196,7 +193,7 @@ def _cases() -> list[dict[str, Any]]:
     ]
 
 
-def run_differential(root: Path) -> dict[str, Any]:
+def run_differential(root: Path, require_bcir_opt: bool = False) -> dict[str, Any]:
     from bcir.verify import verify  # noqa: F401 - keep import side effects stable
 
     rows = []
@@ -262,17 +259,30 @@ def run_differential(root: Path) -> dict[str, Any]:
     if malformed_rejected < 3:
         report["state"] = "INVALID/VACUOUS"
         report["error"] = f"only {malformed_rejected} malformed cases were rejected"
+    if require_bcir_opt:
+        if not find_bcir_opt(root):
+            report["state"] = "FAIL"
+            report["error"] = "bcir-opt required but not found in PATH or build/mlir-build"
+        else:
+            skipped = [
+                row["name"] for row in rows
+                if row["mlir_compiled"]["state"] == "UNAVAILABLE/SKIPPED"
+            ]
+            if skipped:
+                report["state"] = "FAIL"
+                report["error"] = f"compiled rail skipped for {skipped}"
     return report
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="run_malformed_differential")
     parser.add_argument("--root", type=Path, default=ROOT)
+    parser.add_argument("--require-bcir-opt", action="store_true")
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args(argv)
     if str(args.root) not in sys.path:
         sys.path.insert(0, str(args.root))
-    report = run_differential(args.root)
+    report = run_differential(args.root, require_bcir_opt=args.require_bcir_opt)
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

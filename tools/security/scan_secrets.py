@@ -35,6 +35,7 @@ ARCHIVE_SUFFIXES = frozenset({
 })
 TEXT_SAMPLE = 8192
 ARCHIVE_MEMBER_CAP = 4096
+ZIP_SYMLINK_MAX = 4096
 
 RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("private-key-header", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
@@ -136,12 +137,14 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
 
 def _zip_symlink_target(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> str | None:
     unix_mode = info.external_attr >> 16
-    if info.create_system == 3 and (unix_mode & 0o170000) == 0o120000:
-        try:
-            return archive.read(info.filename).decode("utf-8", "replace")
-        except (RuntimeError, UnicodeError, OSError):
-            return None
-    return None
+    if not (info.create_system == 3 and (unix_mode & 0o170000) == 0o120000):
+        return None
+    if info.file_size > ZIP_SYMLINK_MAX:
+        return "../oversized-symlink"
+    try:
+        return archive.read(info.filename)[:ZIP_SYMLINK_MAX].decode("utf-8", "replace")
+    except (RuntimeError, UnicodeError, OSError):
+        return None
 
 
 def _is_zip_bytes(data: bytes) -> bool:

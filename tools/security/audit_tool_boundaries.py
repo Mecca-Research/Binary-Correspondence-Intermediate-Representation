@@ -12,7 +12,11 @@ ROOT = Path(__file__).resolve().parents[2]
 TREES = ("bcir", "tools")
 SKIP_PARTS = {".git", "build", "__pycache__", "dataset"}
 OS_FUNCS = frozenset({"system", "popen"})
-SUBPROCESS_FUNCS = frozenset({"run", "Popen", "check_output", "check_call", "call"})
+SUBPROCESS_FUNCS = frozenset({
+    "run", "Popen", "check_output", "check_call", "call",
+    "getoutput", "getstatusoutput",
+})
+SHELL_ALWAYS = frozenset({"subprocess.getoutput", "subprocess.getstatusoutput"})
 
 
 def _iter_python(root: Path) -> list[Path]:
@@ -108,6 +112,8 @@ class _BoundaryVisitor(ast.NodeVisitor):
         mapped = _resolve_bound_value(node.value, self._names())
         if mapped:
             self._names()[target] = mapped
+        else:
+            self._names().pop(target, None)
 
     def _record_call(self, node: ast.Call) -> None:
         kind = _call_kind(node.func, self._names())
@@ -116,6 +122,11 @@ class _BoundaryVisitor(ast.NodeVisitor):
         if kind.startswith("os."):
             self.findings.append({
                 "path": self.rel, "line": node.lineno, "rule": "os.system-or-popen",
+            })
+            return
+        if kind in SHELL_ALWAYS:
+            self.findings.append({
+                "path": self.rel, "line": node.lineno, "rule": "subprocess-shell-true",
             })
             return
         keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
