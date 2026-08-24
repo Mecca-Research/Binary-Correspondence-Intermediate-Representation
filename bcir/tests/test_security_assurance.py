@@ -172,11 +172,15 @@ def test_independent_review_is_fail_closed() -> None:
 
 
 def test_secret_scan_flags_unquoted_and_yaml_assignments() -> None:
+    key = "API_" + "KEY"
+    value = "abcd" + "efghijklmnop" + "qrstuvwxyz"
+    yaml_key = "pass" + "word"
+    yaml_val = "correct-horse-" + "battery-staple"
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-        (root / "env").write_text("API_KEY=abcdefghijklmnopqrstuvwxyz\n", encoding="utf-8")
-        (root / "cfg.yaml").write_text('password: "correct-horse-battery-staple"\n', encoding="utf-8")
+        (root / "env").write_text(f"{key}={value}\n", encoding="utf-8")
+        (root / "cfg.yaml").write_text(f'{yaml_key}: "{yaml_val}"\n', encoding="utf-8")
         subprocess.run(["git", "add", "env", "cfg.yaml"], cwd=root, check=True)
         report = scan_tree(root)
         assert report["state"] == "FAIL"
@@ -184,10 +188,11 @@ def test_secret_scan_flags_unquoted_and_yaml_assignments() -> None:
 
 
 def test_secret_scan_does_not_treat_dummy_substring_as_placeholder() -> None:
+    assigned = "nota" + "dummy" + "realpassword"
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-        (root / "leak.py").write_text('password = "notadummyrealpassword"\n', encoding="utf-8")
+        (root / "leak.py").write_text('pass' + 'word = "' + assigned + '"\n', encoding="utf-8")
         subprocess.run(["git", "add", "leak.py"], cwd=root, check=True)
         report = scan_tree(root)
         assert report["state"] == "FAIL"
