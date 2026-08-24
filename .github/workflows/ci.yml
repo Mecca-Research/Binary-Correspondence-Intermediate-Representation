@@ -694,3 +694,42 @@ jobs:
 
       - name: Hot/cold import quarantine (research organs stay off the simple path)
         run: python3 tools/perf/import_graph.py --check
+
+  security-assurance:
+    name: Security assurance (secrets, inventory, campaigns, review contract)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources)
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
+
+      - name: Install clang + compiler-rt for the bounded decoder campaign
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        with:
+          packages: clang lld llvm libclang-rt-18-dev
+          version: security-assurance-${{ runner.arch }}-v1
+
+      - name: Secret scan with explicit binary/archive policy
+        run: python3 tools/security/scan_secrets.py
+
+      - name: Inventory-first dependency audit
+        run: python3 tools/security/audit_dependencies.py
+
+      - name: Lowering and developer-tool boundary policy
+        run: python3 tools/security/audit_tool_boundaries.py
+
+      - name: Bounded StreamPack/BCAB/model decoder campaign
+        run: python3 tools/security/run_decoder_campaign.py --mutations 24 --fuzz-runs 200 --fuzz-seconds 8
+
+      - name: Malformed-input Python/MLIR differential
+        run: python3 tools/security/run_malformed_differential.py
+
+      - name: Fail-closed independent-review contract
+        run: python3 tools/security/independent_review.py --self-check

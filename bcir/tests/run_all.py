@@ -407,6 +407,7 @@ _MODULES = [
     "bcir.tests.test_tiers",
     "bcir.tests.test_toolchain",
     "bcir.tests.test_security_hardening",
+    "bcir.tests.test_security_assurance",
     "bcir.tests.test_perf_budget",
     "bcir.tests.test_import_quarantine",
     "bcir.tests.test_docs_claims",

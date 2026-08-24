@@ -1,0 +1,14 @@
+# BCIR secret-scan policy. tools/security/scan_secrets.py is the required CI rail.
+# gitleaks is used when present. Binaries are recorded, not grepped as text.
+# Archives are inspected for member-path traversal and never extracted to disk.
+title = "BCIR"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Build outputs and generated inventories"
+paths = [
+  '''(^|/)build/''',
+  '''docs/STATUS\.md''',
+]
