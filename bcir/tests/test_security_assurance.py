@@ -164,7 +164,94 @@ def test_independent_review_is_fail_closed() -> None:
     report = review_self_check()
     assert report["fail_closed"] is True
     assert report["cases"]["missing-command"] == "FAIL"
+    assert report["cases"]["missing-executable"] == "FAIL"
     assert report["cases"]["unparseable"] == "FAIL"
     assert report["cases"]["empty-output"] == "FAIL"
     assert report["cases"]["valid-json"] == "PASS"
     assert report["state"] == "PASS"
+
+
+def test_secret_scan_flags_unquoted_and_yaml_assignments() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "env").write_text("API_KEY=abcdefghijklmnopqrstuvwxyz\n", encoding="utf-8")
+        (root / "cfg.yaml").write_text('password: "correct-horse-battery-staple"\n', encoding="utf-8")
+        subprocess.run(["git", "add", "env", "cfg.yaml"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert len(report["findings"]) >= 2
+
+
+def test_secret_scan_does_not_treat_dummy_substring_as_placeholder() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "leak.py").write_text('password = "notadummyrealpassword"\n', encoding="utf-8")
+        subprocess.run(["git", "add", "leak.py"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "assignment-secret" for item in report["findings"])
+
+
+def test_secret_scan_reads_the_index_not_the_working_tree() -> None:
+    planted = "ghp_" + ("ef" * 18)
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        leak = root / "leak.py"
+        leak.write_text(f'token = "{planted}"\n', encoding="utf-8")
+        subprocess.run(["git", "add", "leak.py"], cwd=root, check=True)
+        leak.write_text("token = None\n", encoding="utf-8")
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "github-token" for item in report["findings"])
+
+
+def test_secret_scan_flags_windows_archive_traversal() -> None:
+    import io
+    import zipfile
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            archive.writestr("..\\escape.txt", "nope")
+        (root / "payload.zip").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "payload.zip"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])
+
+
+def test_decoder_require_c_fails_when_c_rail_is_unavailable() -> None:
+    from tools.security.run_decoder_campaign import run_campaign
+    report = run_campaign(_ROOT, mutations=1, seed=1, fuzz_runs=1, fuzz_seconds=1, require_c=True)
+    if report["c_decoder"]["state"] != "PASS":
+        assert report["state"] == "FAIL"
+
+
+def test_boundary_audit_resolves_import_aliases() -> None:
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "bcir").mkdir()
+        (root / "tools").mkdir()
+        # Fixture text only: the auditor must see aliased os.system / shell=True.
+        (root / "bcir" / "hostile.py").write_text(
+            "from subprocess import run as invoke\n"
+            "from os import system as execute\n"
+            "invoke('echo hi', shell=True)\n"
+            "execute('echo hi')\n",
+            encoding="utf-8",
+        )
+        report = audit_boundaries(root)
+        rules = {item["rule"] for item in report["findings"]}
+        assert "subprocess-shell-true" in rules
+        assert "os.system-or-popen" in rules
+
+
+def test_find_bcir_opt_never_returns_stock_mlir_opt() -> None:
+    from tools.security.run_malformed_differential import find_bcir_opt
+    found = find_bcir_opt(_ROOT)
+    if found is not None:
+        assert Path(found).name.startswith("bcir-opt")

@@ -11,7 +11,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 TREES = ("bcir", "tools")
 SKIP_PARTS = {".git", "build", "__pycache__", "dataset"}
-PRODUCTION_STRING_SUBPROCESS = True
+OS_FUNCS = frozenset({"system", "popen"})
+SUBPROCESS_FUNCS = frozenset({"run", "Popen", "check_output", "check_call", "call"})
 
 
 def _iter_python(root: Path) -> list[Path]:
@@ -31,6 +32,40 @@ def _is_true(node: ast.AST) -> bool:
     return isinstance(node, ast.Constant) and node.value is True
 
 
+def _bindings(tree: ast.AST) -> dict[str, str]:
+    names: dict[str, str] = {"os": "os", "subprocess": "subprocess"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                local = alias.asname or alias.name
+                if alias.name == "os":
+                    names[local] = "os"
+                elif alias.name == "subprocess":
+                    names[local] = "subprocess"
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "os":
+                for alias in node.names:
+                    if alias.name in OS_FUNCS:
+                        names[alias.asname or alias.name] = f"os.{alias.name}"
+            elif node.module == "subprocess":
+                for alias in node.names:
+                    if alias.name in SUBPROCESS_FUNCS:
+                        names[alias.asname or alias.name] = f"subprocess.{alias.name}"
+    return names
+
+
+def _call_kind(func: ast.AST, bindings: dict[str, str]) -> str | None:
+    if isinstance(func, ast.Name):
+        return bindings.get(func.id)
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+        owner = bindings.get(func.value.id)
+        if owner == "os" and func.attr in OS_FUNCS:
+            return f"os.{func.attr}"
+        if owner == "subprocess" and func.attr in SUBPROCESS_FUNCS:
+            return f"subprocess.{func.attr}"
+    return None
+
+
 def audit_boundaries(root: Path) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     scanned = 0
@@ -38,30 +73,28 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
         scanned += 1
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         rel = str(path.relative_to(root)).replace("\\", "/")
+        bindings = _bindings(tree)
         for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                func = node.func
-                name = ""
-                if isinstance(func, ast.Name):
-                    name = func.id
-                elif isinstance(func, ast.Attribute):
-                    name = func.attr
-                if name in {"system", "popen"} and isinstance(func, ast.Attribute):
-                    if isinstance(func.value, ast.Name) and func.value.id == "os":
-                        findings.append({
-                            "path": rel, "line": node.lineno, "rule": "os.system-or-popen",
-                        })
-                if name in {"run", "Popen", "check_output", "check_call", "call"}:
-                    keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
-                    if "shell" in keywords and _is_true(keywords["shell"]):
-                        findings.append({
-                            "path": rel, "line": node.lineno, "rule": "subprocess-shell-true",
-                        })
-                    if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                        if "/tests/" not in f"/{rel}" and not rel.startswith("bcir/tests/"):
-                            findings.append({
-                                "path": rel, "line": node.lineno, "rule": "subprocess-string-command",
-                            })
+            if not isinstance(node, ast.Call):
+                continue
+            kind = _call_kind(node.func, bindings)
+            if kind is None:
+                continue
+            if kind.startswith("os."):
+                findings.append({
+                    "path": rel, "line": node.lineno, "rule": "os.system-or-popen",
+                })
+                continue
+            keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+            if "shell" in keywords and _is_true(keywords["shell"]):
+                findings.append({
+                    "path": rel, "line": node.lineno, "rule": "subprocess-shell-true",
+                })
+            if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                if "/tests/" not in f"/{rel}" and not rel.startswith("bcir/tests/"):
+                    findings.append({
+                        "path": rel, "line": node.lineno, "rule": "subprocess-string-command",
+                    })
     report = {
         "state": "FAIL" if findings else "PASS",
         "scanned_files": scanned,

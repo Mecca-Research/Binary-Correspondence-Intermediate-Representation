@@ -44,9 +44,22 @@ def run_reviewer(command: list[str], cwd: Path) -> dict[str, Any]:
             "reason": "no reviewer command configured",
             "fail_closed": True,
         }
-    result = subprocess.run(
-        command, cwd=cwd, capture_output=True, text=True, check=False, timeout=120,
-    )
+    try:
+        result = subprocess.run(
+            command, cwd=cwd, capture_output=True, text=True, check=False, timeout=120,
+        )
+    except FileNotFoundError as exc:
+        return {
+            "state": "FAIL",
+            "reason": f"reviewer could not start: {exc}",
+            "fail_closed": True,
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "state": "FAIL",
+            "reason": "reviewer timed out",
+            "fail_closed": True,
+        }
     if result.returncode != 0:
         return {
             "state": "FAIL",
@@ -84,11 +97,15 @@ def self_check() -> dict[str, Any]:
         empty.write_text("print('')\n", encoding="utf-8")
         python = sys.executable
         cases.append(("missing-command", run_reviewer([], Path(tmp))))
+        cases.append(("missing-executable", run_reviewer(
+            [str(Path(tmp) / "no-such-reviewer")], Path(tmp),
+        )))
         cases.append(("valid-json", run_reviewer([python, str(good)], Path(tmp))))
         cases.append(("unparseable", run_reviewer([python, str(bad)], Path(tmp))))
         cases.append(("empty-output", run_reviewer([python, str(empty)], Path(tmp))))
     expected = {
         "missing-command": "FAIL",
+        "missing-executable": "FAIL",
         "valid-json": "PASS",
         "unparseable": "FAIL",
         "empty-output": "FAIL",

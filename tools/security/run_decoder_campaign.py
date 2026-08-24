@@ -195,6 +195,7 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
 
 def run_campaign(
     root: Path, mutations: int, seed: int, fuzz_runs: int, fuzz_seconds: int,
+    require_c: bool = False,
 ) -> dict[str, Any]:
     python = run_python_campaign(mutations, seed)
     names = {item["surface"] for item in python}
@@ -211,6 +212,12 @@ def run_campaign(
         report["state"] = "FAIL"
     if report["c_decoder"]["state"] == "FAIL":
         report["state"] = "FAIL"
+    if require_c and report["c_decoder"]["state"] != "PASS":
+        report["state"] = "FAIL"
+        report["error"] = (
+            "C decoder campaign required but was "
+            f"{report['c_decoder']['state']}: {report['c_decoder'].get('reason', '')}"
+        )
     return report
 
 
@@ -221,12 +228,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=20260824)
     parser.add_argument("--fuzz-runs", type=int, default=200)
     parser.add_argument("--fuzz-seconds", type=int, default=8)
+    parser.add_argument("--require-c", action="store_true")
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args(argv)
     if str(args.root) not in sys.path:
         sys.path.insert(0, str(args.root))
     report = run_campaign(
         args.root, args.mutations, args.seed, args.fuzz_runs, args.fuzz_seconds,
+        require_c=args.require_c,
     )
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -50,25 +51,46 @@ def parse_mlir_text(text: str) -> dict[str, Any]:
     return {"state": "PASS", "rejected": False, "reason": "structurally-well-formed"}
 
 
+def find_bcir_opt(root: Path) -> str | None:
+    env = os.environ.get("BCIR_OPT")
+    if env and Path(env).is_file():
+        return env
+    which = shutil.which("bcir-opt")
+    if which:
+        return which
+    trees = (
+        root / "build" / "mlir-build",
+        root / "build" / "mlir-build-debug",
+        root / "build" / "mlir22",
+    )
+    for tree in trees:
+        if not tree.is_dir():
+            continue
+        for candidate in tree.rglob("bcir-opt"):
+            if candidate.is_file():
+                return str(candidate)
+        windows = tree / "bin" / "bcir-opt.exe"
+        if windows.is_file():
+            return str(windows)
+    return None
+
+
 def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
-    opt = shutil.which("bcir-opt") or shutil.which("mlir-opt")
+    opt = find_bcir_opt(root)
     if not opt:
-        local = root / "build" / "mlir" / "bin" / "bcir-opt"
-        opt = str(local) if local.is_file() else None
-    if not opt:
-        return {"state": "UNAVAILABLE/SKIPPED", "reason": "bcir-opt/mlir-opt not on PATH"}
+        return {"state": "UNAVAILABLE/SKIPPED", "reason": "bcir-opt not found in PATH or build/mlir-build"}
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "case.mlir"
         path.write_text(text, encoding="utf-8")
-        cmd = [opt]
-        if Path(opt).name.startswith("bcir"):
-            cmd.append("-bcir-verify")
-        cmd.append(str(path))
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=20)
+        result = subprocess.run(
+            [opt, "-bcir-verify", str(path)],
+            capture_output=True, text=True, check=False, timeout=20,
+        )
     return {
         "state": "PASS",
         "rejected": result.returncode != 0,
         "returncode": result.returncode,
+        "tool": opt,
     }
 
 
@@ -160,11 +182,14 @@ def run_differential(root: Path) -> dict[str, Any]:
             executed.append(("mlir-compiled", compiled["rejected"]))
         if not executed:
             disagreements.append(f"{case['name']}: no rail executed")
-        elif case["expect_reject"] and not any(rejected for _, rejected in executed):
-            disagreements.append(f"{case['name']}: malformed input was not rejected")
-        elif not case["expect_reject"] and any(rejected for _, rejected in executed):
-            disagreements.append(f"{case['name']}: clean input was rejected")
-        if case["expect_reject"] and any(rejected for _, rejected in executed):
+        else:
+            mismatched = [name for name, rejected in executed if rejected != case["expect_reject"]]
+            if mismatched:
+                disagreements.append(
+                    f"{case['name']}: rails {mismatched} did not match expect_reject="
+                    f"{case['expect_reject']}"
+                )
+        if case["expect_reject"] and executed and all(rejected for _, rejected in executed):
             malformed_rejected += 1
         rows.append({
             "name": case["name"],

@@ -42,17 +42,49 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("github-fine-grained", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
     ("slack-token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
     ("assignment-secret", re.compile(
-        r"(?i)\b(?:api[_-]?key|secret|password|token|passwd)\s*=\s*['\"][^'\"]{12,}['\"]"
+        r"(?i)\b(?:api[_-]?key|secret|password|token|passwd|aws_secret_access_key)"
+        r"\s*[:=]\s*(?:'[^']{12,}'|\"[^\"]{12,}\"|[A-Za-z0-9_/+-]{16,})"
     )),
 )
 
-PLACEHOLDER = re.compile(
-    r"(?i)(example|changeme|change_me|placeholder|redacted|dummy|fake|xxxx|0000|1111|2222)"
-)
+EXACT_PLACEHOLDERS = frozenset({
+    "changeme", "change_me", "placeholder", "redacted", "dummy", "fake",
+    "example", "xxxx", "password", "secret", "your_token_here",
+    "not_a_secret", "todo",
+})
+
+
+def _assigned_value(match_text: str) -> str:
+    extracted = re.search(r"""[:=]\s*['\"]?([^'\"]+?)['\"]?\s*$""", match_text.strip())
+    return (extracted.group(1) if extracted else match_text).strip()
+
+
+def _is_placeholder(value: str) -> bool:
+    return _assigned_value(value).lower() in EXACT_PLACEHOLDERS
 
 
 def _fingerprint(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+def _archive_path_unsafe(name: str) -> bool:
+    norm = name.replace("\\", "/")
+    if re.match(r"^[A-Za-z]:/", norm):
+        return True
+    if norm.startswith("/") or norm.startswith("//"):
+        return True
+    return any(part == ".." for part in norm.split("/") if part)
+
+
+def _read_index_blob(root: Path, rel: str) -> bytes | None:
+    result = subprocess.run(
+        ["git", "-C", str(root), "show", f":{rel}"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout
 
 
 def _git_files(root: Path) -> list[str]:
@@ -88,7 +120,7 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
         for rule, pattern in RULES:
             for match in pattern.finditer(line):
                 value = match.group(0)
-                if PLACEHOLDER.search(value):
+                if _is_placeholder(value):
                     continue
                 findings.append({
                     "path": path,
@@ -99,21 +131,21 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
     return findings
 
 
-def _archive_members(path: Path, data: bytes) -> list[str]:
+def _archive_members(data: bytes) -> list[str]:
     names: list[str] = []
-    if zipfile.is_zipfile(path) or data[:4] == b"PK\x03\x04":
+    if data[:4] == b"PK\x03\x04":
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             names = archive.namelist()
-    elif tarfile.is_tarfile(path):
+    else:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
             names = [member.name for member in archive.getmembers()]
     return names
 
 
-def _scan_archive(rel: str, path: Path, data: bytes) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _scan_archive(rel: str, data: bytes) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     try:
-        names = _archive_members(path, data)
+        names = _archive_members(data)
     except (zipfile.BadZipFile, tarfile.TarError, OSError) as exc:
         findings.append({
             "path": rel,
@@ -127,10 +159,8 @@ def _scan_archive(rel: str, path: Path, data: bytes) -> tuple[list[dict[str, Any
             "error": type(exc).__name__,
             "extracted": False,
         }
-    inspectable = (
-        zipfile.is_zipfile(path) or data[:4] == b"PK\x03\x04" or tarfile.is_tarfile(path)
-    )
-    if not inspectable:
+    inspectable = data[:4] == b"PK\x03\x04" or data[:5] in {b"ustar"} or data[:2] == b"\x1f\x8b"
+    if not names and not inspectable:
         findings.append({
             "path": rel,
             "line": 0,
@@ -143,10 +173,7 @@ def _scan_archive(rel: str, path: Path, data: bytes) -> tuple[list[dict[str, Any
             "error": "no-supported-archive-parser",
             "extracted": False,
         }
-    unsafe = [
-        name for name in names
-        if name.startswith("/") or name.startswith("\\") or ".." in Path(name).parts
-    ]
+    unsafe = [name for name in names if _archive_path_unsafe(name)]
     for name in unsafe:
         findings.append({
             "path": rel,
@@ -177,17 +204,22 @@ def scan_tree(root: Path) -> dict[str, Any]:
         "binaries": [],
         "archives": [],
         "engine": "bcir-scan_secrets",
+        "source": "index",
     }
     if not files:
         report["state"] = "INVALID/VACUOUS"
         report["error"] = "git ls-files returned no paths"
         return report
     for rel in files:
-        path = root / rel
-        if not path.is_file():
-            report["skipped_missing"] += 1
+        data = _read_index_blob(root, rel)
+        if data is None:
+            report["findings"].append({
+                "path": rel,
+                "line": 0,
+                "rule": "index-unreadable",
+                "fingerprint": _fingerprint(rel),
+            })
             continue
-        data = path.read_bytes()
         kind = _kind_for(rel, data)
         if kind == "binary":
             report["binary_files"] += 1
@@ -195,7 +227,7 @@ def scan_tree(root: Path) -> dict[str, Any]:
             continue
         if kind == "archive":
             report["archive_files"] += 1
-            extra, meta = _scan_archive(rel, path, data)
+            extra, meta = _scan_archive(rel, data)
             report["archives"].append(meta)
             report["findings"].extend(extra)
             continue
