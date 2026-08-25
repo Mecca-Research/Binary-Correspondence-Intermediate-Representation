@@ -88,7 +88,7 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
         for rule, pattern in RULES:
             for match in pattern.finditer(line):
                 value = match.group(0)
-                if PLACEHOLDER.search(value) or PLACEHOLDER.search(line):
+                if PLACEHOLDER.search(value):
                     continue
                 findings.append({
                     "path": path,
@@ -99,6 +99,13 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
     return findings
 
 
+def _archive_path_unsafe(name: str) -> bool:
+    normalized = name.replace("\\", "/")
+    if normalized.startswith("/") or normalized.startswith("//"):
+        return True
+    return ".." in Path(normalized).parts
+
+
 def _archive_members(path: Path, data: bytes) -> list[str]:
     names: list[str] = []
     if zipfile.is_zipfile(path) or data[:4] == b"PK\x03\x04":
@@ -107,6 +114,10 @@ def _archive_members(path: Path, data: bytes) -> list[str]:
     elif tarfile.is_tarfile(path):
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
             names = [member.name for member in archive.getmembers()]
+    else:
+        raise zipfile.BadZipFile("unrecognized archive")
+    if len(names) > ARCHIVE_MEMBER_CAP:
+        raise ValueError("archive-member-cap")
     return names
 
 
@@ -114,12 +125,13 @@ def _scan_archive(rel: str, path: Path, data: bytes) -> tuple[list[dict[str, Any
     findings: list[dict[str, Any]] = []
     try:
         names = _archive_members(path, data)
-    except (zipfile.BadZipFile, tarfile.TarError, OSError) as exc:
+    except (zipfile.BadZipFile, tarfile.TarError, OSError, ValueError) as exc:
+        findings.append({
+            "path": rel, "line": 0, "rule": "archive-unreadable",
+            "fingerprint": _fingerprint(type(exc).__name__),
+        })
         return findings, {"path": rel, "status": "unreadable", "error": type(exc).__name__}
-    unsafe = [
-        name for name in names
-        if name.startswith("/") or name.startswith("\\") or ".." in Path(name).parts
-    ]
+    unsafe = [name for name in names if _archive_path_unsafe(name)]
     for name in unsafe:
         findings.append({
             "path": rel,
@@ -174,11 +186,11 @@ def scan_tree(root: Path) -> dict[str, Any]:
             continue
         report["text_files"] += 1
         report["findings"].extend(_scan_text(rel, data.decode("utf-8", "replace")))
-    if report["text_files"] == 0:
+    if report["findings"]:
+        report["state"] = "FAIL"
+    elif report["text_files"] == 0:
         report["state"] = "INVALID/VACUOUS"
         report["error"] = "no text files were scanned"
-    elif report["findings"]:
-        report["state"] = "FAIL"
     return report
 
 

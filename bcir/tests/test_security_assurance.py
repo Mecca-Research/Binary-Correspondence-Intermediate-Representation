@@ -145,3 +145,115 @@ def test_independent_review_is_fail_closed() -> None:
     assert report["cases"]["empty-output"] == "FAIL"
     assert report["cases"]["valid-json"] == "PASS"
     assert report["state"] == "PASS"
+
+
+def test_placeholder_on_the_line_does_not_hide_a_real_token() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        planted = "ghp_" + ("ab" * 18)
+        (root / "leak.py").write_text(
+            'token = "' + planted + '"  # example configuration\n', encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "leak.py"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "github-token" for item in report["findings"])
+
+
+def test_unreadable_archive_fails_the_scan() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        (root / "bad.zip").write_bytes(b"not-a-zip")
+        subprocess.run(["git", "add", "ok.py", "bad.zip"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "archive-unreadable" for item in report["findings"])
+
+
+def test_archive_scan_normalizes_windows_separators() -> None:
+    import io
+    import zipfile
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            archive.writestr("..\\escape.txt", "nope")
+        (root / "win.zip").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "win.zip"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])
+
+
+def test_archive_member_cap_is_enforced() -> None:
+    import io
+    import zipfile
+    from tools.security import scan_secrets as secrets
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            archive.writestr("a.txt", "1")
+            archive.writestr("b.txt", "2")
+        (root / "many.zip").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "many.zip"], cwd=root, check=True)
+        old = secrets.ARCHIVE_MEMBER_CAP
+        secrets.ARCHIVE_MEMBER_CAP = 1
+        try:
+            report = scan_tree(root)
+        finally:
+            secrets.ARCHIVE_MEMBER_CAP = old
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "archive-unreadable" for item in report["findings"])
+
+
+def test_boundary_audit_ignores_unrelated_run_methods() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "bcir").mkdir()
+        (root / "tools").mkdir()
+        (root / "bcir" / "job.py").write_text(
+            "class Job:\n"
+            "    def run(self, cmd):\n"
+            "        return cmd\n"
+            "Job().run('safe')\n",
+            encoding="utf-8",
+        )
+        report = audit_boundaries(root)
+        assert report["findings"] == []
+
+
+def test_decoder_seed_rejection_is_a_finding() -> None:
+    from tools.security.run_decoder_campaign import _probe
+    import random
+
+    def reject(_data: bytes) -> None:
+        raise ValueError("seed")
+
+    row = _probe("streampack", reject, b"seed", random.Random(0), mutations=2)
+    assert row["state"] == "FAIL"
+    assert any(item["kind"] == "seed-rejected" for item in row["findings"])
+
+
+def test_r5_text_check_is_per_claim() -> None:
+    from tools.security.run_malformed_differential import parse_mlir_text
+    legal = (
+        "bcir.module @ok {\n"
+        "  bcir.claim @a attributes { lane = #bcir.lane<a>, "
+        "hazard = #bcir.hazard<atomic> } { }\n"
+        "  bcir.claim @b attributes { lane = #bcir.lane<u>, "
+        "hazard = #bcir.hazard<unique> } { }\n"
+        "}\n"
+    )
+    assert parse_mlir_text(legal)["rejected"] is False
+    isolated = (
+        "bcir.module @r5 {\n"
+        "  bcir.claim @c attributes { lane = #bcir.lane<a>, "
+        "hazard = #bcir.hazard<unique> } { }\n"
+        "}\n"
+    )
+    assert parse_mlir_text(isolated)["reason"] == "r5-atomic-unique"

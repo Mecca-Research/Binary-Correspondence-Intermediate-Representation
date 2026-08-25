@@ -63,8 +63,14 @@ def parse_mlir_text(text: str) -> dict[str, Any]:
     rids = re.findall(r"\brid\s*=\s*(\d+)", stripped)
     if len(rids) != len(set(rids)):
         return {"state": "PASS", "rejected": True, "reason": "duplicate-rid"}
-    if re.search(r"lane\s*=\s*#bcir\.lane<a>.*hazard\s*=\s*#bcir\.hazard<unique>", stripped, re.S):
-        return {"state": "PASS", "rejected": True, "reason": "r5-atomic-unique"}
+    starts = [match.start() for match in re.finditer(r"bcir\.claim\b", stripped)]
+    starts.append(len(stripped))
+    for index in range(len(starts) - 1):
+        block = stripped[starts[index]:starts[index + 1]]
+        if re.search(r"lane\s*=\s*#bcir\.lane<a>", block) and re.search(
+            r"hazard\s*=\s*#bcir\.hazard<unique>", block
+        ):
+            return {"state": "PASS", "rejected": True, "reason": "r5-atomic-unique"}
     return {"state": "PASS", "rejected": False, "reason": None}
 
 

@@ -58,6 +58,12 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
                             "path": rel, "line": node.lineno, "rule": "os.system-or-popen",
                         })
                 if name in {"run", "Popen", "check_output", "check_call", "call"}:
+                    if not (
+                        isinstance(func, ast.Attribute)
+                        and isinstance(func.value, ast.Name)
+                        and func.value.id == "subprocess"
+                    ):
+                        continue
                     keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
                     if "shell" in keywords and _is_true(keywords["shell"]):
                         findings.append({
