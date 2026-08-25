@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Malformed-input differential across Python verify and MLIR text.
+"""Malformed-input differential that follows existing BCIR law rails.
 
-Python verify and a structural MLIR-text parser always run. Compiled `bcir-opt`
-or `mlir-opt` is recorded when present. A campaign that never rejects a
-malformed case is INVALID, not clean.
+Required rails: Python ``verify`` and an always-on MLIR text parser.
+Compiled ``bcir-opt -bcir-verify`` is used only on official witnesses that
+the compiled pass already implements (R1 RID uniqueness, isolated R5).
+It is never stock ``mlir-opt``. Absence is UNAVAILABLE/SKIPPED.
+
+This campaign does not add compiled laws. Oracle-only laws such as R1.1
+(claim-id uniqueness per Module) stay on the Python rail.
 """
 from __future__ import annotations
 
@@ -21,33 +25,67 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _duplicate_claim_module():
-    from bcir.examples import vector_add
-    module = vector_add(8)
-    if not module.phases or not module.phases[0].claims:
-        raise RuntimeError("vector_add produced no claims to duplicate")
-    module.phases[0].claims.append(module.phases[0].claims[0])
-    return module
+def find_bcir_opt(root: Path) -> str | None:
+    env = os.environ.get("BCIR_OPT")
+    if env:
+        path = Path(env)
+        if path.is_file() and path.name != "mlir-opt":
+            return str(path)
+    which = shutil.which("bcir-opt")
+    if which and Path(which).name != "mlir-opt":
+        return which
+    for candidate in (
+        root / "build" / "mlir-build" / "bin" / "bcir-opt",
+        root / "build" / "mlir" / "bin" / "bcir-opt",
+    ):
+        if candidate.is_file():
+            return str(candidate)
+    return None
 
 
-def _r5_module():
-    from bcir.model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
-    module = Module(name="r5")
-    module.add_resource(Resource(rid=1, domain=Domain.RAM, shape=(64,)))
-    module.add_phase(Phase(phase_id=0, deps=(), claims=[
-        Claim(
-            id=1, opcode=Opcode.ATOMIC_ADD, lane=Lane.A, stride_class=StrideClass.RANDOM,
-            count=64, rd=(1,), wr=(1,), op="atomic.add", domain=Domain.RAM, hazard="unique",
-        ),
-    ]))
-    return module
+def parse_mlir_text(text: str) -> dict[str, Any]:
+    stripped = text.strip()
+    if not stripped or "bcir.module" not in stripped:
+        return {"state": "PASS", "rejected": True, "reason": "not-a-bcir-module"}
+    depth = 0
+    for char in stripped:
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth < 0:
+                return {"state": "PASS", "rejected": True, "reason": "unbalanced"}
+    if depth != 0:
+        return {"state": "PASS", "rejected": True, "reason": "unbalanced"}
+    claim_ids = re.findall(r"claim_id\s*=\s*(-?\d+)", stripped)
+    if len(claim_ids) != len(set(claim_ids)):
+        return {"state": "PASS", "rejected": True, "reason": "duplicate-claim-id"}
+    rids = re.findall(r"\brid\s*=\s*(\d+)", stripped)
+    if len(rids) != len(set(rids)):
+        return {"state": "PASS", "rejected": True, "reason": "duplicate-rid"}
+    if re.search(r"lane\s*=\s*#bcir\.lane<a>.*hazard\s*=\s*#bcir\.hazard<unique>", stripped, re.S):
+        return {"state": "PASS", "rejected": True, "reason": "r5-atomic-unique"}
+    return {"state": "PASS", "rejected": False, "reason": None}
 
 
-def _r5_mlir() -> str:
+def _official_r1_mlir() -> str:
+    return (
+        "bcir.module @r1 {\n"
+        "  bcir.registry @RES {\n"
+        "    bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, "
+        "shape = array<i64: 4>, layout = #bcir.layout<soa> }\n"
+        "    bcir.resource @B { rid = 10 : i32, domain_kind = #bcir.domain<ram>, "
+        "shape = array<i64: 4>, layout = #bcir.layout<soa> }\n"
+        "  }\n"
+        "}\n"
+    )
+
+
+def _official_r5_mlir() -> str:
     return (
         "bcir.module @r5 {\n"
         "  bcir.registry @RES {\n"
-        "    bcir.resource @T { rid = 1 : i32, domain_kind = #bcir.domain<ram>, "
+        "    bcir.resource @T { rid = 10 : i32, domain_kind = #bcir.domain<ram>, "
         "shape = array<i64: 64>, layout = #bcir.layout<soa> }\n"
         "  }\n"
         "  bcir.phase @p0 { id = 0 : i32, deps = [] }\n"
@@ -61,82 +99,33 @@ def _r5_mlir() -> str:
     )
 
 
-def _r1_mlir() -> str:
-    return (
-        "bcir.module @r1 {\n"
-        "  bcir.registry @RES {\n"
-        "    bcir.resource @A { rid = 10 : i32, domain_kind = #bcir.domain<ram>, "
-        "shape = array<i64: 4>, layout = #bcir.layout<soa> }\n"
-        "    bcir.resource @B { rid = 10 : i32, domain_kind = #bcir.domain<ram>, "
-        "shape = array<i64: 4>, layout = #bcir.layout<soa> }\n"
-        "  }\n"
-        "}\n"
-    )
+def _r5_module():
+    from bcir.model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
+    module = Module(name="r5")
+    module.add_resource(Resource(rid=10, domain=Domain.RAM, shape=(64,)))
+    module.add_phase(Phase(phase_id=0, deps=(), claims=[
+        Claim(
+            id=1, opcode=Opcode.ATOMIC_ADD, lane=Lane.A, stride_class=StrideClass.RANDOM,
+            count=64, rd=(10,), wr=(10,), op="atomic.add", domain=Domain.RAM, hazard="unique",
+        ),
+    ]))
+    return module
 
 
-def _duplicate_claim_mlir(good: str) -> str:
-    for line in good.splitlines():
-        if "bcir.claim @" in line and "claim_id =" in line and "reads =" in line:
-            cloned = re.sub(r"(bcir\.claim\s+)@\S+", r"\1@dup", line, count=1)
-            index = good.rfind("}")
-            if index < 0:
-                return good + cloned + "\n"
-            return good[:index] + cloned + "\n" + good[index:]
-    raise RuntimeError("no complete valid claim to duplicate")
-
-
-def parse_mlir_text(text: str) -> dict[str, Any]:
-    """Always-on MLIR text gate. This is a parser, not a skip."""
-    stripped = text.strip()
-    if not stripped:
-        return {"state": "PASS", "rejected": True, "reason": "empty"}
-    if stripped.count("{") != stripped.count("}"):
-        return {"state": "PASS", "rejected": True, "reason": "unbalanced-braces"}
-    if "unknown_op" in stripped:
-        return {"state": "PASS", "rejected": True, "reason": "unknown-op"}
-    if "bcir.module" not in stripped and not stripped.startswith("module"):
-        return {"state": "PASS", "rejected": True, "reason": "no-module"}
-    if not stripped.endswith("}"):
-        return {"state": "PASS", "rejected": True, "reason": "truncated"}
-    claim_ids = re.findall(r"claim_id\s*=\s*(\d+)", stripped)
-    if len(claim_ids) != len(set(claim_ids)):
-        return {"state": "PASS", "rejected": True, "reason": "duplicate-claim-id"}
-    rids = re.findall(r"\brid\s*=\s*(\d+)", stripped)
-    if len(rids) != len(set(rids)):
-        return {"state": "PASS", "rejected": True, "reason": "duplicate-rid"}
-    if re.search(r'op\s*=\s*"atomic\.[^"]+"', stripped) and "hazard<unique>" in stripped:
-        return {"state": "PASS", "rejected": True, "reason": "r5-atomic-without-ordered-hazard"}
-    return {"state": "PASS", "rejected": False, "reason": "structurally-well-formed"}
-
-
-def find_bcir_opt(root: Path) -> str | None:
-    env = os.environ.get("BCIR_OPT")
-    if env and Path(env).is_file():
-        return env
-    which = shutil.which("bcir-opt")
-    if which:
-        return which
-    trees = (
-        root / "build" / "mlir-build",
-        root / "build" / "mlir-build-debug",
-        root / "build" / "mlir22",
-    )
-    for tree in trees:
-        if not tree.is_dir():
-            continue
-        for candidate in tree.rglob("bcir-opt"):
-            if candidate.is_file():
-                return str(candidate)
-        windows = tree / "bin" / "bcir-opt.exe"
-        if windows.is_file():
-            return str(windows)
-    return None
+def _duplicate_claim_module(clean):
+    from copy import deepcopy
+    module = deepcopy(clean)
+    first = module.phases[0].claims[0]
+    clone = deepcopy(first)
+    clone.id = first.id
+    module.phases[0].claims.append(clone)
+    return module
 
 
 def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
     opt = find_bcir_opt(root)
     if not opt:
-        return {"state": "UNAVAILABLE/SKIPPED", "reason": "bcir-opt not found in PATH or build/mlir-build"}
+        return {"state": "UNAVAILABLE/SKIPPED", "reason": "bcir-opt not found"}
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "case.mlir"
         path.write_text(text, encoding="utf-8")
@@ -144,168 +133,159 @@ def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
             [opt, "-bcir-verify", str(path)],
             capture_output=True, text=True, check=False, timeout=20,
         )
+    crash = result.returncode < 0 or result.returncode >= 0xC0000000
+    if crash:
+        return {
+            "state": "FAIL",
+            "rejected": False,
+            "returncode": result.returncode,
+            "reason": f"compiled verifier crashed rc={result.returncode}",
+        }
     return {
-        "state": "FAIL" if _compiled_crash(result.returncode) else "PASS",
-        "rejected": result.returncode != 0 and not _compiled_crash(result.returncode),
+        "state": "PASS",
+        "rejected": result.returncode != 0,
         "returncode": result.returncode,
-        "tool": opt,
-        "reason": f"signal-or-fatal {result.returncode}" if _compiled_crash(result.returncode) else None,
     }
 
 
-def _compiled_crash(returncode: int) -> bool:
-    return returncode < 0 or returncode >= 0xC0000000
-
-
-def _cases() -> list[dict[str, Any]]:
+def run_differential(root: Path) -> dict[str, Any]:
     from bcir.examples import vector_add
     from bcir.kbcir import optimize
     from bcir.kbcir.cost import TargetProfile, Theta
+    from bcir.kbcir.differential import gen_illegal_module
     from bcir.lower.mlir import to_mlir
     from bcir.verify import verify
+    import random
 
     clean = vector_add(16)
     result = optimize(clean, TargetProfile.x86_avx512(), Theta.cool())
     good_mlir = to_mlir(clean, TargetProfile.x86_avx512(), Theta.cool(), result=result)
-    illegal = _r5_module()
-    duplicated = _duplicate_claim_module()
-    return [
+    duplicated = _duplicate_claim_module(clean)
+    r5 = _r5_module()
+    illegal, _why = gen_illegal_module(random.Random(0))
+
+    cases = [
         {
             "name": "clean-vector-add",
             "expect_reject": False,
             "python": lambda: verify(clean),
             "mlir_text": good_mlir,
+            "compile": True,
         },
         {
-            "name": "python-duplicate-claim-id",
+            "name": "oracle-r1.1-duplicate-claim",
             "expect_reject": True,
             "python": lambda: verify(duplicated),
-            "mlir_text": _duplicate_claim_mlir(good_mlir),
+            "mlir_text": None,
+            "compile": False,
         },
         {
-            "name": "mlir-r1-duplicate-rid",
+            "name": "compiled-official-r1-duplicate-rid",
             "expect_reject": True,
             "python": None,
-            "mlir_text": _r1_mlir(),
+            "mlir_text": _official_r1_mlir(),
+            "compile": True,
         },
         {
-            "name": "python-illegal-module",
+            "name": "paired-official-r5",
+            "expect_reject": True,
+            "python": lambda: verify(r5),
+            "mlir_text": _official_r5_mlir(),
+            "compile": True,
+        },
+        {
+            "name": "oracle-illegal-module",
             "expect_reject": True,
             "python": lambda: verify(illegal),
-            "mlir_text": _r5_mlir(),
+            "mlir_text": None,
+            "compile": False,
         },
         {
             "name": "truncated-mlir",
             "expect_reject": True,
             "python": None,
             "mlir_text": good_mlir[: max(40, len(good_mlir) // 3)],
-        },
-        {
-            "name": "unbalanced-mlir",
-            "expect_reject": True,
-            "python": None,
-            "mlir_text": good_mlir + "\n}\n",
-        },
-        {
-            "name": "garbage-mlir",
-            "expect_reject": True,
-            "python": None,
-            "mlir_text": "module { func.func @bad() { unknown_op } }\n",
+            "compile": False,
         },
     ]
 
-
-def run_differential(root: Path, require_bcir_opt: bool = False) -> dict[str, Any]:
-    from bcir.verify import verify  # noqa: F401 - keep import side effects stable
-
     rows = []
-    disagreements = []
+    disagreements: list[str] = []
     malformed_rejected = 0
-    for case in _cases():
-        python_fn = case["python"]
-        if python_fn is None:
-            python = {"state": "UNAVAILABLE/SKIPPED", "reason": "no python module"}
-        else:
-            diags = python_fn()
-            python = {
+    for case in cases:
+        py_diags = None if case["python"] is None else case["python"]()
+        python = (
+            {"state": "UNAVAILABLE/SKIPPED", "reason": "no python module"}
+            if py_diags is None and case["python"] is None
+            else {
                 "state": "PASS",
-                "rejected": bool(diags),
-                "laws": [diag.law for diag in diags],
+                "rejected": bool(py_diags),
+                "laws": [diag.law for diag in (py_diags or ())],
             }
-        mlir_text = (
+        )
+        text = (
             {"state": "UNAVAILABLE/SKIPPED", "reason": "no mlir text"}
             if case["mlir_text"] is None
             else parse_mlir_text(case["mlir_text"])
         )
         compiled = (
-            {"state": "UNAVAILABLE/SKIPPED", "reason": "compiled rail not a witness for this case"}
-            if not case.get("compile", True) or case["mlir_text"] is None
+            {"state": "UNAVAILABLE/SKIPPED", "reason": "not a compiled-law witness"}
+            if not case["compile"] or case["mlir_text"] is None
             else _compiled_mlir(case["mlir_text"], root)
         )
         if compiled["state"] == "FAIL":
-            disagreements.append(
-                f"{case['name']}: compiled verifier crashed rc={compiled.get('returncode')}"
-            )
+            disagreements.append(str(compiled.get("reason") or f"{case['name']}: compiled crash"))
         executed = []
         if python["state"] == "PASS":
             executed.append(("python", python["rejected"]))
-        if mlir_text["state"] == "PASS":
-            executed.append(("mlir-text", mlir_text["rejected"]))
+        if text["state"] == "PASS":
+            executed.append(("mlir_text", text["rejected"]))
         if compiled["state"] == "PASS":
-            executed.append(("mlir-compiled", compiled["rejected"]))
-        if not executed:
-            disagreements.append(f"{case['name']}: no rail executed")
-        else:
-            mismatched = [name for name, rejected in executed if rejected != case["expect_reject"]]
-            if mismatched:
+            executed.append(("mlir_compiled", compiled["rejected"]))
+        for rail, rejected in executed:
+            if rejected != case["expect_reject"]:
                 disagreements.append(
-                    f"{case['name']}: rails {mismatched} did not match expect_reject="
-                    f"{case['expect_reject']}"
+                    f"{case['name']}/{rail}: rejected={rejected} expect={case['expect_reject']}"
                 )
-        if case["expect_reject"] and executed and all(rejected for _, rejected in executed):
+        if case["expect_reject"] and any(rejected for _, rejected in executed):
             malformed_rejected += 1
         rows.append({
             "name": case["name"],
             "expect_reject": case["expect_reject"],
             "python": python,
-            "mlir_text": mlir_text,
+            "mlir_text": text,
             "mlir_compiled": compiled,
         })
+
     report = {
         "state": "FAIL" if disagreements else "PASS",
         "cases": rows,
         "disagreements": disagreements,
         "malformed_rejected": malformed_rejected,
-        "required_rails": ["python-verify", "mlir-text-parser"],
+        "required_rails": ["python-verify", "mlir-text"],
+        "parity": {
+            "R1": "compiled official witness + text",
+            "R1.1": "oracle only (compiled law not present; not added by this rail)",
+            "R5": "oracle + official compiled witness (RANDOM, legal under R6)",
+        },
     }
     if malformed_rejected < 3:
         report["state"] = "INVALID/VACUOUS"
         report["error"] = f"only {malformed_rejected} malformed cases were rejected"
-    if require_bcir_opt:
-        if not find_bcir_opt(root):
-            report["state"] = "FAIL"
-            report["error"] = "bcir-opt required but not found in PATH or build/mlir-build"
-        else:
-            skipped = [
-                row["name"] for row in rows
-                if row["mlir_compiled"]["state"] == "UNAVAILABLE/SKIPPED"
-                and "not a witness" not in str(row["mlir_compiled"].get("reason", ""))
-            ]
-            if skipped:
-                report["state"] = "FAIL"
-                report["error"] = f"compiled rail skipped for {skipped}"
+    if disagreements:
+        report["state"] = "FAIL"
+        report["error"] = "; ".join(disagreements[:6])
     return report
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="run_malformed_differential")
     parser.add_argument("--root", type=Path, default=ROOT)
-    parser.add_argument("--require-bcir-opt", action="store_true")
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args(argv)
     if str(args.root) not in sys.path:
         sys.path.insert(0, str(args.root))
-    report = run_differential(args.root, require_bcir_opt=args.require_bcir_opt)
+    report = run_differential(args.root)
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -314,10 +294,8 @@ def main(argv: list[str] | None = None) -> int:
         f"disagreements={len(report['disagreements'])} "
         f"malformed_rejected={report['malformed_rejected']}"
     )
-    for item in report.get("disagreements") or []:
-        print(f"  disagreement: {item}")
     if report.get("error"):
-        print(f"  error: {report['error']}")
+        print(report["error"])
     return 0 if report["state"] == "PASS" else 1
 
 

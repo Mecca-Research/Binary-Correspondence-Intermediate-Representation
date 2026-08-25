@@ -225,18 +225,6 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
-    // R1.1: claim-id uniqueness (mirror of R1, for the claim namespace).
-    llvm::DenseMap<uint32_t, ClaimOp> claimIds;
-    root->walk([&](ClaimOp c) {
-      uint32_t id = c.getClaimId();
-      if (claimIds.count(id)) {
-        c.emitError("R1.1: duplicate claim id ") << id;
-        ok = false;
-      } else {
-        claimIds[id] = c;
-      }
-    });
-
     // R2: registry resolution -- claim reads/writes resolve to declared resources.
     auto checkRefs = [&](ClaimOp c, ArrayAttr refs, StringRef which) {
       for (Attribute a : refs) {

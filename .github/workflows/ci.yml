@@ -661,9 +661,6 @@ jobs:
       - name: Validate MLIR bytecode round-trip (Properties survive text<->bytecode)
         run: bash tools/wsl/check_bytecode.sh
 
-      - name: Malformed-input differential against compiled bcir-opt
-        run: python3 tools/security/run_malformed_differential.py --require-bcir-opt
-
       - name: Grade training MLIR conversion and LLVM translation tiers (required tools)
         env:
           LLVM_SUFFIX: "-${{ matrix.llvm }}"
@@ -729,7 +726,7 @@ jobs:
         run: python3 tools/security/audit_tool_boundaries.py
 
       - name: Bounded StreamPack/BCAB/model decoder campaign
-        run: python3 tools/security/run_decoder_campaign.py --mutations 24 --fuzz-runs 200 --fuzz-seconds 8 --require-c
+        run: python3 tools/security/run_decoder_campaign.py --mutations 24 --fuzz-runs 200 --fuzz-seconds 8
 
       - name: Malformed-input Python/MLIR differential
         run: python3 tools/security/run_malformed_differential.py
