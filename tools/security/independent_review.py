@@ -111,7 +111,10 @@ def env_command(raw: str, posix: bool | None = None) -> list[str] | dict[str, An
     is a structured FAIL report, never a ValueError traceback.
 
     On Windows the non-POSIX rules apply so backslashed executable paths
-    survive; surrounding quotes are stripped per token there."""
+    survive; surrounding quotes are stripped per token there. The supported
+    Windows subset quotes WHOLE tokens ("--note=two words" or --note "two
+    words") — mid-token quotes such as --note="two words" are not re-joined,
+    and a mis-split command fails closed as a structured reviewer error."""
     if not raw:
         return []
     if posix is None:

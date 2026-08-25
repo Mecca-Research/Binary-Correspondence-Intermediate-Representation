@@ -66,7 +66,9 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
         scanned += 1
         rel = str(path.relative_to(root)).replace("\\", "/")
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            # Bytes, not text: ast.parse honors a PEP 263 encoding cookie, so
+            # a valid latin-1 source is audited rather than falsely rejected.
+            tree = ast.parse(path.read_bytes(), filename=str(path))
         except (SyntaxError, ValueError) as exc:
             # An unparseable file is uninspectable; fail closed with a finding
             # rather than escaping as a traceback.

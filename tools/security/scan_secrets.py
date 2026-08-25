@@ -120,6 +120,8 @@ def _archive_path_unsafe(name: str) -> bool:
     normalized = name.replace("\\", "/")
     if normalized.startswith("/") or normalized.startswith("//"):
         return True
+    if re.match(r"^[A-Za-z]:", normalized):
+        return True  # Windows drive-qualified absolute (C:\escape.txt)
     return ".." in Path(normalized).parts
 
 

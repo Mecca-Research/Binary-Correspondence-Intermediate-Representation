@@ -57,20 +57,27 @@ def parse_mlir_text(text: str) -> dict[str, Any]:
                 return {"state": "PASS", "rejected": True, "reason": "unbalanced"}
     if depth != 0:
         return {"state": "PASS", "rejected": True, "reason": "unbalanced"}
-    claim_ids = re.findall(r"claim_id\s*=\s*(-?\d+)", stripped)
-    if len(claim_ids) != len(set(claim_ids)):
-        return {"state": "PASS", "rejected": True, "reason": "duplicate-claim-id"}
-    rids = re.findall(r"\brid\s*=\s*(\d+)", stripped)
-    if len(rids) != len(set(rids)):
-        return {"state": "PASS", "rejected": True, "reason": "duplicate-rid"}
-    starts = [match.start() for match in re.finditer(r"bcir\.claim\b", stripped)]
-    starts.append(len(stripped))
-    for index in range(len(starts) - 1):
-        block = stripped[starts[index]:starts[index + 1]]
-        if re.search(r"lane\s*=\s*#bcir\.lane<a>", block) and re.search(
-            r"hazard\s*=\s*#bcir\.hazard<unique>", block
-        ):
-            return {"state": "PASS", "rejected": True, "reason": "r5-atomic-unique"}
+    # IDs are unique PER MODULE (the oracle's seen sets are per Module), so a
+    # file holding several independent bcir.module operations must not be
+    # rejected for cross-module reuse the conformance oracle accepts.
+    module_starts = [m.start() for m in re.finditer(r"bcir\.module\b", stripped)]
+    module_starts.append(len(stripped))
+    for index in range(len(module_starts) - 1):
+        body = stripped[module_starts[index]:module_starts[index + 1]]
+        claim_ids = re.findall(r"claim_id\s*=\s*(-?\d+)", body)
+        if len(claim_ids) != len(set(claim_ids)):
+            return {"state": "PASS", "rejected": True, "reason": "duplicate-claim-id"}
+        rids = re.findall(r"\brid\s*=\s*(\d+)", body)
+        if len(rids) != len(set(rids)):
+            return {"state": "PASS", "rejected": True, "reason": "duplicate-rid"}
+        starts = [match.start() for match in re.finditer(r"bcir\.claim\b", body)]
+        starts.append(len(body))
+        for claim_index in range(len(starts) - 1):
+            block = body[starts[claim_index]:starts[claim_index + 1]]
+            if re.search(r"lane\s*=\s*#bcir\.lane<a>", block) and re.search(
+                r"hazard\s*=\s*#bcir\.hazard<unique>", block
+            ):
+                return {"state": "PASS", "rejected": True, "reason": "r5-atomic-unique"}
     return {"state": "PASS", "rejected": False, "reason": None}
 
 

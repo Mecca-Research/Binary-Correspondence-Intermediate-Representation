@@ -185,10 +185,12 @@ def test_archive_scan_normalizes_windows_separators() -> None:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as archive:
             archive.writestr("..\\escape.txt", "nope")
+            archive.writestr("C:\\drive-escape.txt", "nope")
         (root / "win.zip").write_bytes(buf.getvalue())
         subprocess.run(["git", "add", "win.zip"], cwd=root, check=True)
         report = scan_tree(root)
-        assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])
+        traversals = [i for i in report["findings"] if i["rule"] == "archive-path-traversal"]
+        assert len(traversals) == 2
 
 
 def test_archive_member_cap_is_enforced() -> None:
@@ -422,6 +424,40 @@ def test_boundary_audit_covers_tracked_claude_scripts() -> None:
         assert "subprocess-shell-true" in rules
 
 
+def test_boundary_audit_honors_encoding_declarations() -> None:
+    """A valid PEP 263 latin-1 source must be audited, not falsely rejected —
+    and an actually unparseable file still fails closed."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "tools").mkdir()
+        (root / "tools" / "legacy.py").write_bytes(
+            b"# -*- coding: latin-1 -*-\n# caf\xe9\nx = 1\n"
+        )
+        report = audit_boundaries(root)
+        assert report["findings"] == []
+        (root / "tools" / "junk.py").write_bytes(b"\x00\x01 not python")
+        report = audit_boundaries(root)
+        assert any(item["rule"] == "python-parse-error" for item in report["findings"])
+
+
+def test_mlir_text_duplicate_checks_are_per_module() -> None:
+    """IDs are unique per Module in the oracle; two independent modules
+    reusing an ID must not be rejected by the text rail."""
+    from tools.security.run_malformed_differential import parse_mlir_text
+    two_modules = (
+        "bcir.module @a { bcir.claim @c attributes { claim_id = 1 : i32 } { } }\n"
+        "bcir.module @b { bcir.claim @c attributes { claim_id = 1 : i32 } { } }\n"
+    )
+    assert parse_mlir_text(two_modules)["rejected"] is False
+    one_module = (
+        "bcir.module @a {\n"
+        "  bcir.claim @c attributes { claim_id = 1 : i32 } { }\n"
+        "  bcir.claim @d attributes { claim_id = 1 : i32 } { }\n"
+        "}\n"
+    )
+    assert parse_mlir_text(one_module)["reason"] == "duplicate-claim-id"
+
+
 def test_dependency_audit_rejects_dynamic_dependencies() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -472,6 +508,16 @@ def test_dependency_fallback_parser_survives_hostile_toml_shapes() -> None:
         ']\n'
     )
     assert _fallback_parse(apostrophe)["runtime"] == ["a>=1", "b==2"]
+    # A quoted key is one literal segment; its dots are not path separators.
+    quoted_group = (
+        '[project.optional-dependencies]\n'
+        '"docs.build" = ["sphinx"]\n'
+    )
+    assert _fallback_parse(quoted_group)["optional"] == {"docs.build": ["sphinx"]}
+    # An unquoted dotted key under optional-dependencies nests tables PEP 621
+    # forbids for groups — the reader refuses rather than misattributes.
+    nested_group = '[project.optional-dependencies]\ndocs.build = ["sphinx"]\n'
+    assert _fallback_parse(nested_group)["_unasserted"] is True
     # A dependency-shaped key the reader cannot attribute must fail closed,
     # not vanish into an empty (matching) declared set.
     poetry = '[tool.poetry]\ndependencies = ["c"]\n'

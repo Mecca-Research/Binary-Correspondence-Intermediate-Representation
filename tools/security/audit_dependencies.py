@@ -64,20 +64,26 @@ def _fallback_parse(text: str) -> dict[str, Any]:
     passing a file it may have misread; a parity test pins the reader against
     tomllib where tomllib exists.
     """
-    arrays: dict[str, list[str]] = {}
-    section = ""
-    pending: str | None = None
+    arrays: dict[tuple[str, ...], list[str]] = {}
+    section: tuple[str, ...] = ()
+    pending: tuple[str, ...] | None = None
     buffer = ""
     unasserted = False
     known = {
-        "project.dependencies", "build-system.requires", "project.dynamic",
+        ("project", "dependencies"),
+        ("build-system", "requires"),
+        ("project", "dynamic"),
     }
+    optional_prefix = ("project", "optional-dependencies")
     for raw_line in text.splitlines():
         stripped = _strip_toml_comment(raw_line).strip()
         if pending is None:
             match = _SECTION.match(stripped)
             if match:
-                section = match.group("name").strip().strip("\"'")
+                section = tuple(
+                    part.strip().strip("\"'")
+                    for part in match.group("name").strip().split(".")
+                )
                 continue
             match = _ARRAY_KEY.match(stripped)
             if not match:
@@ -86,10 +92,16 @@ def _fallback_parse(text: str) -> dict[str, Any]:
                 ):
                     unasserted = True
                 continue
-            key = match.group("key").strip().strip("\"'")
-            full = f"{section}.{key}" if section else key
-            if full not in known and not full.startswith("project.optional-dependencies."):
-                if _SENSITIVE.search(full):
+            raw_key = match.group("key").strip()
+            if raw_key[:1] in "\"'":
+                # A quoted key is one literal segment; its dots are not paths.
+                segments: tuple[str, ...] = (raw_key.strip("\"'"),)
+            else:
+                segments = tuple(part.strip() for part in raw_key.split("."))
+            full = section + segments
+            is_optional = len(full) == 3 and full[:2] == optional_prefix
+            if full not in known and not is_optional:
+                if _SENSITIVE.search(".".join(full)) or full[:2] == optional_prefix:
                     unasserted = True
                 continue
             buffer = match.group("rest")
@@ -104,15 +116,15 @@ def _fallback_parse(text: str) -> dict[str, Any]:
     if pending is not None:
         unasserted = True  # an array never closed; the tail was not read
     optional = {
-        full.rsplit(".", 1)[1]: items
+        full[2]: items
         for full, items in arrays.items()
-        if full.startswith("project.optional-dependencies.")
+        if len(full) == 3 and full[:2] == optional_prefix
     }
     return {
-        "runtime": arrays.get("project.dependencies", []),
-        "build_system": arrays.get("build-system.requires", []),
+        "runtime": arrays.get(("project", "dependencies"), []),
+        "build_system": arrays.get(("build-system", "requires"), []),
         "optional": optional,
-        "dynamic": arrays.get("project.dynamic", []),
+        "dynamic": arrays.get(("project", "dynamic"), []),
         "_unasserted": unasserted,
     }
 
