@@ -29,8 +29,13 @@ DIGEST = os.path.join(ROOT, ".claude", "context", "BCIR_DIGEST.md")
 K_BEGIN, K_END = "<!-- KNOWLEDGE:BEGIN -->", "<!-- KNOWLEDGE:END -->"
 
 
-def sh(cmd: str) -> str:
-    return subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True, text=True).stdout.strip()
+def _top_level_dirs() -> str:
+    result = subprocess.run(
+        ["git", "ls-tree", "-d", "--name-only", "HEAD"],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    names = sorted(n for n in result.stdout.splitlines() if n and not n.startswith("."))
+    return " ".join(f"./{n}" for n in names)
 
 
 def doc_map() -> str:
@@ -55,7 +60,7 @@ def mechanical() -> str:
     sp = os.path.join(ROOT, "docs", "STATUS.md")
     if os.path.exists(sp):
         status = "\n".join(l for l in open(sp, encoding="utf-8").read().splitlines() if l.startswith("|"))[:1200]
-    tree = sh("git ls-tree -d --name-only HEAD | grep -v '^\\.' | sed 's#^#./#' | sort | tr '\\n' ' '")
+    tree = _top_level_dirs()
     return (
         "## Generated inventory (do not edit — rebuild with build_digest.py)\n\n"
         f"Top-level: {tree}\n\n"

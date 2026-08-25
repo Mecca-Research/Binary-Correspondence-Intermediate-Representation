@@ -138,13 +138,16 @@ def test_tool_boundaries_scan_is_non_vacuous() -> None:
 
 
 def test_independent_review_is_fail_closed() -> None:
+    """One self_check() run covers every contract case — the harness spawns
+    ~9 child processes and a deliberate 1s timeout, so it runs exactly once."""
     report = review_self_check()
     assert report["fail_closed"] is True
-    assert report["cases"]["missing-command"] == "FAIL"
-    assert report["cases"]["unparseable"] == "FAIL"
-    assert report["cases"]["empty-output"] == "FAIL"
     assert report["cases"]["valid-json"] == "PASS"
-    assert report["state"] == "PASS"
+    for case in ("missing-command", "unparseable", "empty-output",
+                 "missing-executable", "timeout", "duplicate-keys",
+                 "null-summary", "non-utf8", "malformed-env-command"):
+        assert report["cases"][case] == "FAIL", case
+    assert report["state"] == "PASS", report["mismatches"]
 
 
 def test_placeholder_on_the_line_does_not_hide_a_real_token() -> None:
@@ -237,6 +240,244 @@ def test_decoder_seed_rejection_is_a_finding() -> None:
     row = _probe("streampack", reject, b"seed", random.Random(0), mutations=2)
     assert row["state"] == "FAIL"
     assert any(item["kind"] == "seed-rejected" for item in row["findings"])
+
+
+def test_single_file_compression_is_binary_not_archive() -> None:
+    """A legitimate tracked .gz or .7z has no inspection path; it must follow
+    the binary policy instead of failing the scan as an unreadable archive."""
+    import gzip
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        (root / "notes.txt.gz").write_bytes(gzip.compress(b"plain payload"))
+        (root / "blob.7z").write_bytes(b"7z\xbc\xaf\x27\x1c junk")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "PASS", report["findings"]
+        assert report["archive_files"] == 0
+        assert report["binary_files"] == 2
+        # A real tar.gz archive is still inspected as an archive.
+        import io
+        import tarfile
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as archive:
+            info = tarfile.TarInfo("inner.txt")
+            info.size = 2
+            archive.addfile(info, io.BytesIO(b"ok"))
+        (root / "bundle.tar.gz").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "bundle.tar.gz"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["archive_files"] == 1
+        assert report["state"] == "PASS", report["findings"]
+        # A gz-wrapped tar WITHOUT a .tar.gz name is still an archive an
+        # extractor unpacks — content probing keeps its members inspected.
+        evil = io.BytesIO()
+        with tarfile.open(fileobj=evil, mode="w:gz") as archive:
+            link = tarfile.TarInfo("safe-name")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "../../escape"
+            archive.addfile(link)
+        (root / "backup.gz").write_bytes(evil.getvalue())
+        subprocess.run(["git", "add", "backup.gz"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])
+
+
+def test_tar_link_targets_are_checked_for_traversal() -> None:
+    import io
+    import tarfile
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as archive:
+            link = tarfile.TarInfo("safe-name")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "../../escape"
+            archive.addfile(link)
+        (root / "links.tar").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "links.tar"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])
+
+
+def test_zip_symlink_targets_are_checked_for_traversal() -> None:
+    import io
+    import zipfile as zf
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as archive:
+            info = zf.ZipInfo("safe-name")
+            info.create_system = 3
+            info.external_attr = (0o120777 << 16)
+            archive.writestr(info, "../../escape")
+            # Symlink mode bits without the Unix create_system byte are still
+            # honored by permissive extractors — the target must be checked.
+            other = zf.ZipInfo("other-name")
+            other.create_system = 0
+            other.external_attr = (0o120777 << 16)
+            archive.writestr(other, "../../also-escapes")
+        (root / "links.zip").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "links.zip"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        traversals = [i for i in report["findings"] if i["rule"] == "archive-path-traversal"]
+        assert len(traversals) == 2
+
+
+def test_gitleaks_nonzero_fails_the_scan() -> None:
+    from unittest.mock import patch
+    from tools.security import scan_secrets as secrets
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "ok.py"], cwd=root, check=True)
+        fake = {"engine": "gitleaks", "returncode": 2, "stdout_bytes": 10,
+                "stderr_tail": "", "available": True}
+        with patch.object(secrets, "_try_gitleaks", return_value=fake):
+            code = secrets.main(["--root", str(root), "--allow-gitleaks"])
+        assert code == 1
+
+
+def test_reviewer_command_keeps_its_own_flags() -> None:
+    import io
+    from contextlib import redirect_stdout
+    from tools.security.independent_review import main as review_main
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "report.json"
+        script = (
+            "import argparse, json; p = argparse.ArgumentParser();"
+            "p.add_argument('--format'); a = p.parse_args();"
+            "print(json.dumps({'passed': True, 'security_concerns': [],"
+            " 'logic_errors': [], 'summary': 'flags kept: ' + a.format}))"
+        )
+        with redirect_stdout(io.StringIO()):
+            code = review_main([
+                "--json-out", str(out),
+                "--command", sys.executable, "-c", script, "--format", "json",
+            ])
+        assert code == 0
+        payload = json.loads(out.read_text(encoding="utf-8"))
+        assert payload["review"]["summary"] == "flags kept: json"
+
+
+def test_reviewer_env_command_preserves_quoting() -> None:
+    from tools.security.independent_review import env_command
+    parsed = env_command('reviewer --note "two words"')
+    assert parsed == ["reviewer", "--note", "two words"]
+    failed = env_command('reviewer "unterminated')
+    assert isinstance(failed, dict)
+    assert failed["state"] == "FAIL"
+    # Windows rules: backslashed executable paths survive, quotes are shed.
+    windows = env_command('C:\\tools\\reviewer.exe --note "two words"', posix=False)
+    assert windows == ["C:\\tools\\reviewer.exe", "--note", "two words"]
+
+
+def test_decoder_campaign_rejects_vacuous_mutation_counts() -> None:
+    from tools.security.run_decoder_campaign import run_campaign
+    report = run_campaign(_ROOT, mutations=0, seed=1, fuzz_runs=1, fuzz_seconds=1)
+    assert report["state"] == "INVALID/VACUOUS"
+    report = run_campaign(_ROOT, mutations=-4, seed=1, fuzz_runs=1, fuzz_seconds=1)
+    assert report["state"] == "INVALID/VACUOUS"
+    # The C rail's iteration budget is bounded by the same rationale.
+    report = run_campaign(_ROOT, mutations=1, seed=1, fuzz_runs=0, fuzz_seconds=1)
+    assert report["state"] == "INVALID/VACUOUS"
+    report = run_campaign(_ROOT, mutations=1, seed=1, fuzz_runs=1, fuzz_seconds=0)
+    assert report["state"] == "INVALID/VACUOUS"
+
+
+def test_decoder_campaign_require_c_fails_when_unavailable() -> None:
+    from unittest.mock import patch
+    from tools.security import run_decoder_campaign as campaign
+    rows = [
+        {"surface": name, "state": "PASS", "accepted": 1, "rejected": 1,
+         "mutations": 1, "findings": []}
+        for name in campaign.REQUIRED_PYTHON
+    ]
+    unavailable = {"state": "UNAVAILABLE/SKIPPED", "reason": "clang missing"}
+    with patch.object(campaign, "run_python_campaign", return_value=rows):
+        with patch.object(campaign, "run_c_campaign", return_value=unavailable):
+            relaxed = campaign.run_campaign(_ROOT, 1, 1, 1, 1)
+            required = campaign.run_campaign(_ROOT, 1, 1, 1, 1, require_c=True)
+    assert relaxed["state"] == "PASS"
+    assert required["state"] == "FAIL"
+
+
+def test_boundary_audit_covers_tracked_claude_scripts() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / ".claude").mkdir()
+        (root / ".claude" / "helper.py").write_text(
+            "import subprocess\nsubprocess.run('echo hi', shell=True)\n",
+            encoding="utf-8",
+        )
+        report = audit_boundaries(root)
+        rules = {item["rule"] for item in report["findings"]}
+        assert "subprocess-shell-true" in rules
+
+
+def test_dependency_audit_rejects_dynamic_dependencies() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "pyproject.toml").write_text(
+            '[build-system]\nrequires = ["setuptools>=83.0.0"]\n'
+            '[project]\nname = "x"\nversion = "0.0.1"\ndynamic = ["dependencies"]\n',
+            encoding="utf-8",
+        )
+        report = audit_deps(root)
+        assert report["state"] == "FAIL"
+        assert report["inventory_asserted"] is False
+
+
+def test_dependency_fallback_parser_matches_tomllib() -> None:
+    import tools.security.audit_dependencies as deps
+    if deps.tomllib is None:
+        return  # the fallback IS the parser on this host
+    text = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    full = deps.parse_pyproject(_ROOT / "pyproject.toml")
+    fallback = deps._fallback_parse(text)
+    assert fallback["runtime"] == full["runtime"]
+    assert fallback["build_system"] == full["build_system"]
+    assert fallback["optional"] == full["optional"]
+    assert fallback["dynamic"] == full["dynamic"]
+    assert fallback["_unasserted"] is False
+
+
+def test_dependency_fallback_parser_survives_hostile_toml_shapes() -> None:
+    """Fixed-expectation fixtures runnable without tomllib — these exact
+    shapes made an earlier fallback silently misread dependency metadata."""
+    from tools.security.audit_dependencies import _fallback_parse
+    commented = (
+        '[project]  # metadata\n'
+        'dependencies = ["a>=1"]  # uses "b" internally\n'
+        'dynamic = ["dependencies"]\n'
+    )
+    parsed = _fallback_parse(commented)
+    assert parsed["runtime"] == ["a>=1"]
+    assert parsed["dynamic"] == ["dependencies"]
+    assert parsed["_unasserted"] is False
+    dotted = 'project.dependencies = ["requests"]\n'
+    assert _fallback_parse(dotted)["runtime"] == ["requests"]
+    apostrophe = (
+        '[project]\n'
+        'dependencies = [\n'
+        '  "a>=1",  # don\'t pin\n'
+        '  "b==2",\n'
+        ']\n'
+    )
+    assert _fallback_parse(apostrophe)["runtime"] == ["a>=1", "b==2"]
+    # A dependency-shaped key the reader cannot attribute must fail closed,
+    # not vanish into an empty (matching) declared set.
+    poetry = '[tool.poetry]\ndependencies = ["c"]\n'
+    assert _fallback_parse(poetry)["_unasserted"] is True
+    unclosed = '[project]\ndependencies = [\n  "a>=1",\n'
+    assert _fallback_parse(unclosed)["_unasserted"] is True
 
 
 def test_r5_text_check_is_per_claim() -> None:

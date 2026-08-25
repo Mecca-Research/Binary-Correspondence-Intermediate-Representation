@@ -169,15 +169,24 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
         "FUZZ_MAX_TOTAL_TIME": str(seconds),
         "FUZZ_JOBS": "2",
     })
-    result = subprocess.run(
-        [bash, str(script)],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=max(60, seconds * 4),
-    )
+    # ~15 targets on 2 workers can each reach the per-target time bound, plus
+    # compile time — a timeout sized to one target aborts healthy campaigns.
+    timeout = 180 + seconds * 8
+    try:
+        result = subprocess.run(
+            [bash, str(script)],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "state": "FAIL",
+            "reason": f"C campaign timed out after {timeout}s",
+        }
     skipped = "skipping" in (result.stdout + result.stderr).lower()
     if skipped and result.returncode == 0:
         return {
@@ -195,7 +204,21 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
 
 def run_campaign(
     root: Path, mutations: int, seed: int, fuzz_runs: int, fuzz_seconds: int,
+    require_c: bool = False,
 ) -> dict[str, Any]:
+    if mutations < 1 or fuzz_runs < 1 or fuzz_seconds < 1:
+        # A zero iteration budget on any rail turns the malformed-input
+        # campaign into a seed-only smoke test that can only ever pass;
+        # refuse the configuration outright.
+        return {
+            "state": "INVALID/VACUOUS",
+            "error": (
+                "mutations/fuzz-runs/fuzz-seconds must all be positive, got "
+                f"{mutations}/{fuzz_runs}/{fuzz_seconds}"
+            ),
+            "python": [],
+            "c_decoder": {"state": "UNAVAILABLE/SKIPPED", "reason": "vacuous configuration"},
+        }
     python = run_python_campaign(mutations, seed)
     names = {item["surface"] for item in python}
     report: dict[str, Any] = {
@@ -211,6 +234,15 @@ def run_campaign(
         report["state"] = "FAIL"
     if report["c_decoder"]["state"] == "FAIL":
         report["state"] = "FAIL"
+    if require_c and report["c_decoder"]["state"] != "PASS":
+        # CI installs clang/compiler-rt specifically for this campaign; there,
+        # a silently unavailable C rail must fail the job, not stay green.
+        report["state"] = "FAIL"
+        report.setdefault(
+            "error",
+            f"C campaign required but {report['c_decoder']['state']}: "
+            f"{report['c_decoder'].get('reason', 'no reason recorded')}",
+        )
     return report
 
 
@@ -221,18 +253,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=20260824)
     parser.add_argument("--fuzz-runs", type=int, default=200)
     parser.add_argument("--fuzz-seconds", type=int, default=8)
+    parser.add_argument("--require-c", action="store_true",
+                        help="treat an unavailable C campaign as failure (CI)")
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args(argv)
     if str(args.root) not in sys.path:
         sys.path.insert(0, str(args.root))
     report = run_campaign(
         args.root, args.mutations, args.seed, args.fuzz_runs, args.fuzz_seconds,
+        require_c=args.require_c,
     )
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     surfaces = ",".join(f"{item['surface']}:{item['state']}" for item in report["python"])
     print(f"decoder_campaign: {report['state']} python={surfaces} c={report['c_decoder']['state']}")
+    if report.get("error"):
+        print(f"  {report['error']}")
+    c_decoder = report["c_decoder"]
+    if c_decoder["state"] not in {"PASS", "UNAVAILABLE/SKIPPED"}:
+        # The captured tails are the only retained diagnostics once the
+        # temporary build directory is gone; print them on failure.
+        for key in ("reason", "stdout_tail", "stderr_tail"):
+            if c_decoder.get(key):
+                print(f"  c_decoder.{key}: {c_decoder[key]}")
     return 0 if report["state"] == "PASS" else 1
 
 

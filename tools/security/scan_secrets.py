@@ -12,6 +12,7 @@ import io
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tarfile
@@ -28,12 +29,18 @@ BINARY_SUFFIXES = frozenset({
     ".bc", ".bcab", ".bcirq8", ".safetensors", ".pt", ".pth", ".onnx",
     ".pdf", ".mp3", ".mp4", ".wav",
 })
+# Only formats _archive_entries can actually open are archives. Bare single-file
+# compression and 7z have no inspection path here, so they follow the binary
+# policy (recorded, never parsed) — calling them archives made the scan FAIL on
+# legitimate tracked files it could never read.
 ARCHIVE_SUFFIXES = frozenset({
-    ".zip", ".whl", ".egg", ".jar", ".7z",
-    ".tar", ".tgz", ".gz", ".bz2", ".xz",
+    ".zip", ".whl", ".egg", ".jar",
+    ".tar", ".tgz", ".tar.gz", ".tar.bz2", ".tar.xz",
 })
+SINGLE_FILE_COMPRESSION = frozenset({".gz", ".bz2", ".xz", ".7z"})
 TEXT_SAMPLE = 8192
 ARCHIVE_MEMBER_CAP = 1 << 20
+ZIP_SYMLINK_MAX = 4096
 
 RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("private-key-header", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
@@ -70,6 +77,16 @@ def _kind_for(path: str, data: bytes) -> str:
     lower = path.lower()
     if any(lower.endswith(suffix) for suffix in ARCHIVE_SUFFIXES):
         return "archive"
+    if any(lower.endswith(suffix) for suffix in SINGLE_FILE_COMPRESSION):
+        # A compressed tar without a .tar.* name (backup.gz) is still an
+        # archive extractors will unpack — probe the content so genuine
+        # single-file streams stay binary without losing tar inspection.
+        try:
+            if tarfile.is_tarfile(io.BytesIO(data)):
+                return "archive"
+        except (OSError, EOFError, tarfile.TarError):
+            pass
+        return "binary"
     if any(lower.endswith(suffix) for suffix in BINARY_SUFFIXES):
         return "binary"
     sample = data[:TEXT_SAMPLE]
@@ -106,32 +123,60 @@ def _archive_path_unsafe(name: str) -> bool:
     return ".." in Path(normalized).parts
 
 
-def _archive_members(path: Path, data: bytes) -> list[str]:
-    names: list[str] = []
+def _archive_entries(path: Path, data: bytes) -> tuple[list[str], int]:
+    """Member names plus link targets — every string an extractor could turn
+    into a filesystem path. Raises when the archive cannot be fully inspected,
+    which the caller treats as a failing finding, never as a clean scan."""
+    checks: list[str] = []
+    members = 0
     if zipfile.is_zipfile(path) or data[:4] == b"PK\x03\x04":
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            names = archive.namelist()
+            infos = archive.infolist()
+            if len(infos) > ARCHIVE_MEMBER_CAP:
+                raise ValueError("archive-member-cap")
+            for info in infos:
+                members += 1
+                checks.append(info.filename)
+                mode = info.external_attr >> 16
+                # Symlink mode bits alone decide: gating on create_system == 3
+                # would leave a mode-bit symlink from another creator unchecked
+                # while permissive extractors still honor it.
+                if stat.S_ISLNK(mode):
+                    # A stored symlink target traverses like a member name. The
+                    # payload is read through the ZipInfo (a later same-named
+                    # entry cannot alias it), bounded, and an encrypted or
+                    # oversized target fails closed instead of passing unread.
+                    if info.flag_bits & 0x1 or info.file_size > ZIP_SYMLINK_MAX:
+                        raise ValueError("zip-symlink-uninspectable")
+                    with archive.open(info) as handle:
+                        target = handle.read(ZIP_SYMLINK_MAX + 1)
+                    checks.append(target.decode("utf-8", "replace"))
     elif tarfile.is_tarfile(path):
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
-            names = [member.name for member in archive.getmembers()]
+            # Incremental: never materialize getmembers() for a hostile tar.
+            for member in archive:
+                members += 1
+                if members > ARCHIVE_MEMBER_CAP:
+                    raise ValueError("archive-member-cap")
+                checks.append(member.name)
+                if member.issym() or member.islnk():
+                    checks.append(member.linkname)
     else:
         raise zipfile.BadZipFile("unrecognized archive")
-    if len(names) > ARCHIVE_MEMBER_CAP:
-        raise ValueError("archive-member-cap")
-    return names
+    return checks, members
 
 
 def _scan_archive(rel: str, path: Path, data: bytes) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     try:
-        names = _archive_members(path, data)
-    except (zipfile.BadZipFile, tarfile.TarError, OSError, ValueError) as exc:
+        checks, members = _archive_entries(path, data)
+    except (zipfile.BadZipFile, tarfile.TarError, OSError, ValueError, RuntimeError) as exc:
         findings.append({
             "path": rel, "line": 0, "rule": "archive-unreadable",
             "fingerprint": _fingerprint(type(exc).__name__),
         })
         return findings, {"path": rel, "status": "unreadable", "error": type(exc).__name__}
-    unsafe = [name for name in names if _archive_path_unsafe(name)]
+    unsafe = [name for name in checks if _archive_path_unsafe(name)]
     for name in unsafe:
         findings.append({
             "path": rel,
@@ -142,7 +187,7 @@ def _scan_archive(rel: str, path: Path, data: bytes) -> tuple[list[dict[str, Any
     return findings, {
         "path": rel,
         "status": "inspected",
-        "members": len(names),
+        "members": members,
         "unsafe_members": len(unsafe),
         "extracted": False,
     }
@@ -228,6 +273,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.allow_gitleaks:
         extra = _try_gitleaks(args.root)
         report["gitleaks"] = extra or {"available": False}
+        if extra and extra["returncode"] != 0:
+            # An opted-in engine that reports findings or dies must fail the
+            # scan, not ride along as metadata under a green verdict.
+            report["state"] = "FAIL"
+            report["findings"].append({
+                "path": ".", "line": 0, "rule": "gitleaks-nonzero",
+                "fingerprint": _fingerprint(f"gitleaks:{extra['returncode']}"),
+            })
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

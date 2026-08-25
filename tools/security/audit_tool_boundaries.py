@@ -11,16 +11,34 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-TREES = ("bcir", "tools")
+# ".claude" carries tracked developer scripts (digest/skill tooling); a
+# developer-tool boundary policy that skips them audits less than it claims.
+TREES = ("bcir", "tools", ".claude")
 SKIP_PARTS = {".git", "build", "__pycache__", "dataset"}
 PRODUCTION_STRING_SUBPROCESS = True
 
 
+def _tracked(root: Path) -> set[str] | None:
+    result = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return {item.decode("utf-8") for item in result.stdout.split(b"\0") if item}
+
+
 def _iter_python(root: Path) -> list[Path]:
+    # The policy is about TRACKED developer code; an untracked scratch file
+    # under .claude/ must not fail a local run that CI would pass. Outside a
+    # git checkout (unit-test fixtures) the plain walk stands in.
+    tracked = _tracked(root)
     files = []
     for tree in TREES:
         base = root / tree
@@ -29,6 +47,10 @@ def _iter_python(root: Path) -> list[Path]:
         for path in base.rglob("*.py"):
             if any(part in SKIP_PARTS for part in path.parts):
                 continue
+            if tracked is not None:
+                rel = str(path.relative_to(root)).replace("\\", "/")
+                if rel not in tracked:
+                    continue
             files.append(path)
     return files
 
@@ -42,8 +64,18 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
     scanned = 0
     for path in _iter_python(root):
         scanned += 1
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         rel = str(path.relative_to(root)).replace("\\", "/")
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (SyntaxError, ValueError) as exc:
+            # An unparseable file is uninspectable; fail closed with a finding
+            # rather than escaping as a traceback.
+            findings.append({
+                "path": rel,
+                "line": int(getattr(exc, "lineno", 0) or 0),
+                "rule": "python-parse-error",
+            })
+            continue
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 func = node.func
