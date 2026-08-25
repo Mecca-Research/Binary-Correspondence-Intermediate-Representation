@@ -259,7 +259,9 @@ def test_decoder_that_accepts_everything_is_a_finding() -> None:
 
 def test_unseeded_c_fuzzing_is_recorded_as_unavailable() -> None:
     """The fuzz script exits 0 after 'SKIP BCIRQ8 seed corpus'; that run did
-    not exercise the target and must not satisfy --require-c."""
+    not exercise the target and must not satisfy --require-c. The POSIX rail
+    is simulated so the check exercises the same branch on native Windows,
+    where run_c_campaign otherwise short-circuits before the mock."""
     from types import SimpleNamespace
     from unittest.mock import patch
     from tools.security import run_decoder_campaign as campaign
@@ -268,9 +270,11 @@ def test_unseeded_c_fuzzing_is_recorded_as_unavailable() -> None:
         stdout="  SKIP BCIRQ8 seed corpus (could not build a seed artifact); fuzzing unseeded\n",
         stderr="",
     )
-    with patch.object(campaign.shutil, "which", return_value="/usr/bin/tool"):
-        with patch.object(campaign.subprocess, "run", return_value=fake):
-            report = campaign.run_c_campaign(_ROOT, runs=1, seconds=1)
+    posix_os = SimpleNamespace(name="posix", environ=dict(os.environ))
+    with patch.object(campaign, "os", posix_os):
+        with patch.object(campaign.shutil, "which", return_value="/usr/bin/tool"):
+            with patch.object(campaign.subprocess, "run", return_value=fake):
+                report = campaign.run_c_campaign(_ROOT, runs=1, seconds=1)
     assert report["state"] == "UNAVAILABLE/SKIPPED"
     assert "unseeded" in report["reason"]
 
