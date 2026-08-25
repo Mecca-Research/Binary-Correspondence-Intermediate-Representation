@@ -142,10 +142,25 @@ def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "case.mlir"
         path.write_text(text, encoding="utf-8")
-        result = subprocess.run(
-            [opt, "-bcir-verify", str(path)],
-            capture_output=True, text=True, check=False, timeout=20,
-        )
+        try:
+            result = subprocess.run(
+                [opt, "-bcir-verify", str(path)],
+                capture_output=True, text=True, check=False, timeout=20,
+            )
+        except subprocess.TimeoutExpired:
+            # A hanging compiled verifier is exactly what this campaign must
+            # record — a structured FAIL, never an escaping traceback.
+            return {
+                "state": "FAIL",
+                "rejected": False,
+                "reason": "compiled verifier timed out after 20s",
+            }
+        except OSError as exc:
+            return {
+                "state": "FAIL",
+                "rejected": False,
+                "reason": f"compiled verifier failed to start: {type(exc).__name__}",
+            }
     crash = result.returncode < 0 or result.returncode >= 0xC0000000
     if crash:
         return {

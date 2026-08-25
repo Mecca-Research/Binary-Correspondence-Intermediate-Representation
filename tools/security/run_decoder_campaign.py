@@ -76,6 +76,16 @@ def _probe(name: str, decode: Callable[[bytes], Any], seed: bytes,
             rejected += 1
         except Exception as exc:  # noqa: BLE001
             findings.append({"kind": "ungraceful", "type": type(exc).__name__})
+    # A decoder that regresses to accepting EVERYTHING must not be greener for
+    # it: one deterministic format-invalid probe per surface, whose acceptance
+    # is a finding rather than another accepted count.
+    try:
+        decode(b"\x00")
+        findings.append({"kind": "invalid-accepted"})
+    except graceful:
+        rejected += 1
+    except Exception as exc:  # noqa: BLE001
+        findings.append({"kind": "ungraceful-invalid", "type": type(exc).__name__})
     return {
         "surface": name,
         "state": "FAIL" if findings else "PASS",
@@ -187,11 +197,20 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
             "state": "FAIL",
             "reason": f"C campaign timed out after {timeout}s",
         }
-    skipped = "skipping" in (result.stdout + result.stderr).lower()
-    if skipped and result.returncode == 0:
+    combined = (result.stdout + result.stderr).lower()
+    if "skipping" in combined and result.returncode == 0:
         return {
             "state": "UNAVAILABLE/SKIPPED",
             "reason": "clang has no libFuzzer/compiler-rt",
+            "returncode": result.returncode,
+        }
+    if "fuzzing unseeded" in combined and result.returncode == 0:
+        # The script exits 0 after "SKIP BCIRQ8 seed corpus"; random mutations
+        # cannot pass BCIRQ8's checksum layers, so the target was not really
+        # exercised — record unavailability (fatal under --require-c).
+        return {
+            "state": "UNAVAILABLE/SKIPPED",
+            "reason": "BCIRQ8 seed corpus unavailable; campaign ran unseeded",
             "returncode": result.returncode,
         }
     return {

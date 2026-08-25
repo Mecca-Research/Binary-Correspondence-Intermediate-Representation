@@ -244,6 +244,50 @@ def test_decoder_seed_rejection_is_a_finding() -> None:
     assert any(item["kind"] == "seed-rejected" for item in row["findings"])
 
 
+def test_decoder_that_accepts_everything_is_a_finding() -> None:
+    """Removing all validation must make the campaign redder, not greener."""
+    from tools.security.run_decoder_campaign import _probe
+    import random
+
+    def accept_all(_data: bytes) -> str:
+        return "decoded"
+
+    row = _probe("streampack", accept_all, b"seed", random.Random(0), mutations=2)
+    assert row["state"] == "FAIL"
+    assert any(item["kind"] == "invalid-accepted" for item in row["findings"])
+
+
+def test_unseeded_c_fuzzing_is_recorded_as_unavailable() -> None:
+    """The fuzz script exits 0 after 'SKIP BCIRQ8 seed corpus'; that run did
+    not exercise the target and must not satisfy --require-c."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from tools.security import run_decoder_campaign as campaign
+    fake = SimpleNamespace(
+        returncode=0,
+        stdout="  SKIP BCIRQ8 seed corpus (could not build a seed artifact); fuzzing unseeded\n",
+        stderr="",
+    )
+    with patch.object(campaign.shutil, "which", return_value="/usr/bin/tool"):
+        with patch.object(campaign.subprocess, "run", return_value=fake):
+            report = campaign.run_c_campaign(_ROOT, runs=1, seconds=1)
+    assert report["state"] == "UNAVAILABLE/SKIPPED"
+    assert "unseeded" in report["reason"]
+
+
+def test_compiled_verifier_timeout_is_a_structured_failure() -> None:
+    from unittest.mock import patch
+    from tools.security import run_malformed_differential as differential
+    with patch.object(differential, "find_bcir_opt", return_value="/fake/bcir-opt"):
+        with patch.object(
+            differential.subprocess, "run",
+            side_effect=differential.subprocess.TimeoutExpired(cmd="bcir-opt", timeout=20),
+        ):
+            result = differential._compiled_mlir("bcir.module @m { }", _ROOT)
+    assert result["state"] == "FAIL"
+    assert "timed out" in result["reason"]
+
+
 def test_single_file_compression_is_binary_not_archive() -> None:
     """A legitimate tracked .gz or .7z has no inspection path; it must follow
     the binary policy instead of failing the scan as an unreadable archive."""
@@ -508,6 +552,15 @@ def test_dependency_fallback_parser_survives_hostile_toml_shapes() -> None:
         ']\n'
     )
     assert _fallback_parse(apostrophe)["runtime"] == ["a>=1", "b==2"]
+    # Basic-string escapes decode: a real-world environment marker with an
+    # embedded quoted version must round-trip, not split at the escape.
+    marker = '[project]\ndependencies = ["foo; python_version < \\"3.12\\""]\n'
+    parsed = _fallback_parse(marker)
+    assert parsed["runtime"] == ['foo; python_version < "3.12"']
+    assert parsed["_unasserted"] is False
+    # An escape outside the subset fails closed rather than misreads.
+    exotic = '[project]\ndependencies = ["\\u0041"]\n'
+    assert _fallback_parse(exotic)["_unasserted"] is True
     # A quoted key is one literal segment; its dots are not path separators.
     quoted_group = (
         '[project.optional-dependencies]\n'

@@ -25,8 +25,52 @@ EXPECTED = Path(__file__).resolve().parent / "expected_inventory.json"
 
 _SECTION = re.compile(r"^\[(?P<name>[^\]]+)\]\s*$")
 _ARRAY_KEY = re.compile(r"^(?P<key>[A-Za-z0-9_.\-\"']+)\s*=\s*(?P<rest>\[.*)$")
-_STRING_ITEM = re.compile(r"\"([^\"]*)\"|'([^']*)'")
 _SENSITIVE = re.compile(r"(?:^|\.)(?:optional-)?(?:dependencies|dynamic)$")
+_ESCAPES = {"\\": "\\", '"': '"', "b": "\b", "t": "\t", "n": "\n", "f": "\f", "r": "\r"}
+
+
+def _string_items(buffer: str) -> tuple[list[str], bool]:
+    """Escape-aware TOML string extraction; returns (items, ok).
+
+    Basic strings decode the short escapes (an environment marker such as
+    'foo; python_version < \\"3.12\\"' round-trips); literal strings take no
+    escapes. Anything outside that subset (\\uXXXX, an unterminated string)
+    reports ok=False so the caller fails closed instead of misreading."""
+    items: list[str] = []
+    index = 0
+    length = len(buffer)
+    while index < length:
+        char = buffer[index]
+        if char == "'":
+            end = buffer.find("'", index + 1)
+            if end < 0:
+                return items, False
+            items.append(buffer[index + 1:end])
+            index = end + 1
+        elif char == '"':
+            out: list[str] = []
+            index += 1
+            closed = False
+            while index < length:
+                current = buffer[index]
+                if current == "\\":
+                    if index + 1 >= length or buffer[index + 1] not in _ESCAPES:
+                        return items, False
+                    out.append(_ESCAPES[buffer[index + 1]])
+                    index += 2
+                elif current == '"':
+                    closed = True
+                    index += 1
+                    break
+                else:
+                    out.append(current)
+                    index += 1
+            if not closed:
+                return items, False
+            items.append("".join(out))
+        else:
+            index += 1
+    return items, True
 
 
 def _strip_toml_comment(line: str) -> str:
@@ -109,7 +153,9 @@ def _fallback_parse(text: str) -> dict[str, Any]:
         else:
             buffer += " " + stripped
         if pending is not None and buffer.count("[") == buffer.count("]"):
-            items = [a or b for a, b in _STRING_ITEM.findall(buffer)]
+            items, parsed_ok = _string_items(buffer)
+            if not parsed_ok:
+                unasserted = True
             arrays[pending] = items
             pending = None
             buffer = ""
