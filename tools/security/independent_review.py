@@ -57,7 +57,7 @@ def run_reviewer(command: list[str], cwd: Path) -> dict[str, Any]:
         result = subprocess.run(
             command, cwd=cwd, capture_output=True, check=False, timeout=120,
         )
-    except FileNotFoundError as exc:
+    except OSError as exc:
         return {
             "state": "FAIL",
             "reason": f"reviewer could not start: {exc}",

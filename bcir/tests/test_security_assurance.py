@@ -618,3 +618,109 @@ def test_oversized_zip_symlink_is_rejected_without_full_read() -> None:
         subprocess.run(["git", "add", "biglink.zip"], cwd=root, check=True)
         report = scan_tree(root)
         assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])
+
+
+def test_r5_witness_is_isolated_from_r6() -> None:
+    from tools.security.run_malformed_differential import _r5_module
+    from bcir.verify import verify
+    laws = {diag.law for diag in verify(_r5_module())}
+    assert "R5" in laws
+    assert "R6" not in laws
+
+
+def test_zip_symlink_reads_each_zipinfo_not_the_name_map() -> None:
+    import io
+    import zipfile
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            link = zipfile.ZipInfo("same")
+            link.create_system = 3
+            link.external_attr = (0o120777 << 16)
+            archive.writestr(link, "../../escape")
+            safe = zipfile.ZipInfo("same")
+            archive.writestr(safe, "ok")
+        (root / "dup.zip").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "dup.zip"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])
+
+
+def test_boundary_audit_flags_unpacked_shell_kwargs() -> None:
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "bcir").mkdir()
+        (root / "tools").mkdir()
+        (root / "bcir" / "hostile.py").write_text(
+            "import subprocess\n"
+            "opts = {'shell': True}\n"
+            "subprocess.run(['tool'], **opts)\n",
+            encoding="utf-8",
+        )
+        report = audit_boundaries(root)
+        assert any(item["rule"] == "subprocess-shell-true" for item in report["findings"])
+
+
+def test_boundary_audit_ignores_parameter_shadowing() -> None:
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "bcir").mkdir()
+        (root / "tools").mkdir()
+        (root / "bcir" / "ok.py").write_text(
+            "from subprocess import run\n"
+            "def render(run):\n"
+            "    run('safe')\n",
+            encoding="utf-8",
+        )
+        report = audit_boundaries(root)
+        assert report["findings"] == []
+
+
+def test_boundary_audit_flags_bound_string_commands() -> None:
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "bcir").mkdir()
+        (root / "tools").mkdir()
+        (root / "bcir" / "hostile.py").write_text(
+            "import subprocess\n"
+            "cmd = 'tool --flag'\n"
+            "subprocess.run(cmd)\n",
+            encoding="utf-8",
+        )
+        report = audit_boundaries(root)
+        assert any(item["rule"] == "subprocess-string-command" for item in report["findings"])
+
+
+def test_independent_review_fails_closed_on_oserror() -> None:
+    from unittest.mock import patch
+    from tools.security.independent_review import run_reviewer
+    with patch("tools.security.independent_review.subprocess.run", side_effect=PermissionError("denied")):
+        report = run_reviewer(["reviewer"], _ROOT)
+    assert report["state"] == "FAIL"
+    assert report["fail_closed"] is True
+
+
+def test_dynamic_dependency_metadata_fails_closed() -> None:
+    from tools.security.audit_dependencies import audit
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "pyproject.toml").write_text(
+            "[build-system]\nrequires = [\"setuptools>=83.0.0\"]\n"
+            "[project]\nname = \"x\"\nversion = \"0\"\n"
+            "dynamic = [\"dependencies\"]\n",
+            encoding="utf-8",
+        )
+        expected = Path(tmp) / "expected.json"
+        expected.write_text(json.dumps({
+            "runtime": [],
+            "build_system": ["setuptools>=83.0.0"],
+            "optional": {},
+        }), encoding="utf-8")
+        report = audit(root, expected)
+        assert report["state"] == "FAIL"
+        assert "dynamic" in report["error"]

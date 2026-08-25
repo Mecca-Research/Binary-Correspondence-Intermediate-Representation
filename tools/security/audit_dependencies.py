@@ -36,6 +36,7 @@ def parse_pyproject(path: Path) -> dict[str, Any]:
             "runtime": list(project.get("dependencies") or []),
             "build_system": list(build.get("requires") or []),
             "optional": {name: list(items) for name, items in optional.items()},
+            "dynamic": list(project.get("dynamic") or []),
         }
     return _parse_pyproject_legacy(text)
 
@@ -72,10 +73,15 @@ def _parse_pyproject_legacy(text: str) -> dict[str, Any]:
             optional[match.group(1)] = list(
                 ast.literal_eval(_extract_bracket_list(block, match.end()))
             )
+    dynamic: list[str] = []
+    dyn = re.search(r"(?m)^dynamic\s*=\s*", text)
+    if dyn:
+        dynamic = list(ast.literal_eval(_extract_bracket_list(text, dyn.end())))
     return {
         "runtime": list(runtime),
         "build_system": list(build),
         "optional": optional,
+        "dynamic": dynamic,
     }
 
 
@@ -105,6 +111,14 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
     }
     if mismatches:
         report["state"] = "FAIL"
+        return report
+    unresolved = [
+        name for name in declared.get("dynamic") or []
+        if name in {"dependencies", "optional-dependencies"}
+    ]
+    if unresolved:
+        report["state"] = "FAIL"
+        report["error"] = f"unresolved dynamic dependency metadata: {unresolved}"
         return report
     engine = shutil.which("pip-audit")
     if not engine:

@@ -115,6 +115,34 @@ class _BoundaryVisitor(ast.NodeVisitor):
         else:
             self._names().pop(target, None)
 
+    def _shadow_params(self, node: ast.AST) -> None:
+        args = getattr(node, "args", None)
+        if args is None:
+            return
+        names = self._names()
+        constants = self._constants()
+        params = list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs)
+        for param in params:
+            names.pop(param.arg, None)
+            constants.pop(param.arg, None)
+        if args.vararg is not None:
+            names.pop(args.vararg.arg, None)
+            constants.pop(args.vararg.arg, None)
+        if args.kwarg is not None:
+            names.pop(args.kwarg.arg, None)
+            constants.pop(args.kwarg.arg, None)
+
+    def _is_string_command(self, node: ast.AST) -> bool:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return True
+        if isinstance(node, ast.JoinedStr):
+            return True
+        if isinstance(node, ast.Name):
+            return isinstance(self._constants().get(node.id), str)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return self._is_string_command(node.left) or self._is_string_command(node.right)
+        return False
+
     def _record_call(self, node: ast.Call) -> None:
         kind = _call_kind(node.func, self._names())
         if kind is None:
@@ -130,15 +158,33 @@ class _BoundaryVisitor(ast.NodeVisitor):
             })
             return
         keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
-        if "shell" in keywords and _shell_not_provably_false(keywords["shell"], self._constants()):
+        in_tests = "/tests/" in f"/{self.rel}" or self.rel.startswith("bcir/tests/")
+        if any(kw.arg is None for kw in node.keywords):
+            if not in_tests:
+                self.findings.append({
+                    "path": self.rel, "line": node.lineno, "rule": "subprocess-shell-true",
+                })
+        elif "shell" in keywords and _shell_not_provably_false(keywords["shell"], self._constants()):
             self.findings.append({
                 "path": self.rel, "line": node.lineno, "rule": "subprocess-shell-true",
             })
-        if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-            if "/tests/" not in f"/{self.rel}" and not self.rel.startswith("bcir/tests/"):
+        if node.args and self._is_string_command(node.args[0]):
+            if not in_tests:
                 self.findings.append({
                     "path": self.rel, "line": node.lineno, "rule": "subprocess-string-command",
                 })
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._push_scope()
+        self._shadow_params(node)
+        self.generic_visit(node)
+        self.scopes.pop()
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._push_scope()
+        self._shadow_params(node)
+        self.generic_visit(node)
+        self.scopes.pop()
 
     def visit_Import(self, node: ast.Import) -> None:
         self._apply_import(node)
@@ -159,16 +205,6 @@ class _BoundaryVisitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         self.generic_visit(node)
         self._record_call(node)
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self._push_scope()
-        self.generic_visit(node)
-        self.scopes.pop()
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self._push_scope()
-        self.generic_visit(node)
-        self.scopes.pop()
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self._push_scope()

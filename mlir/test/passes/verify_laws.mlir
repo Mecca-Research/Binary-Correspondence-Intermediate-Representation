@@ -16,6 +16,29 @@ bcir.module @r1 {
 
 // -----
 
+// R1.1: duplicate claim id.
+bcir.module @r11 {
+  bcir.registry @RES {
+    bcir.resource @T { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 4>, layout = #bcir.layout<soa> }
+  }
+  bcir.phase @p0 { id = 0 : i32, deps = [] }
+  bcir.claim @c attributes {
+    claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@T], writes = [@T], count = 4 : i64,
+    lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>,
+    verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>
+  } { %i = bcir.index_range 0 to 4 step 1 }
+  // expected-error @+1 {{R1.1: duplicate claim id 1}}
+  bcir.claim @dup attributes {
+    claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@T], writes = [@T], count = 4 : i64,
+    lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32,
+    domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>,
+    verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>
+  } { %i = bcir.index_range 0 to 4 step 1 }
+}
+
+// -----
+
 // R2: claim references an undeclared resource.
 bcir.module @r2 {
   // expected-error @+1 {{R2: claim c reads undeclared resource @Missing}}

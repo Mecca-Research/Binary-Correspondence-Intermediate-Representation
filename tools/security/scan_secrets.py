@@ -142,7 +142,8 @@ def _zip_symlink_target(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> str 
     if info.file_size > ZIP_SYMLINK_MAX:
         return "../oversized-symlink"
     try:
-        return archive.read(info.filename)[:ZIP_SYMLINK_MAX].decode("utf-8", "replace")
+        with archive.open(info) as handle:
+            return handle.read(ZIP_SYMLINK_MAX).decode("utf-8", "replace")
     except (RuntimeError, UnicodeError, OSError):
         return None
 

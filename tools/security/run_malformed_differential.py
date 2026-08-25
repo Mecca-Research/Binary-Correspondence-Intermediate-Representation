@@ -36,7 +36,7 @@ def _r5_module():
     module.add_resource(Resource(rid=1, domain=Domain.RAM, shape=(64,)))
     module.add_phase(Phase(phase_id=0, deps=(), claims=[
         Claim(
-            id=1, opcode=Opcode.ATOMIC_ADD, lane=Lane.A, stride_class=StrideClass.UNIT,
+            id=1, opcode=Opcode.ATOMIC_ADD, lane=Lane.A, stride_class=StrideClass.RANDOM,
             count=64, rd=(1,), wr=(1,), op="atomic.add", domain=Domain.RAM, hazard="unique",
         ),
     ]))
@@ -53,7 +53,7 @@ def _r5_mlir() -> str:
         "  bcir.phase @p0 { id = 0 : i32, deps = [] }\n"
         "  bcir.claim @c attributes {\n"
         "    claim_id = 1 : i32, phase = @p0, op = \"atomic.add\", reads = [@T], writes = [@T], "
-        "count = 64 : i64, lane = #bcir.lane<a>, stride_class = #bcir.stride_class<unit>, "
+        "count = 64 : i64, lane = #bcir.lane<a>, stride_class = #bcir.stride_class<random>, "
         "stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, "
         "verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>\n"
         "  } { %i = bcir.index_range 0 to 64 step 1 }\n"
@@ -181,7 +181,6 @@ def _cases() -> list[dict[str, Any]]:
             "expect_reject": True,
             "python": lambda: verify(duplicated),
             "mlir_text": _duplicate_claim_mlir(good_mlir),
-            "compile": False,
         },
         {
             "name": "mlir-r1-duplicate-rid",
