@@ -35,7 +35,8 @@ BINARY_SUFFIXES = frozenset({
 # legitimate tracked files it could never read.
 ARCHIVE_SUFFIXES = frozenset({
     ".zip", ".whl", ".egg", ".jar",
-    ".tar", ".tgz", ".tar.gz", ".tar.bz2", ".tar.xz",
+    ".tar", ".tgz", ".tbz", ".tbz2", ".txz",
+    ".tar.gz", ".tar.bz2", ".tar.xz",
 })
 SINGLE_FILE_COMPRESSION = frozenset({".gz", ".bz2", ".xz", ".7z"})
 TEXT_SAMPLE = 8192
@@ -214,12 +215,28 @@ def scan_tree(root: Path) -> dict[str, Any]:
         report["state"] = "INVALID/VACUOUS"
         report["error"] = "git ls-files returned no paths"
         return report
+    report["symlinks"] = []
     for rel in files:
         path = root / rel
+        if path.is_symlink():
+            # A tracked symlink's blob is its target string. Dereferencing
+            # would scan arbitrary host bytes (or crash on a procfs target);
+            # record it and move on without following.
+            report["symlinks"].append(rel)
+            continue
         if not path.is_file():
             report["skipped_missing"] += 1
             continue
-        data = path.read_bytes()
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            # A tracked file the scanner cannot read was not inspected — that
+            # is a failing finding, never a silent skip.
+            report["findings"].append({
+                "path": rel, "line": 0, "rule": "file-unreadable",
+                "fingerprint": _fingerprint(type(exc).__name__),
+            })
+            continue
         kind = _kind_for(rel, data)
         if kind == "binary":
             report["binary_files"] += 1

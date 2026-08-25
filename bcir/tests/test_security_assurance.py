@@ -380,6 +380,57 @@ def test_zip_symlink_targets_are_checked_for_traversal() -> None:
         assert len(traversals) == 2
 
 
+def test_tracked_symlinks_are_recorded_not_followed() -> None:
+    """A tracked symlink must never be dereferenced (its target may be any
+    host file, or an unreadable procfs path that would crash the scan)."""
+    if os.name == "nt":
+        return  # creating symlinks needs privilege on Windows; POSIX covers it
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        secret_target = root / "outside.txt"
+        secret_target.write_text('token = "ghp_' + ("ab" * 18) + '"\n', encoding="utf-8")
+        (root / "link.py").symlink_to(secret_target)
+        subprocess.run(["git", "add", "ok.py", "link.py"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert "link.py" in report.get("symlinks", [])
+        # The linked-to secret was NOT scanned through the link, and the scan
+        # did not crash; only real file content decides the verdict.
+        assert all(item["path"] != "link.py" for item in report["findings"])
+
+
+def test_compressed_tar_aliases_are_inspected() -> None:
+    import io
+    import tarfile
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:bz2") as archive:
+            link = tarfile.TarInfo("safe-name")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "../../escape"
+            archive.addfile(link)
+        (root / "bundle.tbz2").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "bundle.tbz2"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])
+
+
+def test_python_verifier_crash_is_a_structured_disagreement() -> None:
+    """A crashing verify() is the exact failure this campaign diagnoses; it
+    must become a recorded disagreement, never an escaping traceback."""
+    from unittest.mock import patch
+    from tools.security import run_malformed_differential as differential
+    with patch.object(differential, "find_bcir_opt", return_value=None):
+        with patch("bcir.verify.verify", side_effect=RuntimeError("boom")):
+            report = differential.run_differential(_ROOT)
+    assert report["state"] == "FAIL"
+    assert any("crashed" in item for item in report["disagreements"])
+
+
 def test_gitleaks_nonzero_fails_the_scan() -> None:
     from unittest.mock import patch
     from tools.security import scan_secrets as secrets
@@ -575,6 +626,9 @@ def test_dependency_fallback_parser_survives_hostile_toml_shapes() -> None:
     # forbids for groups — the reader refuses rather than misattributes.
     nested_group = '[project.optional-dependencies]\ndocs.build = ["sphinx"]\n'
     assert _fallback_parse(nested_group)["_unasserted"] is True
+    # An inline table can carry dependency metadata the subset never parses.
+    inline = 'project = { dependencies = ["requests==2"] }\n'
+    assert _fallback_parse(inline)["_unasserted"] is True
     # A dependency-shaped key the reader cannot attribute must fail closed,
     # not vanish into an empty (matching) declared set.
     poetry = '[tool.poetry]\ndependencies = ["c"]\n'

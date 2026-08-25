@@ -131,10 +131,17 @@ def _fallback_parse(text: str) -> dict[str, Any]:
                 continue
             match = _ARRAY_KEY.match(stripped)
             if not match:
-                if "=" in stripped and _SENSITIVE.search(
-                    stripped.split("=", 1)[0].strip().strip("\"'")
-                ):
-                    unasserted = True
+                if "=" in stripped:
+                    lhs, rhs = stripped.split("=", 1)
+                    if _SENSITIVE.search(lhs.strip().strip("\"'")):
+                        unasserted = True
+                    elif "{" in rhs and re.search(
+                        r"(?:optional-)?dependencies|dynamic", rhs
+                    ):
+                        # An inline table can carry dependency metadata the
+                        # subset reader does not parse; refuse rather than
+                        # report an asserted empty inventory.
+                        unasserted = True
                 continue
             raw_key = match.group("key").strip()
             if raw_key[:1] in "\"'":

@@ -241,16 +241,26 @@ def run_differential(root: Path) -> dict[str, Any]:
     disagreements: list[str] = []
     malformed_rejected = 0
     for case in cases:
-        py_diags = None if case["python"] is None else case["python"]()
-        python = (
-            {"state": "UNAVAILABLE/SKIPPED", "reason": "no python module"}
-            if py_diags is None and case["python"] is None
-            else {
-                "state": "PASS",
-                "rejected": bool(py_diags),
-                "laws": [diag.law for diag in (py_diags or ())],
+        if case["python"] is None:
+            python: dict[str, Any] = {
+                "state": "UNAVAILABLE/SKIPPED", "reason": "no python module",
             }
-        )
+        else:
+            try:
+                py_diags = case["python"]()
+            except Exception as exc:  # noqa: BLE001 - a crashing verifier IS the finding
+                python = {
+                    "state": "FAIL",
+                    "rejected": False,
+                    "reason": f"python verifier crashed: {type(exc).__name__}",
+                }
+                disagreements.append(f"{case['name']}/python: {python['reason']}")
+            else:
+                python = {
+                    "state": "PASS",
+                    "rejected": bool(py_diags),
+                    "laws": [diag.law for diag in (py_diags or ())],
+                }
         text = (
             {"state": "UNAVAILABLE/SKIPPED", "reason": "no mlir text"}
             if case["mlir_text"] is None
