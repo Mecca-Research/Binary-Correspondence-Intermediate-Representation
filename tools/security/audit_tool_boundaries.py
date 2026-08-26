@@ -103,7 +103,10 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
                         findings.append({
                             "path": rel, "line": node.lineno, "rule": "subprocess-shell-true",
                         })
-                    if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                    # The command may be the first positional OR the literal
+                    # `args=` keyword — subprocess's public parameter name.
+                    command = node.args[0] if node.args else keywords.get("args")
+                    if isinstance(command, ast.Constant) and isinstance(command.value, str):
                         if "/tests/" not in f"/{rel}" and not rel.startswith("bcir/tests/"):
                             findings.append({
                                 "path": rel, "line": node.lineno, "rule": "subprocess-string-command",

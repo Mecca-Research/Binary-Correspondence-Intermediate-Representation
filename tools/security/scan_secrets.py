@@ -41,6 +41,7 @@ ARCHIVE_SUFFIXES = frozenset({
 SINGLE_FILE_COMPRESSION = frozenset({".gz", ".bz2", ".xz", ".7z"})
 TEXT_SAMPLE = 8192
 ARCHIVE_MEMBER_CAP = 1 << 20
+ARCHIVE_LOGICAL_CAP = 1 << 28  # 256 MiB declared bytes per tracked archive
 ZIP_SYMLINK_MAX = 4096
 
 RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -96,7 +97,10 @@ def _kind_for(path: str, data: bytes) -> str:
     try:
         sample.decode("utf-8")
     except UnicodeDecodeError:
-        return "binary"
+        # NUL-free but not UTF-8: a Latin-1/PEP 263 source, not a binary.
+        # It still gets scanned — ASCII-shaped secrets survive the
+        # errors="replace" decode — instead of hiding in the binary policy.
+        return "text"
     return "text"
 
 
@@ -157,10 +161,17 @@ def _archive_entries(path: Path, data: bytes) -> tuple[list[str], int]:
     elif tarfile.is_tarfile(path):
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
             # Incremental: never materialize getmembers() for a hostile tar.
+            logical = 0
             for member in archive:
                 members += 1
                 if members > ARCHIVE_MEMBER_CAP:
                     raise ValueError("archive-member-cap")
+                # Advancing the iterator decompresses through each payload;
+                # bound the declared logical bytes so a tiny compression bomb
+                # cannot burn the job before the member cap ever triggers.
+                logical += max(0, member.size)
+                if logical > ARCHIVE_LOGICAL_CAP:
+                    raise ValueError("archive-logical-cap")
                 checks.append(member.name)
                 if member.issym() or member.islnk():
                     checks.append(member.linkname)

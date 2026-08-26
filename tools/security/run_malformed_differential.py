@@ -25,14 +25,22 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _is_bcir_opt_name(name: str) -> bool:
+    # Positive identification: the tool must BE a bcir-opt build. A basename
+    # test against exactly "mlir-opt" let version-suffixed stock binaries
+    # (mlir-opt-22) through, which reject the BCIR dialect and poison the
+    # differential with false disagreements.
+    return "bcir-opt" in name
+
+
 def find_bcir_opt(root: Path) -> str | None:
     env = os.environ.get("BCIR_OPT")
     if env:
         path = Path(env)
-        if path.is_file() and path.name != "mlir-opt":
+        if path.is_file() and _is_bcir_opt_name(path.name):
             return str(path)
     which = shutil.which("bcir-opt")
-    if which and Path(which).name != "mlir-opt":
+    if which and _is_bcir_opt_name(Path(which).name):
         return which
     for candidate in (
         root / "build" / "mlir-build" / "bin" / "bcir-opt",

@@ -121,6 +121,17 @@ def test_find_bcir_opt_never_returns_stock_mlir_opt() -> None:
     with patch.dict(os.environ, {"BCIR_OPT": str(_ROOT / "mlir-opt")}, clear=False):
         with patch("tools.security.run_malformed_differential.shutil.which", return_value="mlir-opt"):
             assert find_bcir_opt(_ROOT) is None
+    # Version-suffixed stock binaries are stock too; only a bcir-opt passes.
+    with tempfile.TemporaryDirectory() as tmp:
+        stock = Path(tmp) / "mlir-opt-22"
+        stock.write_text("", encoding="utf-8")
+        real = Path(tmp) / "bcir-opt"
+        real.write_text("", encoding="utf-8")
+        with patch("tools.security.run_malformed_differential.shutil.which", return_value=None):
+            with patch.dict(os.environ, {"BCIR_OPT": str(stock)}, clear=False):
+                assert find_bcir_opt(Path(tmp)) is None
+            with patch.dict(os.environ, {"BCIR_OPT": str(real)}, clear=False):
+                assert find_bcir_opt(Path(tmp)) == str(real)
 
 
 def test_r5_witness_matches_official_compiled_fixture() -> None:
@@ -508,6 +519,63 @@ def test_decoder_campaign_require_c_fails_when_unavailable() -> None:
             required = campaign.run_campaign(_ROOT, 1, 1, 1, 1, require_c=True)
     assert relaxed["state"] == "PASS"
     assert required["state"] == "FAIL"
+
+
+def test_boundary_audit_flags_args_keyword_string_commands() -> None:
+    """`args=` is subprocess's public command parameter; a literal string
+    there is the same policy violation as the first positional."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "tools").mkdir()
+        (root / "tools" / "kw.py").write_text(
+            "import subprocess\nsubprocess.run(args='tool --flag')\n",
+            encoding="utf-8",
+        )
+        report = audit_boundaries(root)
+        rules = {item["rule"] for item in report["findings"]}
+        assert "subprocess-string-command" in rules
+
+
+def test_non_utf8_text_files_are_still_scanned() -> None:
+    """A NUL-free Latin-1 source is text, not binary — an ASCII credential in
+    it must not hide behind the binary policy."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        planted = "ghp_" + ("ab" * 18)
+        (root / "legacy.py").write_bytes(
+            b"# -*- coding: latin-1 -*-\n# caf\xe9\n"
+            + f'token = "{planted}"\n'.encode("latin-1")
+        )
+        subprocess.run(["git", "add", "legacy.py"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "github-token" for item in report["findings"])
+
+
+def test_tar_logical_size_cap_is_enforced() -> None:
+    import io
+    import tarfile
+    from tools.security import scan_secrets as secrets
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as archive:
+            info = tarfile.TarInfo("big.bin")
+            payload = b"\x00" * 4096
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+        (root / "bomb.tgz").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "bomb.tgz"], cwd=root, check=True)
+        old = secrets.ARCHIVE_LOGICAL_CAP
+        secrets.ARCHIVE_LOGICAL_CAP = 1024
+        try:
+            report = scan_tree(root)
+        finally:
+            secrets.ARCHIVE_LOGICAL_CAP = old
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "archive-unreadable" for item in report["findings"])
 
 
 def test_boundary_audit_covers_tracked_claude_scripts() -> None:
