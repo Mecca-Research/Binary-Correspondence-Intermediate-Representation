@@ -393,8 +393,13 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
             and compiled.get("rejected")
             and marker not in compiled.get("stderr_tail", "")
         ):
+            # The captured diagnostic IS the evidence of which law fired;
+            # print it with the disagreement or the failure is undebuggable
+            # from a CI log.
+            tail = compiled.get("stderr_tail", "").strip().replace("\n", " | ")
             disagreements.append(
-                f"{case['name']}/mlir_compiled: rejection diagnostic lacks {marker!r}"
+                f"{case['name']}/mlir_compiled: rejection diagnostic lacks {marker!r} "
+                f"(stderr: {tail[:220]!r})"
             )
         if case["expect_reject"] and any(rejected for _, rejected in executed):
             malformed_rejected += 1
