@@ -4,7 +4,8 @@
 Required rails: Python ``verify`` and an always-on MLIR text parser.
 Compiled ``bcir-opt -bcir-verify`` is used only on official witnesses that
 the compiled pass already implements (R1 RID uniqueness, isolated R5).
-It is never stock ``mlir-opt``. Absence is UNAVAILABLE/SKIPPED.
+It is never stock ``mlir-opt``. Absence is UNAVAILABLE/SKIPPED — fatal
+under ``--require-compiled``, which CI passes in the job that builds it.
 
 This campaign does not add compiled laws. Oracle-only laws such as R1.1
 (claim-id uniqueness per Module) stay on the Python rail.
@@ -186,7 +187,19 @@ def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
     }
 
 
-def run_differential(root: Path) -> dict[str, Any]:
+def run_differential(root: Path, require_compiled: bool = False) -> dict[str, Any]:
+    if require_compiled and find_bcir_opt(root) is None:
+        # The llvm-training job builds bcir-opt specifically so the compiled
+        # rail can be compared; there, a silently absent binary must fail the
+        # job rather than skip every compiled case (mirrors --require-c).
+        return {
+            "state": "FAIL",
+            "cases": [],
+            "disagreements": ["compiled rail required but bcir-opt not found"],
+            "malformed_rejected": 0,
+            "required_rails": ["python-verify", "mlir-text", "mlir-compiled"],
+            "error": "compiled rail required but bcir-opt not found",
+        }
     from bcir.examples import vector_add
     from bcir.kbcir import optimize
     from bcir.kbcir.cost import TargetProfile, Theta
@@ -329,11 +342,14 @@ def run_differential(root: Path) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="run_malformed_differential")
     parser.add_argument("--root", type=Path, default=ROOT)
+    parser.add_argument("--require-compiled", action="store_true",
+                        help="fail when the compiled bcir-opt rail is unavailable "
+                             "(for the CI job that builds it)")
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args(argv)
     if str(args.root) not in sys.path:
         sys.path.insert(0, str(args.root))
-    report = run_differential(args.root)
+    report = run_differential(args.root, require_compiled=args.require_compiled)
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

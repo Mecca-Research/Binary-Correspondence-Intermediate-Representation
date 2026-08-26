@@ -12,20 +12,52 @@ import json
 import os
 import random
 import shutil
+import signal
 import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import zlib
 from pathlib import Path
 from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[2]
 REQUIRED_PYTHON = ("streampack", "bcab", "bcirq8")
+DECODE_TIMEOUT = 10.0
 _BASE_GRACEFUL = (
     ValueError, KeyError, IndexError, struct.error, EOFError,
     UnicodeDecodeError, OverflowError, OSError, zlib.error,
 )
+
+
+class _DecodeHang(Exception):
+    """Raised by the watchdog when a single decode exceeds its wall bound."""
+
+
+def _bounded_decode(decode: Callable[[bytes], Any], blob: bytes, seconds: float) -> Any:
+    """Run one decode under a wall-clock bound. A decoder that stops
+    terminating is the exact regression this campaign hunts; it must become
+    a structured finding, not a hung required job. Where SIGALRM is
+    unavailable (Windows, a non-main thread) the call runs unbounded — the
+    watchdog is a POSIX rail, like the C campaign."""
+    if (
+        os.name == "nt"
+        or not hasattr(signal, "SIGALRM")
+        or threading.current_thread() is not threading.main_thread()
+    ):
+        return decode(blob)
+
+    def _expired(signum: int, frame: Any) -> None:
+        raise _DecodeHang(f"decode exceeded {seconds}s")
+
+    previous = signal.signal(signal.SIGALRM, _expired)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        return decode(blob)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 def _graceful() -> tuple[type[BaseException], ...]:
@@ -55,14 +87,17 @@ def _mutate(data: bytes, rng: random.Random) -> bytes:
 
 
 def _probe(name: str, decode: Callable[[bytes], Any], seed: bytes,
-           rng: random.Random, mutations: int) -> dict[str, Any]:
+           rng: random.Random, mutations: int,
+           timeout: float = DECODE_TIMEOUT) -> dict[str, Any]:
     findings: list[dict[str, str]] = []
     accepted = 0
     rejected = 0
     graceful = _graceful()
     try:
-        decode(seed)
+        _bounded_decode(decode, seed, timeout)
         accepted += 1
+    except _DecodeHang:
+        findings.append({"kind": "decoder-hang"})
     except graceful:
         findings.append({"kind": "seed-rejected"})
         rejected += 1
@@ -70,8 +105,10 @@ def _probe(name: str, decode: Callable[[bytes], Any], seed: bytes,
         findings.append({"kind": "ungraceful-seed", "type": type(exc).__name__})
     for _ in range(mutations):
         try:
-            decode(_mutate(seed, rng))
+            _bounded_decode(decode, _mutate(seed, rng), timeout)
             accepted += 1
+        except _DecodeHang:
+            findings.append({"kind": "decoder-hang"})
         except graceful:
             rejected += 1
         except Exception as exc:  # noqa: BLE001
@@ -80,8 +117,10 @@ def _probe(name: str, decode: Callable[[bytes], Any], seed: bytes,
     # it: one deterministic format-invalid probe per surface, whose acceptance
     # is a finding rather than another accepted count.
     try:
-        decode(b"\x00")
+        _bounded_decode(decode, b"\x00", timeout)
         findings.append({"kind": "invalid-accepted"})
+    except _DecodeHang:
+        findings.append({"kind": "decoder-hang"})
     except graceful:
         rejected += 1
     except Exception as exc:  # noqa: BLE001
@@ -142,9 +181,20 @@ def _q8_seed() -> bytes:
 
 def _decode_q8_bytes(data: bytes) -> Any:
     from bcir.frontends.models.weights_io import read_q8_decoder
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "mut.bcirq8"
-        path.write_bytes(data)
+    # Campaign I/O is environmental, not a decode verdict: a disk-full or
+    # permission failure in this plumbing must surface as a finding
+    # (RuntimeError sits outside the graceful set), never count as a
+    # graceful rejection that keeps the surface green.
+    try:
+        tmp = tempfile.TemporaryDirectory()
+    except OSError as exc:
+        raise RuntimeError(f"campaign I/O failed: {exc}") from exc
+    with tmp:
+        path = Path(tmp.name) / "mut.bcirq8"
+        try:
+            path.write_bytes(data)
+        except OSError as exc:
+            raise RuntimeError(f"campaign I/O failed: {exc}") from exc
         return read_q8_decoder(path)
 
 

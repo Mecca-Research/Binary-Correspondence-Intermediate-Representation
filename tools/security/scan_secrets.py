@@ -14,6 +14,7 @@ import lzma
 import os
 import re
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -62,13 +63,25 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("assignment-secret", re.compile(
         r"(?i)\b(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|secret|password|token|passwd)"
         r"(?:[_-][A-Za-z0-9]+)*\s*=\s*"
-        r"(?:['\"][^'\"]{12,}['\"]|(?=[A-Za-z0-9+/_.\-]*\d)[A-Za-z0-9+/_.\-]{16,}={0,2})"
+        r"(?:['\"](?P<value>[^'\"]{12,})['\"]"
+        r"|(?P<uvalue>(?=[A-Za-z0-9+/_.\-]*\d)[A-Za-z0-9+/_.\-]{16,}={0,2}))"
     )),
 )
 
-PLACEHOLDER = re.compile(
-    r"(?i)(example|changeme|change_me|placeholder|redacted|dummy|fake|xxxx|0000|1111|2222)"
+# Suppression recognizes placeholder VALUES, never substrings: a real
+# credential that merely CONTAINS "fake" or "0000" stays a finding. Long
+# filler runs suppress anywhere (the doc idiom ghp_xxxxxxxx / AKIA000000);
+# word placeholders suppress only when they lead or end the value.
+FILLER = re.compile(r"(?i)x{6,}|\*{4,}|0{6,}|1{6,}|2{6,}|9{6,}")
+WORD_PLACEHOLDER = re.compile(
+    r"(?i)(?:^[\W_]*(?:example|sample|changeme|change[_-]me|placeholder|"
+    r"redacted|dummy|fake|your|insert|replace)(?:\b|_)"
+    r"|(?:example|sample|placeholder|redacted|changeme)[\W_]*$)"
 )
+
+
+def _is_placeholder(value: str) -> bool:
+    return bool(FILLER.search(value) or WORD_PLACEHOLDER.search(value))
 
 
 def _fingerprint(value: str) -> str:
@@ -131,7 +144,10 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
         for rule, pattern in RULES:
             for match in pattern.finditer(line):
                 value = match.group(0)
-                if PLACEHOLDER.search(value):
+                groups = match.groupdict()
+                # Placeholder checks run on the VALUE (assignment RHS or the
+                # token itself), not on the key or surrounding text.
+                if _is_placeholder(groups.get("value") or groups.get("uvalue") or value):
                     continue
                 findings.append({
                     "path": path,
@@ -140,6 +156,23 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
                     "fingerprint": _fingerprint(value),
                 })
     return findings
+
+
+def _zip_declared_members(data: bytes) -> int | None:
+    """Bounded EOCD tail read: the declared entry count and central-directory
+    byte size cap the member estimate BEFORE ZipFile materializes a ZipInfo
+    per entry. A ZIP64 sentinel exceeds the inspection budget outright; an
+    absent record returns None and ZipFile decides (and fails closed)."""
+    tail = data[-((1 << 16) + 22):]
+    at = tail.rfind(b"PK\x05\x06")
+    if at < 0 or at + 16 > len(tail):
+        return None
+    entries, size_cd = struct.unpack("<HI", tail[at + 10:at + 16])
+    if entries == 0xFFFF or size_cd == 0xFFFFFFFF:
+        return ARCHIVE_MEMBER_CAP + 1
+    # 46 bytes is the minimal central-directory record; the declared size
+    # therefore bounds how many records ZipFile could parse.
+    return max(entries, size_cd // 46)
 
 
 def _archive_path_unsafe(name: str) -> bool:
@@ -158,10 +191,13 @@ def _archive_entries(path: Path, data: bytes) -> tuple[list[str], int]:
     checks: list[str] = []
     members = 0
     if zipfile.is_zipfile(path) or data[:4] == b"PK\x03\x04":
+        declared = _zip_declared_members(data)
+        if declared is not None and declared > ARCHIVE_MEMBER_CAP:
+            raise ValueError("archive-member-cap")
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            # The central directory materializes on open; the ingress size
-            # gate (ARCHIVE_LOGICAL_CAP against the raw file) bounds that
-            # cost before this branch is ever reached.
+            # The EOCD preflight above bounds the central directory BEFORE
+            # ZipFile materializes it; this length check is the backstop for
+            # archives whose EOCD understates the truth.
             infos = archive.infolist()
             if len(infos) > ARCHIVE_MEMBER_CAP:
                 raise ValueError("archive-member-cap")

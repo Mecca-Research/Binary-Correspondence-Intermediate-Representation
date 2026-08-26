@@ -1142,6 +1142,99 @@ def test_boundary_audit_survives_non_utf8_tracked_names() -> None:
         assert report["scanned_files"] == 1
 
 
+def test_hanging_decoder_is_a_structured_finding() -> None:
+    """A decoder that stops terminating is the exact regression the campaign
+    hunts; it must become a finding, not a hung required job."""
+    if os.name == "nt":
+        return  # the SIGALRM watchdog is a POSIX rail
+    import random
+    import time
+    from tools.security.run_decoder_campaign import _probe
+    report = _probe(
+        "sleepy", lambda blob: time.sleep(5), b"seed",
+        random.Random(0), mutations=1, timeout=0.5,
+    )
+    assert report["state"] == "FAIL"
+    assert any(f["kind"] == "decoder-hang" for f in report["findings"])
+
+
+def test_campaign_io_failure_is_not_a_graceful_rejection() -> None:
+    """A disk-full or permission error in the campaign's own temp-file plumbing
+    is environmental, not a decode verdict — it must surface as a finding
+    (RuntimeError, outside the graceful set), never count as rejection."""
+    from unittest.mock import patch
+    from tools.security import run_decoder_campaign as campaign
+    with patch.object(
+        campaign.tempfile, "TemporaryDirectory", side_effect=OSError("disk full"),
+    ):
+        try:
+            campaign._decode_q8_bytes(b"\x00")
+        except RuntimeError as exc:
+            assert "campaign I/O failed" in str(exc)
+        else:
+            raise AssertionError("expected RuntimeError")
+
+
+def test_placeholder_suppression_is_value_shaped_not_substring() -> None:
+    """A real credential merely CONTAINING a placeholder-ish substring stays
+    a finding; only values that ARE placeholders (a leading placeholder word,
+    or long filler runs) are suppressed."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "conf.py").write_text(
+            'DB_PASSWORD = "' + "this_is_a_fake_but_real_password_123" + '"\n'
+            'API_TOKEN = "' + "changeme" + "-please-now" + '"\n'
+            'GH = "ghp_' + "abQ" * 8 + "0000" + 'Z"\n',
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "conf.py"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        rules = [i["rule"] for i in report["findings"]]
+        assert rules.count("assignment-secret") == 1, report["findings"]
+        assert "github-token" in rules
+
+
+def test_zip_member_cap_fires_before_the_central_directory_is_read() -> None:
+    """The declared EOCD size caps members BEFORE ZipFile materializes every
+    ZipInfo — a many-entry ZIP is refused without the allocation."""
+    import io
+    import zipfile as zf
+    from unittest.mock import patch
+    from tools.security import scan_secrets as secrets
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as archive:
+            for index in range(3):
+                archive.writestr(f"m{index}.txt", "data")
+        (root / "many.zip").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "ok.py", "many.zip"], cwd=root, check=True)
+
+        def bomb(*args, **kwargs):
+            raise AssertionError("ZipFile was constructed before the cap check")
+
+        with patch.object(secrets, "ARCHIVE_MEMBER_CAP", 2):
+            with patch.object(secrets.zipfile, "ZipFile", side_effect=bomb):
+                report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "archive-unreadable" for item in report["findings"])
+
+
+def test_differential_requires_the_compiled_rail_when_told() -> None:
+    """--require-compiled makes a missing bcir-opt fatal (mirroring
+    --require-c): the CI job that builds the binary must not pass without it."""
+    from unittest.mock import patch
+    from tools.security import run_malformed_differential as differential
+    with patch.object(differential, "find_bcir_opt", return_value=None):
+        report = differential.run_differential(_ROOT, require_compiled=True)
+    assert report["state"] == "FAIL"
+    assert "bcir-opt" in report["error"]
+
+
 def test_c_campaign_timeout_keeps_the_captured_tails() -> None:
     """On TimeoutExpired the captured output is the only evidence of which
     target hung; the structured FAIL must carry it."""
