@@ -1235,6 +1235,24 @@ def test_differential_requires_the_compiled_rail_when_told() -> None:
     assert "bcir-opt" in report["error"]
 
 
+def test_find_bcir_opt_searches_the_build_tree_layout() -> None:
+    """cmake decides where bcir-opt lands (bin/, tools/...); discovery must
+    mirror check_passes.sh's find over the build tree, not a fixed path."""
+    from unittest.mock import patch
+    from tools.security import run_malformed_differential as differential
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        nested = root / "build" / "mlir-build" / "tools" / "bcir-opt-target"
+        nested.mkdir(parents=True)
+        binary = nested / "bcir-opt"
+        binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        binary.chmod(0o755)
+        with patch.dict(differential.os.environ, {"BCIR_OPT": ""}):
+            with patch.object(differential.shutil, "which", return_value=None):
+                found = differential.find_bcir_opt(root)
+    assert found == str(binary)
+
+
 def test_c_campaign_timeout_keeps_the_captured_tails() -> None:
     """On TimeoutExpired the captured output is the only evidence of which
     target hung; the structured FAIL must carry it."""

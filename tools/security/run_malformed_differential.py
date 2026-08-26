@@ -43,12 +43,15 @@ def find_bcir_opt(root: Path) -> str | None:
     which = shutil.which("bcir-opt")
     if which and _is_bcir_opt_name(Path(which).name):
         return which
-    for candidate in (
-        root / "build" / "mlir-build" / "bin" / "bcir-opt",
-        root / "build" / "mlir" / "bin" / "bcir-opt",
-    ):
-        if candidate.is_file():
-            return str(candidate)
+    for tree in (root / "build" / "mlir-build", root / "build" / "mlir"):
+        if not tree.is_dir():
+            continue
+        # The cmake layout decides where the binary lands (bin/, tools/...);
+        # mirror check_passes.sh's own discovery — the first bcir-opt file in
+        # the build tree — instead of probing a fixed path that misses it.
+        for candidate in sorted(tree.rglob("bcir-opt")):
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
     return None
 
 
