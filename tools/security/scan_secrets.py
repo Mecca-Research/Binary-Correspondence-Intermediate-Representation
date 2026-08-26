@@ -7,6 +7,7 @@ and a non-reversible fingerprint — never the matched value.
 from __future__ import annotations
 
 import argparse
+import codecs
 import hashlib
 import io
 import json
@@ -111,6 +112,39 @@ def _suffix_matches(lower: str, suffixes: frozenset[str]) -> bool:
     return any(lower.endswith(suffix) for suffix in suffixes)
 
 
+# UTF-32 before UTF-16: BOM_UTF32_LE starts with BOM_UTF16_LE's bytes.
+_BOMS: tuple[tuple[bytes, str], ...] = (
+    (codecs.BOM_UTF32_LE, "utf-32"), (codecs.BOM_UTF32_BE, "utf-32"),
+    (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16"),
+    (codecs.BOM_UTF8, "utf-8-sig"),
+)
+
+
+def _decode_text(data: bytes) -> str:
+    for bom, encoding in _BOMS:
+        if data.startswith(bom):
+            return data.decode(encoding, "replace")
+    return data.decode("utf-8", "replace")
+
+
+def _tar_probe(data: bytes) -> bool:
+    """Bounded tar sniff: decompress under the cap FIRST — is_tarfile
+    advances into the first member and would otherwise materialize a PAX
+    metadata bomb before any bound applies. An over-budget stream probes
+    True so the archive path fails it closed; a corrupt stream keeps the
+    single-file binary policy."""
+    try:
+        plain = _decompress_bounded(data)
+    except ValueError:
+        return True
+    except (OSError, EOFError, zlib.error, lzma.LZMAError):
+        return False
+    try:
+        return tarfile.is_tarfile(io.BytesIO(plain))
+    except (OSError, EOFError, tarfile.TarError):
+        return False
+
+
 def _kind_for(path: str, data: bytes) -> str:
     lower = path.lower()
     if _suffix_matches(lower, ARCHIVE_SUFFIXES):
@@ -121,12 +155,7 @@ def _kind_for(path: str, data: bytes) -> str:
         # A compressed tar without a .tar.* name (backup.gz) is still an
         # archive extractors will unpack — probe the content so genuine
         # single-file streams stay binary without losing tar inspection.
-        try:
-            if tarfile.is_tarfile(io.BytesIO(data)):
-                return "archive"
-        except (OSError, EOFError, tarfile.TarError):
-            pass
-        return "binary"
+        return "archive" if _tar_probe(data) else "binary"
     if (
         data[:4] == b"PK\x03\x04"
         or data[257:262] == b"ustar"
@@ -140,6 +169,11 @@ def _kind_for(path: str, data: bytes) -> str:
         return "archive"
     if _suffix_matches(lower, BINARY_SUFFIXES):
         return "binary"
+    for bom, _ in _BOMS:
+        if data.startswith(bom):
+            # A BOM names the real text encoding; UTF-16/32 NUL bytes must
+            # not shunt the file into the binary policy unscanned.
+            return "text"
     sample = data[:TEXT_SAMPLE]
     if b"\0" in sample:
         return "binary"
@@ -272,7 +306,14 @@ def _archive_entries(path: Path, data: bytes) -> tuple[list[str], int]:
                     with archive.open(info) as handle:
                         target = handle.read(ZIP_SYMLINK_MAX + 1)
                     checks.append(target.decode("utf-8", "replace"))
-    elif tarfile.is_tarfile(path) or data[257:262] == b"ustar":
+    elif (
+        # Compressed magic decides FIRST: is_tarfile would advance into the
+        # first member and materialize a PAX bomb before any bound; a plain
+        # tar's probe is bounded by the bytes already in memory.
+        any(data.startswith(magic) for magic, _ in _COMPRESSED_TAR_MAGIC)
+        or data[257:262] == b"ustar"
+        or tarfile.is_tarfile(io.BytesIO(data))
+    ):
         # The stream is decompressed under the logical cap FIRST (a PAX
         # metadata bomb never reaches iteration), then parsed uncompressed.
         plain = _decompress_bounded(data)
@@ -488,7 +529,7 @@ def scan_tree(root: Path) -> dict[str, Any]:
             report["findings"].extend(extra)
             continue
         report["text_files"] += 1
-        report["findings"].extend(_scan_text(rel, data.decode("utf-8", "replace")))
+        report["findings"].extend(_scan_text(rel, _decode_text(data)))
     if report["findings"]:
         report["state"] = "FAIL"
     elif report["text_files"] == 0:

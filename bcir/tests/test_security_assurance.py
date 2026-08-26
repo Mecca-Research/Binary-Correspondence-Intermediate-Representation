@@ -285,29 +285,44 @@ def test_unseeded_c_fuzzing_is_recorded_as_unavailable() -> None:
     from types import SimpleNamespace
     from unittest.mock import patch
     from tools.security import run_decoder_campaign as campaign
-    fake = SimpleNamespace(
-        returncode=0,
-        stdout=b"  SKIP BCIRQ8 seed corpus (could not build a seed artifact); fuzzing unseeded\n",
-        stderr=b"",
-    )
+    class FakeProc:
+        pid = 4242
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return (
+                b"  SKIP BCIRQ8 seed corpus (could not build a seed artifact); "
+                b"fuzzing unseeded\n",
+                b"",
+            )
+
     posix_os = SimpleNamespace(name="posix", environ=dict(os.environ))
     with patch.object(campaign, "os", posix_os):
         with patch.object(campaign.shutil, "which", return_value="/usr/bin/tool"):
-            with patch.object(campaign.subprocess, "run", return_value=fake):
+            with patch.object(campaign.subprocess, "Popen", side_effect=lambda *a, **k: FakeProc()):
                 report = campaign.run_c_campaign(_ROOT, runs=1, seconds=1)
     assert report["state"] == "UNAVAILABLE/SKIPPED"
     assert "unseeded" in report["reason"]
 
 
 def test_compiled_verifier_timeout_is_a_structured_failure() -> None:
+    if os.name == "nt":
+        return  # the fixture verifier is a POSIX shell script
     from unittest.mock import patch
     from tools.security import run_malformed_differential as differential
-    with patch.object(differential, "find_bcir_opt", return_value="/fake/bcir-opt"):
-        with patch.object(
-            differential.subprocess, "run",
-            side_effect=differential.subprocess.TimeoutExpired(cmd="bcir-opt", timeout=20),
-        ):
-            result = differential._compiled_mlir("bcir.module @m { }", _ROOT)
+    with tempfile.TemporaryDirectory() as tmp:
+        hang = Path(tmp) / "fake-bcir-opt"
+        hang.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+        hang.chmod(0o755)
+        with patch.object(differential, "find_bcir_opt", return_value=str(hang)):
+            with patch.object(
+                differential.subprocess.Popen, "wait", autospec=True,
+                side_effect=[
+                    differential.subprocess.TimeoutExpired(cmd="bcir-opt", timeout=20),
+                    0,
+                ],
+            ):
+                result = differential._compiled_mlir("bcir.module @m { }", _ROOT)
     assert result["state"] == "FAIL"
     assert "timed out" in result["reason"]
 
@@ -1641,6 +1656,146 @@ def test_compiled_diagnostic_marker_survives_long_notes() -> None:
     assert result["diagnostic"].startswith("case.mlir")
 
 
+def test_tar_probe_never_parses_compressed_bytes() -> None:
+    """is_tarfile advances into the first member and can materialize a PAX
+    payload BEFORE any bound; tarfile must only ever see plain bytes that
+    already passed the bounded decompression."""
+    import io
+    import tarfile as tf
+    from unittest.mock import patch
+    from tools.security import scan_secrets as secrets
+    real = tf.is_tarfile
+
+    def guarded(target):
+        if hasattr(target, "read"):
+            blob = target.read()
+            target.seek(0)
+        else:
+            with open(target, "rb") as handle:
+                blob = handle.read()
+        assert not blob.startswith(b"\x1f\x8b"), "is_tarfile saw compressed bytes"
+        return real(io.BytesIO(blob))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        buf = io.BytesIO()
+        with tf.open(fileobj=buf, mode="w:gz") as archive:
+            info = tf.TarInfo("member.txt")
+            info.size = 4
+            archive.addfile(info, io.BytesIO(b"data"))
+        (root / "bundle.tar.gz").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "ok.py", "bundle.tar.gz"], cwd=root, check=True)
+        with patch.object(secrets.tarfile, "is_tarfile", side_effect=guarded):
+            report = scan_tree(root)
+        assert report["state"] == "PASS", report["findings"]
+
+
+def test_q8_read_io_failure_is_not_graceful() -> None:
+    """The decoder's open/fstat/read OSError is environmental (its content
+    rejections are all ValueError); it must become a campaign failure, not a
+    graceful malformed-input rejection."""
+    from unittest.mock import patch
+    from tools.security import run_decoder_campaign as campaign
+    with patch(
+        "bcir.frontends.models.weights_io.read_q8_decoder",
+        side_effect=OSError("EIO"),
+    ):
+        try:
+            campaign._decode_q8_bytes(b"\x00")
+        except RuntimeError as exc:
+            assert "campaign I/O" in str(exc)
+        else:
+            raise AssertionError("expected RuntimeError")
+
+
+def test_bom_marked_unicode_text_is_scanned() -> None:
+    """UTF-16/32 text carries NUL bytes that the binary heuristic would eat;
+    a BOM names the real encoding, and the secrets inside must be seen."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        payload = 'DB_PASSWORD="' + "correct-horse-battery-123" + '"\n'
+        (root / "secrets.ps1").write_bytes(payload.encode("utf-16"))
+        subprocess.run(["git", "add", "secrets.ps1"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "assignment-secret" for item in report["findings"])
+
+
+def test_c_campaign_runs_in_its_own_session() -> None:
+    """The fuzz wrapper backgrounds per-target subshells; only a process-
+    group kill can enforce the wall bound on the whole tree, so the wrapper
+    must start in its own session."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from tools.security import run_decoder_campaign as campaign
+    captured: dict[str, object] = {}
+
+    class FakeProc:
+        pid = 4242
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return (b"ok", b"")
+
+    def fake_popen(cmd, **kwargs):
+        captured.update(kwargs)
+        return FakeProc()
+
+    posix_os = SimpleNamespace(name="posix", environ=dict(os.environ))
+    with patch.object(campaign, "os", posix_os):
+        with patch.object(campaign.shutil, "which", return_value="/usr/bin/tool"):
+            with patch.object(campaign.subprocess, "Popen", side_effect=fake_popen):
+                report = campaign.run_c_campaign(_ROOT, runs=1, seconds=1)
+    assert report["state"] == "PASS"
+    assert captured.get("start_new_session") is True
+
+
+def test_verbose_compiled_verifier_is_bounded() -> None:
+    """A regressed bcir-opt spraying diagnostics must hit a byte budget and
+    become a structured failure, not accumulate unbounded for 20 seconds."""
+    if os.name == "nt":
+        return  # the fixture verifier is a POSIX shell script
+    from unittest.mock import patch
+    from tools.security import run_malformed_differential as differential
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = Path(tmp) / "fake-bcir-opt"
+        fake.write_text(
+            "#!/bin/sh\n"
+            "i=0\n"
+            "while [ $i -lt 64 ]; do printf 'x%.0s' $(seq 1 65536); i=$((i+1)); done\n"
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        fake.chmod(0o755)
+        with patch.object(differential, "VERIFY_OUTPUT_CAP", 1 << 16):
+            with patch.object(differential, "find_bcir_opt", return_value=str(fake)):
+                result = differential._compiled_mlir("bcir.module @m { }", _ROOT)
+    assert result["state"] == "FAIL"
+    assert "exceeded" in result["reason"]
+
+
+def test_oversized_python_source_is_a_finding() -> None:
+    """ast.parse builds a tree far larger than the source; a tracked blob
+    must be stat-gated into a finding, never an OOM of the audit."""
+    from unittest.mock import patch
+    from tools.security import audit_tool_boundaries as atb
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        tools = root / "tools"
+        tools.mkdir()
+        (tools / "x.py").write_text("x = 1\n", encoding="utf-8")
+        (tools / "big.py").write_text("y = 2\n" + "# pad\n" * 800, encoding="utf-8")
+        subprocess.run(["git", "add", "tools/x.py", "tools/big.py"], cwd=root, check=True)
+        with patch.object(atb, "SOURCE_SIZE_CAP", 1024):
+            report = audit_boundaries(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "file-oversized" for item in report["findings"])
+
+
 def test_find_bcir_opt_searches_the_build_tree_layout() -> None:
     """cmake decides where bcir-opt lands (bin/, tools/...); discovery must
     mirror check_passes.sh's find over the build tree, not a fixed path."""
@@ -1665,13 +1820,25 @@ def test_c_campaign_timeout_keeps_the_captured_tails() -> None:
     from types import SimpleNamespace
     from unittest.mock import patch
     from tools.security import run_decoder_campaign as campaign
-    exc = campaign.subprocess.TimeoutExpired(
-        cmd="fuzz", timeout=5, output=b"target seven \xff hung", stderr=b"asan \xfe tail",
-    )
+
+    class FakeProc:
+        pid = 4242
+        returncode = -9
+        calls = 0
+
+        def communicate(self, timeout=None):
+            FakeProc.calls += 1
+            if FakeProc.calls == 1:
+                raise campaign.subprocess.TimeoutExpired(cmd="fuzz", timeout=5)
+            return (b"target seven \xff hung", b"asan \xfe tail")
+
+        def kill(self):
+            pass
+
     posix_os = SimpleNamespace(name="posix", environ=dict(os.environ))
     with patch.object(campaign, "os", posix_os):
         with patch.object(campaign.shutil, "which", return_value="/usr/bin/tool"):
-            with patch.object(campaign.subprocess, "run", side_effect=exc):
+            with patch.object(campaign.subprocess, "Popen", side_effect=lambda *a, **k: FakeProc()):
                 report = campaign.run_c_campaign(_ROOT, runs=1, seconds=1)
     assert report["state"] == "FAIL"
     assert "hung" in report["stdout_tail"]

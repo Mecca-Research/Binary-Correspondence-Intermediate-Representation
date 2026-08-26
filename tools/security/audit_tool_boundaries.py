@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # developer-tool boundary policy that skips them audits less than it claims.
 TREES = ("bcir", "tools", ".claude")
 SKIP_PARTS = {".git", "build", "__pycache__", "dataset"}
+SOURCE_SIZE_CAP = 1 << 23  # 8 MiB: ast.parse multiplies source size in memory
 # subprocess helpers that ARE shell string-command execution, like os.system.
 SHELL_HELPERS = {"getoutput", "getstatusoutput"}
 
@@ -125,6 +126,11 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
             continue
         scanned += 1
         try:
+            if path.stat().st_size > SOURCE_SIZE_CAP:
+                # Bounds at ingress: ast.parse on an accidentally tracked
+                # blob must be a finding, never an OOM of the audit.
+                findings.append({"path": rel, "line": 0, "rule": "file-oversized"})
+                continue
             source = path.read_bytes()
         except OSError:
             # A tracked file the auditor cannot read was not audited — a

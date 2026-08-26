@@ -195,7 +195,13 @@ def _decode_q8_bytes(data: bytes) -> Any:
             path.write_bytes(data)
         except OSError as exc:
             raise RuntimeError(f"campaign I/O failed: {exc}") from exc
-        return read_q8_decoder(path)
+        try:
+            return read_q8_decoder(path)
+        except OSError as exc:
+            # The decoder's content rejections are ValueError by contract; an
+            # OSError out of its open/fstat/read is the filesystem failing
+            # mid-campaign, not a decode verdict.
+            raise RuntimeError(f"campaign I/O failed: {exc}") from exc
 
 
 def run_python_campaign(mutations: int, seed: int) -> list[dict[str, Any]]:
@@ -232,47 +238,56 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
     # ~15 targets on 2 workers can each reach the per-target time bound, plus
     # compile time — a timeout sized to one target aborts healthy campaigns.
     timeout = 180 + seconds * 8
+    # Its own session: the wrapper backgrounds per-target subshells, and
+    # only a process-group kill enforces the wall bound on the whole tree.
+    # Bytes, not text=True: sanitizer and fuzzer binaries write raw bytes,
+    # and a strict decode would crash the campaign instead of recording it.
+    proc = subprocess.Popen(
+        [bash, str(script)],
+        cwd=root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=os.name != "nt",
+    )
     try:
-        # Bytes, not text=True: sanitizer and fuzzer binaries write raw
-        # bytes, and a strict decode inside run() would crash the campaign
-        # instead of recording it (the review harness sets the precedent).
-        result = subprocess.run(
-            [bash, str(script)],
-            cwd=root,
-            env=env,
-            capture_output=True,
-            check=False,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired as exc:
+        out_bytes, err_bytes = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if os.name != "nt" and hasattr(os, "killpg"):
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        proc.kill()
+        out_bytes, err_bytes = proc.communicate()
         # The captured output is the only evidence of which target hung.
         return {
             "state": "FAIL",
             "reason": f"C campaign timed out after {timeout}s",
-            "stdout_tail": (exc.stdout or b"").decode("utf-8", "replace")[-800:],
-            "stderr_tail": (exc.stderr or b"").decode("utf-8", "replace")[-800:],
+            "stdout_tail": (out_bytes or b"").decode("utf-8", "replace")[-800:],
+            "stderr_tail": (err_bytes or b"").decode("utf-8", "replace")[-800:],
         }
-    stdout = result.stdout.decode("utf-8", "replace")
-    stderr = result.stderr.decode("utf-8", "replace")
+    stdout = (out_bytes or b"").decode("utf-8", "replace")
+    stderr = (err_bytes or b"").decode("utf-8", "replace")
     combined = (stdout + stderr).lower()
-    if "skipping" in combined and result.returncode == 0:
+    if "skipping" in combined and proc.returncode == 0:
         return {
             "state": "UNAVAILABLE/SKIPPED",
             "reason": "clang has no libFuzzer/compiler-rt",
-            "returncode": result.returncode,
+            "returncode": proc.returncode,
         }
-    if "fuzzing unseeded" in combined and result.returncode == 0:
+    if "fuzzing unseeded" in combined and proc.returncode == 0:
         # The script exits 0 after "SKIP BCIRQ8 seed corpus"; random mutations
         # cannot pass BCIRQ8's checksum layers, so the target was not really
         # exercised — record unavailability (fatal under --require-c).
         return {
             "state": "UNAVAILABLE/SKIPPED",
             "reason": "BCIRQ8 seed corpus unavailable; campaign ran unseeded",
-            "returncode": result.returncode,
+            "returncode": proc.returncode,
         }
     return {
-        "state": "PASS" if result.returncode == 0 else "FAIL",
-        "returncode": result.returncode,
+        "state": "PASS" if proc.returncode == 0 else "FAIL",
+        "returncode": proc.returncode,
         "stdout_tail": stdout[-800:],
         "stderr_tail": stderr[-800:],
     }

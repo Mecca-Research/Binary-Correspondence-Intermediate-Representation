@@ -27,6 +27,25 @@ from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[2]
 PYTHON_VERIFY_TIMEOUT = 20.0
+VERIFY_OUTPUT_CAP = 1 << 20  # per stream; a verifier writes diagnostics, not payload
+
+
+def _drain(stream: Any, chunks: list[bytes], cap: int, state: dict[str, Any]) -> None:
+    """Read one verifier pipe under a byte budget; on overflow the verifier
+    is put down and the pipe kept draining unretained so it cannot block."""
+    received = 0
+    while True:
+        chunk = stream.read(65536)
+        if not chunk:
+            return
+        if state["overflow"]:
+            continue
+        received += len(chunk)
+        if received > cap:
+            state["overflow"] = True
+            state["proc"].kill()
+            continue
+        chunks.append(chunk)
 
 
 class _VerifyHang(Exception):
@@ -201,44 +220,70 @@ def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "case.mlir"
         path.write_text(text, encoding="utf-8")
+        cap = VERIFY_OUTPUT_CAP
         try:
-            # Bytes: the output is never parsed, and a crashing verifier can
-            # spray non-UTF-8 that a text=True strict decode would raise on.
-            result = subprocess.run(
+            # Popen + bounded drains, not run(): capture_output accumulates
+            # without limit, and a regressed verifier spraying diagnostics
+            # would OOM the job before the timeout could report it. Bytes:
+            # a crashing verifier can emit non-UTF-8.
+            proc = subprocess.Popen(
                 [opt, "-bcir-verify", str(path)],
-                capture_output=True, check=False, timeout=20,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
-        except subprocess.TimeoutExpired:
-            # A hanging compiled verifier is exactly what this campaign must
-            # record — a structured FAIL, never an escaping traceback.
-            return {
-                "state": "FAIL",
-                "rejected": False,
-                "reason": "compiled verifier timed out after 20s",
-            }
         except OSError as exc:
             return {
                 "state": "FAIL",
                 "rejected": False,
                 "reason": f"compiled verifier failed to start: {type(exc).__name__}",
             }
-    crash = result.returncode < 0 or result.returncode >= 0xC0000000
+        out_chunks: list[bytes] = []
+        err_chunks: list[bytes] = []
+        state: dict[str, Any] = {"overflow": False, "proc": proc}
+        readers = (
+            threading.Thread(target=_drain, args=(proc.stdout, out_chunks, cap, state), daemon=True),
+            threading.Thread(target=_drain, args=(proc.stderr, err_chunks, cap, state), daemon=True),
+        )
+        for reader in readers:
+            reader.start()
+        try:
+            proc.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            # A hanging compiled verifier is exactly what this campaign must
+            # record — a structured FAIL, never an escaping traceback.
+            proc.kill()
+            proc.wait()
+            for reader in readers:
+                reader.join(5)
+            return {
+                "state": "FAIL",
+                "rejected": False,
+                "reason": "compiled verifier timed out after 20s",
+            }
+        for reader in readers:
+            reader.join(5)
+    if state["overflow"]:
+        return {
+            "state": "FAIL",
+            "rejected": False,
+            "reason": f"compiled verifier output exceeded {cap} bytes",
+        }
+    crash = proc.returncode < 0 or proc.returncode >= 0xC0000000
     if crash:
         return {
             "state": "FAIL",
             "rejected": False,
-            "returncode": result.returncode,
-            "reason": f"compiled verifier crashed rc={result.returncode}",
+            "returncode": proc.returncode,
+            "reason": f"compiled verifier crashed rc={proc.returncode}",
         }
     return {
         "state": "PASS",
-        "rejected": result.returncode != 0,
-        "returncode": result.returncode,
+        "rejected": proc.returncode != 0,
+        "returncode": proc.returncode,
         # HEAD-biased capture: MLIR prints the error line first, then a
         # source quote and a "see current operation" note dump that easily
         # overflows any tail window — a tail-only slice hid the law marker
         # from the pairing check on its first CI run.
-        "diagnostic": result.stderr.decode("utf-8", "replace")[:4000],
+        "diagnostic": b"".join(err_chunks).decode("utf-8", "replace")[:4000],
     }
 
 
