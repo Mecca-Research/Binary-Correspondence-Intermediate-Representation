@@ -24,7 +24,9 @@ ROOT = Path(__file__).resolve().parents[2]
 EXPECTED = Path(__file__).resolve().parent / "expected_inventory.json"
 
 _SECTION = re.compile(r"^\[(?P<name>[^\]]+)\]\s*$")
-_ARRAY_KEY = re.compile(r"^(?P<key>[A-Za-z0-9_.\-\"']+)\s*=\s*(?P<rest>\[.*)$")
+# The key charset admits spaces/tabs: TOML permits whitespace around dotted
+# separators (`project . dependencies`), and _split_key strips each segment.
+_ARRAY_KEY = re.compile(r"^(?P<key>[A-Za-z0-9_.\-\"' \t]+)\s*=\s*(?P<rest>\[.*)$")
 _SENSITIVE = re.compile(r"(?:^|\.)(?:optional-)?(?:dependencies|dynamic)$")
 _ESCAPES = {"\\": "\\", '"': '"', "b": "\b", "t": "\t", "n": "\n", "f": "\f", "r": "\r"}
 

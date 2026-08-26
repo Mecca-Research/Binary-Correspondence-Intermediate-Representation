@@ -25,14 +25,29 @@ SKIP_PARTS = {".git", "build", "__pycache__", "dataset"}
 SHELL_HELPERS = {"getoutput", "getstatusoutput"}
 
 
-def _tracked(root: Path) -> set[str] | None:
-    result = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-z"],
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
+# Sentinel: discovery FAILED inside a git checkout — distinct from the
+# intentional fixture walk (no .git at all), which returns None.
+_DISCOVERY_FAILED = object()
+
+
+def _tracked(root: Path) -> Any:
+    if not (root / ".git").exists():
+        # A fixture tree without git metadata: the plain walk IS the
+        # contract there, not a degraded mode.
         return None
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z"],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return _DISCOVERY_FAILED
+    if result.returncode != 0:
+        # ls-files failing INSIDE a checkout (corrupt metadata, dubious
+        # ownership, git absent) means the audit no longer knows what is
+        # tracked; that must fail the audit, never downgrade it.
+        return _DISCOVERY_FAILED
     # surrogateescape: a non-UTF-8 tracked filename must not kill discovery.
     return {
         item.decode("utf-8", "surrogateescape")
@@ -40,11 +55,13 @@ def _tracked(root: Path) -> set[str] | None:
     }
 
 
-def _iter_python(root: Path) -> tuple[list[Path], list[str]]:
+def _iter_python(root: Path) -> tuple[list[Path], list[str], bool]:
     # The policy is about TRACKED developer code; an untracked scratch file
     # under .claude/ must not fail a local run that CI would pass. Outside a
     # git checkout (unit-test fixtures) the plain walk stands in.
     tracked = _tracked(root)
+    if tracked is _DISCOVERY_FAILED:
+        return [], [], True
     files: list[Path] = []
     seen: set[str] = set()
     for tree in TREES:
@@ -74,7 +91,7 @@ def _iter_python(root: Path) -> tuple[list[Path], list[str]]:
             if parts[0] not in TREES or any(part in SKIP_PARTS for part in parts):
                 continue
             missing.append(rel)
-    return files, missing
+    return files, missing, False
 
 
 def _is_true(node: ast.AST) -> bool:
@@ -85,7 +102,16 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     symlinks: list[str] = []
     scanned = 0
-    paths, missing = _iter_python(root)
+    paths, missing, discovery_failed = _iter_python(root)
+    if discovery_failed:
+        return {
+            "state": "FAIL",
+            "scanned_files": 0,
+            "findings": [
+                {"path": ".", "line": 0, "rule": "tracked-discovery-failed"},
+            ],
+            "symlinks": [],
+        }
     for rel in missing:
         printable = rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
         findings.append({"path": printable, "line": 0, "rule": "file-missing"})

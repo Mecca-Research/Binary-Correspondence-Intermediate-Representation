@@ -23,13 +23,35 @@ ROOT = Path(__file__).resolve().parents[2]
 REQUIRED_KEYS = ("passed", "security_concerns", "logic_errors", "summary")
 REVIEW_TIMEOUT = 120
 REVIEW_OUTPUT_CAP = 1 << 20  # 1 MiB per stream; a review JSON is small
+REVIEW_PIPE_GRACE = 5.0  # seconds to wait for drains after the reviewer exits
+
+
+def _put_down(proc: subprocess.Popen) -> None:
+    """Kill the reviewer's whole session where the platform allows: a
+    descendant that inherited the output pipes must not outlive the bound
+    by holding them open."""
+    if os.name != "nt":
+        import signal
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    proc.kill()
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    keys = [key for key, _ in pairs]
-    if len(keys) != len(set(keys)):
-        duplicates = sorted({key for key in keys if keys.count(key) > 1})
-        raise ValueError(f"duplicate keys in review JSON: {duplicates}")
+    # Single pass: a per-key list scan is quadratic, and one duplicate among
+    # tens of thousands of keys would burn minutes of CPU after the process
+    # timeout has already finished.
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for key, _ in pairs:
+        if key in seen:
+            duplicates.add(key)
+        seen.add(key)
+    if duplicates:
+        raise ValueError(f"duplicate keys in review JSON: {sorted(duplicates)}")
     return dict(pairs)
 
 
@@ -67,7 +89,7 @@ def _drain(stream: Any, chunks: list[bytes], cap: int, state: dict[str, Any]) ->
         received += len(chunk)
         if received > cap:
             state["overflow"] = True
-            state["proc"].kill()
+            _put_down(state["proc"])
             continue
         chunks.append(chunk)
 
@@ -87,6 +109,7 @@ def run_reviewer(command: list[str], cwd: Path, timeout: int = REVIEW_TIMEOUT) -
         # non-UTF-8 output must become a structured FAIL below.
         proc = subprocess.Popen(
             command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=os.name != "nt",
         )
     except OSError as exc:
         return {
@@ -106,17 +129,30 @@ def run_reviewer(command: list[str], cwd: Path, timeout: int = REVIEW_TIMEOUT) -
     try:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        _put_down(proc)
         proc.wait()
         for reader in readers:
-            reader.join()
+            reader.join(REVIEW_PIPE_GRACE)
         return {
             "state": "FAIL",
             "reason": f"reviewer timed out after {timeout}s",
             "fail_closed": True,
         }
+    # Bounded joins: a descendant that inherited the pipes and outlived the
+    # reviewer would otherwise hold the drains (and this harness) open
+    # indefinitely; after the grace the session is put down and re-joined.
     for reader in readers:
-        reader.join()
+        reader.join(REVIEW_PIPE_GRACE)
+    if any(reader.is_alive() for reader in readers):
+        _put_down(proc)
+        for reader in readers:
+            reader.join(REVIEW_PIPE_GRACE)
+        if any(reader.is_alive() for reader in readers):
+            return {
+                "state": "FAIL",
+                "reason": "reviewer descendants held its output pipes open",
+                "fail_closed": True,
+            }
     if state["overflow"]:
         return {
             "state": "FAIL",

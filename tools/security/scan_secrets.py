@@ -57,14 +57,16 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     # (DB_PASSWORD, AWS_SECRET_ACCESS_KEY, SECRET_KEY); a bare \b before the
     # keyword made every one of them invisible. Substring identifiers without
     # a separator (tokenizer, passwords_file) stay out of the rule.
-    # Values: quoted (12+ chars) or the unquoted .env shape — 16+ value
-    # characters carrying at least one digit, so an identifier RHS
-    # (AUTH_TOKEN = DEFAULT_AUTH_TOKEN) and short config words stay out.
+    # Values: quoted (12+ chars) or the unquoted .env shapes — 16+ value
+    # characters carrying at least one digit, OR a 20+ all-lowercase run (a
+    # passphrase, not an identifier: UPPER_SNAKE and snake_case references
+    # carry uppercase or separators and stay out, as do short config words).
     ("assignment-secret", re.compile(
         r"(?i)\b(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|secret|password|token|passwd)"
         r"(?:[_-][A-Za-z0-9]+)*\s*=\s*"
         r"(?:['\"](?P<value>[^'\"]{12,})['\"]"
-        r"|(?P<uvalue>(?=[A-Za-z0-9+/_.\-]*\d)[A-Za-z0-9+/_.\-]{16,}={0,2}))"
+        r"|(?P<uvalue>(?=[A-Za-z0-9+/_.\-]*\d)[A-Za-z0-9+/_.\-]{16,}={0,2}"
+        r"|(?-i:[a-z]{20,})(?![A-Za-z0-9_])))"
     )),
 )
 
@@ -123,6 +125,11 @@ def _kind_for(path: str, data: bytes) -> str:
         except (OSError, EOFError, tarfile.TarError):
             pass
         return "binary"
+    if data[:4] == b"PK\x03\x04" or data[257:262] == b"ustar":
+        # An archive is what an extractor says it is, not what its suffix
+        # says: a ZIP or tar named payload.dat must still have its members
+        # inspected instead of hiding behind the binary policy's NUL check.
+        return "archive"
     if _suffix_matches(lower, BINARY_SUFFIXES):
         return "binary"
     sample = data[:TEXT_SAMPLE]
@@ -156,6 +163,45 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
                     "fingerprint": _fingerprint(value),
                 })
     return findings
+
+
+_COMPRESSED_TAR_MAGIC: tuple[tuple[bytes, str], ...] = (
+    (b"\x1f\x8b", "gzip"), (b"BZh", "bz2"), (b"\xfd7zXZ\x00", "xz"),
+)
+
+
+def _decompress_bounded(data: bytes) -> bytes:
+    """Pre-decompress a compressed tar under ARCHIVE_LOGICAL_CAP. PAX and
+    GNU long-name headers materialize while the iterator advances, BEFORE
+    any TarInfo is yielded, so the per-member size loop cannot bound them —
+    bounding the whole decompressed stream up front does, with one
+    predicate. Unrecognized magic returns the bytes unchanged."""
+    kind = next(
+        (name for magic, name in _COMPRESSED_TAR_MAGIC if data.startswith(magic)),
+        None,
+    )
+    if kind is None:
+        return data
+    if kind == "gzip":
+        import gzip
+        stream: Any = gzip.GzipFile(fileobj=io.BytesIO(data))
+    elif kind == "bz2":
+        import bz2
+        stream = bz2.BZ2File(io.BytesIO(data))
+    else:
+        stream = lzma.LZMAFile(io.BytesIO(data))
+    chunks: list[bytes] = []
+    total = 0
+    with stream:
+        while True:
+            chunk = stream.read(1 << 20)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > ARCHIVE_LOGICAL_CAP:
+                raise ValueError("archive-logical-cap")
+            chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _zip_declared_members(data: bytes) -> int | None:
@@ -218,8 +264,11 @@ def _archive_entries(path: Path, data: bytes) -> tuple[list[str], int]:
                     with archive.open(info) as handle:
                         target = handle.read(ZIP_SYMLINK_MAX + 1)
                     checks.append(target.decode("utf-8", "replace"))
-    elif tarfile.is_tarfile(path):
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
+    elif tarfile.is_tarfile(path) or data[257:262] == b"ustar":
+        # The stream is decompressed under the logical cap FIRST (a PAX
+        # metadata bomb never reaches iteration), then parsed uncompressed.
+        plain = _decompress_bounded(data)
+        with tarfile.open(fileobj=io.BytesIO(plain), mode="r:") as archive:
             # Incremental: never materialize getmembers() for a hostile tar.
             logical = 0
             for member in archive:

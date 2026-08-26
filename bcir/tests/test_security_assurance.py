@@ -1289,6 +1289,144 @@ def test_verbose_reviewer_output_is_bounded() -> None:
     assert "exceeded" in report["reason"]
 
 
+def test_whitespace_around_dotted_toml_keys_is_attributed() -> None:
+    """TOML permits whitespace around dotted-key separators; the fallback
+    must resolve `project . dependencies` as tomllib does, not skip it."""
+    from tools.security.audit_dependencies import _fallback_parse
+    parsed = _fallback_parse('project . dependencies = ["requests==2"]\n')
+    assert parsed["_unasserted"] is False
+    assert parsed["runtime"] == ["requests==2"]
+
+
+def test_unquoted_alphabetic_secrets_are_matched() -> None:
+    """An all-letter passphrase value (20+ lowercase, no separators) is not
+    an identifier reference; it must match unquoted, while UPPER_SNAKE and
+    snake_case RHS identifiers stay out."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "prod.env").write_text(
+            "DB_PASSWORD=" + "correcthorsebatterystaple" + "\n"
+            "AUTH_TOKEN = DEFAULT_AUTH_TOKEN\n"
+            "SESSION_TOKEN = default_session_token\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "prod.env"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        hits = [i for i in report["findings"] if i["rule"] == "assignment-secret"]
+        assert len(hits) == 1, report["findings"]
+
+
+def test_tar_metadata_bomb_is_bounded_before_iteration() -> None:
+    """PAX and GNU long-name headers materialize while the iterator advances,
+    BEFORE any TarInfo is yielded — the per-member size loop cannot bound
+    them. The whole decompressed stream is bounded up front instead."""
+    import io
+    import tarfile
+    from unittest.mock import patch
+    from tools.security import scan_secrets as secrets
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT) as archive:
+            for index in range(64):
+                info = tarfile.TarInfo("d/" + "n" * 512 + f"/{index}")
+                info.size = 0  # all bulk lives in metadata headers
+                archive.addfile(info)
+        (root / "meta.tar.gz").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "meta.tar.gz"], cwd=root, check=True)
+        with patch.object(secrets, "ARCHIVE_LOGICAL_CAP", 4096):
+            report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "archive-unreadable" for item in report["findings"])
+
+
+def test_reviewer_descendants_cannot_hold_the_harness_open() -> None:
+    """A reviewer child that inherits the output pipes and outlives its
+    parent must not stall the bounded harness; the process session is put
+    down and the drains released."""
+    if os.name == "nt":
+        return  # process-group teardown is a POSIX rail
+    import time
+    from unittest.mock import patch
+    from tools.security import independent_review as review
+    with tempfile.TemporaryDirectory() as tmp:
+        parent = Path(tmp) / "parent.py"
+        parent.write_text(
+            "import json, subprocess, sys\n"
+            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(8)'])\n"
+            "print(json.dumps({'passed': True, 'security_concerns': [], "
+            "'logic_errors': [], 'summary': 'ok'}))\n",
+            encoding="utf-8",
+        )
+        started = time.monotonic()
+        with patch.object(review, "REVIEW_PIPE_GRACE", 1.0):
+            report = review.run_reviewer([sys.executable, str(parent)], Path(tmp))
+        elapsed = time.monotonic() - started
+    assert report["state"] == "PASS", report
+    assert elapsed < 4.0, elapsed
+
+
+def test_duplicate_key_detection_is_linear() -> None:
+    """One duplicate among tens of thousands of keys sits under the output
+    cap; detection must be single-pass, not a per-key list scan that burns
+    minutes of CPU after the process timeout already finished."""
+    import time
+    from tools.security.independent_review import parse_review
+    body = ", ".join(f'"k{index}": 1' for index in range(60000))
+    text = (
+        '{"passed": true, "security_concerns": [], "logic_errors": [], '
+        '"summary": "s", ' + body + ', "k0": 2}'
+    )
+    started = time.monotonic()
+    try:
+        parse_review(text)
+    except ValueError as exc:
+        assert "duplicate" in str(exc)
+    else:
+        raise AssertionError("expected duplicate-key rejection")
+    assert time.monotonic() - started < 5.0
+
+
+def test_zip_magic_under_a_foreign_suffix_is_inspected() -> None:
+    """An archive is what an extractor says it is, not what its suffix says:
+    a ZIP named payload.dat still gets its members traversal-checked instead
+    of hiding behind the binary policy via its NUL bytes."""
+    import io
+    import zipfile as zf
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as archive:
+            archive.writestr("../../escape", "nope")
+        (root / "payload.dat").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "payload.dat"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])
+
+
+def test_boundary_audit_fails_when_git_discovery_fails() -> None:
+    """ls-files failing INSIDE a git checkout (corrupt metadata, missing git)
+    is a discovery failure the audit must surface — never a silent downgrade
+    to the fixture walk that no longer knows what is tracked."""
+    from unittest.mock import patch
+    from tools.security import audit_tool_boundaries as atb
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / ".git").mkdir()
+        tools = root / "tools"
+        tools.mkdir()
+        (tools / "x.py").write_text("x = 1\n", encoding="utf-8")
+        with patch.object(atb.subprocess, "run", side_effect=OSError("no git")):
+            report = audit_boundaries(root)
+    assert report["state"] == "FAIL"
+    assert any(item["rule"] == "tracked-discovery-failed" for item in report["findings"])
+
+
 def test_find_bcir_opt_searches_the_build_tree_layout() -> None:
     """cmake decides where bcir-opt lands (bin/, tools/...); discovery must
     mirror check_passes.sh's find over the build tree, not a fixed path."""
