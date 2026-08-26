@@ -1615,6 +1615,32 @@ def test_oversized_text_candidate_is_refused_at_ingress() -> None:
         assert any(item["rule"] == "file-oversized" for item in report["findings"])
 
 
+def test_compiled_diagnostic_marker_survives_long_notes() -> None:
+    """MLIR prints the error line FIRST, then a source quote and a 'see
+    current operation' note dump that easily overflows a tail window; the
+    law marker must be checked against a head-biased diagnostic capture."""
+    if os.name == "nt":
+        return  # the fixture verifier is a POSIX shell script
+    from unittest.mock import patch
+    from tools.security import run_malformed_differential as differential
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = Path(tmp) / "fake-bcir-opt"
+        fake.write_text(
+            "#!/bin/sh\n"
+            "printf 'case.mlir:4:5: error: R1: duplicate RID 10\\n' >&2\n"
+            "printf 'case.mlir:4:5: note: see current operation: %s\\n' "
+            "\"$(printf 'x%.0s' $(seq 1 600))\" >&2\n"
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        fake.chmod(0o755)
+        with patch.object(differential, "find_bcir_opt", return_value=str(fake)):
+            result = differential._compiled_mlir("bcir.module @m { }", _ROOT)
+    assert result["rejected"] is True
+    assert "R1:" in result["diagnostic"]
+    assert result["diagnostic"].startswith("case.mlir")
+
+
 def test_find_bcir_opt_searches_the_build_tree_layout() -> None:
     """cmake decides where bcir-opt lands (bin/, tools/...); discovery must
     mirror check_passes.sh's find over the build tree, not a fixed path."""

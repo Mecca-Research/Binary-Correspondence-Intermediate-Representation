@@ -234,9 +234,11 @@ def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
         "state": "PASS",
         "rejected": result.returncode != 0,
         "returncode": result.returncode,
-        # Diagnostic bytes, replace-decoded: the law-pairing check below
-        # needs to see WHICH law rejected the witness.
-        "stderr_tail": result.stderr.decode("utf-8", "replace")[-400:],
+        # HEAD-biased capture: MLIR prints the error line first, then a
+        # source quote and a "see current operation" note dump that easily
+        # overflows any tail window — a tail-only slice hid the law marker
+        # from the pairing check on its first CI run.
+        "diagnostic": result.stderr.decode("utf-8", "replace")[:4000],
     }
 
 
@@ -391,15 +393,15 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
             marker
             and compiled["state"] == "PASS"
             and compiled.get("rejected")
-            and marker not in compiled.get("stderr_tail", "")
+            and marker not in compiled.get("diagnostic", "")
         ):
             # The captured diagnostic IS the evidence of which law fired;
-            # print it with the disagreement or the failure is undebuggable
-            # from a CI log.
-            tail = compiled.get("stderr_tail", "").strip().replace("\n", " | ")
+            # print its head with the disagreement or the failure is
+            # undebuggable from a CI log.
+            head = compiled.get("diagnostic", "").strip().replace("\n", " | ")
             disagreements.append(
                 f"{case['name']}/mlir_compiled: rejection diagnostic lacks {marker!r} "
-                f"(stderr: {tail[:220]!r})"
+                f"(diagnostic: {head[:220]!r})"
             )
         if case["expect_reject"] and any(rejected for _, rejected in executed):
             malformed_rejected += 1
