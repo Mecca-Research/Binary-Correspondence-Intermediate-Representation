@@ -2,9 +2,10 @@
 """Static heuristic audit for obvious process-boundary literals.
 
 This is not a sound Python interpreter. It flags ``os.system`` /
-``os.popen`` and literal ``shell=True`` / string-command subprocess
-calls. Aliases, control flow, ``**kwargs``, and nested scopes are out
-of scope — those belong to a dedicated linter, not a BCIR rail.
+``os.popen``, the ``subprocess.getoutput``/``getstatusoutput`` shell
+helpers, and literal ``shell=True`` / string-command subprocess calls.
+Aliases, control flow, ``**kwargs``, and nested scopes are out of
+scope — those belong to a dedicated linter, not a BCIR rail.
 """
 from __future__ import annotations
 
@@ -20,7 +21,8 @@ ROOT = Path(__file__).resolve().parents[2]
 # developer-tool boundary policy that skips them audits less than it claims.
 TREES = ("bcir", "tools", ".claude")
 SKIP_PARTS = {".git", "build", "__pycache__", "dataset"}
-PRODUCTION_STRING_SUBPROCESS = True
+# subprocess helpers that ARE shell string-command execution, like os.system.
+SHELL_HELPERS = {"getoutput", "getstatusoutput"}
 
 
 def _tracked(root: Path) -> set[str] | None:
@@ -45,7 +47,10 @@ def _iter_python(root: Path) -> list[Path]:
         if not base.is_dir():
             continue
         for path in base.rglob("*.py"):
-            if any(part in SKIP_PARTS for part in path.parts):
+            # Relative parts only: a checkout that itself lives under a
+            # directory named "build" must not have every file skipped
+            # (and the audit reported vacuous).
+            if any(part in SKIP_PARTS for part in path.relative_to(root).parts):
                 continue
             if tracked is not None:
                 rel = str(path.relative_to(root)).replace("\\", "/")
@@ -61,14 +66,28 @@ def _is_true(node: ast.AST) -> bool:
 
 def audit_boundaries(root: Path) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
+    symlinks: list[str] = []
     scanned = 0
     for path in _iter_python(root):
-        scanned += 1
         rel = str(path.relative_to(root)).replace("\\", "/")
+        if path.is_symlink():
+            # The tracked blob is the target string, not Python source;
+            # following it would audit arbitrary host content (or crash on
+            # an unreadable procfs target). Record it, never dereference.
+            symlinks.append(rel)
+            continue
+        scanned += 1
+        try:
+            source = path.read_bytes()
+        except OSError:
+            # A tracked file the auditor cannot read was not audited — a
+            # failing finding, never an escaping traceback.
+            findings.append({"path": rel, "line": 0, "rule": "file-unreadable"})
+            continue
         try:
             # Bytes, not text: ast.parse honors a PEP 263 encoding cookie, so
             # a valid latin-1 source is audited rather than falsely rejected.
-            tree = ast.parse(path.read_bytes(), filename=str(path))
+            tree = ast.parse(source, filename=str(path))
         except (SyntaxError, ValueError) as exc:
             # An unparseable file is uninspectable; fail closed with a finding
             # rather than escaping as a traceback.
@@ -90,6 +109,12 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
                     if isinstance(func.value, ast.Name) and func.value.id == "os":
                         findings.append({
                             "path": rel, "line": node.lineno, "rule": "os.system-or-popen",
+                        })
+                if name in SHELL_HELPERS and isinstance(func, ast.Attribute):
+                    if isinstance(func.value, ast.Name) and func.value.id == "subprocess":
+                        findings.append({
+                            "path": rel, "line": node.lineno,
+                            "rule": "subprocess-shell-helper",
                         })
                 if name in {"run", "Popen", "check_output", "check_call", "call"}:
                     if not (
@@ -115,6 +140,7 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
         "state": "FAIL" if findings else "PASS",
         "scanned_files": scanned,
         "findings": findings,
+        "symlinks": symlinks,
     }
     if scanned == 0:
         report["state"] = "INVALID/VACUOUS"

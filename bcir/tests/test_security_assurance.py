@@ -35,7 +35,9 @@ def test_secret_scan_fails_closed_on_a_planted_text_secret() -> None:
         assert report["binary_files"] >= 1
         rules = {item["rule"] for item in report["findings"]}
         assert "github-token" in rules
-        assert all("ghp_" not in json.dumps(item) for item in report["findings"])
+        # The raw token must be absent from the ENTIRE serialized report, not
+        # just the findings list — every field is a potential echo path.
+        assert "ghp_" not in json.dumps(report)
 
 
 def test_secret_scan_records_archive_path_traversal_without_extracting() -> None:
@@ -65,7 +67,13 @@ def test_secret_scan_of_the_current_tree_is_non_vacuous() -> None:
 
 
 def test_dependency_inventory_must_be_asserted_before_advisories() -> None:
-    report = audit_deps(_ROOT)
+    from unittest.mock import patch
+    from tools.security import audit_dependencies as deps
+    # The advisory engine is opportunistic; a host that happens to have
+    # pip-audit installed must not turn this unit test into a live network
+    # scan whose result decides the verdict.
+    with patch.object(deps.shutil, "which", return_value=None):
+        report = audit_deps(_ROOT)
     assert report["inventory_asserted"] is True
     assert report["expected_packages"] >= 1
     assert report["declared"]["runtime"] == []
@@ -150,13 +158,14 @@ def test_tool_boundaries_scan_is_non_vacuous() -> None:
 
 def test_independent_review_is_fail_closed() -> None:
     """One self_check() run covers every contract case — the harness spawns
-    ~9 child processes and a deliberate 1s timeout, so it runs exactly once."""
+    ~10 child processes and a deliberate 1s timeout, so it runs exactly once."""
     report = review_self_check()
     assert report["fail_closed"] is True
     assert report["cases"]["valid-json"] == "PASS"
     for case in ("missing-command", "unparseable", "empty-output",
                  "missing-executable", "timeout", "duplicate-keys",
-                 "null-summary", "non-utf8", "malformed-env-command"):
+                 "null-summary", "non-utf8", "depth-bomb",
+                 "malformed-env-command"):
         assert report["cases"][case] == "FAIL", case
     assert report["state"] == "PASS", report["mismatches"]
 
@@ -278,8 +287,8 @@ def test_unseeded_c_fuzzing_is_recorded_as_unavailable() -> None:
     from tools.security import run_decoder_campaign as campaign
     fake = SimpleNamespace(
         returncode=0,
-        stdout="  SKIP BCIRQ8 seed corpus (could not build a seed artifact); fuzzing unseeded\n",
-        stderr="",
+        stdout=b"  SKIP BCIRQ8 seed corpus (could not build a seed artifact); fuzzing unseeded\n",
+        stderr=b"",
     )
     posix_os = SimpleNamespace(name="posix", environ=dict(os.environ))
     with patch.object(campaign, "os", posix_os):
@@ -723,3 +732,345 @@ def test_r5_text_check_is_per_claim() -> None:
         "}\n"
     )
     assert parse_mlir_text(isolated)["reason"] == "r5-atomic-unique"
+
+
+def test_corrupt_zip_symlink_payload_is_unreadable_not_a_crash() -> None:
+    """A crafted symlink member whose deflate stream is garbage raises
+    zlib.error out of the bounded target read; that is the archive-unreadable
+    finding, never an escaping traceback."""
+    import io
+    import struct
+    import zipfile as zf
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as archive:
+            info = zf.ZipInfo("lnk")
+            info.external_attr = 0o120777 << 16
+            info.compress_type = zf.ZIP_DEFLATED
+            archive.writestr(info, "target/path")
+        raw = bytearray(buf.getvalue())
+        header = raw.find(b"PK\x03\x04")
+        name_len, extra_len = struct.unpack("<HH", raw[header + 26:header + 30])
+        payload = header + 30 + name_len + extra_len
+        raw[payload:payload + 4] = b"\xff\xff\xff\xff"
+        (root / "links.zip").write_bytes(bytes(raw))
+        subprocess.run(["git", "add", "links.zip"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "archive-unreadable" for item in report["findings"])
+
+
+def test_corrupt_tar_xz_payload_is_unreadable_not_a_crash() -> None:
+    """tarfile wraps gzip/bz2 corruption into ReadError but lets LZMAError
+    escape; iterating a corrupt .tar.xz must fail closed as unreadable."""
+    import io
+    import tarfile
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:xz") as archive:
+            payload = b"A" * 200000
+            first = tarfile.TarInfo("a.txt")
+            first.size = len(payload)
+            archive.addfile(first, io.BytesIO(payload))
+            second = tarfile.TarInfo("b.txt")
+            second.size = 10
+            archive.addfile(second, io.BytesIO(b"0123456789"))
+        raw = bytearray(buf.getvalue())
+        middle = len(raw) // 2
+        raw[middle:middle + 8] = b"\xff" * 8
+        (root / "bundle.tar.xz").write_bytes(bytes(raw))
+        subprocess.run(["git", "add", "bundle.tar.xz"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "archive-unreadable" for item in report["findings"])
+
+
+def test_missing_tracked_file_is_a_finding_not_a_silent_skip() -> None:
+    """A tracked path absent from the worktree was not inspected; its indexed
+    blob still ships in every clone, so the scan must not PASS around it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        gone = root / "gone.py"
+        gone.write_text("y = 2\n", encoding="utf-8")
+        subprocess.run(["git", "add", "ok.py", "gone.py"], cwd=root, check=True)
+        gone.unlink()
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "file-missing" for item in report["findings"])
+
+
+def test_suffix_binaries_are_recorded_without_reading() -> None:
+    """Bounds are enforced at ingress: a suffix-classified binary (a model or
+    dataset blob) is recorded from its name alone, never materialized."""
+    from unittest.mock import patch
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        (root / "model.safetensors").write_bytes(b"\x00" * 64)
+        subprocess.run(["git", "add", "ok.py", "model.safetensors"], cwd=root, check=True)
+        real_read = Path.read_bytes
+        seen: list[str] = []
+
+        def counting(self: Path) -> bytes:
+            seen.append(self.name)
+            return real_read(self)
+
+        with patch.object(Path, "read_bytes", counting):
+            report = scan_tree(root)
+        assert report["state"] == "PASS", report["findings"]
+        assert "model.safetensors" in report["binaries"]
+        assert "model.safetensors" not in seen
+
+
+def test_oversized_archive_is_a_finding_not_an_oom() -> None:
+    """An archive larger than the inspection budget is refused at ingress —
+    a failing finding — instead of being read into memory whole."""
+    import io
+    import zipfile as zf
+    from unittest.mock import patch
+    from tools.security import scan_secrets as secrets
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as archive:
+            archive.writestr("member.txt", "0" * 2048)
+        (root / "big.zip").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "ok.py", "big.zip"], cwd=root, check=True)
+        with patch.object(secrets, "ARCHIVE_LOGICAL_CAP", 128):
+            report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "archive-oversized" for item in report["findings"])
+        assert any(meta.get("status") == "oversized" for meta in report["archives"])
+
+
+def test_gitleaks_is_invoked_redacted() -> None:
+    """The stderr tail the report keeps must never carry raw secret values;
+    redaction is part of the opt-in engine's contract, not a preference."""
+    if os.name == "nt":
+        return  # the gitleaks rail is POSIX-gated
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from tools.security import scan_secrets as secrets
+    seen: dict[str, list[str]] = {}
+
+    def capture(cmd, **kwargs):
+        seen["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    with patch.object(secrets.subprocess, "run", side_effect=capture):
+        with patch("shutil.which", return_value="/usr/bin/gitleaks"):
+            result = secrets._try_gitleaks(Path("."))
+    assert result is not None and result["available"] is True
+    assert "--redact" in seen["cmd"]
+
+
+def test_depth_bomb_reviewer_output_is_a_structured_failure() -> None:
+    """json.loads raises RecursionError on pathologically nested output; the
+    reviewer contract turns it into the unparseable FAIL, never a traceback."""
+    from tools.security.independent_review import run_reviewer
+    with tempfile.TemporaryDirectory() as tmp:
+        bomb = Path(tmp) / "bomb.py"
+        bomb.write_text("print('[' * 200000)\n", encoding="utf-8")
+        report = run_reviewer([sys.executable, str(bomb)], Path(tmp))
+    assert report["state"] == "FAIL"
+    assert "unparseable" in report["reason"]
+
+
+def test_c_campaign_survives_non_utf8_fuzzer_output() -> None:
+    """Sanitizer and fuzzer binaries write raw bytes; the campaign records
+    them replace-decoded instead of dying on a strict decode."""
+    if os.name == "nt":
+        return  # the fixture fuzz script needs a real POSIX shell
+    from unittest.mock import patch
+    from tools.security import run_decoder_campaign as campaign
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        script_dir = root / "tools" / "c"
+        script_dir.mkdir(parents=True)
+        script = script_dir / "fuzz_streampack.sh"
+        script.write_text("#!/bin/sh\nprintf 'raw \\377\\376 bytes'\nexit 1\n", encoding="utf-8")
+        script.chmod(0o755)
+        real_which = campaign.shutil.which
+
+        def fake_which(name):
+            return real_which(name) if name == "bash" else "/fake/clang"
+
+        with patch.object(campaign.shutil, "which", side_effect=fake_which):
+            report = campaign.run_c_campaign(root, runs=1, seconds=1)
+    assert report["state"] == "FAIL"
+    assert "raw" in report["stdout_tail"]
+
+
+def test_compiled_verifier_output_is_never_strict_decoded() -> None:
+    """bcir-opt's captured output is diagnostic bytes the differential never
+    parses; a crashing build spraying non-UTF-8 must not raise mid-campaign."""
+    if os.name == "nt":
+        return  # the fixture verifier is a POSIX shell script
+    from unittest.mock import patch
+    from tools.security import run_malformed_differential as differential
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = Path(tmp) / "fake-bcir-opt"
+        fake.write_text("#!/bin/sh\nprintf '\\377\\376 diag'\nexit 1\n", encoding="utf-8")
+        fake.chmod(0o755)
+        with patch.object(differential, "find_bcir_opt", return_value=str(fake)):
+            result = differential._compiled_mlir("bcir.module @m { }", _ROOT)
+    assert result["state"] == "PASS"
+    assert result["rejected"] is True
+
+
+def test_boundary_audit_skip_dirs_are_relative_to_the_checkout() -> None:
+    """A checkout that lives under a directory named build (or dataset, or
+    __pycache__) must not have every file skipped into a vacuous report."""
+    with tempfile.TemporaryDirectory() as tmp:
+        nest = Path(tmp) / "build" / "checkout"
+        nest.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q"], cwd=nest, check=True)
+        tools = nest / "tools"
+        tools.mkdir()
+        (tools / "x.py").write_text("x = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "tools/x.py"], cwd=nest, check=True)
+        report = audit_boundaries(nest)
+        assert report["scanned_files"] == 1
+        assert report["state"] == "PASS", report.get("error")
+
+
+def test_boundary_audit_records_symlinks_without_following() -> None:
+    """A tracked symlink's blob is its target string, not Python source;
+    following it would audit arbitrary host content or crash on procfs."""
+    if os.name == "nt":
+        return  # creating symlinks needs privilege on Windows; POSIX covers it
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        tools = root / "tools"
+        tools.mkdir()
+        (tools / "real.py").write_text("x = 1\n", encoding="utf-8")
+        target = root / "outside.py"
+        target.write_text("import os\nos.system('boom')\n", encoding="utf-8")
+        (tools / "alias.py").symlink_to(target)
+        subprocess.run(["git", "add", "tools/real.py", "tools/alias.py"], cwd=root, check=True)
+        report = audit_boundaries(root)
+        assert "tools/alias.py" in report.get("symlinks", [])
+        assert report["state"] == "PASS", report["findings"]
+
+
+def test_boundary_audit_unreadable_file_is_a_finding() -> None:
+    """A tracked file the auditor cannot read was not audited — that is a
+    failing finding, never an escaping OSError."""
+    from unittest.mock import patch
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        tools = root / "tools"
+        tools.mkdir()
+        (tools / "x.py").write_text("x = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "tools/x.py"], cwd=root, check=True)
+        with patch.object(Path, "read_bytes", side_effect=OSError("denied")):
+            report = audit_boundaries(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "file-unreadable" for item in report["findings"])
+
+
+def test_truncated_compressed_tar_is_unreadable_not_a_crash() -> None:
+    """A truncated .tgz still passes is_tarfile's header sniff, then raises
+    EOFError mid-iteration; that must be the unreadable finding."""
+    import io
+    import tarfile
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as archive:
+            payload = b"A" * 200000
+            info = tarfile.TarInfo("a.txt")
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+        whole = buf.getvalue()
+        (root / "cut.tgz").write_bytes(whole[: len(whole) // 2])
+        subprocess.run(["git", "add", "cut.tgz"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "archive-unreadable" for item in report["findings"])
+
+
+def test_prefixed_assignment_secrets_are_matched() -> None:
+    """A word boundary before the keyword let every prefixed key
+    (DB_PASSWORD, AWS_SECRET_ACCESS_KEY, SECRET_KEY) escape the assignment
+    rule — the dominant real-world shape must be visible, while identifier
+    substrings (tokenizer, passwords_file) must not fire."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        # Concatenation keeps the assembled key = "value" shapes out of this
+        # tracked source, exactly like the other planted fixtures above.
+        (root / "settings.py").write_text(
+            'DB_PASSWORD = "' + "correct-horse-battery" + '"\n'
+            'AWS_SECRET_ACCESS_KEY = "' + "d8f7a6s5kjh324kjh9x" + '"\n'
+            'SECRET_KEY = "' + "django-insecure-9f8s7d6f5" + '"\n'
+            'tokenizer = "hf-internal/llama-tokenizer"\n'
+            'passwords_file = "/etc/passwd-list-x"\n',
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "settings.py"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        hits = [i for i in report["findings"] if i["rule"] == "assignment-secret"]
+        assert len(hits) == 3, report["findings"]
+
+
+def test_boundary_audit_flags_shell_helper_calls() -> None:
+    """subprocess.getoutput/getstatusoutput ARE shell string-command
+    execution; the declared scope covers them like os.system."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        tools = root / "tools"
+        tools.mkdir()
+        (tools / "x.py").write_text(
+            "import subprocess\nsubprocess.getoutput('ls -la')\n", encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "tools/x.py"], cwd=root, check=True)
+        report = audit_boundaries(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "subprocess-shell-helper" for item in report["findings"])
+
+
+def test_malformed_pyproject_fails_structured_on_both_parser_paths() -> None:
+    """tomllib's TOMLDecodeError must produce the same structured FAIL the
+    3.10 fallback gives — a divergent contract between hosts is a hole."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "pyproject.toml").write_text(
+            "[project\ndependencies = [\n", encoding="utf-8",
+        )
+        report = audit_deps(root)
+    assert report["state"] == "FAIL"
+    assert report["inventory_asserted"] is False
+
+
+def test_c_campaign_timeout_keeps_the_captured_tails() -> None:
+    """On TimeoutExpired the captured output is the only evidence of which
+    target hung; the structured FAIL must carry it."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from tools.security import run_decoder_campaign as campaign
+    exc = campaign.subprocess.TimeoutExpired(
+        cmd="fuzz", timeout=5, output=b"target seven \xff hung", stderr=b"asan \xfe tail",
+    )
+    posix_os = SimpleNamespace(name="posix", environ=dict(os.environ))
+    with patch.object(campaign, "os", posix_os):
+        with patch.object(campaign.shutil, "which", return_value="/usr/bin/tool"):
+            with patch.object(campaign.subprocess, "run", side_effect=exc):
+                report = campaign.run_c_campaign(_ROOT, runs=1, seconds=1)
+    assert report["state"] == "FAIL"
+    assert "hung" in report["stdout_tail"]
+    assert "asan" in report["stderr_tail"]

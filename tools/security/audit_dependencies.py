@@ -186,7 +186,15 @@ def parse_pyproject(path: Path) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8")
     if tomllib is None:
         return _fallback_parse(text)
-    data = tomllib.loads(text)
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        # The 3.10 fallback reports a malformed file as a structured FAIL via
+        # _unasserted; the tomllib path must not diverge into a traceback.
+        return {
+            "runtime": [], "build_system": [], "optional": {}, "dynamic": [],
+            "_unasserted": True,
+        }
     project = data.get("project") or {}
     optional = project.get("optional-dependencies") or {}
     build = data.get("build-system") or {}
@@ -202,8 +210,9 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
     expected = json.loads(expected_path.read_text(encoding="utf-8"))
     declared = parse_pyproject(root / "pyproject.toml")
     if declared.pop("_unasserted", False):
-        # The 3.10 fallback reader saw a dependency-shaped key it could not
-        # attribute; passing a possibly-misread file would assert nothing.
+        # Either parser path saw metadata it could not fully read (a
+        # dependency-shaped key the 3.10 fallback cannot attribute, or a file
+        # tomllib rejects); passing a possibly-misread file asserts nothing.
         return {
             "state": "FAIL",
             "inventory_asserted": False,
@@ -211,7 +220,7 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
             "declared": declared,
             "mismatches": [],
             "advisory": {"state": "UNAVAILABLE/SKIPPED", "engine": None},
-            "error": "fallback parser could not fully read dependency metadata",
+            "error": "dependency metadata could not be fully read",
         }
     dynamic = [
         item for item in declared.get("dynamic", [])

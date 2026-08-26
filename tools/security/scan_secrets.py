@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import io
 import json
+import lzma
 import os
 import re
 import stat
@@ -17,6 +18,7 @@ import subprocess
 import sys
 import tarfile
 import zipfile
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -50,8 +52,13 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("github-token", re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b")),
     ("github-fine-grained", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
     ("slack-token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
+    # Separator-joined prefixes and suffixes are the dominant real key shape
+    # (DB_PASSWORD, AWS_SECRET_ACCESS_KEY, SECRET_KEY); a bare \b before the
+    # keyword made every one of them invisible. Substring identifiers without
+    # a separator (tokenizer, passwords_file) stay out of the rule.
     ("assignment-secret", re.compile(
-        r"(?i)\b(?:api[_-]?key|secret|password|token|passwd)\s*=\s*['\"][^'\"]{12,}['\"]"
+        r"(?i)\b(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|secret|password|token|passwd)"
+        r"(?:[_-][A-Za-z0-9]+)*\s*=\s*['\"][^'\"]{12,}['\"]"
     )),
 )
 
@@ -75,11 +82,15 @@ def _git_files(root: Path) -> list[str]:
     return [item.decode("utf-8") for item in result.stdout.split(b"\0") if item]
 
 
+def _suffix_matches(lower: str, suffixes: frozenset[str]) -> bool:
+    return any(lower.endswith(suffix) for suffix in suffixes)
+
+
 def _kind_for(path: str, data: bytes) -> str:
     lower = path.lower()
-    if any(lower.endswith(suffix) for suffix in ARCHIVE_SUFFIXES):
+    if _suffix_matches(lower, ARCHIVE_SUFFIXES):
         return "archive"
-    if any(lower.endswith(suffix) for suffix in SINGLE_FILE_COMPRESSION):
+    if _suffix_matches(lower, SINGLE_FILE_COMPRESSION):
         # A compressed tar without a .tar.* name (backup.gz) is still an
         # archive extractors will unpack — probe the content so genuine
         # single-file streams stay binary without losing tar inspection.
@@ -89,7 +100,7 @@ def _kind_for(path: str, data: bytes) -> str:
         except (OSError, EOFError, tarfile.TarError):
             pass
         return "binary"
-    if any(lower.endswith(suffix) for suffix in BINARY_SUFFIXES):
+    if _suffix_matches(lower, BINARY_SUFFIXES):
         return "binary"
     sample = data[:TEXT_SAMPLE]
     if b"\0" in sample:
@@ -138,6 +149,9 @@ def _archive_entries(path: Path, data: bytes) -> tuple[list[str], int]:
     members = 0
     if zipfile.is_zipfile(path) or data[:4] == b"PK\x03\x04":
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            # The central directory materializes on open; the ingress size
+            # gate (ARCHIVE_LOGICAL_CAP against the raw file) bounds that
+            # cost before this branch is ever reached.
             infos = archive.infolist()
             if len(infos) > ARCHIVE_MEMBER_CAP:
                 raise ValueError("archive-member-cap")
@@ -184,7 +198,14 @@ def _scan_archive(rel: str, path: Path, data: bytes) -> tuple[list[dict[str, Any
     findings: list[dict[str, Any]] = []
     try:
         checks, members = _archive_entries(path, data)
-    except (zipfile.BadZipFile, tarfile.TarError, OSError, ValueError, RuntimeError) as exc:
+    except (
+        zipfile.BadZipFile, tarfile.TarError, OSError, ValueError, RuntimeError,
+        # The decompressor error classes escape the stdlib wrappers: EOFError
+        # from a truncated gzip stream mid-iteration, zlib.error from a
+        # corrupt deflate payload on the ZIP symlink read, LZMAError from a
+        # corrupt xz stream. Each is the same uninspectable-archive failure.
+        EOFError, zlib.error, lzma.LZMAError,
+    ) as exc:
         findings.append({
             "path": rel, "line": 0, "rule": "archive-unreadable",
             "fingerprint": _fingerprint(type(exc).__name__),
@@ -236,8 +257,58 @@ def scan_tree(root: Path) -> dict[str, Any]:
             report["symlinks"].append(rel)
             continue
         if not path.is_file():
-            report["skipped_missing"] += 1
+            if path.is_dir():
+                # A tracked directory entry is a submodule gitlink; its
+                # content belongs to another repository's scan.
+                report["skipped_missing"] += 1
+                continue
+            # A tracked path absent from the worktree was not inspected; its
+            # indexed blob still ships in every clone, so a silent skip could
+            # hide a removed-but-tracked credential under PASS.
+            report["findings"].append({
+                "path": rel, "line": 0, "rule": "file-missing",
+                "fingerprint": _fingerprint("missing-worktree-file"),
+            })
             continue
+        lower = rel.lower()
+        archive_shaped = _suffix_matches(lower, ARCHIVE_SUFFIXES)
+        compressed_shaped = _suffix_matches(lower, SINGLE_FILE_COMPRESSION)
+        if (
+            not archive_shaped and not compressed_shaped
+            and _suffix_matches(lower, BINARY_SUFFIXES)
+        ):
+            # Suffix-classified binaries are recorded, never read — reading
+            # would materialize model/dataset blobs only to set them aside.
+            report["binary_files"] += 1
+            report["binaries"].append(rel)
+            continue
+        if archive_shaped or compressed_shaped:
+            try:
+                size = path.stat().st_size
+            except OSError as exc:
+                report["findings"].append({
+                    "path": rel, "line": 0, "rule": "file-unreadable",
+                    "fingerprint": _fingerprint(type(exc).__name__),
+                })
+                continue
+            if size > ARCHIVE_LOGICAL_CAP:
+                if archive_shaped:
+                    # Bounds are enforced at ingress: an archive larger than
+                    # the inspection budget is a finding, not an OOM.
+                    report["archive_files"] += 1
+                    report["archives"].append(
+                        {"path": rel, "status": "oversized", "size": size}
+                    )
+                    report["findings"].append({
+                        "path": rel, "line": 0, "rule": "archive-oversized",
+                        "fingerprint": _fingerprint("archive-oversized"),
+                    })
+                else:
+                    # A compressed stream too large to probe follows the
+                    # binary policy: recorded, never parsed.
+                    report["binary_files"] += 1
+                    report["binaries"].append(rel)
+                continue
         try:
             data = path.read_bytes()
         except OSError as exc:
@@ -276,11 +347,14 @@ def _try_gitleaks(root: Path) -> dict[str, Any] | None:
     exe = which("gitleaks")
     if not exe:
         return None
+    # --redact: the stderr tail this report keeps must never depend on an
+    # external tool's logging default to avoid echoing raw secret values.
+    # Bytes, not text=True: scanned paths and snippets are not guaranteed
+    # UTF-8, and a strict decode inside run() would crash the scan.
     result = subprocess.run(
-        [exe, "detect", "--no-git", "--source", str(root), "--config",
+        [exe, "detect", "--redact", "--no-git", "--source", str(root), "--config",
          str(root / ".gitleaks.toml"), "--report-format", "json", "--exit-code", "2"],
         capture_output=True,
-        text=True,
         cwd=root,
         check=False,
     )
@@ -288,7 +362,7 @@ def _try_gitleaks(root: Path) -> dict[str, Any] | None:
         "engine": "gitleaks",
         "returncode": result.returncode,
         "stdout_bytes": len(result.stdout),
-        "stderr_tail": result.stderr[-400:],
+        "stderr_tail": result.stderr.decode("utf-8", "replace")[-400:],
         "available": True,
     }
 

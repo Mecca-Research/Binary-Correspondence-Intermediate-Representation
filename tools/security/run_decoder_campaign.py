@@ -183,21 +183,28 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
     # compile time — a timeout sized to one target aborts healthy campaigns.
     timeout = 180 + seconds * 8
     try:
+        # Bytes, not text=True: sanitizer and fuzzer binaries write raw
+        # bytes, and a strict decode inside run() would crash the campaign
+        # instead of recording it (the review harness sets the precedent).
         result = subprocess.run(
             [bash, str(script)],
             cwd=root,
             env=env,
             capture_output=True,
-            text=True,
             check=False,
             timeout=timeout,
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        # The captured output is the only evidence of which target hung.
         return {
             "state": "FAIL",
             "reason": f"C campaign timed out after {timeout}s",
+            "stdout_tail": (exc.stdout or b"").decode("utf-8", "replace")[-800:],
+            "stderr_tail": (exc.stderr or b"").decode("utf-8", "replace")[-800:],
         }
-    combined = (result.stdout + result.stderr).lower()
+    stdout = result.stdout.decode("utf-8", "replace")
+    stderr = result.stderr.decode("utf-8", "replace")
+    combined = (stdout + stderr).lower()
     if "skipping" in combined and result.returncode == 0:
         return {
             "state": "UNAVAILABLE/SKIPPED",
@@ -216,8 +223,8 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
     return {
         "state": "PASS" if result.returncode == 0 else "FAIL",
         "returncode": result.returncode,
-        "stdout_tail": result.stdout[-800:],
-        "stderr_tail": result.stderr[-800:],
+        "stdout_tail": stdout[-800:],
+        "stderr_tail": stderr[-800:],
     }
 
 

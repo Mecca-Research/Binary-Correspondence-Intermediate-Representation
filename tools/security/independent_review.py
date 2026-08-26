@@ -93,7 +93,9 @@ def run_reviewer(command: list[str], cwd: Path, timeout: int = REVIEW_TIMEOUT) -
         }
     try:
         payload = parse_review(stdout)
-    except (ValueError, json.JSONDecodeError) as exc:
+    except (ValueError, json.JSONDecodeError, RecursionError) as exc:
+        # RecursionError: json.loads raises it on a depth-bomb payload; that
+        # is unparseable reviewer output under the same contract.
         return {
             "state": "FAIL",
             "reason": f"unparseable reviewer output: {exc}",
@@ -147,6 +149,7 @@ def self_check() -> dict[str, Any]:
         nullsum = Path(tmp) / "nullsum.py"
         rawbytes = Path(tmp) / "rawbytes.py"
         sleeper = Path(tmp) / "sleeper.py"
+        deep = Path(tmp) / "deep.py"
         good.write_text(
             "print('{\"passed\": true, \"security_concerns\": [], "
             "\"logic_errors\": [], \"summary\": \"clean\"}')\n",
@@ -169,6 +172,7 @@ def self_check() -> dict[str, Any]:
             encoding="utf-8",
         )
         sleeper.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
+        deep.write_text("print('[' * 200000)\n", encoding="utf-8")
         python = sys.executable
         cases.append(("missing-command", run_reviewer([], Path(tmp))))
         cases.append(("missing-executable",
@@ -180,6 +184,7 @@ def self_check() -> dict[str, Any]:
         cases.append(("null-summary", run_reviewer([python, str(nullsum)], Path(tmp))))
         cases.append(("non-utf8", run_reviewer([python, str(rawbytes)], Path(tmp))))
         cases.append(("timeout", run_reviewer([python, str(sleeper)], Path(tmp), timeout=1)))
+        cases.append(("depth-bomb", run_reviewer([python, str(deep)], Path(tmp))))
     env_bad = env_command("python -c 'unterminated")
     cases.append(("malformed-env-command",
                   env_bad if isinstance(env_bad, dict) else {"state": "PASS"}))
@@ -193,6 +198,7 @@ def self_check() -> dict[str, Any]:
         "null-summary": "FAIL",
         "non-utf8": "FAIL",
         "timeout": "FAIL",
+        "depth-bomb": "FAIL",
         "malformed-env-command": "FAIL",
     }
     mismatches = [

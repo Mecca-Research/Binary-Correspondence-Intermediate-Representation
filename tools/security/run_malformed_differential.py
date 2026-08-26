@@ -151,9 +151,11 @@ def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
         path = Path(tmp) / "case.mlir"
         path.write_text(text, encoding="utf-8")
         try:
+            # Bytes: the output is never parsed, and a crashing verifier can
+            # spray non-UTF-8 that a text=True strict decode would raise on.
             result = subprocess.run(
                 [opt, "-bcir-verify", str(path)],
-                capture_output=True, text=True, check=False, timeout=20,
+                capture_output=True, check=False, timeout=20,
             )
         except subprocess.TimeoutExpired:
             # A hanging compiled verifier is exactly what this campaign must
