@@ -33,15 +33,20 @@ def _tracked(root: Path) -> set[str] | None:
     )
     if result.returncode != 0:
         return None
-    return {item.decode("utf-8") for item in result.stdout.split(b"\0") if item}
+    # surrogateescape: a non-UTF-8 tracked filename must not kill discovery.
+    return {
+        item.decode("utf-8", "surrogateescape")
+        for item in result.stdout.split(b"\0") if item
+    }
 
 
-def _iter_python(root: Path) -> list[Path]:
+def _iter_python(root: Path) -> tuple[list[Path], list[str]]:
     # The policy is about TRACKED developer code; an untracked scratch file
     # under .claude/ must not fail a local run that CI would pass. Outside a
     # git checkout (unit-test fixtures) the plain walk stands in.
     tracked = _tracked(root)
-    files = []
+    files: list[Path] = []
+    seen: set[str] = set()
     for tree in TREES:
         base = root / tree
         if not base.is_dir():
@@ -52,12 +57,24 @@ def _iter_python(root: Path) -> list[Path]:
             # (and the audit reported vacuous).
             if any(part in SKIP_PARTS for part in path.relative_to(root).parts):
                 continue
-            if tracked is not None:
-                rel = str(path.relative_to(root)).replace("\\", "/")
-                if rel not in tracked:
-                    continue
+            rel = str(path.relative_to(root)).replace("\\", "/")
+            if tracked is not None and rel not in tracked:
+                continue
+            seen.add(rel)
             files.append(path)
-    return files
+    missing: list[str] = []
+    if tracked is not None:
+        # A tracked developer script the walk never yielded is absent from
+        # the worktree (sparse checkout, unstaged deletion); reporting PASS
+        # around it would claim more than was inspected.
+        for rel in sorted(tracked):
+            if not rel.endswith(".py") or rel in seen:
+                continue
+            parts = rel.split("/")
+            if parts[0] not in TREES or any(part in SKIP_PARTS for part in parts):
+                continue
+            missing.append(rel)
+    return files, missing
 
 
 def _is_true(node: ast.AST) -> bool:
@@ -68,7 +85,11 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     symlinks: list[str] = []
     scanned = 0
-    for path in _iter_python(root):
+    paths, missing = _iter_python(root)
+    for rel in missing:
+        printable = rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+        findings.append({"path": printable, "line": 0, "rule": "file-missing"})
+    for path in paths:
         rel = str(path.relative_to(root)).replace("\\", "/")
         if path.is_symlink():
             # The tracked blob is the target string, not Python source;

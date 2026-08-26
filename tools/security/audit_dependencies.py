@@ -73,6 +73,30 @@ def _string_items(buffer: str) -> tuple[list[str], bool]:
     return items, True
 
 
+def _bracket_depth(buffer: str) -> int:
+    """Net [ ] depth OUTSIDE quoted strings (quote- and escape-aware), so a
+    bracket inside a dependency string cannot hold an array open and fail a
+    file tomllib accepts."""
+    depth = 0
+    quote = ""
+    escaped = False
+    for char in buffer:
+        if quote:
+            if escaped:
+                escaped = False
+            elif quote == '"' and char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+    return depth
+
+
 def _strip_toml_comment(line: str) -> str:
     """Cut an unquoted # comment; quote- and escape-aware so a # inside a
     string, or a quote inside a comment, cannot desynchronize the parser."""
@@ -159,7 +183,7 @@ def _fallback_parse(text: str) -> dict[str, Any]:
             pending = full
         else:
             buffer += " " + stripped
-        if pending is not None and buffer.count("[") == buffer.count("]"):
+        if pending is not None and _bracket_depth(buffer) == 0:
             items, parsed_ok = _string_items(buffer)
             if not parsed_ok:
                 unasserted = True

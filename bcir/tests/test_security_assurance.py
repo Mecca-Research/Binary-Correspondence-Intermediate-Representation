@@ -1057,6 +1057,91 @@ def test_malformed_pyproject_fails_structured_on_both_parser_paths() -> None:
     assert report["inventory_asserted"] is False
 
 
+def test_unquoted_assignment_secrets_are_matched() -> None:
+    """.env-style credentials are unquoted; a bounded unquoted value (16+
+    chars carrying a digit) is a finding, while an identifier RHS
+    (AUTH_TOKEN = DEFAULT_AUTH_TOKEN) stays out of the rule."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        # Concatenation keeps the assembled shapes out of this tracked source.
+        (root / "prod.env").write_text(
+            "DB_PASSWORD=" + "hunter2hunter2hunter2" + "\n"
+            "aws_secret_access_key = " + "abcdef1234567890abcd" + "\n"
+            "AUTH_TOKEN = DEFAULT_AUTH_TOKEN\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "prod.env"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        hits = [i for i in report["findings"] if i["rule"] == "assignment-secret"]
+        assert len(hits) == 2, report["findings"]
+
+
+def test_fallback_parser_ignores_brackets_inside_strings() -> None:
+    """A bracket inside a dependency string must not hold the array open —
+    the 3.10 fallback would otherwise fail a file tomllib accepts."""
+    from tools.security.audit_dependencies import _fallback_parse
+    text = '[project]\ndependencies = ["pkg; implementation_name == \'[\'"]\n'
+    parsed = _fallback_parse(text)
+    assert parsed["_unasserted"] is False
+    assert parsed["runtime"] == ["pkg; implementation_name == '['"]
+
+
+def test_non_utf8_tracked_filename_is_a_finding_not_a_crash() -> None:
+    """git ls-files -z hands back raw filename bytes; a non-UTF-8 name must
+    not kill the scan with a UnicodeDecodeError before any verdict."""
+    if os.name == "nt":
+        return  # byte filenames need a POSIX filesystem
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        with open(os.path.join(os.fsencode(tmp), b"caf\xe9.txt"), "wb") as handle:
+            handle.write(b"data\n")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "filename-not-utf8" for item in report["findings"])
+
+
+def test_boundary_audit_missing_tracked_python_is_a_finding() -> None:
+    """A tracked developer script absent from the worktree was not audited;
+    rglob-based discovery must not silently omit it under PASS."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        tools = root / "tools"
+        tools.mkdir()
+        (tools / "x.py").write_text("x = 1\n", encoding="utf-8")
+        gone = tools / "gone.py"
+        gone.write_text("y = 2\n", encoding="utf-8")
+        subprocess.run(["git", "add", "tools/x.py", "tools/gone.py"], cwd=root, check=True)
+        gone.unlink()
+        report = audit_boundaries(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "file-missing" for item in report["findings"])
+
+
+def test_boundary_audit_survives_non_utf8_tracked_names() -> None:
+    """Tracked-file discovery must decode raw git bytes without raising even
+    when some tracked filename is not UTF-8."""
+    if os.name == "nt":
+        return  # byte filenames need a POSIX filesystem
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        tools = root / "tools"
+        tools.mkdir()
+        (tools / "x.py").write_text("x = 1\n", encoding="utf-8")
+        with open(os.path.join(os.fsencode(tmp), b"caf\xe9.txt"), "wb") as handle:
+            handle.write(b"data\n")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        report = audit_boundaries(root)
+        assert report["state"] == "PASS", report["findings"]
+        assert report["scanned_files"] == 1
+
+
 def test_c_campaign_timeout_keeps_the_captured_tails() -> None:
     """On TimeoutExpired the captured output is the only evidence of which
     target hung; the structured FAIL must carry it."""

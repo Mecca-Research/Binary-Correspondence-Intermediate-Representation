@@ -56,9 +56,13 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     # (DB_PASSWORD, AWS_SECRET_ACCESS_KEY, SECRET_KEY); a bare \b before the
     # keyword made every one of them invisible. Substring identifiers without
     # a separator (tokenizer, passwords_file) stay out of the rule.
+    # Values: quoted (12+ chars) or the unquoted .env shape — 16+ value
+    # characters carrying at least one digit, so an identifier RHS
+    # (AUTH_TOKEN = DEFAULT_AUTH_TOKEN) and short config words stay out.
     ("assignment-secret", re.compile(
         r"(?i)\b(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|secret|password|token|passwd)"
-        r"(?:[_-][A-Za-z0-9]+)*\s*=\s*['\"][^'\"]{12,}['\"]"
+        r"(?:[_-][A-Za-z0-9]+)*\s*=\s*"
+        r"(?:['\"][^'\"]{12,}['\"]|(?=[A-Za-z0-9+/_.\-]*\d)[A-Za-z0-9+/_.\-]{16,}={0,2})"
     )),
 )
 
@@ -79,7 +83,13 @@ def _git_files(root: Path) -> list[str]:
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.decode("utf-8", "replace"))
-    return [item.decode("utf-8") for item in result.stdout.split(b"\0") if item]
+    # surrogateescape: git hands back raw filename bytes; a non-UTF-8 name
+    # must reach the scan loop (which records it) instead of killing
+    # discovery with a UnicodeDecodeError before any verdict.
+    return [
+        item.decode("utf-8", "surrogateescape")
+        for item in result.stdout.split(b"\0") if item
+    ]
 
 
 def _suffix_matches(lower: str, suffixes: frozenset[str]) -> bool:
@@ -249,6 +259,18 @@ def scan_tree(root: Path) -> dict[str, Any]:
         return report
     report["symlinks"] = []
     for rel in files:
+        try:
+            rel.encode("utf-8")
+        except UnicodeEncodeError:
+            # The tracked filename itself is not UTF-8. Record it fail-closed
+            # under a printable (replace-decoded) name rather than scanning
+            # through — or printing — an unencodable path.
+            printable = rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+            report["findings"].append({
+                "path": printable, "line": 0, "rule": "filename-not-utf8",
+                "fingerprint": _fingerprint(printable),
+            })
+            continue
         path = root / rel
         if path.is_symlink():
             # A tracked symlink's blob is its target string. Dereferencing
