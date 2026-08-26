@@ -1235,6 +1235,60 @@ def test_differential_requires_the_compiled_rail_when_told() -> None:
     assert "bcir-opt" in report["error"]
 
 
+def test_r1_python_construction_guard_is_paired_in_the_differential() -> None:
+    """R1's Python enforcement is the add_resource construction guard; if it
+    regresses to silently overwriting a duplicate RID, the differential must
+    record a python-rail disagreement, not leave the case python-less."""
+    from unittest.mock import patch
+    from bcir.model.graph import Module
+    from tools.security import run_malformed_differential as differential
+
+    def overwrite(self, resource):
+        self.resources[resource.rid] = resource
+        return resource
+
+    with patch.object(differential, "find_bcir_opt", return_value=None):
+        with patch.object(Module, "add_resource", overwrite):
+            report = differential.run_differential(_ROOT)
+    assert report["state"] == "FAIL"
+    assert any(
+        "compiled-official-r1-duplicate-rid/python" in item
+        for item in report["disagreements"]
+    ), report["disagreements"]
+
+
+def test_quoted_dotted_toml_keys_are_attributed() -> None:
+    """tomllib resolves project."dependencies" to project.dependencies; the
+    3.10 fallback must attribute the same key instead of silently asserting
+    an empty inventory, and an unterminated key quote fails closed."""
+    from tools.security.audit_dependencies import _fallback_parse
+    parsed = _fallback_parse('project."dependencies" = ["requests==2"]\n')
+    assert parsed["_unasserted"] is False
+    assert parsed["runtime"] == ["requests==2"]
+    broken = _fallback_parse('project."dependencies = ["requests==2"]\n')
+    assert broken["_unasserted"] is True
+
+
+def test_verbose_reviewer_output_is_bounded() -> None:
+    """capture without a byte budget lets a flooding reviewer OOM the job
+    before the timeout fires; the budget produces the structured FAIL."""
+    from unittest.mock import patch
+    from tools.security import independent_review as review
+    with tempfile.TemporaryDirectory() as tmp:
+        chatty = Path(tmp) / "chatty.py"
+        chatty.write_text(
+            "import sys\n"
+            "block = b'x' * 65536\n"
+            "for _ in range(64):\n"
+            "    sys.stdout.buffer.write(block)\n",
+            encoding="utf-8",
+        )
+        with patch.object(review, "REVIEW_OUTPUT_CAP", 1 << 16):
+            report = review.run_reviewer([sys.executable, str(chatty)], Path(tmp))
+    assert report["state"] == "FAIL"
+    assert "exceeded" in report["reason"]
+
+
 def test_find_bcir_opt_searches_the_build_tree_layout() -> None:
     """cmake decides where bcir-opt lands (bin/, tools/...); discovery must
     mirror check_passes.sh's find over the build tree, not a fixed path."""

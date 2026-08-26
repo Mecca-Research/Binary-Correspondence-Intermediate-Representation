@@ -73,6 +73,36 @@ def _string_items(buffer: str) -> tuple[list[str], bool]:
     return items, True
 
 
+def _split_key(raw_key: str) -> tuple[str, ...] | None:
+    """Quote-aware dotted-key split: a quoted segment keeps its dots and
+    drops its quotes ('project."dependencies"' -> (project, dependencies)),
+    matching tomllib's resolution. An unterminated quote or a backslash
+    escape inside a key is outside the subset; None tells the caller to
+    fail closed via ``_unasserted``."""
+    segments: list[str] = []
+    buffer: list[str] = []
+    quote = ""
+    for char in raw_key:
+        if quote:
+            if char == "\\":
+                return None
+            if char == quote:
+                quote = ""
+            else:
+                buffer.append(char)
+        elif char in "\"'":
+            quote = char
+        elif char == ".":
+            segments.append("".join(buffer).strip())
+            buffer = []
+        else:
+            buffer.append(char)
+    if quote:
+        return None
+    segments.append("".join(buffer).strip())
+    return tuple(segments)
+
+
 def _bracket_depth(buffer: str) -> int:
     """Net [ ] depth OUTSIDE quoted strings (quote- and escape-aware), so a
     bracket inside a dependency string cannot hold an array open and fail a
@@ -148,10 +178,12 @@ def _fallback_parse(text: str) -> dict[str, Any]:
         if pending is None:
             match = _SECTION.match(stripped)
             if match:
-                section = tuple(
-                    part.strip().strip("\"'")
-                    for part in match.group("name").strip().split(".")
-                )
+                split = _split_key(match.group("name").strip())
+                if split is None:
+                    unasserted = True
+                    section = ("<unattributed>",)
+                else:
+                    section = split
                 continue
             match = _ARRAY_KEY.match(stripped)
             if not match:
@@ -168,11 +200,13 @@ def _fallback_parse(text: str) -> dict[str, Any]:
                         unasserted = True
                 continue
             raw_key = match.group("key").strip()
-            if raw_key[:1] in "\"'":
-                # A quoted key is one literal segment; its dots are not paths.
-                segments: tuple[str, ...] = (raw_key.strip("\"'"),)
-            else:
-                segments = tuple(part.strip() for part in raw_key.split("."))
+            split_key = _split_key(raw_key)
+            if split_key is None:
+                # A key shape the splitter cannot attribute must fail closed,
+                # not vanish into an empty (matching) declared set.
+                unasserted = True
+                continue
+            segments = split_key
             full = section + segments
             is_optional = len(full) == 3 and full[:2] == optional_prefix
             if full not in known and not is_optional:

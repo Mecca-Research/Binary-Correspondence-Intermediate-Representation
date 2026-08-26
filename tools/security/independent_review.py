@@ -15,12 +15,14 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 REQUIRED_KEYS = ("passed", "security_concerns", "logic_errors", "summary")
 REVIEW_TIMEOUT = 120
+REVIEW_OUTPUT_CAP = 1 << 20  # 1 MiB per stream; a review JSON is small
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -51,6 +53,25 @@ def parse_review(text: str) -> dict[str, Any]:
     return payload
 
 
+def _drain(stream: Any, chunks: list[bytes], cap: int, state: dict[str, Any]) -> None:
+    """Read one reviewer pipe under a byte budget. On overflow the reviewer
+    is put down and the pipe kept draining unretained — a full pipe would
+    block the child forever while the job waits to fail it."""
+    received = 0
+    while True:
+        chunk = stream.read(65536)
+        if not chunk:
+            return
+        if state["overflow"]:
+            continue
+        received += len(chunk)
+        if received > cap:
+            state["overflow"] = True
+            state["proc"].kill()
+            continue
+        chunks.append(chunk)
+
+
 def run_reviewer(command: list[str], cwd: Path, timeout: int = REVIEW_TIMEOUT) -> dict[str, Any]:
     if not command:
         return {
@@ -58,33 +79,59 @@ def run_reviewer(command: list[str], cwd: Path, timeout: int = REVIEW_TIMEOUT) -
             "reason": "no reviewer command configured",
             "fail_closed": True,
         }
+    cap = REVIEW_OUTPUT_CAP
     try:
-        # Bytes, not text=True: a reviewer emitting non-UTF-8 must become a
-        # structured FAIL below, not a UnicodeDecodeError traceback here.
-        result = subprocess.run(
-            command, cwd=cwd, capture_output=True, check=False, timeout=timeout,
+        # Popen with bounded drains, not run(): capture_output accumulates
+        # without limit, so a flooding reviewer would OOM the job before the
+        # timeout could ever produce the structured report. Bytes, not text:
+        # non-UTF-8 output must become a structured FAIL below.
+        proc = subprocess.Popen(
+            command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
-    except subprocess.TimeoutExpired:
-        return {
-            "state": "FAIL",
-            "reason": f"reviewer timed out after {timeout}s",
-            "fail_closed": True,
-        }
     except OSError as exc:
         return {
             "state": "FAIL",
             "reason": f"reviewer failed to start: {type(exc).__name__}: {exc}",
             "fail_closed": True,
         }
-    if result.returncode != 0:
+    out_chunks: list[bytes] = []
+    err_chunks: list[bytes] = []
+    state: dict[str, Any] = {"overflow": False, "proc": proc}
+    readers = (
+        threading.Thread(target=_drain, args=(proc.stdout, out_chunks, cap, state), daemon=True),
+        threading.Thread(target=_drain, args=(proc.stderr, err_chunks, cap, state), daemon=True),
+    )
+    for reader in readers:
+        reader.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        for reader in readers:
+            reader.join()
         return {
             "state": "FAIL",
-            "reason": f"reviewer exited {result.returncode}",
+            "reason": f"reviewer timed out after {timeout}s",
             "fail_closed": True,
-            "stderr_tail": result.stderr.decode("utf-8", "replace")[-400:],
+        }
+    for reader in readers:
+        reader.join()
+    if state["overflow"]:
+        return {
+            "state": "FAIL",
+            "reason": f"reviewer output exceeded {cap} bytes",
+            "fail_closed": True,
+        }
+    if proc.returncode != 0:
+        return {
+            "state": "FAIL",
+            "reason": f"reviewer exited {proc.returncode}",
+            "fail_closed": True,
+            "stderr_tail": b"".join(err_chunks).decode("utf-8", "replace")[-400:],
         }
     try:
-        stdout = result.stdout.decode("utf-8")
+        stdout = b"".join(out_chunks).decode("utf-8")
     except UnicodeDecodeError:
         return {
             "state": "FAIL",

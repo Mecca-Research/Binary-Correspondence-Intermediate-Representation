@@ -124,6 +124,22 @@ def _official_r5_mlir() -> str:
     )
 
 
+def _r1_duplicate_rid_python():
+    # R1's Python enforcement is the CONSTRUCTION guard: add_resource raises
+    # on a duplicate RID (Module.resources is keyed by RID, so a regressed
+    # guard silently overwrites and verify() can never observe it). Pairing
+    # the attempt here turns that regression into a rail disagreement.
+    from types import SimpleNamespace
+    from bcir.model import Domain, Module, Resource
+    module = Module(name="r1")
+    module.add_resource(Resource(rid=10, domain=Domain.RAM, shape=(4,)))
+    try:
+        module.add_resource(Resource(rid=10, domain=Domain.RAM, shape=(4,)))
+    except ValueError:
+        return [SimpleNamespace(law="R1")]
+    return []
+
+
 def _r5_module():
     from bcir.model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
     module = Module(name="r5")
@@ -236,7 +252,7 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
         {
             "name": "compiled-official-r1-duplicate-rid",
             "expect_reject": True,
-            "python": None,
+            "python": _r1_duplicate_rid_python,
             "mlir_text": _official_r1_mlir(),
             "compile": True,
         },
