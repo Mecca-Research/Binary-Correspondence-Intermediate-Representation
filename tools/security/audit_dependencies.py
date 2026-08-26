@@ -45,6 +45,10 @@ def _string_items(buffer: str) -> tuple[list[str], bool]:
     length = len(buffer)
     while index < length:
         char = buffer[index]
+        if buffer[index:index + 3] in ('"""', "'''"):
+            # TOML multiline strings are outside the subset; refuse rather
+            # than misreading the delimiters as empty strings.
+            return items, False
         if char == "'":
             end = buffer.find("'", index + 1)
             if end < 0:

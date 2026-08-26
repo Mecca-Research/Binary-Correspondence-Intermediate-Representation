@@ -127,10 +127,16 @@ def _kind_for(path: str, data: bytes) -> str:
         except (OSError, EOFError, tarfile.TarError):
             pass
         return "binary"
-    if data[:4] == b"PK\x03\x04" or data[257:262] == b"ustar":
+    if (
+        data[:4] == b"PK\x03\x04"
+        or data[257:262] == b"ustar"
+        or zipfile.is_zipfile(io.BytesIO(data))
+    ):
         # An archive is what an extractor says it is, not what its suffix
         # says: a ZIP or tar named payload.dat must still have its members
         # inspected instead of hiding behind the binary policy's NUL check.
+        # is_zipfile is EOCD-aware, so a prefixed (self-extracting) ZIP
+        # cannot dodge the offset-zero magic.
         return "archive"
     if _suffix_matches(lower, BINARY_SUFFIXES):
         return "binary"
@@ -387,11 +393,17 @@ def scan_tree(root: Path) -> dict[str, Any]:
             and _suffix_matches(lower, BINARY_SUFFIXES)
         ):
             # Suffix-classified binaries are recorded, never materialized —
-            # but a bounded 262-byte signature probe runs first, so an
-            # archive hiding under payload.pdf cannot dodge inspection.
+            # but bounded head and tail signature probes run first, so an
+            # archive hiding under payload.pdf cannot dodge inspection. The
+            # tail probe matters because ZIP's EOCD lives at the END and
+            # zipfile accepts prefixed (self-extracting) archives.
             try:
+                probe_size = path.stat().st_size
                 with path.open("rb") as handle:
                     head = handle.read(262)
+                    tail_len = min(probe_size, (1 << 16) + 22)
+                    handle.seek(probe_size - tail_len)
+                    tail = handle.read(tail_len)
             except OSError as exc:
                 report["findings"].append({
                     "path": rel, "line": 0, "rule": "file-unreadable",
@@ -402,6 +414,7 @@ def scan_tree(root: Path) -> dict[str, Any]:
                 head[:4] == b"PK\x03\x04"
                 or head[257:262] == b"ustar"
                 or any(head.startswith(magic) for magic, _ in _COMPRESSED_TAR_MAGIC)
+                or (tail.rfind(b"PK\x05\x06") >= 0 and zipfile.is_zipfile(path))
             ):
                 archive_shaped = True
             else:
@@ -434,6 +447,24 @@ def scan_tree(root: Path) -> dict[str, Any]:
                     # binary policy: recorded, never parsed.
                     report["binary_files"] += 1
                     report["binaries"].append(rel)
+                continue
+        else:
+            # Every materialized read is bounded, not just archive-shaped
+            # ones: a pathological unknown-suffix file must be a finding,
+            # never an OOM that kills the scan before its verdict.
+            try:
+                size = path.stat().st_size
+            except OSError as exc:
+                report["findings"].append({
+                    "path": rel, "line": 0, "rule": "file-unreadable",
+                    "fingerprint": _fingerprint(type(exc).__name__),
+                })
+                continue
+            if size > ARCHIVE_LOGICAL_CAP:
+                report["findings"].append({
+                    "path": rel, "line": 0, "rule": "file-oversized",
+                    "fingerprint": _fingerprint("file-oversized"),
+                })
                 continue
         try:
             data = path.read_bytes()

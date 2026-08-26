@@ -234,6 +234,9 @@ def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
         "state": "PASS",
         "rejected": result.returncode != 0,
         "returncode": result.returncode,
+        # Diagnostic bytes, replace-decoded: the law-pairing check below
+        # needs to see WHICH law rejected the witness.
+        "stderr_tail": result.stderr.decode("utf-8", "replace")[-400:],
     }
 
 
@@ -286,6 +289,8 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
             "python": _r1_duplicate_rid_python,
             "mlir_text": _official_r1_mlir(),
             "compile": True,
+            "text_reason": "duplicate-rid",
+            "compiled_marker": "R1:",
         },
         {
             "name": "paired-official-r5",
@@ -293,6 +298,8 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
             "python": lambda: verify(r5),
             "mlir_text": _official_r5_mlir(),
             "compile": True,
+            "text_reason": "r5-atomic-unique",
+            "compiled_marker": "R5:",
         },
         {
             "name": "oracle-illegal-module",
@@ -365,6 +372,30 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
                 disagreements.append(
                     f"{case['name']}/{rail}: rejected={rejected} expect={case['expect_reject']}"
                 )
+        # A rejection must hit the law the witness exists to test: a witness
+        # that drifts into syntax rot or a different check would otherwise
+        # keep the differential green while the target law regresses.
+        expected_reason = case.get("text_reason")
+        if (
+            expected_reason
+            and text["state"] == "PASS"
+            and text.get("rejected")
+            and text.get("reason") != expected_reason
+        ):
+            disagreements.append(
+                f"{case['name']}/mlir_text: rejected for reason "
+                f"{text.get('reason')!r}, expected {expected_reason!r}"
+            )
+        marker = case.get("compiled_marker")
+        if (
+            marker
+            and compiled["state"] == "PASS"
+            and compiled.get("rejected")
+            and marker not in compiled.get("stderr_tail", "")
+        ):
+            disagreements.append(
+                f"{case['name']}/mlir_compiled: rejection diagnostic lacks {marker!r}"
+            )
         if case["expect_reject"] and any(rejected for _, rejected in executed):
             malformed_rejected += 1
         rows.append({

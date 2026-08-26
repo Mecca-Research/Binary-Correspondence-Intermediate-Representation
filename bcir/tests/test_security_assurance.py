@@ -1544,6 +1544,77 @@ def test_compressed_tar_magic_under_foreign_suffixes_is_inspected() -> None:
         assert len(traversals) == 2, report["findings"]
 
 
+def test_toml_multiline_strings_fail_closed() -> None:
+    """Triple-quoted TOML strings are outside the fallback subset; they must
+    refuse into _unasserted, never misparse into empty-string delimiters."""
+    from tools.security.audit_dependencies import _fallback_parse
+    parsed = _fallback_parse('[project]\ndependencies = ["""requests==2"""]\n')
+    assert parsed["_unasserted"] is True
+
+
+def test_witness_rejected_for_the_wrong_law_is_a_disagreement() -> None:
+    """A witness drifting into a different rejection (syntax rot, another
+    law) must not keep the differential green; a rail's rejection has to
+    name the law the case exists to test."""
+    from unittest.mock import patch
+    from tools.security import run_malformed_differential as differential
+    real = differential.parse_mlir_text
+
+    def wrong_reason(text):
+        out = real(text)
+        if out.get("reason") == "duplicate-rid":
+            return dict(out, reason="unbalanced")
+        return out
+
+    with patch.object(differential, "find_bcir_opt", return_value=None):
+        with patch.object(differential, "parse_mlir_text", side_effect=wrong_reason):
+            report = differential.run_differential(_ROOT)
+    assert report["state"] == "FAIL"
+    assert any("reason" in item for item in report["disagreements"])
+
+
+def test_prefixed_zip_under_foreign_suffixes_is_inspected() -> None:
+    """zipfile accepts a ZIP with arbitrary bytes before its first local
+    header (the self-extracting shape); the probes must be EOCD-aware, not
+    offset-zero magic only — under foreign and binary suffixes alike."""
+    import io
+    import zipfile as zf
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as archive:
+            archive.writestr("../../escape", "nope")
+        blob = b"SFX\x00STUB" + buf.getvalue()
+        (root / "payload.dat").write_bytes(blob)
+        (root / "payload.bin").write_bytes(blob)
+        subprocess.run(["git", "add", "payload.dat", "payload.bin"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        traversals = [
+            item for item in report["findings"]
+            if item["rule"] == "archive-path-traversal"
+        ]
+        assert len(traversals) == 2, report["findings"]
+
+
+def test_oversized_text_candidate_is_refused_at_ingress() -> None:
+    """Every materialized read is bounded: a pathological tracked file with
+    no recognized suffix cannot OOM the scan out of its verdict."""
+    from unittest.mock import patch
+    from tools.security import scan_secrets as secrets
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        (root / "huge.log").write_text("A" * 4096, encoding="utf-8")
+        subprocess.run(["git", "add", "ok.py", "huge.log"], cwd=root, check=True)
+        with patch.object(secrets, "ARCHIVE_LOGICAL_CAP", 1024):
+            report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "file-oversized" for item in report["findings"])
+
+
 def test_find_bcir_opt_searches_the_build_tree_layout() -> None:
     """cmake decides where bcir-opt lands (bin/, tools/...); discovery must
     mirror check_passes.sh's find over the build tree, not a fixed path."""
