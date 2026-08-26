@@ -115,7 +115,9 @@ def _kind_for(path: str, data: bytes) -> str:
     lower = path.lower()
     if _suffix_matches(lower, ARCHIVE_SUFFIXES):
         return "archive"
-    if _suffix_matches(lower, SINGLE_FILE_COMPRESSION):
+    if _suffix_matches(lower, SINGLE_FILE_COMPRESSION) or any(
+        data.startswith(magic) for magic, _ in _COMPRESSED_TAR_MAGIC
+    ):
         # A compressed tar without a .tar.* name (backup.gz) is still an
         # archive extractors will unpack — probe the content so genuine
         # single-file streams stay binary without losing tar inspection.
@@ -396,7 +398,11 @@ def scan_tree(root: Path) -> dict[str, Any]:
                     "fingerprint": _fingerprint(type(exc).__name__),
                 })
                 continue
-            if head[:4] == b"PK\x03\x04" or head[257:262] == b"ustar":
+            if (
+                head[:4] == b"PK\x03\x04"
+                or head[257:262] == b"ustar"
+                or any(head.startswith(magic) for magic, _ in _COMPRESSED_TAR_MAGIC)
+            ):
                 archive_shaped = True
             else:
                 report["binary_files"] += 1

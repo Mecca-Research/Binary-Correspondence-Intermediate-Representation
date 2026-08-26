@@ -1508,6 +1508,42 @@ def test_boundary_audit_flags_fstring_commands() -> None:
         )
 
 
+def test_non_string_toml_array_elements_fail_closed() -> None:
+    """dependencies = [42] is valid TOML the tomllib path would flag as a
+    mismatch; the fallback must not silently drop the element into an
+    asserted empty inventory."""
+    from tools.security.audit_dependencies import _fallback_parse
+    parsed = _fallback_parse('[project]\ndependencies = [42]\n')
+    assert parsed["_unasserted"] is True
+
+
+def test_compressed_tar_magic_under_foreign_suffixes_is_inspected() -> None:
+    """A gzip'd tar renamed to payload.dat (or hidden under a binary suffix
+    like payload.pdf) must still have its members traversal-checked; the
+    magic table covers the compressed-tar formats _archive_entries parses."""
+    import io
+    import tarfile
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as archive:
+            link = tarfile.TarInfo("safe-name")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "../../escape"
+            archive.addfile(link)
+        (root / "payload.dat").write_bytes(buf.getvalue())
+        (root / "payload.pdf").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "payload.dat", "payload.pdf"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        traversals = [
+            item for item in report["findings"]
+            if item["rule"] == "archive-path-traversal"
+        ]
+        assert len(traversals) == 2, report["findings"]
+
+
 def test_find_bcir_opt_searches_the_build_tree_layout() -> None:
     """cmake decides where bcir-opt lands (bin/, tools/...); discovery must
     mirror check_passes.sh's find over the build tree, not a fixed path."""

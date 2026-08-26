@@ -72,8 +72,13 @@ def _string_items(buffer: str) -> tuple[list[str], bool]:
             if not closed:
                 return items, False
             items.append("".join(out))
-        else:
+        elif char in "[], \t":
             index += 1
+        else:
+            # Non-string array content (an integer, a bool, a nested table)
+            # is outside the subset; refuse rather than silently dropping it
+            # from the declared inventory tomllib would have retained.
+            return items, False
     return items, True
 
 
