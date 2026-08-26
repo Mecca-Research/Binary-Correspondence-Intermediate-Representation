@@ -1427,6 +1427,87 @@ def test_boundary_audit_fails_when_git_discovery_fails() -> None:
     assert any(item["rule"] == "tracked-discovery-failed" for item in report["findings"])
 
 
+def test_escaped_quoted_toml_keys_fail_closed() -> None:
+    """A basic-string escape in a quoted key resolves for tomllib but sits
+    outside the fallback subset; it must land in _unasserted, never vanish
+    into an asserted empty inventory."""
+    from tools.security.audit_dependencies import _fallback_parse
+    parsed = _fallback_parse('project."depend\\u0065ncies" = ["requests==2"]\n')
+    assert parsed["_unasserted"] is True
+
+
+def test_hanging_python_verifier_is_a_structured_disagreement() -> None:
+    """A verify() that stops terminating on a malformed witness must become
+    a recorded timeout disagreement, not a hung required job — the compiled
+    rail already carries its own 20s bound."""
+    if os.name == "nt":
+        return  # the SIGALRM watchdog is a POSIX rail
+    import time
+    from unittest.mock import patch
+    from tools.security import run_malformed_differential as differential
+    with patch.object(differential, "find_bcir_opt", return_value=None):
+        with patch.object(differential, "PYTHON_VERIFY_TIMEOUT", 0.5):
+            with patch("bcir.verify.verify", side_effect=lambda module: time.sleep(5)):
+                report = differential.run_differential(_ROOT)
+    assert report["state"] == "FAIL"
+    assert any("timed out" in item for item in report["disagreements"])
+
+
+def test_nonstandard_json_constants_are_rejected() -> None:
+    """NaN and Infinity are not JSON; the permissive json.loads default must
+    not let them ride under the fail-closed parse contract."""
+    from tools.security.independent_review import parse_review
+    text = (
+        '{"passed": true, "security_concerns": [], "logic_errors": [], '
+        '"summary": "ok", "metric": NaN}'
+    )
+    try:
+        parse_review(text)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected rejection of NaN")
+
+
+def test_zip_magic_under_a_binary_suffix_is_inspected() -> None:
+    """The no-read ingress shortcut probes a bounded 262 bytes of signature
+    first: a ZIP named payload.pdf still has its members traversal-checked
+    while true model blobs stay unmaterialized."""
+    import io
+    import zipfile as zf
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as archive:
+            archive.writestr("../../escape", "nope")
+        (root / "payload.pdf").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "payload.pdf"], cwd=root, check=True)
+        report = scan_tree(root)
+        assert report["state"] == "FAIL"
+        assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])
+
+
+def test_boundary_audit_flags_fstring_commands() -> None:
+    """An f-string command is a string command; the JoinedStr expression
+    shape must not slip past the literal-string check."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        tools = root / "tools"
+        tools.mkdir()
+        (tools / "x.py").write_text(
+            'import subprocess\nflag = "-l"\nsubprocess.run(f"ls {flag}")\n',
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "tools/x.py"], cwd=root, check=True)
+        report = audit_boundaries(root)
+        assert report["state"] == "FAIL"
+        assert any(
+            item["rule"] == "subprocess-string-command" for item in report["findings"]
+        )
+
+
 def test_find_bcir_opt_searches_the_build_tree_layout() -> None:
     """cmake decides where bcir-opt lands (bin/, tools/...); discovery must
     mirror check_passes.sh's find over the build tree, not a fixed path."""

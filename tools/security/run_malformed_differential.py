@@ -17,13 +17,44 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[2]
+PYTHON_VERIFY_TIMEOUT = 20.0
+
+
+class _VerifyHang(Exception):
+    """Raised by the watchdog when a python-rail probe exceeds its bound."""
+
+
+def _bounded_verify(probe: Callable[[], Any]) -> Any:
+    """Run one python-rail probe under a wall bound (POSIX main thread),
+    matching the compiled rail's 20s subprocess timeout. Where SIGALRM is
+    unavailable (Windows, a non-main thread) the call runs unbounded — the
+    watchdog is a POSIX rail, like the campaign tools'."""
+    if (
+        os.name == "nt"
+        or not hasattr(signal, "SIGALRM")
+        or threading.current_thread() is not threading.main_thread()
+    ):
+        return probe()
+
+    def _expired(signum: int, frame: Any) -> None:
+        raise _VerifyHang(f"python verifier timed out after {PYTHON_VERIFY_TIMEOUT}s")
+
+    previous = signal.signal(signal.SIGALRM, _expired)
+    signal.setitimer(signal.ITIMER_REAL, PYTHON_VERIFY_TIMEOUT)
+    try:
+        return probe()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 def _is_bcir_opt_name(name: str) -> bool:
@@ -289,7 +320,14 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
             }
         else:
             try:
-                py_diags = case["python"]()
+                py_diags = _bounded_verify(case["python"])
+            except _VerifyHang as exc:
+                python = {
+                    "state": "FAIL",
+                    "rejected": False,
+                    "reason": str(exc),
+                }
+                disagreements.append(f"{case['name']}/python: {python['reason']}")
             except Exception as exc:  # noqa: BLE001 - a crashing verifier IS the finding
                 python = {
                     "state": "FAIL",

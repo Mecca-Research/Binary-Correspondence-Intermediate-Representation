@@ -384,11 +384,24 @@ def scan_tree(root: Path) -> dict[str, Any]:
             not archive_shaped and not compressed_shaped
             and _suffix_matches(lower, BINARY_SUFFIXES)
         ):
-            # Suffix-classified binaries are recorded, never read — reading
-            # would materialize model/dataset blobs only to set them aside.
-            report["binary_files"] += 1
-            report["binaries"].append(rel)
-            continue
+            # Suffix-classified binaries are recorded, never materialized —
+            # but a bounded 262-byte signature probe runs first, so an
+            # archive hiding under payload.pdf cannot dodge inspection.
+            try:
+                with path.open("rb") as handle:
+                    head = handle.read(262)
+            except OSError as exc:
+                report["findings"].append({
+                    "path": rel, "line": 0, "rule": "file-unreadable",
+                    "fingerprint": _fingerprint(type(exc).__name__),
+                })
+                continue
+            if head[:4] == b"PK\x03\x04" or head[257:262] == b"ustar":
+                archive_shaped = True
+            else:
+                report["binary_files"] += 1
+                report["binaries"].append(rel)
+                continue
         if archive_shaped or compressed_shaped:
             try:
                 size = path.stat().st_size

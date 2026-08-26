@@ -55,8 +55,18 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return dict(pairs)
 
 
+def _reject_constant(name: str) -> Any:
+    # NaN/Infinity are a permissive json.loads extension, not JSON; the
+    # fail-closed parse contract rejects them.
+    raise ValueError(f"non-standard JSON constant: {name}")
+
+
 def parse_review(text: str) -> dict[str, Any]:
-    payload = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+    payload = json.loads(
+        text,
+        object_pairs_hook=_reject_duplicate_keys,
+        parse_constant=_reject_constant,
+    )
     if not isinstance(payload, dict):
         raise ValueError("review JSON must be an object")
     missing = [key for key in REQUIRED_KEYS if key not in payload]
