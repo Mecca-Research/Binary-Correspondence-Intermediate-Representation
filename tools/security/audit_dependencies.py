@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import shutil
-import signal
-import subprocess
 from pathlib import Path
 from typing import Any
+
+try:
+    from tools.security.proc_bounds import run_bounded
+except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
+    from proc_bounds import run_bounded
 
 try:
     import tomllib
@@ -26,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 EXPECTED = Path(__file__).resolve().parent / "expected_inventory.json"
 PYPROJECT_SIZE_CAP = 1 << 20  # 1 MiB: parsing multiplies metadata in memory
 ADVISORY_TIMEOUT = 300.0  # pip-audit resolves against a network index; stalls expire
+ADVISORY_OUTPUT_CAP = 1 << 20  # per stream; the engine reports advisories, not payload
 
 _SECTION = re.compile(r"^\[(?P<name>[^\]]+)\]\s*$")
 # The key charset admits spaces/tabs (TOML permits whitespace around dotted
@@ -180,6 +183,7 @@ def _fallback_parse(text: str) -> dict[str, Any]:
     tomllib where tomllib exists.
     """
     arrays: dict[tuple[str, ...], list[str]] = {}
+    groups: set[str] = set()
     section: tuple[str, ...] = ()
     pending: tuple[str, ...] | None = None
     buffer = ""
@@ -205,6 +209,10 @@ def _fallback_parse(text: str) -> dict[str, Any]:
             match = _ARRAY_KEY.match(stripped)
             if not match:
                 if "=" in stripped:
+                    if section[:1] == ("dependency-groups",):
+                        # A group shape the subset reader cannot attribute
+                        # (multi-line or non-array) fails closed.
+                        unasserted = True
                     lhs, rhs = stripped.split("=", 1)
                     if _SENSITIVE.search(lhs.strip().strip("\"'")):
                         unasserted = True
@@ -225,6 +233,11 @@ def _fallback_parse(text: str) -> dict[str, Any]:
                 continue
             segments = split_key
             full = section + segments
+            if full[:1] == ("dependency-groups",):
+                # PEP 735 groups are real declared dependencies; record them
+                # so the audit refuses to assert an inventory around them.
+                groups.add(full[1] if len(full) > 1 else "<unnamed>")
+                continue
             is_optional = len(full) == 3 and full[:2] == optional_prefix
             if full not in known and not is_optional:
                 if _SENSITIVE.search(".".join(full)) or full[:2] == optional_prefix:
@@ -253,6 +266,7 @@ def _fallback_parse(text: str) -> dict[str, Any]:
         "build_system": arrays.get(("build-system", "requires"), []),
         "optional": optional,
         "dynamic": arrays.get(("project", "dynamic"), []),
+        "dependency_groups": sorted(groups),
         "_unasserted": unasserted,
     }
 
@@ -286,6 +300,7 @@ def parse_pyproject(path: Path) -> dict[str, Any]:
         "build_system": list(build.get("requires") or []),
         "optional": {name: list(items) for name, items in optional.items()},
         "dynamic": list(project.get("dynamic") or []),
+        "dependency_groups": sorted(data.get("dependency-groups") or {}),
     }
 
 
@@ -304,6 +319,24 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
             "mismatches": [],
             "advisory": {"state": "UNAVAILABLE/SKIPPED", "engine": None},
             "error": "dependency metadata could not be fully read",
+        }
+    groups = declared.pop("dependency_groups", [])
+    if groups:
+        # PEP 735 dependency groups are real declared dependencies that the
+        # expected-inventory schema cannot express; asserting an inventory
+        # around them would let a new group ride in under PASS.
+        return {
+            "state": "FAIL",
+            "inventory_asserted": False,
+            "expected_packages": 0,
+            "declared": declared,
+            "mismatches": [
+                {"field": "dependency-groups", "declared": groups, "expected": []},
+            ],
+            "advisory": {"state": "UNAVAILABLE/SKIPPED", "engine": None},
+            "error": (
+                f"dependency-groups tables are not part of the asserted inventory: {groups}"
+            ),
         }
     dynamic = [
         item for item in declared.get("dynamic", [])
@@ -359,54 +392,40 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
             "note": "no install set remains after asserting the empty runtime inventory",
         }
         return report
-    # Its own session with a wall bound: the resolver does network work and
-    # spawns pip children, so a stalled index or a pipe-holding descendant
-    # must expire into the advisory's fail-closed state, never hang the
-    # gate. Bytes in and out; the pins are ASCII but the tail is decoded
-    # with replacement rather than trusted.
-    try:
-        proc = subprocess.Popen(
-            [engine, "--requirement", "-"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            start_new_session=os.name != "nt",
-        )
-    except OSError as exc:
+    # The shared bounded runner: its own session, a wall bound, per-stream
+    # byte budgets, and a process-group put-down — the resolver does network
+    # work, spawns pip children, and can flood; every failure shape becomes
+    # the advisory's fail-closed state, never a hang, OOM, or traceback.
+    outcome = run_bounded(
+        [engine, "--requirement", "-"],
+        timeout=ADVISORY_TIMEOUT,
+        cap=ADVISORY_OUTPUT_CAP,
+        stdin_data=("\n".join(listed) + "\n").encode("utf-8"),
+    )
+    failure = ""
+    if not outcome["launched"]:
+        failure = outcome["error"]
+    elif outcome["timed_out"]:
+        failure = f"pip-audit timed out after {ADVISORY_TIMEOUT:g}s"
+    elif outcome["overflow"]:
+        failure = f"pip-audit output exceeded {ADVISORY_OUTPUT_CAP} bytes per stream"
+    elif outcome["pipes_held"]:
+        failure = "descendant processes still hold pip-audit's pipes"
+    if failure:
         report["advisory"] = {
             "state": "FAIL",
             "engine": "pip-audit",
-            "error": f"engine failed to launch: {exc}",
-        }
-        report["state"] = "FAIL"
-        return report
-    try:
-        out_bytes, _err_bytes = proc.communicate(
-            input=("\n".join(listed) + "\n").encode("utf-8"),
-            timeout=ADVISORY_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired:
-        if os.name != "nt" and hasattr(os, "killpg"):
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except OSError:
-                pass
-        proc.kill()
-        proc.communicate()
-        report["advisory"] = {
-            "state": "FAIL",
-            "engine": "pip-audit",
-            "error": f"pip-audit timed out after {ADVISORY_TIMEOUT:g}s",
+            "error": failure,
         }
         report["state"] = "FAIL"
         return report
     report["advisory"] = {
-        "state": "PASS" if proc.returncode == 0 else "FAIL",
+        "state": "PASS" if outcome["returncode"] == 0 else "FAIL",
         "engine": "pip-audit",
-        "returncode": proc.returncode,
-        "stdout_tail": (out_bytes or b"").decode("utf-8", "replace")[-500:],
+        "returncode": outcome["returncode"],
+        "stdout_tail": outcome["stdout"].decode("utf-8", "replace")[-500:],
     }
-    if proc.returncode != 0:
+    if outcome["returncode"] != 0:
         report["state"] = "FAIL"
     return report
 

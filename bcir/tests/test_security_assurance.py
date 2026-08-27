@@ -875,16 +875,19 @@ def test_gitleaks_is_invoked_redacted() -> None:
     redaction is part of the opt-in engine's contract, not a preference."""
     if os.name == "nt":
         return  # the gitleaks rail is POSIX-gated
-    from types import SimpleNamespace
     from unittest.mock import patch
     from tools.security import scan_secrets as secrets
     seen: dict[str, list[str]] = {}
 
     def capture(cmd, **kwargs):
         seen["cmd"] = cmd
-        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        return {
+            "launched": True, "timed_out": False, "overflow": False,
+            "pipes_held": False, "returncode": 0, "stdout": b"",
+            "stderr": b"", "error": "",
+        }
 
-    with patch.object(secrets.subprocess, "run", side_effect=capture):
+    with patch.object(secrets, "run_bounded", side_effect=capture):
         with patch("shutil.which", return_value="/usr/bin/gitleaks"):
             result = secrets._try_gitleaks(Path("."))
     assert result is not None and result["available"] is True
@@ -1916,38 +1919,22 @@ def test_stalled_pip_audit_is_bounded() -> None:
     """The advisory engine resolves against a network index and spawns pip
     children; a stall must expire into the advisory's fail-closed state,
     never hang the inventory gate."""
-    from types import SimpleNamespace
     from unittest.mock import patch
     from tools.security import audit_dependencies as deps
-    captured: dict[str, object] = {}
 
-    class FakeProc:
-        pid = 4242
-        returncode = None
-        calls = 0
+    def stalled(cmd, **kwargs):
+        return {
+            "launched": True, "timed_out": True, "overflow": False,
+            "pipes_held": False, "returncode": -9, "stdout": b"",
+            "stderr": b"", "error": "",
+        }
 
-        def communicate(self, input=None, timeout=None):
-            FakeProc.calls += 1
-            if FakeProc.calls == 1:
-                raise deps.subprocess.TimeoutExpired(cmd="pip-audit", timeout=1)
-            return (b"", b"")
-
-        def kill(self):
-            pass
-
-    def fake_popen(cmd, **kwargs):
-        captured.update(kwargs)
-        return FakeProc()
-
-    posix_os = SimpleNamespace(name="posix")
-    with patch.object(deps, "os", posix_os):
-        with patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"):
-            with patch.object(deps.subprocess, "Popen", side_effect=fake_popen):
-                report = audit_deps(_ROOT)
+    with patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"):
+        with patch.object(deps, "run_bounded", side_effect=stalled):
+            report = audit_deps(_ROOT)
     assert report["state"] == "FAIL"
     assert report["advisory"]["state"] == "FAIL"
     assert "timed out" in report["advisory"]["error"]
-    assert captured.get("start_new_session") is True
 
 
 def test_oversized_pyproject_is_unasserted() -> None:
@@ -1966,3 +1953,159 @@ def test_oversized_pyproject_is_unasserted() -> None:
         with patch.object(deps, "PYPROJECT_SIZE_CAP", 1024):
             gated = deps.parse_pyproject(path)
     assert gated["_unasserted"] is True
+
+def test_temporary_aws_keys_are_findings() -> None:
+    """ASIA-prefixed STS keys are real credentials in the same 20-character
+    shape as AKIA; an AKIA-only rule passes a standard leak."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        text = "key = " + "ASIA" + "J9K2M4P6Q8R1S3T5" + "\n"
+        (root / "creds.txt").write_text(text, encoding="utf-8")
+        subprocess.run(["git", "add", "creds.txt"], cwd=root, check=True)
+        report = scan_tree(root)
+    assert report["state"] == "FAIL"
+    assert any(item["rule"] == "aws-access-key-id" for item in report["findings"])
+
+
+def test_colon_delimited_mappings_are_scanned() -> None:
+    """YAML and JSON store credentials behind a colon, not an equals sign;
+    template references (${{ ... }}) stay suppressed as pointers."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        payload = (
+            "password" + ': "' + "correct-horse-battery-123" + '"\n'
+            + "token" + ': "${{ secrets.GITHUB_TOKEN }}"\n'
+            + '"api_key"' + ': "' + "correct-horse-battery-456" + '"\n'
+        )
+        (root / "config.yaml").write_text(payload, encoding="utf-8")
+        subprocess.run(["git", "add", "config.yaml"], cwd=root, check=True)
+        report = scan_tree(root)
+    hits = [item for item in report["findings"] if item["rule"] == "assignment-secret"]
+    assert report["state"] == "FAIL"
+    assert sorted(item["line"] for item in hits) == [1, 3]
+
+
+def test_symlink_target_text_is_scanned() -> None:
+    """The committed blob of a tracked symlink IS its target string; a token
+    embedded there must be a finding without the target being followed."""
+    if os.name == "nt":
+        return  # symlink creation is privilege-gated on Windows
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        os.symlink("creds/" + "ghp_" + "k9J2mQ4pR6sT1vX3zB5dF7hL0nCwEyGa", root / "link")
+        subprocess.run(["git", "add", "link"], cwd=root, check=True)
+        report = scan_tree(root)
+    assert "link" in report["symlinks"]
+    assert report["state"] == "FAIL"
+    assert any(
+        item["rule"] == "github-token" and item["path"] == "link"
+        for item in report["findings"]
+    )
+
+
+def _v7_tar(name: bytes, payload: bytes) -> bytes:
+    """A checksum-valid legacy V7 tar: no ustar magic at offset 257."""
+    header = bytearray(512)
+    header[0:len(name)] = name
+    header[100:108] = b"0000644\x00"
+    header[108:116] = b"0000000\x00"
+    header[116:124] = b"0000000\x00"
+    header[124:136] = ("%011o" % len(payload)).encode("ascii") + b"\x00"
+    header[136:148] = b"00000000000\x00"
+    header[148:156] = b"        "
+    header[156] = 0x30
+    header[148:156] = ("%06o" % sum(header)).encode("ascii") + b"\x00 "
+    padded = payload + b"\x00" * ((512 - len(payload) % 512) % 512)
+    return bytes(header) + padded + b"\x00" * 1024
+
+
+def test_legacy_v7_tar_members_are_inspected() -> None:
+    """A V7 tar under an unrecognized suffix has no ustar marker; only a
+    header-checksum probe keeps its member names from hiding behind the NUL
+    heuristic's binary policy (the archive contract is names and links)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        (root / "payload.dat").write_bytes(_v7_tar(b"../escape", b"owned\n"))
+        subprocess.run(["git", "add", "ok.py", "payload.dat"], cwd=root, check=True)
+        report = scan_tree(root)
+    assert report["archive_files"] >= 1
+    assert report["state"] == "FAIL"
+    assert any(
+        item["rule"] == "archive-path-traversal" for item in report["findings"]
+    )
+
+
+def test_bounded_runner_expires_and_caps() -> None:
+    """The shared runner's two put-down triggers: a stalled group expires at
+    the wall bound; a flooding group dies at the byte budget."""
+    if os.name == "nt":
+        return  # the fixture commands are POSIX shell
+    from tools.security.proc_bounds import run_bounded
+    bash = "/bin/bash"
+    stalled = run_bounded(
+        [bash, "-c", "sleep 30"], timeout=0.5, cap=1 << 16,
+    )
+    assert stalled["timed_out"] is True
+    flooded = run_bounded(
+        [bash, "-c",
+         "i=0; while [ $i -lt 16 ]; do printf 'x%.0s' $(seq 1 65536); i=$((i+1)); done; sleep 30"],
+        timeout=30.0, cap=1 << 16,
+    )
+    assert flooded["overflow"] is True
+    assert flooded["timed_out"] is False
+    assert len(flooded["stdout"]) <= (1 << 16)
+
+
+def test_stalled_gitleaks_is_bounded() -> None:
+    """The opted-in engine must come back as a failing structured outcome
+    when it stalls or floods, never hang the scan or exit clean."""
+    if os.name == "nt":
+        return  # the gitleaks rail is POSIX-gated
+    from unittest.mock import patch
+    from tools.security import scan_secrets as secrets
+
+    def stalled(cmd, **kwargs):
+        return {
+            "launched": True, "timed_out": True, "overflow": False,
+            "pipes_held": False, "returncode": 0, "stdout": b"",
+            "stderr": b"", "error": "",
+        }
+
+    with patch.object(secrets, "run_bounded", side_effect=stalled):
+        with patch("shutil.which", return_value="/usr/bin/gitleaks"):
+            result = secrets._try_gitleaks(Path("."))
+    assert result is not None
+    assert "timed out" in result["error"]
+    assert result["returncode"] != 0
+
+
+def test_dependency_groups_fail_closed() -> None:
+    """PEP 735 [dependency-groups] tables declare real dependencies the
+    expected-inventory schema cannot express; both parser paths must surface
+    them and the audit must refuse to assert around them."""
+    from tools.security import audit_dependencies as deps
+    text = (
+        '[project]\nname = "x"\ndependencies = []\n'
+        '[build-system]\nrequires = ["setuptools>=83.0.0"]\n'
+        '[dependency-groups]\nqa = ["requests==2.32.5"]\n'
+    )
+    fallback = deps._fallback_parse(text)
+    assert fallback["dependency_groups"] == ["qa"]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "pyproject.toml").write_text(text, encoding="utf-8")
+        parsed = deps.parse_pyproject(root / "pyproject.toml")
+        assert parsed["dependency_groups"] == ["qa"]
+        expected = root / "expected.json"
+        expected.write_text(json.dumps({
+            "schema": "bcir-dependency-inventory.v1",
+            "runtime": [], "build_system": ["setuptools>=83.0.0"], "optional": {},
+        }), encoding="utf-8")
+        report = audit_deps(root, expected)
+    assert report["state"] == "FAIL"
+    assert "dependency-groups" in report["error"]

@@ -24,6 +24,11 @@ import zlib
 from pathlib import Path
 from typing import Any
 
+try:
+    from tools.security.proc_bounds import run_bounded
+except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
+    from proc_bounds import run_bounded
+
 ROOT = Path(__file__).resolve().parents[2]
 
 BINARY_SUFFIXES = frozenset({
@@ -47,11 +52,14 @@ TEXT_SAMPLE = 8192
 ARCHIVE_MEMBER_CAP = 1 << 20
 ARCHIVE_LOGICAL_CAP = 1 << 28  # 256 MiB declared bytes per tracked archive
 XZ_MEMORY_LIMIT = 1 << 27  # 128 MiB: the declared LZMA2 dictionary allocates up front
+GITLEAKS_TIMEOUT = 300.0  # the opted-in engine walks the whole tree; stalls expire
+GITLEAKS_OUTPUT_CAP = 1 << 20  # per stream; findings are JSON, not payload
 ZIP_SYMLINK_MAX = 4096
 
 RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("private-key-header", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
-    ("aws-access-key-id", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    # AKIA = long-lived, ASIA = STS temporary: both are real credentials.
+    ("aws-access-key-id", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
     ("github-token", re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b")),
     ("github-fine-grained", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
     ("slack-token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
@@ -63,9 +71,12 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     # characters carrying at least one digit, OR a 20+ all-lowercase run (a
     # passphrase, not an identifier: UPPER_SNAKE and snake_case references
     # carry uppercase or separators and stay out, as do short config words).
+    # Delimiters: assignment (=) AND mapping (:) syntax — YAML `password:`
+    # and JSON `"password":` store the same credential; the optional quote
+    # before the delimiter is the JSON key's closing quote.
     ("assignment-secret", re.compile(
         r"(?i)\b(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|secret|password|token|passwd)"
-        r"(?:[_-][A-Za-z0-9]+)*\s*=\s*"
+        r"(?:[_-][A-Za-z0-9]+)*['\"]?\s*[:=]\s*"
         r"(?:['\"](?P<value>[^'\"]{12,})['\"]"
         r"|(?P<uvalue>(?=[A-Za-z0-9+/_.\-]*\d)[A-Za-z0-9+/_.\-]{16,}={0,2}"
         r"|(?-i:[a-z]{20,})(?![A-Za-z0-9_])))"
@@ -82,10 +93,17 @@ WORD_PLACEHOLDER = re.compile(
     r"redacted|dummy|fake|your|insert|replace)(?:\b|_)"
     r"|(?:example|sample|placeholder|redacted|changeme)[\W_]*$)"
 )
+# A template or variable REFERENCE points at a secret, it is not one:
+# ${VAR}, $(cmd), {{ mustache }} / ${{ workflow }} openers.
+REFERENCE = re.compile(r"^\s*(?:\$\{|\$\(|\{\{)")
 
 
 def _is_placeholder(value: str) -> bool:
-    return bool(FILLER.search(value) or WORD_PLACEHOLDER.search(value))
+    return bool(
+        FILLER.search(value)
+        or WORD_PLACEHOLDER.search(value)
+        or REFERENCE.match(value)
+    )
 
 
 def _fingerprint(value: str) -> str:
@@ -128,6 +146,18 @@ def _decode_text(data: bytes) -> str:
     return data.decode("utf-8", "replace")
 
 
+def _tar_header_ok(block: bytes) -> bool:
+    """Checksum-valid first tar block — the only signature a legacy V7
+    archive carries (no ustar magic at offset 257)."""
+    if len(block) < 512:
+        return False
+    try:
+        tarfile.TarInfo.frombuf(block[:512], "utf-8", "surrogateescape")
+    except (EOFError, ValueError, tarfile.TarError):
+        return False
+    return True
+
+
 def _tar_probe(data: bytes) -> bool:
     """Bounded tar sniff: decompress under the cap FIRST — is_tarfile
     advances into the first member and would otherwise materialize a PAX
@@ -160,13 +190,15 @@ def _kind_for(path: str, data: bytes) -> str:
     if (
         data[:4] == b"PK\x03\x04"
         or data[257:262] == b"ustar"
+        or _tar_header_ok(data[:512])
         or zipfile.is_zipfile(io.BytesIO(data))
     ):
         # An archive is what an extractor says it is, not what its suffix
         # says: a ZIP or tar named payload.dat must still have its members
         # inspected instead of hiding behind the binary policy's NUL check.
         # is_zipfile is EOCD-aware, so a prefixed (self-extracting) ZIP
-        # cannot dodge the offset-zero magic.
+        # cannot dodge the offset-zero magic; the header-checksum probe
+        # catches legacy V7 tars that never carry the ustar marker.
         return "archive"
     if _suffix_matches(lower, BINARY_SUFFIXES):
         return "binary"
@@ -443,8 +475,18 @@ def scan_tree(root: Path) -> dict[str, Any]:
         if path.is_symlink():
             # A tracked symlink's blob is its target string. Dereferencing
             # would scan arbitrary host bytes (or crash on a procfs target);
-            # record it and move on without following.
+            # scan the committed target TEXT itself — a token can hide in a
+            # path — and never follow it.
             report["symlinks"].append(rel)
+            try:
+                target = os.readlink(path)
+            except OSError as exc:
+                report["findings"].append({
+                    "path": rel, "line": 0, "rule": "file-unreadable",
+                    "fingerprint": _fingerprint(type(exc).__name__),
+                })
+                continue
+            report["findings"].extend(_scan_text(rel, target))
             continue
         if not path.is_file():
             if path.is_dir():
@@ -475,7 +517,7 @@ def scan_tree(root: Path) -> dict[str, Any]:
             try:
                 probe_size = path.stat().st_size
                 with path.open("rb") as handle:
-                    head = handle.read(262)
+                    head = handle.read(512)
                     tail_len = min(probe_size, (1 << 16) + 22)
                     handle.seek(probe_size - tail_len)
                     tail = handle.read(tail_len)
@@ -488,6 +530,7 @@ def scan_tree(root: Path) -> dict[str, Any]:
             if (
                 head[:4] == b"PK\x03\x04"
                 or head[257:262] == b"ustar"
+                or _tar_header_ok(head)
                 or any(head.startswith(magic) for magic, _ in _COMPRESSED_TAR_MAGIC)
                 or (tail.rfind(b"PK\x05\x06") >= 0 and zipfile.is_zipfile(path))
             ):
@@ -581,22 +624,39 @@ def _try_gitleaks(root: Path) -> dict[str, Any] | None:
         return None
     # --redact: the stderr tail this report keeps must never depend on an
     # external tool's logging default to avoid echoing raw secret values.
-    # Bytes, not text=True: scanned paths and snippets are not guaranteed
-    # UTF-8, and a strict decode inside run() would crash the scan.
-    result = subprocess.run(
+    # The shared bounded runner keeps the opted-in engine inside a wall
+    # bound and per-stream byte budgets: a stalled or flooding gitleaks is
+    # a structured (and failing) outcome, never a hang or an OOM.
+    outcome = run_bounded(
         [exe, "detect", "--redact", "--no-git", "--source", str(root), "--config",
          str(root / ".gitleaks.toml"), "--report-format", "json", "--exit-code", "2"],
-        capture_output=True,
+        timeout=GITLEAKS_TIMEOUT,
+        cap=GITLEAKS_OUTPUT_CAP,
         cwd=root,
-        check=False,
     )
-    return {
+    failure = ""
+    if not outcome["launched"]:
+        failure = outcome["error"]
+    elif outcome["timed_out"]:
+        failure = f"gitleaks timed out after {GITLEAKS_TIMEOUT:g}s"
+    elif outcome["overflow"]:
+        failure = f"gitleaks output exceeded {GITLEAKS_OUTPUT_CAP} bytes per stream"
+    elif outcome["pipes_held"]:
+        failure = "descendant processes still hold gitleaks's pipes"
+    result = {
         "engine": "gitleaks",
-        "returncode": result.returncode,
-        "stdout_bytes": len(result.stdout),
-        "stderr_tail": result.stderr.decode("utf-8", "replace")[-400:],
+        "returncode": outcome["returncode"],
+        "stdout_bytes": len(outcome["stdout"]),
+        "stderr_tail": outcome["stderr"].decode("utf-8", "replace")[-400:],
         "available": True,
     }
+    if failure:
+        result["error"] = failure
+        if result["returncode"] == 0 or result["returncode"] is None:
+            # A bounded put-down is never a clean engine exit; the opted-in
+            # gate must fail on it.
+            result["returncode"] = -1
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
