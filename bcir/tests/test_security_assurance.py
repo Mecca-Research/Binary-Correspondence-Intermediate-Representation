@@ -1849,11 +1849,16 @@ def test_c_campaign_timeout_keeps_the_captured_tails() -> None:
         def kill(self):
             pass
 
+    # The put-down lives in the shared predicate, so simulating POSIX means
+    # patching ITS os too: otherwise a Windows host takes the tree-kill
+    # branch and shells out mid-test, which is not what this pins.
+    from tools.security import proc_bounds
     posix_os = SimpleNamespace(name="posix", environ=dict(os.environ))
     with patch.object(campaign, "os", posix_os):
-        with patch.object(campaign.shutil, "which", return_value="/usr/bin/tool"):
-            with patch.object(campaign.subprocess, "Popen", side_effect=lambda *a, **k: FakeProc()):
-                report = campaign.run_c_campaign(_ROOT, runs=1, seconds=1)
+        with patch.object(proc_bounds, "os", posix_os):
+            with patch.object(campaign.shutil, "which", return_value="/usr/bin/tool"):
+                with patch.object(campaign.subprocess, "Popen", side_effect=lambda *a, **k: FakeProc()):
+                    report = campaign.run_c_campaign(_ROOT, runs=1, seconds=1)
     assert report["state"] == "FAIL"
     assert "hung" in report["stdout_tail"]
     assert "asan" in report["stderr_tail"]
@@ -2241,3 +2246,74 @@ def test_credential_shaped_filenames_are_findings() -> None:
     assert len(hits) == 1
     assert hits[0]["path"] == "keys/<redacted-filename>"
     assert "ghp_" not in json.dumps(report)
+
+def test_put_down_never_raises_from_the_tree_terminator() -> None:
+    """The put-down runs inside timeout and overflow paths that must still
+    return a structured verdict; no failure of the terminator may escape and
+    turn a bounded FAIL into a traceback."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from tools.security import proc_bounds
+    killed: dict[str, object] = {}
+
+    class FakeProc:
+        pid = 4242
+
+        def kill(self):
+            killed["direct"] = True
+
+    def exploding(cmd, **kwargs):
+        raise TypeError("a wrapped subprocess implementation")
+
+    with patch.object(proc_bounds, "os", SimpleNamespace(name="nt")):
+        with patch.object(proc_bounds.subprocess, "run", side_effect=exploding):
+            proc_bounds.put_down_group(FakeProc())  # must not raise
+    assert killed.get("direct") is True
+
+
+def test_wrong_shaped_metadata_tables_are_unasserted() -> None:
+    """A scalar or list where a metadata TABLE belongs raises on .get (or is
+    coerced away by `or {}`); both parser paths must fail closed instead."""
+    from tools.security import audit_dependencies as deps
+    bodies = (
+        'project = "x"\n',
+        'project = []\n',
+        '[project]\nname = "x"\ndependencies = []\n[build-system]\n'
+        'requires = ["setuptools"]\n' if False else 'build-system = 42\n',
+    )
+    for body in bodies:
+        assert deps._fallback_parse(body)["_unasserted"] is True, body
+    if deps.tomllib is None:
+        return  # the fallback IS the parser on this host
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "pyproject.toml"
+        for body in bodies:
+            path.write_text(body, encoding="utf-8")
+            parsed = deps.parse_pyproject(path)
+            assert parsed["_unasserted"] is True, body
+            assert parsed["runtime"] == [], body
+
+
+def test_credential_shaped_names_are_redacted_in_every_report_field() -> None:
+    """A finding that redacts while the binaries/archives/symlinks lists keep
+    the raw name still republishes the credential through --json-out."""
+    if os.name == "nt":
+        return  # symlink creation is privilege-gated on Windows
+    token = "ghp_" + "k9J2mQ4pR6sT1vX3zB5dF7hL0nCwEyGa"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / (token + ".bin")).write_bytes(b"\x00\x01binary\x00")
+        (root / (token + ".zip")).write_bytes(
+            b"PK\x03\x04" + b"\x00" * 26 + b"PK\x05\x06" + b"\x00" * 18
+        )
+        os.symlink("elsewhere", root / (token + ".link"))
+        (root / (token + ".txt")).write_text("benign\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        report = scan_tree(root)
+    assert report["state"] == "FAIL"
+    assert len([f for f in report["findings"] if f["rule"] == "filename-secret"]) == 4
+    # The whole serialized report, not just the findings, must be clean.
+    assert token not in json.dumps(report)
+    assert report["binaries"] == ["<redacted-filename>"]
+    assert report["symlinks"] == ["<redacted-filename>"]

@@ -30,6 +30,7 @@ PYPROJECT_SIZE_CAP = 1 << 20  # 1 MiB: parsing multiplies metadata in memory
 ADVISORY_TIMEOUT = 300.0  # pip-audit resolves against a network index; stalls expire
 ADVISORY_OUTPUT_CAP = 1 << 20  # per stream; the engine reports advisories, not payload
 
+_METADATA_TABLES = frozenset({"project", "build-system", "dependency-groups"})
 _SECTION = re.compile(r"^\[(?P<name>[^\]]+)\]\s*$")
 # The key charset admits spaces/tabs (TOML permits whitespace around dotted
 # separators; _split_key strips each segment) and backslashes — an escaped
@@ -215,6 +216,12 @@ def _fallback_parse(text: str) -> dict[str, Any]:
                         unasserted = True
                     lhs, rhs = stripped.split("=", 1)
                     key = lhs.strip().strip("\"'")
+                    if key.split(".", 1)[0].strip().strip("\"'") in _METADATA_TABLES:
+                        # `project = "x"` / `build-system = 42` assigns a
+                        # whole metadata table to a non-table. tomllib
+                        # refuses it below; the subset reader must not read
+                        # past it into an asserted empty inventory.
+                        unasserted = True
                     if key == "dependency-groups" or key.startswith("dependency-groups."):
                         # dependency-groups = { qa = [...] } is the bracket
                         # table in inline spelling; the subset reader does
@@ -246,6 +253,12 @@ def _fallback_parse(text: str) -> dict[str, Any]:
                 continue
             segments = split_key
             full = section + segments
+            if len(full) == 1 and full[0] in _METADATA_TABLES:
+                # An ARRAY assigned to a whole metadata table (project = [])
+                # is not a table either, and this branch — not the scalar
+                # one — is where that spelling lands. tomllib refuses it.
+                unasserted = True
+                continue
             if full[:1] == ("dependency-groups",):
                 # PEP 735 groups are real declared dependencies; record them
                 # so the audit refuses to assert an inventory around them.
@@ -284,6 +297,18 @@ def _fallback_parse(text: str) -> dict[str, Any]:
     }
 
 
+def _table(value: Any) -> dict[str, Any] | None:
+    """A metadata table is a table or it is unreadable. None means refuse:
+    an absent table is an empty one, but a scalar or list in its place must
+    not be coerced away by ``or {}`` (project = [] would read as no
+    dependencies) nor dereferenced (project = "x" makes .get raise)."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        return None
+    return value
+
+
 def _string_list(value: Any) -> list[str] | None:
     """A dependency field is a list of strings or it is unreadable. None
     means refuse: bool is excluded because it is an int, and a bare string
@@ -318,15 +343,23 @@ def parse_pyproject(path: Path) -> dict[str, Any]:
             "runtime": [], "build_system": [], "optional": {}, "dynamic": [],
             "_unasserted": True,
         }
-    project = data.get("project") or {}
-    optional = project.get("optional-dependencies") or {}
-    build = data.get("build-system") or {}
-    groups = data.get("dependency-groups") or {}
+    project = _table(data.get("project"))
+    build = _table(data.get("build-system"))
+    groups = _table(data.get("dependency-groups"))
+    if project is None or build is None or groups is None:
+        # The enclosing tables are validated BEFORE their fields: a scalar
+        # in place of a table raises on .get, and an empty list would be
+        # coerced to an empty table and pass as "no dependencies".
+        return {
+            "runtime": [], "build_system": [], "optional": {}, "dynamic": [],
+            "_unasserted": True,
+        }
+    optional = _table(project.get("optional-dependencies"))
     runtime = _string_list(project.get("dependencies"))
     requires = _string_list(build.get("requires"))
     dynamic = _string_list(project.get("dynamic"))
     extras: dict[str, list[str]] | None = None
-    if isinstance(optional, dict):
+    if optional is not None:
         extras = {}
         for name, items in optional.items():
             values = _string_list(items)
@@ -334,10 +367,7 @@ def parse_pyproject(path: Path) -> dict[str, Any]:
                 extras = None
                 break
             extras[name] = values
-    if (
-        runtime is None or requires is None or dynamic is None or extras is None
-        or not isinstance(groups, dict)
-    ):
+    if runtime is None or requires is None or dynamic is None or extras is None:
         # Syntactically valid TOML can still carry a nonsense metadata shape
         # (dependencies = 42, or a bare string that list() would silently
         # shred into characters). The 3.10 fallback already refuses these;

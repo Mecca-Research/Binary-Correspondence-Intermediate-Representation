@@ -476,33 +476,38 @@ def scan_tree(root: Path) -> dict[str, Any]:
                 "fingerprint": _fingerprint(printable),
             })
             continue
-        for hit in _scan_text(rel, rel):
-            # Git commits the tree-entry NAME as surely as it commits blob
-            # bytes, so a token spelled into a filename ships in every
-            # clone. The finding names the directory and fingerprints the
-            # match — echoing the full path would republish the credential
-            # in the report and in CI logs.
+        # Git commits the tree-entry NAME as surely as it commits blob
+        # bytes, so a token spelled into a filename ships in every clone.
+        # Once the name itself matches, EVERY report field that would carry
+        # it switches to a redacted display path — a finding that redacts
+        # while the binaries/archives/symlinks lists keep the raw name
+        # still republishes the credential through --json-out and CI logs.
+        name_hits = _scan_text(rel, rel)
+        display = rel
+        if name_hits:
             parent = rel.rsplit("/", 1)[0] + "/" if "/" in rel else ""
-            report["findings"].append({
-                "path": f"{parent}<redacted-filename>", "line": 0,
-                "rule": "filename-secret", "fingerprint": hit["fingerprint"],
-            })
+            display = f"{parent}<redacted-filename>"
+            for hit in name_hits:
+                report["findings"].append({
+                    "path": display, "line": 0,
+                    "rule": "filename-secret", "fingerprint": hit["fingerprint"],
+                })
         path = root / rel
         if path.is_symlink():
             # A tracked symlink's blob is its target string. Dereferencing
             # would scan arbitrary host bytes (or crash on a procfs target);
             # scan the committed target TEXT itself — a token can hide in a
             # path — and never follow it.
-            report["symlinks"].append(rel)
+            report["symlinks"].append(display)
             try:
                 target = os.readlink(path)
             except OSError as exc:
                 report["findings"].append({
-                    "path": rel, "line": 0, "rule": "file-unreadable",
+                    "path": display, "line": 0, "rule": "file-unreadable",
                     "fingerprint": _fingerprint(type(exc).__name__),
                 })
                 continue
-            report["findings"].extend(_scan_text(rel, target))
+            report["findings"].extend(_scan_text(display, target))
             continue
         if not path.is_file():
             if path.is_dir():
@@ -514,7 +519,7 @@ def scan_tree(root: Path) -> dict[str, Any]:
             # indexed blob still ships in every clone, so a silent skip could
             # hide a removed-but-tracked credential under PASS.
             report["findings"].append({
-                "path": rel, "line": 0, "rule": "file-missing",
+                "path": display, "line": 0, "rule": "file-missing",
                 "fingerprint": _fingerprint("missing-worktree-file"),
             })
             continue
@@ -539,7 +544,7 @@ def scan_tree(root: Path) -> dict[str, Any]:
                     tail = handle.read(tail_len)
             except OSError as exc:
                 report["findings"].append({
-                    "path": rel, "line": 0, "rule": "file-unreadable",
+                    "path": display, "line": 0, "rule": "file-unreadable",
                     "fingerprint": _fingerprint(type(exc).__name__),
                 })
                 continue
@@ -553,14 +558,14 @@ def scan_tree(root: Path) -> dict[str, Any]:
                 archive_shaped = True
             else:
                 report["binary_files"] += 1
-                report["binaries"].append(rel)
+                report["binaries"].append(display)
                 continue
         if archive_shaped or compressed_shaped:
             try:
                 size = path.stat().st_size
             except OSError as exc:
                 report["findings"].append({
-                    "path": rel, "line": 0, "rule": "file-unreadable",
+                    "path": display, "line": 0, "rule": "file-unreadable",
                     "fingerprint": _fingerprint(type(exc).__name__),
                 })
                 continue
@@ -570,17 +575,17 @@ def scan_tree(root: Path) -> dict[str, Any]:
                     # the inspection budget is a finding, not an OOM.
                     report["archive_files"] += 1
                     report["archives"].append(
-                        {"path": rel, "status": "oversized", "size": size}
+                        {"path": display, "status": "oversized", "size": size}
                     )
                     report["findings"].append({
-                        "path": rel, "line": 0, "rule": "archive-oversized",
+                        "path": display, "line": 0, "rule": "archive-oversized",
                         "fingerprint": _fingerprint("archive-oversized"),
                     })
                 else:
                     # A compressed stream too large to probe follows the
                     # binary policy: recorded, never parsed.
                     report["binary_files"] += 1
-                    report["binaries"].append(rel)
+                    report["binaries"].append(display)
                 continue
         else:
             # Every materialized read is bounded, not just archive-shaped
@@ -590,13 +595,13 @@ def scan_tree(root: Path) -> dict[str, Any]:
                 size = path.stat().st_size
             except OSError as exc:
                 report["findings"].append({
-                    "path": rel, "line": 0, "rule": "file-unreadable",
+                    "path": display, "line": 0, "rule": "file-unreadable",
                     "fingerprint": _fingerprint(type(exc).__name__),
                 })
                 continue
             if size > ARCHIVE_LOGICAL_CAP:
                 report["findings"].append({
-                    "path": rel, "line": 0, "rule": "file-oversized",
+                    "path": display, "line": 0, "rule": "file-oversized",
                     "fingerprint": _fingerprint("file-oversized"),
                 })
                 continue
@@ -606,23 +611,23 @@ def scan_tree(root: Path) -> dict[str, Any]:
             # A tracked file the scanner cannot read was not inspected — that
             # is a failing finding, never a silent skip.
             report["findings"].append({
-                "path": rel, "line": 0, "rule": "file-unreadable",
+                "path": display, "line": 0, "rule": "file-unreadable",
                 "fingerprint": _fingerprint(type(exc).__name__),
             })
             continue
         kind = _kind_for(rel, data)
         if kind == "binary":
             report["binary_files"] += 1
-            report["binaries"].append(rel)
+            report["binaries"].append(display)
             continue
         if kind == "archive":
             report["archive_files"] += 1
-            extra, meta = _scan_archive(rel, path, data)
+            extra, meta = _scan_archive(display, path, data)
             report["archives"].append(meta)
             report["findings"].extend(extra)
             continue
         report["text_files"] += 1
-        report["findings"].extend(_scan_text(rel, _decode_text(data)))
+        report["findings"].extend(_scan_text(display, _decode_text(data)))
     if report["findings"]:
         report["state"] = "FAIL"
     elif report["text_files"] == 0:

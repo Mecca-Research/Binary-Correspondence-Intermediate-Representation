@@ -37,9 +37,18 @@ def put_down_group(proc: Any) -> None:
                 check=False,
                 timeout=TREE_KILL_TIMEOUT,
             )
-        except (OSError, subprocess.TimeoutExpired):
+        except Exception:
+            # Deliberately total: this runs inside timeout and overflow
+            # paths that MUST still return a structured verdict, so no
+            # failure of the terminator — absent, wedged, or a wrapped
+            # subprocess implementation raising something unforeseen — may
+            # escape and turn a bounded FAIL into a traceback. The direct
+            # kill below is the guaranteed floor.
             pass
-    proc.kill()
+    try:
+        proc.kill()
+    except Exception:
+        pass
 
 
 def _drain(stream: Any, chunks: list[bytes], cap: int, state: dict[str, Any]) -> None:
