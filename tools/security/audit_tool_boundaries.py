@@ -69,7 +69,12 @@ def _iter_python(root: Path) -> tuple[list[Path], list[str], bool]:
         base = root / tree
         if not base.is_dir():
             continue
-        for path in base.rglob("*.py"):
+        for path in base.rglob("*"):
+            # Suffix matched case-insensitively: rglob("*.py") is literal on
+            # Linux, so a tracked check.PY would dodge the audit there while
+            # the case-folding hosts inspect it.
+            if path.suffix.lower() != ".py":
+                continue
             # Relative parts only: a checkout that itself lives under a
             # directory named "build" must not have every file skipped
             # (and the audit reported vacuous).
@@ -86,7 +91,7 @@ def _iter_python(root: Path) -> tuple[list[Path], list[str], bool]:
         # the worktree (sparse checkout, unstaged deletion); reporting PASS
         # around it would claim more than was inspected.
         for rel in sorted(tracked):
-            if not rel.endswith(".py") or rel in seen:
+            if not rel.lower().endswith(".py") or rel in seen:
                 continue
             parts = rel.split("/")
             if parts[0] not in TREES or any(part in SKIP_PARTS for part in parts):

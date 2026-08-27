@@ -67,10 +67,13 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     # (DB_PASSWORD, AWS_SECRET_ACCESS_KEY, SECRET_KEY); a bare \b before the
     # keyword made every one of them invisible. Substring identifiers without
     # a separator (tokenizer, passwords_file) stay out of the rule.
-    # Values: quoted (12+ chars) or the unquoted .env shapes — 16+ value
-    # characters carrying at least one digit, OR a 20+ all-lowercase run (a
-    # passphrase, not an identifier: UPPER_SNAKE and snake_case references
-    # carry uppercase or separators and stay out, as do short config words).
+    # Values: quoted (12+ chars) or the unquoted shapes — 16+ value
+    # characters carrying at least one digit, OR a 20+ all-lowercase run,
+    # OR a hyphen-delimited lowercase passphrase (three-plus words, 16+
+    # chars: correct-horse-battery-staple). Hyphens only: snake_case is the
+    # identifier shape (default_session_token is a REFERENCE), so
+    # underscore-joined values stay out along with UPPER_SNAKE and
+    # camelCase references and short config words.
     # Delimiters: assignment (=) AND mapping (:) syntax — YAML `password:`
     # and JSON `"password":` store the same credential; the optional quote
     # before the delimiter is the JSON key's closing quote.
@@ -79,7 +82,9 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
         r"(?:[_-][A-Za-z0-9]+)*['\"]?\s*[:=]\s*"
         r"(?:['\"](?P<value>[^'\"]{12,})['\"]"
         r"|(?P<uvalue>(?=[A-Za-z0-9+/_.\-]*\d)[A-Za-z0-9+/_.\-]{16,}={0,2}"
-        r"|(?-i:[a-z]{20,})(?![A-Za-z0-9_])))"
+        r"|(?-i:[a-z]{20,})(?![A-Za-z0-9_])"
+        r"|(?-i:(?=[a-z\-]{16,}(?![A-Za-z0-9_.\-]))[a-z]+(?:-[a-z]+){2,})"
+        r"(?![A-Za-z0-9_.\-])))"
     )),
 )
 

@@ -214,7 +214,14 @@ def _fallback_parse(text: str) -> dict[str, Any]:
                         # (multi-line or non-array) fails closed.
                         unasserted = True
                     lhs, rhs = stripped.split("=", 1)
-                    if _SENSITIVE.search(lhs.strip().strip("\"'")):
+                    key = lhs.strip().strip("\"'")
+                    if key == "dependency-groups" or key.startswith("dependency-groups."):
+                        # dependency-groups = { qa = [...] } is the bracket
+                        # table in inline spelling; the subset reader does
+                        # not parse inline tables, so it refuses instead of
+                        # asserting an inventory around the declaration.
+                        unasserted = True
+                    if _SENSITIVE.search(key):
                         unasserted = True
                     elif "{" in rhs and re.search(
                         r"(?:optional-)?dependencies|dynamic", rhs

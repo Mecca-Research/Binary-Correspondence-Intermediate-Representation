@@ -2109,3 +2109,58 @@ def test_dependency_groups_fail_closed() -> None:
         report = audit_deps(root, expected)
     assert report["state"] == "FAIL"
     assert "dependency-groups" in report["error"]
+
+def test_inline_dependency_group_tables_fail_closed() -> None:
+    """dependency-groups = { qa = [...] } is the bracket table in inline
+    spelling; the 3.10 subset reader must refuse it (and attribute the
+    dotted-key spelling), never diverge from tomllib into PASS."""
+    from tools.security import audit_dependencies as deps
+    inline = deps._fallback_parse(
+        'dependency-groups = { qa = ["requests==2.32.5"] }\n'
+    )
+    assert inline["_unasserted"] is True
+    dotted = deps._fallback_parse(
+        'dependency-groups.qa = ["requests==2.32.5"]\n'
+    )
+    assert dotted["dependency_groups"] == ["qa"]
+
+
+def test_unquoted_passphrases_are_findings() -> None:
+    """Separator-delimited lowercase passphrases are a standard credential
+    shape; requiring a digit or one uninterrupted run passed them clean."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        payload = (
+            "password" + ": " + "correct-horse-battery-staple" + "\n"
+            + "password" + ": " + "your-password-here" + "\n"
+        )
+        (root / "config.yaml").write_text(payload, encoding="utf-8")
+        subprocess.run(["git", "add", "config.yaml"], cwd=root, check=True)
+        report = scan_tree(root)
+    hits = [item for item in report["findings"] if item["rule"] == "assignment-secret"]
+    assert report["state"] == "FAIL"
+    assert [item["line"] for item in hits] == [1]  # the placeholder stays out
+
+
+def test_uppercase_python_suffix_is_audited() -> None:
+    """rglob('*.py') is case-literal on Linux; a tracked check.PY carrying a
+    boundary violation must be discovered and flagged, not silently skipped
+    while the same tree passes on case-folding hosts."""
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        tools = root / "tools"
+        tools.mkdir()
+        (tools / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        (tools / "check.PY").write_text(
+            "import os\nos.system(" + '"ls"' + ")\n", encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        report = audit_boundaries(root)
+    assert report["state"] == "FAIL"
+    assert any(
+        item["rule"] == "os.system-or-popen" and item["path"].endswith("check.PY")
+        for item in report["findings"]
+    )
