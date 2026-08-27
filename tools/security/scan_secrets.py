@@ -476,6 +476,17 @@ def scan_tree(root: Path) -> dict[str, Any]:
                 "fingerprint": _fingerprint(printable),
             })
             continue
+        for hit in _scan_text(rel, rel):
+            # Git commits the tree-entry NAME as surely as it commits blob
+            # bytes, so a token spelled into a filename ships in every
+            # clone. The finding names the directory and fingerprints the
+            # match — echoing the full path would republish the credential
+            # in the report and in CI logs.
+            parent = rel.rsplit("/", 1)[0] + "/" if "/" in rel else ""
+            report["findings"].append({
+                "path": f"{parent}<redacted-filename>", "line": 0,
+                "rule": "filename-secret", "fingerprint": hit["fingerprint"],
+            })
         path = root / rel
         if path.is_symlink():
             # A tracked symlink's blob is its target string. Dereferencing

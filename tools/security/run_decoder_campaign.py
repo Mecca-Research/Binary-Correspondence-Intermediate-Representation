@@ -22,6 +22,11 @@ import zlib
 from pathlib import Path
 from typing import Any, Callable
 
+try:
+    from tools.security.proc_bounds import put_down_group
+except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
+    from proc_bounds import put_down_group
+
 ROOT = Path(__file__).resolve().parents[2]
 REQUIRED_PYTHON = ("streampack", "bcab", "bcirq8")
 DECODE_TIMEOUT = 10.0
@@ -220,14 +225,9 @@ CAMPAIGN_OUTPUT_CAP = 1 << 20  # per stream; fuzzers log diagnostics, not payloa
 
 
 def _put_down_group(proc: Any) -> None:
-    """SIGKILL the wrapper's whole session (its per-target subshells hold
-    the pipes), then the direct child as the portable fallback."""
-    if os.name != "nt" and hasattr(os, "killpg"):
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            pass
-    proc.kill()
+    """Kill the wrapper's whole process tree — its per-target subshells hold
+    the pipes. One predicate for every rail (POSIX session, Windows tree)."""
+    put_down_group(proc)
 
 
 def _drain_capped(stream: Any, chunks: list[bytes], state: dict[str, Any]) -> None:

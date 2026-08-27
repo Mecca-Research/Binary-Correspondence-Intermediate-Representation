@@ -223,8 +223,14 @@ def _fallback_parse(text: str) -> dict[str, Any]:
                         unasserted = True
                     if _SENSITIVE.search(key):
                         unasserted = True
-                    elif "{" in rhs and re.search(
-                        r"(?:optional-)?dependencies|dynamic", rhs
+                    elif "{" in rhs and (
+                        re.search(r"(?:optional-)?dependencies|dynamic", rhs)
+                        # An escaped key inside the table never reaches
+                        # _split_key, so its spelling cannot be compared:
+                        # "dependencies" reads as dependencies to
+                        # tomllib and as nothing here. Refuse every escaped
+                        # inline table rather than scan the raw spelling.
+                        or "\\" in rhs
                     ):
                         # An inline table can carry dependency metadata the
                         # subset reader does not parse; refuse rather than
@@ -278,6 +284,19 @@ def _fallback_parse(text: str) -> dict[str, Any]:
     }
 
 
+def _string_list(value: Any) -> list[str] | None:
+    """A dependency field is a list of strings or it is unreadable. None
+    means refuse: bool is excluded because it is an int, and a bare string
+    is refused rather than shredded into characters by list()."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return None
+    if not all(isinstance(item, str) for item in value):
+        return None
+    return list(value)
+
+
 def parse_pyproject(path: Path) -> dict[str, Any]:
     if path.stat().st_size > PYPROJECT_SIZE_CAP:
         # Bounds at ingress: tomllib and the fallback both build structures
@@ -302,12 +321,37 @@ def parse_pyproject(path: Path) -> dict[str, Any]:
     project = data.get("project") or {}
     optional = project.get("optional-dependencies") or {}
     build = data.get("build-system") or {}
+    groups = data.get("dependency-groups") or {}
+    runtime = _string_list(project.get("dependencies"))
+    requires = _string_list(build.get("requires"))
+    dynamic = _string_list(project.get("dynamic"))
+    extras: dict[str, list[str]] | None = None
+    if isinstance(optional, dict):
+        extras = {}
+        for name, items in optional.items():
+            values = _string_list(items)
+            if values is None:
+                extras = None
+                break
+            extras[name] = values
+    if (
+        runtime is None or requires is None or dynamic is None or extras is None
+        or not isinstance(groups, dict)
+    ):
+        # Syntactically valid TOML can still carry a nonsense metadata shape
+        # (dependencies = 42, or a bare string that list() would silently
+        # shred into characters). The 3.10 fallback already refuses these;
+        # the tomllib path must fail closed the same way, never traceback.
+        return {
+            "runtime": [], "build_system": [], "optional": {}, "dynamic": [],
+            "_unasserted": True,
+        }
     return {
-        "runtime": list(project.get("dependencies") or []),
-        "build_system": list(build.get("requires") or []),
-        "optional": {name: list(items) for name, items in optional.items()},
-        "dynamic": list(project.get("dynamic") or []),
-        "dependency_groups": sorted(data.get("dependency-groups") or {}),
+        "runtime": runtime,
+        "build_system": requires,
+        "optional": extras,
+        "dynamic": dynamic,
+        "dependency_groups": sorted(groups),
     }
 
 

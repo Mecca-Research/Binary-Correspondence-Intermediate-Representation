@@ -19,6 +19,11 @@ import threading
 from pathlib import Path
 from typing import Any
 
+try:
+    from tools.security.proc_bounds import put_down_group
+except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
+    from proc_bounds import put_down_group
+
 ROOT = Path(__file__).resolve().parents[2]
 REQUIRED_KEYS = ("passed", "security_concerns", "logic_errors", "summary")
 REVIEW_TIMEOUT = 120
@@ -27,17 +32,10 @@ REVIEW_PIPE_GRACE = 5.0  # seconds to wait for drains after the reviewer exits
 
 
 def _put_down(proc: subprocess.Popen) -> None:
-    """Kill the reviewer's whole session where the platform allows: a
-    descendant that inherited the output pipes must not outlive the bound
-    by holding them open."""
-    if os.name != "nt":
-        import signal
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-            return
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
-    proc.kill()
+    """Kill the reviewer's whole process tree. One predicate for every rail:
+    a descendant that inherited the output pipes must not outlive the bound
+    by holding them open, on POSIX (session kill) or Windows (tree kill)."""
+    put_down_group(proc)
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

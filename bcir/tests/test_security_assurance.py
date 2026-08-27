@@ -2164,3 +2164,80 @@ def test_uppercase_python_suffix_is_audited() -> None:
         item["rule"] == "os.system-or-popen" and item["path"].endswith("check.PY")
         for item in report["findings"]
     )
+
+def test_escaped_keys_inside_inline_tables_fail_closed() -> None:
+    """An escaped key inside an inline table never reaches _split_key, so
+    its spelling cannot be compared; tomllib resolves it. The 3.10 subset
+    reader must refuse every escaped inline table rather than assert an
+    empty inventory around one."""
+    from tools.security import audit_dependencies as deps
+    escaped = deps._fallback_parse(
+        'project = { "depend\\u0065ncies" = ["requests==2"] }\n'
+    )
+    assert escaped["_unasserted"] is True
+    plain = deps._fallback_parse('[project]\ndependencies = ["requests==2"]\n')
+    assert plain["_unasserted"] is False
+    assert plain["runtime"] == ["requests==2"]
+
+
+def test_scalar_dependency_fields_are_unasserted() -> None:
+    """Valid TOML can still carry a nonsense metadata shape; the tomllib
+    path must fail closed like the fallback, never traceback (list(42)) and
+    never silently shred a bare string into characters."""
+    from tools.security import audit_dependencies as deps
+    if deps.tomllib is None:
+        return  # the fallback IS the parser on this host
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        path = root / "pyproject.toml"
+        for body in ('dependencies = 42\n', 'dependencies = "requests"\n'):
+            path.write_text('[project]\nname = "x"\n' + body, encoding="utf-8")
+            parsed = deps.parse_pyproject(path)
+            assert parsed["_unasserted"] is True, body
+            assert parsed["runtime"] == [], body
+
+
+def test_reviewer_put_down_kills_the_tree_on_windows() -> None:
+    """Windows has no session to kill, so the put-down must terminate the
+    process TREE; a descendant holding the pipes would otherwise outlive
+    every advertised bound."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from tools.security import proc_bounds
+    killed: dict[str, object] = {}
+
+    class FakeProc:
+        pid = 4242
+
+        def kill(self):
+            killed["direct"] = True
+
+    def capture(cmd, **kwargs):
+        killed["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    with patch.object(proc_bounds, "os", SimpleNamespace(name="nt")):
+        with patch.object(proc_bounds.subprocess, "run", side_effect=capture):
+            proc_bounds.put_down_group(FakeProc())
+    assert killed["cmd"][:3] == ["taskkill", "/F", "/T"]
+    assert killed["cmd"][-1] == "4242"
+    assert killed.get("direct") is True
+
+
+def test_credential_shaped_filenames_are_findings() -> None:
+    """Git commits tree-entry names like it commits blobs; a token spelled
+    into a filename ships in every clone, and the finding must not echo the
+    credential back into the report."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        leaked = "ghp_" + "k9J2mQ4pR6sT1vX3zB5dF7hL0nCwEyGa" + ".txt"
+        (root / "keys").mkdir()
+        (root / "keys" / leaked).write_text("benign\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        report = scan_tree(root)
+    hits = [item for item in report["findings"] if item["rule"] == "filename-secret"]
+    assert report["state"] == "FAIL"
+    assert len(hits) == 1
+    assert hits[0]["path"] == "keys/<redacted-filename>"
+    assert "ghp_" not in json.dumps(report)

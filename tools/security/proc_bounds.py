@@ -15,13 +15,29 @@ import threading
 from typing import Any
 
 
+TREE_KILL_TIMEOUT = 15  # the Windows tree terminator is itself bounded
+
+
 def put_down_group(proc: Any) -> None:
-    """SIGKILL the child's whole session (descendants hold pipes), then the
-    direct child as the portable fallback."""
+    """Kill the child's whole process TREE — a descendant holding the pipes
+    must not outlive the bound. POSIX kills the session; Windows has no
+    session to kill, so the documented tree terminator stands in. The direct
+    kill is the last resort on both, and this never raises: it runs inside
+    timeout and overflow paths that must still return a structured verdict."""
     if os.name != "nt" and hasattr(os, "killpg"):
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except OSError:
+            pass
+    elif os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+                check=False,
+                timeout=TREE_KILL_TIMEOUT,
+            )
+        except (OSError, subprocess.TimeoutExpired):
             pass
     proc.kill()
 
