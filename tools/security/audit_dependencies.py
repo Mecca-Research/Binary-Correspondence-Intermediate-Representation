@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
+import signal
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,8 @@ except ModuleNotFoundError:  # Python 3.10: requires-python is >=3.10
 
 ROOT = Path(__file__).resolve().parents[2]
 EXPECTED = Path(__file__).resolve().parent / "expected_inventory.json"
+PYPROJECT_SIZE_CAP = 1 << 20  # 1 MiB: parsing multiplies metadata in memory
+ADVISORY_TIMEOUT = 300.0  # pip-audit resolves against a network index; stalls expire
 
 _SECTION = re.compile(r"^\[(?P<name>[^\]]+)\]\s*$")
 # The key charset admits spaces/tabs (TOML permits whitespace around dotted
@@ -254,6 +258,14 @@ def _fallback_parse(text: str) -> dict[str, Any]:
 
 
 def parse_pyproject(path: Path) -> dict[str, Any]:
+    if path.stat().st_size > PYPROJECT_SIZE_CAP:
+        # Bounds at ingress: tomllib and the fallback both build structures
+        # a multiple of the file's size, so an oversized metadata file is
+        # unasserted (a fail-closed verdict), never an OOM of the audit.
+        return {
+            "runtime": [], "build_system": [], "optional": {}, "dynamic": [],
+            "_unasserted": True,
+        }
     text = path.read_text(encoding="utf-8")
     if tomllib is None:
         return _fallback_parse(text)
@@ -347,20 +359,54 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
             "note": "no install set remains after asserting the empty runtime inventory",
         }
         return report
-    result = subprocess.run(
-        [engine, "--requirement", "-"],
-        input="\n".join(listed) + "\n",
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    # Its own session with a wall bound: the resolver does network work and
+    # spawns pip children, so a stalled index or a pipe-holding descendant
+    # must expire into the advisory's fail-closed state, never hang the
+    # gate. Bytes in and out; the pins are ASCII but the tail is decoded
+    # with replacement rather than trusted.
+    try:
+        proc = subprocess.Popen(
+            [engine, "--requirement", "-"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=os.name != "nt",
+        )
+    except OSError as exc:
+        report["advisory"] = {
+            "state": "FAIL",
+            "engine": "pip-audit",
+            "error": f"engine failed to launch: {exc}",
+        }
+        report["state"] = "FAIL"
+        return report
+    try:
+        out_bytes, _err_bytes = proc.communicate(
+            input=("\n".join(listed) + "\n").encode("utf-8"),
+            timeout=ADVISORY_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        if os.name != "nt" and hasattr(os, "killpg"):
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        proc.kill()
+        proc.communicate()
+        report["advisory"] = {
+            "state": "FAIL",
+            "engine": "pip-audit",
+            "error": f"pip-audit timed out after {ADVISORY_TIMEOUT:g}s",
+        }
+        report["state"] = "FAIL"
+        return report
     report["advisory"] = {
-        "state": "PASS" if result.returncode == 0 else "FAIL",
+        "state": "PASS" if proc.returncode == 0 else "FAIL",
         "engine": "pip-audit",
-        "returncode": result.returncode,
-        "stdout_tail": result.stdout[-500:],
+        "returncode": proc.returncode,
+        "stdout_tail": (out_bytes or b"").decode("utf-8", "replace")[-500:],
     }
-    if result.returncode != 0:
+    if proc.returncode != 0:
         report["state"] = "FAIL"
     return report
 

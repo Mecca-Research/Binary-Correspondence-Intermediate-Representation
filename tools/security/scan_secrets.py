@@ -46,6 +46,7 @@ SINGLE_FILE_COMPRESSION = frozenset({".gz", ".bz2", ".xz", ".7z"})
 TEXT_SAMPLE = 8192
 ARCHIVE_MEMBER_CAP = 1 << 20
 ARCHIVE_LOGICAL_CAP = 1 << 28  # 256 MiB declared bytes per tracked archive
+XZ_MEMORY_LIMIT = 1 << 27  # 128 MiB: the declared LZMA2 dictionary allocates up front
 ZIP_SYMLINK_MAX = 4096
 
 RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -224,14 +225,14 @@ def _decompress_bounded(data: bytes) -> bytes:
     )
     if kind is None:
         return data
+    if kind == "xz":
+        return _xz_bounded(data)
     if kind == "gzip":
         import gzip
         stream: Any = gzip.GzipFile(fileobj=io.BytesIO(data))
-    elif kind == "bz2":
+    else:
         import bz2
         stream = bz2.BZ2File(io.BytesIO(data))
-    else:
-        stream = lzma.LZMAFile(io.BytesIO(data))
     chunks: list[bytes] = []
     total = 0
     with stream:
@@ -243,6 +244,39 @@ def _decompress_bounded(data: bytes) -> bytes:
             if total > ARCHIVE_LOGICAL_CAP:
                 raise ValueError("archive-logical-cap")
             chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _xz_bounded(data: bytes) -> bytes:
+    """LZMAFile enforces no memory limit: a kilobyte stream declaring a
+    multi-GiB LZMA2 dictionary allocates it before the first read returns,
+    so only the incremental decompressor's memlimit bounds peak memory.
+    Exceeding it is the same hostile shape as an over-cap stream and fails
+    closed the same way; gzip/bz2 need none (their windows are fixed)."""
+    chunks: list[bytes] = []
+    total = 0
+    feed = data
+    try:
+        while feed:
+            decomp = lzma.LZMADecompressor(memlimit=XZ_MEMORY_LIMIT)
+            while not decomp.eof:
+                chunk = decomp.decompress(feed, max_length=1 << 20)
+                feed = b""
+                if not chunk and not decomp.eof:
+                    raise EOFError("truncated xz stream")
+                total += len(chunk)
+                if total > ARCHIVE_LOGICAL_CAP:
+                    raise ValueError("archive-logical-cap")
+                if chunk:
+                    chunks.append(chunk)
+            # Concatenated streams are valid xz (and what LZMAFile reads);
+            # inter-stream null padding is stripped, trailing garbage lands
+            # in a fresh decompressor and fails as corrupt.
+            feed = decomp.unused_data.lstrip(b"\x00")
+    except lzma.LZMAError as exc:
+        if "limit" in str(exc).lower():
+            raise ValueError("archive-logical-cap") from exc
+        raise
     return b"".join(chunks)
 
 

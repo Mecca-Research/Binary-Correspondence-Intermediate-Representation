@@ -216,6 +216,39 @@ def run_python_campaign(mutations: int, seed: int) -> list[dict[str, Any]]:
     ]
 
 
+CAMPAIGN_OUTPUT_CAP = 1 << 20  # per stream; fuzzers log diagnostics, not payload
+
+
+def _put_down_group(proc: Any) -> None:
+    """SIGKILL the wrapper's whole session (its per-target subshells hold
+    the pipes), then the direct child as the portable fallback."""
+    if os.name != "nt" and hasattr(os, "killpg"):
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+    proc.kill()
+
+
+def _drain_capped(stream: Any, chunks: list[bytes], state: dict[str, Any]) -> None:
+    """Read one campaign pipe under a byte budget; on overflow the campaign
+    group is put down and the pipe kept draining unretained so no writer
+    can block on it."""
+    received = 0
+    while True:
+        chunk = stream.read(65536)
+        if not chunk:
+            return
+        if state["overflow"]:
+            continue
+        received += len(chunk)
+        if received > CAMPAIGN_OUTPUT_CAP:
+            state["overflow"] = True
+            _put_down_group(state["proc"])
+            continue
+        chunks.append(chunk)
+
+
 def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
     script = root / "tools" / "c" / "fuzz_streampack.sh"
     bash = shutil.which("bash")
@@ -250,25 +283,60 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
         stderr=subprocess.PIPE,
         start_new_session=os.name != "nt",
     )
+    # Bounded drains instead of communicate(): a concurrent fuzzer spraying
+    # output would otherwise accumulate in memory until the wall bound.
+    out_chunks: list[bytes] = []
+    err_chunks: list[bytes] = []
+    state: dict[str, Any] = {"overflow": False, "proc": proc}
+    drains = [
+        threading.Thread(
+            target=_drain_capped, args=(proc.stdout, out_chunks, state), daemon=True,
+        ),
+        threading.Thread(
+            target=_drain_capped, args=(proc.stderr, err_chunks, state), daemon=True,
+        ),
+    ]
+    for drain in drains:
+        drain.start()
+    timed_out = False
     try:
-        out_bytes, err_bytes = proc.communicate(timeout=timeout)
+        proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        if os.name != "nt" and hasattr(os, "killpg"):
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except OSError:
-                pass
-        proc.kill()
-        out_bytes, err_bytes = proc.communicate()
+        timed_out = True
+        _put_down_group(proc)
+        proc.wait()
+    for drain in drains:
+        drain.join(5.0)
+    stdout = b"".join(out_chunks).decode("utf-8", "replace")
+    stderr = b"".join(err_chunks).decode("utf-8", "replace")
+    if any(drain.is_alive() for drain in drains):
+        # A pipe still open after the group was reaped (or exited) means an
+        # escaped descendant holds it; the campaign cannot vouch for output
+        # it never saw the end of.
+        _put_down_group(proc)
+        return {
+            "state": "FAIL",
+            "reason": "descendant processes still hold the campaign's pipes",
+            "stdout_tail": stdout[-800:],
+            "stderr_tail": stderr[-800:],
+        }
+    if timed_out:
         # The captured output is the only evidence of which target hung.
         return {
             "state": "FAIL",
             "reason": f"C campaign timed out after {timeout}s",
-            "stdout_tail": (out_bytes or b"").decode("utf-8", "replace")[-800:],
-            "stderr_tail": (err_bytes or b"").decode("utf-8", "replace")[-800:],
+            "stdout_tail": stdout[-800:],
+            "stderr_tail": stderr[-800:],
         }
-    stdout = (out_bytes or b"").decode("utf-8", "replace")
-    stderr = (err_bytes or b"").decode("utf-8", "replace")
+    if state["overflow"]:
+        return {
+            "state": "FAIL",
+            "reason": (
+                f"C campaign output exceeded {CAMPAIGN_OUTPUT_CAP} bytes per stream"
+            ),
+            "stdout_tail": stdout[-800:],
+            "stderr_tail": stderr[-800:],
+        }
     combined = (stdout + stderr).lower()
     if "skipping" in combined and proc.returncode == 0:
         return {

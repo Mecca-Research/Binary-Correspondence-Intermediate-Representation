@@ -285,16 +285,19 @@ def test_unseeded_c_fuzzing_is_recorded_as_unavailable() -> None:
     from types import SimpleNamespace
     from unittest.mock import patch
     from tools.security import run_decoder_campaign as campaign
+    import io
+
     class FakeProc:
         pid = 4242
         returncode = 0
+        stdout = io.BytesIO(
+            b"  SKIP BCIRQ8 seed corpus (could not build a seed artifact); "
+            b"fuzzing unseeded\n"
+        )
+        stderr = io.BytesIO(b"")
 
-        def communicate(self, timeout=None):
-            return (
-                b"  SKIP BCIRQ8 seed corpus (could not build a seed artifact); "
-                b"fuzzing unseeded\n",
-                b"",
-            )
+        def wait(self, timeout=None):
+            return 0
 
     posix_os = SimpleNamespace(name="posix", environ=dict(os.environ))
     with patch.object(campaign, "os", posix_os):
@@ -1733,12 +1736,16 @@ def test_c_campaign_runs_in_its_own_session() -> None:
     from tools.security import run_decoder_campaign as campaign
     captured: dict[str, object] = {}
 
+    import io
+
     class FakeProc:
         pid = 4242
         returncode = 0
+        stdout = io.BytesIO(b"ok")
+        stderr = io.BytesIO(b"")
 
-        def communicate(self, timeout=None):
-            return (b"ok", b"")
+        def wait(self, timeout=None):
+            return 0
 
     def fake_popen(cmd, **kwargs):
         captured.update(kwargs)
@@ -1821,16 +1828,20 @@ def test_c_campaign_timeout_keeps_the_captured_tails() -> None:
     from unittest.mock import patch
     from tools.security import run_decoder_campaign as campaign
 
+    import io
+
     class FakeProc:
         pid = 4242
         returncode = -9
         calls = 0
+        stdout = io.BytesIO(b"target seven \xff hung")
+        stderr = io.BytesIO(b"asan \xfe tail")
 
-        def communicate(self, timeout=None):
+        def wait(self, timeout=None):
             FakeProc.calls += 1
             if FakeProc.calls == 1:
                 raise campaign.subprocess.TimeoutExpired(cmd="fuzz", timeout=5)
-            return (b"target seven \xff hung", b"asan \xfe tail")
+            return -9
 
         def kill(self):
             pass
@@ -1843,3 +1854,115 @@ def test_c_campaign_timeout_keeps_the_captured_tails() -> None:
     assert report["state"] == "FAIL"
     assert "hung" in report["stdout_tail"]
     assert "asan" in report["stderr_tail"]
+
+
+def test_xz_dictionary_memory_is_bounded() -> None:
+    """A kilobyte .tar.xz can declare a giant LZMA2 dictionary that the
+    decoder allocates BEFORE the first output byte, so the emitted-bytes cap
+    alone cannot bound peak memory; the decode must honor an explicit memory
+    limit and fail closed exactly like an over-cap stream."""
+    import io
+    import tarfile as tf
+    from unittest.mock import patch
+    from tools.security import scan_secrets as secrets
+    buf = io.BytesIO()
+    with tf.open(fileobj=buf, mode="w:xz") as archive:
+        info = tf.TarInfo("member.txt")
+        info.size = 4
+        archive.addfile(info, io.BytesIO(b"data"))
+    blob = buf.getvalue()
+    assert secrets._decompress_bounded(blob)  # a sane limit decodes fine
+    with patch.object(secrets, "XZ_MEMORY_LIMIT", 1 << 15):
+        assert secrets._tar_probe(blob) is True  # fail-closed, not "binary"
+        try:
+            secrets._decompress_bounded(blob)
+        except ValueError as exc:
+            assert "archive-logical-cap" in str(exc)
+        else:
+            raise AssertionError("expected fail-closed ValueError")
+
+
+def test_flooding_c_campaign_is_bounded() -> None:
+    """A concurrent fuzzer spraying output must hit a per-stream byte budget
+    that puts the whole process group down, not accumulate in communicate()
+    until the runner OOMs or the wall bound fires."""
+    if os.name == "nt":
+        return  # the fixture wrapper is a POSIX shell script
+    from unittest.mock import patch
+    from tools.security import run_decoder_campaign as campaign
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        script = root / "tools" / "c" / "fuzz_streampack.sh"
+        script.parent.mkdir(parents=True)
+        script.write_text(
+            "#!/bin/bash\n"
+            "i=0\n"
+            "while [ $i -lt 16 ]; do printf 'x%.0s' $(seq 1 65536); i=$((i+1)); done\n"
+            "sleep 30\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        with patch.object(campaign, "CAMPAIGN_OUTPUT_CAP", 1 << 16):
+            with patch.object(
+                campaign.shutil, "which",
+                side_effect=lambda name: "/usr/bin/" + name,
+            ):
+                report = campaign.run_c_campaign(root, runs=1, seconds=1)
+    assert report["state"] == "FAIL"
+    assert "exceeded" in report["reason"]
+
+
+def test_stalled_pip_audit_is_bounded() -> None:
+    """The advisory engine resolves against a network index and spawns pip
+    children; a stall must expire into the advisory's fail-closed state,
+    never hang the inventory gate."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from tools.security import audit_dependencies as deps
+    captured: dict[str, object] = {}
+
+    class FakeProc:
+        pid = 4242
+        returncode = None
+        calls = 0
+
+        def communicate(self, input=None, timeout=None):
+            FakeProc.calls += 1
+            if FakeProc.calls == 1:
+                raise deps.subprocess.TimeoutExpired(cmd="pip-audit", timeout=1)
+            return (b"", b"")
+
+        def kill(self):
+            pass
+
+    def fake_popen(cmd, **kwargs):
+        captured.update(kwargs)
+        return FakeProc()
+
+    posix_os = SimpleNamespace(name="posix")
+    with patch.object(deps, "os", posix_os):
+        with patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"):
+            with patch.object(deps.subprocess, "Popen", side_effect=fake_popen):
+                report = audit_deps(_ROOT)
+    assert report["state"] == "FAIL"
+    assert report["advisory"]["state"] == "FAIL"
+    assert "timed out" in report["advisory"]["error"]
+    assert captured.get("start_new_session") is True
+
+
+def test_oversized_pyproject_is_unasserted() -> None:
+    """tomllib and the fallback multiply metadata size in memory; an
+    oversized pyproject must stat-gate into the fail-closed inventory
+    verdict, never an OOM of the required audit."""
+    from unittest.mock import patch
+    from tools.security import audit_dependencies as deps
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "pyproject.toml"
+        path.write_text(
+            '[project]\nname = "x"\n' + "#" * 4096 + "\n", encoding="utf-8",
+        )
+        parsed = deps.parse_pyproject(path)
+        assert parsed.get("_unasserted", False) is False  # below cap: normal
+        with patch.object(deps, "PYPROJECT_SIZE_CAP", 1024):
+            gated = deps.parse_pyproject(path)
+    assert gated["_unasserted"] is True
