@@ -25,27 +25,15 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
+try:
+    from tools.security.proc_bounds import run_bounded
+except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
+    from proc_bounds import run_bounded
+
 ROOT = Path(__file__).resolve().parents[2]
 PYTHON_VERIFY_TIMEOUT = 20.0
 VERIFY_OUTPUT_CAP = 1 << 20  # per stream; a verifier writes diagnostics, not payload
-
-
-def _drain(stream: Any, chunks: list[bytes], cap: int, state: dict[str, Any]) -> None:
-    """Read one verifier pipe under a byte budget; on overflow the verifier
-    is put down and the pipe kept draining unretained so it cannot block."""
-    received = 0
-    while True:
-        chunk = stream.read(65536)
-        if not chunk:
-            return
-        if state["overflow"]:
-            continue
-        received += len(chunk)
-        if received > cap:
-            state["overflow"] = True
-            state["proc"].kill()
-            continue
-        chunks.append(chunk)
+COMPILED_VERIFY_TIMEOUT = 20.0  # the wall bound the python rail mirrors
 
 
 class _VerifyHang(Exception):
@@ -220,70 +208,61 @@ def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "case.mlir"
         path.write_text(text, encoding="utf-8")
-        cap = VERIFY_OUTPUT_CAP
-        try:
-            # Popen + bounded drains, not run(): capture_output accumulates
-            # without limit, and a regressed verifier spraying diagnostics
-            # would OOM the job before the timeout could report it. Bytes:
-            # a crashing verifier can emit non-UTF-8.
-            proc = subprocess.Popen(
-                [opt, "-bcir-verify", str(path)],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            )
-        except OSError as exc:
-            return {
-                "state": "FAIL",
-                "rejected": False,
-                "reason": f"compiled verifier failed to start: {type(exc).__name__}",
-            }
-        out_chunks: list[bytes] = []
-        err_chunks: list[bytes] = []
-        state: dict[str, Any] = {"overflow": False, "proc": proc}
-        readers = (
-            threading.Thread(target=_drain, args=(proc.stdout, out_chunks, cap, state), daemon=True),
-            threading.Thread(target=_drain, args=(proc.stderr, err_chunks, cap, state), daemon=True),
+        # The shared bounded runner, not a local Popen: BCIR_OPT may name a
+        # wrapper, and a helper that inherits the pipes must not outlive the
+        # bound. It gives this rail its own session, per-stream byte
+        # budgets, a process-TREE put-down, and a held-pipes signal — all
+        # of which a direct kill plus fixed reader joins could not provide.
+        outcome = run_bounded(
+            [opt, "-bcir-verify", str(path)],
+            timeout=COMPILED_VERIFY_TIMEOUT,
+            cap=VERIFY_OUTPUT_CAP,
         )
-        for reader in readers:
-            reader.start()
-        try:
-            proc.wait(timeout=20)
-        except subprocess.TimeoutExpired:
-            # A hanging compiled verifier is exactly what this campaign must
-            # record — a structured FAIL, never an escaping traceback.
-            proc.kill()
-            proc.wait()
-            for reader in readers:
-                reader.join(5)
-            return {
-                "state": "FAIL",
-                "rejected": False,
-                "reason": "compiled verifier timed out after 20s",
-            }
-        for reader in readers:
-            reader.join(5)
-    if state["overflow"]:
+    if not outcome["launched"]:
         return {
             "state": "FAIL",
             "rejected": False,
-            "reason": f"compiled verifier output exceeded {cap} bytes",
+            "reason": f"compiled verifier failed to start: {outcome['error']}",
         }
-    crash = proc.returncode < 0 or proc.returncode >= 0xC0000000
-    if crash:
+    if outcome["timed_out"]:
+        # A hanging compiled verifier is exactly what this campaign must
+        # record — a structured FAIL, never an escaping traceback.
         return {
             "state": "FAIL",
             "rejected": False,
-            "returncode": proc.returncode,
-            "reason": f"compiled verifier crashed rc={proc.returncode}",
+            "reason": f"compiled verifier timed out after {COMPILED_VERIFY_TIMEOUT:g}s",
+        }
+    if outcome["overflow"]:
+        return {
+            "state": "FAIL",
+            "rejected": False,
+            "reason": f"compiled verifier output exceeded {VERIFY_OUTPUT_CAP} bytes",
+        }
+    if outcome["pipes_held"]:
+        # A descendant still holding the pipes means the diagnostic below
+        # was never seen to its end; the rail cannot vouch for it.
+        return {
+            "state": "FAIL",
+            "rejected": False,
+            "reason": "compiled verifier descendants held its output pipes open",
+        }
+    returncode = outcome["returncode"]
+    if returncode < 0 or returncode >= 0xC0000000:
+        return {
+            "state": "FAIL",
+            "rejected": False,
+            "returncode": returncode,
+            "reason": f"compiled verifier crashed rc={returncode}",
         }
     return {
         "state": "PASS",
-        "rejected": proc.returncode != 0,
-        "returncode": proc.returncode,
+        "rejected": returncode != 0,
+        "returncode": returncode,
         # HEAD-biased capture: MLIR prints the error line first, then a
         # source quote and a "see current operation" note dump that easily
         # overflows any tail window — a tail-only slice hid the law marker
         # from the pairing check on its first CI run.
-        "diagnostic": b"".join(err_chunks).decode("utf-8", "replace")[:4000],
+        "diagnostic": outcome["stderr"].decode("utf-8", "replace")[:4000],
     }
 
 

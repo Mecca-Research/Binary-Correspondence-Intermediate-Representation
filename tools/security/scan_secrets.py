@@ -101,6 +101,16 @@ WORD_PLACEHOLDER = re.compile(
 # A template or variable REFERENCE points at a secret, it is not one:
 # ${VAR}, $(cmd), {{ mustache }} / ${{ workflow }} openers.
 REFERENCE = re.compile(r"^\s*(?:\$\{|\$\(|\{\{)")
+# The quoted branch is the only value shape with no structural requirement
+# (12+ characters of anything), so prose lands in it: a schema description
+# like "object or null" under a key named token_counts. Credentials are
+# opaque; when they carry whitespace at all they are passphrases, and
+# passphrases are long. Below that length, whitespace means prose.
+PROSE_MIN = 20
+
+
+def _is_prose(value: str) -> bool:
+    return bool(re.search(r"\s", value)) and len(value) < PROSE_MIN
 
 
 def _is_placeholder(value: str) -> bool:
@@ -109,6 +119,23 @@ def _is_placeholder(value: str) -> bool:
         or WORD_PLACEHOLDER.search(value)
         or REFERENCE.match(value)
     )
+
+
+def _redacted_path(rel: str) -> str:
+    """Redact every secret-bearing component, not just the basename: a
+    credential can name a DIRECTORY (ghp_.../safe.txt), and copying the
+    parent through verbatim republishes it. Components that carry no match
+    survive so the finding still says where to look; a match that spans a
+    separator redacts the whole path."""
+    parts = rel.split("/")
+    redacted = [
+        "<redacted>" if _scan_text(part, part) else part for part in parts
+    ]
+    if redacted == parts:
+        # The match crossed a component boundary, so no single component
+        # reproduces it — nothing here can be shown safely.
+        return "<redacted-path>"
+    return "/".join(redacted)
 
 
 def _fingerprint(value: str) -> str:
@@ -235,6 +262,11 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
                 # Placeholder checks run on the VALUE (assignment RHS or the
                 # token itself), not on the key or surrounding text.
                 if _is_placeholder(groups.get("value") or groups.get("uvalue") or value):
+                    continue
+                # Prose suppression applies ONLY to the quoted branch: the
+                # unquoted branches and every token rule already carry a
+                # shape, so this cannot weaken them.
+                if groups.get("value") is not None and _is_prose(groups["value"]):
                     continue
                 findings.append({
                     "path": path,
@@ -485,8 +517,7 @@ def scan_tree(root: Path) -> dict[str, Any]:
         name_hits = _scan_text(rel, rel)
         display = rel
         if name_hits:
-            parent = rel.rsplit("/", 1)[0] + "/" if "/" in rel else ""
-            display = f"{parent}<redacted-filename>"
+            display = _redacted_path(rel)
             for hit in name_hits:
                 report["findings"].append({
                     "path": display, "line": 0,

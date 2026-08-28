@@ -2244,7 +2244,7 @@ def test_credential_shaped_filenames_are_findings() -> None:
     hits = [item for item in report["findings"] if item["rule"] == "filename-secret"]
     assert report["state"] == "FAIL"
     assert len(hits) == 1
-    assert hits[0]["path"] == "keys/<redacted-filename>"
+    assert hits[0]["path"] == "keys/<redacted>"
     assert "ghp_" not in json.dumps(report)
 
 def test_put_down_never_raises_from_the_tree_terminator() -> None:
@@ -2315,5 +2315,55 @@ def test_credential_shaped_names_are_redacted_in_every_report_field() -> None:
     assert len([f for f in report["findings"] if f["rule"] == "filename-secret"]) == 4
     # The whole serialized report, not just the findings, must be clean.
     assert token not in json.dumps(report)
-    assert report["binaries"] == ["<redacted-filename>"]
-    assert report["symlinks"] == ["<redacted-filename>"]
+    assert report["binaries"] == ["<redacted>"]
+    assert report["symlinks"] == ["<redacted>"]
+
+def test_secret_bearing_directories_are_redacted() -> None:
+    """A credential can name a DIRECTORY; copying the parent through
+    verbatim republishes it just as surely as the basename would."""
+    token = "ghp_" + "k9J2mQ4pR6sT1vX3zB5dF7hL0nCwEyGa"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / token).mkdir()
+        (root / token / "safe.txt").write_text("benign\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        report = scan_tree(root)
+    hits = [f for f in report["findings"] if f["rule"] == "filename-secret"]
+    assert report["state"] == "FAIL" and len(hits) == 1
+    assert hits[0]["path"] == "<redacted>/safe.txt"  # the safe half survives
+    assert token not in json.dumps(report)
+
+
+def test_schema_prose_is_not_a_secret() -> None:
+    """The quoted branch is the only value shape with no structural
+    requirement, so prose lands in it. A short whitespace-bearing value is
+    a description; a passphrase-length one is still a credential."""
+    from tools.security.scan_secrets import _scan_text
+    prose = _scan_text("f", '"token_counts": "object or null",')
+    assert prose == []
+    for line in (
+        "password" + ': "' + "correct-horse-battery-123" + '"',
+        "password" + ' = "' + "correct horse battery staple" + '"',
+    ):
+        assert [h["rule"] for h in _scan_text("f", line)] == ["assignment-secret"], line
+
+
+def test_compiled_verifier_descendants_are_a_structured_failure() -> None:
+    """BCIR_OPT may name a wrapper; a helper holding the pipes after the
+    direct process exits must be reported, not silently outlive the rail."""
+    from unittest.mock import patch
+    from tools.security import run_malformed_differential as differential
+
+    def held(cmd, **kwargs):
+        return {
+            "launched": True, "timed_out": False, "overflow": False,
+            "pipes_held": True, "returncode": 0, "stdout": b"",
+            "stderr": b"", "error": "",
+        }
+
+    with patch.object(differential, "find_bcir_opt", return_value="/usr/bin/fake"):
+        with patch.object(differential, "run_bounded", side_effect=held):
+            result = differential._compiled_mlir("bcir.module @m { }", _ROOT)
+    assert result["state"] == "FAIL"
+    assert "descendants" in result["reason"]

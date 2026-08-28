@@ -266,7 +266,7 @@ def prepare(args: argparse.Namespace, repo_root: Path, entries: list[dict[str, A
                 "generator_output_schema": {
                     "generated_artifact_paths": "array of paths below attempt_directory",
                     "model": "object with provider-neutral identity/revision fields",
-                    "token_counts": "object|null",
+                    "token_counts": "object or null",
                     "status": "completed, failed, or skipped",
                 },
             },
