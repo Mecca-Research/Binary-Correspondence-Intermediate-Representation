@@ -2541,3 +2541,101 @@ def test_json_escaped_credential_keys_are_findings() -> None:
     assert [h["rule"] for h in hits] == ["assignment-secret"]
     benign = '{"c\\u006flor": "blue-green-teal-cyan"}'
     assert _scan_text("f", benign) == []
+
+
+def test_toml_multiline_string_secrets_are_findings() -> None:
+    """A TOML triple-quoted opener puts the key and its value on separate
+    lines, exactly like a YAML block scalar; neither line is
+    credential-shaped alone."""
+    from tools.security.scan_secrets import _scan_text
+    basic = '"' * 3
+    literal = "'" * 3
+    body = (
+        "password" + " = " + basic + "\n"
+        + "correct-horse-battery-staple" + "\n" + basic + "\n"
+        + "token" + " = " + literal + "\n"
+        + "example" + "\n" + literal + "\n"
+    )
+    hits = _scan_text("config.toml", body)
+    assert [h["line"] for h in hits] == [1]  # the placeholder stays suppressed
+
+
+def test_bomless_utf16_with_cjk_preamble_is_scanned() -> None:
+    """A CJK preamble carries no NUL in either byte of its code units, so
+    the sample's parity vote is silent — but the ASCII credential further
+    down still interleaves NULs the whole-file vote can see."""
+    from tools.security.scan_secrets import _decode_text, _scan_text, _utf16_bomless
+    text = (
+        "汉" * 5000 + "\n"
+        + "password" + ": " + "correct-horse-battery-staple" + "\n"
+    )
+    blob = text.encode("utf-16-le")
+    assert _utf16_bomless(blob) == "utf-16-le"
+    hits = _scan_text("notes.txt", _decode_text(blob))
+    assert [h["rule"] for h in hits] == ["assignment-secret"]
+    # An even-length plain-ASCII file must NOT start decoding as UTF-16
+    # garbage: valid UTF-8 with no NUL signal is single-byte text.
+    assert _utf16_bomless(b"ab" * 4096) is None
+
+
+def test_staged_secrets_are_scanned() -> None:
+    """The index is what the next commit records: a secret staged and then
+    overwritten with a benign worktree copy must still be a finding."""
+    token = "ghp_" + ("cd" * 18)
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        target = root / "config.py"
+        target.write_text('token = "' + token + '"\n', encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        target.write_text("token = None\n", encoding="utf-8")
+        report = scan_tree(root)
+    assert report["state"] == "FAIL"
+    staged = [i for i in report["findings"] if i["path"].endswith("(staged)")]
+    assert "github-token" in {i["rule"] for i in staged}
+    assert token not in json.dumps(report)  # fingerprints only, ever
+
+
+def test_seed_construction_failure_is_a_structured_campaign_verdict() -> None:
+    """An encoder or I/O failure while BUILDING a seed is the campaign
+    failing to run — a structured surface FAIL, never a traceback that
+    also silences the C rail behind it."""
+    from tools.security import run_decoder_campaign as campaign
+
+    def broken() -> bytes:
+        raise OSError("disk full")
+
+    original = campaign._q8_seed
+    campaign._q8_seed = broken
+    try:
+        results = campaign.run_python_campaign(2, 20260828)
+    finally:
+        campaign._q8_seed = original
+    by_name = {item["surface"]: item for item in results}
+    assert set(by_name) == {"streampack", "bcab", "bcirq8"}
+    assert by_name["bcirq8"]["state"] == "FAIL"
+    assert [f["kind"] for f in by_name["bcirq8"]["findings"]] == [
+        "seed-construction-failed"
+    ]
+    assert by_name["streampack"]["state"] == "PASS"
+
+
+def test_assignment_matcher_is_linear_time() -> None:
+    """A keyword-free separator run made the greedy prefix group retry from
+    every word boundary — tens of kilobytes stalled the required scan
+    quadratically. The wall bound is generous: the linear rule finishes
+    ~1000x inside it, the quadratic one was half a minute outside."""
+    import time
+    from tools.security.scan_secrets import RULES
+    rule = dict(RULES)["assignment-secret"]
+    lines = ["a-" * 20000 + "b", ("password" + "_") * 8000 + "x"]
+    start = time.perf_counter()
+    for line in lines:
+        assert rule.search(line) is None
+    assert time.perf_counter() - start < 2.0
+    # The rewrite keeps the rule's exact reach: separator-joined key
+    # shapes still match, substring identifiers still do not.
+    assert rule.search("DB_" + "PASSWORD" + ' = "' + "hunter2hunter2007" + '"')
+    assert rule.search("client_" + "secret" + ": " + "abc123def456ghi789")
+    assert not rule.search("secretariat" + ' = "' + "abcdefghijklmno" + '"')
+    assert not rule.search("passwords_file" + ' = "' + "abcdefghijklmno" + '"')

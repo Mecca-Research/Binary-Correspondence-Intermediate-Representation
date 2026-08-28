@@ -19,6 +19,7 @@ import struct
 import subprocess
 import sys
 import tarfile
+import tempfile
 import zipfile
 import zlib
 from pathlib import Path
@@ -72,6 +73,18 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     # (DB_PASSWORD, AWS_SECRET_ACCESS_KEY, SECRET_KEY); a bare \b before the
     # keyword made every one of them invisible. Substring identifiers without
     # a separator (tokenizer, passwords_file) stay out of the rule.
+    # LINEAR by construction: the keyword is matched directly — \b covers
+    # start-of-identifier and hyphen-joined prefixes, the lookbehind covers
+    # underscore-joined ones — never through a greedy prefix group, which
+    # re-split a long a-a-a… run from every word boundary at every start
+    # position and stalled the required scan quadratically on keyword-free
+    # lines. The suffix run is possessive (*+): no shorter split of it can
+    # rescue a failed delimiter check, because the delimiter characters are
+    # not suffix characters, so it never backtracks — and it is BOUNDED
+    # (16 segments of 64 chars), so a line that repeats the keyword cannot
+    # make every attempt re-walk the rest of the line either. No real key
+    # identifier approaches a kilobyte; longer ones are out of scope by
+    # declaration, not by accident.
     # Values: quoted (12+ chars) or the unquoted shapes — 16+ value
     # characters carrying at least one digit, OR a 20+ all-lowercase run,
     # OR a hyphen-delimited lowercase passphrase (three-plus words, 16+
@@ -83,8 +96,8 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     # and JSON `"password":` store the same credential; the optional quote
     # before the delimiter is the JSON key's closing quote.
     ("assignment-secret", re.compile(
-        r"(?i)\b(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|secret|password|token|passwd)"
-        r"(?:[_-][A-Za-z0-9]+)*['\"]?\s*[:=]\s*"
+        r"(?i)(?:\b|(?<=[0-9A-Za-z]_))(?:api[_-]?key|secret|password|token|passwd)"
+        r"(?:[_-][A-Za-z0-9]{1,64}){0,16}+['\"]?\s*[:=]\s*"
         r"(?:['\"](?P<value>[^'\"]{12,})['\"]"
         r"|(?P<uvalue>(?=[A-Za-z0-9+/_.\-]*\d)[A-Za-z0-9+/_.\-]{16,}={0,2}"
         r"|(?-i:[a-z]{20,})(?![A-Za-z0-9_])"
@@ -168,6 +181,46 @@ def _git_files(root: Path) -> list[str]:
     ]
 
 
+def _staged_divergent(root: Path) -> list[str] | None:
+    """Tracked paths whose INDEX blob differs from the worktree copy.
+
+    The tree walk reads worktree bytes, but the next commit records the
+    index: a secret staged and then overwritten with a benign unstaged
+    copy passes a worktree-only scan while still shipping. In a clean
+    checkout (every CI run) this list is empty. None means the
+    divergence question itself could not be answered — a fail-closed
+    finding, never a silent downgrade."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "diff", "--name-only", "-z"],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return [
+        item.decode("utf-8", "surrogateescape")
+        for item in result.stdout.split(b"\0") if item
+    ]
+
+
+def _staged_blob(root: Path, rel: str) -> bytes | None:
+    """The stage-0 index blob for ``rel``, or None when unreadable."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "show", f":0:{rel}"],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
 def _suffix_matches(lower: str, suffixes: frozenset[str]) -> bool:
     return any(lower.endswith(suffix) for suffix in suffixes)
 
@@ -206,7 +259,29 @@ def _utf16_bomless(data: bytes) -> str | None:
     elif even > half * 0.3 and even > odd * 4:
         encoding = "utf-16-be"
     else:
-        return None
+        # No NUL signal in the sample is not proof of single-byte text: a
+        # CJK preamble's code units carry no NUL in either byte (U+4E00–
+        # U+7FFF is even ASCII-clean as raw bytes), while an ASCII
+        # credential later in the file still does. The parity vote is
+        # re-taken over the WHOLE file under an absolute floor instead of
+        # a density one: a plain single-byte text file has no NULs at all,
+        # an ASCII-bearing UTF-16 file always has them somewhere, and a
+        # UTF-16 file with no ASCII anywhere has no ASCII-shaped secrets
+        # to miss. Chunked counting: the stride starts stay even, and no
+        # 128 MiB slice copy is materialized for a classification
+        # question.
+        even = 0
+        odd = 0
+        for start in range(0, len(data), 1 << 16):
+            chunk = data[start:start + (1 << 16)]
+            even += chunk[0::2].count(0)
+            odd += chunk[1::2].count(0)
+        if odd >= 8 and odd > even * 4:
+            encoding = "utf-16-le"
+        elif even >= 8 and even > odd * 4:
+            encoding = "utf-16-be"
+        else:
+            return None
     try:
         text = sample.decode(encoding)
     except (UnicodeDecodeError, ValueError):
@@ -349,6 +424,53 @@ def _block_scalar_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
     return findings
 
 
+# A TOML multiline string does the same key/value split with quote
+# delimiters: `password = """` (basic) or `'''` (literal) opens a value
+# whose lines follow until the closing delimiter. Line by line, the key
+# line ends in an opener the inline rule cannot pair and the continuation
+# is bare text. Anchored like BLOCK_SCALAR, so the prefix group cannot
+# retry across a long line from more than one start position.
+TOML_MULTILINE = re.compile(
+    r"(?i)^\s*['\"]?(?:[A-Za-z0-9]+[_-])*"
+    r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
+    r"['\"]?\s*=\s*(?P<delim>\"\"\"|''')(?P<rest>.*)$"
+)
+
+
+def _toml_multiline_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
+    """Findings for credentials held in TOML multiline strings under a
+    secret-named key. The value runs to the closing delimiter and is
+    judged by the same placeholder, reference and prose rules as an
+    inline value, so a documented example stays suppressed."""
+    findings: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        match = TOML_MULTILINE.match(line)
+        if not match:
+            continue
+        delim = match.group("delim")
+        rest = match.group("rest")
+        if delim in rest:
+            # Opened and closed on one line: the inline rule's territory.
+            continue
+        collected = [rest] if rest else []
+        for follower in lines[index + 1:]:
+            closing = follower.find(delim)
+            if closing >= 0:
+                collected.append(follower[:closing])
+                break
+            collected.append(follower)
+        value = "\n".join(collected).strip()
+        if len(value) < 12 or _is_placeholder(value) or _is_prose(value):
+            continue
+        findings.append({
+            "path": path,
+            "line": index + 1,
+            "rule": "assignment-secret",
+            "fingerprint": _fingerprint(value),
+        })
+    return findings
+
+
 _JSON_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
 
 
@@ -369,6 +491,7 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
     findings = []
     lines = text.splitlines()
     findings.extend(_block_scalar_findings(path, lines))
+    findings.extend(_toml_multiline_findings(path, lines))
     for number, line in enumerate(text.splitlines(), 1):
         if "\\u" in line:
             decoded = _decode_json_escapes(line)
@@ -820,6 +943,65 @@ def scan_tree(root: Path) -> dict[str, Any]:
         if kind == "archive":
             report["archive_files"] += 1
             extra, meta = _scan_archive(display, path, data)
+            report["archives"].append(meta)
+            report["findings"].extend(extra)
+            continue
+        report["text_files"] += 1
+        report["findings"].extend(_scan_text(display, _decode_text(data)))
+    # The walk above scanned the WORKTREE; the next commit records the
+    # INDEX. Every path where the two diverge gets its staged blob scanned
+    # through the same classification, under the same caps — otherwise a
+    # staged secret hides behind a benign unstaged overwrite while the
+    # mandated before-commit validation reports PASS.
+    staged = _staged_divergent(root)
+    if staged is None:
+        report["findings"].append({
+            "path": ".", "line": 0, "rule": "staged-discovery-failed",
+            "fingerprint": _fingerprint("staged-discovery-failed"),
+        })
+    for rel in staged or ():
+        try:
+            rel.encode("utf-8")
+        except UnicodeEncodeError:
+            # The tracked-file walk already recorded this name fail-closed
+            # as filename-not-utf8; its staged blob stays uninspected for
+            # the same reason its worktree copy did.
+            continue
+        shown = _redacted_path(rel) if _scan_text(rel, rel) else rel
+        display = f"{shown} (staged)"
+        data = _staged_blob(root, rel)
+        if data is None:
+            # git reported the path divergent but its index blob cannot be
+            # read (or the path is index-deleted): not inspected, so not
+            # clean.
+            report["findings"].append({
+                "path": display, "line": 0, "rule": "staged-unreadable",
+                "fingerprint": _fingerprint("staged-unreadable"),
+            })
+            continue
+        if len(data) > ARCHIVE_LOGICAL_CAP:
+            report["findings"].append({
+                "path": display, "line": 0, "rule": "file-oversized",
+                "fingerprint": _fingerprint("file-oversized"),
+            })
+            continue
+        kind = _kind_for(rel, data)
+        if kind == "binary":
+            report["binary_files"] += 1
+            report["binaries"].append(display)
+            continue
+        if kind == "archive":
+            # _archive_entries probes ZIP through a real path before
+            # parsing the bytes; a staged blob has no path, so spool it
+            # (already bounded by the cap above) for the probe's benefit.
+            report["archive_files"] += 1
+            with tempfile.NamedTemporaryFile(delete=False) as spool:
+                spool.write(data)
+                spool_path = Path(spool.name)
+            try:
+                extra, meta = _scan_archive(display, spool_path, data)
+            finally:
+                spool_path.unlink(missing_ok=True)
             report["archives"].append(meta)
             report["findings"].extend(extra)
             continue

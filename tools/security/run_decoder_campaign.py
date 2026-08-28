@@ -232,16 +232,56 @@ def _decode_q8_bytes(data: bytes) -> Any:
             raise RuntimeError(f"campaign I/O failed: {exc}") from exc
 
 
+def _seed_failure(name: str, exc: Exception) -> dict[str, Any]:
+    """A surface whose seed cannot be BUILT was never campaigned: the
+    encoder or its I/O failed before the first decode. That is the
+    campaign failing to run, so it becomes the surface's structured FAIL —
+    never a traceback in place of the report, and never a reason the C
+    rail silently does not run."""
+    return {
+        "surface": name,
+        "state": "FAIL",
+        "accepted": 0,
+        "rejected": 0,
+        "mutations": 0,
+        "findings": [{
+            "kind": "seed-construction-failed",
+            "type": type(exc).__name__,
+            "detail": str(exc)[:200],
+        }],
+    }
+
+
 def run_python_campaign(mutations: int, seed: int) -> list[dict[str, Any]]:
-    from bcir.abi.artifact_bundle import decode_bundle
-    from bcir.abi.streampack_abi import decode as decode_pack
     rng = random.Random(seed)
-    pack = _streampack_seed()
-    return [
-        _probe("streampack", decode_pack, pack, rng, mutations),
-        _probe("bcab", decode_bundle, _bcab_seed(pack), rng, mutations),
-        _probe("bcirq8", _decode_q8_bytes, _q8_seed(), rng, mutations),
-    ]
+    results: list[dict[str, Any]] = []
+    # Exception, not BaseException: the decode watchdog only arms inside
+    # _bounded_decode, and seed construction must not swallow a
+    # KeyboardInterrupt either.
+    try:
+        from bcir.abi.streampack_abi import decode as decode_pack
+        pack = _streampack_seed()
+    except Exception as exc:  # noqa: BLE001 - every failure shape is the verdict
+        # BCAB's seed embeds the StreamPack seed, so neither surface can
+        # be campaigned; both fail structurally rather than one vanishing.
+        results.append(_seed_failure("streampack", exc))
+        results.append(_seed_failure("bcab", exc))
+    else:
+        results.append(_probe("streampack", decode_pack, pack, rng, mutations))
+        try:
+            from bcir.abi.artifact_bundle import decode_bundle
+            bundle = _bcab_seed(pack)
+        except Exception as exc:  # noqa: BLE001
+            results.append(_seed_failure("bcab", exc))
+        else:
+            results.append(_probe("bcab", decode_bundle, bundle, rng, mutations))
+    try:
+        q8 = _q8_seed()
+    except Exception as exc:  # noqa: BLE001
+        results.append(_seed_failure("bcirq8", exc))
+    else:
+        results.append(_probe("bcirq8", _decode_q8_bytes, q8, rng, mutations))
+    return results
 
 
 CAMPAIGN_OUTPUT_CAP = 1 << 20  # per stream; fuzzers log diagnostics, not payload

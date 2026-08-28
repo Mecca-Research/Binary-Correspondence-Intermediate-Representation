@@ -181,3 +181,8 @@ finding,date,file,title,grade,law
 180,2026-08-28 13:05,scan_secrets.py,Encode non-UTF-8 archive paths before fingerprinting,INSTANCE,L7
 181,2026-08-28 13:05,audit_tool_boundaries.py,Sanitize non-UTF-8 paths before printing findings,INSTANCE,L7
 182,2026-08-28 13:05,scan_secrets.py,Decode escaped credential keys before scanning JSON,INSTANCE,L5
+183,2026-08-28 14:54,scan_secrets.py,Scan TOML multiline assignment values,INSTANCE,L5
+184,2026-08-28 14:54,scan_secrets.py,Decode BOM-less UTF-16 without relying on NUL density,INSTANCE,L5
+185,2026-08-28 14:54,scan_secrets.py,Scan staged blobs rather than unstaged worktree copies,INSTANCE,L15
+186,2026-08-28 14:54,run_decoder_campaign.py,Convert seed-construction failures into campaign verdicts,INSTANCE,L1
+187,2026-08-28 14:54,scan_secrets.py,Make the assignment-secret matcher linear-time,INSTANCE,L3

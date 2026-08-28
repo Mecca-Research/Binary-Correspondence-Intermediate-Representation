@@ -43,7 +43,8 @@ UNAVAILABLE-SKIPPED — error paths included. A traceback in place of a
 structured report is itself a defect: it skips the JSON artifact and the
 exit-code contract. Witnesses: `test_campaign_launch_failure_is_structured`,
 `test_compiled_verifier_timeout_is_a_structured_failure`,
-`test_q8_read_io_failure_is_not_graceful`.
+`test_q8_read_io_failure_is_not_graceful`,
+`test_seed_construction_failure_is_a_structured_campaign_verdict`.
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -66,7 +67,9 @@ Witnesses: `test_xz_dictionary_memory_is_bounded`,
 `test_zip_symlink_under_lzma_is_uninspectable`,
 `test_oversized_python_source_is_a_finding`,
 `test_symlinked_pyproject_is_unasserted`,
-`test_tar_probe_never_parses_compressed_bytes`.
+`test_tar_probe_never_parses_compressed_bytes`,
+`test_assignment_matcher_is_linear_time` (a quadratic matcher commits
+CPU the same way a decompressor commits memory).
 **Port note:** this is the memory-safety law. In Python these failures were
 OOMs; in C the same shapes are allocator abuse and heap corruption. Every
 `malloc` sized from input data is an L3 site.
@@ -96,7 +99,9 @@ Witnesses: `test_credential_shaped_filenames_are_findings`,
 `test_archive_member_names_are_scanned_for_secrets`,
 `test_bomless_utf16_text_is_scanned`,
 `test_yaml_block_scalar_secrets_are_findings`,
-`test_json_escaped_credential_keys_are_findings`.
+`test_json_escaped_credential_keys_are_findings`,
+`test_toml_multiline_string_secrets_are_findings`,
+`test_bomless_utf16_with_cjk_preamble_is_scanned`.
 **Port note:** format-level knowledge; transfers verbatim to any scanner
 in any language.
 
@@ -212,7 +217,9 @@ checkout is a FAIL (never a downgrade), and generated-tree skips are path
 prefixes with named roots — a skip matched anywhere lets tracked code hide
 in a directory that shares a name.
 Witnesses: `test_nested_build_directories_are_still_audited`,
-`test_tool_boundaries_scan_is_non_vacuous`.
+`test_tool_boundaries_scan_is_non_vacuous`,
+`test_staged_secrets_are_scanned` (the INDEX is part of what the
+repository tracks: the next commit records it, not the worktree).
 **Port note:** identical everywhere.
 
 ### L16 — Never green yourself by editing the neighbor
@@ -272,16 +279,23 @@ map, every tagged union, every "impossible" enum value is an L20 site.
 
 ## Campaign classification summary
 
-Every review-thread finding from the campaign (182 threads, rounds 1–31)
-was graded retroactively under the harvest protocol. The full per-finding
+Every review-thread finding from the campaign (187 threads, rounds 1–32)
+is graded under the harvest protocol. The full per-finding
 index is `docs/security/pr749-harvest.csv`; the campaign ledger tracks the
 same data round by round.
 
 | Grade | Findings | Share | Meaning |
 |---|---|---|---|
-| **NEW-LAW** | 19 | **10.4%** | Originated a registry law (L1–L13, L15–L20; L14 emerged from the repetition itself, not one finding) |
-| **INSTANCE** | 124 | **68.1%** | New entry point to a registered law — the law gained a witness |
-| **LOCAL** | 39 | **21.4%** | No transfer value beyond the code touched |
+| **NEW-LAW** | 19 | **10.2%** | Originated a registry law (L1–L13, L15–L20; L14 emerged from the repetition itself, not one finding) |
+| **INSTANCE** | 129 | **69.0%** | New entry point to a registered law — the law gained a witness |
+| **LOCAL** | 39 | **20.9%** | No transfer value beyond the code touched |
+
+Rounds through 31 were graded retroactively; from round 32 every finding
+is graded at triage. Round 32 (5 findings: TOML multiline values,
+NUL-free UTF-16, staged blobs, seed-construction verdicts, matcher
+complexity) was the campaign's first zero-NEW-LAW round — all five were
+instances of L5, L15, L1 and L3 — so the staleness counter stands at
+**1 of 3**.
 
 Where the instances concentrated (finding count per law, origin included):
 L5 scannable-data coverage 22 · L3 resource-commit bounds 18 · L1
