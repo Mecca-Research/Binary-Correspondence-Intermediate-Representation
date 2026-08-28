@@ -2592,3 +2592,105 @@ def test_implementation_errors_are_never_graceful() -> None:
     kinds = {item["kind"] for item in row["findings"]}
     assert "ungraceful-seed" in kinds and "ungraceful" in kinds
     assert all(item.get("type") == "IndexError" for item in row["findings"])
+
+def test_fallback_refuses_metadata_table_spellings() -> None:
+    """Every bracket spelling of a metadata table that tomllib rejects (or
+    projects as the wrong shape) must fail closed here too, while the
+    legitimate table sections keep parsing."""
+    from tools.security import audit_dependencies as deps
+    refused = {
+        "array-of-tables group": '[[dependency-groups]]\nqa = ["requests==2.32.5"]\n',
+        "dependencies as table": '[project.dependencies]\nx = 1\n',
+        "optional non-array": '[project.optional-dependencies]\nbad = {}\n',
+        "duplicate audited key":
+            '[project]\ndependencies = ["requests==2"]\ndependencies = []\n',
+    }
+    for name, body in refused.items():
+        assert deps._fallback_parse(body)["_unasserted"] is True, name
+    allowed = {
+        "optional group": '[project.optional-dependencies]\ndev = ["pytest"]\n',
+        "unrelated array table": '[[tool.plugins]]\nname = "p"\n',
+    }
+    for name, body in allowed.items():
+        assert deps._fallback_parse(body)["_unasserted"] is False, name
+
+
+def test_decoder_watchdog_cannot_be_swallowed() -> None:
+    """Decoders wrap broad `except Exception` around inner decodes; an
+    Exception-derived watchdog is caught there and re-raised as the
+    surface's declared rejection, so the stalled mutation reads as
+    graceful and the campaign reports PASS."""
+    import random
+    from tools.security.run_decoder_campaign import _DecodeHang, _probe
+    from bcir.abi.streampack_abi import AbiError
+    assert not issubclass(_DecodeHang, Exception)
+
+    def swallowing(_data: bytes):
+        # Exactly the shape of artifact_bundle's inner validation.
+        try:
+            raise _DecodeHang("decode exceeded 10s")
+        except Exception as exc:  # noqa: BLE001
+            raise AbiError("wrapped") from exc
+
+    row = _probe("streampack", swallowing, b"seed", random.Random(0), mutations=2)
+    assert row["state"] == "FAIL"
+    assert any(item["kind"] == "decoder-hang" for item in row["findings"])
+
+
+def test_bomless_utf16_text_is_scanned() -> None:
+    """BOM-less UTF-16 carries interleaved NULs; the generic heuristic filed
+    it as binary and never looked inside."""
+    for encoding in ("utf-16-le", "utf-16-be"):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            payload = "password" + ": " + "correct-horse-battery-staple" + "\n"
+            (root / "config.yaml").write_bytes(payload.encode(encoding))
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            report = scan_tree(root)
+        assert report["state"] == "FAIL", encoding
+        assert report["text_files"] == 1, encoding
+        assert any(
+            item["rule"] == "assignment-secret" for item in report["findings"]
+        ), encoding
+
+
+def test_archive_member_names_are_scanned_for_secrets() -> None:
+    """A member name or link target is committed metadata like a tree entry;
+    the traversal predicate read those strings but the secret rules did not."""
+    import io
+    import zipfile as zf
+    token = "ghp_" + "k9J2mQ4pR6sT1vX3zB5dF7hL0nCwEyGa"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as archive:
+            archive.writestr(token + ".txt", "benign\n")
+        (root / "bundle.zip").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        report = scan_tree(root)
+    assert report["state"] == "FAIL"
+    assert any(
+        item["rule"] == "archive-metadata-secret" for item in report["findings"]
+    )
+    assert token not in json.dumps(report)  # the member name is never echoed
+
+
+def test_yaml_block_scalar_secrets_are_findings() -> None:
+    """`password: |-` puts the key and its value on separate lines; neither
+    is credential-shaped alone."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        body = (
+            "password" + ": |-\n  " + "correct-horse-battery-staple" + "\n"
+            + "note" + ": |-\n  " + "your-password-here" + "\n"
+        )
+        (root / "config.yaml").write_text(body, encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        report = scan_tree(root)
+    hits = [i for i in report["findings"] if i["rule"] == "assignment-secret"]
+    assert report["state"] == "FAIL"
+    assert [i["line"] for i in hits] == [1]  # the placeholder stays suppressed

@@ -48,8 +48,16 @@ _DECLARED_REJECTIONS = {
 }
 
 
-class _DecodeHang(Exception):
-    """Raised by the watchdog when a single decode exceeds its wall bound."""
+class _DecodeHang(BaseException):
+    """Raised by the watchdog when a single decode exceeds its wall bound.
+
+    BaseException, deliberately: decoders wrap broad ``except Exception``
+    handlers around their inner decodes (BCAB validates an embedded
+    StreamPack that way), and an Exception-derived watchdog signal is
+    caught there and re-raised as the surface's DECLARED rejection type.
+    The timeout then reads as a graceful rejection and the stalled
+    mutation reports PASS — the wall bound must be unswallowable by the
+    code it is bounding."""
 
 
 def _bounded_decode(decode: Callable[[bytes], Any], blob: bytes, seconds: float) -> Any:

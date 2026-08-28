@@ -176,10 +176,53 @@ _BOMS: tuple[tuple[bytes, str], ...] = (
 )
 
 
+def _utf16_bomless(data: bytes) -> str | None:
+    """The BOM-less UTF-16 encoding of ``data``, or None.
+
+    Without a BOM the interleaved NULs read as binary to the generic
+    heuristic, so a UTF-16LE config file hid every credential in it. The
+    parity of the NUL bytes names the endianness; a STRICT decode of a
+    bounded sample plus a printability floor then confirms it, which
+    arbitrary binary payloads do not satisfy. Only the sample is decoded —
+    this answers a classification question, and the caller that needs the
+    whole text decodes it once."""
+    if len(data) % 2:
+        return None
+    # A multiple of four cannot split a surrogate pair at the boundary and
+    # fail a file that is in fact valid UTF-16.
+    sample = data[:TEXT_SAMPLE - (TEXT_SAMPLE % 4)]
+    sample = sample[:len(sample) - (len(sample) % 4)]
+    if len(sample) < 4:
+        return None
+    even = sample[0::2].count(0)
+    odd = sample[1::2].count(0)
+    half = len(sample) // 2
+    if odd > half * 0.3 and odd > even * 4:
+        encoding = "utf-16-le"
+    elif even > half * 0.3 and even > odd * 4:
+        encoding = "utf-16-be"
+    else:
+        return None
+    try:
+        text = sample.decode(encoding)
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if not text:
+        return None
+    printable = sum(ch.isprintable() or ch in "\r\n\t" for ch in text)
+    return encoding if printable >= len(text) * 0.9 else None
+
+
 def _decode_text(data: bytes) -> str:
     for bom, encoding in _BOMS:
         if data.startswith(bom):
             return data.decode(encoding, "replace")
+    bomless = _utf16_bomless(data)
+    if bomless is not None:
+        # Replacement decode of the WHOLE file here: the classifier proved
+        # the encoding on a sample, and a trailing malformed unit must not
+        # cost the scan the rest of the text.
+        return data.decode(bomless, "replace")
     return data.decode("utf-8", "replace")
 
 
@@ -244,6 +287,10 @@ def _kind_for(path: str, data: bytes) -> str:
             # A BOM names the real text encoding; UTF-16/32 NUL bytes must
             # not shunt the file into the binary policy unscanned.
             return "text"
+    if _utf16_bomless(data) is not None:
+        # BOM-less UTF-16 carries interleaved NULs; the generic heuristic
+        # below would file it as binary and never scan it.
+        return "text"
     sample = data[:TEXT_SAMPLE]
     if b"\0" in sample:
         return "binary"
@@ -257,8 +304,51 @@ def _kind_for(path: str, data: bytes) -> str:
     return "text"
 
 
+# A YAML block scalar puts the secret-named key and its value on separate
+# lines: `password: |-` then an indented run. Line-by-line, the key has no
+# value and the continuation is not token-shaped, so both slipped through.
+BLOCK_SCALAR = re.compile(
+    r"(?i)^(?P<indent>\s*)(?:-\s+)?['\"]?(?:[A-Za-z0-9]+[_-])*"
+    r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
+    r"['\"]?\s*:\s*[|>][-+0-9]*\s*$"
+)
+
+
+def _block_scalar_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
+    """Findings for credentials held in YAML block scalars under a
+    secret-named key. The value is the dedented continuation run; it is
+    judged by the same placeholder, reference and prose rules as an inline
+    value, so a documented example stays suppressed."""
+    findings: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        match = BLOCK_SCALAR.match(line)
+        if not match:
+            continue
+        base = len(match.group("indent"))
+        collected: list[str] = []
+        for follower in lines[index + 1:]:
+            if not follower.strip():
+                collected.append("")
+                continue
+            if len(follower) - len(follower.lstrip()) <= base:
+                break
+            collected.append(follower.strip())
+        value = "\n".join(collected).strip()
+        if len(value) < 12 or _is_placeholder(value) or _is_prose(value):
+            continue
+        findings.append({
+            "path": path,
+            "line": index + 1,
+            "rule": "assignment-secret",
+            "fingerprint": _fingerprint(value),
+        })
+    return findings
+
+
 def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
     findings = []
+    lines = text.splitlines()
+    findings.extend(_block_scalar_findings(path, lines))
     for number, line in enumerate(text.splitlines(), 1):
         for rule, pattern in RULES:
             for match in pattern.finditer(line):
@@ -478,6 +568,17 @@ def _scan_archive(rel: str, path: Path, data: bytes) -> tuple[list[dict[str, Any
             "rule": "archive-path-traversal",
             "fingerprint": _fingerprint(name),
         })
+    for name in checks:
+        # A member name or link target is committed metadata exactly like a
+        # tree entry: a credential spelled into one ships in every clone.
+        # These strings were already collected for the traversal predicate;
+        # the secret rules run over them too, and the finding carries only
+        # the archive's path plus the fingerprint — never the member name.
+        for hit in _scan_text(rel, name):
+            findings.append({
+                "path": rel, "line": 0, "rule": "archive-metadata-secret",
+                "fingerprint": hit["fingerprint"],
+            })
     return findings, {
         "path": rel,
         "status": "inspected",

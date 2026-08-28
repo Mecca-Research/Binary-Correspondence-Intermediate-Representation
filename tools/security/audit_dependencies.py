@@ -206,9 +206,17 @@ def _fallback_parse(text: str) -> dict[str, Any]:
     for raw_line in text.splitlines():
         stripped = _strip_toml_comment(raw_line).strip()
         if pending is None:
-            if _ARRAY_TABLE.match(stripped):
-                # Unattributable, not invalid: a dependency-shaped key inside
-                # it still fails closed through the sensitivity net below.
+            array_table = _ARRAY_TABLE.match(stripped)
+            if array_table:
+                split = _split_key(array_table.group("name").strip())
+                if split is None or split[0] in _METADATA_TABLES:
+                    # [[dependency-groups]] declares the metadata table as an
+                    # ARRAY of tables; tomllib then exposes it as a non-table
+                    # shape and fails closed. Treating it as merely
+                    # unattributable let the group inside it disappear.
+                    unasserted = True
+                # Otherwise unattributable, not invalid: a dependency-shaped
+                # key inside it still fails closed through the nets below.
                 section = ("<unattributed>",)
                 continue
             match = _SECTION.match(stripped)
@@ -218,6 +226,12 @@ def _fallback_parse(text: str) -> dict[str, Any]:
                     unasserted = True
                     section = ("<unattributed>",)
                 else:
+                    if split in known:
+                        # [project.dependencies] spells an ARRAY field as a
+                        # table. tomllib projects it as a dict and fails the
+                        # list-shape validation; the bracket spelling must
+                        # not slip past that check here.
+                        unasserted = True
                     section = split
                 continue
             match = _ARRAY_KEY.match(stripped)
@@ -241,7 +255,17 @@ def _fallback_parse(text: str) -> dict[str, Any]:
                         # not parse inline tables, so it refuses instead of
                         # asserting an inventory around the declaration.
                         unasserted = True
-                    if _SENSITIVE.search(key):
+                    if section[:2] == optional_prefix:
+                        # Every key under [project.optional-dependencies] IS
+                        # an optional group. A non-array shape there (bad =
+                        # {}) is one tomllib retains and this reader cannot,
+                        # so the local-key net never saw it.
+                        unasserted = True
+                    qualified = ".".join(section + tuple(key.split(".")))
+                    if _SENSITIVE.search(key) or _SENSITIVE.search(qualified):
+                        # Section-qualified: a bare `dependencies = {}` under
+                        # [project] is dependency-shaped only once its
+                        # section is composed in.
                         unasserted = True
                     elif "{" in rhs and (
                         re.search(r"(?:optional-)?dependencies|dynamic", rhs)
@@ -295,6 +319,11 @@ def _fallback_parse(text: str) -> dict[str, Any]:
                     buffer = match.group("rest")
                     pending = _SKIP_ARRAY
                 continue
+            if full in arrays:
+                # tomllib rejects a second assignment to the same key; the
+                # unconditional overwrite here let a later `dependencies =
+                # []` erase a real declaration and match the empty inventory.
+                unasserted = True
             buffer = match.group("rest")
             pending = full
         else:
