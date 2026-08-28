@@ -669,73 +669,6 @@ def test_dependency_audit_rejects_dynamic_dependencies() -> None:
         assert report["inventory_asserted"] is False
 
 
-def test_dependency_fallback_parser_matches_tomllib() -> None:
-    import tools.security.audit_dependencies as deps
-    if deps.tomllib is None:
-        return  # the fallback IS the parser on this host
-    text = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    full = deps.parse_pyproject(_ROOT / "pyproject.toml")
-    fallback = deps._fallback_parse(text)
-    assert fallback["runtime"] == full["runtime"]
-    assert fallback["build_system"] == full["build_system"]
-    assert fallback["optional"] == full["optional"]
-    assert fallback["dynamic"] == full["dynamic"]
-    assert fallback["_unasserted"] is False
-
-
-def test_dependency_fallback_parser_survives_hostile_toml_shapes() -> None:
-    """Fixed-expectation fixtures runnable without tomllib — these exact
-    shapes made an earlier fallback silently misread dependency metadata."""
-    from tools.security.audit_dependencies import _fallback_parse
-    commented = (
-        '[project]  # metadata\n'
-        'dependencies = ["a>=1"]  # uses "b" internally\n'
-        'dynamic = ["dependencies"]\n'
-    )
-    parsed = _fallback_parse(commented)
-    assert parsed["runtime"] == ["a>=1"]
-    assert parsed["dynamic"] == ["dependencies"]
-    assert parsed["_unasserted"] is False
-    dotted = 'project.dependencies = ["requests"]\n'
-    assert _fallback_parse(dotted)["runtime"] == ["requests"]
-    apostrophe = (
-        '[project]\n'
-        'dependencies = [\n'
-        '  "a>=1",  # don\'t pin\n'
-        '  "b==2",\n'
-        ']\n'
-    )
-    assert _fallback_parse(apostrophe)["runtime"] == ["a>=1", "b==2"]
-    # Basic-string escapes decode: a real-world environment marker with an
-    # embedded quoted version must round-trip, not split at the escape.
-    marker = '[project]\ndependencies = ["foo; python_version < \\"3.12\\""]\n'
-    parsed = _fallback_parse(marker)
-    assert parsed["runtime"] == ['foo; python_version < "3.12"']
-    assert parsed["_unasserted"] is False
-    # An escape outside the subset fails closed rather than misreads.
-    exotic = '[project]\ndependencies = ["\\u0041"]\n'
-    assert _fallback_parse(exotic)["_unasserted"] is True
-    # A quoted key is one literal segment; its dots are not path separators.
-    quoted_group = (
-        '[project.optional-dependencies]\n'
-        '"docs.build" = ["sphinx"]\n'
-    )
-    assert _fallback_parse(quoted_group)["optional"] == {"docs.build": ["sphinx"]}
-    # An unquoted dotted key under optional-dependencies nests tables PEP 621
-    # forbids for groups — the reader refuses rather than misattributes.
-    nested_group = '[project.optional-dependencies]\ndocs.build = ["sphinx"]\n'
-    assert _fallback_parse(nested_group)["_unasserted"] is True
-    # An inline table can carry dependency metadata the subset never parses.
-    inline = 'project = { dependencies = ["requests==2"] }\n'
-    assert _fallback_parse(inline)["_unasserted"] is True
-    # A dependency-shaped key the reader cannot attribute must fail closed,
-    # not vanish into an empty (matching) declared set.
-    poetry = '[tool.poetry]\ndependencies = ["c"]\n'
-    assert _fallback_parse(poetry)["_unasserted"] is True
-    unclosed = '[project]\ndependencies = [\n  "a>=1",\n'
-    assert _fallback_parse(unclosed)["_unasserted"] is True
-
-
 def test_r5_text_check_is_per_claim() -> None:
     from tools.security.run_malformed_differential import parse_mlir_text
     legal = (
@@ -1103,16 +1036,6 @@ def test_unquoted_assignment_secrets_are_matched() -> None:
         assert len(hits) == 2, report["findings"]
 
 
-def test_fallback_parser_ignores_brackets_inside_strings() -> None:
-    """A bracket inside a dependency string must not hold the array open —
-    the 3.10 fallback would otherwise fail a file tomllib accepts."""
-    from tools.security.audit_dependencies import _fallback_parse
-    text = '[project]\ndependencies = ["pkg; implementation_name == \'[\'"]\n'
-    parsed = _fallback_parse(text)
-    assert parsed["_unasserted"] is False
-    assert parsed["runtime"] == ["pkg; implementation_name == '['"]
-
-
 def test_non_utf8_tracked_filename_is_a_finding_not_a_crash() -> None:
     """git ls-files -z hands back raw filename bytes; a non-UTF-8 name must
     not kill the scan with a UnicodeDecodeError before any verdict."""
@@ -1282,18 +1205,6 @@ def test_r1_python_construction_guard_is_paired_in_the_differential() -> None:
     ), report["disagreements"]
 
 
-def test_quoted_dotted_toml_keys_are_attributed() -> None:
-    """tomllib resolves project."dependencies" to project.dependencies; the
-    3.10 fallback must attribute the same key instead of silently asserting
-    an empty inventory, and an unterminated key quote fails closed."""
-    from tools.security.audit_dependencies import _fallback_parse
-    parsed = _fallback_parse('project."dependencies" = ["requests==2"]\n')
-    assert parsed["_unasserted"] is False
-    assert parsed["runtime"] == ["requests==2"]
-    broken = _fallback_parse('project."dependencies = ["requests==2"]\n')
-    assert broken["_unasserted"] is True
-
-
 def test_verbose_reviewer_output_is_bounded() -> None:
     """capture without a byte budget lets a flooding reviewer OOM the job
     before the timeout fires; the budget produces the structured FAIL."""
@@ -1312,15 +1223,6 @@ def test_verbose_reviewer_output_is_bounded() -> None:
             report = review.run_reviewer([sys.executable, str(chatty)], Path(tmp))
     assert report["state"] == "FAIL"
     assert "exceeded" in report["reason"]
-
-
-def test_whitespace_around_dotted_toml_keys_is_attributed() -> None:
-    """TOML permits whitespace around dotted-key separators; the fallback
-    must resolve `project . dependencies` as tomllib does, not skip it."""
-    from tools.security.audit_dependencies import _fallback_parse
-    parsed = _fallback_parse('project . dependencies = ["requests==2"]\n')
-    assert parsed["_unasserted"] is False
-    assert parsed["runtime"] == ["requests==2"]
 
 
 def test_unquoted_alphabetic_secrets_are_matched() -> None:
@@ -1452,15 +1354,6 @@ def test_boundary_audit_fails_when_git_discovery_fails() -> None:
     assert any(item["rule"] == "tracked-discovery-failed" for item in report["findings"])
 
 
-def test_escaped_quoted_toml_keys_fail_closed() -> None:
-    """A basic-string escape in a quoted key resolves for tomllib but sits
-    outside the fallback subset; it must land in _unasserted, never vanish
-    into an asserted empty inventory."""
-    from tools.security.audit_dependencies import _fallback_parse
-    parsed = _fallback_parse('project."depend\\u0065ncies" = ["requests==2"]\n')
-    assert parsed["_unasserted"] is True
-
-
 def test_hanging_python_verifier_is_a_structured_disagreement() -> None:
     """A verify() that stops terminating on a malformed witness must become
     a recorded timeout disagreement, not a hung required job — the compiled
@@ -1533,15 +1426,6 @@ def test_boundary_audit_flags_fstring_commands() -> None:
         )
 
 
-def test_non_string_toml_array_elements_fail_closed() -> None:
-    """dependencies = [42] is valid TOML the tomllib path would flag as a
-    mismatch; the fallback must not silently drop the element into an
-    asserted empty inventory."""
-    from tools.security.audit_dependencies import _fallback_parse
-    parsed = _fallback_parse('[project]\ndependencies = [42]\n')
-    assert parsed["_unasserted"] is True
-
-
 def test_compressed_tar_magic_under_foreign_suffixes_is_inspected() -> None:
     """A gzip'd tar renamed to payload.dat (or hidden under a binary suffix
     like payload.pdf) must still have its members traversal-checked; the
@@ -1567,14 +1451,6 @@ def test_compressed_tar_magic_under_foreign_suffixes_is_inspected() -> None:
             if item["rule"] == "archive-path-traversal"
         ]
         assert len(traversals) == 2, report["findings"]
-
-
-def test_toml_multiline_strings_fail_closed() -> None:
-    """Triple-quoted TOML strings are outside the fallback subset; they must
-    refuse into _unasserted, never misparse into empty-string delimiters."""
-    from tools.security.audit_dependencies import _fallback_parse
-    parsed = _fallback_parse('[project]\ndependencies = ["""requests==2"""]\n')
-    assert parsed["_unasserted"] is True
 
 
 def test_witness_rejected_for_the_wrong_law_is_a_disagreement() -> None:
@@ -2095,16 +1971,14 @@ def test_stalled_gitleaks_is_bounded() -> None:
 
 def test_dependency_groups_fail_closed() -> None:
     """PEP 735 [dependency-groups] tables declare real dependencies the
-    expected-inventory schema cannot express; both parser paths must surface
-    them and the audit must refuse to assert around them."""
+    expected-inventory schema cannot express; the parser must surface them
+    and the audit must refuse to assert around them."""
     from tools.security import audit_dependencies as deps
     text = (
         '[project]\nname = "x"\ndependencies = []\n'
         '[build-system]\nrequires = ["setuptools>=83.0.0"]\n'
         '[dependency-groups]\nqa = ["requests==2.32.5"]\n'
     )
-    fallback = deps._fallback_parse(text)
-    assert fallback["dependency_groups"] == ["qa"]
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "pyproject.toml").write_text(text, encoding="utf-8")
@@ -2118,21 +1992,6 @@ def test_dependency_groups_fail_closed() -> None:
         report = audit_deps(root, expected)
     assert report["state"] == "FAIL"
     assert "dependency-groups" in report["error"]
-
-def test_inline_dependency_group_tables_fail_closed() -> None:
-    """dependency-groups = { qa = [...] } is the bracket table in inline
-    spelling; the 3.10 subset reader must refuse it (and attribute the
-    dotted-key spelling), never diverge from tomllib into PASS."""
-    from tools.security import audit_dependencies as deps
-    inline = deps._fallback_parse(
-        'dependency-groups = { qa = ["requests==2.32.5"] }\n'
-    )
-    assert inline["_unasserted"] is True
-    dotted = deps._fallback_parse(
-        'dependency-groups.qa = ["requests==2.32.5"]\n'
-    )
-    assert dotted["dependency_groups"] == ["qa"]
-
 
 def test_unquoted_passphrases_are_findings() -> None:
     """Separator-delimited lowercase passphrases are a standard credential
@@ -2174,28 +2033,11 @@ def test_uppercase_python_suffix_is_audited() -> None:
         for item in report["findings"]
     )
 
-def test_escaped_keys_inside_inline_tables_fail_closed() -> None:
-    """An escaped key inside an inline table never reaches _split_key, so
-    its spelling cannot be compared; tomllib resolves it. The 3.10 subset
-    reader must refuse every escaped inline table rather than assert an
-    empty inventory around one."""
-    from tools.security import audit_dependencies as deps
-    escaped = deps._fallback_parse(
-        'project = { "depend\\u0065ncies" = ["requests==2"] }\n'
-    )
-    assert escaped["_unasserted"] is True
-    plain = deps._fallback_parse('[project]\ndependencies = ["requests==2"]\n')
-    assert plain["_unasserted"] is False
-    assert plain["runtime"] == ["requests==2"]
-
-
 def test_scalar_dependency_fields_are_unasserted() -> None:
-    """Valid TOML can still carry a nonsense metadata shape; the tomllib
-    path must fail closed like the fallback, never traceback (list(42)) and
-    never silently shred a bare string into characters."""
+    """Valid TOML can still carry a nonsense metadata shape; the parser
+    must fail closed, never traceback (list(42)) and never silently shred
+    a bare string into characters."""
     from tools.security import audit_dependencies as deps
-    if deps.tomllib is None:
-        return  # the fallback IS the parser on this host
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         path = root / "pyproject.toml"
@@ -2277,18 +2119,9 @@ def test_put_down_never_raises_from_the_tree_terminator() -> None:
 
 def test_wrong_shaped_metadata_tables_are_unasserted() -> None:
     """A scalar or list where a metadata TABLE belongs raises on .get (or is
-    coerced away by `or {}`); both parser paths must fail closed instead."""
+    coerced away by `or {}`); the parser must fail closed instead."""
     from tools.security import audit_dependencies as deps
-    bodies = (
-        'project = "x"\n',
-        'project = []\n',
-        '[project]\nname = "x"\ndependencies = []\n[build-system]\n'
-        'requires = ["setuptools"]\n' if False else 'build-system = 42\n',
-    )
-    for body in bodies:
-        assert deps._fallback_parse(body)["_unasserted"] is True, body
-    if deps.tomllib is None:
-        return  # the fallback IS the parser on this host
+    bodies = ('project = "x"\n', 'project = []\n', 'build-system = 42\n')
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "pyproject.toml"
         for body in bodies:
@@ -2437,22 +2270,6 @@ def test_symlinked_pyproject_is_unasserted() -> None:
         real.write_text('[project]\ndependencies = ["a>=1"]\n', encoding="utf-8")
         assert deps.parse_pyproject(real)["runtime"] == ["a>=1"]
 
-def test_fallback_refuses_unrecognized_lines() -> None:
-    """tomllib rejects a garbage line outright; the 3.10 reader must not
-    read past it and assert an inventory the newer hosts refuse. Blank,
-    comment-only, array-of-table and untracked-array bodies stay legal."""
-    from tools.security import audit_dependencies as deps
-    good = (
-        '# a comment\n\n[project]\nname = "x"\ndependencies = ["a>=1"]\n'
-        '[[tool.plugins]]\nname = "p"\n'
-        '[tool.ruff.lint]\nignore = [\n  "E501",\n  "E701",\n]\n'
-    )
-    parsed = deps._fallback_parse(good)
-    assert parsed["_unasserted"] is False
-    assert parsed["runtime"] == ["a>=1"]
-    assert deps._fallback_parse(good + "this is invalid\n")["_unasserted"] is True
-
-
 def test_credential_in_non_utf8_filename_is_redacted() -> None:
     """Replacement decoding rewrites only the invalid byte, so an ASCII
     credential survives it intact; the non-UTF-8 branch must redact like
@@ -2593,28 +2410,6 @@ def test_implementation_errors_are_never_graceful() -> None:
     assert "ungraceful-seed" in kinds and "ungraceful" in kinds
     assert all(item.get("type") == "IndexError" for item in row["findings"])
 
-def test_fallback_refuses_metadata_table_spellings() -> None:
-    """Every bracket spelling of a metadata table that tomllib rejects (or
-    projects as the wrong shape) must fail closed here too, while the
-    legitimate table sections keep parsing."""
-    from tools.security import audit_dependencies as deps
-    refused = {
-        "array-of-tables group": '[[dependency-groups]]\nqa = ["requests==2.32.5"]\n',
-        "dependencies as table": '[project.dependencies]\nx = 1\n',
-        "optional non-array": '[project.optional-dependencies]\nbad = {}\n',
-        "duplicate audited key":
-            '[project]\ndependencies = ["requests==2"]\ndependencies = []\n',
-    }
-    for name, body in refused.items():
-        assert deps._fallback_parse(body)["_unasserted"] is True, name
-    allowed = {
-        "optional group": '[project.optional-dependencies]\ndev = ["pytest"]\n',
-        "unrelated array table": '[[tool.plugins]]\nname = "p"\n',
-    }
-    for name, body in allowed.items():
-        assert deps._fallback_parse(body)["_unasserted"] is False, name
-
-
 def test_decoder_watchdog_cannot_be_swallowed() -> None:
     """Decoders wrap broad `except Exception` around inner decodes; an
     Exception-derived watchdog is caught there and re-raised as the
@@ -2694,3 +2489,55 @@ def test_yaml_block_scalar_secrets_are_findings() -> None:
     hits = [i for i in report["findings"] if i["rule"] == "assignment-secret"]
     assert report["state"] == "FAIL"
     assert [i["line"] for i in hits] == [1]  # the placeholder stays suppressed
+
+def test_non_utf8_archive_member_names_are_findings_not_crashes() -> None:
+    """tarfile exposes a member's invalid byte as a surrogate; a strict
+    fingerprint encode then tracebacks the required scan in place of its
+    archive-path-traversal finding."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        (root / "bundle.tar").write_bytes(_v7_tar(b"../bad\xff", b"owned\n"))
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        report = scan_tree(root)
+    assert report["state"] == "FAIL"
+    assert any(
+        item["rule"] == "archive-path-traversal" for item in report["findings"]
+    )
+
+
+def test_boundary_findings_survive_strict_stdout() -> None:
+    """A finding on a non-UTF-8 path must be printable under a strict
+    stdout, exactly like the missing-file branch's printable form — the
+    audit's report is its deliverable, not a traceback trigger."""
+    if os.name == "nt":
+        return  # the raw byte cannot be written into an NT filename
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        tools = root / "tools"
+        tools.mkdir()
+        raw = ("bad\udcff.py").encode("utf-8", "surrogateescape")
+        (tools / os.fsdecode(raw)).write_bytes(b"import os\nos.system('ls')\n")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        report = audit_boundaries(root)
+    assert report["state"] == "FAIL"
+    flagged = [f for f in report["findings"] if f["rule"] == "os.system-or-popen"]
+    assert flagged
+    for finding in flagged:
+        finding["path"].encode("utf-8")  # strict: printable everywhere
+
+
+def test_json_escaped_credential_keys_are_findings() -> None:
+    """JSON resolves ASCII \\uXXXX escapes at runtime, so an escaped key
+    names the same credential; the raw-line rule never saw it."""
+    from tools.security.scan_secrets import _scan_text
+    line = (
+        '{"passw' + "\\u006f" + 'rd": "' + "correct-horse-battery-staple" + '"}'
+    )
+    hits = _scan_text("f", line)
+    assert [h["rule"] for h in hits] == ["assignment-secret"]
+    benign = '{"c\\u006flor": "blue-green-teal-cyan"}'
+    assert _scan_text("f", benign) == []

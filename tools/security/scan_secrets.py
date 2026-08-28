@@ -144,7 +144,11 @@ def _redacted_path(rel: str) -> str:
 
 
 def _fingerprint(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    # Replacement encoding: a tar member name with a non-UTF-8 byte reaches
+    # here as a surrogate, and a strict encode would traceback the required
+    # scan in place of its finding. The fingerprint is a stable opaque id,
+    # not a reversible value, so replacement costs nothing.
+    return hashlib.sha256(value.encode("utf-8", "replace")).hexdigest()[:16]
 
 
 def _git_files(root: Path) -> list[str]:
@@ -345,11 +349,51 @@ def _block_scalar_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
     return findings
 
 
+_JSON_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
+
+
+def _decode_json_escapes(line: str) -> str:
+    r"""ASCII-range \uXXXX escapes decoded ("passw\u006frd" -> password).
+
+    JSON resolves these at runtime, so the escaped spelling names the same
+    credential key; the raw-line rule never saw it. Non-ASCII escapes stay
+    as written — decoding them cannot complete a key the rules match."""
+    return _JSON_ESCAPE.sub(
+        lambda m: chr(int(m.group(1), 16))
+        if 0x20 <= int(m.group(1), 16) < 0x7F else m.group(0),
+        line,
+    )
+
+
 def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
     findings = []
     lines = text.splitlines()
     findings.extend(_block_scalar_findings(path, lines))
     for number, line in enumerate(text.splitlines(), 1):
+        if "\\u" in line:
+            decoded = _decode_json_escapes(line)
+            if decoded != line:
+                # The decoded shadow is scanned alongside the raw line; a
+                # hit in either is a finding on this line. Duplicates from
+                # a value matching in both dedupe by fingerprint below.
+                seen = {item["fingerprint"] for item in findings}
+                for rule, pattern in RULES:
+                    for match in pattern.finditer(decoded):
+                        value = match.group(0)
+                        groups = match.groupdict()
+                        if _is_placeholder(
+                            groups.get("value") or groups.get("uvalue") or value
+                        ):
+                            continue
+                        if groups.get("value") is not None and _is_prose(groups["value"]):
+                            continue
+                        fingerprint = _fingerprint(value)
+                        if fingerprint in seen:
+                            continue
+                        findings.append({
+                            "path": path, "line": number,
+                            "rule": rule, "fingerprint": fingerprint,
+                        })
         for rule, pattern in RULES:
             for match in pattern.finditer(line):
                 value = match.group(0)

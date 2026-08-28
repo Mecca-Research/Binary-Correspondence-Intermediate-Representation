@@ -140,24 +140,30 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
         findings.append({"path": printable, "line": 0, "rule": "file-missing"})
     for path in paths:
         rel = str(path.relative_to(root)).replace("\\", "/")
+        # rel keeps its surrogates for logic (tracked-set membership needs
+        # the raw form); shown is what every finding and the symlink list
+        # carry, because a surrogate printed under a strict stdout
+        # (PYTHONIOENCODING=utf-8:strict) tracebacks the audit after its
+        # summary — the same printable form the missing-file branch uses.
+        shown = rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
         if path.is_symlink():
             # The tracked blob is the target string, not Python source;
             # following it would audit arbitrary host content (or crash on
             # an unreadable procfs target). Record it, never dereference.
-            symlinks.append(rel)
+            symlinks.append(shown)
             continue
         scanned += 1
         try:
             if path.stat().st_size > SOURCE_SIZE_CAP:
                 # Bounds at ingress: ast.parse on an accidentally tracked
                 # blob must be a finding, never an OOM of the audit.
-                findings.append({"path": rel, "line": 0, "rule": "file-oversized"})
+                findings.append({"path": shown, "line": 0, "rule": "file-oversized"})
                 continue
             source = path.read_bytes()
         except OSError:
             # A tracked file the auditor cannot read was not audited — a
             # failing finding, never an escaping traceback.
-            findings.append({"path": rel, "line": 0, "rule": "file-unreadable"})
+            findings.append({"path": shown, "line": 0, "rule": "file-unreadable"})
             continue
         try:
             # Bytes, not text: ast.parse honors a PEP 263 encoding cookie, so
@@ -167,7 +173,7 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
             # An unparseable file is uninspectable; fail closed with a finding
             # rather than escaping as a traceback.
             findings.append({
-                "path": rel,
+                "path": shown,
                 "line": int(getattr(exc, "lineno", 0) or 0),
                 "rule": "python-parse-error",
             })
@@ -183,12 +189,12 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
                 if name in {"system", "popen"} and isinstance(func, ast.Attribute):
                     if isinstance(func.value, ast.Name) and func.value.id == "os":
                         findings.append({
-                            "path": rel, "line": node.lineno, "rule": "os.system-or-popen",
+                            "path": shown, "line": node.lineno, "rule": "os.system-or-popen",
                         })
                 if name in SHELL_HELPERS and isinstance(func, ast.Attribute):
                     if isinstance(func.value, ast.Name) and func.value.id == "subprocess":
                         findings.append({
-                            "path": rel, "line": node.lineno,
+                            "path": shown, "line": node.lineno,
                             "rule": "subprocess-shell-helper",
                         })
                 if name in {"run", "Popen", "check_output", "check_call", "call"}:
@@ -201,7 +207,7 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
                     keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
                     if "shell" in keywords and _is_true(keywords["shell"]):
                         findings.append({
-                            "path": rel, "line": node.lineno, "rule": "subprocess-shell-true",
+                            "path": shown, "line": node.lineno, "rule": "subprocess-shell-true",
                         })
                     # The command may be the first positional OR the literal
                     # `args=` keyword — subprocess's public parameter name.
@@ -214,7 +220,7 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
                     ):
                         if "/tests/" not in f"/{rel}" and not rel.startswith("bcir/tests/"):
                             findings.append({
-                                "path": rel, "line": node.lineno, "rule": "subprocess-string-command",
+                                "path": shown, "line": node.lineno, "rule": "subprocess-string-command",
                             })
     report = {
         "state": "FAIL" if findings else "PASS",

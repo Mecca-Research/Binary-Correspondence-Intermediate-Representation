@@ -12,7 +12,7 @@ name = "bcir"
 version = "0.2.0"
 description = "Binary Correspondence Intermediate Representation — the executable conformance oracle"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "LicenseRef-BCIR-NC-1.0" }  # BCIR Non-Commercial License v1.0 — see LICENSE
 keywords = ["compiler", "mlir", "intermediate-representation", "optimization", "bcir"]
 # The oracle is deterministic and dependency-free by design (pure-Python, integer/Q-fixed

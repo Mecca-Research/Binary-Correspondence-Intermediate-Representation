@@ -1,0 +1,183 @@
+finding,date,file,title,grade,law
+001,2026-08-24 13:29,test_security_assurance.py,Avoid scanning the planted token as a real secret,LOCAL,
+002,2026-08-24 13:29,ci.yml,Require an MLIR parser before passing the differential,NEW-LAW,L2
+003,2026-08-24 13:29,run_malformed_differential.py,Construct an actually malformed Python module,NEW-LAW,L11
+004,2026-08-24 13:29,scan_secrets.py,Fail the scan when an archive cannot be inspected,NEW-LAW,L1
+005,2026-08-24 13:29,run_decoder_campaign.py,Fail when a canonical decoder seed is rejected,NEW-LAW,L10
+006,2026-08-24 13:29,scan_secrets.py,Limit placeholder suppression to the matched value,NEW-LAW,L6
+007,2026-08-24 13:29,scan_secrets.py,Propagate gitleaks failures into the scan result,NEW-LAW,L9
+008,2026-08-24 13:29,audit_dependencies.py,Support Python 3.10 in the required audit,LOCAL,
+009,2026-08-24 13:52,run_malformed_differential.py,Discover bcir-opt in the documented build directory,NEW-LAW,L13
+010,2026-08-24 13:52,run_malformed_differential.py,Require every executed verifier to reject malformed input,INSTANCE,L11
+011,2026-08-24 13:52,scan_secrets.py,Restrict placeholder suppression to explicit fixture values,INSTANCE,L6
+012,2026-08-24 13:52,ci.yml,Fail CI when the C decoder campaign is unavailable,INSTANCE,L10
+013,2026-08-24 13:52,scan_secrets.py,Normalize Windows separators before checking archive paths,NEW-LAW,L17
+014,2026-08-24 13:52,audit_tool_boundaries.py,Resolve imported aliases when auditing subprocess boundaries,NEW-LAW,L18
+015,2026-08-24 13:52,scan_secrets.py,Scan staged contents rather than the working-tree copy,NEW-LAW,L15
+016,2026-08-24 13:52,scan_secrets.py,Detect unquoted and YAML-style secret assignments,NEW-LAW,L5
+017,2026-08-24 13:52,independent_review.py,Return a structured failure when the reviewer cannot start,INSTANCE,L1
+018,2026-08-24 14:36,run_malformed_differential.py,Treat compiled-verifier crashes as failures,INSTANCE,L10
+019,2026-08-24 14:36,scan_secrets.py,Handle declared single-file compression formats,INSTANCE,L18
+020,2026-08-24 14:36,scan_secrets.py,Enforce the archive enumeration cap,NEW-LAW,L3
+021,2026-08-24 14:36,audit_tool_boundaries.py,Propagate assigned process-function aliases,LOCAL,
+022,2026-08-24 14:36,run_decoder_campaign.py,Require a guaranteed malformed mutation to be rejected,INSTANCE,L2
+023,2026-08-24 14:36,independent_review.py,Accept reviewer options after --command,LOCAL,
+024,2026-08-24 14:36,run_decoder_campaign.py,Print captured C campaign diagnostics on failure,INSTANCE,L1
+025,2026-08-24 15:25,scan_secrets.py,Recognize empty ZIP archives before falling back to tar,INSTANCE,L18
+026,2026-08-24 15:25,audit_tool_boundaries.py,Detect non-literal truthy shell arguments,LOCAL,
+027,2026-08-24 15:25,independent_review.py,Preserve quoting in the reviewer environment command,LOCAL,
+028,2026-08-24 15:25,test_security_assurance.py,Keep the C fuzzer out of the parallel Python test inventory,NEW-LAW,L19
+029,2026-08-24 15:25,test_security_assurance.py,Isolate optional pip-audit from the quick oracle,INSTANCE,L19
+030,2026-08-24 15:25,audit_tool_boundaries.py,Make alias propagation converge across reassignments,LOCAL,
+031,2026-08-24 16:45,run_malformed_differential.py,Exercise malformed laws on both verifier rails,INSTANCE,L11
+032,2026-08-24 16:45,audit_tool_boundaries.py,Clear cached constants on nonconstant reassignment,LOCAL,
+033,2026-08-24 16:45,scan_secrets.py,Match qualified secret assignment names,INSTANCE,L5
+034,2026-08-24 16:45,scan_secrets.py,Inspect archive link targets for traversal,INSTANCE,L17
+035,2026-08-24 16:45,test_security_assurance.py,Isolate optional bcir-opt from the quick oracle,INSTANCE,L19
+036,2026-08-24 16:45,independent_review.py,Convert undecodable reviewer output into a structured failure,INSTANCE,L1
+037,2026-08-24 19:06,audit_tool_boundaries.py,Evaluate shell constants at each call site,LOCAL,
+038,2026-08-24 19:06,scan_secrets.py,Allow quoted sensitive keys in assignment scans,INSTANCE,L5
+039,2026-08-24 19:06,scan_secrets.py,Avoid parsing 7z archives as tar files,INSTANCE,L18
+040,2026-08-24 19:06,scan_secrets.py,Inspect symlink targets in ZIP entries,INSTANCE,L17
+041,2026-08-24 19:06,independent_review.py,Require a nonempty textual review summary,INSTANCE,L2
+042,2026-08-24 19:26,ci.yml,Run the differential where bcir-opt exists,INSTANCE,L10
+043,2026-08-24 19:26,run_malformed_differential.py,Make the duplicate-claim fixture otherwise valid,INSTANCE,L11
+044,2026-08-24 19:26,scan_secrets.py,Bound reads of ZIP symlink payloads,INSTANCE,L3
+045,2026-08-24 19:26,audit_tool_boundaries.py,Clear process bindings on ordinary reassignment,LOCAL,
+046,2026-08-24 19:26,audit_tool_boundaries.py,Audit subprocess helpers that always invoke a shell,INSTANCE,L18
+047,2026-08-24 19:26,run_decoder_campaign.py,Scale the timeout to the complete C campaign,LOCAL,
+048,2026-08-24 20:12,scan_secrets.py,Read each ZIP symlink through its ZipInfo,INSTANCE,L17
+049,2026-08-24 20:12,audit_tool_boundaries.py,Inspect unpacked subprocess keyword arguments,LOCAL,
+050,2026-08-24 20:12,audit_tool_boundaries.py,Remove process aliases shadowed by function parameters,LOCAL,
+051,2026-08-24 20:12,run_malformed_differential.py,Make the R5 fixture legal under R6,INSTANCE,L11
+052,2026-08-24 20:12,audit_tool_boundaries.py,Track string-valued command expressions,LOCAL,
+053,2026-08-24 20:12,independent_review.py,Convert all reviewer startup errors into failures,INSTANCE,L1
+054,2026-08-24 20:12,run_malformed_differential.py,Do not exempt duplicate claims from compiled verification,INSTANCE,L11
+055,2026-08-24 20:12,audit_dependencies.py,Reject unresolved dynamic dependency metadata,NEW-LAW,L4
+056,2026-08-25 00:53,BCIRVerifyPass.cpp,Scope claim-ID uniqueness to each BCIR module,INSTANCE,L11
+057,2026-08-25 00:53,audit_tool_boundaries.py,Merge conditional assignment states conservatively,LOCAL,
+058,2026-08-25 00:53,audit_tool_boundaries.py,Preserve constants captured by nested functions,LOCAL,
+059,2026-08-25 00:53,audit_dependencies.py,Handle dynamic dependency declarations on Python 3.10,LOCAL,
+060,2026-08-25 00:53,scan_secrets.py,Fail closed when a ZIP symlink target cannot be read,INSTANCE,L1
+061,2026-08-25 00:53,audit_tool_boundaries.py,Track every target of chained process-alias assignments,LOCAL,
+062,2026-08-25 00:53,independent_review.py,Convert malformed environment commands into structured failures,INSTANCE,L1
+063,2026-08-25 00:53,BCIRVerifyPass.cpp,Reject IDs that collide with DenseMap sentinels,NEW-LAW,L20
+064,2026-08-25 00:53,audit_tool_boundaries.py,Audit defaults before shadowing function parameters,LOCAL,
+065,2026-08-25 00:53,independent_review.py,Reject duplicate keys in reviewer JSON,INSTANCE,L4
+066,2026-08-25 01:47,run_decoder_campaign.py,Require canonical decoder seeds to succeed,INSTANCE,L2
+067,2026-08-25 01:47,scan_secrets.py,Limit placeholder suppression to the matched credential,INSTANCE,L6
+068,2026-08-25 01:47,scan_secrets.py,Reject unreadable archives instead of recording a clean scan,INSTANCE,L1
+069,2026-08-25 01:47,scan_secrets.py,Interpret backslashes when checking archive traversal,INSTANCE,L17
+070,2026-08-25 01:47,audit_tool_boundaries.py,Restrict process checks to subprocess callables,INSTANCE,L18
+071,2026-08-25 01:47,scan_secrets.py,Enforce the archive member cap,INSTANCE,L3
+072,2026-08-25 01:47,run_malformed_differential.py,Scope the R5 text check to one claim,INSTANCE,L11
+073,2026-08-25 02:13,scan_secrets.py,Inspect TAR link targets for traversal,INSTANCE,L17
+074,2026-08-25 02:13,scan_secrets.py,Do not classify unsupported formats as inspectable archives,INSTANCE,L18
+075,2026-08-25 02:13,independent_review.py,Convert reviewer timeouts into structured failures,INSTANCE,L1
+076,2026-08-25 02:13,run_decoder_campaign.py,Fail CI when the C campaign is unavailable,INSTANCE,L10
+077,2026-08-25 02:13,run_decoder_campaign.py,Reject vacuous mutation counts,INSTANCE,L2
+078,2026-08-25 02:13,audit_tool_boundaries.py,Include tracked developer utilities in the boundary audit,INSTANCE,L15
+079,2026-08-25 02:13,scan_secrets.py,Propagate gitleaks failures to the scan verdict,INSTANCE,L9
+080,2026-08-25 18:26,scan_secrets.py,Reject Windows drive-absolute archive paths,INSTANCE,L17
+081,2026-08-25 18:26,run_malformed_differential.py,Scope duplicate checks to each BCIR module,INSTANCE,L11
+082,2026-08-25 18:26,independent_review.py,Preserve quoted Windows option values,LOCAL,
+083,2026-08-25 18:26,audit_dependencies.py,Preserve dots in quoted optional-dependency keys,LOCAL,
+084,2026-08-25 18:26,audit_tool_boundaries.py,Honor Python source encoding declarations,INSTANCE,L13
+085,2026-08-25 18:39,audit_dependencies.py,Parse escaped TOML strings correctly on Python 3.10,LOCAL,
+086,2026-08-25 18:39,run_decoder_campaign.py,Fail campaigns that accept every mutation,INSTANCE,L2
+087,2026-08-25 18:39,run_malformed_differential.py,Convert compiled-verifier timeouts into campaign failures,INSTANCE,L1
+088,2026-08-25 18:39,run_decoder_campaign.py,Treat an unseeded BCIRQ8 C target as unavailable,INSTANCE,L10
+089,2026-08-25 18:57,scan_secrets.py,Do not follow tracked symlinks outside the checkout,INSTANCE,L3
+090,2026-08-25 18:57,scan_secrets.py,Recognize common compressed-tar aliases,INSTANCE,L5
+091,2026-08-25 18:57,audit_dependencies.py,Reject inline dependency tables in the fallback parser,LOCAL,
+092,2026-08-25 18:57,run_malformed_differential.py,Record Python verifier crashes as differential failures,INSTANCE,L1
+093,2026-08-25 18:57,ci.yml,Exercise the Python 3.10 fallback in CI,LOCAL,
+094,2026-08-25 19:11,audit_tool_boundaries.py,Inspect string commands passed through args=,INSTANCE,L18
+095,2026-08-25 19:11,scan_secrets.py,Scan encoded source files instead of treating them as binary,INSTANCE,L5
+096,2026-08-25 19:11,scan_secrets.py,Bound decompression while enumerating TAR members,INSTANCE,L3
+097,2026-08-25 19:11,run_malformed_differential.py,Reject version-suffixed stock mlir-opt binaries,INSTANCE,L13
+098,2026-08-26 15:57,audit_tool_boundaries.py,Avoid dereferencing tracked Python symlinks,INSTANCE,L3
+099,2026-08-26 15:57,scan_secrets.py,Fail scans when tracked files are missing,INSTANCE,L15
+100,2026-08-26 15:57,audit_tool_boundaries.py,Apply skip-directory checks relative to the checkout,INSTANCE,L15
+101,2026-08-26 16:29,scan_secrets.py,Scan unquoted assignment secrets,INSTANCE,L5
+102,2026-08-26 16:29,audit_tool_boundaries.py,Audit missing tracked Python files,INSTANCE,L15
+103,2026-08-26 16:29,audit_dependencies.py,Ignore brackets inside TOML strings when finding array ends,LOCAL,
+104,2026-08-26 16:29,scan_secrets.py,Handle non-UTF-8 tracked filenames,INSTANCE,L1
+105,2026-08-26 16:45,scan_secrets.py,Restrict placeholder suppression to whole placeholder values,INSTANCE,L6
+106,2026-08-26 16:45,run_decoder_campaign.py,Bound each Python decoder invocation,INSTANCE,L3
+107,2026-08-26 16:45,ci.yml,Provision bcir-opt before running the differential,INSTANCE,L10
+108,2026-08-26 16:45,scan_secrets.py,Enforce the ZIP member cap before materializing metadata,INSTANCE,L3
+109,2026-08-26 16:45,run_decoder_campaign.py,Do not classify I/O failures as malformed-input rejection,INSTANCE,L10
+110,2026-08-26 21:44,audit_dependencies.py,Handle quoted segments in dotted TOML keys,LOCAL,
+111,2026-08-26 21:44,run_malformed_differential.py,Pair the R1 witness with the Python oracle,INSTANCE,L11
+112,2026-08-26 21:44,independent_review.py,Bound reviewer output before capturing it,NEW-LAW,L8
+113,2026-08-26 22:00,audit_dependencies.py,Parse whitespace around dotted TOML keys,LOCAL,
+114,2026-08-26 22:00,scan_secrets.py,Accept unquoted alphabetic secret values,INSTANCE,L5
+115,2026-08-26 22:00,run_decoder_campaign.py,Enforce decoder timeouts on Windows,NEW-LAW,L12
+116,2026-08-26 22:00,independent_review.py,Terminate inherited reviewer pipe holders,INSTANCE,L8
+117,2026-08-26 22:00,scan_secrets.py,Bound TAR extended-header payloads before iteration,INSTANCE,L3
+118,2026-08-26 22:00,scan_secrets.py,Detect archives by signature before binary classification,INSTANCE,L5
+119,2026-08-26 22:00,independent_review.py,Detect duplicate JSON keys in linear time,INSTANCE,L3
+120,2026-08-26 22:00,audit_tool_boundaries.py,Fail when tracked-file discovery fails,INSTANCE,L15
+121,2026-08-26 22:20,run_malformed_differential.py,Bound each Python verifier invocation,INSTANCE,L3
+122,2026-08-26 22:20,audit_dependencies.py,Fail closed on escaped dependency keys,LOCAL,
+123,2026-08-26 22:20,scan_secrets.py,Probe archive magic before skipping binary suffixes,INSTANCE,L5
+124,2026-08-26 22:20,independent_review.py,Reject non-standard JSON constants,INSTANCE,L4
+125,2026-08-26 22:20,audit_tool_boundaries.py,Recognize f-string subprocess commands,INSTANCE,L18
+126,2026-08-26 22:29,scan_secrets.py,Inspect compressed TAR magic under foreign suffixes,INSTANCE,L5
+127,2026-08-26 22:29,audit_dependencies.py,Reject non-string TOML array elements in fallback,LOCAL,
+128,2026-08-26 23:02,audit_dependencies.py,Recognize TOML multiline string delimiters,LOCAL,
+129,2026-08-26 23:02,scan_secrets.py,Bound regular-file reads before materializing them,INSTANCE,L3
+130,2026-08-26 23:02,scan_secrets.py,Detect prefixed ZIP archives before binary classification,INSTANCE,L5
+131,2026-08-26 23:02,run_malformed_differential.py,Require each malformed witness to hit its intended law,INSTANCE,L11
+132,2026-08-26 23:26,scan_secrets.py,Decompress TARs before probing them with tarfile,INSTANCE,L3
+133,2026-08-26 23:26,run_decoder_campaign.py,Reclassify Q8 read failures as campaign failures,INSTANCE,L10
+134,2026-08-26 23:26,scan_secrets.py,Decode BOM-marked Unicode text before the NUL check,INSTANCE,L5
+135,2026-08-26 23:26,run_decoder_campaign.py,Terminate the C campaign's descendant processes,INSTANCE,L8
+136,2026-08-26 23:26,audit_tool_boundaries.py,Bound Python source size before reading it,INSTANCE,L3
+137,2026-08-26 23:26,run_malformed_differential.py,Bound compiled-verifier output while it runs,INSTANCE,L8
+138,2026-08-26 23:44,scan_secrets.py,Limit the XZ decoder's dictionary memory,INSTANCE,L3
+139,2026-08-26 23:44,run_decoder_campaign.py,Bound the C campaign's captured output,INSTANCE,L8
+140,2026-08-26 23:44,audit_dependencies.py,Add a timeout to the advisory audit,INSTANCE,L8
+141,2026-08-26 23:44,audit_dependencies.py,Bound pyproject ingestion before parsing,INSTANCE,L3
+142,2026-08-27 13:34,scan_secrets.py,Probe legacy TARs before binary classification,INSTANCE,L5
+143,2026-08-27 13:34,audit_dependencies.py,Bound pip-audit output while it runs,INSTANCE,L8
+144,2026-08-27 13:34,scan_secrets.py,Bound the opt-in gitleaks invocation,INSTANCE,L8
+145,2026-08-27 13:34,scan_secrets.py,Recognize temporary AWS access key IDs,INSTANCE,L5
+146,2026-08-27 13:34,scan_secrets.py,Scan colon-delimited secret mappings,INSTANCE,L5
+147,2026-08-27 13:34,scan_secrets.py,Scan the committed text of tracked symlinks,INSTANCE,L5
+148,2026-08-27 13:34,audit_dependencies.py,Include dependency groups in the asserted inventory,INSTANCE,L4
+149,2026-08-27 13:58,audit_dependencies.py,Reject inline dependency-group tables in the fallback,LOCAL,
+150,2026-08-27 13:58,scan_secrets.py,Match unquoted separator-delimited passphrases,INSTANCE,L5
+151,2026-08-27 13:58,audit_tool_boundaries.py,Audit Python suffixes without case sensitivity,INSTANCE,L12
+152,2026-08-27 17:31,audit_dependencies.py,Decode escapes before inspecting inline tables,LOCAL,
+153,2026-08-27 17:31,audit_dependencies.py,Return a structured failure for scalar dependency fields,INSTANCE,L4
+154,2026-08-27 17:31,independent_review.py,Terminate reviewer descendants on Windows,INSTANCE,L8
+155,2026-08-27 17:31,scan_secrets.py,Scan credential-shaped tracked filenames,INSTANCE,L5
+156,2026-08-27 17:46,audit_dependencies.py,Validate dependency table shapes before use,INSTANCE,L4
+157,2026-08-27 17:46,scan_secrets.py,Redact credential-shaped names from binary metadata,NEW-LAW,L7
+158,2026-08-27 18:09,scan_secrets.py,Redact secret-bearing parent path components,INSTANCE,L7
+159,2026-08-27 18:09,run_malformed_differential.py,Terminate compiled-verifier descendants,INSTANCE,L8
+160,2026-08-27 18:09,run-eval.py,Restore the training corpus's independent schema wording,NEW-LAW,L16
+161,2026-08-28 10:03,run_malformed_differential.py,Verify that each Python witness hits its intended law,INSTANCE,L11
+162,2026-08-28 10:03,scan_secrets.py,Bound LZMA memory for ZIP symlink targets,INSTANCE,L3
+163,2026-08-28 10:03,audit_dependencies.py,Reject symlinked pyproject inputs before reading,INSTANCE,L3
+164,2026-08-28 10:28,audit_dependencies.py,Reject malformed lines in the fallback parser,LOCAL,
+165,2026-08-28 10:28,scan_secrets.py,Redact credentials in non-UTF-8 filenames,INSTANCE,L7
+166,2026-08-28 10:28,audit_tool_boundaries.py,Limit generated-directory skips to their actual roots,INSTANCE,L15
+167,2026-08-28 10:28,run_malformed_differential.py,Search the checked-in debug build directory for bcir-opt,INSTANCE,L13
+168,2026-08-28 10:28,run_decoder_campaign.py,Honor CLANG when detecting the configured fuzzer toolchain,INSTANCE,L13
+169,2026-08-28 10:28,run_decoder_campaign.py,Report uncaught IndexError from decoders as a finding,INSTANCE,L9
+170,2026-08-28 11:15,audit_dependencies.py,Reject dependency-group array tables in the fallback,LOCAL,
+171,2026-08-28 11:15,audit_dependencies.py,Qualify fallback scalar keys with their section,LOCAL,
+172,2026-08-28 11:15,scan_secrets.py,Scan BOM-less UTF-16 text before classifying it as binary,INSTANCE,L5
+173,2026-08-28 11:15,scan_secrets.py,Scan archive path metadata for credentials,INSTANCE,L5
+174,2026-08-28 12:39,audit_dependencies.py,Reject duplicate dependency keys in the fallback,LOCAL,
+175,2026-08-28 12:39,audit_dependencies.py,Reject dependency fields declared as section tables,LOCAL,
+176,2026-08-28 12:39,run_decoder_campaign.py,Keep decoder timeout exceptions out of rejection handlers,INSTANCE,L9
+177,2026-08-28 12:39,scan_secrets.py,Scan multiline secret mappings,INSTANCE,L5
+178,2026-08-28 13:05,audit_dependencies.py,Reject nested dependency arrays in the fallback,LOCAL,
+179,2026-08-28 13:05,audit_dependencies.py,Reject duplicate table headers in the fallback,LOCAL,
+180,2026-08-28 13:05,scan_secrets.py,Encode non-UTF-8 archive paths before fingerprinting,INSTANCE,L7
+181,2026-08-28 13:05,audit_tool_boundaries.py,Sanitize non-UTF-8 paths before printing findings,INSTANCE,L7
+182,2026-08-28 13:05,scan_secrets.py,Decode escaped credential keys before scanning JSON,INSTANCE,L5

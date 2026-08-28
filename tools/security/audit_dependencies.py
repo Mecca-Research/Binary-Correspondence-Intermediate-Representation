@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Inventory-first dependency audit.
+"""Inventory-first dependency audit (Python 3.11+, tomllib only).
 
 An empty-dependency report is INVALID unless the expected runtime inventory is
 also empty and that emptiness was asserted. Advisory scanners run only after the
-declared inventory matches the committed expected file.
+declared inventory matches the committed expected file. The metadata parser is
+the standard library's tomllib, unconditionally: the repository's floor is
+3.11, and no hand-rolled TOML subset stands in anywhere — a subset reader has
+an unbounded surface of valid spellings and can only lose to them.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import re
 import shutil
 import stat
 from pathlib import Path
@@ -20,342 +22,13 @@ try:
 except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
     from proc_bounds import run_bounded
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python 3.10: requires-python is >=3.10
-    tomllib = None  # type: ignore[assignment]
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 EXPECTED = Path(__file__).resolve().parent / "expected_inventory.json"
 PYPROJECT_SIZE_CAP = 1 << 20  # 1 MiB: parsing multiplies metadata in memory
 ADVISORY_TIMEOUT = 300.0  # pip-audit resolves against a network index; stalls expire
 ADVISORY_OUTPUT_CAP = 1 << 20  # per stream; the engine reports advisories, not payload
-
-_METADATA_TABLES = frozenset({"project", "build-system", "dependency-groups"})
-_SECTION = re.compile(r"^\[(?P<name>[^\]]+)\]\s*$")
-# [[array-of-tables]] is a valid header the subset does not attribute; it
-# opens an unattributable section rather than reading as a garbage line.
-_ARRAY_TABLE = re.compile(r"^\[\[(?P<name>[^\]]+)\]\]\s*$")
-# Sentinel: an array whose key this reader does not track. Its BODY must
-# still be consumed to the closing bracket, or every continuation line
-# reads as unrecognized garbage.
-_SKIP_ARRAY = ("<skip>",)
-# The key charset admits spaces/tabs (TOML permits whitespace around dotted
-# separators; _split_key strips each segment) and backslashes — an escaped
-# quoted key must REACH _split_key, which refuses escapes into _unasserted,
-# instead of slipping past both this regex and the sensitivity net.
-_ARRAY_KEY = re.compile(r"^(?P<key>[A-Za-z0-9_.\-\"'\\ \t]+)\s*=\s*(?P<rest>\[.*)$")
-_SENSITIVE = re.compile(r"(?:^|\.)(?:optional-)?(?:dependencies|dynamic)$")
-_ESCAPES = {"\\": "\\", '"': '"', "b": "\b", "t": "\t", "n": "\n", "f": "\f", "r": "\r"}
-
-
-def _string_items(buffer: str) -> tuple[list[str], bool]:
-    """Escape-aware TOML string extraction; returns (items, ok).
-
-    Basic strings decode the short escapes (an environment marker such as
-    'foo; python_version < \\"3.12\\"' round-trips); literal strings take no
-    escapes. Anything outside that subset (\\uXXXX, an unterminated string)
-    reports ok=False so the caller fails closed instead of misreading."""
-    items: list[str] = []
-    index = 0
-    length = len(buffer)
-    while index < length:
-        char = buffer[index]
-        if buffer[index:index + 3] in ('"""', "'''"):
-            # TOML multiline strings are outside the subset; refuse rather
-            # than misreading the delimiters as empty strings.
-            return items, False
-        if char == "'":
-            end = buffer.find("'", index + 1)
-            if end < 0:
-                return items, False
-            items.append(buffer[index + 1:end])
-            index = end + 1
-        elif char == '"':
-            out: list[str] = []
-            index += 1
-            closed = False
-            while index < length:
-                current = buffer[index]
-                if current == "\\":
-                    if index + 1 >= length or buffer[index + 1] not in _ESCAPES:
-                        return items, False
-                    out.append(_ESCAPES[buffer[index + 1]])
-                    index += 2
-                elif current == '"':
-                    closed = True
-                    index += 1
-                    break
-                else:
-                    out.append(current)
-                    index += 1
-            if not closed:
-                return items, False
-            items.append("".join(out))
-        elif char in "[], \t":
-            index += 1
-        else:
-            # Non-string array content (an integer, a bool, a nested table)
-            # is outside the subset; refuse rather than silently dropping it
-            # from the declared inventory tomllib would have retained.
-            return items, False
-    return items, True
-
-
-def _split_key(raw_key: str) -> tuple[str, ...] | None:
-    """Quote-aware dotted-key split: a quoted segment keeps its dots and
-    drops its quotes ('project."dependencies"' -> (project, dependencies)),
-    matching tomllib's resolution. An unterminated quote or a backslash
-    escape inside a key is outside the subset; None tells the caller to
-    fail closed via ``_unasserted``."""
-    segments: list[str] = []
-    buffer: list[str] = []
-    quote = ""
-    for char in raw_key:
-        if quote:
-            if char == "\\":
-                return None
-            if char == quote:
-                quote = ""
-            else:
-                buffer.append(char)
-        elif char in "\"'":
-            quote = char
-        elif char == ".":
-            segments.append("".join(buffer).strip())
-            buffer = []
-        else:
-            buffer.append(char)
-    if quote:
-        return None
-    segments.append("".join(buffer).strip())
-    return tuple(segments)
-
-
-def _bracket_depth(buffer: str) -> int:
-    """Net [ ] depth OUTSIDE quoted strings (quote- and escape-aware), so a
-    bracket inside a dependency string cannot hold an array open and fail a
-    file tomllib accepts."""
-    depth = 0
-    quote = ""
-    escaped = False
-    for char in buffer:
-        if quote:
-            if escaped:
-                escaped = False
-            elif quote == '"' and char == "\\":
-                escaped = True
-            elif char == quote:
-                quote = ""
-        elif char in "\"'":
-            quote = char
-        elif char == "[":
-            depth += 1
-        elif char == "]":
-            depth -= 1
-    return depth
-
-
-def _strip_toml_comment(line: str) -> str:
-    """Cut an unquoted # comment; quote- and escape-aware so a # inside a
-    string, or a quote inside a comment, cannot desynchronize the parser."""
-    out: list[str] = []
-    quote = ""
-    escaped = False
-    for char in line:
-        if quote:
-            out.append(char)
-            if escaped:
-                escaped = False
-            elif quote == '"' and char == "\\":
-                escaped = True
-            elif char == quote:
-                quote = ""
-        elif char in "\"'":
-            quote = char
-            out.append(char)
-        elif char == "#":
-            break
-        else:
-            out.append(char)
-    return "".join(out)
-
-
-def _fallback_parse(text: str) -> dict[str, Any]:
-    """Minimal TOML-subset reader for the audited fields on Python 3.10.
-
-    It understands `key = [ "string", ... ]` arrays (single- or multi-line,
-    plain or dotted keys) under bracketed sections, with comments stripped.
-    Any dependency-shaped key it sees but cannot attribute sets
-    ``_unasserted`` and the audit fails closed on this host rather than
-    passing a file it may have misread; a parity test pins the reader against
-    tomllib where tomllib exists.
-    """
-    arrays: dict[tuple[str, ...], list[str]] = {}
-    groups: set[str] = set()
-    section: tuple[str, ...] = ()
-    pending: tuple[str, ...] | None = None
-    buffer = ""
-    unasserted = False
-    known = {
-        ("project", "dependencies"),
-        ("build-system", "requires"),
-        ("project", "dynamic"),
-    }
-    optional_prefix = ("project", "optional-dependencies")
-    for raw_line in text.splitlines():
-        stripped = _strip_toml_comment(raw_line).strip()
-        if pending is None:
-            array_table = _ARRAY_TABLE.match(stripped)
-            if array_table:
-                split = _split_key(array_table.group("name").strip())
-                if split is None or split[0] in _METADATA_TABLES:
-                    # [[dependency-groups]] declares the metadata table as an
-                    # ARRAY of tables; tomllib then exposes it as a non-table
-                    # shape and fails closed. Treating it as merely
-                    # unattributable let the group inside it disappear.
-                    unasserted = True
-                # Otherwise unattributable, not invalid: a dependency-shaped
-                # key inside it still fails closed through the nets below.
-                section = ("<unattributed>",)
-                continue
-            match = _SECTION.match(stripped)
-            if match:
-                split = _split_key(match.group("name").strip())
-                if split is None:
-                    unasserted = True
-                    section = ("<unattributed>",)
-                else:
-                    if split in known:
-                        # [project.dependencies] spells an ARRAY field as a
-                        # table. tomllib projects it as a dict and fails the
-                        # list-shape validation; the bracket spelling must
-                        # not slip past that check here.
-                        unasserted = True
-                    section = split
-                continue
-            match = _ARRAY_KEY.match(stripped)
-            if not match:
-                if "=" in stripped:
-                    if section[:1] == ("dependency-groups",):
-                        # A group shape the subset reader cannot attribute
-                        # (multi-line or non-array) fails closed.
-                        unasserted = True
-                    lhs, rhs = stripped.split("=", 1)
-                    key = lhs.strip().strip("\"'")
-                    if key.split(".", 1)[0].strip().strip("\"'") in _METADATA_TABLES:
-                        # `project = "x"` / `build-system = 42` assigns a
-                        # whole metadata table to a non-table. tomllib
-                        # refuses it below; the subset reader must not read
-                        # past it into an asserted empty inventory.
-                        unasserted = True
-                    if key == "dependency-groups" or key.startswith("dependency-groups."):
-                        # dependency-groups = { qa = [...] } is the bracket
-                        # table in inline spelling; the subset reader does
-                        # not parse inline tables, so it refuses instead of
-                        # asserting an inventory around the declaration.
-                        unasserted = True
-                    if section[:2] == optional_prefix:
-                        # Every key under [project.optional-dependencies] IS
-                        # an optional group. A non-array shape there (bad =
-                        # {}) is one tomllib retains and this reader cannot,
-                        # so the local-key net never saw it.
-                        unasserted = True
-                    qualified = ".".join(section + tuple(key.split(".")))
-                    if _SENSITIVE.search(key) or _SENSITIVE.search(qualified):
-                        # Section-qualified: a bare `dependencies = {}` under
-                        # [project] is dependency-shaped only once its
-                        # section is composed in.
-                        unasserted = True
-                    elif "{" in rhs and (
-                        re.search(r"(?:optional-)?dependencies|dynamic", rhs)
-                        # An escaped key inside the table never reaches
-                        # _split_key, so its spelling cannot be compared:
-                        # "dependencies" reads as dependencies to
-                        # tomllib and as nothing here. Refuse every escaped
-                        # inline table rather than scan the raw spelling.
-                        or "\\" in rhs
-                    ):
-                        # An inline table can carry dependency metadata the
-                        # subset reader does not parse; refuse rather than
-                        # report an asserted empty inventory.
-                        unasserted = True
-                elif stripped:
-                    # Neither a section, an array key, nor any assignment —
-                    # and not blank or comment-only, both of which strip to
-                    # empty. tomllib rejects such a line outright, so the
-                    # fallback must not read past it and report an asserted
-                    # inventory on a file newer hosts refuse.
-                    unasserted = True
-                continue
-            raw_key = match.group("key").strip()
-            split_key = _split_key(raw_key)
-            if split_key is None:
-                # A key shape the splitter cannot attribute must fail closed,
-                # not vanish into an empty (matching) declared set.
-                unasserted = True
-                continue
-            segments = split_key
-            full = section + segments
-            if len(full) == 1 and full[0] in _METADATA_TABLES:
-                # An ARRAY assigned to a whole metadata table (project = [])
-                # is not a table either, and this branch — not the scalar
-                # one — is where that spelling lands. tomllib refuses it.
-                unasserted = True
-                continue
-            if full[:1] == ("dependency-groups",):
-                # PEP 735 groups are real declared dependencies; record them
-                # so the audit refuses to assert an inventory around them.
-                groups.add(full[1] if len(full) > 1 else "<unnamed>")
-                continue
-            is_optional = len(full) == 3 and full[:2] == optional_prefix
-            if full not in known and not is_optional:
-                if _SENSITIVE.search(".".join(full)) or full[:2] == optional_prefix:
-                    unasserted = True
-                if _bracket_depth(match.group("rest")) != 0:
-                    # A multi-line array this reader does not track: consume
-                    # to its closing bracket so its element lines are not
-                    # mistaken for unrecognized garbage.
-                    buffer = match.group("rest")
-                    pending = _SKIP_ARRAY
-                continue
-            if full in arrays:
-                # tomllib rejects a second assignment to the same key; the
-                # unconditional overwrite here let a later `dependencies =
-                # []` erase a real declaration and match the empty inventory.
-                unasserted = True
-            buffer = match.group("rest")
-            pending = full
-        else:
-            buffer += " " + stripped
-        if pending is _SKIP_ARRAY and _bracket_depth(buffer) == 0:
-            # Untracked body consumed; nothing to record or validate.
-            pending = None
-            buffer = ""
-            continue
-        if pending is not None and _bracket_depth(buffer) == 0:
-            items, parsed_ok = _string_items(buffer)
-            if not parsed_ok:
-                unasserted = True
-            arrays[pending] = items
-            pending = None
-            buffer = ""
-    if pending is not None:
-        unasserted = True  # an array never closed; the tail was not read
-    optional = {
-        full[2]: items
-        for full, items in arrays.items()
-        if len(full) == 3 and full[:2] == optional_prefix
-    }
-    return {
-        "runtime": arrays.get(("project", "dependencies"), []),
-        "build_system": arrays.get(("build-system", "requires"), []),
-        "optional": optional,
-        "dynamic": arrays.get(("project", "dynamic"), []),
-        "dependency_groups": sorted(groups),
-        "_unasserted": unasserted,
-    }
-
 
 def _table(value: Any) -> dict[str, Any] | None:
     """A metadata table is a table or it is unreadable. None means refuse:
@@ -418,8 +91,6 @@ def parse_pyproject(path: Path) -> dict[str, Any]:
         text = raw.decode("utf-8")
     except (OSError, UnicodeDecodeError):
         return dict(_UNASSERTED)
-    if tomllib is None:
-        return _fallback_parse(text)
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError:
