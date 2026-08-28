@@ -20,7 +20,14 @@ ROOT = Path(__file__).resolve().parents[2]
 # ".claude" carries tracked developer scripts (digest/skill tooling); a
 # developer-tool boundary policy that skips them audits less than it claims.
 TREES = ("bcir", "tools", ".claude")
-SKIP_PARTS = {".git", "build", "__pycache__", "dataset"}
+# Any-component skips: these names mean the same thing at every depth.
+SKIP_PARTS = {".git", "__pycache__"}
+# Generated-tree skips, scoped to the roots the build actually writes. As a
+# component-wide predicate these excluded a tracked developer script under
+# ANY nested directory so named (tools/build/release.py), and the
+# missing-file reconciliation excluded it too, so the audit could report
+# PASS around a script carrying os.system() or shell=True.
+SKIP_ROOTS = (("build",), ("dataset",), ("bcir", "dataset"))
 SOURCE_SIZE_CAP = 1 << 23  # 8 MiB: ast.parse multiplies source size in memory
 # subprocess helpers that ARE shell string-command execution, like os.system.
 SHELL_HELPERS = {"getoutput", "getstatusoutput"}
@@ -78,7 +85,8 @@ def _iter_python(root: Path) -> tuple[list[Path], list[str], bool]:
             # Relative parts only: a checkout that itself lives under a
             # directory named "build" must not have every file skipped
             # (and the audit reported vacuous).
-            if any(part in SKIP_PARTS for part in path.relative_to(root).parts):
+            rel_parts = path.relative_to(root).parts
+            if any(part in SKIP_PARTS for part in rel_parts) or _is_generated(rel_parts):
                 continue
             rel = str(path.relative_to(root)).replace("\\", "/")
             if tracked is not None and rel not in tracked:
@@ -94,10 +102,19 @@ def _iter_python(root: Path) -> tuple[list[Path], list[str], bool]:
             if not rel.lower().endswith(".py") or rel in seen:
                 continue
             parts = rel.split("/")
-            if parts[0] not in TREES or any(part in SKIP_PARTS for part in parts):
+            if (
+                parts[0] not in TREES
+                or any(part in SKIP_PARTS for part in parts)
+                or _is_generated(tuple(parts))
+            ):
                 continue
             missing.append(rel)
     return files, missing, False
+
+
+def _is_generated(parts: tuple[str, ...]) -> bool:
+    """A generated tree is a PREFIX of the path, never a name anywhere in it."""
+    return any(parts[:len(root)] == root for root in SKIP_ROOTS)
 
 
 def _is_true(node: ast.AST) -> bool:

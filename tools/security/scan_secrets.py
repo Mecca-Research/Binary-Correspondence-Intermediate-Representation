@@ -510,31 +510,40 @@ def scan_tree(root: Path) -> dict[str, Any]:
     for rel in files:
         try:
             rel.encode("utf-8")
+            printable = rel
+            encodable = True
         except UnicodeEncodeError:
-            # The tracked filename itself is not UTF-8. Record it fail-closed
-            # under a printable (replace-decoded) name rather than scanning
-            # through — or printing — an unencodable path.
+            # The tracked filename itself is not UTF-8; everything reported
+            # about it uses the printable (replace-decoded) form, which the
+            # name scan below sees exactly as the report will print it.
             printable = rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
-            report["findings"].append({
-                "path": printable, "line": 0, "rule": "filename-not-utf8",
-                "fingerprint": _fingerprint(printable),
-            })
-            continue
+            encodable = False
         # Git commits the tree-entry NAME as surely as it commits blob
         # bytes, so a token spelled into a filename ships in every clone.
         # Once the name itself matches, EVERY report field that would carry
         # it switches to a redacted display path — a finding that redacts
         # while the binaries/archives/symlinks lists keep the raw name
         # still republishes the credential through --json-out and CI logs.
-        name_hits = _scan_text(rel, rel)
-        display = rel
+        # Replacement decoding only rewrites the invalid BYTES, so an ASCII
+        # credential survives it intact: this scan must run on both paths,
+        # not only the UTF-8 one.
+        name_hits = _scan_text(printable, printable)
+        display = printable
         if name_hits:
-            display = _redacted_path(rel)
+            display = _redacted_path(printable)
             for hit in name_hits:
                 report["findings"].append({
                     "path": display, "line": 0,
                     "rule": "filename-secret", "fingerprint": hit["fingerprint"],
                 })
+        if not encodable:
+            # Record it fail-closed rather than scanning through — or
+            # printing — an unencodable path.
+            report["findings"].append({
+                "path": display, "line": 0, "rule": "filename-not-utf8",
+                "fingerprint": _fingerprint(printable),
+            })
+            continue
         path = root / rel
         if path.is_symlink():
             # A tracked symlink's blob is its target string. Dereferencing

@@ -30,10 +30,22 @@ except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
 ROOT = Path(__file__).resolve().parents[2]
 REQUIRED_PYTHON = ("streampack", "bcab", "bcirq8")
 DECODE_TIMEOUT = 10.0
-_BASE_GRACEFUL = (
-    ValueError, KeyError, IndexError, struct.error, EOFError,
-    UnicodeDecodeError, OverflowError, OSError, zlib.error,
-)
+# Each surface's DELIBERATE rejection type, and only that. A blanket tuple
+# (IndexError, KeyError, struct.error, OverflowError, zlib.error...) counted
+# unchecked indexing and unpacking as "graceful rejection", so a decoder
+# could regress to raising IndexError on every mutation and the campaign
+# would still report PASS as long as the seed decoded. Implementation
+# exceptions are ungraceful findings, which is what they always were.
+# Measured against the live decoders: 400 mutations per surface raise the
+# declared type and nothing else, so this narrowing hides no real rejection.
+_DECLARED_REJECTIONS = {
+    "streampack": ("bcir.abi.streampack_abi", "AbiError"),
+    "bcab": ("bcir.abi.artifact_bundle", "BundleError"),
+    # weights_io raises ValueError for every content rejection; its OSError
+    # is re-raised as RuntimeError by _decode_q8_bytes so an environmental
+    # failure can never pass as a decode verdict.
+    "bcirq8": ("builtins", "ValueError"),
+}
 
 
 class _DecodeHang(Exception):
@@ -65,15 +77,18 @@ def _bounded_decode(decode: Callable[[bytes], Any], blob: bytes, seconds: float)
         signal.signal(signal.SIGALRM, previous)
 
 
-def _graceful() -> tuple[type[BaseException], ...]:
-    from bcir.abi.streampack_abi import AbiError
-    extras: list[type[BaseException]] = [AbiError]
-    try:
-        from bcir.abi.artifact_bundle import BundleError
-        extras.append(BundleError)
-    except ImportError:
-        pass
-    return _BASE_GRACEFUL + tuple(extras)
+def _graceful_for(surface: str) -> tuple[type[BaseException], ...]:
+    """The exception classes this surface rejects malformed input WITH.
+
+    An unknown surface has no declared rejection, so every exception it
+    raises is ungraceful — a new surface must declare its contract to be
+    counted, never inherit a blanket one."""
+    import importlib
+    entry = _DECLARED_REJECTIONS.get(surface)
+    if entry is None:
+        return ()
+    module, name = entry
+    return (getattr(importlib.import_module(module), name),)
 
 
 def _mutate(data: bytes, rng: random.Random) -> bytes:
@@ -97,7 +112,7 @@ def _probe(name: str, decode: Callable[[bytes], Any], seed: bytes,
     findings: list[dict[str, str]] = []
     accepted = 0
     rejected = 0
-    graceful = _graceful()
+    graceful = _graceful_for(name)
     try:
         _bounded_decode(decode, seed, timeout)
         accepted += 1
@@ -252,7 +267,12 @@ def _drain_capped(stream: Any, chunks: list[bytes], state: dict[str, Any]) -> No
 def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
     script = root / "tools" / "c" / "fuzz_streampack.sh"
     bash = shutil.which("bash")
-    clang = shutil.which("clang")
+    # The wrapper honors CLANG, so this preflight must resolve the same
+    # toolchain: checking only an unversioned `clang` on PATH skipped hosts
+    # that had configured a versioned or custom one, and --require-c then
+    # failed a campaign that would have run.
+    configured = os.environ.get("CLANG")
+    clang = shutil.which(configured) if configured else shutil.which("clang")
     if os.name == "nt":
         return {
             "state": "UNAVAILABLE/SKIPPED",
@@ -261,7 +281,8 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
     if not bash or not script.is_file():
         return {"state": "UNAVAILABLE/SKIPPED", "reason": "bash or fuzz_streampack.sh missing"}
     if not clang:
-        return {"state": "UNAVAILABLE/SKIPPED", "reason": "clang missing"}
+        missing = configured or "clang"
+        return {"state": "UNAVAILABLE/SKIPPED", "reason": f"{missing} missing"}
     env = dict(os.environ)
     env.update({
         "FUZZ_RUNS": str(runs),

@@ -33,6 +33,13 @@ ADVISORY_OUTPUT_CAP = 1 << 20  # per stream; the engine reports advisories, not 
 
 _METADATA_TABLES = frozenset({"project", "build-system", "dependency-groups"})
 _SECTION = re.compile(r"^\[(?P<name>[^\]]+)\]\s*$")
+# [[array-of-tables]] is a valid header the subset does not attribute; it
+# opens an unattributable section rather than reading as a garbage line.
+_ARRAY_TABLE = re.compile(r"^\[\[(?P<name>[^\]]+)\]\]\s*$")
+# Sentinel: an array whose key this reader does not track. Its BODY must
+# still be consumed to the closing bracket, or every continuation line
+# reads as unrecognized garbage.
+_SKIP_ARRAY = ("<skip>",)
 # The key charset admits spaces/tabs (TOML permits whitespace around dotted
 # separators; _split_key strips each segment) and backslashes — an escaped
 # quoted key must REACH _split_key, which refuses escapes into _unasserted,
@@ -199,6 +206,11 @@ def _fallback_parse(text: str) -> dict[str, Any]:
     for raw_line in text.splitlines():
         stripped = _strip_toml_comment(raw_line).strip()
         if pending is None:
+            if _ARRAY_TABLE.match(stripped):
+                # Unattributable, not invalid: a dependency-shaped key inside
+                # it still fails closed through the sensitivity net below.
+                section = ("<unattributed>",)
+                continue
             match = _SECTION.match(stripped)
             if match:
                 split = _split_key(match.group("name").strip())
@@ -244,6 +256,13 @@ def _fallback_parse(text: str) -> dict[str, Any]:
                         # subset reader does not parse; refuse rather than
                         # report an asserted empty inventory.
                         unasserted = True
+                elif stripped:
+                    # Neither a section, an array key, nor any assignment —
+                    # and not blank or comment-only, both of which strip to
+                    # empty. tomllib rejects such a line outright, so the
+                    # fallback must not read past it and report an asserted
+                    # inventory on a file newer hosts refuse.
+                    unasserted = True
                 continue
             raw_key = match.group("key").strip()
             split_key = _split_key(raw_key)
@@ -269,11 +288,22 @@ def _fallback_parse(text: str) -> dict[str, Any]:
             if full not in known and not is_optional:
                 if _SENSITIVE.search(".".join(full)) or full[:2] == optional_prefix:
                     unasserted = True
+                if _bracket_depth(match.group("rest")) != 0:
+                    # A multi-line array this reader does not track: consume
+                    # to its closing bracket so its element lines are not
+                    # mistaken for unrecognized garbage.
+                    buffer = match.group("rest")
+                    pending = _SKIP_ARRAY
                 continue
             buffer = match.group("rest")
             pending = full
         else:
             buffer += " " + stripped
+        if pending is _SKIP_ARRAY and _bracket_depth(buffer) == 0:
+            # Untracked body consumed; nothing to record or validate.
+            pending = None
+            buffer = ""
+            continue
         if pending is not None and _bracket_depth(buffer) == 0:
             items, parsed_ok = _string_items(buffer)
             if not parsed_ok:

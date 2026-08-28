@@ -81,7 +81,15 @@ def find_bcir_opt(root: Path) -> str | None:
     which = shutil.which("bcir-opt")
     if which and _is_bcir_opt_name(Path(which).name):
         return which
-    for tree in (root / "build" / "mlir-build", root / "build" / "mlir"):
+    # Every binary directory the official presets write to: mlir/CMakePresets
+    # sends the debug preset to build/mlir-build-debug, and discovery that
+    # searched only the release tree recorded the rail unavailable — or
+    # failed --require-compiled — beside a perfectly valid official build.
+    for tree in (
+        root / "build" / "mlir-build",
+        root / "build" / "mlir-build-debug",
+        root / "build" / "mlir",
+    ):
         if not tree.is_dir():
             continue
         # The cmake layout decides where the binary lands (bin/, tools/...);

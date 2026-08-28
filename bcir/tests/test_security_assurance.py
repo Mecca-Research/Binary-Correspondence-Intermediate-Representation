@@ -254,10 +254,14 @@ def test_boundary_audit_ignores_unrelated_run_methods() -> None:
 
 def test_decoder_seed_rejection_is_a_finding() -> None:
     from tools.security.run_decoder_campaign import _probe
+    from bcir.abi.streampack_abi import AbiError
     import random
 
     def reject(_data: bytes) -> None:
-        raise ValueError("seed")
+        # The surface's DECLARED rejection type: rejecting the valid seed is
+        # a finding whichever way the decoder signals it, but only the
+        # declared type is a rejection at all (see _DECLARED_REJECTIONS).
+        raise AbiError("seed")
 
     row = _probe("streampack", reject, b"seed", random.Random(0), mutations=2)
     assert row["state"] == "FAIL"
@@ -2432,3 +2436,122 @@ def test_symlinked_pyproject_is_unasserted() -> None:
         real = root / "real.toml"
         real.write_text('[project]\ndependencies = ["a>=1"]\n', encoding="utf-8")
         assert deps.parse_pyproject(real)["runtime"] == ["a>=1"]
+
+def test_fallback_refuses_unrecognized_lines() -> None:
+    """tomllib rejects a garbage line outright; the 3.10 reader must not
+    read past it and assert an inventory the newer hosts refuse. Blank,
+    comment-only, array-of-table and untracked-array bodies stay legal."""
+    from tools.security import audit_dependencies as deps
+    good = (
+        '# a comment\n\n[project]\nname = "x"\ndependencies = ["a>=1"]\n'
+        '[[tool.plugins]]\nname = "p"\n'
+        '[tool.ruff.lint]\nignore = [\n  "E501",\n  "E701",\n]\n'
+    )
+    parsed = deps._fallback_parse(good)
+    assert parsed["_unasserted"] is False
+    assert parsed["runtime"] == ["a>=1"]
+    assert deps._fallback_parse(good + "this is invalid\n")["_unasserted"] is True
+
+
+def test_credential_in_non_utf8_filename_is_redacted() -> None:
+    """Replacement decoding rewrites only the invalid byte, so an ASCII
+    credential survives it intact; the non-UTF-8 branch must redact like
+    the UTF-8 one instead of printing the token."""
+    if os.name == "nt":
+        return  # the raw byte cannot be written into an NT filename
+    token = "ghp_" + "k9J2mQ4pR6sT1vX3zB5dF7hL0nCwEyGa"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        raw = (token + "\udcff.txt").encode("utf-8", "surrogateescape")
+        (root / os.fsdecode(raw)).write_bytes(b"benign\n")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        report = scan_tree(root)
+    rules = {item["rule"] for item in report["findings"]}
+    assert report["state"] == "FAIL"
+    assert "filename-not-utf8" in rules and "filename-secret" in rules
+    assert token not in json.dumps(report)
+
+
+def test_nested_build_directories_are_still_audited() -> None:
+    """A generated tree is a path PREFIX; as a component-wide name it
+    excluded tracked developer scripts under any nested directory so
+    called, and the missing-file reconciliation excluded them too."""
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        nested = root / "tools" / "build"
+        nested.mkdir(parents=True)
+        (root / "tools" / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        (nested / "release.py").write_text(
+            "import os\nos.system(" + '"ls"' + ")\n", encoding="utf-8",
+        )
+        generated = root / "build"
+        generated.mkdir()
+        (generated / "gen.py").write_text(
+            "import os\nos.system(" + '"ls"' + ")\n", encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        report = audit_boundaries(root)
+    flagged = {item["path"] for item in report["findings"]}
+    assert report["state"] == "FAIL"
+    assert "tools/build/release.py" in flagged   # nested: audited
+    assert not any(p.startswith("build/") for p in flagged)  # root: generated
+
+
+def test_debug_preset_build_is_discovered() -> None:
+    """mlir/CMakePresets sends the debug preset to build/mlir-build-debug;
+    discovery that searched only the release tree recorded the compiled rail
+    unavailable beside a valid official build."""
+    from unittest.mock import patch
+    from tools.security import run_malformed_differential as differential
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        binary = root / "build" / "mlir-build-debug" / "bin" / "bcir-opt"
+        binary.parent.mkdir(parents=True)
+        binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        binary.chmod(0o755)
+        with patch.dict(differential.os.environ, {"BCIR_OPT": ""}):
+            with patch.object(differential.shutil, "which", return_value=None):
+                found = differential.find_bcir_opt(root)
+    assert found == str(binary)
+
+
+def test_configured_clang_is_honored() -> None:
+    """The wrapper supports CLANG, so a host with only a versioned clang
+    must run the campaign rather than skip it and fail --require-c."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from tools.security import run_decoder_campaign as campaign
+    seen: dict[str, object] = {}
+
+    def which(name):
+        seen.setdefault("asked", []).append(name)  # type: ignore[union-attr]
+        return "/usr/bin/" + Path(name).name if "clang" in name or name == "bash" else None
+
+    posix_os = SimpleNamespace(
+        name="posix", environ={**os.environ, "CLANG": "/opt/llvm/bin/clang-19"},
+    )
+    with patch.object(campaign, "os", posix_os):
+        with patch.object(campaign.shutil, "which", side_effect=which):
+            report = campaign.run_c_campaign(_ROOT, runs=1, seconds=1)
+    assert "/opt/llvm/bin/clang-19" in seen["asked"]  # type: ignore[operator]
+    assert report["state"] != "UNAVAILABLE/SKIPPED" or "missing" not in report["reason"]
+
+
+def test_implementation_errors_are_never_graceful() -> None:
+    """A blanket exception tuple counted unchecked indexing as a graceful
+    rejection, so a decoder could regress to raising IndexError on every
+    mutation and still report PASS. Only the declared type counts."""
+    import random
+    from tools.security.run_decoder_campaign import _probe
+
+    def index_error(_data: bytes) -> str:
+        raise IndexError("unchecked indexing")
+
+    row = _probe("streampack", index_error, b"seed", random.Random(0), mutations=3)
+    assert row["state"] == "FAIL"
+    kinds = {item["kind"] for item in row["findings"]}
+    assert "ungraceful-seed" in kinds and "ungraceful" in kinds
+    assert all(item.get("type") == "IndexError" for item in row["findings"])
