@@ -296,14 +296,25 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
     # only a process-group kill enforces the wall bound on the whole tree.
     # Bytes, not text=True: sanitizer and fuzzer binaries write raw bytes,
     # and a strict decode would crash the campaign instead of recording it.
-    proc = subprocess.Popen(
-        [bash, str(script)],
-        cwd=root,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=os.name != "nt",
-    )
+    try:
+        proc = subprocess.Popen(
+            [bash, str(script)],
+            cwd=root,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=os.name != "nt",
+        )
+    except OSError as exc:
+        # `which` said the toolchain was there and the exec still failed: a
+        # dangling symlink, a non-executable wrapper, a path that moved
+        # between the preflight and the spawn. Every path out of this rail
+        # is a structured state — the reviewer rail already guards its own
+        # launch this way — never a traceback in place of the verdict.
+        return {
+            "state": "FAIL",
+            "reason": f"C campaign failed to start: {type(exc).__name__}: {exc}",
+        }
     # Bounded drains instead of communicate(): a concurrent fuzzer spraying
     # output would otherwise accumulate in memory until the wall bound.
     out_chunks: list[bytes] = []

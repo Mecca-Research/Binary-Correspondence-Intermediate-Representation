@@ -2530,14 +2530,51 @@ def test_configured_clang_is_honored() -> None:
         seen.setdefault("asked", []).append(name)  # type: ignore[union-attr]
         return "/usr/bin/" + Path(name).name if "clang" in name or name == "bash" else None
 
+    import io
+
+    class FakeProc:
+        pid = 4242
+        returncode = 0
+        stdout = io.BytesIO(b"ok")
+        stderr = io.BytesIO(b"")
+
+        def wait(self, timeout=None):
+            return 0
+
+    # Popen is faked: this pins the PREFLIGHT's toolchain resolution, and a
+    # real spawn of the resolved path would depend on the host (it does not
+    # exist on Windows, where the launch guard would then report FAIL).
     posix_os = SimpleNamespace(
         name="posix", environ={**os.environ, "CLANG": "/opt/llvm/bin/clang-19"},
     )
     with patch.object(campaign, "os", posix_os):
         with patch.object(campaign.shutil, "which", side_effect=which):
-            report = campaign.run_c_campaign(_ROOT, runs=1, seconds=1)
+            with patch.object(
+                campaign.subprocess, "Popen", side_effect=lambda *a, **k: FakeProc()
+            ):
+                report = campaign.run_c_campaign(_ROOT, runs=1, seconds=1)
     assert "/opt/llvm/bin/clang-19" in seen["asked"]  # type: ignore[operator]
-    assert report["state"] != "UNAVAILABLE/SKIPPED" or "missing" not in report["reason"]
+    assert report["state"] == "PASS", report
+
+
+def test_campaign_launch_failure_is_structured() -> None:
+    """`which` can succeed and the exec still fail — a dangling symlink, a
+    non-executable wrapper, a path that moved. Every path out of this rail
+    is a structured state, never a traceback in place of the verdict."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from tools.security import run_decoder_campaign as campaign
+
+    def exploding(*args, **kwargs):
+        raise FileNotFoundError(2, "The system cannot find the file specified")
+
+    posix_os = SimpleNamespace(name="posix", environ=dict(os.environ))
+    with patch.object(campaign, "os", posix_os):
+        with patch.object(campaign.shutil, "which", return_value="/usr/bin/tool"):
+            with patch.object(campaign.subprocess, "Popen", side_effect=exploding):
+                report = campaign.run_c_campaign(_ROOT, runs=1, seconds=1)
+    assert report["state"] == "FAIL"
+    assert "failed to start" in report["reason"]
 
 
 def test_implementation_errors_are_never_graceful() -> None:
