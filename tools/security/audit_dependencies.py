@@ -11,6 +11,7 @@ import argparse
 import json
 import re
 import shutil
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -322,16 +323,42 @@ def _string_list(value: Any) -> list[str] | None:
     return list(value)
 
 
+_UNASSERTED: dict[str, Any] = {
+    "runtime": [], "build_system": [], "optional": {}, "dynamic": [],
+    "_unasserted": True,
+}
+
+
 def parse_pyproject(path: Path) -> dict[str, Any]:
-    if path.stat().st_size > PYPROJECT_SIZE_CAP:
+    try:
+        info = path.lstat()
+    except OSError:
+        # An absent or unreadable metadata file asserts nothing; it must not
+        # escape as a traceback from the required audit either.
+        return dict(_UNASSERTED)
+    if not stat.S_ISREG(info.st_mode):
+        # lstat, not stat: a SYMLINK to /dev/zero reports size 0 through a
+        # following stat and then reads without end. The secret scan records
+        # links without following them; this rail refuses them outright,
+        # along with every other non-regular file (FIFO, device), because a
+        # stat size means nothing for those.
+        return dict(_UNASSERTED)
+    if info.st_size > PYPROJECT_SIZE_CAP:
         # Bounds at ingress: tomllib and the fallback both build structures
         # a multiple of the file's size, so an oversized metadata file is
         # unasserted (a fail-closed verdict), never an OOM of the audit.
-        return {
-            "runtime": [], "build_system": [], "optional": {}, "dynamic": [],
-            "_unasserted": True,
-        }
-    text = path.read_text(encoding="utf-8")
+        return dict(_UNASSERTED)
+    try:
+        with path.open("rb") as handle:
+            # The declared size is not the read bound: read one byte past
+            # the cap and refuse if anything remains, so a file that grows
+            # (or lies) between stat and read cannot slip through.
+            raw = handle.read(PYPROJECT_SIZE_CAP + 1)
+        if len(raw) > PYPROJECT_SIZE_CAP:
+            return dict(_UNASSERTED)
+        text = raw.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return dict(_UNASSERTED)
     if tomllib is None:
         return _fallback_parse(text)
     try:
@@ -339,10 +366,7 @@ def parse_pyproject(path: Path) -> dict[str, Any]:
     except tomllib.TOMLDecodeError:
         # The 3.10 fallback reports a malformed file as a structured FAIL via
         # _unasserted; the tomllib path must not diverge into a traceback.
-        return {
-            "runtime": [], "build_system": [], "optional": {}, "dynamic": [],
-            "_unasserted": True,
-        }
+        return dict(_UNASSERTED)
     project = _table(data.get("project"))
     build = _table(data.get("build-system"))
     groups = _table(data.get("dependency-groups"))

@@ -304,6 +304,7 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
         },
         {
             "name": "oracle-r1.1-duplicate-claim",
+            "python_law": "R1.1",
             "expect_reject": True,
             "python": lambda: verify(duplicated),
             "mlir_text": None,
@@ -311,6 +312,7 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
         },
         {
             "name": "compiled-official-r1-duplicate-rid",
+            "python_law": "R1",
             "expect_reject": True,
             "python": _r1_duplicate_rid_python,
             "mlir_text": _official_r1_mlir(),
@@ -320,6 +322,7 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
         },
         {
             "name": "paired-official-r5",
+            "python_law": "R5",
             "expect_reject": True,
             "python": lambda: verify(r5),
             "mlir_text": _official_r5_mlir(),
@@ -329,6 +332,7 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
         },
         {
             "name": "oracle-illegal-module",
+            "python_law": "R8",
             "expect_reject": True,
             "python": lambda: verify(illegal),
             "mlir_text": None,
@@ -411,6 +415,22 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
             disagreements.append(
                 f"{case['name']}/mlir_text: rejected for reason "
                 f"{text.get('reason')!r}, expected {expected_reason!r}"
+            )
+        # The Python rail needs the same pairing as the other two: a witness
+        # that keeps rejecting under a DIFFERENT law (syntax rot, a broader
+        # check firing first) leaves `rejected` true while the law the
+        # witness exists to test has regressed, and both workflow
+        # invocations stay green.
+        expected_law = case.get("python_law")
+        if (
+            expected_law
+            and python["state"] == "PASS"
+            and python.get("rejected")
+            and expected_law not in (python.get("laws") or ())
+        ):
+            disagreements.append(
+                f"{case['name']}/python: rejected under laws "
+                f"{python.get('laws')!r}, expected {expected_law!r}"
             )
         marker = case.get("compiled_marker")
         if (

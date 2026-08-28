@@ -55,6 +55,11 @@ XZ_MEMORY_LIMIT = 1 << 27  # 128 MiB: the declared LZMA2 dictionary allocates up
 GITLEAKS_TIMEOUT = 300.0  # the opted-in engine walks the whole tree; stalls expire
 GITLEAKS_OUTPUT_CAP = 1 << 20  # per stream; findings are JSON, not payload
 ZIP_SYMLINK_MAX = 4096
+# Only the two methods a real symlink member ever uses. LZMA (14) and BZIP2
+# (12) build a decompressor from member properties BEFORE a byte emerges —
+# an attacker-declared LZMA dictionary allocates ahead of every read cap —
+# and no legitimate stored link needs them, so they fail closed instead.
+ZIP_SYMLINK_METHODS = frozenset({zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED})
 
 RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("private-key-header", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
@@ -404,7 +409,14 @@ def _archive_entries(path: Path, data: bytes) -> tuple[list[str], int]:
                     # payload is read through the ZipInfo (a later same-named
                     # entry cannot alias it), bounded, and an encrypted or
                     # oversized target fails closed instead of passing unread.
-                    if info.flag_bits & 0x1 or info.file_size > ZIP_SYMLINK_MAX:
+                    if (
+                        info.flag_bits & 0x1
+                        or info.file_size > ZIP_SYMLINK_MAX
+                        or info.compress_type not in ZIP_SYMLINK_METHODS
+                    ):
+                        # Encrypted, oversized, or built on a decompressor
+                        # whose allocation precedes the read cap: all three
+                        # are uninspectable, never quietly skipped.
                         raise ValueError("zip-symlink-uninspectable")
                     with archive.open(info) as handle:
                         target = handle.read(ZIP_SYMLINK_MAX + 1)

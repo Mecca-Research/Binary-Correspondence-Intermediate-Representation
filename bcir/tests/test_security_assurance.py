@@ -2367,3 +2367,68 @@ def test_compiled_verifier_descendants_are_a_structured_failure() -> None:
             result = differential._compiled_mlir("bcir.module @m { }", _ROOT)
     assert result["state"] == "FAIL"
     assert "descendants" in result["reason"]
+
+def test_python_witness_paired_to_its_intended_law() -> None:
+    """A witness that keeps rejecting under a DIFFERENT law leaves the rail
+    green while the law it exists to test has regressed; the Python rail
+    needs the same pairing the text and compiled rails carry."""
+    from unittest.mock import patch
+    from types import SimpleNamespace
+    from tools.security import run_malformed_differential as differential
+    real = differential._bounded_verify
+
+    def wrong_law(probe):
+        diags = real(probe)
+        # Simulate the regression: still rejected, but by another law.
+        return [SimpleNamespace(law="R99") for _ in diags] if diags else diags
+
+    with patch.object(differential, "_bounded_verify", side_effect=wrong_law):
+        report = differential.run_differential(_ROOT)
+    assert report["state"] == "FAIL"
+    assert any(
+        "/python: rejected under laws" in item for item in report["disagreements"]
+    ), report["disagreements"]
+
+
+def test_zip_symlink_under_lzma_is_uninspectable() -> None:
+    """LZMA builds its decompressor from member properties BEFORE any byte
+    emerges, so a declared dictionary allocates ahead of the read cap; a
+    symlink member under that method must fail closed, never be opened."""
+    import io
+    import zipfile as zf
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as archive:
+            info = zf.ZipInfo("link")
+            info.create_system = 3
+            info.external_attr = (0o120777 << 16)  # S_IFLNK
+            info.compress_type = 14  # ZIP_LZMA
+            archive.writestr(info, "target")
+        (root / "bundle.zip").write_bytes(buf.getvalue())
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        report = scan_tree(root)
+    assert report["state"] == "FAIL"
+    assert any(item["rule"] == "archive-unreadable" for item in report["findings"])
+
+
+def test_symlinked_pyproject_is_unasserted() -> None:
+    """stat() follows links, so a symlink to /dev/zero reports size 0 and
+    then reads without end; the metadata ingress must refuse every
+    non-regular file rather than dereference it."""
+    if os.name == "nt":
+        return  # symlink creation is privilege-gated on Windows
+    from tools.security import audit_dependencies as deps
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        link = root / "pyproject.toml"
+        os.symlink("/dev/zero", link)
+        parsed = deps.parse_pyproject(link)
+        assert parsed["_unasserted"] is True
+        missing = deps.parse_pyproject(root / "absent.toml")
+        assert missing["_unasserted"] is True
+        real = root / "real.toml"
+        real.write_text('[project]\ndependencies = ["a>=1"]\n', encoding="utf-8")
+        assert deps.parse_pyproject(real)["runtime"] == ["a>=1"]
