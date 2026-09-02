@@ -68,6 +68,15 @@ ZIP_SYMLINK_MAX = 4096
 # and no legitimate stored link needs them, so they fail closed instead.
 ZIP_SYMLINK_METHODS = frozenset({zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED})
 
+# YAML node properties: an anchor (&name) and/or a tag (!tag, !!type,
+# !<uri>) may stand between a key and its scalar. They NAME the node,
+# they are not the value, so every RHS rule steps over them instead of
+# stopping at them -- `password: !!str "x"` stores the same credential
+# as `password: "x"`. One fragment, three call sites (L14). An ALIAS
+# (*name) is deliberately absent: it points at another node, so like
+# ${VAR} it is a REFERENCE, not a credential.
+YAML_NODE_PROPS = r"(?:(?:&[^\s\[\]{},]+|![^\s\[\]{},]*)[ \t]*)*"
+
 RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("private-key-header", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     # AKIA = long-lived, ASIA = STS temporary: both are real credentials.
@@ -103,7 +112,7 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     # before the delimiter is the JSON key's closing quote.
     ("assignment-secret", re.compile(
         r"(?i)(?:\b|(?<=[0-9A-Za-z]_))(?:api[_-]?key|secret|password|token|passwd)"
-        r"(?:[_-][A-Za-z0-9]{1,64}){0,16}+['\"]?\s*[:=]\s*"
+        r"(?:[_-][A-Za-z0-9]{1,64}){0,16}+['\"]?\s*(?::\s*" + YAML_NODE_PROPS + r"|=\s*)"
         # Split by delimiter, and escape-aware in each: `[^'\"]` knew
         # neither which quote opened the value nor that a backslash escapes
         # the next character, so a JSON value containing an escaped quote
@@ -153,21 +162,31 @@ def _is_placeholder(value: str) -> bool:
     )
 
 
-def _redacted_path(rel: str) -> str:
+def redacted_path(rel: str) -> str:
     """Redact every secret-bearing component, not just the basename: a
     credential can name a DIRECTORY (ghp_.../safe.txt), and copying the
     parent through verbatim republishes it. Components that carry no match
     survive so the finding still says where to look; a match that spans a
-    separator redacts the whole path."""
+    separator redacts the whole path.
+
+    TOTAL over every path, including one carrying no credential at all,
+    which passes through unchanged. It was once partial — a path with no
+    matching component returned `<redacted-path>` — with the "does this
+    path match?" test standing outside it at the one call site that needed
+    it. A precondition a caller must know is a defect waiting for the
+    second caller, and the second rail (the boundary audit) is exactly
+    where it would have landed."""
     parts = rel.split("/")
     redacted = [
         "<redacted>" if _scan_text(part, part) else part for part in parts
     ]
-    if redacted == parts:
-        # The match crossed a component boundary, so no single component
-        # reproduces it — nothing here can be shown safely.
-        return "<redacted-path>"
-    return "/".join(redacted)
+    if redacted != parts:
+        return "/".join(redacted)
+    if not _scan_text(rel, rel):
+        return rel
+    # The path matches but no single component does, so the match crossed a
+    # separator and nothing here can be shown safely.
+    return "<redacted-path>"
 
 
 def _fingerprint(value: str) -> str:
@@ -455,7 +474,7 @@ WRAPPED_KEY = re.compile(
     # that opens the object, and the anchor otherwise refuses it.
     r"(?i)^\s*[\{\[]?\s*(?:-\s+)?(?:(?:\"(?:[^\"\\]|\\.)*\"|'[^']*'|[A-Za-z0-9_-]+)\s*\.\s*)*['\"]?(?:[A-Za-z0-9]+[_-])*"
     r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
-    r"['\"]?\s*[:=]\s*$"
+    r"['\"]?\s*(?::\s*" + YAML_NODE_PROPS + r"|=\s*)$"
 )
 
 
@@ -489,7 +508,7 @@ def _wrapped_value_findings(path: str, lines: list[str]) -> list[dict[str, Any]]
 BLOCK_SCALAR = re.compile(
     r"(?i)^(?P<indent>\s*)(?:-\s+)?(?:(?:\"(?:[^\"\\]|\\.)*\"|'[^']*'|[A-Za-z0-9_-]+)\s*\.\s*)*['\"]?(?:[A-Za-z0-9]+[_-])*"
     r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
-    r"['\"]?\s*:\s*[|>][-+0-9]*\s*$"
+    r"['\"]?\s*:\s*" + YAML_NODE_PROPS + r"[|>][-+0-9]*\s*$"
 )
 
 
@@ -992,7 +1011,7 @@ def scan_tree(root: Path) -> dict[str, Any]:
         name_hits = _scan_text(printable, printable)
         display = printable
         if name_hits:
-            display = _redacted_path(printable)
+            display = redacted_path(printable)
             for hit in name_hits:
                 report["findings"].append({
                     "path": display, "line": 0,
@@ -1175,7 +1194,7 @@ def scan_tree(root: Path) -> dict[str, Any]:
             # as filename-not-utf8; its staged blob stays uninspected for
             # the same reason its worktree copy did.
             continue
-        shown = _redacted_path(rel) if _scan_text(rel, rel) else rel
+        shown = redacted_path(rel)
         display = f"{shown} (staged)"
         if staged_mode(root, rel) == "120000":
             # The index entry is a SYMLINK: its blob is the target string,

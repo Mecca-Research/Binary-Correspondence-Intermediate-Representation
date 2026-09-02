@@ -141,7 +141,9 @@ read as binary to every density heuristic),
 `test_escaped_quotes_inside_inline_values` (an escaped delimiter ends a
 value only if the grammar forgets the escape),
 `test_multilingual_bomless_utf32_is_scanned` (NUL density is an
-ASCII-shaped assumption; decode validity is not).
+ASCII-shaped assumption; decode validity is not),
+`test_yaml_node_properties_precede_the_credential` (an anchor or tag NAMES
+the node; the value behind it is the same credential).
 **Port note:** format-level knowledge; transfers verbatim to any scanner
 in any language.
 
@@ -168,7 +170,10 @@ Witnesses: `test_credential_shaped_names_are_redacted_in_every_report_field`,
 `test_dependency_declarations_are_redacted_in_reports` (a PEP 508 direct
 reference can CARRY a credential, and no scanner rule reads URL
 userinfo), `test_advisory_output_is_redacted` (a wrapped tool's stdout and
-error text are report fields too).
+error text are report fields too),
+`test_url_username_only_credentials_are_redacted` (userinfo is credential
+material by POSITION — redacting only the password half left a token used
+as the username intact).
 **Port note:** harsher in C — every format string and every buffer holding
 a matched value is an L7 site.
 
@@ -261,8 +266,15 @@ the drain/put-down/redaction/fingerprint predicates are shared modules
 (`tools/security/proc_bounds.py`) precisely because their gaps recurred
 per-copy until they were unified. A scope rollback is an audit of every
 fix layered on the stripped code, never a bare revert.
-Witness: the shared modules and their tests, e.g.
-`test_bounded_runner_expires_and_caps`.
+A shared predicate must also be TOTAL: one carrying an unstated
+precondition (`redacted_path` returned `<redacted-path>` for any path with
+no matching component, correct only because its single caller tested the
+path first) is a defect held in reserve for the second caller.
+Witnesses: the shared modules and their tests, e.g.
+`test_bounded_runner_expires_and_caps`,
+`test_boundary_audit_paths_are_redacted` (the scan rail had redacted
+secret-bearing path components for sixteen rounds; the boundary rail
+printed them to the CI log until it imported the same predicate).
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -369,16 +381,16 @@ install tree is the audit.
 
 ## Campaign classification summary
 
-Every review-thread finding from the campaign (224 threads, rounds 1–39)
+Every review-thread finding from the campaign (227 threads, rounds 1–40)
 is graded under the harvest protocol. The full per-finding
 index is `docs/security/pr749-harvest.csv`; the campaign ledger tracks the
 same data round by round.
 
 | Grade | Findings | Share | Meaning |
 |---|---|---|---|
-| **NEW-LAW** | 20 | **8.9%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
-| **INSTANCE** | 165 | **73.7%** | New entry point to a registered law — the law gained a witness |
-| **LOCAL** | 39 | **17.4%** | No transfer value beyond the code touched |
+| **NEW-LAW** | 20 | **8.8%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
+| **INSTANCE** | 168 | **74.0%** | New entry point to a registered law — the law gained a witness |
+| **LOCAL** | 39 | **17.2%** | No transfer value beyond the code touched |
 
 Rounds through 31 were graded retroactively; from round 32 every finding
 is graded at triage. Rounds 32 and 33 were both zero-NEW-LAW, taking the
@@ -466,20 +478,50 @@ the one place a review loop is structurally blind to itself, since a test
 that passes is not evidence that it would fail. That is worth naming as
 the loop's own limit, not a defect it found.
 
+Round 40 (three findings, all instances) is the sixth consecutive
+zero-NEW-LAW round, and it is the first to produce a finding graded
+**L14** — the law that until now had no originating finding because it
+emerged from repetition rather than from any single defect. The boundary
+audit copied credential-shaped display paths verbatim into its findings
+and its symlink inventory, and printed them to the CI log; the secret scan
+has redacted exactly those components since round 24. Sixteen rounds, one
+rail apart, same defect. Wiring the boundary rail to the scan rail's
+`redacted_path` then exposed a second-order version of the same law: the
+predicate was **partial**, returning `<redacted-path>` for any path with no
+matching component, and was correct only because its one caller tested the
+path first. A shared predicate carrying an unstated precondition is a
+defect held in reserve for its second caller — which is what five
+previously-green boundary tests said the moment the second caller arrived.
+The predicate is now total.
+
+The other two were the round-38-and-39 pattern continuing. YAML node
+properties (`password: !!str "x"`, `password: &dbpass x`) stand between a
+key and its scalar without changing the scalar, and every RHS rule stopped
+at the property — one fragment now steps over them for the inline,
+wrapped and block-scalar rules alike, while an *alias* (`*name`) stays
+suppressed because it points at another node rather than holding a value.
+And the dependency-URL redaction, closed in round 38 and extended in
+round 39, was still matching only `user:secret@`: a token used as the
+whole username survived, and a username beside a password was preserved
+verbatim. Userinfo is credential material by position, so position is what
+it redacts now. That is the same leak reaching its third round — which is
+the clearest possible statement that the loop is finishing its own work
+rather than opening new ground.
+
 Where the instances concentrated (finding count per law, origin included):
-L5 scannable-data coverage 36 · L3 resource-commit bounds 24 · L1
+L5 scannable-data coverage 37 · L3 resource-commit bounds 24 · L1
 every-exit-a-verdict 19 · L11 witness/law pairing 13 · L15 discovery
 reconciliation 12 · L8 process trees/pipes 10 · L10 rejection contracts 9 ·
-L18 heuristic scope 9 · L2 gate-can-fire 7 · L7 report-as-egress 7 · L17
+L18 heuristic scope 9 · L7 report-as-egress 8 · L2 gate-can-fire 7 · L17
 names-are-paths 7 — the remaining laws
 account for the rest. The two heaviest laws are exactly the two that port
 hardest into C (allocation bounds and data-coverage claims), which is the
 campaign's transfer thesis in one line.
 
 Where the noise concentrated: the deleted Python 3.10 TOML fallback
-absorbed 21 findings (9.4% of the entire campaign — the single largest
+absorbed 21 findings (9.3% of the entire campaign — the single largest
 family, all LOCAL, resolved by raising the floor to 3.11 per L4), and the
 rolled-back alias/dataflow tracking in the boundary audit absorbed 13 more
-(5.8%, resolved by declaring scope per L18). Those two structural changes
+(5.7%, resolved by declaring scope per L18). Those two structural changes
 retire **87% of all LOCAL findings** — the loop's zero-yield surface —
 which is what steers future review rounds toward NEW-LAW territory.

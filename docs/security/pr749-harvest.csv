@@ -223,3 +223,6 @@ finding,date,file,title,grade,law
 222,2026-09-02 20:42,scan_secrets.py,Accept escaped quotes inside quoted key segments,INSTANCE,L5
 223,2026-09-02 20:42,scan_secrets.py,Classify BOM-less UTF-32 by decode validity not NUL density,INSTANCE,L5
 224,2026-09-02 20:42,scan_secrets.py,Split quoted value branches so escaped quotes stay in scope,INSTANCE,L5
+225,2026-09-02 21:24,scan_secrets.py,Step over YAML node properties before the value rules,INSTANCE,L5
+226,2026-09-02 21:24,audit_dependencies.py,Redact all URL userinfo not only the password half,INSTANCE,L7
+227,2026-09-02 21:24,audit_tool_boundaries.py,Redact credential-shaped paths on the boundary rail,INSTANCE,L14

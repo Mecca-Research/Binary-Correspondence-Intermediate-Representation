@@ -20,8 +20,10 @@ try:
     from tools.security.git_index import (
         STAGED_OVERSIZED, staged_blob, staged_divergent, staged_mode,
     )
+    from tools.security.scan_secrets import redacted_path
 except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
     from git_index import STAGED_OVERSIZED, staged_blob, staged_divergent, staged_mode
+    from scan_secrets import redacted_path
 
 ROOT = Path(__file__).resolve().parents[2]
 # ".claude" carries tracked developer scripts (digest/skill tooling); a
@@ -198,7 +200,9 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
         }
     for rel in missing:
         printable = rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
-        findings.append({"path": printable, "line": 0, "rule": "file-missing"})
+        findings.append(
+            {"path": redacted_path(printable), "line": 0, "rule": "file-missing"}
+        )
     for path in paths:
         rel = str(path.relative_to(root)).replace("\\", "/")
         # rel keeps its surrogates for logic (tracked-set membership needs
@@ -206,7 +210,13 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
         # carry, because a surrogate printed under a strict stdout
         # (PYTHONIOENCODING=utf-8:strict) tracebacks the audit after its
         # summary — the same printable form the missing-file branch uses.
-        shown = rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+        # It is redacted through the scan rail's own predicate: a tracked
+        # path can BE a credential (tools/ghp_....py), and a report that
+        # copies it verbatim republishes the secret into the CI log. One
+        # predicate, both rails (L14) — this rail must not grow a second.
+        shown = redacted_path(
+            rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+        )
         if path.is_symlink():
             # The tracked blob is the target string, not Python source;
             # following it would audit arbitrary host content (or crash on
@@ -266,7 +276,9 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
             or _is_generated(tuple(parts))
         ):
             continue
-        shown = rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+        shown = redacted_path(
+            rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+        )
         shown = f"{shown} (staged)"
         if staged_mode(root, rel) == "120000":
             # The index entry is a SYMLINK: its blob is the target string,

@@ -39,7 +39,14 @@ ADVISORY_OUTPUT_CAP = 1 << 20  # per stream; the engine reports advisories, not 
 # secret in metadata this gate then copies into every report field. The
 # scanner's rules do not recognize URL userinfo, so nothing else catches
 # it — L7 is this rail's job here, not the scan's.
-_URL_USERINFO = re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://[^/\s:@]+:)[^/\s@]+@")
+# ALL of userinfo, not just the password half. `user:secret@` was the
+# shape this caught first, but a token is just as often the whole
+# username (`ghp_...@host`, `x-access-token:...@host` inverted), and a
+# username-only URL matched nothing while a username beside a password
+# was preserved verbatim. Userinfo is credential material by position,
+# so position is what this redacts; host and path still name the
+# declaration for the reader.
+_URL_USERINFO = re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://)[^/?#\s@]+@")
 _QUERY_SECRET = re.compile(
     r"(?i)([?&](?:token|key|api[_-]?key|password|passwd|secret|access[_-]?token)=)"
     r"[^&\s\"']+"
@@ -50,7 +57,7 @@ def _redacted_requirement(text: str) -> str:
     """A dependency string with any embedded credential replaced.
 
     The declaration still names its package, host and path — everything a
-    reader needs to act on the mismatch — with only the secret removed.
+    reader needs to act on the mismatch — with the credential removed.
     """
     redacted = _URL_USERINFO.sub(r"\1<redacted>@", text)
     return _QUERY_SECRET.sub(r"\1<redacted>", redacted)

@@ -3274,8 +3274,10 @@ def test_dependency_declarations_are_redacted_in_reports() -> None:
     # unsafe when it gates a redirect). Asserting the redacted declaration
     # itself is both unambiguous and a stronger claim: the credential is
     # gone, the package, host and path survive, and nothing else moved.
+    # The whole userinfo goes, not the password half: a token is as often
+    # the username as the password, so the redaction is by POSITION.
     assert report["declared"]["runtime"] == [
-        "private @ https://user:<redacted>@example.com/pkg.whl"
+        "private @ https://<redacted>@example.com/pkg.whl"
     ]
 
 
@@ -3550,3 +3552,111 @@ def test_escaped_quotes_inside_inline_values() -> None:
     assert _scan_text("f", '{"' + "password" + '":"' + value + '"}')
     assert _scan_text("f", "password: 'your-password-here'") == []
     assert _scan_text("f", "token_counts: 'object or null'") == []
+
+
+def test_yaml_node_properties_precede_the_credential() -> None:
+    """A YAML anchor or tag stands between a key and its scalar without
+    changing the scalar: `password: !!str "x"` and `password: &a x` store
+    the credential `x`. Every RHS rule stopped at the property and matched
+    nothing, so a tracked YAML file holding a real passphrase behind a tag
+    scanned clean — inline, wrapped and block-scalar alike."""
+    from tools.security.scan_secrets import _scan_text
+    # Built by concatenation: this file is itself scanned by the tree pass.
+    key = "pass" + "word"
+    value = "correct-horse-battery-staple"
+    tagged = [
+        key + ': !!str "' + value + '"',            # tag, quoted
+        key + ": &dbpass " + value,                 # anchor, bare
+        key + ": !!str " + value,                   # tag, bare
+        key + ': &dbpass !!str "' + value + '"',    # both, in YAML's order
+        key + ": &dbpass\n  " + value,              # property, value wraps
+        key + ": !!str |\n  " + value,              # property, block scalar
+    ]
+    for document in tagged:
+        findings = _scan_text("conf.yaml", document)
+        assert len(findings) == 1, (document, findings)
+        assert findings[0]["rule"].endswith("secret"), findings
+
+    # An ALIAS is a reference to another node, not a value — it stays
+    # suppressed exactly as ${VAR} does, and a placeholder behind a tag is
+    # still judged by its value shape (L6), not by the property.
+    assert _scan_text("conf.yaml", key + ": *dbpass") == []
+    assert _scan_text("conf.yaml", key + ': !!str "changeme-please-now"') == []
+
+
+def test_url_username_only_credentials_are_redacted() -> None:
+    """Userinfo is credential material by POSITION. The first redaction
+    matched `user:secret@` and kept the username, so a token used as the
+    whole username (`https://<token>@host/x.whl`) survived into `declared`,
+    and so did a username beside a password."""
+    from tools.security.audit_dependencies import audit
+    value = "correct-horse-battery-staple"
+    shapes = [
+        "private @ https://" + value + "@example.com/pkg.whl",
+        "private @ https://" + value + ":@example.com/pkg.whl",
+        "private @ https://user:" + value + "@example.com/pkg.whl",
+    ]
+    for dependency in shapes:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text(
+                '[project]\nname="x"\nversion="1"\ndependencies = ["'
+                + dependency + '"]\n', encoding="utf-8")
+            expected = root / "expected.json"
+            expected.write_text(
+                json.dumps({"runtime": [], "build_system": [], "optional": {}}),
+                encoding="utf-8")
+            report = audit(root, expected)
+        assert report["state"] == "FAIL"
+        assert value not in json.dumps(report), dependency
+        assert report["declared"]["runtime"] == [
+            "private @ https://<redacted>@example.com/pkg.whl"
+        ], dependency
+
+    # A URL with no userinfo is untouched: redaction is not a blanket
+    # rewrite of every dependency URL.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "pyproject.toml").write_text(
+            '[project]\nname="x"\nversion="1"\n'
+            'dependencies = ["public @ https://example.com/pkg.whl"]\n',
+            encoding="utf-8")
+        expected = root / "expected.json"
+        expected.write_text(
+            json.dumps({"runtime": [], "build_system": [], "optional": {}}),
+            encoding="utf-8")
+        report = audit(root, expected)
+    assert report["declared"]["runtime"] == [
+        "public @ https://example.com/pkg.whl"
+    ]
+
+
+def test_boundary_audit_paths_are_redacted() -> None:
+    """A tracked path can BE a credential. The secret scan has redacted
+    secret-bearing path components since round 24; the boundary audit
+    copied the display path verbatim into every finding and the symlink
+    inventory, and prints them to the CI log — the same defect, one rail
+    late, so both now share the one predicate (L14)."""
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    token = "ghp_" + "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        tools = root / "tools"
+        tools.mkdir()
+        (tools / (token + ".py")).write_text(
+            "import os\nos.system('ls')\n", encoding="utf-8")
+        (tools / "plain.py").write_text("x = 1\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", str(root), "-c", "user.email=a@b", "-c", "user.name=t",
+             "commit", "-qm", "fixture"], check=True)
+        report = audit_boundaries(root)
+
+    assert report["state"] == "FAIL"
+    assert token not in json.dumps(report)
+    paths = [finding["path"] for finding in report["findings"]]
+    assert paths == ["tools/<redacted>"], report["findings"]
+    # The finding still says where to look: the parent component that
+    # carries no credential survives, so the report stays actionable.
+    assert report["findings"][0]["rule"] == "os.system-or-popen"
