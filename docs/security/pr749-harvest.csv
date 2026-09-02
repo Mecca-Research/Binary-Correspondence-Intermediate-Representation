@@ -190,3 +190,7 @@ finding,date,file,title,grade,law
 189,2026-08-28 21:12,scan_secrets.py,Include index-flagged paths in staged-blob scanning,INSTANCE,L15
 190,2026-08-28 21:12,scan_secrets.py,Bound staged blobs before materializing them,INSTANCE,L3
 191,2026-08-28 21:12,scan_secrets.py,Avoid splitting UTF-16 surrogate pairs in the probe,INSTANCE,L5
+192,2026-09-02 11:57,scan_secrets.py,Cap concatenated XZ streams before reprocessing the tail,INSTANCE,L3
+193,2026-09-02 11:57,scan_secrets.py,Recognize escaped TOML multiline delimiters,INSTANCE,L5
+194,2026-09-02 11:57,run_all.py,Keep the registered suite runnable after package installation,NEW-LAW,L21
+195,2026-09-02 11:57,audit_tool_boundaries.py,Audit the staged Python blob instead of only the worktree,INSTANCE,L15

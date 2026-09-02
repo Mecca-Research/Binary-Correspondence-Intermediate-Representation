@@ -16,6 +16,11 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+try:
+    from tools.security.git_index import STAGED_OVERSIZED, staged_blob, staged_divergent
+except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
+    from git_index import STAGED_OVERSIZED, staged_blob, staged_divergent
+
 ROOT = Path(__file__).resolve().parents[2]
 # ".claude" carries tracked developer scripts (digest/skill tooling); a
 # developer-tool boundary policy that skips them audits less than it claims.
@@ -121,6 +126,60 @@ def _is_true(node: ast.AST) -> bool:
     return isinstance(node, ast.Constant) and node.value is True
 
 
+def _boundary_findings(tree: ast.AST, shown: str, rel: str) -> list[dict[str, Any]]:
+    """Every prohibited process-boundary literal in one parsed source.
+
+    One predicate, two callers: the worktree file and the stage-0 blob
+    are the same audit question asked of different bytes.
+    """
+    findings: list[dict[str, Any]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = ""
+            if isinstance(func, ast.Name):
+                name = func.id
+            elif isinstance(func, ast.Attribute):
+                name = func.attr
+            if name in {"system", "popen"} and isinstance(func, ast.Attribute):
+                if isinstance(func.value, ast.Name) and func.value.id == "os":
+                    findings.append({
+                        "path": shown, "line": node.lineno, "rule": "os.system-or-popen",
+                    })
+            if name in SHELL_HELPERS and isinstance(func, ast.Attribute):
+                if isinstance(func.value, ast.Name) and func.value.id == "subprocess":
+                    findings.append({
+                        "path": shown, "line": node.lineno,
+                        "rule": "subprocess-shell-helper",
+                    })
+            if name in {"run", "Popen", "check_output", "check_call", "call"}:
+                if not (
+                    isinstance(func, ast.Attribute)
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == "subprocess"
+                ):
+                    continue
+                keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+                if "shell" in keywords and _is_true(keywords["shell"]):
+                    findings.append({
+                        "path": shown, "line": node.lineno, "rule": "subprocess-shell-true",
+                    })
+                # The command may be the first positional OR the literal
+                # `args=` keyword — subprocess's public parameter name.
+                command = node.args[0] if node.args else keywords.get("args")
+                # An f-string is a string command too: ast.JoinedStr,
+                # not ast.Constant, but a string at the call site.
+                if isinstance(command, ast.JoinedStr) or (
+                    isinstance(command, ast.Constant)
+                    and isinstance(command.value, str)
+                ):
+                    if "/tests/" not in f"/{rel}" and not rel.startswith("bcir/tests/"):
+                        findings.append({
+                            "path": shown, "line": node.lineno, "rule": "subprocess-string-command",
+                        })
+    return findings
+
+
 def audit_boundaries(root: Path) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     symlinks: list[str] = []
@@ -178,50 +237,45 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
                 "rule": "python-parse-error",
             })
             continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                func = node.func
-                name = ""
-                if isinstance(func, ast.Name):
-                    name = func.id
-                elif isinstance(func, ast.Attribute):
-                    name = func.attr
-                if name in {"system", "popen"} and isinstance(func, ast.Attribute):
-                    if isinstance(func.value, ast.Name) and func.value.id == "os":
-                        findings.append({
-                            "path": shown, "line": node.lineno, "rule": "os.system-or-popen",
-                        })
-                if name in SHELL_HELPERS and isinstance(func, ast.Attribute):
-                    if isinstance(func.value, ast.Name) and func.value.id == "subprocess":
-                        findings.append({
-                            "path": shown, "line": node.lineno,
-                            "rule": "subprocess-shell-helper",
-                        })
-                if name in {"run", "Popen", "check_output", "check_call", "call"}:
-                    if not (
-                        isinstance(func, ast.Attribute)
-                        and isinstance(func.value, ast.Name)
-                        and func.value.id == "subprocess"
-                    ):
-                        continue
-                    keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
-                    if "shell" in keywords and _is_true(keywords["shell"]):
-                        findings.append({
-                            "path": shown, "line": node.lineno, "rule": "subprocess-shell-true",
-                        })
-                    # The command may be the first positional OR the literal
-                    # `args=` keyword — subprocess's public parameter name.
-                    command = node.args[0] if node.args else keywords.get("args")
-                    # An f-string is a string command too: ast.JoinedStr,
-                    # not ast.Constant, but a string at the call site.
-                    if isinstance(command, ast.JoinedStr) or (
-                        isinstance(command, ast.Constant)
-                        and isinstance(command.value, str)
-                    ):
-                        if "/tests/" not in f"/{rel}" and not rel.startswith("bcir/tests/"):
-                            findings.append({
-                                "path": shown, "line": node.lineno, "rule": "subprocess-string-command",
-                            })
+        findings.extend(_boundary_findings(tree, shown, rel))
+    # The walk above audited the WORKTREE; the next commit records the
+    # INDEX. A tracked script staged with os.system() and then overwritten
+    # with benign worktree bytes would otherwise pass this rail exactly as
+    # it once passed the secret scan — same defect, same shared predicate.
+    staged = staged_divergent(root) if (root / ".git").exists() else []
+    if staged is None:
+        findings.append({"path": ".", "line": 0, "rule": "staged-discovery-failed"})
+    for rel in staged or ():
+        parts = rel.split("/")
+        if (
+            not rel.lower().endswith(".py")
+            or parts[0] not in TREES
+            or any(part in SKIP_PARTS for part in parts)
+            or _is_generated(tuple(parts))
+        ):
+            continue
+        shown = rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+        shown = f"{shown} (staged)"
+        blob = staged_blob(root, rel, cap=SOURCE_SIZE_CAP)
+        if blob is None:
+            # Divergent per git, but its index object cannot be read (or the
+            # path is index-deleted): not audited, so not clean.
+            findings.append({"path": shown, "line": 0, "rule": "staged-unreadable"})
+            continue
+        if blob is STAGED_OVERSIZED:
+            findings.append({"path": shown, "line": 0, "rule": "file-oversized"})
+            continue
+        scanned += 1
+        try:
+            staged_tree = ast.parse(blob, filename=shown)
+        except (SyntaxError, ValueError) as exc:
+            findings.append({
+                "path": shown,
+                "line": int(getattr(exc, "lineno", 0) or 0),
+                "rule": "python-parse-error",
+            })
+            continue
+        findings.extend(_boundary_findings(staged_tree, shown, rel))
     report = {
         "state": "FAIL" if findings else "PASS",
         "scanned_files": scanned,

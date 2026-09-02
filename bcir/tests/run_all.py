@@ -424,16 +424,47 @@ _TIER_BLURB = {
 }
 
 
-def _collect_tests() -> list[tuple[str, str]]:
+# Top-level trees that live in the REPOSITORY but are not shipped in the
+# wheel (`[tool.setuptools.packages.find] include = ["bcir*"]`). Test
+# modules that import them can only run from a source checkout.
+_REPO_ONLY_TREES = ("tools",)
+
+
+def _is_source_checkout() -> bool:
+    """True when this runner is executing out of the repository itself."""
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.isfile(os.path.join(root, "pyproject.toml")) and all(
+        os.path.isdir(os.path.join(root, tree)) for tree in _REPO_ONLY_TREES
+    )
+
+
+def _collect_tests() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """Import every module and return the flat (module, test) work list, in declared module order
-    then alphabetical test order (so a serial run is byte-identical to the historic behaviour)."""
+    then alphabetical test order (so a serial run is byte-identical to the historic behaviour).
+
+    Also returns the modules that could not be imported because they need a
+    repo-only tree. The wheel ships `bcir.tests.*` but not `tools/`, so in an
+    INSTALLED environment those modules raise `ModuleNotFoundError` during
+    discovery and take the whole suite down before a single test runs. A skip
+    is honest only where the absence is expected: in a source checkout the
+    tree is present, so any import error there is still fatal.
+    """
     pairs: list[tuple[str, str]] = []
+    skipped: list[tuple[str, str]] = []
+    source = _is_source_checkout()
     for modname in _MODULES:
-        mod = importlib.import_module(modname)
+        try:
+            mod = importlib.import_module(modname)
+        except ModuleNotFoundError as exc:
+            missing = (exc.name or "").split(".")[0]
+            if source or missing not in _REPO_ONLY_TREES:
+                raise
+            skipped.append((modname, missing))
+            continue
         for name in sorted(dir(mod)):
             if name.startswith("test_") and callable(getattr(mod, name)):
                 pairs.append((modname, name))
-    return pairs
+    return pairs, skipped
 
 
 def _run_one(pair: tuple[str, str]) -> tuple[str, str, str | None]:
@@ -538,7 +569,14 @@ def main() -> int:
     shard, shards = _resolve_shard()
     print(f"[run_all] tier={tier} — {_TIER_BLURB[tier]}  (jobs={jobs}"
           + (f", shard {shard}/{shards}" if shards > 1 else "") + ")\n")
-    pairs = _collect_tests()                # stable discovery; fork also benefits from the warm imports
+    pairs, skipped = _collect_tests()       # stable discovery; fork also benefits from the warm imports
+    for modname, tree in skipped:
+        # Never a silent thinning: a run that inspects less than the full
+        # registry says so, by name, on every host that does it.
+        print(f"[run_all] SKIP {modname} (needs the repo-only '{tree}/' tree; "
+              "not shipped in the wheel)")
+    if skipped:
+        print()
     total = len(pairs)
     if shards > 1:
         pairs = pairs[shard - 1::shards]
@@ -572,7 +610,12 @@ def main() -> int:
                 _report(*res)
 
     suffix = f" (shard {shard}/{shards} of {total} total)" if shards > 1 else ""
-    print(f"\n{passed} passed, {failed} failed{suffix}")
+    skip_note = f", {len(skipped)} modules skipped" if skipped else ""
+    print(f"\n{passed} passed, {failed} failed{skip_note}{suffix}")
+    if not pairs:
+        # Anti-vacuity: a suite that ran nothing has not passed.
+        print("[run_all] INVALID/VACUOUS: no tests were collected")
+        return 1
     return 1 if failed else 0
 
 

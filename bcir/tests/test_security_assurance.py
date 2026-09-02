@@ -2686,9 +2686,8 @@ def test_staged_blobs_are_bounded_before_materializing() -> None:
     process first, so a highly compressible staged blob could exhaust the
     runner before any post-hoc length check ran. The cap is asked of the
     OBJECT, before a byte is materialized."""
-    from tools.security.scan_secrets import (
-        ARCHIVE_LOGICAL_CAP, _STAGED_OVERSIZED, _staged_blob,
-    )
+    from tools.security.git_index import STAGED_OVERSIZED, staged_blob
+    from tools.security.scan_secrets import ARCHIVE_LOGICAL_CAP
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -2700,7 +2699,7 @@ def test_staged_blobs_are_bounded_before_materializing() -> None:
         big.write_bytes(b"small\n")
         # The witness is that the bytes are never fetched: `git show` is
         # what materializes them, so refusing before it runs IS the bound.
-        import tools.security.scan_secrets as scanner
+        import tools.security.git_index as scanner
 
         original = scanner.subprocess.Popen
 
@@ -2712,7 +2711,7 @@ def test_staged_blobs_are_bounded_before_materializing() -> None:
 
         scanner.subprocess.Popen = _no_materialize  # type: ignore[misc]
         try:
-            assert _staged_blob(root, "big.bin") is _STAGED_OVERSIZED
+            assert staged_blob(root, "big.bin", cap=ARCHIVE_LOGICAL_CAP) is STAGED_OVERSIZED
         finally:
             scanner.subprocess.Popen = original  # type: ignore[misc]
         report = scan_tree(root)
@@ -2741,3 +2740,113 @@ def test_utf16_probe_survives_a_split_surrogate_pair() -> None:
     # Trimming a dangling high surrogate must not turn plain text into a
     # UTF-16 claim.
     assert _utf16_bomless(b"ab" * 4096) is None
+
+
+def test_concatenated_xz_streams_are_bounded() -> None:
+    """Concatenated streams are valid xz, but an unbounded COUNT of them is
+    its own resource: each costs a decompressor and a pass over the
+    remainder, and EMPTY streams advance no output cap at all, so the
+    logical-byte budget never fired. Feeding the whole suffix to each new
+    decompressor made it quadratic on top of that."""
+    import lzma
+    import time
+    from tools.security.scan_secrets import _xz_bounded
+    empty = lzma.compress(b"", format=lzma.FORMAT_XZ)
+    start = time.perf_counter()
+    try:
+        _xz_bounded(empty * 20_000)
+        raise AssertionError("a 20,000-stream file must be refused, not decoded")
+    except ValueError as exc:
+        assert "cap" in str(exc)
+    assert time.perf_counter() - start < 5.0
+    # Legitimate xz is untouched: single, concatenated, and null-padded.
+    plain = b"hello world\n" * 100
+    assert _xz_bounded(lzma.compress(plain, format=lzma.FORMAT_XZ)) == plain
+    first, second = b"first-part\n", b"second-part\n"
+    head = lzma.compress(first, format=lzma.FORMAT_XZ)
+    tail = lzma.compress(second, format=lzma.FORMAT_XZ)
+    assert _xz_bounded(head + tail) == first + second
+    assert _xz_bounded(head + b"\x00" * 8 + tail) == first + second
+
+
+def test_escaped_toml_delimiters_do_not_end_the_value() -> None:
+    """In a TOML basic string a backslash escapes the next character, so an
+    escaped quote followed by two literal ones is part of the value. A raw
+    find() stopped there and inspected only the prefix, while tomllib reads
+    the credential that follows."""
+    import tomllib
+    from tools.security.scan_secrets import _scan_text
+    basic = '"' * 3
+    literal = "'" * 3
+    value = "correct-horse-battery-staple"
+    doc = "password" + " = " + basic + "x\\" + basic + value + basic + "\n"
+    # The oracle: tomllib puts the credential inside the value.
+    assert value in tomllib.loads(doc)["password"]
+    assert [h["line"] for h in _scan_text("c.toml", doc)] == [1]
+    # A literal string has no escape character at all, so its scan stays
+    # literal — the backslash there is data, not an escape.
+    short = "token" + " = " + literal + "a\\" + literal + "\n"
+    assert tomllib.loads(short)["token"] == "a\\"
+    assert _scan_text("c.toml", short) == []
+
+
+def test_registered_suite_survives_missing_repo_only_trees() -> None:
+    """The wheel ships `bcir.tests.*` but not `tools/`, so a registered test
+    module that imports it took the whole suite down during DISCOVERY, before
+    a single test ran. A skip is honest only where absence is expected: in a
+    source checkout the tree is present, so the same import error stays
+    fatal there."""
+    from bcir.tests import run_all
+    assert run_all._is_source_checkout() is True  # this repo, right now
+    sentinel = "bcir.tests._not_a_real_module"
+    real_import = run_all.importlib.import_module
+
+    def _fake(name: str):
+        if name == sentinel:
+            raise ModuleNotFoundError("No module named 'tools'", name="tools")
+        return real_import(name)
+
+    original_modules = run_all._MODULES
+    original_source = run_all._is_source_checkout
+    run_all.importlib.import_module = _fake
+    run_all._MODULES = [sentinel]
+    try:
+        # Installed environment: the module is skipped BY NAME, never silently.
+        run_all._is_source_checkout = lambda: False
+        pairs, skipped = run_all._collect_tests()
+        assert pairs == [] and skipped == [(sentinel, "tools")]
+        # Source checkout: the very same failure is fatal.
+        run_all._is_source_checkout = lambda: True
+        try:
+            run_all._collect_tests()
+            raise AssertionError("a source checkout must not skip an import error")
+        except ModuleNotFoundError:
+            pass
+    finally:
+        run_all.importlib.import_module = real_import
+        run_all._MODULES = original_modules
+        run_all._is_source_checkout = original_source
+    assert run_all._is_source_checkout() is True
+
+
+def test_staged_python_blobs_are_audited() -> None:
+    """The boundary audit read the worktree while the next commit records the
+    index — the same defect the secret scan closed, on the other rail. Both
+    now reconcile through one shared predicate."""
+    from tools.security import audit_tool_boundaries, git_index, scan_secrets
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    # L14: one predicate, not a second copy.
+    assert audit_tool_boundaries.staged_divergent is git_index.staged_divergent
+    assert scan_secrets.staged_divergent is git_index.staged_divergent
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "tools").mkdir()
+        target = root / "tools" / "release.py"
+        target.write_text("import os\nos.system('ls')\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        target.write_text("x = 1\n", encoding="utf-8")
+        report = audit_boundaries(root)
+    assert report["state"] == "FAIL"
+    flagged = [f for f in report["findings"] if f["rule"] == "os.system-or-popen"]
+    assert [f["path"] for f in flagged] == ["tools/release.py (staged)"]

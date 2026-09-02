@@ -71,7 +71,9 @@ Witnesses: `test_xz_dictionary_memory_is_bounded`,
 `test_assignment_matcher_is_linear_time` (a quadratic matcher commits
 CPU the same way a decompressor commits memory),
 `test_staged_blobs_are_bounded_before_materializing` (a compressed
-object commits memory when it is expanded, not when it is listed).
+object commits memory when it is expanded, not when it is listed),
+`test_concatenated_xz_streams_are_bounded` (a stream COUNT is a
+resource: empty streams advance no output cap at all).
 **Port note:** this is the memory-safety law. In Python these failures were
 OOMs; in C the same shapes are allocator abuse and heap corruption. Every
 `malloc` sized from input data is an L3 site.
@@ -105,7 +107,8 @@ Witnesses: `test_credential_shaped_filenames_are_findings`,
 `test_toml_multiline_string_secrets_are_findings`,
 `test_single_line_toml_multiline_secrets_are_findings`,
 `test_bomless_utf16_with_cjk_preamble_is_scanned`,
-`test_utf16_probe_survives_a_split_surrogate_pair`.
+`test_utf16_probe_survives_a_split_surrogate_pair`,
+`test_escaped_toml_delimiters_do_not_end_the_value`.
 **Port note:** format-level knowledge; transfers verbatim to any scanner
 in any language.
 
@@ -225,7 +228,9 @@ Witnesses: `test_nested_build_directories_are_still_audited`,
 `test_staged_secrets_are_scanned` (the INDEX is part of what the
 repository tracks: the next commit records it, not the worktree),
 `test_index_flagged_paths_are_staged_scanned` (an entry the VCS was
-told to stop comparing is one the gate must compare itself).
+told to stop comparing is one the gate must compare itself),
+`test_staged_python_blobs_are_audited` (every rail reconciles, through
+one shared predicate — see L14).
 **Port note:** identical everywhere.
 
 ### L16 — Never green yourself by editing the neighbor
@@ -283,28 +288,56 @@ Witness: the claim-id guard in `mlir/lib/passes/BCIRVerifyPass.cpp`.
 **Port note:** a C++-specific discovery of a universal law — every hash
 map, every tagged union, every "impossible" enum value is an L20 site.
 
+### L21 — A package must contain what it registers
+The shipped artifact is a claim about itself: every test the packaged
+runner registers, every fixture a registered test reads, must either be
+in the package or be a **declared, reported** absence. This repository
+had already learned the rule for data — `pyproject.toml` ships the ASN.1
+sources because "an sdist/wheel without them installs a package whose own
+tests cannot run" — but not for code: four registered test modules import
+the repo-only `tools/` tree, which the wheel does not ship, so discovery
+raised `ModuleNotFoundError` and took the whole suite down before a single
+test executed. A skip is honest only where absence is expected, so the
+runner distinguishes the two environments: in a source checkout the tree
+is present and any import error stays fatal; in an installed environment
+the module is skipped **by name, on stdout**, and a run that collected
+nothing is INVALID/VACUOUS rather than a pass.
+Witness: `test_registered_suite_survives_missing_repo_only_trees`.
+**Port note:** the same law, harder to see in C: an installed library
+whose CTest manifest names build-tree fixtures, a pkg-config file
+pointing at headers the install step never copied, a `make check` that
+passes only in the source directory. The manifest is the promise; the
+install tree is the audit.
+
 ## Campaign classification summary
 
-Every review-thread finding from the campaign (191 threads, rounds 1–33)
+Every review-thread finding from the campaign (195 threads, rounds 1–34)
 is graded under the harvest protocol. The full per-finding
 index is `docs/security/pr749-harvest.csv`; the campaign ledger tracks the
 same data round by round.
 
 | Grade | Findings | Share | Meaning |
 |---|---|---|---|
-| **NEW-LAW** | 19 | **9.9%** | Originated a registry law (L1–L13, L15–L20; L14 emerged from the repetition itself, not one finding) |
-| **INSTANCE** | 133 | **69.6%** | New entry point to a registered law — the law gained a witness |
-| **LOCAL** | 39 | **20.4%** | No transfer value beyond the code touched |
+| **NEW-LAW** | 20 | **10.3%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
+| **INSTANCE** | 136 | **69.7%** | New entry point to a registered law — the law gained a witness |
+| **LOCAL** | 39 | **20.0%** | No transfer value beyond the code touched |
 
 Rounds through 31 were graded retroactively; from round 32 every finding
-is graded at triage. Round 32 (5 findings) and round 33 (4 findings) were
-both zero-NEW-LAW, so the staleness counter stands at **2 of 3**. Round 33
-is the sharper signal: every one of its four findings was a second-order
-probe of round 32's own fixes — the single-line spelling of the multiline
-form, the index flags that suppress the divergence query, the cap the new
-staged read skipped, and the surrogate pair astride the probe's sample
-boundary. A reviewer auditing the previous round's patch rather than the
-gate's contract is the classic late-loop signature.
+is graded at triage. Rounds 32 and 33 were both zero-NEW-LAW, taking the
+staleness counter to 2 of 3 — and round 34 **reset it to 0**, because one
+of its four findings (the packaged runner) established L21, the first law
+in the registry about the shipped artifact rather than a gate's internals.
+
+That reset deserves its caveat, because the harvest protocol is exactly
+gameable here: whether a finding is NEW-LAW depends on whether a registry
+entry is written for it. L21 is claimed on three grounds — it names a
+surface (distribution) no existing law covers, the repository had already
+articulated the same rule independently for data files in
+`pyproject.toml`, and it ports to C/C++ without translation. Read the
+other way — as an instance of L12's "declare the boundary, never leave it
+implicit" — the counter would stand at 3 of 3 and the loop would be
+stale. The other three round-34 findings were unambiguous instances, and
+the loop's overall trend remains a thinning one.
 
 Where the instances concentrated (finding count per law, origin included):
 L5 scannable-data coverage 22 · L3 resource-commit bounds 18 · L1

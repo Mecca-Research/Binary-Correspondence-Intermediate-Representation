@@ -26,8 +26,10 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from tools.security.git_index import STAGED_OVERSIZED, staged_blob, staged_divergent
     from tools.security.proc_bounds import run_bounded
 except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
+    from git_index import STAGED_OVERSIZED, staged_blob, staged_divergent
     from proc_bounds import run_bounded
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -53,6 +55,8 @@ TEXT_SAMPLE = 8192
 ARCHIVE_MEMBER_CAP = 1 << 20
 ARCHIVE_LOGICAL_CAP = 1 << 28  # 256 MiB declared bytes per tracked archive
 XZ_MEMORY_LIMIT = 1 << 27  # 128 MiB: the declared LZMA2 dictionary allocates up front
+XZ_FEED_CHUNK = 1 << 20  # bounded input slice per decompressor step
+XZ_STREAM_CAP = 4096  # concatenated streams; a count is a resource too
 GITLEAKS_TIMEOUT = 300.0  # the opted-in engine walks the whole tree; stalls expire
 GITLEAKS_OUTPUT_CAP = 1 << 20  # per stream; findings are JSON, not payload
 ZIP_SYMLINK_MAX = 4096
@@ -179,111 +183,6 @@ def _git_files(root: Path) -> list[str]:
         item.decode("utf-8", "surrogateescape")
         for item in result.stdout.split(b"\0") if item
     ]
-
-
-def _staged_divergent(root: Path) -> list[str] | None:
-    """Tracked paths whose INDEX blob differs from the worktree copy.
-
-    The tree walk reads worktree bytes, but the next commit records the
-    index: a secret staged and then overwritten with a benign unstaged
-    copy passes a worktree-only scan while still shipping. In a clean
-    checkout (every CI run) this list is empty. None means the
-    divergence question itself could not be answered — a fail-closed
-    finding, never a silent downgrade.
-
-    ``git diff`` alone is not the whole answer: ``--assume-unchanged`` and
-    ``--skip-worktree`` tell git to stop comparing those entries, so a
-    staged secret under either flag reports no divergence while shipping
-    exactly the same. Entries git has been told not to check are precisely
-    the ones this scan must check itself, so they are unioned in."""
-    paths: list[str] = []
-    seen: set[str] = set()
-    try:
-        diffed = subprocess.run(
-            ["git", "-C", str(root), "diff", "--name-only", "-z"],
-            capture_output=True,
-            check=False,
-        )
-        # -v tags every entry: lowercase means assume-unchanged, S/s means
-        # skip-worktree. Both suppress the comparison above.
-        flagged = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-v", "-z"],
-            capture_output=True,
-            check=False,
-        )
-    except OSError:
-        return None
-    if diffed.returncode != 0 or flagged.returncode != 0:
-        return None
-    for item in diffed.stdout.split(b"\0"):
-        if not item:
-            continue
-        rel = item.decode("utf-8", "surrogateescape")
-        if rel not in seen:
-            seen.add(rel)
-            paths.append(rel)
-    for item in flagged.stdout.split(b"\0"):
-        # `<tag><space><path>`: a one-character tag, then the path verbatim.
-        if len(item) < 3 or item[1:2] != b" ":
-            continue
-        tag = item[0:1]
-        if not (tag.islower() or tag in (b"S", b"s")):
-            continue
-        rel = item[2:].decode("utf-8", "surrogateescape")
-        if rel not in seen:
-            seen.add(rel)
-            paths.append(rel)
-    return paths
-
-
-# Sentinel: the index object is real but larger than the inspection
-# budget — a finding, distinct from None (unreadable).
-_STAGED_OVERSIZED = object()
-
-
-def _staged_blob(root: Path, rel: str) -> Any:
-    """The stage-0 index blob for ``rel``, bounded at ingress.
-
-    The cap is asked of the OBJECT before a byte is materialized: a
-    `git show` into `capture_output` expands the whole blob into this
-    process first, so a highly compressible staged object could exhaust
-    the runner well before a post-hoc length check ever ran. Bounds live
-    where the resource commits — here that is `cat-file -s`, then a
-    read of one byte past the cap so an object that lies about its size
-    cannot slip through either."""
-    try:
-        sized = subprocess.run(
-            ["git", "-C", str(root), "cat-file", "-s", f":0:{rel}"],
-            capture_output=True,
-            check=False,
-        )
-    except OSError:
-        return None
-    if sized.returncode != 0:
-        return None
-    try:
-        size = int(sized.stdout.strip())
-    except ValueError:
-        return None
-    if size > ARCHIVE_LOGICAL_CAP:
-        return _STAGED_OVERSIZED
-    try:
-        with subprocess.Popen(
-            ["git", "-C", str(root), "show", f":0:{rel}"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        ) as proc:
-            assert proc.stdout is not None
-            data = proc.stdout.read(ARCHIVE_LOGICAL_CAP + 1)
-            proc.stdout.close()
-            if proc.wait() != 0:
-                return None
-    except OSError:
-        return None
-    if len(data) > ARCHIVE_LOGICAL_CAP:
-        # The object under-reported its size between the two calls.
-        return _STAGED_OVERSIZED
-    return data
 
 
 def _suffix_matches(lower: str, suffixes: frozenset[str]) -> bool:
@@ -516,6 +415,33 @@ TOML_MULTILINE = re.compile(
 )
 
 
+def _multiline_close(text: str, delim: str) -> int:
+    """Index of ``delim`` closing a TOML multiline value in ``text``, or -1.
+
+    A raw ``find`` is not a closing-delimiter test. Inside a BASIC
+    (three-double-quote) string a backslash escapes the next character, so
+    an escaped quote followed by two literal ones is part of the value,
+    not its end — ``tomllib`` reads the credential after it while a raw
+    find stopped short and inspected only the prefix. Literal
+    (three-single-quote) strings have no escape character at all, so their
+    scan stays literal. Walking left to right past escaped characters is
+    exact for this construct rather than another subset reader: the escape
+    is the only ambiguity the grammar admits here.
+    """
+    if delim[0] == "'":
+        return text.find(delim)
+    index = 0
+    limit = len(text)
+    while index < limit:
+        if text[index] == "\\":
+            index += 2          # the escaped character closes nothing
+            continue
+        if text.startswith(delim, index):
+            return index
+        index += 1
+    return -1
+
+
 def _toml_multiline_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
     """Findings for credentials held in TOML multiline strings under a
     secret-named key. The value runs to the closing delimiter and is
@@ -528,7 +454,7 @@ def _toml_multiline_findings(path: str, lines: list[str]) -> list[dict[str, Any]
             continue
         delim = match.group("delim")
         rest = match.group("rest")
-        closing = rest.find(delim)
+        closing = _multiline_close(rest, delim)
         if closing >= 0:
             # Opened AND closed on one line. This is NOT the inline rule's
             # territory: its quoted branch reads one quote, then demands 12+
@@ -547,7 +473,7 @@ def _toml_multiline_findings(path: str, lines: list[str]) -> list[dict[str, Any]
             continue
         collected = [rest] if rest else []
         for follower in lines[index + 1:]:
-            closing = follower.find(delim)
+            closing = _multiline_close(follower, delim)
             if closing >= 0:
                 collected.append(follower[:closing])
                 break
@@ -679,24 +605,47 @@ def _xz_bounded(data: bytes) -> bytes:
     closed the same way; gzip/bz2 need none (their windows are fixed)."""
     chunks: list[bytes] = []
     total = 0
-    feed = data
+    view = memoryview(data)
+    offset = 0
+    streams = 0
     try:
-        while feed:
+        while offset < len(view):
+            # Inter-stream null padding is not a stream; skip it in place.
+            while offset < len(view) and view[offset] == 0:
+                offset += 1
+            if offset >= len(view):
+                break
+            streams += 1
+            if streams > XZ_STREAM_CAP:
+                # Concatenated streams are valid xz, but an unbounded COUNT
+                # of them is its own resource: each one costs a decompressor
+                # and a pass over the remainder, and empty streams advance
+                # no output cap at all, so a 2.5 MiB file of 32-byte streams
+                # already burned 8 seconds and the ingress cap allowed ~8M
+                # of them. The count is bounded like every other budget.
+                raise ValueError("archive-logical-cap")
             decomp = lzma.LZMADecompressor(memlimit=XZ_MEMORY_LIMIT)
             while not decomp.eof:
-                chunk = decomp.decompress(feed, max_length=1 << 20)
-                feed = b""
-                if not chunk and not decomp.eof:
-                    raise EOFError("truncated xz stream")
+                if decomp.needs_input:
+                    if offset >= len(view):
+                        raise EOFError("truncated xz stream")
+                    # Feed a BOUNDED slice, never the whole remainder: the
+                    # decompressor hands back what it did not consume, so
+                    # feeding the suffix made every stream re-copy the tail
+                    # after it — quadratic in the stream count.
+                    block = bytes(view[offset:offset + XZ_FEED_CHUNK])
+                    offset += len(block)
+                else:
+                    block = b""
+                chunk = decomp.decompress(block, max_length=1 << 20)
                 total += len(chunk)
                 if total > ARCHIVE_LOGICAL_CAP:
                     raise ValueError("archive-logical-cap")
                 if chunk:
                     chunks.append(chunk)
-            # Concatenated streams are valid xz (and what LZMAFile reads);
-            # inter-stream null padding is stripped, trailing garbage lands
-            # in a fresh decompressor and fails as corrupt.
-            feed = decomp.unused_data.lstrip(b"\x00")
+            # Only the tail of the LAST fed block can be unconsumed, so this
+            # rewind is bounded by XZ_FEED_CHUNK rather than by the file.
+            offset -= len(decomp.unused_data)
     except lzma.LZMAError as exc:
         if "limit" in str(exc).lower():
             raise ValueError("archive-logical-cap") from exc
@@ -1046,7 +995,7 @@ def scan_tree(root: Path) -> dict[str, Any]:
     # through the same classification, under the same caps — otherwise a
     # staged secret hides behind a benign unstaged overwrite while the
     # mandated before-commit validation reports PASS.
-    staged = _staged_divergent(root)
+    staged = staged_divergent(root)
     if staged is None:
         report["findings"].append({
             "path": ".", "line": 0, "rule": "staged-discovery-failed",
@@ -1062,7 +1011,7 @@ def scan_tree(root: Path) -> dict[str, Any]:
             continue
         shown = _redacted_path(rel) if _scan_text(rel, rel) else rel
         display = f"{shown} (staged)"
-        data = _staged_blob(root, rel)
+        data = staged_blob(root, rel, cap=ARCHIVE_LOGICAL_CAP)
         if data is None:
             # git reported the path divergent but its index blob cannot be
             # read (or the path is index-deleted): not inspected, so not
@@ -1072,7 +1021,7 @@ def scan_tree(root: Path) -> dict[str, Any]:
                 "fingerprint": _fingerprint("staged-unreadable"),
             })
             continue
-        if data is _STAGED_OVERSIZED:
+        if data is STAGED_OVERSIZED:
             # Refused at ingress by `cat-file -s`, before any bytes were
             # materialized — a finding, never an OOM of the required scan.
             report["findings"].append({
