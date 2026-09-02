@@ -55,7 +55,11 @@ oracle under test fail like anything else),
 `test_malformed_verifier_diagnostics_are_a_disagreement` (a verifier's
 RETURN value is input too, not only what it raises),
 `test_staged_archive_spool_failure_is_a_finding` (the temporary file a
-gate writes is I/O like any other).
+gate writes is I/O like any other),
+`test_compiled_fixture_io_failure_is_a_verdict` (a guard on BUILDING the
+fixture is not a guard on WRITING it),
+`test_inventory_depth_bomb_is_a_verdict` (every token valid and the
+parser still bottoms out — a size cap is no defence against depth).
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -92,7 +96,10 @@ the read is the commitment),
 `test_secret_scan_worktree_read_is_bounded` (the same bound, the third
 rail to receive it),
 `test_expected_inventory_is_bounded_at_ingress` (a gate's own reference
-data allocates like any other input).
+data allocates like any other input),
+`test_concatenated_compressed_streams_are_counted` (the same stream-COUNT
+bound the xz rail got, on gzip and bzip2 — a budget that measures the
+wrong resource is not a budget).
 **Port note:** this is the memory-safety law. In Python these failures were
 OOMs; in C the same shapes are allocator abuse and heap corruption. Every
 `malloc` sized from input data is an L3 site.
@@ -143,7 +150,11 @@ value only if the grammar forgets the escape),
 `test_multilingual_bomless_utf32_is_scanned` (NUL density is an
 ASCII-shaped assumption; decode validity is not),
 `test_yaml_node_properties_precede_the_credential` (an anchor or tag NAMES
-the node; the value behind it is the same credential).
+the node; the value behind it is the same credential),
+`test_yaml_explicit_mapping_keys_are_scanned` (`? key` / `: value` is the
+same mapping across two lines),
+`test_folded_yaml_quoted_scalars_are_scanned` (a quoted scalar folds; the
+key half has no closing quote and the value half has no key).
 **Port note:** format-level knowledge; transfers verbatim to any scanner
 in any language.
 
@@ -199,6 +210,9 @@ can satisfy by accident is not an accounting (a blanket exception tuple
 counted unchecked indexing as graceful rejection). An opted-in engine whose
 failure is metadata is theater — its verdict gates.
 Witnesses: `test_decoder_watchdog_cannot_be_swallowed`,
+`test_verifier_watchdog_cannot_be_swallowed` (the differential's watchdog
+derived from `Exception` for eleven rounds after the decoder's did not —
+one law, two rails, one spelling, see L14),
 `test_implementation_errors_are_never_graceful`,
 `test_gitleaks_nonzero_fails_the_scan`.
 **Port note:** in C the watchdog is a separate process; in-process signals
@@ -242,6 +256,10 @@ never left implicit. Declared boundaries are honored in review instead of
 re-litigated.
 Witnesses: `test_uppercase_python_suffix_is_audited`,
 `test_reviewer_put_down_kills_the_tree_on_windows`,
+`test_staged_symlink_inputs_are_refused_not_dereferenced` (the dependency
+rail's BOTH audited inputs, two rounds after the scan and boundary rails),
+`test_staged_inventory_decodes_strictly` (a lenient decode on one path and
+a strict one on its sibling is the gate disagreeing with itself),
 `test_staged_symlinks_are_recorded_not_parsed` (the index path and the
 worktree path of one gate are two paths, and must agree),
 `test_staged_symlinks_are_not_classified_by_suffix` (the same divergence
@@ -366,7 +384,18 @@ runner distinguishes the two environments: in a source checkout the tree
 is present and any import error stays fatal; in an installed environment
 the module is skipped **by name, on stdout**, and a run that collected
 nothing is INVALID/VACUOUS rather than a pass.
+**A skip is where a shipping defect hides.** An exclusion converts "the
+wheel is broken" into "this module does not run here", and the two read
+identically in a green run. `bcir/kbcir/tables/*.json` is library data —
+`tile_prior`, `bayescal` and `microbench` read it to apply a measured
+profile — so an installed wheel without it raised `cannot read calibrated
+profile` from `close_loop()` itself, for every user, not only from a test.
+The registry had absorbed that as one more repo-only module, taking six
+runnable tests with it. Read every entry as a question about the PACKAGE
+first and the test second.
 Witnesses: `test_registered_suite_survives_missing_repo_only_trees`,
+`test_packaged_library_data_is_registered_for_shipping` (the exclusion was
+masking a defect in the shipped library, not classifying a test),
 `test_repo_only_modules_are_classified_before_import` (import failure
 catches only the modules that import a missing tree; the ones that
 import cleanly and then read a missing asset must be declared),
@@ -381,16 +410,16 @@ install tree is the audit.
 
 ## Campaign classification summary
 
-Every review-thread finding from the campaign (227 threads, rounds 1–40)
+Every review-thread finding from the campaign (236 threads, rounds 1–41)
 is graded under the harvest protocol. The full per-finding
 index is `docs/security/pr749-harvest.csv`; the campaign ledger tracks the
 same data round by round.
 
 | Grade | Findings | Share | Meaning |
 |---|---|---|---|
-| **NEW-LAW** | 20 | **8.8%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
-| **INSTANCE** | 168 | **74.0%** | New entry point to a registered law — the law gained a witness |
-| **LOCAL** | 39 | **17.2%** | No transfer value beyond the code touched |
+| **NEW-LAW** | 20 | **8.5%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
+| **INSTANCE** | 177 | **75.0%** | New entry point to a registered law — the law gained a witness |
+| **LOCAL** | 39 | **16.5%** | No transfer value beyond the code touched |
 
 Rounds through 31 were graded retroactively; from round 32 every finding
 is graded at triage. Rounds 32 and 33 were both zero-NEW-LAW, taking the
@@ -508,9 +537,56 @@ it redacts now. That is the same leak reaching its third round — which is
 the clearest possible statement that the loop is finishing its own work
 rather than opening new ground.
 
+Round 41 (nine findings, all instances) is the seventh consecutive
+zero-NEW-LAW round, and the largest since round 38. It is also the round
+that most clearly separates *what the loop finds* from *what the fix turns
+out to be* — because on its best finding the two were different laws.
+
+Codex reported that the packaged runner excluded the whole
+`test_calibrator` module although six of its seven tests need no
+repository asset, and proposed narrowing the classification. Running the
+module against the staged wheel tree confirmed the count exactly — and
+named the asset: `bcir/kbcir/tables/x86_64_reference.json`. That file is
+not a test fixture. `tile_prior`, `bayescal` and `microbench` read it to
+apply a measured profile, `package-data` shipped the ASN.1 sources beside
+it but not the tables, and so **every installed wheel raised `cannot read
+calibrated profile` from `close_loop()` itself** — a library defect, for
+every user, that had been sitting inside a test-runner exclusion. The fix
+is to ship the table (L21), not to narrow the skip; the skip then
+dissolves on its own. The corollary is now written into L21: *a skip is
+where a shipping defect hides*, because an exclusion turns "the wheel is
+broken" into "this module does not run here" and the two read identically
+in a green run.
+
+The rest divide into three familiar shapes. **YAML keeps yielding
+spellings**: explicit mapping keys (`? key` / `: value`) and folded
+double-quoted scalars join round 40's node properties — three rounds, one
+law, one format, each a production of the same grammar that the rule set
+had not enumerated. That is the strongest argument yet for how the C port
+should begin: from the format's productions, not from the accumulated
+regexes. **The staged rail is still catching up to the worktree rail**:
+neither audited input checked `staged_mode`, so a staged symlink's TARGET
+was parsed as metadata, and the staged inventory decoded with `replace`
+where every sibling read decodes strictly — a gate that disagrees with
+itself across two paths (L12), for the third and fourth time. And **two
+budgets measured the wrong resource or nothing at all**: concatenated
+gzip/bzip2 members advance the logical output cap by zero, exactly as
+concatenated xz streams did before round 34 fixed only xz (L3, L14); and a
+`RecursionError` from a 40 KiB depth bomb escaped before any report
+existed, where the review parser has caught the same shape since round 30
+(L1, L14).
+
+The remaining finding is the campaign's cleanest L9: the differential's
+`_VerifyHang` derived from `Exception` while the decoder campaign's
+`_DecodeHang` has derived from `BaseException` since round 30 — so a
+verifier wrapping its work in `except Exception` caught its own watchdog,
+returned an ordinary verdict, and was accepted as having answered in time,
+with the one-shot timer already spent. Eleven rounds, one law, two rails,
+two spellings.
+
 Where the instances concentrated (finding count per law, origin included):
-L5 scannable-data coverage 37 · L3 resource-commit bounds 24 · L1
-every-exit-a-verdict 19 · L11 witness/law pairing 13 · L15 discovery
+L5 scannable-data coverage 39 · L3 resource-commit bounds 25 · L1
+every-exit-a-verdict 21 · L11 witness/law pairing 13 · L15 discovery
 reconciliation 12 · L8 process trees/pipes 10 · L10 rejection contracts 9 ·
 L18 heuristic scope 9 · L7 report-as-egress 8 · L2 gate-can-fire 7 · L17
 names-are-paths 7 — the remaining laws
@@ -519,9 +595,9 @@ hardest into C (allocation bounds and data-coverage claims), which is the
 campaign's transfer thesis in one line.
 
 Where the noise concentrated: the deleted Python 3.10 TOML fallback
-absorbed 21 findings (9.3% of the entire campaign — the single largest
+absorbed 21 findings (8.9% of the entire campaign — the single largest
 family, all LOCAL, resolved by raising the floor to 3.11 per L4), and the
 rolled-back alias/dataflow tracking in the boundary audit absorbed 13 more
-(5.7%, resolved by declaring scope per L18). Those two structural changes
+(5.5%, resolved by declaring scope per L18). Those two structural changes
 retire **87% of all LOCAL findings** — the loop's zero-yield surface —
 which is what steers future review rounds toward NEW-LAW territory.

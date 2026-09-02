@@ -473,7 +473,6 @@ _REPO_ONLY_MODULES = frozenset({
     "bcir.tests.test_c_runtime",
     "bcir.tests.test_c_xer",
     "bcir.tests.test_calibloop",
-    "bcir.tests.test_calibrator",
     "bcir.tests.test_cfront",
     "bcir.tests.test_cfront_link",
     "bcir.tests.test_cfront_roundtrip",

@@ -57,8 +57,12 @@ TEXT_SAMPLE = 8192
 ARCHIVE_MEMBER_CAP = 1 << 20
 ARCHIVE_LOGICAL_CAP = 1 << 28  # 256 MiB declared bytes per tracked archive
 XZ_MEMORY_LIMIT = 1 << 27  # 128 MiB: the declared LZMA2 dictionary allocates up front
-XZ_FEED_CHUNK = 1 << 20  # bounded input slice per decompressor step
-XZ_STREAM_CAP = 4096  # concatenated streams; a count is a resource too
+FEED_CHUNK = 1 << 20  # bounded input slice per decompressor step
+# Concatenated streams; a COUNT is a resource too. Not xz-specific: gzip
+# and bzip2 concatenate the same way, and their high-level readers walk
+# every member before returning an empty chunk, so the LOGICAL cap never
+# advances on empty ones and cannot bound them either.
+STREAM_CAP = 4096
 GITLEAKS_TIMEOUT = 300.0  # the opted-in engine walks the whole tree; stalls expire
 GITLEAKS_OUTPUT_CAP = 1 << 20  # per stream; findings are JSON, not payload
 ZIP_SYMLINK_MAX = 4096
@@ -578,6 +582,99 @@ def _multiline_close(text: str, delim: str) -> int:
     return -1
 
 
+# YAML's EXPLICIT mapping key: `? key` on one line, `: value` on the next.
+# Every other rule here wants the key and its delimiter on one physical
+# line, so this valid spelling of the same mapping was invisible — the
+# loaded document holds the credential under the same key either way.
+EXPLICIT_KEY = re.compile(
+    r"(?i)^\s*\?[ \t]+(?:(?:\"(?:[^\"\\]|\\.)*\"|'[^']*'|[A-Za-z0-9_-]+)\s*\.\s*)*"
+    r"['\"]?(?:[A-Za-z0-9]+[_-])*"
+    r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
+    r"['\"]?[ \t]*$"
+)
+EXPLICIT_VALUE = re.compile(
+    r"^\s*:[ \t]*" + YAML_NODE_PROPS + r"(?P<value>.*)$"
+)
+
+
+def _explicit_key_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
+    """Findings for credentials under a YAML explicit mapping key."""
+    findings: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        if not EXPLICIT_KEY.match(line):
+            continue
+        for follower in lines[index + 1:]:
+            if not follower.strip():
+                continue
+            match = EXPLICIT_VALUE.match(follower)
+            if not match:
+                # The next node is not this key's value entry, so this key
+                # has no value here to judge.
+                break
+            value = match.group("value").strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            finding = _continuation_finding(path, index, value)
+            if finding:
+                findings.append(finding)
+            break
+    return findings
+
+
+# A YAML double-quoted scalar may FOLD across lines: a line break inside
+# the quotes becomes a space, and a trailing backslash suppresses even
+# that. Read one physical line at a time, the key has no closing quote and
+# the continuation has no key, so neither half is credential-shaped and no
+# block or wrapped collector applies — while a loader resolves the two
+# halves into one credential.
+FOLDED_KEY = re.compile(
+    r"(?i)^\s*(?:-\s+)?(?:(?:\"(?:[^\"\\]|\\.)*\"|'[^']*'|[A-Za-z0-9_-]+)\s*\.\s*)*"
+    r"['\"]?(?:[A-Za-z0-9]+[_-])*"
+    r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
+    r"['\"]?\s*:\s*" + YAML_NODE_PROPS + r"\"(?P<rest>.*)$"
+)
+
+
+def _folded_scalar_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
+    """Findings for credentials in a folded YAML double-quoted scalar."""
+    findings: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        match = FOLDED_KEY.match(line)
+        if not match:
+            continue
+        rest = match.group("rest")
+        if _multiline_close(rest, "\"") >= 0:
+            # The scalar closes on its own line: inline territory, and the
+            # assignment rule has already judged it.
+            continue
+        segments = [rest]
+        closed = False
+        for follower in lines[index + 1:]:
+            stripped = follower.strip()
+            at = _multiline_close(stripped, "\"")
+            if at >= 0:
+                segments.append(stripped[:at])
+                closed = True
+                break
+            segments.append(stripped)
+        if not closed:
+            # An unterminated scalar is not a value. Refusing to guess is
+            # what keeps this from inventing findings out of broken YAML.
+            continue
+        value = segments[0]
+        for segment in segments[1:]:
+            if value.endswith("\\"):
+                value = value[:-1] + segment    # escaped break: no space
+            elif value:
+                value = f"{value} {segment}"    # a folded break IS a space
+            else:
+                value = segment
+        finding = _continuation_finding(path, index, value)
+        if finding:
+            findings.append(finding)
+    return findings
+
+
 def _toml_multiline_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
     """Findings for credentials held in TOML multiline strings under a
     secret-named key. The value runs to the closing delimiter and is
@@ -652,6 +749,8 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
     findings.extend(_block_scalar_findings(path, shadow))
     findings.extend(_toml_multiline_findings(path, shadow))
     findings.extend(_wrapped_value_findings(path, shadow))
+    findings.extend(_explicit_key_findings(path, shadow))
+    findings.extend(_folded_scalar_findings(path, shadow))
     for number, line in enumerate(text.splitlines(), 1):
         if "\\" in line:
             # Cheap gate: only a line carrying a backslash can carry an
@@ -726,23 +825,61 @@ def _decompress_bounded(data: bytes) -> bytes:
         return data
     if kind == "xz":
         return _xz_bounded(data)
+    return _members_bounded(data, kind)
+
+
+def _members_bounded(data: bytes, kind: str) -> bytes:
+    """Concatenated gzip/bzip2 members under a stream COUNT bound.
+
+    `GzipFile`/`BZ2File` decode concatenated members transparently, which
+    reads correctly and bounds nothing: 50k valid EMPTY members fit in a
+    megabyte, every one costs a decompressor and a pass, and not one of
+    them advances ``ARCHIVE_LOGICAL_CAP`` — so the only budget in the loop
+    never moved and the ingress allowance permitted millions. Counting the
+    members means driving the incremental decompressors directly, exactly
+    as the xz rail already does (L14), with the same bounded feed slice so
+    the walk stays linear in the input rather than quadratic in the count.
+    """
     if kind == "gzip":
-        import gzip
-        stream: Any = gzip.GzipFile(fileobj=io.BytesIO(data))
+        import zlib
+        new = lambda: zlib.decompressobj(16 + zlib.MAX_WBITS)  # noqa: E731
     else:
         import bz2
-        stream = bz2.BZ2File(io.BytesIO(data))
+        new = bz2.BZ2Decompressor
     chunks: list[bytes] = []
     total = 0
-    with stream:
-        while True:
-            chunk = stream.read(1 << 20)
-            if not chunk:
-                break
+    view = memoryview(data)
+    offset = 0
+    streams = 0
+    while offset < len(view):
+        streams += 1
+        if streams > STREAM_CAP:
+            raise ValueError("archive-logical-cap")
+        decomp: Any = new()
+        pending = b""
+        while not decomp.eof:
+            if pending:
+                block, pending = pending, b""
+            elif getattr(decomp, "needs_input", True):
+                if offset >= len(view):
+                    raise EOFError(f"truncated {kind} stream")
+                block = bytes(view[offset:offset + FEED_CHUNK])
+                offset += len(block)
+            else:
+                block = b""
+            chunk = decomp.decompress(block, 1 << 20)
+            # zlib reports its unconsumed input here; bz2 and lzma report
+            # it through needs_input. Carrying it forward keeps every fed
+            # byte accounted for exactly once against `offset`.
+            pending = getattr(decomp, "unconsumed_tail", b"")
             total += len(chunk)
             if total > ARCHIVE_LOGICAL_CAP:
                 raise ValueError("archive-logical-cap")
-            chunks.append(chunk)
+            if chunk:
+                chunks.append(chunk)
+        # Only the tail of what was fed can be unused, so this rewind is
+        # bounded by FEED_CHUNK rather than by the file.
+        offset -= len(decomp.unused_data)
     return b"".join(chunks)
 
 
@@ -765,7 +902,7 @@ def _xz_bounded(data: bytes) -> bytes:
             if offset >= len(view):
                 break
             streams += 1
-            if streams > XZ_STREAM_CAP:
+            if streams > STREAM_CAP:
                 # Concatenated streams are valid xz, but an unbounded COUNT
                 # of them is its own resource: each one costs a decompressor
                 # and a pass over the remainder, and empty streams advance
@@ -782,7 +919,7 @@ def _xz_bounded(data: bytes) -> bytes:
                     # decompressor hands back what it did not consume, so
                     # feeding the suffix made every stream re-copy the tail
                     # after it — quadratic in the stream count.
-                    block = bytes(view[offset:offset + XZ_FEED_CHUNK])
+                    block = bytes(view[offset:offset + FEED_CHUNK])
                     offset += len(block)
                 else:
                     block = b""
@@ -793,7 +930,7 @@ def _xz_bounded(data: bytes) -> bytes:
                 if chunk:
                     chunks.append(chunk)
             # Only the tail of the LAST fed block can be unconsumed, so this
-            # rewind is bounded by XZ_FEED_CHUNK rather than by the file.
+            # rewind is bounded by FEED_CHUNK rather than by the file.
             offset -= len(decomp.unused_data)
     except lzma.LZMAError as exc:
         if "limit" in str(exc).lower():

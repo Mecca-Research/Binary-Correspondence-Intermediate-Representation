@@ -226,3 +226,12 @@ finding,date,file,title,grade,law
 225,2026-09-02 21:24,scan_secrets.py,Step over YAML node properties before the value rules,INSTANCE,L5
 226,2026-09-02 21:24,audit_dependencies.py,Redact all URL userinfo not only the password half,INSTANCE,L7
 227,2026-09-02 21:24,audit_tool_boundaries.py,Redact credential-shaped paths on the boundary rail,INSTANCE,L14
+228,2026-09-02 23:40,scan_secrets.py,Scan YAML explicit mapping keys,INSTANCE,L5
+229,2026-09-02 23:40,audit_dependencies.py,Refuse staged symlink metadata and inventory blobs,INSTANCE,L12
+230,2026-09-02 23:40,audit_dependencies.py,Decode the staged inventory strictly like every sibling read,INSTANCE,L12
+231,2026-09-02 23:40,pyproject.toml,Ship the calibrated tables the library itself reads,INSTANCE,L21
+232,2026-09-02 23:40,run_malformed_differential.py,Make the verifier watchdog unswallowable,INSTANCE,L9
+233,2026-09-02 23:40,run_malformed_differential.py,Convert compiled-fixture IO failures into a verdict,INSTANCE,L1
+234,2026-09-02 23:40,scan_secrets.py,Bound concatenated gzip and bzip2 stream counts,INSTANCE,L3
+235,2026-09-02 23:40,scan_secrets.py,Scan folded YAML double-quoted scalars,INSTANCE,L5
+236,2026-09-02 23:40,audit_dependencies.py,Convert inventory parser recursion into a verdict,INSTANCE,L1

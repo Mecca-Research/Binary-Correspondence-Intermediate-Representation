@@ -19,10 +19,14 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from tools.security.git_index import STAGED_OVERSIZED, staged_blob, staged_divergent
+    from tools.security.git_index import (
+        STAGED_OVERSIZED, staged_blob, staged_divergent, staged_mode,
+    )
     from tools.security.proc_bounds import run_bounded
 except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
-    from git_index import STAGED_OVERSIZED, staged_blob, staged_divergent
+    from git_index import (
+        STAGED_OVERSIZED, staged_blob, staged_divergent, staged_mode,
+    )
     from proc_bounds import run_bounded
 
 import tomllib
@@ -239,7 +243,14 @@ def _expected_inventory(expected_path: Path) -> dict[str, Any] | None:
 def _inventory_from_text(raw: str) -> dict[str, Any] | None:
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
+        # RecursionError, not just malformed JSON: every token can be valid
+        # and the payload still bottom out the parser -- 20k nested arrays
+        # is ~40 KiB, well inside the ingress cap, so a size bound is no
+        # defence. It escaped before any report existed, taking --json-out
+        # with it. Unreadable is a VERDICT this gate already knows how to
+        # report (L1), and the review parser has caught this since R30 --
+        # one predicate, both parsers (L14).
         return None
     return _inventory_shape(data)
 
@@ -298,6 +309,18 @@ def _staged_inventory_mismatches(
     key = str(rel).replace("\\", "/")
     if key not in divergent:
         return []
+    if staged_mode(root, key) == "120000":
+        # The index entry is a SYMLINK: its blob is a TARGET PATH, not
+        # inventory JSON. Parsing it audits whatever that path names on
+        # this host -- and a target whose text happens to be matching JSON
+        # would pass here while a clean checkout of the same commit takes
+        # the non-regular-file branch and fails. Never dereference an
+        # index symlink (L12); the scan and boundary rails already refuse.
+        return [{
+            "field": "staged-inventory",
+            "declared": "symlink",
+            "expected": "a regular-file staged inventory",
+        }]
     blob = staged_blob(root, key, cap=INVENTORY_SIZE_CAP)
     if blob is None or blob is STAGED_OVERSIZED:
         return [{
@@ -305,7 +328,20 @@ def _staged_inventory_mismatches(
             "declared": "unreadable" if blob is None else "oversized",
             "expected": "readable staged inventory within the ingress cap",
         }]
-    staged = _inventory_from_text(blob.decode("utf-8", "replace"))
+    try:
+        # STRICT, exactly as the worktree read and the staged pyproject
+        # read already are. A replacement decode turns an invalid byte into
+        # U+FFFD, so a staged inventory that CI refuses to decode could
+        # match a worktree copy carrying the replacement character and pass
+        # locally -- the gate disagreeing with itself across two paths (L12).
+        text = blob.decode("utf-8")
+    except UnicodeDecodeError:
+        return [{
+            "field": "staged-inventory",
+            "declared": "not-utf-8",
+            "expected": "decodable staged inventory",
+        }]
+    staged = _inventory_from_text(text)
     if staged is None:
         return [{
             "field": "staged-inventory",
@@ -342,6 +378,16 @@ def _staged_mismatches(root: Path, expected: dict[str, Any]) -> list[dict[str, A
         }]
     if "pyproject.toml" not in divergent:
         return []
+    if staged_mode(root, "pyproject.toml") == "120000":
+        # Same refusal as the staged inventory above: a symlink's blob is
+        # its target path, and parse_pyproject() rejects a non-regular file
+        # in the worktree, so parsing the target here made the local audit
+        # PASS on a commit whose clean checkout FAILS (L12).
+        return [{
+            "field": "staged-pyproject",
+            "declared": "symlink",
+            "expected": "regular-file staged metadata",
+        }]
     blob = staged_blob(root, "pyproject.toml", cap=PYPROJECT_SIZE_CAP)
     if blob is None or blob is STAGED_OVERSIZED:
         return [{

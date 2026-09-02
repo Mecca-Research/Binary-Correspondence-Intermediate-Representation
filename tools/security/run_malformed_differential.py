@@ -36,8 +36,18 @@ VERIFY_OUTPUT_CAP = 1 << 20  # per stream; a verifier writes diagnostics, not pa
 COMPILED_VERIFY_TIMEOUT = 20.0  # the wall bound the python rail mirrors
 
 
-class _VerifyHang(Exception):
-    """Raised by the watchdog when a python-rail probe exceeds its bound."""
+class _VerifyHang(BaseException):
+    """Raised by the watchdog when a python-rail probe exceeds its bound.
+
+    BaseException, deliberately, and for the same reason the decoder
+    campaign's ``_DecodeHang`` is: the SUBJECT of this bound is a
+    verifier, and a verifier that wraps its work in ``except Exception``
+    would catch the watchdog as ordinary control flow, return a normal
+    verdict, and be accepted as though it had answered in time. The
+    one-shot timer has already fired by then, so a probe that resumes
+    hangs forever with no bound left to fire. An instrument the subject
+    can swallow is not a bound (L9); the two rails now spell it the
+    same way (L14)."""
 
 
 def _bounded_verify(probe: Callable[[], Any]) -> Any:
@@ -222,19 +232,31 @@ def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
     opt = find_bcir_opt(root)
     if not opt:
         return {"state": "UNAVAILABLE/SKIPPED", "reason": "bcir-opt not found"}
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "case.mlir"
-        path.write_text(text, encoding="utf-8")
+    # Materializing the case is part of running it. The fixture-CONSTRUCTION
+    # guard upstream covers building the module; this is the write that
+    # commits it to disk, and an unavailable or full TMPDIR raised here
+    # escaped run_differential() entirely — no structured failure, and no
+    # --json-out artifact for the very run that needed one (L1).
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "case.mlir"
+            path.write_text(text, encoding="utf-8")
         # The shared bounded runner, not a local Popen: BCIR_OPT may name a
         # wrapper, and a helper that inherits the pipes must not outlive the
         # bound. It gives this rail its own session, per-stream byte
         # budgets, a process-TREE put-down, and a held-pipes signal — all
         # of which a direct kill plus fixed reader joins could not provide.
-        outcome = run_bounded(
-            [opt, "-bcir-verify", str(path)],
-            timeout=COMPILED_VERIFY_TIMEOUT,
-            cap=VERIFY_OUTPUT_CAP,
-        )
+            outcome = run_bounded(
+                [opt, "-bcir-verify", str(path)],
+                timeout=COMPILED_VERIFY_TIMEOUT,
+                cap=VERIFY_OUTPUT_CAP,
+            )
+    except OSError as exc:
+        return {
+            "state": "FAIL",
+            "rejected": False,
+            "reason": f"compiled fixture io failed: {exc}",
+        }
     if not outcome["launched"]:
         return {
             "state": "FAIL",

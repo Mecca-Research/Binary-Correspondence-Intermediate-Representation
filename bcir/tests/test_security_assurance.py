@@ -3660,3 +3660,229 @@ def test_boundary_audit_paths_are_redacted() -> None:
     # The finding still says where to look: the parent component that
     # carries no credential survives, so the report stays actionable.
     assert report["findings"][0]["rule"] == "os.system-or-popen"
+
+
+def test_yaml_explicit_mapping_keys_are_scanned() -> None:
+    """YAML's explicit-key form puts `? key` on one line and `: value` on
+    the next. Every rule wanted both on one physical line, so this valid
+    spelling of the same mapping scanned clean while a loader resolves it
+    to the identical credential."""
+    from tools.security.scan_secrets import _scan_text
+    key = "pass" + "word"
+    value = "correct-horse-battery-staple"
+    for document in (
+        "? " + key + "\n: " + value + "\n",
+        "? " + key + '\n: "' + value + '"\n',
+        "? " + key + "\n: !!str " + value + "\n",     # composes with R40
+    ):
+        findings = _scan_text("conf.yaml", document)
+        assert len(findings) == 1, (document, findings)
+
+    # An explicit key whose next node is a different mapping entry has no
+    # value here to judge, and a placeholder value is still suppressed.
+    assert _scan_text("conf.yaml", "? " + key + "\nother: 1\n") == []
+    assert _scan_text("conf.yaml", "? " + key + "\n: changeme-please-now\n") == []
+
+
+def test_folded_yaml_quoted_scalars_are_scanned() -> None:
+    """A YAML double-quoted scalar folds across lines: the break becomes a
+    space, and a trailing backslash suppresses even that. Line by line the
+    key has no closing quote and the continuation has no key, so neither
+    half is credential-shaped and no other collector applies."""
+    from tools.security.scan_secrets import _scan_text
+    key = "pass" + "word"
+    escaped = key + ': "correct-horse-battery-\\\n  staple"\n'
+    folded = key + ': "correct horse battery\n  staple pass"\n'
+    for document in (escaped, folded):
+        findings = _scan_text("conf.yaml", document)
+        assert len(findings) == 1, (document, findings)
+
+    # A scalar that closes on its own line is inline territory: exactly one
+    # finding, not one from each rule.
+    inline = key + ': "correct-horse-battery-staple"\n'
+    assert len(_scan_text("conf.yaml", inline)) == 1
+    # An unterminated scalar is not a value; refusing to guess is the point.
+    assert _scan_text("conf.yaml", key + ': "correct-horse-battery-\n') == []
+
+
+def test_concatenated_compressed_streams_are_counted() -> None:
+    """`GzipFile`/`BZ2File` walk concatenated members transparently, which
+    bounds nothing: 50k valid EMPTY members fit in a megabyte and advance
+    the logical output cap by zero, so the only budget in the loop never
+    moved while the ingress allowance permitted millions."""
+    import bz2
+    import gzip
+    from tools.security import scan_secrets as secrets
+
+    for blob in (gzip.compress(b"") * (secrets.STREAM_CAP + 1),
+                 bz2.compress(b"") * (secrets.STREAM_CAP + 1)):
+        try:
+            secrets._decompress_bounded(blob)
+        except ValueError as exc:
+            assert "archive-logical-cap" in str(exc)
+        else:                                   # pragma: no cover - the defect
+            raise AssertionError("unbounded concatenated stream count")
+
+    # The bound must not cost correctness: real archives still decode
+    # byte-identically, and concatenated members still concatenate.
+    payload = b"api" + b"_key = correct-horse-battery-staple\n" * 64
+    for compressed in (gzip.compress(payload), bz2.compress(payload)):
+        assert secrets._decompress_bounded(compressed) == payload
+    assert secrets._decompress_bounded(
+        gzip.compress(b"alpha") + gzip.compress(b"beta")) == b"alphabeta"
+    assert secrets._decompress_bounded(
+        bz2.compress(b"alpha") + bz2.compress(b"beta")) == b"alphabeta"
+
+
+def test_verifier_watchdog_cannot_be_swallowed() -> None:
+    """The SUBJECT of this bound is a verifier, and a verifier that wraps
+    its work in `except Exception` caught the watchdog as ordinary control
+    flow and returned a normal verdict. The one-shot timer has already
+    fired by then, so a probe that resumes hangs with no bound left."""
+    import signal as signal_module
+    import time
+    from tools.security import run_malformed_differential as differential
+    if not hasattr(signal_module, "SIGALRM"):
+        return                                  # POSIX rail, as the tool declares
+    previous = differential.PYTHON_VERIFY_TIMEOUT
+    differential.PYTHON_VERIFY_TIMEOUT = 0.3
+    try:
+        def greedy() -> list[str]:
+            try:
+                time.sleep(5.0)
+            except Exception:                   # noqa: BLE001 - the defect
+                return ["swallowed the bound"]
+            return ["never reached"]
+        try:
+            differential._bounded_verify(greedy)
+        except BaseException as exc:            # noqa: BLE001 - must escape
+            assert type(exc).__name__ == "_VerifyHang", exc
+            assert not isinstance(exc, Exception), "a subject can catch Exception"
+        else:                                   # pragma: no cover - the defect
+            raise AssertionError("the probe swallowed its own watchdog")
+    finally:
+        differential.PYTHON_VERIFY_TIMEOUT = previous
+
+
+def test_compiled_fixture_io_failure_is_a_verdict() -> None:
+    """The upstream guard covers BUILDING the fixture; this is the write
+    that commits it to disk. An unavailable or full TMPDIR raised here
+    escaped run_differential() entirely — no structured failure, and no
+    --json-out artifact for the very run that needed one."""
+    from unittest import mock
+    from tools.security import run_malformed_differential as differential
+    with mock.patch.object(differential.tempfile, "TemporaryDirectory",
+                           side_effect=OSError("No space left on device")), \
+         mock.patch.object(differential, "find_bcir_opt",
+                           return_value="/nonexistent/bcir-opt"):
+        result = differential._compiled_mlir("module {}", differential.ROOT)
+    assert result["state"] == "FAIL"
+    assert result["rejected"] is False
+    assert "No space left on device" in result["reason"]
+
+
+def _staged_repo(tmp: str, pyproject: str, inventory: bytes) -> tuple[Path, Path]:
+    """A committed checkout with pyproject.toml and an expected inventory."""
+    root = Path(tmp)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    (root / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+    expected = root / "expected.json"
+    expected.write_bytes(inventory)
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "-c", "user.email=a@b", "-c", "user.name=t",
+         "commit", "-qm", "base"], check=True)
+    return root, expected
+
+
+def test_staged_symlink_inputs_are_refused_not_dereferenced() -> None:
+    """An index entry's blob is its TARGET PATH, not metadata. Parsing it
+    audits whatever that path names on this host, and a target whose text
+    is valid matching metadata passed here while a clean checkout of the
+    same commit takes the non-regular-file branch and fails."""
+    from tools.security.audit_dependencies import audit
+    pyproject = '[project]\nname="x"\nversion="1"\ndependencies = []\n'
+    inventory = json.dumps(
+        {"runtime": [], "build_system": [], "optional": {}}).encode("utf-8")
+
+    for target, staged_name, field in (
+        ("decoy.toml", "pyproject.toml", "staged-pyproject"),
+        ("decoy.json", "expected.json", "staged-inventory"),
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, expected = _staged_repo(tmp, pyproject, inventory)
+            body = pyproject if staged_name.endswith(".toml") else inventory.decode()
+            (root / target).write_text(body, encoding="utf-8")
+            staged = root / staged_name
+            staged.unlink()
+            staged.symlink_to(target)
+            subprocess.run(["git", "-C", str(root), "add", staged_name], check=True)
+            staged.unlink()                     # restore a benign regular file
+            staged.write_text(body, encoding="utf-8")
+            report = audit(root, expected)
+        assert report["state"] == "FAIL", field
+        declared = {m["field"]: m["declared"] for m in report["mismatches"]}
+        assert declared.get(field) == "symlink", report["mismatches"]
+
+
+def test_staged_inventory_decodes_strictly() -> None:
+    """The worktree read and the staged pyproject read both decode STRICTLY;
+    the staged inventory decoded with `replace`, turning an invalid byte
+    into U+FFFD. A staged inventory CI refuses to decode could therefore
+    match a worktree copy carrying the replacement character and pass —
+    the gate disagreeing with itself across two paths."""
+    from tools.security.audit_dependencies import audit
+    name = "pkg�"
+    pyproject = ('[project]\nname="x"\nversion="1"\n'
+                 'dependencies = ["' + name + '"]\n')
+    good = json.dumps({"runtime": [name], "build_system": [], "optional": {}},
+                      ensure_ascii=False).encode("utf-8")
+    bad = good.replace(name.encode("utf-8"), b"pkg\xff")
+    assert bad != good
+    with tempfile.TemporaryDirectory() as tmp:
+        root, expected = _staged_repo(tmp, pyproject, good)
+        expected.write_bytes(bad)
+        subprocess.run(["git", "-C", str(root), "add", "expected.json"], check=True)
+        expected.write_bytes(good)              # worktree: valid, matches declared
+        report = audit(root, expected)
+    assert report["state"] == "FAIL"
+    declared = {m["field"]: m["declared"] for m in report["mismatches"]}
+    assert declared.get("staged-inventory") == "not-utf-8", report["mismatches"]
+
+
+def test_inventory_depth_bomb_is_a_verdict() -> None:
+    """Every token can be valid and the payload still bottom out the
+    parser: 20k nested arrays are ~40 KiB, well inside the ingress cap, so
+    a size bound is no defence. The RecursionError escaped before any
+    report existed, taking --json-out with it."""
+    from tools.security.audit_dependencies import audit
+    pyproject = '[project]\nname="x"\nversion="1"\ndependencies = []\n'
+    inventory = json.dumps(
+        {"runtime": [], "build_system": [], "optional": {}}).encode("utf-8")
+    with tempfile.TemporaryDirectory() as tmp:
+        root, expected = _staged_repo(tmp, pyproject, inventory)
+        bomb = ("[" * 20000 + "]" * 20000).encode("utf-8")
+        assert len(bomb) < (1 << 20), "the size cap must not be what catches this"
+        expected.write_bytes(bomb)
+        report = audit(root, expected)          # a verdict, never a traceback
+    assert report["state"] == "FAIL"
+    assert isinstance(json.dumps(report), str)  # the --json-out artifact exists
+
+
+def test_packaged_library_data_is_registered_for_shipping() -> None:
+    """`bcir/kbcir/tables/*.json` is LIBRARY data: tile_prior, bayescal and
+    microbench read it to apply a measured profile, so a wheel without it
+    raises `cannot read calibrated profile` from close_loop() itself, not
+    only from a test. The packaged runner had classified the whole
+    test_calibrator module repo-only for it, hiding six runnable tests."""
+    import tomllib
+    from bcir.tests.run_all import _REPO_ONLY_MODULES
+    root = Path(__file__).resolve().parents[2]
+    table = root / "bcir" / "kbcir" / "tables" / "x86_64_reference.json"
+    if not table.exists():                      # installed tree: nothing to check
+        return
+    config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    package_data = config["tool"]["setuptools"]["package-data"]
+    assert "tables/*.json" in package_data.get("bcir.kbcir", []), package_data
+    # And the module is no longer excluded wholesale from the packaged run.
+    assert "bcir.tests.test_calibrator" not in _REPO_ONLY_MODULES
