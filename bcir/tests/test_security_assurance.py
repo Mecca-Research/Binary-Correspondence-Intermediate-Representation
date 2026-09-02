@@ -2639,3 +2639,105 @@ def test_assignment_matcher_is_linear_time() -> None:
     assert rule.search("client_" + "secret" + ": " + "abc123def456ghi789")
     assert not rule.search("secretariat" + ' = "' + "abcdefghijklmno" + '"')
     assert not rule.search("passwords_file" + ' = "' + "abcdefghijklmno" + '"')
+
+
+def test_single_line_toml_multiline_secrets_are_findings() -> None:
+    """`password = \"\"\"value\"\"\"` opens and closes on one line: the inline
+    quoted branch reads one quote then demands 12+ non-quote characters,
+    and the delimiter's second quote ends it immediately, so this form
+    matched nothing on either path."""
+    from tools.security.scan_secrets import _scan_text
+    basic = '"' * 3
+    literal = "'" * 3
+    value = "correct-horse-battery-staple"
+    assert [h["line"] for h in _scan_text(
+        "c.toml", "password" + " = " + basic + value + basic + "\n")] == [1]
+    assert [h["line"] for h in _scan_text(
+        "c.toml", "token" + " = " + literal + value + literal + "\n")] == [1]
+    # The value still faces the placeholder rules.
+    assert _scan_text(
+        "c.toml", "password" + " = " + basic + "your-password-here" + basic) == []
+
+
+def test_index_flagged_paths_are_staged_scanned() -> None:
+    """`--assume-unchanged` and `--skip-worktree` tell git to stop comparing
+    an entry, so `git diff` reports no divergence while the staged secret
+    still ships. Entries git was told not to check are exactly the ones the
+    scan must check itself."""
+    token = "ghp_" + ("ef" * 18)
+    for flag in ("--skip-worktree", "--assume-unchanged"):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            target = root / "x.py"
+            target.write_text('token = "' + token + '"\n', encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "update-index", flag, "x.py"], cwd=root, check=True)
+            target.write_text("token = None\n", encoding="utf-8")
+            report = scan_tree(root)
+        assert report["state"] == "FAIL", flag
+        assert "github-token" in {i["rule"] for i in report["findings"]}, flag
+        assert token not in json.dumps(report), flag
+
+
+def test_staged_blobs_are_bounded_before_materializing() -> None:
+    """A `git show` into a captured pipe expands the whole object into this
+    process first, so a highly compressible staged blob could exhaust the
+    runner before any post-hoc length check ran. The cap is asked of the
+    OBJECT, before a byte is materialized."""
+    from tools.security.scan_secrets import (
+        ARCHIVE_LOGICAL_CAP, _STAGED_OVERSIZED, _staged_blob,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        big = root / "big.bin"
+        # Compresses to a few hundred bytes in the object store; expands
+        # past the ingress cap only when materialized.
+        big.write_bytes(b"\0" * (ARCHIVE_LOGICAL_CAP + 4096))
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        big.write_bytes(b"small\n")
+        # The witness is that the bytes are never fetched: `git show` is
+        # what materializes them, so refusing before it runs IS the bound.
+        import tools.security.scan_secrets as scanner
+
+        original = scanner.subprocess.Popen
+
+        def _no_materialize(args: list[str], *rest: object, **kw: object) -> object:
+            # `cat-file -s` asks the object's size and is what the bound
+            # runs on; `show` is what expands it into this process.
+            assert "show" not in args, "staged blob materialized past the cap"
+            return original(args, *rest, **kw)
+
+        scanner.subprocess.Popen = _no_materialize  # type: ignore[misc]
+        try:
+            assert _staged_blob(root, "big.bin") is _STAGED_OVERSIZED
+        finally:
+            scanner.subprocess.Popen = original  # type: ignore[misc]
+        report = scan_tree(root)
+    assert report["state"] == "FAIL"
+    assert "file-oversized" in {i["rule"] for i in report["findings"]}
+
+
+def test_utf16_probe_survives_a_split_surrogate_pair() -> None:
+    """A four-byte multiple is not code-point alignment: an odd number of
+    BMP characters ahead of a supplementary one puts its surrogate pair
+    astride the sample boundary, and the strict probe decode then rejects a
+    file that is in fact valid UTF-16."""
+    from tools.security.scan_secrets import (
+        _decode_text, _kind_for, _scan_text, _utf16_bomless,
+    )
+    for encoding in ("utf-16-le", "utf-16-be"):
+        text = (
+            "A" * 4095 + "\U0001F600" + "\n"
+            + "password" + ": " + "correct-horse-battery-staple" + "\n"
+        )
+        blob = text.encode(encoding)
+        assert _utf16_bomless(blob) == encoding
+        assert _kind_for("notes.txt", blob) == "text"
+        hits = _scan_text("notes.txt", _decode_text(blob))
+        assert [h["rule"] for h in hits] == ["assignment-secret"], encoding
+    # Trimming a dangling high surrogate must not turn plain text into a
+    # UTF-16 claim.
+    assert _utf16_bomless(b"ab" * 4096) is None

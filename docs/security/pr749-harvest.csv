@@ -186,3 +186,7 @@ finding,date,file,title,grade,law
 185,2026-08-28 14:54,scan_secrets.py,Scan staged blobs rather than unstaged worktree copies,INSTANCE,L15
 186,2026-08-28 14:54,run_decoder_campaign.py,Convert seed-construction failures into campaign verdicts,INSTANCE,L1
 187,2026-08-28 14:54,scan_secrets.py,Make the assignment-secret matcher linear-time,INSTANCE,L3
+188,2026-08-28 21:12,scan_secrets.py,Scan single-line TOML multiline strings,INSTANCE,L5
+189,2026-08-28 21:12,scan_secrets.py,Include index-flagged paths in staged-blob scanning,INSTANCE,L15
+190,2026-08-28 21:12,scan_secrets.py,Bound staged blobs before materializing them,INSTANCE,L3
+191,2026-08-28 21:12,scan_secrets.py,Avoid splitting UTF-16 surrogate pairs in the probe,INSTANCE,L5

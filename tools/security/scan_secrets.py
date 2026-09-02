@@ -189,36 +189,101 @@ def _staged_divergent(root: Path) -> list[str] | None:
     copy passes a worktree-only scan while still shipping. In a clean
     checkout (every CI run) this list is empty. None means the
     divergence question itself could not be answered — a fail-closed
-    finding, never a silent downgrade."""
+    finding, never a silent downgrade.
+
+    ``git diff`` alone is not the whole answer: ``--assume-unchanged`` and
+    ``--skip-worktree`` tell git to stop comparing those entries, so a
+    staged secret under either flag reports no divergence while shipping
+    exactly the same. Entries git has been told not to check are precisely
+    the ones this scan must check itself, so they are unioned in."""
+    paths: list[str] = []
+    seen: set[str] = set()
     try:
-        result = subprocess.run(
+        diffed = subprocess.run(
             ["git", "-C", str(root), "diff", "--name-only", "-z"],
             capture_output=True,
             check=False,
         )
-    except OSError:
-        return None
-    if result.returncode != 0:
-        return None
-    return [
-        item.decode("utf-8", "surrogateescape")
-        for item in result.stdout.split(b"\0") if item
-    ]
-
-
-def _staged_blob(root: Path, rel: str) -> bytes | None:
-    """The stage-0 index blob for ``rel``, or None when unreadable."""
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(root), "show", f":0:{rel}"],
+        # -v tags every entry: lowercase means assume-unchanged, S/s means
+        # skip-worktree. Both suppress the comparison above.
+        flagged = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-v", "-z"],
             capture_output=True,
             check=False,
         )
     except OSError:
         return None
-    if result.returncode != 0:
+    if diffed.returncode != 0 or flagged.returncode != 0:
         return None
-    return result.stdout
+    for item in diffed.stdout.split(b"\0"):
+        if not item:
+            continue
+        rel = item.decode("utf-8", "surrogateescape")
+        if rel not in seen:
+            seen.add(rel)
+            paths.append(rel)
+    for item in flagged.stdout.split(b"\0"):
+        # `<tag><space><path>`: a one-character tag, then the path verbatim.
+        if len(item) < 3 or item[1:2] != b" ":
+            continue
+        tag = item[0:1]
+        if not (tag.islower() or tag in (b"S", b"s")):
+            continue
+        rel = item[2:].decode("utf-8", "surrogateescape")
+        if rel not in seen:
+            seen.add(rel)
+            paths.append(rel)
+    return paths
+
+
+# Sentinel: the index object is real but larger than the inspection
+# budget — a finding, distinct from None (unreadable).
+_STAGED_OVERSIZED = object()
+
+
+def _staged_blob(root: Path, rel: str) -> Any:
+    """The stage-0 index blob for ``rel``, bounded at ingress.
+
+    The cap is asked of the OBJECT before a byte is materialized: a
+    `git show` into `capture_output` expands the whole blob into this
+    process first, so a highly compressible staged object could exhaust
+    the runner well before a post-hoc length check ever ran. Bounds live
+    where the resource commits — here that is `cat-file -s`, then a
+    read of one byte past the cap so an object that lies about its size
+    cannot slip through either."""
+    try:
+        sized = subprocess.run(
+            ["git", "-C", str(root), "cat-file", "-s", f":0:{rel}"],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if sized.returncode != 0:
+        return None
+    try:
+        size = int(sized.stdout.strip())
+    except ValueError:
+        return None
+    if size > ARCHIVE_LOGICAL_CAP:
+        return _STAGED_OVERSIZED
+    try:
+        with subprocess.Popen(
+            ["git", "-C", str(root), "show", f":0:{rel}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        ) as proc:
+            assert proc.stdout is not None
+            data = proc.stdout.read(ARCHIVE_LOGICAL_CAP + 1)
+            proc.stdout.close()
+            if proc.wait() != 0:
+                return None
+    except OSError:
+        return None
+    if len(data) > ARCHIVE_LOGICAL_CAP:
+        # The object under-reported its size between the two calls.
+        return _STAGED_OVERSIZED
+    return data
 
 
 def _suffix_matches(lower: str, suffixes: frozenset[str]) -> bool:
@@ -245,8 +310,6 @@ def _utf16_bomless(data: bytes) -> str | None:
     whole text decodes it once."""
     if len(data) % 2:
         return None
-    # A multiple of four cannot split a surrogate pair at the boundary and
-    # fail a file that is in fact valid UTF-16.
     sample = data[:TEXT_SAMPLE - (TEXT_SAMPLE % 4)]
     sample = sample[:len(sample) - (len(sample) % 4)]
     if len(sample) < 4:
@@ -282,6 +345,22 @@ def _utf16_bomless(data: bytes) -> str | None:
             encoding = "utf-16-be"
         else:
             return None
+    # A four-byte multiple is NOT code-point alignment: an odd number of BMP
+    # characters ahead of a supplementary one puts its surrogate pair astride
+    # the sample boundary, leaving a high surrogate with no low half. The
+    # strict decode below would then reject a file that is in fact valid
+    # UTF-16 — and the caller would file it as binary and never scan it. Drop
+    # a trailing unpaired high surrogate before confirming; the sample exists
+    # to answer a classification question, not to be complete.
+    high = 0
+    if encoding == "utf-16-le":
+        high = int.from_bytes(sample[-2:], "little")
+    else:
+        high = int.from_bytes(sample[-2:], "big")
+    if 0xD800 <= high <= 0xDBFF:
+        sample = sample[:-2]
+    if len(sample) < 2:
+        return None
     try:
         text = sample.decode(encoding)
     except (UnicodeDecodeError, ValueError):
@@ -449,8 +528,22 @@ def _toml_multiline_findings(path: str, lines: list[str]) -> list[dict[str, Any]
             continue
         delim = match.group("delim")
         rest = match.group("rest")
-        if delim in rest:
-            # Opened and closed on one line: the inline rule's territory.
+        closing = rest.find(delim)
+        if closing >= 0:
+            # Opened AND closed on one line. This is NOT the inline rule's
+            # territory: its quoted branch reads one quote, then demands 12+
+            # non-quote characters, and the delimiter's second quote ends the
+            # match immediately — so `password = """secret"""` matched
+            # nothing anywhere. The value is the text between the delimiters,
+            # judged by the same rules as any other.
+            value = rest[:closing].strip()
+            if len(value) >= 12 and not _is_placeholder(value) and not _is_prose(value):
+                findings.append({
+                    "path": path,
+                    "line": index + 1,
+                    "rule": "assignment-secret",
+                    "fingerprint": _fingerprint(value),
+                })
             continue
         collected = [rest] if rest else []
         for follower in lines[index + 1:]:
@@ -979,7 +1072,9 @@ def scan_tree(root: Path) -> dict[str, Any]:
                 "fingerprint": _fingerprint("staged-unreadable"),
             })
             continue
-        if len(data) > ARCHIVE_LOGICAL_CAP:
+        if data is _STAGED_OVERSIZED:
+            # Refused at ingress by `cat-file -s`, before any bytes were
+            # materialized — a finding, never an OOM of the required scan.
             report["findings"].append({
                 "path": display, "line": 0, "rule": "file-oversized",
                 "fingerprint": _fingerprint("file-oversized"),
