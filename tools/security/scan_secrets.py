@@ -375,6 +375,63 @@ def _kind_for(path: str, data: bytes) -> str:
 # A YAML block scalar puts the secret-named key and its value on separate
 # lines: `password: |-` then an indented run. Line-by-line, the key has no
 # value and the continuation is not token-shaped, so both slipped through.
+def _continuation_finding(path: str, index: int, value: str) -> dict[str, Any] | None:
+    """The verdict on a value that reached its key across a line break.
+
+    One predicate for every continuation collector — block scalars, TOML
+    multiline strings, and wrapped mapping values all judge the value they
+    assembled by exactly the rules an inline value faces, so a documented
+    example stays suppressed on every one of them and a real credential is
+    reported the same way.
+    """
+    if len(value) < 12 or _is_placeholder(value) or _is_prose(value):
+        return None
+    return {
+        "path": path,
+        "line": index + 1,
+        "rule": "assignment-secret",
+        "fingerprint": _fingerprint(value),
+    }
+
+
+# A mapping key whose line ENDS at the delimiter: JSON and YAML both allow
+# the value to wrap onto the following line, and line-by-line neither half
+# is credential-shaped — the key has no value, the value has no key. This
+# is the same key/value split as a block scalar without the `|` marker.
+WRAPPED_KEY = re.compile(
+    r"(?i)^\s*(?:-\s+)?['\"]?(?:[A-Za-z0-9]+[_-])*"
+    r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
+    r"['\"]?\s*[:=]\s*$"
+)
+
+
+def _wrapped_value_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
+    """Findings for credentials on the line after their key."""
+    findings: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        if not WRAPPED_KEY.match(line):
+            continue
+        follower = ""
+        for candidate in lines[index + 1:]:
+            if candidate.strip():
+                follower = candidate.strip()
+                break
+        if not follower:
+            continue
+        follower = follower.rstrip(",")
+        if len(follower) >= 2 and follower[0] == follower[-1] and follower[0] in "\"'":
+            value = follower[1:-1]
+        elif ":" in follower or "=" in follower:
+            # A nested mapping or the next key, not this key's value.
+            continue
+        else:
+            value = follower
+        finding = _continuation_finding(path, index, value)
+        if finding:
+            findings.append(finding)
+    return findings
+
+
 BLOCK_SCALAR = re.compile(
     r"(?i)^(?P<indent>\s*)(?:-\s+)?['\"]?(?:[A-Za-z0-9]+[_-])*"
     r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
@@ -402,14 +459,9 @@ def _block_scalar_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
                 break
             collected.append(follower.strip())
         value = "\n".join(collected).strip()
-        if len(value) < 12 or _is_placeholder(value) or _is_prose(value):
-            continue
-        findings.append({
-            "path": path,
-            "line": index + 1,
-            "rule": "assignment-secret",
-            "fingerprint": _fingerprint(value),
-        })
+        finding = _continuation_finding(path, index, value)
+        if finding:
+            findings.append(finding)
     return findings
 
 
@@ -473,14 +525,9 @@ def _toml_multiline_findings(path: str, lines: list[str]) -> list[dict[str, Any]
             # match immediately — so `password = """secret"""` matched
             # nothing anywhere. The value is the text between the delimiters,
             # judged by the same rules as any other.
-            value = rest[:closing].strip()
-            if len(value) >= 12 and not _is_placeholder(value) and not _is_prose(value):
-                findings.append({
-                    "path": path,
-                    "line": index + 1,
-                    "rule": "assignment-secret",
-                    "fingerprint": _fingerprint(value),
-                })
+            finding = _continuation_finding(path, index, rest[:closing].strip())
+            if finding:
+                findings.append(finding)
             continue
         collected = [rest] if rest else []
         for follower in lines[index + 1:]:
@@ -490,14 +537,9 @@ def _toml_multiline_findings(path: str, lines: list[str]) -> list[dict[str, Any]
                 break
             collected.append(follower)
         value = "\n".join(collected).strip()
-        if len(value) < 12 or _is_placeholder(value) or _is_prose(value):
-            continue
-        findings.append({
-            "path": path,
-            "line": index + 1,
-            "rule": "assignment-secret",
-            "fingerprint": _fingerprint(value),
-        })
+        finding = _continuation_finding(path, index, value)
+        if finding:
+            findings.append(finding)
     return findings
 
 
@@ -529,6 +571,7 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
     lines = text.splitlines()
     findings.extend(_block_scalar_findings(path, lines))
     findings.extend(_toml_multiline_findings(path, lines))
+    findings.extend(_wrapped_value_findings(path, lines))
     for number, line in enumerate(text.splitlines(), 1):
         if "\\" in line:
             # Cheap gate: only a line carrying a backslash can carry an

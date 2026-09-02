@@ -932,7 +932,9 @@ def test_boundary_audit_unreadable_file_is_a_finding() -> None:
         tools.mkdir()
         (tools / "x.py").write_text("x = 1\n", encoding="utf-8")
         subprocess.run(["git", "add", "tools/x.py"], cwd=root, check=True)
-        with patch.object(Path, "read_bytes", side_effect=OSError("denied")):
+        # The read is bounded through an opened descriptor (the stat size is
+        # not the read bound), so that is where an unreadable file fails.
+        with patch.object(Path, "open", side_effect=OSError("denied")):
             report = audit_boundaries(root)
         assert report["state"] == "FAIL"
         assert any(item["rule"] == "file-unreadable" for item in report["findings"])
@@ -2964,3 +2966,138 @@ def test_ci_exercises_the_declared_python_floor() -> None:
     # The floor CI runs must be the floor pyproject declares: raising one
     # without the other fails here rather than shipping an untested claim.
     assert f'python: ["{floor}"]' in workflow, f"no CI cell runs Python {floor}"
+
+
+def test_wrapped_mapping_values_are_findings() -> None:
+    """JSON and YAML both let a value wrap onto the line after its key, and
+    line by line neither half is credential-shaped: the key has no value and
+    the value has no key. Same split as a block scalar without the marker."""
+    from tools.security.scan_secrets import _scan_text
+    value = "correct-horse-battery-staple"
+    nl = "\n"
+    document = '{' + nl + '  "password":' + nl + '    "' + value + '"' + nl + '}'
+    assert json.loads(document)["password"] == value      # the oracle
+    assert [h["rule"] for h in _scan_text("c.json", document)] == ["assignment-secret"]
+    assert [h["rule"] for h in _scan_text(
+        "c.yaml", "password:" + nl + "  " + value)] == ["assignment-secret"]
+    # Negatives: the placeholder rules still apply across the break, a
+    # nested mapping is not a value, and neither is the next key.
+    assert _scan_text("c.yaml", "password:" + nl + "  your-password-here") == []
+    assert _scan_text("c.yaml", "password:" + nl + "  type: string") == []
+    assert _scan_text("c.yaml", "password:" + nl + "username: bobby") == []
+
+
+def test_staged_dependency_metadata_is_audited() -> None:
+    """The worktree file is not what the next commit records: a dependency
+    staged and then restored to benign worktree content shipped under PASS
+    on this rail, after the secret scan and the boundary audit had both
+    already learned to reconcile against the index."""
+    from tools.security.audit_dependencies import audit
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        metadata = root / "pyproject.toml"
+        metadata.write_text(
+            '[project]\nname="x"\nversion="1"\ndependencies = ["requests==2.0"]\n',
+            encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        metadata.write_text(
+            '[project]\nname="x"\nversion="1"\ndependencies = []\n', encoding="utf-8")
+        expected = root / "expected.json"
+        expected.write_text(
+            json.dumps({"runtime": [], "build_system": [], "optional": {}}),
+            encoding="utf-8")
+        report = audit(root, expected)
+    assert report["state"] == "FAIL"
+    assert any(m["field"] == "staged:runtime" for m in report["mismatches"])
+
+
+def test_unreadable_expected_inventory_is_a_failing_report() -> None:
+    """The committed inventory is INPUT to this gate exactly as
+    pyproject.toml is. Absent, malformed or wrong-shaped, it left the
+    required audit raising before it built a verdict — no exit-code
+    contract, no --json-out artifact."""
+    from tools.security.audit_dependencies import audit
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "pyproject.toml").write_text(
+            '[project]\nname="x"\nversion="1"\n', encoding="utf-8")
+        cases = {
+            "missing.json": None,
+            "malformed.json": "{not json",
+            "wrong_shape.json": json.dumps({"runtime": "not-a-list"}),
+            "not_an_object.json": json.dumps([1, 2, 3]),
+        }
+        for name, body in cases.items():
+            target = root / name
+            if body is not None:
+                target.write_text(body, encoding="utf-8")
+            report = audit(root, target)
+            assert report["state"] == "FAIL", name
+            assert report["inventory_asserted"] is False, name
+            assert "expected inventory could not be read" in report["error"], name
+            json.dumps(report)          # still a serializable REPORT
+
+
+def test_worktree_source_read_is_bounded() -> None:
+    """`stat` is not a read bound: a tracked file that grows between the
+    size check and the read was materialized whole and then multiplied by
+    ast.parse. The staged blob was already read at cap + 1; the worktree
+    file now is too."""
+    from tools.security.audit_tool_boundaries import SOURCE_SIZE_CAP, audit_boundaries
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "tools").mkdir()
+        target = root / "tools" / "big.py"
+        target.write_text("x = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        target.write_bytes(b"# " + b"a" * (SOURCE_SIZE_CAP + 4096) + b"\n")
+
+        # The race itself: stat reports the size the file had a moment ago
+        # while the read sees what it has grown to. Injecting the stale
+        # answer is the only way to witness the window; without it the
+        # pre-existing stat check catches the file and proves nothing.
+        real_stat = Path.stat
+
+        class _Stale:
+            st_size = 6
+            st_mode = target.stat().st_mode
+
+        def _stale_stat(self, *args, **kwargs):      # type: ignore[no-untyped-def]
+            if self == target:
+                return _Stale()
+            return real_stat(self, *args, **kwargs)
+
+        Path.stat = _stale_stat                      # type: ignore[method-assign]
+        try:
+            report = audit_boundaries(root)
+        finally:
+            Path.stat = real_stat                    # type: ignore[method-assign]
+    assert report["state"] == "FAIL"
+    assert "file-oversized" in {f["rule"] for f in report["findings"]}
+
+
+def test_staged_symlinks_are_recorded_not_parsed() -> None:
+    """A `.py` staged as a SYMLINK carries its target string as the blob.
+    Parsing that as Python produced `python-parse-error` locally for a
+    commit CI passes, because a clean checkout takes the worktree symlink
+    branch and never parses it."""
+    from tools.security.audit_tool_boundaries import audit_boundaries
+    from tools.security.git_index import staged_mode
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "tools").mkdir()
+        (root / "pkg").mkdir()
+        (root / "pkg" / "target.py").write_text("x = 1\n", encoding="utf-8")
+        link = root / "tools" / "link.py"
+        link.symlink_to("../pkg/target.py")     # target is not valid Python
+        (root / "tools" / "real.py").write_text("z = 3\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        link.unlink()
+        link.write_text("y = 2\n", encoding="utf-8")
+        assert staged_mode(root, "tools/link.py") == "120000"
+        report = audit_boundaries(root)
+    assert report["state"] == "PASS", report["findings"]
+    assert "tools/link.py (staged)" in report["symlinks"]

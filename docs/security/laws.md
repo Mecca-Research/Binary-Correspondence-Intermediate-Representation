@@ -45,7 +45,9 @@ exit-code contract. Witnesses: `test_campaign_launch_failure_is_structured`,
 `test_compiled_verifier_timeout_is_a_structured_failure`,
 `test_q8_read_io_failure_is_not_graceful`,
 `test_seed_construction_failure_is_a_structured_campaign_verdict`,
-`test_secret_scan_discovery_failure_is_a_verdict`.
+`test_secret_scan_discovery_failure_is_a_verdict`,
+`test_unreadable_expected_inventory_is_a_failing_report` (a gate's own
+reference data is input too).
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -76,7 +78,9 @@ CPU the same way a decompressor commits memory),
 `test_staged_blobs_are_bounded_before_materializing` (a compressed
 object commits memory when it is expanded, not when it is listed),
 `test_concatenated_xz_streams_are_bounded` (a stream COUNT is a
-resource: empty streams advance no output cap at all).
+resource: empty streams advance no output cap at all),
+`test_worktree_source_read_is_bounded` (stat answers about the past;
+the read is the commitment).
 **Port note:** this is the memory-safety law. In Python these failures were
 OOMs; in C the same shapes are allocator abuse and heap corruption. Every
 `malloc` sized from input data is an L3 site.
@@ -112,7 +116,9 @@ Witnesses: `test_credential_shaped_filenames_are_findings`,
 `test_bomless_utf16_with_cjk_preamble_is_scanned`,
 `test_utf16_probe_survives_a_split_surrogate_pair`,
 `test_escaped_toml_delimiters_do_not_end_the_value`,
-`test_yaml_escaped_credential_keys_are_findings`.
+`test_yaml_escaped_credential_keys_are_findings`,
+`test_wrapped_mapping_values_are_findings` (a value may reach its key
+across a line break in JSON and YAML alike).
 **Port note:** format-level knowledge; transfers verbatim to any scanner
 in any language.
 
@@ -198,7 +204,9 @@ either fixed to parity or declared a boundary in the tool's own docstring —
 never left implicit. Declared boundaries are honored in review instead of
 re-litigated.
 Witnesses: `test_uppercase_python_suffix_is_audited`,
-`test_reviewer_put_down_kills_the_tree_on_windows`.
+`test_reviewer_put_down_kills_the_tree_on_windows`,
+`test_staged_symlinks_are_recorded_not_parsed` (the index path and the
+worktree path of one gate are two paths, and must agree).
 **Port note:** substitute endianness, ABI, and libc variance for the same
 discipline.
 
@@ -236,7 +244,9 @@ repository tracks: the next commit records it, not the worktree),
 `test_index_flagged_paths_are_staged_scanned` (an entry the VCS was
 told to stop comparing is one the gate must compare itself),
 `test_staged_python_blobs_are_audited` (every rail reconciles, through
-one shared predicate — see L14).
+one shared predicate — see L14),
+`test_staged_dependency_metadata_is_audited` (the third rail; the same
+defect went unfixed on it for two rounds after the first two closed it).
 **Port note:** identical everywhere.
 
 ### L16 — Never green yourself by editing the neighbor
@@ -320,16 +330,16 @@ install tree is the audit.
 
 ## Campaign classification summary
 
-Every review-thread finding from the campaign (200 threads, rounds 1–35)
+Every review-thread finding from the campaign (205 threads, rounds 1–36)
 is graded under the harvest protocol. The full per-finding
 index is `docs/security/pr749-harvest.csv`; the campaign ledger tracks the
 same data round by round.
 
 | Grade | Findings | Share | Meaning |
 |---|---|---|---|
-| **NEW-LAW** | 20 | **10.0%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
-| **INSTANCE** | 141 | **70.5%** | New entry point to a registered law — the law gained a witness |
-| **LOCAL** | 39 | **19.5%** | No transfer value beyond the code touched |
+| **NEW-LAW** | 20 | **9.8%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
+| **INSTANCE** | 146 | **71.2%** | New entry point to a registered law — the law gained a witness |
+| **LOCAL** | 39 | **19.0%** | No transfer value beyond the code touched |
 
 Rounds through 31 were graded retroactively; from round 32 every finding
 is graded at triage. Rounds 32 and 33 were both zero-NEW-LAW, taking the
@@ -357,6 +367,16 @@ newly declared law being tested and found under-implemented is the loop
 working exactly as intended, and it is the strongest argument yet that
 laws should be landed with their full witness set rather than their first
 one.
+
+Round 36 produced five findings and no new law, so the counter stands at
+**2 of 3**. Its pattern is worth recording: three of the five were the
+index/worktree reconciliation and the ingress cap built in rounds 33–35
+applied unevenly — the dependency rail never got the reconciliation, the
+worktree read never got the `cap + 1` its staged sibling had, and the
+staged path never learned the symlink check its worktree sibling always
+had. That is **L14** (one predicate per repeated defect) reasserting
+itself: a mechanism landed on two rails out of three is a defect on the
+third, and the loop found each one.
 
 Where the instances concentrated (finding count per law, origin included):
 L5 scannable-data coverage 22 · L3 resource-commit bounds 18 · L1

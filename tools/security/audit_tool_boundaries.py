@@ -17,9 +17,11 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from tools.security.git_index import STAGED_OVERSIZED, staged_blob, staged_divergent
+    from tools.security.git_index import (
+        STAGED_OVERSIZED, staged_blob, staged_divergent, staged_mode,
+    )
 except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
-    from git_index import STAGED_OVERSIZED, staged_blob, staged_divergent
+    from git_index import STAGED_OVERSIZED, staged_blob, staged_divergent, staged_mode
 
 ROOT = Path(__file__).resolve().parents[2]
 # ".claude" carries tracked developer scripts (digest/skill tooling); a
@@ -218,7 +220,17 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
                 # blob must be a finding, never an OOM of the audit.
                 findings.append({"path": shown, "line": 0, "rule": "file-oversized"})
                 continue
-            source = path.read_bytes()
+            with path.open("rb") as handle:
+                # The stat above is not the read bound: a file that grows
+                # between the two (an editor or generator writing while the
+                # local audit runs) would otherwise be materialized whole,
+                # and ast.parse would multiply it in memory. Read one byte
+                # past the cap and refuse the remainder — the same shape the
+                # staged blob already uses.
+                source = handle.read(SOURCE_SIZE_CAP + 1)
+            if len(source) > SOURCE_SIZE_CAP:
+                findings.append({"path": shown, "line": 0, "rule": "file-oversized"})
+                continue
         except OSError:
             # A tracked file the auditor cannot read was not audited — a
             # failing finding, never an escaping traceback.
@@ -256,6 +268,14 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
             continue
         shown = rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
         shown = f"{shown} (staged)"
+        if staged_mode(root, rel) == "120000":
+            # The index entry is a SYMLINK: its blob is the target string,
+            # not Python. A clean checkout of the same index takes the
+            # worktree symlink branch and records it without parsing, so
+            # parsing it here made the local audit FAIL on a commit CI
+            # passes. Record it the same way, never dereference it.
+            symlinks.append(shown)
+            continue
         blob = staged_blob(root, rel, cap=SOURCE_SIZE_CAP)
         if blob is None:
             # Divergent per git, but its index object cannot be read (or the

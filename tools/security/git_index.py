@@ -120,3 +120,27 @@ def staged_blob(root: Path, rel: str, *, cap: int) -> Any:
     if len(data) > cap:
         return STAGED_OVERSIZED
     return data
+
+
+def staged_mode(root: Path, rel: str) -> str | None:
+    """The stage-0 file mode for ``rel`` (``"120000"`` for a symlink), or None.
+
+    A gate that inspects staged CONTENT has to ask what kind of entry it is
+    first: the blob behind a symlink entry is its target string, and reading
+    it as file content is a category error the worktree path never makes
+    because `is_symlink()` answers there.
+    """
+    try:
+        listed = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-s", "-z", "--", rel],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if listed.returncode != 0 or not listed.stdout:
+        return None
+    # `<mode> <object> <stage>\t<path>\0`
+    first = listed.stdout.split(b"\0")[0]
+    head = first.split(b"\t", 1)[0].split()
+    return head[0].decode("ascii", "replace") if head else None

@@ -199,3 +199,8 @@ finding,date,file,title,grade,law
 198,2026-09-02 12:39,scan_secrets.py,Decode YAML hex escapes before scanning credential keys,INSTANCE,L5
 199,2026-09-02 12:39,scan_secrets.py,Return a verdict when tracked-file discovery fails,INSTANCE,L1
 200,2026-09-02 12:39,pyproject.toml,Test the newly advertised Python 3.11 floor,INSTANCE,L2
+201,2026-09-02 15:53,audit_tool_boundaries.py,Respect staged symlink modes before parsing Python,INSTANCE,L12
+202,2026-09-02 15:53,audit_dependencies.py,Convert invalid expected inventories into failing reports,INSTANCE,L1
+203,2026-09-02 15:53,scan_secrets.py,Scan JSON values wrapped onto following lines,INSTANCE,L5
+204,2026-09-02 15:53,audit_tool_boundaries.py,Enforce the source cap while reading worktree files,INSTANCE,L3
+205,2026-09-02 15:53,audit_dependencies.py,Audit staged dependency metadata before passing,INSTANCE,L15

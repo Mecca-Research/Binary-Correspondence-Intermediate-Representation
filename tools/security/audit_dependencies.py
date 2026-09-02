@@ -18,8 +18,10 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from tools.security.git_index import STAGED_OVERSIZED, staged_blob, staged_divergent
     from tools.security.proc_bounds import run_bounded
 except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
+    from git_index import STAGED_OVERSIZED, staged_blob, staged_divergent
     from proc_bounds import run_bounded
 
 import tomllib
@@ -91,6 +93,16 @@ def parse_pyproject(path: Path) -> dict[str, Any]:
         text = raw.decode("utf-8")
     except (OSError, UnicodeDecodeError):
         return dict(_UNASSERTED)
+    return parse_metadata(text)
+
+
+def parse_metadata(text: str) -> dict[str, Any]:
+    """The metadata contract, independent of where the bytes came from.
+
+    The worktree file and the stage-0 blob are the same question asked of
+    different bytes, so they share this validation rather than growing a
+    second, subtly different copy.
+    """
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError:
@@ -139,8 +151,117 @@ def parse_pyproject(path: Path) -> dict[str, Any]:
     }
 
 
+def _unreadable_inventory(reason: str) -> dict[str, Any]:
+    return {
+        "state": "FAIL",
+        "inventory_asserted": False,
+        "expected_packages": 0,
+        "declared": {},
+        "mismatches": [],
+        "advisory": {"state": "UNAVAILABLE/SKIPPED", "engine": None},
+        "error": f"expected inventory could not be read: {reason}",
+    }
+
+
+def _expected_inventory(expected_path: Path) -> dict[str, Any] | None:
+    """The committed expected inventory, or None when it cannot be trusted.
+
+    The inventory is INPUT to this gate exactly as pyproject.toml is: an
+    absent, unreadable, non-UTF-8, malformed, or wrong-shaped file left the
+    required audit raising before it built a verdict — no exit-code
+    contract, no --json-out artifact. Shape is checked here too, because a
+    JSON document that parses can still be the wrong document.
+    """
+    try:
+        raw = expected_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    if _string_list(data.get("runtime")) is None:
+        return None
+    if _string_list(data.get("build_system")) is None:
+        return None
+    optional = _table(data.get("optional"))
+    if optional is None or any(
+        _string_list(items) is None for items in optional.values()
+    ):
+        return None
+    return data
+
+
+def _staged_mismatches(root: Path, expected: dict[str, Any]) -> list[dict[str, Any]]:
+    """Mismatches carried by the STAGED pyproject.toml, if it diverges.
+
+    In a clean checkout — every CI run — nothing diverges and this costs two
+    git invocations. Anything the index says that the inventory does not is
+    a mismatch reported against the staged field, because that is what the
+    next commit publishes.
+    """
+    if not (root / ".git").exists():
+        return []
+    divergent = staged_divergent(root)
+    if divergent is None:
+        return [{
+            "field": "staged-discovery",
+            "declared": "unavailable",
+            "expected": "an answerable index/worktree comparison",
+        }]
+    if "pyproject.toml" not in divergent:
+        return []
+    blob = staged_blob(root, "pyproject.toml", cap=PYPROJECT_SIZE_CAP)
+    if blob is None or blob is STAGED_OVERSIZED:
+        return [{
+            "field": "staged-pyproject",
+            "declared": "unreadable" if blob is None else "oversized",
+            "expected": "readable staged metadata within the ingress cap",
+        }]
+    try:
+        text = blob.decode("utf-8")
+    except UnicodeDecodeError:
+        return [{
+            "field": "staged-pyproject",
+            "declared": "not-utf-8",
+            "expected": "decodable staged metadata",
+        }]
+    staged = parse_metadata(text)
+    if staged.pop("_unasserted", False):
+        return [{
+            "field": "staged-pyproject",
+            "declared": "unasserted",
+            "expected": "fully attributable staged metadata",
+        }]
+    found: list[dict[str, Any]] = []
+    if staged.pop("dependency_groups", []):
+        found.append({
+            "field": "staged:dependency-groups",
+            "declared": staged.get("dependency_groups", []),
+            "expected": [],
+        })
+    for field in ("runtime", "build_system", "optional"):
+        if staged.get(field) != expected[field]:
+            found.append({
+                "field": f"staged:{field}",
+                "declared": staged.get(field),
+                "expected": expected[field],
+            })
+    dynamic = [
+        item for item in staged.get("dynamic", [])
+        if item in ("dependencies", "optional-dependencies")
+    ]
+    if dynamic:
+        found.append({"field": "staged:dynamic", "declared": dynamic, "expected": []})
+    return found
+
+
 def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
-    expected = json.loads(expected_path.read_text(encoding="utf-8"))
+    expected = _expected_inventory(expected_path)
+    if expected is None:
+        return _unreadable_inventory(str(expected_path))
     declared = parse_pyproject(root / "pyproject.toml")
     if declared.pop("_unasserted", False):
         # Either parser path saw metadata it could not fully read (a
@@ -197,6 +318,12 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
                 "declared": declared[field],
                 "expected": expected[field],
             })
+    # The worktree file is not what the next commit records. A dependency
+    # staged and then restored to benign worktree content shipped under a
+    # PASS on this rail while the secret scan and the boundary audit had
+    # already learned to reconcile against the index; all three now use the
+    # one shared predicate.
+    mismatches.extend(_staged_mismatches(root, expected))
     expected_count = (
         len(expected["runtime"])
         + len(expected["build_system"])
