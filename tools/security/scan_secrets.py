@@ -168,14 +168,25 @@ def _fingerprint(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8", "replace")).hexdigest()[:16]
 
 
-def _git_files(root: Path) -> list[str]:
-    result = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-z"],
-        capture_output=True,
-        check=False,
-    )
+def _git_files(root: Path) -> list[str] | None:
+    """Tracked paths, or None when discovery itself failed.
+
+    None is a fail-closed VERDICT for the caller, not an exception: a root
+    that is not a checkout, corrupt metadata, dubious-ownership refusal, or
+    a git that will not launch all left the required scan emitting a
+    traceback in place of its report and its --json-out artifact. The
+    boundary audit already answered this the same way.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z"],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.decode("utf-8", "replace"))
+        return None
     # surrogateescape: git hands back raw filename bytes; a non-UTF-8 name
     # must reach the scan loop (which records it) instead of killing
     # discovery with a UnicodeDecodeError before any verdict.
@@ -490,21 +501,28 @@ def _toml_multiline_findings(path: str, lines: list[str]) -> list[dict[str, Any]
     return findings
 
 
-_JSON_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
+# Escaped spellings a loader resolves at runtime: JSON's \uXXXX, and YAML's
+# \xNN and \UNNNNNNNN. Each names the same key as its plain spelling, so a
+# raw-line rule that only sees the escaped form finds nothing.
+_TEXT_ESCAPE = re.compile(r"\\(?:u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|U([0-9a-fA-F]{8}))")
 
 
-def _decode_json_escapes(line: str) -> str:
-    r"""ASCII-range \uXXXX escapes decoded ("passw\u006frd" -> password).
+def _decode_text_escapes(line: str) -> str:
+    r"""ASCII-range \uXXXX / \xNN / \UNNNNNNNN escapes decoded in place.
 
-    JSON resolves these at runtime, so the escaped spelling names the same
-    credential key; the raw-line rule never saw it. Non-ASCII escapes stay
-    as written — decoding them cannot complete a key the rules match."""
-    return _JSON_ESCAPE.sub(
-        lambda m: chr(int(m.group(1), 16))
-        if 0x20 <= int(m.group(1), 16) < 0x7F else m.group(0),
-        line,
-    )
+    ``"passw\x6frd"`` is an ordinary ``password`` key to every YAML loader,
+    and ``"password"`` is one to every JSON parser; the assignment rule
+    only ever saw the raw spelling. Decoding is restricted to the ASCII
+    range on purpose: a non-ASCII escape cannot complete a keyword the
+    rules match, and leaving it as written keeps the shadow line the same
+    length as the raw one so reported columns stay meaningful.
+    """
+    def _one(match: re.Match[str]) -> str:
+        digits = match.group(1) or match.group(2) or match.group(3)
+        point = int(digits, 16)
+        return chr(point) if 0x20 <= point < 0x7F else match.group(0)
 
+    return _TEXT_ESCAPE.sub(_one, line)
 
 def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
     findings = []
@@ -512,8 +530,10 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
     findings.extend(_block_scalar_findings(path, lines))
     findings.extend(_toml_multiline_findings(path, lines))
     for number, line in enumerate(text.splitlines(), 1):
-        if "\\u" in line:
-            decoded = _decode_json_escapes(line)
+        if "\\" in line:
+            # Cheap gate: only a line carrying a backslash can carry an
+            # escape at all. The decoder decides which spellings count.
+            decoded = _decode_text_escapes(line)
             if decoded != line:
                 # The decoded shadow is scanned alongside the raw line; a
                 # hit in either is a finding on this line. Duplicates from
@@ -799,6 +819,28 @@ def _scan_archive(rel: str, path: Path, data: bytes) -> tuple[list[dict[str, Any
 
 def scan_tree(root: Path) -> dict[str, Any]:
     files = _git_files(root)
+    if files is None:
+        # Discovery failed: the scan does not know what it was meant to
+        # inspect, so it cannot be clean. A structured FAIL, never a
+        # traceback — the exit code and the JSON artifact are the contract.
+        return {
+            "state": "FAIL",
+            "root": str(root),
+            "tracked_files": 0,
+            "text_files": 0,
+            "binary_files": 0,
+            "archive_files": 0,
+            "skipped_missing": 0,
+            "findings": [{
+                "path": ".", "line": 0, "rule": "tracked-discovery-failed",
+                "fingerprint": _fingerprint("tracked-discovery-failed"),
+            }],
+            "binaries": [],
+            "archives": [],
+            "symlinks": [],
+            "engine": "bcir-scan_secrets",
+            "error": "git ls-files could not enumerate tracked files",
+        }
     report: dict[str, Any] = {
         "state": "PASS",
         "root": str(root),

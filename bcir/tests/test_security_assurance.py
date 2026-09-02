@@ -2850,3 +2850,117 @@ def test_staged_python_blobs_are_audited() -> None:
     assert report["state"] == "FAIL"
     flagged = [f for f in report["findings"] if f["rule"] == "os.system-or-popen"]
     assert [f["path"] for f in flagged] == ["tools/release.py (staged)"]
+
+
+def test_yaml_escaped_credential_keys_are_findings() -> None:
+    """YAML resolves \\xNN and \\UNNNNNNNN at load time exactly as JSON
+    resolves \\uXXXX, so all three spell the same credential key. The
+    shadow-line scan only understood the JSON form, and its trigger only
+    looked for that form's prefix."""
+    from tools.security.scan_secrets import _scan_text
+    value = "correct-horse-battery-staple"
+    back = chr(92)
+    for escape in (back + "x6f", back + "U0000006f", back + "u006f"):
+        line = '"passw' + escape + 'rd": "' + value + '"'
+        assert [h["rule"] for h in _scan_text("c.yaml", line)] == [
+            "assignment-secret"
+        ], escape
+    # Decoding must not manufacture findings: a benign escaped key stays
+    # benign, and an escaped SPACE does not stitch a keyword together.
+    assert _scan_text("c.yaml", '{"c' + back + 'x6flor": "blue-green-teal-cyan"}') == []
+    assert _scan_text("c.yaml", 'note = "a' + back + 'x20b"') == []
+
+
+def test_secret_scan_discovery_failure_is_a_verdict() -> None:
+    """A root that is not a checkout (or whose metadata is unreadable) left
+    the required scan raising RuntimeError — no verdict, no exit code, no
+    --json-out artifact. The boundary audit already answered this shape with
+    a finding; both rails now do."""
+    from tools.security.scan_secrets import scan_tree
+    with tempfile.TemporaryDirectory() as tmp:
+        report = scan_tree(Path(tmp))          # no .git anywhere
+    assert report["state"] == "FAIL"
+    assert [i["rule"] for i in report["findings"]] == ["tracked-discovery-failed"]
+    assert report["tracked_files"] == 0
+    # The report is still a REPORT: serializable, with every documented key.
+    json.dumps(report)
+    for key in ("root", "text_files", "binary_files", "archive_files", "engine"):
+        assert key in report
+
+
+def test_configured_bcir_opt_command_name_is_resolved() -> None:
+    """`BCIR_OPT` may name a command on PATH — the WSL wrapper executes the
+    variable directly — but the gate tested it only as a filesystem path and
+    then fell back to the stock name, reporting the compiled rail missing
+    beside a runnable binary."""
+    import os
+    import stat as stat_module
+    from tools.security.run_malformed_differential import find_bcir_opt
+    with tempfile.TemporaryDirectory() as tmp:
+        bindir = Path(tmp)
+        exe = bindir / "custom-bcir-opt"
+        exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        exe.chmod(exe.stat().st_mode | stat_module.S_IXUSR)
+        old_path, old_opt = os.environ.get("PATH", ""), os.environ.get("BCIR_OPT")
+        os.environ["PATH"] = f"{bindir}{os.pathsep}{old_path}"
+        os.environ["BCIR_OPT"] = "custom-bcir-opt"
+        try:
+            resolved = find_bcir_opt(Path(tmp))
+        finally:
+            os.environ["PATH"] = old_path
+            if old_opt is None:
+                os.environ.pop("BCIR_OPT", None)
+            else:
+                os.environ["BCIR_OPT"] = old_opt
+    if os.name == "nt":
+        return  # a bare .sh stub is not executable through which() on Windows
+    assert resolved == str(exe)
+
+
+def test_repo_only_modules_are_classified_before_import() -> None:
+    """Import failure catches only the modules that import a repo-only TREE.
+    These import cleanly and fail on the first missing asset, so the packaged
+    runner classifies them by declaration — before import, and only outside a
+    source checkout."""
+    from bcir.tests import run_all
+    # Anti-drift: every declared name is a module the runner actually runs.
+    registered = set(run_all._MODULES)
+    assert run_all._REPO_ONLY_MODULES <= registered, (
+        run_all._REPO_ONLY_MODULES - registered
+    )
+    # The two modules the finding named must be covered by the declaration.
+    assert "bcir.tests.test_docs_claims" in run_all._REPO_ONLY_MODULES
+    assert "bcir.tests.test_asn1_ecn_law_parity" in run_all._REPO_ONLY_MODULES
+    sample = "bcir.tests.test_docs_claims"
+    original_modules, original_source = run_all._MODULES, run_all._is_source_checkout
+    run_all._MODULES = [sample]
+    try:
+        run_all._is_source_checkout = lambda: False
+        pairs, skipped = run_all._collect_tests()
+        assert pairs == [] and skipped == [(sample, "repository assets")]
+        # In a source checkout the registry is inert: the module runs.
+        run_all._is_source_checkout = lambda: True
+        pairs, skipped = run_all._collect_tests()
+        assert skipped == [] and pairs, "a checkout must still run repo-only modules"
+    finally:
+        run_all._MODULES = original_modules
+        run_all._is_source_checkout = original_source
+
+
+def test_ci_exercises_the_declared_python_floor() -> None:
+    """`requires-python` is a claim about which interpreters this package
+    supports. Every other Python job runs a newer one, so without a cell
+    pinned to the floor the claim was asserted by nothing."""
+    root = _ROOT
+    declared = ""
+    for line in (root / "pyproject.toml").read_text(encoding="utf-8").splitlines():
+        if line.replace(" ", "").startswith("requires-python="):
+            declared = line.split("=", 1)[1].strip().strip('"')
+            break
+    assert declared, "pyproject.toml must declare requires-python"
+    floor = ".".join(declared.lstrip(">=~^ ").split(".")[:2])
+    workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "python-floor:" in workflow, "no job pins the declared floor"
+    # The floor CI runs must be the floor pyproject declares: raising one
+    # without the other fails here rather than shipping an untested claim.
+    assert f'python: ["{floor}"]' in workflow, f"no CI cell runs Python {floor}"

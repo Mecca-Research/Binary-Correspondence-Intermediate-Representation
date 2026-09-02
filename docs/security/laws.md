@@ -44,7 +44,8 @@ structured report is itself a defect: it skips the JSON artifact and the
 exit-code contract. Witnesses: `test_campaign_launch_failure_is_structured`,
 `test_compiled_verifier_timeout_is_a_structured_failure`,
 `test_q8_read_io_failure_is_not_graceful`,
-`test_seed_construction_failure_is_a_structured_campaign_verdict`.
+`test_seed_construction_failure_is_a_structured_campaign_verdict`,
+`test_secret_scan_discovery_failure_is_a_verdict`.
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -53,7 +54,9 @@ Prove RED before landing GREEN. Refuse zero iteration budgets and empty
 corpora; require executed negative cases; ask of every checker "what input
 makes every loop iterate zero times?" and feed it that input in a test.
 Witnesses: `test_decoder_that_accepts_everything_is_a_finding`,
-`test_secret_scan_of_the_current_tree_is_non_vacuous`.
+`test_secret_scan_of_the_current_tree_is_non_vacuous`,
+`test_ci_exercises_the_declared_python_floor` (a support claim no job
+exercises is asserted by nothing).
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -108,7 +111,8 @@ Witnesses: `test_credential_shaped_filenames_are_findings`,
 `test_single_line_toml_multiline_secrets_are_findings`,
 `test_bomless_utf16_with_cjk_preamble_is_scanned`,
 `test_utf16_probe_survives_a_split_surrogate_pair`,
-`test_escaped_toml_delimiters_do_not_end_the_value`.
+`test_escaped_toml_delimiters_do_not_end_the_value`,
+`test_yaml_escaped_credential_keys_are_findings`.
 **Port note:** format-level knowledge; transfers verbatim to any scanner
 in any language.
 
@@ -204,7 +208,9 @@ directory, the gate's preflight resolves the same configuration — a
 preflight stricter than its tool reports available rails as unavailable
 and fails `--require` runs that would have passed.
 Witnesses: `test_configured_clang_is_honored`,
-`test_debug_preset_build_is_discovered`.
+`test_debug_preset_build_is_discovered`,
+`test_configured_bcir_opt_command_name_is_resolved` (a configured value
+may be a PATH or a command NAME; the wrapper accepts both).
 **Port note:** identical everywhere.
 
 ### L14 — One predicate per repeated defect
@@ -302,7 +308,10 @@ runner distinguishes the two environments: in a source checkout the tree
 is present and any import error stays fatal; in an installed environment
 the module is skipped **by name, on stdout**, and a run that collected
 nothing is INVALID/VACUOUS rather than a pass.
-Witness: `test_registered_suite_survives_missing_repo_only_trees`.
+Witnesses: `test_registered_suite_survives_missing_repo_only_trees`,
+`test_repo_only_modules_are_classified_before_import` (import failure
+catches only the modules that import a missing tree; the ones that
+import cleanly and then read a missing asset must be declared).
 **Port note:** the same law, harder to see in C: an installed library
 whose CTest manifest names build-tree fixtures, a pkg-config file
 pointing at headers the install step never copied, a `make check` that
@@ -311,16 +320,16 @@ install tree is the audit.
 
 ## Campaign classification summary
 
-Every review-thread finding from the campaign (195 threads, rounds 1–34)
+Every review-thread finding from the campaign (200 threads, rounds 1–35)
 is graded under the harvest protocol. The full per-finding
 index is `docs/security/pr749-harvest.csv`; the campaign ledger tracks the
 same data round by round.
 
 | Grade | Findings | Share | Meaning |
 |---|---|---|---|
-| **NEW-LAW** | 20 | **10.3%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
-| **INSTANCE** | 136 | **69.7%** | New entry point to a registered law — the law gained a witness |
-| **LOCAL** | 39 | **20.0%** | No transfer value beyond the code touched |
+| **NEW-LAW** | 20 | **10.0%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
+| **INSTANCE** | 141 | **70.5%** | New entry point to a registered law — the law gained a witness |
+| **LOCAL** | 39 | **19.5%** | No transfer value beyond the code touched |
 
 Rounds through 31 were graded retroactively; from round 32 every finding
 is graded at triage. Rounds 32 and 33 were both zero-NEW-LAW, taking the
@@ -338,6 +347,16 @@ other way — as an instance of L12's "declare the boundary, never leave it
 implicit" — the counter would stand at 3 of 3 and the loop would be
 stale. The other three round-34 findings were unambiguous instances, and
 the loop's overall trend remains a thinning one.
+
+Round 35 produced five findings and **no new law**, so the counter stands
+at **1 of 3**. Its sharpest result was an instance of L21 itself: the law
+was one round old and its implementation already proved incomplete —
+import-time classification caught only the modules that import a missing
+tree, not the ones that import cleanly and then read a missing asset. A
+newly declared law being tested and found under-implemented is the loop
+working exactly as intended, and it is the strongest argument yet that
+laws should be landed with their full witness set rather than their first
+one.
 
 Where the instances concentrated (finding count per law, origin included):
 L5 scannable-data coverage 22 · L3 resource-commit bounds 18 · L1

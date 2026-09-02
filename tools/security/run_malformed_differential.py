@@ -75,9 +75,18 @@ def _is_bcir_opt_name(name: str) -> bool:
 def find_bcir_opt(root: Path) -> str | None:
     env = os.environ.get("BCIR_OPT")
     if env:
+        # A configured value may be a PATH or a bare command NAME: the WSL
+        # wrapper executes $BCIR_OPT directly, so `BCIR_OPT=custom-bcir-opt`
+        # is a supported spelling. Testing it only as a relative path made
+        # the gate stricter than the tool it wraps — the rail reported
+        # unavailable, and --require-compiled failed, beside a runnable
+        # binary. Resolved through which(), exactly as CLANG already is.
         path = Path(env)
         if path.is_file() and _is_bcir_opt_name(path.name):
             return str(path)
+        resolved = shutil.which(env)
+        if resolved and _is_bcir_opt_name(Path(resolved).name):
+            return resolved
     which = shutil.which("bcir-opt")
     if which and _is_bcir_opt_name(Path(which).name):
         return which

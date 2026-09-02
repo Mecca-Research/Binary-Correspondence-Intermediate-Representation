@@ -194,3 +194,8 @@ finding,date,file,title,grade,law
 193,2026-09-02 11:57,scan_secrets.py,Recognize escaped TOML multiline delimiters,INSTANCE,L5
 194,2026-09-02 11:57,run_all.py,Keep the registered suite runnable after package installation,NEW-LAW,L21
 195,2026-09-02 11:57,audit_tool_boundaries.py,Audit the staged Python blob instead of only the worktree,INSTANCE,L15
+196,2026-09-02 12:39,run_all.py,Skip tests that need repository-only runtime assets,INSTANCE,L21
+197,2026-09-02 12:39,run_malformed_differential.py,Resolve BCIR_OPT command names through PATH,INSTANCE,L13
+198,2026-09-02 12:39,scan_secrets.py,Decode YAML hex escapes before scanning credential keys,INSTANCE,L5
+199,2026-09-02 12:39,scan_secrets.py,Return a verdict when tracked-file discovery fails,INSTANCE,L1
+200,2026-09-02 12:39,pyproject.toml,Test the newly advertised Python 3.11 floor,INSTANCE,L2
