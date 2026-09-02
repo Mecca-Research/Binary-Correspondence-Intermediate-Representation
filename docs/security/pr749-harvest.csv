@@ -204,3 +204,9 @@ finding,date,file,title,grade,law
 203,2026-09-02 15:53,scan_secrets.py,Scan JSON values wrapped onto following lines,INSTANCE,L5
 204,2026-09-02 15:53,audit_tool_boundaries.py,Enforce the source cap while reading worktree files,INSTANCE,L3
 205,2026-09-02 15:53,audit_dependencies.py,Audit staged dependency metadata before passing,INSTANCE,L15
+206,2026-09-02 18:09,scan_secrets.py,Enforce the cap while reading worktree files,INSTANCE,L3
+207,2026-09-02 18:09,audit_dependencies.py,Require expected-inventory fields to be present,INSTANCE,L1
+208,2026-09-02 18:09,scan_secrets.py,Normalize escaped keys before wrapped-value matching,INSTANCE,L5
+209,2026-09-02 18:09,scan_secrets.py,Accept dotted keys in the TOML multiline collector,INSTANCE,L5
+210,2026-09-02 18:09,run_all.py,Classify C-runtime tests that need unshipped sources,INSTANCE,L21
+211,2026-09-02 18:09,run_malformed_differential.py,Convert differential setup failures into a verdict,INSTANCE,L1

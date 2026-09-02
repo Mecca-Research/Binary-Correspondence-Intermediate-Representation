@@ -296,20 +296,37 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
             "required_rails": ["python-verify", "mlir-text", "mlir-compiled"],
             "error": "compiled rail required but bcir-opt not found",
         }
-    from bcir.examples import vector_add
-    from bcir.kbcir import optimize
-    from bcir.kbcir.cost import TargetProfile, Theta
-    from bcir.kbcir.differential import gen_illegal_module
-    from bcir.lower.mlir import to_mlir
-    from bcir.verify import verify
-    import random
+    # Every fixture this rail compares is BUILT here, by the same oracle it
+    # is meant to test: an optimizer or emitter regression makes setup raise
+    # before a single case runs, and before any report exists. The decoder
+    # campaign learned this for its seeds; this rail is the other half of
+    # the same lesson, so setup failure is the campaign's structured FAIL
+    # rather than a traceback that also skips --json-out.
+    try:
+        from bcir.examples import vector_add
+        from bcir.kbcir import optimize
+        from bcir.kbcir.cost import TargetProfile, Theta
+        from bcir.kbcir.differential import gen_illegal_module
+        from bcir.lower.mlir import to_mlir
+        from bcir.verify import verify
+        import random
 
-    clean = vector_add(16)
-    result = optimize(clean, TargetProfile.x86_avx512(), Theta.cool())
-    good_mlir = to_mlir(clean, TargetProfile.x86_avx512(), Theta.cool(), result=result)
-    duplicated = _duplicate_claim_module(clean)
-    r5 = _r5_module()
-    illegal, _why = gen_illegal_module(random.Random(0))
+        clean = vector_add(16)
+        result = optimize(clean, TargetProfile.x86_avx512(), Theta.cool())
+        good_mlir = to_mlir(clean, TargetProfile.x86_avx512(), Theta.cool(), result=result)
+        duplicated = _duplicate_claim_module(clean)
+        r5 = _r5_module()
+        illegal, _why = gen_illegal_module(random.Random(0))
+    except Exception as exc:  # noqa: BLE001 - every failure shape is the verdict
+        detail = f"{type(exc).__name__}: {str(exc)[:200]}"
+        return {
+            "state": "FAIL",
+            "cases": [],
+            "disagreements": [f"differential fixtures could not be built: {detail}"],
+            "malformed_rejected": 0,
+            "required_rails": ["python-verify", "mlir-text", "mlir-compiled"],
+            "error": f"differential fixtures could not be built: {detail}",
+        }
 
     cases = [
         {

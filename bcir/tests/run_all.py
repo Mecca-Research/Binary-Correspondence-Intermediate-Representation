@@ -431,15 +431,24 @@ _REPO_ONLY_TREES = ("tools",)
 
 
 # Modules whose TESTS read repository assets the wheel does not ship —
-# `tools/` scripts, the `mlir/` tree, `docs/`, committed corpora, build
-# outputs. Import-time failure catches only the ones that import such a
-# tree; these import cleanly and then fail on the first missing asset, so
-# they are classified by declaration instead, BEFORE import. In a source
-# checkout the registry is inert: every one of them runs.
+# `tools/` scripts, the `mlir/` tree, `docs/`, `runtime/c` sources,
+# committed corpora, build outputs. Import-time failure catches only the
+# ones that import such a tree; these import cleanly and then fail on the
+# first missing asset, so they are classified by declaration instead,
+# BEFORE import. In a source checkout the registry is inert: every one of
+# them runs.
 #
-# To regenerate: install the wheel into a clean venv, run this module, and
-# collect the modules of any FAIL lines.
+# TIER MATTERS when regenerating. The quick tier hides host toolchains
+# behind its `which` gate, so the C-compiling modules SELF-SKIP there and
+# look clean; at `--tier c-runtime` the compiler is visible and they reach
+# for `runtime/c` sources that are not in the wheel. Regenerate at the
+# highest tier the host supports, not the default one.
+#
+# To regenerate: install the wheel into a clean venv, run this module at
+# `--tier c-runtime` (or higher), and collect the modules of any FAIL
+# lines.
 _REPO_ONLY_MODULES = frozenset({
+    "bcir.tests.test_artifact_bundle",
     "bcir.tests.test_asn1_calibration",
     "bcir.tests.test_asn1_constraints",
     "bcir.tests.test_asn1_dialect",
@@ -450,28 +459,47 @@ _REPO_ONLY_MODULES = frozenset({
     "bcir.tests.test_asn1_native_bench",
     "bcir.tests.test_asn1_simd_hosts",
     "bcir.tests.test_asn1_surface",
+    "bcir.tests.test_c_asn1",
+    "bcir.tests.test_c_asn1_streampack",
     "bcir.tests.test_c_cfront",
     "bcir.tests.test_c_channel",
+    "bcir.tests.test_c_emit",
+    "bcir.tests.test_c_encoder",
+    "bcir.tests.test_c_executor",
+    "bcir.tests.test_c_jer",
+    "bcir.tests.test_c_oer",
+    "bcir.tests.test_c_per",
+    "bcir.tests.test_c_per_plan",
+    "bcir.tests.test_c_runtime",
+    "bcir.tests.test_c_xer",
     "bcir.tests.test_calibloop",
     "bcir.tests.test_calibrator",
     "bcir.tests.test_cfront",
+    "bcir.tests.test_cfront_link",
     "bcir.tests.test_cfront_roundtrip",
     "bcir.tests.test_channel_plugin",
     "bcir.tests.test_cpp_handoff",
     "bcir.tests.test_cpp_jer_index",
     "bcir.tests.test_cpp_jer_simd",
+    "bcir.tests.test_decode_c_kernels",
     "bcir.tests.test_device_manifest",
     "bcir.tests.test_differential",
     "bcir.tests.test_docs_claims",
     "bcir.tests.test_driver_gpio",
+    "bcir.tests.test_etl_binrec",
     "bcir.tests.test_event_phases",
     "bcir.tests.test_gemplus_baseline",
     "bcir.tests.test_hosted_model_spec",
     "bcir.tests.test_import_quarantine",
+    "bcir.tests.test_ir_structural_parity",
+    "bcir.tests.test_lowbit",
     "bcir.tests.test_microbench",
     "bcir.tests.test_model_assets",
+    "bcir.tests.test_model_weights_io",
+    "bcir.tests.test_native_ai",
     "bcir.tests.test_native_object_gate",
     "bcir.tests.test_provenance",
+    "bcir.tests.test_provenance_twin",
     "bcir.tests.test_q8_embed",
     "bcir.tests.test_regret",
     "bcir.tests.test_security_assurance",
@@ -480,8 +508,11 @@ _REPO_ONLY_MODULES = frozenset({
     "bcir.tests.test_sycl_channel",
     "bcir.tests.test_sycl_dispatch",
     "bcir.tests.test_target_matrix",
+    "bcir.tests.test_telemetry_frame",
     "bcir.tests.test_telemetry_security",
     "bcir.tests.test_toolchain",
+    "bcir.tests.test_train_c_kernels",
+    "bcir.tests.test_train_pack_exec",
     "bcir.tests.test_verify_differential",
 })
 

@@ -3101,3 +3101,144 @@ def test_staged_symlinks_are_recorded_not_parsed() -> None:
         report = audit_boundaries(root)
     assert report["state"] == "PASS", report["findings"]
     assert "tools/link.py (staged)" in report["symlinks"]
+
+
+def test_dotted_toml_keys_reach_the_continuation_collectors() -> None:
+    """`auth.password = \"\"\"...\"\"\"` is an ordinary dotted TOML key naming
+    the same leaf. The inline rule crosses the dot through its \\b, but the
+    anchored collectors rejected the prefix outright, and the inline rule
+    cannot cross a triple-quote delimiter — so the value was invisible."""
+    import tomllib
+    from tools.security.scan_secrets import _scan_text
+    value = "correct-horse-battery-staple"
+    quote = '"' * 3
+    # Built by concatenation: written out whole, these fixture lines are
+    # themselves credential-shaped and the tree scan flags this file.
+    key = "auth." + "password" + " = "
+    deep = "a.b." + "password" + " = "
+    same_line = key + quote + value + quote + "\n"
+    wrapped = key + quote + "\n" + value + "\n" + quote + "\n"
+    assert tomllib.loads(same_line)["auth"]["password"] == value       # oracle
+    assert tomllib.loads(wrapped)["auth"]["password"].strip() == value
+    assert [h["line"] for h in _scan_text("c.toml", same_line)] == [1]
+    assert [h["line"] for h in _scan_text("c.toml", wrapped)] == [1]
+    assert _scan_text("c.toml", deep + quote + value + quote), "deep dots"
+    # The value still faces the placeholder rules through the dotted key.
+    assert _scan_text("c.toml", key + quote + "your-password-here" + quote) == []
+
+
+def test_escaped_keys_reach_the_continuation_collectors() -> None:
+    """An escaped key spelling and a wrapped value were each handled, and
+    their COMBINATION was not: the decoded shadow fed only the per-line
+    rules, where the key and its value are still on different lines."""
+    import json
+    from tools.security.scan_secrets import _scan_text
+    value = "correct-horse-battery-staple"
+    back = chr(92)
+    document = (
+        '{' + "\n" + '  "passw' + back + 'u006frd":' + "\n"
+        + '    "' + value + '"' + "\n" + '}'
+    )
+    assert json.loads(document)["password"] == value                   # oracle
+    assert [h["rule"] for h in _scan_text("c.json", document)] == ["assignment-secret"]
+    # YAML's \\xNN spelling on the same shape, and a block scalar too.
+    assert _scan_text("c.yaml", '"passw' + back + 'x6frd":' + "\n" + "  " + value)
+    assert _scan_text("c.yaml", '"passw' + back + 'x6frd": |-' + "\n" + "  " + value)
+    # Decoding must not manufacture a finding from a benign escaped key.
+    assert _scan_text("c.yaml", '"c' + back + 'x6flor":' + "\n" + "  blue-green-teal") == []
+
+
+def test_secret_scan_worktree_read_is_bounded() -> None:
+    """`stat` answers about the past; the read is where memory is committed.
+    A tracked file that grows between the two was materialized whole and
+    then classified, decoded and scanned past the ingress cap. The boundary
+    audit and the staged blob were already read at cap + 1."""
+    from tools.security.scan_secrets import ARCHIVE_LOGICAL_CAP, scan_tree
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        target = root / "notes.txt"
+        target.write_text("small\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        target.write_bytes(b"a" * (ARCHIVE_LOGICAL_CAP + 4096))
+        real_stat = Path.stat
+
+        class _Stale:
+            st_size = 6
+            st_mode = target.stat().st_mode
+
+        def _stale_stat(self, *args, **kwargs):      # type: ignore[no-untyped-def]
+            if self == target:
+                return _Stale()
+            return real_stat(self, *args, **kwargs)
+
+        Path.stat = _stale_stat                      # type: ignore[method-assign]
+        try:
+            report = scan_tree(root)
+        finally:
+            Path.stat = real_stat                    # type: ignore[method-assign]
+    assert report["state"] == "FAIL"
+    assert "file-oversized" in {item["rule"] for item in report["findings"]}
+
+
+def test_expected_inventory_requires_its_fields() -> None:
+    """An ABSENT field is not an empty one. `_string_list(None)` and
+    `_table(None)` normalize omissions to empty values — the right reading
+    for optional pyproject metadata, the wrong one for the inventory this
+    gate asserts against, where it raised KeyError instead."""
+    from tools.security.audit_dependencies import audit
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "pyproject.toml").write_text(
+            '[project]\nname="x"\nversion="1"\n', encoding="utf-8")
+        for name, body in {
+            "empty.json": {},
+            "no_runtime.json": {"build_system": [], "optional": {}},
+            "no_optional.json": {"runtime": [], "build_system": []},
+        }.items():
+            target = root / name
+            target.write_text(json.dumps(body), encoding="utf-8")
+            report = audit(root, target)
+            assert report["state"] == "FAIL", name
+            assert report["inventory_asserted"] is False, name
+            json.dumps(report)
+
+
+def test_differential_setup_failure_is_a_verdict() -> None:
+    """Every fixture this rail compares is built by the oracle it tests, so
+    an optimizer or emitter regression made setup raise before any case ran
+    and before a report existed — a traceback in place of the verdict, and
+    no --json-out artifact."""
+    from unittest.mock import patch
+    import bcir.kbcir as kbcir
+    from tools.security.run_malformed_differential import run_differential
+    with patch.object(kbcir, "optimize", side_effect=RuntimeError("regressed")):
+        report = run_differential(_ROOT)
+    assert report["state"] == "FAIL"
+    assert report["cases"] == []
+    assert "fixtures could not be built" in report["error"]
+    assert "RuntimeError" in report["error"]
+    json.dumps(report)
+
+
+def test_repo_only_registry_covers_the_compiling_tiers() -> None:
+    """The quick tier hides host toolchains behind its `which` gate, so the
+    C-compiling modules SELF-SKIP there and an installed-wheel run at the
+    default tier looks clean. At `--tier c-runtime` the compiler is visible
+    and those modules reach for `runtime/c` sources the wheel never ships:
+    23 modules, 122 failures. A registry validated only at the tier that
+    cannot reach the defect is not validated."""
+    from bcir.tests import run_all
+    registered = set(run_all._MODULES)
+    assert run_all._REPO_ONLY_MODULES <= registered, (
+        run_all._REPO_ONLY_MODULES - registered
+    )
+    # The modules the finding named, plus the rest of the C-compiling set
+    # the c-runtime tier exposed.
+    for name in (
+        "bcir.tests.test_artifact_bundle",
+        "bcir.tests.test_c_runtime",
+        "bcir.tests.test_native_ai",
+        "bcir.tests.test_train_c_kernels",
+    ):
+        assert name in run_all._REPO_ONLY_MODULES, name

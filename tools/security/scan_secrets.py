@@ -399,7 +399,7 @@ def _continuation_finding(path: str, index: int, value: str) -> dict[str, Any] |
 # is credential-shaped — the key has no value, the value has no key. This
 # is the same key/value split as a block scalar without the `|` marker.
 WRAPPED_KEY = re.compile(
-    r"(?i)^\s*(?:-\s+)?['\"]?(?:[A-Za-z0-9]+[_-])*"
+    r"(?i)^\s*(?:-\s+)?['\"]?(?:[A-Za-z0-9_-]+\s*\.\s*)*(?:[A-Za-z0-9]+[_-])*"
     r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
     r"['\"]?\s*[:=]\s*$"
 )
@@ -433,7 +433,7 @@ def _wrapped_value_findings(path: str, lines: list[str]) -> list[dict[str, Any]]
 
 
 BLOCK_SCALAR = re.compile(
-    r"(?i)^(?P<indent>\s*)(?:-\s+)?['\"]?(?:[A-Za-z0-9]+[_-])*"
+    r"(?i)^(?P<indent>\s*)(?:-\s+)?['\"]?(?:[A-Za-z0-9_-]+\s*\.\s*)*(?:[A-Za-z0-9]+[_-])*"
     r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
     r"['\"]?\s*:\s*[|>][-+0-9]*\s*$"
 )
@@ -472,7 +472,7 @@ def _block_scalar_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
 # is bare text. Anchored like BLOCK_SCALAR, so the prefix group cannot
 # retry across a long line from more than one start position.
 TOML_MULTILINE = re.compile(
-    r"(?i)^\s*['\"]?(?:[A-Za-z0-9]+[_-])*"
+    r"(?i)^\s*['\"]?(?:[A-Za-z0-9_-]+\s*\.\s*)*(?:[A-Za-z0-9]+[_-])*"
     r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
     r"['\"]?\s*=\s*(?P<delim>\"\"\"|''')(?P<rest>.*)$"
 )
@@ -569,9 +569,16 @@ def _decode_text_escapes(line: str) -> str:
 def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
     findings = []
     lines = text.splitlines()
-    findings.extend(_block_scalar_findings(path, lines))
-    findings.extend(_toml_multiline_findings(path, lines))
-    findings.extend(_wrapped_value_findings(path, lines))
+    # The continuation collectors run over the DECODED shadow, not the raw
+    # lines: an escaped key spelling and a wrapped value are independently
+    # handled, and their combination reached neither — the decode fed only
+    # the per-line rules, where the key and value are still apart. Decoding
+    # is length-preserving outside the ASCII range it rewrites, so line
+    # numbers and indentation are the raw file's throughout.
+    shadow = [_decode_text_escapes(line) if "\\" in line else line for line in lines]
+    findings.extend(_block_scalar_findings(path, shadow))
+    findings.extend(_toml_multiline_findings(path, shadow))
+    findings.extend(_wrapped_value_findings(path, shadow))
     for number, line in enumerate(text.splitlines(), 1):
         if "\\" in line:
             # Cheap gate: only a line carrying a backslash can carry an
@@ -1053,7 +1060,21 @@ def scan_tree(root: Path) -> dict[str, Any]:
                 })
                 continue
         try:
-            data = path.read_bytes()
+            with path.open("rb") as handle:
+                # The stat above answers about the past; this read is where
+                # the memory is committed. A file that grows between the two
+                # (a concurrent editor or generator) would otherwise be
+                # materialized whole and then classified, decoded and
+                # scanned — past the advertised ingress cap. Read one byte
+                # beyond it and refuse the remainder, exactly as the staged
+                # blob and the boundary audit's worktree read already do.
+                data = handle.read(ARCHIVE_LOGICAL_CAP + 1)
+            if len(data) > ARCHIVE_LOGICAL_CAP:
+                report["findings"].append({
+                    "path": display, "line": 0, "rule": "file-oversized",
+                    "fingerprint": _fingerprint("file-oversized"),
+                })
+                continue
         except OSError as exc:
             # A tracked file the scanner cannot read was not inspected — that
             # is a failing finding, never a silent skip.

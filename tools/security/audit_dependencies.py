@@ -182,6 +182,18 @@ def _expected_inventory(expected_path: Path) -> dict[str, Any] | None:
         return None
     if not isinstance(data, dict):
         return None
+    # PRESENCE before shape: `_string_list(None)` and `_table(None)` both
+    # normalize an ABSENT field to an empty one, which is the right reading
+    # for optional metadata in pyproject.toml but the wrong one here — an
+    # inventory that never mentions `runtime` has not asserted an empty
+    # runtime, it has failed to say anything, and `audit()` then raised
+    # KeyError reaching for it.
+    missing = [
+        field for field in ("runtime", "build_system", "optional")
+        if field not in data
+    ]
+    if missing:
+        return None
     if _string_list(data.get("runtime")) is None:
         return None
     if _string_list(data.get("build_system")) is None:

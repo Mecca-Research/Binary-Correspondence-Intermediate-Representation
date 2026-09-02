@@ -47,7 +47,11 @@ exit-code contract. Witnesses: `test_campaign_launch_failure_is_structured`,
 `test_seed_construction_failure_is_a_structured_campaign_verdict`,
 `test_secret_scan_discovery_failure_is_a_verdict`,
 `test_unreadable_expected_inventory_is_a_failing_report` (a gate's own
-reference data is input too).
+reference data is input too),
+`test_expected_inventory_requires_its_fields` (an ABSENT field is not
+an empty one),
+`test_differential_setup_failure_is_a_verdict` (fixtures built by the
+oracle under test fail like anything else).
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -80,7 +84,9 @@ object commits memory when it is expanded, not when it is listed),
 `test_concatenated_xz_streams_are_bounded` (a stream COUNT is a
 resource: empty streams advance no output cap at all),
 `test_worktree_source_read_is_bounded` (stat answers about the past;
-the read is the commitment).
+the read is the commitment),
+`test_secret_scan_worktree_read_is_bounded` (the same bound, the third
+rail to receive it).
 **Port note:** this is the memory-safety law. In Python these failures were
 OOMs; in C the same shapes are allocator abuse and heap corruption. Every
 `malloc` sized from input data is an L3 site.
@@ -118,7 +124,10 @@ Witnesses: `test_credential_shaped_filenames_are_findings`,
 `test_escaped_toml_delimiters_do_not_end_the_value`,
 `test_yaml_escaped_credential_keys_are_findings`,
 `test_wrapped_mapping_values_are_findings` (a value may reach its key
-across a line break in JSON and YAML alike).
+across a line break in JSON and YAML alike),
+`test_dotted_toml_keys_reach_the_continuation_collectors`,
+`test_escaped_keys_reach_the_continuation_collectors` (two closed
+defects compose into a third that neither fix covered).
 **Port note:** format-level knowledge; transfers verbatim to any scanner
 in any language.
 
@@ -321,7 +330,10 @@ nothing is INVALID/VACUOUS rather than a pass.
 Witnesses: `test_registered_suite_survives_missing_repo_only_trees`,
 `test_repo_only_modules_are_classified_before_import` (import failure
 catches only the modules that import a missing tree; the ones that
-import cleanly and then read a missing asset must be declared).
+import cleanly and then read a missing asset must be declared),
+`test_repo_only_registry_covers_the_compiling_tiers` (a registry
+validated at a tier that hides the toolchain is not validated: the
+quick tier's `which` gate made 23 C-compiling modules self-skip).
 **Port note:** the same law, harder to see in C: an installed library
 whose CTest manifest names build-tree fixtures, a pkg-config file
 pointing at headers the install step never copied, a `make check` that
@@ -330,16 +342,16 @@ install tree is the audit.
 
 ## Campaign classification summary
 
-Every review-thread finding from the campaign (205 threads, rounds 1–36)
+Every review-thread finding from the campaign (211 threads, rounds 1–37)
 is graded under the harvest protocol. The full per-finding
 index is `docs/security/pr749-harvest.csv`; the campaign ledger tracks the
 same data round by round.
 
 | Grade | Findings | Share | Meaning |
 |---|---|---|---|
-| **NEW-LAW** | 20 | **9.8%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
-| **INSTANCE** | 146 | **71.2%** | New entry point to a registered law — the law gained a witness |
-| **LOCAL** | 39 | **19.0%** | No transfer value beyond the code touched |
+| **NEW-LAW** | 20 | **9.5%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
+| **INSTANCE** | 152 | **72.0%** | New entry point to a registered law — the law gained a witness |
+| **LOCAL** | 39 | **18.5%** | No transfer value beyond the code touched |
 
 Rounds through 31 were graded retroactively; from round 32 every finding
 is graded at triage. Rounds 32 and 33 were both zero-NEW-LAW, taking the
@@ -377,6 +389,19 @@ staged path never learned the symlink check its worktree sibling always
 had. That is **L14** (one predicate per repeated defect) reasserting
 itself: a mechanism landed on two rails out of three is a defect on the
 third, and the loop found each one.
+
+Round 37 produced six findings and no new law, so **the staleness rule
+fires**: three consecutive zero-NEW-LAW rounds. The pattern that began in
+round 36 sharpened rather than broke — every one of the six was an
+already-registered law reaching one path and not its sibling: the cap that
+landed on the boundary audit but not the secret scan, the inventory shape
+check that validated fields without requiring them, escaped keys and
+wrapped values each handled but not composed, dotted keys crossed by the
+inline rule but not the collectors, the repo-only registry validated at a
+tier that hides the toolchain, and the seed guard given to the decoder
+campaign but not the differential. The registry has been stable for three
+rounds while its implementation catches up — which is precisely the
+condition the rule was written to detect.
 
 Where the instances concentrated (finding count per law, origin included):
 L5 scannable-data coverage 22 · L3 resource-commit bounds 18 · L1
