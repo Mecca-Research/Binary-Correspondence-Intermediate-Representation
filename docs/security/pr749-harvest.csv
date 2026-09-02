@@ -217,3 +217,9 @@ finding,date,file,title,grade,law
 216,2026-09-02 18:52,audit_dependencies.py,Bound the expected inventory before reading it,INSTANCE,L3
 217,2026-09-02 18:52,scan_secrets.py,Convert staged archive spool failures into findings,INSTANCE,L1
 218,2026-09-02 18:52,run_malformed_differential.py,Convert malformed verifier results into disagreements,INSTANCE,L1
+219,2026-09-02 20:42,test_security_assurance.py,Assert redaction structurally rather than by URL substring,INSTANCE,L11
+220,2026-09-02 20:42,audit_dependencies.py,Audit the staged expected inventory alongside the worktree copy,INSTANCE,L15
+221,2026-09-02 20:42,audit_dependencies.py,Redact credentials from advisory stdout and error text,INSTANCE,L7
+222,2026-09-02 20:42,scan_secrets.py,Accept escaped quotes inside quoted key segments,INSTANCE,L5
+223,2026-09-02 20:42,scan_secrets.py,Classify BOM-less UTF-32 by decode validity not NUL density,INSTANCE,L5
+224,2026-09-02 20:42,scan_secrets.py,Split quoted value branches so escaped quotes stay in scope,INSTANCE,L5

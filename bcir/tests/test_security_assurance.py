@@ -3268,8 +3268,15 @@ def test_dependency_declarations_are_redacted_in_reports() -> None:
     serialized = json.dumps(report)
     assert report["state"] == "FAIL"
     assert value not in serialized                  # the whole report, not just findings
-    assert "<redacted>" in serialized
-    assert "example.com" in serialized              # still actionable
+    # Exact, not a substring search: `"example.com" in serialized` reads as
+    # a URL host check to a static analyser (CodeQL's
+    # py/incomplete-url-substring-sanitization, and fairly — that shape IS
+    # unsafe when it gates a redirect). Asserting the redacted declaration
+    # itself is both unambiguous and a stronger claim: the credential is
+    # gone, the package, host and path survive, and nothing else moved.
+    assert report["declared"]["runtime"] == [
+        "private @ https://user:<redacted>@example.com/pkg.whl"
+    ]
 
 
 def test_bomless_utf32_text_is_scanned() -> None:
@@ -3423,3 +3430,123 @@ def test_staged_archive_spool_failure_is_a_finding() -> None:
     staged = [i for i in report["findings"] if i["path"].endswith("(staged)")]
     assert [i["rule"] for i in staged] == ["archive-unreadable"]
     json.dumps(report)
+
+
+def test_advisory_output_is_redacted() -> None:
+    """pip-audit echoes the requirements it is handed, so its own stdout
+    carries whatever the declaration carried. Redacting `declared` while
+    retaining the engine's output verbatim moved the leak rather than
+    closing it."""
+    import os
+    import stat as stat_module
+    from tools.security.audit_dependencies import audit
+    value = "correct-horse-battery-staple"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        dependency = "private @ https://user:" + value + "@example.com/pkg.whl"
+        (root / "pyproject.toml").write_text(
+            '[project]\nname="x"\nversion="1"\ndependencies = ["'
+            + dependency + '"]\n', encoding="utf-8")
+        expected = root / "expected.json"
+        expected.write_text(
+            json.dumps({"runtime": [dependency], "build_system": [], "optional": {}}),
+            encoding="utf-8")
+        # An engine that echoes its stdin is exactly pip-audit's behaviour
+        # for the requirement list, and the smallest way to reproduce it.
+        bindir = root / "bin"
+        bindir.mkdir()
+        engine = bindir / "pip-audit"
+        engine.write_text("#!/bin/sh\ncat\n", encoding="utf-8")
+        engine.chmod(engine.stat().st_mode | stat_module.S_IXUSR)
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{bindir}{os.pathsep}{old_path}"
+        try:
+            report = audit(root, expected)
+        finally:
+            os.environ["PATH"] = old_path
+    if os.name == "nt":
+        return  # a /bin/sh stub is not executable through which() there
+    serialized = json.dumps(report)
+    assert report["advisory"]["engine"] == "pip-audit"
+    assert value not in serialized, "the engine's own output leaked it"
+    assert "<redacted>" in report["advisory"]["stdout_tail"]
+
+
+def test_staged_expected_inventory_is_audited() -> None:
+    """The audit asserts declared metadata AGAINST the inventory, so both
+    sides of that comparison are index-sensitive. Reconciling only
+    pyproject.toml left the mirror-image hole."""
+    from tools.security.audit_dependencies import audit
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "pyproject.toml").write_text(
+            '[project]\nname="x"\nversion="1"\n', encoding="utf-8")
+        inventory = root / "expected.json"
+        inventory.write_text(
+            json.dumps({"runtime": ["requests==2.0"], "build_system": [],
+                        "optional": {}}), encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        # Staged inventory demands a dependency; worktree copy is benign.
+        inventory.write_text(
+            json.dumps({"runtime": [], "build_system": [], "optional": {}}),
+            encoding="utf-8")
+        report = audit(root, inventory)
+    assert report["state"] == "FAIL"
+    assert any(
+        m["field"] == "staged-inventory:runtime" for m in report["mismatches"]
+    ), report["mismatches"]
+
+
+def test_escaped_quotes_in_quoted_key_segments() -> None:
+    """A quoted TOML key segment may contain an escaped quote. The segment
+    pattern stopped at that raw quote, and the inline rule cannot cross a
+    triple-quote opener, so the credential was invisible to both."""
+    import tomllib
+    from tools.security.scan_secrets import _scan_text
+    value = "correct-horse-battery-staple"
+    quote = '"' * 3
+    back = chr(92)
+    prefix = '"au' + back + '"th".' + "password"
+    document = prefix + " = " + quote + value + quote + "\n"
+    assert tomllib.loads(document)['au"th']["password"] == value      # oracle
+    assert [h["line"] for h in _scan_text("c.toml", document)] == [1]
+
+
+def test_multilingual_bomless_utf32_is_scanned() -> None:
+    """The UTF-32 probe counted three-NUL groups, which asks "is this mostly
+    ASCII?" — so non-ASCII text ahead of a credential sank the vote and the
+    file fell through to the binary heuristic. Validity decides now."""
+    from tools.security.scan_secrets import _decode_text, _kind_for, _scan_text
+    value = "correct-horse-battery-staple"
+    document = ('{"note":"' + ("漢" * 10) + '","' + "password"
+                + '":"' + value + '"}')
+    for encoding in ("utf-32-le", "utf-32-be"):
+        blob = document.encode(encoding)
+        assert json.loads(blob)["password"] == value                 # oracle
+        assert _kind_for("c.json", blob) == "text", encoding
+        assert [h["rule"] for h in _scan_text("c.json", _decode_text(blob))] == [
+            "assignment-secret"
+        ], encoding
+    # Validity must not admit what is not UTF-32.
+    assert _kind_for("a.txt", b"hello world!") == "text"
+    assert _kind_for("a.txt", "hello".encode("utf-16-le")) == "text"
+    assert _kind_for("a.bin", bytes(range(256)) * 4) == "binary"
+    assert _kind_for("a.bin", b"\x00" * 4096) == "binary"
+
+
+def test_escaped_quotes_inside_inline_values() -> None:
+    """`[^'\\"]` knew neither which quote opened the value nor that a
+    backslash escapes the next character, so a JSON value containing an
+    escaped quote ended at that raw quote and no branch recovered it."""
+    from tools.security.scan_secrets import _scan_text
+    value = "correct-horse-battery-staple"
+    back = chr(92)
+    document = '{"' + "password" + '":"x' + back + '"' + value + '"}'
+    assert json.loads(document)["password"] == 'x"' + value          # oracle
+    assert [h["rule"] for h in _scan_text("c.json", document)] == ["assignment-secret"]
+    # Splitting the branches must not weaken either one.
+    assert _scan_text("f", "password: '" + value + "'")
+    assert _scan_text("f", '{"' + "password" + '":"' + value + '"}')
+    assert _scan_text("f", "password: 'your-password-here'") == []
+    assert _scan_text("f", "token_counts: 'object or null'") == []

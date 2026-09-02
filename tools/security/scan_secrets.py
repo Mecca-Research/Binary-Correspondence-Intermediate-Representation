@@ -104,7 +104,15 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("assignment-secret", re.compile(
         r"(?i)(?:\b|(?<=[0-9A-Za-z]_))(?:api[_-]?key|secret|password|token|passwd)"
         r"(?:[_-][A-Za-z0-9]{1,64}){0,16}+['\"]?\s*[:=]\s*"
-        r"(?:['\"](?P<value>[^'\"]{12,})['\"]"
+        # Split by delimiter, and escape-aware in each: `[^'\"]` knew
+        # neither which quote opened the value nor that a backslash escapes
+        # the next character, so a JSON value containing an escaped quote
+        # ended at that raw quote and no branch could recover the
+        # assignment. The two alternatives are unambiguous (one starts
+        # with a backslash, the other cannot contain one), so this stays
+        # linear.
+        r"(?:\"(?P<value>(?:[^\"\\]|\\.){12,})\""
+        r"|'(?P<svalue>(?:[^'\\]|\\.){12,})'"
         r"|(?P<uvalue>(?=[A-Za-z0-9+/_.\-]*\d)[A-Za-z0-9+/_.\-]{16,}={0,2}"
         r"|(?-i:[a-z]{20,})(?![A-Za-z0-9_])"
         r"|(?-i:(?=[a-z\-]{16,}(?![A-Za-z0-9_.\-]))[a-z]+(?:-[a-z]+){2,})"
@@ -228,29 +236,26 @@ def _utf32_bomless(data: bytes) -> str | None:
     sample = sample[:len(sample) - (len(sample) % 4)]
     if len(sample) < 8:
         return None
-    units = len(sample) // 4
-    little = sum(
-        sample[index + 1] == 0 and sample[index + 2] == 0 and sample[index + 3] == 0
-        for index in range(0, len(sample), 4)
-    )
-    big = sum(
-        sample[index] == 0 and sample[index + 1] == 0 and sample[index + 2] == 0
-        for index in range(0, len(sample), 4)
-    )
-    if little >= units * 0.9 and little > big:
-        encoding = "utf-32-le"
-    elif big >= units * 0.9 and big > little:
-        encoding = "utf-32-be"
-    else:
-        return None
-    try:
-        text = sample.decode(encoding)
-    except (UnicodeDecodeError, ValueError):
-        return None
-    if not text:
-        return None
-    printable = sum(ch.isprintable() or ch in "\r\n\t" for ch in text)
-    return encoding if printable >= len(text) * 0.9 else None
+    # VALIDITY decides, not NUL density. Counting three-NUL groups asked
+    # "is this mostly ASCII?", so ten CJK characters ahead of a credential
+    # sank the vote and the file fell through to the binary heuristic. A
+    # strict UTF-32 decode is a far stronger test on its own: every unit
+    # must be a scalar value below U+110000 and outside the surrogate
+    # range, which single-byte text, UTF-16, and arbitrary binary all fail
+    # immediately (ASCII "abcd" reads as U+64636261). The endianness that
+    # decodes is the endianness it is; the printability floor then rejects
+    # the rare blob that decodes but is not text.
+    for encoding in ("utf-32-le", "utf-32-be"):
+        try:
+            text = sample.decode(encoding)
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if not text:
+            continue
+        printable = sum(ch.isprintable() or ch in "\r\n\t" for ch in text)
+        if printable >= len(text) * 0.9:
+            return encoding
+    return None
 
 
 def _utf16_bomless(data: bytes) -> str | None:
@@ -448,7 +453,7 @@ def _continuation_finding(path: str, index: int, value: str) -> dict[str, Any] |
 WRAPPED_KEY = re.compile(
     # `{` / `[` lead-in: a JSON key may share its line with the brace
     # that opens the object, and the anchor otherwise refuses it.
-    r"(?i)^\s*[\{\[]?\s*(?:-\s+)?(?:(?:\"[^\"]*\"|'[^']*'|[A-Za-z0-9_-]+)\s*\.\s*)*['\"]?(?:[A-Za-z0-9]+[_-])*"
+    r"(?i)^\s*[\{\[]?\s*(?:-\s+)?(?:(?:\"(?:[^\"\\]|\\.)*\"|'[^']*'|[A-Za-z0-9_-]+)\s*\.\s*)*['\"]?(?:[A-Za-z0-9]+[_-])*"
     r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
     r"['\"]?\s*[:=]\s*$"
 )
@@ -482,7 +487,7 @@ def _wrapped_value_findings(path: str, lines: list[str]) -> list[dict[str, Any]]
 
 
 BLOCK_SCALAR = re.compile(
-    r"(?i)^(?P<indent>\s*)(?:-\s+)?(?:(?:\"[^\"]*\"|'[^']*'|[A-Za-z0-9_-]+)\s*\.\s*)*['\"]?(?:[A-Za-z0-9]+[_-])*"
+    r"(?i)^(?P<indent>\s*)(?:-\s+)?(?:(?:\"(?:[^\"\\]|\\.)*\"|'[^']*'|[A-Za-z0-9_-]+)\s*\.\s*)*['\"]?(?:[A-Za-z0-9]+[_-])*"
     r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
     r"['\"]?\s*:\s*[|>][-+0-9]*\s*$"
 )
@@ -521,7 +526,7 @@ def _block_scalar_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
 # is bare text. Anchored like BLOCK_SCALAR, so the prefix group cannot
 # retry across a long line from more than one start position.
 TOML_MULTILINE = re.compile(
-    r"(?i)^\s*(?:(?:\"[^\"]*\"|'[^']*'|[A-Za-z0-9_-]+)\s*\.\s*)*['\"]?(?:[A-Za-z0-9]+[_-])*"
+    r"(?i)^\s*(?:(?:\"(?:[^\"\\]|\\.)*\"|'[^']*'|[A-Za-z0-9_-]+)\s*\.\s*)*['\"]?(?:[A-Za-z0-9]+[_-])*"
     r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
     r"['\"]?\s*=\s*(?P<delim>\"\"\"|''')(?P<rest>.*)$"
 )
@@ -643,10 +648,12 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
                         value = match.group(0)
                         groups = match.groupdict()
                         if _is_placeholder(
-                            groups.get("value") or groups.get("uvalue") or value
+                            groups.get("value") or groups.get("svalue")
+                            or groups.get("uvalue") or value
                         ):
                             continue
-                        if groups.get("value") is not None and _is_prose(groups["value"]):
+                        quoted = groups.get("value") or groups.get("svalue")
+                        if quoted is not None and _is_prose(quoted):
                             continue
                         fingerprint = _fingerprint(value)
                         if fingerprint in seen:
@@ -661,12 +668,16 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
                 groups = match.groupdict()
                 # Placeholder checks run on the VALUE (assignment RHS or the
                 # token itself), not on the key or surrounding text.
-                if _is_placeholder(groups.get("value") or groups.get("uvalue") or value):
+                if _is_placeholder(
+                    groups.get("value") or groups.get("svalue")
+                    or groups.get("uvalue") or value
+                ):
                     continue
                 # Prose suppression applies ONLY to the quoted branch: the
                 # unquoted branches and every token rule already carry a
                 # shape, so this cannot weaken them.
-                if groups.get("value") is not None and _is_prose(groups["value"]):
+                quoted = groups.get("value") or groups.get("svalue")
+                if quoted is not None and _is_prose(quoted):
                     continue
                 findings.append({
                     "path": path,

@@ -136,7 +136,12 @@ across a line break in JSON and YAML alike),
 defects compose into a third that neither fix covered),
 `test_bomless_utf32_text_is_scanned` (three NULs per ASCII character
 read as binary to every density heuristic),
-`test_quoted_dotted_key_segments_are_matched`.
+`test_quoted_dotted_key_segments_are_matched`,
+`test_escaped_quotes_in_quoted_key_segments`,
+`test_escaped_quotes_inside_inline_values` (an escaped delimiter ends a
+value only if the grammar forgets the escape),
+`test_multilingual_bomless_utf32_is_scanned` (NUL density is an
+ASCII-shaped assumption; decode validity is not).
 **Port note:** format-level knowledge; transfers verbatim to any scanner
 in any language.
 
@@ -162,7 +167,8 @@ Witnesses: `test_credential_shaped_names_are_redacted_in_every_report_field`,
 `test_non_utf8_archive_member_names_are_findings_not_crashes`,
 `test_dependency_declarations_are_redacted_in_reports` (a PEP 508 direct
 reference can CARRY a credential, and no scanner rule reads URL
-userinfo).
+userinfo), `test_advisory_output_is_redacted` (a wrapped tool's stdout and
+error text are report fields too).
 **Port note:** harsher in C — every format string and every buffer holding
 a matched value is an L7 site.
 
@@ -211,10 +217,15 @@ whitelists those values and nothing else.
 a broader check keeps the differential green while its target law
 regresses. Each rejecting witness declares its expected law per rail
 (Python law, text reason, compiled diagnostic marker), and diagnostics are
-captured head-biased so the marker survives note floods.
+captured head-biased so the marker survives note floods. The assertion
+itself is under the same discipline: a witness that checks for a *substring*
+of what should have been removed still passes on output where the law is
+violated — it must pin the whole shape.
 Witnesses: `test_python_witness_paired_to_its_intended_law`,
 `test_witness_rejected_for_the_wrong_law_is_a_disagreement`,
-`test_compiled_diagnostic_marker_survives_long_notes`.
+`test_compiled_diagnostic_marker_survives_long_notes`,
+`test_dependency_declarations_are_redacted_in_reports` (asserts the
+redacted requirement exactly, not that a host substring is present).
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -269,7 +280,9 @@ told to stop comparing is one the gate must compare itself),
 `test_staged_python_blobs_are_audited` (every rail reconciles, through
 one shared predicate — see L14),
 `test_staged_dependency_metadata_is_audited` (the third rail; the same
-defect went unfixed on it for two rounds after the first two closed it).
+defect went unfixed on it for two rounds after the first two closed it),
+`test_staged_expected_inventory_is_audited` (a rail reconciles every input
+it reads, not just the one the first fix reached).
 **Port note:** identical everywhere.
 
 ### L16 — Never green yourself by editing the neighbor
@@ -356,16 +369,16 @@ install tree is the audit.
 
 ## Campaign classification summary
 
-Every review-thread finding from the campaign (218 threads, rounds 1–38)
+Every review-thread finding from the campaign (224 threads, rounds 1–39)
 is graded under the harvest protocol. The full per-finding
 index is `docs/security/pr749-harvest.csv`; the campaign ledger tracks the
 same data round by round.
 
 | Grade | Findings | Share | Meaning |
 |---|---|---|---|
-| **NEW-LAW** | 20 | **9.2%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
-| **INSTANCE** | 159 | **72.9%** | New entry point to a registered law — the law gained a witness |
-| **LOCAL** | 39 | **17.9%** | No transfer value beyond the code touched |
+| **NEW-LAW** | 20 | **8.9%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
+| **INSTANCE** | 165 | **73.7%** | New entry point to a registered law — the law gained a witness |
+| **LOCAL** | 39 | **17.4%** | No transfer value beyond the code touched |
 
 Rounds through 31 were graded retroactively; from round 32 every finding
 is graded at triage. Rounds 32 and 33 were both zero-NEW-LAW, taking the
@@ -428,19 +441,45 @@ userinfo, which no scanner rule reads, so the dependency audit was
 republishing it through `--json-out` — a real leak, and still an instance
 of a law the registry already held.
 
+Round 39 (six findings, again all instances) is the fifth consecutive
+zero-NEW-LAW round, and its shape is the clearest evidence yet that the
+loop has turned inward: **three of the six were follow-ons to round 38's
+own fixes**. The leak closed in round 38 had been witnessed by a substring
+check — `"example.com" in text` — which any redaction shape that keeps the
+host would satisfy, so the witness did not hit its law (**L11**); it is now
+structural equality on the parsed field. The redaction itself reached the
+declared block but not pip-audit's own `stdout_tail` and `error`, so the
+same credential still had an exit (**L7**, the second half of one leak).
+And the BOM-less UTF-32 probe added in round 38 classified by NUL density,
+which is an ASCII-shaped assumption: a CJK document encoded in UTF-32
+carries too few NULs to pass the threshold, so the probe written to stop
+treating UTF-32 as binary still treated *multilingual* UTF-32 as binary
+(**L5**) — decode validity replaced the density count. The remaining three
+are the familiar sibling-path pattern: staged-inventory reconciliation
+reaching the expected-inventory blob a round after it reached the declared
+metadata (**L15**), and escaped quotes handled in one quoting branch but
+not the other, twice (**L5**).
+
+This round also introduced a third reviewer. One of the six came from
+CodeQL rather than Codex, and it landed on a *witness* rather than a gate —
+the one place a review loop is structurally blind to itself, since a test
+that passes is not evidence that it would fail. That is worth naming as
+the loop's own limit, not a defect it found.
+
 Where the instances concentrated (finding count per law, origin included):
-L5 scannable-data coverage 22 · L3 resource-commit bounds 18 · L1
-every-exit-a-verdict 12 · L11 witness/law pairing 12 · L8 process
-trees/pipes 10 · L10 rejection contracts 9 · L18 heuristic scope 9 · L15
-discovery reconciliation 7 · L17 names-are-paths 7 — the remaining laws
+L5 scannable-data coverage 36 · L3 resource-commit bounds 24 · L1
+every-exit-a-verdict 19 · L11 witness/law pairing 13 · L15 discovery
+reconciliation 12 · L8 process trees/pipes 10 · L10 rejection contracts 9 ·
+L18 heuristic scope 9 · L2 gate-can-fire 7 · L7 report-as-egress 7 · L17
+names-are-paths 7 — the remaining laws
 account for the rest. The two heaviest laws are exactly the two that port
 hardest into C (allocation bounds and data-coverage claims), which is the
 campaign's transfer thesis in one line.
 
 Where the noise concentrated: the deleted Python 3.10 TOML fallback
-absorbed 21 findings (11.5% of the entire campaign — the single largest
+absorbed 21 findings (9.4% of the entire campaign — the single largest
 family, all LOCAL, resolved by raising the floor to 3.11 per L4), and the
 rolled-back alias/dataflow tracking in the boundary audit absorbed 13 more
-(7.1%, resolved by declaring scope per L18). Those two structural changes
+(5.8%, resolved by declaring scope per L18). Those two structural changes
 retire **87% of all LOCAL findings** — the loop's zero-yield surface —
 which is what steers future review rounds toward NEW-LAW territory.

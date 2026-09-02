@@ -226,10 +226,18 @@ def _expected_inventory(expected_path: Path) -> dict[str, Any] | None:
         raw = blob.decode("utf-8")
     except (OSError, UnicodeDecodeError):
         return None
+    return _inventory_from_text(raw)
+
+
+def _inventory_from_text(raw: str) -> dict[str, Any] | None:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
         return None
+    return _inventory_shape(data)
+
+
+def _inventory_shape(data: Any) -> dict[str, Any] | None:
     if not isinstance(data, dict):
         return None
     # PRESENCE before shape: `_string_list(None)` and `_table(None)` both
@@ -254,6 +262,58 @@ def _expected_inventory(expected_path: Path) -> dict[str, Any] | None:
     ):
         return None
     return data
+
+
+def _staged_inventory_mismatches(
+    root: Path, expected_path: Path, declared: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Mismatches carried by the STAGED expected inventory, if it diverges.
+
+    The audit asserts the declared metadata against the inventory, so BOTH
+    sides of that comparison are index-sensitive. Reconciling only
+    pyproject.toml left the mirror-image hole: stage an inventory change,
+    restore the benign worktree copy, and the audit passes while the commit
+    it produces fails the same audit in CI.
+    """
+    try:
+        rel = expected_path.resolve().relative_to(root.resolve())
+    except ValueError:
+        # An inventory outside the checkout is not something the index can
+        # carry, so there is nothing to reconcile.
+        return []
+    divergent = staged_divergent(root)
+    if divergent is None:
+        return [{
+            "field": "staged-discovery",
+            "declared": "unavailable",
+            "expected": "an answerable index/worktree comparison",
+        }]
+    key = str(rel).replace("\\", "/")
+    if key not in divergent:
+        return []
+    blob = staged_blob(root, key, cap=INVENTORY_SIZE_CAP)
+    if blob is None or blob is STAGED_OVERSIZED:
+        return [{
+            "field": "staged-inventory",
+            "declared": "unreadable" if blob is None else "oversized",
+            "expected": "readable staged inventory within the ingress cap",
+        }]
+    staged = _inventory_from_text(blob.decode("utf-8", "replace"))
+    if staged is None:
+        return [{
+            "field": "staged-inventory",
+            "declared": "unusable",
+            "expected": "a well-shaped staged inventory",
+        }]
+    found: list[dict[str, Any]] = []
+    for field in ("runtime", "build_system", "optional"):
+        if declared.get(field) != staged[field]:
+            found.append({
+                "field": f"staged-inventory:{field}",
+                "declared": _redacted(declared.get(field)),
+                "expected": _redacted(staged[field]),
+            })
+    return found
 
 
 def _staged_mismatches(root: Path, expected: dict[str, Any]) -> list[dict[str, Any]]:
@@ -386,6 +446,10 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
     # already learned to reconcile against the index; all three now use the
     # one shared predicate.
     mismatches.extend(_staged_mismatches(root, expected))
+    if (root / ".git").exists():
+        mismatches.extend(
+            _staged_inventory_mismatches(root, expected_path, declared)
+        )
     expected_count = (
         len(expected["runtime"])
         + len(expected["build_system"])
@@ -439,7 +503,7 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
         report["advisory"] = {
             "state": "FAIL",
             "engine": "pip-audit",
-            "error": failure,
+            "error": _redacted_requirement(failure),
         }
         report["state"] = "FAIL"
         return report
@@ -447,7 +511,13 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
         "state": "PASS" if outcome["returncode"] == 0 else "FAIL",
         "engine": "pip-audit",
         "returncode": outcome["returncode"],
-        "stdout_tail": outcome["stdout"].decode("utf-8", "replace")[-500:],
+        # pip-audit echoes the requirements it was handed, so its own
+        # output carries whatever the declaration carried. Redacting
+        # `declared` while retaining the engine's stdout verbatim moved
+        # the leak rather than closing it.
+        "stdout_tail": _redacted_requirement(
+            outcome["stdout"].decode("utf-8", "replace")[-500:]
+        ),
     }
     if outcome["returncode"] != 0:
         report["state"] = "FAIL"
