@@ -26,10 +26,12 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from tools.security.git_index import STAGED_OVERSIZED, staged_blob, staged_divergent
+    from tools.security.git_index import (
+        STAGED_OVERSIZED, staged_blob, staged_divergent, staged_mode,
+    )
     from tools.security.proc_bounds import run_bounded
 except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
-    from git_index import STAGED_OVERSIZED, staged_blob, staged_divergent
+    from git_index import STAGED_OVERSIZED, staged_blob, staged_divergent, staged_mode
     from proc_bounds import run_bounded
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -208,6 +210,49 @@ _BOMS: tuple[tuple[bytes, str], ...] = (
 )
 
 
+def _utf32_bomless(data: bytes) -> str | None:
+    """The BOM-less UTF-32 encoding of ``data``, or None.
+
+    UTF-32 puts THREE NUL bytes around every ASCII character, so the
+    generic NUL heuristic files such a file as binary and never scans it —
+    while `json.loads` and every other decoder read it back normally. The
+    NUL positions modulo four name the endianness (`X 00 00 00` little,
+    `00 00 00 X` big); a strict decode of a bounded sample plus a
+    printability floor then confirms it, which arbitrary binary does not
+    satisfy. Probed BEFORE UTF-16 for the same reason the BOM table lists
+    UTF-32 first: the shorter form is a prefix of the longer one.
+    """
+    if len(data) % 4:
+        return None
+    sample = data[:TEXT_SAMPLE - (TEXT_SAMPLE % 4)]
+    sample = sample[:len(sample) - (len(sample) % 4)]
+    if len(sample) < 8:
+        return None
+    units = len(sample) // 4
+    little = sum(
+        sample[index + 1] == 0 and sample[index + 2] == 0 and sample[index + 3] == 0
+        for index in range(0, len(sample), 4)
+    )
+    big = sum(
+        sample[index] == 0 and sample[index + 1] == 0 and sample[index + 2] == 0
+        for index in range(0, len(sample), 4)
+    )
+    if little >= units * 0.9 and little > big:
+        encoding = "utf-32-le"
+    elif big >= units * 0.9 and big > little:
+        encoding = "utf-32-be"
+    else:
+        return None
+    try:
+        text = sample.decode(encoding)
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if not text:
+        return None
+    printable = sum(ch.isprintable() or ch in "\r\n\t" for ch in text)
+    return encoding if printable >= len(text) * 0.9 else None
+
+
 def _utf16_bomless(data: bytes) -> str | None:
     """The BOM-less UTF-16 encoding of ``data``, or None.
 
@@ -285,7 +330,7 @@ def _decode_text(data: bytes) -> str:
     for bom, encoding in _BOMS:
         if data.startswith(bom):
             return data.decode(encoding, "replace")
-    bomless = _utf16_bomless(data)
+    bomless = _utf32_bomless(data) or _utf16_bomless(data)
     if bomless is not None:
         # Replacement decode of the WHOLE file here: the classifier proved
         # the encoding on a sample, and a trailing malformed unit must not
@@ -355,9 +400,11 @@ def _kind_for(path: str, data: bytes) -> str:
             # A BOM names the real text encoding; UTF-16/32 NUL bytes must
             # not shunt the file into the binary policy unscanned.
             return "text"
-    if _utf16_bomless(data) is not None:
-        # BOM-less UTF-16 carries interleaved NULs; the generic heuristic
-        # below would file it as binary and never scan it.
+    if _utf32_bomless(data) is not None or _utf16_bomless(data) is not None:
+        # BOM-less UTF-16/32 carry interleaved NULs; the generic heuristic
+        # below would file them as binary and never scan them. UTF-32 is
+        # probed first: it surrounds each ASCII character with three NULs,
+        # which the UTF-16 vote reads as no signal at all.
         return "text"
     sample = data[:TEXT_SAMPLE]
     if b"\0" in sample:
@@ -399,7 +446,9 @@ def _continuation_finding(path: str, index: int, value: str) -> dict[str, Any] |
 # is credential-shaped — the key has no value, the value has no key. This
 # is the same key/value split as a block scalar without the `|` marker.
 WRAPPED_KEY = re.compile(
-    r"(?i)^\s*(?:-\s+)?['\"]?(?:[A-Za-z0-9_-]+\s*\.\s*)*(?:[A-Za-z0-9]+[_-])*"
+    # `{` / `[` lead-in: a JSON key may share its line with the brace
+    # that opens the object, and the anchor otherwise refuses it.
+    r"(?i)^\s*[\{\[]?\s*(?:-\s+)?(?:(?:\"[^\"]*\"|'[^']*'|[A-Za-z0-9_-]+)\s*\.\s*)*['\"]?(?:[A-Za-z0-9]+[_-])*"
     r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
     r"['\"]?\s*[:=]\s*$"
 )
@@ -433,7 +482,7 @@ def _wrapped_value_findings(path: str, lines: list[str]) -> list[dict[str, Any]]
 
 
 BLOCK_SCALAR = re.compile(
-    r"(?i)^(?P<indent>\s*)(?:-\s+)?['\"]?(?:[A-Za-z0-9_-]+\s*\.\s*)*(?:[A-Za-z0-9]+[_-])*"
+    r"(?i)^(?P<indent>\s*)(?:-\s+)?(?:(?:\"[^\"]*\"|'[^']*'|[A-Za-z0-9_-]+)\s*\.\s*)*['\"]?(?:[A-Za-z0-9]+[_-])*"
     r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
     r"['\"]?\s*:\s*[|>][-+0-9]*\s*$"
 )
@@ -472,7 +521,7 @@ def _block_scalar_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
 # is bare text. Anchored like BLOCK_SCALAR, so the prefix group cannot
 # retry across a long line from more than one start position.
 TOML_MULTILINE = re.compile(
-    r"(?i)^\s*['\"]?(?:[A-Za-z0-9_-]+\s*\.\s*)*(?:[A-Za-z0-9]+[_-])*"
+    r"(?i)^\s*(?:(?:\"[^\"]*\"|'[^']*'|[A-Za-z0-9_-]+)\s*\.\s*)*['\"]?(?:[A-Za-z0-9]+[_-])*"
     r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
     r"['\"]?\s*=\s*(?P<delim>\"\"\"|''')(?P<rest>.*)$"
 )
@@ -1117,6 +1166,26 @@ def scan_tree(root: Path) -> dict[str, Any]:
             continue
         shown = _redacted_path(rel) if _scan_text(rel, rel) else rel
         display = f"{shown} (staged)"
+        if staged_mode(root, rel) == "120000":
+            # The index entry is a SYMLINK: its blob is the target string,
+            # not file content. Classifying it by the path's suffix made a
+            # staged `link.zip` an unreadable ARCHIVE — a local FAIL on a
+            # commit CI accepts, since a clean checkout takes the worktree
+            # symlink branch. Handled exactly as that branch does: the link
+            # is recorded and its committed target TEXT is scanned, because
+            # a credential can hide in a path.
+            report["symlinks"].append(display)
+            target = staged_blob(root, rel, cap=ZIP_SYMLINK_MAX)
+            if target is None or target is STAGED_OVERSIZED:
+                report["findings"].append({
+                    "path": display, "line": 0, "rule": "staged-unreadable",
+                    "fingerprint": _fingerprint("staged-unreadable"),
+                })
+                continue
+            report["findings"].extend(
+                _scan_text(display, target.decode("utf-8", "replace"))
+            )
+            continue
         data = staged_blob(root, rel, cap=ARCHIVE_LOGICAL_CAP)
         if data is None:
             # git reported the path divergent but its index blob cannot be
@@ -1145,9 +1214,23 @@ def scan_tree(root: Path) -> dict[str, Any]:
             # parsing the bytes; a staged blob has no path, so spool it
             # (already bounded by the cap above) for the probe's benefit.
             report["archive_files"] += 1
-            with tempfile.NamedTemporaryFile(delete=False) as spool:
-                spool.write(data)
-                spool_path = Path(spool.name)
+            try:
+                with tempfile.NamedTemporaryFile(delete=False) as spool:
+                    spool.write(data)
+                    spool_path = Path(spool.name)
+            except OSError as exc:
+                # The spool is I/O like any other: a full or unavailable
+                # temporary directory must not turn the required scan into
+                # a traceback that skips its verdict and its --json-out.
+                report["findings"].append({
+                    "path": display, "line": 0, "rule": "archive-unreadable",
+                    "fingerprint": _fingerprint(type(exc).__name__),
+                })
+                report["archives"].append(
+                    {"path": display, "status": "unreadable",
+                     "error": type(exc).__name__}
+                )
+                continue
             try:
                 extra, meta = _scan_archive(display, spool_path, data)
             finally:

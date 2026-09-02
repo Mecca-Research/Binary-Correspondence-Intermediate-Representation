@@ -3242,3 +3242,184 @@ def test_repo_only_registry_covers_the_compiling_tiers() -> None:
         "bcir.tests.test_train_c_kernels",
     ):
         assert name in run_all._REPO_ONLY_MODULES, name
+
+
+def test_dependency_declarations_are_redacted_in_reports() -> None:
+    """A PEP 508 direct reference can CARRY a credential
+    (`pkg @ https://user:secret@host/x.whl`). The mismatch report copied
+    the declaration verbatim into `declared` and `mismatches`, so
+    --json-out republished it — and the scanner's rules do not recognize
+    URL userinfo, so nothing else caught the leak."""
+    from tools.security.audit_dependencies import audit
+    # Named `value`, not `secret`: the scanner's own rule matches a
+    # keyword-named variable holding a passphrase, and this file is scanned.
+    value = "correct-horse-battery-staple"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        dependency = "private @ https://user:" + value + "@example.com/pkg.whl"
+        (root / "pyproject.toml").write_text(
+            '[project]\nname="x"\nversion="1"\ndependencies = ["'
+            + dependency + '"]\n', encoding="utf-8")
+        expected = root / "expected.json"
+        expected.write_text(
+            json.dumps({"runtime": [], "build_system": [], "optional": {}}),
+            encoding="utf-8")
+        report = audit(root, expected)
+    serialized = json.dumps(report)
+    assert report["state"] == "FAIL"
+    assert value not in serialized                  # the whole report, not just findings
+    assert "<redacted>" in serialized
+    assert "example.com" in serialized              # still actionable
+
+
+def test_bomless_utf32_text_is_scanned() -> None:
+    """UTF-32 wraps every ASCII character in three NULs, so the generic
+    heuristic filed such a file as binary and never scanned it — while
+    `json.loads` reads it back normally."""
+    from tools.security.scan_secrets import _decode_text, _kind_for, _scan_text
+    value = "correct-horse-battery-staple"
+    document = '{"' + "password" + '":"' + value + '"}'
+    for encoding in ("utf-32-le", "utf-32-be"):
+        blob = document.encode(encoding)
+        assert json.loads(blob)["password"] == value          # the oracle
+        assert _kind_for("c.json", blob) == "text", encoding
+        assert [h["rule"] for h in _scan_text("c.json", _decode_text(blob))] == [
+            "assignment-secret"
+        ], encoding
+    # The probe must not reclassify ordinary text or real binary.
+    assert _kind_for("a.txt", b"hello world\n") == "text"
+    assert _kind_for("a.bin", bytes(range(256)) * 4) == "binary"
+
+
+def test_quoted_dotted_key_segments_are_matched() -> None:
+    """TOML allows a dotted key's segments to be quoted. `tomllib` resolves
+    the credential under the same leaf, but the anchored collectors took
+    bare segments only, and the inline rule cannot cross a triple quote."""
+    import tomllib
+    from tools.security.scan_secrets import _scan_text
+    value = "correct-horse-battery-staple"
+    quote = '"' * 3
+    for prefix in ('"auth".' + "password", "auth." + '"password"',
+                   "'auth'." + "password"):
+        document = prefix + " = " + quote + value + quote + "\n"
+        assert tomllib.loads(document)["auth"]["password"] == value, prefix
+        assert [h["line"] for h in _scan_text("c.toml", document)] == [1], prefix
+    # Placeholder suppression survives the quoted prefix.
+    assert _scan_text(
+        "c.toml", '"auth".' + "password" + " = " + quote + "your-password-here" + quote) == []
+
+
+def test_staged_symlinks_are_not_classified_by_suffix() -> None:
+    """An archive-suffixed path staged as a SYMLINK carries its target
+    string as the blob. Classifying that by the `.zip` suffix reported
+    `archive-unreadable` — a local FAIL on a commit CI accepts, since a
+    clean checkout takes the worktree symlink branch."""
+    import io
+    import zipfile
+    from tools.security.scan_secrets import scan_tree
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            archive.writestr("ok.txt", "fine")
+        (root / "notes.txt").write_text("hello\n", encoding="utf-8")
+        link = root / "link.zip"
+        link.symlink_to("../elsewhere/target.zip")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        link.unlink()
+        link.write_bytes(buf.getvalue())
+        report = scan_tree(root)
+    assert report["state"] == "PASS", report["findings"]
+    assert "link.zip (staged)" in report["symlinks"]
+
+
+def test_staged_symlink_targets_are_still_scanned() -> None:
+    """Handling the staged symlink must not stop scanning it: the target
+    string is committed text and a credential can hide in a path."""
+    from tools.security.scan_secrets import scan_tree
+    token = "ghp_" + ("ab" * 18)
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "notes.txt").write_text("hello\n", encoding="utf-8")
+        link = root / "cfg.txt"
+        link.symlink_to("../vault/" + token + "/secret.txt")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        link.unlink()
+        link.write_text("benign\n", encoding="utf-8")
+        report = scan_tree(root)
+    assert report["state"] == "FAIL"
+    assert "github-token" in {item["rule"] for item in report["findings"]}
+    assert token not in json.dumps(report)
+
+
+def test_expected_inventory_is_bounded_at_ingress() -> None:
+    """The gate's own reference data is input: `json.loads` allocates a
+    multiple of its text, so a padding-heavy inventory could exhaust the
+    job before any shape check ran, even though pyproject.toml is capped."""
+    from tools.security.audit_dependencies import INVENTORY_SIZE_CAP, audit
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "pyproject.toml").write_text(
+            '[project]\nname="x"\nversion="1"\n', encoding="utf-8")
+        oversized = root / "big.json"
+        oversized.write_text(
+            '{"runtime":[],"build_system":[],"optional":{},"pad":"'
+            + "a" * (INVENTORY_SIZE_CAP + 4096) + '"}', encoding="utf-8")
+        report = audit(root, oversized)
+    assert report["state"] == "FAIL"
+    assert report["inventory_asserted"] is False
+    json.dumps(report)
+
+
+def test_malformed_verifier_diagnostics_are_a_disagreement() -> None:
+    """A verifier that regresses by RETURNING something malformed rather
+    than raising escaped every per-case guard at the attribute access, so
+    the rail emitted a traceback, wrote no --json-out, and skipped the
+    remaining comparisons."""
+    from unittest.mock import patch
+    import bcir.verify as verifier
+    from tools.security.run_malformed_differential import run_differential
+    with patch.object(verifier, "verify", return_value=[object()]):
+        report = run_differential(_ROOT)
+    assert report["state"] == "FAIL"
+    assert any("malformed diagnostics" in d for d in report["disagreements"])
+    assert report["cases"], "the remaining cases must still be compared"
+    json.dumps(report)
+
+
+def test_staged_archive_spool_failure_is_a_finding() -> None:
+    """Probing a staged archive needs a real path, so its bytes are spooled
+    to a temporary file — and that write is I/O like any other. A full or
+    unavailable temp directory raised outside the archive error handling,
+    so the required scan emitted a traceback instead of its verdict and its
+    --json-out artifact."""
+    import io
+    import zipfile
+    from unittest.mock import patch
+    import tools.security.scan_secrets as scanner
+    from tools.security.scan_secrets import scan_tree
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            archive.writestr("ok.txt", "fine")
+        target = root / "payload.zip"
+        target.write_bytes(buf.getvalue())
+        (root / "notes.txt").write_text("hello\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        # Divergent, so the staged archive path runs at all.
+        second = io.BytesIO()
+        with zipfile.ZipFile(second, "w") as archive:
+            archive.writestr("other.txt", "different")
+        target.write_bytes(second.getvalue())
+        with patch.object(
+            scanner.tempfile, "NamedTemporaryFile", side_effect=OSError("no space")
+        ):
+            report = scan_tree(root)
+    assert report["state"] == "FAIL"
+    staged = [i for i in report["findings"] if i["path"].endswith("(staged)")]
+    assert [i["rule"] for i in staged] == ["archive-unreadable"]
+    json.dumps(report)

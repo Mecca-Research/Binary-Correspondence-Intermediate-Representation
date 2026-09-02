@@ -51,7 +51,11 @@ reference data is input too),
 `test_expected_inventory_requires_its_fields` (an ABSENT field is not
 an empty one),
 `test_differential_setup_failure_is_a_verdict` (fixtures built by the
-oracle under test fail like anything else).
+oracle under test fail like anything else),
+`test_malformed_verifier_diagnostics_are_a_disagreement` (a verifier's
+RETURN value is input too, not only what it raises),
+`test_staged_archive_spool_failure_is_a_finding` (the temporary file a
+gate writes is I/O like any other).
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -86,7 +90,9 @@ resource: empty streams advance no output cap at all),
 `test_worktree_source_read_is_bounded` (stat answers about the past;
 the read is the commitment),
 `test_secret_scan_worktree_read_is_bounded` (the same bound, the third
-rail to receive it).
+rail to receive it),
+`test_expected_inventory_is_bounded_at_ingress` (a gate's own reference
+data allocates like any other input).
 **Port note:** this is the memory-safety law. In Python these failures were
 OOMs; in C the same shapes are allocator abuse and heap corruption. Every
 `malloc` sized from input data is an L3 site.
@@ -127,7 +133,10 @@ Witnesses: `test_credential_shaped_filenames_are_findings`,
 across a line break in JSON and YAML alike),
 `test_dotted_toml_keys_reach_the_continuation_collectors`,
 `test_escaped_keys_reach_the_continuation_collectors` (two closed
-defects compose into a third that neither fix covered).
+defects compose into a third that neither fix covered),
+`test_bomless_utf32_text_is_scanned` (three NULs per ASCII character
+read as binary to every density heuristic),
+`test_quoted_dotted_key_segments_are_matched`.
 **Port note:** format-level knowledge; transfers verbatim to any scanner
 in any language.
 
@@ -150,7 +159,10 @@ Witnesses: `test_credential_shaped_names_are_redacted_in_every_report_field`,
 `test_secret_bearing_directories_are_redacted`,
 `test_credential_in_non_utf8_filename_is_redacted`,
 `test_boundary_findings_survive_strict_stdout`,
-`test_non_utf8_archive_member_names_are_findings_not_crashes`.
+`test_non_utf8_archive_member_names_are_findings_not_crashes`,
+`test_dependency_declarations_are_redacted_in_reports` (a PEP 508 direct
+reference can CARRY a credential, and no scanner rule reads URL
+userinfo).
 **Port note:** harsher in C — every format string and every buffer holding
 a matched value is an L7 site.
 
@@ -215,7 +227,9 @@ re-litigated.
 Witnesses: `test_uppercase_python_suffix_is_audited`,
 `test_reviewer_put_down_kills_the_tree_on_windows`,
 `test_staged_symlinks_are_recorded_not_parsed` (the index path and the
-worktree path of one gate are two paths, and must agree).
+worktree path of one gate are two paths, and must agree),
+`test_staged_symlinks_are_not_classified_by_suffix` (the same divergence
+on the second rail, one round later).
 **Port note:** substitute endianness, ABI, and libc variance for the same
 discipline.
 
@@ -342,16 +356,16 @@ install tree is the audit.
 
 ## Campaign classification summary
 
-Every review-thread finding from the campaign (211 threads, rounds 1–37)
+Every review-thread finding from the campaign (218 threads, rounds 1–38)
 is graded under the harvest protocol. The full per-finding
 index is `docs/security/pr749-harvest.csv`; the campaign ledger tracks the
 same data round by round.
 
 | Grade | Findings | Share | Meaning |
 |---|---|---|---|
-| **NEW-LAW** | 20 | **9.5%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
-| **INSTANCE** | 152 | **72.0%** | New entry point to a registered law — the law gained a witness |
-| **LOCAL** | 39 | **18.5%** | No transfer value beyond the code touched |
+| **NEW-LAW** | 20 | **9.2%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
+| **INSTANCE** | 159 | **72.9%** | New entry point to a registered law — the law gained a witness |
+| **LOCAL** | 39 | **17.9%** | No transfer value beyond the code touched |
 
 Rounds through 31 were graded retroactively; from round 32 every finding
 is graded at triage. Rounds 32 and 33 were both zero-NEW-LAW, taking the
@@ -402,6 +416,17 @@ tier that hides the toolchain, and the seed guard given to the decoder
 campaign but not the differential. The registry has been stable for three
 rounds while its implementation catches up — which is precisely the
 condition the rule was written to detect.
+
+Round 38 (seven findings, again all instances) was run at the owner's
+request after the rule had already fired, and it did not disturb the
+reading: a BOM-less UTF-32 probe beside the UTF-16 one, quoted segments
+beside bare ones in dotted keys, `staged_mode` on the second rail a round
+after the first, an ingress cap on the inventory beside the one on
+pyproject, and two more unguarded paths. Its one genuinely new *surface*
+was L7's: a PEP 508 direct reference carries a credential in URL
+userinfo, which no scanner rule reads, so the dependency audit was
+republishing it through `--json-out` — a real leak, and still an instance
+of a law the registry already held.
 
 Where the instances concentrated (finding count per law, origin included):
 L5 scannable-data coverage 22 · L3 resource-commit bounds 18 · L1

@@ -210,3 +210,10 @@ finding,date,file,title,grade,law
 209,2026-09-02 18:09,scan_secrets.py,Accept dotted keys in the TOML multiline collector,INSTANCE,L5
 210,2026-09-02 18:09,run_all.py,Classify C-runtime tests that need unshipped sources,INSTANCE,L21
 211,2026-09-02 18:09,run_malformed_differential.py,Convert differential setup failures into a verdict,INSTANCE,L1
+212,2026-09-02 18:52,scan_secrets.py,Detect BOM-less UTF-32 before the binary fallback,INSTANCE,L5
+213,2026-09-02 18:52,scan_secrets.py,Accept quoted segments in dotted TOML keys,INSTANCE,L5
+214,2026-09-02 18:52,scan_secrets.py,Handle staged symlinks before classifying their blobs,INSTANCE,L12
+215,2026-09-02 18:52,audit_dependencies.py,Redact credentials from dependency audit reports,INSTANCE,L7
+216,2026-09-02 18:52,audit_dependencies.py,Bound the expected inventory before reading it,INSTANCE,L3
+217,2026-09-02 18:52,scan_secrets.py,Convert staged archive spool failures into findings,INSTANCE,L1
+218,2026-09-02 18:52,run_malformed_differential.py,Convert malformed verifier results into disagreements,INSTANCE,L1

@@ -407,11 +407,30 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
                 }
                 disagreements.append(f"{case['name']}/python: {python['reason']}")
             else:
-                python = {
-                    "state": "PASS",
-                    "rejected": bool(py_diags),
-                    "laws": [diag.law for diag in (py_diags or ())],
-                }
+                # Reading the diagnostics is INSIDE the guarded section: a
+                # verifier that regresses by RETURNING something malformed
+                # (rather than raising) made this attribute access throw
+                # past every per-case guard, so the rail emitted a
+                # traceback, wrote no --json-out, and skipped the remaining
+                # comparisons. A verifier's output is input like any other.
+                try:
+                    laws = [diag.law for diag in (py_diags or ())]
+                except (AttributeError, TypeError) as exc:
+                    python = {
+                        "state": "FAIL",
+                        "rejected": False,
+                        "reason": (
+                            "python verifier returned malformed diagnostics: "
+                            f"{type(exc).__name__}"
+                        ),
+                    }
+                    disagreements.append(f"{case['name']}/python: {python['reason']}")
+                else:
+                    python = {
+                        "state": "PASS",
+                        "rejected": bool(py_diags),
+                        "laws": laws,
+                    }
         text = (
             {"state": "UNAVAILABLE/SKIPPED", "reason": "no mlir text"}
             if case["mlir_text"] is None

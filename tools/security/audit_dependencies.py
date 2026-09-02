@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import stat
 from pathlib import Path
@@ -29,8 +30,42 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[2]
 EXPECTED = Path(__file__).resolve().parent / "expected_inventory.json"
 PYPROJECT_SIZE_CAP = 1 << 20  # 1 MiB: parsing multiplies metadata in memory
+INVENTORY_SIZE_CAP = 1 << 20  # 1 MiB: the gate's own reference data is input too
 ADVISORY_TIMEOUT = 300.0  # pip-audit resolves against a network index; stalls expire
 ADVISORY_OUTPUT_CAP = 1 << 20  # per stream; the engine reports advisories, not payload
+
+# A dependency specifier can CARRY a credential: PEP 508 direct references
+# admit a full URL, and `pkg @ https://user:secret@host/x.whl` puts the
+# secret in metadata this gate then copies into every report field. The
+# scanner's rules do not recognize URL userinfo, so nothing else catches
+# it — L7 is this rail's job here, not the scan's.
+_URL_USERINFO = re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://[^/\s:@]+:)[^/\s@]+@")
+_QUERY_SECRET = re.compile(
+    r"(?i)([?&](?:token|key|api[_-]?key|password|passwd|secret|access[_-]?token)=)"
+    r"[^&\s\"']+"
+)
+
+
+def _redacted_requirement(text: str) -> str:
+    """A dependency string with any embedded credential replaced.
+
+    The declaration still names its package, host and path — everything a
+    reader needs to act on the mismatch — with only the secret removed.
+    """
+    redacted = _URL_USERINFO.sub(r"\1<redacted>@", text)
+    return _QUERY_SECRET.sub(r"\1<redacted>", redacted)
+
+
+def _redacted(value: Any) -> Any:
+    """``_redacted_requirement`` applied through the report's shapes."""
+    if isinstance(value, str):
+        return _redacted_requirement(value)
+    if isinstance(value, list):
+        return [_redacted(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _redacted(item) for key, item in value.items()}
+    return value
+
 
 def _table(value: Any) -> dict[str, Any] | None:
     """A metadata table is a table or it is unreadable. None means refuse:
@@ -173,7 +208,22 @@ def _expected_inventory(expected_path: Path) -> dict[str, Any] | None:
     JSON document that parses can still be the wrong document.
     """
     try:
-        raw = expected_path.read_text(encoding="utf-8")
+        info = expected_path.lstat()
+        if not stat.S_ISREG(info.st_mode):
+            # Same refusal pyproject.toml gets: a stat size means nothing
+            # for a symlink, FIFO or device, and following one to /dev/zero
+            # reads without end.
+            return None
+        with expected_path.open("rb") as handle:
+            # Bounds at ingress, as this rail already does for the metadata
+            # it audits: `json.loads` allocates a multiple of its input, so
+            # a padding-heavy inventory could exhaust the job before any
+            # shape check ran. The declared size is not the read bound —
+            # read one byte past the cap and refuse the remainder.
+            blob = handle.read(INVENTORY_SIZE_CAP + 1)
+        if len(blob) > INVENTORY_SIZE_CAP:
+            return None
+        raw = blob.decode("utf-8")
     except (OSError, UnicodeDecodeError):
         return None
     try:
@@ -258,15 +308,15 @@ def _staged_mismatches(root: Path, expected: dict[str, Any]) -> list[dict[str, A
         if staged.get(field) != expected[field]:
             found.append({
                 "field": f"staged:{field}",
-                "declared": staged.get(field),
-                "expected": expected[field],
+                "declared": _redacted(staged.get(field)),
+                "expected": _redacted(expected[field]),
             })
     dynamic = [
         item for item in staged.get("dynamic", [])
         if item in ("dependencies", "optional-dependencies")
     ]
     if dynamic:
-        found.append({"field": "staged:dynamic", "declared": dynamic, "expected": []})
+        found.append({"field": "staged:dynamic", "declared": _redacted(dynamic), "expected": []})
     return found
 
 
@@ -283,7 +333,7 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
             "state": "FAIL",
             "inventory_asserted": False,
             "expected_packages": 0,
-            "declared": declared,
+            "declared": _redacted(declared),
             "mismatches": [],
             "advisory": {"state": "UNAVAILABLE/SKIPPED", "engine": None},
             "error": "dependency metadata could not be fully read",
@@ -297,13 +347,13 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
             "state": "FAIL",
             "inventory_asserted": False,
             "expected_packages": 0,
-            "declared": declared,
+            "declared": _redacted(declared),
             "mismatches": [
-                {"field": "dependency-groups", "declared": groups, "expected": []},
+                {"field": "dependency-groups", "declared": _redacted(groups), "expected": []},
             ],
             "advisory": {"state": "UNAVAILABLE/SKIPPED", "engine": None},
             "error": (
-                f"dependency-groups tables are not part of the asserted inventory: {groups}"
+                f"dependency-groups tables are not part of the asserted inventory: {_redacted(groups)}"
             ),
         }
     dynamic = [
@@ -317,18 +367,18 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
             "state": "FAIL",
             "inventory_asserted": False,
             "expected_packages": 0,
-            "declared": declared,
-            "mismatches": [{"field": "dynamic", "declared": dynamic, "expected": []}],
+            "declared": _redacted(declared),
+            "mismatches": [{"field": "dynamic", "declared": _redacted(dynamic), "expected": []}],
             "advisory": {"state": "UNAVAILABLE/SKIPPED", "engine": None},
-            "error": f"dynamic dependency metadata cannot be asserted: {dynamic}",
+            "error": f"dynamic dependency metadata cannot be asserted: {_redacted(dynamic)}",
         }
     mismatches = []
     for field in ("runtime", "build_system", "optional"):
         if declared[field] != expected[field]:
             mismatches.append({
                 "field": field,
-                "declared": declared[field],
-                "expected": expected[field],
+                "declared": _redacted(declared[field]),
+                "expected": _redacted(expected[field]),
             })
     # The worktree file is not what the next commit records. A dependency
     # staged and then restored to benign worktree content shipped under a
@@ -345,7 +395,7 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
         "state": "PASS",
         "inventory_asserted": True,
         "expected_packages": expected_count,
-        "declared": declared,
+        "declared": _redacted(declared),
         "mismatches": mismatches,
         "advisory": {"state": "UNAVAILABLE/SKIPPED", "engine": None},
     }
