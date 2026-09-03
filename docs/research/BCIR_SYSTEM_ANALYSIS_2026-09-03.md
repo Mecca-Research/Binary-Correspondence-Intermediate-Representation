@@ -130,15 +130,66 @@ workers throughout; heavy gates serialized, as the repository requires.
 
 ### 3.2 The MLIR rail on a coherent LLVM/MLIR 22 toolset
 
-<!-- MLIR22-RESULTS -->
+| Step | Outcome |
+|---|---|
+| `tools/wsl/tblgen_check.sh` (`mlir-tblgen` 22.1.8) | all BCIR ODS generators passed |
+| `tools/irdl/check_corpus.sh` (stock `mlir-opt` 22.1.8) | all corpus files round-trip |
+| `tools/wsl/build_mlir.sh` with the system `g++` 13 | builds in 4 m 33 s (0 errors, 78 warnings) but the resulting `bcir-opt` **segfaults on every input** (SIGSEGV reported at `TypeIDResolver<Float8E5M2Type>::id`) |
+| the same build with the toolchain's own `clang++` 22 | builds in 4 m 05 s; runs correctly |
+| `tools/wsl/check_ods_examples.sh` | all pretty ODS examples validate |
+| `tools/wsl/check_passes.sh` (with `LLVM_BIN=/opt/llvm22/bin` so the assemble-smoke resolver can find `mlir-translate`/`llc`) | **120 PASS, 0 FAIL**, including the assemble-smoke gate: every asm-edge op produces a real `.o` with the expected instruction |
+| `run_malformed_differential.py --require-compiled` | PASS: 6 cases, 0 disagreements, 5 malformed rejected |
+| `tools/wsl/check_bytecode.sh` | all modules round-trip through MLIR bytecode |
+| `llvm-training` MLIR examples with `--require-tools` and the grader self-test (`LLVM_SUFFIX=-22`) | exit 0 |
+
+Reading: the rail is sound on LLVM 22, matching CI. The `g++` crash is a toolchain-coherence
+lesson rather than a rail defect: conda-forge's MLIR archives are compiled with GCC 15.3, and
+linking GCC 13-compiled objects against them produced a binary that jumped into a data symbol
+before parsing its first module. Two small tooling hardenings follow (§9.6): `build_mlir.sh`
+should prefer the `clang++` that lives beside a non-system `MLIR_DIR` (or refuse to mix
+compiler generations), and the assemble-smoke resolver should also search the `bin/`
+directory that `MLIR_DIR` implies instead of only `PATH` and `/usr/lib/llvm-*`.
 
 ### 3.3 The same rail against LLVM/MLIR 23.1.0 (the actual latest release)
 
-<!-- MLIR23-RESULTS -->
+LLVM/MLIR 23.1.0 is the current release on conda-forge and in the Ubuntu pool. Against it:
+
+| Step | Outcome |
+|---|---|
+| `tools/wsl/tblgen_check.sh`, `tools/irdl/check_corpus.sh` (23.1.0 tools) | both pass unchanged |
+| `tools/wsl/build_mlir.sh` on the unmodified tree (system `g++`, then conda `clang++` 23) | **fails with exactly one error**: `mlir/lib/passes/BCIRPromotePass.cpp:69: 'applyPatternsAndFoldGreedily' was not declared in this scope`. LLVM 23 removed the deprecated name; LLVM 22 and 23 both provide `applyPatternsGreedily`, which `BCIRConvertToLLVM.cpp:878` already uses |
+| the same build on a **scratch copy** with that one call renamed (`clang++` 23) | builds in 3 m 40 s; 0 errors, 103 warnings, 102 of them `-Wdeprecated-declarations` for `OpBuilder::create<OpTy>(...)` → `OpTy::create(builder, ...)`, concentrated in `BCIRConvertToLLVM.cpp` (64) and `BCIRLowerGemMatmulBufferPass.cpp` (26) |
+| `tools/wsl/check_ods_examples.sh` (scratch binary) | all pretty ODS examples validate |
+| `tools/wsl/check_passes.sh` (`LLVM_BIN=/opt/llvm23/bin`) | **120 PASS, 0 FAIL**, assemble-smoke included |
+| `run_malformed_differential.py --require-compiled` | PASS: 6 cases, 0 disagreements, 5 malformed rejected |
+| `tools/wsl/check_bytecode.sh` | all modules round-trip |
+| `llvm-training` MLIR examples `--require-tools` and grader self-test (`LLVM_SUFFIX=-23`) | exit 0 |
+
+Reading: the rail is one identifier away from the latest release, and the 102 deprecation
+warnings name the next breakage (LLVM 24 will drop `OpBuilder::create<OpTy>`). The tree
+itself was not modified for this measurement; the rename is recommended in §9.6 and the
+verification above is what a bump PR should reproduce.
 
 ### 3.4 Newer interpreters and compilers
 
-<!-- LATEST-TOOLCHAIN-RESULTS -->
+The declared floor is Python 3.11 and CI exercises 3.11 and 3.12. Both current interpreters
+were installed from conda-forge and run against the tree unchanged:
+
+| Interpreter / compiler | Gate | Outcome |
+|---|---|---|
+| Python 3.14.7 | `run_all --tier quick -j 2` | **3519 passed, 0 failed** |
+| Python 3.14.7 | `audit_dependencies.py`, `scan_secrets.py`, `audit_tool_boundaries.py` | PASS / PASS (1781 tracked, 0 findings) / PASS (534 files, 0 findings) |
+| Python 3.15.0rc2 | `run_all --tier quick -j 2` | **3519 passed, 0 failed** |
+| Python 3.15.0rc2 | the same three security rails | PASS / PASS / PASS |
+| clang 22.1.8 | `check_memory_discipline.sh` | all gates passed |
+| clang 23.1.0 | `check_memory_discipline.sh` | all gates passed |
+| clang 23.1.0 | `BCIR_SKIP_CFRONT_SANITIZE=1 bash tools/c/check_runtime.sh` (the CI `c-runtime` form; the cfront sanitizer harness ran separately under clang 18) | `[c-runtime] ok` in 1 m 55 s, 351 PASS lines, no FAIL |
+
+Reading: nothing in the oracle or the C rail depends on an interpreter or compiler
+detail that the two newest releases changed; the strict `-Werror` C11/C23 builds, the
+`-O0 == -O3` twins and the freestanding checks all hold under clang 23. Raising the
+`host-portability` matrix to 3.14 would be cheap and would keep the 3.15 release in view
+before it ships.
 
 ### 3.5 What could not be produced here
 
@@ -358,7 +409,8 @@ its PR-sized-slice method. "Ready" means no hardware and no other slice is requi
 3. Add an advisory scan to `audit_dependencies.py` under the `security-assurance` job,
    keeping the inventory assertion first and treating a missing scanner as FAIL there
    (L1/L2: a skip in a required job is where a shipping defect hides).
-4. Refresh the agent digest and skill alias table (`R-laws=R1–R25`).
+4. Refresh the agent digest and skill alias table (`R-laws=R1–R25`); the PR that lands
+   this report does both.
 
 ### 9.1 The certificate spine (ready; the optimizer's correctness debt)
 5. **GEM+ G1**: one canonical schedule artifact, gated on `pricing.eft.divergence`
@@ -407,11 +459,18 @@ its PR-sized-slice method. "Ready" means no hardware and no other slice is requi
     and any silicon TMSAO certificate. One x86-64 and one aarch64 bare-metal box would
     unblock all of them at once; nothing else on this list is waiting on them.
 
-### 9.6 The LLVM 23 decision
-17. Either bump the `mlir-rail-validate` matrix to `["23"]` (and the skill/digest text)
-    once §3.3's residue is fixed, or change the CI comment so the pin is a stated
-    decision rather than a claim of tracking the latest release. Running the matrix on
-    both majors for one release cycle is cheap and is how #243–#246 moved to 22.
+### 9.6 The LLVM 23 decision and two toolchain hardenings
+17. Rename `applyPatternsAndFoldGreedily` → `applyPatternsGreedily` in
+    `mlir/lib/passes/BCIRPromotePass.cpp` (§3.3 shows the whole rail passing on 23.1.0
+    with only that change, and LLVM 22 keeps working), then either bump the
+    `mlir-rail-validate` matrix to `["23"]` (and the skill/digest text) or run both majors
+    for one release cycle, as #243–#246 did for 22. Migrate the 102
+    `OpBuilder::create<OpTy>` call sites to `OpTy::create` before LLVM 24, or the next bump
+    will not be a one-liner.
+18. Make `build_mlir.sh` prefer the compiler beside a non-system `MLIR_DIR` (or refuse to
+    mix compiler generations), and let the assemble-smoke resolver in `bcir/toolchain.py`
+    search the `bin/` that `MLIR_DIR` implies, so a conda-forge or custom-prefix toolset
+    exercises the same gates CI does (§3.2).
 
 ---
 
@@ -428,7 +487,10 @@ and `api.anaconda.org`. The coherent toolsets were obtained without any of the d
   compiler-rt=NN.x` (about 3.4 GiB each). The rail scripts resolve tools from
   `/usr/lib/llvm-*/bin`, so a symlink `/usr/lib/llvm-NN → /opt/llvmNN` plus
   `MLIR_DIR`/`LLVM_DIR`/`MLIR_INCLUDE`/`CMAKE_PREFIX_PATH` makes `build_mlir.sh`,
-  `tblgen_check.sh` and `check_corpus.sh` work unchanged. `FileCheck` is not in the
+  `tblgen_check.sh` and `check_corpus.sh` work unchanged. Build `bcir-opt` with the
+  prefix's own compiler (`CC=/opt/llvmNN/bin/clang CXX=/opt/llvmNN/bin/clang++`); the
+  system `g++` produces a binary that crashes on every input (§3.2). Set
+  `LLVM_BIN=/opt/llvmNN/bin` for the assemble-smoke resolver. `FileCheck` is not in the
   conda `llvm-tools` package; Ubuntu's `llvm-18-tools` supplies it and the scripts accept
   any major for FileCheck.
 - **Python 3.14.7 and 3.15.0rc2**: `micromamba create -p /opt/py314 -c conda-forge
