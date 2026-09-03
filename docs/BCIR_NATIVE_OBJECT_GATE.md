@@ -1,5 +1,9 @@
 # BCIR Native Object Emission — the Decision Gate
 
+> **Naming.** G1–G4 below are the GO *criteria* of this gate and S1–S4 its STOP criteria; they are not build
+> slices, and they are unrelated to the GEM+ slices G0–G10 in
+> [`research/BCIR_GEMPLUS_ROADMAP.md`](research/BCIR_GEMPLUS_ROADMAP.md) or the game-optimization slices G1–G11.
+
 > **Status (2026-07-15): DEFERRED (correct).** BCIR does **not** hand-roll an instruction selector /
 > ELF+relocation emitter. The warranted path — emit the K_BCIR-planned kernel and let
 > the **resident compiler** finish it to a real object — is implemented and tested for

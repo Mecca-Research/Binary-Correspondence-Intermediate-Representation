@@ -260,7 +260,7 @@ sets of faults, and the ones R24 owns are the ones that are properties of the ty
 | `strict_der` ⇏ accepts BER | — | a direct contradiction |
 | projection is `additive` | — | a replacement would invalidate every digest over the native octets |
 
-Vacuous for IR with no `bcir.asn1.*` operation — the non-disturbance invariant R14–R23
+Vacuous for IR with no `bcir.asn1.*` operation — the non-disturbance invariant R14–R25
 also hold to. Negative fixtures: `mlir/test/passes/verify_asn1.mlir` (1 positive, 13
 negatives, one per diagnostic). Enum values, the module OID, and the
 diagnostic-to-fixture pairing are pinned across the rails by

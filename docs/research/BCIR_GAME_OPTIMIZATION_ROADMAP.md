@@ -1,5 +1,9 @@
 # BCIR Game-Optimization Roadmap — legendary game techniques, mapped to GEM / K_BCIR / StreamPack (2026-07-08)
 
+> **Slice IDs.** The G1–G11 slices ranked in §7 are this roadmap's own numbering. They are unrelated to the
+> GEM+ slices G0–G10 in [`BCIR_GEMPLUS_ROADMAP.md`](BCIR_GEMPLUS_ROADMAP.md) and to the G1–G4 GO *criteria* of
+> [`BCIR_NATIVE_OBJECT_GATE.md`](../BCIR_NATIVE_OBJECT_GATE.md).
+
 **What this is**: a research note + build plan that mines the *gold-standard optimization lore of
 games* — RollerCoaster Tycoon's assembly, Doom's BSP, Quake's fast inverse square root, direct
 IEEE-754 bit manipulation, Elite/Frontier procedural generation from a seed, Crash Bandicoot's
@@ -186,7 +190,7 @@ subsystem, and an honest status (`already-in-bcir` / `build-exact` / `build-appr
 | # | Game / technique | Lesson | BCIR mechanism | Target | Status |
 |---|---|---|---|---|---|
 | 20 | **RollerCoaster Tycoon (1999)** — ~99 % x86 asm | Stability came from **determinism + a frozen artifact**, not from assembly; "bug-free / never-patched" is myth (patches to v1.08.187 / v1.10.026) | Resident-compiler gate: BCIR emits C23/LLVM IR and hands isel to clang/llc — **never hand-rolls asm**. The determinism/frugality **spirit** is already K_BCIR strength-reduction + `quantize` `_BitInt(N)` + `layout` SoA/AoS. The method is an explicit **anti-pattern** | other (reframe) | do-not-import (method); already-in-bcir (spirit) |
-| 21 | **seL4 (SOSP 2009)** — machine-checked correctness | The principled route to "stable / no-patching" is **proof**, not asm; seL4 proved correctness **without owning isel** (base proof trusted the C compiler). TCB = ~600 asm lines + boot + hardware + compiler | BCIR's value-invariance proofs are seL4-style refinement at the realization level; R1–R23 laws + two-truth are the guard. "Bug-free" = correct-relative-to-spec **modulo a declared TCB**. seL4 later closed the compiler gap via translation validation (PLDI 2013) — the model for a future BCIR IR→machine-code validation pass | other (verification rails) | build-exact (proof-carrying realization discipline) |
+| 21 | **seL4 (SOSP 2009)** — machine-checked correctness | The principled route to "stable / no-patching" is **proof**, not asm; seL4 proved correctness **without owning isel** (base proof trusted the C compiler). TCB = ~600 asm lines + boot + hardware + compiler | BCIR's value-invariance proofs are seL4-style refinement at the realization level; R1–R25 laws + two-truth are the guard. "Bug-free" = correct-relative-to-spec **modulo a declared TCB**. seL4 later closed the compiler gap via translation validation (PLDI 2013) — the model for a future BCIR IR→machine-code validation pass | other (verification rails) | build-exact (proof-carrying realization discipline) |
 | 22 | **SQLite / TigerBeetle / NASA Power of Ten** | Exhaustive testing (100 % MC/DC + differential + fuzz), static allocation + deterministic simulation testing (VOPR), and static-analyzability rules are what asm was a crude proxy for | `bcir.kbcir.differential` already does Python↔MLIR parity; extend with MC/DC gating + an IR/plan mutation fuzzer (replay-gated). Plan-time worst-case sizing freezes HAM/StreamPack (no runtime alloc). A VOPR-style fault injector over the GEM scheduler/DMA rings checks replay stays bit-identical. Codify Power-of-Ten as explicit R-laws | provenance/replay + GEM + device-manifest/HAM | build-exact |
 | 23 | **Kaze SM64** — smaller code on a memory-bound target | On a memory-bound target, prefer **smaller** code (inlining/unrolling **hurt** via icache misses); fixed-point sine LUT over float trig | Surface an icache/code-size cost dimension so the tropical optimizer prefers smaller code when memory/fabric terms dominate — turns a hand-won heuristic into a **priced** decision. LUT memoization = `realize.py` materialize-vs-recompute (exact for enumerable domains; a transcendental LUT is build-approx-under-R17) | K_BCIR | build-exact |
 
@@ -419,7 +423,7 @@ Game-optimization lore imports into BCIR **only after** the exact-vs-approximate
   either **two-truth-quarantined behind a NEW relative-error contract** (**G8** — the fast-rsqrt
   *pattern*, never the literal) or **do-not-import** — and **never** dressed up as "perfect accuracy."
 - "Embrace assembly for stability" (RCT) is an **anti-pattern** under the resident-compiler gate; the
-  principled route to "stable / no-patching" is BCIR's **verification rails** — R1–R23, two-truth,
+  principled route to "stable / no-patching" is BCIR's **verification rails** — R1–R25, two-truth,
   value-invariance proofs, deterministic provenance — the route **seL4 proved exists** (**G10**), not
   hand-rolled asm.
 
@@ -435,4 +439,4 @@ only way to keep BCIR's one law intact.
 - [`BCIR_ML_AI_INTEGRATION_ROADMAP.md`](../machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md) — the process the per-slice build waves land under.
 - [`BCIR_WHOLE_MODEL_REFERENCE.md`](../machine-learning/BCIR_WHOLE_MODEL_REFERENCE.md) — the rung-8 capstone (same "migrate the idea, wrap it in BCIR's discipline" pattern).
 - [`BCIR_STREAMPACK_ABI.md`](../kernel/BCIR_STREAMPACK_ABI.md) — the frozen binary ABI the StreamPack lessons (§6) build on.
-- [`BCIR_LANGREF.md`](../BCIR_LANGREF.md) — the R1–R23 law spec (R11 stale-pack, R13 replay, R17 accuracy).
+- [`BCIR_LANGREF.md`](../BCIR_LANGREF.md) — the R1–R25 law spec (R11 stale-pack, R13 replay, R17 accuracy).

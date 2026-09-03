@@ -80,7 +80,7 @@ must remain consistent with the corresponding fixed-width C contracts where one 
 | Path | Responsibility |
 |---|---|
 | `include/BCIR/*.td` | ODS operations, types, attributes, interfaces, and pass declarations |
-| `lib/` | Dialect registration, R1–R24 verification, K_BCIR/GEM passes, and partial conversions |
+| `lib/` | Dialect registration, R1–R25 verification, K_BCIR/GEM passes, and partial conversions |
 | `tools/bcir-opt.cpp` | Registered command-line law/pipeline driver |
 | `test/` | Positive, negative-diagnostic, pass, assembly, and lowering fixtures |
 | `examples/` | Canonical readable modules and worked parity anchors |

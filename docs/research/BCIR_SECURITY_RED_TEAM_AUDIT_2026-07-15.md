@@ -1,4 +1,5 @@
 # BCIR security red-team audit — 2026-07-15
+<!-- allow-law-ranges -->
 
 > **Scope:** merge of PR #538 (`8d88b530e3922d722fb02e0bcc30c89aadc9a630`)
 > through the current audited base, merge of PR #639

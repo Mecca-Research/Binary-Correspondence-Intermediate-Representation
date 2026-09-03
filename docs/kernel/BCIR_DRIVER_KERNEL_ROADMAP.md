@@ -733,7 +733,8 @@ new driver family, as defined in [`C_MEMORY_DISCIPLINE.md`](../languages/C_MEMOR
 
 A milestone stops rather than expands scope when its prerequisite contract is unstable, its test
 matrix cannot express teardown/recovery, its performance claim lacks a baseline, or required
-hardware evidence is unavailable. Deferred hardware work is shipped as clearly labeled code plus a
+hardware evidence is unavailable (what each available host lacks, and why privilege does not
+supply it, is recorded in [`BCIR_TARGET_ACCESS.md`](../BCIR_TARGET_ACCESS.md)). Deferred hardware work is shipped as clearly labeled code plus a
 residual-risk record, never as an unqualified support claim.
 
 ## 10. Historical rationale retained from roadmap v1

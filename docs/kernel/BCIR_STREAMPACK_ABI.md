@@ -133,7 +133,7 @@ contract, not a wire-layout revision.
 
 ## Why a frozen ABI now
 
-It is the linchpin for the next phases: the freestanding **C runtime** (Phase 8)
+It is the linchpin for the next phases: the freestanding **C runtime**
 loads exactly these bytes with no libc; cross-language **drivers** consume them; and
 it is the stable hand-off between the compiler (`mlir/`) and any executor. The
 artifact is portable in the same sense as a `.wasm` module — data the standard

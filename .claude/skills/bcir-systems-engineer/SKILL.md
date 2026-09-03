@@ -98,7 +98,7 @@ These are load-bearing across every subsystem; a PR that bends one will be rever
   (L1–L8, RT1–RT7, G1–G8, A/B/M/E/T/SEG/U/D series, ASN.1 phases A–H, JER J1–J6, ECN
   slices A–G3, GEM+ G0–G10), then land one gateable slice per PR with the slice ID in
   the title. If a slice spans rails, write the build reference doc *first*
-  (`docs/PER_DECODER_HANDOFF.md` is the model: "a finding written down before the code
+  (the PER-decoder hand-off note, retired once `bcir_per_plan.c` landed, was the model: "a finding written down before the code
   is worth more than a half-finished branch").
 - **Verification-first PR bodies.** End every substantive PR body with a Verification
   section quoting *exact* gate commands and outputs (pass counts, sanitizer results,

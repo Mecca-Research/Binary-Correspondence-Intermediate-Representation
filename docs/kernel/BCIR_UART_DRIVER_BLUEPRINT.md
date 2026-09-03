@@ -15,7 +15,7 @@
 > and every design decision is already made and justified. Follow it top to bottom.
 >
 > **Where it sits.** This is the Phase D slice-1 deep plan the
-> [`BCIR_DRIVER_KERNEL_ROADMAP.md`](BCIR_DRIVER_KERNEL_ROADMAP.md) Part IV points at, expanded to
+> [`BCIR_DRIVER_KERNEL_ROADMAP.md`](BCIR_DRIVER_KERNEL_ROADMAP.md) §5 (driver maturity and build order) points at, expanded to
 > a full program. It builds ONLY on machinery that is already merged (referenced by file path
 > throughout); nothing here requires new core-IR invention beyond the named law additions.
 >
@@ -53,7 +53,8 @@
   fail the suite if you forget), measured-then-pinned convergence/performance gates, and
   non-disturbance (every new law vacuous on non-UART code).
 - When a numeric gate is required (a performance win, a tolerance), **measure first, then pin
-  the gate at ~3× headroom** — the repo convention. Never guess a threshold.
+  the gate with headroom** — a win gate at ~⅔ of the measured gain (the rule §6's table uses),
+  a tolerance gate at ~3× the measured error — the repo convention. Never guess a threshold.
 - The device model in §1 and the variant matrix in §2 are the single source of truth for the
   register generator, the laws, the simulator, and the tests. If an implementation detail is
   not in §1/§2, it is a design hole: stop and check the source PDFs, do not improvise silently.
@@ -491,7 +492,8 @@ hot path containing **zero** learned inference (L0).
 first pass. They enter as (a) op-level/unit-level checks on the oracle (advisory diagnostics,
 like `abi_diagnostics`) and (b) an MLIR clause reported under **R3** (MMIO discipline — the
 DLAB/FCR/ordering rules are refinements of "device access is ordered and well-formed") with the
-message prefix `R3-uart:`. If the maintainers later want a numbered law (R24), it is a rename,
+message prefix `R3-uart:`. If the maintainers later want a numbered law (the next free number; R24 and R25 are now the ASN.1
+and ECN laws), it is a rename,
 not a redesign. This keeps `gen_status`'s R-table stable and honors non-disturbance.
 
 ---
@@ -504,7 +506,7 @@ not a redesign. This keeps `gen_status`'s R-table stable and honors non-disturba
 placement, plus a compile-time RegMap contract verified like the R12 ABI contract — so a driver
 binary *attests which register map it was laid out for* and a placement mismatch is caught by
 law, not by debugging. **(Since hardened: the RegMapContract is the MMIO specialization of the
-repo-wide `DeviceManifest` (D-R1, driver/kernel roadmap Part VI). A 16550 has no memory-tier
+repo-wide `DeviceManifest` (D-R1, driver/kernel roadmap §3). A 16550 has no memory-tier
 banks, so U0 needs no distance matrix — but any DMA-bearing device blueprint MUST author a
 `bcir/kbcir/device_manifest.py::DeviceManifest` here and route buffer programming through
 `StridedView`s; the D-R1..D-R6 rule card is a design axiom for every future U0.)**
@@ -832,8 +834,8 @@ per trigger level, `test_auto_cts_holds_the_next_byte_not_the_current`,
 contracts + plan `DecisionRecord` (replayable via `bcir.run --replay`'s exit-code contract) +
 the frozen prior envelope + the DurableLog schema — the *proof-carrying driver*. Write
 `docs/UART_DRIVER.md` (user-facing: how to build for each placement, how to retune, what each
-certificate means), update `BCIR_DRIVER_KERNEL_ROADMAP.md` Part IV (slice 1 DONE with pointers)
-and `BCIR_MASTER_ROADMAP.md` Phase D, regenerate STATUS.
+certificate means), update `BCIR_DRIVER_KERNEL_ROADMAP.md` §5 (slice 1 DONE with pointers)
+and `BCIR_MASTER_ROADMAP.md` §4.3, regenerate STATUS.
 **Commit.** `devices: U7 -- the proof-carrying UART driver artifact + docs`
 
 ### U8 — The 16750-family registry + laws (the second program increment begins)
@@ -984,7 +986,7 @@ data is held, wake on RX edge / modem change / THR write — all in char-ticks.
 
 | Item | Why deferred | Unblocks when |
 |---|---|---|
-| Interrupt/ISR claim model + IRQ-driven driver | BCIR has no event-triggered phase model; polled slice needs none (roadmap Part 0 finding). Design note: THRE-as-hint rule (§3.2) is already written so the IRQ port cannot regress. | after U7; needs an `event.irq` phase-trigger design on the IR |
+| Interrupt/ISR claim model + IRQ-driven driver | the EV1–EV3 event phases have since landed (driver roadmap §2); the polled slice needs none, and the IRQ port is sequenced after U2. Design note: THRE-as-hint rule (§3.2) is already written so the IRQ port cannot regress. | after U7; needs an `event.irq` phase-trigger design on the IR |
 | Bus-master DMA | not in the 16550 family (pins only); platform DMA engines are their own drivers | a DMA-engine registry model |
 | Real-silicon measurement (PMU/RAPL, a physical UART) | rig-gated, same as CT4 | `HARDWARE_VALIDATION.md` runbook rig |
 | Chip-lot errata sheets (date-code silicon bugs) | not publicly indexed | **vendor support** (TI/Exar/Microsemi/AMD/CAST/Lattice contacts) |
@@ -999,7 +1001,7 @@ data is held, wake on RX edge / modem change / THR write — all in char-ticks.
 
 ## 10. Process requirements (restated, with anchors)
 
-0. **The D-R rule card** (driver/kernel roadmap Part VI) governs every slice: one attested
+0. **The D-R rule card** (driver/kernel roadmap §3) governs every slice: one attested
    manifest per device build; discovery may VETO, never STEER (`uart_probe`'s `caps_mismatch`
    is this law); memory-tier crossings are explicit `mem.move.*` casts (MMIO register I/O
    stays under R3); movement is priced from manifest distances; allocation currency is the
@@ -1013,8 +1015,8 @@ data is held, wake on RX edge / modem change / THR write — all in char-ticks.
    `test_registry_complete.py` fails the suite otherwise.
 3. **Gates per slice**: touched tests + `python -m bcir.tests.run_all --tier quick` (expect the
    documented toolchain-gated failure count to stay constant; any new failure is yours) +
-   `tools/c/check_runtime.sh` when `runtime/c` changes + `PATH=/usr/lib/llvm-18/bin
-   tools/wsl/check_passes.sh` when `mlir/` changes + `gen_status > docs/STATUS.md` +
+   `tools/c/check_runtime.sh` when `runtime/c` changes + `bash tools/wsl/check_passes.sh` (with a coherent LLVM/MLIR 23 toolset; see
+   `tools/local/README.md`) when `mlir/` changes + `gen_status > docs/STATUS.md` +
    `check_links.py` + `check_retired_paths.py`.
 4. **Non-disturbance**: every new claim field digest-excluded by default (the R13 fixed fold
    list in `bcir/kbcir/provenance.py` makes this automatic); every law vacuous off-UART, proven

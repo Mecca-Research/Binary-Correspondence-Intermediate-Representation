@@ -66,7 +66,7 @@ Sizes, as a rough effort signal (converted spec text, lines): X.681 1 125 · X.6
 X.683 567 · X.691 2 733 · X.692 **7 599** · X.693 2 562. ECN is the largest document in
 the suite by a factor of three, and §0 is why it is nevertheless the destination.
 
-## 2. What is built (baseline through PR #670)
+## 2. What is built (baseline taken at PR #670; §4 records the phases landed since)
 
 - The whole of X.690 clause 8 on the oracle rail (`bcir/asn1/`, ~2 160 lines), clauses
   10 + 11 as a checker and a BER→DER rewrite.
@@ -491,12 +491,13 @@ exhaustiveness across would pick the wrong encoding for every fixed-size string 
 common case, not an edge. §21.13.4 a) also turns on the lower bound being **zero** where
 §21.11.4 a) turned on one *existing*, because an X.680 size always has one.
 
-Five of §21.7's eight repetition-space determinations are built: a count field
-(`field-to-be-set` / `field-to-be-used`), a terminator (`pattern` — this is the NUL-terminated
-string, and it is why the group carries a `Pattern` at all), §21.7.10's identification handle,
-and §21.7.11's fixed count. The other three are refused by name: `flag-to-be-set` and
-`flag-to-be-used` put a continuation flag **inside the repeated element** (§21.7.6/§21.7.7),
-which needs the element's own structure; `container` needs containment.
+All eight of §21.7's repetition-space determinations are built. Five landed with this slice: a
+count field (`field-to-be-set` / `field-to-be-used`), a terminator (`pattern` — this is the
+NUL-terminated string, and it is why the group carries a `Pattern` at all), §21.7.10's
+identification handle, and §21.7.11's fixed count. The continuation flags (`flag-to-be-set` /
+`flag-to-be-used`, §21.7.6/§21.7.7, which live **inside the repeated element**) and `container`
+followed once the element's own structure could reserve a field for them; the paragraph
+"clause 21.7 is complete" later in this section records that landing.
 
 §23.8's `#NUL` and §23.15's `#TAG` needed nothing new and are built. `#NUL` is the one category
 where `VALUE-PADDING` *is* the value encoding, since X.680's NULL carries no information;
@@ -541,7 +542,7 @@ replaced optional component is replaced "with a **non-optional** instantiation",
 parameter de-references to the component "**except for any class in the optionality
 category**". `REPLACE OPTIONALS` removes optionality rather than wrapping it.
 
-R25 grew to twenty-two rules for the same slice: §22.9.1.6, §22.9.1.9, §22.9.2.1 and §22.9.2.3
+R25 grew by twenty-two rules in the same slice: §22.9.1.6, §22.9.1.9, §22.9.2.1 and §22.9.2.3
 over handles, the eight parallel restrictions of §22.5.2 and §22.6.2, §22.5.2.4's start-pointer
 requirement, §22.6.1.1's two-valued ordering and §22.10.2.1's handle prerequisite. §22.9.2.1 and
 §22.9.2.3 are the two that could only ever live here: both relate one `EXHIBITS HANDLE` clause
@@ -1117,12 +1118,13 @@ its one ordinary structure as the §13.2 application point. That is a limit of t
 than of the clause, and the two facts are worth separating: §13.2 walks one application point,
 but nothing in clause 16 says a module declares only one *structure*. The hoisting semantics
 (§22.1.3.6) are built and exercised from Python. §22.1.1.7 e)'s
-`REPLACE NON-OPTIONALS ... AND OPTIONALS WITH ...` needs a second replacement group beside
-`ConcatenationSpec.replacement`, which is a change to the semantics rather than to the notation.
+`REPLACE NON-OPTIONALS ... AND OPTIONALS WITH ...` needed a second replacement group beside
+`ConcatenationSpec.replacement`, a change to the semantics rather than to the notation; that group
+landed at `SYNTAX_VERSION` 13 (see "§22.1.1.7 e)'s second replacement group is built" above).
 
-Two of §21.7's eight repetition-space determinations remain: `flag-to-be-set` and
-`flag-to-be-used` put a continuation flag **inside the repeated element** (§21.7.6/§21.7.7),
-which needs the element's own structure to reserve a field for it.
+None of §21.7's eight repetition-space determinations remains open: the continuation flags
+(`flag-to-be-set` / `flag-to-be-used`, §21.7.6/§21.7.7) were the last two, and the paragraph
+"clause 21.7 is complete" above records their landing.
 
 **The plan-v6 question, answered.** The open question was whether an ECN encoding is a sixth
 column in [`encode_plan`](../bcir/asn1/encode_plan.py), carried by a version 6 of that

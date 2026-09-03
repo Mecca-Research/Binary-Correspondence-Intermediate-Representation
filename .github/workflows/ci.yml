@@ -698,6 +698,8 @@ jobs:
 
       - name: Summary claims still match the code they summarise
         run: python3 tools/docs/check_claims.py
+      - name: Verifier-law ranges in prose match the tree (no former-last-law drift)
+        run: python3 tools/docs/check_law_range.py
 
       - name: Hot/cold import quarantine (research organs stay off the simple path)
         run: python3 tools/perf/import_graph.py --check
