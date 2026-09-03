@@ -3515,11 +3515,12 @@ def frame_header_source() -> str:
 
     Read through `importlib.resources` rather than by path arithmetic so it works from an
     installed wheel, where `__file__` may sit inside a zip and `Path(__file__).parent` is not
-    a directory anything can be opened from.
+    a directory anything can be opened from. The reader is the package's own
+    `module_source`, shared with the two `.asn1` modules beside this one.
     """
-    from importlib import resources
+    from . import module_source
 
-    return (resources.files(__package__) / FRAME_HEADER_MODULE).read_text(encoding="utf-8")
+    return module_source(FRAME_HEADER_MODULE)
 
 
 def frame_header_module() -> EcnModule:

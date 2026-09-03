@@ -228,8 +228,12 @@ def _duplicate_claim_module(clean):
     return module
 
 
-def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
-    opt = find_bcir_opt(root)
+def _compiled_mlir(text: str, root: Path, opt: str | None = None) -> dict[str, Any]:
+    # Resolved ONCE per campaign by the caller. Re-resolving per case made
+    # discovery a moving target: a wrapper or build artifact removed mid-run
+    # turned every remaining compiled witness into UNAVAILABLE/SKIPPED, and
+    # only FAIL becomes a disagreement, so the run still reported PASS.
+    opt = opt or find_bcir_opt(root)
     if not opt:
         return {"state": "UNAVAILABLE/SKIPPED", "reason": "bcir-opt not found"}
     # Materializing the case is part of running it. The fixture-CONSTRUCTION
@@ -306,7 +310,8 @@ def _compiled_mlir(text: str, root: Path) -> dict[str, Any]:
 
 
 def run_differential(root: Path, require_compiled: bool = False) -> dict[str, Any]:
-    if require_compiled and find_bcir_opt(root) is None:
+    opt = find_bcir_opt(root)
+    if require_compiled and opt is None:
         # The llvm-training job builds bcir-opt specifically so the compiled
         # rail can be compared; there, a silently absent binary must fail the
         # job rather than skip every compiled case (mirrors --require-c).
@@ -461,10 +466,20 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
         compiled = (
             {"state": "UNAVAILABLE/SKIPPED", "reason": "not a compiled-law witness"}
             if not case["compile"] or case["mlir_text"] is None
-            else _compiled_mlir(case["mlir_text"], root)
+            else _compiled_mlir(case["mlir_text"], root, opt)
         )
         if compiled["state"] == "FAIL":
             disagreements.append(str(compiled.get("reason") or f"{case['name']}: compiled crash"))
+        elif require_compiled and case["compile"] and compiled["state"] != "PASS":
+            # --require-compiled is a claim that the compiled rail RAN, not
+            # merely that it was discoverable at startup. Only FAIL became a
+            # disagreement, so a witness that never executed left the run
+            # green while proving nothing -- the vacuity this campaign
+            # refuses everywhere else (L2).
+            disagreements.append(
+                f"{case['name']}/mlir_compiled: required rail did not run "
+                f"({compiled.get('reason') or compiled['state']})"
+            )
         executed = []
         if python["state"] == "PASS":
             executed.append(("python", python["rejected"]))

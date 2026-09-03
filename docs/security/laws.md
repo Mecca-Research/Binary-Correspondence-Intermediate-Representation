@@ -67,10 +67,16 @@ parser still bottoms out — a size cap is no defence against depth).
 Prove RED before landing GREEN. Refuse zero iteration budgets and empty
 corpora; require executed negative cases; ask of every checker "what input
 makes every loop iterate zero times?" and feed it that input in a test.
+A `--require-X` flag is the same claim in a smaller frame: it promises
+the rail RAN, so a preflight that only proves the rail was *discoverable*
+leaves the run green over zero executions.
 Witnesses: `test_decoder_that_accepts_everything_is_a_finding`,
 `test_secret_scan_of_the_current_tree_is_non_vacuous`,
 `test_ci_exercises_the_declared_python_floor` (a support claim no job
-exercises is asserted by nothing).
+exercises is asserted by nothing),
+`test_require_compiled_demands_the_rail_actually_ran` (discovery resolved
+once per campaign, and every unavailable required witness is a
+disagreement).
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -111,9 +117,14 @@ reader cannot fully attribute must fail closed — and the stable resolution
 is to delete the subset reader entirely (this PR raised the Python floor to
 3.11 and removed its TOML fallback for exactly this reason, after the
 spelling family produced more findings than any other component).
+An AMBIGUOUS document is the same defect from the other side: `json.loads`
+keeps the last value for a repeated key, so a document saying two things
+parses as one of them and the contradiction is never attributed.
 Witnesses: `test_scalar_dependency_fields_are_unasserted`,
 `test_wrong_shaped_metadata_tables_are_unasserted`,
-`test_dependency_groups_fail_closed`.
+`test_dependency_groups_fail_closed`,
+`test_expected_inventory_rejects_duplicate_keys` (the review parser has
+refused this since R23; the two now share one predicate, see L14).
 **Port note:** BCIR wire formats get grammar-complete parsers generated
 from the registry, or refusal. No "good enough" readers in C, ever.
 
@@ -184,7 +195,11 @@ userinfo), `test_advisory_output_is_redacted` (a wrapped tool's stdout and
 error text are report fields too),
 `test_url_username_only_credentials_are_redacted` (userinfo is credential
 material by POSITION — redacting only the password half left a token used
-as the username intact).
+as the username intact),
+`test_reviewer_findings_are_redacted` (a reviewer QUOTES the code it
+reviews, so its findings are the field guaranteed to carry the secret;
+redacted through the scan's own predicate, so a report cannot remove less
+than the scan would report).
 **Port note:** harsher in C — every format string and every buffer holding
 a matched value is an L7 site.
 
@@ -396,6 +411,10 @@ first and the test second.
 Witnesses: `test_registered_suite_survives_missing_repo_only_trees`,
 `test_packaged_library_data_is_registered_for_shipping` (the exclusion was
 masking a defect in the shipped library, not classifying a test),
+`test_packaged_asn1_modules_are_read_from_the_package` (the second such
+exclusion in two rounds: the resource WAS shipped, and a
+working-directory-relative `open` could not find it — checked over the
+syntax, so a docstring describing the defect is not the defect),
 `test_repo_only_modules_are_classified_before_import` (import failure
 catches only the modules that import a missing tree; the ones that
 import cleanly and then read a missing asset must be declared),
@@ -410,16 +429,16 @@ install tree is the audit.
 
 ## Campaign classification summary
 
-Every review-thread finding from the campaign (236 threads, rounds 1–41)
+Every review-thread finding from the campaign (240 threads, rounds 1–42)
 is graded under the harvest protocol. The full per-finding
 index is `docs/security/pr749-harvest.csv`; the campaign ledger tracks the
 same data round by round.
 
 | Grade | Findings | Share | Meaning |
 |---|---|---|---|
-| **NEW-LAW** | 20 | **8.5%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
-| **INSTANCE** | 177 | **75.0%** | New entry point to a registered law — the law gained a witness |
-| **LOCAL** | 39 | **16.5%** | No transfer value beyond the code touched |
+| **NEW-LAW** | 20 | **8.3%** | Originated a registry law (L1–L13, L15–L21; L14 emerged from the repetition itself, not one finding) |
+| **INSTANCE** | 181 | **75.4%** | New entry point to a registered law — the law gained a witness |
+| **LOCAL** | 39 | **16.2%** | No transfer value beyond the code touched |
 
 Rounds through 31 were graded retroactively; from round 32 every finding
 is graded at triage. Rounds 32 and 33 were both zero-NEW-LAW, taking the
@@ -584,20 +603,64 @@ returned an ordinary verdict, and was accepted as having answered in time,
 with the one-shot timer already spent. Eleven rounds, one law, two rails,
 two spellings.
 
+Round 42 (four findings, all instances) is the eighth consecutive
+zero-NEW-LAW round, and it settles what round 41 opened. The corollary
+written into L21 last round — *a skip is where a shipping defect hides* —
+was tested immediately: Codex reported a second over-broad exclusion, the
+`test_asn1_constraints` module skipped whole for one of its 21 tests, and
+underneath it was the same class of defect. The ASN.1 module the test
+compiles **is** shipped; the test opened it as
+`open("bcir/asn1/BCIR-StreamPack.asn1")`, a path relative to the working
+directory, which resolves only when a test happens to run from the
+repository root and fails inside the very wheel that ships the file.
+`ecn_syntax.frame_header_source` has read its module through
+`importlib.resources` since it was written, with a docstring explaining
+exactly why; the two `.asn1` modules beside it had no such reader. One
+predicate now (`bcir.asn1.module_source`), shared by all three.
+
+Two rounds, two exclusions, two different underlying defects — a missing
+`package-data` entry and a working-directory-relative read — so the
+registry was **re-derived** rather than edited twice: every one of its 64
+entries was run against a freshly staged wheel tree, per test rather than
+per module. Four more entries were excluding modules that pass entirely in
+the wheel. With the two Codex found, five entries were hiding **98
+runnable tests**, among them 181 in the security suite this very campaign
+depends on. The regeneration note now says to read a candidate entry as a
+question about the package first and the test second, and records the trap
+that made the first survey worthless: importing `bcir.tests.run_all` from
+the checkout binds `bcir` to the repository, so every module under test
+comes from there and the survey reports uniformly clean.
+
+The other three are single-line statements of laws the registry already
+holds. A reviewer QUOTES the code it reviews, so `security_concerns` and
+`summary` are the report fields guaranteed to carry whatever secret it
+just found, and this rail copied them into `--json-out` verbatim (L7) —
+now redacted through the scan's own predicate, so a report cannot remove
+less than the scan would report. `json.loads` keeps the last value for a
+repeated key, so an inventory declaring `"runtime": ["hidden-package==1"]`
+and later `"runtime": []` audited clean while saying two things (L4) — the
+review parser has refused exactly that since round 23. And
+`--require-compiled` proved only that `bcir-opt` was *discoverable* at
+startup: every per-case call re-resolved it, and only `FAIL` became a
+disagreement, so a binary that vanished mid-run left every witness
+`UNAVAILABLE/SKIPPED` and the report `PASS` over zero compiled executions
+(L2). Discovery is resolved once per campaign now, and an unavailable
+required witness is a disagreement.
+
 Where the instances concentrated (finding count per law, origin included):
 L5 scannable-data coverage 39 · L3 resource-commit bounds 25 · L1
 every-exit-a-verdict 21 · L11 witness/law pairing 13 · L15 discovery
 reconciliation 12 · L8 process trees/pipes 10 · L10 rejection contracts 9 ·
-L18 heuristic scope 9 · L7 report-as-egress 8 · L2 gate-can-fire 7 · L17
-names-are-paths 7 — the remaining laws
+L18 heuristic scope 9 · L7 report-as-egress 9 · L2 gate-can-fire 8 · L4
+attribute-or-refuse 7 · L17 names-are-paths 7 — the remaining laws
 account for the rest. The two heaviest laws are exactly the two that port
 hardest into C (allocation bounds and data-coverage claims), which is the
 campaign's transfer thesis in one line.
 
 Where the noise concentrated: the deleted Python 3.10 TOML fallback
-absorbed 21 findings (8.9% of the entire campaign — the single largest
+absorbed 21 findings (8.8% of the entire campaign — the single largest
 family, all LOCAL, resolved by raising the floor to 3.11 per L4), and the
 rolled-back alias/dataflow tracking in the boundary audit absorbed 13 more
-(5.5%, resolved by declaring scope per L18). Those two structural changes
+(5.4%, resolved by declaring scope per L18). Those two structural changes
 retire **87% of all LOCAL findings** — the loop's zero-yield surface —
 which is what steers future review rounds toward NEW-LAW territory.

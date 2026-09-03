@@ -3886,3 +3886,138 @@ def test_packaged_library_data_is_registered_for_shipping() -> None:
     assert "tables/*.json" in package_data.get("bcir.kbcir", []), package_data
     # And the module is no longer excluded wholesale from the packaged run.
     assert "bcir.tests.test_calibrator" not in _REPO_ONLY_MODULES
+
+
+def test_reviewer_findings_are_redacted() -> None:
+    """A reviewer QUOTES the code it reviews, so its findings are the one
+    report field guaranteed to carry whatever secret it just discovered —
+    and this rail copied them verbatim into `--json-out`."""
+    from tools.security.independent_review import run_reviewer
+    value = "correct-horse-battery-staple"
+    finding = "hardcoded " + "pass" + "word: " + value
+    with tempfile.TemporaryDirectory() as tmp:
+        script = Path(tmp) / "reviewer.py"
+        script.write_text(
+            "import json\n"
+            "print(json.dumps({'passed': False,\n"
+            "                  'security_concerns': [" + repr(finding) + "],\n"
+            "                  'logic_errors': [],\n"
+            "                  'summary': " + repr(finding) + "}))\n",
+            encoding="utf-8")
+        report = run_reviewer([sys.executable, str(script)], Path(tmp))
+    serialized = json.dumps(report)
+    assert report["state"] == "FAIL"
+    assert value not in serialized, serialized
+    # The reviewer's prose SURVIVES around the redaction: the field is still
+    # a usable finding, and `passed` is still a boolean.
+    assert "hardcoded" in serialized
+    assert report["review"]["passed"] is False
+
+
+def test_expected_inventory_rejects_duplicate_keys() -> None:
+    """`json.loads` keeps the LAST value for a repeated key, so an inventory
+    declaring `"runtime": ["hidden-package==1"]` and later `"runtime": []`
+    parses clean and audits clean while saying two different things."""
+    from tools.security.audit_dependencies import audit
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        (root / "pyproject.toml").write_text(
+            '[project]\nname="x"\nversion="1"\ndependencies = []\n', encoding="utf-8")
+        expected = root / "expected.json"
+        expected.write_text(
+            '{"runtime": ["hidden-package==1"], "build_system": [],'
+            ' "optional": {}, "runtime": []}', encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", str(root), "-c", "user.email=a@b", "-c", "user.name=t",
+             "commit", "-qm", "base"], check=True)
+        report = audit(root, expected)
+    assert report["state"] == "FAIL", report
+    # An unambiguous inventory of the same shape still passes: the refusal
+    # is of the CONTRADICTION, not of the document.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        (root / "pyproject.toml").write_text(
+            '[project]\nname="x"\nversion="1"\ndependencies = []\n', encoding="utf-8")
+        expected = root / "expected.json"
+        expected.write_text(
+            json.dumps({"runtime": [], "build_system": [], "optional": {}}),
+            encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", str(root), "-c", "user.email=a@b", "-c", "user.name=t",
+             "commit", "-qm", "base"], check=True)
+        assert audit(root, expected)["state"] == "PASS"
+
+
+def test_require_compiled_demands_the_rail_actually_ran() -> None:
+    """`--require-compiled` is a claim that the compiled rail RAN, not that
+    it was discoverable at startup. Only `FAIL` became a disagreement, so a
+    witness that never executed left the run green while proving nothing."""
+    from unittest import mock
+    from tools.security import run_malformed_differential as differential
+    unavailable = {"state": "UNAVAILABLE/SKIPPED", "reason": "bcir-opt not found"}
+    with mock.patch.object(differential, "find_bcir_opt",
+                           return_value="/nonexistent/bcir-opt"), \
+         mock.patch.object(differential, "_compiled_mlir", return_value=unavailable):
+        strict = differential.run_differential(differential.ROOT, require_compiled=True)
+        lax = differential.run_differential(differential.ROOT, require_compiled=False)
+    assert strict["state"] == "FAIL", strict
+    assert any("required rail did not run" in d for d in strict["disagreements"])
+    # Without the flag an unavailable compiled rail is still a legitimate skip.
+    assert lax["state"] == "PASS", lax
+
+    # And discovery is resolved ONCE: a binary that vanishes after the
+    # preflight must not silently downgrade every remaining case.
+    calls = {"n": 0}
+
+    def vanishing(_root: Path) -> str | None:
+        calls["n"] += 1
+        return "/nonexistent/bcir-opt" if calls["n"] == 1 else None
+
+    with mock.patch.object(differential, "find_bcir_opt", side_effect=vanishing):
+        report = differential.run_differential(differential.ROOT, require_compiled=True)
+    assert calls["n"] == 1, "the executable is resolved once per campaign"
+    assert report["state"] == "FAIL", report
+
+
+def test_packaged_asn1_modules_are_read_from_the_package() -> None:
+    """`bcir/asn1/*.asn1` is shipped SOURCE the front end compiles. Opening
+    it through a working-directory-relative path worked only when a test
+    happened to run from the repository root, and failed inside the very
+    wheel that ships the file — so the packaged runner had excluded the
+    whole module for it."""
+    from bcir.asn1 import ARTIFACT_BUNDLE_MODULE, STREAMPACK_MODULE, module_source
+    from bcir.asn1.ecn_syntax import FRAME_HEADER_MODULE, frame_header_source
+    from bcir.tests.run_all import _REPO_ONLY_MODULES
+
+    for name in (STREAMPACK_MODULE, ARTIFACT_BUNDLE_MODULE, FRAME_HEADER_MODULE):
+        text = module_source(name)
+        assert text.strip(), name
+    # The ECN reader is the same predicate, not a second copy of it.
+    assert frame_header_source() == module_source(FRAME_HEADER_MODULE)
+    # No module reads a packaged resource through the working directory.
+    # Checked over the SYNTAX, not the text: a docstring explaining the
+    # defect is not the defect, and a textual scan flags its own prose.
+    import ast
+    root = Path(__file__).resolve().parents[2]
+    if (root / "bcir").is_dir():
+        prefix = "bcir" + "/"
+        offenders = []
+        for path in sorted((root / "bcir").rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "open"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                    and node.args[0].value.startswith(prefix)
+                ):
+                    offenders.append(f"{path}:{node.lineno}")
+        assert not offenders, offenders
+    assert "bcir.tests.test_asn1_constraints" not in _REPO_ONLY_MODULES

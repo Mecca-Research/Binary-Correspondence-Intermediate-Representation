@@ -46,9 +46,33 @@ DER_OID_IRI = "/ASN.1/BER-Derived/Distinguished-Encoding"
 BER_OID: tuple[int, ...] = (2, 1, 1)
 BER_OID_IRI = "/ASN.1/Basic-Encoding"
 
+#: The X.680 modules shipped beside this package (see `pyproject.toml`'s
+#: package-data note): they are SOURCE the front end compiles, not
+#: documentation about it.
+STREAMPACK_MODULE = "BCIR-StreamPack.asn1"
+ARTIFACT_BUNDLE_MODULE = "BCIR-ArtifactBundle.asn1"
+
+
+def module_source(name: str) -> str:
+    """The text of a module shipped inside this package.
+
+    Read through `importlib.resources`, never by path arithmetic and never
+    relative to the working directory. `__file__` may sit inside a zip in an
+    installed wheel, and a checkout-relative `open("bcir/asn1/...")` resolves
+    against the CWD — so it works when a test happens to run from the repo
+    root and fails everywhere else, including in the wheel that ships the
+    very file it is opening. `ecn_syntax.frame_header_source` has read its
+    module this way since it was written; this is the same predicate, now
+    shared by all three (L14).
+    """
+    from importlib import resources
+
+    return (resources.files(__package__) / name).read_text(encoding="utf-8")
+
 __all__ = [
-    "Asn1Error", "BER_OID", "BER_OID_IRI", "BitString", "DER_OID", "DER_OID_IRI",
-    "Strictness", "Tag", "TagClass", "Tlv", "Universal", "Violation", "decode_der",
-    "decode_one", "decode_tlv", "decode_value", "der_violations", "encode_der",
-    "encode_tlv", "is_der", "iter_tlv", "reencode_as_der", "require_der", "to_der",
+    "ARTIFACT_BUNDLE_MODULE", "Asn1Error", "BER_OID", "BER_OID_IRI", "BitString",
+    "DER_OID", "DER_OID_IRI", "STREAMPACK_MODULE", "Strictness", "Tag", "TagClass",
+    "Tlv", "Universal", "Violation", "decode_der", "decode_one", "decode_tlv",
+    "decode_value", "der_violations", "encode_der", "encode_tlv", "is_der",
+    "iter_tlv", "module_source", "reencode_as_der", "require_der", "to_der",
 ]

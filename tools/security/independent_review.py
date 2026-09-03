@@ -21,8 +21,12 @@ from typing import Any
 
 try:
     from tools.security.proc_bounds import put_down_group
+    from tools.security.report_hygiene import mapped, reject_duplicate_keys
+    from tools.security.scan_secrets import redacted_text
 except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
     from proc_bounds import put_down_group
+    from report_hygiene import mapped, reject_duplicate_keys
+    from scan_secrets import redacted_text
 
 ROOT = Path(__file__).resolve().parents[2]
 REQUIRED_KEYS = ("passed", "security_concerns", "logic_errors", "summary")
@@ -38,19 +42,10 @@ def _put_down(proc: subprocess.Popen) -> None:
     put_down_group(proc)
 
 
-def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    # Single pass: a per-key list scan is quadratic, and one duplicate among
-    # tens of thousands of keys would burn minutes of CPU after the process
-    # timeout has already finished.
-    seen: set[str] = set()
-    duplicates: set[str] = set()
-    for key, _ in pairs:
-        if key in seen:
-            duplicates.add(key)
-        seen.add(key)
-    if duplicates:
-        raise ValueError(f"duplicate keys in review JSON: {sorted(duplicates)}")
-    return dict(pairs)
+# The duplicate-key refusal this rail has always had now lives in
+# report_hygiene, because the dependency audit needed the same one and
+# a second copy is how the campaign's repeat defects start (L14).
+_reject_duplicate_keys = reject_duplicate_keys
 
 
 def _reject_constant(name: str) -> Any:
@@ -195,7 +190,14 @@ def run_reviewer(command: list[str], cwd: Path, timeout: int = REVIEW_TIMEOUT) -
     return {
         "state": "PASS" if payload["passed"] else "FAIL",
         "fail_closed": True,
-        "review": payload,
+        # A reviewer quotes the code it is reviewing. Its findings are
+        # therefore the one report field GUARANTEED to carry whatever
+        # secret it just discovered, and this rail copied them verbatim
+        # into --json-out. Redacted through the scan's own predicate, so
+        # this cannot remove less than the scanner would report; the
+        # reviewer's prose around the value survives, and `passed` stays
+        # a boolean because `mapped` only touches strings (L7).
+        "review": mapped(payload, redacted_text),
     }
 
 

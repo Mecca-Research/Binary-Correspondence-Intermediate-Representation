@@ -446,11 +446,20 @@ _REPO_ONLY_TREES = ("tools",)
 #
 # To regenerate: install the wheel into a clean venv, run this module at
 # `--tier c-runtime` (or higher), and collect the modules of any FAIL
-# lines.
+# lines. Do it PER TEST, not per module: five entries here excluded a whole
+# module for one dependent test, hiding 91 runnable ones between them, and
+# two of those five were not classification errors at all -- they were a
+# missing package-data entry and a resource opened through a
+# working-directory-relative path. Read a candidate entry as a question
+# about the PACKAGE first (L21) and about the test second.
+#
+# Beware the import trap when regenerating: importing this module from the
+# CHECKOUT binds `bcir` to the repository, so every module under test then
+# comes from there and the whole survey reports clean. Read the registry as
+# text, or run entirely inside the installed tree.
 _REPO_ONLY_MODULES = frozenset({
     "bcir.tests.test_artifact_bundle",
     "bcir.tests.test_asn1_calibration",
-    "bcir.tests.test_asn1_constraints",
     "bcir.tests.test_asn1_dialect",
     "bcir.tests.test_asn1_ecn_law_parity",
     "bcir.tests.test_asn1_frontend",
@@ -472,7 +481,6 @@ _REPO_ONLY_MODULES = frozenset({
     "bcir.tests.test_c_per_plan",
     "bcir.tests.test_c_runtime",
     "bcir.tests.test_c_xer",
-    "bcir.tests.test_calibloop",
     "bcir.tests.test_cfront",
     "bcir.tests.test_cfront_link",
     "bcir.tests.test_cfront_roundtrip",
@@ -497,10 +505,8 @@ _REPO_ONLY_MODULES = frozenset({
     "bcir.tests.test_model_weights_io",
     "bcir.tests.test_native_ai",
     "bcir.tests.test_native_object_gate",
-    "bcir.tests.test_provenance",
     "bcir.tests.test_provenance_twin",
     "bcir.tests.test_q8_embed",
-    "bcir.tests.test_regret",
     "bcir.tests.test_security_assurance",
     "bcir.tests.test_security_hardening",
     "bcir.tests.test_silicon_runbook",
@@ -508,7 +514,6 @@ _REPO_ONLY_MODULES = frozenset({
     "bcir.tests.test_sycl_dispatch",
     "bcir.tests.test_target_matrix",
     "bcir.tests.test_telemetry_frame",
-    "bcir.tests.test_telemetry_security",
     "bcir.tests.test_toolchain",
     "bcir.tests.test_train_c_kernels",
     "bcir.tests.test_train_pack_exec",

@@ -22,11 +22,13 @@ try:
     from tools.security.git_index import (
         STAGED_OVERSIZED, staged_blob, staged_divergent, staged_mode,
     )
+    from tools.security.report_hygiene import DuplicateKeys, mapped, strict_loads
     from tools.security.proc_bounds import run_bounded
 except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
     from git_index import (
         STAGED_OVERSIZED, staged_blob, staged_divergent, staged_mode,
     )
+    from report_hygiene import DuplicateKeys, mapped, strict_loads
     from proc_bounds import run_bounded
 
 import tomllib
@@ -69,13 +71,7 @@ def _redacted_requirement(text: str) -> str:
 
 def _redacted(value: Any) -> Any:
     """``_redacted_requirement`` applied through the report's shapes."""
-    if isinstance(value, str):
-        return _redacted_requirement(value)
-    if isinstance(value, list):
-        return [_redacted(item) for item in value]
-    if isinstance(value, dict):
-        return {key: _redacted(item) for key, item in value.items()}
-    return value
+    return mapped(value, _redacted_requirement)
 
 
 def _table(value: Any) -> dict[str, Any] | None:
@@ -242,8 +238,14 @@ def _expected_inventory(expected_path: Path) -> dict[str, Any] | None:
 
 def _inventory_from_text(raw: str) -> dict[str, Any] | None:
     try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, RecursionError):
+        # STRICT: json.loads keeps the LAST value for a repeated key, so an
+        # inventory declaring `"runtime": ["hidden-package==1"]` and later
+        # `"runtime": []` parses clean and audits clean while saying two
+        # different things. A gate cannot attribute a contradictory
+        # declaration, so it refuses it (L4) -- the review parser has
+        # refused exactly this since R23, and now they share the predicate.
+        data = strict_loads(raw)
+    except (json.JSONDecodeError, DuplicateKeys, RecursionError):
         # RecursionError, not just malformed JSON: every token can be valid
         # and the payload still bottom out the parser -- 20k nested arrays
         # is ~40 KiB, well inside the ingress cap, so a size bound is no

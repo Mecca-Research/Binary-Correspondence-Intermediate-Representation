@@ -736,6 +736,71 @@ def _decode_text_escapes(line: str) -> str:
 
     return _TEXT_ESCAPE.sub(_one, line)
 
+def _reportable(match: "re.Match[str]") -> str | None:
+    """The matched credential, or None when suppression applies.
+
+    _scan_text carried two copies of this test — one for the raw line and
+    one for the decoded shadow — and `redacted_text` needs a third. One
+    predicate instead (L14), so a value the scan would REPORT is exactly
+    the value a report REMOVES.
+    """
+    value = match.group(0)
+    groups = match.groupdict()
+    # Placeholder checks run on the VALUE (assignment RHS or the token
+    # itself), not on the key or surrounding text.
+    if _is_placeholder(
+        groups.get("value") or groups.get("svalue")
+        or groups.get("uvalue") or value
+    ):
+        return None
+    # Prose suppression applies ONLY to the quoted branch: the unquoted
+    # branches and every token rule already carry a shape, so this cannot
+    # weaken them.
+    quoted = groups.get("value") or groups.get("svalue")
+    if quoted is not None and _is_prose(quoted):
+        return None
+    return value
+
+
+def redacted_text(text: str) -> str:
+    """Arbitrary text with every credential VALUE replaced by `<redacted>`.
+
+    `redacted_path` redacts a whole COMPONENT because a path is structured
+    and a component is its unit; prose has no such unit, so this redacts
+    the matched span itself and leaves the reviewer's words around it
+    readable. What counts as a credential is the scan's own predicate, so
+    a report cannot redact less than the scan would report.
+    """
+    spans: list[tuple[int, int]] = []
+    for _rule, pattern in RULES:
+        for match in pattern.finditer(text):
+            if _reportable(match) is None:
+                continue
+            groups = match.groupdict()
+            for key in ("value", "svalue", "uvalue"):
+                if groups.get(key) is not None:
+                    spans.append(match.span(key))
+                    break
+            else:
+                # A token rule matches the credential itself: no value
+                # group to narrow to, so the whole match is the secret.
+                spans.append(match.span())
+    if not spans:
+        return text
+    parts: list[str] = []
+    cursor = 0
+    for start, end in sorted(spans):
+        if start < cursor:
+            # Two rules matched overlapping spans; the first already
+            # covered this text.
+            continue
+        parts.append(text[cursor:start])
+        parts.append("<redacted>")
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
 def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
     findings = []
     lines = text.splitlines()
@@ -763,15 +828,8 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
                 seen = {item["fingerprint"] for item in findings}
                 for rule, pattern in RULES:
                     for match in pattern.finditer(decoded):
-                        value = match.group(0)
-                        groups = match.groupdict()
-                        if _is_placeholder(
-                            groups.get("value") or groups.get("svalue")
-                            or groups.get("uvalue") or value
-                        ):
-                            continue
-                        quoted = groups.get("value") or groups.get("svalue")
-                        if quoted is not None and _is_prose(quoted):
+                        value = _reportable(match)
+                        if value is None:
                             continue
                         fingerprint = _fingerprint(value)
                         if fingerprint in seen:
@@ -782,20 +840,8 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
                         })
         for rule, pattern in RULES:
             for match in pattern.finditer(line):
-                value = match.group(0)
-                groups = match.groupdict()
-                # Placeholder checks run on the VALUE (assignment RHS or the
-                # token itself), not on the key or surrounding text.
-                if _is_placeholder(
-                    groups.get("value") or groups.get("svalue")
-                    or groups.get("uvalue") or value
-                ):
-                    continue
-                # Prose suppression applies ONLY to the quoted branch: the
-                # unquoted branches and every token rule already carry a
-                # shape, so this cannot weaken them.
-                quoted = groups.get("value") or groups.get("svalue")
-                if quoted is not None and _is_prose(quoted):
+                value = _reportable(match)
+                if value is None:
                     continue
                 findings.append({
                     "path": path,

@@ -235,3 +235,7 @@ finding,date,file,title,grade,law
 234,2026-09-02 23:40,scan_secrets.py,Bound concatenated gzip and bzip2 stream counts,INSTANCE,L3
 235,2026-09-02 23:40,scan_secrets.py,Scan folded YAML double-quoted scalars,INSTANCE,L5
 236,2026-09-02 23:40,audit_dependencies.py,Convert inventory parser recursion into a verdict,INSTANCE,L1
+237,2026-09-03 01:32,bcir/asn1/__init__.py,Read packaged ASN.1 modules from the package not the CWD,INSTANCE,L21
+238,2026-09-03 01:32,independent_review.py,Redact reviewer findings before reporting them,INSTANCE,L7
+239,2026-09-03 01:32,audit_dependencies.py,Reject duplicate keys in the expected inventory,INSTANCE,L4
+240,2026-09-03 01:32,run_malformed_differential.py,Require the compiled rail to have actually run,INSTANCE,L2

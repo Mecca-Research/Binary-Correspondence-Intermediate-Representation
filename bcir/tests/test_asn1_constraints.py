@@ -201,8 +201,13 @@ def test_the_streampack_projection_is_unchanged_by_the_constraint_machinery():
     from bcir.kbcir.cost import TargetProfile, Theta
 
     host, theta = TargetProfile.x86_avx512(), Theta.cool()
-    compiled = compile_module(
-        open("bcir/asn1/BCIR-StreamPack.asn1", encoding="utf-8").read()).module
+    # The module is SHIPPED inside bcir.asn1, so it is read from the package
+    # rather than through a path relative to the working directory: the old
+    # spelling resolved only when the test ran from the repository root, and
+    # failed in the very wheel that ships the file it opens.
+    from bcir.asn1 import STREAMPACK_MODULE, module_source
+
+    compiled = compile_module(module_source(STREAMPACK_MODULE)).module
     for name, build in sorted(PROGRAMS.items()):
         module = build()
         value = pack_to_value(hydrate(module, optimize(module, host, theta)))
