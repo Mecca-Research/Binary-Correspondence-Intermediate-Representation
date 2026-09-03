@@ -310,6 +310,12 @@ account, so there was no second reader. The mechanism that catches summary drift
 **CI health.** 725 workflow runs on `main`; the last 30 are all successful. No open pull
 requests, no open issues. The repository is effectively a single-maintainer project
 driven by two agent fleets, which makes the written gates (not reviewers) the safety net.
+One non-required check is permanently red: GitHub's own "Code scanning AI findings" agent
+(the `github-advanced-security` dynamic workflow, not part of `ci.yml`) has failed on
+every one of its last 29 completed runs since 2026-08-26 with a GitHub-side
+model-availability error before any analysis starts. It provides no coverage today and
+should either be fixed at the organization level or disabled so it stops appearing as a
+red check on every PR.
 
 ---
 
