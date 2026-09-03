@@ -67,7 +67,7 @@ resource with a legality floor (correctness) that is never traded away.
 Use these in scratchpad notes/plans (NOT in user-facing docs): oracle=`bcir/` Python
 rail · law=`mlir/` rail · twin=`runtime/c/bcir_cfront.c` · SP=StreamPack · MR=master
 roadmap · MLAI=ML/AI roadmap · DKR=driver/kernel roadmap · GT=ground truth
-(STATUS.md) · R-laws=R1–R21 · DH=DEVELOPMENT_HISTORY.md.
+(STATUS.md) · R-laws=R1–R25 · DH=DEVELOPMENT_HISTORY.md.
 
 ## 7. Optional heavy machinery
 

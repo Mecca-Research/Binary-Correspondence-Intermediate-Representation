@@ -116,6 +116,17 @@ inference, emulation, or nested build loops. New C sources must land in the
 check_runtime.sh gate block AND `native_bench._SOURCES` together (the #719 wiring trap).
 New `test_*.py` files must be registered in `run_all.py`. Regenerate `STATUS.md` last;
 regenerate this digest (`build_digest.py`) when its inventory drifts.
+**2026-09-03 whole-system analysis** (`docs/research/BCIR_SYSTEM_ANALYSIS_2026-09-03.md`, PR #751):
+every local gate green at PR #750 (quick + thorough tiers, C rail with clang/gcc sanitizers and
+libFuzzer, docs governance, the six assurance rails, the MLIR rail on conda-forge LLVM 22.1.8);
+Python 3.14.7 and 3.15.0rc2 pass the quick tier; clang 22/23 pass the C gates. Toolchain
+lessons: build `bcir-opt` with the compiler that built the MLIR libraries (system g++ 13 objects
+against conda's GCC-15-built archives crash at startup); set `LLVM_BIN` for the assemble-smoke
+resolver. LLVM 23.1.0 is released and the rail needs one rename to compile on it
+(`applyPatternsAndFoldGreedily` -> `applyPatternsGreedily` in `BCIRPromotePass.cpp`; LLVM 22
+already provides the new name). The report's D1-D10 ledger lists the live documentation drift
+(stale `R1-R23` ranges in ~20 docs, the LangRef's appended 3,190-line snapshot, the stale PER
+hand-off note, ASN.1 roadmap self-contradictions) and §9 ranks the next slices.
 <!-- KNOWLEDGE:END -->
 
 ## Generated inventory (do not edit — rebuild with build_digest.py)
@@ -197,6 +208,7 @@ Top-level: ./bcir ./channels ./docs ./llvm-training ./mlir ./runtime ./tools
 - **docs/research/BCIR_SECURITY_AUDIT_2026-08-12b.md** (170L): 1. What the previous pass handed this one · 2. Confirmed and fixed · 3. Investigated and cleared · 4. Swept clean · 5. Verification · 6. What remains open
 - **docs/research/BCIR_SECURITY_RED_TEAM_AUDIT_2026-07-15.md** (192L): Executive verdict · Method and safety boundary · Observed environment and exploitability · Confirmed findings and fixes · Copy Fail, Dirty Frag, and local-escalation analogues · Investigated and closed as non-exploitable in the current en · Dependency and CI disposition · Validation record · Residual risk and required follow-up
 - **docs/research/BCIR_SECURITY_THREAT_MODEL.md** (143L): Security objective · System and trust boundaries · Assets · Attacker capabilities · Security invariants · Principal abuse paths · Future driver/UAPI requirements · Accepted residual risk
+- **docs/research/BCIR_SYSTEM_ANALYSIS_2026-09-03.md** (530L): 1. Executive summary · 2. What the system is, by the numbers · 3. Evidence: what was executed on this host · 4. Architecture assessment by subsystem · 5. History and process review · 6. Documentation audit: drift and inconsistencies found · 7. Code-quality observations · 8. Risks, ranked · 9. Recommended next development steps · 10. Reproducing the toolchains on a network-restricted host · Appendix A. Reading map used for this report
 - **docs/research/BCIR_TMSAO_ARCHITECTURE_AND_PERFORMANCE_REPORT.md** (941L): 1. Executive answer · 2. What “TMSAO” can and cannot mean · 3. Audit method and limitations · 4. Current architecture: what is genuinely strong · 5. Full operational and data-structure performance · 6. Exact differentials: where the current optimizer is not o · 7. Native measurement validity finding · 8. Is a DAG the right fallback? · 9. Is tropical min-plus the master algorithm? · 10. What current state-of-the-art systems add · 11. Proposed GEM+ / K_BCIR architecture · 12. Prioritized implementation program · 13. Decisions
 - **docs/research/BCIR_TMSAO_ASN1_JSON_DRIVER_PROPOSAL.md** (974L): 1. Executive verdict · 2. Operational definition of TMSAO · 3. Source-backed state at PR #739 · 4. GEM+: the canonical architecture · 5. Solver portfolio and lower-bound stack · 6. Scaling, scheduling, and memory program · 7. ASN.1 through PR #739 and its GEM+ role · 8. Python-to-C++ migration roadmap · 9. Hardware profiles and the native measurement rig · 10. API, database, service, and IPC architecture · 11. Driver, kernel, FPGA, and SASOS implications · 12. Prioritized implementation program · 13. Risk register and decision rules
 - **docs/research/BCIR_TRITON_COMPARATIVE_ANALYSIS.md** (271L): 0. Executive verdict · 1. The comparison matrix · 2. Where the two systems actually touch (BCIR surfaces, anch · 3. The migration ledger · 4. Direct answers to the three questions · 5. Recommended next steps (ranked) · 6. Messaging discipline (the corrections, restated so they d
