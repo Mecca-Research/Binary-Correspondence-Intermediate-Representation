@@ -31,7 +31,7 @@ Three parallel workflows run on every push/PR; the main CI's jobs and what each
 |---|---|
 | BCIR oracle 1/2 + 2/2 | thorough tier, sharded by discovery-order stride (`BCIR_THOROUGH=1 run_all -j0 --shard N/2`); whole-suite campaigns run once on shard 1 |
 | BCIR C runtime / C analysis | StreamPack byte-identity, decoder fuzz, sanitizers, static analysis |
-| BCIR MLIR rail (LLVM 22) | tblgen, `bcir-opt` build, ODS corpus, pass tests — the only place compiled-law work is verified |
+| BCIR MLIR rail (LLVM 22 / LLVM 23) | tblgen, `bcir-opt` build, ODS corpus, pass tests — the only place compiled-law work is verified |
 | LLVM training corpus | the separate curriculum's validators |
 | Docs governance | STATUS drift, links, retired paths, claim markers |
 | Host portability (ubuntu/windows, 3.12) + hosted model gates | cross-host oracle + train-to-C |

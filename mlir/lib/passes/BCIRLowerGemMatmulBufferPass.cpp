@@ -99,7 +99,7 @@ struct LowerGemMatmulBufferPass
     const StringRef loopOrder = op.getLoopOrder();
 
     auto cst = [&](int64_t v) -> Value {
-      return builder.create<arith::ConstantIndexOp>(loc, v);
+      return arith::ConstantIndexOp::create(builder, loc, v);
     };
     Value c0 = cst(0), c1 = cst(1);
     Value cM = cst(M), cN = cst(N), cK = cst(K);
@@ -134,7 +134,7 @@ struct LowerGemMatmulBufferPass
     auto axisIndex = [](char id) { return id == 'i' ? 0 : (id == 'j' ? 1 : 2); };
 
     for (const Axis &ax : order) {
-      auto forOp = builder.create<scf::ForOp>(loc, c0, ax.extent, ax.step);
+      auto forOp = scf::ForOp::create(builder, loc, c0, ax.extent, ax.step);
       tileLB[axisIndex(ax.id)] = forOp.getInductionVar();
       // Insert subsequent ops (and the next loop) into this loop's body, before
       // the implicit scf.yield terminator.
@@ -145,33 +145,33 @@ struct LowerGemMatmulBufferPass
 
     // Ragged-boundary clamps: upper bound of each point loop is min(origin + tile, dim).
     auto clamp = [&](Value lb, Value step, Value dim) -> Value {
-      Value sum = builder.create<arith::AddIOp>(loc, lb, step);
-      return builder.create<arith::MinSIOp>(loc, sum, dim);
+      Value sum = arith::AddIOp::create(builder, loc, lb, step);
+      return arith::MinSIOp::create(builder, loc, sum, dim);
     };
     Value iU = clamp(iLB, cTm, cM);
     Value jU = clamp(jLB, cTn, cN);
     Value kU = clamp(kLB, cTk, cK);
 
     // Point loops: ii -> jj -> kk, step 1. The fma body lives at the innermost.
-    auto iiFor = builder.create<scf::ForOp>(loc, iLB, iU, c1);
+    auto iiFor = scf::ForOp::create(builder, loc, iLB, iU, c1);
     builder.setInsertionPointToStart(iiFor.getBody());
     Value ii = iiFor.getInductionVar();
 
-    auto jjFor = builder.create<scf::ForOp>(loc, jLB, jU, c1);
+    auto jjFor = scf::ForOp::create(builder, loc, jLB, jU, c1);
     builder.setInsertionPointToStart(jjFor.getBody());
     Value jj = jjFor.getInductionVar();
 
-    auto kkFor = builder.create<scf::ForOp>(loc, kLB, kU, c1);
+    auto kkFor = scf::ForOp::create(builder, loc, kLB, kU, c1);
     builder.setInsertionPointToStart(kkFor.getBody());
     Value kk = kkFor.getInductionVar();
 
     // C[ii,jj] += A[ii,kk] * B[kk,jj]
-    Value a = builder.create<memref::LoadOp>(loc, A, ValueRange{ii, kk});
-    Value b = builder.create<memref::LoadOp>(loc, B, ValueRange{kk, jj});
-    Value c = builder.create<memref::LoadOp>(loc, C, ValueRange{ii, jj});
-    Value prod = builder.create<arith::MulFOp>(loc, a, b);
-    Value acc = builder.create<arith::AddFOp>(loc, c, prod);
-    builder.create<memref::StoreOp>(loc, acc, C, ValueRange{ii, jj});
+    Value a = memref::LoadOp::create(builder, loc, A, ValueRange{ii, kk});
+    Value b = memref::LoadOp::create(builder, loc, B, ValueRange{kk, jj});
+    Value c = memref::LoadOp::create(builder, loc, C, ValueRange{ii, jj});
+    Value prod = arith::MulFOp::create(builder, loc, a, b);
+    Value acc = arith::AddFOp::create(builder, loc, c, prod);
+    memref::StoreOp::create(builder, loc, acc, C, ValueRange{ii, jj});
 
     // Genuine lowering: the plan op is consumed.
     op.erase();

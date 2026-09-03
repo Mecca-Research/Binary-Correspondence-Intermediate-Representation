@@ -23,7 +23,7 @@ frontends/  CT3 ROP/MAP/C front-ends plus model manifest/tokenizer/decode and
 lower/      BCIR-5: single-claim elementwise LLVM AOT/JIT subset / portable C23 kernels
 abi/        versioned StreamPack and artifact byte contracts
 telemetry.py CT4 "data DNA" schema + local sinks (null/list/file; no live remote transport)
-verify/     runnable LangRef verifier laws R1-R23
+verify/     runnable LangRef verifier laws R1-R25
 silicon.py  real-signal probes: PMU + RAPL energy + on-die thermal + cpufreq (honest)
 kbcir/fuzz.py  fuzz the trust boundaries (StreamPack/ROP/MAP/ETL/JSON/MLIR), gen-seeded
 api.py      the embeddable library facade: plan -> KernelArtifact (C + ABI header + R12 attestation)

@@ -192,7 +192,7 @@ struct LowerGemActivationPass
       const int64_t base = s * width;
       const int64_t stripe = std::min(width, count - base);
       std::string sym = (name + "_s" + Twine(s)).str();
-      builder.create<GEMBlockOp>(
+      GEMBlockOp::create(builder,
           loc,
           /*sym_name=*/StringAttr::get(ctx, sym),
           /*base=*/builder.getI64IntegerAttr(base),

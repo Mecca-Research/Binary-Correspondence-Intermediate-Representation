@@ -222,7 +222,7 @@ struct DescriptorLoadOpLowering : public OpConversionPattern<DescriptorLoadOp> {
         rewriter.getNamedAttr("constraints", rewriter.getStringAttr("r,~{memory}")),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    rewriter.create<LLVM::InlineAsmOp>(op.getLoc(), TypeRange{},
+    LLVM::InlineAsmOp::create(rewriter, op.getLoc(), TypeRange{},
                                        ValueRange{adaptor.getAddr()}, attrs);
     rewriter.eraseOp(op);
     return success();
@@ -241,7 +241,7 @@ struct TaskRegisterLoadOpLowering
         rewriter.getNamedAttr("constraints", rewriter.getStringAttr("r,~{memory}")),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    rewriter.create<LLVM::InlineAsmOp>(op.getLoc(), TypeRange{},
+    LLVM::InlineAsmOp::create(rewriter, op.getLoc(), TypeRange{},
                                        ValueRange{adaptor.getSelector()}, attrs);
     rewriter.eraseOp(op);
     return success();
@@ -256,7 +256,7 @@ struct SegmentReloadOpLowering : public OpConversionPattern<SegmentReloadOp> {
                   ConversionPatternRewriter &rewriter) const override {
     // A far return is the long-mode mechanism for reloading CS. The `${:uid}` local-label suffix is
     // LLVM's inline-asm uniqueness escape, so cloning/inlining this op cannot create duplicate labels.
-    Value code64 = rewriter.create<LLVM::ZExtOp>(
+    Value code64 = LLVM::ZExtOp::create(rewriter,
         op.getLoc(), rewriter.getI64Type(), adaptor.getCodeSelector());
     StringRef assembly =
         "movw ${0:w}, %ds; movw ${0:w}, %es; movw ${0:w}, %ss; "
@@ -268,7 +268,7 @@ struct SegmentReloadOpLowering : public OpConversionPattern<SegmentReloadOp> {
                               rewriter.getStringAttr("r,r,~{rax},~{memory}")),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    rewriter.create<LLVM::InlineAsmOp>(
+    LLVM::InlineAsmOp::create(rewriter,
         op.getLoc(), TypeRange{},
         ValueRange{adaptor.getDataSelector(), code64}, attrs);
     rewriter.eraseOp(op);
@@ -399,11 +399,11 @@ struct ComputeOpLowering : public OpConversionPattern<ComputeOp> {
     StringRef kind = op.getKind();
     Value res;
     if (kind == "fadd")
-      res = rewriter.create<LLVM::FAddOp>(op.getLoc(), lhs, rhs);
+      res = LLVM::FAddOp::create(rewriter, op.getLoc(), lhs, rhs);
     else if (kind == "fsub")
-      res = rewriter.create<LLVM::FSubOp>(op.getLoc(), lhs, rhs);
+      res = LLVM::FSubOp::create(rewriter, op.getLoc(), lhs, rhs);
     else if (kind == "fmul")
-      res = rewriter.create<LLVM::FMulOp>(op.getLoc(), lhs, rhs);
+      res = LLVM::FMulOp::create(rewriter, op.getLoc(), lhs, rhs);
     else
       return rewriter.notifyMatchFailure(op, "unsupported compute kind");
     rewriter.replaceOp(op, res);
@@ -522,7 +522,7 @@ struct AsmOpLowering : public OpConversionPattern<AsmOp> {
         rewriter.getNamedAttr("constraints", rewriter.getStringAttr(constraints)),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    auto newOp = rewriter.create<LLVM::InlineAsmOp>(
+    auto newOp = LLVM::InlineAsmOp::create(rewriter,
         op.getLoc(), TypeRange(resultTypes), inputs, asmAttrs);
 
     if (numOut == 0)
@@ -599,7 +599,7 @@ struct PortioOpLowering : public OpConversionPattern<PortioOp> {
         rewriter.getNamedAttr("constraints", rewriter.getStringAttr(constraints)),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    auto newOp = rewriter.create<LLVM::InlineAsmOp>(
+    auto newOp = LLVM::InlineAsmOp::create(rewriter,
         op.getLoc(), TypeRange(resultTypes), callOperands, asmAttrs);
 
     if (isIn)
@@ -624,8 +624,8 @@ struct VolatileLoadOpLowering : public OpConversionPattern<VolatileLoadOp> {
       return rewriter.notifyMatchFailure(op, "result type not convertible");
     auto ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
     Value ptr =
-        rewriter.create<LLVM::IntToPtrOp>(op.getLoc(), ptrTy, adaptor.getAddr());
-    auto load = rewriter.create<LLVM::LoadOp>(op.getLoc(), resTy, ptr);
+        LLVM::IntToPtrOp::create(rewriter, op.getLoc(), ptrTy, adaptor.getAddr());
+    auto load = LLVM::LoadOp::create(rewriter, op.getLoc(), resTy, ptr);
     load.setVolatile_(true);
     rewriter.replaceOp(op, load.getResult());
     return success();
@@ -642,9 +642,9 @@ struct VolatileStoreOpLowering : public OpConversionPattern<VolatileStoreOp> {
     // VolatileLoadOpLowering (`*(volatile T *)(intaddr) = value`); `volatile` set via the setter.
     auto ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
     Value ptr =
-        rewriter.create<LLVM::IntToPtrOp>(op.getLoc(), ptrTy, adaptor.getAddr());
+        LLVM::IntToPtrOp::create(rewriter, op.getLoc(), ptrTy, adaptor.getAddr());
     auto store =
-        rewriter.create<LLVM::StoreOp>(op.getLoc(), adaptor.getValue(), ptr);
+        LLVM::StoreOp::create(rewriter, op.getLoc(), adaptor.getValue(), ptr);
     store.setVolatile_(true);
     rewriter.eraseOp(op);
     return success();
@@ -699,7 +699,7 @@ struct AtomicRMWOpLowering : public OpConversionPattern<AtomicRMWOp> {
       return rewriter.notifyMatchFailure(op, "unknown atomic_rmw kind");
     auto ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
     Value ptr =
-        rewriter.create<LLVM::IntToPtrOp>(op.getLoc(), ptrTy, adaptor.getAddr());
+        LLVM::IntToPtrOp::create(rewriter, op.getLoc(), ptrTy, adaptor.getAddr());
     rewriter.replaceOpWithNewOp<LLVM::AtomicRMWOp>(
         op, bin, ptr, adaptor.getValue(), atomicOrdering(op.getOrdering()));
     return success();
@@ -717,14 +717,14 @@ struct AtomicCASOpLowering : public OpConversionPattern<AtomicCASOp> {
     // volatile setters in the MMIO lowerings).
     auto ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
     Value ptr =
-        rewriter.create<LLVM::IntToPtrOp>(op.getLoc(), ptrTy, adaptor.getAddr());
+        LLVM::IntToPtrOp::create(rewriter, op.getLoc(), ptrTy, adaptor.getAddr());
     LLVM::AtomicOrdering succ = atomicOrdering(op.getOrdering());
-    auto cas = rewriter.create<LLVM::AtomicCmpXchgOp>(
+    auto cas = LLVM::AtomicCmpXchgOp::create(rewriter,
         op.getLoc(), ptr, adaptor.getExpected(), adaptor.getDesired(), succ,
         casFailureOrdering(succ));
     if (op.getWeak())
       cas.setWeak(true);
-    Value old = rewriter.create<LLVM::ExtractValueOp>(op.getLoc(), cas.getRes(),
+    Value old = LLVM::ExtractValueOp::create(rewriter, op.getLoc(), cas.getRes(),
                                                       ArrayRef<int64_t>{0});
     rewriter.replaceOp(op, old);
     return success();
@@ -755,7 +755,7 @@ struct CRegReadOpLowering : public OpConversionPattern<CRegReadOp> {
         rewriter.getNamedAttr("constraints", rewriter.getStringAttr("=r,~{memory}")),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    auto newOp = rewriter.create<LLVM::InlineAsmOp>(
+    auto newOp = LLVM::InlineAsmOp::create(rewriter,
         op.getLoc(), TypeRange{resTy}, ValueRange{}, attrs);
     rewriter.replaceOp(op, newOp.getRes());
     return success();
@@ -778,7 +778,7 @@ struct CRegWriteOpLowering : public OpConversionPattern<CRegWriteOp> {
         rewriter.getNamedAttr("constraints", rewriter.getStringAttr("r,~{memory}")),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    rewriter.create<LLVM::InlineAsmOp>(op.getLoc(), TypeRange{},
+    LLVM::InlineAsmOp::create(rewriter, op.getLoc(), TypeRange{},
                                        ValueRange{adaptor.getValue()}, attrs);
     rewriter.eraseOp(op);
     return success();
@@ -807,16 +807,16 @@ struct MsrReadOpLowering : public OpConversionPattern<MsrReadOp> {
                               rewriter.getStringAttr("={ax},={dx},{cx},~{memory}")),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    auto asmOp = rewriter.create<LLVM::InlineAsmOp>(
+    auto asmOp = LLVM::InlineAsmOp::create(rewriter,
         loc, TypeRange{pairTy}, ValueRange{adaptor.getIndex()}, attrs);
-    Value lo = rewriter.create<LLVM::ExtractValueOp>(loc, asmOp.getRes(), 0);
-    Value hi = rewriter.create<LLVM::ExtractValueOp>(loc, asmOp.getRes(), 1);
-    Value lo64 = rewriter.create<LLVM::ZExtOp>(loc, i64Ty, lo);
-    Value hi64 = rewriter.create<LLVM::ZExtOp>(loc, i64Ty, hi);
-    Value c32 = rewriter.create<LLVM::ConstantOp>(
+    Value lo = LLVM::ExtractValueOp::create(rewriter, loc, asmOp.getRes(), 0);
+    Value hi = LLVM::ExtractValueOp::create(rewriter, loc, asmOp.getRes(), 1);
+    Value lo64 = LLVM::ZExtOp::create(rewriter, loc, i64Ty, lo);
+    Value hi64 = LLVM::ZExtOp::create(rewriter, loc, i64Ty, hi);
+    Value c32 = LLVM::ConstantOp::create(rewriter,
         loc, i64Ty, rewriter.getI64IntegerAttr(32));
-    Value hiShifted = rewriter.create<LLVM::ShlOp>(loc, hi64, c32);
-    Value full = rewriter.create<LLVM::OrOp>(loc, hiShifted, lo64);
+    Value hiShifted = LLVM::ShlOp::create(rewriter, loc, hi64, c32);
+    Value full = LLVM::OrOp::create(rewriter, loc, hiShifted, lo64);
     rewriter.replaceOp(op, full);
     return success();
   }
@@ -837,18 +837,18 @@ struct MsrWriteOpLowering : public OpConversionPattern<MsrWriteOp> {
     Type i32Ty = rewriter.getI32Type();
     Type i64Ty = rewriter.getI64Type();
     Value val = adaptor.getValue();
-    Value lo = rewriter.create<LLVM::TruncOp>(loc, i32Ty, val);
-    Value c32 = rewriter.create<LLVM::ConstantOp>(
+    Value lo = LLVM::TruncOp::create(rewriter, loc, i32Ty, val);
+    Value c32 = LLVM::ConstantOp::create(rewriter,
         loc, i64Ty, rewriter.getI64IntegerAttr(32));
-    Value hiShifted = rewriter.create<LLVM::LShrOp>(loc, val, c32);
-    Value hi = rewriter.create<LLVM::TruncOp>(loc, i32Ty, hiShifted);
+    Value hiShifted = LLVM::LShrOp::create(rewriter, loc, val, c32);
+    Value hi = LLVM::TruncOp::create(rewriter, loc, i32Ty, hiShifted);
     SmallVector<NamedAttribute, 3> attrs = {
         rewriter.getNamedAttr("asm_string", rewriter.getStringAttr("wrmsr")),
         rewriter.getNamedAttr("constraints",
                               rewriter.getStringAttr("{cx},{ax},{dx},~{memory}")),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    rewriter.create<LLVM::InlineAsmOp>(
+    LLVM::InlineAsmOp::create(rewriter,
         loc, TypeRange{}, ValueRange{adaptor.getIndex(), lo, hi}, attrs);
     rewriter.eraseOp(op);
     return success();

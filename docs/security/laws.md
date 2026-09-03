@@ -60,6 +60,10 @@ gate writes is I/O like any other),
 fixture is not a guard on WRITING it),
 `test_inventory_depth_bomb_is_a_verdict` (every token valid and the
 parser still bottoms out — a size cap is no defence against depth).
+Post-campaign instance: `test_unwritable_requirements_are_a_verdict` (the
+advisory rail's own temporary directory and requirements file are
+resources of the run; a full or read-only TMPDIR is that run's fail-closed
+verdict, not a traceback out of the required audit).
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -77,6 +81,15 @@ exercises is asserted by nothing),
 `test_require_compiled_demands_the_rail_actually_ran` (discovery resolved
 once per campaign, and every unavailable required witness is a
 disagreement).
+Post-campaign instances (the advisory rail, 2026-09-03):
+`test_advisory_requirements_are_handed_to_the_engine_as_files` (the rail
+handed pip-audit `--requirement -`, which the engine refuses; the rail had
+never run, so every green it reported was over zero executions — found the
+day it first ran live), `test_require_advisory_fails_when_the_engine_is_absent`
+(the job that installs the engine requires it; elsewhere the skip is
+recorded, never silent), `test_advisory_over_zero_dependencies_is_vacuous`
+(an engine that exits 0 over an install set it collected nothing from has
+audited nothing).
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -125,6 +138,15 @@ Witnesses: `test_scalar_dependency_fields_are_unasserted`,
 `test_dependency_groups_fail_closed`,
 `test_expected_inventory_rejects_duplicate_keys` (the review parser has
 refused this since R23; the two now share one predicate, see L14).
+Post-campaign instances: `test_unusable_advisory_output_is_a_verdict` (the
+engine's JSON report is input to the gate, parsed strictly — a duplicate
+key, a missing or mis-typed field, a depth that bottoms out the parser
+under the byte cap — and anything else is the run's fail-closed verdict
+with the tail retained, never a traceback);
+`test_floor_pins_refuse_what_they_cannot_attribute` (the floor grammar is
+two shapes, declared in the tool; a URL, marker, wildcard, compound or
+arbitrary-equality declaration is refused and reported, never approximated
+into a pin the declaration did not make).
 **Port note:** BCIR wire formats get grammar-complete parsers generated
 from the registry, or refusal. No "good enough" readers in C, ever.
 
@@ -200,6 +222,11 @@ as the username intact),
 reviews, so its findings are the field guaranteed to carry the secret;
 redacted through the scan's own predicate, so a report cannot remove less
 than the scan would report).
+Post-campaign instance: `test_advisory_output_is_redacted` now drives a stub
+engine that names the requirement on stderr and in its JSON report, as
+pip-audit does, and every field of the structured advisory (`stderr_tail`,
+`vulnerable`, `skipped`, `stdout_tail`) passes through the one redaction
+predicate.
 **Port note:** harsher in C — every format string and every buffer holding
 a matched value is an L7 site.
 
@@ -243,6 +270,9 @@ absence is unexpected.
 Witnesses: `test_decoder_seed_rejection_is_a_finding`,
 `test_implementation_errors_are_never_graceful`,
 `test_unseeded_c_fuzzing_is_recorded_as_unavailable`.
+Post-campaign instance: `test_ci_owns_the_advisory_rail` (exactly one job
+installs pip-audit, pinned, and that job passes `--require-advisory`; the
+audit asserts the inventory only everywhere else).
 **Port note:** the C header's error enum IS the contract; the fuzz harness
 whitelists those values and nothing else.
 
@@ -291,6 +321,11 @@ Witnesses: `test_configured_clang_is_honored`,
 `test_debug_preset_build_is_discovered`,
 `test_configured_bcir_opt_command_name_is_resolved` (a configured value
 may be a PATH or a command NAME; the wrapper accepts both).
+Post-campaign instance: `test_configured_advisory_engine_is_honored`
+(`PIP_AUDIT` names the engine as `CLANG` and `BCIR_OPT` name theirs, a path
+or a command name through the same resolution the default takes; a
+configured engine that does not resolve is reported, never replaced by
+PATH's).
 **Port note:** identical everywhere.
 
 ### L14 — One predicate per repeated defect
@@ -328,6 +363,16 @@ one shared predicate — see L14),
 defect went unfixed on it for two rounds after the first two closed it),
 `test_staged_expected_inventory_is_audited` (a rail reconciles every input
 it reads, not just the one the first fix reached).
+Post-campaign instances: `test_advisory_skipped_dependency_is_a_finding` (a
+dependency the engine could not collect is a `skip_reason` entry in its
+report; the gate runs the engine `--strict` and refuses the entry
+independently, because a skip inside the audited set is coverage lost, not
+a quieter pass); `test_advisory_coverage_is_reconciled_against_the_declaration`
+(what the engine audited is checked against what was declared: pip-audit's
+resolver run drops its scratch venv's own setuptools from the report, so
+the one security-motivated floor in the tree was audited by nothing and
+exited 0 — the floor run now covers it by name, and a declared name neither
+run reports is a FAIL that says which).
 **Port note:** identical everywhere.
 
 ### L16 — Never green yourself by editing the neighbor
@@ -373,6 +418,10 @@ really executes on one platform and tracebacks on another.
 Witnesses: `test_dependency_inventory_must_be_asserted_before_advisories`,
 `test_c_campaign_runs_in_its_own_session`,
 `test_configured_clang_is_honored`.
+Post-campaign instance: the advisory tests fake `which` and the bounded
+runner together (and clear `PIP_AUDIT`), and `test_advisory_output_is_redacted`
+runs a stub engine end to end, so a host's real pip-audit never decides a
+unit verdict and the spawn path is exercised wherever the stub can execute.
 **Port note:** identical; in C the "fake" is a stub binary on PATH.
 
 ### L20 — Reserved implementation values are not valid domain values

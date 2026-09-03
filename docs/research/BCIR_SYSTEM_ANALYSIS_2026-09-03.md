@@ -1,4 +1,5 @@
 # BCIR whole-system analysis and next-step recommendations (2026-09-03)
+<!-- allow-law-ranges -->
 
 > **Status.** Dated, non-normative research snapshot taken at `main` = `d52558c` (the merge of
 > PR #750), package version `0.2.0`. It sits at the *research notes* level of the authority
@@ -46,7 +47,7 @@ audits say the same thing. It is now the cheapest, highest-leverage work availab
 
 1. **Land a documentation-currency PR first** (one day of work): fix the stale `R1–R23`
    ranges, move the LangRef's appended system report to `docs/research/`, retire
-   [`PER_DECODER_HANDOFF.md`](../PER_DECODER_HANDOFF.md), reconcile the ASN.1 roadmap's
+   `PER_DECODER_HANDOFF.md` (retired by the follow-up PR), reconcile the ASN.1 roadmap's
    phase-G paragraphs and the four different R25 rule counts, and add a *law-range drift*
    check to docs governance so this class of drift cannot recur.
 2. **Close the certificate spine** on the optimizer: GEM+ G1 (one schedule artifact) →
@@ -328,7 +329,7 @@ much they can mislead a reader or an agent.
 |---|---|---|---|
 | D1 | A dated system report (3,190 lines, ~70% of the file) is appended to the **normative** LangRef with colliding section numbers, a stale HEAD pin (`997511de`), hard-coded counts, and an explicit "does not prescribe next work" disclaimer | [`BCIR_LANGREF.md`](../BCIR_LANGREF.md) from the second top-level heading onward | Move to `docs/research/` (or delete; this document supersedes its inventory), leave a one-line pointer |
 | D2 | Stale or narrowed law ranges (`R1–R23`, `R1–R24`, `R14–R23`, `R1–R21`, `R1–R22`) in active docs while the rail is R1–R25 | README (`verify/ … R1–R23`), `AGENTS.md`, `BCIR_Repo_Structure.md`, `RELEASE_NOTES_0.3b.md`, LangRef §10 and `BCIR_ASN1_X690_ABI.md` §6 (`R14–R23`), LangRef §11 (`R1–R12`), `TELEMETRY_PIPELINE_RESEARCH.md`, `CPP_HANDOFF_BOUNDARY.md` (×3), `BCIR_ML_AI_INTEGRATION_ROADMAP.md` (×6), `ML_LANGUAGE_PLACEMENT_ANALYSIS.md` (×6), `BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md` (×2), `BCIR_GAME_OPTIMIZATION_ROADMAP.md` (×3), `BCIR_TRITON_COMPARATIVE_ANALYSIS.md` (×2), `BCIR_NATIVE_BACKEND_FEASIBILITY.md`, the two security docs, the TMSAO report, and the agent skill alias table (`R-laws=R1–R21`). The C-front's *scoped* `R1–R18` statements are intentional and correct | One sweep, then a governance check that fails on `R1–R<N>` where N is not the generated last law unless the line carries a scope marker |
-| D3 | [`PER_DECODER_HANDOFF.md`](../PER_DECODER_HANDOFF.md) is entirely stale: it says "No whole-value decode" and "one row", but `runtime/c/bcir_per_plan.{c,h}` exist, the `#per` gate passes, and the build-out roadmap's phase-H blockquote already reports three rows | `docs/PER_DECODER_HANDOFF.md` | Retire it (move its verification-discipline list into the systems-engineer skill, which already carries it) |
+| D3 | `PER_DECODER_HANDOFF.md` (retired by the follow-up PR) is entirely stale: it says "No whole-value decode" and "one row", but `runtime/c/bcir_per_plan.{c,h}` exist, the `#per` gate passes, and the build-out roadmap's phase-H blockquote already reports three rows | `docs/PER_DECODER_HANDOFF.md` | Retire it (move its verification-discipline list into the systems-engineer skill, which already carries it) |
 | D4 | Phase-G paragraphs contradict each other inside one section ("clause 21.7 is complete" vs "two of §21.7's eight determinations remain"; "second replacement group is built" vs "needs a second replacement group"); R25's rule count is given as 11, 22, 43 and "dozens" across four documents; headers still say "baseline through PR #670" | [`BCIR_ASN1_BUILDOUT_ROADMAP.md`](../BCIR_ASN1_BUILDOUT_ROADMAP.md) §1/§4-G/§9, [`BCIR_ASN1_JSON_ROADMAP.md`](../BCIR_ASN1_JSON_ROADMAP.md) §2, LangRef §10, [`BCIR_ASN1_COMPILER_COMPARISON.md`](../BCIR_ASN1_COMPILER_COMPARISON.md) (17 vs 19 transform classes) | Reconcile against `bcir/asn1/ecn_*.py`; derive the R25 rule count from the pass source the way `gen_status.py` derives the law range |
 | D5 | Status block says "It claims no implementation. Nothing in this document is built" while §7 marks P0–P6 landed with gates met | [`BCIR_JSON_PROGRAM_REPRESENTATION.md`](../BCIR_JSON_PROGRAM_REPRESENTATION.md) | Rewrite the status block |
 | D6 | The UART blueprint reserves **R24** for a future UART law (R24 is now ASN.1), pins `PATH=/usr/lib/llvm-18/bin` (rail is 22), cites abolished roadmap "Part IV/VI" numbering, defers the IRQ driver because "BCIR has no event-triggered phase model" although EV1–EV3 landed, and pins gates at "~3× headroom" in §0 but "~⅔ of measured" in §6 | [`BCIR_UART_DRIVER_BLUEPRINT.md`](../kernel/BCIR_UART_DRIVER_BLUEPRINT.md) | Fix before U0 starts; the implementer will otherwise inherit the collisions |

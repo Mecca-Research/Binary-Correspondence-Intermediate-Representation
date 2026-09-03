@@ -76,8 +76,7 @@ Worth stating before the gap list, because several of the gaps below are only wo
 they do not cost these.
 
 * **X.692 ECN, all three parts** — the model and built-in object sets, the user-defined
-  encodings, and clause 20's defined syntax, with clause 24's transforms built out to 17
-  transform classes. asn1scc has ACN, which is the same *idea* under a different, non-standard
+  encodings, and clause 20's defined syntax, with clause 24's transforms built out to the clause-24 transform classes (the build-out roadmap's census counts nineteen). asn1scc has ACN, which is the same *idea* under a different, non-standard
   notation; asn1c and ffasn1 have nothing in this space.
 * **Two decode tables that are never merged.** X.691 §7.2 and X.696 §6.2 deny PER and OER a
   schema-free decode permanently. BCIR keeps schema-free and schema-directed measurements in

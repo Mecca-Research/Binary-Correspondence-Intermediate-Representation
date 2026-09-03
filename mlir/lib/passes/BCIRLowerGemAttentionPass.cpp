@@ -124,7 +124,7 @@ struct LowerGemAttentionPass
       const int64_t base = i0 * N + j0;   // row-major gemm-output origin
       const int64_t count = rows * cols;  // tile element count
       std::string sym = (prefix + "_t" + Twine(idx)).str();
-      builder.create<GEMBlockOp>(
+      GEMBlockOp::create(builder,
           loc,
           /*sym_name=*/StringAttr::get(ctx, sym),
           /*base=*/builder.getI64IntegerAttr(base),
@@ -253,7 +253,7 @@ struct LowerGemAttentionPass
     // attention (the oracle plans the two matmuls, not the softmax lane), so we emit ONE stripe over the
     // whole score matrix (count = seq*seq), the natural softmax pass: strideA = 1 (unit read), strideB =
     // seq (the last-axis reduce row length), strideD = 1.
-    builder.create<GEMBlockOp>(
+    GEMBlockOp::create(builder,
         loc,
         /*sym_name=*/StringAttr::get(ctx, (name + "_sm_s0").str()),
         /*base=*/builder.getI64IntegerAttr(0),

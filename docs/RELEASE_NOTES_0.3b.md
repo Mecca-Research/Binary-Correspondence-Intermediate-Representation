@@ -12,7 +12,7 @@ the first direct driver lifecycle and completing the publication gate.
 
 ### Law and compiler rails
 
-- The MLIR law rail carries R1–R24 with negative fixtures; the C frontend remains
+- The MLIR law rail carries R1–R25 with negative fixtures; the C frontend remains
   explicitly scoped to the laws and constructs it implements rather than claiming false
   full-law symmetry.
 - Python and C C-front rails cover a broad driver-oriented C23 subset, target ABI

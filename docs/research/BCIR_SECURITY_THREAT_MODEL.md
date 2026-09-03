@@ -18,7 +18,7 @@ process/kernel boundary.
 flowchart LR
     U["Untrusted inputs<br/>C / ROP / MAP / MLIR<br/>model / tokenizer / JSON<br/>StreamPack / telemetry"]
     P["Bounded parsers and loaders<br/>Python + hosted C"]
-    V["BCIR laws and artifact verification<br/>R1-R23 / CRC / digest / generation"]
+    V["BCIR laws and artifact verification<br/>R1-R25 / CRC / digest / generation"]
     O["K_BCIR planner and ML organs<br/>untrusted advice, deterministic gates"]
     A["Immutable plan / StreamPack / Q8 artifact"]
     X["Freestanding C execution<br/>or standalone model runtime"]

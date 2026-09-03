@@ -25,6 +25,10 @@ need privilege. Timing ratios are evidence from a named rig, not portable CI law
 
 ## What is BLOCKED in this sandbox (and why)
 
+The probe-backed record of *every* available host's limits, and of why more privilege does not
+help, is [`BCIR_TARGET_ACCESS.md`](../BCIR_TARGET_ACCESS.md); this section is the rig-side view
+of the same facts.
+
 | Operation | Blocked by | Symptom |
 |---|---|---|
 | Hardware PMU counters (cycles / instructions / **cache-misses**, IPC) | no virtualized PMU exposed by the hypervisor | `perf_event_open` → **ENOENT**; `read_hw_counters()` → `None` (falls back to OS counters) |

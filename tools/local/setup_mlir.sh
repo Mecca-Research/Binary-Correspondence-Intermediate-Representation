@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
-# Set up a TRUE MLIR 22 toolchain LOCALLY, for sandboxes where apt.llvm.org (the usual
-# MLIR-22 source) is blocked by the network policy but conda-forge IS reachable. The
+# Set up a TRUE MLIR toolchain of the rail's major LOCALLY, for sandboxes where apt.llvm.org
+# (the usual source) is blocked by the network policy but conda-forge IS reachable. The
 # stock Ubuntu archive only ships MLIR up to 18, so an 18 build (build_mlir.sh) validates
-# the C++/pass logic but not the 22-only rules (IRDL named-operand syntax, the Symbol
-# verifier tightenings, 22 deprecations). conda-forge ships real mlir=22.1.x dev libs +
+# the C++/pass logic but not the newer-major-only rules (IRDL named-operand syntax, the
+# Symbol verifier tightenings, current deprecations). conda-forge ships real mlir dev libs +
 # an ABI-matched compiler, which closes that gap.
 #
-# Installs micromamba + an 'm22' env (mlir + llvmdev + gxx_linux-64 + ninja + cmake).
-# Idempotent. After this, run tools/local/check_rail22.sh to build bcir-opt against 22
-# and run the full rail. CI still uses apt.llvm.org (the authoritative gate); this is a
-# local convenience only.
+# MLIR_MAJOR selects the major (default 23, the major CI tracks; 22 is still in the CI
+# matrix and is valid here too). Installs micromamba + an 'm<MAJOR>' env (mlir + llvmdev +
+# gxx_linux-64 + ninja + cmake). Idempotent. After this, run tools/local/check_rail.sh to
+# build bcir-opt against that major and run the full rail. CI still uses apt.llvm.org (the
+# authoritative gate); this is a local convenience only.
 set -euo pipefail
+MLIR_MAJOR="${MLIR_MAJOR:-23}"
+if ! [[ "${MLIR_MAJOR}" =~ ^[0-9]{2}$ ]]; then
+  echo "[setup_mlir] MLIR_MAJOR must be a two-digit LLVM major (e.g. 23)" >&2
+  exit 2
+fi
+ENV_NAME="m${MLIR_MAJOR}"
 
 # Arch-select the micromamba asset + the conda compiler package (so this builds natively on a
-# Raspberry Pi 5 / aarch64, not only x86_64). conda-forge publishes mlir=22 for linux-aarch64.
+# Raspberry Pi 5 / aarch64, not only x86_64). conda-forge publishes mlir for linux-aarch64.
 case "$(uname -m)" in
   aarch64|arm64)
     MM_ASSET="micromamba-linux-aarch64"
@@ -43,23 +50,23 @@ for directory in "${MM_DIR}" "${PREFIX}"; do
   owner="$(stat -c '%u' -- "${directory}")"
   mode="$(stat -c '%a' -- "${directory}")"
   if [ "${owner}" != "${EUID}" ] || (( (8#${mode} & 0022) != 0 )); then
-    echo "[setup_mlir22] refusing non-private directory: ${directory}" >&2
+    echo "[setup_mlir] refusing non-private directory: ${directory}" >&2
     exit 1
   fi
 done
 
 if [ -e "${MM}" ]; then
   if [ -L "${MM}" ] || [ ! -f "${MM}" ] || [ "$(stat -c '%u' -- "${MM}")" != "${EUID}" ]; then
-    echo "[setup_mlir22] refusing unowned, non-regular, or symlinked bootstrap: ${MM}" >&2
+    echo "[setup_mlir] refusing unowned, non-regular, or symlinked bootstrap: ${MM}" >&2
     exit 1
   fi
   actual="$(sha256sum -- "${MM}" | awk '{print $1}')"
   if [ "${actual}" != "${MM_SHA256}" ]; then
-    echo "[setup_mlir22] refusing micromamba with unexpected SHA-256: ${MM}" >&2
+    echo "[setup_mlir] refusing micromamba with unexpected SHA-256: ${MM}" >&2
     exit 1
   fi
 else
-  echo "[setup_mlir22] fetching pinned micromamba ${MM_VERSION} (${MM_ASSET})..."
+  echo "[setup_mlir] fetching pinned micromamba ${MM_VERSION} (${MM_ASSET})..."
   part="$(mktemp "${MM}.part.XXXXXXXX")"
   trap 'rm -f -- "${part:-}"' EXIT
   curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
@@ -67,7 +74,7 @@ else
     -o "${part}"
   actual="$(sha256sum -- "${part}" | awk '{print $1}')"
   if [ "${actual}" != "${MM_SHA256}" ]; then
-    echo "[setup_mlir22] downloaded micromamba failed SHA-256 verification" >&2
+    echo "[setup_mlir] downloaded micromamba failed SHA-256 verification" >&2
     exit 1
   fi
   chmod 0700 "${part}"
@@ -76,11 +83,11 @@ else
 fi
 chmod 0700 "${MM}"
 
-if [ ! -x "${PREFIX}/envs/m22/bin/mlir-opt" ]; then
-  echo "[setup_mlir22] creating the MLIR 22 env from conda-forge (~250 MB)..."
-  "${MM}" create -y -n m22 -c conda-forge mlir=22 llvmdev=22 "${GXX_PKG}" ninja cmake
+if [ ! -x "${PREFIX}/envs/${ENV_NAME}/bin/mlir-opt" ]; then
+  echo "[setup_mlir] creating the MLIR ${MLIR_MAJOR} env from conda-forge (~250 MB)..."
+  "${MM}" create -y -n "${ENV_NAME}" -c conda-forge "mlir=${MLIR_MAJOR}" "llvmdev=${MLIR_MAJOR}" "${GXX_PKG}" ninja cmake
 fi
 
-echo "[setup_mlir22] toolchain ready at ${PREFIX}/envs/m22"
-LD_LIBRARY_PATH="${PREFIX}/envs/m22/lib" "${PREFIX}/envs/m22/bin/mlir-opt" --version | grep -i "LLVM version"
-echo "[setup_mlir22] now run: bash tools/local/check_rail22.sh"
+echo "[setup_mlir] toolchain ready at ${PREFIX}/envs/${ENV_NAME}"
+LD_LIBRARY_PATH="${PREFIX}/envs/${ENV_NAME}/lib" "${PREFIX}/envs/${ENV_NAME}/bin/mlir-opt" --version | grep -i "LLVM version"
+echo "[setup_mlir] now run: MLIR_MAJOR=${MLIR_MAJOR} bash tools/local/check_rail.sh"

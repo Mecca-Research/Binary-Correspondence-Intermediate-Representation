@@ -8,7 +8,7 @@ The IR is realized as two cooperating trees:
 
 | Path     | What it is |
 |----------|------------|
-| `bcir/`  | the **executable conformance oracle** (Python, dependency-free, runnable today): the K_BCIR optimizer, GEM hydration/execution, M5 event transduction, ROP/MAP front-ends, LLVM lowering (AOT clang + JIT lli), the data-DNA telemetry loop, and the R1–R23 verifier reference |
+| `bcir/`  | the **executable conformance oracle** (Python, dependency-free, runnable today): the K_BCIR optimizer, GEM hydration/execution, M5 event transduction, ROP/MAP front-ends, LLVM lowering (AOT clang + JIT lli), the data-DNA telemetry loop, and the R1–R25 verifier reference |
 | `mlir/`  | the **IR law**: the TableGen/ODS dialect family, the **compiled `bcir-opt`** (`lib/BCIRDialect.cpp` + `tools/bcir-opt.cpp`), and the pure-data **IRDL projection** |
 
 The Python package is the runnable conformance reference for the MLIR dialect law

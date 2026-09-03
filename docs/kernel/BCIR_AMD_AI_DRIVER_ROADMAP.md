@@ -13,10 +13,9 @@ driver machinery, Triton's AMD backend + the BCIR-Triton compiler design, the in
 training/quant ecosystem, the framework supplements, and a scoping-only pass on the deferred
 Linux-inheritance) with six load-bearing strategy claims put through adversarial verification
 (4 confirmed, 2 partial, 0 refuted). Every BCIR-side statement is `file:line`-anchored; AMD-side
-claims anchor to AMD/ROCm docs and project READMEs. This doc extends the **Part IX driver
-catalog** and consumes the **[BCIR–Triton comparative-analysis](../research/BCIR_TRITON_COMPARATIVE_ANALYSIS.md)** verdict; it is a roadmap,
+claims anchor to AMD/ROCm docs and project READMEs. This doc extends the **driver-package contract** ([`BCIR_DRIVER_KERNEL_ROADMAP.md`](BCIR_DRIVER_KERNEL_ROADMAP.md) §3 and §5) and consumes the **[BCIR–Triton comparative-analysis](../research/BCIR_TRITON_COMPARATIVE_ANALYSIS.md)** verdict; it is a roadmap,
 not a build — each device class gets its own `BCIR_<DEV>_DRIVER_BLUEPRINT.md` authored in its
-own research session before its slices (the Part IX per-driver contract).
+own research session before its slices (the per-driver contract of that roadmap's §3).
 
 > **Four corrections the verification forced — they are messaging discipline.** (1) **BCIR's GPU
 > compute codegen is not real today** (matmul lowers to a scalar `scf.for`, no Matrix Cores; the
@@ -86,8 +85,8 @@ optimizer rewrite):
   an `amd_rocm` segment with **zero artifact/ABI change**.
 - The **resident-compiler gate** is already the codegen posture (`codegen.py:36`, `llvm.py:46`) —
   the discipline that lets BCIR ride AMDGPU-LLVM instead of hand-rolling AMDGCN isel. The Triton
-  analysis already **decided** the AMD codegen posture (interop-not-fork). Part IX defines the
-  process, the ML-seam mandate, and the D15 RDNA3 backend row.
+  analysis already **decided** the AMD codegen posture (interop-not-fork). The driver roadmap's package contract (§3) defines the
+  process and the ML-seam mandate.
 - **Two-truth is structurally enforced**: `device_manifest`, `dma`, `events`, `tile_prior`,
   `channel_prior` import **no verifier** — an AMD prior/cost can never move the legality verdict.
 
@@ -173,7 +172,7 @@ selection/legality); `-bcir-verify` R-law legality over the AMD plan; StreamPack
 across the on-call GPU seam; migrated ideas landed (OCP MXFP4/6/8 + blockwise/NF4 into
 `quantize.py` under R17; CK fusion-as-composition into `gem.*` seam laws; torchtitan device-mesh
 sharding-as-a-plan into channel orchestration). Author `BCIR_AMD_GPU_DRIVER_BLUEPRINT.md` per the
-Part IX contract with its §7 learned placement card.
+driver-package contract with its §7 learned placement card.
 
 **Phase 5 — XDNA NPU device class (separate manifest, blueprint, hybrid router).** *Deps: Phase 1
 machinery; Phase 4 pattern.* Treat the Ryzen AI NPU as a **distinct accelerator** (spatial
@@ -283,7 +282,7 @@ four inheritance targets and one fallback so later phases have a landing zone:
    CREATE/DESTROY_QUEUE, ALLOC/MAP/UNMAP_MEMORY_OF_GPU, SVM, CREATE/WAIT_EVENTS,
    GET/IMPORT/EXPORT_DMABUF, GET_PROCESS_APERTURES_NEW) + the **amdgpu DRM UAPI** (GEM typed
    domains, GPUVM, CS chunk model, USERQ) + the separate **`amdxdna`** NPU driver — all as future
-   **RuntimeChannel direct hook-table** binding targets (Part VIII MC8), bound as an ABI, with the
+   **RuntimeChannel direct hook-table** binding targets (MC8 in [`BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md`](../BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md)), bound as an ABI, with the
    resident KMD owning the kernel side. *(Precision: AQL packets / doorbells are ROCr/HSA-runtime
    + hardware constructs, not KMD tables — inherit the ABI, bind the runtime.)*
 3. **The HSA AQL doorbell ring + Linux-6.16 user-mode queues** (MES/MQD/wptr-doorbell) as the
@@ -292,7 +291,7 @@ four inheritance targets and one fallback so later phases have a landing zone:
    AQL/doorbell abstraction is future-proof (only the submission wrapper changes).
 4. **DMA-buf fd handoff** (KFD + amdgpu PRIME, emerging P2P) as the **IPC-R2 generation-guarded
    zero-copy** capability primitive (the substrate RCCL/RDMA ride).
-5. **The Strategy-3 "Linux Master Kernel" fallback** (wave 15): keep `amdgpu.ko`/KFD/ROCr resident
+5. **The Strategy-3 "Linux Master Kernel" fallback**: keep `amdgpu.ko`/KFD/ROCr resident
    as a peer over an initially simple `SOCK_SEQPACKET` + bounded shared-memory transport,
    migrating only measured-hot submission
    paths off it (telemetry-ring driven), the cold tail staying on Linux indefinitely — the bridge
@@ -352,7 +351,7 @@ and native-ize only those.**
 
 ## 9. Recommended next steps (ranked)
 
-1. **Author the blueprints first** (normative-before-code, Part IX contract):
+1. **Author the blueprints first** (normative-before-code, the driver-package contract):
    `BCIR_AMD_GPU_DRIVER_BLUEPRINT.md` (with its §7 learned-placement card) and a separate
    `BCIR_XDNA_DRIVER_BLUEPRINT.md` — **three device classes** (CDNA, RDNA-iGPU, XDNA-NPU), not one.
 2. **Land Phase 1**: `register_channel()` `amd_cdna`/`amd_cdna4`/`amd_rdna4` + TargetProfile

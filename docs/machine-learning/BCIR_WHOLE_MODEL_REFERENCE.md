@@ -141,6 +141,10 @@ process (oracle first, C twin second, measured-then-pinned parity gate, registry
   Maykeye/TinyLLama-v0 revision. The gate requires token-ID parity and C-vs-Python-Q8 logit error
   at most `1e-9`, while recording float-vs-Q8 drift and NLL delta without treating them as hidden
   implementation details.
+The three laboratories below are the same bounded labs the ML roadmap files as
+[§1.6–§1.8](BCIR_ML_AI_INTEGRATION_ROADMAP.md); that roadmap owns their sequencing, and this list only
+records how they relate to the capstone.
+
 - **WMR-5 — bounded adaptive architecture laboratory:** tied-depth LoopDeepNorm, fixed-residual
   variable widths, reference-plus-sliding attention, H0/H1 ExoFormer mixing, and multi-patch image
   processing have independent dependency-free contracts and tiny hosted training probes. Their

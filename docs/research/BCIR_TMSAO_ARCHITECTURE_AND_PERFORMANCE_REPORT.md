@@ -1,4 +1,5 @@
 # BCIR TMSAO core architecture and operational performance audit
+<!-- allow-law-ranges -->
 
 **Audit date:** 2026-07-29
 **Repository revision:** `7d1b8d7a58bf19823b6d62320293460b00a7aa33` (`origin/main`, post-PR #683)

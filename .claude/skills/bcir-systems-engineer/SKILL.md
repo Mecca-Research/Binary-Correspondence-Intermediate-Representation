@@ -40,7 +40,7 @@ register allocator, or linker (see `docs/BCIR_NATIVE_OBJECT_GATE.md`).
 | Rail | Role | Boundary to respect |
 |---|---|---|
 | `bcir/` | executable Python conformance oracle (dependency-free core) | `bcir.hosted.*` is an import-quarantined opt-in extra, never the default path |
-| `mlir/` | ODS/TableGen/C++ law rail: `bcir-opt`, R1–R25, optimizer passes, IRDL projection | `bcir-aot` is *partial* preparation; targets LLVM/MLIR **22** — one coherent major |
+| `mlir/` | ODS/TableGen/C++ law rail: `bcir-opt`, R1–R25, optimizer passes, IRDL projection | `bcir-aot` is *partial* preparation; targets LLVM/MLIR **23** (22 still in the CI matrix) — one coherent major |
 | `runtime/c/` | production C rail: freestanding StreamPack/codecs, the `bcir_cfront.c` twin, hosted model/compiler tools, RuntimeChannel | three memory classes (freestanding heap-free / hosted allocator-injected / driver handles+offsets) — `docs/languages/C_MEMORY_DISCIPLINE.md` |
 | `runtime/cpp/` | narrow orchestration seam above the C ABI | single-node real; distributed/dynamic backends are honest stubs |
 | `llvm-training/` | agent training corpus | **not the IR**; neither may depend on the other |
@@ -98,7 +98,7 @@ These are load-bearing across every subsystem; a PR that bends one will be rever
   (L1–L8, RT1–RT7, G1–G8, A/B/M/E/T/SEG/U/D series, ASN.1 phases A–H, JER J1–J6, ECN
   slices A–G3, GEM+ G0–G10), then land one gateable slice per PR with the slice ID in
   the title. If a slice spans rails, write the build reference doc *first*
-  (`docs/PER_DECODER_HANDOFF.md` is the model: "a finding written down before the code
+  (the PER-decoder hand-off note, retired once `bcir_per_plan.c` landed, was the model: "a finding written down before the code
   is worth more than a half-finished branch").
 - **Verification-first PR bodies.** End every substantive PR body with a Verification
   section quoting *exact* gate commands and outputs (pass counts, sanitizer results,
@@ -168,7 +168,7 @@ python -m bcir.tests.run_all --tier quick -j 2      # bounded; hides toolchains 
 python -m bcir.tests.run_all --tier thorough -j 2   # restores the real host toolset
 bash tools/c/check_runtime.sh                       # strict C gates + sanitizers
 bash tools/cpp/check_handoff.sh
-bash tools/wsl/check_passes.sh                      # ONLY with a coherent LLVM/MLIR 22 toolset
+bash tools/wsl/check_passes.sh                      # ONLY with a coherent LLVM/MLIR 23 (or 22) toolset
 bash tools/irdl/check_corpus.sh
 python tools/docs/gen_status.py --check             # + regenerate STATUS.md LAST after test changes
 python tools/docs/check_links.py
@@ -176,7 +176,7 @@ git diff --check
 
 # the assurance rails (#749) — each one a required CI job
 python tools/security/scan_secrets.py
-python tools/security/audit_dependencies.py
+python tools/security/audit_dependencies.py   # CI adds --require-advisory where it installs pip-audit
 python tools/security/audit_tool_boundaries.py
 python tools/security/run_decoder_campaign.py --mutations 24 --fuzz-runs 200 --fuzz-seconds 8
 python tools/security/run_malformed_differential.py
@@ -184,7 +184,7 @@ python tools/security/independent_review.py --self-check
 ```
 
 - Quick tier *intentionally* hides compiler/toolchain capabilities and expects explicit
-  skips; don't "fix" those skips. Thorough must use one coherent LLVM major (22). On a
+  skips; don't "fix" those skips. Thorough must use one coherent LLVM major (23; 22 still passes). On a
   host with only LLVM 18, the MLIR rail is an **honest documented skip** — CI's
   `mlir-rail-validate` owns it; do not touch ODS/pass sources you cannot build.
 - Before commit/PR: read `.github/workflows/ci.yml`, map every affected job/matrix

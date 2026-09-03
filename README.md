@@ -31,7 +31,7 @@ B(H,Θ) = live budgets (thermal cap, power cap, bandwidth)
 │   ├── hosted/          opt-in model training/alignment + hardware-policy references
 │   ├── lower/           BCIR-5: single-claim elementwise LLVM AOT/JIT subset + broader C lowering
 │   ├── telemetry.py     "data DNA" schema + local sinks (null/list/file)
-│   └── verify/          runnable reference of verifier laws R1–R23
+│   └── verify/          runnable reference of verifier laws R1–R25
 ├── mlir/                the IR law: TableGen/ODS dialect family + compiled bcir-opt + IRDL projection
 │   ├── include/BCIR/    *.td (enums/types/attrs/ops) + *.h
 │   ├── lib/, tools/     BCIRDialect.cpp + bcir-opt.cpp (the compiled dialect)

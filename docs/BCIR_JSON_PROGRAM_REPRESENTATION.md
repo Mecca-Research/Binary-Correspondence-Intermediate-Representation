@@ -1,8 +1,8 @@
 # BCIR JSON program representation — research note and roadmap
 
-> **Status:** research note plus a proposed phase ladder. It defines future gates and
-> records prior art and corrections; it claims **no** implementation. Nothing in this
-> document is built.
+> **Status:** research note plus a phase ladder whose phases P0–P6 have since landed (§7 names
+> the module behind each). It records the prior art and the corrections that shaped the design;
+> the gates in §7 remain the contract each landed phase met.
 >
 > **Relationship to existing roadmaps:** this extends
 > [`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md), which stops at compiling JER

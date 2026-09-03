@@ -262,7 +262,7 @@ data. There is no channel-backed UART sender, HTTP/Prometheus host, OTLP gRPC/HT
 Redfish/BMC client, or live provider transport. The implemented pieces are pure Python (T2 also
 has a C twin) and remain strictly on the *cost/optimization* side of the two-truth quarantine.
 
-Everything above is the *cost/optimization* side. The legality verdict (R1–R23) never reads telemetry.
+Everything above is the *cost/optimization* side. The legality verdict (R1–R25) never reads telemetry.
 
 ## 7. Driver/kernel integration gate
 

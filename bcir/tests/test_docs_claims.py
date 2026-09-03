@@ -135,3 +135,46 @@ def test_the_registry_is_listable_without_running_the_predicates() -> None:
                  "r25-covers-parameterization", "asn1-c-twins-exist",
                  "ecn-three-parts-built"):
         assert name in done.stdout, name
+
+
+# --- the verifier-law range checker (tools/docs/check_law_range.py) -------------------------
+
+_LAW_RANGE_CHECKER = os.path.join(_ROOT, "tools", "docs", "check_law_range.py")
+
+
+def _run_law_range(root: str, *extra: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, _LAW_RANGE_CHECKER, "--root", root, *extra],
+                          cwd=_ROOT, capture_output=True, text=True, timeout=180)
+
+
+def test_no_active_doc_states_a_stale_verifier_law_range() -> None:
+    """The live tree passes: no prose names a former last law as the end of the rail."""
+    done = _run_law_range(_ROOT)
+    assert done.returncode == 0, done.stderr
+
+
+def test_law_range_checker_fires_on_a_former_last_law_and_honours_both_markers() -> None:
+    """Prove the gate can fail (L2): a stale whole-rail range and a stale non-disturbance range
+    are refused; a line marker, a file marker, a fixed subsystem scope, and the current last law
+    all pass. The last law is pinned so the fixture does not depend on the live tree."""
+    with tempfile.TemporaryDirectory() as tmp:
+        docs = os.path.join(tmp, "docs")
+        os.makedirs(docs)
+        fixture = {
+            "stale.md": "The rail carries R1–R23 today.\nNon-disturbance holds for R14-R24.\n",
+            "quoted.md": "It said R1–R23 then. <!-- law-scope: quoting the 2026-07-15 audit -->\n",
+            "dated.md": "<!-- allow-law-ranges -->\nA snapshot: R1–R23 and R14–R23.\n",
+            "scoped.md": "The C twin covers R1–R18; smart lowering is R14–R16; the rail is R1–R25.\n",
+        }
+        for name, body in fixture.items():
+            with open(os.path.join(docs, name), "w", encoding="utf-8") as handle:
+                handle.write(body)
+        done = _run_law_range(tmp, "--last-law", "25")
+        assert done.returncode == 1, done.stderr
+        assert "stale.md:1: R1–R23" in done.stderr, done.stderr
+        assert "stale.md:2: R14-R24" in done.stderr, done.stderr
+        for clean in ("quoted.md", "dated.md", "scoped.md"):
+            assert clean not in done.stderr, done.stderr
+        # and the same tree with the two stale lines removed is green
+        os.remove(os.path.join(docs, "stale.md"))
+        assert _run_law_range(tmp, "--last-law", "25").returncode == 0

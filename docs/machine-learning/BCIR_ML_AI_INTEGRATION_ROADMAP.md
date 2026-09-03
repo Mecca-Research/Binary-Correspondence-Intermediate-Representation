@@ -53,7 +53,7 @@ pathway selection over the legal candidate DAG:
 
 **The non-negotiables (what keeps this engineering, not dreaming).** Every layer below obeys:
 1. **The two-truth quarantine** (LangRef §13, `bcir/kbcir/twotruth.py`, `verify_quarantine` R13). *Classical
-   truth `v`* — binary legality (R1–R23); there is no "0.7 legal." *Graded truth `(v,w)`* — a value with
+   truth `v`* — binary legality (R1–R25); there is no "0.7 legal." *Graded truth `(v,w)`* — a value with
    confidence `w∈[0,1]`, the learned/measured machinery (softdp posterior, bayescal interval, regret evidence)
    that answers *which legal plan is best*, never *whether a plan is legal*. Graded may **inform** but never
    **become** a verdict; the only sanctioned crossing is an explicit `decide()` at a frozen threshold.
@@ -77,7 +77,7 @@ audit (do not rebuild any of this — extend it):
 
 **The deterministic spine (the body's reflexes).** BCIR-0..5; the claim graph; K_BCIR (`-bcir-cost-model`,
 `-bcir-plan`, `-bcir-rcsp`, the min-plus shortest path + Pareto); GEM (`bcir/gem/execute.py`, the phase-ordered
-wave executor); the **R1–R23** verifier law rail (with the C frontend carrying its scoped subset;
+wave executor); the **R1–R25** verifier law rail (with the C frontend carrying its scoped subset;
 R19/R20/R21 first-class and R22/R23 covering the GEM seams). **Reusable as-is.** The
 landing chronology is recorded in [`DEVELOPMENT_HISTORY.md`](../DEVELOPMENT_HISTORY.md).
 
@@ -277,7 +277,7 @@ flowchart LR
     X --> P
     G --> P
     P --> M["Bounded root-PUCT\nmicro-profile search"]
-    M --> V["R1–R23 + bank moves +\nstatic addresses + StreamPack"]
+    M --> V["R1–R25 + bank moves +\nstatic addresses + StreamPack"]
     V --> Q["Quiescent generation promotion\nmeasured evidence only"]
 ```
 
@@ -504,7 +504,7 @@ The BCIR integration is a real execution contract rather than an isolated notebo
   recurrent state, diffusion scratch, and patch metadata are byte-accounted independently.
 - Raw ingest, patching, local attention or selective scan, patch cross-attention, global
   Transformer, local decode, block diffusion, and exact verification lower to ordinary claims,
-  pass R1–R23/plan/smart-lowering checks, and hydrate a provenance-carrying StreamPack.
+  pass R1–R25/plan/smart-lowering checks, and hydrate a provenance-carrying StreamPack.
 - The measured ingest selector chooses a device provider only when an exact byte round trip,
   capacity, launch/chunk costs, and a strict predicted advantage are all present. Otherwise the
   host path wins explicitly.
@@ -720,7 +720,7 @@ rematerialization/spill execution remain to be materialized here.*
   and HPC `do` loops with known trip counts over contiguous arrays. Not a full language frontend — targeted
   intrinsics. (C++ and the Python lifter remain master-roadmap Phase F.)
 
-### Phase E — Hardware-native deployment (the body's organs) — *this is master-roadmap Phase D, now ML-guided*
+### Phase E — Hardware-native deployment (the body's organs) — *this is the master roadmap's driver rail (§4.3), now ML-guided*
 *Deliberately after Phase B: drivers and JIT microkernels are far more powerful once the ML layer can guide
 them (thermal/power/clock optimization, adaptive unrolling, best-ISA selection).*
 
@@ -738,7 +738,7 @@ them (thermal/power/clock optimization, adaptive unrolling, best-ISA selection).
   ML decides boot/driver configuration. Explicitly plan the **Linux-master-kernel ABI/IPC triage**: which ABI
   and inter-process-communication contracts to keep vs re-derive through BCIR.
 - **E3 — Drivers / JIT microkernels (ML-guided).** The `drivers/` JIT generator + per-channel resident drivers
-  (master-roadmap Phase D), now consuming the ML guidance from E1 to give each hardware **channel** its real,
+  (the master roadmap's driver rail, §4.3), now consuming the ML guidance from E1 to give each hardware **channel** its real,
   measured-calibrated driver. Closes the heterogeneous-tower loop (FPGA/NVMe/HBM-PIM become driver-backed).
 
 ### Phase F — Higher cognition (NLP + recursive intelligence) — *extends Phase L*
@@ -1112,7 +1112,7 @@ The audit finds five deepening moves, all quarantine-compatible:
 - ✅ **D1 — Training as a planned graph, not a Python loop. STEPS 1–8 COMPLETE**
   (`bcir/kbcir/train_graph.py`, `test_train_graph.py`): one training step is six chained
   first-class claim phases (forward `gem.matmul` → `gem.activation` → `gem.loss` →
-  `reduce.loss_mean` → `gem.autodiff` → `gem.opt_step`) — law-clean under R1–R22, priced by the
+  `reduce.loss_mean` → `gem.autodiff` → `gem.opt_step`) — law-clean under R1–R25, priced by the
   tropical optimizer (realized in stage order), composed over steps via `kbcir.compose` (a run
   is a `Seq`; series-summed cost), RCSP-budget-feasible-or-not BEFORE execution,
   R13-deterministic, and structurally bridged to the M3 loop (`steps_for` = epochs ×
@@ -1171,7 +1171,7 @@ The audit finds five deepening moves, all quarantine-compatible:
   **R23** the dtype handover (conv/attention→activation on MLIR; the E3–E6 quarantine dtype rules
   at the spec level via `verify.verify_ml_spec`, which promotes every checker message to R22/R23).
   Negative MLIR cases in `verify_shape_dtype.mlir`; oracle suite `test_shape_dtype_laws.py`;
-  `gen_status` sweeps R1–R23. Vacuous-by-default (non-disturbance). This is the "structurally
+  `gen_status` sweeps R1–R25. Vacuous-by-default (non-disturbance). This is the "structurally
   valid tensors" guarantee (§8.4) made law.
 - ✅ **D3 — Learned cost-model priors at L1. SLICES 1–4 LANDED** (`kbcir/tile_prior.py`,
   `test_tile_prior.py`): the accel-ranker precedent generalized to the L1 tile search — a
@@ -1210,7 +1210,7 @@ The audit finds five deepening moves, all quarantine-compatible:
   tile_prior/channel_prior recipe (Q8-frozen prior over cheap features, trained on the
   exhaustive optimizer's own choices, certificate-gated guided==exhaustive with
   mismatches 0, staleness-refused) is now the **ML-seam-per-device-class mandate** — every
-  driver blueprint (Part IX of the driver roadmap) carries a §7 ML placement card with its
+  driver blueprint (§3 of the driver roadmap, the driver-package contract) carries a §7 ML placement card with its
   device's learned prior (UART trigger/burst is planned in U5, not shipped; interrupt-affinity, timer-drift,
   DMA-batching, NVMe queue-depth, cache admit/evict, NIC ITR-coalescing, xHCI scheduling,
   GPU occupancy, IOMMU IOTLB-prefetch, FS readahead). A driver with no ML placement card is

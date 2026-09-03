@@ -1,4 +1,5 @@
 <!-- allow-retired-paths -->
+<!-- allow-law-ranges -->
 # BCIR Development History
 
 > **Purpose.** The single summary of *how BCIR was built*: the development method, the
@@ -9,7 +10,7 @@
 > slice-by-slice build notes formerly embedded in the roadmaps. Roadmap docs now describe
 > *what exists and what is next*; this doc records *how it got here*. For current counts
 > (tests, ops, passes, laws) see the generated [`STATUS.md`](STATUS.md) — nothing here is
-> a live count. This revision is current through merged PR #645 and package version
+> a live count. This revision is current through merged PR #751 (2026-09-03) and package version
 > `0.2.0`. Sources are the GitHub PR record, first-parent history, implementation/tests,
 > and pre-consolidation document revisions retained in git.
 
@@ -388,7 +389,7 @@ exist; it does not imply production deployment or hardware evidence.
 
 | Program | Landed baseline | Work deliberately left open |
 |---|---|---|
-| Language and verifier | Python/C C-front twins, project/cross-TU mode, ABI and effect contracts, R1–R24, ordinary x86-64 assembly edges | Hosted-C completeness, `_Decimal*` reference support, reset/exception/paranoid entry, additional language frontends |
+| Language and verifier | Python/C C-front twins, project/cross-TU mode, ABI and effect contracts, R1–R25, ordinary x86-64 assembly edges | Hosted-C completeness, `_Decimal*` reference support, reset/exception/paranoid entry, additional language frontends |
 | Optimizer and backend | 12-axis K_BCIR, min-plus/RCSP/(max,+), GEM scheduling, C23 and resident LLVM/object paths, JVM/CIL/WASM bounded validation | Arbitrary-graph LLVM AOT, general native isel (gated), target-specific measured scheduling evidence |
 | Machine/driver substrate | StreamPack v1–v3, device manifests, bank/move/event/DMA contracts, MC1/MC2 operator tools, direct RuntimeChannel hooks, metadata-only HAM routing/residency/replay, and strict context-shard activation | Resident UART/virtio/device drivers, physical HAM adapters, stable UAPI, Linux modules, native IPC, and physical-device qualification |
 | Memory discipline | Freestanding/hosted/adapter classes, checked hosted allocator and fault injection, fail-every-allocation tests | Per-operation compiler arenas and further context migration as allocation-bearing surfaces expand |

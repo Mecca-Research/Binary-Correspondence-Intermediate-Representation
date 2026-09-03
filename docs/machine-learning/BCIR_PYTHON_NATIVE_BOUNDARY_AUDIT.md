@@ -9,7 +9,7 @@
 BCIR needs two deliberately different implementations:
 
 - **Python remains the independent semantic oracle and control plane.** It owns strict
-  artifact schemas, R1–R23 legality, K_BCIR decisions, claim/StreamPack construction,
+  artifact schemas, R1–R25 legality, K_BCIR decisions, claim/StreamPack construction,
   provenance, bounded search, model ingestion, training orchestration, and readable
   reference math.
 - **Portable C owns stable repeated numeric work.** It now owns Q8/Q4 group
@@ -154,7 +154,7 @@ SIMD kernels, and accelerator backends still require target-specific comparison.
 | Paged KV and serving scheduler | C++ later, gated | Requires request ownership, cancellation, generation-safe cache reuse, backpressure, deadlines, and measured concurrency before an ABI can be frozen |
 | Whole-model Q4 | C after format/quality closure | First freeze decoder wire layout, activation/outlier policy, drift/NLL, tied/untied parity, and target kernels; the current grouped primitive is not enough |
 | GPU Q8/Q4 and custom attention | Vendor/LLVM/CUDA rail later | Establish SDPA parity and measurements first; portable scalar C is not a GPU backend |
-| R1–R23, K_BCIR legality, telemetry governance, provenance | Do not port for speed | These are deterministic authorities and are not allowed in the per-token L0 hot path |
+| R1–R25, K_BCIR legality, telemetry governance, provenance | Do not port for speed | These are deterministic authorities and are not allowed in the per-token L0 hot path |
 
 ## 7. Next native milestones
 
