@@ -407,6 +407,7 @@ _MODULES = [
     "bcir.tests.test_tiers",
     "bcir.tests.test_toolchain",
     "bcir.tests.test_security_hardening",
+    "bcir.tests.test_security_assurance",
     "bcir.tests.test_perf_budget",
     "bcir.tests.test_import_quarantine",
     "bcir.tests.test_docs_claims",
@@ -423,16 +424,147 @@ _TIER_BLURB = {
 }
 
 
-def _collect_tests() -> list[tuple[str, str]]:
+# Top-level trees that live in the REPOSITORY but are not shipped in the
+# wheel (`[tool.setuptools.packages.find] include = ["bcir*"]`). Test
+# modules that import them can only run from a source checkout.
+_REPO_ONLY_TREES = ("tools",)
+
+
+# Modules whose TESTS read repository assets the wheel does not ship —
+# `tools/` scripts, the `mlir/` tree, `docs/`, `runtime/c` sources,
+# committed corpora, build outputs. Import-time failure catches only the
+# ones that import such a tree; these import cleanly and then fail on the
+# first missing asset, so they are classified by declaration instead,
+# BEFORE import. In a source checkout the registry is inert: every one of
+# them runs.
+#
+# TIER MATTERS when regenerating. The quick tier hides host toolchains
+# behind its `which` gate, so the C-compiling modules SELF-SKIP there and
+# look clean; at `--tier c-runtime` the compiler is visible and they reach
+# for `runtime/c` sources that are not in the wheel. Regenerate at the
+# highest tier the host supports, not the default one.
+#
+# To regenerate: install the wheel into a clean venv, run this module at
+# `--tier c-runtime` (or higher), and collect the modules of any FAIL
+# lines. Do it PER TEST, not per module: five entries here excluded a whole
+# module for one dependent test, hiding 91 runnable ones between them, and
+# two of those five were not classification errors at all -- they were a
+# missing package-data entry and a resource opened through a
+# working-directory-relative path. Read a candidate entry as a question
+# about the PACKAGE first (L21) and about the test second.
+#
+# Beware the import trap when regenerating: importing this module from the
+# CHECKOUT binds `bcir` to the repository, so every module under test then
+# comes from there and the whole survey reports clean. Read the registry as
+# text, or run entirely inside the installed tree.
+_REPO_ONLY_MODULES = frozenset({
+    "bcir.tests.test_artifact_bundle",
+    "bcir.tests.test_asn1_calibration",
+    "bcir.tests.test_asn1_dialect",
+    "bcir.tests.test_asn1_ecn_law_parity",
+    "bcir.tests.test_asn1_frontend",
+    "bcir.tests.test_asn1_graph",
+    "bcir.tests.test_asn1_law_parity",
+    "bcir.tests.test_asn1_native_bench",
+    "bcir.tests.test_asn1_simd_hosts",
+    "bcir.tests.test_asn1_surface",
+    "bcir.tests.test_c_asn1",
+    "bcir.tests.test_c_asn1_streampack",
+    "bcir.tests.test_c_cfront",
+    "bcir.tests.test_c_channel",
+    "bcir.tests.test_c_emit",
+    "bcir.tests.test_c_encoder",
+    "bcir.tests.test_c_executor",
+    "bcir.tests.test_c_jer",
+    "bcir.tests.test_c_oer",
+    "bcir.tests.test_c_per",
+    "bcir.tests.test_c_per_plan",
+    "bcir.tests.test_c_runtime",
+    "bcir.tests.test_c_xer",
+    "bcir.tests.test_cfront",
+    "bcir.tests.test_cfront_link",
+    "bcir.tests.test_cfront_roundtrip",
+    "bcir.tests.test_channel_plugin",
+    "bcir.tests.test_cpp_handoff",
+    "bcir.tests.test_cpp_jer_index",
+    "bcir.tests.test_cpp_jer_simd",
+    "bcir.tests.test_decode_c_kernels",
+    "bcir.tests.test_device_manifest",
+    "bcir.tests.test_differential",
+    "bcir.tests.test_docs_claims",
+    "bcir.tests.test_driver_gpio",
+    "bcir.tests.test_etl_binrec",
+    "bcir.tests.test_event_phases",
+    "bcir.tests.test_gemplus_baseline",
+    "bcir.tests.test_hosted_model_spec",
+    "bcir.tests.test_import_quarantine",
+    "bcir.tests.test_ir_structural_parity",
+    "bcir.tests.test_lowbit",
+    "bcir.tests.test_microbench",
+    "bcir.tests.test_model_assets",
+    "bcir.tests.test_model_weights_io",
+    "bcir.tests.test_native_ai",
+    "bcir.tests.test_native_object_gate",
+    "bcir.tests.test_provenance_twin",
+    "bcir.tests.test_q8_embed",
+    "bcir.tests.test_security_assurance",
+    "bcir.tests.test_security_hardening",
+    "bcir.tests.test_silicon_runbook",
+    "bcir.tests.test_sycl_channel",
+    "bcir.tests.test_sycl_dispatch",
+    "bcir.tests.test_target_matrix",
+    "bcir.tests.test_telemetry_frame",
+    "bcir.tests.test_toolchain",
+    "bcir.tests.test_train_c_kernels",
+    "bcir.tests.test_train_pack_exec",
+    "bcir.tests.test_verify_differential",
+})
+
+
+def _is_source_checkout() -> bool:
+    """True when this runner is executing out of the repository itself."""
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.isfile(os.path.join(root, "pyproject.toml")) and all(
+        os.path.isdir(os.path.join(root, tree)) for tree in _REPO_ONLY_TREES
+    )
+
+
+def _collect_tests() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """Import every module and return the flat (module, test) work list, in declared module order
-    then alphabetical test order (so a serial run is byte-identical to the historic behaviour)."""
+    then alphabetical test order (so a serial run is byte-identical to the historic behaviour).
+
+    Also returns the modules skipped because they need repository-only
+    assets. The wheel ships `bcir.tests.*` but not `tools/`, `mlir/`,
+    `docs/` or the committed corpora, so in an INSTALLED environment such a
+    module either raises `ModuleNotFoundError` during discovery — taking the
+    whole suite down before a single test runs — or imports cleanly and then
+    fails on the first missing asset. Both are classified here: the declared
+    registry catches the second kind before import, the import guard is the
+    backstop for the first. A skip is honest only where the absence is
+    expected: in a source checkout every asset is present, so the registry
+    is inert and any import error is still fatal.
+    """
     pairs: list[tuple[str, str]] = []
+    skipped: list[tuple[str, str]] = []
+    source = _is_source_checkout()
     for modname in _MODULES:
-        mod = importlib.import_module(modname)
+        if not source and modname in _REPO_ONLY_MODULES:
+            # Classified before import: these modules import cleanly and only
+            # fail once a test reaches for an asset the package never shipped.
+            skipped.append((modname, "repository assets"))
+            continue
+        try:
+            mod = importlib.import_module(modname)
+        except ModuleNotFoundError as exc:
+            missing = (exc.name or "").split(".")[0]
+            if source or missing not in _REPO_ONLY_TREES:
+                raise
+            skipped.append((modname, missing))
+            continue
         for name in sorted(dir(mod)):
             if name.startswith("test_") and callable(getattr(mod, name)):
                 pairs.append((modname, name))
-    return pairs
+    return pairs, skipped
 
 
 def _run_one(pair: tuple[str, str]) -> tuple[str, str, str | None]:
@@ -537,7 +669,15 @@ def main() -> int:
     shard, shards = _resolve_shard()
     print(f"[run_all] tier={tier} — {_TIER_BLURB[tier]}  (jobs={jobs}"
           + (f", shard {shard}/{shards}" if shards > 1 else "") + ")\n")
-    pairs = _collect_tests()                # stable discovery; fork also benefits from the warm imports
+    pairs, skipped = _collect_tests()       # stable discovery; fork also benefits from the warm imports
+    for modname, tree in skipped:
+        # Never a silent thinning: a run that inspects less than the full
+        # registry says so, by name, on every host that does it.
+        detail = (f"needs the repo-only '{tree}/' tree" if tree != "repository assets"
+                  else "needs repository assets")
+        print(f"[run_all] SKIP {modname} ({detail}; not shipped in the wheel)")
+    if skipped:
+        print()
     total = len(pairs)
     if shards > 1:
         pairs = pairs[shard - 1::shards]
@@ -571,7 +711,12 @@ def main() -> int:
                 _report(*res)
 
     suffix = f" (shard {shard}/{shards} of {total} total)" if shards > 1 else ""
-    print(f"\n{passed} passed, {failed} failed{suffix}")
+    skip_note = f", {len(skipped)} modules skipped" if skipped else ""
+    print(f"\n{passed} passed, {failed} failed{skip_note}{suffix}")
+    if not pairs:
+        # Anti-vacuity: a suite that ran nothing has not passed.
+        print("[run_all] INVALID/VACUOUS: no tests were collected")
+        return 1
     return 1 if failed else 0
 
 
