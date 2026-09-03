@@ -658,6 +658,12 @@ jobs:
       - name: Validate Phase-6 passes (verify / promote / lower)
         run: bash tools/wsl/check_passes.sh
 
+      - name: Malformed-input differential with the compiled rail required
+        # This job just built bcir-opt (build/mlir-build/bin), so here the
+        # compiled/python law comparison must actually run - an absent binary
+        # fails the step instead of skipping every compiled case.
+        run: python3 tools/security/run_malformed_differential.py --require-compiled
+
       - name: Validate MLIR bytecode round-trip (Properties survive text<->bytecode)
         run: bash tools/wsl/check_bytecode.sh
 
@@ -694,3 +700,103 @@ jobs:
 
       - name: Hot/cold import quarantine (research organs stay off the simple path)
         run: python3 tools/perf/import_graph.py --check
+
+  python-floor:
+    name: Declared Python floor (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # The MINIMUM this package advertises. Every other Python job runs a
+        # newer interpreter, so without this cell `requires-python = ">=3.11"`
+        # was a claim nothing exercised: syntax or stdlib behaviour available
+        # only on the runner's newer interpreter could ship broken for users
+        # sitting exactly on the declared floor.
+        python: ["3.11"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: The interpreter IS the declared floor (anti-vacuity)
+        # A cell that silently ran 3.13 would pass while testing nothing it
+        # exists to test, so the running interpreter is checked against the
+        # floor READ FROM pyproject.toml rather than a copy of it here:
+        # raising the floor without updating this job fails the job.
+        run: |
+          python - <<'PY'
+          import sys, tomllib
+          with open("pyproject.toml", "rb") as handle:
+              declared = tomllib.load(handle)["project"]["requires-python"]
+          floor = tuple(int(part) for part in declared.lstrip(">=~^ ").split(".")[:2])
+          running = sys.version_info[:2]
+          print(f"declared floor {declared!r} -> {floor}; running {running}")
+          if running != floor:
+              raise SystemExit(
+                  f"this job must run the declared floor {floor}, not {running}"
+              )
+          PY
+
+      - name: Quick tier on the floor interpreter
+        run: python -m bcir.tests.run_all --tier quick -j0
+
+      - name: Required security gates on the floor interpreter
+        run: |
+          python tools/security/audit_dependencies.py
+          python tools/security/scan_secrets.py
+          python tools/security/audit_tool_boundaries.py
+
+      - name: The package builds and imports on the floor interpreter
+        # Packaging is part of the claim: a wheel that cannot be built or
+        # imported on the advertised minimum is the same defect as code that
+        # cannot run there.
+        run: |
+          python -m pip install --disable-pip-version-check --no-input build==1.2.2.post1
+          python -m build --wheel --outdir dist/
+          python -m pip install --disable-pip-version-check --no-input dist/*.whl
+          cd "$RUNNER_TEMP" && python -c "import bcir; print('imported', bcir.__name__)"
+
+  security-assurance:
+    name: Security assurance (secrets, inventory, campaigns, review contract)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources)
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
+
+      - name: Install clang + compiler-rt for the bounded decoder campaign
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        with:
+          packages: clang lld llvm libclang-rt-18-dev
+          version: security-assurance-${{ runner.arch }}-v1
+
+      - name: Secret scan with explicit binary/archive policy
+        run: python3 tools/security/scan_secrets.py
+
+      - name: Inventory-first dependency audit
+        run: python3 tools/security/audit_dependencies.py
+
+      - name: Lowering and developer-tool boundary policy
+        run: python3 tools/security/audit_tool_boundaries.py
+
+      - name: Bounded StreamPack/BCAB/model decoder campaign
+        run: python3 tools/security/run_decoder_campaign.py --mutations 24 --fuzz-runs 200 --fuzz-seconds 8 --require-c
+
+      - name: Malformed-input Python/MLIR differential
+        run: python3 tools/security/run_malformed_differential.py
+
+      - name: Fail-closed independent-review contract
+        run: python3 tools/security/independent_review.py --self-check

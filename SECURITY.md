@@ -35,6 +35,11 @@ In scope:
   crash a downstream pass (a violation of laws R1–R18).
 - Unsafe handling of inputs in the lowering/codegen path that compiles+runs emitted C/LLVM IR.
 
+Maintained assurance rails (secrets, declared-dependency inventory, decoder campaigns,
+malformed-input differentials, tool-boundary policy, and fail-closed independent review)
+live under `tools/security/` and are gated by the `security-assurance` CI job. Those rails
+are coverage and policy, not a claim that unknown vulnerabilities do not exist.
+
 Out of scope:
 
 - Denial of service from intentionally pathological but well-formed inputs (the optimizer is a

@@ -207,6 +207,7 @@ pending required check is not ready for handoff.
 | Portable backend smoke coverage | `./llvm-training/tools/smoke-llc.sh` |
 | Interpreter smoke coverage | `./llvm-training/tools/smoke-lli.sh` |
 | BOLT fixture changes | `./llvm-training/tools/smoke-bolt.sh` |
+| Security-assurance rails (`tools/security/**`, `.gitleaks.toml`) | `python tools/security/scan_secrets.py`, `python tools/security/audit_dependencies.py`, `python tools/security/audit_tool_boundaries.py`, `python tools/security/run_decoder_campaign.py`, `python tools/security/run_malformed_differential.py`, `python tools/security/independent_review.py --self-check` |
 
 For IR changes outside the training corpus, run the relevant gate:
 
