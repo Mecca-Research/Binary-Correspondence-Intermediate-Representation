@@ -176,7 +176,7 @@ git diff --check
 
 # the assurance rails (#749) — each one a required CI job
 python tools/security/scan_secrets.py
-python tools/security/audit_dependencies.py
+python tools/security/audit_dependencies.py   # CI adds --require-advisory where it installs pip-audit
 python tools/security/audit_tool_boundaries.py
 python tools/security/run_decoder_campaign.py --mutations 24 --fuzz-runs 200 --fuzz-seconds 8
 python tools/security/run_malformed_differential.py

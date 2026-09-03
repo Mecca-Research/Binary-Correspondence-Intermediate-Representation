@@ -2,19 +2,30 @@
 """Inventory-first dependency audit (Python 3.11+, tomllib only).
 
 An empty-dependency report is INVALID unless the expected runtime inventory is
-also empty and that emptiness was asserted. Advisory scanners run only after the
-declared inventory matches the committed expected file. The metadata parser is
-the standard library's tomllib, unconditionally: the repository's floor is
-3.11, and no hand-rolled TOML subset stands in anywhere — a subset reader has
-an unbounded surface of valid spellings and can only lose to them.
+also empty and that emptiness was asserted. The advisory rail runs only after the
+declared inventory matches the committed expected file: pip-audit resolves the
+asserted install set (pip's resolver, then PyPI's advisory database) and its
+JSON report is parsed strictly into vulnerability IDs, aliases and fix versions
+-- never its prose. The rail is opportunistic by default (no engine on the host:
+``UNAVAILABLE/SKIPPED``, the inventory verdict stands) and REQUIRED under
+``--require-advisory``, which the one CI job that installs the engine passes:
+there an absent engine is a FAIL. In either mode an engine that ran gates: a
+finding, a dependency it could not collect, a report it did not write in its own
+shape, or an audit that collected nothing from a non-empty install set is a FAIL,
+never a quieter kind of pass. The metadata parser is the standard library's
+tomllib, unconditionally: the repository's floor is 3.11, and no hand-rolled TOML
+subset stands in anywhere — a subset reader has an unbounded surface of valid
+spellings and can only lose to them.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import stat
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +50,11 @@ PYPROJECT_SIZE_CAP = 1 << 20  # 1 MiB: parsing multiplies metadata in memory
 INVENTORY_SIZE_CAP = 1 << 20  # 1 MiB: the gate's own reference data is input too
 ADVISORY_TIMEOUT = 300.0  # pip-audit resolves against a network index; stalls expire
 ADVISORY_OUTPUT_CAP = 1 << 20  # per stream; the engine reports advisories, not payload
+ADVISORY_ENGINE = "pip-audit"
+# The engine is configured the way CLANG and BCIR_OPT configure theirs: a path
+# or a command NAME, resolved through the same lookup the default takes (L13).
+ADVISORY_ENGINE_ENV = "PIP_AUDIT"
+ADVISORY_TAIL = 500  # bytes of engine stderr/stdout retained in the report, redacted
 
 # A dependency specifier can CARRY a credential: PEP 508 direct references
 # admit a full URL, and `pkg @ https://user:secret@host/x.whl` puts the
@@ -435,7 +451,9 @@ def _staged_mismatches(root: Path, expected: dict[str, Any]) -> list[dict[str, A
     return found
 
 
-def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
+def audit(
+    root: Path, expected_path: Path = EXPECTED, *, require_advisory: bool = False
+) -> dict[str, Any]:
     expected = _expected_inventory(expected_path)
     if expected is None:
         return _unreadable_inventory(str(expected_path))
@@ -521,8 +539,19 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
     if mismatches:
         report["state"] = "FAIL"
         return report
-    engine = shutil.which("pip-audit")
+    engine = advisory_engine()
     if not engine:
+        if require_advisory:
+            # The job that installed the engine passes --require-advisory and
+            # owns its absence (L10); a skip nobody owns is where a shipping
+            # defect hides (L2). Everywhere else the inventory verdict stands
+            # and the skip is recorded, not silent.
+            report["advisory"] = {
+                "state": "FAIL",
+                "engine": ADVISORY_ENGINE,
+                "error": _absent_engine_error(),
+            }
+            report["state"] = "FAIL"
         return report
     listed = list(expected["build_system"])
     for items in expected["optional"].values():
@@ -531,68 +560,358 @@ def audit(root: Path, expected_path: Path = EXPECTED) -> dict[str, Any]:
     if not listed:
         report["advisory"] = {
             "state": "PASS",
-            "engine": "pip-audit",
+            "engine": ADVISORY_ENGINE,
             "note": "no install set remains after asserting the empty runtime inventory",
         }
         return report
-    # The shared bounded runner: its own session, a wall bound, per-stream
-    # byte budgets, and a process-group put-down — the resolver does network
-    # work, spawns pip children, and can flood; every failure shape becomes
-    # the advisory's fail-closed state, never a hang, OOM, or traceback.
-    outcome = run_bounded(
-        [engine, "--requirement", "-"],
-        timeout=ADVISORY_TIMEOUT,
-        cap=ADVISORY_OUTPUT_CAP,
-        stdin_data=("\n".join(listed) + "\n").encode("utf-8"),
+    report["advisory"] = _run_advisory(engine, listed)
+    if report["advisory"]["state"] != "PASS":
+        report["state"] = "FAIL"
+    return report
+
+
+def advisory_engine() -> str | None:
+    """The advisory engine's executable, or None when the host has none.
+
+    ``PIP_AUDIT`` may name a path or a command; either goes through the same
+    lookup the default ``pip-audit`` takes, so a configured engine that does
+    not resolve is reported as absent rather than silently replaced by
+    whatever PATH holds (L13).
+    """
+    configured = os.environ.get(ADVISORY_ENGINE_ENV, "").strip()
+    return shutil.which(configured or ADVISORY_ENGINE)
+
+
+def _absent_engine_error() -> str:
+    configured = os.environ.get(ADVISORY_ENGINE_ENV, "").strip()
+    if configured:
+        return (
+            f"advisory rail required and {ADVISORY_ENGINE_ENV}="
+            f"{_redacted_requirement(configured)} does not resolve to an executable"
+        )
+    return (
+        f"advisory rail required and no engine found: {ADVISORY_ENGINE} on PATH, "
+        f"or {ADVISORY_ENGINE_ENV} naming one"
     )
+
+
+# The floor grammar, declared here exactly (L4, L18): a name, optional extras,
+# ONE of `==` / `>=`, and a plain version. No markers, URLs, wildcards, compound
+# or arbitrary-equality specifiers -- the inventory's own shapes are the two
+# above, and a declaration outside the grammar is refused and reported, never
+# approximated. Growing the grammar is a deliberate edit here plus a witness.
+_FLOOR_GRAMMAR = re.compile(
+    r"^\s*(?P<name>[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)"
+    r"(?P<extras>\s*\[[A-Za-z0-9._,\s-]*\])?"
+    r"\s*(?P<op>==|>=)\s*(?P<version>[0-9][0-9A-Za-z.!+-]*)\s*$"
+)
+
+
+def canonical_name(name: str) -> str:
+    """PEP 503 normalization; the engine reports names in this form."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def floor_pins(listed: list[str]) -> tuple[list[str], list[str], list[str]]:
+    """(exact pins at each declaration's lowest admitted version, their
+    canonical names, the declarations the grammar refuses).
+
+    A declaration is a promise over a SET of versions. The resolved run audits
+    the set's practical maximum (what pip installs today); this pins its
+    minimum, which is the version a stale cache or an old lock still
+    satisfies the declaration with, and the one most likely to be vulnerable.
+    """
+    pins: list[str] = []
+    names: list[str] = []
+    refused: list[str] = []
+    for item in listed:
+        match = _FLOOR_GRAMMAR.match(item)
+        if not match:
+            refused.append(item)
+            continue
+        extras = (match.group("extras") or "").strip()
+        pins.append(f"{match.group('name')}{extras}=={match.group('version')}")
+        names.append(canonical_name(match.group("name")))
+    return pins, names, refused
+
+
+def _advisory_command(engine: str, requirements: Path, *, floor: bool) -> list[str]:
+    cmd = [
+        engine,
+        "--requirement", str(requirements),
+        # The engine's own report, parsed strictly below; the columns
+        # rendering was a tail of prose the gate could only grep.
+        "--format", "json",
+        # A dependency the engine cannot collect fails the audit outright
+        # rather than becoming a skip inside a green run (L15).
+        "--strict",
+        # IDs, aliases and fix versions are the finding; the advisory prose
+        # is not copied into a report that is itself an egress surface (L7).
+        "--desc", "off",
+        "--progress-spinner", "off",
+    ]
+    if floor:
+        # Exact pins: no resolver, no scratch venv, only the advisory
+        # database. This is also the run that covers what the resolved run
+        # structurally omits -- pip-audit drops its scratch venv's own
+        # pip/setuptools/wheel from the resolver's report, so a requirements
+        # file holding only `setuptools>=83.0.0` audits NOTHING there and
+        # exits 0. The floor run audits that floor by name.
+        cmd += ["--no-deps", "--disable-pip"]
+    return cmd
+
+
+def _run_advisory(engine: str, listed: list[str]) -> dict[str, Any]:
+    """The engine over the asserted install set, twice, reconciled against
+    the declaration: the resolved run (what pip installs today, transitive
+    closure included) and the floor run (each declaration at its lowest
+    admitted version). A declared name neither run audited is uncovered,
+    and uncovered is a FAIL (L15) -- the report says which."""
+    pins, names, refused = floor_pins(listed)
+    runs: dict[str, dict[str, Any]] = {"resolved": _engine_run(engine, listed, floor=False)}
+    if pins:
+        runs["floor"] = _engine_run(engine, pins, floor=True)
+    else:
+        runs["floor"] = {
+            "state": "SKIPPED", "audited": 0,
+            "note": "no declaration inside the floor grammar",
+        }
+    return _combined_verdict(listed, names, refused, runs)
+
+
+def _engine_run(engine: str, requirements: list[str], *, floor: bool) -> dict[str, Any]:
+    """One engine invocation, as a report field.
+
+    The engine reads a requirements FILE (2.10.1 refuses ``-``: "invalid
+    requirements input"; the rail that passed it had never run). The set is
+    written to a private temporary directory that is removed on every exit
+    path, including the engine never launching: a declaration can carry a
+    credential, and the file must not outlive the audit (L7).
+    """
+    try:
+        tmp = tempfile.mkdtemp(prefix="bcir-advisory-")
+    except OSError as exc:
+        # A full or unwritable temporary directory is a verdict of this run,
+        # never a traceback out of the required audit (L1).
+        return {
+            "state": "FAIL", "audited": 0,
+            "error": _redacted_requirement(f"could not create the requirements directory: {exc}"),
+        }
+    try:
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", dir=tmp, suffix=".txt", delete=False
+            ) as handle:
+                handle.write("\n".join(requirements) + "\n")
+                path = Path(handle.name)
+        except OSError as exc:
+            return {
+                "state": "FAIL", "audited": 0,
+                "error": _redacted_requirement(f"could not write the requirements file: {exc}"),
+            }
+        # The shared bounded runner: its own session, a wall bound, per-stream
+        # byte budgets, and a process-group put-down — the resolver does
+        # network work, spawns pip children, and can flood; every failure
+        # shape becomes the run's fail-closed state, never a hang, OOM, or
+        # traceback (L8).
+        outcome = run_bounded(
+            _advisory_command(engine, path, floor=floor),
+            timeout=ADVISORY_TIMEOUT,
+            cap=ADVISORY_OUTPUT_CAP,
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return _run_verdict(outcome)
+
+
+def _tail(stream: bytes) -> str:
+    return _redacted_requirement(stream.decode("utf-8", "replace")[-ADVISORY_TAIL:])
+
+
+def _run_verdict(outcome: dict[str, Any]) -> dict[str, Any]:
+    """One run's outcome as a report field. The ``_names`` / ``_skipped`` /
+    ``_vulnerable`` entries are for the combining step, which pops them."""
+    run: dict[str, Any] = {"state": "FAIL", "audited": 0}
     failure = ""
     if not outcome["launched"]:
         failure = outcome["error"]
     elif outcome["timed_out"]:
-        failure = f"pip-audit timed out after {ADVISORY_TIMEOUT:g}s"
+        failure = f"{ADVISORY_ENGINE} timed out after {ADVISORY_TIMEOUT:g}s"
     elif outcome["overflow"]:
-        failure = f"pip-audit output exceeded {ADVISORY_OUTPUT_CAP} bytes per stream"
+        failure = f"{ADVISORY_ENGINE} output exceeded {ADVISORY_OUTPUT_CAP} bytes per stream"
     elif outcome["pipes_held"]:
-        failure = "descendant processes still hold pip-audit's pipes"
+        failure = f"descendant processes still hold {ADVISORY_ENGINE}'s pipes"
     if failure:
-        report["advisory"] = {
-            "state": "FAIL",
-            "engine": "pip-audit",
-            "error": _redacted_requirement(failure),
-        }
-        report["state"] = "FAIL"
-        return report
-    report["advisory"] = {
-        "state": "PASS" if outcome["returncode"] == 0 else "FAIL",
-        "engine": "pip-audit",
-        "returncode": outcome["returncode"],
-        # pip-audit echoes the requirements it was handed, so its own
-        # output carries whatever the declaration carried. Redacting
-        # `declared` while retaining the engine's stdout verbatim moved
-        # the leak rather than closing it.
-        "stdout_tail": _redacted_requirement(
-            outcome["stdout"].decode("utf-8", "replace")[-500:]
-        ),
-    }
-    if outcome["returncode"] != 0:
-        report["state"] = "FAIL"
-    return report
+        run["error"] = _redacted_requirement(failure)
+        return run
+    run["returncode"] = outcome["returncode"]
+    # The engine says what it found on stderr ("No known vulnerabilities
+    # found", "Found N known vulnerabilities in M packages", or the
+    # resolver's complaint) and echoes the requirements it was handed in
+    # every one of them; a report field is an egress surface, so the tail
+    # is retained redacted (L7).
+    run["stderr_tail"] = _tail(outcome["stderr"])
+    parsed = _parse_advisory_report(outcome["stdout"])
+    if parsed is None:
+        run["error"] = "unusable engine output (not the engine's own JSON report)"
+        run["stdout_tail"] = _tail(outcome["stdout"])
+        return run
+    names, skipped, vulnerable = parsed
+    run["audited"] = len(names)
+    run["_names"] = names
+    run["_skipped"] = skipped
+    run["_vulnerable"] = vulnerable
+    if skipped:
+        run["error"] = f"{len(skipped)} dependency(ies) the engine could not audit"
+    elif vulnerable:
+        count = sum(len(item["vulns"]) for item in vulnerable)
+        run["error"] = f"{count} known vulnerability(ies) in {len(vulnerable)} package(s)"
+    elif outcome["returncode"] != 0:
+        run["error"] = f"{ADVISORY_ENGINE} exited {outcome['returncode']} without a finding"
+    else:
+        run["state"] = "PASS"
+    return run
 
+
+def _combined_verdict(
+    listed: list[str],
+    names: list[str],
+    refused: list[str],
+    runs: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    advisory: dict[str, Any] = {
+        "state": "FAIL", "engine": ADVISORY_ENGINE, "declared": len(listed), "runs": runs,
+    }
+    reasons: list[str] = []
+    if refused:
+        advisory["unattributable"] = _redacted(refused)
+        reasons.append(
+            f"{len(refused)} declaration(s) outside the floor grammar "
+            "(name[extras]==version or name[extras]>=version)"
+        )
+    audited = 0
+    covered: set[str] = set()
+    skipped: list[dict[str, Any]] = []
+    vulnerable: list[dict[str, Any]] = []
+    for label, run in runs.items():
+        covered.update(run.pop("_names", []))
+        audited += run.get("audited", 0)
+        skipped.extend({"run": label, **item} for item in run.pop("_skipped", []))
+        vulnerable.extend({"run": label, **item} for item in run.pop("_vulnerable", []))
+        if run["state"] == "FAIL":
+            reasons.append(f"{label} run: {run['error']}")
+    declared = set(names)
+    uncovered = sorted(declared - covered)
+    advisory["audited"] = audited
+    advisory["covered"] = sorted(declared & covered)
+    advisory["uncovered"] = uncovered
+    if skipped:
+        advisory["skipped"] = _redacted(skipped)
+    if uncovered:
+        if audited == 0:
+            reasons.append(
+                f"INVALID/VACUOUS: the engine audited none of the {len(listed)} declared "
+                "dependencies"
+            )
+        else:
+            reasons.append(
+                f"{len(uncovered)} declared dependency(ies) never audited: "
+                + ", ".join(uncovered)
+            )
+    if vulnerable:
+        advisory["vulnerable"] = _redacted(vulnerable)
+    if reasons:
+        advisory["error"] = "; ".join(reasons)
+        return advisory
+    advisory["state"] = "PASS"
+    return advisory
+
+
+def _string_items(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _parse_advisory_report(
+    raw: bytes,
+) -> tuple[list[str], list[dict[str, Any]], list[dict[str, Any]]] | None:
+    """pip-audit's ``--format json`` report reduced to (audited canonical
+    names, skipped, vulnerable), or None when the bytes are not that report.
+
+    The report is INPUT to this gate exactly as the metadata is: strict
+    decode, strict JSON (a duplicate key says two things; the parser has
+    refused that since R23), and the shape checked field by field, because
+    a document that parses can still be the wrong document (L4). A depth
+    that bottoms out the parser under the byte cap is the same refusal (L1).
+    Every string that survives is a report field; the caller redacts.
+    """
+    try:
+        data = strict_loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, DuplicateKeys, RecursionError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("dependencies"), list):
+        return None
+    names: list[str] = []
+    skipped: list[dict[str, Any]] = []
+    vulnerable: list[dict[str, Any]] = []
+    for entry in data["dependencies"]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+            return None
+        if "skip_reason" in entry or not isinstance(entry.get("version"), str):
+            skipped.append({
+                "name": entry["name"],
+                "reason": str(entry.get("skip_reason", "no version collected")),
+            })
+            continue
+        vulns = entry.get("vulns")
+        if not isinstance(vulns, list):
+            return None
+        findings: list[dict[str, Any]] = []
+        for vuln in vulns:
+            if not isinstance(vuln, dict) or not isinstance(vuln.get("id"), str):
+                return None
+            findings.append({
+                "id": vuln["id"],
+                "aliases": _string_items(vuln.get("aliases")),
+                "fix_versions": _string_items(vuln.get("fix_versions")),
+            })
+        names.append(canonical_name(entry["name"]))
+        if findings:
+            vulnerable.append({
+                "name": entry["name"], "version": entry["version"], "vulns": findings,
+            })
+    return names, skipped, vulnerable
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="audit_dependencies")
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--expected", type=Path, default=EXPECTED)
     parser.add_argument("--json-out", type=Path)
+    parser.add_argument(
+        "--require-advisory", action="store_true",
+        help="the advisory rail must RUN: no engine is a FAIL. The CI job that installs "
+             "pip-audit passes this and owns the rail's absence (L10); every other caller "
+             "asserts the inventory and records a missing engine as skipped.",
+    )
     args = parser.parse_args(argv)
-    report = audit(args.root, args.expected)
+    report = audit(args.root, args.expected, require_advisory=args.require_advisory)
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    advisory = report["advisory"]
+    detail = ""
+    if "audited" in advisory:
+        detail = (
+            f" audited={advisory['audited']} "
+            f"covered={len(advisory['covered'])}/{len(advisory['covered']) + len(advisory['uncovered'])}"
+        )
+    if "error" in advisory:
+        detail += f" error={advisory['error']!r}"
     print(
         f"audit_dependencies: {report['state']} asserted={report['inventory_asserted']} "
         f"expected={report['expected_packages']} mismatches={len(report['mismatches'])} "
-        f"advisory={report['advisory']['state']}"
+        f"advisory={advisory['state']}{detail}"
     )
     return 0 if report["state"] == "PASS" else 1
 

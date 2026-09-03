@@ -70,9 +70,10 @@ def test_dependency_inventory_must_be_asserted_before_advisories() -> None:
     from unittest.mock import patch
     from tools.security import audit_dependencies as deps
     # The advisory engine is opportunistic; a host that happens to have
-    # pip-audit installed must not turn this unit test into a live network
-    # scan whose result decides the verdict.
-    with patch.object(deps.shutil, "which", return_value=None):
+    # pip-audit installed (or PIP_AUDIT naming one) must not turn this unit
+    # test into a live network scan whose result decides the verdict.
+    with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
+            patch.object(deps.shutil, "which", return_value=None):
         report = audit_deps(_ROOT)
     assert report["inventory_asserted"] is True
     assert report["expected_packages"] >= 1
@@ -3435,44 +3436,68 @@ def test_staged_archive_spool_failure_is_a_finding() -> None:
 
 
 def test_advisory_output_is_redacted() -> None:
-    """pip-audit echoes the requirements it is handed, so its own stdout
-    carries whatever the declaration carried. Redacting `declared` while
-    retaining the engine's output verbatim moved the leak rather than
-    closing it."""
+    """pip-audit names the requirement it could not resolve on stderr and the
+    package it audited in its JSON report, so the engine's own output carries
+    whatever the declaration carried. Redacting `declared` while retaining
+    the engine's output verbatim moved the leak rather than closing it. A
+    stub engine on PATH, so the FULL spawn path runs (L7, L19)."""
     import os
     import stat as stat_module
+    from unittest.mock import patch
     from tools.security.audit_dependencies import audit
     value = "correct-horse-battery-staple"
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         dependency = "private @ https://user:" + value + "@example.com/pkg.whl"
-        (root / "pyproject.toml").write_text(
-            '[project]\nname="x"\nversion="1"\ndependencies = ["'
-            + dependency + '"]\n', encoding="utf-8")
-        expected = root / "expected.json"
-        expected.write_text(
-            json.dumps({"runtime": [dependency], "build_system": [], "optional": {}}),
-            encoding="utf-8")
-        # An engine that echoes its stdin is exactly pip-audit's behaviour
-        # for the requirement list, and the smallest way to reproduce it.
+        expected = _advisory_project(root, dependency)
+        # The stub does with the requirement what the engine does: complains
+        # about it on stderr and names it in the report it writes.
         bindir = root / "bin"
         bindir.mkdir()
         engine = bindir / "pip-audit"
-        engine.write_text("#!/bin/sh\ncat\n", encoding="utf-8")
+        engine.write_text(_STUB_ENGINE, encoding="utf-8")
         engine.chmod(engine.stat().st_mode | stat_module.S_IXUSR)
         old_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{bindir}{os.pathsep}{old_path}"
         try:
-            report = audit(root, expected)
+            with patch.dict(os.environ, {"PIP_AUDIT": ""}):
+                report = audit(root, expected)
         finally:
             os.environ["PATH"] = old_path
     if os.name == "nt":
         return  # a /bin/sh stub is not executable through which() there
     serialized = json.dumps(report)
-    assert report["advisory"]["engine"] == "pip-audit"
+    advisory = report["advisory"]
+    assert advisory["engine"] == "pip-audit"
+    assert report["state"] == "FAIL"
+    assert advisory["state"] == "FAIL"
+    assert advisory["runs"]["resolved"]["audited"] == 1
+    # A URL declaration has no floor to pin, so that run is refused and
+    # reported (redacted), and the floor run has nothing to do.
+    assert advisory["runs"]["floor"]["state"] == "SKIPPED"
+    assert advisory["unattributable"] == ["private @ https://<redacted>@example.com/pkg.whl"]
     assert value not in serialized, "the engine's own output leaked it"
-    assert "<redacted>" in report["advisory"]["stdout_tail"]
+    assert "<redacted>" in advisory["runs"]["resolved"]["stderr_tail"]
+    assert "<redacted>" in json.dumps(advisory["vulnerable"])
+    assert advisory["vulnerable"][0]["run"] == "resolved"
+    assert advisory["vulnerable"][0]["vulns"] == [
+        {"id": "GHSA-stub", "aliases": [], "fix_versions": []},
+    ]
 
+
+_STUB_ENGINE = """#!/bin/sh
+# A pip-audit stand-in: find the requirements file it was handed, echo its
+# content where the real engine would (the resolver's complaint on stderr,
+# the package name in the JSON report), and report one finding.
+req=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--requirement" ]; then req=$(cat "$2"); fi
+  shift
+done
+printf 'ERROR: could not resolve %s\\n' "$req" >&2
+printf '{"dependencies":[{"name":"%s","version":"1","vulns":[{"id":"GHSA-stub","fix_versions":[],"aliases":[]}]}],"fixes":[]}' "$req"
+exit 1
+"""
 
 def test_staged_expected_inventory_is_audited() -> None:
     """The audit asserts declared metadata AGAINST the inventory, so both
@@ -4021,3 +4046,380 @@ def test_packaged_asn1_modules_are_read_from_the_package() -> None:
                     offenders.append(f"{path}:{node.lineno}")
         assert not offenders, offenders
     assert "bcir.tests.test_asn1_constraints" not in _REPO_ONLY_MODULES
+
+
+
+# --- the advisory rail -----------------------------------------------------------------
+# Every test here fakes the FULL spawn path (L19): `which` for discovery and the bounded
+# runner for the engine, or a stub engine on PATH where the spawn itself is the subject;
+# a host's real pip-audit (or a PIP_AUDIT it exports) never decides a unit verdict.
+
+_DEP = "definitely-not-a-bcir-dep"
+
+
+def _advisory_project(root: Path, dependency: str = _DEP + "==1.0") -> Path:
+    """A project whose asserted inventory holds one runtime dependency, so the
+    advisory rail has a non-empty install set to run over."""
+    (root / "pyproject.toml").write_text(
+        '[project]\nname="x"\nversion="1"\ndependencies = ["' + dependency + '"]\n',
+        encoding="utf-8")
+    expected = root / "expected.json"
+    expected.write_text(
+        json.dumps({"runtime": [dependency], "build_system": [], "optional": {}}),
+        encoding="utf-8")
+    return expected
+
+
+def _engine_report(*dependencies: dict) -> bytes:
+    """pip-audit's `--format json` shape."""
+    return json.dumps({"dependencies": list(dependencies), "fixes": []}).encode("utf-8")
+
+
+def _engine_outcome(stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0) -> dict:
+    return {
+        "launched": True, "timed_out": False, "overflow": False, "pipes_held": False,
+        "returncode": returncode, "stdout": stdout, "stderr": stderr, "error": "",
+    }
+
+
+def _clean_outcome(name: str = _DEP, version: str = "1.0") -> dict:
+    return _engine_outcome(
+        _engine_report({"name": name, "version": version, "vulns": []}),
+        b"No known vulnerabilities found\n",
+    )
+
+
+def _audit_with_engine(resolved: dict, floor: dict | None = None, *, require: bool = False,
+                       dependency: str = _DEP + "==1.0") -> dict:
+    """The audit of a one-dependency project against faked engine outcomes,
+    one per run (the floor run is told apart by its `--no-deps`)."""
+    from unittest.mock import patch
+    from tools.security import audit_dependencies as deps
+    floor = _clean_outcome() if floor is None else floor
+
+    def engine(cmd, **kwargs):
+        return floor if "--no-deps" in cmd else resolved
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        expected = _advisory_project(root, dependency)
+        with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
+                patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"), \
+                patch.object(deps, "run_bounded", side_effect=engine):
+            return audit_deps(root, expected, require_advisory=require)
+
+
+def test_require_advisory_fails_when_the_engine_is_absent() -> None:
+    """A `--require-X` flag promises the rail RAN. The job that installs
+    pip-audit passes it, so there an absent engine is a FAIL that names what
+    was missing; everywhere else the inventory verdict stands and the
+    advisory is recorded as skipped, never silently (L2, L10)."""
+    from unittest.mock import patch
+    from tools.security import audit_dependencies as deps
+    with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
+            patch.object(deps.shutil, "which", return_value=None):
+        opportunistic = audit_deps(_ROOT)
+        required = audit_deps(_ROOT, require_advisory=True)
+        exit_code = deps.main(["--require-advisory"])
+    assert opportunistic["state"] == "PASS"
+    assert opportunistic["advisory"]["state"] == "UNAVAILABLE/SKIPPED"
+    assert required["inventory_asserted"] is True       # the inventory half ran first
+    assert required["mismatches"] == []
+    assert required["state"] == "FAIL"
+    assert required["advisory"]["state"] == "FAIL"
+    assert "pip-audit" in required["advisory"]["error"]
+    assert "PIP_AUDIT" in required["advisory"]["error"]
+    assert exit_code == 1
+
+
+def test_advisory_requirements_are_handed_to_the_engine_as_files() -> None:
+    """The rail handed pip-audit `--requirement -`, which the engine refuses
+    ("invalid requirements input: -"): the advisory had never run, and the
+    first host with an engine would have failed the audit on its own
+    argument. Each run now gets a requirements FILE in a private temporary
+    directory, gone on every exit path (a declaration can carry a
+    credential); the resolved run gets the declaration, the floor run its
+    exact lower-bound pins with no resolver; both ask for the engine's JSON
+    report, strictly (L2, L7)."""
+    import stat as stat_module
+    from unittest.mock import patch
+    from tools.security import audit_dependencies as deps
+    seen: list = []
+
+    def engine(cmd, **kwargs):
+        path = Path(cmd[cmd.index("--requirement") + 1])
+        seen.append({
+            "cmd": list(cmd), "stdin": kwargs.get("stdin_data"), "path": path,
+            "text": path.read_text(encoding="utf-8"),
+            "dir_mode": stat_module.S_IMODE(path.parent.stat().st_mode),
+        })
+        return _clean_outcome()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        expected = _advisory_project(root, _DEP + ">=1.0")
+        with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
+                patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"), \
+                patch.object(deps, "run_bounded", side_effect=engine):
+            report = audit_deps(root, expected, require_advisory=True)
+    assert report["state"] == "PASS"
+    advisory = report["advisory"]
+    assert advisory["state"] == "PASS"
+    assert advisory["audited"] == 2
+    assert advisory["covered"] == [_DEP] and advisory["uncovered"] == []
+    assert [run["state"] for run in advisory["runs"].values()] == ["PASS", "PASS"]
+    resolved, floor = seen
+    assert resolved["text"] == _DEP + ">=1.0\n"          # the declaration as written
+    assert floor["text"] == _DEP + "==1.0\n"             # pinned at its lower bound
+    assert "--no-deps" not in resolved["cmd"]
+    assert "--no-deps" in floor["cmd"] and "--disable-pip" in floor["cmd"]
+    for call in seen:
+        assert call["cmd"][0] == "/usr/bin/pip-audit"
+        assert "-" not in call["cmd"]
+        assert call["stdin"] is None
+        for flag in ("--format", "json", "--strict", "--progress-spinner", "off"):
+            assert flag in call["cmd"], flag
+        assert not call["path"].exists(), "the requirements file outlived the audit"
+        if os.name != "nt":
+            assert call["dir_mode"] == 0o700, "the requirements file was not private"
+
+
+def test_unwritable_requirements_are_a_verdict() -> None:
+    """The requirements file is the rail's own resource: a temporary directory
+    that cannot be created or a file that cannot be written (a full or
+    read-only TMPDIR on the runner) is that run's fail-closed verdict, never
+    a traceback out of the required audit (L1)."""
+    from unittest.mock import patch
+    from tools.security import audit_dependencies as deps
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        expected = _advisory_project(root)
+        with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
+                patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"), \
+                patch.object(deps, "run_bounded", side_effect=AssertionError("must not spawn")):
+            with patch.object(deps.tempfile, "NamedTemporaryFile",
+                              side_effect=OSError("No space left on device")):
+                unwritable = audit_deps(root, expected, require_advisory=True)
+            with patch.object(deps.tempfile, "mkdtemp",
+                              side_effect=OSError("Read-only file system")):
+                uncreatable = audit_deps(root, expected, require_advisory=True)
+    for report, needle in ((unwritable, "could not write"), (uncreatable, "could not create")):
+        assert report["state"] == "FAIL"
+        assert report["advisory"]["state"] == "FAIL"
+        for run in report["advisory"]["runs"].values():
+            assert run["state"] == "FAIL" and run["audited"] == 0
+            assert needle in run["error"]
+        assert "VACUOUS" in report["advisory"]["error"]
+
+
+def test_floor_pins_refuse_what_they_cannot_attribute() -> None:
+    """The floor grammar is declared in the tool, exactly: the inventory's two
+    shapes pin; a URL, a marker, a wildcard, a compound or an
+    arbitrary-equality specifier is refused and reported, never approximated
+    into a pin the declaration did not make (L4, L18)."""
+    from tools.security.audit_dependencies import canonical_name, floor_pins
+    pins, names, refused = floor_pins([
+        "setuptools>=83.0.0", "ruff>=0.6", "pre-commit>=3.5", "torch==2.13.0",
+        "safetensors[numpy]==0.8.0", "numpy==2.2.6", "Typing_Extensions >= 4.16.0",
+    ])
+    assert pins == [
+        "setuptools==83.0.0", "ruff==0.6", "pre-commit==3.5", "torch==2.13.0",
+        "safetensors[numpy]==0.8.0", "numpy==2.2.6", "Typing_Extensions==4.16.0",
+    ]
+    assert names == ["setuptools", "ruff", "pre-commit", "torch", "safetensors", "numpy",
+                     "typing-extensions"]
+    assert refused == []
+    outside = [
+        "private @ https://example.com/pkg.whl", 'pkg>=1; python_version > "3.8"',
+        "pkg==1.*", "pkg>=1,<2", "pkg===1", "pkg~=1.0", "pkg", "pkg>1",
+    ]
+    assert floor_pins(outside) == ([], [], outside)
+    assert canonical_name("Pre_Commit.Hooks") == "pre-commit-hooks"
+
+
+def test_advisory_findings_are_structured_and_fail_the_audit() -> None:
+    """An engine that ran and found something gates, opportunistic or
+    required (L9): the finding is the ID, its aliases and the fix versions,
+    copied from the engine's own report and tagged with the run that made it
+    -- never its prose, and never the columns rendering the old rail could
+    only tail."""
+    stdout = _engine_report({
+        "name": _DEP, "version": "1.0",
+        "vulns": [{
+            "id": "GHSA-xxxx-xxxx-xxxx", "fix_versions": ["1.1"],
+            "aliases": ["CVE-2026-00001"], "description": "prose the report must not copy",
+        }],
+    })
+    outcome = _engine_outcome(
+        stdout, b"Found 1 known vulnerability in 1 package\n", returncode=1)
+    for require in (False, True):
+        report = _audit_with_engine(outcome, require=require)
+        assert report["state"] == "FAIL", require
+        advisory = report["advisory"]
+        assert advisory["state"] == "FAIL"
+        assert advisory["audited"] == 2 and advisory["uncovered"] == []
+        assert advisory["runs"]["resolved"]["state"] == "FAIL"
+        assert advisory["runs"]["floor"]["state"] == "PASS"
+        assert advisory["vulnerable"] == [{
+            "run": "resolved", "name": _DEP, "version": "1.0",
+            "vulns": [{
+                "id": "GHSA-xxxx-xxxx-xxxx", "aliases": ["CVE-2026-00001"],
+                "fix_versions": ["1.1"],
+            }],
+        }]
+        assert "prose the report" not in json.dumps(report)
+        assert "1 known vulnerability" in advisory["runs"]["resolved"]["stderr_tail"]
+        assert "1 known vulnerability" in advisory["error"]
+    # The same finding from the floor run is the same verdict, tagged floor.
+    report = _audit_with_engine(_clean_outcome(), outcome)
+    assert report["state"] == "FAIL"
+    assert report["advisory"]["vulnerable"][0]["run"] == "floor"
+
+
+def test_advisory_over_zero_dependencies_is_vacuous() -> None:
+    """Both runs exited 0 and said "No known vulnerabilities found" over
+    NOTHING: the install set was asserted non-empty and the engine collected
+    no dependency from it. Green over zero executions is the L2 shape
+    exactly, and it is a FAIL in either mode."""
+    empty = _engine_outcome(_engine_report(), b"No known vulnerabilities found\n")
+    for require in (False, True):
+        report = _audit_with_engine(empty, empty, require=require)
+        assert report["state"] == "FAIL", require
+        advisory = report["advisory"]
+        assert advisory["state"] == "FAIL"
+        assert advisory["audited"] == 0
+        assert advisory["uncovered"] == [_DEP]
+        assert "VACUOUS" in advisory["error"]
+
+
+def test_advisory_coverage_is_reconciled_against_the_declaration() -> None:
+    """What the engine audited is checked against what was declared (L15).
+    pip-audit's resolver run drops its scratch venv's own setuptools from the
+    report, so a build-system floor audited by that run alone is audited by
+    nothing and exits 0; the floor run covers it by name. A declared name
+    neither run reports is uncovered, and uncovered is a FAIL that says
+    which name."""
+    # Resolved run audits nothing (setuptools' shape); the floor run covers it.
+    report = _audit_with_engine(
+        _engine_outcome(_engine_report(), b"No known vulnerabilities found\n"),
+        _clean_outcome("setuptools", "83.0.0"),
+        dependency="setuptools>=83.0.0",
+    )
+    assert report["state"] == "PASS"
+    assert report["advisory"]["covered"] == ["setuptools"]
+    assert report["advisory"]["runs"]["resolved"]["audited"] == 0
+    assert report["advisory"]["runs"]["floor"]["audited"] == 1
+    # Both runs audited SOMETHING, but not the declared name: uncovered.
+    other = _clean_outcome("something-else", "2.0")
+    report = _audit_with_engine(other, other)
+    assert report["state"] == "FAIL"
+    assert report["advisory"]["audited"] == 2
+    assert report["advisory"]["uncovered"] == [_DEP]
+    assert "never audited: " + _DEP in report["advisory"]["error"]
+    assert "VACUOUS" not in report["advisory"]["error"]
+
+
+def test_advisory_skipped_dependency_is_a_finding() -> None:
+    """`--strict` makes the engine fail when it cannot collect a dependency,
+    and the parser refuses the same thing independently: a `skip_reason`
+    entry is a dependency the audit did not cover, which is coverage lost,
+    not a quieter kind of pass (L15)."""
+    stdout = _engine_report(
+        {"name": _DEP, "version": "1.0", "vulns": []},
+        {"name": "private-index-only", "skip_reason": "could not resolve"},
+    )
+    report = _audit_with_engine(_engine_outcome(stdout))
+    assert report["state"] == "FAIL"
+    advisory = report["advisory"]
+    assert advisory["state"] == "FAIL"
+    assert advisory["runs"]["resolved"]["state"] == "FAIL"
+    assert advisory["skipped"] == [
+        {"run": "resolved", "name": "private-index-only", "reason": "could not resolve"},
+    ]
+    assert "could not audit" in advisory["error"]
+
+
+def test_unusable_advisory_output_is_a_verdict() -> None:
+    """The engine's report is INPUT: not JSON, JSON that is not the report,
+    a duplicate key saying two things, a mis-typed field, or a depth that
+    bottoms out the parser under the byte cap -- each is the run's
+    fail-closed state with the tail retained for the reader, never a
+    traceback (L1, L4)."""
+    shapes = {
+        "columns": b"Name Version ID Fix Versions\n---- ------- -- ------------\n",
+        "not the report": b'{"fixes": []}',
+        "wrong shape": b'{"dependencies": "' + _DEP.encode() + b'==1.0"}',
+        "duplicate key": (
+            b'{"dependencies": [], '
+            b'"dependencies": [{"name": "x", "version": "1", "vulns": []}]}'
+        ),
+        "entry shape": b'{"dependencies": [{"name": 7}]}',
+        "vuln shape": (
+            b'{"dependencies": [{"name": "x", "version": "1", "vulns": [{"fix_versions": []}]}]}'
+        ),
+        "not utf-8": b'{"dependencies": [{"name": "\xff", "version": "1", "vulns": []}]}',
+        "depth bomb": b"[" * 20000 + b"]" * 20000,
+    }
+    for label, stdout in shapes.items():
+        report = _audit_with_engine(_engine_outcome(stdout))
+        assert report["state"] == "FAIL", label
+        run = report["advisory"]["runs"]["resolved"]
+        assert run["state"] == "FAIL", label
+        assert "unusable" in run["error"], label
+        assert "stdout_tail" in run, label
+        assert "resolved run: unusable" in report["advisory"]["error"], label
+
+
+def test_configured_advisory_engine_is_honored() -> None:
+    """`PIP_AUDIT` names the engine the way `CLANG` and `BCIR_OPT` name
+    theirs: a path or a command NAME, resolved through the same lookup the
+    default takes -- and a configured engine that does not resolve is
+    reported, never silently replaced by whatever PATH holds (L13)."""
+    from unittest.mock import patch
+    from tools.security import audit_dependencies as deps
+    calls: list = []
+    table = {
+        "pip-audit": "/usr/bin/pip-audit",
+        "my-audit": "/opt/bin/my-audit",
+        "/opt/bin/my-audit": "/opt/bin/my-audit",
+    }
+
+    def which(name):
+        calls.append(name)
+        return table.get(name)
+
+    with patch.object(deps.shutil, "which", side_effect=which):
+        with patch.dict(os.environ, {"PIP_AUDIT": ""}):
+            assert deps.advisory_engine() == "/usr/bin/pip-audit"
+        with patch.dict(os.environ, {"PIP_AUDIT": "my-audit"}):
+            assert deps.advisory_engine() == "/opt/bin/my-audit"
+        with patch.dict(os.environ, {"PIP_AUDIT": "/opt/bin/my-audit"}):
+            assert deps.advisory_engine() == "/opt/bin/my-audit"
+        with patch.dict(os.environ, {"PIP_AUDIT": "/nowhere/pip-audit"}):
+            assert deps.advisory_engine() is None
+            report = audit_deps(_ROOT, require_advisory=True)
+    assert calls.count("pip-audit") == 1, "the default is consulted only when nothing is configured"
+    assert report["state"] == "FAIL"
+    assert "/nowhere/pip-audit" in report["advisory"]["error"]
+
+
+def test_ci_owns_the_advisory_rail() -> None:
+    """A skipped rail needs an owner (L10): exactly one job installs the
+    advisory engine, pinned to one exact version, and that job passes
+    `--require-advisory`; every other job that runs the audit asserts the
+    inventory only, so the engine's absence fails precisely where it is
+    unexpected and nowhere else."""
+    import re
+    workflow = (_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    jobs = re.split(r"\n  (?=[a-z][a-z0-9-]*:\n)", workflow)
+    owners = [job for job in jobs if "--require-advisory" in job]
+    assert len(owners) == 1, "exactly one job owns the advisory rail"
+    owner = owners[0]
+    assert owner.startswith("security-assurance:")
+    assert "audit_dependencies.py --require-advisory" in owner
+    pins = re.findall(r"pip-audit==(\d+\.\d+\.\d+)\b", owner)
+    assert len(pins) == 1, "the owner installs the engine pinned to one exact version"
+    installers = [job for job in jobs if "pip-audit==" in job]
+    assert installers == owners, "the job that installs the engine is the job that requires it"
+    audits = [job for job in jobs if "audit_dependencies.py" in job]
+    assert len(audits) >= 2, "the inventory half still runs outside the owner"

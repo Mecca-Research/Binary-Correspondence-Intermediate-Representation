@@ -127,13 +127,20 @@ resolver. LLVM 23.1.0 is released and the rail needs one rename to compile on it
 already provides the new name). The report's D1-D10 ledger lists the live documentation drift
 (stale verifier-law ranges in ~20 docs, the LangRef's appended 3,190-line snapshot, the stale PER
 hand-off note, ASN.1 roadmap self-contradictions) and §9 ranks the next slices.
-**MLIR rail on LLVM 23 (this branch, after the 2026-09-03 analysis).** `applyPatternsAndFoldGreedily`
+**MLIR rail on LLVM 23 (PR #752, after the 2026-09-03 analysis).** `applyPatternsAndFoldGreedily`
 was renamed to `applyPatternsGreedily` and all 51 `builder.create<OpTy>(...)` call sites became
 `OpTy::create(builder, ...)` (both spellings exist in LLVM 22; the old ones are gone/deprecated in 23);
 `mlir-rail-validate` now runs `llvm: ["22", "23"]`, the tool scripts try the `-23` names first, and
 `tools/local/{setup_mlir,check_rail,env_mlir}.sh` take `MLIR_MAJOR` (default 23). Locally the rail
 passed identically on conda-forge 22.1.8 and 23.1.0 (tblgen, IRDL, ODS, passes incl. asm-smoke,
 malformed differential, bytecode, training tiers) built with each toolchain's own clang++.
+The advisory half of the dependency audit is real from 2026-09-03: `security-assurance`
+installs `pip-audit==2.10.1` and runs `audit_dependencies.py --require-advisory` — a resolved
+run (pip's closure) and a floor run (each declaration at its lowest admitted version, which is
+also what covers `setuptools`, dropped by pip-audit's scratch venv) reconciled against the
+declared names; every other job asserts the inventory only. Dated findings and the currency
+table: `docs/security/DEPENDENCY_AUDIT_2026-09-03.md`.
+
 <!-- KNOWLEDGE:END -->
 
 ## Generated inventory (do not edit — rebuild with build_digest.py)
@@ -143,7 +150,7 @@ Top-level: ./bcir ./channels ./docs ./llvm-training ./mlir ./runtime ./tools
 ### STATUS.md counts (generated source of truth)
 | Metric | Value |
 |---|---|
-| Static Python `test_*` function inventory | **3521** across 254 files |
+| Static Python `test_*` function inventory | **3532** across 254 files |
 | Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **133** |
 | Static registered-pass inventory | **37** |
 | Static MLIR fixture inventory (`mlir/test/`) | **117** files; 300 `expected-error` markers |
@@ -220,4 +227,5 @@ Top-level: ./bcir ./channels ./docs ./llvm-training ./mlir ./runtime ./tools
 - **docs/research/BCIR_TMSAO_ASN1_JSON_DRIVER_PROPOSAL.md** (974L): 1. Executive verdict · 2. Operational definition of TMSAO · 3. Source-backed state at PR #739 · 4. GEM+: the canonical architecture · 5. Solver portfolio and lower-bound stack · 6. Scaling, scheduling, and memory program · 7. ASN.1 through PR #739 and its GEM+ role · 8. Python-to-C++ migration roadmap · 9. Hardware profiles and the native measurement rig · 10. API, database, service, and IPC architecture · 11. Driver, kernel, FPGA, and SASOS implications · 12. Prioritized implementation program · 13. Risk register and decision rules
 - **docs/research/BCIR_TRITON_COMPARATIVE_ANALYSIS.md** (271L): 0. Executive verdict · 1. The comparison matrix · 2. Where the two systems actually touch (BCIR surfaces, anch · 3. The migration ledger · 4. Direct answers to the three questions · 5. Recommended next steps (ranked) · 6. Messaging discipline (the corrections, restated so they d
 - **docs/research/CLANG_COMPARISON.md** (98L): The fair frame · Results · Where we WIN · Where we MATCH · Where we LOSE (honest) · Bottom line
-- **docs/security/laws.md** (666L): The harvest protocol · The staleness rule (declared, not discretionary) · The laws · Campaign classification summary
+- **docs/security/DEPENDENCY_AUDIT_2026-09-03.md** (213L): 1. Verdict · 2. Inventory and currency · 3. The advisory scan — method and result · 4. What the rail enforces from this slice on · 5. What this audit does not cover · 6. Recommendations
+- **docs/security/laws.md** (715L): The harvest protocol · The staleness rule (declared, not discretionary) · The laws · Campaign classification summary
