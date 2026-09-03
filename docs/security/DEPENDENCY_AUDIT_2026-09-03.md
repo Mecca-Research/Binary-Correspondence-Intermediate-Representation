@@ -61,9 +61,13 @@ Native and workflow dependencies:
 - **GitHub Actions** (all SHA-pinned; pinning is test-enforced): `actions/checkout`
   (13 uses, annotated `# v4`), `actions/setup-python` (4 uses, `# v5`), `actions/cache`
   (2), `actions/upload-artifact` (3), `awalsh128/cache-apt-pkgs-action` (8). The SHAs'
-  currency against upstream releases was **not verified**: `api.github.com` is not reachable
-  from this host's proxy. Three of the five carry no version comment, so a reader cannot
-  tell a pin's age without resolving it.
+  currency against upstream releases was **not verified** from this host (`api.github.com` is
+  not reachable through its proxy). The runner answered part of the question on this PR's
+  first CI run: `actions/checkout` and `actions/setup-python` at the pinned SHAs target
+  Node.js 20, which GitHub deprecated on the runners in 2025-09 and now forces onto Node 24
+  with a warning in every job log; both actions have Node-24 releases upstream, so those two
+  pins are at least one major behind. Three of the five carry no version comment, so a
+  reader cannot tell a pin's age without resolving it.
 - **apt** in `security-assurance`: `clang lld llvm libclang-rt-18-dev` — the runner's system
   clang is 18 on Ubuntu 24.04, and a sanitizer runtime must match the compiler that emits
   the instrumentation, so the 18 pin is coherent there and independent of the MLIR rail's
@@ -99,6 +103,13 @@ typing-extensions 4.16.0 · virtualenv 21.7.8 · distlib 0.4.3 · filelock 3.32.
 platformdirs 4.11.7 · python-discovery 1.6.0 · jinja2 3.1.6 · markupsafe 3.0.3.
 
 `setuptools` is absent from that list by construction (§1, third bullet).
+
+The same rail on the runner (`security-assurance`, ubuntu-latest, CPython 3.12.14, the first CI
+run with the engine installed) reached the identical verdict in 12 s:
+
+```
+audit_dependencies: PASS asserted=True expected=6 mismatches=0 advisory=PASS audited=46 covered=6/6
+```
 
 **Floor run** — every declaration pinned at the lowest version it admits (`>=X` becomes
 `==X`; `==X` stays), no resolver, no scratch environment, only the advisory database:
@@ -185,7 +196,8 @@ Report shape (`--json-out`), abbreviated from the live run:
 - **Native dependencies.** apt and conda-forge packages (LLVM/MLIR, clang, compiler-rt) are
   not advisory-scanned; the distributions' own security processes are relied on.
 - **GitHub Actions currency.** SHAs are pinned and the pinning is test-enforced, but whether
-  each SHA is the current release of its action was not checked from this host (§2).
+  each SHA is the current release of its action was not checked from this host; the runner's
+  Node-20 deprecation warning shows two of the five are behind (§2).
 - **Static analysis of the repository's own code** is CodeQL's job (three languages, green on
   every recent run) and out of this audit's scope.
 
@@ -199,8 +211,10 @@ Report shape (`--json-out`), abbreviated from the live run:
    landing only on a newer line.
 2. **`build` 1.2.2.post1 → 1.6.0** in the `python-floor` job: pure packaging, low risk, and
    the pin is old enough that its next advisory would arrive without a fix on that line.
-3. **Annotate the three unannotated action pins** with their release tags and, from a host
-   with GitHub API access, compare all five SHAs with upstream's current releases.
+3. **Move `actions/checkout` and `actions/setup-python` to their Node-24 releases** (the runner
+   already warns on every job), annotate the three unannotated action pins with their release
+   tags, and, from a host with GitHub API access, compare all five SHAs with upstream's
+   current releases.
 4. **Decide on a lockfile** for the extras and the CI tools (`pip-compile --generate-hashes`
    or `uv export`): it would let the resolved run become `--require-hashes --disable-pip`
    (no resolver, no scratch environment, and the audit's only unbounded network dependency
