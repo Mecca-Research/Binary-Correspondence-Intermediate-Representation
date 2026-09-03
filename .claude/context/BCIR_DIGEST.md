@@ -1,7 +1,7 @@
 # BCIR repo digest (compressed knowledge base — read this INSTEAD of exploring)
 
 <!-- KNOWLEDGE:BEGIN -->
-## Curated knowledge (current through PR #748 and package 0.2.0, 2026-08-24)
+## Curated knowledge (current through PR #749 and package 0.2.0, 2026-09-03)
 
 **What BCIR is.** A registry-first, phase-ordered, lane-typed, cost-governed
 correspondence IR: `K_BCIR(G|H,Θ) = min_π M(π,Θ) s.t. R(π,Θ) ⪯
@@ -96,8 +96,19 @@ frozen baseline harness + G0/G9, two 2026-08-12 security audits (Class A second-
 Class B vacuous-check; the host-parser rule), tools-namespace and safetensors-mapping
 fixes, and the setuptools-83-floor arc (#747 raised it; #748 opened as a revert, then
 reversed course — the floor stands and a policy regression now rejects any lower floor).
-#749 (open): maintained assurance rails — secret scanning, inventory-first dependency
-audit, bounded fuzz campaigns, subprocess policy, fail-closed independent review.
+#749 (merged): the maintained assurance rails — secret scanning, inventory-first
+dependency audit, bounded fuzz/decoder campaigns, a malformed differential, subprocess
+policy, and fail-closed independent review — hardened over 42 adversarial review rounds
+and 240 graded findings. Its durable output is `docs/security/laws.md`: **21 gate-authoring
+laws (L1–L21)**, each with witness tests and a C/C++ port note, plus the per-finding
+harvest in `docs/security/pr749-harvest.csv` (20 NEW-LAW / 181 INSTANCE / 39 LOCAL). Read
+that registry before writing or reviewing any gate. Side effects that are now repo facts:
+the Python floor is **3.11** (the 3.10 TOML fallback is deleted, and a `python-floor` CI
+job refuses to run on any other interpreter), the packaged wheel is a tested artifact
+(`bcir.tests.run_all` runs from an installed wheel, and `_REPO_ONLY_MODULES` is a
+per-test-derived registry, not a per-module guess), and `tools/security/` carries shared
+predicates — `git_index`, `proc_bounds`, `report_hygiene` — that every rail must reuse
+rather than re-implement.
 Gotchas: quick tier intentionally hides toolchains; thorough must use one coherent LLVM
 major (22 — an LLVM-18 host cannot build `mlir/`, honest skip). The default target is
 host-adaptive. Keep local concurrency at two and never launch unbounded fuzzing,
@@ -114,7 +125,7 @@ Top-level: ./bcir ./channels ./docs ./llvm-training ./mlir ./runtime ./tools
 ### STATUS.md counts (generated source of truth)
 | Metric | Value |
 |---|---|
-| Static Python `test_*` function inventory | **3334** across 253 files |
+| Static Python `test_*` function inventory | **3519** across 254 files |
 | Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **133** |
 | Static registered-pass inventory | **37** |
 | Static MLIR fixture inventory (`mlir/test/`) | **117** files; 300 `expected-error` markers |
@@ -190,3 +201,4 @@ Top-level: ./bcir ./channels ./docs ./llvm-training ./mlir ./runtime ./tools
 - **docs/research/BCIR_TMSAO_ASN1_JSON_DRIVER_PROPOSAL.md** (974L): 1. Executive verdict · 2. Operational definition of TMSAO · 3. Source-backed state at PR #739 · 4. GEM+: the canonical architecture · 5. Solver portfolio and lower-bound stack · 6. Scaling, scheduling, and memory program · 7. ASN.1 through PR #739 and its GEM+ role · 8. Python-to-C++ migration roadmap · 9. Hardware profiles and the native measurement rig · 10. API, database, service, and IPC architecture · 11. Driver, kernel, FPGA, and SASOS implications · 12. Prioritized implementation program · 13. Risk register and decision rules
 - **docs/research/BCIR_TRITON_COMPARATIVE_ANALYSIS.md** (271L): 0. Executive verdict · 1. The comparison matrix · 2. Where the two systems actually touch (BCIR surfaces, anch · 3. The migration ledger · 4. Direct answers to the three questions · 5. Recommended next steps (ranked) · 6. Messaging discipline (the corrections, restated so they d
 - **docs/research/CLANG_COMPARISON.md** (98L): The fair frame · Results · Where we WIN · Where we MATCH · Where we LOSE (honest) · Bottom line
+- **docs/security/laws.md** (666L): The harvest protocol · The staleness rule (declared, not discretionary) · The laws · Campaign classification summary

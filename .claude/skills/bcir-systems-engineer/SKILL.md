@@ -15,9 +15,10 @@ description: >-
 # BCIR systems engineer
 
 How to think and work like the engineers who built this repository — distilled from the
-full PR record (#2–#748), the 1,699-commit history, the docs tree, and the repo's own
-audits. This skill is the *method*; the repo docs are the *law*. When they conflict,
-the docs win, in this authority order:
+full PR record (#2–#749), the commit history, the docs tree, and the repo's own audits
+— including the 42-round adversarial campaign of #749, whose 240 graded findings are
+distilled into `docs/security/laws.md`. This skill is the *method*; the repo docs are
+the *law*. When they conflict, the docs win, in this authority order:
 
 > LangRef → generated/static evidence and implementation → current-state audit →
 > master roadmap → companion roadmaps → research notes → development history.
@@ -143,7 +144,14 @@ These are load-bearing across every subsystem; a PR that bends one will be rever
   broke PR #719 mid-session; `test_the_gate_and_the_harness_link_the_same_sources`
   guards it now — extend that pattern for new gate/harness pairs.
 - **New test files** must be registered in `bcir/tests/run_all.py`
-  (`test_registry_complete` fails otherwise).
+  (`test_registry_complete` fails otherwise) — and registration is a claim about the
+  **shipped package**, not only the checkout. If a test needs an asset, ask first
+  whether the asset should ship (`[tool.setuptools.package-data]`) and whether library
+  code reads it through `importlib.resources` rather than a checkout- or
+  CWD-relative path; only then consider `_REPO_ONLY_MODULES`, and scope the entry to
+  the dependent **test**, never the whole module. Two rounds of #749 were spent on
+  exclusions that were hiding a broken wheel and a mis-resolved resource — 98 runnable
+  tests between them (L21).
 - **Editing large modules**: use exact-match edits, never scripted `str.replace` over a
   large file — anchors that match elsewhere have caused real mis-targets here.
 - **Read two rails out of their own sources** rather than mirroring into a third list;
@@ -165,6 +173,14 @@ bash tools/irdl/check_corpus.sh
 python tools/docs/gen_status.py --check             # + regenerate STATUS.md LAST after test changes
 python tools/docs/check_links.py
 git diff --check
+
+# the assurance rails (#749) — each one a required CI job
+python tools/security/scan_secrets.py
+python tools/security/audit_dependencies.py
+python tools/security/audit_tool_boundaries.py
+python tools/security/run_decoder_campaign.py --mutations 24 --fuzz-runs 200 --fuzz-seconds 8
+python tools/security/run_malformed_differential.py
+python tools/security/independent_review.py --self-check
 ```
 
 - Quick tier *intentionally* hides compiler/toolchain capabilities and expects explicit
@@ -207,7 +223,38 @@ git diff --check
 
 ## 8. Security-engineering lessons (paid for; do not re-buy)
 
-- **Two failure classes** cover most defects here. Class A, *a second spelling*: a
+**The registry owns this now.** `docs/security/laws.md` holds **21 gate-authoring laws
+(L1–L21)**, each with its witness tests and a C/C++ port note, derived from 240 graded
+findings across #749's 42 review rounds. Read it before writing or reviewing a gate;
+`bcir-cicd` is the companion skill for the pipeline half. What follows is the part of
+that experience that generalizes beyond gates, and the shape of the registry so you can
+navigate it:
+
+- The four laws that produced the most findings are the four to design against first:
+  **L5** everything committed is scannable data (tree names, symlink targets, archive
+  members, every text encoding), **L3** bounds live where the resource commits (a `stat`
+  answers about the past; the *read* is the commitment), **L1** every exit is a verdict
+  (a traceback is a lost finding *and* a lie about the outcome), **L11** a witness must
+  hit the law it exists to test, on every rail.
+- **L14 — one predicate per repeated defect — is the campaign's own summary.** The
+  dominant defect shape was never a novel bug: it was a mechanism landed on two rails
+  out of three. Fixing a repeated defect per-site is how there came to be N of them; a
+  shared predicate must also be **total**, because a precondition living outside it is a
+  defect held in reserve for its second caller.
+- **A budget that measures the wrong resource is not a budget** (L3). Empty concatenated
+  compressed members advance a bytes-out cap by zero while each one costs a decompressor;
+  a byte-statistics heuristic encodes the script of the text it was tested on.
+- **A report is an egress surface** (L7). Findings carry fingerprints, never values; a
+  wrapped tool's stdout is a report field; a reviewer *quotes the code it reviews*, so
+  its findings are the field guaranteed to carry the secret. Redact by position, and
+  with the same predicate that decides what to report.
+- **A skip is where a shipping defect hides** (L21). An exclusion converts "the artifact
+  is broken" into "this does not run here", and in a green run those read identically.
+- **A `--require-X` flag claims the rail RAN**, not that it was discoverable at startup
+  (L2); and a witness that asserts a *substring* of what should have been removed passes
+  on output that violates the law (L11) — that one was found by CodeQL, not by the loop,
+  because a review pair is structurally blind to its own assertions.
+- **Two failure classes** still cover most defects here. Class A, *a second spelling*: a
   strict decoder accepting bytes the canonical rules spell exactly once — every
   canonicality fix must assert both halves (bad spelling refused AND the encoder's own
   output still round-trips). Class B, *a vacuous check*: a law returning clean over
@@ -232,7 +279,7 @@ git diff --check
 - Deliberate unsigned wraps in the C twins are commented and well-defined;
   `-fsanitize=integer` findings there need the recorded suppressions, not "fixes".
 
-## 9. Current state and open edges (2026-08, post-#748)
+## 9. Current state and open edges (2026-09, post-#749)
 
 Landed and gated: R1–R25 dual-rail with negative fixtures; the C-front twin
 (driver-subset C23, ~21 fuzzer-found miscompiles turned into gates; `_Decimal*`
@@ -241,7 +288,13 @@ DER/BER, PER, OER, XER, JER, ECN complete with R24/R25; cost-governed encoding
 selection with measured native tables and two admitted calibration targets); BCIRQ8 +
 TinyLlama standalone-C parity; the bounded model labs; HAM metadata planning; GEM+
 G0 landed and G9 half-landed (alias facts to LLVM — the emitter no longer lies with
-blanket `noalias`).
+blanket `noalias`); and the maintained **assurance rails** (`tools/security/`: secret
+scan, dependency audit, tool-boundary audit, decoder campaign, malformed differential,
+fail-closed independent review), each a required CI job, with their laws registered in
+`docs/security/laws.md`. Two repo-wide facts came out of that arc: the Python floor is
+**3.11** with a `python-floor` job that refuses any other interpreter, and the wheel is
+a tested artifact — the suite runs from an installed package, so a resource a test reads
+must actually ship.
 
 Open, deliberately: resident UART/virtio drivers and UAPI v1 (UART + virtio-blk
 evidence must come first); live telemetry transports; GEM+ G1–G8/G10 (one schedule
