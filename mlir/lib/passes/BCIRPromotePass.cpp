@@ -66,7 +66,7 @@ struct PromoteLanesPass
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<PromoteGGGtoUX>(&getContext());
-    if (failed(applyPatternsAndFoldGreedily(getOperation(),
+    if (failed(applyPatternsGreedily(getOperation(),
                                             std::move(patterns))))
       signalPassFailure();
   }

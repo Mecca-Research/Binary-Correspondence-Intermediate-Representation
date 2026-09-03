@@ -71,7 +71,7 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     (`bcir-audit`/`-optimize`/`-hydrate`/`-lower-llvm`; `bcir-aot` is partial AOT
     preparation that leaves unsupported BCIR/GEM operations in mixed-dialect IR), and the IRDL
     projection for stock `mlir-opt`. Validated in CI on the latest LLVM/MLIR
-    release — LLVM 22, gating (`mlir-rail-validate`).
+    release — LLVM 23, gating (`mlir-rail-validate`; LLVM 22 stays in the matrix for one release cycle).
 - **`runtime/c/`** — the production C rail (component count in
   [`STATUS.md`](STATUS.md)): the freestanding (no-libc) StreamPack decoder/encoder/
   executor + hydrate + scalar planner, allocation-free BCAB reader/selector, direct

@@ -65,7 +65,7 @@ def test_mlir_bootstrap_never_executes_an_unverified_existing_file() -> None:
             }
         )
         result = subprocess.run(
-            ["bash", str(_ROOT / "tools/local/setup_mlir22.sh")],
+            ["bash", str(_ROOT / "tools/local/setup_mlir.sh")],
             cwd=_ROOT,
             env=env,
             capture_output=True,
@@ -83,9 +83,9 @@ def test_validation_scripts_use_operation_private_tempdirs() -> None:
         "tools/wsl/check_bytecode.sh",
         "tools/wsl/check_ods_examples.sh",
         "tools/irdl/check_corpus.sh",
-        "tools/local/check_rail22.sh",
+        "tools/local/check_rail.sh",
     )
-    fixed_names = re.compile(r"/tmp/(?:pe|bce|bc\.mlirbc|ods_err|irdl_err|rail22_)")
+    fixed_names = re.compile(r"/tmp/(?:pe|bce|bc\.mlirbc|ods_err|irdl_err|rail22_|rail_)")
     for relative in scripts:
         text = (_ROOT / relative).read_text(encoding="utf-8")
         assert "mktemp -d" in text, relative

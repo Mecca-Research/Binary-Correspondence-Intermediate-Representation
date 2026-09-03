@@ -22,7 +22,7 @@ instruction selector by default.
 - `mlir/` is the ODS/TableGen/C++ law rail: verifier and optimizer passes, partial AOT
   preparation, IRDL projection, typed x86 entry/descriptor/segment/ordinary-interrupt
   edges, and the `bcir.asn1.*` (R24) / `bcir.ecn.*` (R25) schema-legality dialects.
-  `bcir-aot` may intentionally leave residual BCIR/GEM operations. Targets LLVM 22.
+  `bcir-aot` may intentionally leave residual BCIR/GEM operations. Targets LLVM 23 (22 still in the CI matrix).
 - `runtime/c/` contains three enforced classes: heap-free freestanding code; hosted
   compiler/model tools with allocator injection and fail-every-allocation tests; and
   driver adapters using handles/offsets rather than cross-boundary pointers. It includes
@@ -110,7 +110,7 @@ per-test-derived registry, not a per-module guess), and `tools/security/` carrie
 predicates — `git_index`, `proc_bounds`, `report_hygiene` — that every rail must reuse
 rather than re-implement.
 Gotchas: quick tier intentionally hides toolchains; thorough must use one coherent LLVM
-major (22 — an LLVM-18 host cannot build `mlir/`, honest skip). The default target is
+major (23, with 22 still passing — an LLVM-18 host cannot build `mlir/`, honest skip). The default target is
 host-adaptive. Keep local concurrency at two and never launch unbounded fuzzing,
 inference, emulation, or nested build loops. New C sources must land in the
 check_runtime.sh gate block AND `native_bench._SOURCES` together (the #719 wiring trap).
@@ -127,6 +127,13 @@ resolver. LLVM 23.1.0 is released and the rail needs one rename to compile on it
 already provides the new name). The report's D1-D10 ledger lists the live documentation drift
 (stale `R1-R23` ranges in ~20 docs, the LangRef's appended 3,190-line snapshot, the stale PER
 hand-off note, ASN.1 roadmap self-contradictions) and §9 ranks the next slices.
+**MLIR rail on LLVM 23 (this branch, after the 2026-09-03 analysis).** `applyPatternsAndFoldGreedily`
+was renamed to `applyPatternsGreedily` and all 51 `builder.create<OpTy>(...)` call sites became
+`OpTy::create(builder, ...)` (both spellings exist in LLVM 22; the old ones are gone/deprecated in 23);
+`mlir-rail-validate` now runs `llvm: ["22", "23"]`, the tool scripts try the `-23` names first, and
+`tools/local/{setup_mlir,check_rail,env_mlir}.sh` take `MLIR_MAJOR` (default 23). Locally the rail
+passed identically on conda-forge 22.1.8 and 23.1.0 (tblgen, IRDL, ODS, passes incl. asm-smoke,
+malformed differential, bytecode, training tiers) built with each toolchain's own clang++.
 <!-- KNOWLEDGE:END -->
 
 ## Generated inventory (do not edit — rebuild with build_digest.py)

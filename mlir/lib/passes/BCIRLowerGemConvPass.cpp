@@ -181,7 +181,7 @@ struct LowerGemConvPass
       const int64_t count = rows * cols;  // tile element count
 
       std::string sym = (name + "_t" + Twine(idx)).str();
-      builder.create<GEMBlockOp>(
+      GEMBlockOp::create(builder,
           loc,
           /*sym_name=*/StringAttr::get(ctx, sym),
           /*base=*/builder.getI64IntegerAttr(base),

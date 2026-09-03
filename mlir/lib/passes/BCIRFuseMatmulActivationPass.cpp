@@ -164,7 +164,7 @@ struct FuseMatmulActivationPass
     // epilogue half (kind + dtype) + the proof-carrying fusion decision (the FusionCertificate
     // analog: unfused/fused score + gain). sym_name = <matmul>_<activation>_fused.
     std::string sym = (mm.getSymName() + "_" + act.getSymName() + "_fused").str();
-    builder.create<GEMFusedMatmulActivationOp>(
+    GEMFusedMatmulActivationOp::create(builder,
         mm.getLoc(),
         /*sym_name=*/StringAttr::get(ctx, sym),
         /*m=*/ab.getI64IntegerAttr(static_cast<int64_t>(mm.getM())),

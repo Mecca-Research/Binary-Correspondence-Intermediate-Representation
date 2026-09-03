@@ -585,7 +585,8 @@ jobs:
   mlir-rail-validate:
     name: BCIR MLIR rail (LLVM ${{ matrix.llvm }})
     runs-on: ubuntu-latest
-    # The gating MLIR rail tracks the LATEST LLVM/MLIR release (22). Ubuntu's default
+    # The gating MLIR rail tracks the LATEST LLVM/MLIR release (23; 22 stays in the matrix
+    # for one release cycle, as the 21->22 move did in PRs #243-#246). Ubuntu's default
     # repos on ubuntu-latest top out near LLVM 18/19, so the toolchain comes from
     # apt.llvm.org (the llvm.sh helper adds the signed repo). The scripts auto-resolve
     # the toolchain version-agnostically (build_mlir.sh picks the highest installed
@@ -598,7 +599,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["22"]
+        llvm: ["22", "23"]
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

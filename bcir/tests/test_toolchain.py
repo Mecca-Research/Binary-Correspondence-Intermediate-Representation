@@ -112,8 +112,8 @@ def test_llvm_suffix_and_bin_take_precedence():
         assert dict(r.paths) == expected
 
 
-def test_mlir22_environment_pins_backend_tools_to_its_distribution():
-    env_script = (_ROOT / "tools" / "local" / "env_mlir22.sh").read_text(
+def test_local_mlir_environment_pins_backend_tools_to_its_distribution():
+    env_script = (_ROOT / "tools" / "local" / "env_mlir.sh").read_text(
         encoding="utf-8")
     assert 'export LLVM_BIN="${_ENV}/bin"' in env_script
 
