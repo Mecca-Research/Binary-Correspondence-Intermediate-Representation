@@ -589,13 +589,13 @@ correctness-closure items that are prerequisites rather than GEM+ slices.
 ```
 Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)
                                            S0-2 R11 per-resource generation vectors
-                                           S0-3 verify checkpoints in bcir-optimize/-hydrate + the inert fixtures
+                                           S0-3 verify checkpoints in bcir-optimize/-hydrate + the inert fixtures  <- LANDED (S0-B)
                                            S0-4 EV1–EV3 in verify_all                 <- LANDED (S0-A)
-                                           S0-5 module-scoped verifier walks
+                                           S0-5 module-scoped verifier walks             <- LANDED (S0-B)
                                            S0-6 shared structural-law corpus, both rails
                                            S0-7 R9 re-derives offer/cost/feasibility; C R9 width/cost  <- LANDED (S0-A)
                                            S0-8 lowering tail contract; convolution overflow fixture
-                                           S0-9 ODS→IRDL inventory gate
+                                           S0-9 ODS→IRDL inventory gate                  <- LANDED (S0-B)
                                            S0-10 bcir-performance-audit rename + wording sweep  <- LANDED (S0-A)
                                            G7   native measurement repair
 Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5

@@ -115,6 +115,15 @@ a forged step cost passed 4,096 times out of 4,096
 `verify.plan.r9.vacuous` freezes that 1.0 and now reads 0.0). The C rail's R9
 accepted any `cost` and any `width`
 (`test_c_planner_width_contract_and_r9_rederives_costs`).
+S0-B instances (the MLIR rail, 2026-09-04): two compiled fixtures
+(`verify_timing_lifetime.mlir`, `cost_model_barrier.mlir`) carried RUN lines
+and expected-error markers that no runner executed, so their five R19–R21
+negatives asserted nothing (`test_mlir_fixture_inventory.py` named them
+before the runner did); `bcir-optimize` and `bcir-hydrate` advertised
+verifier checkpoints and ran no verifier, so an illegal module planned and
+hydrated (`pipeline_checkpoints.mlir` refuses it under both); and R2 held
+vacuously across modules -- a root-global registry map let one module's
+claim resolve another's resource (`verify_module_scope.mlir`).
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -382,6 +391,10 @@ the two shared the offer as well as the price. On the C rail
 `bcir_plan_base_cost` moved into `bcir_plan.h` as a header inline so
 `bcir_plan.c` and `bcir_verify.c` compute one base cost without every build
 that links the verifier needing a new object.
+S0-B instance (2026-09-04): the scope of an MLIR pass is ONE predicate
+(`BCIRPassSupport.h` `forEachScope` / `walkScope`), shared by `-bcir-verify`,
+`-bcir-select-realization`, `-bcir-rcsp` and the GEM batch/schedule/lower passes -- the
+finding was the same root-global walk landed in each of them separately.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -417,6 +430,12 @@ Installed-environment audit instance:
 interpreter sees must come back audited; the repository's own distribution is
 the one declared exclusion, reported, because an unrelated project may own
 that name on PyPI).
+S0-B instances (2026-09-04): `test_mlir_fixture_inventory.py` reconciles the
+fixture directory against the runner scripts both ways (a fixture nothing
+runs, a reference to no fixture), reading both rather than a third list;
+`tools/irdl/check_inventory.py` reconciles the ODS dialect, the IRDL
+projection and the manifest of declared-unprojected operations both ways,
+and refuses an empty inventory as vacuous.
 **Port note:** identical everywhere.
 
 ### L16 — Never green yourself by editing the neighbor

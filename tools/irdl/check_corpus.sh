@@ -12,6 +12,12 @@ ERR="${TMP_ROOT}/irdl.err"
 IRDL="${ROOT}/mlir/irdl/bcir.irdl.mlir"
 CORPUS="${ROOT}/mlir/test/irdl"
 
+# S0-9: the ODS -> IRDL inventory gate. Pure text over the dialect, the projection and the
+# manifest of declared-unprojected operations; it needs no toolchain, so it runs before the
+# mlir-opt resolution and its early exit -- a host without mlir-opt still refuses drift.
+echo "[irdl] ODS -> IRDL inventory (tools/irdl/check_inventory.py)"
+python3 "${ROOT}/tools/irdl/check_inventory.py" || exit 1
+
 # Resolve mlir-opt version-agnostically (highest /usr/lib/llvm-*/bin/mlir-opt, then PATH names).
 MLIR_OPT="${MLIR_OPT:-$(ls /usr/lib/llvm-*/bin/mlir-opt 2>/dev/null | sort -V | tail -1)}"
 MLIR_OPT="${MLIR_OPT:-$(command -v mlir-opt-23 || command -v mlir-opt-22 || command -v mlir-opt || command -v mlir-opt-18 || true)}"

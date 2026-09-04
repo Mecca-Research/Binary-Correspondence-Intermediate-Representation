@@ -42,19 +42,28 @@ struct SelectRealizationPass : public PassWrapper<SelectRealizationPass, Operati
   }
 
   void runOnOperation() override {
-    Operation *root = getOperation();
+    // S0-5 (module scope): a selection prices the paths, budgets and policies of ITS
+    // `bcir.module`; a namesake path in another module of the same file is a different
+    // path. See BCIRPassSupport.h.
     Builder b(&getContext());
+    bool ok = true;
+    forEachScope(getOperation(), [&](Operation *scope) { ok &= selectScope(scope, b); });
+    if (!ok)
+      signalPassFailure();
+  }
+
+  bool selectScope(Operation *root, Builder &b) {
     bool ok = true;
 
     llvm::DenseMap<StringRef, KBCIRPathOp> pathByName;
     llvm::DenseMap<StringRef, KBCIRBudgetOp> budgetByName;
     llvm::DenseMap<int, KBCIRPolicyOp> policyByMode; // PolicyMode -> first policy
-    root->walk([&](KBCIRPathOp p) { pathByName[p.getSymName()] = p; });
-    root->walk([&](KBCIRBudgetOp bud) { budgetByName[bud.getSymName()] = bud; });
-    root->walk(
-        [&](KBCIRPolicyOp p) { policyByMode.try_emplace(static_cast<int>(p.getMode()), p); });
+    walkScope(root, [&](KBCIRPathOp p) { pathByName[p.getSymName()] = p; });
+    walkScope(root, [&](KBCIRBudgetOp bud) { budgetByName[bud.getSymName()] = bud; });
+    walkScope(root,
+              [&](KBCIRPolicyOp p) { policyByMode.try_emplace(static_cast<int>(p.getMode()), p); });
 
-    root->walk([&](KBCIRSelectOp s) {
+    walkScope(root, [&](KBCIRSelectOp s) {
       auto polIt = policyByMode.find(static_cast<int>(s.getPolicy()));
       if (polIt == policyByMode.end()) {
         s.emitError("bcir-select-realization: no kbcir.policy declares the "
@@ -126,8 +135,7 @@ struct SelectRealizationPass : public PassWrapper<SelectRealizationPass, Operati
         ok = false;
       }
     });
-    if (!ok)
-      signalPassFailure();
+    return ok;
   }
 };
 
