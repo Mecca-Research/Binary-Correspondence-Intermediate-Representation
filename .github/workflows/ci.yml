@@ -20,7 +20,7 @@ jobs:
   # The former monolithic "oracle + training" job is split into three jobs that run in
   # PARALLEL (oracle | c-runtime | llvm-training) — the check-runtime / decoder-fuzz / training
   # work no longer sits sequentially behind the ~80s Python suite, so the critical path drops
-  # from their sum to their max. Each job restores the same cached toolchain (clang/lld/llvm/node).
+  # from their sum to their max. Each job restores the same cached toolchain (clang/lld/llvm).
   oracle:
     name: BCIR oracle ${{ matrix.shard }}/2 (Python conformance + parity + fuzz)
     runs-on: ubuntu-latest
@@ -52,16 +52,30 @@ jobs:
           printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
             | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
 
-      - name: Install lowering toolchain (clang/lld/llvm for AOT/JIT/WASM tests; node for WASM; mono for CIL)
+      - name: Install lowering toolchain (clang/lld/llvm for AOT/JIT/WASM tests; mono for CIL)
         # Caches the INSTALLED file tree (not just the .debs), so a warm run restores it in seconds
         # and skips apt's dpkg unpack/configure entirely -- the remaining install-time floor. Pinned
-        # to v1.6.1 by commit SHA (supply-chain). Bump `version` to invalidate the cache.
+        # to v1.6.3 by commit SHA (supply-chain). Bump `version` to invalidate the cache.
         # mono-devel supplies ilasm + the mono runtime so the stackify CIL emit is ASSEMBLED AND
         # EXECUTED on a real CLR (test_stackify_exec.py), closing the H5 "documented skip".
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
-          packages: clang lld llvm nodejs libclang-rt-18-dev mono-devel
+          packages: clang lld llvm libclang-rt-18-dev mono-devel
           version: train-${{ runner.arch }}-v2
+
+      - name: Node.js LTS for the WASM tests (replaces apt's end-of-life 18 line; 2026-09-04 audit F6)
+        # The WASM lowering tests execute the emitted module under `node`. Ubuntu's `nodejs`
+        # package is the 18 line -- upstream end-of-life since 2025-04-30, 20 open advisories in
+        # noble -- and the hosted image ships its own node in /usr/local/bin ahead of /usr/bin on
+        # PATH, so the apt package pinned nothing. setup-node pins the LTS major explicitly (24;
+        # patches flow from the toolcache). No package-manager cache: there is no package.json.
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Node.js in use for the WASM tests
+        run: command -v node && node --version
 
       - name: BCIR oracle (Python conformance tests)
         # -j0 = every core. run_all's own default is a deliberately safe min(cpu, 2) for a
@@ -120,10 +134,10 @@ jobs:
           printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
             | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
 
-      - name: Install lowering toolchain (clang/lld/llvm; node for WASM)
+      - name: Install lowering toolchain (clang/lld/llvm)
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
-          packages: clang lld llvm nodejs libclang-rt-18-dev
+          packages: clang lld llvm libclang-rt-18-dev
           version: train-${{ runner.arch }}-v1
 
       - name: Freestanding C StreamPack runtime (no-libc + Python->C ABI parity)
@@ -187,7 +201,7 @@ jobs:
       - name: Install lowering toolchain (clang + compiler-rt for ASan/UBSan/libFuzzer)
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
-          packages: clang lld llvm nodejs libclang-rt-18-dev
+          packages: clang lld llvm libclang-rt-18-dev
           version: train-${{ runner.arch }}-v1
 
       - name: cfront twin sanitizer sweep (ASan/UBSan/LSan over the C compiler's own lexer/parser/lowering/emit)
@@ -406,7 +420,7 @@ jobs:
       - name: Install LLVM toolchain (llvm-as/opt/llc/clang for the corpus checks)
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
-          packages: clang lld llvm nodejs libclang-rt-18-dev
+          packages: clang lld llvm libclang-rt-18-dev
           version: train-${{ runner.arch }}-v1
 
       - name: LLVM training examples and invalid-example tripwire
@@ -533,11 +547,25 @@ jobs:
 
       - name: Install the C lowering toolchain
         # Caches the installed file tree (restores in seconds; skips dpkg unpack on a warm run).
-        # Pinned to v1.6.1 by commit SHA; bump `version` to invalidate.
+        # Pinned to v1.6.3 by commit SHA; bump `version` to invalidate.
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: clang lld llvm
           version: arm-${{ runner.arch }}-v1
+
+      - name: Node.js LTS for the WASM tests (replaces apt's end-of-life 18 line; 2026-09-04 audit F6)
+        # The WASM lowering tests execute the emitted module under `node`. Ubuntu's `nodejs`
+        # package is the 18 line -- upstream end-of-life since 2025-04-30, 20 open advisories in
+        # noble -- and the hosted image ships its own node in /usr/local/bin ahead of /usr/bin on
+        # PATH, so the apt package pinned nothing. setup-node pins the LTS major explicitly (24;
+        # patches flow from the toolcache). No package-manager cache: there is no package.json.
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Node.js in use for the WASM tests
+        run: command -v node && node --version
 
       - name: Confirm the runner is aarch64
         run: |
@@ -628,7 +656,7 @@ jobs:
         # / FileCheck) + cmake/ninja/ccache. bcir-opt builds with the runner's pre-installed g++
         # (CMake default; no script uses clang/lld/lldb/clangd), so llvm.sh's heavy clang+lldb+clangd
         # base is skipped. The action caches the installed file tree -> a warm run restores it in
-        # seconds and skips dpkg unpack/configure. Pinned to v1.6.1 by commit SHA.
+        # seconds and skips dpkg unpack/configure. Pinned to v1.6.3 by commit SHA.
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: llvm-${{ matrix.llvm }}-dev llvm-${{ matrix.llvm }}-tools libmlir-${{ matrix.llvm }}-dev mlir-${{ matrix.llvm }}-tools cmake ninja-build ccache
