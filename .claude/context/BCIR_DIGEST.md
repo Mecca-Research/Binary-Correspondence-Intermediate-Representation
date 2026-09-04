@@ -145,8 +145,9 @@ table: `docs/security/DEPENDENCY_AUDIT_2026-09-03.md`.
 evidence in `docs/security/audit-2026-09-04/`, tooling in `tools/security/audit/`): 0 known
 vulnerabilities across 77 package-versions by two sources (pip-audit/PyPI API and an offline OSV
 evaluation); every action/hook pin is a release commit; checkout/setup-python/cache/upload-artifact were
-2–3 majors behind and moved to v7.0.1 / v7.0.0 / v6.1.0 / v7.0.1 in the follow-up PR; the runners' apt `nodejs` is
-the EOL 18 line with 20 open Ubuntu advisories; kafka-python became the declared `telemetry-kafka`
+2–3 majors behind and moved to v7.0.1 / v7.0.0 / v6.1.0 / v7.0.1 in the follow-up PR; the runners' apt `nodejs` was
+the EOL 18 line with 20 open Ubuntu advisories (dropped; the WASM tests run Node 24 through
+SHA-pinned setup-node in the oracle jobs); kafka-python became the declared `telemetry-kafka`
 extra (floor 2.3.2). A first-pass OSV false positive on torch (non-PEP-440 `last_affected`
 values in PYSEC records) is root-caused in `osv_pypi.py`'s docstring.
 
