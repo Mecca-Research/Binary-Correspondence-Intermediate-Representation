@@ -10,17 +10,26 @@ compute-only ranking would ignore). All deterministic + pure-Python."""
 import random
 
 from bcir.kbcir.cost import ACCURACY, COMPUTE, MEMORY, CostVector, TargetProfile
-from bcir.kbcir.matmul import (TilePlan, bottleneck, cost_of, cost_vector, matmul_reference,
-                               matmul_tiled, plan_matmul, quantized_matmul)
+from bcir.kbcir.matmul import (
+    TilePlan,
+    bottleneck,
+    cost_of,
+    cost_vector,
+    matmul_reference,
+    matmul_tiled,
+    plan_matmul,
+    quantized_matmul,
+)
 
 _HOST = TargetProfile.for_host()
 
 
 def _imatrix(rng, n, lo=-4, hi=4):
-    return [float(rng.randint(lo, hi)) for _ in range(n)]   # integer-valued -> float sums are exact
+    return [float(rng.randint(lo, hi)) for _ in range(n)]  # integer-valued -> float sums are exact
 
 
 # --- the verification: every realization reproduces the reference --------------------------------
+
 
 def test_tiling_and_loop_order_are_exact_for_integer_inputs():
     rng = random.Random(0xB1)
@@ -56,6 +65,7 @@ def test_fuzz_tiling_invariance_holds_over_random_shapes():
 
 # --- the quantized-dot matmul (built on A1.2) tracks the float reference --------------------------
 
+
 def test_quantized_matmul_tracks_the_reference_within_quant_error():
     rng = random.Random(7)
     M, N, K = 4, 4, 12
@@ -68,6 +78,7 @@ def test_quantized_matmul_tracks_the_reference_within_quant_error():
 
 # --- the plan is deterministic + reproducible ----------------------------------------------------
 
+
 def test_plan_is_deterministic():
     for M, N, K in [(8, 8, 8), (16, 4, 32), (3, 7, 5)]:
         assert plan_matmul(M, N, K, _HOST) == plan_matmul(M, N, K, _HOST)
@@ -75,11 +86,12 @@ def test_plan_is_deterministic():
 
 def test_plan_prefers_a_cache_fitting_realization():
     plan = plan_matmul(64, 64, 64, _HOST)
-    assert plan.fits_cache                                  # a fitting plan exists and is chosen
+    assert plan.fits_cache  # a fitting plan exists and is chosen
     assert plan.bottleneck == max(plan.compute_cost, plan.mem_cost)
 
 
 # --- the dual-semiring necessity: the bottleneck is a max, not a sum -----------------------------
+
 
 def test_bottleneck_is_max_plus_not_min_plus():
     # The chosen plan minimizes the max(compute, mem) ROOFLINE. Show that the binding term really is the
@@ -100,10 +112,10 @@ def test_memory_bound_shape_is_decided_by_the_mem_term():
     # not worse than the untiled traffic.
     M, N, K = 2, 2, 256
     plan = plan_matmul(M, N, K, _HOST)
-    assert plan.mem_cost >= plan.compute_cost              # memory-bound regime
+    assert plan.mem_cost >= plan.compute_cost  # memory-bound regime
     assert plan.bottleneck == plan.mem_cost
     _, untiled_mem, _ = cost_of(M, N, K, M, N, K, _HOST)
-    assert plan.mem_cost <= untiled_mem                    # tiling did not increase the binding term
+    assert plan.mem_cost <= untiled_mem  # tiling did not increase the binding term
 
 
 def test_cost_vector_wires_the_plan_into_the_production_12d_algebra():
@@ -120,8 +132,10 @@ def test_cost_vector_wires_the_plan_into_the_production_12d_algebra():
 
 def test_cost_vector_carries_the_r17_bound_on_the_accuracy_axis_when_quantized():
     plan = plan_matmul(8, 8, 8, _HOST)
-    assert cost_vector(plan, quant_bits=0).v[ACCURACY] == 0          # dense: no accuracy cost
-    assert cost_vector(plan, quant_bits=8).v[ACCURACY] == 1          # quantized: the R17 bridge bound (1 ULP)
+    assert cost_vector(plan, quant_bits=0).v[ACCURACY] == 0  # dense: no accuracy cost
+    assert (
+        cost_vector(plan, quant_bits=8).v[ACCURACY] == 1
+    )  # quantized: the R17 bridge bound (1 ULP)
 
 
 def test_cost_is_monotone_and_well_formed():

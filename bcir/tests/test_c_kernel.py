@@ -27,23 +27,24 @@ def _plan(theta=Theta.cool()):
 
 # --- emission: clean, portable, C23 ----------------------------------------------
 
+
 def test_kernel_is_c23_and_restrict_qualified():
     m, r = _plan()
     c = emit_kernel_c(m, r)
     assert c.startswith("/* BCIR -> portable C23 kernel")
-    assert "const float * restrict A" in c          # the non-aliasing contract
+    assert "const float * restrict A" in c  # the non-aliasing contract
     assert "_Static_assert(sizeof(float) == 4" in c  # header-independent C11/C23 spelling
-    assert "#pragma STDC FP_CONTRACT OFF" in c      # reproducible float
-    assert "size_t n" in c                          # <stddef.h> trip count
+    assert "#pragma STDC FP_CONTRACT OFF" in c  # reproducible float
+    assert "size_t n" in c  # <stddef.h> trip count
 
 
 def test_selected_width_drives_the_loop():
     # The default (no hardware width given): conservatively cap at the selected
     # width -- the literal geometry-encoding form, unchanged by the width-aware work.
-    m, r = _plan(Theta.cool())                       # AVX-512 cool -> vec16
+    m, r = _plan(Theta.cool())  # AVX-512 cool -> vec16
     assert "width=16" in emit_kernel_c(m, r)
     assert "for (; i + 16u <= n; i += 16u)" in emit_kernel_c(m, r)
-    m, r = _plan(Theta.hot())                         # hot downclock -> vec8
+    m, r = _plan(Theta.hot())  # hot downclock -> vec8
     assert "width=8" in emit_kernel_c(m, r)
     assert "< 8u" in emit_kernel_c(m, r)
 
@@ -52,10 +53,11 @@ def test_scalar_width_emits_no_vector_loop():
     m, r = _plan()
     c = emit_kernel_c(m, r, width_override=1)
     assert "width=1" in c and "for (size_t i = 0; i < n; ++i)" in c
-    assert "u <= n" not in c                          # no vector-width loop
+    assert "u <= n" not in c  # no vector-width loop
 
 
 # --- width-aware lowering: go-fast at the full lane, cap only when throttled ------
+
 
 def test_full_hardware_lane_emits_an_idiomatic_uncapped_loop():
     # cool -> selected width 16 == AVX-512 widest lane -> go-fast: an idiomatic loop
@@ -64,9 +66,9 @@ def test_full_hardware_lane_emits_an_idiomatic_uncapped_loop():
     m, r = _plan(Theta.cool())
     c = emit_kernel_c(m, r, hw_width=AVX.vector_width)
     assert "width=16" in c and "full hardware lane" in c
-    assert "16u" not in c                                       # not hand-blocked
-    assert "for (size_t i = 0; i < n; ++i)" in c                # the idiomatic loop
-    assert verify_c_lowering(m, r, c, hw_width=AVX.vector_width) == []   # R12 clean
+    assert "16u" not in c  # not hand-blocked
+    assert "for (size_t i = 0; i < n; ++i)" in c  # the idiomatic loop
+    assert verify_c_lowering(m, r, c, hw_width=AVX.vector_width) == []  # R12 clean
 
 
 def test_sub_maximal_width_keeps_the_throttle_cap():
@@ -82,8 +84,10 @@ def test_r12_rejects_a_full_lane_kernel_that_hides_a_sub_width_cap():
     # a go-fast kernel must not secretly cap below the lane (that throttles the backend).
     m, r = _plan(Theta.cool())
     good = emit_kernel_c(m, r, hw_width=AVX.vector_width)
-    bad = good.replace("for (size_t i = 0; i < n; ++i)\n    C[i] = A[i] + B[i];",
-                       "for (size_t j = 0; j < 8u; ++j) C[j] = A[j] + B[j];")
+    bad = good.replace(
+        "for (size_t i = 0; i < n; ++i)\n    C[i] = A[i] + B[i];",
+        "for (size_t j = 0; j < 8u; ++j) C[j] = A[j] + B[j];",
+    )
     assert "R12" in _laws(verify_c_lowering(m, r, bad, hw_width=AVX.vector_width))
 
 
@@ -98,7 +102,7 @@ def test_i32_kernel_uses_stdint_and_no_fp_pragma():
     m, r = _plan()
     c = emit_kernel_c(m, r, elem="i32")
     assert "#include <stdint.h>" in c and "int32_t" in c
-    assert "FP_CONTRACT" not in c                     # integers do not contract
+    assert "FP_CONTRACT" not in c  # integers do not contract
 
 
 def test_codegen_fallback_delegates_to_the_c_backend():
@@ -107,6 +111,7 @@ def test_codegen_fallback_delegates_to_the_c_backend():
 
 
 # --- AOT: compile with the host C compiler and self-check ------------------------
+
 
 def test_kernel_compiles_and_self_checks():
     if shutil.which("clang") is None and shutil.which("cc") is None and shutil.which("gcc") is None:
@@ -131,7 +136,9 @@ def test_emitted_kernel_is_a_self_contained_c_translation_unit():
             f.write(emit_kernel_c(m, r))
         built = subprocess.run(
             [cc, "-std=c11", "-Wall", "-Werror", "-c", source, "-o", obj],
-            capture_output=True, text=True)
+            capture_output=True,
+            text=True,
+        )
         assert built.returncode == 0, built.stderr
 
 
@@ -143,6 +150,7 @@ def test_selfcheck_exercises_the_tail():
 
 
 # --- R12: the C lowering contract ------------------------------------------------
+
 
 def test_clean_kernel_satisfies_R12():
     m, r = _plan()
@@ -175,5 +183,5 @@ def test_missing_bounds_guard_is_R12():
 
 def test_missing_discharge_note_is_R12():
     m, r = _plan()
-    bad = emit_kernel_c(m, r).split("\n", 1)[1]   # drop the head comment
+    bad = emit_kernel_c(m, r).split("\n", 1)[1]  # drop the head comment
     assert "R12" in _laws(verify_c_lowering(m, r, bad))

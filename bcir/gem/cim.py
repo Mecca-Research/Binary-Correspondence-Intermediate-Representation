@@ -59,17 +59,19 @@ def cim_decision(opcode: str, count: int, elem_bytes: int, h: TargetProfile) -> 
     if not _is_reduction(opcode):
         # placeholder cost; non-reductions are never offloaded.
         return CIMDecision(claim_id=-1, offload=False, core_cost=0, pim_cost=0)
-    traffic = count * elem_bytes                          # operand bytes streamed to the core
-    compute = count * h.mem_unit                          # per-element reduce work
+    traffic = count * elem_bytes  # operand bytes streamed to the core
+    compute = count * h.mem_unit  # per-element reduce work
     core_cost = traffic + compute
     # surcharged in-memory compute + fixed dispatch setup + 1-element result return
     pim_cost = (compute * _PIM_COMPUTE_Q8 >> 8) + _PIM_DISPATCH_OVERHEAD + elem_bytes
-    return CIMDecision(claim_id=-1, offload=pim_cost < core_cost,
-                       core_cost=core_cost, pim_cost=pim_cost)
+    return CIMDecision(
+        claim_id=-1, offload=pim_cost < core_cost, core_cost=core_cost, pim_cost=pim_cost
+    )
 
 
-def annotate_cim(module: Module, result: RealizationResult, h: TargetProfile,
-                 pack: StreamPack | None = None) -> tuple[StreamPack, list[CIMDecision]]:
+def annotate_cim(
+    module: Module, result: RealizationResult, h: TargetProfile, pack: StreamPack | None = None
+) -> tuple[StreamPack, list[CIMDecision]]:
     """Return (annotated StreamPack, decisions): reduction segments whose modeled
     PIM cost beats the core get `dispatch="pim"`; everything else is unchanged."""
     pack = pack or hydrate(module, result)
@@ -83,8 +85,9 @@ def annotate_cim(module: Module, result: RealizationResult, h: TargetProfile,
             res = module.resource(claim.rd[0]) if claim.rd else None
             eb = res.elem_bytes if res is not None else h.elem_bytes
             d = cim_decision(seg.opcode, max(1, claim.count), eb, h)
-            d = CIMDecision(claim_id=seg.claim_id, offload=d.offload,
-                            core_cost=d.core_cost, pim_cost=d.pim_cost)
+            d = CIMDecision(
+                claim_id=seg.claim_id, offload=d.offload, core_cost=d.core_cost, pim_cost=d.pim_cost
+            )
             decisions.append(d)
             if d.offload:
                 seg_out = replace(seg, dispatch="pim")

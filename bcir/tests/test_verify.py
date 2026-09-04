@@ -18,6 +18,7 @@ def _laws(diags):
 
 # --- positive: the canonical corpus passes the whole chain -----------------------
 
+
 def test_vector_add_is_legal():
     assert is_legal(vector_add(1024))
 
@@ -41,12 +42,26 @@ def test_full_chain_R1_R12_clean_on_vector_add():
 
 # --- R2 / R4 / R6 (existing structural laws) -------------------------------------
 
+
 def test_undeclared_rid_is_R2():
     m = Module(name="bad")
     m.add_resource(Resource(rid=1, shape=(4,)))
-    m.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=4, rd=(1, 99), wr=(1,))]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=1,
+                    opcode=Opcode.ADD,
+                    lane=Lane.U,
+                    stride_class=StrideClass.UNIT,
+                    count=4,
+                    rd=(1, 99),
+                    wr=(1,),
+                )
+            ],
+        )
+    )
     assert "R2" in _laws(verify(m))
 
 
@@ -61,28 +76,53 @@ def test_illegal_lane_for_stride_is_R6():
     m = Module(name="bad")
     m.add_resource(Resource(rid=1, shape=(4,)))
     # UNIT access on a GGG lane is illegal geometry.
-    m.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.ADD, lane=Lane.GGG, stride_class=StrideClass.UNIT,
-              count=4, rd=(1,), wr=(1,))]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=1,
+                    opcode=Opcode.ADD,
+                    lane=Lane.GGG,
+                    stride_class=StrideClass.UNIT,
+                    count=4,
+                    rd=(1,),
+                    wr=(1,),
+                )
+            ],
+        )
+    )
     assert "R6" in _laws(verify(m))
 
 
 # --- R3: domain legality ----------------------------------------------------------
 
+
 def test_claim_domain_unbacked_by_resources_is_R3():
     m = Module(name="bad")
     m.add_resource(Resource(rid=1, domain=Domain.RAM, shape=(4,)))
-    m.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.ADD, count=4, rd=(1,), wr=(1,), domain=Domain.HBM)]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[Claim(id=1, opcode=Opcode.ADD, count=4, rd=(1,), wr=(1,), domain=Domain.HBM)],
+        )
+    )
     assert "R3" in _laws(verify(m))
 
 
 def test_mmio_write_with_unique_hazard_is_R3():
     m = Module(name="bad")
     m.add_resource(Resource(rid=1, domain=Domain.MMIO, shape=(4,)))
-    m.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.STORE, count=4, wr=(1,), domain=Domain.MMIO,
-              hazard="unique")]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=1, opcode=Opcode.STORE, count=4, wr=(1,), domain=Domain.MMIO, hazard="unique"
+                )
+            ],
+        )
+    )
     assert "R3" in _laws(verify(m))
 
 
@@ -94,21 +134,50 @@ def test_ham_access_on_mmio_is_R3():
 
 # --- R5: hazard legality ----------------------------------------------------------
 
+
 def test_atomic_opcode_with_unique_hazard_is_R5():
     m = Module(name="bad")
     m.add_resource(Resource(rid=1, shape=(64,)))
-    m.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.ATOMIC_ADD, lane=Lane.A, stride_class=StrideClass.RANDOM,
-              count=64, rd=(1,), wr=(1,), hazard="unique")]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=1,
+                    opcode=Opcode.ATOMIC_ADD,
+                    lane=Lane.A,
+                    stride_class=StrideClass.RANDOM,
+                    count=64,
+                    rd=(1,),
+                    wr=(1,),
+                    hazard="unique",
+                )
+            ],
+        )
+    )
     assert "R5" in _laws(verify(m))
 
 
 def test_atomic_hazard_makes_atomic_claim_legal():
     m = Module(name="ok")
     m.add_resource(Resource(rid=1, shape=(64,)))
-    m.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.ATOMIC_ADD, lane=Lane.A, stride_class=StrideClass.RANDOM,
-              count=64, rd=(1,), wr=(1,), hazard="atomic")]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=1,
+                    opcode=Opcode.ATOMIC_ADD,
+                    lane=Lane.A,
+                    stride_class=StrideClass.RANDOM,
+                    count=64,
+                    rd=(1,),
+                    wr=(1,),
+                    hazard="atomic",
+                )
+            ],
+        )
+    )
     assert "R5" not in _laws(verify(m))
 
 
@@ -118,11 +187,26 @@ def test_ggg_tail_conflict_without_ordered_hazard_is_R5():
     m = Module(name="bad")
     m.add_resource(Resource(rid=1, shape=(1024,)))
     m.add_resource(Resource(rid=2, shape=(1024,)))
-    scatter = Claim(id=1, opcode=Opcode.GGG_STORE, lane=Lane.GGG,
-                    stride_class=StrideClass.RANDOM, count=1024, wr=(1,), hazard="unique",
-                    verify="bounds")
-    reader = Claim(id=2, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                   count=1024, rd=(1,), wr=(2,), hazard="unique")
+    scatter = Claim(
+        id=1,
+        opcode=Opcode.GGG_STORE,
+        lane=Lane.GGG,
+        stride_class=StrideClass.RANDOM,
+        count=1024,
+        wr=(1,),
+        hazard="unique",
+        verify="bounds",
+    )
+    reader = Claim(
+        id=2,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=1024,
+        rd=(1,),
+        wr=(2,),
+        hazard="unique",
+    )
     m.add_phase(Phase(phase_id=0, claims=[scatter, reader]))
     assert "R5" in _laws(verify(m))
     # Ordered hazard contracts on both ends discharge the law.
@@ -132,11 +216,13 @@ def test_ggg_tail_conflict_without_ordered_hazard_is_R5():
 
 # --- R7: bounds legality ----------------------------------------------------------
 
+
 def test_static_overrun_is_R7():
     m = Module(name="bad")
     m.add_resource(Resource(rid=1, shape=(4,)))
-    m.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.ADD, count=8, rd=(1,), wr=(1,))]))
+    m.add_phase(
+        Phase(phase_id=0, claims=[Claim(id=1, opcode=Opcode.ADD, count=8, rd=(1,), wr=(1,))])
+    )
     assert "R7" in _laws(verify(m))
 
 
@@ -145,9 +231,23 @@ def test_strided_read_extent_counts_stride():
     m.add_resource(Resource(rid=1, shape=(1024,)))
     m.add_resource(Resource(rid=2, shape=(1024,)))
     # 1024 reads at stride 4 touch an extent of 4093 > 1024.
-    m.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.MUL, lane=Lane.U, stride_class=StrideClass.STRIDED,
-              count=1024, stride_k=4, rd=(1,), wr=(2,))]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=1,
+                    opcode=Opcode.MUL,
+                    lane=Lane.U,
+                    stride_class=StrideClass.STRIDED,
+                    count=1024,
+                    stride_k=4,
+                    rd=(1,),
+                    wr=(2,),
+                )
+            ],
+        )
+    )
     assert "R7" in _laws(verify(m))
 
 
@@ -157,16 +257,28 @@ def test_masked_without_bounds_verify_is_R7():
     # without a guard -- a silent loss of the check.
     m = Module(name="bad")
     m.add_resource(Resource(rid=1, shape=(8,)))
-    m.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.LOAD, rd=(1,), wr=(1,), bounds="masked", verify="none")]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(id=1, opcode=Opcode.LOAD, rd=(1,), wr=(1,), bounds="masked", verify="none")
+            ],
+        )
+    )
     assert "R7" in _laws(verify(m))
 
 
 def test_masked_with_bounds_verify_is_legal():
     m = Module(name="ok")
     m.add_resource(Resource(rid=1, shape=(8,)))
-    m.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.LOAD, rd=(1,), wr=(1,), bounds="masked", verify="bounds")]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(id=1, opcode=Opcode.LOAD, rd=(1,), wr=(1,), bounds="masked", verify="bounds")
+            ],
+        )
+    )
     assert "R7" not in _laws(verify(m))
 
 
@@ -174,23 +286,53 @@ def test_random_strict_bounds_without_runtime_verify_is_R7():
     m = Module(name="bad")
     m.add_resource(Resource(rid=1, shape=(1024,)))
     m.add_resource(Resource(rid=2, shape=(1024,)))
-    m.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.GGG_LOAD, lane=Lane.GGG, stride_class=StrideClass.RANDOM,
-              count=1024, rd=(1,), wr=(2,), bounds="strict", verify="none")]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=1,
+                    opcode=Opcode.GGG_LOAD,
+                    lane=Lane.GGG,
+                    stride_class=StrideClass.RANDOM,
+                    count=1024,
+                    rd=(1,),
+                    wr=(2,),
+                    bounds="strict",
+                    verify="none",
+                )
+            ],
+        )
+    )
     assert "R7" in _laws(verify(m))
 
 
 def test_unknown_contract_mnemonics_are_R5_R7_R8():
     m = Module(name="bad")
     m.add_resource(Resource(rid=1, shape=(4,)))
-    m.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.ADD, count=4, rd=(1,), wr=(1,),
-              hazard="wild", bounds="wild", cost_class="wild")]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=1,
+                    opcode=Opcode.ADD,
+                    count=4,
+                    rd=(1,),
+                    wr=(1,),
+                    hazard="wild",
+                    bounds="wild",
+                    cost_class="wild",
+                )
+            ],
+        )
+    )
     laws = _laws(verify(m))
     assert {"R5", "R7", "R8"} <= laws
 
 
 # --- R8 / R9: plan laws -----------------------------------------------------------
+
 
 def test_plan_missing_claim_is_R9():
     m = vector_add(1024)
@@ -220,6 +362,7 @@ def test_optimizer_plans_satisfy_R8_R9_for_all_targets():
 
 
 # --- R10 / R11: stream laws -------------------------------------------------------
+
 
 def _hydrated(n=1024):
     m = vector_add(n)
@@ -261,6 +404,7 @@ def test_generation_drift_is_R11():
 
 
 # --- R12: lowering legality -------------------------------------------------------
+
 
 def _lowered(n=1024):
     m = vector_add(n)

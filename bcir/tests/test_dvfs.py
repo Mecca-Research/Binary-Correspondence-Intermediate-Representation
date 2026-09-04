@@ -19,17 +19,18 @@ AVX = TARGETS["x86_avx512"]
 
 # --- the classifier + clock policy (pure units) ----------------------------------
 
+
 def test_classify_by_arithmetic_intensity():
-    assert classify(compute=1000, memory=100) == "compute"   # compute >> memory
-    assert classify(compute=10, memory=1000) == "memory"     # memory >> compute
+    assert classify(compute=1000, memory=100) == "compute"  # compute >> memory
+    assert classify(compute=10, memory=1000) == "memory"  # memory >> compute
     assert classify(compute=500, memory=1000) == "balanced"  # in between
 
 
 def test_compute_bound_overclocks_only_within_thermal_budget():
     clk, _ = clock_for("compute", Theta.cool())
     assert clk == OVERCLOCK
-    hot, reason = clock_for("compute", Theta.hot())          # thermal 80 >= cap
-    assert hot == NOMINAL and "capped" in reason             # overclock suppressed
+    hot, reason = clock_for("compute", Theta.hot())  # thermal 80 >= cap
+    assert hot == NOMINAL and "capped" in reason  # overclock suppressed
 
 
 def test_memory_bound_downclocks_and_balanced_holds_nominal():
@@ -39,6 +40,7 @@ def test_memory_bound_downclocks_and_balanced_holds_nominal():
 
 
 # --- real module: an elementwise (bandwidth-bound) phase downclocks ---------------
+
 
 def test_bandwidth_bound_phase_is_downclocked():
     m = vector_add(1 << 16)
@@ -58,6 +60,7 @@ def test_downclock_saves_power_without_losing_throughput():
 
 
 # --- safety + determinism --------------------------------------------------------
+
 
 def test_no_overclock_when_hot_is_the_gains_only_guard():
     # a synthetic compute-bound phase: cool overclocks, hot holds nominal.

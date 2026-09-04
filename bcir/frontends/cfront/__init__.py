@@ -10,6 +10,7 @@ The public entry is :func:`compile_unit`, which runs the full six-artifact pipel
 translation unit: the parsed C, the lowered claim graph, the K_BCIR plan, the emitted C output, the
 R1–R18 verifier checkpoint, the Clang behaviour-equivalence verdict, and the `bcir-explain` text.
 """
+
 from __future__ import annotations
 
 from .cparse import CParseError, parse_unit
@@ -24,6 +25,19 @@ from .diagnostics import (
 from .lower import lower_unit
 from .pipeline import CompileResult, compile_unit, compile_with_fallback, diagnose, emit_selfcheck
 
-__all__ = ["CParseError", "CompileResult", "DiagnosticReport", "SourceDiagnostic", "Span",
-           "compile_unit", "compile_with_fallback", "diagnose", "diagnostic_to_dict",
-           "emit_selfcheck", "line_col", "lower_unit", "parse_unit", "render"]
+__all__ = [
+    "CParseError",
+    "CompileResult",
+    "DiagnosticReport",
+    "SourceDiagnostic",
+    "Span",
+    "compile_unit",
+    "compile_with_fallback",
+    "diagnose",
+    "diagnostic_to_dict",
+    "emit_selfcheck",
+    "line_col",
+    "lower_unit",
+    "parse_unit",
+    "render",
+]

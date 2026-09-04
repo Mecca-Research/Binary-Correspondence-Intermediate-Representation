@@ -30,27 +30,46 @@ All deterministic, pure-Python (no numpy). The loop is the oracle generalization
 import ast
 import math
 
-from bcir.kbcir.training import (Dataset, EarlyStop, TrainResult, accuracy, binary_f1, linear_model,
-                                 make_linearly_separable, make_xor, minibatches, mlp_model,
-                                 mlp_param_names, mse_metric, train, train_val_split, _lcg_permutation,
-                                 _predict)
+from bcir.kbcir.training import (
+    Dataset,
+    EarlyStop,
+    TrainResult,
+    accuracy,
+    binary_f1,
+    linear_model,
+    make_linearly_separable,
+    make_xor,
+    minibatches,
+    mlp_model,
+    mlp_param_names,
+    mse_metric,
+    train,
+    train_val_split,
+    _lcg_permutation,
+    _predict,
+)
 
 
 # A shared, deterministic MLP init: small positive hidden biases keep the relu units active at start (avoids
 # dead-unit stalls), weights from the same LCG used throughout the module. Reproducible by construction.
 def _mlp_init(names):
     state = 12345
+
     def rnd():
         nonlocal state
         state = (state * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
         return (state >> 33) / float(1 << 31) - 1.0
+
     return [0.1 if nm.startswith("b1_") else rnd() for nm in names]
 
 
 # === Dataset / batching: deterministic permutation, full coverage, ragged last batch ===================
 
+
 def test_minibatches_is_a_deterministic_permutation_covering_all_samples_once():
-    ds = Dataset(tuple((float(i), float(-i)) for i in range(10)), tuple(float(i % 2) for i in range(10)))
+    ds = Dataset(
+        tuple((float(i), float(-i)) for i in range(10)), tuple(float(i % 2) for i in range(10))
+    )
     # same seed -> same order (the determinism the loop relies on).
     b1 = list(minibatches(ds, 3, seed=42))
     b2 = list(minibatches(ds, 3, seed=42))
@@ -62,7 +81,9 @@ def test_minibatches_is_a_deterministic_permutation_covering_all_samples_once():
     assert b3 != flat1, "a different seed should reshuffle"
     # every sample appears EXACTLY ONCE per epoch (a permutation).
     seen = sorted(flat1)
-    assert seen == sorted(tuple(row) for row in ds.X), "an epoch must cover every sample exactly once"
+    assert seen == sorted(tuple(row) for row in ds.X), (
+        "an epoch must cover every sample exactly once"
+    )
     assert len(flat1) == len(ds), "no sample dropped or duplicated"
 
 
@@ -82,14 +103,16 @@ def test_minibatches_batch_sizes_including_a_ragged_last_batch():
 def test_lcg_permutation_is_a_valid_deterministic_permutation():
     for seed in (0, 1, 5, 999):
         p = _lcg_permutation(12, seed)
-        assert sorted(p) == list(range(12)), (seed, p)            # a valid permutation of 0..11
-        assert _lcg_permutation(12, seed) == p                    # reproducible
+        assert sorted(p) == list(range(12)), (seed, p)  # a valid permutation of 0..11
+        assert _lcg_permutation(12, seed) == p  # reproducible
 
 
 def test_train_val_split_is_disjoint_covers_all_and_deterministic():
-    ds = Dataset(tuple((float(i), float(i * i)) for i in range(20)), tuple(float(i % 2) for i in range(20)))
+    ds = Dataset(
+        tuple((float(i), float(i * i)) for i in range(20)), tuple(float(i % 2) for i in range(20))
+    )
     tr, va = train_val_split(ds, 0.25, seed=3)
-    assert len(va) == 5 and len(tr) == 15, (len(tr), len(va))     # round(0.25*20) = 5
+    assert len(va) == 5 and len(tr) == 15, (len(tr), len(va))  # round(0.25*20) = 5
     tr_set = {tuple(r) for r in tr.X}
     va_set = {tuple(r) for r in va.X}
     assert tr_set.isdisjoint(va_set), "train and val must be disjoint"
@@ -103,6 +126,7 @@ def test_train_val_split_is_disjoint_covers_all_and_deterministic():
 
 
 # === Metrics: match an INDEPENDENT hand computation (incl. a confusion-matrix anchor for F1) ===========
+
 
 def test_accuracy_binary_and_multiclass_match_hand_computation():
     # BINARY: scalar probabilities thresholded at 0.5. preds-as-class: 1,0,1,0 ; truth: 1,0,0,0 -> 3/4 right.
@@ -136,11 +160,23 @@ def test_binary_f1_matches_a_hand_computed_confusion_matrix():
 
 # === LOGISTIC REGRESSION end-to-end (the headline) =====================================================
 
+
 def _train_logreg(seed=3):
     ds = make_linearly_separable(80, seed=1)
     tr, va = train_val_split(ds, 0.25, seed=7)
-    res = train(linear_model, [0.0, 0.0, 0.0], tr, loss="bce", optimizer="adam", epochs=80,
-                batch_size=16, lr=0.1, val=va, metrics=("accuracy", "f1"), seed=seed)
+    res = train(
+        linear_model,
+        [0.0, 0.0, 0.0],
+        tr,
+        loss="bce",
+        optimizer="adam",
+        epochs=80,
+        batch_size=16,
+        lr=0.1,
+        val=va,
+        metrics=("accuracy", "f1"),
+        seed=seed,
+    )
     return tr, va, res
 
 
@@ -179,6 +215,7 @@ def test_logistic_regression_is_deterministic_across_runs():
 
 # === MLP end-to-end on a NON-linearly-separable set (the hidden layer learns) ==========================
 
+
 def _xor_split():
     xds = make_xor(30, seed=2)
     return train_val_split(xds, 0.25, seed=5)
@@ -190,19 +227,39 @@ def test_mlp_clears_the_linear_ceiling_on_a_nonlinear_set():
     xtr, xva = _xor_split()
 
     # --- the linear model's ceiling on this set (it cannot separate XOR) ---
-    lin = train(linear_model, [0.0, 0.0, 0.0], xtr, loss="bce", optimizer="adam", epochs=400,
-                batch_size=16, lr=0.05, seed=4)
+    lin = train(
+        linear_model,
+        [0.0, 0.0, 0.0],
+        xtr,
+        loss="bce",
+        optimizer="adam",
+        epochs=400,
+        batch_size=16,
+        lr=0.05,
+        seed=4,
+    )
     lin_preds = _predict(linear_model, lin.params, ["w0", "w1", "w2"], xtr.X, "bce")
     lin_acc = accuracy(lin_preds, xtr.y)
-    assert lin_acc < 0.8, ("a linear model should NOT solve XOR", lin_acc)   # the ceiling
+    assert lin_acc < 0.8, ("a linear model should NOT solve XOR", lin_acc)  # the ceiling
 
     # --- the 2-layer MLP (hidden relu via select, output logit) ---
     nh = 12
     names = mlp_param_names(2, nh)
     mdl = mlp_model(2, nh)
     p0 = _mlp_init(names)
-    res = train(mdl, p0, xtr, loss="bce", optimizer="adam", epochs=400, batch_size=16, lr=0.05,
-                metrics=("accuracy",), seed=4, param_names=names)
+    res = train(
+        mdl,
+        p0,
+        xtr,
+        loss="bce",
+        optimizer="adam",
+        epochs=400,
+        batch_size=16,
+        lr=0.05,
+        metrics=("accuracy",),
+        seed=4,
+        param_names=names,
+    )
     mlp_acc = res.train_metrics["accuracy"][-1]
     # the MLP reaches high accuracy ...
     assert mlp_acc >= 0.9, ("MLP should solve XOR", mlp_acc)
@@ -218,19 +275,41 @@ def test_mlp_training_is_deterministic():
     names = mlp_param_names(2, nh)
     mdl = mlp_model(2, nh)
     p0 = _mlp_init(names)
-    r1 = train(mdl, p0, xtr, loss="bce", optimizer="adam", epochs=120, batch_size=16, lr=0.05,
-               seed=4, param_names=names)
-    r2 = train(mdl, list(p0), xtr, loss="bce", optimizer="adam", epochs=120, batch_size=16, lr=0.05,
-               seed=4, param_names=names)
+    r1 = train(
+        mdl,
+        p0,
+        xtr,
+        loss="bce",
+        optimizer="adam",
+        epochs=120,
+        batch_size=16,
+        lr=0.05,
+        seed=4,
+        param_names=names,
+    )
+    r2 = train(
+        mdl,
+        list(p0),
+        xtr,
+        loss="bce",
+        optimizer="adam",
+        epochs=120,
+        batch_size=16,
+        lr=0.05,
+        seed=4,
+        param_names=names,
+    )
     assert r1.train_loss == r2.train_loss, "MLP training must be deterministic given the seed"
     assert r1.params == r2.params
 
 
 # === Softmax-CE multiclass path (the transcendental softmax-CE seed composes) ==========================
 
+
 def _softmax_linear_model(K, d):
     """A K-class linear head: logits_k = dot(W_k, x), built per example -- the loss="softmax_ce" shape (a
     K-length list of logit nodes per example). Param names W{k}_{j}."""
+
     def model(tape, names, X):
         Wvars = [[tape.var(f"W{k}_{j}") for j in range(d)] for k in range(K)]
         out = []
@@ -238,16 +317,19 @@ def _softmax_linear_model(K, d):
             xc = [tape.const(row[j]) for j in range(d)]
             out.append([tape.dot(tuple(Wvars[k]), tuple(xc)) for k in range(K)])
         return out
+
     return model
 
 
 def _three_class_dataset(n=60, seed=7):
     centers = [(2.0, 0.0), (-1.0, 2.0), (-1.0, -2.0)]
     state = seed & 0xFFFFFFFFFFFFFFFF or 1
+
     def rnd():
         nonlocal state
         state = (state * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
         return (state >> 33) / float(1 << 31) - 1.0
+
     X, y = [], []
     for i in range(n):
         c = i % 3
@@ -261,13 +343,25 @@ def test_softmax_ce_multiclass_reaches_high_accuracy():
     ds = _three_class_dataset()
     names = [f"W{k}_{j}" for k in range(3) for j in range(2)]
     mdl = _softmax_linear_model(3, 2)
-    res = train(mdl, [0.0] * 6, ds, loss="softmax_ce", optimizer="adam", epochs=150,
-                batch_size=16, lr=0.1, metrics=("accuracy",), seed=2, param_names=names)
+    res = train(
+        mdl,
+        [0.0] * 6,
+        ds,
+        loss="softmax_ce",
+        optimizer="adam",
+        epochs=150,
+        batch_size=16,
+        lr=0.1,
+        metrics=("accuracy",),
+        seed=2,
+        param_names=names,
+    )
     assert res.train_metrics["accuracy"][-1] >= 0.95, res.train_metrics["accuracy"][-1]
     assert res.train_loss[-1] < 0.1 * res.train_loss[0], (res.train_loss[0], res.train_loss[-1])
 
 
 # === MSE closed-set path: a linear regression converges to the known minimizer ========================
+
 
 def test_mse_closed_set_regression_converges_to_the_known_minimizer():
     # fit y = 2x + 1 (exactly realizable): the MSE-into-Tape loss is differentiated by the EXISTING
@@ -277,22 +371,47 @@ def test_mse_closed_set_regression_converges_to_the_known_minimizer():
         b = tape.var("w1")
         return [tape.add(tape.mul(w, tape.const(row[0])), b) for row in X]
 
-    ds = Dataset(tuple((float(i),) for i in range(-5, 6)), tuple(2.0 * i + 1.0 for i in range(-5, 6)))
-    res = train(reg_model, [0.0, 0.0], ds, loss="mse", optimizer="adam", epochs=600, batch_size=4,
-                lr=0.1, metrics=("mse",), seed=1, param_names=["w0", "w1"])
+    ds = Dataset(
+        tuple((float(i),) for i in range(-5, 6)), tuple(2.0 * i + 1.0 for i in range(-5, 6))
+    )
+    res = train(
+        reg_model,
+        [0.0, 0.0],
+        ds,
+        loss="mse",
+        optimizer="adam",
+        epochs=600,
+        batch_size=4,
+        lr=0.1,
+        metrics=("mse",),
+        seed=1,
+        param_names=["w0", "w1"],
+    )
     assert abs(res.params[0] - 2.0) < 1e-2 and abs(res.params[1] - 1.0) < 1e-2, res.params
     assert res.train_metrics["mse"][-1] < 1e-4, res.train_metrics["mse"][-1]
 
 
 # === Early stop: a run that plateaus on val stops before the cap (the hook fires) ======================
 
+
 def test_early_stop_fires_when_val_plateaus():
     ds = make_linearly_separable(60, seed=1)
     tr, va = train_val_split(ds, 0.3, seed=7)
     cap = 200
     es = EarlyStop(patience=3, min_delta=1e-5)
-    res = train(linear_model, [0.0, 0.0, 0.0], tr, loss="bce", optimizer="adam", epochs=cap,
-                batch_size=16, lr=0.2, val=va, early_stop=es, seed=3)
+    res = train(
+        linear_model,
+        [0.0, 0.0, 0.0],
+        tr,
+        loss="bce",
+        optimizer="adam",
+        epochs=cap,
+        batch_size=16,
+        lr=0.2,
+        val=va,
+        early_stop=es,
+        seed=3,
+    )
     # the run stopped EARLY (fewer epochs than the cap) once the val loss plateaued -- the hook fired.
     assert res.early_stopped, "early stop should fire on a converging run"
     assert res.epochs_run < cap, (res.epochs_run, cap)
@@ -307,18 +426,30 @@ def test_early_stop_does_not_fire_when_still_improving():
     ds = make_linearly_separable(60, seed=1)
     tr, va = train_val_split(ds, 0.3, seed=7)
     es = EarlyStop(patience=1000, min_delta=1e-9)
-    res = train(linear_model, [0.0, 0.0, 0.0], tr, loss="bce", optimizer="adam", epochs=10,
-                batch_size=16, lr=0.05, val=va, early_stop=es, seed=3)
+    res = train(
+        linear_model,
+        [0.0, 0.0, 0.0],
+        tr,
+        loss="bce",
+        optimizer="adam",
+        epochs=10,
+        batch_size=16,
+        lr=0.05,
+        val=va,
+        early_stop=es,
+        seed=3,
+    )
     assert not res.early_stopped and res.epochs_run == 10
 
 
 # === TrainResult carries the history ====================================================================
 
+
 def test_train_result_carries_per_epoch_history():
     _, _, res = _train_logreg()
     assert isinstance(res, TrainResult)
     assert len(res.train_loss) == res.epochs_run
-    assert len(res.val_loss) == res.epochs_run                # a val set was supplied
+    assert len(res.val_loss) == res.epochs_run  # a val set was supplied
     assert len(res.train_metrics["accuracy"]) == res.epochs_run
     assert res.final_train_loss == res.train_loss[-1]
     assert res.final_val_loss == res.val_loss[-1]
@@ -326,8 +457,10 @@ def test_train_result_carries_per_epoch_history():
 
 # === The two-truth invariant: training is cost/optimization-side, never a verdict ======================
 
+
 def test_training_touches_no_verifier_and_emits_no_diagnostic():
     import bcir.kbcir.training as tr_mod
+
     # (1) no verifier / diagnostic / graded name is bound in the live module namespace.
     bound = set(vars(tr_mod))
     assert not (bound & {"verify_quarantine", "Diagnostic", "Graded", "decide"}), sorted(bound)
@@ -351,6 +484,7 @@ def test_model_graphs_are_closed_set_and_verify_clean():
     # transcendental node, never a verifier object. The closed primitive set IS what keeps the gradient honest.
     from bcir.kbcir.autodiff import Tape
     from bcir.lower.autodiff_kernel import _LOWERABLE
+
     t = Tape()
     out = linear_model(t, ["w0", "w1", "b"], [(1.0, 2.0), (-1.0, 0.5)])
     ops = {t.node(nid).op for nid in range(t.node_count())}

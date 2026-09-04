@@ -67,19 +67,38 @@ _PROM_NAME = re.compile(r"^[a-zA-Z_:][a-zA-Z0-9_:]*$")
 # are forced available/unavailable so the test is identical on every host.
 
 _COUNTER_DEF = MetricDefinition(
-    "power.rapl_energy_uj", Unit.MICROJOULE, "power", Provenance.MEASURED,
-    SamplingModel.POLLED, "RAPL package energy counter, microjoules (monotonic).",
-    signal_id=3, metric_kind=MetricKind.COUNTER,
-    temporality=Temporality.CUMULATIVE, monotonic=True)
+    "power.rapl_energy_uj",
+    Unit.MICROJOULE,
+    "power",
+    Provenance.MEASURED,
+    SamplingModel.POLLED,
+    "RAPL package energy counter, microjoules (monotonic).",
+    signal_id=3,
+    metric_kind=MetricKind.COUNTER,
+    temporality=Temporality.CUMULATIVE,
+    monotonic=True,
+)
 _GAUGE_DEF = MetricDefinition(
-    "thermal.pressure", Unit.PERCENT, "thermal", Provenance.MEASURED,
-    SamplingModel.POLLED, "On-die temperature mapped to 0..100 thermal pressure.",
-    signal_id=1)
+    "thermal.pressure",
+    Unit.PERCENT,
+    "thermal",
+    Provenance.MEASURED,
+    SamplingModel.POLLED,
+    "On-die temperature mapped to 0..100 thermal pressure.",
+    signal_id=1,
+)
 _GAP_DEF = MetricDefinition(
-    "fabric.interconnect_bytes", Unit.BYTES, "fabric", Provenance.MEASURED,
-    SamplingModel.STREAMED, "Interconnect bytes (gap: needs a fabric backend).",
-    signal_id=12, metric_kind=MetricKind.COUNTER,
-    temporality=Temporality.CUMULATIVE, monotonic=True)
+    "fabric.interconnect_bytes",
+    Unit.BYTES,
+    "fabric",
+    Provenance.MEASURED,
+    SamplingModel.STREAMED,
+    "Interconnect bytes (gap: needs a fabric backend).",
+    signal_id=12,
+    metric_kind=MetricKind.COUNTER,
+    temporality=Temporality.CUMULATIVE,
+    monotonic=True,
+)
 
 
 class _FixedProvider(SignalProvider):
@@ -104,9 +123,9 @@ class _FixedProvider(SignalProvider):
 
 def _synthetic_registry() -> SignalRegistry:
     reg = SignalRegistry()
-    reg.register(_FixedProvider(_COUNTER_DEF, 123456))     # available counter
-    reg.register(_FixedProvider(_GAUGE_DEF, 42))           # available gauge
-    reg.register(_FixedProvider(_GAP_DEF, None))           # unavailable gap signal
+    reg.register(_FixedProvider(_COUNTER_DEF, 123456))  # available counter
+    reg.register(_FixedProvider(_GAUGE_DEF, 42))  # available gauge
+    reg.register(_FixedProvider(_GAP_DEF, None))  # unavailable gap signal
     return reg
 
 
@@ -135,17 +154,15 @@ def test_prometheus_has_valid_type_and_series_lines():
 def test_prometheus_available_reading_has_value_and_labels():
     text = to_prometheus(_synthetic_registry(), channel="ch0")
     # the available gauge appears with its value + the channel/cost_dim/provenance/unit labels.
-    line = next(ln for ln in text.splitlines()
-                if ln.startswith("bcir_thermal_pressure{"))
-    assert ' 42' in line
+    line = next(ln for ln in text.splitlines() if ln.startswith("bcir_thermal_pressure{"))
+    assert " 42" in line
     assert 'channel="ch0"' in line
     assert 'cost_dim="thermal"' in line
     assert 'provenance="measured"' in line
     assert 'unit="percent"' in line
     # the available counter appears with its value.
-    cline = next(ln for ln in text.splitlines()
-                 if ln.startswith("bcir_power_rapl_energy_uj{"))
-    assert ' 123456' in cline
+    cline = next(ln for ln in text.splitlines() if ln.startswith("bcir_power_rapl_energy_uj{"))
+    assert " 123456" in cline
     assert 'cost_dim="power"' in cline
 
 
@@ -153,8 +170,9 @@ def test_prometheus_unavailable_signal_has_no_value_but_up_zero():
     text = to_prometheus(_synthetic_registry(), channel="ch0")
     lines = text.splitlines()
     # NO value series for the unavailable gap signal...
-    assert not any(ln.startswith("bcir_fabric_interconnect_bytes{") for ln in lines), \
+    assert not any(ln.startswith("bcir_fabric_interconnect_bytes{") for ln in lines), (
         "an unavailable signal must NOT emit a value line"
+    )
     # ...but it DOES appear in the availability series as up=0.
     up_lines = [ln for ln in lines if ln.startswith("bcir_signal_up{")]
     gap_up = next(ln for ln in up_lines if 'cost_dim="fabric"' in ln)
@@ -209,9 +227,9 @@ def test_prometheus_folds_in_derived_and_sensitivity():
         derived={"thermal": _FM()},
         sensitivity=[_Sens("thermal.pressure", 7), _Sens("power.rapl_energy_uj", 0)],
     )
-    assert "bcir_derived_thermal_max{field=\"thermal\"} 9" in text
+    assert 'bcir_derived_thermal_max{field="thermal"} 9' in text
     assert "# TYPE bcir_signal_sensitivity gauge" in text
-    assert "bcir_signal_sensitivity{signal=\"thermal.pressure\"} 7" in text
+    assert 'bcir_signal_sensitivity{signal="thermal.pressure"} 7' in text
 
 
 def test_scrape_is_to_prometheus():
@@ -247,13 +265,26 @@ def test_otlp_gauge_is_gauge_nonmonotonic_no_temporality():
 
 def test_otlp_metric_dataclass_rules():
     # the frozen OtlpMetric declares kind/temporality/monotonicity explicitly.
-    counter = OtlpMetric("c", Unit.MICROJOULE, OtlpKind.SUM, OtlpTemporality.CUMULATIVE,
-                         True, points=[({"k": "v"}, 5)], resource="ch0")
+    counter = OtlpMetric(
+        "c",
+        Unit.MICROJOULE,
+        OtlpKind.SUM,
+        OtlpTemporality.CUMULATIVE,
+        True,
+        points=[({"k": "v"}, 5)],
+        resource="ch0",
+    )
     d = counter.to_dict()
     assert d["sum"]["isMonotonic"] is True
     assert d["sum"]["aggregationTemporality"] == "cumulative"
-    gauge = OtlpMetric("g", Unit.PERCENT, OtlpKind.GAUGE, OtlpTemporality.UNSPECIFIED,
-                       False, points=[({"k": "v"}, 3)])
+    gauge = OtlpMetric(
+        "g",
+        Unit.PERCENT,
+        OtlpKind.GAUGE,
+        OtlpTemporality.UNSPECIFIED,
+        False,
+        points=[({"k": "v"}, 3)],
+    )
     dg = gauge.to_dict()
     assert "isMonotonic" not in dg["gauge"] and "aggregationTemporality" not in dg["gauge"]
 
@@ -286,8 +317,10 @@ def test_otlp_availability_gauge_covers_unavailable_signal():
     up = next(m for m in metrics if m["name"] == "bcir_signal_up")
     # one data point per signal (3), the fabric gap one is 0.
     assert len(up["gauge"]["dataPoints"]) == 3
-    vals = {tuple(sorted((a["key"], a["value"]["stringValue"]) for a in dp["attributes"])):
-            dp["asInt"] for dp in up["gauge"]["dataPoints"]}
+    vals = {
+        tuple(sorted((a["key"], a["value"]["stringValue"]) for a in dp["attributes"])): dp["asInt"]
+        for dp in up["gauge"]["dataPoints"]
+    }
     fabric = next(v for k, v in vals.items() if ("cost_dim", "fabric") in k)
     assert fabric == "0"
 
@@ -303,7 +336,7 @@ def test_redfish_metric_report_covers_available_with_provenance_oem():
     assert "bcir_thermal_pressure" in ids and "bcir_power_rapl_energy_uj" in ids
     assert "bcir_fabric_interconnect_bytes" not in ids
     therm = next(mv for mv in report["MetricValues"] if mv["MetricId"] == "bcir_thermal_pressure")
-    assert therm["MetricValue"] == "42"                 # Redfish MetricValue is a string
+    assert therm["MetricValue"] == "42"  # Redfish MetricValue is a string
     assert therm["Oem"]["BCIR"]["Provenance"] == "measured"
     assert therm["Oem"]["BCIR"]["CostDim"] == "thermal"
 
@@ -318,12 +351,12 @@ def test_redfish_round_trip_encode_decode():
     assert by_name["thermal.pressure"].provenance == "measured"
     assert by_name["thermal.pressure"].unit == "percent"
     assert by_name["power.rapl_energy_uj"].value == 123456
-    assert "fabric.interconnect_bytes" not in by_name      # unavailable: never in the report
+    assert "fabric.interconnect_bytes" not in by_name  # unavailable: never in the report
 
 
 def test_redfish_round_trip_via_json_string():
     report = to_redfish_metric_report(_synthetic_registry())
-    readings = parse_redfish_metric_report(json.dumps(report))   # accept a JSON string
+    readings = parse_redfish_metric_report(json.dumps(report))  # accept a JSON string
     assert {r.name for r in readings} == {"thermal.pressure", "power.rapl_energy_uj"}
 
 
@@ -333,48 +366,59 @@ def test_redfish_parse_tolerates_minimal_foreign_report():
         "@odata.type": "#MetricReport.v1_4_0.MetricReport",
         "SomeVendorField": {"nested": True},
         "MetricValues": [
-            {"MetricId": "Fan1", "MetricValue": "3200"},                 # no Oem, no property
-            {"MetricId": "Volt", "MetricValue": "not_a_number"},         # unparseable -> skipped
-            {"MetricId": "NoValue"},                                     # no MetricValue -> skipped
-            "a string entry, not a dict",                                # junk -> skipped
-            {"MetricProperty": "thermal.pressure", "MetricValue": "55",
-             "Oem": {"BCIR": {"Provenance": "measured", "CostDim": "thermal", "Unit": "percent"}}},
+            {"MetricId": "Fan1", "MetricValue": "3200"},  # no Oem, no property
+            {"MetricId": "Volt", "MetricValue": "not_a_number"},  # unparseable -> skipped
+            {"MetricId": "NoValue"},  # no MetricValue -> skipped
+            "a string entry, not a dict",  # junk -> skipped
+            {
+                "MetricProperty": "thermal.pressure",
+                "MetricValue": "55",
+                "Oem": {
+                    "BCIR": {"Provenance": "measured", "CostDim": "thermal", "Unit": "percent"}
+                },
+            },
         ],
     }
     readings = parse_redfish_metric_report(foreign)
     by_name = {r.name: r for r in readings}
-    assert "Fan1" in by_name and by_name["Fan1"].value == 3200       # foreign metric still parsed
-    assert by_name["Fan1"].unit == "none"                            # no Oem -> tolerant default
-    assert "Volt" not in by_name and "NoValue" not in by_name        # bad cells skipped, no crash
+    assert "Fan1" in by_name and by_name["Fan1"].value == 3200  # foreign metric still parsed
+    assert by_name["Fan1"].unit == "none"  # no Oem -> tolerant default
+    assert "Volt" not in by_name and "NoValue" not in by_name  # bad cells skipped, no crash
     assert by_name["thermal.pressure"].value == 55
 
 
 def test_redfish_parse_empty_and_garbage_does_not_crash():
     assert parse_redfish_metric_report({}) == []
     assert parse_redfish_metric_report({"MetricValues": "not a list"}) == []
-    assert parse_redfish_metric_report([1, 2, 3]) == []               # not a report dict
+    assert parse_redfish_metric_report([1, 2, 3]) == []  # not a report dict
 
 
 def test_redfish_parser_rejects_ambiguous_or_unbounded_input_and_skips_poison():
     """The BMC boundary is strict JSON and bounded work; malformed OEM trees and
     non-finite/oversized values cannot poison a telemetry snapshot."""
-    for text in ('{"MetricValues":[],"MetricValues":[]}',
-                 '{"MetricValues":[{"MetricId":"x","MetricValue":NaN}]}'):
+    for text in (
+        '{"MetricValues":[],"MetricValues":[]}',
+        '{"MetricValues":[{"MetricId":"x","MetricValue":NaN}]}',
+    ):
         try:
             parse_redfish_metric_report(text)
             raise AssertionError("ambiguous/non-finite Redfish JSON was accepted")
         except ValueError:
             pass
-    poisoned = {"MetricValues": [
-        {"MetricId": "finite", "MetricValue": "2.5", "Oem": "not-an-object"},
-        {"MetricId": "infinity", "MetricValue": "Infinity"},
-        {"MetricId": ["not", "a", "name"], "MetricValue": "1"},
-        {"MetricId": "huge", "MetricValue": "9" * 129},
-        {"MetricId": "bad-oem", "MetricValue": "3", "Oem": {"BCIR": []}},
-    ]}
+    poisoned = {
+        "MetricValues": [
+            {"MetricId": "finite", "MetricValue": "2.5", "Oem": "not-an-object"},
+            {"MetricId": "infinity", "MetricValue": "Infinity"},
+            {"MetricId": ["not", "a", "name"], "MetricValue": "1"},
+            {"MetricId": "huge", "MetricValue": "9" * 129},
+            {"MetricId": "bad-oem", "MetricValue": "3", "Oem": {"BCIR": []}},
+        ]
+    }
     readings = parse_redfish_metric_report(poisoned)
     assert [(reading.name, reading.value) for reading in readings] == [
-        ("finite", 2.5), ("bad-oem", 3)]
+        ("finite", 2.5),
+        ("bad-oem", 3),
+    ]
     try:
         parse_redfish_metric_report({"MetricValues": [{}] * ((1 << 16) + 1)})
         raise AssertionError("oversized Redfish metric inventory was accepted")
@@ -407,20 +451,27 @@ def test_metric_definitions_carry_unit_and_provenance_on_definition():
 
 def test_witness_export_surfaces_up_accepted_rejected():
     # a stream with a rejected record but some accepted -> not blind.
-    witness = TelemetryIntegrity(accepted=5, rejected=2, dropped=1,
-                                 frames_accepted=7, frames_rejected=1, frames_missing=2,
-                                 frames_reordered=3, frames_duplicated=4)
+    witness = TelemetryIntegrity(
+        accepted=5,
+        rejected=2,
+        dropped=1,
+        frames_accepted=7,
+        frames_rejected=1,
+        frames_missing=2,
+        frames_reordered=3,
+        frames_duplicated=4,
+    )
     text = to_prometheus(_synthetic_registry(), witness=witness)
-    assert "bcir_telemetry_accepted{channel=\"host\"} 5" in text
-    assert "bcir_telemetry_rejected{channel=\"host\"} 2" in text
-    assert "bcir_telemetry_dropped{channel=\"host\"} 1" in text
-    assert "bcir_telemetry_blind{channel=\"host\"} 0" in text
-    assert "bcir_telemetry_frames_accepted{channel=\"host\"} 7" in text
-    assert "bcir_telemetry_frames_rejected{channel=\"host\"} 1" in text
-    assert "bcir_telemetry_frames_missing{channel=\"host\"} 2" in text
-    assert "bcir_telemetry_frames_reordered{channel=\"host\"} 3" in text
-    assert "bcir_telemetry_frames_duplicated{channel=\"host\"} 4" in text
-    assert "bcir_telemetry_frame_monotonic{channel=\"host\"} 0" in text
+    assert 'bcir_telemetry_accepted{channel="host"} 5' in text
+    assert 'bcir_telemetry_rejected{channel="host"} 2' in text
+    assert 'bcir_telemetry_dropped{channel="host"} 1' in text
+    assert 'bcir_telemetry_blind{channel="host"} 0' in text
+    assert 'bcir_telemetry_frames_accepted{channel="host"} 7' in text
+    assert 'bcir_telemetry_frames_rejected{channel="host"} 1' in text
+    assert 'bcir_telemetry_frames_missing{channel="host"} 2' in text
+    assert 'bcir_telemetry_frames_reordered{channel="host"} 3' in text
+    assert 'bcir_telemetry_frames_duplicated{channel="host"} 4' in text
+    assert 'bcir_telemetry_frame_monotonic{channel="host"} 0' in text
     otlp = to_otlp(_synthetic_registry(), witness=witness)
     metrics = otlp["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
     assert any(m["name"] == "bcir_telemetry_frames_accepted" for m in metrics)
@@ -430,8 +481,8 @@ def test_witness_blind_surfaces_when_all_rejected():
     blind_witness = TelemetryIntegrity(accepted=0, rejected=3)
     assert blind_witness.blind is True
     text = to_prometheus(_synthetic_registry(), witness=blind_witness)
-    assert "bcir_telemetry_blind{channel=\"host\"} 1" in text
-    assert "bcir_telemetry_accepted{channel=\"host\"} 0" in text
+    assert 'bcir_telemetry_blind{channel="host"} 1' in text
+    assert 'bcir_telemetry_accepted{channel="host"} 0' in text
     # and in OTLP the witness counters are cumulative monotonic sums.
     otlp = to_otlp(_synthetic_registry(), witness=blind_witness)
     metrics = otlp["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
@@ -461,12 +512,14 @@ def test_export_emits_no_diagnostic_and_touches_no_verifier():
         assert not hasattr(r, "code")
     # importing the export module must not drag in the legality verifier.
     import bcir.telemetry_export  # noqa: F401
+
     # (verify may be loaded by an *earlier* test in the same process; the contract here is
     # that telemetry_export itself never IMPORTS or INVOKES it — checked from the parsed AST
     # so a mention in the docstring/comments does not false-positive.)
     imports, calls = _module_imports_and_calls("bcir.telemetry_export")
     assert not any("verify" in name for name in imports), (
-        f"export module must not import the legality verifier: {sorted(imports)}")
+        f"export module must not import the legality verifier: {sorted(imports)}"
+    )
     assert "verify" not in calls, "export module must not invoke verify()"
 
 
@@ -475,6 +528,7 @@ def _module_imports_and_calls(modname: str):
     import ast
     import importlib
     import inspect
+
     tree = ast.parse(inspect.getsource(importlib.import_module(modname)))
     imports: set[str] = set()
     calls: set[str] = set()
@@ -515,8 +569,7 @@ def test_export_works_on_the_real_default_registry():
 
 
 def _run_all() -> int:
-    fns = [v for k, v in sorted(globals().items())
-           if k.startswith("test_") and callable(v)]
+    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0
     for fn in fns:
         try:

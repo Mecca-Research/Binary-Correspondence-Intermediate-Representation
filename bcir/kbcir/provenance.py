@@ -38,7 +38,7 @@ from .weights import PERF, Policy
 _FNV_OFFSET = 14695981039346656037
 _FNV_PRIME = 1099511628211
 _MASK = (1 << 64) - 1
-_I63 = (1 << 63) - 1            # keep digests within signed-i64 range (MLIR parity)
+_I63 = (1 << 63) - 1  # keep digests within signed-i64 range (MLIR parity)
 
 
 def _fnv(*items) -> int:
@@ -47,7 +47,7 @@ def _fnv(*items) -> int:
     for it in _flatten(items):
         for byte in str(it).encode("utf-8"):
             h = ((h ^ byte) * _FNV_PRIME) & _MASK
-        h = ((h ^ 0xFF) * _FNV_PRIME) & _MASK          # field separator
+        h = ((h ^ 0xFF) * _FNV_PRIME) & _MASK  # field separator
     return h & _I63
 
 
@@ -61,17 +61,45 @@ def _flatten(xs):
 
 # --- component hashes (the canonical content of each input) ----------------------
 
+
 def hash_module(module: Module) -> int:
     """Hash the goal graph G structure (resources + claims + phase DAG)."""
-    res = [(r.rid, int(r.domain), tuple(r.shape), r.layout, r.align, r.access,
-            r.priority, r.map_gen, r.data_gen)
-           for r in sorted(module.resources.values(), key=lambda r: r.rid)]
+    res = [
+        (
+            r.rid,
+            int(r.domain),
+            tuple(r.shape),
+            r.layout,
+            r.align,
+            r.access,
+            r.priority,
+            r.map_gen,
+            r.data_gen,
+        )
+        for r in sorted(module.resources.values(), key=lambda r: r.rid)
+    ]
     phases = []
     for ph in module.phases:
-        claims = [(c.id, int(c.opcode), int(c.lane), int(c.stride_class), c.count,
-                   c.stride_k, tuple(c.rd), tuple(c.wr), c.hazard, int(c.domain),
-                   c.verify, c.bounds, c.op, c.offset, c.cost_class)
-                  for c in sorted(ph.claims, key=lambda c: c.id)]
+        claims = [
+            (
+                c.id,
+                int(c.opcode),
+                int(c.lane),
+                int(c.stride_class),
+                c.count,
+                c.stride_k,
+                tuple(c.rd),
+                tuple(c.wr),
+                c.hazard,
+                int(c.domain),
+                c.verify,
+                c.bounds,
+                c.op,
+                c.offset,
+                c.cost_class,
+            )
+            for c in sorted(ph.claims, key=lambda c: c.id)
+        ]
         phases.append((ph.phase_id, tuple(sorted(ph.deps)), tuple(claims)))
     return _fnv(module.name, module.cacheline, module.align, tuple(res), tuple(phases))
 
@@ -89,15 +117,37 @@ def hash_target(h) -> int:
     Tracked with the GEM+ scope work; until then `replay` compares the produced plan, not
     only this digest, so a collision surfaces as a mismatch instead of a wrong answer.
     """
-    return _fnv(h.name, h.triple, h.cacheline, h.elem_bytes, tuple(sorted(h.lane_widths)),
-                h.warp, h.scalable, h.gather_penalty, h.mem_unit, h.base_overhead,
-                h.thermal_density, h.power_density, h.per_op_heat, h.affinity_domains,
-                getattr(h, "mem_channels", 4), getattr(h, "cal_gen", 0))
+    return _fnv(
+        h.name,
+        h.triple,
+        h.cacheline,
+        h.elem_bytes,
+        tuple(sorted(h.lane_widths)),
+        h.warp,
+        h.scalable,
+        h.gather_penalty,
+        h.mem_unit,
+        h.base_overhead,
+        h.thermal_density,
+        h.power_density,
+        h.per_op_heat,
+        h.affinity_domains,
+        getattr(h, "mem_channels", 4),
+        getattr(h, "cal_gen", 0),
+    )
 
 
 def hash_theta(theta: Theta) -> int:
-    return _fnv(theta.thermal, theta.power, theta.mem_pressure, theta.contention,
-                theta.noise, theta.wear, theta.utilization, theta.voltage)
+    return _fnv(
+        theta.thermal,
+        theta.power,
+        theta.mem_pressure,
+        theta.contention,
+        theta.noise,
+        theta.wear,
+        theta.utilization,
+        theta.voltage,
+    )
 
 
 def hash_policy(policy: Policy) -> int:
@@ -106,6 +156,7 @@ def hash_policy(policy: Policy) -> int:
 
 # --- the manifest ----------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class ProvenanceManifest:
     """The commit hash of a plan: component hashes + in-force artifact generations,
@@ -113,8 +164,8 @@ class ProvenanceManifest:
 
     digest: int
     score: int
-    widths: tuple              # ((claim_id, width), ...) -- the recorded plan shape
-    artifacts: tuple           # ((name, generation/fingerprint), ...) sorted
+    widths: tuple  # ((claim_id, width), ...) -- the recorded plan shape
+    artifacts: tuple  # ((name, generation/fingerprint), ...) sorted
     m_module: int
     m_target: int
     m_theta: int
@@ -123,11 +174,13 @@ class ProvenanceManifest:
     def diff(self, other: "ProvenanceManifest") -> list:
         """Which components changed between two runs -- the cross-generation view."""
         out = []
-        for name, a, b in (("module", self.m_module, other.m_module),
-                           ("target", self.m_target, other.m_target),
-                           ("theta", self.m_theta, other.m_theta),
-                           ("policy", self.m_policy, other.m_policy),
-                           ("artifacts", self.artifacts, other.artifacts)):
+        for name, a, b in (
+            ("module", self.m_module, other.m_module),
+            ("target", self.m_target, other.m_target),
+            ("theta", self.m_theta, other.m_theta),
+            ("policy", self.m_policy, other.m_policy),
+            ("artifacts", self.artifacts, other.artifacts),
+        ):
             if a != b:
                 out.append(name)
         return out
@@ -141,15 +194,22 @@ class ProvenanceManifest:
     @staticmethod
     def from_json(text: str) -> "ProvenanceManifest":
         d = strict_json_loads(text, "provenance manifest")
-        fields = {"digest", "score", "widths", "artifacts", "m_module", "m_target",
-                  "m_theta", "m_policy"}
+        fields = {
+            "digest",
+            "score",
+            "widths",
+            "artifacts",
+            "m_module",
+            "m_target",
+            "m_theta",
+            "m_policy",
+        }
         if not isinstance(d, dict) or set(d) != fields:
             raise ValueError(f"provenance manifest fields must be exactly {sorted(fields)}")
 
         def i63(key: str) -> int:
             value = d[key]
-            if (isinstance(value, bool) or not isinstance(value, int) or
-                    not 0 <= value <= _I63):
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= _I63:
                 raise ValueError(f"provenance manifest {key} must be a non-negative i63")
             return value
 
@@ -160,8 +220,11 @@ class ProvenanceManifest:
             raise ValueError("provenance manifest widths must be an array")
         widths = []
         for index, pair in enumerate(d["widths"]):
-            if (not isinstance(pair, list) or len(pair) != 2 or
-                    any(isinstance(v, bool) or not isinstance(v, int) for v in pair)):
+            if (
+                not isinstance(pair, list)
+                or len(pair) != 2
+                or any(isinstance(v, bool) or not isinstance(v, int) for v in pair)
+            ):
                 raise ValueError(f"provenance manifest width[{index}] must be [claim_id, width]")
             cid, width = pair
             if cid < 0 or cid > _I63 or width <= 0 or width > 0xFFFFFFFF:
@@ -176,19 +239,31 @@ class ProvenanceManifest:
             if not isinstance(pair, list) or len(pair) != 2:
                 raise ValueError(f"provenance manifest artifact[{index}] must be [name, value]")
             name, value = pair
-            if (not isinstance(name, str) or not name or len(name) > 4096 or
-                    any(ord(ch) < 0x20 for ch in name) or isinstance(value, bool) or
-                    not isinstance(value, int) or not -(1 << 63) <= value <= _I63):
+            if (
+                not isinstance(name, str)
+                or not name
+                or len(name) > 4096
+                or any(ord(ch) < 0x20 for ch in name)
+                or isinstance(value, bool)
+                or not isinstance(value, int)
+                or not -(1 << 63) <= value <= _I63
+            ):
                 raise ValueError(f"provenance manifest artifact[{index}] is invalid")
             artifacts.append((name, value))
         if artifacts != sorted(artifacts) or len({name for name, _ in artifacts}) != len(artifacts):
             raise ValueError("provenance artifacts must be sorted with unique names")
         if _digest(*components, tuple(artifacts)) != digest:
             raise ValueError("provenance manifest digest does not match its components/artifacts")
-        return ProvenanceManifest(digest=digest, score=score, widths=tuple(widths),
-                                  artifacts=tuple(artifacts), m_module=components[0],
-                                  m_target=components[1], m_theta=components[2],
-                                  m_policy=components[3])
+        return ProvenanceManifest(
+            digest=digest,
+            score=score,
+            widths=tuple(widths),
+            artifacts=tuple(artifacts),
+            m_module=components[0],
+            m_target=components[1],
+            m_theta=components[2],
+            m_policy=components[3],
+        )
 
 
 def _digest(m_module, m_target, m_theta, m_policy, artifacts) -> int:
@@ -199,31 +274,49 @@ def _norm_artifacts(artifacts) -> tuple:
     return tuple(sorted((str(n), int(t)) for n, t in artifacts))
 
 
-def _manifest_from_result(module: Module, h, theta: Theta, policy: Policy,
-                          artifacts, result: RealizationResult) -> ProvenanceManifest:
+def _manifest_from_result(
+    module: Module, h, theta: Theta, policy: Policy, artifacts, result: RealizationResult
+) -> ProvenanceManifest:
     """Assemble a manifest from an *already-computed* plan -- the digest depends
     only on the inputs/artifacts, the score/shape on the result. Factored out so
     the planner is run exactly once per manifest (no recursive re-planning)."""
     arts = _norm_artifacts(artifacts)
-    mm, mt, mth, mp = (hash_module(module), hash_target(h), hash_theta(theta),
-                       hash_policy(policy))
+    mm, mt, mth, mp = (hash_module(module), hash_target(h), hash_theta(theta), hash_policy(policy))
     widths = tuple(sorted((cid, c.width) for cid, c in result.by_claim().items()))
-    return ProvenanceManifest(digest=_digest(mm, mt, mth, mp, arts), score=result.score,
-                              widths=widths, artifacts=arts,
-                              m_module=mm, m_target=mt, m_theta=mth, m_policy=mp)
+    return ProvenanceManifest(
+        digest=_digest(mm, mt, mth, mp, arts),
+        score=result.score,
+        widths=widths,
+        artifacts=arts,
+        m_module=mm,
+        m_target=mt,
+        m_theta=mth,
+        m_policy=mp,
+    )
 
 
-def build_manifest(module: Module, h, theta: Theta, policy: Policy = PERF,
-                   artifacts=()) -> ProvenanceManifest:
+def build_manifest(
+    module: Module, h, theta: Theta, policy: Policy = PERF, artifacts=()
+) -> ProvenanceManifest:
     """Record a plan's provenance: run the optimizer and chain its inputs + the
     in-force decision-rule generations into a manifest (the flight-recorder entry)."""
-    return _manifest_from_result(module, h, theta, policy, artifacts,
-                                 optimize(module, h, theta, policy))
+    return _manifest_from_result(
+        module, h, theta, policy, artifacts, optimize(module, h, theta, policy)
+    )
 
 
-def manifest_for(module: Module, h, theta: Theta, policy: Policy = PERF, *,
-                 table=None, gate=None, pack=None, memory=None,
-                 extra=()) -> ProvenanceManifest:
+def manifest_for(
+    module: Module,
+    h,
+    theta: Theta,
+    policy: Policy = PERF,
+    *,
+    table=None,
+    gate=None,
+    pack=None,
+    memory=None,
+    extra=(),
+) -> ProvenanceManifest:
     """Convenience: assemble the artifact tags from the actual learned objects (the
     calibration table generation, the gate fingerprint, the StreamPack generation
     tags, a frozen memory module's generation + fingerprint) and record the
@@ -231,8 +324,7 @@ def manifest_for(module: Module, h, theta: Theta, policy: Policy = PERF, *,
     into the plan's commit hash (Phase 20)."""
     arts = list(extra)
     if table is not None:
-        arts.append(("cal_fp", _fnv(table.gather_penalty, table.base_overhead,
-                                    table.mem_unit)))
+        arts.append(("cal_fp", _fnv(table.gather_penalty, table.base_overhead, table.mem_unit)))
         arts.append(("cal_gen", table.cal_gen))
     if gate is not None:
         arts.append(("gate", gate.fingerprint))
@@ -248,12 +340,19 @@ def manifest_for(module: Module, h, theta: Theta, policy: Policy = PERF, *,
 
 # --- replay (deterministic reproduction from the manifest) -----------------------
 
+
 class ProvenanceMismatch(Exception):
     """The inputs/artifacts do not match the manifest's recorded digest."""
 
 
-def replay(manifest: ProvenanceManifest, module: Module, h, theta: Theta,
-           policy: Policy = PERF, artifacts=()) -> RealizationResult:
+def replay(
+    manifest: ProvenanceManifest,
+    module: Module,
+    h,
+    theta: Theta,
+    policy: Policy = PERF,
+    artifacts=(),
+) -> RealizationResult:
     """Reproduce the plan from the manifest. Raises if the supplied inputs do not
     hash to the manifest's digest (you are replaying a different commit). The
     planner runs exactly once -- the digest check reuses the replayed plan instead
@@ -263,7 +362,8 @@ def replay(manifest: ProvenanceManifest, module: Module, h, theta: Theta,
     if fresh.digest != manifest.digest:
         raise ProvenanceMismatch(
             f"inputs hash to {fresh.digest}, manifest records {manifest.digest} "
-            f"(changed: {fresh.diff(manifest)})")
+            f"(changed: {fresh.diff(manifest)})"
+        )
     # The OUTCOME too, not only the inputs' digest. A digest is a claim about the inputs;
     # replaying is a claim about the plan, and the two came apart whenever a plan-affecting
     # input was missing from the hash -- `replay` handed back a plan scoring 1,574,912 for
@@ -273,13 +373,23 @@ def replay(manifest: ProvenanceManifest, module: Module, h, theta: Theta,
         raise ProvenanceMismatch(
             f"inputs hash to the manifest's digest but replay produced a DIFFERENT plan: "
             f"score {fresh.score} vs {manifest.score}, widths {fresh.widths} vs "
-            f"{manifest.widths}. The digest is missing a plan-affecting input.")
+            f"{manifest.widths}. The digest is missing a plan-affecting input."
+        )
     return result
 
 
-def reproduces(manifest: ProvenanceManifest, module: Module, h, theta: Theta,
-               policy: Policy = PERF, artifacts=()) -> bool:
+def reproduces(
+    manifest: ProvenanceManifest,
+    module: Module,
+    h,
+    theta: Theta,
+    policy: Policy = PERF,
+    artifacts=(),
+) -> bool:
     """True iff the manifest's inputs reproduce its recorded score and plan shape."""
     fresh = build_manifest(module, h, theta, policy, artifacts)
-    return (fresh.digest == manifest.digest and fresh.score == manifest.score
-            and fresh.widths == manifest.widths)
+    return (
+        fresh.digest == manifest.digest
+        and fresh.score == manifest.score
+        and fresh.widths == manifest.widths
+    )

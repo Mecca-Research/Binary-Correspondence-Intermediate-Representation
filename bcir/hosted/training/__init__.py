@@ -1,23 +1,59 @@
 """Offline-first contracts and lazy tensor-backed stages for BCIR model training."""
+
 from __future__ import annotations
 
 from .bpe import BytePairTokenizer, token_source_from_corpus
 from .architecture_spec import SmallModelSpec
-from .contracts import (PPOExample, PreferenceExample, ReasoningExample, SFTExample,
-                        StageRunReport, StageTrainEvent, StageTrainSpec)
-from .data import (DataPreparationReport, DataPreparationSpec, PreparedCorpus,
-                   PreparedDocument, RawDocument, prepare_corpus, write_prepared_corpus)
-from .providers import (ArtifactFile, OfflineComputeAdapter, RecordedTeacherProvider,
-                        RemoteComputeProvider, RemoteTrainingBundle, RemoteTrainingResult,
-                        TeacherProvider, TeacherRequest, TeacherResponse,
-                        relational_embedding_targets)
-from .pipeline import (PipelineStageRecord, TrainingPipelineLedger, read_pipeline_ledger,
-                       write_pipeline_ledger)
-from .reasoning import (ReasoningCandidate, SearchBudget, SearchResult, Verification,
-                        bounded_reasoning_search)
-from .hardware_policy_spec import (HardwarePolicyArtifact, HardwarePolicyEvent,
-                                   HardwarePolicyRunReport, HardwarePolicySpec,
-                                   HardwarePolicyTrainSpec)
+from .contracts import (
+    PPOExample,
+    PreferenceExample,
+    ReasoningExample,
+    SFTExample,
+    StageRunReport,
+    StageTrainEvent,
+    StageTrainSpec,
+)
+from .data import (
+    DataPreparationReport,
+    DataPreparationSpec,
+    PreparedCorpus,
+    PreparedDocument,
+    RawDocument,
+    prepare_corpus,
+    write_prepared_corpus,
+)
+from .providers import (
+    ArtifactFile,
+    OfflineComputeAdapter,
+    RecordedTeacherProvider,
+    RemoteComputeProvider,
+    RemoteTrainingBundle,
+    RemoteTrainingResult,
+    TeacherProvider,
+    TeacherRequest,
+    TeacherResponse,
+    relational_embedding_targets,
+)
+from .pipeline import (
+    PipelineStageRecord,
+    TrainingPipelineLedger,
+    read_pipeline_ledger,
+    write_pipeline_ledger,
+)
+from .reasoning import (
+    ReasoningCandidate,
+    SearchBudget,
+    SearchResult,
+    Verification,
+    bounded_reasoning_search,
+)
+from .hardware_policy_spec import (
+    HardwarePolicyArtifact,
+    HardwarePolicyEvent,
+    HardwarePolicyRunReport,
+    HardwarePolicySpec,
+    HardwarePolicyTrainSpec,
+)
 
 _LAZY = {
     "HostedRewardModel": (".stages", "HostedRewardModel"),
@@ -38,8 +74,7 @@ _LAZY = {
     "HostedAdaptiveLanguageModel": (".adaptive_transformer", "HostedAdaptiveLanguageModel"),
     "HostedMultiPatchTransformer": (".adaptive_transformer", "HostedMultiPatchTransformer"),
     "train_adaptive_pretrain": (".adaptive_transformer", "train_adaptive_pretrain"),
-    "train_multipatch_reconstruction": (
-        ".adaptive_transformer", "train_multipatch_reconstruction"),
+    "train_multipatch_reconstruction": (".adaptive_transformer", "train_multipatch_reconstruction"),
     "HostedByteLatentModel": (".byte_latent", "HostedByteLatentModel"),
     "HostedMambaByteModel": (".byte_latent", "HostedMambaByteModel"),
     "apply_byteified_transplant": (".byte_latent", "apply_byteified_transplant"),
@@ -54,13 +89,13 @@ _LAZY = {
     "train_byte_latent_pretrain": (".byte_latent", "train_byte_latent_pretrain"),
     "train_mambabyte_pretrain": (".byte_latent", "train_mambabyte_pretrain"),
     "ExpandedRowTable": (".sequence_interfaces", "ExpandedRowTable"),
-    "HostedProgressiveLanguageModel": (
-        ".sequence_interfaces", "HostedProgressiveLanguageModel"),
+    "HostedProgressiveLanguageModel": (".sequence_interfaces", "HostedProgressiveLanguageModel"),
     "clipped_cross_tokenizer_opd_loss": (
-        ".sequence_interfaces", "clipped_cross_tokenizer_opd_loss"),
+        ".sequence_interfaces",
+        "clipped_cross_tokenizer_opd_loss",
+    ),
     "initialize_expanded_rows": (".sequence_interfaces", "initialize_expanded_rows"),
-    "train_progressive_growth_stage": (
-        ".sequence_interfaces", "train_progressive_growth_stage"),
+    "train_progressive_growth_stage": (".sequence_interfaces", "train_progressive_growth_stage"),
 }
 
 
@@ -68,6 +103,7 @@ def __getattr__(name):
     if name not in _LAZY:
         raise AttributeError(name)
     from importlib import import_module
+
     module, attribute = _LAZY[name]
     value = getattr(import_module(module, __name__), attribute)
     globals()[name] = value
@@ -75,32 +111,82 @@ def __getattr__(name):
 
 
 __all__ = [
-    "ArtifactFile", "BytePairTokenizer", "DataPreparationReport", "DataPreparationSpec",
-    "HardwarePolicyArtifact", "HardwarePolicyEvent", "HardwarePolicyNetwork",
-    "HardwarePolicyRunReport", "HardwarePolicySpec", "HardwarePolicyTrainSpec",
-    "HostedAdaptiveLanguageModel", "HostedByteLatentModel", "HostedEmbeddingStudent",
-    "HostedMambaByteModel", "HostedMultiPatchTransformer",
-    "HostedProgressiveLanguageModel", "HostedRewardModel",
-    "HostedSmallModel", "HostedValueModel",
-    "OfflineComputeAdapter", "PipelineStageRecord", "PPOExample",
-    "PreferenceExample", "PreparedCorpus", "PreparedDocument", "RawDocument",
-    "ReasoningCandidate", "ReasoningExample", "RecordedTeacherProvider",
-    "RemoteComputeProvider", "RemoteTrainingBundle", "RemoteTrainingResult", "SFTExample",
-    "SearchBudget", "SearchResult", "SmallModelSpec", "StageRunReport", "StageTrainEvent",
-    "StageTrainSpec", "TeacherProvider", "TrainingPipelineLedger",
-    "TeacherRequest", "TeacherResponse", "Verification", "bounded_reasoning_search",
-    "ExpandedRowTable", "apply_byteified_transplant", "byte_latent_tensor_shapes",
-    "byteified_parameter_groups", "diffusion_draft", "diffusion_generate",
-    "clipped_cross_tokenizer_opd_loss", "diffusion_verify_generate",
+    "ArtifactFile",
+    "BytePairTokenizer",
+    "DataPreparationReport",
+    "DataPreparationSpec",
+    "HardwarePolicyArtifact",
+    "HardwarePolicyEvent",
+    "HardwarePolicyNetwork",
+    "HardwarePolicyRunReport",
+    "HardwarePolicySpec",
+    "HardwarePolicyTrainSpec",
+    "HostedAdaptiveLanguageModel",
+    "HostedByteLatentModel",
+    "HostedEmbeddingStudent",
+    "HostedMambaByteModel",
+    "HostedMultiPatchTransformer",
+    "HostedProgressiveLanguageModel",
+    "HostedRewardModel",
+    "HostedSmallModel",
+    "HostedValueModel",
+    "OfflineComputeAdapter",
+    "PipelineStageRecord",
+    "PPOExample",
+    "PreferenceExample",
+    "PreparedCorpus",
+    "PreparedDocument",
+    "RawDocument",
+    "ReasoningCandidate",
+    "ReasoningExample",
+    "RecordedTeacherProvider",
+    "RemoteComputeProvider",
+    "RemoteTrainingBundle",
+    "RemoteTrainingResult",
+    "SFTExample",
+    "SearchBudget",
+    "SearchResult",
+    "SmallModelSpec",
+    "StageRunReport",
+    "StageTrainEvent",
+    "StageTrainSpec",
+    "TeacherProvider",
+    "TrainingPipelineLedger",
+    "TeacherRequest",
+    "TeacherResponse",
+    "Verification",
+    "bounded_reasoning_search",
+    "ExpandedRowTable",
+    "apply_byteified_transplant",
+    "byte_latent_tensor_shapes",
+    "byteified_parameter_groups",
+    "diffusion_draft",
+    "diffusion_generate",
+    "clipped_cross_tokenizer_opd_loss",
+    "diffusion_verify_generate",
     "greedy_generate_byte_latent",
-    "greedy_generate_mambabyte", "prepare_corpus", "read_pipeline_ledger",
-    "relational_embedding_targets", "self_speculative_generate",
-    "token_source_from_corpus", "train_adaptive_pretrain", "train_dpo",
-    "train_embedding_distillation", "train_ppo", "train_reasoning_sft", "train_reward_model",
-    "train_sft", "train_small_supervised", "train_multipatch_reconstruction",
-    "train_byte_latent_pretrain", "train_mambabyte_pretrain",
-    "train_hardware_policy", "load_hardware_policy",
-    "hardware_policy_priors_q20", "initialize_expanded_rows",
+    "greedy_generate_mambabyte",
+    "prepare_corpus",
+    "read_pipeline_ledger",
+    "relational_embedding_targets",
+    "self_speculative_generate",
+    "token_source_from_corpus",
+    "train_adaptive_pretrain",
+    "train_dpo",
+    "train_embedding_distillation",
+    "train_ppo",
+    "train_reasoning_sft",
+    "train_reward_model",
+    "train_sft",
+    "train_small_supervised",
+    "train_multipatch_reconstruction",
+    "train_byte_latent_pretrain",
+    "train_mambabyte_pretrain",
+    "train_hardware_policy",
+    "load_hardware_policy",
+    "hardware_policy_priors_q20",
+    "initialize_expanded_rows",
     "train_progressive_growth_stage",
-    "write_pipeline_ledger", "write_prepared_corpus",
+    "write_pipeline_ledger",
+    "write_prepared_corpus",
 ]

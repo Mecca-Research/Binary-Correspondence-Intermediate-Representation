@@ -31,12 +31,15 @@ _CC = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
 
 def _requires_cc(test):
     """Capability guard for tests whose assertion is specifically Clang equivalence."""
+
     @wraps(test)
     def guarded():
         if not _CC:
             return
         return test()
+
     return guarded
+
 
 # Bounds-quarantine support (§5.12): the emit of a `masked` array access uses BCIR_CHK(rid, idx, N, "site")
 # for a READ and BCIR_CHK_W(...) for a WRITE -- a READ may clamp an OOB index, a WRITE never clamps (its
@@ -52,104 +55,180 @@ _BOUNDS_GUARD = (
     "#define BCIR_CHK(rid,idx,n,site) ((uint64_t)(idx)<(uint64_t)(n)?(size_t)(idx):"
     "bcir_bounds_quarantine((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n),(site)))\n"
     "#define BCIR_CHK_W(rid,idx,n,site) ((uint64_t)(idx)<(uint64_t)(n)?(size_t)(idx):"
-    "(bcir_bounds_quarantine_write((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n),(site)),(size_t)(idx)))")
+    "(bcir_bounds_quarantine_write((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n),(site)),(size_t)(idx)))"
+)
 # straight-line fixtures run the full execute loop; control-flow fixtures get parity + emit + Clang ≡
 # (control flow is not a flat StreamPack segment stream, so the loop runs the straight-line set).
-_STRAIGHTLINE = ["cfront_regmap.c", "cfront_array.c", "cfront_array2d.c", "cfront_widerow.c", "cfront_deref.c",
-                 "cfront_callgraph.c", "cfront_typedef.c", "cfront_enum.c", "cfront_enumtype.c", "cfront_ternary.c",
-                 "cfront_sizeof.c", "cfront_strsizeof.c", "cfront_strval.c", "cfront_charlit.c",
-                 "cfront_strtab.c", "cfront_strconcat.c", "cfront_widelit.c", "cfront_cast.c", "cfront_alignof.c", "cfront_static.c",
-                 "cfront_global.c", "cfront_compound.c", "cfront_logic.c", "cfront_abi.c", "cfront_signed.c", "cfront_signedcmp.c", "cfront_signedbare.c", "cfront_longunary.c", "cfront_boolnorm.c", "cfront_unarypromote.c", "cfront_floatsigncast.c", "cfront_intsigncast.c", "cfront_boolcast.c", "cfront_boolmember.c",
-                 "cfront_unsequenced.c", "cfront_reproducible.c",   # + char consts + str table/dedup + const LUT + ABI sizeof model + bool normalization + unary integer-promotion/float + float->signed + int->signed cast + bool cast + _Bool member/element store-normalization + C23 [[unsequenced]]/[[reproducible]] hints (A1.3)
-                 "cfront_bitint.c",   # + C23 `_BitInt(N)` (#bitint): exact-width, non-promoting bit-precise ints (incl. a NON-standard 12/20-bit lane) as locals/params/returns, same-type arithmetic, faithful `_BitInt(N)` emit
-                 "cfront_bitint_mixed.c"]   # + C23 `_BitInt(N)` MIXED-WIDTH arithmetic (#bitintmixed): a `_BitInt(N)` mixed with a NARROWER standard int / `_BitInt` / constant, where the C23 6.3.1.8 result is the WIDER `_BitInt` -- modeled result type == Clang (the `_Generic` differential), faithful emit
-_CONTROL = ["cfront_branch.c", "cfront_while.c", "cfront_for.c", "cfront_dowhile.c",
-            "cfront_continue.c", "cfront_switch.c", "cfront_switchfall.c", "cfront_goto.c", "cfront_incdec.c",
-            "cfront_multidecl.c", "cfront_commastep.c", "cfront_emptystmt.c", "cfront_loopreuse.c", "cfront_loopscope.c", "cfront_blockscope.c", "cfront_localmd.c", "cfront_localmdinit.c", "cfront_ptrlocal.c"]
-            # + multi-declarator locals (T a=x, b, c=z), comma-operator for-step (i++, j--), empty stmts
-_PREPROC = ["cfront_macros.c", "cfront_ppinc.c", "cfront_comments.c"]      # L7: exercise the preprocessor
-_ABI = ["cfront_structret.c", "cfront_structcall.c",  # L8: struct return-by-value (+ using a call RESULT)
-        "cfront_packed.c",                            # + packed layout
-        "cfront_union.c",                             # + full union (members overlap at offset 0)
-        "cfront_interleave.c",                        # + enum/struct defined *between* two functions
-        "cfront_funcptr.c",                           # + funcptr param + indirect call (HAL dispatch)
-        "cfront_fnptrparam.c",                         # + DIRECT inline funcptr params int (*g)(int) (no typedef)
-        "cfront_rmw.c",                               # + MMIO register read-modify-write (d->reg |= bits)
-        "cfront_bitfield.c",                          # + MMIO bitfield write (r->field = v, c.bf.set)
-        "cfront_bfcompound.c",                         # + bitfield compound-assign (r->field |= bits)
-        "cfront_signedbf.c",                           # + signed bitfield read sign-extension (int x:N)
-        "cfront_widebf.c",                             # + WIDE bitfields in a 64-bit unit (long long x:N, N>32)
-        "cfront_packedbf.c",                           # + PACKED bitfields (bit-by-bit, byte/word-straddling)
-        "cfront_alignasmember.c",                      # + over-aligned members (_Alignas/alignas/aligned(N))
-        "cfront_anonmember.c",                          # + anonymous struct/union members (promoted leaves)
-        "cfront_unnamedbf.c",                           # + unnamed / zero-width bitfields (layout-only padding)
-        "cfront_charmember.c",                          # + plain `char` members read as `char` not int8_t (ARM)
-        "cfront_aostruct.c",                            # + ARRAY-OF-STRUCTS members p->arr[i].field (strided)
-        "cfront_aoslocal.c",                            # + regular LOCAL array decl init (inferred/explicit, scalar/struct)
-        "cfront_fnptrmember.c",                         # + funcptr members set from NAMED functions (dispatch)
-        "cfront_assignexpr.c",                          # + assignment as an EXPRESSION (a=b=c, if((x=f()))...)
-        "cfront_memassignexpr.c",                       # + member-lvalue assignment as a value ((p->x=v)+1)
-        "cfront_signedload.c",                         # + signed sub-int member/array read sign-extension
-        "cfront_restrict.c",                           # + restrict/__restrict pointer params (consumed hint)
-        "cfront_shiftassign.c",                        # + <<= / >>= shift compound-assign (scalar/member/array)
-        "cfront_ptrarith.c",                           # + pointer mutation p++ / p += n (buffer-walk cursor)
-        "cfront_structmulti.c",                        # + multi-declarator struct members (unsigned x,y,z;)
-        "cfront_nestmember.c",                         # + nested member access (o.pos.lo / dev->ctrl.bf)
-        "cfront_memberarray.c",                        # + native 1-D struct member arrays (s.arr[i])
-        "cfront_neststruct.c",                          # + nested struct members + nested-brace init `{ {..}, .. }`
-        "cfront_bitint_member.c",                        # + C23 `_BitInt(N)` struct MEMBERS (#bitintmember): a PLAIN
-                                                         #   (non-bitfield) `_BitInt(N)` member -- read + write + same-type
-                                                         #   arithmetic, layout (sizeof/offsetof) == Clang, faithful emit
-        "cfront_bitint_bitfield.c"]                      # + C23 `_BitInt(N)` BITFIELDS (#bitintbitfield): `_BitInt(N) m:W`
-                                                         #   (1<=W<=N) packs into the `_BitInt(N)` storage unit LSB-first,
-                                                         #   byte-identical to Clang (the layout differential); W<=32 reads
-                                                         #   promote to int, W>32 stay `_BitInt(N)` -- faithful emit
-_FLOAT = ["cfront_float.c", "cfront_floatcast.c", "cfront_hexfloat.c", "cfront_mathh.c",
-          "cfront_mathh_mixed.c", "cfront_mathh_long.c", "cfront_mathh_ptr.c",
-          "cfront_calltyped.c", "cfront_complex.c", "cfront_complexdiv.c",   # + C99 _Complex (#complex) + complex `/`
-          "cfront_complextrans.c",                                           # + complex transcendentals (#complextrans)
-          "cfront_imagunit.c",                                               # + <complex.h> imaginary unit `I` (#imagunit)
-          "cfront_complexlong.c",                                           # + long-double complex (#complexlong)
-          "cfront_complexmember.c"]                                          # + complex struct members (#complexmember)
+_STRAIGHTLINE = [
+    "cfront_regmap.c",
+    "cfront_array.c",
+    "cfront_array2d.c",
+    "cfront_widerow.c",
+    "cfront_deref.c",
+    "cfront_callgraph.c",
+    "cfront_typedef.c",
+    "cfront_enum.c",
+    "cfront_enumtype.c",
+    "cfront_ternary.c",
+    "cfront_sizeof.c",
+    "cfront_strsizeof.c",
+    "cfront_strval.c",
+    "cfront_charlit.c",
+    "cfront_strtab.c",
+    "cfront_strconcat.c",
+    "cfront_widelit.c",
+    "cfront_cast.c",
+    "cfront_alignof.c",
+    "cfront_static.c",
+    "cfront_global.c",
+    "cfront_compound.c",
+    "cfront_logic.c",
+    "cfront_abi.c",
+    "cfront_signed.c",
+    "cfront_signedcmp.c",
+    "cfront_signedbare.c",
+    "cfront_longunary.c",
+    "cfront_boolnorm.c",
+    "cfront_unarypromote.c",
+    "cfront_floatsigncast.c",
+    "cfront_intsigncast.c",
+    "cfront_boolcast.c",
+    "cfront_boolmember.c",
+    "cfront_unsequenced.c",
+    "cfront_reproducible.c",  # + char consts + str table/dedup + const LUT + ABI sizeof model + bool normalization + unary integer-promotion/float + float->signed + int->signed cast + bool cast + _Bool member/element store-normalization + C23 [[unsequenced]]/[[reproducible]] hints (A1.3)
+    "cfront_bitint.c",  # + C23 `_BitInt(N)` (#bitint): exact-width, non-promoting bit-precise ints (incl. a NON-standard 12/20-bit lane) as locals/params/returns, same-type arithmetic, faithful `_BitInt(N)` emit
+    "cfront_bitint_mixed.c",
+]  # + C23 `_BitInt(N)` MIXED-WIDTH arithmetic (#bitintmixed): a `_BitInt(N)` mixed with a NARROWER standard int / `_BitInt` / constant, where the C23 6.3.1.8 result is the WIDER `_BitInt` -- modeled result type == Clang (the `_Generic` differential), faithful emit
+_CONTROL = [
+    "cfront_branch.c",
+    "cfront_while.c",
+    "cfront_for.c",
+    "cfront_dowhile.c",
+    "cfront_continue.c",
+    "cfront_switch.c",
+    "cfront_switchfall.c",
+    "cfront_goto.c",
+    "cfront_incdec.c",
+    "cfront_multidecl.c",
+    "cfront_commastep.c",
+    "cfront_emptystmt.c",
+    "cfront_loopreuse.c",
+    "cfront_loopscope.c",
+    "cfront_blockscope.c",
+    "cfront_localmd.c",
+    "cfront_localmdinit.c",
+    "cfront_ptrlocal.c",
+]
+# + multi-declarator locals (T a=x, b, c=z), comma-operator for-step (i++, j--), empty stmts
+_PREPROC = [
+    "cfront_macros.c",
+    "cfront_ppinc.c",
+    "cfront_comments.c",
+]  # L7: exercise the preprocessor
+_ABI = [
+    "cfront_structret.c",
+    "cfront_structcall.c",  # L8: struct return-by-value (+ using a call RESULT)
+    "cfront_packed.c",  # + packed layout
+    "cfront_union.c",  # + full union (members overlap at offset 0)
+    "cfront_interleave.c",  # + enum/struct defined *between* two functions
+    "cfront_funcptr.c",  # + funcptr param + indirect call (HAL dispatch)
+    "cfront_fnptrparam.c",  # + DIRECT inline funcptr params int (*g)(int) (no typedef)
+    "cfront_rmw.c",  # + MMIO register read-modify-write (d->reg |= bits)
+    "cfront_bitfield.c",  # + MMIO bitfield write (r->field = v, c.bf.set)
+    "cfront_bfcompound.c",  # + bitfield compound-assign (r->field |= bits)
+    "cfront_signedbf.c",  # + signed bitfield read sign-extension (int x:N)
+    "cfront_widebf.c",  # + WIDE bitfields in a 64-bit unit (long long x:N, N>32)
+    "cfront_packedbf.c",  # + PACKED bitfields (bit-by-bit, byte/word-straddling)
+    "cfront_alignasmember.c",  # + over-aligned members (_Alignas/alignas/aligned(N))
+    "cfront_anonmember.c",  # + anonymous struct/union members (promoted leaves)
+    "cfront_unnamedbf.c",  # + unnamed / zero-width bitfields (layout-only padding)
+    "cfront_charmember.c",  # + plain `char` members read as `char` not int8_t (ARM)
+    "cfront_aostruct.c",  # + ARRAY-OF-STRUCTS members p->arr[i].field (strided)
+    "cfront_aoslocal.c",  # + regular LOCAL array decl init (inferred/explicit, scalar/struct)
+    "cfront_fnptrmember.c",  # + funcptr members set from NAMED functions (dispatch)
+    "cfront_assignexpr.c",  # + assignment as an EXPRESSION (a=b=c, if((x=f()))...)
+    "cfront_memassignexpr.c",  # + member-lvalue assignment as a value ((p->x=v)+1)
+    "cfront_signedload.c",  # + signed sub-int member/array read sign-extension
+    "cfront_restrict.c",  # + restrict/__restrict pointer params (consumed hint)
+    "cfront_shiftassign.c",  # + <<= / >>= shift compound-assign (scalar/member/array)
+    "cfront_ptrarith.c",  # + pointer mutation p++ / p += n (buffer-walk cursor)
+    "cfront_structmulti.c",  # + multi-declarator struct members (unsigned x,y,z;)
+    "cfront_nestmember.c",  # + nested member access (o.pos.lo / dev->ctrl.bf)
+    "cfront_memberarray.c",  # + native 1-D struct member arrays (s.arr[i])
+    "cfront_neststruct.c",  # + nested struct members + nested-brace init `{ {..}, .. }`
+    "cfront_bitint_member.c",  # + C23 `_BitInt(N)` struct MEMBERS (#bitintmember): a PLAIN
+    #   (non-bitfield) `_BitInt(N)` member -- read + write + same-type
+    #   arithmetic, layout (sizeof/offsetof) == Clang, faithful emit
+    "cfront_bitint_bitfield.c",
+]  # + C23 `_BitInt(N)` BITFIELDS (#bitintbitfield): `_BitInt(N) m:W`
+#   (1<=W<=N) packs into the `_BitInt(N)` storage unit LSB-first,
+#   byte-identical to Clang (the layout differential); W<=32 reads
+#   promote to int, W>32 stay `_BitInt(N)` -- faithful emit
+_FLOAT = [
+    "cfront_float.c",
+    "cfront_floatcast.c",
+    "cfront_hexfloat.c",
+    "cfront_mathh.c",
+    "cfront_mathh_mixed.c",
+    "cfront_mathh_long.c",
+    "cfront_mathh_ptr.c",
+    "cfront_calltyped.c",
+    "cfront_complex.c",
+    "cfront_complexdiv.c",  # + C99 _Complex (#complex) + complex `/`
+    "cfront_complextrans.c",  # + complex transcendentals (#complextrans)
+    "cfront_imagunit.c",  # + <complex.h> imaginary unit `I` (#imagunit)
+    "cfront_complexlong.c",  # + long-double complex (#complexlong)
+    "cfront_complexmember.c",
+]  # + complex struct members (#complexmember)
 #   float/double: parity + emit + Clang ≡ (the
 #   integer StreamPack executor doesn't compute float; the math is delegated to the resident backend)
-_INIT = ["cfront_dispatch_table.c",   # designated initializers ([i]=v) for a file-scope dispatch table
-         "cfront_agginit.c",          # local struct/union aggregate init ({.field=v}) -> = {0} + stores
-         "cfront_localarray.c",       # local array decl T a[N] + array aggregate init (positional + [i]=)
-         "cfront_nestinit.c"]         # NESTED-brace init `{ m, {e0..}, n }` for a struct's array member
+_INIT = [
+    "cfront_dispatch_table.c",  # designated initializers ([i]=v) for a file-scope dispatch table
+    "cfront_agginit.c",  # local struct/union aggregate init ({.field=v}) -> = {0} + stores
+    "cfront_localarray.c",  # local array decl T a[N] + array aggregate init (positional + [i]=)
+    "cfront_nestinit.c",
+]  # NESTED-brace init `{ m, {e0..}, n }` for a struct's array member
 #   (a local decl, a compound literal, and a struct return BY VALUE) -- offset-based element stores
 #   parity + emit + Clang ≡ (the table is referenced by name, defined in the source -- not re-hydrated)
-_PTRVALUE = ["cfront_ptrvalue.c",   # pointer VALUES across non-address contexts (#ptrvalue): pointer
-#   arithmetic `p + i` as an rvalue returned by value -- the temp carries the pointee type (a real
-#   `T *t = p + i`), not a truncating uint32. Parity + emit + Clang ≡ (returns a pointer, not executed).
-             "cfront_ptrfield.c",   # + a pointer stored into / loaded from a struct field (#ptrfield):
-             "cfront_addrof.c",   # general address-of `&`
-             "cfront_addrofarr.c",   # member-array element address
-             "cfront_addrofaos.c",   # array-of-structs element field address
-             "cfront_extentsnap.c",  # §5.12 recoverable-extent SNAPSHOT: expression counts (#extentsnap)
-             "cfront_comma.c",       # the comma operator in a primary parenthesized expr (#comma)
-             "cfront_vla.c",         # native 1-D stack VLAs `T a[n]` -- in-body decl + masked bounds (#vla)
-             "cfront_vlasizeof.c",   # runtime `sizeof a` of a VLA -> extent * sizeof(elem) (#vlasizeof)
-             "cfront_vlaparam.c",    # VLA function parameters `T a[n]` -> masked param bounds vs n (#vlaparam)
-             "cfront_vlamd.c",       # multi-dimensional VLAs `T a[m][n]` -> flat m*n extent + Horner (#vlamd)
-             "cfront_lvassignexpr.c",# array/deref/nested lvalue assignment used as a value (#lvassignexpr)
-             "cfront_narrowcompound.c", # a narrow-target compound assignment AS A VALUE re-reads (#narrowcompound)
-             "cfront_bfassignexpr.c",# a BITFIELD member assignment used as a value (#bfassignexpr)
-             "cfront_aosassignexpr.c",# an array-of-structs field / member-array element as a value (#aosassignexpr)
-             "cfront_signedfnptr.c", # a SIGNED function-pointer return reads back signed (#signedfnptr)
-             "cfront_addroffollow.c",# &arr[i].field (plain base) + &s->ptr (pointer member) (#addroffollow)
-             "cfront_incdecexpr.c",  # ++/-- in expression position as a value (#incdecexpr)
-             "cfront_computedgoto.c",# computed goto: &&L label-as-value + goto *p (#computedgoto)
-             "cfront_fnptrlocal.c",  # a function-pointer LOCAL VARIABLE `RET (*f)(P)=fn;` (#fnptrlocal)
-             "cfront_arrcomplit.c",  # 1-D scalar array compound literals, bounds-guard-reconciled (#arrcomplit)
-             "cfront_stdlibmem.c"]   # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
+_PTRVALUE = [
+    "cfront_ptrvalue.c",  # pointer VALUES across non-address contexts (#ptrvalue): pointer
+    #   arithmetic `p + i` as an rvalue returned by value -- the temp carries the pointee type (a real
+    #   `T *t = p + i`), not a truncating uint32. Parity + emit + Clang ≡ (returns a pointer, not executed).
+    "cfront_ptrfield.c",  # + a pointer stored into / loaded from a struct field (#ptrfield):
+    "cfront_addrof.c",  # general address-of `&`
+    "cfront_addrofarr.c",  # member-array element address
+    "cfront_addrofaos.c",  # array-of-structs element field address
+    "cfront_extentsnap.c",  # §5.12 recoverable-extent SNAPSHOT: expression counts (#extentsnap)
+    "cfront_comma.c",  # the comma operator in a primary parenthesized expr (#comma)
+    "cfront_vla.c",  # native 1-D stack VLAs `T a[n]` -- in-body decl + masked bounds (#vla)
+    "cfront_vlasizeof.c",  # runtime `sizeof a` of a VLA -> extent * sizeof(elem) (#vlasizeof)
+    "cfront_vlaparam.c",  # VLA function parameters `T a[n]` -> masked param bounds vs n (#vlaparam)
+    "cfront_vlamd.c",  # multi-dimensional VLAs `T a[m][n]` -> flat m*n extent + Horner (#vlamd)
+    "cfront_lvassignexpr.c",  # array/deref/nested lvalue assignment used as a value (#lvassignexpr)
+    "cfront_narrowcompound.c",  # a narrow-target compound assignment AS A VALUE re-reads (#narrowcompound)
+    "cfront_bfassignexpr.c",  # a BITFIELD member assignment used as a value (#bfassignexpr)
+    "cfront_aosassignexpr.c",  # an array-of-structs field / member-array element as a value (#aosassignexpr)
+    "cfront_signedfnptr.c",  # a SIGNED function-pointer return reads back signed (#signedfnptr)
+    "cfront_addroffollow.c",  # &arr[i].field (plain base) + &s->ptr (pointer member) (#addroffollow)
+    "cfront_incdecexpr.c",  # ++/-- in expression position as a value (#incdecexpr)
+    "cfront_computedgoto.c",  # computed goto: &&L label-as-value + goto *p (#computedgoto)
+    "cfront_fnptrlocal.c",  # a function-pointer LOCAL VARIABLE `RET (*f)(P)=fn;` (#fnptrlocal)
+    "cfront_arrcomplit.c",  # 1-D scalar array compound literals, bounds-guard-reconciled (#arrcomplit)
+    "cfront_stdlibmem.c",
+]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
 _FIXTURES = _STRAIGHTLINE + _CONTROL + _PREPROC + _ABI + _FLOAT + _INIT + _PTRVALUE
 # §5.8 atomics/fences/CAS run their own gate: their memory side effects make the generic
 # pure-function equivalence harness invalid (it would call the original first and observe
 # the mutated cell), so they get a side-effect-aware behaviour check below.
-_ATOMIC = ["cfront_atomic.c", "cfront_cmpxchg.c", "cfront_atomic11.c", "cfront_atomic_xchg.c", "cfront_cmpxchg11.c"]  # + C11 stdatomic + atomic_exchange + compare_exchange
+_ATOMIC = [
+    "cfront_atomic.c",
+    "cfront_cmpxchg.c",
+    "cfront_atomic11.c",
+    "cfront_atomic_xchg.c",
+    "cfront_cmpxchg11.c",
+]  # + C11 stdatomic + atomic_exchange + compare_exchange
 
 
 def _includes_for(fx: str) -> dict:
@@ -174,7 +253,7 @@ def _oracle(src: str, includes=None):
     bf = sum(1 for c in cl if c.op == "c.bf.get")
     kn = sum(1 for c in cl if c.op == "c.const")
     bo = sum(1 for c in cl if c.op.startswith("c.bin."))
-    ca = sum(1 for c in cl if c.op.startswith("c.call"))   # c.call:NAME (direct) + c.call.indirect
+    ca = sum(1 for c in cl if c.op.startswith("c.call"))  # c.call:NAME (direct) + c.call.indirect
     # A1.3 fusion-legality signal: how many functions in the unit carry a C23 `[[reproducible]]` /
     # `[[unsequenced]]` hint. Value-neutral (dropped from the emit), so it never affects behaviour --
     # it is surfaced here so the dual-rail parity gate pins it identically on both rails.
@@ -182,8 +261,10 @@ def _oracle(src: str, includes=None):
     # digest = the cross-rail per-claim STRUCTURAL digest (the count->structural parity fix): the C twin
     # appends the byte-identical `digest=<16-hex>` to its summary, so the gate now compares structure.
     digest = cfront_structural_digest(r.lowered)
-    summary = (f"funcs={len(funcs)} claims={len(cl)} mmio={mmio} bf={bf} const={kn} "
-               f"binop={bo} call={ca} repro={repro} ok={1 if r.is_clean else 0} digest={digest:016x}")
+    summary = (
+        f"funcs={len(funcs)} claims={len(cl)} mmio={mmio} bf={bf} const={kn} "
+        f"binop={bo} call={ca} repro={repro} ok={1 if r.is_clean else 0} digest={digest:016x}"
+    )
     return summary, r, entry
 
 
@@ -212,8 +293,9 @@ def _compile_once(key: str, out_name: str, src_names: tuple, label: str) -> str:
     exe = os.path.join(_session_build_dir(), out_name)
     srcs = [os.path.join(_C, s) for s in src_names]
     for std in ("c23", "c11"):
-        b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe],
-                           capture_output=True, text=True)
+        b = subprocess.run(
+            [_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe], capture_output=True, text=True
+        )
         if b.returncode == 0:
             _BUILD_CACHE[key] = exe
             return exe
@@ -223,9 +305,12 @@ def _compile_once(key: str, out_name: str, src_names: tuple, label: str) -> str:
 def _build_frontend(d: str) -> str:
     # `d` is retained for call-site compatibility; the binary is cached session-wide (see _compile_once).
     # bcir_cfront verifies (bcir_verify.c) and the pack law reaches into bcir_runtime.c, so both link in.
-    return _compile_once("frontend", "tcf",
-                         ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c", "bcir_runtime.c", "test_cfront.c"),
-                         "C frontend")
+    return _compile_once(
+        "frontend",
+        "tcf",
+        ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c", "bcir_runtime.c", "test_cfront.c"),
+        "C frontend",
+    )
 
 
 def _c_run(exe: str, fixture_path: str):
@@ -252,7 +337,7 @@ def _seed_params(entry):
     has_ptr = any(ct.kind in ("pointer", "array") for _n, _r, ct in entry.params)
     decls, setup, args, prelude = [], [], [], []
     for i, (_pn, _rid, ct) in enumerate(entry.params):
-        if ct.kind == "funcptr":                          # pass a real (deterministic) target fn
+        if ct.kind == "funcptr":  # pass a real (deterministic) target fn
             rety = _cname(ct.of) if ct.of else "uint32_t"
             plist = ", ".join(f"{_cname(pt)} p{j}" for j, pt in enumerate(ct.params)) or "void"
             comb = " + ".join(f"(p{j} * {2 * j + 1}u)" for j in range(len(ct.params))) or "1u"
@@ -261,7 +346,9 @@ def _seed_params(entry):
             continue
         if ct.kind in ("pointer", "array"):
             decls.append(f"  static {_cname(ct.of)} buf{i}[256];")
-            setup.append(f"    for(unsigned k=0;k<sizeof buf{i}/4;k++) ((uint32_t*)buf{i})[k]=rng();")
+            setup.append(
+                f"    for(unsigned k=0;k<sizeof buf{i}/4;k++) ((uint32_t*)buf{i})[k]=rng();"
+            )
             # The original multidimensional-array parameter adjusts to a pointer-to-row
             # (for example ``uint32_t (*)[8]``), while the verified-C rail deliberately
             # flattens it to ``uint32_t *``. A void-object-pointer argument converts to
@@ -270,12 +357,15 @@ def _seed_params(entry):
             args.append(f"(void *)buf{i}")
         elif ct.is_aggregate:
             decls.append(f"  {ct.kind} {ct.name} a{i};")
-            inits = "".join(f"    a{i}.{fn}=(rng()&{(1 << bw) - 1}u);\n" if bw
-                            else f"    a{i}.{fn}=({_cname(ft)})rng();\n"
-                            for fn, ft, _bo, _bf, bw in ct.fields)
+            inits = "".join(
+                f"    a{i}.{fn}=(rng()&{(1 << bw) - 1}u);\n"
+                if bw
+                else f"    a{i}.{fn}=({_cname(ft)})rng();\n"
+                for fn, ft, _bo, _bf, bw in ct.fields
+            )
             setup.append(inits.rstrip("\n"))
             args.append(f"a{i}")
-        elif ct.is_complex:                          # a _Complex param: seed BOTH axes (finite, in range)
+        elif ct.is_complex:  # a _Complex param: seed BOTH axes (finite, in range)
             decls.append(f"  {_cname(ct)} s{i};")
             el = "float" if ct.size == 8 else ("long double" if ct.size > 16 else "double")
             setup.append(f"    s{i}=({el})(rng()%1000) + ({el})(rng()%1000)*I;")
@@ -306,17 +396,23 @@ def _equiv(source: str, c_emitted: str, entry, *, cc=_CC) -> str:
         # padding bytes -- which memcmp would wrongly flag -- AND nan-safe, which a complex division by a
         # near-zero divisor needs (`==` is false for a nan, so the isnan&&isnan arm catches it). Both rails
         # run the identical native op, so equal-value already implies bit-equal (incl. signed zero / inf).
-        cmp = (f"    {rt} ra={entry.name}({call}), rb=bcir_{entry.name}({call});\n"
-               f"    if(!((creall(ra)==creall(rb)||(isnan(creall(ra))&&isnan(creall(rb))))"
-               f"&&(cimagl(ra)==cimagl(rb)||(isnan(cimagl(ra))&&isnan(cimagl(rb))))))"
-               f"{{printf(\"MISMATCH@%d\\n\",i);return 1;}}")
+        cmp = (
+            f"    {rt} ra={entry.name}({call}), rb=bcir_{entry.name}({call});\n"
+            f"    if(!((creall(ra)==creall(rb)||(isnan(creall(ra))&&isnan(creall(rb))))"
+            f"&&(cimagl(ra)==cimagl(rb)||(isnan(cimagl(ra))&&isnan(cimagl(rb))))))"
+            f'{{printf("MISMATCH@%d\\n",i);return 1;}}'
+        )
     elif entry.ret_type.is_aggregate:
         # an aggregate result is compared BIT-exactly (memcmp): both rails run the identical stores.
-        cmp = (f"    {rt} ra={entry.name}({call}), rb=bcir_{entry.name}({call});\n"
-               f"    if(memcmp(&ra,&rb,sizeof ra)){{printf(\"MISMATCH@%d\\n\",i);return 1;}}")
+        cmp = (
+            f"    {rt} ra={entry.name}({call}), rb=bcir_{entry.name}({call});\n"
+            f'    if(memcmp(&ra,&rb,sizeof ra)){{printf("MISMATCH@%d\\n",i);return 1;}}'
+        )
     else:
-        cmp = (f"    if({entry.name}({call})!=bcir_{entry.name}({call}))"
-               f"{{printf(\"MISMATCH@%d\\n\",i);return 1;}}")
+        cmp = (
+            f"    if({entry.name}({call})!=bcir_{entry.name}({call}))"
+            f'{{printf("MISMATCH@%d\\n",i);return 1;}}'
+        )
     harness = f"""#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -342,9 +438,13 @@ int main(void){{
         c, e = os.path.join(d, "e.c"), os.path.join(d, "e")
         open(c, "w").write(harness)
         for std in ("c23", "c2x", "c17"):
-            b = subprocess.run(host_link_args(
-                [cc, f"-std={std}", "-O2", c, "-o", e, "-lm"]),   # logical libm; omitted for Windows CRT
-                               capture_output=True, text=True)
+            b = subprocess.run(
+                host_link_args(
+                    [cc, f"-std={std}", "-O2", c, "-o", e, "-lm"]
+                ),  # logical libm; omitted for Windows CRT
+                capture_output=True,
+                text=True,
+            )
             if b.returncode == 0:
                 break
         else:
@@ -367,8 +467,8 @@ def _equiv_atomic(source: str, c_emitted: str, entry, *, cc=_CC) -> str:
     decls, setup, args_a, args_b, cell_cmp = [], [], [], [], []
     for i, (_pn, _rid, ct) in enumerate(entry.params):
         if ct.kind in ("pointer", "array"):
-            base = _cname(ct.of)                            # may be `_Atomic uint32_t` (a C11 cell)
-            plain = base.replace("_Atomic ", "")            # the seed casts to the non-atomic type
+            base = _cname(ct.of)  # may be `_Atomic uint32_t` (a C11 cell)
+            plain = base.replace("_Atomic ", "")  # the seed casts to the non-atomic type
             decls += [f"  {base} ca{i};", f"  {base} cb{i};"]
             setup.append(f"    ca{i}=cb{i}=({plain})(rng()%16);")
             args_a.append(f"&ca{i}")
@@ -404,9 +504,13 @@ int main(void){{
         c, e = os.path.join(d, "a.c"), os.path.join(d, "a")
         open(c, "w").write(harness)
         for std in ("c23", "c2x", "c17"):
-            b = subprocess.run(host_link_args(
-                [cc, f"-std={std}", "-O2", c, "-o", e, "-lm"]),   # logical libm; omitted for Windows CRT
-                               capture_output=True, text=True)
+            b = subprocess.run(
+                host_link_args(
+                    [cc, f"-std={std}", "-O2", c, "-o", e, "-lm"]
+                ),  # logical libm; omitted for Windows CRT
+                capture_output=True,
+                text=True,
+            )
             if b.returncode == 0:
                 break
         else:
@@ -459,8 +563,11 @@ def _parity_check_fixture(args):
     # malloc/calloc'd pointer with a recovered extent. A divergence here means one rail promoted and the
     # other did not (a silent two-rail split the claim-summary parity does not catch).
     if oracle_emit.count("BCIR_CHK") != c_emit.count("BCIR_CHK"):
-        return (fx, f"bounds-guard parity: oracle={oracle_emit.count('BCIR_CHK')} "
-                    f"twin={c_emit.count('BCIR_CHK')} BCIR_CHK guards")
+        return (
+            fx,
+            f"bounds-guard parity: oracle={oracle_emit.count('BCIR_CHK')} "
+            f"twin={c_emit.count('BCIR_CHK')} BCIR_CHK guards",
+        )
     # Storage-extent parity: both rails must allocate identically-sized backing arrays. An over-sized
     # compound literal / inferred-size array keeps the same stores, behaviour, and guard COUNT (so the checks
     # above all pass), but a larger backing array -- the dim-product multiset of array declarations catches it.
@@ -515,14 +622,18 @@ def _original_xcc_verdict(source: str, entry, compilers) -> str:
     call = ", ".join(args)
     rt = _cname(entry.ret_type)
     if entry.ret_type.kind in ("pointer", "array"):
-        fold = f"    (void)({entry.name}({call}));"        # absolute address: not a cross-binary value
+        fold = f"    (void)({entry.name}({call}));"  # absolute address: not a cross-binary value
     elif entry.ret_type.is_complex:
-        fold = (f"    {rt} rr={entry.name}({call});\n"
-                f"    h=h*1099511628211u + (uint64_t)(int64_t)creall(rr);\n"
-                f"    h=h*1099511628211u + (uint64_t)(int64_t)cimagl(rr);")
+        fold = (
+            f"    {rt} rr={entry.name}({call});\n"
+            f"    h=h*1099511628211u + (uint64_t)(int64_t)creall(rr);\n"
+            f"    h=h*1099511628211u + (uint64_t)(int64_t)cimagl(rr);"
+        )
     elif entry.ret_type.is_aggregate:
-        fold = (f"    {rt} rr={entry.name}({call});\n"
-                f"    for(unsigned b=0;b<sizeof rr;b++) h=h*1099511628211u + ((unsigned char*)&rr)[b];")
+        fold = (
+            f"    {rt} rr={entry.name}({call});\n"
+            f"    for(unsigned b=0;b<sizeof rr;b++) h=h*1099511628211u + ((unsigned char*)&rr)[b];"
+        )
     else:
         fold = f"    h=h*1099511628211u + (uint64_t)({entry.name}({call}));"
     harness = f"""#include <stdint.h>
@@ -552,12 +663,15 @@ int main(void){{
         for idx, cc in enumerate(compilers):
             e = os.path.join(d, f"o{idx}")
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run(host_link_args([cc, f"-std={std}", "-O2", c, "-o", e, "-lm"]),
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    host_link_args([cc, f"-std={std}", "-O2", c, "-o", e, "-lm"]),
+                    capture_output=True,
+                    text=True,
+                )
                 if b.returncode == 0:
                     break
             else:
-                return "unsupported"                       # the original doesn't build under this compiler
+                return "unsupported"  # the original doesn't build under this compiler
             fingerprints.append(subprocess.run([e], capture_output=True, text=True).stdout.strip())
     return "fair" if len(set(fingerprints)) == 1 else "xcc-divergent"
 
@@ -577,7 +691,7 @@ def _differential_check_fixture(fx: str, compilers) -> tuple[str | None, str | N
     _oracle_summary, r, entry = _oracle(src, _includes_for(fx))
     verdict = _original_xcc_verdict(r.source, entry, compilers)
     if verdict != "fair":
-        return (None, f"{fx}: {verdict}")                  # not a fair differential -- exclude, don't blame
+        return (None, f"{fx}: {verdict}")  # not a fair differential -- exclude, don't blame
     _c_summary, c_emit = _c_run(_build_frontend(_session_build_dir()), path)
     oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
     check = _equiv_atomic if fx in _ATOMIC else _equiv
@@ -585,8 +699,11 @@ def _differential_check_fixture(fx: str, compilers) -> tuple[str | None, str | N
         for rail, emit in (("twin", c_emit), ("oracle", oracle_emit)):
             out = check(r.source, emit, entry, cc=cc)
             if out != "MATCH":
-                return (f"{fx}: {rail} emit not behaviour-equivalent under "
-                        f"{os.path.basename(cc)} ({out})", None)
+                return (
+                    f"{fx}: {rail} emit not behaviour-equivalent under "
+                    f"{os.path.basename(cc)} ({out})",
+                    None,
+                )
     return (None, None)
 
 
@@ -604,7 +721,7 @@ def _differential_check_group(fxs):
     gap or an xcc-divergent original) is NOT charged against cfront; only a real {original != emit} divergence
     on a fair fixture fails the group."""
     compilers = _differential_compilers()
-    if not compilers:                                            # quick tier or a single-compiler host
+    if not compilers:  # quick tier or a single-compiler host
         return
     fails, tested = [], 0
     for fx in fxs:
@@ -612,13 +729,17 @@ def _differential_check_group(fxs):
         if msg:
             fails.append(msg)
         elif excluded is None:
-            tested += 1                                          # a fair fixture that passed both compilers
-    assert not fails, ("GCC<->Clang behaviour-equivalence differential failures (the cfront emit diverges "
-                       "from the original under a compiler where the original is well-defined):\n"
-                       + "\n".join(f"  {m}" for m in fails))
+            tested += 1  # a fair fixture that passed both compilers
+    assert not fails, (
+        "GCC<->Clang behaviour-equivalence differential failures (the cfront emit diverges "
+        "from the original under a compiler where the original is well-defined):\n"
+        + "\n".join(f"  {m}" for m in fails)
+    )
     # at least one fixture in the slice must have actually run under BOTH compilers, so a slice that
     # silently degenerated to all-excluded (or a single-compiler fall-back) is itself a failure.
-    assert tested > 0, f"differential exercised no fair fixture in this slice under both compilers: {fxs}"
+    assert tested > 0, (
+        f"differential exercised no fair fixture in this slice under both compilers: {fxs}"
+    )
 
 
 def test_emitted_c_is_equivalent_under_both_gcc_and_clang_g0():
@@ -651,22 +772,26 @@ def test_emitted_c_is_equivalent_under_both_gcc_and_clang_smoke():
     asserts MATCH under each, FAILING (not skipping) if either compiler is missing when it should be
     there. So a silent fall-back to a single compiler -- the failure mode this whole differential guards
     against -- is itself caught. Under the quick tier (toolchain hidden) it correctly self-skips."""
-    if not _CC:                                                 # quick tier: toolchain hidden -> skip
+    if not _CC:  # quick tier: toolchain hidden -> skip
         return
     compilers = _differential_compilers()
     # _CC resolved (a compiler is visible), so under any tier that exposes a C compiler BOTH gcc and
     # clang are in the visible set (run_all's `_C_COMPILER`) -- a single-compiler host is the bug.
-    assert compilers, ("cross-compiler differential degenerated to ONE compiler: "
-                       f"gcc={shutil.which('gcc')} clang={shutil.which('clang')} -- "
-                       "the equivalence gate would silently exercise only one toolchain")
+    assert compilers, (
+        "cross-compiler differential degenerated to ONE compiler: "
+        f"gcc={shutil.which('gcc')} clang={shutil.which('clang')} -- "
+        "the equivalence gate would silently exercise only one toolchain"
+    )
     gcc, clang = compilers
-    fx = "cfront_intsigncast.c"                                 # signed/float casts: a UB-sensitive pick
+    fx = "cfront_intsigncast.c"  # signed/float casts: a UB-sensitive pick
     path = os.path.join(_C, fx)
     src = open(path, encoding="utf-8").read()
     _summary, r, entry = _oracle(src, _includes_for(fx))
     _c_summary, c_emit = _c_run(_build_frontend(_session_build_dir()), path)
     assert _equiv(r.source, c_emit, entry, cc=gcc) == "MATCH", f"{fx}: twin emit diverges under gcc"
-    assert _equiv(r.source, c_emit, entry, cc=clang) == "MATCH", f"{fx}: twin emit diverges under clang"
+    assert _equiv(r.source, c_emit, entry, cc=clang) == "MATCH", (
+        f"{fx}: twin emit diverges under clang"
+    )
 
 
 def test_storage_extent_parity_catches_oversizing():
@@ -678,7 +803,11 @@ def test_storage_extent_parity_catches_oversizing():
     # the divergence the parity check now flags (same stores/behaviour, different backing size)
     assert _array_extents("T a[6] = {0};") != _array_extents("T a[10] = {0};")
     # robust to a flat-vs-nested decl form: a [2][2] and a [4] are the same storage (dim product)
-    assert _array_extents("unsigned int a[2][2] = {0};") == _array_extents("unsigned int b[4] = {0};") == (4,)
+    assert (
+        _array_extents("unsigned int a[2][2] = {0};")
+        == _array_extents("unsigned int b[4] = {0};")
+        == (4,)
+    )
     # a multiset: two same-sized arrays are distinct from one
     assert _array_extents("T a[2];\nT b[2];") == (2, 2) != _array_extents("T a[2];")
 
@@ -693,32 +822,45 @@ def test_link_flag_derivation_dual_rail():
     libc is implicit), and a mixed math+free unit (still just `-lm`, dedup + implicit-skip). Also pins
     the callee->library classification (incl. cblas_*->-lcblas and the unknown-callee policy) directly."""
     from bcir.frontends.cfront.linkflags import (
-        NO_FLAG, derive_link_flags, format_link_flags, library_for_callee,
+        NO_FLAG,
+        derive_link_flags,
+        format_link_flags,
+        library_for_callee,
     )
 
     # (a) the mapping itself -- the source of truth, independent of the C-toolchain gate.
-    assert library_for_callee("sqrt") == "-lm"            # base math.h
-    assert library_for_callee("sqrtf") == "-lm"           # f-suffixed variant
-    assert library_for_callee("lroundl") == "-lm"         # fixed-long suffixed variant
-    assert library_for_callee("free") == NO_FLAG          # libc-implicit, EXPLICITLY known (not unknown)
+    assert library_for_callee("sqrt") == "-lm"  # base math.h
+    assert library_for_callee("sqrtf") == "-lm"  # f-suffixed variant
+    assert library_for_callee("lroundl") == "-lm"  # fixed-long suffixed variant
+    assert library_for_callee("free") == NO_FLAG  # libc-implicit, EXPLICITLY known (not unknown)
     assert library_for_callee("malloc") == NO_FLAG
-    assert library_for_callee("printf") == NO_FLAG        # printf-family extern variadic
+    assert library_for_callee("printf") == NO_FLAG  # printf-family extern variadic
     assert library_for_callee("cblas_sgemm") == "-lcblas"  # B5 BLAS (the existing path's choice)
     assert library_for_callee("cblas_dgemm") == "-lcblas"  # any cblas_*
     assert library_for_callee("fftwf_execute") == "-lfftw3"  # B2 FFTW (single-prec edge)
     assert library_for_callee("fftwf_plan_dft_1d") == "-lfftw3"  # any fftwf_*
     assert library_for_callee("fftw_execute") == "-lfftw3"  # the double-prec fftw_* prefix too
-    assert library_for_callee("LAPACKE_sgesv") == "-llapack"  # #61 LAPACK (the linear-solve wrap's callee)
+    assert (
+        library_for_callee("LAPACKE_sgesv") == "-llapack"
+    )  # #61 LAPACK (the linear-solve wrap's callee)
     assert library_for_callee("LAPACKE_dgesv") == "-llapack"  # any LAPACKE_*
-    assert library_for_callee("sgesv_") == "-llapack"        # the Fortran-ABI driver symbol
-    assert library_for_callee("gsl_stats_mean") == "-lgsl"   # #62 GSL (the statistics wrap's callee)
-    assert library_for_callee("gsl_sf_erf") == "-lgsl"       # any gsl_*
-    assert library_for_callee("Sleef_expf1_u10") == "-lsleef"  # #63 SLEEF (the vectorized-exp wrap's callee)
+    assert library_for_callee("sgesv_") == "-llapack"  # the Fortran-ABI driver symbol
+    assert library_for_callee("gsl_stats_mean") == "-lgsl"  # #62 GSL (the statistics wrap's callee)
+    assert library_for_callee("gsl_sf_erf") == "-lgsl"  # any gsl_*
+    assert (
+        library_for_callee("Sleef_expf1_u10") == "-lsleef"
+    )  # #63 SLEEF (the vectorized-exp wrap's callee)
     assert library_for_callee("Sleef_sinf1_u10") == "-lsleef"  # any Sleef_*
-    assert library_for_callee("erfcxf") == "-lcerf"          # #64 libcerf (the scaled-erfc wrap's callee)
-    assert library_for_callee("erfcx") == "-lcerf"           # the bare/double erfcx too (a symbol libm lacks)
-    assert library_for_callee("erfcf") == "-lm"              # ... but erfcf/erfc/erf are still libm (not shadowed)
-    assert library_for_callee("totally_unknown_fn") is None  # unknown-callee policy: None (no invented -l)
+    assert library_for_callee("erfcxf") == "-lcerf"  # #64 libcerf (the scaled-erfc wrap's callee)
+    assert (
+        library_for_callee("erfcx") == "-lcerf"
+    )  # the bare/double erfcx too (a symbol libm lacks)
+    assert (
+        library_for_callee("erfcf") == "-lm"
+    )  # ... but erfcf/erfc/erf are still libm (not shadowed)
+    assert (
+        library_for_callee("totally_unknown_fn") is None
+    )  # unknown-callee policy: None (no invented -l)
     # dedup + STABLE sort (reproducible): a set with two libs always yields the same ordered line.
     assert format_link_flags(sorted({"-lm", "-lcblas"})) == "-lcblas -lm"
     assert format_link_flags(sorted({"-lm", "-lfftw3"})) == "-lfftw3 -lm"
@@ -728,12 +870,18 @@ def test_link_flag_derivation_dual_rail():
 
     # (b) end-to-end derivation over real units (oracle rail).
     cases = {
-        "pure-int":   ("uint32_t f(uint32_t a){ return a*3u + 1u; }", ""),
-        "mathh":      ("#include <math.h>\ndouble f(double x){ return sqrt(x) + floor(x); }", "-lm"),
-        "free":       ("#include <stdlib.h>\nunsigned f(unsigned n){ unsigned *p=malloc(n*4u);"
-                       " unsigned r=p[0]; free(p); return r; }", ""),
-        "math+free":  ("#include <math.h>\n#include <stdlib.h>\ndouble f(double x){ double *p=malloc(8);"
-                       " double r=sqrt(x); free(p); return r; }", "-lm"),
+        "pure-int": ("uint32_t f(uint32_t a){ return a*3u + 1u; }", ""),
+        "mathh": ("#include <math.h>\ndouble f(double x){ return sqrt(x) + floor(x); }", "-lm"),
+        "free": (
+            "#include <stdlib.h>\nunsigned f(unsigned n){ unsigned *p=malloc(n*4u);"
+            " unsigned r=p[0]; free(p); return r; }",
+            "",
+        ),
+        "math+free": (
+            "#include <math.h>\n#include <stdlib.h>\ndouble f(double x){ double *p=malloc(8);"
+            " double r=sqrt(x); free(p); return r; }",
+            "-lm",
+        ),
     }
     for label, (src, want) in cases.items():
         r = compile_unit(src, check_clang=False)
@@ -745,13 +893,15 @@ def test_link_flag_derivation_dual_rail():
         return
     # (c) the dual-rail parity gate: the C twin's --emit-link-flags == the oracle, byte-for-byte.
     exe = _build_frontend(_session_build_dir())
-    d = tempfile.mkdtemp(prefix="bcir_lf_"); atexit.register(shutil.rmtree, d, ignore_errors=True)
+    d = tempfile.mkdtemp(prefix="bcir_lf_")
+    atexit.register(shutil.rmtree, d, ignore_errors=True)
     for label, (src, want) in cases.items():
         path = os.path.join(d, f"lf_{label.replace('+', '_')}.c")
         with open(path, "w", encoding="utf-8") as f:
             f.write(src + "\n")
-        c_out = subprocess.run([exe, "--emit-link-flags", path],
-                               capture_output=True, text=True).stdout.strip()
+        c_out = subprocess.run(
+            [exe, "--emit-link-flags", path], capture_output=True, text=True
+        ).stdout.strip()
         py_out = format_link_flags(derive_link_flags(compile_unit(src, check_clang=False).lowered))
         assert c_out == want, f"{label}: C twin emitted {c_out!r}, want {want!r}"
         assert c_out == py_out, f"{label}: dual-rail divergence  C={c_out!r}  PY={py_out!r}"
@@ -778,7 +928,7 @@ def test_c23_unsequenced_reproducible_dual_rail():
         oracle_summary, r, entry = _oracle(src)
         assert "ok=1" in oracle_summary, oracle_summary
         assert f"repro={want_repro}" in oracle_summary, oracle_summary
-        assert "[[" not in "\n".join(r.emitted.values())            # (c) emit drops the attribute
+        assert "[[" not in "\n".join(r.emitted.values())  # (c) emit drops the attribute
         if not _CC:
             continue
         # (d) the dual-rail gate: the twin prints the same summary (incl. repro=) and its emit == Clang.
@@ -806,14 +956,17 @@ def _parity_check_group(fxs):
     if not _CC:
         # quick tier: still validate the oracle side computes the summaries.
         for fx in fxs:
-            s, _, _ = _oracle(open(os.path.join(_C, fx), encoding="utf-8").read(), _includes_for(fx))
+            s, _, _ = _oracle(
+                open(os.path.join(_C, fx), encoding="utf-8").read(), _includes_for(fx)
+            )
             assert "ok=1" in s
         return
-    exe = _build_frontend(_session_build_dir())                  # session-cached; the arg is ignored
+    exe = _build_frontend(_session_build_dir())  # session-cached; the arg is ignored
     results = [_parity_check_fixture((exe, fx)) for fx in fxs]
     fails = [(fx, msg) for fx, msg in results if msg]
     assert not fails, "C-frontend parity/equivalence failures:\n" + "\n".join(
-        f"  {fx}: {msg}" for fx, msg in fails)
+        f"  {fx}: {msg}" for fx, msg in fails
+    )
 
 
 def test_python_c_parity_and_equivalence_across_fixtures_g0():
@@ -880,7 +1033,9 @@ def test_pointer_to_pointer_dual_rail():
             cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
             open(cpath, "w").write(harness)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -904,8 +1059,20 @@ def test_field_deref_dual_rail():
     assert "ok=1" in oracle_summary, oracle_summary
     if not _CC:
         return
-    funcs = ["fd_read", "fd_write", "fd_qread", "fd_index", "fd_index_set", "fd_rmw", "fd_chain1",
-             "fd_chain1_set", "fd_chain1_rmw", "fd_chain2", "fd_chain2_long", "fd_chain2_set"]
+    funcs = [
+        "fd_read",
+        "fd_write",
+        "fd_qread",
+        "fd_index",
+        "fd_index_set",
+        "fd_rmw",
+        "fd_chain1",
+        "fd_chain1_set",
+        "fd_chain1_rmw",
+        "fd_chain2",
+        "fd_chain2_long",
+        "fd_chain2_set",
+    ]
     renamed = src
     for f in funcs:
         renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
@@ -947,7 +1114,9 @@ def test_field_deref_dual_rail():
             cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
             open(cpath, "w").write(harness)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -970,8 +1139,23 @@ def test_pointer_element_signedness_dual_rail():
     assert "ok=1" in oracle_summary, oracle_summary
     if not _CC:
         return
-    funcs = ["ps_s8", "ps_u8", "ps_s16", "ps_u16", "ps_s8_divrem", "ps_u8_div", "ps_s8_shr", "ps_u8_shr",
-             "ps_s8_cmp", "ps_s64_div", "ps_u64_div", "ps_arith", "ps_uac", "ps_field", "ps_w8"]
+    funcs = [
+        "ps_s8",
+        "ps_u8",
+        "ps_s16",
+        "ps_u16",
+        "ps_s8_divrem",
+        "ps_u8_div",
+        "ps_s8_shr",
+        "ps_u8_shr",
+        "ps_s8_cmp",
+        "ps_s64_div",
+        "ps_u64_div",
+        "ps_arith",
+        "ps_uac",
+        "ps_field",
+        "ps_w8",
+    ]
     renamed = src
     for f in funcs:
         renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
@@ -1010,7 +1194,9 @@ def test_pointer_element_signedness_dual_rail():
             cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
             open(cpath, "w").write(harness)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1061,7 +1247,9 @@ int main(void){
             cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
             open(cpath, "w").write(harness)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1110,7 +1298,9 @@ def test_multi_declarator_pointer_dual_rail():
             cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
             open(cpath, "w").write(harness)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1133,8 +1323,18 @@ def test_faithful_char_types_dual_rail():
     assert "ok=1" in oracle_summary, oracle_summary
     if not _CC:
         return
-    funcs = ["ct_plain_deref", "ct_signed_deref", "ct_unsigned_deref", "ct_plain_cmp", "ct_signed_cmp",
-             "ct_plain_div", "ct_signed_div", "ct_unsigned_div", "ct_roundtrip", "ct_plain_widen"]
+    funcs = [
+        "ct_plain_deref",
+        "ct_signed_deref",
+        "ct_unsigned_deref",
+        "ct_plain_cmp",
+        "ct_signed_cmp",
+        "ct_plain_div",
+        "ct_signed_div",
+        "ct_unsigned_div",
+        "ct_roundtrip",
+        "ct_plain_widen",
+    ]
     renamed = src
     for f in funcs:
         renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
@@ -1162,11 +1362,14 @@ def test_faithful_char_types_dual_rail():
             harness = f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
-            for charmode in ("-fsigned-char", "-funsigned-char"):       # exercise plain char both ways
+            for charmode in ("-fsigned-char", "-funsigned-char"):  # exercise plain char both ways
                 epath = os.path.join(d, f"{label}{charmode}")
                 for std in ("c23", "c2x", "c17"):
-                    b = subprocess.run([_CC, f"-std={std}", "-O2", charmode, cpath, "-o", epath],
-                                       capture_output=True, text=True)
+                    b = subprocess.run(
+                        [_CC, f"-std={std}", "-O2", charmode, cpath, "-o", epath],
+                        capture_output=True,
+                        text=True,
+                    )
                     if b.returncode == 0:
                         break
                 else:
@@ -1188,9 +1391,19 @@ def test_compound_literals_dual_rail():
     assert "ok=1" in oracle_summary, oracle_summary
     if not _CC:
         return
-    funcs = ["cl_byval", "cl_designated", "cl_partial", "cl_scalar",
-             "cl_addr_scalar", "cl_addr_struct", "cl_nested",
-             "cl_dot", "cl_dot_desig", "cl_dot_part", "cl_dot_wide"]
+    funcs = [
+        "cl_byval",
+        "cl_designated",
+        "cl_partial",
+        "cl_scalar",
+        "cl_addr_scalar",
+        "cl_addr_struct",
+        "cl_nested",
+        "cl_dot",
+        "cl_dot_desig",
+        "cl_dot_part",
+        "cl_dot_wide",
+    ]
     renamed = src
     for f in funcs:
         renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
@@ -1220,8 +1433,9 @@ def test_compound_literals_dual_rail():
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1244,8 +1458,20 @@ def test_typeof_dual_rail():
     assert "ok=1" in oracle_summary, oracle_summary
     if not _CC:
         return
-    funcs = ["to_width", "to_sign", "to_typename", "to_ptr", "to_struct", "to_unqual",
-             "to_ebinop", "to_ebinsign", "to_ecast", "to_ederef", "to_emember", "to_eindex"]
+    funcs = [
+        "to_width",
+        "to_sign",
+        "to_typename",
+        "to_ptr",
+        "to_struct",
+        "to_unqual",
+        "to_ebinop",
+        "to_ebinsign",
+        "to_ecast",
+        "to_ederef",
+        "to_emember",
+        "to_eindex",
+    ]
     renamed = src
     for f in funcs:
         renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
@@ -1276,8 +1502,9 @@ def test_typeof_dual_rail():
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1321,8 +1548,9 @@ def test_struct_member_init_dual_rail():
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1348,12 +1576,15 @@ def test_array_compound_literals_dual_rail():
     for f in funcs:
         renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
     cmps = "\n".join(
-        f'    if({f}_s(i)!=bcir_{f}(i)){{printf("{f}@%u\\n",i);return 1;}}' for f in funcs)
-    driver = ("int main(void){\n"
-              "  for(unsigned i=0;i<60u;i++){\n"
-              f"{cmps}\n"
-              "  }\n"
-              '  printf("MATCH\\n");return 0;}')
+        f'    if({f}_s(i)!=bcir_{f}(i)){{printf("{f}@%u\\n",i);return 1;}}' for f in funcs
+    )
+    driver = (
+        "int main(void){\n"
+        "  for(unsigned i=0;i<60u;i++){\n"
+        f"{cmps}\n"
+        "  }\n"
+        '  printf("MATCH\\n");return 0;}'
+    )
     with tempfile.TemporaryDirectory() as d:
         exe = _build_frontend(d)
         c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
@@ -1365,8 +1596,9 @@ def test_array_compound_literals_dual_rail():
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1387,7 +1619,17 @@ def test_compound_wide_dual_rail():
     assert "ok=1" in oracle_summary, oracle_summary
     if not _CC:
         return
-    funcs = ["l_local", "d_local", "l_inc", "l_member", "l_array", "l_ptr", "d_vararg", "l_vararg", "driver"]
+    funcs = [
+        "l_local",
+        "d_local",
+        "l_inc",
+        "l_member",
+        "l_array",
+        "l_ptr",
+        "d_vararg",
+        "l_vararg",
+        "driver",
+    ]
     renamed = src
     for f in funcs:
         renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
@@ -1410,14 +1652,17 @@ def test_compound_wide_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = (f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
-                       f"#include <stdarg.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}")
+            harness = (
+                f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
+                f"#include <stdarg.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
+            )
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1440,9 +1685,23 @@ def test_stmtexpr_dual_rail():
     assert "ok=1" in oracle_summary, oracle_summary
     if not _CC:
         return
-    funcs = ["se_simple", "se_max", "se_embed", "se_loop", "se_nest", "se_scope", "se_void",
-             "se_bf_declared", "se_bf_regular", "se_bf_cast", "se_bf_expr", "se_bf_comma", "se_bf_paren",
-             "se_bf_arrow", "se_bf_signed"]
+    funcs = [
+        "se_simple",
+        "se_max",
+        "se_embed",
+        "se_loop",
+        "se_nest",
+        "se_scope",
+        "se_void",
+        "se_bf_declared",
+        "se_bf_regular",
+        "se_bf_cast",
+        "se_bf_expr",
+        "se_bf_comma",
+        "se_bf_paren",
+        "se_bf_arrow",
+        "se_bf_signed",
+    ]
     renamed = src
     for f in funcs:
         renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
@@ -1479,8 +1738,9 @@ def test_stmtexpr_dual_rail():
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1526,8 +1786,9 @@ def test_builtins_dual_rail():
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1567,14 +1828,17 @@ def test_atomic_local_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = (f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
-                       f"#include <stdatomic.h>\n{renamed}\n{emit}\n{driver}")
+            harness = (
+                f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
+                f"#include <stdatomic.h>\n{renamed}\n{emit}\n{driver}"
+            )
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1617,8 +1881,9 @@ def test_addrmember_dual_rail():
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1664,8 +1929,9 @@ def test_nestoffset_dual_rail():
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1710,8 +1976,9 @@ def test_designate_dual_rail():
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1732,8 +1999,18 @@ def test_generic_dual_rail():
     assert "ok=1" in oracle_summary, oracle_summary
     if not _CC:
         return
-    funcs = ["g_int", "g_long", "g_uint", "g_double", "g_float", "g_char", "g_ptr",
-             "g_exprtype", "g_default", "g_compute"]
+    funcs = [
+        "g_int",
+        "g_long",
+        "g_uint",
+        "g_double",
+        "g_float",
+        "g_char",
+        "g_ptr",
+        "g_exprtype",
+        "g_default",
+        "g_compute",
+    ]
     renamed = src
     for f in funcs:
         renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
@@ -1762,8 +2039,9 @@ def test_generic_dual_rail():
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1805,15 +2083,19 @@ def test_long_double_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = (f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
-                       f"#include <math.h>\n{renamed}\n{emit}\n{driver}")
+            harness = (
+                f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
+                f"#include <math.h>\n{renamed}\n{emit}\n{driver}"
+            )
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run(host_link_args(
-                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath, "-lm"]),
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    host_link_args([_CC, f"-std={std}", "-O2", cpath, "-o", epath, "-lm"]),
+                    capture_output=True,
+                    text=True,
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1853,14 +2135,17 @@ def test_extern_variadic_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = (f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
-                       f"#include <stdarg.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}")
+            harness = (
+                f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
+                f"#include <stdarg.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
+            )
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1902,14 +2187,17 @@ def test_variadic_dual_rail():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
         for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
-            harness = (f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
-                       f"#include <stdarg.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}")
+            harness = (
+                f"#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
+                f"#include <stdarg.h>\n{_BOUNDS_GUARD}\n{renamed}\n{emit}\n{driver}"
+            )
             cpath = os.path.join(d, f"{label}.c")
             open(cpath, "w").write(harness)
             epath = os.path.join(d, label)
             for std in ("c23", "c2x", "c17"):
-                b = subprocess.run([_CC, f"-std={std}", "-O2", cpath, "-o", epath],
-                                   capture_output=True, text=True)
+                b = subprocess.run(
+                    [_CC, f"-std={std}", "-O2", cpath, "-o", epath], capture_output=True, text=True
+                )
                 if b.returncode == 0:
                     break
             else:
@@ -1919,9 +2207,21 @@ def test_variadic_dual_rail():
 
 
 def _build_loop(d: str) -> str:
-    return _compile_once("loop", "loop",
-                         ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c",
-                          "bcir_runtime.c", "bcir_verify.c", "test_cfront_loop.c"), "loop")
+    return _compile_once(
+        "loop",
+        "loop",
+        (
+            "bcir_cfront.c",
+            "bcir_cpp.c",
+            "bcir_plan.c",
+            "bcir_hydrate.c",
+            "bcir_exec.c",
+            "bcir_runtime.c",
+            "bcir_verify.c",
+            "test_cfront_loop.c",
+        ),
+        "loop",
+    )
 
 
 def test_full_compile_execute_loop_in_c():
@@ -1939,18 +2239,29 @@ def test_full_compile_execute_loop_in_c():
             m = dict(re.findall(r"(\w+)=([0-9]+)", out))
             # the loop executes exactly the entry's claims (parity-identical to the oracle's count)...
             assert int(m["executed"]) == int(m["claims"]) == len(entry.claims), f"{fx}: {out}"
-            assert int(m["plan_cost"]) > 0 and int(m["pack_bytes"]) > 64                # a real plan + a real pack
+            assert (
+                int(m["plan_cost"]) > 0 and int(m["pack_bytes"]) > 64
+            )  # a real plan + a real pack
             order = out.split("order=")[1].split(",")
-            assert order == sorted(order, key=int)                       # deterministic lowering order
+            assert order == sorted(order, key=int)  # deterministic lowering order
 
 
 # the atomic builtins each fixture must emit back (the faithful-emit artifact, not a scalar fallback).
 _ATOMIC_EMITS = {
     "cfront_atomic.c": ["__atomic_fetch_", "__atomic_thread_fence", "__ATOMIC_SEQ_CST"],
     "cfront_cmpxchg.c": ["__sync_val_compare_and_swap", "__sync_bool_compare_and_swap"],
-    "cfront_atomic11.c": ["_Atomic uint32_t *", "atomic_fetch_add", "atomic_fetch_xor", "atomic_load"],
+    "cfront_atomic11.c": [
+        "_Atomic uint32_t *",
+        "atomic_fetch_add",
+        "atomic_fetch_xor",
+        "atomic_load",
+    ],
     "cfront_atomic_xchg.c": ["_Atomic uint32_t *", "atomic_exchange", "atomic_load"],
-    "cfront_cmpxchg11.c": ["atomic_compare_exchange_strong", "atomic_compare_exchange_weak", "_Atomic"],
+    "cfront_cmpxchg11.c": [
+        "atomic_compare_exchange_strong",
+        "atomic_compare_exchange_weak",
+        "_Atomic",
+    ],
 }
 
 
@@ -1962,7 +2273,7 @@ def test_atomic_fence_dual_rail_parity_and_behaviour():
     builtins, and -- run on independent copies of the same seeded cell -- are behaviour-equivalent
     under Clang. The full C compile->execute loop hydrates and executes every atomic claim with
     R9/R10-R11 clean."""
-    for fx in _ATOMIC:                       # quick tier: the oracle accepts the atomic fixtures.
+    for fx in _ATOMIC:  # quick tier: the oracle accepts the atomic fixtures.
         s, _, _ = _oracle(open(os.path.join(_C, fx), encoding="utf-8").read())
         assert "ok=1" in s, f"{fx}: oracle rejects atomics: {s}"
     if not _CC:
@@ -1975,12 +2286,16 @@ def test_atomic_fence_dual_rail_parity_and_behaviour():
             src = open(path, encoding="utf-8").read()
             oracle_summary, r, entry = _oracle(src)
             c_summary, c_emit = _c_run(exe, path)
-            assert c_summary == oracle_summary, f"{fx}: parity diverged\n C: {c_summary}\nPY: {oracle_summary}"
+            assert c_summary == oracle_summary, (
+                f"{fx}: parity diverged\n C: {c_summary}\nPY: {oracle_summary}"
+            )
             assert "ok=1" in c_summary, c_summary
             # the emitted C carries the real atomic builtins, not a scalar fallback.
             for needle in _ATOMIC_EMITS[fx]:
                 assert needle in c_emit, f"{fx}: emit missing {needle}\n{c_emit}"
-            assert _equiv_atomic(r.source, c_emit, entry) == "MATCH", f"{fx}: not behaviour-equivalent"
+            assert _equiv_atomic(r.source, c_emit, entry) == "MATCH", (
+                f"{fx}: not behaviour-equivalent"
+            )
             # the full C compile->execute loop: every atomic claim hydrates + executes, R9/R10-R11 clean.
             out = subprocess.run([loop, path], capture_output=True, text=True).stdout.strip()
             assert out.startswith("loop:"), out
@@ -2001,16 +2316,37 @@ def test_fence_order_edge_cases_dual_rail():
     through the full compile->execute loop; this adds the cast/binary-fold and the enum-shadow forms, which
     need their own translation units.)"""
     if not _CC:
-        return                                            # quick tier hides the toolchain -> self-skip
+        return  # quick tier hides the toolchain -> self-skip
     cases = [
-        ("unary-plus integer",   "uint32_t f(uint32_t *p){ atomic_thread_fence(+2); return *p; }"),
-        ("unary-plus name",      "uint32_t f(uint32_t *p){ __atomic_thread_fence(+memory_order_release); return *p; }"),
-        ("paren+unary-plus",     "uint32_t f(uint32_t *p){ atomic_thread_fence(+(memory_order_acquire)); return *p; }"),
-        ("cast folds to full",   "uint32_t f(uint32_t *p){ atomic_thread_fence((int)2); return *p; }"),
-        ("binary folds to full", "uint32_t f(uint32_t *p){ atomic_thread_fence(memory_order_acquire + 0); return *p; }"),
-        ("enum shadow ->release","enum { memory_order_acquire = 3 };\nuint32_t f(uint32_t *p){ atomic_thread_fence(memory_order_acquire); return *p; }"),
-        ("enum shadow ->full",   "enum { memory_order_acquire = 7 };\nuint32_t f(uint32_t *p){ __atomic_thread_fence(memory_order_acquire); return *p; }"),
-        ("enum __ATOMIC ->acq",  "enum { __ATOMIC_RELEASE = 2 };\nuint32_t f(uint32_t *p){ __atomic_thread_fence(__ATOMIC_RELEASE); return *p; }"),
+        ("unary-plus integer", "uint32_t f(uint32_t *p){ atomic_thread_fence(+2); return *p; }"),
+        (
+            "unary-plus name",
+            "uint32_t f(uint32_t *p){ __atomic_thread_fence(+memory_order_release); return *p; }",
+        ),
+        (
+            "paren+unary-plus",
+            "uint32_t f(uint32_t *p){ atomic_thread_fence(+(memory_order_acquire)); return *p; }",
+        ),
+        (
+            "cast folds to full",
+            "uint32_t f(uint32_t *p){ atomic_thread_fence((int)2); return *p; }",
+        ),
+        (
+            "binary folds to full",
+            "uint32_t f(uint32_t *p){ atomic_thread_fence(memory_order_acquire + 0); return *p; }",
+        ),
+        (
+            "enum shadow ->release",
+            "enum { memory_order_acquire = 3 };\nuint32_t f(uint32_t *p){ atomic_thread_fence(memory_order_acquire); return *p; }",
+        ),
+        (
+            "enum shadow ->full",
+            "enum { memory_order_acquire = 7 };\nuint32_t f(uint32_t *p){ __atomic_thread_fence(memory_order_acquire); return *p; }",
+        ),
+        (
+            "enum __ATOMIC ->acq",
+            "enum { __ATOMIC_RELEASE = 2 };\nuint32_t f(uint32_t *p){ __atomic_thread_fence(__ATOMIC_RELEASE); return *p; }",
+        ),
     ]
     with tempfile.TemporaryDirectory() as d:
         exe = _build_frontend(d)
@@ -2022,7 +2358,8 @@ def test_fence_order_edge_cases_dual_rail():
                 fh.write(src)
             c_summary, _emit = _c_run(exe, path)
             assert c_summary == oracle_summary, (
-                f"{label}: dual-rail fence-order parity diverged\n C: {c_summary}\nPY: {oracle_summary}")
+                f"{label}: dual-rail fence-order parity diverged\n C: {c_summary}\nPY: {oracle_summary}"
+            )
 
 
 def test_funcptr_member_dispatch_table():
@@ -2043,8 +2380,8 @@ def test_funcptr_member_dispatch_table():
         exe = _build_frontend(d)
         c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
-        assert "o->add2(" in c_emit and "o->mul2(" in c_emit, c_emit       # faithful member-call emit
-        struct_ct = entry.params[0][2].of                                  # the pointed-to ops struct
+        assert "o->add2(" in c_emit and "o->mul2(" in c_emit, c_emit  # faithful member-call emit
+        struct_ct = entry.params[0][2].of  # the pointed-to ops struct
         helpers, inits = [], []
         for fi, (fname, ftype, *_rest) in enumerate(struct_ct.fields):
             rety = _cname(ftype.of) if ftype.of else "uint32_t"
@@ -2067,16 +2404,20 @@ int main(void){{
   {struct_ct.kind} {struct_ct.name} obj;
 {chr(10).join(inits)}
   for(int i=0;i<256;i++){{
-    {''.join(f'uint32_t {s}=rng(); ' for s in scalars)}
+    {"".join(f"uint32_t {s}=rng(); " for s in scalars)}
     if({entry.name}({call})!=bcir_{entry.name}({call})){{printf("MISMATCH@%d",i);return 1;}}
   }}
   printf("MATCH");return 0;}}"""
         c, e = os.path.join(d, "disp.c"), os.path.join(d, "disp")
         open(c, "w").write(harness)
         for std in ("c23", "c2x", "c17"):
-            b = subprocess.run(host_link_args(
-                [_CC, f"-std={std}", "-O2", c, "-o", e, "-lm"]),   # logical libm; omitted for Windows CRT
-                               capture_output=True, text=True)
+            b = subprocess.run(
+                host_link_args(
+                    [_CC, f"-std={std}", "-O2", c, "-o", e, "-lm"]
+                ),  # logical libm; omitted for Windows CRT
+                capture_output=True,
+                text=True,
+            )
             if b.returncode == 0:
                 break
         else:
@@ -2096,7 +2437,7 @@ def test_integration_driver_composes_phase2_surface():
     src = open(os.path.join(_C, fx), encoding="utf-8").read()
     oracle_summary, r, entry = _oracle(src)
     assert "ok=1" in oracle_summary, oracle_summary
-    assert len(r.lowered.functions) == 3                      # decode_state, bank_lookup, sensor_read
+    assert len(r.lowered.functions) == 3  # decode_state, bank_lookup, sensor_read
     # the entry reads two MMIO registers (status + sample) and makes one resolved call (decode_state).
     assert "mmio=2" in oracle_summary and "call=1" in oracle_summary, oracle_summary
     if not _CC:
@@ -2106,8 +2447,14 @@ def test_integration_driver_composes_phase2_surface():
         c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         # the emit carries each composed feature in one verified-C unit.
-        for needle in ("volatile uint32_t *", "goto done", "static uint32_t faults",
-                       "(uint16_t)", "bcir_decode_state(", "BCIR verified-C attestation"):
+        for needle in (
+            "volatile uint32_t *",
+            "goto done",
+            "static uint32_t faults",
+            "(uint16_t)",
+            "bcir_decode_state(",
+            "BCIR verified-C attestation",
+        ):
             assert needle in c_emit, f"{fx}: emit missing {needle!r}"
         # every function (the switch decode, the 2D+cast lookup, the MMIO/static/goto entry) is
         # behaviour-equivalent to the original under Clang.
@@ -2141,8 +2488,14 @@ def test_register_driver_composes_register_map_surface():
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         # the emit carries each composed register feature in one verified-C unit (the status `switch`
         # now renders as a real C `switch`, not an if/else-if desugar).
-        for needle in ("volatile uint32_t *", "QUANTA[", "static uint32_t halts",
-                       "switch (", "case ", "BCIR verified-C attestation"):
+        for needle in (
+            "volatile uint32_t *",
+            "QUANTA[",
+            "static uint32_t halts",
+            "switch (",
+            "case ",
+            "BCIR verified-C attestation",
+        ):
             assert needle in c_emit, f"{fx}: emit missing {needle!r}"
         assert _equiv(r.source, c_emit, entry) == "MATCH", f"{fx}: emit not behaviour-equivalent"
 
@@ -2164,7 +2517,9 @@ def test_c2_attestation_in_emitted_c():
         assert m, c_emit
         out = subprocess.run([loop, path], capture_output=True, text=True).stdout.strip()
         prov = re.search(r"prov=([0-9a-f]{16})", out)
-        assert prov and prov.group(1) == m.group(1), f"digest mismatch: emit={m.group(1)} loop={prov}"
+        assert prov and prov.group(1) == m.group(1), (
+            f"digest mismatch: emit={m.group(1)} loop={prov}"
+        )
 
 
 def test_phase_d_real_header_driver_end_to_end():
@@ -2180,7 +2535,9 @@ def test_phase_d_real_header_driver_end_to_end():
     oracle_summary, r, entry = _oracle(src, inc)
     assert "ok=1" in oracle_summary, oracle_summary
     # a real driver, not a toy: a memory-mapped read + bitfield decode + a call graph.
-    assert "mmio=1" in oracle_summary and "bf=3" in oracle_summary and "call=2" in oracle_summary, oracle_summary
+    assert "mmio=1" in oracle_summary and "bf=3" in oracle_summary and "call=2" in oracle_summary, (
+        oracle_summary
+    )
     if not _CC:
         return
     with tempfile.TemporaryDirectory() as d:
@@ -2188,7 +2545,9 @@ def test_phase_d_real_header_driver_end_to_end():
         loop = _build_loop(d)
         path = os.path.join(_C, "cfront_driver.c")
         c_summary, c_emit = _c_run(exe, path)
-        assert c_summary == oracle_summary, f"Phase D parity diverged\n C: {c_summary}\nPY: {oracle_summary}"
+        assert c_summary == oracle_summary, (
+            f"Phase D parity diverged\n C: {c_summary}\nPY: {oracle_summary}"
+        )
         # the emitted verified-C carries the device semantics + the C.2 attestation.
         assert "volatile uint32_t *" in c_emit and "BCIR verified-C attestation" in c_emit, c_emit
         # behaviour-equivalent against the original header+driver under Clang (r.source is preprocessed).
@@ -2203,8 +2562,12 @@ def test_phase_d_real_header_driver_end_to_end():
 
 def _cli(args, cwd=None):
     """Invoke the bcir-cfront driver CLI; return (rc, stdout, stderr)."""
-    p = subprocess.run([sys.executable, "-m", "bcir.frontends.cfront", *args],
-                       capture_output=True, text=True, cwd=cwd or _ROOT)
+    p = subprocess.run(
+        [sys.executable, "-m", "bcir.frontends.cfront", *args],
+        capture_output=True,
+        text=True,
+        cwd=cwd or _ROOT,
+    )
     return p.returncode, p.stdout, p.stderr
 
 
@@ -2221,7 +2584,8 @@ def test_cli_resolves_sibling_and_search_path_headers():
     assert rc == 0 and "struct uart_regs" in out and "uart_regs_t" in out, out
     with tempfile.TemporaryDirectory() as d:
         # (3) -I <dir>: a header outside the source directory resolves via the search path.
-        incd = os.path.join(d, "inc"); os.makedirs(incd)
+        incd = os.path.join(d, "inc")
+        os.makedirs(incd)
         with open(os.path.join(incd, "regs.h"), "w") as f:
             f.write("typedef volatile unsigned int reg32;\nstruct dev { reg32 r; };\n")
         src = os.path.join(d, "drv.c")
@@ -2231,22 +2595,35 @@ def test_cli_resolves_sibling_and_search_path_headers():
         assert rc == 0, f"-I compile failed: {err}\n{out}"
         assert "R1-R18: CLEAN" in out, out
         # (4) a missing header is a clean diagnostic + non-zero exit (not a crash).
-        rc, out, err = _cli([src])                     # no -I -> regs.h unresolved
+        rc, out, err = _cli([src])  # no -I -> regs.h unresolved
         assert rc != 0 and "not found" in (out + err), (out, err)
     # (5) -D predefines a macro used in a #if.
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "g.c")
         with open(src, "w") as f:
-            f.write("#if defined(WIDE)\nunsigned int w(unsigned int x){return x+1;}\n"
-                    "#else\nunsigned int w(unsigned int x){return x;}\n#endif\n")
+            f.write(
+                "#if defined(WIDE)\nunsigned int w(unsigned int x){return x+1;}\n"
+                "#else\nunsigned int w(unsigned int x){return x;}\n#endif\n"
+            )
         rc, out, _ = _cli(["-E", "-D", "WIDE", src])
         assert rc == 0 and "x+1" in out.replace(" ", ""), out
 
 
 def _build_bcir_cc(d: str) -> str:
-    return _compile_once("bcir_cc", "bcir-cc",
-                         ("bcir_cc.c", "bcir_cpp.c", "bcir_cfront.c", "bcir_verify.c", "bcir_runtime.c",
-                          "bcir_plan.c", "bcir_hydrate.c"), "bcir-cc")
+    return _compile_once(
+        "bcir_cc",
+        "bcir-cc",
+        (
+            "bcir_cc.c",
+            "bcir_cpp.c",
+            "bcir_cfront.c",
+            "bcir_verify.c",
+            "bcir_runtime.c",
+            "bcir_plan.c",
+            "bcir_hydrate.c",
+        ),
+        "bcir-cc",
+    )
 
 
 def test_file_macro_real_path_dual_rail():
@@ -2256,6 +2633,7 @@ def test_file_macro_real_path_dual_rail():
     if not _CC:
         return
     from bcir.frontends.cfront.cpp import preprocess as _py_pp  # noqa: PLC0415
+
     with tempfile.TemporaryDirectory() as d:
         exe = _build_bcir_cc(d)
         src = os.path.join(d, "unit.c")
@@ -2265,13 +2643,13 @@ def test_file_macro_real_path_dual_rail():
         # C rail: bcir-cc -E <path> emits the raw preprocessed text.
         cr = subprocess.run([exe, "-E", src], capture_output=True, text=True)
         assert cr.returncode == 0, cr.stderr
-        assert f'"{src}"' in cr.stdout, cr.stdout                     # __FILE__ == the given path
-        assert cr.stdout == _py_pp(text, name=src)                   # byte-identical to the oracle
+        assert f'"{src}"' in cr.stdout, cr.stdout  # __FILE__ == the given path
+        assert cr.stdout == _py_pp(text, name=src)  # byte-identical to the oracle
         # Python CLI rail: -E <path> (the driver appends one trailing newline).
         rc, pyo, err = _cli(["-E", src])
         assert rc == 0, err
         assert f'"{src}"' in pyo, pyo
-        assert pyo.rstrip("\n") == cr.stdout.rstrip("\n")            # same content across the rails
+        assert pyo.rstrip("\n") == cr.stdout.rstrip("\n")  # same content across the rails
         # the default (no driver-supplied name) stays "<source>".
         assert _py_pp(text).startswith('a"<source>"')
 
@@ -2284,6 +2662,7 @@ def test_bcir_cc_driver_compiles_and_emits_artifacts():
     if not _CC:
         return
     from bcir.frontends.cfront import compile_unit  # noqa: PLC0415
+
     with tempfile.TemporaryDirectory() as d:
         cc = _build_bcir_cc(d)
         uart = os.path.join(_C, "cfront_driver_uart.c")
@@ -2300,23 +2679,33 @@ def test_bcir_cc_driver_compiles_and_emits_artifacts():
             assert f.read(4) == b"BSPK"
         # (4) -I <dir> + -D macro: a header outside the source dir + a -D-selected #if branch, and
         #     the C rail agrees with the oracle given the same search path + define.
-        incd = os.path.join(d, "inc"); os.makedirs(incd)
+        incd = os.path.join(d, "inc")
+        os.makedirs(incd)
         with open(os.path.join(incd, "r.h"), "w") as f:
             f.write("typedef volatile unsigned int reg32;\nstruct dev { reg32 s; };\n")
         src = os.path.join(d, "m.c")
         with open(src, "w") as f:
-            f.write('#include "r.h"\n#if defined(FAST)\n'
-                    'unsigned int g(volatile struct dev *p){ return p->s + 1u; }\n'
-                    '#else\nunsigned int g(volatile struct dev *p){ return p->s; }\n#endif\n')
-        c_sum = subprocess.run([cc, "-I", incd, "-D", "FAST", src],
-                               capture_output=True, text=True).stdout.strip()
-        assert "binop=1" in c_sum and "ok=1" in c_sum, c_sum     # the FAST branch (+1u) -> one binop
-        r = compile_unit(open(src, encoding="utf-8").read(), check_clang=False,
-                         search_paths=[incd], defines={"FAST": "1"})
+            f.write(
+                '#include "r.h"\n#if defined(FAST)\n'
+                "unsigned int g(volatile struct dev *p){ return p->s + 1u; }\n"
+                "#else\nunsigned int g(volatile struct dev *p){ return p->s; }\n#endif\n"
+            )
+        c_sum = subprocess.run(
+            [cc, "-I", incd, "-D", "FAST", src], capture_output=True, text=True
+        ).stdout.strip()
+        assert "binop=1" in c_sum and "ok=1" in c_sum, c_sum  # the FAST branch (+1u) -> one binop
+        r = compile_unit(
+            open(src, encoding="utf-8").read(),
+            check_clang=False,
+            search_paths=[incd],
+            defines={"FAST": "1"},
+        )
         entry = r.lowered.functions[next(reversed(r.lowered.functions))]
-        assert sum(1 for c in entry.claims if c.op.startswith("c.bin.")) == 1   # oracle agrees
+        assert sum(1 for c in entry.claims if c.op.startswith("c.bin.")) == 1  # oracle agrees
         # without -D FAST the other branch (no +1) is taken -> zero binops, on both rails.
-        c_sum0 = subprocess.run([cc, "-I", incd, src], capture_output=True, text=True).stdout.strip()
+        c_sum0 = subprocess.run(
+            [cc, "-I", incd, src], capture_output=True, text=True
+        ).stdout.strip()
         assert "binop=0" in c_sum0, c_sum0
 
 
@@ -2334,14 +2723,16 @@ def test_phase_d_uart_driver_write_and_poll_path():
     src = open(os.path.join(_C, fx), encoding="utf-8").read()
     oracle_summary, r, entry = _oracle(src, _includes_for(fx))
     assert "ok=1" in oracle_summary, oracle_summary
-    assert len(r.lowered.functions) == 3                      # cfg_low, send, configure
+    assert len(r.lowered.functions) == 3  # cfg_low, send, configure
     if not _CC:
         return
     with tempfile.TemporaryDirectory() as d:
         exe = _build_frontend(d)
         loop = _build_loop(d)
         c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
-        assert c_summary == oracle_summary, f"{fx}: parity diverged\n C: {c_summary}\nPY: {oracle_summary}"
+        assert c_summary == oracle_summary, (
+            f"{fx}: parity diverged\n C: {c_summary}\nPY: {oracle_summary}"
+        )
         assert "ok=1" in c_summary, c_summary
         # the emitted C carries real volatile MMIO accesses + the union view + the C.2 attestation.
         assert "volatile uint32_t *" in c_emit and "union uart_cfg" in c_emit, c_emit
@@ -2352,14 +2743,18 @@ def test_phase_d_uart_driver_write_and_poll_path():
             assert _equiv(r.source, c_emit, lf) == "MATCH", f"{fx}:{name} not behaviour-equivalent"
         # the straight-line entry (uart_configure) plans/hydrates/executes, R9/R10-R11 clean, and
         # the loop's provenance digest is the one stamped in the emitted attestation.
-        out = subprocess.run([loop, os.path.join(_C, fx)], capture_output=True, text=True).stdout.strip()
+        out = subprocess.run(
+            [loop, os.path.join(_C, fx)], capture_output=True, text=True
+        ).stdout.strip()
         assert out.startswith("loop:"), out
         m = dict(re.findall(r"(\w+)=([0-9]+)", out))
         assert int(m["executed"]) == int(m["claims"]) == len(entry.claims), out
         assert m["r9"] == "1" and m["r10r11"] == "1", out
         prov = re.search(r"prov=([0-9a-f]{16})", out)
         emit_prov = re.search(r"R13 provenance digest\s+([0-9a-f]{16})", c_emit)
-        assert prov and emit_prov and prov.group(1) == emit_prov.group(1), "digest mismatch loop vs emit"
+        assert prov and emit_prov and prov.group(1) == emit_prov.group(1), (
+            "digest mismatch loop vs emit"
+        )
 
 
 def test_L8_packed_layout_matches_clang():
@@ -2369,17 +2764,26 @@ def test_L8_packed_layout_matches_clang():
     assert hdr.size == 7 and hdr.field("addr")[1] == 1 and hdr.field("len")[1] == 5
     if not _CC:
         return
-    probe = ("#include <stdint.h>\n#include <stddef.h>\n#include <stdio.h>\n"
-             "struct __attribute__((packed)) wire_hdr { uint8_t cmd; uint32_t addr; uint16_t len; };\n"
-             'int main(void){printf("%zu %zu %zu %zu", sizeof(struct wire_hdr),'
-             " offsetof(struct wire_hdr,cmd), offsetof(struct wire_hdr,addr),"
-             " offsetof(struct wire_hdr,len)); return 0;}")
+    probe = (
+        "#include <stdint.h>\n#include <stddef.h>\n#include <stdio.h>\n"
+        "struct __attribute__((packed)) wire_hdr { uint8_t cmd; uint32_t addr; uint16_t len; };\n"
+        'int main(void){printf("%zu %zu %zu %zu", sizeof(struct wire_hdr),'
+        " offsetof(struct wire_hdr,cmd), offsetof(struct wire_hdr,addr),"
+        " offsetof(struct wire_hdr,len)); return 0;}"
+    )
     with tempfile.TemporaryDirectory() as d:
         c, e = os.path.join(d, "p.c"), os.path.join(d, "p")
         open(c, "w").write(probe)
         if subprocess.run([_CC, "-std=c11", c, "-o", e], capture_output=True).returncode == 0:
-            nums = [int(x) for x in subprocess.run([e], capture_output=True, text=True).stdout.split()]
-            assert nums == [hdr.size, hdr.field("cmd")[1], hdr.field("addr")[1], hdr.field("len")[1]]
+            nums = [
+                int(x) for x in subprocess.run([e], capture_output=True, text=True).stdout.split()
+            ]
+            assert nums == [
+                hdr.size,
+                hdr.field("cmd")[1],
+                hdr.field("addr")[1],
+                hdr.field("len")[1],
+            ]
 
 
 def test_bitint_member_layout_matches_clang():
@@ -2393,22 +2797,44 @@ def test_bitint_member_layout_matches_clang():
     # the oracle layout: tag@0 (int), lo@4 (_BitInt(12) -> 2-byte slot), hi@8 (_BitInt(64) -> 8-byte slot)
     assert bp.size == 16 and bp.align == 8
     assert bp.field("tag")[1] == 0 and bp.field("lo")[1] == 4 and bp.field("hi")[1] == 8
-    assert bp.field("lo")[0].is_bitint and bp.field("lo")[0].bit_width == 12 and bp.field("lo")[0].size == 2
-    assert bp.field("hi")[0].is_bitint and bp.field("hi")[0].bit_width == 64 and bp.field("hi")[0].size == 8
+    assert (
+        bp.field("lo")[0].is_bitint
+        and bp.field("lo")[0].bit_width == 12
+        and bp.field("lo")[0].size == 2
+    )
+    assert (
+        bp.field("hi")[0].is_bitint
+        and bp.field("hi")[0].bit_width == 64
+        and bp.field("hi")[0].size == 8
+    )
     if not _CC:
         return
-    probe = ("#include <stdint.h>\n#include <stddef.h>\n#include <stdio.h>\n"
-             "struct bipair { int tag; unsigned _BitInt(12) lo; unsigned _BitInt(64) hi; };\n"
-             'int main(void){printf("%zu %zu %zu %zu %zu", sizeof(struct bipair),'
-             " (size_t)_Alignof(struct bipair), offsetof(struct bipair,tag),"
-             " offsetof(struct bipair,lo), offsetof(struct bipair,hi)); return 0;}")
+    probe = (
+        "#include <stdint.h>\n#include <stddef.h>\n#include <stdio.h>\n"
+        "struct bipair { int tag; unsigned _BitInt(12) lo; unsigned _BitInt(64) hi; };\n"
+        'int main(void){printf("%zu %zu %zu %zu %zu", sizeof(struct bipair),'
+        " (size_t)_Alignof(struct bipair), offsetof(struct bipair,tag),"
+        " offsetof(struct bipair,lo), offsetof(struct bipair,hi)); return 0;}"
+    )
     with tempfile.TemporaryDirectory() as d:
         c, e = os.path.join(d, "p.c"), os.path.join(d, "p")
         open(c, "w").write(probe)
         for std in ("c23", "c2x"):
-            if subprocess.run([_CC, f"-std={std}", c, "-o", e], capture_output=True).returncode == 0:
-                nums = [int(x) for x in subprocess.run([e], capture_output=True, text=True).stdout.split()]
-                assert nums == [bp.size, bp.align, bp.field("tag")[1], bp.field("lo")[1], bp.field("hi")[1]]
+            if (
+                subprocess.run([_CC, f"-std={std}", c, "-o", e], capture_output=True).returncode
+                == 0
+            ):
+                nums = [
+                    int(x)
+                    for x in subprocess.run([e], capture_output=True, text=True).stdout.split()
+                ]
+                assert nums == [
+                    bp.size,
+                    bp.align,
+                    bp.field("tag")[1],
+                    bp.field("lo")[1],
+                    bp.field("hi")[1],
+                ]
                 break
 
 
@@ -2420,6 +2846,7 @@ def _bitint_model_tag(ta, tb):
     Clang's `_Generic` MUST select that exact tag; if it returns None, Clang's result MUST NOT be a
     `_BitInt` (so routing to fallback is correct, never hiding a wrong claim)."""
     from bcir.frontends.cfront.ctype_model import BitIntMix, usual_arith_int
+
     try:
         r = usual_arith_int(ta, tb)
     except BitIntMix:
@@ -2448,49 +2875,108 @@ def test_bitint_mixed_width_result_type_matches_clang():
 
     # (label, decl-c-type, cfront-CType) for each operand we mix.
     operands = {
-        "bi8": ("_BitInt(8)", bi(8)), "ubi8": ("unsigned _BitInt(8)", bi(8, False)),
-        "bi12": ("_BitInt(12)", bi(12)), "ubi12": ("unsigned _BitInt(12)", bi(12, False)),
-        "bi16": ("_BitInt(16)", bi(16)), "ubi16": ("unsigned _BitInt(16)", bi(16, False)),
-        "bi32": ("_BitInt(32)", bi(32)), "ubi32": ("unsigned _BitInt(32)", bi(32, False)),
-        "bi33": ("_BitInt(33)", bi(33)), "ubi33": ("unsigned _BitInt(33)", bi(33, False)),
-        "bi40": ("_BitInt(40)", bi(40)), "ubi40": ("unsigned _BitInt(40)", bi(40, False)),
-        "bi64": ("_BitInt(64)", bi(64)), "ubi64": ("unsigned _BitInt(64)", bi(64, False)),
-        "i": ("int", scalar("int")), "u": ("unsigned", scalar("unsigned int")),
-        "l": ("long", scalar("long")), "ul": ("unsigned long", scalar("unsigned long")),
-        "ll": ("long long", scalar("long long")), "ull": ("unsigned long long", scalar("unsigned long long")),
-        "sh": ("short", scalar("short")), "c": ("char", scalar("char")),
-        "fl": ("float", scalar("float")), "db": ("double", scalar("double")),
+        "bi8": ("_BitInt(8)", bi(8)),
+        "ubi8": ("unsigned _BitInt(8)", bi(8, False)),
+        "bi12": ("_BitInt(12)", bi(12)),
+        "ubi12": ("unsigned _BitInt(12)", bi(12, False)),
+        "bi16": ("_BitInt(16)", bi(16)),
+        "ubi16": ("unsigned _BitInt(16)", bi(16, False)),
+        "bi32": ("_BitInt(32)", bi(32)),
+        "ubi32": ("unsigned _BitInt(32)", bi(32, False)),
+        "bi33": ("_BitInt(33)", bi(33)),
+        "ubi33": ("unsigned _BitInt(33)", bi(33, False)),
+        "bi40": ("_BitInt(40)", bi(40)),
+        "ubi40": ("unsigned _BitInt(40)", bi(40, False)),
+        "bi64": ("_BitInt(64)", bi(64)),
+        "ubi64": ("unsigned _BitInt(64)", bi(64, False)),
+        "i": ("int", scalar("int")),
+        "u": ("unsigned", scalar("unsigned int")),
+        "l": ("long", scalar("long")),
+        "ul": ("unsigned long", scalar("unsigned long")),
+        "ll": ("long long", scalar("long long")),
+        "ull": ("unsigned long long", scalar("unsigned long long")),
+        "sh": ("short", scalar("short")),
+        "c": ("char", scalar("char")),
+        "fl": ("float", scalar("float")),
+        "db": ("double", scalar("double")),
     }
     # Cover: _BitInt + int / unsigned, signed/unsigned _BitInt mixes, two different _BitInt widths, and the
     # boundary on both sides of the rank (N<width, N==width, N>width); plus long / long long / sub-int.
     pairs = [
-        ("bi8", "i"), ("bi12", "i"), ("bi16", "i"), ("bi32", "i"), ("bi33", "i"), ("bi40", "i"), ("bi64", "i"),
-        ("bi8", "u"), ("bi32", "u"), ("bi33", "u"), ("bi64", "u"),
-        ("ubi8", "i"), ("ubi32", "i"), ("ubi33", "i"), ("ubi64", "i"),
-        ("ubi8", "u"), ("ubi32", "u"), ("ubi64", "u"),
-        ("bi8", "sh"), ("bi12", "sh"), ("bi8", "c"),
-        ("bi8", "l"), ("bi33", "l"), ("bi64", "l"), ("bi64", "ll"), ("bi64", "ull"), ("bi40", "l"),
-        ("bi8", "bi12"), ("bi12", "bi8"), ("bi8", "bi16"), ("bi32", "bi64"), ("bi16", "bi40"),
-        ("bi8", "ubi8"), ("bi32", "ubi32"), ("bi64", "ubi64"),
-        ("bi8", "ubi12"), ("ubi8", "bi12"), ("bi16", "ubi8"), ("bi32", "ubi64"), ("ubi32", "bi64"),
+        ("bi8", "i"),
+        ("bi12", "i"),
+        ("bi16", "i"),
+        ("bi32", "i"),
+        ("bi33", "i"),
+        ("bi40", "i"),
+        ("bi64", "i"),
+        ("bi8", "u"),
+        ("bi32", "u"),
+        ("bi33", "u"),
+        ("bi64", "u"),
+        ("ubi8", "i"),
+        ("ubi32", "i"),
+        ("ubi33", "i"),
+        ("ubi64", "i"),
+        ("ubi8", "u"),
+        ("ubi32", "u"),
+        ("ubi64", "u"),
+        ("bi8", "sh"),
+        ("bi12", "sh"),
+        ("bi8", "c"),
+        ("bi8", "l"),
+        ("bi33", "l"),
+        ("bi64", "l"),
+        ("bi64", "ll"),
+        ("bi64", "ull"),
+        ("bi40", "l"),
+        ("bi8", "bi12"),
+        ("bi12", "bi8"),
+        ("bi8", "bi16"),
+        ("bi32", "bi64"),
+        ("bi16", "bi40"),
+        ("bi8", "ubi8"),
+        ("bi32", "ubi32"),
+        ("bi64", "ubi64"),
+        ("bi8", "ubi12"),
+        ("ubi8", "bi12"),
+        ("bi16", "ubi8"),
+        ("bi32", "ubi64"),
+        ("ubi32", "bi64"),
         ("bi40", "ubi16"),
         # a `_BitInt` mixed with a FLOAT -> float (NOT a `_BitInt`): the model must route to fallback, never
         # mistake the float's byte-width for an integer rank (the `bi64 + float` regression class). The probe
         # asserts Clang's result is NOT a `_BitInt` (a float result lands on its float:300/double:301 tag,
         # still >= 100, so the "fallback => not a _BitInt" assertion holds).
-        ("bi8", "fl"), ("bi64", "fl"), ("bi64", "db"), ("ubi64", "fl"), ("bi32", "db"),
+        ("bi8", "fl"),
+        ("bi64", "fl"),
+        ("bi64", "db"),
+        ("ubi64", "fl"),
+        ("bi32", "db"),
     ]
     # the universal _Generic type list (every _BitInt width we might land on, + the standard ints).
-    glist = ("    _BitInt(8):1, unsigned _BitInt(8):2, _BitInt(12):3, unsigned _BitInt(12):4,\n"
-             "    _BitInt(16):5, unsigned _BitInt(16):6, _BitInt(32):7, unsigned _BitInt(32):8,\n"
-             "    _BitInt(33):9, unsigned _BitInt(33):10, _BitInt(40):11, unsigned _BitInt(40):12,\n"
-             "    _BitInt(64):13, unsigned _BitInt(64):14, int:100, unsigned:101, long:102,\n"
-             "    unsigned long:103, long long:104, unsigned long long:105, float:300, double:301, default:200")
+    glist = (
+        "    _BitInt(8):1, unsigned _BitInt(8):2, _BitInt(12):3, unsigned _BitInt(12):4,\n"
+        "    _BitInt(16):5, unsigned _BitInt(16):6, _BitInt(32):7, unsigned _BitInt(32):8,\n"
+        "    _BitInt(33):9, unsigned _BitInt(33):10, _BitInt(40):11, unsigned _BitInt(40):12,\n"
+        "    _BitInt(64):13, unsigned _BitInt(64):14, int:100, unsigned:101, long:102,\n"
+        "    unsigned long:103, long long:104, unsigned long long:105, float:300, double:301, default:200"
+    )
     tags = {  # the _Generic value for a `_BitInt` tag (so a static-assert can compare)
-        "_BitInt(8)": 1, "unsigned _BitInt(8)": 2, "_BitInt(12)": 3, "unsigned _BitInt(12)": 4,
-        "_BitInt(16)": 5, "unsigned _BitInt(16)": 6, "_BitInt(32)": 7, "unsigned _BitInt(32)": 8,
-        "_BitInt(33)": 9, "unsigned _BitInt(33)": 10, "_BitInt(40)": 11, "unsigned _BitInt(40)": 12,
-        "_BitInt(64)": 13, "unsigned _BitInt(64)": 14,
+        "_BitInt(8)": 1,
+        "unsigned _BitInt(8)": 2,
+        "_BitInt(12)": 3,
+        "unsigned _BitInt(12)": 4,
+        "_BitInt(16)": 5,
+        "unsigned _BitInt(16)": 6,
+        "_BitInt(32)": 7,
+        "unsigned _BitInt(32)": 8,
+        "_BitInt(33)": 9,
+        "unsigned _BitInt(33)": 10,
+        "_BitInt(40)": 11,
+        "unsigned _BitInt(40)": 12,
+        "_BitInt(64)": 13,
+        "unsigned _BitInt(64)": 14,
     }
     decls, asserts, checked_firstclass, checked_fallback = [], [], 0, 0
     for i, (la, lb) in enumerate(pairs):
@@ -2499,31 +2985,47 @@ def test_bitint_mixed_width_result_type_matches_clang():
         model = _bitint_model_tag(ta, tb)
         decls.append(f"{ca} a{i}; {cb} b{i};")
         gen = f"_Generic((a{i} + b{i}),\n{glist})"
-        if model is not None:                          # first-class: Clang MUST select the modeled _BitInt tag
+        if model is not None:  # first-class: Clang MUST select the modeled _BitInt tag
             assert model in tags, (la, lb, model)
-            asserts.append(f"_Static_assert(({gen}) == {tags[model]}, "
-                           f'"{la}+{lb}: cfront models {model}, Clang disagrees");')
+            asserts.append(
+                f"_Static_assert(({gen}) == {tags[model]}, "
+                f'"{la}+{lb}: cfront models {model}, Clang disagrees");'
+            )
             checked_firstclass += 1
-        else:                                          # fallback: Clang's result must NOT be a _BitInt (< 100)
-            asserts.append(f"_Static_assert(({gen}) >= 100, "
-                           f'"{la}+{lb}: cfront routes to fallback but Clang result IS a _BitInt");')
+        else:  # fallback: Clang's result must NOT be a _BitInt (< 100)
+            asserts.append(
+                f"_Static_assert(({gen}) >= 100, "
+                f'"{la}+{lb}: cfront routes to fallback but Clang result IS a _BitInt");'
+            )
             checked_fallback += 1
-    assert checked_firstclass >= 10 and checked_fallback >= 8   # both sides of the boundary are exercised
-    probe = ("int probe(void){\n  " + "\n  ".join(decls) + "\n  "
-             + "\n  ".join(asserts) + "\n  return 0;\n}\n")
+    assert (
+        checked_firstclass >= 10 and checked_fallback >= 8
+    )  # both sides of the boundary are exercised
+    probe = (
+        "int probe(void){\n  "
+        + "\n  ".join(decls)
+        + "\n  "
+        + "\n  ".join(asserts)
+        + "\n  return 0;\n}\n"
+    )
     with tempfile.TemporaryDirectory() as d:
         c = os.path.join(d, "g.c")
         open(c, "w").write(probe)
         built = None
         for std in ("c23", "c2x"):
-            b = subprocess.run([_CC, f"-std={std}", "-Wno-constant-conversion", "-c", c, "-o", os.devnull],
-                               capture_output=True, text=True)
+            b = subprocess.run(
+                [_CC, f"-std={std}", "-Wno-constant-conversion", "-c", c, "-o", os.devnull],
+                capture_output=True,
+                text=True,
+            )
             if "unknown" not in b.stderr.lower() or b.returncode == 0:
                 built = b
                 break
         assert built is not None
         # a non-zero return code here means a `_Static_assert` fired: the cfront's model disagreed with Clang.
-        assert built.returncode == 0, ("cfront _BitInt result-type model diverges from Clang:\n" + built.stderr)
+        assert built.returncode == 0, (
+            "cfront _BitInt result-type model diverges from Clang:\n" + built.stderr
+        )
 
 
 def test_bitint_bitfield_layout_matches_clang():
@@ -2539,28 +3041,41 @@ def test_bitint_bitfield_layout_matches_clang():
         ("B", "unsigned _BitInt(20) a : 10; unsigned _BitInt(20) b : 10;"),
         ("C", "unsigned _BitInt(8) a : 3; unsigned _BitInt(8) b : 5; unsigned _BitInt(8) c : 2;"),
         ("D", "int tag; _BitInt(64) x : 40; _BitInt(64) y : 20;"),
-        ("E", "unsigned _BitInt(12) a : 5; unsigned int b : 6;"),     # mixed bit-int + standard bitfield
-        ("F", "unsigned _BitInt(12) a : 12;"),                         # full-width W == N
+        (
+            "E",
+            "unsigned _BitInt(12) a : 5; unsigned int b : 6;",
+        ),  # mixed bit-int + standard bitfield
+        ("F", "unsigned _BitInt(12) a : 12;"),  # full-width W == N
         ("G", "unsigned _BitInt(16) a : 5; unsigned _BitInt(8) b : 5;"),  # different storage sizes
         ("H", "unsigned _BitInt(32) a : 20; unsigned _BitInt(32) b : 20;"),  # straddle -> two units
-        ("I", "unsigned _BitInt(12) a : 12; unsigned _BitInt(12) b : 6;"),   # straddle in a 2-byte unit
+        (
+            "I",
+            "unsigned _BitInt(12) a : 12; unsigned _BitInt(12) b : 6;",
+        ),  # straddle in a 2-byte unit
     ]
     for tag, members in cases:
         src = f"struct {tag} {{ {members} }};\n_BitInt(8) f(struct {tag} s){{ (void)s; return (_BitInt(8))0; }}\n"
         agg = compile_unit(src, check_clang=False).lowered.aggregates[tag]
         if not _CC:
             continue
-        probe = ("#include <stddef.h>\n#include <stdio.h>\n"
-                 f"struct {tag} {{ {members} }};\n"
-                 f'int main(void){{printf("%zu %zu", sizeof(struct {tag}),'
-                 f" (size_t)_Alignof(struct {tag})); return 0;}}")
+        probe = (
+            "#include <stddef.h>\n#include <stdio.h>\n"
+            f"struct {tag} {{ {members} }};\n"
+            f'int main(void){{printf("%zu %zu", sizeof(struct {tag}),'
+            f" (size_t)_Alignof(struct {tag})); return 0;}}"
+        )
         with tempfile.TemporaryDirectory() as d:
             c, e = os.path.join(d, "p.c"), os.path.join(d, "p")
             open(c, "w").write(probe)
             for std in ("c23", "c2x"):
-                if subprocess.run([_CC, f"-std={std}", c, "-o", e],
-                                  capture_output=True).returncode == 0:
-                    nums = [int(x) for x in subprocess.run([e], capture_output=True, text=True).stdout.split()]
+                if (
+                    subprocess.run([_CC, f"-std={std}", c, "-o", e], capture_output=True).returncode
+                    == 0
+                ):
+                    nums = [
+                        int(x)
+                        for x in subprocess.run([e], capture_output=True, text=True).stdout.split()
+                    ]
                     assert nums == [agg.size, agg.align], (tag, members, nums, agg.size, agg.align)
                     break
 
@@ -2568,12 +3083,34 @@ def test_bitint_bitfield_layout_matches_clang():
 def test_c_frontend_builds_warning_clean():
     if not _CC:
         return
-    for unit in ("bcir_cfront.c", "bcir_cpp.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_verify.c",
-                 "bcir_cc.c", "bcir_diag.c"):
+    for unit in (
+        "bcir_cfront.c",
+        "bcir_cpp.c",
+        "bcir_plan.c",
+        "bcir_hydrate.c",
+        "bcir_verify.c",
+        "bcir_cc.c",
+        "bcir_diag.c",
+    ):
         ok = False
         for std in ("c23", "c11"):
-            b = subprocess.run([_CC, f"-std={std}", "-Wall", "-Wextra", "-Werror", "-I", _C, "-c",
-                                os.path.join(_C, unit), "-o", os.devnull], capture_output=True, text=True)
+            b = subprocess.run(
+                [
+                    _CC,
+                    f"-std={std}",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    "-I",
+                    _C,
+                    "-c",
+                    os.path.join(_C, unit),
+                    "-o",
+                    os.devnull,
+                ],
+                capture_output=True,
+                text=True,
+            )
             if b.returncode == 0:
                 ok = True
                 break
@@ -2587,13 +3124,17 @@ def test_c_preprocessor_macros_conditionals_and_embed():
         drv = os.path.join(d, "drv.c")
         open(drv, "w").write(
             '#include <stdio.h>\n#include "bcir_cpp.h"\n'
-            'int main(int c,char**v){static char o[65536],e[256],s[65536];'
-            'size_t n=fread(s,1,sizeof s-1,stdin);s[n]=0;'
+            "int main(int c,char**v){static char o[65536],e[256],s[65536];"
+            "size_t n=fread(s,1,sizeof s-1,stdin);s[n]=0;"
             'if(bcir_cpp_run(s,c>1?v[1]:"",o,sizeof o,e,sizeof e)){printf("ERR %s",e);return 1;}'
-            'fputs(o,stdout);return 0;}\n')
+            "fputs(o,stdout);return 0;}\n"
+        )
         exe = os.path.join(d, "drv")
-        b = subprocess.run([_CC, "-std=c11", "-O1", "-I", _C, os.path.join(_C, "bcir_cpp.c"), drv,
-                            "-o", exe], capture_output=True, text=True)
+        b = subprocess.run(
+            [_CC, "-std=c11", "-O1", "-I", _C, os.path.join(_C, "bcir_cpp.c"), drv, "-o", exe],
+            capture_output=True,
+            text=True,
+        )
         assert b.returncode == 0, b.stderr
 
         def pp(src, basedir=""):
@@ -2624,6 +3165,7 @@ def test_c_preprocessor_macros_conditionals_and_embed():
         # dual-rail gate: the C twin's output is byte-identical to cpp.py over the same probes,
         # including __LINE__ through a function macro (the invocation line), #line, and across #include.
         from bcir.frontends.cfront.cpp import preprocess as _py_pp  # noqa: PLC0415
+
         open(os.path.join(d, "ph.h"), "w").write("in __LINE__ __FILE__")
         probes = [
             "a __LINE__\nb __LINE__\nc __LINE__\n",
@@ -2636,26 +3178,26 @@ def test_c_preprocessor_macros_conditionals_and_embed():
             "__STDC__ __STDC_VERSION__ __STDC_HOSTED__\n",
             "a __LINE__\n#line 100\nb __LINE__\nc __LINE__\n",
             "#define N 200\n#line N\nq __LINE__\n",
-            '#line 30 "a\\"b.c"\nz __FILE__\n',                  # an escaped quote in the name
-            "p __LINE__\n#line\nq __LINE__\n",                   # malformed -> ignored
-            "#if 0\n#line 999\n#endif\nr __LINE__\n",            # inactive branch -> skipped
-            'int x; _Pragma("once") int y;\n',                   # _Pragma operator: a no-op
-            'p _Pragma("a(b)c") q\n',                            # balanced parens consumed
-            "#define DO(x) _Pragma(#x)\nDO(message hi)\nz\n",    # _Pragma produced by a macro
-            "#if __has_attribute(packed)\nP\n#else\nn\n#endif\n",        # feature-test: supported
-            "#if __has_attribute(__aligned__)\nA\n#endif\n",            # GCC __x__ spelling
-            "#if __has_attribute(deprecated)\nd\n#else\nU\n#endif\n",   # unsupported attribute
+            '#line 30 "a\\"b.c"\nz __FILE__\n',  # an escaped quote in the name
+            "p __LINE__\n#line\nq __LINE__\n",  # malformed -> ignored
+            "#if 0\n#line 999\n#endif\nr __LINE__\n",  # inactive branch -> skipped
+            'int x; _Pragma("once") int y;\n',  # _Pragma operator: a no-op
+            'p _Pragma("a(b)c") q\n',  # balanced parens consumed
+            "#define DO(x) _Pragma(#x)\nDO(message hi)\nz\n",  # _Pragma produced by a macro
+            "#if __has_attribute(packed)\nP\n#else\nn\n#endif\n",  # feature-test: supported
+            "#if __has_attribute(__aligned__)\nA\n#endif\n",  # GCC __x__ spelling
+            "#if __has_attribute(deprecated)\nd\n#else\nU\n#endif\n",  # unsupported attribute
             "#if __has_builtin(__builtin_expect)\nb\n#else\nU\n#endif\n",
             "#if __has_c_attribute(nodiscard)\nc\n#else\nU\n#endif\n",
-            "#ifdef __has_attribute\nDEF\n#endif\n",                    # reported as `defined`
+            "#ifdef __has_attribute\nDEF\n#endif\n",  # reported as `defined`
             "#if defined(__has_builtin) && !__has_builtin(x)\nG\n#endif\n",
-            "#define V(...) f(__VA_ARGS__)\nV(1,2,3)\n",                 # __VA_ARGS__ flattens all args
-            "#define L(a, ...) g(a, __VA_ARGS__)\nL(x,1,2)\nL(z)\n",    # named + variadic, incl. empty
-            "#define S(...) #__VA_ARGS__\nS(1, 2, 3)\nS()\n",           # stringize __VA_ARGS__
-            "#define P(...) x ## __VA_ARGS__\nP(1,2)\nP()\n",           # paste __VA_ARGS__
+            "#define V(...) f(__VA_ARGS__)\nV(1,2,3)\n",  # __VA_ARGS__ flattens all args
+            "#define L(a, ...) g(a, __VA_ARGS__)\nL(x,1,2)\nL(z)\n",  # named + variadic, incl. empty
+            "#define S(...) #__VA_ARGS__\nS(1, 2, 3)\nS()\n",  # stringize __VA_ARGS__
+            "#define P(...) x ## __VA_ARGS__\nP(1,2)\nP()\n",  # paste __VA_ARGS__
             "#define LOG(f, ...) p(f __VA_OPT__(,) __VA_ARGS__)\nLOG(z)\nLOG(z,1,2)\n",  # __VA_OPT__
-            "#define W(x, ...) [x __VA_OPT__(/ __VA_ARGS__)]\nW(p)\nW(p,q,r)\n",         # nested VA
-            "#define E(...) z __VA_OPT__(Y)\nE()\nE(,)\nE(q)\n",        # emptiness incl. a lone comma
+            "#define W(x, ...) [x __VA_OPT__(/ __VA_ARGS__)]\nW(p)\nW(p,q,r)\n",  # nested VA
+            "#define E(...) z __VA_OPT__(Y)\nE()\nE(,)\nE(q)\n",  # emptiness incl. a lone comma
         ]
         for s in probes:
             assert pp(s) == _py_pp(s), f"twin divergence on {s!r}\n C: {pp(s)!r}\nPY: {_py_pp(s)!r}"
@@ -2668,23 +3210,32 @@ def test_c_preprocessor_macros_conditionals_and_embed():
 
         # __has_include resolves against the search path on both rails (the C eval_if gained this);
         # ph.h exists in `d`, so it probes true; a missing header probes false. Both <...> and "...".
-        for s in ('#if __has_include("ph.h")\nY\n#else\nN\n#endif\n',
-                  '#if __has_include(<ph.h>)\nY\n#else\nN\n#endif\n',
-                  '#if __has_include("nope.h")\nY\n#else\nN\n#endif\n',
-                  '#if defined(__has_include) && __has_include("ph.h")\nOK\n#endif\n',
-                  '#if !__has_include("nope.h")\nNEG\n#endif\n'):
-            assert pp(s, d) == _py_pp(s, search_paths=[d]), \
+        for s in (
+            '#if __has_include("ph.h")\nY\n#else\nN\n#endif\n',
+            "#if __has_include(<ph.h>)\nY\n#else\nN\n#endif\n",
+            '#if __has_include("nope.h")\nY\n#else\nN\n#endif\n',
+            '#if defined(__has_include) && __has_include("ph.h")\nOK\n#endif\n',
+            '#if !__has_include("nope.h")\nNEG\n#endif\n',
+        ):
+            assert pp(s, d) == _py_pp(s, search_paths=[d]), (
                 f"__has_include divergence on {s!r}\n C:{pp(s, d)!r}\nPY:{_py_pp(s, search_paths=[d])!r}"
+            )
 
         # __DATE__/__TIME__: SOURCE_DATE_EPOCH (UTC) freezes both twins to the same string.
         def ppe(src, epoch):
-            env = dict(os.environ); env["SOURCE_DATE_EPOCH"] = epoch
-            return subprocess.run([exe, ""], input=src, capture_output=True, text=True, env=env).stdout
+            env = dict(os.environ)
+            env["SOURCE_DATE_EPOCH"] = epoch
+            return subprocess.run(
+                [exe, ""], input=src, capture_output=True, text=True, env=env
+            ).stdout
+
         old_epoch = os.environ.get("SOURCE_DATE_EPOCH")
         try:
-            for epoch, want in (("1234567890", '"Feb 13 2009""23:31:30"'),     # 2009-02-13 23:31:30Z
-                                ("1577836800", '"Jan  1 2020""00:00:00"')):    # padded single-digit day
-                os.environ["SOURCE_DATE_EPOCH"] = epoch                        # _py_pp reads it here
+            for epoch, want in (
+                ("1234567890", '"Feb 13 2009""23:31:30"'),  # 2009-02-13 23:31:30Z
+                ("1577836800", '"Jan  1 2020""00:00:00"'),
+            ):  # padded single-digit day
+                os.environ["SOURCE_DATE_EPOCH"] = epoch  # _py_pp reads it here
                 assert ppe("__DATE__ __TIME__\n", epoch).strip() == want
                 assert ppe("__DATE__ __TIME__\n", epoch) == _py_pp("__DATE__ __TIME__\n")
         finally:
@@ -2717,8 +3268,10 @@ def test_c_preprocessor_driver_and_emitter_fail_closed_at_capacity_edges():
         assert r.returncode == 1 and "invalid shift in #if expression" in r.stderr, r.stderr
         r = run("dead_shift.c", "#if 0 && (1 << 999)\ninvalid\n#endif\nint f(void){return 1;}\n")
         assert r.returncode == 0 and "ok=1" in r.stdout, (r.stdout, r.stderr)
-        r = run("nested_dead_shift.c",
-                "#if 0\n#if 1 / 0\ninvalid\n#endif\n#endif\nint f(void){return 1;}\n")
+        r = run(
+            "nested_dead_shift.c",
+            "#if 0\n#if 1 / 0\ninvalid\n#endif\n#endif\nint f(void){return 1;}\n",
+        )
         assert r.returncode == 0 and "ok=1" in r.stdout, (r.stdout, r.stderr)
 
         # Malformed directives and driver definitions fail deterministically, without reading
@@ -2784,20 +3337,23 @@ def test_abi_target_matrix_dual_rail():
     src = open(path, encoding="utf-8").read()
     # oracle side always runs (quick tier too): the matrix spans the three data models.
     vecs = {t: _abi_const_vec_oracle(src, t) for t in _ABI_TARGETS}
-    assert vecs["x86_64-linux"] == [8, 8, 8, 4, 8]                       # LP64
+    assert vecs["x86_64-linux"] == [8, 8, 8, 4, 8]  # LP64
     assert vecs["aarch64-linux"] == vecs["riscv64-linux"] == [8, 8, 8, 4, 8]
-    assert vecs["x86_64-windows"] == [4, 8, 8, 4, 8]                     # LLP64: long is 4
-    assert vecs["i386-linux"] == [4, 4, 4, 4, 8]                         # ILP32: pointers are 4 too
-    assert len({tuple(v) for v in vecs.values()}) == 3                   # three distinct data models
+    assert vecs["x86_64-windows"] == [4, 8, 8, 4, 8]  # LLP64: long is 4
+    assert vecs["i386-linux"] == [4, 4, 4, 4, 8]  # ILP32: pointers are 4 too
+    assert len({tuple(v) for v in vecs.values()}) == 3  # three distinct data models
     if not _CC:
         return
     with tempfile.TemporaryDirectory() as d:
         exe = _build_frontend(d)
         for t in _ABI_TARGETS:
-            assert _abi_const_vec_twin(exe, path, t) == vecs[t], \
+            assert _abi_const_vec_twin(exe, path, t) == vecs[t], (
                 f"ABI {t}: twin {_abi_const_vec_twin(exe, path, t)} != oracle {vecs[t]}"
+            )
         # an unknown target is a clean diagnostic + nonzero exit on the C rail (not a crash).
-        bad = subprocess.run([exe, "--target", "sparc-solaris", path], capture_output=True, text=True)
+        bad = subprocess.run(
+            [exe, "--target", "sparc-solaris", path], capture_output=True, text=True
+        )
         assert bad.returncode != 0 and "unknown target" in bad.stdout, bad.stdout
 
 
@@ -2805,32 +3361,57 @@ def test_abi_target_matrix_dual_rail():
 # verifier rejects it (R18 recursion), "fallback" is outside the supported subset (route to LLVM).
 _FALLBACK_PROBES = [
     ("unsigned f(unsigned x){ return x*2u + 1u; }", "clean"),
-    ("unsigned f(unsigned n){ return f(n-1u); }", "dirty"),              # R18 recursion -> DIRTY, not fallback
-    ("unsigned f(unsigned x){ return x + ; }", "fallback"),              # malformed -> parse reject
-    ("unsigned f(void){ _Complex double z; (void)z; return 0u; }", "clean"),  # _Complex: now in the subset
-    ("unsigned f(void){ _Imaginary double z; return 0u; }", "fallback"),  # _Imaginary: still outside the subset
-    ("unsigned f(unsigned n){ unsigned a[n][n][n][n]; return a[0][0][0][0]; }", "fallback"),   # a >3-D VLA:
-                     # 1-D / 2-D / 3-D stack VLAs are now natively lowered (#vla / #vlamd -- snapshot each
-                     # runtime dim, flatten to m*n, mask the Horner index), but >3 dims defers to fallback
-                     # on both rails (the dim table caps at 3).
-    ("unsigned f(unsigned x){ return ({ unsigned y=x; y+1u; }); }", "clean"),  # statement-expr (#stmtexpr): now native
-    ("unsigned f(unsigned a){ a = a*3u + 1u; return a; }", "clean"),       # assigning a PARAMETER: a bare
-                     # `a = ..;` in the emit, never a `uint32_t a = ..;` redeclaration (twin-emit regression).
-    ("unsigned f(unsigned a){ return ({ a++; }); }", "fallback"),          # `i++` as a stmt-expr VALUE: the
-                     # post/pre distinction was discarded in the desugar, so it routes away on both rails.
-    ("unsigned f(unsigned a){ return ({ a = a+1u; }); }", "fallback"),     # an assignment as a stmt-expr value
-                     # (the twin's value-expression grammar has none) -> fallback on both rails, in lockstep.
-    ("unsigned f(unsigned x){ void *p=&&L; goto *p; L: return x; }", "clean"),  # computed goto (#computedgoto):
-                     # the GNU label-as-value `&&L` (a `void *`) + the indirect `goto *p` are now native on BOTH
-                     # rails -- they lower to the GNU forms (which Clang compiles), so the unit is clean, not fallback.
-    ("struct Q{unsigned*p; unsigned n;}; unsigned f(struct Q q,unsigned i){ return q.p[i&3u]+q.n; }",
-     "clean"),      # a *pointer* member indexed (`q.p[i]` == `*(q.p + i)`): both rails now load the full
-                     # pointer field and subscript the loaded pointer (#fieldderef, pointer-value slice 2b).
-                     # (1-D..3-D member *arrays* are native -- #memberarray; deref-through is now native too.)
-    ("unsigned f(unsigned i){ unsigned m[2][2][2][2]; m[0][0][0][0]=1u; return m[i&1u][0][0][0]; }",
-     "fallback"),   # a >3-dimensional local array: 1-D..3-D locals are now natively lowered (a flat
-                     # resource of the product of dims + the per-dim flatten shape), but the dim table
-                     # holds 3, so 4-D+ defers to fallback on both rails (the subset stays pinned).
+    ("unsigned f(unsigned n){ return f(n-1u); }", "dirty"),  # R18 recursion -> DIRTY, not fallback
+    ("unsigned f(unsigned x){ return x + ; }", "fallback"),  # malformed -> parse reject
+    (
+        "unsigned f(void){ _Complex double z; (void)z; return 0u; }",
+        "clean",
+    ),  # _Complex: now in the subset
+    (
+        "unsigned f(void){ _Imaginary double z; return 0u; }",
+        "fallback",
+    ),  # _Imaginary: still outside the subset
+    (
+        "unsigned f(unsigned n){ unsigned a[n][n][n][n]; return a[0][0][0][0]; }",
+        "fallback",
+    ),  # a >3-D VLA:
+    # 1-D / 2-D / 3-D stack VLAs are now natively lowered (#vla / #vlamd -- snapshot each
+    # runtime dim, flatten to m*n, mask the Horner index), but >3 dims defers to fallback
+    # on both rails (the dim table caps at 3).
+    (
+        "unsigned f(unsigned x){ return ({ unsigned y=x; y+1u; }); }",
+        "clean",
+    ),  # statement-expr (#stmtexpr): now native
+    (
+        "unsigned f(unsigned a){ a = a*3u + 1u; return a; }",
+        "clean",
+    ),  # assigning a PARAMETER: a bare
+    # `a = ..;` in the emit, never a `uint32_t a = ..;` redeclaration (twin-emit regression).
+    ("unsigned f(unsigned a){ return ({ a++; }); }", "fallback"),  # `i++` as a stmt-expr VALUE: the
+    # post/pre distinction was discarded in the desugar, so it routes away on both rails.
+    (
+        "unsigned f(unsigned a){ return ({ a = a+1u; }); }",
+        "fallback",
+    ),  # an assignment as a stmt-expr value
+    # (the twin's value-expression grammar has none) -> fallback on both rails, in lockstep.
+    (
+        "unsigned f(unsigned x){ void *p=&&L; goto *p; L: return x; }",
+        "clean",
+    ),  # computed goto (#computedgoto):
+    # the GNU label-as-value `&&L` (a `void *`) + the indirect `goto *p` are now native on BOTH
+    # rails -- they lower to the GNU forms (which Clang compiles), so the unit is clean, not fallback.
+    (
+        "struct Q{unsigned*p; unsigned n;}; unsigned f(struct Q q,unsigned i){ return q.p[i&3u]+q.n; }",
+        "clean",
+    ),  # a *pointer* member indexed (`q.p[i]` == `*(q.p + i)`): both rails now load the full
+    # pointer field and subscript the loaded pointer (#fieldderef, pointer-value slice 2b).
+    # (1-D..3-D member *arrays* are native -- #memberarray; deref-through is now native too.)
+    (
+        "unsigned f(unsigned i){ unsigned m[2][2][2][2]; m[0][0][0][0]=1u; return m[i&1u][0][0][0]; }",
+        "fallback",
+    ),  # a >3-dimensional local array: 1-D..3-D locals are now natively lowered (a flat
+    # resource of the product of dims + the per-dim flatten shape), but the dim table
+    # holds 3, so 4-D+ defers to fallback on both rails (the subset stays pinned).
 ]
 _FALLBACK_RC = {"clean": 0, "dirty": 1, "fallback": 2}
 
@@ -2839,6 +3420,7 @@ def _oracle_fallback_rc(src: str) -> int:
     """The oracle's total-compile outcome as an exit code: needs_fallback=2 / not-clean=1 / clean=0
     (the contract `bcir-cc --fallback` mirrors)."""
     from bcir.frontends.cfront.pipeline import compile_with_fallback  # noqa: PLC0415
+
     r = compile_with_fallback(src, check_clang=False)
     return 2 if r.needs_fallback else (0 if r.is_clean else 1)
 
@@ -2855,7 +3437,7 @@ def test_fallback_contract_dual_rail():
     oracle = {src: _oracle_fallback_rc(src) for src, _ in _FALLBACK_PROBES}
     for src, want in _FALLBACK_PROBES:
         assert oracle[src] == _FALLBACK_RC[want], f"oracle {oracle[src]} != {want} for {src!r}"
-    assert set(oracle.values()) == {0, 1, 2}                            # spans clean / dirty / fallback
+    assert set(oracle.values()) == {0, 1, 2}  # spans clean / dirty / fallback
     if not _CC:
         return
     with tempfile.TemporaryDirectory() as d:
@@ -2865,8 +3447,9 @@ def test_fallback_contract_dual_rail():
             with open(p, "w") as f:
                 f.write(src + "\n")
             got = subprocess.run([cc, "--fallback", p], capture_output=True, text=True)
-            assert got.returncode == _FALLBACK_RC[want], \
+            assert got.returncode == _FALLBACK_RC[want], (
                 f"twin rc={got.returncode} != {want}({_FALLBACK_RC[want]}) for {src!r}\n{got.stderr}"
+            )
             if want == "fallback":
                 assert "fallback to LLVM backend" in got.stderr, got.stderr
 
@@ -2892,7 +3475,9 @@ def test_member_array_oracle_emit_is_clang_equivalent():
     ):
         r = compile_unit(src, check_clang=True)
         assert r.is_clean, f"oracle not clean: {src!r}"
-        assert r.equivalence == "match", f"oracle emit not Clang-equivalent ({r.equivalence}): {src!r}"
+        assert r.equivalence == "match", (
+            f"oracle emit not Clang-equivalent ({r.equivalence}): {src!r}"
+        )
 
 
 def _build_diag(d: str) -> str:
@@ -2900,8 +3485,9 @@ def _build_diag(d: str) -> str:
     exe = os.path.join(d, "tdiag")
     srcs = [os.path.join(_C, s) for s in ("bcir_diag.c", "test_diag.c")]
     for std in ("c23", "c11"):
-        b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe],
-                           capture_output=True, text=True)
+        b = subprocess.run(
+            [_CC, f"-std={std}", "-O2", "-I", _C, *srcs, "-o", exe], capture_output=True, text=True
+        )
         if b.returncode == 0:
             return exe
     raise AssertionError(f"bcir_diag build failed:\n{b.stderr}")
@@ -2927,22 +3513,35 @@ def test_diagnostic_renderer_dual_rail():
     shared; the LAYOUT is). Covers spanned / spanless / zero-width / past-EOF spans, multi-line
     sources, tab-indented lines, multi-column underlines, and attached notes."""
     from bcir.frontends.cfront.diagnostics import (  # noqa: PLC0415
-        SourceDiagnostic, Span, Note, render)
+        SourceDiagnostic,
+        Span,
+        Note,
+        render,
+    )
+
     src_a = "unsigned f(unsigned x){ return x + ; }\n"
-    src_b = "int main(void)\n{\n\treturn foo(1, 2);\n}\n"     # a tab-indented line
+    src_b = "int main(void)\n{\n\treturn foo(1, 2);\n}\n"  # a tab-indented line
     src_c = "a\nbb\nccc\n"
     cases = [
         (src_a, "u.c", ("error", (34, 35), "expected ';'"), []),
-        (src_a, "u.c", ("error", (-1, -1), "file-level problem"), []),       # spanless banner
+        (src_a, "u.c", ("error", (-1, -1), "file-level problem"), []),  # spanless banner
         (src_a, "u.c", ("warning", (9, 10), "odd parameter name"), []),
         (src_a, "u.c", ("error", (34, 34), "zero-width insertion point"), []),
         (src_a, "u.c", ("error", (40, 41), "past end of file"), []),
-        (src_b, "m.c", ("error", (19, 22), "implicit declaration of 'foo'"),  # tab line + a note
-         [((4, 8), "expanded from macro here")]),
+        (
+            src_b,
+            "m.c",
+            ("error", (19, 22), "implicit declaration of 'foo'"),  # tab line + a note
+            [((4, 8), "expanded from macro here")],
+        ),
         (src_c, "t.c", ("error", (4, 7), "underline runs to end of line"), []),  # line 2, multi-col
         (src_c, "t.c", ("note", (8, 9), "on the last line"), []),
-        (src_b, "m.c", ("error", (-1, -1), "no primary span"),               # spanless + mixed notes
-         [((19, 20), "see here"), ((-1, -1), "and a spanless note")]),
+        (
+            src_b,
+            "m.c",
+            ("error", (-1, -1), "no primary span"),  # spanless + mixed notes
+            [((19, 20), "see here"), ((-1, -1), "and a spanless note")],
+        ),
     ]
 
     def py_render(src, fn, primary, notes):
@@ -2962,10 +3561,12 @@ def test_diagnostic_renderer_dual_rail():
             sp = os.path.join(d, "s.c")
             with open(sp, "w") as f:
                 f.write(src)
-            c_out = subprocess.run([exe, sp, fn], input=_diag_spec(primary, notes),
-                                   capture_output=True, text=True).stdout
-            assert c_out == py_render(src, fn, primary, notes), \
+            c_out = subprocess.run(
+                [exe, sp, fn], input=_diag_spec(primary, notes), capture_output=True, text=True
+            ).stdout
+            assert c_out == py_render(src, fn, primary, notes), (
                 f"diag layout diverged for {fn} {primary}\n C: {c_out!r}\nPY: {py_render(src, fn, primary, notes)!r}"
+            )
 
 
 def test_diagnostic_json_dual_rail():
@@ -2977,18 +3578,43 @@ def test_diagnostic_json_dual_rail():
     spanned diagnostic with a note, a spanless banner, escaped characters in the message, a
     multi-element array, and the empty array."""
     from bcir.frontends.cfront.diagnostics import (  # noqa: PLC0415
-        SourceDiagnostic, Span, Note, DiagnosticReport)
+        SourceDiagnostic,
+        Span,
+        Note,
+        DiagnosticReport,
+    )
+
     src_a = "unsigned f(unsigned x){ return x + ; }\n"
     src_b = "int main(void)\n{\n\treturn foo(1, 2);\n}\n"
     cases = [
         (src_a, "u.c", [("error", (34, 35), "expected ';'", [])]),
         (src_a, "u.c", [("warning", (-1, -1), "file-level problem", [])]),
-        (src_b, "m.c", [("error", (19, 22), "implicit declaration of 'foo'",
-                         [((4, 8), "expanded from macro here")])]),
-        (src_a, "u.c", [("error", (0, 3), 'quote" and back\\slash and a\ttab', [])]),  # JSON escapes
-        (src_b, "m.c", [("warning", (-1, -1), "first", []),
-                        ("error", (19, 20), "second", [((-1, -1), "spanless note")])]),  # 2-element array
-        (src_a, "u.c", []),                                                  # the empty array -> "[]"
+        (
+            src_b,
+            "m.c",
+            [
+                (
+                    "error",
+                    (19, 22),
+                    "implicit declaration of 'foo'",
+                    [((4, 8), "expanded from macro here")],
+                )
+            ],
+        ),
+        (
+            src_a,
+            "u.c",
+            [("error", (0, 3), 'quote" and back\\slash and a\ttab', [])],
+        ),  # JSON escapes
+        (
+            src_b,
+            "m.c",
+            [
+                ("warning", (-1, -1), "first", []),
+                ("error", (19, 20), "second", [((-1, -1), "spanless note")]),
+            ],
+        ),  # 2-element array
+        (src_a, "u.c", []),  # the empty array -> "[]"
     ]
 
     def spec(diags):
@@ -3008,7 +3634,7 @@ def test_diagnostic_json_dual_rail():
         return DiagnosticReport(dl, src, fn).to_json()
 
     for src, fn, diags in cases:
-        assert py_json(src, fn, diags).startswith("[")                      # oracle side always runs
+        assert py_json(src, fn, diags).startswith("[")  # oracle side always runs
     if not _CC:
         return
     with tempfile.TemporaryDirectory() as d:
@@ -3017,10 +3643,12 @@ def test_diagnostic_json_dual_rail():
             sp = os.path.join(d, "s.c")
             with open(sp, "w") as f:
                 f.write(src)
-            c_out = subprocess.run([exe, "--json", sp, fn], input=spec(diags),
-                                   capture_output=True, text=True).stdout
-            assert c_out == py_json(src, fn, diags), \
+            c_out = subprocess.run(
+                [exe, "--json", sp, fn], input=spec(diags), capture_output=True, text=True
+            ).stdout
+            assert c_out == py_json(src, fn, diags), (
                 f"JSON diverged for {fn}\n C: {c_out!r}\nPY: {py_json(src, fn, diags)!r}"
+            )
 
 
 def test_diagnostic_fixits_dual_rail():
@@ -3030,14 +3658,21 @@ def test_diagnostic_fixits_dual_rail():
     between the location and the notes (the diagnostic_to_dict member order). Covers all three verbs and
     `repr`'s quote selection (a `'` in the replacement switches it to double quotes)."""
     from bcir.frontends.cfront.diagnostics import (  # noqa: PLC0415
-        SourceDiagnostic, Span, FixIt, Note, DiagnosticReport, render)
+        SourceDiagnostic,
+        Span,
+        FixIt,
+        Note,
+        DiagnosticReport,
+        render,
+    )
+
     src = "unsigned f(unsigned x){ return x + ; }\n"
     # (fixit spans+replacements, notes) on a fixed primary error @34:35.
     fixit_sets = [
-        [((34, 35), ";")],                                  # replace with ';'
-        [((34, 34), ")")],                                  # insert ')'
-        [((34, 36), "")],                                   # remove ''
-        [((10, 11), "x'y")],                                # repr -> double quotes ("x'y")
+        [((34, 35), ";")],  # replace with ';'
+        [((34, 34), ")")],  # insert ')'
+        [((34, 36), "")],  # remove ''
+        [((10, 11), "x'y")],  # repr -> double quotes ("x'y")
         [((34, 35), ";"), ((34, 34), ")"), ((34, 36), "")],  # several fix-its in order
     ]
     note_sets = [[], [((9, 10), "macro here")]]
@@ -3053,8 +3688,9 @@ def test_diagnostic_fixits_dual_rail():
     def build(fixits, notes):
         fx = [FixIt(Span(a, b), r) for (a, b), r in fixits]
         nt = [Note(m, Span(a, b)) for (a, b), m in notes]
-        return SourceDiagnostic("error", "expected token", span=Span(34, 35),
-                                fixits=fx, notes=nt, phase="parse")
+        return SourceDiagnostic(
+            "error", "expected token", span=Span(34, 35), fixits=fx, notes=nt, phase="parse"
+        )
 
     # the oracle side runs in the quick tier too.
     for fixits in fixit_sets:
@@ -3069,12 +3705,17 @@ def test_diagnostic_fixits_dual_rail():
         for fixits in fixit_sets:
             for notes in note_sets:
                 diag = build(fixits, notes)
-                for flag, want in ((None, render(diag, src, "u.c")),
-                                   ("--json", DiagnosticReport([diag], src, "u.c").to_json())):
+                for flag, want in (
+                    (None, render(diag, src, "u.c")),
+                    ("--json", DiagnosticReport([diag], src, "u.c").to_json()),
+                ):
                     args = [exe] + ([flag] if flag else []) + [sp, "u.c"]
-                    out = subprocess.run(args, input=spec(fixits, notes),
-                                         capture_output=True, text=True).stdout
-                    assert out == want, f"fix-it {flag} diverged for {fixits}\n C: {out!r}\nPY: {want!r}"
+                    out = subprocess.run(
+                        args, input=spec(fixits, notes), capture_output=True, text=True
+                    ).stdout
+                    assert out == want, (
+                        f"fix-it {flag} diverged for {fixits}\n C: {out!r}\nPY: {want!r}"
+                    )
 
 
 def test_diagnostic_include_stack_origin_dual_rail():
@@ -3086,31 +3727,55 @@ def test_diagnostic_include_stack_origin_dual_rail():
     asymmetry for a spanless diagnostic (render still shows the frames + origin file; JSON ignores the
     origin and keeps the default file), an empty include stack, and origin alongside a fix-it + note."""
     from bcir.frontends.cfront.diagnostics import (  # noqa: PLC0415
-        SourceDiagnostic, Span, Note, FixIt, render, diagnostic_to_dict)
+        SourceDiagnostic,
+        Span,
+        Note,
+        FixIt,
+        render,
+        diagnostic_to_dict,
+    )
     import json as _json  # noqa: PLC0415
+
     src = "line0\nline1 has the token X here\nline2\n"
     off = src.index("X")
 
     def build(span, msg, fixits, notes):
-        return SourceDiagnostic("error" if span else "warning", msg, span=span,
-                                fixits=[FixIt(Span(a, b), r) for (a, b), r in fixits],
-                                notes=[Note(m, Span(a, b)) for (a, b), m in notes], phase="parse")
+        return SourceDiagnostic(
+            "error" if span else "warning",
+            msg,
+            span=span,
+            fixits=[FixIt(Span(a, b), r) for (a, b), r in fixits],
+            notes=[Note(m, Span(a, b)) for (a, b), m in notes],
+            phase="parse",
+        )
 
     # (diag, origin, spec) tuples.
     span = Span(off, off + 1)
     cases = [
         # spanned + origin + 2 include frames
-        (build(span, "undeclared 'X'", [], []), ("inc/b.h", 42, [("main.c", 10), ("inc/a.h", 3)]),
-         f"error\t{off}\t{off + 1}\tundeclared 'X'\n@\t42\t0\tinc/b.h\n^\t10\t0\tmain.c\n^\t3\t0\tinc/a.h\n"),
+        (
+            build(span, "undeclared 'X'", [], []),
+            ("inc/b.h", 42, [("main.c", 10), ("inc/a.h", 3)]),
+            f"error\t{off}\t{off + 1}\tundeclared 'X'\n@\t42\t0\tinc/b.h\n^\t10\t0\tmain.c\n^\t3\t0\tinc/a.h\n",
+        ),
         # spanned + origin + empty include stack (no "includedFrom" in JSON)
-        (build(span, "undeclared 'X'", [], []), ("inc/b.h", 42, []),
-         f"error\t{off}\t{off + 1}\tundeclared 'X'\n@\t42\t0\tinc/b.h\n"),
+        (
+            build(span, "undeclared 'X'", [], []),
+            ("inc/b.h", 42, []),
+            f"error\t{off}\t{off + 1}\tundeclared 'X'\n@\t42\t0\tinc/b.h\n",
+        ),
         # spanless + origin: render shows frames + origin file; JSON ignores origin (keeps default file)
-        (build(None, "no span", [], []), ("inc/b.h", 42, [("main.c", 10)]),
-         "warning\t-1\t-1\tno span\n@\t42\t0\tinc/b.h\n^\t10\t0\tmain.c\n"),
+        (
+            build(None, "no span", [], []),
+            ("inc/b.h", 42, [("main.c", 10)]),
+            "warning\t-1\t-1\tno span\n@\t42\t0\tinc/b.h\n^\t10\t0\tmain.c\n",
+        ),
         # origin alongside a fix-it + a note (only the primary is relocated)
-        (build(span, "bad", [((off, off + 1), "Y")], [((0, 3), "see")]), ("hdr.h", 7, [("top.c", 2)]),
-         f"error\t{off}\t{off + 1}\tbad\n@\t7\t0\thdr.h\n^\t2\t0\ttop.c\n+\t{off}\t{off + 1}\tY\n-\t0\t3\tsee\n"),
+        (
+            build(span, "bad", [((off, off + 1), "Y")], [((0, 3), "see")]),
+            ("hdr.h", 7, [("top.c", 2)]),
+            f"error\t{off}\t{off + 1}\tbad\n@\t7\t0\thdr.h\n^\t2\t0\ttop.c\n+\t{off}\t{off + 1}\tY\n-\t0\t3\tsee\n",
+        ),
     ]
 
     def py_text(diag, origin):
@@ -3119,7 +3784,7 @@ def test_diagnostic_include_stack_origin_dual_rail():
     def py_json(diag, origin):
         return _json.dumps([diagnostic_to_dict(diag, src, "u.c", origin=origin)], indent=2)
 
-    for diag, origin, _spec in cases:                                      # oracle side always runs
+    for diag, origin, _spec in cases:  # oracle side always runs
         assert "In file included from" in py_text(diag, origin) or origin[2] == []
     if not _CC:
         return
@@ -3158,14 +3823,18 @@ def test_diagnostic_error_recovery_report_dual_rail():
     drives the C engine with real recovery output (multiple errors, some carrying a fix-it) -- not a
     synthetic battery -- and also covers the clean source (the empty report -> "" / "[]")."""
     from bcir.frontends.cfront.pipeline import diagnose  # noqa: PLC0415
+
     sources = [
-        ("unsigned f(unsigned x) { return x + ; }\n"
-         "unsigned g(unsigned y) { return y 7; }\n", "multi.c", 2),     # >=2 errors, one with a fix-it
+        (
+            "unsigned f(unsigned x) { return x + ; }\nunsigned g(unsigned y) { return y 7; }\n",
+            "multi.c",
+            2,
+        ),  # >=2 errors, one with a fix-it
         ("unsigned ok(unsigned x){ return x*2u + 1u; }\n", "clean.c", 0),  # the empty report
     ]
     reports = [(diagnose(src, filename=fn), fn, lo) for src, fn, lo in sources]
     for rep, _fn, lo in reports:
-        assert len(rep.diagnostics) >= lo                              # the recovery actually fired
+        assert len(rep.diagnostics) >= lo  # the recovery actually fired
     if not _CC:
         return
     with tempfile.TemporaryDirectory() as d:
@@ -3173,19 +3842,21 @@ def test_diagnostic_error_recovery_report_dual_rail():
         for rep, fn, _lo in reports:
             sp = os.path.join(d, "pp.c")
             with open(sp, "w") as f:
-                f.write(rep.source)                                    # the preprocessed source the spans index
+                f.write(rep.source)  # the preprocessed source the spans index
             spec = _report_spec(rep)
             for flag, want in ((None, rep.render()), ("--json", rep.to_json())):
                 args = [exe] + ([flag] if flag else []) + [sp, fn]
                 out = subprocess.run(args, input=spec, capture_output=True, text=True).stdout
-                assert out == want, f"recovery report {flag} diverged for {fn}\n C: {out!r}\nPY: {want!r}"
+                assert out == want, (
+                    f"recovery report {flag} diverged for {fn}\n C: {out!r}\nPY: {want!r}"
+                )
 
 
 def test_c_diagnostic_renderer_rejects_malformed_shapes_and_clamps_hostile_spans():
     """Public diagnostic APIs must fail atomically instead of dereferencing sparse records."""
     if not _CC:
         return
-    driver = r'''
+    driver = r"""
 #include <limits.h>
 #include <string.h>
 #include "bcir_diag.h"
@@ -3201,16 +3872,30 @@ int main(void){
   if(bcir_diag_render(&d,"x","u.c",0,128)!=0)return 6;
   return 0;
 }
-'''
+"""
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "diag_hostile.c")
         with open(src, "w", encoding="utf-8") as f:
             f.write(driver)
         exe = os.path.join(d, "diag_hostile")
         build = subprocess.run(
-            [_CC, "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror", "-I", _C,
-             os.path.join(_C, "bcir_diag.c"), src, "-o", exe],
-            capture_output=True, text=True)
+            [
+                _CC,
+                "-std=c11",
+                "-O1",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C,
+                os.path.join(_C, "bcir_diag.c"),
+                src,
+                "-o",
+                exe,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert build.returncode == 0, build.stderr
         run = subprocess.run([exe], capture_output=True, text=True)
         assert run.returncode == 0, (run.stdout, run.stderr)
@@ -3228,9 +3913,11 @@ def _oracle_effects_report(src: str) -> str:
     out = []
     for n in fns:
         e = r.effects[n]
-        out.append(f"fn={n} reads={','.join(names(e.reads)) or '-'} writes={','.join(names(e.writes)) or '-'}")
+        out.append(
+            f"fn={n} reads={','.join(names(e.reads)) or '-'} writes={','.join(names(e.writes)) or '-'}"
+        )
     for i, a in enumerate(fns):
-        for b in fns[i + 1:]:
+        for b in fns[i + 1 :]:
             out.append(f"commute {a} {b} = {1 if r.commute(a, b) else 0}")
     return "\n".join(out) + "\n"
 
@@ -3251,27 +3938,37 @@ def test_effect_commutation_analysis_dual_rail():
     # the analysis has teeth: cfront_effects spans a commute=1 pair and a conflict=0 pair.
     assert "commute read_a read_b = 1" in reports["cfront_effects.c"]
     assert "commute read_a write_a = 0" in reports["cfront_effects.c"]
-    assert "fn=via_a reads=ga writes=ga" in reports["cfront_effects.c"]      # folded callee effects
+    assert "fn=via_a reads=ga writes=ga" in reports["cfront_effects.c"]  # folded callee effects
     if not _CC:
         return
     with tempfile.TemporaryDirectory() as d:
         cc = _build_bcir_cc(d)
         for fx in fixtures:
-            out = subprocess.run([cc, "--emit-effects", os.path.join(_C, fx)],
-                                 capture_output=True, text=True).stdout
+            out = subprocess.run(
+                [cc, "--emit-effects", os.path.join(_C, fx)], capture_output=True, text=True
+            ).stdout
             assert out == reports[fx], f"{fx}: effects diverged\n C:\n{out}\nPY:\n{reports[fx]}"
 
 
 def _scale_unit_src() -> str:
     """A translation unit that busts every *old* fixed IR ceiling: 40 leaf functions + a
     12-parameter function + a 40-call aggregator + a 7500-claim function."""
-    fns = [f"unsigned g{k}(void){{ return {k}u; }}" for k in range(40)]          # > old BCIR_MAX_FUNCS 16
+    fns = [f"unsigned g{k}(void){{ return {k}u; }}" for k in range(40)]  # > old BCIR_MAX_FUNCS 16
     ps = [chr(ord("a") + i) for i in range(12)]
-    fns.append("unsigned many12(" + ",".join(f"unsigned {p}" for p in ps) +
-               "){ return " + "+".join(ps) + "; }")                              # > old BCIR_MAX_PARAMS 8
-    fns.append("unsigned agg(void){ return " + "+".join(f"g{k}()" for k in range(40)) + "; }")  # > old BCIR_MAX_CALLS 32
+    fns.append(
+        "unsigned many12("
+        + ",".join(f"unsigned {p}" for p in ps)
+        + "){ return "
+        + "+".join(ps)
+        + "; }"
+    )  # > old BCIR_MAX_PARAMS 8
+    fns.append(
+        "unsigned agg(void){ return " + "+".join(f"g{k}()" for k in range(40)) + "; }"
+    )  # > old BCIR_MAX_CALLS 32
     body = "\n".join("  acc = acc + 1u;" for _ in range(2500))
-    fns.append("unsigned big(unsigned acc){\n" + body + "\n  return acc;\n}")    # > old 4096-claim per-fn cap
+    fns.append(
+        "unsigned big(unsigned acc){\n" + body + "\n  return acc;\n}"
+    )  # > old 4096-claim per-fn cap
     return "\n".join(fns) + "\n"
 
 
@@ -3281,7 +3978,7 @@ def test_scalable_ir_no_fixed_ceilings():
     7500-claim function (> the old 4096 per-function cap) -- compiles clean on the C twin (the IR
     grows geometrically) and matches the oracle's structural counts, which are uncapped by design."""
     src = _scale_unit_src()
-    r = compile_unit(src, check_clang=False)                 # oracle: Python lists, no caps
+    r = compile_unit(src, check_clang=False)  # oracle: Python lists, no caps
     assert len(r.lowered.functions) == 43
     assert len(r.lowered.functions["big"].claims) == 7500
     if not _CC:
@@ -3344,17 +4041,24 @@ def test_claim_id_uniqueness_law_R1_1_dual_rail():
         cpath, exe = os.path.join(d, "r11.c"), os.path.join(d, "r11")
         with open(cpath, "w", encoding="utf-8") as fh:
             fh.write(_R11_HARNESS)
-        srcs = [os.path.join(_C, s) for s in
-                ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c", "bcir_runtime.c")]
+        srcs = [
+            os.path.join(_C, s)
+            for s in ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c", "bcir_runtime.c")
+        ]
         for std in ("c23", "c2x", "c11"):
-            b = subprocess.run([_CC, f"-std={std}", "-O2", "-I", _C, cpath, *srcs, "-o", exe],
-                               capture_output=True, text=True)
+            b = subprocess.run(
+                [_CC, f"-std={std}", "-O2", "-I", _C, cpath, *srcs, "-o", exe],
+                capture_output=True,
+                text=True,
+            )
             if b.returncode == 0:
                 break
         else:
             raise AssertionError(f"R1.1 harness build failed:\n{b.stderr}")
         out = subprocess.run([exe], capture_output=True, text=True).stdout.strip()
-        assert out == "intra=1 cross=1", f"C twin R1.1 (intra + cross): expected 'intra=1 cross=1', got {out!r}"
+        assert out == "intra=1 cross=1", (
+            f"C twin R1.1 (intra + cross): expected 'intra=1 cross=1', got {out!r}"
+        )
 
 
 def _pstress_unit_src() -> str:
@@ -3363,8 +4067,13 @@ def _pstress_unit_src() -> str:
     L = [f"struct S{k} {{ unsigned m0; unsigned m1; }};" for k in range(20)]
     L += [f"typedef unsigned U{k};" for k in range(20)]
     L += [f"static const unsigned G{k}[2] = {{ {k}u, {k + 1}u }};" for k in range(25)]
-    L.append("unsigned big(void){\n" + "\n".join(f"  unsigned v{i} = {i}u;" for i in range(300)) +
-             "\n  return " + "+".join(f"v{i}" for i in range(300)) + "; }")
+    L.append(
+        "unsigned big(void){\n"
+        + "\n".join(f"  unsigned v{i} = {i}u;" for i in range(300))
+        + "\n  return "
+        + "+".join(f"v{i}" for i in range(300))
+        + "; }"
+    )
     L.append("unsigned useg(unsigned i){ return G0[i%2u] + G19[i%2u] + G24[i%2u]; }")
     return "\n".join(L) + "\n"
 
@@ -3375,7 +4084,7 @@ def test_scalable_parser_state_no_fixed_caps():
     are gone, so a real header (20 structs, 25 globals, 300 locals) lowers and matches the oracle, which
     is uncapped by design."""
     src = _pstress_unit_src()
-    r = compile_unit(src, check_clang=False)                 # oracle: Python dicts/lists, no caps
+    r = compile_unit(src, check_clang=False)  # oracle: Python dicts/lists, no caps
     assert len(r.lowered.functions) == 2 and r.is_clean
     if not _CC:
         return
@@ -3386,17 +4095,17 @@ def test_scalable_parser_state_no_fixed_caps():
             fh.write(src)
         out = subprocess.run([cc, "--emit-claimgraph", p], capture_output=True, text=True)
         assert out.returncode == 0, out.stderr
-        assert "ok=1" in out.stdout, out.stdout[:200]          # all structs/globals/locals resolved
+        assert "ok=1" in out.stdout, out.stdout[:200]  # all structs/globals/locals resolved
 
 
 _INTPROMOTE_SRC = (
-    "int sdiv(int a, int b){ return b ? a / b : 0; }\n"          # signed division (truncates toward 0)
-    "int smod(int a, int b){ return b ? a % b : 0; }\n"          # signed remainder
-    "int sshr(int a){ return a >> 3; }\n"                        # arithmetic right shift (sign-extends)
+    "int sdiv(int a, int b){ return b ? a / b : 0; }\n"  # signed division (truncates toward 0)
+    "int smod(int a, int b){ return b ? a % b : 0; }\n"  # signed remainder
+    "int sshr(int a){ return a >> 3; }\n"  # arithmetic right shift (sign-extends)
     "int scmp(int a, int b){ return (a < b) + 2*(a <= b) + 4*(a > b) + 8*(a >= b); }\n"  # signed compares
-    "unsigned udiv(unsigned a, unsigned b){ return b ? a / b : 0u; }\n"   # unsigned division (control)
-    "long wide(int a, long b){ return a + b; }\n"                # int + long -> 64-bit UAC
-    "long umix(unsigned a, long b){ return a * b; }\n"          # unsigned*long -> long (mixed width/sign)
+    "unsigned udiv(unsigned a, unsigned b){ return b ? a / b : 0u; }\n"  # unsigned division (control)
+    "long wide(int a, long b){ return a + b; }\n"  # int + long -> 64-bit UAC
+    "long umix(unsigned a, long b){ return a * b; }\n"  # unsigned*long -> long (mixed width/sign)
 )
 
 
@@ -3411,8 +4120,8 @@ def test_integer_promotions_and_uac_oracle():
     emit = "\n".join(r.emitted.values())
     # teeth: result temps carry their real integer types -- the old model rendered them all uint32_t.
     assert "int32_t" in emit, emit
-    assert "int64_t" in emit, emit          # int + long widened to 64-bit
-    assert "uint32_t" in emit               # unsigned stays unsigned
+    assert "int64_t" in emit, emit  # int + long widened to 64-bit
+    assert "uint32_t" in emit  # unsigned stays unsigned
     if not _CC:
         return
     harness = f"""#include <stdint.h>
@@ -3439,7 +4148,9 @@ int main(void){{
         with open(c, "w", encoding="utf-8") as fh:
             fh.write(harness)
         for std in ("c23", "c2x", "c17"):
-            b = subprocess.run([_CC, f"-std={std}", "-O2", c, "-o", e], capture_output=True, text=True)
+            b = subprocess.run(
+                [_CC, f"-std={std}", "-O2", c, "-o", e], capture_output=True, text=True
+            )
             if b.returncode == 0:
                 break
         else:
@@ -3451,10 +4162,10 @@ _AGGINIT_SRC = (
     "struct P { unsigned a; unsigned b; unsigned c; };\n"
     "union U { unsigned w; unsigned h; };\n"
     "unsigned spos(unsigned x){ struct P p = {x, x+1u, x+2u}; return p.a*100u+p.b*10u+p.c; }\n"
-    "unsigned sdes(unsigned x){ struct P p = {.c=x, .a=x+5u}; return p.a*100u+p.b*10u+p.c; }\n"   # .b gap -> 0
+    "unsigned sdes(unsigned x){ struct P p = {.c=x, .a=x+5u}; return p.a*100u+p.b*10u+p.c; }\n"  # .b gap -> 0
     "unsigned apos(unsigned x){ unsigned a[4] = {x, x+1u, x+2u}; return a[0]+a[1]+a[2]+a[3]; }\n"  # a[3] gap -> 0
-    "unsigned ades(unsigned x){ unsigned a[4] = {[3]=x, [0]=x+9u}; return a[0]*10u+a[3]; }\n"      # gaps -> 0
-    "unsigned udes(unsigned x){ union U u = {.h=x}; return u.w; }\n"                               # overlap @0
+    "unsigned ades(unsigned x){ unsigned a[4] = {[3]=x, [0]=x+9u}; return a[0]*10u+a[3]; }\n"  # gaps -> 0
+    "unsigned udes(unsigned x){ union U u = {.h=x}; return u.w; }\n"  # overlap @0
 )
 
 
@@ -3466,8 +4177,8 @@ def test_local_aggregate_initializers_oracle():
     and positional/designated. (The C-twin port is the next segment.)"""
     r = compile_unit(_AGGINIT_SRC, check_clang=False)
     emit = "\n".join(r.emitted.values())
-    assert "= {0}" in emit                  # the zero baseline (uninitialized members zero-fill)
-    assert "[4]" in emit                     # a local array is declared with its dimension
+    assert "= {0}" in emit  # the zero baseline (uninitialized members zero-fill)
+    assert "[4]" in emit  # a local array is declared with its dimension
     if not _CC:
         return
     harness = f"""#include <stdint.h>
@@ -3487,7 +4198,9 @@ int main(void){{
         with open(c, "w", encoding="utf-8") as fh:
             fh.write(harness)
         for std in ("c23", "c2x", "c17"):
-            b = subprocess.run([_CC, f"-std={std}", "-O2", c, "-o", e], capture_output=True, text=True)
+            b = subprocess.run(
+                [_CC, f"-std={std}", "-O2", c, "-o", e], capture_output=True, text=True
+            )
             if b.returncode == 0:
                 break
         else:
@@ -3514,7 +4227,9 @@ def test_scalar_globals_read_write_dual_rail():
         c_summary, c_emit = _c_run(exe, os.path.join(_C, fx))
         assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
         # the emit references the global by name: a bare `acc = ...;`, never `uint32_t acc = ...;`.
-        assert "acc = " in c_emit and "uint32_t acc" not in c_emit and "return acc;" in c_emit, c_emit
+        assert "acc = " in c_emit and "uint32_t acc" not in c_emit and "return acc;" in c_emit, (
+            c_emit
+        )
         # side-effect-aware behaviour: reset `acc` between the original and the emitted twin per call.
         harness = f"""#include <stdint.h>
 #include <stdio.h>
@@ -3540,7 +4255,9 @@ int main(void){{
         cf, ef = os.path.join(d, "g.c"), os.path.join(d, "g")
         open(cf, "w").write(harness)
         for std in ("c23", "c2x", "c17"):
-            b = subprocess.run([_CC, f"-std={std}", "-O2", cf, "-o", ef], capture_output=True, text=True)
+            b = subprocess.run(
+                [_CC, f"-std={std}", "-O2", cf, "-o", ef], capture_output=True, text=True
+            )
             if b.returncode == 0:
                 break
         else:
@@ -3555,9 +4272,12 @@ def test_c_frontend_R18_rejects_recursion_and_undefined_callee():
     with tempfile.TemporaryDirectory() as d:
         exe = _build_frontend(d)
         for src, needle in [
-                ("uint32_t f(uint32_t n){ return f(n-1); }\nuint32_t g(uint32_t n){ return f(n); }\n",
-                 "recursive"),
-                ("uint32_t g(uint32_t a){ return missing(a); }\n", "undefined")]:
+            (
+                "uint32_t f(uint32_t n){ return f(n-1); }\nuint32_t g(uint32_t n){ return f(n); }\n",
+                "recursive",
+            ),
+            ("uint32_t g(uint32_t a){ return missing(a); }\n", "undefined"),
+        ]:
             fx = os.path.join(d, "bad.c")
             open(fx, "w").write(src)
             out = subprocess.run([exe, fx], capture_output=True, text=True).stdout
@@ -3608,14 +4328,15 @@ def _cfront_differential_fuzz_seed(seed: int):
     unchanged, so coverage is byte-identical to the former single test (it just parallelizes)."""
     import random as _random
     import sys as _sys
+
     tools_c = os.path.join(_ROOT, "tools", "c")
     if tools_c not in _sys.path:
         _sys.path.insert(0, tools_c)
     import fuzz_cfront
 
-    if not _CC:                                         # no compiler -> can't build the twin; at least pin
-        rng = _random.Random(seed)                     # that generation terminates and the oracle never
-        for _ in range(60):                            # crashes on an in-subset program.
+    if not _CC:  # no compiler -> can't build the twin; at least pin
+        rng = _random.Random(seed)  # that generation terminates and the oracle never
+        for _ in range(60):  # crashes on an in-subset program.
             fuzz_cfront._oracle_outcome(fuzz_cfront.Gen(rng).program().source)
         return
     with tempfile.TemporaryDirectory() as d:
@@ -3660,11 +4381,13 @@ def test_bounds_promotion_local_static_arrays_to_masked():
         return r.is_clean, b
 
     clean, b = bounds_of("unsigned f(unsigned i){ unsigned a[8]; a[i&7u]=3u; return a[i&7u]; }")
-    assert clean and b == {"masked"}                                  # a local array -> runtime-checked
-    clean, b = bounds_of("unsigned f(unsigned i){ static unsigned a[4]; a[i&3u]=2u; return a[i&3u]; }")
-    assert clean and b == {"masked"}                                  # a static array -> runtime-checked
+    assert clean and b == {"masked"}  # a local array -> runtime-checked
+    clean, b = bounds_of(
+        "unsigned f(unsigned i){ static unsigned a[4]; a[i&3u]=2u; return a[i&3u]; }"
+    )
+    assert clean and b == {"masked"}  # a static array -> runtime-checked
     clean, b = bounds_of("unsigned f(unsigned *p,unsigned i){ p[i&7u]=3u; return p[i&7u]; }")
-    assert clean and b == {"assumed_safe"}                            # a pointer (extent unknown) stays trusted
+    assert clean and b == {"assumed_safe"}  # a pointer (extent unknown) stays trusted
 
 
 def test_bounds_quarantine_traps_out_of_bounds():
@@ -3676,24 +4399,49 @@ def test_bounds_quarantine_traps_out_of_bounds():
         return
     src = "unsigned g(unsigned i){ unsigned a[8]; for(unsigned k=0u;k<8u;k++) a[k]=k*2u; return a[i]; }"
     from bcir.frontends.cfront import compile_unit
+
     r = compile_unit(src, check_clang=False)
     name = next(reversed(r.lowered.functions))
     body = r.emitted[name].split("*/\n", 1)[-1]
-    assert 'BCIR_CHK(' in body and '"g:a"' in body, body          # the guard threads the <func>:<array> site
+    assert "BCIR_CHK(" in body and '"g:a"' in body, (
+        body
+    )  # the guard threads the <func>:<array> site
     with tempfile.TemporaryDirectory() as d:
-        prog = (f'#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine.h"\n'
-                f'{r.source}\n\n{body}\n'
-                f'int main(int c, char **v){{ (void)c; printf("%u\\n", bcir_g((unsigned)atoi(v[1]))); return 0; }}\n')
+        prog = (
+            f'#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine.h"\n'
+            f"{r.source}\n\n{body}\n"
+            f'int main(int c, char **v){{ (void)c; printf("%u\\n", bcir_g((unsigned)atoi(v[1]))); return 0; }}\n'
+        )
         cpath, epath = os.path.join(d, "e.c"), os.path.join(d, "e")
         open(cpath, "w").write(prog)
-        b = subprocess.run([_CC, "-std=c23", "-O2", "-I", _C, cpath,
-                            os.path.join(_C, "bcir_quarantine.c"), "-o", epath], capture_output=True, text=True)
+        b = subprocess.run(
+            [
+                _CC,
+                "-std=c23",
+                "-O2",
+                "-I",
+                _C,
+                cpath,
+                os.path.join(_C, "bcir_quarantine.c"),
+                "-o",
+                epath,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert b.returncode == 0, b.stderr
-        inb = subprocess.run([epath, "3"], capture_output=True, text=True)   # in-bounds: a[3] = 6, exits 0
+        inb = subprocess.run(
+            [epath, "3"], capture_output=True, text=True
+        )  # in-bounds: a[3] = 6, exits 0
         assert inb.returncode == 0 and inb.stdout.strip() == "6", (inb.returncode, inb.stdout)
-        oob = subprocess.run([epath, "99"], capture_output=True, text=True)  # OOB: the handler aborts
-        assert oob.returncode != 0 and "bounds-quarantine" in oob.stderr, (oob.returncode, oob.stderr)
-        assert "g:a" in oob.stderr, oob.stderr                    # the source site is in the fail-fast message
+        oob = subprocess.run(
+            [epath, "99"], capture_output=True, text=True
+        )  # OOB: the handler aborts
+        assert oob.returncode != 0 and "bounds-quarantine" in oob.stderr, (
+            oob.returncode,
+            oob.stderr,
+        )
+        assert "g:a" in oob.stderr, oob.stderr  # the source site is in the fail-fast message
 
 
 def test_recovered_extent_quarantines_out_of_bounds():
@@ -3704,32 +4452,56 @@ def test_recovered_extent_quarantines_out_of_bounds():
     the recovered runtime extent (not a constant) actually bounds-checks the heap buffer."""
     if not _CC:
         return
-    src = ("unsigned mpick(unsigned n, unsigned i){ unsigned *p = malloc(n*sizeof(unsigned)); "
-           "for(unsigned k=0u;k<n;k++) p[k]=k*2u; return p[i]; }")
+    src = (
+        "unsigned mpick(unsigned n, unsigned i){ unsigned *p = malloc(n*sizeof(unsigned)); "
+        "for(unsigned k=0u;k<n;k++) p[k]=k*2u; return p[i]; }"
+    )
     from bcir.frontends.cfront import compile_unit
+
     r = compile_unit("#include <stdlib.h>\n" + src, check_clang=False)
     body = r.emitted["mpick"].split("*/\n", 1)[-1]
-    assert 'BCIR_CHK(' in body and ', n, "mpick:p")' in body, body   # the extent is the runtime count `n`
+    assert "BCIR_CHK(" in body and ', n, "mpick:p")' in body, (
+        body
+    )  # the extent is the runtime count `n`
     with tempfile.TemporaryDirectory() as d:
-        prog = (f'#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine.h"\n'
-                f'{body}\n'
-                f'int main(int c, char **v){{ (void)c; printf("%u\\n", bcir_mpick(8u, (unsigned)atoi(v[1]))); '
-                f'return 0; }}\n')
+        prog = (
+            f'#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine.h"\n'
+            f"{body}\n"
+            f'int main(int c, char **v){{ (void)c; printf("%u\\n", bcir_mpick(8u, (unsigned)atoi(v[1]))); '
+            f"return 0; }}\n"
+        )
         cpath, epath = os.path.join(d, "e.c"), os.path.join(d, "e")
         open(cpath, "w").write(prog)
-        b = subprocess.run([_CC, "-std=c23", "-O2", "-I", _C, cpath,
-                            os.path.join(_C, "bcir_quarantine.c"), "-o", epath], capture_output=True, text=True)
+        b = subprocess.run(
+            [
+                _CC,
+                "-std=c23",
+                "-O2",
+                "-I",
+                _C,
+                cpath,
+                os.path.join(_C, "bcir_quarantine.c"),
+                "-o",
+                epath,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert b.returncode == 0, b.stderr
-        inb = subprocess.run([epath, "3"], capture_output=True, text=True)   # in-bounds: p[3] = 6
+        inb = subprocess.run([epath, "3"], capture_output=True, text=True)  # in-bounds: p[3] = 6
         assert inb.returncode == 0 and inb.stdout.strip() == "6", (inb.returncode, inb.stdout)
-        oob = subprocess.run([epath, "99"], capture_output=True, text=True)  # OOB of the 8-element buffer
-        assert oob.returncode != 0 and "bounds-quarantine" in oob.stderr and "mpick:p" in oob.stderr, \
-            (oob.returncode, oob.stderr)
+        oob = subprocess.run(
+            [epath, "99"], capture_output=True, text=True
+        )  # OOB of the 8-element buffer
+        assert (
+            oob.returncode != 0 and "bounds-quarantine" in oob.stderr and "mpick:p" in oob.stderr
+        ), (oob.returncode, oob.stderr)
 
 
 def _r21(src):
     """Compile a heap snippet and return (is_clean, [R21 lifetime messages])."""
     from bcir.frontends.cfront import compile_unit
+
     r = compile_unit("#include <stdlib.h>\n" + src, check_clang=False)
     return r.is_clean, [d.message for d in r.lifetime_diagnostics]
 
@@ -3741,18 +4513,24 @@ def test_r21_lifetime_is_load_bearing_for_c_heap():
     into the frontend pass/fail (`is_clean` stays True), exactly like the R19/R20 timing laws."""
     # a dangling READ (load), a dangling WRITE (store), and a dangling deref `*p` are all use-after-free
     # (each reads the freed pointer to form the address); free-of-freed is a double-free.
-    for src in ("unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); return p[0]; }",
-                "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); p[0]=1u; return n; }",
-                "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); return *p; }"):
+    for src in (
+        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); return p[0]; }",
+        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); p[0]=1u; return n; }",
+        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); return *p; }",
+    ):
         clean, diags = _r21(src)
         assert clean and any("use-after-free" in d for d in diags), (src, diags)
-    clean, diags = _r21("unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); free(p); return n; }")
+    clean, diags = _r21(
+        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); free(p); return n; }"
+    )
     assert clean and any("double-free" in d for d in diags), diags
     # well-formed heap use is silent: access BEFORE free, and free-then-reallocate-then-use (the write
     # re-validates the pointer), both produce no lifetime diagnostic.
-    for src in ("unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); unsigned r=p[0]; free(p); return r; }",
-                "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); "
-                "p=malloc(n*sizeof(unsigned)); unsigned r=p[0]; free(p); return r; }"):
+    for src in (
+        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); unsigned r=p[0]; free(p); return r; }",
+        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); "
+        "p=malloc(n*sizeof(unsigned)); unsigned r=p[0]; free(p); return r; }",
+    ):
         clean, diags = _r21(src)
         assert clean and diags == [], (src, diags)
 
@@ -3764,17 +4542,20 @@ def test_r21_does_not_disturb_the_corpus():
     import glob
     from bcir.frontends.cfront import compile_unit
     from bcir.frontends.cfront.cparse import CParseError
+
     for path in sorted(glob.glob(os.path.join(_C, "cfront_*.c"))):
         fx = os.path.basename(path)
         try:
-            r = compile_unit(open(path, encoding="utf-8").read(), check_clang=False, includes=_includes_for(fx))
+            r = compile_unit(
+                open(path, encoding="utf-8").read(), check_clang=False, includes=_includes_for(fx)
+            )
         except CParseError:
             if fx.startswith(("cfront_sec_", "cfront_pp_")):
-                continue   # a deliberately-malformed adversarial fixture (cfront_sec_deepnest/lextail) or a
-                           # PREPROCESSOR-only adversarial fixture (cfront_pp_*: macro definitions + bare
-                           # expansions, not a complete translation unit -- consumed only by the L7 reference
-                           # differential, never lowered) -- out of scope for this corpus check.
-            raise          # a REAL fixture must still parse: a regression to CParseError is a hard failure.
+                continue  # a deliberately-malformed adversarial fixture (cfront_sec_deepnest/lextail) or a
+                # PREPROCESSOR-only adversarial fixture (cfront_pp_*: macro definitions + bare
+                # expansions, not a complete translation unit -- consumed only by the L7 reference
+                # differential, never lowered) -- out of scope for this corpus check.
+            raise  # a REAL fixture must still parse: a regression to CParseError is a hard failure.
         if r.fallback:
             continue
         assert r.lifetime_diagnostics == [], (fx, [d.message for d in r.lifetime_diagnostics])
@@ -3785,10 +4566,14 @@ def _r21_kinds(messages):
     or `R21 f: use-after-free` (twin). RID/claim numbers differ across rails; the FUNC + KIND must agree."""
     out = []
     for m in messages:
-        kind = "double-free" if "double-free" in m else ("use-after-free" if "use-after-free" in m else None)
+        kind = (
+            "double-free"
+            if "double-free" in m
+            else ("use-after-free" if "use-after-free" in m else None)
+        )
         if kind is None:
             continue
-        m = m[len("R21 "):] if m.startswith("R21 ") else m
+        m = m[len("R21 ") :] if m.startswith("R21 ") else m
         out.append((m.split(":", 1)[0].strip(), kind))
     return sorted(out)
 
@@ -3801,19 +4586,22 @@ def test_r21_dual_rail_parity():
     if not _CC:
         return
     from bcir.frontends.cfront import compile_unit
+
     cases = [
-        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); return p[0]; }",      # UAF
-        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); p[0]=1u; return n; }", # UAF store
-        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); free(p); return n; }", # double-free
+        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); return p[0]; }",  # UAF
+        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); p[0]=1u; return n; }",  # UAF store
+        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); free(p); return n; }",  # double-free
         "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); unsigned r=p[0]; free(p); return r; }",  # clean
         "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); "
-        "p=malloc(n*sizeof(unsigned)); unsigned r=p[0]; free(p); return r; }",                           # reuse
+        "p=malloc(n*sizeof(unsigned)); unsigned r=p[0]; free(p); return r; }",  # reuse
     ]
     with tempfile.TemporaryDirectory() as d:
         exe = _build_frontend(d)
         for i, src in enumerate(cases):
             full = "#include <stdlib.h>\n" + src
-            oracle = _r21_kinds(d.message for d in compile_unit(full, check_clang=False).lifetime_diagnostics)
+            oracle = _r21_kinds(
+                d.message for d in compile_unit(full, check_clang=False).lifetime_diagnostics
+            )
             cpath = os.path.join(d, f"u{i}.c")
             open(cpath, "w").write(full)
             out = subprocess.run([exe, cpath], capture_output=True, text=True).stdout
@@ -3830,17 +4618,21 @@ def test_r21_policy_gates_the_verdict():
     tools/c/check_runtime.sh; here the Python rail (bcir-cfront) is exercised directly so the policy
     is gated even without a C compiler. Default == advisory keeps the corpus + fuzzer undisturbed."""
     from bcir.frontends.cfront.__main__ import main
+
     uaf = "#include <stdlib.h>\nunsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); return p[0]; }\n"
     dfree = "#include <stdlib.h>\nunsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); free(p); free(p); return n; }\n"
     clean = "#include <stdlib.h>\nunsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); unsigned r=p[0]; free(p); return r; }\n"
     with tempfile.TemporaryDirectory() as d:
+
         def run(src, *flags):
-            p = os.path.join(d, "u.c"); open(p, "w").write(src)
+            p = os.path.join(d, "u.c")
+            open(p, "w").write(src)
             return main([*flags, "-o", os.path.join(d, "out.txt"), p])
+
         # advisory (explicit AND the default) never gates -- everything compiles clean (exit 0)
         for src in (uaf, dfree, clean):
             assert run(src, "--r21=advisory") == 0
-            assert run(src) == 0                                      # no --r21 == advisory (non-disturbance)
+            assert run(src) == 0  # no --r21 == advisory (non-disturbance)
         # fallback: a UAF / double-free routes to LLVM (2); a clean unit stays 0
         assert run(uaf, "--r21=fallback") == 2
         assert run(dfree, "--r21=fallback") == 2
@@ -3860,12 +4652,15 @@ def test_extent_count_mutation_is_not_promoted():
     and FALSE-TRAP a valid access. Both rails leave it unmanaged (no `BCIR_CHK`); a decl-init count
     (`unsigned m = ...`, before the alloc) still promotes. Guards the gate that distinguishes the two."""
     from bcir.frontends.cfront import compile_unit
+
     # the access p[n] (after n=n-1) reads p[original-1], the LAST valid element -- it must not be guarded
     # against the mutated extent (which would reject original-1 < original-1).
-    src = ("unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); "
-           "for(unsigned k=0u;k<n;k++) p[k]=k; n=n-1u; return p[n]; }")
+    src = (
+        "unsigned f(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); "
+        "for(unsigned k=0u;k<n;k++) p[k]=k; n=n-1u; return p[n]; }"
+    )
     r = compile_unit("#include <stdlib.h>\n" + src, check_clang=False)
-    assert "BCIR_CHK" not in r.emitted["f"], r.emitted["f"]              # oracle: unmanaged (sound)
+    assert "BCIR_CHK" not in r.emitted["f"], r.emitted["f"]  # oracle: unmanaged (sound)
     if _CC:
         with tempfile.TemporaryDirectory() as d:
             # twin agrees (no BCIR_CHK), and the emit RUNS without a false trap on the valid p[original-1].
@@ -3873,17 +4668,40 @@ def test_extent_count_mutation_is_not_promoted():
             cpath = os.path.join(d, "f.c")
             open(cpath, "w").write("#include <stdlib.h>\n" + src)
             out = subprocess.run([exe, cpath], capture_output=True, text=True).stdout
-            assert "BCIR_CHK" not in out.partition("----EMIT----")[2], out   # twin: unmanaged too (parity)
+            assert "BCIR_CHK" not in out.partition("----EMIT----")[2], (
+                out
+            )  # twin: unmanaged too (parity)
             body = r.emitted["f"].split("*/\n", 1)[-1]
-            prog = (f'#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine.h"\n'
-                    f'{body}\nint main(void){{ printf("%u\\n", bcir_f(5u)); return 0; }}\n')  # f(5)=p[4]=4
+            prog = (
+                f'#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine.h"\n'
+                f'{body}\nint main(void){{ printf("%u\\n", bcir_f(5u)); return 0; }}\n'
+            )  # f(5)=p[4]=4
             ep = os.path.join(d, "e")
             open(os.path.join(d, "e.c"), "w").write(prog)
-            b = subprocess.run([_CC, "-std=c23", "-O2", "-I", _C, os.path.join(d, "e.c"),
-                                os.path.join(_C, "bcir_quarantine.c"), "-o", ep], capture_output=True, text=True)
+            b = subprocess.run(
+                [
+                    _CC,
+                    "-std=c23",
+                    "-O2",
+                    "-I",
+                    _C,
+                    os.path.join(d, "e.c"),
+                    os.path.join(_C, "bcir_quarantine.c"),
+                    "-o",
+                    ep,
+                ],
+                capture_output=True,
+                text=True,
+            )
             assert b.returncode == 0, b.stderr
-            run = subprocess.run([ep], capture_output=True, text=True)     # must NOT abort (no false trap)
-            assert run.returncode == 0 and run.stdout.strip() == "4", (run.returncode, run.stdout, run.stderr)
+            run = subprocess.run(
+                [ep], capture_output=True, text=True
+            )  # must NOT abort (no false trap)
+            assert run.returncode == 0 and run.stdout.strip() == "4", (
+                run.returncode,
+                run.stdout,
+                run.stderr,
+            )
 
 
 def test_masked_claims_are_discharged_by_a_runtime_guard():
@@ -3894,26 +4712,37 @@ def test_masked_claims_are_discharged_by_a_runtime_guard():
     import glob
     from bcir.frontends.cfront import compile_unit
     from bcir.frontends.cfront.cparse import CParseError
+
     seen_masked = 0
     for path in sorted(glob.glob(os.path.join(_C, "cfront_*.c"))):
         fx = os.path.basename(path)
         try:
-            r = compile_unit(open(path, encoding="utf-8").read(), check_clang=False, includes=_includes_for(fx))
+            r = compile_unit(
+                open(path, encoding="utf-8").read(), check_clang=False, includes=_includes_for(fx)
+            )
         except CParseError:
             if fx.startswith(("cfront_sec_", "cfront_pp_")):
-                continue   # a deliberately-malformed adversarial fixture (cfront_sec_deepnest/lextail) or a
-                           # PREPROCESSOR-only adversarial fixture (cfront_pp_*, not a complete translation
-                           # unit -- consumed only by the L7 reference differential) -- out of scope here.
-            raise          # a REAL fixture must still parse: a regression to CParseError is a hard failure.
+                continue  # a deliberately-malformed adversarial fixture (cfront_sec_deepnest/lextail) or a
+                # PREPROCESSOR-only adversarial fixture (cfront_pp_*, not a complete translation
+                # unit -- consumed only by the L7 reference differential) -- out of scope here.
+            raise  # a REAL fixture must still parse: a regression to CParseError is a hard failure.
         if r.fallback:
             continue
         for name, lf in r.lowered.functions.items():
-            masked = [c for c in lf.claims if c.op in ("c.load", "c.store") and c.bounds == "masked"]
+            masked = [
+                c for c in lf.claims if c.op in ("c.load", "c.store") and c.bounds == "masked"
+            ]
             seen_masked += len(masked)
-            assert all(c.verify == "bounds" for c in masked), (fx, name)        # R7 contract
-            assert len(masked) == r.emitted[name].count("BCIR_CHK"), \
-                (fx, name, "masked claims", len(masked), "BCIR_CHK guards", r.emitted[name].count("BCIR_CHK"))
-    assert seen_masked > 0                                                       # the corpus exercises the path
+            assert all(c.verify == "bounds" for c in masked), (fx, name)  # R7 contract
+            assert len(masked) == r.emitted[name].count("BCIR_CHK"), (
+                fx,
+                name,
+                "masked claims",
+                len(masked),
+                "BCIR_CHK guards",
+                r.emitted[name].count("BCIR_CHK"),
+            )
+    assert seen_masked > 0  # the corpus exercises the path
 
 
 def test_cfront_lowering_faithfulness_is_a_self_check():
@@ -3923,12 +4752,17 @@ def test_cfront_lowering_faithfulness_is_a_self_check():
     backend that would silently lose a bounds check, on any compile (not just the corpus)."""
     from bcir.frontends.cfront import compile_unit
     from bcir.frontends.cfront.pipeline import verify_cfront_lowering
-    r = compile_unit(open(os.path.join(_C, "cfront_stdlibmem.c"), encoding="utf-8").read(), check_clang=False)
-    assert r.lowering_diagnostics == [], [d.message for d in r.lowering_diagnostics]   # the real emit is faithful
-    lf = r.lowered.functions["msum"]                                                   # 2 masked claims
-    assert verify_cfront_lowering(lf, r.emitted["msum"]) == []                         # faithful
+
+    r = compile_unit(
+        open(os.path.join(_C, "cfront_stdlibmem.c"), encoding="utf-8").read(), check_clang=False
+    )
+    assert r.lowering_diagnostics == [], [
+        d.message for d in r.lowering_diagnostics
+    ]  # the real emit is faithful
+    lf = r.lowered.functions["msum"]  # 2 masked claims
+    assert verify_cfront_lowering(lf, r.emitted["msum"]) == []  # faithful
     dropped = verify_cfront_lowering(lf, r.emitted["msum"].replace("BCIR_CHK", "no_guard", 1))
-    assert dropped and dropped[0].law == "R12", dropped                                # one guard dropped -> flagged
+    assert dropped and dropped[0].law == "R12", dropped  # one guard dropped -> flagged
 
 
 @_requires_cc
@@ -3941,17 +4775,23 @@ def test_native_vla_lowering_and_unsupported_forms():
     from bcir.frontends.cfront import compile_unit
     from bcir.frontends.cfront.lower import CLowerError
     from bcir.frontends.cfront.cparse import CParseError
+
     # a native VLA compiles and is Clang-equivalent (in-bounds for every n -> the rails + Clang agree)
-    for src in ("unsigned f(unsigned n){ unsigned m=(n&7u)+1u; unsigned a[m]; unsigned s=0u;"
-                "  for(unsigned i=0u;i<m;i++){a[i]=i+n;s+=a[i];} return s; }",
-                "int g(int n){ int m=(n&7)+1; int a[m]; int s=0;"
-                "  for(int i=0;i<m;i++){a[i]=i*2-n;s+=a[i];} return s; }",
-                "unsigned h(unsigned n){ unsigned a[(n&3u)+2u]; unsigned k=(n&3u)+2u; unsigned s=0u;"
-                "  for(unsigned i=0u;i<k;i++){a[i]=i^n;s+=a[i];} return s; }"):
+    for src in (
+        "unsigned f(unsigned n){ unsigned m=(n&7u)+1u; unsigned a[m]; unsigned s=0u;"
+        "  for(unsigned i=0u;i<m;i++){a[i]=i+n;s+=a[i];} return s; }",
+        "int g(int n){ int m=(n&7)+1; int a[m]; int s=0;"
+        "  for(int i=0;i<m;i++){a[i]=i*2-n;s+=a[i];} return s; }",
+        "unsigned h(unsigned n){ unsigned a[(n&3u)+2u]; unsigned k=(n&3u)+2u; unsigned s=0u;"
+        "  for(unsigned i=0u;i<k;i++){a[i]=i^n;s+=a[i];} return s; }",
+    ):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
     # a single-integer-literal dim still compiles a static array (unchanged)
-    r = compile_unit("unsigned f(unsigned i){ unsigned a[8]={0}; a[i & 7u]=i; return a[i & 7u]; }", check_clang=True)
+    r = compile_unit(
+        "unsigned f(unsigned i){ unsigned a[8]={0}; a[i & 7u]=i; return a[i & 7u]; }",
+        check_clang=True,
+    )
     assert r.equivalence == "match" and r.is_clean, r.equivalence
     # a VLA with an initializer (illegal C) routes to fallback
     try:
@@ -3961,7 +4801,10 @@ def test_native_vla_lowering_and_unsupported_forms():
         assert "VLA" in str(e) or "variable-length" in str(e), e
     # a 2-D / 3-D VLA is now natively lowered (see test_multidim_vla_lowering); only a >3-D VLA falls back
     try:
-        compile_unit("unsigned f(unsigned n){ unsigned a[n][n][n][n]; return a[0][0][0][0]; }", check_clang=False)
+        compile_unit(
+            "unsigned f(unsigned n){ unsigned a[n][n][n][n]; return a[0][0][0][0]; }",
+            check_clang=False,
+        )
         assert False, "a >3-D VLA should route to fallback"
     except (CParseError, CLowerError):
         pass
@@ -3974,18 +4817,29 @@ def test_vla_sizeof_is_runtime():
     the STATIC element size, and `sizeof` of a non-VLA (a static array, a pointer) is unchanged -- so no
     cross-rail divergence and Clang-equivalent on both rails."""
     from bcir.frontends.cfront import compile_unit, cparse, lower, emit
+
     # the runtime sizeof compiles + is Clang-equivalent, and emits the runtime form (NOT a stale `= 0u`)
-    src = ("unsigned f(unsigned n){ unsigned m=(n&7u)+1u; unsigned a[m]; unsigned b=(unsigned)sizeof a;"
-           " unsigned e=(unsigned)sizeof a[0]; unsigned c=b/e; unsigned s=0u;"
-           " for(unsigned i=0u;i<c;i++){a[i]=i+n;s+=a[i];} return s+b+e; }")
+    src = (
+        "unsigned f(unsigned n){ unsigned m=(n&7u)+1u; unsigned a[m]; unsigned b=(unsigned)sizeof a;"
+        " unsigned e=(unsigned)sizeof a[0]; unsigned c=b/e; unsigned s=0u;"
+        " for(unsigned i=0u;i<c;i++){a[i]=i+n;s+=a[i];} return s+b+e; }"
+    )
     r = compile_unit(src, check_clang=True)
     assert r.equivalence == "match" and r.is_clean, r.equivalence
     body = emit.emit_function(lower.lower_unit(cparse.parse_unit(src), None).functions["f"])
-    assert "(size_t)((size_t)__bcir_ext0 * 4)" in body, body         # the RUNTIME extent*size form
-    assert "size_t" in body                                          # the temp is size_t (matches the twin)
+    assert "(size_t)((size_t)__bcir_ext0 * 4)" in body, body  # the RUNTIME extent*size form
+    assert "size_t" in body  # the temp is size_t (matches the twin)
     # sizeof of a NON-VLA stays a static fold (no extent read) -- no regression
-    for src2, want in [("unsigned f(unsigned i){ unsigned a[8]={0}; a[i&7u]=i; return (unsigned)sizeof a + a[0]; }", "match"),
-                       ("unsigned g(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); unsigned z=(unsigned)sizeof p; free(p); return z; }", "match")]:
+    for src2, want in [
+        (
+            "unsigned f(unsigned i){ unsigned a[8]={0}; a[i&7u]=i; return (unsigned)sizeof a + a[0]; }",
+            "match",
+        ),
+        (
+            "unsigned g(unsigned n){ unsigned *p=malloc(n*sizeof(unsigned)); unsigned z=(unsigned)sizeof p; free(p); return z; }",
+            "match",
+        ),
+    ]:
         r2 = compile_unit(src2, check_clang=True)
         assert r2.equivalence == want and r2.is_clean, (src2, r2.equivalence)
 
@@ -4002,11 +4856,12 @@ def test_vla_function_parameters_recover_masked_bounds():
     def _body(src):
         lu = lower.lower_unit(cparse.parse_unit(src), None)
         return emit.emit_function(lu.functions[next(iter(lu.functions))])
+
     # a VLA param read masks against n; Clang-equivalent
     src = "unsigned f(unsigned n, unsigned a[n]){ unsigned s=0u; for(unsigned i=0u;i<n;i++) s+=a[i]; return s; }"
     r = compile_unit(src, check_clang=True)
     assert r.equivalence == "match" and r.is_clean, r.equivalence
-    assert 'BCIR_CHK(' in _body(src) and ', n, ' in _body(src), _body(src)   # masked vs n, by name
+    assert "BCIR_CHK(" in _body(src) and ", n, " in _body(src), _body(src)  # masked vs n, by name
     # a regular (static-dim) array param is unchanged -- NOT masked
     assert "BCIR_CHK" not in _body("unsigned f(unsigned a[5], unsigned i){ return a[i % 5u]; }")
     # a MUTATED size param is not bound (assumed_safe) -- the stability gate; still Clang-equivalent
@@ -4025,18 +4880,24 @@ def test_multidim_vla_lowering():
     from bcir.frontends.cfront import compile_unit, cparse, lower, emit
     from bcir.frontends.cfront.lower import CLowerError
     from bcir.frontends.cfront.cparse import CParseError
-    src = ("unsigned f(unsigned p, unsigned q){ unsigned m=(p&3u)+1u; unsigned n=(q&3u)+1u; unsigned a[m][n];"
-           " unsigned s=0u; for(unsigned i=0u;i<m;i++) for(unsigned j=0u;j<n;j++){a[i][j]=i*n+j+p;s+=a[i][j];}"
-           " return s; }")
+
+    src = (
+        "unsigned f(unsigned p, unsigned q){ unsigned m=(p&3u)+1u; unsigned n=(q&3u)+1u; unsigned a[m][n];"
+        " unsigned s=0u; for(unsigned i=0u;i<m;i++) for(unsigned j=0u;j<n;j++){a[i][j]=i*n+j+p;s+=a[i][j];}"
+        " return s; }"
+    )
     r = compile_unit(src, check_clang=True)
     assert r.equivalence == "match" and r.is_clean, r.equivalence
     body = emit.emit_function(lower.lower_unit(cparse.parse_unit(src), None).functions["f"])
-    assert "a[__bcir_ext2]" in body                         # flat in-body decl sized by the product m*n
-    assert "i * __bcir_ext1" in body                        # Horner uses the RUNTIME inner-dim stride (not a const)
-    assert "* __bcir_ext1" in body and "__bcir_ext0 * __bcir_ext1" in body   # total = m*n
+    assert "a[__bcir_ext2]" in body  # flat in-body decl sized by the product m*n
+    assert "i * __bcir_ext1" in body  # Horner uses the RUNTIME inner-dim stride (not a const)
+    assert "* __bcir_ext1" in body and "__bcir_ext0 * __bcir_ext1" in body  # total = m*n
     # a >3-D VLA falls back (dim table caps at 3)
     try:
-        compile_unit("unsigned f(unsigned n){ unsigned a[n][n][n][n]; return a[0][0][0][0]; }", check_clang=False)
+        compile_unit(
+            "unsigned f(unsigned n){ unsigned a[n][n][n][n]; return a[0][0][0][0]; }",
+            check_clang=False,
+        )
         assert False, "a >3-D VLA should route to fallback"
     except (CParseError, CLowerError):
         pass
@@ -4052,19 +4913,29 @@ def test_lvalue_assignment_as_value_extended_forms():
     follow-on."""
     from bcir.frontends.cfront import compile_unit
     from bcir.frontends.cfront.lower import CLowerError
-    for src in ("unsigned f(unsigned i, unsigned v){ unsigned a[8]={0}; unsigned r=(a[i&7u]=v)+1u; return r+a[i&7u]; }",
-                "unsigned f(unsigned v){ unsigned y=0u; unsigned *p=&y; unsigned r=(*p=v)*2u; return r+y; }",
-                "unsigned f(unsigned v){ unsigned a[4]={0},b[4]={0}; unsigned r=(a[0]=b[0]=v)+7u; return r+a[0]+b[0]; }",
-                "unsigned f(unsigned i, unsigned v){ unsigned a[8]={0}; a[i&7u]=v; unsigned r=(a[i&7u]+=5u)*2u; return r+a[i&7u]; }"):
+
+    for src in (
+        "unsigned f(unsigned i, unsigned v){ unsigned a[8]={0}; unsigned r=(a[i&7u]=v)+1u; return r+a[i&7u]; }",
+        "unsigned f(unsigned v){ unsigned y=0u; unsigned *p=&y; unsigned r=(*p=v)*2u; return r+y; }",
+        "unsigned f(unsigned v){ unsigned a[4]={0},b[4]={0}; unsigned r=(a[0]=b[0]=v)+7u; return r+a[0]+b[0]; }",
+        "unsigned f(unsigned i, unsigned v){ unsigned a[8]={0}; a[i&7u]=v; unsigned r=(a[i&7u]+=5u)*2u; return r+a[i&7u]; }",
+    ):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
     # the single-level scalar member case (#memassignexpr) still compiles
-    assert compile_unit("struct S{unsigned a;}; unsigned f(unsigned v){ struct S s; return (s.a=v)+1u; }",
-                        check_clang=True).equivalence == "match"
+    assert (
+        compile_unit(
+            "struct S{unsigned a;}; unsigned f(unsigned v){ struct S s; return (s.a=v)+1u; }",
+            check_clang=True,
+        ).equivalence
+        == "match"
+    )
     # a VOLATILE lvalue as a value falls back (the re-read would be an extra MMIO access)
     try:
-        compile_unit("struct R{volatile unsigned reg;}; unsigned f(volatile struct R *r, unsigned v){ return (r->reg=v)+1u; }",
-                     check_clang=False)
+        compile_unit(
+            "struct R{volatile unsigned reg;}; unsigned f(volatile struct R *r, unsigned v){ return (r->reg=v)+1u; }",
+            check_clang=False,
+        )
         assert False, "a volatile lvalue-as-value should fall back"
     except CLowerError:
         pass
@@ -4078,19 +4949,33 @@ def test_narrow_compound_assignment_as_value_is_the_stored_value():
     was a both-rails SILENT MISCOMPILE (clean, wrong, untriggered by the fuzzer). A full-width target needs no
     re-read and is byte-unchanged."""
     from bcir.frontends.cfront import compile_unit
-    for src in ("struct N{unsigned char c;}; unsigned f(unsigned v){ struct N s; s.c=200u; return (s.c += v)*3u + s.c; }",
-                "unsigned f(unsigned i, unsigned v){ unsigned short a[4]={0}; a[i&3u]=60000u; return (a[i&3u] += v)+7u + a[i&3u]; }",
-                "unsigned f(unsigned v){ unsigned char y=250u; unsigned char *p=&y; return (*p += v)*2u + y; }"):
+
+    for src in (
+        "struct N{unsigned char c;}; unsigned f(unsigned v){ struct N s; s.c=200u; return (s.c += v)*3u + s.c; }",
+        "unsigned f(unsigned i, unsigned v){ unsigned short a[4]={0}; a[i&3u]=60000u; return (a[i&3u] += v)+7u + a[i&3u]; }",
+        "unsigned f(unsigned v){ unsigned char y=250u; unsigned char *p=&y; return (*p += v)*2u + y; }",
+    ):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
     # the NARROW target adds exactly ONE re-read vs the otherwise-identical FULL-width target (which is
     # unchanged -- its value is the binop result, no spurious re-read)
     from bcir.frontends.cfront import cparse, lower, emit
+
     def _chk(src):
-        return emit.emit_function(lower.lower_unit(cparse.parse_unit(src), None).functions["f"]).count("BCIR_CHK")
-    full = _chk("unsigned f(unsigned i, unsigned v){ unsigned a[4]={0}; a[i&3u]=1000u; return (a[i&3u] += v)*2u; }")
-    narrow = _chk("unsigned f(unsigned i, unsigned v){ unsigned short a[4]={0}; a[i&3u]=1000u; return (a[i&3u] += v)*2u; }")
-    assert narrow == full + 1, (full, narrow)         # the narrow target re-reads the stored (truncated) value
+        return emit.emit_function(
+            lower.lower_unit(cparse.parse_unit(src), None).functions["f"]
+        ).count("BCIR_CHK")
+
+    full = _chk(
+        "unsigned f(unsigned i, unsigned v){ unsigned a[4]={0}; a[i&3u]=1000u; return (a[i&3u] += v)*2u; }"
+    )
+    narrow = _chk(
+        "unsigned f(unsigned i, unsigned v){ unsigned short a[4]={0}; a[i&3u]=1000u; return (a[i&3u] += v)*2u; }"
+    )
+    assert narrow == full + 1, (
+        full,
+        narrow,
+    )  # the narrow target re-reads the stored (truncated) value
 
 
 @_requires_cc
@@ -4100,9 +4985,12 @@ def test_bitfield_assignment_as_value():
     bf.get; the compound path re-reads because a bitfield narrows to its bit width). Extends the lvalue-as-value
     forms to bitfield targets. Behaviour-equivalent to Clang on both rails."""
     from bcir.frontends.cfront import compile_unit
-    for src in ("struct B{unsigned f:5;}; unsigned g(unsigned v){ struct B s; s.f=0u; return (s.f=v)+1u + s.f; }",
-                "struct B{unsigned f:5;}; unsigned g(unsigned v){ struct B s; s.f=10u; return (s.f+=v)*2u + s.f; }",
-                "struct B{int c:6;}; int g(int v){ struct B s; s.c=0; return (s.c=v)-1 + s.c; }"):
+
+    for src in (
+        "struct B{unsigned f:5;}; unsigned g(unsigned v){ struct B s; s.f=0u; return (s.f=v)+1u + s.f; }",
+        "struct B{unsigned f:5;}; unsigned g(unsigned v){ struct B s; s.f=10u; return (s.f+=v)*2u + s.f; }",
+        "struct B{int c:6;}; int g(int v){ struct B s; s.c=0; return (s.c=v)-1 + s.c; }",
+    ):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
@@ -4114,10 +5002,13 @@ def test_array_of_structs_field_assignment_as_value():
     stride + field offset), resolved ONCE, stored, then re-read (the value). Combines with the narrow re-read
     for a sub-int field. Behaviour-equivalent to Clang on both rails."""
     from bcir.frontends.cfront import compile_unit
-    for src in ("struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned v){ struct P a[4]; a[i&3u].x=0u; return (a[i&3u].x = v)+1u + a[i&3u].x; }",
-                "struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned v){ struct P a[4]; a[i&3u].y=10u; return (a[i&3u].y += v)*2u + a[i&3u].y; }",
-                "struct S{unsigned arr[4];}; unsigned f(unsigned i, unsigned v){ struct S s; s.arr[i&3u]=0u; return (s.arr[i&3u] = v)+3u + s.arr[i&3u]; }",
-                "struct N{unsigned char c; unsigned x;}; unsigned f(unsigned i, unsigned v){ struct N a[4]; a[i&3u].c=0u; return (a[i&3u].c += v)*2u + a[i&3u].c; }"):
+
+    for src in (
+        "struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned v){ struct P a[4]; a[i&3u].x=0u; return (a[i&3u].x = v)+1u + a[i&3u].x; }",
+        "struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned v){ struct P a[4]; a[i&3u].y=10u; return (a[i&3u].y += v)*2u + a[i&3u].y; }",
+        "struct S{unsigned arr[4];}; unsigned f(unsigned i, unsigned v){ struct S s; s.arr[i&3u]=0u; return (s.arr[i&3u] = v)+3u + s.arr[i&3u]; }",
+        "struct N{unsigned char c; unsigned x;}; unsigned f(unsigned i, unsigned v){ struct N a[4]; a[i&3u].c=0u; return (a[i&3u].c += v)*2u + a[i&3u].c; }",
+    ):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
@@ -4130,9 +5021,12 @@ def test_signed_function_pointer_return():
     `(long)`-widen sign-extends. The indirect/member call results were hardcoded uint32 (a both-rails
     miscompile). Behaviour-equivalent to Clang on both rails; an unresolved funcptr return stays uint32."""
     from bcir.frontends.cfront import compile_unit
-    for src in ("static int neg(int x){return -x-1;} struct D{int(*op)(int);}; int f(int x){ struct D d; d.op=neg; return d.op(x) >> 1; }",
-                "static int neg(int x){return -x-1;} struct D{int(*op)(int);}; int f(int x){ struct D d; d.op=neg; int r=d.op(x); return r<0?-r:r; }",
-                "static long lw(int x){return -(long)x-1;} struct D{long(*op)(int);}; long f(int x){ struct D d; d.op=lw; return d.op(x)-1; }"):
+
+    for src in (
+        "static int neg(int x){return -x-1;} struct D{int(*op)(int);}; int f(int x){ struct D d; d.op=neg; return d.op(x) >> 1; }",
+        "static int neg(int x){return -x-1;} struct D{int(*op)(int);}; int f(int x){ struct D d; d.op=neg; int r=d.op(x); return r<0?-r:r; }",
+        "static long lw(int x){return -(long)x-1;} struct D{long(*op)(int);}; long f(int x){ struct D d; d.op=lw; return d.op(x)-1; }",
+    ):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
@@ -4146,13 +5040,19 @@ def test_address_of_follow_ons():
     rails."""
     from bcir.frontends.cfront import compile_unit
     from bcir.frontends.cfront.lower import CLowerError
-    for src in ("struct P{unsigned a,b;}; unsigned f(struct P *arr, unsigned i){ unsigned *p=&arr[i&3u].b; return *p+1u; }",
-                "struct P{unsigned a,b;}; unsigned f(unsigned i, unsigned v){ struct P arr[4]; unsigned *p=&arr[i&3u].a; *p=v; return arr[i&3u].a; }",
-                "struct S{unsigned *ptr; unsigned n;}; unsigned f(struct S *s, unsigned *q){ s->ptr=q; unsigned **pp=&s->ptr; *pp=q+1; return (unsigned)(s->ptr==q+1); }"):
+
+    for src in (
+        "struct P{unsigned a,b;}; unsigned f(struct P *arr, unsigned i){ unsigned *p=&arr[i&3u].b; return *p+1u; }",
+        "struct P{unsigned a,b;}; unsigned f(unsigned i, unsigned v){ struct P arr[4]; unsigned *p=&arr[i&3u].a; *p=v; return arr[i&3u].a; }",
+        "struct S{unsigned *ptr; unsigned n;}; unsigned f(struct S *s, unsigned *q){ s->ptr=q; unsigned **pp=&s->ptr; *pp=q+1; return (unsigned)(s->ptr==q+1); }",
+    ):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
-    try:                                                  # &s->arr (array member) stays a clean fallback
-        compile_unit("struct S{unsigned arr[4];}; unsigned f(struct S *s){ unsigned (*pa)[4]=&s->arr; return (**pa); }", check_clang=True)
+    try:  # &s->arr (array member) stays a clean fallback
+        compile_unit(
+            "struct S{unsigned arr[4];}; unsigned f(struct S *s){ unsigned (*pa)[4]=&s->arr; return (**pa); }",
+            check_clang=True,
+        )
     except CLowerError:
         pass
 
@@ -4164,13 +5064,16 @@ def test_incdec_as_expression_value():
     array element, bitfield, sub-int (narrowing) local, pointer step, and the comma operator. The statement
     forms `a++;` already worked. Behaviour-equivalent to Clang on both rails."""
     from bcir.frontends.cfront import compile_unit
-    for src in ("unsigned f(unsigned a){ unsigned x=a++; return x*100u+a; }",
-                "unsigned f(unsigned a){ unsigned x=++a; return x*100u+a; }",
-                "int f(int a){ int x=a--; return x*100+a; }",
-                "struct S{unsigned x;}; unsigned f(unsigned v){ struct S s; s.x=v; unsigned r=s.x++; return r*100u+s.x; }",
-                "unsigned f(unsigned i, unsigned v){ unsigned a[4]; a[i&3u]=v; unsigned r=a[i&3u]++; return r*100u+a[i&3u]; }",
-                "struct B{unsigned x:5;}; unsigned f(unsigned v){ struct B b; b.x=v&31u; unsigned r=b.x++; return r*100u+b.x; }",
-                "unsigned f(unsigned a, unsigned b){ return (a++, b)+a; }"):
+
+    for src in (
+        "unsigned f(unsigned a){ unsigned x=a++; return x*100u+a; }",
+        "unsigned f(unsigned a){ unsigned x=++a; return x*100u+a; }",
+        "int f(int a){ int x=a--; return x*100+a; }",
+        "struct S{unsigned x;}; unsigned f(unsigned v){ struct S s; s.x=v; unsigned r=s.x++; return r*100u+s.x; }",
+        "unsigned f(unsigned i, unsigned v){ unsigned a[4]; a[i&3u]=v; unsigned r=a[i&3u]++; return r*100u+a[i&3u]; }",
+        "struct B{unsigned x:5;}; unsigned f(unsigned v){ struct B b; b.x=v&31u; unsigned r=b.x++; return r*100u+b.x; }",
+        "unsigned f(unsigned a, unsigned b){ return (a++, b)+a; }",
+    ):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
@@ -4182,9 +5085,12 @@ def test_array_compound_literal_1d_scalar():
     per write, like a regular array init), so the bounds-guard count reconciles. Behaviour-equivalent to
     Clang."""
     from bcir.frontends.cfront import compile_unit
-    for src in ("unsigned f(unsigned i){ return (unsigned[]){10u,20u,30u,40u}[i&3u]; }",
-                "unsigned f(unsigned i){ return (unsigned[4]){10u,20u}[i&3u]; }",
-                "int f(unsigned i){ return (int[]){-1,-2,-3}[i%3u]; }"):
+
+    for src in (
+        "unsigned f(unsigned i){ return (unsigned[]){10u,20u,30u,40u}[i&3u]; }",
+        "unsigned f(unsigned i){ return (unsigned[4]){10u,20u}[i&3u]; }",
+        "int f(unsigned i){ return (int[]){-1,-2,-3}[i%3u]; }",
+    ):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
@@ -4199,13 +5105,16 @@ def test_multidim_scalar_array_complit_lowers():
     Horner-flattens to `i*B + j` (the inner dim). Both rails emit an IDENTICAL claim sequence (offsets/strides
     pinned by the `match` check) and stay Clang-behaviour-equivalent."""
     from bcir.frontends.cfront import compile_unit
-    for src in ("unsigned f(unsigned i, unsigned j){ return (unsigned[2][2]){{1u,2u},{3u,4u}}[i&1u][j&1u]; }",
-                "unsigned f(unsigned i, unsigned j){ return (unsigned[][2]){{1u,2u},{3u,4u},{5u,6u}}[i%3u][j&1u]; }",
-                # an inferred outer dim via OUT-OF-ORDER DESIGNATORS: the outer dim is max(designator index)+1 = 2
-                # (NOT the raw entry count), so the storage is `_cl[2*2]` -- the #506 latent under-sizing where
-                # peek_top_entries ignored designators and sized `_cl[1*2]` (a silent over-write past the storage).
-                "unsigned f(unsigned i, unsigned j){ return (unsigned[][2]){[1]={5u,6u},[0]={1u,2u}}[i&1u][j&1u]; }",
-                "int f(unsigned i, unsigned j){ return (int[2][2]){{-1,-2},{-3,-4}}[i&1u][j&1u]; }"):
+
+    for src in (
+        "unsigned f(unsigned i, unsigned j){ return (unsigned[2][2]){{1u,2u},{3u,4u}}[i&1u][j&1u]; }",
+        "unsigned f(unsigned i, unsigned j){ return (unsigned[][2]){{1u,2u},{3u,4u},{5u,6u}}[i%3u][j&1u]; }",
+        # an inferred outer dim via OUT-OF-ORDER DESIGNATORS: the outer dim is max(designator index)+1 = 2
+        # (NOT the raw entry count), so the storage is `_cl[2*2]` -- the #506 latent under-sizing where
+        # peek_top_entries ignored designators and sized `_cl[1*2]` (a silent over-write past the storage).
+        "unsigned f(unsigned i, unsigned j){ return (unsigned[][2]){[1]={5u,6u},[0]={1u,2u}}[i&1u][j&1u]; }",
+        "int f(unsigned i, unsigned j){ return (int[2][2]){{-1,-2},{-3,-4}}[i&1u][j&1u]; }",
+    ):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
@@ -4222,9 +5131,12 @@ def test_aggregate_array_complit_lowers():
     Clang-behaviour-equivalent. (The MULTI-dim aggregate form lowers too -- see
     test_multidim_aggregate_complit_lowers.)"""
     from bcir.frontends.cfront import compile_unit
-    for src in ("struct P{unsigned x,y;}; unsigned f(unsigned i){ return (struct P[]){{1u,2u},{3u,4u}}[i&1u].x; }",   # INFERRED
-                "struct P{unsigned x,y;}; unsigned f(unsigned i){ return (struct P[2]){{5u,6u},{7u,8u}}[i&1u].y; }",  # EXPLICIT
-                "struct P{unsigned x,y;}; unsigned f(unsigned i){ return (struct P[]){{1u},{3u,4u}}[i&1u].y; }"):     # PARTIAL (= {0})
+
+    for src in (
+        "struct P{unsigned x,y;}; unsigned f(unsigned i){ return (struct P[]){{1u,2u},{3u,4u}}[i&1u].x; }",  # INFERRED
+        "struct P{unsigned x,y;}; unsigned f(unsigned i){ return (struct P[2]){{5u,6u},{7u,8u}}[i&1u].y; }",  # EXPLICIT
+        "struct P{unsigned x,y;}; unsigned f(unsigned i){ return (struct P[]){{1u},{3u,4u}}[i&1u].y; }",
+    ):  # PARTIAL (= {0})
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
@@ -4242,16 +5154,19 @@ def test_multidim_aggregate_complit_lowers():
     `struct P a[A][B]` decl uses. Both rails emit an IDENTICAL claim sequence (offsets/strides pinned by the
     `match` check -- a wrong extent/stride is a #500 silent miscompile) and stay Clang-behaviour-equivalent."""
     from bcir.frontends.cfront import compile_unit
-    for src in ("struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned j){ "                       # FIXED dims
-                "return (struct P[2][2]){{{1u,2u},{3u,4u}},{{5u,6u},{7u,8u}}}[i&1u][j&1u].x; }",
-                "struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned j){ "                       # INFERRED outer
-                "return (struct P[][2]){{{1u,2u},{3u,4u}},{{5u,6u},{7u,8u}},{{9u,10u},{11u,12u}}}[i%3u][j&1u].y; }",
-                # an inferred outer dim via OUT-OF-ORDER DESIGNATORS: outer = max(idx)+1 = 2, so storage is `_cl[2*2]`
-                # (the #506 designated-outer under-sizing, shared with the scalar path -- fixed in peek_top_entries).
-                "struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned j){ "                       # INFERRED via DESIGNATORS
-                "return (struct P[][2]){[1]={{5u,6u},{7u,8u}},[0]={{1u,2u},{3u,4u}}}[i&1u][j&1u].x; }",
-                "struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned j){ "                       # PARTIAL (= {0})
-                "return (struct P[2][2]){{{1u},{3u}},{{5u,6u}}}[i&1u][j&1u].y; }"):
+
+    for src in (
+        "struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned j){ "  # FIXED dims
+        "return (struct P[2][2]){{{1u,2u},{3u,4u}},{{5u,6u},{7u,8u}}}[i&1u][j&1u].x; }",
+        "struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned j){ "  # INFERRED outer
+        "return (struct P[][2]){{{1u,2u},{3u,4u}},{{5u,6u},{7u,8u}},{{9u,10u},{11u,12u}}}[i%3u][j&1u].y; }",
+        # an inferred outer dim via OUT-OF-ORDER DESIGNATORS: outer = max(idx)+1 = 2, so storage is `_cl[2*2]`
+        # (the #506 designated-outer under-sizing, shared with the scalar path -- fixed in peek_top_entries).
+        "struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned j){ "  # INFERRED via DESIGNATORS
+        "return (struct P[][2]){[1]={{5u,6u},{7u,8u}},[0]={{1u,2u},{3u,4u}}}[i&1u][j&1u].x; }",
+        "struct P{unsigned x,y;}; unsigned f(unsigned i, unsigned j){ "  # PARTIAL (= {0})
+        "return (struct P[2][2]){{{1u},{3u}},{{5u,6u}}}[i&1u][j&1u].y; }",
+    ):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
@@ -4265,9 +5180,12 @@ def test_multidim_array_braceinit():
     element (the old IndexError / parse-error). Behaviour-equivalent to Clang on both rails (the strides /
     offsets are pinned by the `match` check -- a wrong stride is a silent miscompile, #500)."""
     from bcir.frontends.cfront import compile_unit
-    for src in ("unsigned f(unsigned i, unsigned j){ unsigned a[2][2]={{1u,2u},{3u,4u}}; return a[i&1u][j&1u]; }",
-                "unsigned f(unsigned i, unsigned j, unsigned k){ unsigned b[2][2][2]={{{1u,2u},{3u,4u}},{{5u,6u},{7u,8u}}}; return b[i&1u][j&1u][k&1u]; }",
-                "unsigned f(unsigned i, unsigned j){ unsigned c[2][3]={{1u},{4u,5u}}; return c[i&1u][j%3u]; }"):
+
+    for src in (
+        "unsigned f(unsigned i, unsigned j){ unsigned a[2][2]={{1u,2u},{3u,4u}}; return a[i&1u][j&1u]; }",
+        "unsigned f(unsigned i, unsigned j, unsigned k){ unsigned b[2][2][2]={{{1u,2u},{3u,4u}},{{5u,6u},{7u,8u}}}; return b[i&1u][j&1u][k&1u]; }",
+        "unsigned f(unsigned i, unsigned j){ unsigned c[2][3]={{1u},{4u,5u}}; return c[i&1u][j%3u]; }",
+    ):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
@@ -4282,11 +5200,14 @@ def test_inferred_and_aos_local_array():
     `= {0}` baseline so a partial init zero-fills. Both rails lower an IDENTICAL claim sequence
     (offsets/strides pinned by the `match` check) and stay Clang-behaviour-equivalent."""
     from bcir.frontends.cfront import compile_unit
-    for src in ("struct P{unsigned x,y;}; unsigned f(unsigned i){ struct P a[]={{1u,2u},{3u,4u}}; return a[i&1u].x; }",     # struct, INFERRED
-                "struct P{unsigned x,y;}; unsigned f(unsigned i){ struct P b[2]={{5u,6u},{7u,8u}}; return b[i&1u].y; }",    # struct, EXPLICIT
-                "unsigned f(unsigned i){ unsigned c[]={10u,20u,30u,40u}; return c[i&3u]; }",                                # scalar, INFERRED
-                "unsigned f(unsigned i){ unsigned a[]={1u,2u,3u,4u}; return a[i&3u]; }",                                    # scalar, INFERRED (Bug A)
-                "struct P{unsigned x,y;}; unsigned f(unsigned i){ struct P d[2]={{1u}}; return d[i&1u].x + d[i&1u].y; }"):  # struct, PARTIAL (= {0})
+
+    for src in (
+        "struct P{unsigned x,y;}; unsigned f(unsigned i){ struct P a[]={{1u,2u},{3u,4u}}; return a[i&1u].x; }",  # struct, INFERRED
+        "struct P{unsigned x,y;}; unsigned f(unsigned i){ struct P b[2]={{5u,6u},{7u,8u}}; return b[i&1u].y; }",  # struct, EXPLICIT
+        "unsigned f(unsigned i){ unsigned c[]={10u,20u,30u,40u}; return c[i&3u]; }",  # scalar, INFERRED
+        "unsigned f(unsigned i){ unsigned a[]={1u,2u,3u,4u}; return a[i&3u]; }",  # scalar, INFERRED (Bug A)
+        "struct P{unsigned x,y;}; unsigned f(unsigned i){ struct P d[2]={{1u}}; return d[i&1u].x + d[i&1u].y; }",
+    ):  # struct, PARTIAL (= {0})
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
@@ -4297,9 +5218,12 @@ def test_computed_goto():
     A void* holds a taken label address; `goto *p` dispatches. Both rails lower to the GNU forms (which Clang
     compiles), behaviour-equivalent to Clang."""
     from bcir.frontends.cfront import compile_unit
-    for src in ("unsigned f(unsigned x){ void *p=&&O; if((x&1u)==0u) p=&&E; goto *p; E: return x*2u; O: return x*3u+1u; }",
-                "unsigned f(unsigned i){ void *t[3]; t[0]=&&a; t[1]=&&b; t[2]=&&c; goto *t[i%3u]; a: return 1u; b: return 2u; c: return 3u; }",
-                "unsigned f(unsigned n){ unsigned s=0u,i=0u; void *p=&&L; L: if(i<(n&7u)){ s+=i; i++; goto *p; } return s; }"):
+
+    for src in (
+        "unsigned f(unsigned x){ void *p=&&O; if((x&1u)==0u) p=&&E; goto *p; E: return x*2u; O: return x*3u+1u; }",
+        "unsigned f(unsigned i){ void *t[3]; t[0]=&&a; t[1]=&&b; t[2]=&&c; goto *t[i%3u]; a: return 1u; b: return 2u; c: return 3u; }",
+        "unsigned f(unsigned n){ unsigned s=0u,i=0u; void *p=&&L; L: if(i<(n&7u)){ s+=i; i++; goto *p; } return s; }",
+    ):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
@@ -4311,9 +5235,12 @@ def test_function_pointer_local_variable():
     local-decl path did not (only funcptr struct members + typedefs), a latent divergence. Behaviour-equivalent
     to Clang on both rails."""
     from bcir.frontends.cfront import compile_unit
-    for src in ("static unsigned a(unsigned x){return x+1u;} static unsigned d(unsigned x){return x*2u;} unsigned f(unsigned x){ unsigned (*g)(unsigned)=a; unsigned r=g(x); g=d; return r*10u+g(x); }",
-                "static unsigned a(unsigned x){return x+1u;} static unsigned d(unsigned x){return x*2u;} unsigned f(unsigned x, unsigned w){ unsigned (*g)(unsigned)=a; if(w&1u) g=d; return g(x); }",
-                "static int n(int x){return -x-1;} int f(int x){ int (*g)(int)=n; int r=g(x); return r>>1; }"):
+
+    for src in (
+        "static unsigned a(unsigned x){return x+1u;} static unsigned d(unsigned x){return x*2u;} unsigned f(unsigned x){ unsigned (*g)(unsigned)=a; unsigned r=g(x); g=d; return r*10u+g(x); }",
+        "static unsigned a(unsigned x){return x+1u;} static unsigned d(unsigned x){return x*2u;} unsigned f(unsigned x, unsigned w){ unsigned (*g)(unsigned)=a; if(w&1u) g=d; return g(x); }",
+        "static int n(int x){return -x-1;} int f(int x){ int (*g)(int)=n; int r=g(x); return r>>1; }",
+    ):
         r = compile_unit(src, check_clang=True)
         assert r.equivalence == "match" and r.is_clean, (src, r.equivalence)
 
@@ -4328,27 +5255,48 @@ def test_quarantine_report_is_the_debugger_trace_surface():
         return
     src = "unsigned g(unsigned i){ unsigned a[8]; for(unsigned k=0u;k<8u;k++) a[k]=k*2u; return a[i]; }"
     from bcir.frontends.cfront import compile_unit
+
     r = compile_unit(src, check_clang=False)
     name = next(reversed(r.lowered.functions))
     body = r.emitted[name].split("*/\n", 1)[-1]
     with tempfile.TemporaryDirectory() as d:
         # A strong (non-weak) override records the event but does NOT abort, so several OOB accesses survive.
-        prog = (f'#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine.h"\n'
-                f'{r.source}\n\n{body}\n'
-                f'size_t bcir_bounds_quarantine(uint64_t rid,uint64_t index,uint64_t extent,const char *site)\n'
-                f'{{ bcir_oob_record_event(rid,index,extent,site); return 0; }}\n'
-                f'int main(void){{ (void)bcir_g(8u); (void)bcir_g(40u); bcir_quarantine_report(stdout); return 0; }}\n')
+        prog = (
+            f'#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine.h"\n'
+            f"{r.source}\n\n{body}\n"
+            f"size_t bcir_bounds_quarantine(uint64_t rid,uint64_t index,uint64_t extent,const char *site)\n"
+            f"{{ bcir_oob_record_event(rid,index,extent,site); return 0; }}\n"
+            f"int main(void){{ (void)bcir_g(8u); (void)bcir_g(40u); bcir_quarantine_report(stdout); return 0; }}\n"
+        )
         cpath, epath = os.path.join(d, "e.c"), os.path.join(d, "e")
         open(cpath, "w").write(prog)
-        b = subprocess.run([_CC, "-std=c23", "-O2", "-I", _C, cpath,
-                            os.path.join(_C, "bcir_quarantine.c"), "-o", epath], capture_output=True, text=True)
+        b = subprocess.run(
+            [
+                _CC,
+                "-std=c23",
+                "-O2",
+                "-I",
+                _C,
+                cpath,
+                os.path.join(_C, "bcir_quarantine.c"),
+                "-o",
+                epath,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert b.returncode == 0, b.stderr
         run = subprocess.run([epath], capture_output=True, text=True)
-        assert run.returncode == 0, (run.returncode, run.stderr)         # survived: the override did not abort
+        assert run.returncode == 0, (
+            run.returncode,
+            run.stderr,
+        )  # survived: the override did not abort
         out = run.stdout
-        assert "2 out-of-bounds event(s)" in out, out                    # the running total
-        assert "g:a" in out and "index 8" in out and "index 40" in out, out   # both sites + indices, in order
-        assert "out of [0, 8)" in out, out                               # the extent the report resolves
+        assert "2 out-of-bounds event(s)" in out, out  # the running total
+        assert "g:a" in out and "index 8" in out and "index 40" in out, (
+            out
+        )  # both sites + indices, in order
+        assert "out of [0, 8)" in out, out  # the extent the report resolves
 
 
 def test_quarantine_recover_is_the_two_truth_crossing():
@@ -4362,35 +5310,56 @@ def test_quarantine_recover_is_the_two_truth_crossing():
         return
     src = "unsigned g(unsigned i){ unsigned a[8]; for(unsigned k=0u;k<8u;k++) a[k]=k*2u; return a[i]; }"
     from bcir.frontends.cfront import compile_unit
+
     r = compile_unit(src, check_clang=False)
     name = next(reversed(r.lowered.functions))
     body = r.emitted[name].split("*/\n", 1)[-1]
     with tempfile.TemporaryDirectory() as d:
         prog = (
             '#include <stdint.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include "bcir_quarantine_recover.h"\n'
-            f'{r.source}\n\n{body}\n'
-            'int main(int argc, char **argv){\n'
+            f"{r.source}\n\n{body}\n"
+            "int main(int argc, char **argv){\n"
             '  static const bcir_recover_rule confident[] = {{"g:a", BCIR_RECOVER_CLAMP, 900}};\n'
             '  static const bcir_recover_rule underconf[] = {{"g:a", BCIR_RECOVER_CLAMP, 300}};\n'
-            '  int abort_mode = argc > 1 && argv[1][0] == \'1\';\n'
-            '  if (abort_mode) bcir_recover_set_policy(underconf, 1, 500);  /* 300 < 500 -> rejected */\n'
-            '  else            bcir_recover_set_policy(confident, 1, 500);  /* 900 >= 500 -> admitted clamp */\n'
-            '  unsigned v = bcir_g(40u);                 /* index 40 is out of [0,8) -> the handler decides */\n'
+            "  int abort_mode = argc > 1 && argv[1][0] == '1';\n"
+            "  if (abort_mode) bcir_recover_set_policy(underconf, 1, 500);  /* 300 < 500 -> rejected */\n"
+            "  else            bcir_recover_set_policy(confident, 1, 500);  /* 900 >= 500 -> admitted clamp */\n"
+            "  unsigned v = bcir_g(40u);                 /* index 40 is out of [0,8) -> the handler decides */\n"
             '  printf("recovered=%u\\n", v);\n'
-            '  bcir_decide_report(stdout);\n'
-            '  return 0;\n}\n')
+            "  bcir_decide_report(stdout);\n"
+            "  return 0;\n}\n"
+        )
         cpath, epath = os.path.join(d, "e.c"), os.path.join(d, "e")
         open(cpath, "w").write(prog)
-        b = subprocess.run([_CC, "-std=c23", "-O2", "-I", _C, cpath,
-                            os.path.join(_C, "bcir_quarantine.c"), os.path.join(_C, "bcir_quarantine_recover.c"),
-                            "-o", epath], capture_output=True, text=True)
+        b = subprocess.run(
+            [
+                _CC,
+                "-std=c23",
+                "-O2",
+                "-I",
+                _C,
+                cpath,
+                os.path.join(_C, "bcir_quarantine.c"),
+                os.path.join(_C, "bcir_quarantine_recover.c"),
+                "-o",
+                epath,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert b.returncode == 0, b.stderr
         # admitted clamp: confidence 900 >= threshold 500 -> the access lands on a[7] (= 14), program survives,
         # and the recorded decide witnesses the crossing.
         ok = subprocess.run([epath, "0"], capture_output=True, text=True)
-        assert ok.returncode == 0 and "recovered=14" in ok.stdout, (ok.returncode, ok.stdout, ok.stderr)
+        assert ok.returncode == 0 and "recovered=14" in ok.stdout, (
+            ok.returncode,
+            ok.stdout,
+            ok.stderr,
+        )
         assert "1 recovery crossing(s)" in ok.stdout, ok.stdout
-        assert "g:a" in ok.stdout and "confidence 900/1000 vs threshold 500/1000" in ok.stdout, ok.stdout
+        assert "g:a" in ok.stdout and "confidence 900/1000 vs threshold 500/1000" in ok.stdout, (
+            ok.stdout
+        )
         assert "admitted, clamp to index 7" in ok.stdout, ok.stdout
         # rejected: confidence 300 < threshold 500 -> not confident enough to recover -> fail-fast.
         no = subprocess.run([epath, "1"], capture_output=True, text=True)
@@ -4427,7 +5396,7 @@ _PP_FIXTURES = sorted(os.path.basename(p) for p in _glob.glob(os.path.join(_C, "
 # agree still runs it), but a pinned entry documents WHY a known-divergent fixture is expected to drop.
 _PP_PIN_XCC = {
     "cfront_pp_stdcver.c": "__STDC_VERSION__ is implementation-defined: clang reports 202311L, gcc "
-                           "(-std=c2x) 202000L -- no single truth, so it is not a fair differential.",
+    "(-std=c2x) 202000L -- no single truth, so it is not a fair differential.",
 }
 
 
@@ -4450,7 +5419,7 @@ def _pp_token_normalize(text: str) -> list[str]:
     as program text.)"""
     toks: list[str] = []
     for ln in text.splitlines():
-        if re.match(r"\s*#", ln):                          # a residual directive / line marker: drop
+        if re.match(r"\s*#", ln):  # a residual directive / line marker: drop
             continue
         toks.extend(_cpp._tokens(ln))
     return toks
@@ -4489,22 +5458,25 @@ def _pp_fixture_verdict(fx: str):
       * `(None, None)` -- cpp.preprocess matched the agreed reference exactly (a clean pass)."""
     path = os.path.join(_C, fx)
     cl, gc = _pp_reference_pair(path)
-    if cl is None or gc is None:                           # a reference compiler is missing -> not gradable
+    if cl is None or gc is None:  # a reference compiler is missing -> not gradable
         return (None, f"{fx}: a reference preprocessor is unavailable")
-    if cl != gc:                                           # clang and gcc disagree -> impl-defined -> unfair
+    if cl != gc:  # clang and gcc disagree -> impl-defined -> unfair
         reason = _PP_PIN_XCC.get(fx, "clang -E and gcc -E disagree (implementation-defined)")
         return (None, f"{fx}: xcc-divergent -- {reason}")
     src = open(path, encoding="utf-8").read()
     try:
         got = _pp_token_normalize(_cpp.preprocess(src, name=fx))
-    except _cpp.CPPError as e:                             # a fair fixture must preprocess cleanly
+    except _cpp.CPPError as e:  # a fair fixture must preprocess cleanly
         return (f"{fx}: cpp.preprocess raised CPPError on a fair fixture: {e}", None)
     if got != cl:
         # the first differing token pins the divergence in the diagnostic.
         diff = next((i for i, (a, b) in enumerate(zip(got, cl)) if a != b), min(len(got), len(cl)))
-        return (f"{fx}: cpp.preprocess diverges from the reference (clang==gcc) at token #{diff}: "
-                f"cpp.py={got[diff:diff + 4]} reference={cl[diff:diff + 4]} "
-                f"(full cpp.py={got} reference={cl})", None)
+        return (
+            f"{fx}: cpp.preprocess diverges from the reference (clang==gcc) at token #{diff}: "
+            f"cpp.py={got[diff : diff + 4]} reference={cl[diff : diff + 4]} "
+            f"(full cpp.py={got} reference={cl})",
+            None,
+        )
     return (None, None)
 
 
@@ -4517,7 +5489,7 @@ def test_preprocessor_differential_against_clang_and_gcc():
     present. ANTI-DEGENERATION: a non-trivial number of fixtures must actually run the differential, so
     an all-excluded / all-skipped slice FAILS (see the asserts below)."""
     if not (shutil.which("clang") or shutil.which("gcc")):
-        return                                             # no reference preprocessor -> clean self-skip
+        return  # no reference preprocessor -> clean self-skip
     assert _PP_FIXTURES, "no cfront_pp_*.c adversarial fixtures were discovered"
     fails, excluded, tested = [], [], 0
     for fx in _PP_FIXTURES:
@@ -4528,15 +5500,18 @@ def test_preprocessor_differential_against_clang_and_gcc():
             excluded.append(why)
         else:
             tested += 1
-    assert not fails, ("cfront preprocessor (cpp.preprocess) diverges from the reference on a FAIR "
-                       "fixture (clang and gcc agree, cpp.py does not) -- a real preprocessor bug:\n"
-                       + "\n".join(f"  {m}" for m in fails))
+    assert not fails, (
+        "cfront preprocessor (cpp.preprocess) diverges from the reference on a FAIR "
+        "fixture (clang and gcc agree, cpp.py does not) -- a real preprocessor bug:\n"
+        + "\n".join(f"  {m}" for m in fails)
+    )
     # ANTI-DEGENERATION: a fair single-truth differential must actually have RUN on a non-trivial number
     # of fixtures. An all-excluded / all-skipped slice (every fixture pinned, or a silent normalization
     # that swallowed every divergence) is itself a failure of this gate, not a pass.
     assert tested >= max(4, len(_PP_FIXTURES) - len(_PP_PIN_XCC) - 1), (
         f"preprocessor differential degenerated: only {tested} of {len(_PP_FIXTURES)} fixtures ran a "
-        f"fair differential (excluded: {excluded}) -- expected nearly all to be single-valued and run")
+        f"fair differential (excluded: {excluded}) -- expected nearly all to be single-valued and run"
+    )
 
 
 def test_preprocessor_differential_is_not_degenerate_smoke():
@@ -4548,15 +5523,18 @@ def test_preprocessor_differential_is_not_degenerate_smoke():
         return
     tested = sum(1 for fx in _PP_FIXTURES if _pp_fixture_verdict(fx) == (None, None))
     # at least the blue-paint / paste / stringize / prescan / vaopt / conditionals cores must have run.
-    assert tested >= 4, (f"preprocessor differential is degenerate: only {tested} fair fixtures ran "
-                         f"under the reference -- a real differential must exercise the adversarial core")
+    assert tested >= 4, (
+        f"preprocessor differential is degenerate: only {tested} fair fixtures ran "
+        f"under the reference -- a real differential must exercise the adversarial core"
+    )
     # and the fairness gate must actually be EXERCISED: the pinned impl-defined fixture must be present
     # and recognized as excluded, proving the gate is not vacuously passing everything.
     pin = "cfront_pp_stdcver.c"
     if pin in _PP_FIXTURES:
         msg, why = _pp_fixture_verdict(pin)
         assert msg is None and why is not None and "xcc-divergent" in why, (
-            f"the impl-defined fairness pin {pin} was not excluded as expected: {(msg, why)}")
+            f"the impl-defined fairness pin {pin} was not excluded as expected: {(msg, why)}"
+        )
 
 
 # --- preprocessor robustness fuzzing (the totality contract) ------------------------------------
@@ -4564,6 +5542,7 @@ def test_preprocessor_differential_is_not_degenerate_smoke():
 # ALWAYS returns or raises a clean CPPError -- never crashes, hangs, or blows the stack/memory. Mirrors
 # the existing cfuzz / fuzz_cfront totality style: the contract is "every input is handled" (a result OR
 # a typed CPPError), with expansion capped so a fork-bomb macro can't run away.
+
 
 def _pp_fuzz_corpus(rng):
     """A grab-bag of MALFORMED / adversarial preprocessor inputs built from random pieces: unterminated
@@ -4573,30 +5552,32 @@ def _pp_fuzz_corpus(rng):
     ids = ["A", "B", "f", "g", "X", "VA", "M", "Q"]
     rid = lambda: rng.choice(ids)
     pieces = [
-        lambda: f"#if {rng.randint(0, 3)}",                          # unterminated #if (no #endif)
-        lambda: f"#ifdef {rid()}",                                   # unterminated #ifdef
-        lambda: "#elif 1",                                           # #elif with no #if
-        lambda: "#else",                                             # #else with no #if
-        lambda: "#endif",                                            # #endif with no #if
-        lambda: f"#define {rid()}(",                                 # bad function-macro: open paren only
-        lambda: f"#define {rid()}(a, b",                             # unterminated param list
-        lambda: f"#define {rid()} ## tail",                          # ## at the START of a body
-        lambda: f"#define {rid()} head ##",                          # ## at the END of a body
-        lambda: f"#define {rid()}(x) # ",                            # lone # with no operand
-        lambda: f"#define {rid()}(x) x ## ## x",                     # doubled ##
-        lambda: f"{rid()}({rid()}, {rid()}",                         # unbalanced macro CALL (no close)
-        lambda: f"{rid()}(((((",                                     # deeply unbalanced parens
-        lambda: "#include",                                          # #include of nothing
-        lambda: '#include "',                                        # #include with a dangling quote
-        lambda: "#include <>",                                       # empty angle include
-        lambda: f"#define {rid()} {rid()}",                          # a plain define (may form a cycle)
-        lambda: f"#undef {rid()}",                                   # undef (maybe of an undefined name)
+        lambda: f"#if {rng.randint(0, 3)}",  # unterminated #if (no #endif)
+        lambda: f"#ifdef {rid()}",  # unterminated #ifdef
+        lambda: "#elif 1",  # #elif with no #if
+        lambda: "#else",  # #else with no #if
+        lambda: "#endif",  # #endif with no #if
+        lambda: f"#define {rid()}(",  # bad function-macro: open paren only
+        lambda: f"#define {rid()}(a, b",  # unterminated param list
+        lambda: f"#define {rid()} ## tail",  # ## at the START of a body
+        lambda: f"#define {rid()} head ##",  # ## at the END of a body
+        lambda: f"#define {rid()}(x) # ",  # lone # with no operand
+        lambda: f"#define {rid()}(x) x ## ## x",  # doubled ##
+        lambda: f"{rid()}({rid()}, {rid()}",  # unbalanced macro CALL (no close)
+        lambda: f"{rid()}(((((",  # deeply unbalanced parens
+        lambda: "#include",  # #include of nothing
+        lambda: '#include "',  # #include with a dangling quote
+        lambda: "#include <>",  # empty angle include
+        lambda: f"#define {rid()} {rid()}",  # a plain define (may form a cycle)
+        lambda: f"#undef {rid()}",  # undef (maybe of an undefined name)
         lambda: "#" + rng.choice(["bogus", "1nvalid", "", "pragma x"]),  # unknown / empty directive
-        lambda: f"#if defined({rid()}) && ({rng.randint(0, 9)} / 0)",    # division by zero in #if
+        lambda: f"#if defined({rid()}) && ({rng.randint(0, 9)} / 0)",  # division by zero in #if
         lambda: f"#line {rng.choice(['x', '', '999999999999999999999'])}",  # malformed #line
-        lambda: '#define S(x) #x\nS(' + '\\' * rng.randint(1, 6),    # stringize of trailing backslashes
-        lambda: rid() + "'unterminated char",                        # an unterminated char literal
-        lambda: '"unterminated string',                             # an unterminated string literal
+        lambda: (
+            "#define S(x) #x\nS(" + "\\" * rng.randint(1, 6)
+        ),  # stringize of trailing backslashes
+        lambda: rid() + "'unterminated char",  # an unterminated char literal
+        lambda: '"unterminated string',  # an unterminated string literal
     ]
     n = rng.randint(1, 12)
     return "\n".join(rng.choice(pieces)() for _ in range(n)) + "\n"
@@ -4616,8 +5597,8 @@ def _pp_fuzz_cycle_and_bomb(rng):
     depth = rng.randint(6, 12)
     body = ["#define L0 xx"]
     for k in range(1, depth):
-        body.append(f"#define L{k} L{k-1} L{k-1}")
-    body.append(f"L{depth-1}")
+        body.append(f"#define L{k} L{k - 1} L{k - 1}")
+    body.append(f"L{depth - 1}")
     out.append("\n".join(body) + "\n")
     return out
 
@@ -4629,8 +5610,9 @@ def _preprocessor_robustness_fuzz_seed(seed: int):
     it runs under EVERY tier (no toolchain needed); deterministic given the seed. A hang is caught by the
     suite-level wall clock + the expansion cap; an uncaught non-CPPError exception fails here."""
     import random as _random
+
     rng = _random.Random(seed)
-    cap = 8 * 1024 * 1024                                   # an output this large is a runaway -> fail
+    cap = 8 * 1024 * 1024  # an output this large is a runaway -> fail
     for _ in range(400):
         src = _pp_fuzz_corpus(rng)
         try:
@@ -4638,9 +5620,11 @@ def _preprocessor_robustness_fuzz_seed(seed: int):
             assert isinstance(out, str), (src, type(out))
             assert len(out) < cap, f"runaway expansion ({len(out)} bytes) on:\n{src}"
         except _cpp.CPPError:
-            pass                                           # a typed, intended preprocessing error: fine
-        except RecursionError as e:                        # a stack blowout is a robustness BUG, not clean
-            raise AssertionError(f"cpp.preprocess RecursionError (not a clean CPPError) on:\n{src}") from e
+            pass  # a typed, intended preprocessing error: fine
+        except RecursionError as e:  # a stack blowout is a robustness BUG, not clean
+            raise AssertionError(
+                f"cpp.preprocess RecursionError (not a clean CPPError) on:\n{src}"
+            ) from e
     for src in (s for _ in range(40) for s in _pp_fuzz_cycle_and_bomb(rng)):
         try:
             out = _cpp.preprocess(src)
@@ -4648,7 +5632,9 @@ def _preprocessor_robustness_fuzz_seed(seed: int):
         except _cpp.CPPError:
             pass
         except RecursionError as e:
-            raise AssertionError(f"cpp.preprocess RecursionError on a cycle/bomb input:\n{src[:200]}") from e
+            raise AssertionError(
+                f"cpp.preprocess RecursionError on a cycle/bomb input:\n{src[:200]}"
+            ) from e
 
 
 def test_preprocessor_robustness_fuzz_seed1():
@@ -4689,9 +5675,11 @@ def _pp_fuzz_body(rng, params, obj):
         if params and r < 0.3:
             toks.append(rng.choice(params))
         elif r < 0.55 and toks and toks[-1] not in ("##", "#"):
-            toks.append("##"); toks.append(rng.choice(_PP_FUZZ_IDS + params))
+            toks.append("##")
+            toks.append(rng.choice(_PP_FUZZ_IDS + params))
         elif not obj and params and r < 0.7:
-            toks.append("#"); toks.append(rng.choice(params))
+            toks.append("#")
+            toks.append(rng.choice(params))
         else:
             toks.append(rng.choice(_PP_FUZZ_IDS))
     while toks and toks[0] == "##":
@@ -4703,19 +5691,24 @@ def _pp_fuzz_body(rng, params, obj):
 
 def _pp_fuzz_program(rng) -> str:
     """A random small macro program: a few object + function `#define`s, then a few uses of them."""
-    defs = []                                              # (name, nparams_or_None, source_line)
+    defs = []  # (name, nparams_or_None, source_line)
     for _ in range(rng.randint(2, 5)):
         nm = rng.choice(["O", "F"]) + str(len(defs))
-        if rng.random() < 0.5:                             # object macro
+        if rng.random() < 0.5:  # object macro
             defs.append((nm, None, f"#define {nm} {_pp_fuzz_body(rng, [], obj=True)}"))
-        else:                                              # function macro
+        else:  # function macro
             ps = [chr(ord("p") + k) for k in range(rng.randint(0, 2))]
-            defs.append((nm, len(ps), f"#define {nm}({', '.join(ps)}) {_pp_fuzz_body(rng, ps, obj=False)}"))
+            defs.append(
+                (nm, len(ps), f"#define {nm}({', '.join(ps)}) {_pp_fuzz_body(rng, ps, obj=False)}")
+            )
     lines = [d[2] for d in defs]
     for _ in range(rng.randint(1, 3)):
         nm, npar, _src = rng.choice(defs)
-        lines.append(nm if npar is None
-                     else f"{nm}({', '.join(rng.choice(_PP_FUZZ_IDS) for _ in range(npar))})")
+        lines.append(
+            nm
+            if npar is None
+            else f"{nm}({', '.join(rng.choice(_PP_FUZZ_IDS) for _ in range(npar))})"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -4737,9 +5730,10 @@ def _pp_gcc_std() -> str:
 def _run_pp_fuzz_differential(seed: int, count: int = 300):
     """The fuzz-differential body: returns (fair, divergences, first_examples)."""
     import random as _random
+
     clang, gcc = shutil.which("clang"), shutil.which("gcc")
     if not (clang and gcc):
-        return None                                        # needs the cross-compiler fairness vote -> skip
+        return None  # needs the cross-compiler fairness vote -> skip
     gstd = _pp_gcc_std()
     rng = _random.Random(seed)
     fair = div = 0
@@ -4748,13 +5742,13 @@ def _run_pp_fuzz_differential(seed: int, count: int = 300):
         src = _pp_fuzz_program(rng)
         cl = _pp_reference_text(src, clang, "c23")
         gc = _pp_reference_text(src, gcc, gstd)
-        if cl is None or gc is None or cl != gc:           # not a fair single-truth program
+        if cl is None or gc is None or cl != gc:  # not a fair single-truth program
             continue
         fair += 1
         try:
             got = _pp_token_normalize(_cpp.preprocess(src))
         except _cpp.CPPError:
-            continue                                       # a malformed program cpp.py rejects -> not graded
+            continue  # a malformed program cpp.py rejects -> not graded
         if got != cl:
             div += 1
             if len(examples) < 5:
@@ -4772,10 +5766,14 @@ def test_preprocessor_fuzz_differential_seed_a():
     if res is None:
         return
     fair, div, examples = res
-    assert fair >= 100, f"fuzz-differential generated too few fair programs ({fair}) -- not exercising"
-    assert div == 0, ("cpp.preprocess diverges from the reference (clang==gcc) on a fair random macro "
-                      "program -- a real preprocessor bug:\n"
-                      + "\n".join(f"  SRC {s!r}\n    cpp.py={p}\n    reference={c}" for s, p, c in examples))
+    assert fair >= 100, (
+        f"fuzz-differential generated too few fair programs ({fair}) -- not exercising"
+    )
+    assert div == 0, (
+        "cpp.preprocess diverges from the reference (clang==gcc) on a fair random macro "
+        "program -- a real preprocessor bug:\n"
+        + "\n".join(f"  SRC {s!r}\n    cpp.py={p}\n    reference={c}" for s, p, c in examples)
+    )
 
 
 def test_preprocessor_fuzz_differential_seed_b():
@@ -4785,8 +5783,10 @@ def test_preprocessor_fuzz_differential_seed_b():
         return
     fair, div, examples = res
     assert fair >= 100, f"fuzz-differential generated too few fair programs ({fair})"
-    assert div == 0, ("cpp.preprocess diverges from the reference on a fair random macro program:\n"
-                      + "\n".join(f"  SRC {s!r}\n    cpp.py={p}\n    reference={c}" for s, p, c in examples))
+    assert div == 0, (
+        "cpp.preprocess diverges from the reference on a fair random macro program:\n"
+        + "\n".join(f"  SRC {s!r}\n    cpp.py={p}\n    reference={c}" for s, p, c in examples)
+    )
 
 
 # --- DUAL-RAIL C TWIN preprocessor differential (bonus) -----------------------------------------
@@ -4801,13 +5801,13 @@ def test_preprocessor_fuzz_differential_seed_b():
 # caught, and the pinned set is asserted to stay BOUNDED (it must not silently grow).
 _PP_CTWIN_PIN = {
     "cfront_pp_stringize.c": "C twin (bcir_cpp.c) does not prescan a two-level XSTR argument and does "
-                             "not escape `\"`/`\\` inside a stringized string-literal token -- "
-                             "TODO(bcir_cpp): add argument prescan + spec stringize escaping.",
+    'not escape `"`/`\\` inside a stringized string-literal token -- '
+    "TODO(bcir_cpp): add argument prescan + spec stringize escaping.",
     "cfront_pp_predefined.c": "C twin does not prescan `__LINE__` through the two-level XSTR "
-                              "(emits \"__LINE__\" not the number) -- TODO(bcir_cpp): prescan dynamic "
-                              "predefineds in argument position.",
+    '(emits "__LINE__" not the number) -- TODO(bcir_cpp): prescan dynamic '
+    "predefineds in argument position.",
     "cfront_pp_bluepaint.c": "C twin mis-handles a 3-macro indirect self-reference cycle (p->q->r->p) "
-                             "-- TODO(bcir_cpp): paint the whole active replacement chain, not one level.",
+    "-- TODO(bcir_cpp): paint the whole active replacement chain, not one level.",
 }
 
 
@@ -4830,11 +5830,11 @@ def test_c_twin_preprocessor_differential_against_reference():
     Asserts the pinned set stays BOUNDED (a new C-twin divergence must be triaged, not silently pinned)
     and that a non-trivial subset actually ran (anti-degeneration)."""
     if not _CC or not (shutil.which("clang") or shutil.which("gcc")):
-        return                                             # no toolchain -> clean self-skip
+        return  # no toolchain -> clean self-skip
     fails, pinned, tested = [], [], 0
     for fx in _PP_FIXTURES:
         _msg, why = _pp_fixture_verdict(fx)
-        if why is not None:                                # an unfair fixture (impl-defined) -> skip the C rail too
+        if why is not None:  # an unfair fixture (impl-defined) -> skip the C rail too
             continue
         cl, _gc = _pp_reference_pair(os.path.join(_C, fx))
         ct = _ctwin_emit_cpp(fx)
@@ -4842,28 +5842,40 @@ def test_c_twin_preprocessor_differential_against_reference():
             # a pinned fixture is EXPECTED to diverge; assert it still DOES (so a silent C-twin FIX
             # un-pins it loudly instead of leaving a stale pin that hides real coverage).
             if ct is not None and ct == cl:
-                fails.append(f"{fx}: STALE PIN -- the C twin now AGREES with the reference; drop it "
-                             f"from _PP_CTWIN_PIN so the fixture is differentialed again "
-                             f"(recorded reason: {_PP_CTWIN_PIN[fx]})")
+                fails.append(
+                    f"{fx}: STALE PIN -- the C twin now AGREES with the reference; drop it "
+                    f"from _PP_CTWIN_PIN so the fixture is differentialed again "
+                    f"(recorded reason: {_PP_CTWIN_PIN[fx]})"
+                )
             pinned.append(fx)
             continue
         if ct is None:
             fails.append(f"{fx}: C twin --emit-cpp failed to run")
         elif ct != cl:
-            diff = next((i for i, (a, b) in enumerate(zip(ct, cl)) if a != b), min(len(ct), len(cl)))
-            fails.append(f"{fx}: C twin diverges from the reference at token #{diff}: "
-                         f"ctwin={ct[diff:diff + 4]} reference={cl[diff:diff + 4]} -- a Python<->C "
-                         f"preprocessor divergence on a fixture the C twin was expected to handle")
+            diff = next(
+                (i for i, (a, b) in enumerate(zip(ct, cl)) if a != b), min(len(ct), len(cl))
+            )
+            fails.append(
+                f"{fx}: C twin diverges from the reference at token #{diff}: "
+                f"ctwin={ct[diff : diff + 4]} reference={cl[diff : diff + 4]} -- a Python<->C "
+                f"preprocessor divergence on a fixture the C twin was expected to handle"
+            )
         else:
             tested += 1
-    assert not fails, ("C-twin preprocessor differential failures (the C rail diverges from the "
-                       "reference on a non-pinned fair fixture):\n" + "\n".join(f"  {m}" for m in fails))
+    assert not fails, (
+        "C-twin preprocessor differential failures (the C rail diverges from the "
+        "reference on a non-pinned fair fixture):\n" + "\n".join(f"  {m}" for m in fails)
+    )
     # The pinned set stays bounded from BOTH sides, and neither side is a tautology:
     #   * it cannot GROW  -- a new divergence lands on a non-pinned fixture and is in `fails` above;
     #   * it cannot ROT   -- a pin whose divergence disappeared is a STALE PIN, also in `fails`.
     # This residual check only guards the bookkeeping itself (a pin recorded for a fixture that is
     # not in the pin table would mean `_pp_fixture_verdict`/the loop drifted).
-    assert set(pinned) <= set(_PP_CTWIN_PIN), f"unexpected C-twin pins: {set(pinned) - set(_PP_CTWIN_PIN)}"
+    assert set(pinned) <= set(_PP_CTWIN_PIN), (
+        f"unexpected C-twin pins: {set(pinned) - set(_PP_CTWIN_PIN)}"
+    )
     # ANTI-DEGENERATION: the C-twin differential must have actually RUN on a non-trivial fair subset.
-    assert tested >= 3, (f"C-twin preprocessor differential degenerated: only {tested} fixtures ran "
-                         f"(pinned={pinned}) -- a real differential must exercise the clean subset")
+    assert tested >= 3, (
+        f"C-twin preprocessor differential degenerated: only {tested} fixtures ran "
+        f"(pinned={pinned}) -- a real differential must exercise the clean subset"
+    )

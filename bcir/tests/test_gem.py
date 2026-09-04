@@ -12,12 +12,33 @@ def _two_phase_module() -> Module:
     m.add_resource(Resource(rid=1, name="A"))
     m.add_resource(Resource(rid=2, name="C"))
     # phase 1 (calc) depends on phase 0 (load); claims given out of id order on purpose.
-    load = Claim(id=20, opcode=Opcode.LOAD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                 count=8, rd=(1,), wr=(1,))
-    c_hi = Claim(id=11, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                 count=8, rd=(1,), wr=(2,))
-    c_lo = Claim(id=10, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                 count=8, rd=(1,), wr=(2,))
+    load = Claim(
+        id=20,
+        opcode=Opcode.LOAD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=8,
+        rd=(1,),
+        wr=(1,),
+    )
+    c_hi = Claim(
+        id=11,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=8,
+        rd=(1,),
+        wr=(2,),
+    )
+    c_lo = Claim(
+        id=10,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=8,
+        rd=(1,),
+        wr=(2,),
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=[load]))
     m.add_phase(Phase(phase_id=1, deps=(0,), claims=[c_hi, c_lo]))
     return m

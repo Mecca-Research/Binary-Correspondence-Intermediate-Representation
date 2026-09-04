@@ -23,9 +23,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from ..model import (ATOMIC_OPCODES, Claim, Domain, Lane, Module, Opcode,
-                     StrideClass,
-                     phase_graph_has_cycle, topological_phase_ids)
+from ..model import (
+    ATOMIC_OPCODES,
+    Claim,
+    Domain,
+    Lane,
+    Module,
+    Opcode,
+    StrideClass,
+    phase_graph_has_cycle,
+    topological_phase_ids,
+)
 
 
 @dataclass(frozen=True)
@@ -55,8 +63,13 @@ _COST_CLASSES = {"latency", "bandwidth", "compute"}
 # Opcodes whose semantics are atomic read-modify-write (R5).
 _ATOMIC_OPCODES = ATOMIC_OPCODES
 # Control/provenance opcodes realized on the H lane (legal for any plan).
-_CONTROL_OPCODES = {Opcode.NOP, Opcode.PHASE_ENTER, Opcode.PHASE_LEAVE, Opcode.PROV_NOTE,
-                    Opcode.BARRIER}
+_CONTROL_OPCODES = {
+    Opcode.NOP,
+    Opcode.PHASE_ENTER,
+    Opcode.PHASE_LEAVE,
+    Opcode.PROV_NOTE,
+    Opcode.BARRIER,
+}
 
 # Access patterns whose touched index set is data-dependent (R7): a strict bounds
 # contract cannot be discharged statically, so a runtime verify contract is required.
@@ -93,31 +106,38 @@ def verify(module: Module) -> list[Diagnostic]:
         for claim in ph.claims:
             for rid in claim.io_rids():
                 if module.resource(rid) is None:
-                    diags.append(Diagnostic("R2", f"claim {claim.id} references undeclared RID {rid}"))
+                    diags.append(
+                        Diagnostic("R2", f"claim {claim.id} references undeclared RID {rid}")
+                    )
 
     # R3: domain legality -- claim domain contracts correspond to registry placement.
     for res in module.resources.values():
         if res.access == "ham" and res.domain == Domain.MMIO:
-            diags.append(Diagnostic(
-                "R3", f"resource {res.rid}: HAM access is illegal in the MMIO domain"))
+            diags.append(
+                Diagnostic("R3", f"resource {res.rid}: HAM access is illegal in the MMIO domain")
+            )
     for ph in module.phases:
         for claim in ph.claims:
             touched = [module.resource(rid) for rid in claim.io_rids()]
             touched = [r for r in touched if r is not None]
             if touched and claim.domain not in {r.domain for r in touched}:
-                diags.append(Diagnostic(
-                    "R3",
-                    f"claim {claim.id}: declares domain {claim.domain.name} but touches only "
-                    f"{{{', '.join(sorted({r.domain.name for r in touched}))}}}",
-                ))
+                diags.append(
+                    Diagnostic(
+                        "R3",
+                        f"claim {claim.id}: declares domain {claim.domain.name} but touches only "
+                        f"{{{', '.join(sorted({r.domain.name for r in touched}))}}}",
+                    )
+                )
             for rid in claim.wr:
                 res = module.resource(rid)
                 if res is not None and res.domain == Domain.MMIO and claim.hazard == "unique":
-                    diags.append(Diagnostic(
-                        "R3",
-                        f"claim {claim.id}: MMIO write to RID {rid} requires an "
-                        f"atomic/barriered hazard contract",
-                    ))
+                    diags.append(
+                        Diagnostic(
+                            "R3",
+                            f"claim {claim.id}: MMIO write to RID {rid} requires an "
+                            f"atomic/barriered hazard contract",
+                        )
+                    )
 
     # R4: phase DAG legality (acyclic).
     if _has_cycle(module):
@@ -127,38 +147,47 @@ def verify(module: Module) -> list[Diagnostic]:
     for ph in module.phases:
         for claim in ph.claims:
             if claim.hazard not in _HAZARDS:
-                diags.append(Diagnostic(
-                    "R5", f"claim {claim.id}: unknown hazard contract {claim.hazard!r}"))
+                diags.append(
+                    Diagnostic("R5", f"claim {claim.id}: unknown hazard contract {claim.hazard!r}")
+                )
                 continue
             if claim.opcode in _ATOMIC_OPCODES and claim.hazard == "unique":
-                diags.append(Diagnostic(
-                    "R5",
-                    f"claim {claim.id}: atomic opcode {claim.opcode.name} requires an "
-                    f"atomic/barriered hazard contract",
-                ))
+                diags.append(
+                    Diagnostic(
+                        "R5",
+                        f"claim {claim.id}: atomic opcode {claim.opcode.name} requires an "
+                        f"atomic/barriered hazard contract",
+                    )
+                )
             if claim.lane == Lane.A and claim.hazard == "unique":
-                diags.append(Diagnostic(
-                    "R5",
-                    f"claim {claim.id}: atomic lane A requires an atomic/barriered "
-                    f"hazard contract",
-                ))
+                diags.append(
+                    Diagnostic(
+                        "R5",
+                        f"claim {claim.id}: atomic lane A requires an atomic/barriered "
+                        f"hazard contract",
+                    )
+                )
             # §5.14 Phase 2 (indirect-call effect): a dispatch claim's DECLARED callee signature,
             # when carried, must be well-formed "ret(params)" -- a malformed record would poison the
             # R18/commutation consumers silently. Vacuous when absent (the opaque-edge default).
             if claim.callee_sig and "(" not in claim.callee_sig:
-                diags.append(Diagnostic(
-                    "R18",
-                    f"claim {claim.id}: malformed indirect-callee signature "
-                    f"{claim.callee_sig!r} (expected 'ret(params)')",
-                ))
+                diags.append(
+                    Diagnostic(
+                        "R18",
+                        f"claim {claim.id}: malformed indirect-callee signature "
+                        f"{claim.callee_sig!r} (expected 'ret(params)')",
+                    )
+                )
             # §5.14 Phase 2: a VOLATILE access (MMIO) must carry an ordered hazard -- volatility is
             # an ordering/legality signal, not a cosmetic tag. Vacuous unless a claim opts in.
             if claim.volatile and claim.hazard == "unique":
-                diags.append(Diagnostic(
-                    "R5",
-                    f"claim {claim.id}: volatile access requires an atomic/barriered "
-                    f"hazard contract",
-                ))
+                diags.append(
+                    Diagnostic(
+                        "R5",
+                        f"claim {claim.id}: volatile access requires an atomic/barriered "
+                        f"hazard contract",
+                    )
+                )
         # CT2 decoupling soundness: the GGG/random tail executes decoupled from the
         # wave order, so a same-phase conflict touching a sparse claim loses its
         # implicit serialization -- both ends must carry an ordered hazard contract.
@@ -181,54 +210,69 @@ def verify(module: Module) -> list[Diagnostic]:
                         continue
                     for c in (a, b):
                         if c.hazard == "unique":
-                            diags.append(Diagnostic(
-                                "R5",
-                                f"claim {c.id}: conflicts across the decoupled GGG tail in "
-                                f"phase {ph.phase_id} without an atomic/barriered hazard",
-                            ))
+                            diags.append(
+                                Diagnostic(
+                                    "R5",
+                                    f"claim {c.id}: conflicts across the decoupled GGG tail in "
+                                    f"phase {ph.phase_id} without an atomic/barriered hazard",
+                                )
+                            )
 
     # R6: lane legality -- lane type matches the declared access pattern.
     for ph in module.phases:
         for claim in ph.claims:
             legal = _LEGAL_LANES.get(claim.stride_class, set())
             if claim.lane not in legal:
-                diags.append(Diagnostic(
-                    "R6",
-                    f"claim {claim.id}: lane {claim.lane.name} illegal for "
-                    f"stride_class {claim.stride_class.name}",
-                ))
+                diags.append(
+                    Diagnostic(
+                        "R6",
+                        f"claim {claim.id}: lane {claim.lane.name} illegal for "
+                        f"stride_class {claim.stride_class.name}",
+                    )
+                )
 
     # R7: bounds legality -- strict bounds are discharged statically (affine
     # patterns) or guarded by a runtime verify contract (data-dependent patterns).
     for ph in module.phases:
         for claim in ph.claims:
             if claim.bounds not in _BOUNDS:
-                diags.append(Diagnostic(
-                    "R7", f"claim {claim.id}: unknown bounds mode {claim.bounds!r}"))
+                diags.append(
+                    Diagnostic("R7", f"claim {claim.id}: unknown bounds mode {claim.bounds!r}")
+                )
                 continue
             if claim.verify not in _VERIFY:
-                diags.append(Diagnostic(
-                    "R7", f"claim {claim.id}: unknown verify contract {claim.verify!r}"))
+                diags.append(
+                    Diagnostic("R7", f"claim {claim.id}: unknown verify contract {claim.verify!r}")
+                )
                 continue
             # A `masked` access (the §5.12 promotion: runtime-bounds-checked, the contract the quarantine
             # handler discharges) must DECLARE that runtime contract -- `verify == "bounds"`. The law now
             # SEES the masked metadata it previously skipped: a masked claim with no bounds verify is a
             # promotion the backend would emit without a guard (a silent loss of the check).
             if claim.bounds == "masked" and claim.verify != "bounds":
-                why = (f" (extent provenance: {claim.bounds_provenance})"
-                       if claim.bounds_provenance else "")
-                diags.append(Diagnostic(
-                    "R7", f"claim {claim.id}: masked (runtime-bounds-checked) access must carry a "
-                          f"'bounds' verify contract, not {claim.verify!r}{why}"))
+                why = (
+                    f" (extent provenance: {claim.bounds_provenance})"
+                    if claim.bounds_provenance
+                    else ""
+                )
+                diags.append(
+                    Diagnostic(
+                        "R7",
+                        f"claim {claim.id}: masked (runtime-bounds-checked) access must carry a "
+                        f"'bounds' verify contract, not {claim.verify!r}{why}",
+                    )
+                )
             if claim.bounds != "strict":
                 continue
             if claim.stride_class in _DATA_DEPENDENT:
                 if claim.verify == "none":
-                    diags.append(Diagnostic(
-                        "R7",
-                        f"claim {claim.id}: data-dependent {claim.stride_class.name} access "
-                        f"with strict bounds requires a runtime verify contract",
-                    ))
+                    diags.append(
+                        Diagnostic(
+                            "R7",
+                            f"claim {claim.id}: data-dependent {claim.stride_class.name} access "
+                            f"with strict bounds requires a runtime verify contract",
+                        )
+                    )
                 continue
             # Affine pattern: the touched extent is statically known. The stride
             # applies to the streamed read source; writes land unit-stride (a
@@ -239,26 +283,28 @@ def verify(module: Module) -> list[Diagnostic]:
             read_extent = claim.offset + (claim.count - 1) * k + 1 if claim.count > 0 else 0
             is_reduction = claim.op.startswith("reduce.")
             write_extent = claim.offset + (1 if is_reduction else claim.count)
-            for rid, extent, kind in (
-                [(r, read_extent, "read") for r in claim.rd]
-                + [(w, write_extent, "write") for w in claim.wr]
-            ):
+            for rid, extent, kind in [(r, read_extent, "read") for r in claim.rd] + [
+                (w, write_extent, "write") for w in claim.wr
+            ]:
                 res = module.resource(rid)
                 if res is None or not res.shape:
                     continue
                 if extent > res.count:
-                    diags.append(Diagnostic(
-                        "R7",
-                        f"claim {claim.id}: {kind} of RID {rid} overruns the resource "
-                        f"(extent {extent} > {res.count})",
-                    ))
+                    diags.append(
+                        Diagnostic(
+                            "R7",
+                            f"claim {claim.id}: {kind} of RID {rid} overruns the resource "
+                            f"(extent {extent} > {res.count})",
+                        )
+                    )
 
     # R8 (static half): cost completeness -- every claim names a known cost class.
     for ph in module.phases:
         for claim in ph.claims:
             if claim.cost_class not in _COST_CLASSES:
-                diags.append(Diagnostic(
-                    "R8", f"claim {claim.id}: unknown cost class {claim.cost_class!r}"))
+                diags.append(
+                    Diagnostic("R8", f"claim {claim.id}: unknown cost class {claim.cost_class!r}")
+                )
 
     # EV1-EV3 (event phases, driver roadmap A1/B1): module laws too, so the canonical
     # verifier carries them. Vacuous over every eventless module; the mask/unmask
@@ -334,19 +380,20 @@ def verify(module: Module) -> list[Diagnostic]:
 # rebinds value-number trees; an op substitution changes a base; a call redirect changes a `c.call:NAME`
 # base; a constant tamper changes c.const's imm; a cast-width change changes `c.cast:WIDTH`; an injected/
 # duplicate id is caught by the dedicated unit-wide R1.1 law. Non-tautological in test_ir_structural_parity.py.
-_DIGEST_OFFSET = 1469598103934665603        # FNV-1a 64-bit offset basis (== the C offset)
-_DIGEST_PRIME = 1099511628211               # FNV-1a 64-bit prime
+_DIGEST_OFFSET = 1469598103934665603  # FNV-1a 64-bit offset basis (== the C offset)
+_DIGEST_PRIME = 1099511628211  # FNV-1a 64-bit prime
 _DIGEST_MASK = (1 << 64) - 1
-_NOP = 0                                     # Opcode.NOP integer value (the control-marker opcode)
-_VN_MAXDEPTH = 96                            # recursion guard (== the C twin's; a deep/cyclic chain folds to "cyc")
+_NOP = 0  # Opcode.NOP integer value (the control-marker opcode)
+_VN_MAXDEPTH = 96  # recursion guard (== the C twin's; a deep/cyclic chain folds to "cyc")
 # The ONLY op whose ':' suffix is a rail-divergent label (Python `c.call.vaarg` vs the C twin
 # `c.call.vaarg:int`); its suffix is stripped. Every other ':' suffix is structural and KEPT.
 _VN_STRIP_SUFFIX = ("c.call.vaarg",)
 # Genuinely COMMUTATIVE ops: operand order cannot change the computed value, so their reads are sorted
 # (this is what absorbs the few cross-rail operand-order divergences). All other ops keep POSITIONAL
 # read order, so reversing a non-commutative op's operands is caught.
-_VN_COMMUTATIVE = frozenset((
-    "c.bin.add", "c.bin.mul", "c.bin.and", "c.bin.or", "c.bin.xor", "c.bin.eq", "c.bin.ne"))
+_VN_COMMUTATIVE = frozenset(
+    ("c.bin.add", "c.bin.mul", "c.bin.and", "c.bin.or", "c.bin.xor", "c.bin.eq", "c.bin.ne")
+)
 
 
 def _vn_base(op: str) -> str:
@@ -376,9 +423,9 @@ def _vn_imm(c) -> str:
     if op in ("c.const", "c.addrof", "c.bf.get", "c.bf.set", "c.call.imember", "c.sizeof.vla"):
         keep = imm
     elif op == "c.load":
-        keep = [imm[0] if imm else 0]                  # the member byte offset (drop the divergent bound)
+        keep = [imm[0] if imm else 0]  # the member byte offset (drop the divergent bound)
     elif op == "c.store":
-        keep = imm[:2]                                 # (byte offset, unit size); drop the _Bool/stride tail
+        keep = imm[:2]  # (byte offset, unit size); drop the _Bool/stride tail
     else:
         return ""
     return ",".join(str(v) for v in keep)
@@ -391,8 +438,8 @@ def _canon_func_records(lf) -> list[str]:
     anchor closes that by pinning what the function actually OUTPUTS -- the value it RETURNS and the
     memory it STORES -- as rail-stable value-number trees."""
     claims = [c for c in lf.claims if int(c.opcode) != _NOP]
-    first_writer: dict[int, int] = {}              # rid -> index of the FIRST claim that writes it
-    last_writer: dict[int, int] = {}               # rid -> index of the LAST claim that writes it
+    first_writer: dict[int, int] = {}  # rid -> index of the FIRST claim that writes it
+    last_writer: dict[int, int] = {}  # rid -> index of the LAST claim that writes it
     for i, c in enumerate(claims):
         for w in c.wr:
             first_writer.setdefault(int(w), i)
@@ -413,16 +460,19 @@ def _canon_func_records(lf) -> list[str]:
             i = writer.get(rid)
             if i is None:
                 j = param_ix.get(int(rid))
-                return f"in:p{j}" if j is not None else "in"  # a param (positional, cross-rail) else anon
+                return (
+                    f"in:p{j}" if j is not None else "in"
+                )  # a param (positional, cross-rail) else anon
             if depth > _VN_MAXDEPTH:
                 return "cyc"
             if i in memo:
                 return memo[i]
-            memo[i] = "cyc"                        # cycle guard (a loop-carried rid resolves to "cyc")
+            memo[i] = "cyc"  # cycle guard (a loop-carried rid resolves to "cyc")
             c = claims[i]
             parts = _ordered(c, [vn(int(r), depth + 1) for r in c.rd])
             memo[i] = "{}({})".format(_vn_base(c.op), ",".join(parts))
             return memo[i]
+
         return vn
 
     # Per-claim records: the FIRST-writer dataflow VN (the form that holds cross-rail byte-identity).
@@ -430,8 +480,11 @@ def _canon_func_records(lf) -> list[str]:
     recs = []
     for c in claims:
         parts = _ordered(c, [vn_first(int(r), 0) for r in c.rd])
-        recs.append("{}|{}|{}|{}|{}".format(
-            _vn_base(c.op), int(c.opcode), ",".join(parts), _vn_imm(c), int(c.domain)))
+        recs.append(
+            "{}|{}|{}|{}|{}".format(
+                _vn_base(c.op), int(c.opcode), ",".join(parts), _vn_imm(c), int(c.domain)
+            )
+        )
     recs.sort()
 
     # The OBSERVABLE-OUTPUT anchor (LAST-writer VN -- a use observes the most-recent prior write, which
@@ -440,12 +493,15 @@ def _canon_func_records(lf) -> list[str]:
     # changes though no per-claim record does). The STORE destinations+values (sorted, rail-stable VNs)
     # catch a dead/store-target redirect. last==first for a single-write rid, so this stays byte-identical.
     vn_last = _vn(last_writer, {})
-    rr = getattr(lf, "return_rid", None)           # None for a void function (no returned value)
+    rr = getattr(lf, "return_rid", None)  # None for a void function (no returned value)
     ret = vn_last(int(rr), 0) if rr is not None else "void"
     stores = sorted(
-        "{}->{}".format(vn_last(int(c.rd[0]), 0) if c.rd else "?",
-                        vn_last(int(c.rd[-1]), 0) if c.rd else "?")
-        for c in claims if c.op == "c.store")
+        "{}->{}".format(
+            vn_last(int(c.rd[0]), 0) if c.rd else "?", vn_last(int(c.rd[-1]), 0) if c.rd else "?"
+        )
+        for c in claims
+        if c.op == "c.store"
+    )
     recs.append("ret={}|stores={}".format(ret, ";".join(stores)))
     return recs
 
@@ -488,7 +544,6 @@ def cfront_unit_claim_ids_unique(lowered) -> list[Diagnostic]:
     return diags
 
 
-
 def _same_realization(chosen, offered) -> bool:
     """Two candidates denote the same realization.
 
@@ -497,8 +552,12 @@ def _same_realization(chosen, offered) -> bool:
     leaving the realization identical -- so `base` is compared and the coupled total is
     checked separately by R8.
     """
-    return (chosen.lane is offered.lane and chosen.width == offered.width
-            and chosen.name == offered.name and chosen.base.v == offered.base.v)
+    return (
+        chosen.lane is offered.lane
+        and chosen.width == offered.width
+        and chosen.name == offered.name
+        and chosen.base.v == offered.base.v
+    )
 
 
 def _admissible_candidates(module: Module, h) -> dict[int, tuple]:
@@ -518,8 +577,9 @@ def _admissible_candidates(module: Module, h) -> dict[int, tuple]:
     return {cid: tuple(cands) for cid, cands in fused_candidates(module, h).items()}
 
 
-def verify_plan(module: Module, result, h=None, theta=None, policy=None,
-                budget=None) -> list[Diagnostic]:
+def verify_plan(
+    module: Module, result, h=None, theta=None, policy=None, budget=None
+) -> list[Diagnostic]:
     """K_BCIR plan laws R8 (cost completeness) and R9 (plan legality).
 
     `result` is a `kbcir.realize.RealizationResult` (duck-typed to keep the
@@ -560,11 +620,13 @@ def verify_plan(module: Module, result, h=None, theta=None, policy=None,
         cand = step.candidate
         # R8: every realized step carries a complete, non-negative scalarized cost.
         if len(cand.base.v) != 12:
-            diags.append(Diagnostic(
-                "R8", f"claim {step.claim_id}: candidate cost vector is not 12-d"))
+            diags.append(
+                Diagnostic("R8", f"claim {step.claim_id}: candidate cost vector is not 12-d")
+            )
         if step.cost < 0:
-            diags.append(Diagnostic(
-                "R8", f"claim {step.claim_id}: negative realized cost {step.cost}"))
+            diags.append(
+                Diagnostic("R8", f"claim {step.claim_id}: negative realized cost {step.cost}")
+            )
         total += step.cost
 
         # R9: the realization has to be one the planner could actually have generated
@@ -572,42 +634,49 @@ def verify_plan(module: Module, result, h=None, theta=None, policy=None,
         if admissible is not None:
             offered = admissible.get(step.claim_id, ())
             if not any(_same_realization(cand, c) for c in offered):
-                diags.append(Diagnostic(
-                    "R9",
-                    f"claim {step.claim_id}: realization "
-                    f"{cand.name!r}({cand.lane.name}, width {cand.width}) is not among "
-                    f"the {len(offered)} candidate(s) this target admits: "
-                    f"{sorted(c.name for c in offered)}",
-                ))
+                diags.append(
+                    Diagnostic(
+                        "R9",
+                        f"claim {step.claim_id}: realization "
+                        f"{cand.name!r}({cand.lane.name}, width {cand.width}) is not among "
+                        f"the {len(offered)} candidate(s) this target admits: "
+                        f"{sorted(c.name for c in offered)}",
+                    )
+                )
 
         # R9: an ATOMIC opcode keeps an atomic realization. Checked before the geometry
         # rules because it does not depend on them: `stride_class` describes which
         # elements are touched, and no answer to that question makes a vectorized or
         # gathered read-modify-write atomic. The geometry check alone passed
         # ATOMIC_ADD/SCALAR realized as `U vec16` and ATOMIC_ADD/RANDOM as `GGG gather`.
-        if claim.opcode in _ATOMIC_OPCODES and (cand.lane is not Lane.A
-                                                or cand.width != 1):
-            diags.append(Diagnostic(
-                "R9",
-                f"claim {step.claim_id}: atomic opcode {claim.opcode.name} realized as "
-                f"{cand.lane.name} width {cand.width}; an atomic read-modify-write has "
-                f"one realization, A lane width 1",
-            ))
+        if claim.opcode in _ATOMIC_OPCODES and (cand.lane is not Lane.A or cand.width != 1):
+            diags.append(
+                Diagnostic(
+                    "R9",
+                    f"claim {step.claim_id}: atomic opcode {claim.opcode.name} realized as "
+                    f"{cand.lane.name} width {cand.width}; an atomic read-modify-write has "
+                    f"one realization, A lane width 1",
+                )
+            )
 
         # R9: the chosen realization is legal for the claim's declared geometry.
         if cand.lane == Lane.H:
             if claim.opcode not in _CONTROL_OPCODES and claim.stride_class != StrideClass.SCALAR:
-                diags.append(Diagnostic(
-                    "R9",
-                    f"claim {step.claim_id}: H-lane realization {cand.name!r} for a "
-                    f"non-control claim",
-                ))
+                diags.append(
+                    Diagnostic(
+                        "R9",
+                        f"claim {step.claim_id}: H-lane realization {cand.name!r} for a "
+                        f"non-control claim",
+                    )
+                )
         elif cand.lane not in _LEGAL_LANES.get(claim.stride_class, set()):
-            diags.append(Diagnostic(
-                "R9",
-                f"claim {step.claim_id}: chosen lane {cand.lane.name} illegal for "
-                f"stride_class {claim.stride_class.name}",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R9",
+                    f"claim {step.claim_id}: chosen lane {cand.lane.name} illegal for "
+                    f"stride_class {claim.stride_class.name}",
+                )
+            )
 
     # R9 (scope): every realized cost re-derives from (h, theta, policy) -- the same
     # predicate the planner prices its DAG edges with (`realize.edge_cost`).
@@ -622,16 +691,20 @@ def verify_plan(module: Module, result, h=None, theta=None, policy=None,
                 continue
             expected = step_cost(prev, step.candidate, h, theta, step.phase_id, pol)
             if expected != step.cost:
-                diags.append(Diagnostic(
-                    "R9",
-                    f"claim {step.claim_id}: realized cost {step.cost} does not re-derive "
-                    f"from the scope (expected {expected} for {step.candidate.name!r} "
-                    f"under policy {pol.name!r})"))
+                diags.append(
+                    Diagnostic(
+                        "R9",
+                        f"claim {step.claim_id}: realized cost {step.cost} does not re-derive "
+                        f"from the scope (expected {expected} for {step.candidate.name!r} "
+                        f"under policy {pol.name!r})",
+                    )
+                )
             prev = step.candidate
     if budget is not None:
         if theta is None:
-            raise ValueError("R9 budget feasibility needs theta: R(pi, Theta) is priced "
-                             "under Theta")
+            raise ValueError(
+                "R9 budget feasibility needs theta: R(pi, Theta) is priced under Theta"
+            )
         from ..kbcir.cost import DIMS
         from ..kbcir.rcsp import plan_resources
 
@@ -647,8 +720,7 @@ def verify_plan(module: Module, result, h=None, theta=None, policy=None,
 
     # R9: the reported score is the sum of the realized step costs.
     if result.steps and total != result.score:
-        diags.append(Diagnostic(
-            "R9", f"plan score {result.score} != sum of step costs {total}"))
+        diags.append(Diagnostic("R9", f"plan score {result.score} != sum of step costs {total}"))
 
     # R9: steps follow the topological phase order.
     pos = {pid: i for i, pid in enumerate(_topo_phase_ids(module))}
@@ -656,8 +728,7 @@ def verify_plan(module: Module, result, h=None, theta=None, policy=None,
     for step in result.steps:
         p = pos.get(step.phase_id, -1)
         if p < last:
-            diags.append(Diagnostic(
-                "R9", f"claim {step.claim_id}: realized out of phase order"))
+            diags.append(Diagnostic("R9", f"claim {step.claim_id}: realized out of phase order"))
             break
         last = max(last, p)
 
@@ -686,10 +757,13 @@ def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
     for cid in sorted(claims - covered):
         claim = next(c for ph in module.phases for c in ph.claims if c.id == cid)
         if claim.opcode in _CONTROL_OPCODES:
-            continue                      # control claims lower to no stream segment
-        diags.append(Diagnostic(
-            "R10", f"claim {cid} has no StreamPack segment; the pack does not realize "
-                   f"the module"))
+            continue  # control claims lower to no stream segment
+        diags.append(
+            Diagnostic(
+                "R10",
+                f"claim {cid} has no StreamPack segment; the pack does not realize the module",
+            )
+        )
     segment_ids = [s.claim_id for s in pack.segments]
     trace_ids = [t.claim_id for t in pack.trace_notes]
     prefetch_names = [p.name for p in pack.prefetches]
@@ -705,28 +779,34 @@ def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
     if len(set(prefetch_names)) != len(prefetch_names):
         diags.append(Diagnostic("R10", "duplicate prefetch name in StreamPack"))
     if getattr(pack, "pipeline_depth", 1) < 1:
-        diags.append(Diagnostic(
-            "R10", f"invalid pipeline_depth {pack.pipeline_depth} (must be >= 1)"))
+        diags.append(
+            Diagnostic("R10", f"invalid pipeline_depth {pack.pipeline_depth} (must be >= 1)")
+        )
     for pf in pack.prefetches:
         if getattr(pf, "buffers", 1) not in (1, 2):
-            diags.append(Diagnostic(
-                "R10", f"prefetch {pf.name}: invalid buffer count {pf.buffers} (1 or 2)"))
+            diags.append(
+                Diagnostic("R10", f"prefetch {pf.name}: invalid buffer count {pf.buffers} (1 or 2)")
+            )
 
     # R10: stream provenance -- every segment maps back to a live BCIR claim.
     for seg in pack.segments:
         if seg.claim_id not in traced:
-            diags.append(Diagnostic(
-                "R10", f"segment {seg.name}: no trace note for claim {seg.claim_id}"))
+            diags.append(
+                Diagnostic("R10", f"segment {seg.name}: no trace note for claim {seg.claim_id}")
+            )
         if seg.claim_id not in claims:
-            diags.append(Diagnostic(
-                "R10", f"segment {seg.name}: references unknown claim {seg.claim_id}"))
+            diags.append(
+                Diagnostic("R10", f"segment {seg.name}: references unknown claim {seg.claim_id}")
+            )
         for rid in tuple(seg.reads) + tuple(seg.writes):
             if module.resource(rid) is None:
-                diags.append(Diagnostic(
-                    "R10", f"segment {seg.name}: references undeclared RID {rid}"))
+                diags.append(
+                    Diagnostic("R10", f"segment {seg.name}: references undeclared RID {rid}")
+                )
         if seg.prefetch is not None and seg.prefetch not in prefetches:
-            diags.append(Diagnostic(
-                "R10", f"segment {seg.name}: undeclared prefetch {seg.prefetch!r}"))
+            diags.append(
+                Diagnostic("R10", f"segment {seg.name}: undeclared prefetch {seg.prefetch!r}")
+            )
         # R10: a declared prefetch must actually FEED this segment -- at least one of its
         # read RIDs must be a prefetch target (hydrate sets pf.targets == claim.rd). A
         # redirected/swapped target (no read covered) is a broken provenance binding the
@@ -734,10 +814,13 @@ def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
         elif seg.prefetch is not None and seg.reads:
             tgts = pf_targets.get(seg.prefetch, set())
             if not (set(seg.reads) & tgts):
-                diags.append(Diagnostic(
-                    "R10",
-                    f"segment {seg.name}: prefetch {seg.prefetch!r} feeds no read RID "
-                    f"(targets {sorted(tgts)} disjoint from reads {sorted(seg.reads)})"))
+                diags.append(
+                    Diagnostic(
+                        "R10",
+                        f"segment {seg.name}: prefetch {seg.prefetch!r} feeds no read RID "
+                        f"(targets {sorted(tgts)} disjoint from reads {sorted(seg.reads)})",
+                    )
+                )
 
     # R10: the pack is the lowering of THIS plan. Segment-to-claim provenance is not
     # enough on its own: the claim ids can all be right while the realization the pack
@@ -747,22 +830,32 @@ def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
         for seg in pack.segments:
             cand = chosen.get(seg.claim_id)
             if cand is None:
-                diags.append(Diagnostic(
-                    "R10", f"segment {seg.name}: claim {seg.claim_id} is not realized by "
-                           f"the plan this pack is verified against"))
+                diags.append(
+                    Diagnostic(
+                        "R10",
+                        f"segment {seg.name}: claim {seg.claim_id} is not realized by "
+                        f"the plan this pack is verified against",
+                    )
+                )
                 continue
             width = getattr(seg, "width", None)
             if width is not None and int(width) != int(cand.width):
-                diags.append(Diagnostic(
-                    "R10",
-                    f"segment {seg.name}: width {width} but the plan chose "
-                    f"{cand.name!r} at width {cand.width}"))
+                diags.append(
+                    Diagnostic(
+                        "R10",
+                        f"segment {seg.name}: width {width} but the plan chose "
+                        f"{cand.name!r} at width {cand.width}",
+                    )
+                )
             lane = getattr(seg, "lane", None)
             if lane is not None and int(lane) != int(cand.lane):
-                diags.append(Diagnostic(
-                    "R10",
-                    f"segment {seg.name}: lane {lane} but the plan chose "
-                    f"{cand.lane.name} ({int(cand.lane)})"))
+                diags.append(
+                    Diagnostic(
+                        "R10",
+                        f"segment {seg.name}: lane {lane} but the plan chose "
+                        f"{cand.lane.name} ({int(cand.lane)})",
+                    )
+                )
 
     # R11: generation validity -- the pack's tags match the live registry. A
     # mismatch is a stale pack: rehydrate (keep/patch/repack/replan,
@@ -772,25 +865,39 @@ def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
     reg_map = max((r.map_gen for r in module.resources.values()), default=0)
     reg_data = max((r.data_gen for r in module.resources.values()), default=0)
     if pack.map_gen != reg_map:
-        diags.append(Diagnostic(
-            "R11",
-            f"stale StreamPack: map_gen {pack.map_gen} != registry {reg_map} "
-            f"(rehydrate: repack)",
-        ))
+        diags.append(
+            Diagnostic(
+                "R11",
+                f"stale StreamPack: map_gen {pack.map_gen} != registry {reg_map} "
+                f"(rehydrate: repack)",
+            )
+        )
     if pack.data_gen != reg_data:
-        diags.append(Diagnostic(
-            "R11",
-            f"stale StreamPack: data_gen {pack.data_gen} != registry {reg_data} "
-            f"(rehydrate: replan)",
-        ))
+        diags.append(
+            Diagnostic(
+                "R11",
+                f"stale StreamPack: data_gen {pack.data_gen} != registry {reg_data} "
+                f"(rehydrate: replan)",
+            )
+        )
 
     return diags
 
 
 # The textual instruction surface emit_kernel_ll may legally produce (R12: no
 # invented opcodes; the emitter is legal-IR-only).
-_LEGAL_RESULT_OPS = {"phi", "getelementptr", "load", "icmp",
-                     "add", "sub", "mul", "fadd", "fsub", "fmul"}
+_LEGAL_RESULT_OPS = {
+    "phi",
+    "getelementptr",
+    "load",
+    "icmp",
+    "add",
+    "sub",
+    "mul",
+    "fadd",
+    "fsub",
+    "fmul",
+}
 _LEGAL_STMT_OPS = {"store", "br", "ret", "fence"}
 _RESULT_RE = re.compile(r"^%[\w.]+\s*=\s*(\w+)")
 _GUARD_RE = re.compile(r"icmp\s+\w+\s+i64\s+%\w+,\s*%n\b")
@@ -815,12 +922,14 @@ def verify_support_preservation(source, target, mapping=None) -> list[Diagnostic
     diags: list[Diagnostic] = []
     for d in sorted(f.dropped(source, target)):
         tgt = f.dim_map.get(d, d)
-        diags.append(Diagnostic(
-            "R12",
-            f"objective support not preserved: source dimension {d!r} is nonzero "
-            f"but maps to {tgt!r} which the target drops, with no discharge "
-            f"(map {f.name!r})",
-        ))
+        diags.append(
+            Diagnostic(
+                "R12",
+                f"objective support not preserved: source dimension {d!r} is nonzero "
+                f"but maps to {tgt!r} which the target drops, with no discharge "
+                f"(map {f.name!r})",
+            )
+        )
     return diags
 
 
@@ -832,16 +941,19 @@ def verify_commutativity(square, inputs, eq=None) -> list[Diagnostic]:
     """
     diags: list[Diagnostic] = []
     for x in square.mismatches(inputs, eq):
-        diags.append(Diagnostic(
-            "R12",
-            f"conversion paths disagree on {x!r}: lam(psi(x)) != phi(x) -- the "
-            f"square {square.name!r} does not commute (Λ∘Ψ ≠ Φ)",
-        ))
+        diags.append(
+            Diagnostic(
+                "R12",
+                f"conversion paths disagree on {x!r}: lam(psi(x)) != phi(x) -- the "
+                f"square {square.name!r} does not commute (Λ∘Ψ ≠ Φ)",
+            )
+        )
     return diags
 
 
-def verify_lowering(module: Module, result, ll_text: str, elem: str = "f32",
-                    width_override: int | None = None) -> list[Diagnostic]:
+def verify_lowering(
+    module: Module, result, ll_text: str, elem: str = "f32", width_override: int | None = None
+) -> list[Diagnostic]:
     """Lowering law R12: the emitted LLVM IR preserves the BCIR semantic (lane
     geometry, bounds, hazard, precision) or carries an explicit discharge note.
 
@@ -874,11 +986,13 @@ def verify_lowering(module: Module, result, ll_text: str, elem: str = "f32",
     base_w = width_override if width_override else cand.width
     expected_w = base_w if (base_w >= 1 and n % base_w == 0) else 1
     if declared_w != expected_w:
-        diags.append(Diagnostic(
-            "R12",
-            f"lane geometry not preserved: realized width {declared_w} != "
-            f"selected width {expected_w} (candidate {cand.name})",
-        ))
+        diags.append(
+            Diagnostic(
+                "R12",
+                f"lane geometry not preserved: realized width {declared_w} != "
+                f"selected width {expected_w} (candidate {cand.name})",
+            )
+        )
 
     # Precision + geometry of the kernel op: the compute instruction operates on
     # the contracted element type at the realized width.
@@ -886,44 +1000,61 @@ def verify_lowering(module: Module, result, ll_text: str, elem: str = "f32",
     op_ll = _IOP[claim.opcode] if elem == "i32" else _FOP[claim.opcode][0]
     kernel_ty = f"<{declared_w} x {ety}>" if declared_w > 1 else ety
     if f"{op_ll} {kernel_ty}" not in ll_text:
-        diags.append(Diagnostic(
-            "R12", f"precision not preserved: kernel op '{op_ll} {kernel_ty}' not emitted"))
+        diags.append(
+            Diagnostic(
+                "R12", f"precision not preserved: kernel op '{op_ll} {kernel_ty}' not emitted"
+            )
+        )
     if declared_w == 1 and f"x {ety}>" in ll_text:
-        diags.append(Diagnostic(
-            "R12", "lane geometry not preserved: vector types in a scalar lowering"))
+        diags.append(
+            Diagnostic("R12", "lane geometry not preserved: vector types in a scalar lowering")
+        )
 
     # No invented instructions: every emitted instruction is in the legal set.
     for raw in ll_text.splitlines():
         s = raw.strip()
-        if (not s or s.startswith(";") or s.startswith("source_filename")
-                or s.startswith("define") or s == "}" or s.endswith(":")):
+        if (
+            not s
+            or s.startswith(";")
+            or s.startswith("source_filename")
+            or s.startswith("define")
+            or s == "}"
+            or s.endswith(":")
+        ):
             continue
         rm = _RESULT_RE.match(s)
         op = rm.group(1) if rm else s.split()[0]
         if op not in (_LEGAL_RESULT_OPS | _LEGAL_STMT_OPS):
-            diags.append(Diagnostic(
-                "R12", f"instruction {op!r} outside the legal lowering set"))
+            diags.append(Diagnostic("R12", f"instruction {op!r} outside the legal lowering set"))
 
     # Bounds: a strict bounds contract is discharged by the trip-count guard.
     if claim.bounds == "strict" and not _GUARD_RE.search(ll_text):
-        diags.append(Diagnostic(
-            "R12", "strict bounds contract not discharged (no trip-count guard on %n)"))
+        diags.append(
+            Diagnostic("R12", "strict bounds contract not discharged (no trip-count guard on %n)")
+        )
 
     # Hazard: an ordered hazard contract must materialize as a fence.
     ordering = hazard_to_ordering(claim.hazard)
     if ordering in ("acq_rel", "seq_cst") and "fence" not in ll_text:
-        diags.append(Diagnostic(
-            "R12",
-            f"hazard contract {claim.hazard!r} requires a fence (>= {ordering}) "
-            f"in the lowered kernel",
-        ))
+        diags.append(
+            Diagnostic(
+                "R12",
+                f"hazard contract {claim.hazard!r} requires a fence (>= {ordering}) "
+                f"in the lowered kernel",
+            )
+        )
 
     return diags
 
 
-def verify_c_lowering(module: Module, result, c_text: str, elem: str = "f32",
-                      width_override: int | None = None,
-                      hw_width: int | None = None) -> list[Diagnostic]:
+def verify_c_lowering(
+    module: Module,
+    result,
+    c_text: str,
+    elem: str = "f32",
+    width_override: int | None = None,
+    hw_width: int | None = None,
+) -> list[Diagnostic]:
     """Lowering law R12 for the portable C backend: the emitted C23 kernel
     (`lower.c_kernel.emit_kernel_c`) preserves the K_BCIR-selected realization --
     lane geometry, precision (the contracted element type), bounds (a trip-count
@@ -962,49 +1093,59 @@ def verify_c_lowering(module: Module, result, c_text: str, elem: str = "f32",
     w = int(width_override) if width_override else int(cand.width)
     w = w if w >= 1 else 1
     if declared_w != w:
-        diags.append(Diagnostic(
-            "R12",
-            f"lane geometry not preserved: declared width {declared_w} != selected "
-            f"width {w} (candidate {cand.name})"))
+        diags.append(
+            Diagnostic(
+                "R12",
+                f"lane geometry not preserved: declared width {declared_w} != selected "
+                f"width {w} (candidate {cand.name})",
+            )
+        )
 
     # Lane geometry in the body, width-aware (see the docstring).
     full_lane = hw_width is not None and w == int(hw_width)
     if w == 1:
         if re.search(r"<\s*\d+u", c_text):
-            diags.append(Diagnostic(
-                "R12", "lane geometry not preserved: a vector-width loop in a scalar kernel"))
+            diags.append(
+                Diagnostic(
+                    "R12", "lane geometry not preserved: a vector-width loop in a scalar kernel"
+                )
+            )
     elif full_lane:
         # Go-fast: the idiomatic loop realizes >= the full lane. Geometry is the
         # recorded width (checked above) + a bounds-safe loop; a cap *below* the
         # lane would secretly throttle the backend, so reject it.
         sub_caps = [int(x) for x in re.findall(r"<\s*(\d+)u", c_text) if int(x) < w]
         if sub_caps:
-            diags.append(Diagnostic(
-                "R12", f"lane geometry not preserved: full-width kernel caps below the "
-                       f"hardware lane (found width-{min(sub_caps)} cap, lane is {w})"))
+            diags.append(
+                Diagnostic(
+                    "R12",
+                    f"lane geometry not preserved: full-width kernel caps below the "
+                    f"hardware lane (found width-{min(sub_caps)} cap, lane is {w})",
+                )
+            )
     else:
         # Deliberate sub-maximal throttle: the cap MUST be physically honored, else
         # the compiler widens past the selected (thermal/power-limited) lane.
         if f"< {w}u" not in c_text:
-            diags.append(Diagnostic(
-                "R12", f"lane geometry not preserved: no width-{w} throttle cap emitted"))
+            diags.append(
+                Diagnostic("R12", f"lane geometry not preserved: no width-{w} throttle cap emitted")
+            )
 
     # Precision: the contracted element type on the kernel signature.
     ctype = _ctype(elem)
     if f"const {ctype} " not in c_text:
-        diags.append(Diagnostic(
-            "R12", f"precision not preserved: kernel does not operate on {ctype}"))
+        diags.append(
+            Diagnostic("R12", f"precision not preserved: kernel does not operate on {ctype}")
+        )
 
     # The elementwise op.
     op = C_OP.get(claim.opcode)
     if op and f"] {op} B" not in c_text and f"] {op} B[i]" not in c_text:
-        diags.append(Diagnostic(
-            "R12", f"op not preserved: elementwise '{op}' not emitted"))
+        diags.append(Diagnostic("R12", f"op not preserved: elementwise '{op}' not emitted"))
 
     # Bounds: a trip-count guard on n (the strict bounds contract -> a loop over n).
     if "< n" not in c_text and "<= n" not in c_text:
-        diags.append(Diagnostic(
-            "R12", "bounds not preserved: no trip-count guard on n"))
+        diags.append(Diagnostic("R12", "bounds not preserved: no trip-count guard on n"))
 
     # Non-aliasing: restrict when the read/write resources are disjoint.
     pack = hydrate(module, result)
@@ -1012,9 +1153,13 @@ def verify_c_lowering(module: Module, result, c_text: str, elem: str = "f32",
     reads = tuple(seg.reads) if seg else tuple(claim.rd)
     writes = tuple(seg.writes) if seg else tuple(claim.wr)
     if not (set(reads) & set(writes)) and "restrict" not in c_text:
-        diags.append(Diagnostic(
-            "R12", "aliasing contract not preserved: disjoint operands but no "
-            "restrict-qualified pointers"))
+        diags.append(
+            Diagnostic(
+                "R12",
+                "aliasing contract not preserved: disjoint operands but no "
+                "restrict-qualified pointers",
+            )
+        )
 
     return diags
 
@@ -1031,21 +1176,24 @@ def verify_manifest(manifest, module, h, theta, policy=None, artifacts=()) -> li
     diags: list[Diagnostic] = []
     fresh = build_manifest(module, h, theta, policy or PERF, artifacts)
     if fresh.digest != manifest.digest:
-        diags.append(Diagnostic(
-            "R13",
-            f"manifest digest {manifest.digest} != recomputed {fresh.digest} "
-            f"(changed components: {fresh.diff(manifest)})",
-        ))
+        diags.append(
+            Diagnostic(
+                "R13",
+                f"manifest digest {manifest.digest} != recomputed {fresh.digest} "
+                f"(changed components: {fresh.diff(manifest)})",
+            )
+        )
         return diags
     if fresh.score != manifest.score:
-        diags.append(Diagnostic(
-            "R13",
-            f"manifest is not reproducible: recorded score {manifest.score} != "
-            f"replayed {fresh.score}",
-        ))
+        diags.append(
+            Diagnostic(
+                "R13",
+                f"manifest is not reproducible: recorded score {manifest.score} != "
+                f"replayed {fresh.score}",
+            )
+        )
     if fresh.widths != manifest.widths:
-        diags.append(Diagnostic(
-            "R13", "manifest is not reproducible: replayed plan shape differs"))
+        diags.append(Diagnostic("R13", "manifest is not reproducible: replayed plan shape differs"))
     return diags
 
 
@@ -1070,49 +1218,61 @@ def verify_memory(mm, generation=None, *, recheck=True) -> list[Diagnostic]:
 
     # R13: the fixpoint witness. A budget cutoff is not Lim(Res(U)).
     if not mm.saturated:
-        diags.append(Diagnostic(
-            "R13",
-            f"memory module is not a fixpoint: saturated == False after "
-            f"{mm.iterations} round(s) -- a budget cutoff Res^k(U), not "
-            f"Lim(Res(U)); not admissible as memory",
-        ))
+        diags.append(
+            Diagnostic(
+                "R13",
+                f"memory module is not a fixpoint: saturated == False after "
+                f"{mm.iterations} round(s) -- a budget cutoff Res^k(U), not "
+                f"Lim(Res(U)); not admissible as memory",
+            )
+        )
 
     # R13: a frozen artifact must be generation-tagged (immutable within a gen).
     if mm.generation < 1:
-        diags.append(Diagnostic(
-            "R13",
-            f"memory module has no generation tag (generation {mm.generation}); "
-            f"a frozen artifact is immutable within a generation and must carry one",
-        ))
+        diags.append(
+            Diagnostic(
+                "R13",
+                f"memory module has no generation tag (generation {mm.generation}); "
+                f"a frozen artifact is immutable within a generation and must carry one",
+            )
+        )
     elif generation is not None and mm.generation != generation:
-        diags.append(Diagnostic(
-            "R13",
-            f"memory module generation {mm.generation} != expected {generation}",
-        ))
+        diags.append(
+            Diagnostic(
+                "R13",
+                f"memory module generation {mm.generation} != expected {generation}",
+            )
+        )
 
     # R13: independent fixpoint recheck (tamper-evidence). Re-resolving the stored
     # representative must reproduce it, saturated -- idempotence Res(Lim) = Lim.
     if recheck and mm.saturated:
         again = try_freeze(mm.expr, generation=mm.generation, costs=_costs_for(mm.expr))
         if not again.saturated:
-            diags.append(Diagnostic(
-                "R13",
-                "memory module fails the fixpoint recheck: its representative does "
-                "not re-resolve to saturation (the recorded witness is unsound)",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    "memory module fails the fixpoint recheck: its representative does "
+                    "not re-resolve to saturation (the recorded witness is unsound)",
+                )
+            )
         elif again.expr != mm.expr:
-            diags.append(Diagnostic(
-                "R13",
-                "memory module is not idempotent: re-resolving its representative "
-                "yields a different form, so it is not Lim(Res(U)) (tampered or "
-                "frozen before saturation)",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    "memory module is not idempotent: re-resolving its representative "
+                    "yields a different form, so it is not Lim(Res(U)) (tampered or "
+                    "frozen before saturation)",
+                )
+            )
         elif again.fingerprint != mm.fingerprint:
-            diags.append(Diagnostic(
-                "R13",
-                f"memory module fingerprint {mm.fingerprint} != recomputed "
-                f"{again.fingerprint} (content does not match its hash)",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    f"memory module fingerprint {mm.fingerprint} != recomputed "
+                    f"{again.fingerprint} (content does not match its hash)",
+                )
+            )
 
     return diags
 
@@ -1128,18 +1288,22 @@ def verify_calibration(cert) -> list[Diagnostic]:
     """
     diags: list[Diagnostic] = []
     if cert.cal_gen < 1:
-        diags.append(Diagnostic(
-            "R13",
-            f"calibration table is not generation-tagged (cal_gen {cert.cal_gen}); "
-            f"a measured table must be frozen + tagged before it is deployed",
-        ))
+        diags.append(
+            Diagnostic(
+                "R13",
+                f"calibration table is not generation-tagged (cal_gen {cert.cal_gen}); "
+                f"a measured table must be frozen + tagged before it is deployed",
+            )
+        )
     if cert.win < 0:
-        diags.append(Diagnostic(
-            "R13",
-            f"calibration loop regressed: win {cert.win} < 0 (stale cost "
-            f"{cert.stale_cost} < recalibrated {cert.calibrated_cost}); the "
-            f"recalibrated plan is not optimal under the measured model",
-        ))
+        diags.append(
+            Diagnostic(
+                "R13",
+                f"calibration loop regressed: win {cert.win} < 0 (stale cost "
+                f"{cert.stale_cost} < recalibrated {cert.calibrated_cost}); the "
+                f"recalibrated plan is not optimal under the measured model",
+            )
+        )
     return diags
 
 
@@ -1170,11 +1334,13 @@ def verify_cim(pack) -> list[Diagnostic]:
     diags: list[Diagnostic] = []
     for seg in pack.segments:
         if getattr(seg, "dispatch", "core") == "pim" and not seg.opcode.startswith("reduce."):
-            diags.append(Diagnostic(
-                "R14",
-                f"segment {seg.name}: pim dispatch illegal for non-reduction op "
-                f"{seg.opcode!r} (claim {seg.claim_id})",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R14",
+                    f"segment {seg.name}: pim dispatch illegal for non-reduction op "
+                    f"{seg.opcode!r} (claim {seg.claim_id})",
+                )
+            )
     return diags
 
 
@@ -1188,17 +1354,21 @@ def verify_dvfs(plan) -> list[Diagnostic]:
     diags: list[Diagnostic] = []
     for d in plan.decisions:
         if not (_CLOCK_MIN_Q8 <= d.clock_q8 <= _CLOCK_MAX_Q8):
-            diags.append(Diagnostic(
-                "R15",
-                f"phase {d.phase_id}: clock_q8 {d.clock_q8} out of legal range "
-                f"[{_CLOCK_MIN_Q8}, {_CLOCK_MAX_Q8}]",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R15",
+                    f"phase {d.phase_id}: clock_q8 {d.clock_q8} out of legal range "
+                    f"[{_CLOCK_MIN_Q8}, {_CLOCK_MAX_Q8}]",
+                )
+            )
         elif d.klass == "memory" and d.clock_q8 > _CLOCK_NOMINAL_Q8:
-            diags.append(Diagnostic(
-                "R15",
-                f"phase {d.phase_id}: memory-bound phase must not overclock "
-                f"(clock_q8 {d.clock_q8} > {_CLOCK_NOMINAL_Q8})",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R15",
+                    f"phase {d.phase_id}: memory-bound phase must not overclock "
+                    f"(clock_q8 {d.clock_q8} > {_CLOCK_NOMINAL_Q8})",
+                )
+            )
     return diags
 
 
@@ -1225,11 +1395,12 @@ def verify_allocator(module: Module, placement) -> list[Diagnostic]:
         # element). Using 4 here keeps the two rails in lock-step at the cap boundary.
         nbytes = res.count * 4
         if nbytes > cap:
-            diags.append(Diagnostic(
-                "R16",
-                f"placement {tier.name} does not fit RID {rid} "
-                f"({nbytes} B > {cap} B)",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R16",
+                    f"placement {tier.name} does not fit RID {rid} ({nbytes} B > {cap} B)",
+                )
+            )
     return diags
 
 
@@ -1253,12 +1424,14 @@ def verify_accuracy(module: Module) -> list[Diagnostic]:
             compensated = getattr(claim, "precision", "") == "compensated"
             bound = accuracy_bound(claim, compensated=compensated)
             if bound > tol:
-                diags.append(Diagnostic(
-                    "R17",
-                    f"claim {claim.id} accuracy bound {bound} ULP exceeds tolerance {tol} "
-                    f"ULP (precision={claim.precision or 'naive'!r}; a compensated "
-                    f"reduction would bound it at 1)",
-                ))
+                diags.append(
+                    Diagnostic(
+                        "R17",
+                        f"claim {claim.id} accuracy bound {bound} ULP exceeds tolerance {tol} "
+                        f"ULP (precision={claim.precision or 'naive'!r}; a compensated "
+                        f"reduction would bound it at 1)",
+                    )
+                )
     return diags
 
 
@@ -1280,35 +1453,63 @@ def verify_timing(module: Module) -> list[Diagnostic]:
     `sync_type='mixed'` OR a `barriered` hazard (the synchronizer / handshake, modeled on the existing
     `!bcir.token` fork/await + barrier machinery). An unguarded crossing is a metastability risk."""
     diags: list[Diagnostic] = []
-    writer_domain: dict[int, str] = {}          # rid -> clock_domain of the last claim that WROTE it
+    writer_domain: dict[int, str] = {}  # rid -> clock_domain of the last claim that WROTE it
     for ph in module.phases:
         for claim in ph.claims:
             tm = getattr(claim, "timing", None)
             if tm is not None:
                 if tm.sync_type not in _SYNC_TYPES:
-                    diags.append(Diagnostic("R19", f"claim {claim.id}: unknown sync_type {tm.sync_type!r}"))
+                    diags.append(
+                        Diagnostic("R19", f"claim {claim.id}: unknown sync_type {tm.sync_type!r}")
+                    )
                 if tm.latency_cycles < 0:
-                    diags.append(Diagnostic("R19", f"claim {claim.id}: negative latency_cycles {tm.latency_cycles}"))
+                    diags.append(
+                        Diagnostic(
+                            "R19", f"claim {claim.id}: negative latency_cycles {tm.latency_cycles}"
+                        )
+                    )
                 if tm.setup_hold_margin < 0:
-                    diags.append(Diagnostic("R19", f"claim {claim.id}: negative setup_hold_margin {tm.setup_hold_margin}"))
+                    diags.append(
+                        Diagnostic(
+                            "R19",
+                            f"claim {claim.id}: negative setup_hold_margin {tm.setup_hold_margin}",
+                        )
+                    )
                 if tm.clock_frequency_mhz < 0:
-                    diags.append(Diagnostic("R19", f"claim {claim.id}: negative clock_frequency_mhz {tm.clock_frequency_mhz}"))
+                    diags.append(
+                        Diagnostic(
+                            "R19",
+                            f"claim {claim.id}: negative clock_frequency_mhz {tm.clock_frequency_mhz}",
+                        )
+                    )
                 if tm.sync_type == "synchronous" and tm.clock_frequency_mhz <= 0:
-                    diags.append(Diagnostic("R19", f"claim {claim.id}: a synchronous claim needs a positive clock_frequency_mhz"))
+                    diags.append(
+                        Diagnostic(
+                            "R19",
+                            f"claim {claim.id}: a synchronous claim needs a positive clock_frequency_mhz",
+                        )
+                    )
                 if tm.latency_cycles > 0 and tm.setup_hold_margin > tm.latency_cycles:
-                    diags.append(Diagnostic(
-                        "R19", f"claim {claim.id}: setup_hold_margin {tm.setup_hold_margin} exceeds the "
-                        f"stage latency_cycles {tm.latency_cycles}"))
+                    diags.append(
+                        Diagnostic(
+                            "R19",
+                            f"claim {claim.id}: setup_hold_margin {tm.setup_hold_margin} exceeds the "
+                            f"stage latency_cycles {tm.latency_cycles}",
+                        )
+                    )
                 synchronized = (tm.sync_type == "mixed") or (claim.hazard == "barriered")
                 if tm.clock_domain and not synchronized:
                     for rid in claim.rd:
                         pdom = writer_domain.get(rid)
                         if pdom and pdom != tm.clock_domain:
-                            diags.append(Diagnostic(
-                                "R20",
-                                f"claim {claim.id}: reads RID {rid} from clock domain {pdom!r} into "
-                                f"{tm.clock_domain!r} without a synchronizer (declare sync_type='mixed' or "
-                                f"a barriered hazard) -- an unguarded clock-domain crossing"))
+                            diags.append(
+                                Diagnostic(
+                                    "R20",
+                                    f"claim {claim.id}: reads RID {rid} from clock domain {pdom!r} into "
+                                    f"{tm.clock_domain!r} without a synchronizer (declare sync_type='mixed' or "
+                                    f"a barriered hazard) -- an unguarded clock-domain crossing",
+                                )
+                            )
             dom = tm.clock_domain if tm is not None else ""
             for rid in claim.wr:
                 writer_domain[rid] = dom
@@ -1336,23 +1537,29 @@ def verify_lifetime(module: Module) -> list[Diagnostic]:
     tolerance. It becomes load-bearing once a frontend annotates its malloc/free (the lifetime rewrite of
     naked pointers), catching the dangling access the C program would have left UB."""
     diags: list[Diagnostic] = []
-    freed: set[int] = set()                       # resources freed and not yet re-allocated
+    freed: set[int] = set()  # resources freed and not yet re-allocated
     for ph in module.phases:
         for claim in ph.claims:
             lt = getattr(claim, "lifetime", None)
             event = lt.event if lt is not None else "use"
             if lt is not None and event not in _LIFETIME_EVENTS:
-                diags.append(Diagnostic("R21", f"claim {claim.id}: unknown lifetime event {event!r}"))
+                diags.append(
+                    Diagnostic("R21", f"claim {claim.id}: unknown lifetime event {event!r}")
+                )
                 event = "use"
-            for rid in claim.rd:                  # a READ of a freed resource is the dangling dereference
+            for rid in claim.rd:  # a READ of a freed resource is the dangling dereference
                 if rid in freed:
                     kind = "double-free" if event == "free" else "use-after-free"
-                    diags.append(Diagnostic(
-                        "R21", f"claim {claim.id}: {kind} of RID {rid} (freed and not re-allocated)"))
-            if event == "free":                   # the read resources die after this claim
+                    diags.append(
+                        Diagnostic(
+                            "R21",
+                            f"claim {claim.id}: {kind} of RID {rid} (freed and not re-allocated)",
+                        )
+                    )
+            if event == "free":  # the read resources die after this claim
                 for rid in claim.rd:
                     freed.add(rid)
-            for rid in claim.wr:                  # a WRITE (reassignment / alloc) re-validates the resource
+            for rid in claim.wr:  # a WRITE (reassignment / alloc) re-validates the resource
                 freed.discard(rid)
     return diags
 
@@ -1375,17 +1582,19 @@ def verify_shape(module: Module) -> list[Diagnostic]:
                 for rid in claim.rd:
                     prod = writer.get(rid)
                     if prod is not None and prod.count != claim.count:
-                        diags.append(Diagnostic(
-                            "R22",
-                            f"claim {claim.id}: gem seam over RID {rid} is shape-inconsistent -- "
-                            f"producer claim {prod.id} hands over {prod.count} elements, the "
-                            f"consumer declares {claim.count}",
-                        ))
+                        diags.append(
+                            Diagnostic(
+                                "R22",
+                                f"claim {claim.id}: gem seam over RID {rid} is shape-inconsistent -- "
+                                f"producer claim {prod.id} hands over {prod.count} elements, the "
+                                f"consumer declares {claim.count}",
+                            )
+                        )
             for rid in claim.wr:
                 if claim.op.startswith("gem."):
                     writer[rid] = claim
                 else:
-                    writer.pop(rid, None)         # a non-gem rewrite breaks the tensor seam
+                    writer.pop(rid, None)  # a non-gem rewrite breaks the tensor seam
     return diags
 
 
@@ -1401,8 +1610,10 @@ def verify_ml_spec(family: str, errors: list[str]) -> list[Diagnostic]:
     (cost-side, importing no verifier -- the two-truth quarantine); the CALLER runs the checker
     and passes its messages here, so the sanctioned import direction is preserved and THIS
     function owns the law numbering."""
-    return [Diagnostic("R23" if ("dtype" in msg or "f32" in msg) else "R22", f"{family}: {msg}")
-            for msg in errors]
+    return [
+        Diagnostic("R23" if ("dtype" in msg or "f32" in msg) else "R22", f"{family}: {msg}")
+        for msg in errors
+    ]
 
 
 def verify_barrier_ordering(module: Module, result) -> list[Diagnostic]:
@@ -1427,27 +1638,31 @@ def verify_barrier_ordering(module: Module, result) -> list[Diagnostic]:
     for ph in module.phases:
         declared = [c.id for c in ph.claims]
         if not any(c.hazard == "barriered" for c in ph.claims):
-            continue                              # no fence in this phase: nothing to enforce
+            continue  # no fence in this phase: nothing to enforce
         order = realized.get(ph.phase_id)
         if order is None:
-            continue                              # phase not realized by this plan (nothing to check)
+            continue  # phase not realized by this plan (nothing to check)
         pos = {cid: i for i, cid in enumerate(order)}
         # Every declared (barriered, other) pair must keep its declared relative order: a barrier is a
         # hard ordering edge, so a claim before it stays before it (and after stays after).
         barriers = [c.id for c in ph.claims if c.hazard == "barriered"]
         for i, a in enumerate(declared):
-            for b in declared[i + 1:]:
+            for b in declared[i + 1 :]:
                 if (a in barriers or b in barriers) and a in pos and b in pos:
                     if pos[a] > pos[b]:
-                        diags.append(Diagnostic(
-                            "ASM3b",
-                            f"phase {ph.phase_id}: claim {a} and {b} reordered across a "
-                            f"barriered ordering edge (a barrier is a hard reorder fence)"))
+                        diags.append(
+                            Diagnostic(
+                                "ASM3b",
+                                f"phase {ph.phase_id}: claim {a} and {b} reordered across a "
+                                f"barriered ordering edge (a barrier is a hard reorder fence)",
+                            )
+                        )
     return diags
 
 
-def verify_smart_lowering(module: Module, pack=None, dvfs_plan=None,
-                          placement=None) -> list[Diagnostic]:
+def verify_smart_lowering(
+    module: Module, pack=None, dvfs_plan=None, placement=None
+) -> list[Diagnostic]:
     """Run the smart-lowering laws R14-R17 over whichever artifacts are provided
     (CIM StreamPack, DVFS plan, allocator placement) plus the always-checkable
     accuracy contract (R17) -- the dual-rail counterpart to the MLIR
@@ -1460,9 +1675,9 @@ def verify_smart_lowering(module: Module, pack=None, dvfs_plan=None,
     if placement is not None:
         diags += verify_allocator(module, placement)
     diags += verify_accuracy(module)
-    diags += verify_timing(module)          # R19/R20 over optional claim.timing -- vacuous without it
-    diags += verify_lifetime(module)        # R21 over optional claim.lifetime -- vacuous without it
-    diags += verify_shape(module)           # R22 over gem.* tensor seams -- vacuous without them
+    diags += verify_timing(module)  # R19/R20 over optional claim.timing -- vacuous without it
+    diags += verify_lifetime(module)  # R21 over optional claim.lifetime -- vacuous without it
+    diags += verify_shape(module)  # R22 over gem.* tensor seams -- vacuous without them
     return diags
 
 
@@ -1490,36 +1705,44 @@ def verify_quarantine(verdict_inputs=(), decisions=(), diagnostics=None) -> list
         if not is_classical(x):
             inner = x.value if isinstance(x, Decision) else x
             conf = getattr(inner, "confidence_milli", "?")
-            diags.append(Diagnostic(
-                "R13",
-                f"graded proposition (confidence {conf}/1000, source "
-                f"{getattr(inner, 'source', '?')!r}) crossed into a legality "
-                f"verdict; collapse it with decide() first",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    f"graded proposition (confidence {conf}/1000, source "
+                    f"{getattr(inner, 'source', '?')!r}) crossed into a legality "
+                    f"verdict; collapse it with decide() first",
+                )
+            )
 
     # R13: every recorded collapse is well-formed (auditable).
     for d in decisions:
         if not (0 <= d.confidence_milli <= 1000 and 0 <= d.threshold_milli <= 1000):
-            diags.append(Diagnostic(
-                "R13",
-                f"malformed two-truth collapse (confidence {d.confidence_milli}, "
-                f"threshold {d.threshold_milli}); a crossing must be auditable",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    f"malformed two-truth collapse (confidence {d.confidence_milli}, "
+                    f"threshold {d.threshold_milli}); a crossing must be auditable",
+                )
+            )
         if not is_classical(d.value):
-            diags.append(Diagnostic(
-                "R13",
-                "two-truth collapse still wraps a graded value; decide() must "
-                "yield classical truth",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    "two-truth collapse still wraps a graded value; decide() must "
+                    "yield classical truth",
+                )
+            )
 
     # R13: a verdict is classical -- a Diagnostic may not carry a confidence.
-    for diag in (diagnostics or ()):
+    for diag in diagnostics or ():
         if isinstance(diag, Graded) or hasattr(diag, "confidence_milli"):
-            diags.append(Diagnostic(
-                "R13",
-                "a legality verdict carries a confidence; classical truth is "
-                "binary (graded verdicts are quarantined out of the laws)",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    "a legality verdict carries a confidence; classical truth is "
+                    "binary (graded verdicts are quarantined out of the laws)",
+                )
+            )
 
     return diags
 
@@ -1547,14 +1770,21 @@ def verify_enriched(operad, root=None) -> list[Diagnostic]:
     for index, reason in operad.problems():
         diags.append(Diagnostic("R13", f"enriched operation {index}: {reason}"))
     if root is not None and operad.get(root) is None:
-        diags.append(Diagnostic(
-            "R13", f"enriched operad root {root} does not resolve"))
+        diags.append(Diagnostic("R13", f"enriched operad root {root} does not resolve"))
     return diags
 
 
-def verify_provenance(portfolio, certificates=(), h=None, table=None,
-                      verdicts=(), gate_certificates=(), accel_certificates=(),
-                      amortization_certificates=(), memory_modules=()) -> list[Diagnostic]:
+def verify_provenance(
+    portfolio,
+    certificates=(),
+    h=None,
+    table=None,
+    verdicts=(),
+    gate_certificates=(),
+    accel_certificates=(),
+    amortization_certificates=(),
+    memory_modules=(),
+) -> list[Diagnostic]:
     """Policy/table provenance law R13: every decision rule in force carries a
     generation tag and an admitting certificate -- rule swaps and table
     applications are never silent -- and every boundary verdict carries an MDL
@@ -1582,12 +1812,14 @@ def verify_provenance(portfolio, certificates=(), h=None, table=None,
     # classify router). The network proposes a route; the verifier disposes.
     for cert in gate_certificates:
         if not cert.admitted:
-            diags.append(Diagnostic(
-                "R13",
-                f"learned gate {cert.candidate!r} cannot deploy: replay gate "
-                f"not passed ({cert.regressions} regression(s) over "
-                f"{cert.episodes} episode(s) vs {cert.incumbent!r})",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    f"learned gate {cert.candidate!r} cannot deploy: replay gate "
+                    f"not passed ({cert.regressions} regression(s) over "
+                    f"{cert.episodes} episode(s) vs {cert.incumbent!r})",
+                )
+            )
 
     # R13: search-accelerator provenance -- a learned candidate ordering
     # (kbcir.accel) speeds the exact search but must reproduce the exact optimum.
@@ -1595,11 +1827,13 @@ def verify_provenance(portfolio, certificates=(), h=None, table=None,
     # mismatches; ordering changes work, never the result.
     for cert in accel_certificates:
         if not cert.admitted:
-            diags.append(Diagnostic(
-                "R13",
-                f"search accelerator {cert.order_name!r} changed the optimum: "
-                f"{cert.mismatches} mismatch(es) over {cert.checked} case(s)",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    f"search accelerator {cert.order_name!r} changed the optimum: "
+                    f"{cert.mismatches} mismatch(es) over {cert.checked} case(s)",
+                )
+            )
 
     # R13: amortization provenance (the L1 cost throttle) -- a deployed learned
     # component must belong at its tier: the L0 prohibition (no inference on the
@@ -1607,19 +1841,23 @@ def verify_provenance(portfolio, certificates=(), h=None, table=None,
     # tier's inference budget. Performance is throttled where it matters.
     for cert in amortization_certificates:
         if cert.tier == "L0" and cert.inference_cost != 0:
-            diags.append(Diagnostic(
-                "R13",
-                f"component {cert.component!r} at L0 runs learned inference "
-                f"(cost {cert.inference_cost}); the hot path carries decisions, "
-                f"not models",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    f"component {cert.component!r} at L0 runs learned inference "
+                    f"(cost {cert.inference_cost}); the hot path carries decisions, "
+                    f"not models",
+                )
+            )
         elif not cert.admitted:
-            diags.append(Diagnostic(
-                "R13",
-                f"component {cert.component!r} fails amortization at {cert.tier}: "
-                f"gain {cert.gain} vs inference_cost {cert.inference_cost}, "
-                f"budget {cert._budget()}",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    f"component {cert.component!r} fails amortization at {cert.tier}: "
+                    f"gain {cert.gain} vs inference_cost {cert.inference_cost}, "
+                    f"budget {cert._budget()}",
+                )
+            )
 
     # R13: boundary-verdict provenance -- a retune recommendation must be backed
     # by description-length evidence (data_fit > complexity), and a keep must not
@@ -1628,17 +1866,21 @@ def verify_provenance(portfolio, certificates=(), h=None, table=None,
     for v in verdicts:
         justified = v.data_fit_nats > v.complexity_nats
         if v.verdict == "retune" and not justified:
-            diags.append(Diagnostic(
-                "R13",
-                f"retune verdict for {v.rule!r} is unjustified: data_fit "
-                f"{v.data_fit_nats:.3f} <= complexity {v.complexity_nats:.3f}",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    f"retune verdict for {v.rule!r} is unjustified: data_fit "
+                    f"{v.data_fit_nats:.3f} <= complexity {v.complexity_nats:.3f}",
+                )
+            )
         if v.verdict == "keep" and justified:
-            diags.append(Diagnostic(
-                "R13",
-                f"keep verdict for {v.rule!r} ignores justified regret: data_fit "
-                f"{v.data_fit_nats:.3f} > complexity {v.complexity_nats:.3f}",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    f"keep verdict for {v.rule!r} ignores justified regret: data_fit "
+                    f"{v.data_fit_nats:.3f} > complexity {v.complexity_nats:.3f}",
+                )
+            )
 
     # R13: gain-schedule provenance -- a promoted (gen > 1) certified entry must
     # be backed by an admitting replay certificate covering exactly that swap.
@@ -1647,42 +1889,53 @@ def verify_provenance(portfolio, certificates=(), h=None, table=None,
             if not entry.certified:
                 continue
             if entry.gen < 1:
-                diags.append(Diagnostic(
-                    "R13", f"certified policy {slot!r} has no generation tag"))
+                diags.append(Diagnostic("R13", f"certified policy {slot!r} has no generation tag"))
             if entry.gen > 1:
-                covering = [c for c in certificates
-                            if c.admitted and c.candidate == entry.policy.name
-                            and c.incumbent == slot]
+                covering = [
+                    c
+                    for c in certificates
+                    if c.admitted and c.candidate == entry.policy.name and c.incumbent == slot
+                ]
                 if not covering:
-                    diags.append(Diagnostic(
-                        "R13",
-                        f"promoted policy {slot!r} (gen {entry.gen}) has no "
-                        f"admitting replay certificate",
-                    ))
+                    diags.append(
+                        Diagnostic(
+                            "R13",
+                            f"promoted policy {slot!r} (gen {entry.gen}) has no "
+                            f"admitting replay certificate",
+                        )
+                    )
 
     # R13: cost-table provenance -- a profile claiming calibration must present
     # the certified table it was calibrated under, with matching generation and
     # constants (no silent drift between the table and the rule in force).
     if h is not None and getattr(h, "cal_gen", 0) >= 1:
         if table is None:
-            diags.append(Diagnostic(
-                "R13",
-                f"profile {h.name!r} claims cal_gen {h.cal_gen} but presents "
-                f"no certified table",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    f"profile {h.name!r} claims cal_gen {h.cal_gen} but presents "
+                    f"no certified table",
+                )
+            )
         elif table.cal_gen != h.cal_gen:
-            diags.append(Diagnostic(
-                "R13",
-                f"stale calibration: profile cal_gen {h.cal_gen} != table "
-                f"cal_gen {table.cal_gen} (recalibrate or rehydrate)",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    f"stale calibration: profile cal_gen {h.cal_gen} != table "
+                    f"cal_gen {table.cal_gen} (recalibrate or rehydrate)",
+                )
+            )
         elif (h.gather_penalty, h.base_overhead, h.mem_unit) != (
-                table.gather_penalty, table.base_overhead, table.mem_unit):
-            diags.append(Diagnostic(
-                "R13",
-                f"profile constants drifted from the certified table "
-                f"(cal_gen {h.cal_gen})",
-            ))
+            table.gather_penalty,
+            table.base_overhead,
+            table.mem_unit,
+        ):
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    f"profile constants drifted from the certified table (cal_gen {h.cal_gen})",
+                )
+            )
 
     # R13: conformal-guarantee provenance -- a Bayesian-calibrated table that
     # claims a coverage level must carry a valid coverage in (0,1) and a
@@ -1693,23 +1946,33 @@ def verify_provenance(portfolio, certificates=(), h=None, table=None,
         delta = getattr(table, "random_delta_q8", 0)
         samples = getattr(getattr(table, "point", None), "samples", 0)
         if not (0 < cov < 1000):
-            diags.append(Diagnostic(
-                "R13", f"conformal coverage {cov}/1000 out of range (0,1000)"))
+            diags.append(Diagnostic("R13", f"conformal coverage {cov}/1000 out of range (0,1000)"))
         if delta < 0:
             diags.append(Diagnostic("R13", "conformal delta must be >= 0"))
         if delta > 0 and samples <= 1:
-            diags.append(Diagnostic(
-                "R13",
-                f"conformal interval (delta {delta}) certified from {samples} "
-                f"sample(s): a coverage guarantee needs >= 2 observations",
-            ))
+            diags.append(
+                Diagnostic(
+                    "R13",
+                    f"conformal interval (delta {delta}) certified from {samples} "
+                    f"sample(s): a coverage guarantee needs >= 2 observations",
+                )
+            )
 
     return diags
 
 
-def verify_all(module: Module, result=None, pack=None, ll_text: str | None = None,
-               elem: str = "f32", width_override: int | None = None,
-               h=None, theta=None, policy=None, budget=None) -> list[Diagnostic]:
+def verify_all(
+    module: Module,
+    result=None,
+    pack=None,
+    ll_text: str | None = None,
+    elem: str = "f32",
+    width_override: int | None = None,
+    h=None,
+    theta=None,
+    policy=None,
+    budget=None,
+) -> list[Diagnostic]:
     """Run the R1-R12 chain (and EV1-EV3) over every artifact provided (R13 attaches to
     the decision rules, not the module: see `verify_provenance`).
 

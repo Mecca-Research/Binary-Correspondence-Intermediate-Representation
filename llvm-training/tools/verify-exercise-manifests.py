@@ -12,13 +12,27 @@ from pathlib import Path
 from typing import Any
 
 CHECK_TYPES = {
-    "file_exists", "non_empty", "llvm_assemble", "llvm_verify", "mlir_parse",
-    "contains_symbol", "contains_instruction", "contains_metadata", "forbids_pattern",
-    "run_and_compare", "expected_diagnostic", "rubric_terms", "custom_script",
+    "file_exists",
+    "non_empty",
+    "llvm_assemble",
+    "llvm_verify",
+    "mlir_parse",
+    "contains_symbol",
+    "contains_instruction",
+    "contains_metadata",
+    "forbids_pattern",
+    "run_and_compare",
+    "expected_diagnostic",
+    "rubric_terms",
+    "custom_script",
 }
 ANSWER_KINDS = {
-    "llvm_ir", "markdown_review", "optimizer_prediction", "mlir_review",
-    "diagnostic", "adversarial_analysis",
+    "llvm_ir",
+    "markdown_review",
+    "optimizer_prediction",
+    "mlir_review",
+    "diagnostic",
+    "adversarial_analysis",
 }
 TOOLS = {"FileCheck", "clang", "lli", "llc", "llvm-as", "mlir-opt", "opt", "python3"}
 TOOL_FOR_CHECK = {
@@ -27,18 +41,50 @@ TOOL_FOR_CHECK = {
     "mlir_parse": "mlir-opt",
 }
 REQUIRED_FIELDS = {
-    "id", "title", "prompt", "solution", "answer_kind", "required_tools",
-    "minimum_tool_versions", "tool_absence_policy", "checks", "score", "tags",
-    "difficulty", "license", "determinism", "timeout_seconds",
+    "id",
+    "title",
+    "prompt",
+    "solution",
+    "answer_kind",
+    "required_tools",
+    "minimum_tool_versions",
+    "tool_absence_policy",
+    "checks",
+    "score",
+    "tags",
+    "difficulty",
+    "license",
+    "determinism",
+    "timeout_seconds",
 }
 CHECK_FIELDS = {
-    "id", "type", "points", "path", "tool", "symbol", "instruction", "metadata",
-    "pattern", "command", "expected_stdout", "diagnostic", "terms", "mode",
+    "id",
+    "type",
+    "points",
+    "path",
+    "tool",
+    "symbol",
+    "instruction",
+    "metadata",
+    "pattern",
+    "command",
+    "expected_stdout",
+    "diagnostic",
+    "terms",
+    "mode",
 }
 PATH_CHECKS = {
-    "file_exists", "non_empty", "llvm_assemble", "llvm_verify", "mlir_parse",
-    "contains_symbol", "contains_instruction", "contains_metadata", "forbids_pattern",
-    "expected_diagnostic", "rubric_terms",
+    "file_exists",
+    "non_empty",
+    "llvm_assemble",
+    "llvm_verify",
+    "mlir_parse",
+    "contains_symbol",
+    "contains_instruction",
+    "contains_metadata",
+    "forbids_pattern",
+    "expected_diagnostic",
+    "rubric_terms",
 }
 VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+){0,2}$")
 ID_RE = re.compile(r"^(?:[0-9]{3}|adv-[a-z0-9][a-z0-9-]*)$")
@@ -100,7 +146,12 @@ def validate_check(
     if check_type not in CHECK_TYPES:
         errors.append(f"{label}.type: unsupported check type {check_type!r}")
     points = check.get("points")
-    if isinstance(points, bool) or not isinstance(points, (int, float)) or points < 0 or not math.isfinite(points):
+    if (
+        isinstance(points, bool)
+        or not isinstance(points, (int, float))
+        or points < 0
+        or not math.isfinite(points)
+    ):
         errors.append(f"{label}.points: expected a finite non-negative number")
         points = 0.0
 
@@ -182,7 +233,9 @@ def validate_manifest(path: Path, data: Any, repo_root: Path, errors: list[str])
             allowed = {"expected_tier", "classification", "registry_sources"}
             unknown_mlir = set(mlir_validation) - allowed
             if unknown_mlir:
-                errors.append(f"{path}: unknown mlir_validation fields: {', '.join(sorted(unknown_mlir))}")
+                errors.append(
+                    f"{path}: unknown mlir_validation fields: {', '.join(sorted(unknown_mlir))}"
+                )
             tier = mlir_validation.get("expected_tier")
             classification = mlir_validation.get("classification")
             expected_class = {
@@ -193,18 +246,26 @@ def validate_manifest(path: Path, data: Any, repo_root: Path, errors: list[str])
                 4: "translated-llvm-ir",
             }.get(tier)
             if expected_class is None or classification != expected_class:
-                errors.append(f"{path}: mlir_validation classification does not match expected_tier")
+                errors.append(
+                    f"{path}: mlir_validation classification does not match expected_tier"
+                )
             sources = mlir_validation.get("registry_sources")
-            if not isinstance(sources, list) or not all(isinstance(source, str) for source in sources):
+            if not isinstance(sources, list) or not all(
+                isinstance(source, str) for source in sources
+            ):
                 errors.append(f"{path}: mlir_validation.registry_sources must be an array of paths")
             else:
                 for source in sources:
-                    repository_path(repo_root, source, f"{path}: mlir_validation.registry_sources", errors)
+                    repository_path(
+                        repo_root, source, f"{path}: mlir_validation.registry_sources", errors
+                    )
     elif mlir_validation is not None:
         errors.append(f"{path}: mlir_validation is only valid for mlir_review exercises")
 
     tools = data.get("required_tools")
-    if not isinstance(tools, list) or not all(isinstance(tool, str) and tool in TOOLS for tool in tools):
+    if not isinstance(tools, list) or not all(
+        isinstance(tool, str) and tool in TOOLS for tool in tools
+    ):
         errors.append(f"{path}: required_tools must contain only declared tool names")
         tools = []
     elif len(tools) != len(set(tools)):
@@ -219,14 +280,22 @@ def validate_manifest(path: Path, data: Any, repo_root: Path, errors: list[str])
         missing_versions = declared_tools - set(versions)
         extra_versions = set(versions) - declared_tools
         if missing_versions:
-            errors.append(f"{path}: missing minimum versions for: {', '.join(sorted(missing_versions))}")
+            errors.append(
+                f"{path}: missing minimum versions for: {', '.join(sorted(missing_versions))}"
+            )
         if extra_versions:
-            errors.append(f"{path}: versions declared for unused tools: {', '.join(sorted(extra_versions))}")
+            errors.append(
+                f"{path}: versions declared for unused tools: {', '.join(sorted(extra_versions))}"
+            )
     for tool, version in versions.items():
         if tool not in TOOLS or not isinstance(version, str) or not VERSION_RE.fullmatch(version):
             errors.append(f"{path}: invalid minimum version for {tool!r}: {version!r}")
 
-    if data.get("tool_absence_policy") not in {"hard_failure", "unscored_skip", "reduced_confidence_score"}:
+    if data.get("tool_absence_policy") not in {
+        "hard_failure",
+        "unscored_skip",
+        "reduced_confidence_score",
+    }:
         errors.append(f"{path}: invalid tool_absence_policy")
     if data.get("difficulty") not in {"beginner", "intermediate", "advanced"}:
         errors.append(f"{path}: invalid difficulty")
@@ -238,7 +307,11 @@ def validate_manifest(path: Path, data: Any, repo_root: Path, errors: list[str])
     if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 300:
         errors.append(f"{path}: timeout_seconds must be an integer from 1 through 300")
     tags = data.get("tags")
-    if not isinstance(tags, list) or not tags or not all(isinstance(tag, str) and TAG_RE.fullmatch(tag) for tag in tags):
+    if (
+        not isinstance(tags, list)
+        or not tags
+        or not all(isinstance(tag, str) and TAG_RE.fullmatch(tag) for tag in tags)
+    ):
         errors.append(f"{path}: tags must be a non-empty array of lowercase slug strings")
     elif len(tags) != len(set(tags)):
         errors.append(f"{path}: tags contains duplicates")
@@ -256,7 +329,12 @@ def validate_manifest(path: Path, data: Any, repo_root: Path, errors: list[str])
                 errors.append(f"{path}: duplicate check id {check['id']!r}")
             check_ids.add(check["id"])
     score = data.get("score")
-    if isinstance(score, bool) or not isinstance(score, (int, float)) or score <= 0 or not math.isfinite(score):
+    if (
+        isinstance(score, bool)
+        or not isinstance(score, (int, float))
+        or score <= 0
+        or not math.isfinite(score)
+    ):
         errors.append(f"{path}: score must be a finite positive number")
     elif not math.isclose(points, float(score), abs_tol=1e-9):
         errors.append(f"{path}: check points total {points:g}, expected score {float(score):g}")
@@ -283,8 +361,14 @@ def main() -> int:
     script = Path(__file__).resolve()
     repo_root = script.parents[2]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--schema", type=Path, default=repo_root / "llvm-training/autograder/schema/exercise.schema.json")
-    parser.add_argument("--manifests", type=Path, default=repo_root / "llvm-training/autograder/manifests")
+    parser.add_argument(
+        "--schema",
+        type=Path,
+        default=repo_root / "llvm-training/autograder/schema/exercise.schema.json",
+    )
+    parser.add_argument(
+        "--manifests", type=Path, default=repo_root / "llvm-training/autograder/manifests"
+    )
     args = parser.parse_args()
 
     errors: list[str] = []
@@ -304,12 +388,16 @@ def main() -> int:
         manifest_id = validate_manifest(path, data, repo_root, errors)
         if manifest_id:
             if manifest_id in ids:
-                errors.append(f"duplicate exercise id {manifest_id!r}: {ids[manifest_id]} and {path}")
+                errors.append(
+                    f"duplicate exercise id {manifest_id!r}: {ids[manifest_id]} and {path}"
+                )
             ids[manifest_id] = path
         if isinstance(data, dict) and isinstance(data.get("prompt"), str):
             prompt = data["prompt"]
             if prompt in prompts:
-                errors.append(f"prompt has multiple manifests: {prompt} ({prompts[prompt]} and {path})")
+                errors.append(
+                    f"prompt has multiple manifests: {prompt} ({prompts[prompt]} and {path})"
+                )
             prompts[prompt] = path
 
     graded_prompts = {
@@ -328,7 +416,9 @@ def main() -> int:
         for error in errors:
             print(f"  - {error}", file=sys.stderr)
         return 1
-    print(f"validated {len(manifest_paths)} exercise manifests against {args.schema.relative_to(repo_root)}")
+    print(
+        f"validated {len(manifest_paths)} exercise manifests against {args.schema.relative_to(repo_root)}"
+    )
     print(f"covered {len(graded_prompts)} numbered graded exercise prompts with unique IDs")
     return 0
 

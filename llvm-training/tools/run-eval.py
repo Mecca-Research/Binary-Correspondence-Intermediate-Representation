@@ -121,7 +121,9 @@ def discover_context_paths(repo_root: Path, metadata: dict[str, Any]) -> list[st
     return sorted(candidates)
 
 
-def load_catalog(repo_root: Path, registry_path: Path, manifests_dir: Path) -> tuple[str, dict[str, dict[str, Any]]]:
+def load_catalog(
+    repo_root: Path, registry_path: Path, manifests_dir: Path
+) -> tuple[str, dict[str, dict[str, Any]]]:
     registry = read_json(registry_path)
     grader_entries = {entry["id"]: entry for entry in registry["exercises"]}
     metadata_entries: dict[str, dict[str, Any]] = {}
@@ -137,7 +139,10 @@ def load_catalog(repo_root: Path, registry_path: Path, manifests_dir: Path) -> t
     catalog: dict[str, dict[str, Any]] = {}
     for exercise_id, grader in grader_entries.items():
         metadata = metadata_entries[exercise_id]
-        if metadata["prompt"] != grader["prompt_path"] or metadata["solution"] != grader["reference_solution_path"]:
+        if (
+            metadata["prompt"] != grader["prompt_path"]
+            or metadata["solution"] != grader["reference_solution_path"]
+        ):
             raise ValueError(f"manifest and grader registry disagree for exercise {exercise_id}")
         item = dict(grader)
         item["metadata"] = metadata
@@ -146,7 +151,9 @@ def load_catalog(repo_root: Path, registry_path: Path, manifests_dir: Path) -> t
     return str(registry["schema_version"]), catalog
 
 
-def select_exercises(catalog: dict[str, dict[str, Any]], selected: list[str] | None) -> list[dict[str, Any]]:
+def select_exercises(
+    catalog: dict[str, dict[str, Any]], selected: list[str] | None
+) -> list[dict[str, Any]]:
     ids = selected or list(catalog)
     unknown = sorted(set(ids) - set(catalog))
     if unknown:
@@ -233,7 +240,12 @@ def make_manifest(
     }
 
 
-def prepare(args: argparse.Namespace, repo_root: Path, entries: list[dict[str, Any]], parameters: dict[str, Any]) -> None:
+def prepare(
+    args: argparse.Namespace,
+    repo_root: Path,
+    entries: list[dict[str, Any]],
+    parameters: dict[str, Any],
+) -> None:
     prepared_root = args.output_dir / "prepared"
     for entry in entries:
         exercise_id = entry["id"]
@@ -292,12 +304,17 @@ def validate_artifact_path(path_value: str, attempt_directory: Path) -> Path:
         raise ValueError(f"generated artifact escapes attempt directory: {path_value}") from exc
     if not path.is_file():
         raise ValueError(f"generated artifact does not exist: {path}")
-    if path.name in FORBIDDEN_GENERATED_NAMES or path.suffix.lower() in FORBIDDEN_GENERATED_SUFFIXES:
+    if (
+        path.name in FORBIDDEN_GENERATED_NAMES
+        or path.suffix.lower() in FORBIDDEN_GENERATED_SUFFIXES
+    ):
         raise ValueError(f"unsupported generated executable or build artifact: {path}")
     return path
 
 
-def validate_generator_output(output: Any, attempt_directory: Path, primary_artifact: Path) -> dict[str, Any]:
+def validate_generator_output(
+    output: Any, attempt_directory: Path, primary_artifact: Path
+) -> dict[str, Any]:
     if not isinstance(output, dict):
         raise ValueError("generator output must be a JSON object")
     if output.get("status") not in {"completed", "failed", "skipped"}:
@@ -321,11 +338,22 @@ def fixture_generate(
 ) -> dict[str, Any]:
     primary_artifact.parent.mkdir(parents=True, exist_ok=True)
     if name == "reference":
-        shutil.copyfile(repository_path(repo_root, entry["reference_solution_path"]), primary_artifact)
+        shutil.copyfile(
+            repository_path(repo_root, entry["reference_solution_path"]), primary_artifact
+        )
     elif name == "empty":
         primary_artifact.write_text("", encoding="utf-8")
     elif name == "partial":
-        fixture = repo_root / "llvm-training" / "autograder" / "fixtures" / "incomplete" / "attempts" / entry["id"] / primary_artifact.name
+        fixture = (
+            repo_root
+            / "llvm-training"
+            / "autograder"
+            / "fixtures"
+            / "incomplete"
+            / "attempts"
+            / entry["id"]
+            / primary_artifact.name
+        )
         if not fixture.is_file():
             raise ValueError(f"no known partial fixture for exercise {entry['id']}")
         shutil.copyfile(fixture, primary_artifact)
@@ -359,10 +387,14 @@ def generate(args: argparse.Namespace, repo_root: Path, entries: list[dict[str, 
         exercise_id = entry["id"]
         input_path = args.output_dir / "prepared" / exercise_id / "input.json"
         if not input_path.is_file():
-            raise ValueError(f"prepared input is missing for exercise {exercise_id}; run prepare first")
+            raise ValueError(
+                f"prepared input is missing for exercise {exercise_id}; run prepare first"
+            )
         primary_artifact = answer_path(args.output_dir / "attempts", entry)
         output_path = primary_artifact.parent / "generator-output.json"
-        if not args.force_regenerate and completed_attempt_is_reusable(output_path, primary_artifact):
+        if not args.force_regenerate and completed_attempt_is_reusable(
+            output_path, primary_artifact
+        ):
             print(f"[resume] {exercise_id}: keeping completed attempt")
             continue
         if primary_artifact.parent.exists():
@@ -378,19 +410,25 @@ def generate(args: argparse.Namespace, repo_root: Path, entries: list[dict[str, 
             else:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 command = [
-                    token.replace("{input}", str(input_path.resolve())).replace("{output}", str(output_path.resolve()))
+                    token.replace("{input}", str(input_path.resolve())).replace(
+                        "{output}", str(output_path.resolve())
+                    )
                     for token in shlex.split(args.generator_command)
                 ]
-                if not any("{input}" in token for token in shlex.split(args.generator_command)) or not any(
-                    "{output}" in token for token in shlex.split(args.generator_command)
-                ):
-                    raise ValueError("--generator-command must contain {input} and {output} placeholders")
+                if not any(
+                    "{input}" in token for token in shlex.split(args.generator_command)
+                ) or not any("{output}" in token for token in shlex.split(args.generator_command)):
+                    raise ValueError(
+                        "--generator-command must contain {input} and {output} placeholders"
+                    )
                 result = run_bounded(command, timeout=args.generator_timeout)
                 command_record = command
                 stderr = result.stderr
                 returncode = result.returncode
                 if result.returncode != 0:
-                    raise RuntimeError(f"generator exited with status {result.returncode}: {result.stderr.strip()}")
+                    raise RuntimeError(
+                        f"generator exited with status {result.returncode}: {result.stderr.strip()}"
+                    )
                 if not output_path.is_file():
                     raise RuntimeError("generator did not write its output JSON")
                 output = read_json(output_path)
@@ -423,7 +461,9 @@ def generate(args: argparse.Namespace, repo_root: Path, entries: list[dict[str, 
     return failures
 
 
-def grade_one(grader: Path, repo_root: Path, registry: Path, entry: dict[str, Any], attempt: Path) -> tuple[dict[str, Any] | None, str | None]:
+def grade_one(
+    grader: Path, repo_root: Path, registry: Path, entry: dict[str, Any], attempt: Path
+) -> tuple[dict[str, Any] | None, str | None]:
     command = [
         sys.executable,
         str(grader),
@@ -444,7 +484,10 @@ def grade_one(grader: Path, repo_root: Path, registry: Path, entry: dict[str, An
     try:
         report = json.loads(result.stdout)
     except json.JSONDecodeError:
-        return None, f"grader did not emit valid JSON (exit {result.returncode}): {result.stderr.strip()}"
+        return (
+            None,
+            f"grader did not emit valid JSON (exit {result.returncode}): {result.stderr.strip()}",
+        )
     if not report.get("results"):
         return None, "grader emitted no exercise result"
     return report, None
@@ -457,7 +500,9 @@ def grade(
     grader: Path,
     entries: list[dict[str, Any]],
 ) -> int:
-    attempts_dir = args.attempts_dir.resolve() if args.attempts_dir else args.output_dir / "attempts"
+    attempts_dir = (
+        args.attempts_dir.resolve() if args.attempts_dir else args.output_dir / "attempts"
+    )
     grades_dir = args.output_dir / "grades"
     grades_dir.mkdir(parents=True, exist_ok=True)
     infrastructure_failures = 0
@@ -465,12 +510,16 @@ def grade(
         exercise_id = entry["id"]
         attempt = answer_path(attempts_dir, entry)
         generation_output_path = attempts_dir / exercise_id / "generator-output.json"
-        generation = read_json(generation_output_path) if generation_output_path.is_file() else {
-            "status": "external",
-            "model": {"identity": "external-attempt"},
-            "token_counts": None,
-            "generated_artifact_paths": [str(attempt)],
-        }
+        generation = (
+            read_json(generation_output_path)
+            if generation_output_path.is_file()
+            else {
+                "status": "external",
+                "model": {"identity": "external-attempt"},
+                "token_counts": None,
+                "generated_artifact_paths": [str(attempt)],
+            }
+        )
         record: dict[str, Any] = {
             "runner_schema_version": RUNNER_SCHEMA_VERSION,
             "exercise_id": exercise_id,
@@ -484,22 +533,32 @@ def grade(
         }
         if not attempt.is_file():
             infrastructure_failures += 1
-            record.update({
-                "outcome": "infrastructure_failure",
-                "infrastructure_error": f"attempt artifact is missing: {attempt}",
-                "grade": None,
-            })
+            record.update(
+                {
+                    "outcome": "infrastructure_failure",
+                    "infrastructure_error": f"attempt artifact is missing: {attempt}",
+                    "grade": None,
+                }
+            )
             report = None
             error = None
         else:
             report, error = grade_one(grader, repo_root, registry, entry, attempt)
             if error:
                 infrastructure_failures += 1
-                record.update({"outcome": "infrastructure_failure", "infrastructure_error": error, "grade": None})
+                record.update(
+                    {
+                        "outcome": "infrastructure_failure",
+                        "infrastructure_error": error,
+                        "grade": None,
+                    }
+                )
         if report is not None:
             grade_result = report["results"][0]
             failed_checks = [check for check in grade_result["checks"] if check["status"] == "fail"]
-            skipped_checks = [check for check in grade_result["checks"] if check["status"] == "skip"]
+            skipped_checks = [
+                check for check in grade_result["checks"] if check["status"] == "skip"
+            ]
             generation_failed = generation.get("status") == "failed"
             if generation_failed:
                 outcome = "infrastructure_failure"
@@ -546,7 +605,9 @@ def grouped_scores(records: list[dict[str, Any]], key: str) -> dict[str, dict[st
 
 def build_summary(records: list[dict[str, Any]], manifest: dict[str, Any]) -> dict[str, Any]:
     graded = [record for record in records if record.get("grade")]
-    quality_graded = [record for record in graded if record.get("outcome") != "infrastructure_failure"]
+    quality_graded = [
+        record for record in graded if record.get("outcome") != "infrastructure_failure"
+    ]
     scores = [float(record["grade"]["score_percent"]) for record in quality_graded]
     passed = sum(record["outcome"] == "passed" for record in records)
     infrastructure = sum(record["outcome"] == "infrastructure_failure" for record in records)
@@ -556,15 +617,18 @@ def build_summary(records: list[dict[str, Any]], manifest: dict[str, Any]) -> di
 
     required_occurrences: dict[str, int] = {}
     for exercise_id in manifest["exercise_ids"]:
-        grade_record = next((record for record in records if record["exercise_id"] == exercise_id), None)
+        grade_record = next(
+            (record for record in records if record["exercise_id"] == exercise_id), None
+        )
         if grade_record and grade_record.get("grade"):
             for check in grade_record["grade"]["checks"]:
                 command = check.get("command") or []
                 if command:
-                    required_occurrences[Path(command[0]).name] = required_occurrences.get(Path(command[0]).name, 0) + 1
+                    required_occurrences[Path(command[0]).name] = (
+                        required_occurrences.get(Path(command[0]).name, 0) + 1
+                    )
     declared = {
-        name: info for name, info in manifest["tools"].items()
-        if name not in {"python", "grader"}
+        name: info for name, info in manifest["tools"].items() if name not in {"python", "grader"}
     }
     available_count = sum(bool(info.get("available")) for info in declared.values())
     toolchain_coverage = {
@@ -599,7 +663,9 @@ def build_summary(records: list[dict[str, Any]], manifest: dict[str, Any]) -> di
         },
         "infrastructure": {
             "hard_failures": infrastructure,
-            "generation_failures": sum(record.get("generation", {}).get("status") == "failed" for record in records),
+            "generation_failures": sum(
+                record.get("generation", {}).get("status") == "failed" for record in records
+            ),
         },
     }
 
@@ -638,16 +704,28 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("prepare", "generate", "grade", "report", "run"))
     parser.add_argument("--output-dir", type=Path, required=True, help="caller-owned run directory")
-    parser.add_argument("--exercise", action="append", help="stable exercise ID (repeatable; defaults to all gradeable exercises)")
-    parser.add_argument("--generator-command", help="argument-safe command template containing {input} and {output}")
-    parser.add_argument("--generator-id", help="provider-neutral generator identity recorded in the manifest")
+    parser.add_argument(
+        "--exercise",
+        action="append",
+        help="stable exercise ID (repeatable; defaults to all gradeable exercises)",
+    )
+    parser.add_argument(
+        "--generator-command", help="argument-safe command template containing {input} and {output}"
+    )
+    parser.add_argument(
+        "--generator-id", help="provider-neutral generator identity recorded in the manifest"
+    )
     parser.add_argument("--generator-timeout", type=float, default=300.0)
     parser.add_argument("--generation-parameters", help="JSON object or path to a JSON object")
     parser.add_argument("--fixture-adapter", choices=FIXTURE_NAMES)
     parser.add_argument("--force-regenerate", action="store_true")
-    parser.add_argument("--attempts-dir", type=Path, help="grade attempts from this NNN/answer.ext tree")
+    parser.add_argument(
+        "--attempts-dir", type=Path, help="grade attempts from this NNN/answer.ext tree"
+    )
     parser.add_argument("--registry", type=Path, help="override the executable grader registry")
-    parser.add_argument("--manifests-dir", type=Path, help="override per-exercise metadata manifests")
+    parser.add_argument(
+        "--manifests-dir", type=Path, help="override per-exercise metadata manifests"
+    )
     return parser.parse_args(argv)
 
 
@@ -668,21 +746,37 @@ def main(argv: list[str] | None = None) -> int:
         registry_schema, catalog = load_catalog(repo_root, registry, manifests_dir)
         manifest_path = args.output_dir / "reproducibility-manifest.json"
         selected = args.exercise
-        if selected is None and args.mode in {"generate", "grade", "report"} and manifest_path.is_file():
+        if (
+            selected is None
+            and args.mode in {"generate", "grade", "report"}
+            and manifest_path.is_file()
+        ):
             selected = read_json(manifest_path).get("exercise_ids")
         entries = select_exercises(catalog, selected)
         parameters = parse_generation_parameters(args.generation_parameters)
         if args.mode in {"prepare", "run"} or not manifest_path.exists():
             write_json(
                 manifest_path,
-                make_manifest(args, repo_root, registry_schema, registry, schema_path, grader, entries, parameters),
+                make_manifest(
+                    args,
+                    repo_root,
+                    registry_schema,
+                    registry,
+                    schema_path,
+                    grader,
+                    entries,
+                    parameters,
+                ),
             )
 
         infrastructure_failures = 0
         if args.mode in {"prepare", "run"}:
             prepare(args, repo_root, entries, parameters)
         if args.mode in {"generate", "run"}:
-            if not all((args.output_dir / "prepared" / entry["id"] / "input.json").is_file() for entry in entries):
+            if not all(
+                (args.output_dir / "prepared" / entry["id"] / "input.json").is_file()
+                for entry in entries
+            ):
                 prepare(args, repo_root, entries, parameters)
             infrastructure_failures += generate(args, repo_root, entries)
             manifest = read_json(manifest_path)
@@ -690,10 +784,16 @@ def main(argv: list[str] | None = None) -> int:
                 entry["id"]: {
                     "path": str(answer_path(args.output_dir / "attempts", entry)),
                     "sha256": sha256(answer_path(args.output_dir / "attempts", entry))
-                    if answer_path(args.output_dir / "attempts", entry).is_file() else None,
+                    if answer_path(args.output_dir / "attempts", entry).is_file()
+                    else None,
                     "generation_status": (
-                        read_json(args.output_dir / "attempts" / entry["id"] / "generator-output.json").get("status")
-                        if (args.output_dir / "attempts" / entry["id"] / "generator-output.json").is_file() else "missing"
+                        read_json(
+                            args.output_dir / "attempts" / entry["id"] / "generator-output.json"
+                        ).get("status")
+                        if (
+                            args.output_dir / "attempts" / entry["id"] / "generator-output.json"
+                        ).is_file()
+                        else "missing"
                     ),
                 }
                 for entry in entries

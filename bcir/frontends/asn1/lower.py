@@ -25,8 +25,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from bcir.asn1.schema import (Asn1Type, Choice, Component, Module, ObjectSetTable,
-                              OpenType, Primitive, Sequence, SequenceOf, Set, SetOf)
+from bcir.asn1.schema import (
+    Asn1Type,
+    Choice,
+    Component,
+    Module,
+    ObjectSetTable,
+    OpenType,
+    Primitive,
+    Sequence,
+    SequenceOf,
+    Set,
+    SetOf,
+)
 from bcir.asn1.tags import Asn1Error, Tag, TagClass, Universal
 
 from . import ast
@@ -34,27 +45,40 @@ from .lexer import Asn1SyntaxError
 
 #: X.680 Table 1: built-in type name -> universal class tag number.
 UNIVERSAL_OF = {
-    "BOOLEAN": Universal.BOOLEAN, "INTEGER": Universal.INTEGER,
-    "BIT STRING": Universal.BIT_STRING, "OCTET STRING": Universal.OCTET_STRING,
-    "NULL": Universal.NULL, "OBJECT IDENTIFIER": Universal.OBJECT_IDENTIFIER,
-    "ObjectDescriptor": Universal.OBJECT_DESCRIPTOR, "EXTERNAL": Universal.EXTERNAL,
-    "REAL": Universal.REAL, "ENUMERATED": Universal.ENUMERATED,
-    "EMBEDDED PDV": Universal.EMBEDDED_PDV, "UTF8String": Universal.UTF8_STRING,
-    "RELATIVE-OID": Universal.RELATIVE_OID, "TIME": Universal.TIME,
+    "BOOLEAN": Universal.BOOLEAN,
+    "INTEGER": Universal.INTEGER,
+    "BIT STRING": Universal.BIT_STRING,
+    "OCTET STRING": Universal.OCTET_STRING,
+    "NULL": Universal.NULL,
+    "OBJECT IDENTIFIER": Universal.OBJECT_IDENTIFIER,
+    "ObjectDescriptor": Universal.OBJECT_DESCRIPTOR,
+    "EXTERNAL": Universal.EXTERNAL,
+    "REAL": Universal.REAL,
+    "ENUMERATED": Universal.ENUMERATED,
+    "EMBEDDED PDV": Universal.EMBEDDED_PDV,
+    "UTF8String": Universal.UTF8_STRING,
+    "RELATIVE-OID": Universal.RELATIVE_OID,
+    "TIME": Universal.TIME,
     "NumericString": Universal.NUMERIC_STRING,
     "PrintableString": Universal.PRINTABLE_STRING,
-    "TeletexString": Universal.TELETEX_STRING, "T61String": Universal.TELETEX_STRING,
-    "VideotexString": Universal.VIDEOTEX_STRING, "IA5String": Universal.IA5_STRING,
-    "UTCTime": Universal.UTC_TIME, "GeneralizedTime": Universal.GENERALIZED_TIME,
+    "TeletexString": Universal.TELETEX_STRING,
+    "T61String": Universal.TELETEX_STRING,
+    "VideotexString": Universal.VIDEOTEX_STRING,
+    "IA5String": Universal.IA5_STRING,
+    "UTCTime": Universal.UTC_TIME,
+    "GeneralizedTime": Universal.GENERALIZED_TIME,
     "GraphicString": Universal.GRAPHIC_STRING,
     "VisibleString": Universal.VISIBLE_STRING,
     "ISO646String": Universal.VISIBLE_STRING,
     "GeneralString": Universal.GENERAL_STRING,
     "UniversalString": Universal.UNIVERSAL_STRING,
     "CHARACTER STRING": Universal.CHARACTER_STRING,
-    "BMPString": Universal.BMP_STRING, "DATE": Universal.DATE,
-    "TIME-OF-DAY": Universal.TIME_OF_DAY, "DATE-TIME": Universal.DATE_TIME,
-    "DURATION": Universal.DURATION, "OID-IRI": Universal.OID_IRI,
+    "BMPString": Universal.BMP_STRING,
+    "DATE": Universal.DATE,
+    "TIME-OF-DAY": Universal.TIME_OF_DAY,
+    "DATE-TIME": Universal.DATE_TIME,
+    "DURATION": Universal.DURATION,
+    "OID-IRI": Universal.OID_IRI,
     "RELATIVE-OID-IRI": Universal.RELATIVE_OID_IRI,
 }
 
@@ -74,12 +98,12 @@ class _LazyType(Asn1Type):
     def _resolved(self) -> Asn1Type:
         try:
             resolved = self.registry[self.target_name]
-        except KeyError:                                   # pragma: no cover - guarded
+        except KeyError:  # pragma: no cover - guarded
             raise Asn1SemanticError(
-                f"unresolved forward reference to {self.target_name!r}") from None
-        if resolved is self:                               # pragma: no cover - guarded
-            raise Asn1SemanticError(
-                f"type {self.target_name!r} is defined as itself")
+                f"unresolved forward reference to {self.target_name!r}"
+            ) from None
+        if resolved is self:  # pragma: no cover - guarded
+            raise Asn1SemanticError(f"type {self.target_name!r} is defined as itself")
         return resolved
 
     def base_tag(self) -> Tag:
@@ -110,7 +134,7 @@ class LoweredModule:
     #: the component-shaped type model cannot express.
     assigned_tags: dict[str, tuple] = field(default_factory=dict)
 
-    def __getattr__(self, item):                           # convenience delegation
+    def __getattr__(self, item):  # convenience delegation
         return getattr(self.module, item)
 
 
@@ -122,22 +146,22 @@ class Lowerer:
         #: the field's DECLARED type when it is a value field, and only to an open type
         #: when it is a type field -- the class definition is the only place that says
         #: which, so a front-end without this table has to guess.
-        self.classes = {a.name: a for a in node.assignments
-                        if isinstance(a, ast.ClassAssignment)}
+        self.classes = {a.name: a for a in node.assignments if isinstance(a, ast.ClassAssignment)}
         self.imported = imports or {}
         self.types: dict[str, Asn1Type] = {}
         self.enumerations: dict[str, dict[str, int]] = {}
         self.assigned_tags: dict[str, tuple] = {}
-        self.objects = {a.name: a for a in node.assignments
-                        if isinstance(a, ast.ObjectAssignment)}
-        self.object_sets = {a.name: a for a in node.assignments
-                            if isinstance(a, ast.ObjectSetAssignment)}
+        self.objects = {a.name: a for a in node.assignments if isinstance(a, ast.ObjectAssignment)}
+        self.object_sets = {
+            a.name: a for a in node.assignments if isinstance(a, ast.ObjectSetAssignment)
+        }
         self._tables: dict[str, ObjectSetTable] = {}
         #: X.683 §8.2 parameterized assignments, by name. They are NOT lowered eagerly:
         #: §9.7 makes instantiation a substitution of actuals for dummy references, so
         #: there is nothing to build until a reference supplies them.
-        self.parameterized = {a.name: a for a in node.assignments
-                              if isinstance(a, ast.ParameterizedAssignment)}
+        self.parameterized = {
+            a.name: a for a in node.assignments if isinstance(a, ast.ParameterizedAssignment)
+        }
         self._instantiations: dict[tuple, Asn1Type] = {}
         self._in_progress: set[str] = set()
 
@@ -148,8 +172,9 @@ class Lowerer:
             self._type_by_name(name)
         oid = self._oid(self.node.oid) if self.node.oid else ()
         module = Module(self.node.name, oid, dict(self.types))
-        return LoweredModule(module, self.node.tag_default, self.enumerations, self.node,
-                            dict(self.assigned_tags))
+        return LoweredModule(
+            module, self.node.tag_default, self.enumerations, self.node, dict(self.assigned_tags)
+        )
 
     def _oid(self, value: ast.OidValue) -> tuple[int, ...]:
         arcs: list[int] = []
@@ -160,7 +185,8 @@ class Lowerer:
                     raise Asn1SemanticError(
                         f"module {self.node.name}: object identifier arc {arc.name!r} "
                         f"has no number and is not a well-known arc name; write it as "
-                        f"{arc.name}(n)")
+                        f"{arc.name}(n)"
+                    )
                 arcs.append(number)
             else:
                 arcs.append(arc.number)
@@ -172,14 +198,15 @@ class Lowerer:
         if name in self.types:
             return self.types[name]
         if name in self._in_progress:
-            return _LazyType(name, self.types, name)       # a recursive definition
+            return _LazyType(name, self.types, name)  # a recursive definition
         if name not in self.assignments:
             for module in self.imported.values():
                 if name in module.types:
                     return module.types[name]
             raise Asn1SemanticError(
                 f"module {self.node.name}: type {name!r} is referenced but never "
-                f"assigned, and no IMPORTS provides it")
+                f"assigned, and no IMPORTS provides it"
+            )
         self._in_progress.add(name)
         try:
             built = self._type(self.assignments[name], name)
@@ -195,7 +222,8 @@ class Lowerer:
                 if target is None or node.name not in target.types:
                     raise Asn1SemanticError(
                         f"{label}: external reference {node.module}.{node.name} is not "
-                        f"available; pass the module in `imports`")
+                        f"available; pass the module in `imports`"
+                    )
                 return target.types[node.name]
             return self._type_by_name(node.name)
 
@@ -268,21 +296,30 @@ class Lowerer:
         # and §9 is explicitly "a special form of ASN.1 comment" (§9 NOTE 1). Both are split
         # off here so `Intersection` is only ever handed real element set specs.
         contents = [c for c in applied if isinstance(c, ast.ContentsConstraintNode)]
-        applied = [c for c in applied
-                   if not isinstance(c, (ast.ContentsConstraintNode,
-                                         ast.UserDefinedConstraintNode))]
+        applied = [
+            c
+            for c in applied
+            if not isinstance(c, (ast.ContentsConstraintNode, ast.UserDefinedConstraintNode))
+        ]
         if contents:
             spec = contents[0]
             if not isinstance(built, Primitive) or built.universal not in (
-                    Universal.OCTET_STRING, Universal.BIT_STRING):
+                Universal.OCTET_STRING,
+                Universal.BIT_STRING,
+            ):
                 raise Asn1SemanticError(
                     f"{label}: a contents constraint applies only to OCTET STRING and to "
-                    f"BIT STRING without a NamedBitList (X.682 11.3)")
+                    f"BIT STRING without a NamedBitList (X.682 11.3)"
+                )
             built = replace(
                 built,
-                contains=(self._type(spec.contained, f"{label} CONTAINING")
-                          if spec.contained is not None else None),
-                encoded_by=self._encoded_by(spec.encoded_by, label))
+                contains=(
+                    self._type(spec.contained, f"{label} CONTAINING")
+                    if spec.contained is not None
+                    else None
+                ),
+                encoded_by=self._encoded_by(spec.encoded_by, label),
+            )
         if not applied:
             return built
         combined = applied[0] if len(applied) == 1 else Intersection(tuple(applied))
@@ -321,20 +358,26 @@ class Lowerer:
             if declared is None:
                 raise Asn1SemanticError(
                     f"{label}: information object class {node.object_class!r} is "
-                    f"referenced but never defined in this module")
+                    f"referenced but never defined in this module"
+                )
             for field in declared.fields:
                 if field.name != node.field:
                     continue
                 table = self._table_for(node, label)
                 if field.is_type_field:
                     governing, columns = self._governing(node, declared, label)
-                    return OpenType(f"{node.object_class}{node.field}", table=table,
-                                    field=node.field, governing=governing,
-                                    governing_fields=columns)
+                    return OpenType(
+                        f"{node.object_class}{node.field}",
+                        table=table,
+                        field=node.field,
+                        governing=governing,
+                        governing_fields=columns,
+                    )
                 if field.type is None:
                     raise Asn1SemanticError(
                         f"{label}: {node.object_class}{node.field} is a value field with "
-                        f"no declared type, so it has no encoding")
+                        f"no declared type, so it has no encoding"
+                    )
                 built = self._type(field.type, label)
                 if table is not None and isinstance(built, Primitive):
                     # X.682 §10.6 b): a value field is restricted to its column. This rides
@@ -346,8 +389,7 @@ class Lowerer:
                     if column:
                         built = replace(built, table_values=tuple(column))
                 return built
-            raise Asn1SemanticError(
-                f"{label}: {node.object_class} has no field {node.field!r}")
+            raise Asn1SemanticError(f"{label}: {node.object_class} has no field {node.field!r}")
         governed = f" DEFINED BY {node.governed_by}" if node.governed_by else ""
         return OpenType(f"ANY{governed}")
 
@@ -365,11 +407,13 @@ class Lowerer:
         if target is None:
             raise Asn1SemanticError(
                 f"{label}: {node.name!r} is referenced with actual parameters but is not a "
-                f"parameterized assignment (X.683 9.2)")
+                f"parameterized assignment (X.683 9.2)"
+            )
         if len(node.actuals) != len(target.params):
             raise Asn1SemanticError(
                 f"{label}: {node.name} takes {len(target.params)} parameter(s), "
-                f"{len(node.actuals)} supplied (X.683 9.6)")
+                f"{len(node.actuals)} supplied (X.683 9.6)"
+            )
         key = (node.name, tuple(map(_actual_key, node.actuals)))
         if key in self._instantiations:
             return self._instantiations[key]
@@ -378,7 +422,8 @@ class Lowerer:
         if not isinstance(body, ast.TypeAssignment):
             raise Asn1SemanticError(
                 f"{label}: only a parameterized TYPE assignment can be referenced as a "
-                f"type; {node.name} assigns a {type(body).__name__}")
+                f"type; {node.name} assigns a {type(body).__name__}"
+            )
         substituted = _substitute(body.type, bindings)
         # Object sets carried as actuals have to be visible to the table machinery under the
         # dummy's name for the duration, because a table constraint inside the body names
@@ -414,7 +459,8 @@ class Lowerer:
         if arcs:
             return self._oid(ast.OidValue(arcs))
         raise Asn1SemanticError(
-            f"{label}: ENCODED BY takes an object identifier value (X.682 11.2)")
+            f"{label}: ENCODED BY takes an object identifier value (X.682 11.2)"
+        )
 
     def _table_for(self, node: ast.OpenTypeNode, label: str):
         """The associated table (X.681 §13) of the object set a table constraint names."""
@@ -430,7 +476,8 @@ class Lowerer:
         if assignment is None:
             raise Asn1SemanticError(
                 f"{label}: table constraint names object set {name!r}, which this module "
-                f"does not define (X.682 10.4)")
+                f"does not define (X.682 10.4)"
+            )
         rows: list[dict] = []
         extensible = assignment.extensible
         self._tables[name] = ObjectSetTable(assignment.object_class, (), extensible)
@@ -448,7 +495,8 @@ class Lowerer:
                 if obj is None:
                     raise Asn1SemanticError(
                         f"{label}: object set {name!r} references {element!r}, which is "
-                        f"neither a defined object nor a defined object set")
+                        f"neither a defined object nor a defined object set"
+                    )
                 rows.append(self._row(obj.settings, assignment.object_class, label))
                 continue
             rows.append(self._row(element, assignment.object_class, label))
@@ -468,15 +516,20 @@ class Lowerer:
         row: dict = {}
         for setting in settings:
             field = by_name.get(setting.name)
-            is_type = (field.is_type_field if field is not None
-                       else len(setting.name) > 1 and setting.name[1].isupper())
+            is_type = (
+                field.is_type_field
+                if field is not None
+                else len(setting.name) > 1 and setting.name[1].isupper()
+            )
             if is_type:
                 row[setting.name] = self._type(setting.value, f"{label}.{setting.name}")
             else:
-                governor = (self._type(field.type, label)
-                            if field is not None and field.type is not None else None)
-                row[setting.name] = self.value(
-                    setting.value, governor, f"{label}.{setting.name}")
+                governor = (
+                    self._type(field.type, label)
+                    if field is not None and field.type is not None
+                    else None
+                )
+                row[setting.name] = self.value(setting.value, governor, f"{label}.{setting.name}")
         return row
 
     def _governing(self, node: ast.OpenTypeNode, declared, label: str):
@@ -505,8 +558,7 @@ class Lowerer:
             # The module-level side table answers "what does this DEFAULT identifier mean",
             # which an extension item can be as legitimately as a root one -- so both halves
             # go in here, unlike the codec-facing lists below.
-            self.enumerations[label] = {n.name: n.number
-                                        for n in node.named + node.extension_named}
+            self.enumerations[label] = {n.name: n.number for n in node.named + node.extension_named}
         if universal == Universal.ENUMERATED:
             # Carry the enumeration ONTO the type, not just into the module-level side
             # table. The side table answers "what does this DEFAULT identifier mean"; PER
@@ -514,11 +566,12 @@ class Lowerer:
             # the codec needs the whole root list at the point of use. BER/DER/OER never
             # needed it because they encode the value itself.
             return Primitive(
-                int(universal), node.name,
+                int(universal),
+                node.name,
                 enumeration=tuple((n.name, n.number) for n in node.named),
                 enum_extensible=bool(node.extensible),
-                enum_extension=tuple((n.name, n.number)
-                                     for n in node.extension_named) or None)
+                enum_extension=tuple((n.name, n.number) for n in node.extension_named) or None,
+            )
         return Primitive(int(universal), node.name)
 
     def _components(self, nodes, label: str, choice: bool = False):
@@ -547,14 +600,16 @@ class Lowerer:
                 extension_of[id(node)] = markers == 1
                 entries.append(node)
         automatic = self._use_automatic_tags(
-            [e for e in entries if isinstance(e, ast.ComponentNode)])
+            [e for e in entries if isinstance(e, ast.ComponentNode)]
+        )
         out: list[Component] = []
         position = -1
         for item in entries:
             position += 1
             if id(item) in groups:
                 members, _ = self._components(
-                    groups[id(item)].components, f"{label}.group{position}", choice)
+                    groups[id(item)].components, f"{label}.group{position}", choice
+                )
                 if choice:
                     # X.691 §23.8 NOTE: "Version brackets in the definition of choice
                     # extension additions have no effect on how ExtensionAdditionAlternatives
@@ -562,10 +617,17 @@ class Lowerer:
                     # member is its own alternative with its own index (§23.2), so grouping
                     # them would invent a nesting the encoding does not have.
                     for i, m in enumerate(members):
-                        out.append(replace(
-                            m, extension=True,
-                            **({"tag": position + i, "tag_class": TagClass.CONTEXT}
-                               if automatic else {})))
+                        out.append(
+                            replace(
+                                m,
+                                extension=True,
+                                **(
+                                    {"tag": position + i, "tag_class": TagClass.CONTEXT}
+                                    if automatic
+                                    else {}
+                                ),
+                            )
+                        )
                     position += len(members) - 1
                     continue
                 if automatic:
@@ -573,15 +635,22 @@ class Lowerer:
                     # the group consumes as many tag numbers as it holds.
                     members = tuple(
                         replace(m, tag=position + i, tag_class=TagClass.CONTEXT)
-                        for i, m in enumerate(members))
+                        for i, m in enumerate(members)
+                    )
                     position += len(members) - 1
-                out.append(Component(
-                    name=f"[[{position}]]", type=Sequence(members, f"{label}.group"),
-                    extension=True, optional=True, group=members))
+                out.append(
+                    Component(
+                        name=f"[[{position}]]",
+                        type=Sequence(members, f"{label}.group"),
+                        extension=True,
+                        optional=True,
+                        group=members,
+                    )
+                )
                 continue
             inner, tag, mode, tag_cls = _peel_tag(item.type)
             if tag is None and automatic:
-                tag, mode, tag_cls = position, None, TagClass.CONTEXT   # §12.3
+                tag, mode, tag_cls = position, None, TagClass.CONTEXT  # §12.3
             built = self._type(inner, f"{label}.{item.name}")
             if tag is None and isinstance(inner, ast.TypeRef):
                 # The component is untagged, but the type it names may have been ASSIGNED
@@ -594,13 +663,22 @@ class Lowerer:
                     tag_cls, tag, mode = assigned
             explicit = self._explicit(mode, built)
             default, has_default = self._default(item, built, f"{label}.{item.name}")
-            out.append(Component(
-                name=item.name, type=built, tag=tag, explicit=explicit,
-                optional=item.optional, extension=extension_of[id(item)],
-                **({"tag_class": tag_cls} if tag_cls is not None else {}),
-                **({"default": default} if has_default else {})))
-        return (self._bind_governing(tuple(out), entries, label),
-                any(isinstance(n, ast.ExtensionMarker) for n in nodes))
+            out.append(
+                Component(
+                    name=item.name,
+                    type=built,
+                    tag=tag,
+                    explicit=explicit,
+                    optional=item.optional,
+                    extension=extension_of[id(item)],
+                    **({"tag_class": tag_cls} if tag_cls is not None else {}),
+                    **({"default": default} if has_default else {}),
+                )
+            )
+        return (
+            self._bind_governing(tuple(out), entries, label),
+            any(isinstance(n, ast.ExtensionMarker) for n in nodes),
+        )
 
     def _bind_governing(self, built: tuple, entries, label: str) -> tuple:
         """Fill in each table-constrained open type's governing COLUMNS (X.682 §10.15).
@@ -617,7 +695,7 @@ class Lowerer:
         fields: dict[str, str] = {}
         for item in entries:
             if not isinstance(item, ast.ComponentNode):
-                continue                                   # an extension-group marker
+                continue  # an extension-group marker
             node = item.type
             while isinstance(node, (ast.Tagged, ast.Constrained)):
                 node = node.inner
@@ -648,7 +726,8 @@ class Lowerer:
             if _needs_explicit_tag(built):
                 raise Asn1SemanticError(
                     "IMPLICIT cannot tag a CHOICE or an open type: an implicit tag "
-                    "replaces the base tag and neither has one (X.680 29.1/31.2.7)")
+                    "replaces the base tag and neither has one (X.680 29.1/31.2.7)"
+                )
             return False
         # No keyword: the module's default decides -- except that §31.2.7 forces
         # EXPLICIT over a CHOICE or an open type even in an IMPLICIT/AUTOMATIC module.
@@ -673,11 +752,13 @@ class Lowerer:
             return node.value
         if isinstance(node, ast.NullValue):
             from bcir.asn1.codec import NULL
+
             return NULL
         if isinstance(node, ast.BitsValue):
             return node.data
         if isinstance(node, ast.OidValue):
             from bcir.asn1.codec import Oid
+
             return Oid(self._oid(node))
         if isinstance(node, ast.BracedValue):
             return self._braced(node, built, label)
@@ -699,24 +780,29 @@ class Lowerer:
             if node.items is None:
                 raise Asn1SemanticError(
                     f"{label}: {built.name} needs a value list, but the braced value "
-                    f"is an object identifier arc list")
+                    f"is an object identifier arc list"
+                )
             return [self.value(v, element, label) for v in node.items]
         if isinstance(built, Primitive) and built.universal in (
-                int(Universal.OBJECT_IDENTIFIER), int(Universal.RELATIVE_OID)):
+            int(Universal.OBJECT_IDENTIFIER),
+            int(Universal.RELATIVE_OID),
+        ):
             from bcir.asn1.codec import Oid, RelativeOid
+
             if node.arcs is None:
                 raise Asn1SemanticError(
                     f"{label}: {built.name} needs object identifier arcs, but the "
-                    f"braced value is a comma-separated value list")
-            wrap = Oid if built.universal == int(Universal.OBJECT_IDENTIFIER) \
-                else RelativeOid
+                    f"braced value is a comma-separated value list"
+                )
+            wrap = Oid if built.universal == int(Universal.OBJECT_IDENTIFIER) else RelativeOid
             return wrap(self._oid(ast.OidValue(node.arcs)))
         if node.items == ():
             # `{}` against a constructed type with no element: an empty SEQUENCE/SET.
             return {}
         raise Asn1SemanticError(
             f"{label}: a braced value needs a SEQUENCE OF / SET OF or OBJECT "
-            f"IDENTIFIER type, not {built.name}")
+            f"IDENTIFIER type, not {built.name}"
+        )
 
     def _named_value(self, name: str, built: Asn1Type, label: str):
         """A bare identifier as a value: an ENUMERATED/INTEGER item, or a
@@ -737,12 +823,17 @@ class Lowerer:
             return self.value(assignment.value, built, label)
         raise Asn1SemanticError(
             f"{label}: DEFAULT {name!r} is neither an enumeration item of "
-            f"{built.name} nor a value assigned in this module")
+            f"{built.name} nor a value assigned in this module"
+        )
 
 
 #: Arc names X.660 fixes, so `{ iso 3 6 1 }` resolves without a number in parentheses.
 _WELL_KNOWN_ARCS = {
-    "itu-t": 0, "ccitt": 0, "iso": 1, "joint-iso-itu-t": 2, "joint-iso-ccitt": 2,
+    "itu-t": 0,
+    "ccitt": 0,
+    "iso": 1,
+    "joint-iso-itu-t": 2,
+    "joint-iso-ccitt": 2,
 }
 
 
@@ -778,7 +869,7 @@ def _needs_explicit_tag(built: Asn1Type) -> bool:
     if isinstance(built, _LazyType):
         try:
             return isinstance(built._resolved(), (Choice, OpenType))
-        except Asn1SemanticError:                          # pragma: no cover - guarded
+        except Asn1SemanticError:  # pragma: no cover - guarded
             return False
     return False
 
@@ -796,12 +887,12 @@ def _render_name(node) -> str:
         return f"SEQUENCE OF {_render_name(node.element)}"
     if isinstance(node, ast.SetOfType):
         return f"SET OF {_render_name(node.element)}"
-    return {ast.SequenceType: "SEQUENCE", ast.SetType: "SET",
-            ast.ChoiceType: "CHOICE"}.get(type(node), "TYPE")
+    return {ast.SequenceType: "SEQUENCE", ast.SetType: "SET", ast.ChoiceType: "CHOICE"}.get(
+        type(node), "TYPE"
+    )
 
 
-def lower(node: ast.ModuleNode, imports: dict[str, Module] | None = None
-          ) -> LoweredModule:
+def lower(node: ast.ModuleNode, imports: dict[str, Module] | None = None) -> LoweredModule:
     return Lowerer(node, imports).run()
 
 
@@ -824,7 +915,8 @@ def _substitute(node, bindings: dict):
         return ast.TypeRef(actual) if isinstance(actual, str) else actual
     if isinstance(node, ast.ParameterizedRef):
         return dataclasses.replace(
-            node, actuals=tuple(_substitute(a, bindings) for a in node.actuals))
+            node, actuals=tuple(_substitute(a, bindings) for a in node.actuals)
+        )
     if isinstance(node, ast.TableConstraintNode):
         # `{Supported}` inside the body names a DUMMY object set; rewriting it to the
         # actual's name is what lets the table constraint resolve after instantiation.
@@ -844,12 +936,21 @@ def _substitute(node, bindings: dict):
     return node
 
 
-def compile_module(text: str, source: str = "<asn1>",
-                   imports: dict[str, Module] | None = None) -> LoweredModule:
+def compile_module(
+    text: str, source: str = "<asn1>", imports: dict[str, Module] | None = None
+) -> LoweredModule:
     """Parse and lower one ASN.1 module in a single call."""
     from .parser import parse_module
+
     return lower(parse_module(text, source), imports)
 
 
-__all__ = ["Asn1SemanticError", "Asn1SyntaxError", "LoweredModule", "Lowerer",
-           "UNIVERSAL_OF", "compile_module", "lower"]
+__all__ = [
+    "Asn1SemanticError",
+    "Asn1SyntaxError",
+    "LoweredModule",
+    "Lowerer",
+    "UNIVERSAL_OF",
+    "compile_module",
+    "lower",
+]

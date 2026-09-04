@@ -59,7 +59,9 @@ def test_x680_module_compiles_to_the_same_der_and_oer_type_contract():
     from bcir.asn1.oer import OerRules, encode_oer
 
     assert encode_oer(
-        lowered.module.types["ArtifactBundle"], value, rules=OerRules.CANONICAL,
+        lowered.module.types["ArtifactBundle"],
+        value,
+        rules=OerRules.CANONICAL,
     ) == encode_bundle_oer(bundle)
 
 

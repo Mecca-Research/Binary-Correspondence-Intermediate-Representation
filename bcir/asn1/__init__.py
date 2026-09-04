@@ -69,10 +69,33 @@ def module_source(name: str) -> str:
 
     return (resources.files(__package__) / name).read_text(encoding="utf-8")
 
+
 __all__ = [
-    "ARTIFACT_BUNDLE_MODULE", "Asn1Error", "BER_OID", "BER_OID_IRI", "BitString",
-    "DER_OID", "DER_OID_IRI", "STREAMPACK_MODULE", "Strictness", "Tag", "TagClass",
-    "Tlv", "Universal", "Violation", "decode_der", "decode_one", "decode_tlv",
-    "decode_value", "der_violations", "encode_der", "encode_tlv", "is_der",
-    "iter_tlv", "module_source", "reencode_as_der", "require_der", "to_der",
+    "ARTIFACT_BUNDLE_MODULE",
+    "Asn1Error",
+    "BER_OID",
+    "BER_OID_IRI",
+    "BitString",
+    "DER_OID",
+    "DER_OID_IRI",
+    "STREAMPACK_MODULE",
+    "Strictness",
+    "Tag",
+    "TagClass",
+    "Tlv",
+    "Universal",
+    "Violation",
+    "decode_der",
+    "decode_one",
+    "decode_tlv",
+    "decode_value",
+    "der_violations",
+    "encode_der",
+    "encode_tlv",
+    "is_der",
+    "iter_tlv",
+    "module_source",
+    "reencode_as_der",
+    "require_der",
+    "to_der",
 ]

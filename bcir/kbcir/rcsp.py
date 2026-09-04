@@ -73,7 +73,7 @@ class _Label:
 
     score: int
     res: tuple[int, ...]
-    cand: Candidate | None          # candidate realized at this column (None = source)
+    cand: Candidate | None  # candidate realized at this column (None = source)
     parent: "_Label | None"
 
 
@@ -90,12 +90,13 @@ def _insert(labels: list[_Label], new: _Label) -> None:
     labels.append(new)
 
 
-def _expand(module: Module, h, theta: Theta, policy: Policy,
-            dims: tuple[int, ...], caps: dict[int, int]):
+def _expand(
+    module: Module, h, theta: Theta, policy: Policy, dims: tuple[int, ...], caps: dict[int, int]
+):
     """Run the label DP over the layered candidate DAG; return the sink labels
     paired with their (phase_id, claim) trail for reconstruction."""
     flat = _flatten(module)
-    cand_map = fused_candidates(module, h)    # producer->consumer deforestation, shared with optimize
+    cand_map = fused_candidates(module, h)  # producer->consumer deforestation, shared with optimize
     prev: list[_Label] = [_Label(0, (0,) * len(dims), None, None)]
     trail: list[tuple[int, object]] = []
 
@@ -131,14 +132,17 @@ def _reconstruct(label: _Label, trail) -> RealizationResult:
         node = node.parent
     chain.reverse()
     steps = [
-        ChosenStep(claim.id, phase_id, lab.cand, lab.score - (lab.parent.score if lab.parent else 0))
+        ChosenStep(
+            claim.id, phase_id, lab.cand, lab.score - (lab.parent.score if lab.parent else 0)
+        )
         for (phase_id, claim), lab in zip(trail, chain)
     ]
     return RealizationResult(steps, label.score)
 
 
-def optimize_constrained(module: Module, h, theta: Theta, policy: Policy = PERF,
-                         budget: Budget = Budget.unbounded()) -> RealizationResult:
+def optimize_constrained(
+    module: Module, h, theta: Theta, policy: Policy = PERF, budget: Budget = Budget.unbounded()
+) -> RealizationResult:
     """Constrained K_BCIR selection: min score subject to R(pi, Theta) <= budget.
 
     With `Budget.unbounded()` this is exactly `realize.optimize` (the degenerate
@@ -177,8 +181,13 @@ def feasible(result: RealizationResult, theta: Theta, budget: Budget) -> bool:
     return all(res.v[d] <= cap for d, cap in budget.caps)
 
 
-def pareto_plans(module: Module, h, theta: Theta, policy: Policy = PERF,
-                 dims: tuple[str, ...] = ("thermal", "power")) -> list[RealizationResult]:
+def pareto_plans(
+    module: Module,
+    h,
+    theta: Theta,
+    policy: Policy = PERF,
+    dims: tuple[str, ...] = ("thermal", "power"),
+) -> list[RealizationResult]:
     """The Pareto front over (score, *dims): every non-dominated plan, by rising score.
 
     Reaches the non-convex points that no weight vector w can select under the

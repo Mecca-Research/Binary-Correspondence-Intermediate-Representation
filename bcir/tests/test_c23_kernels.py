@@ -37,22 +37,38 @@ def _mul_plan(n: int = 1024):
     m = Module(name="qmul")
     for rid in (1, 2, 3):
         m.add_resource(Resource(rid=rid, domain=Domain.RAM, shape=(n,)))
-    m.add_phase(Phase(phase_id=0, deps=(), claims=[
-        Claim(id=1, opcode=Opcode.MUL, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=n, rd=(1, 2), wr=(3,), op="vector.mul", domain=Domain.RAM)]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            deps=(),
+            claims=[
+                Claim(
+                    id=1,
+                    opcode=Opcode.MUL,
+                    lane=Lane.U,
+                    stride_class=StrideClass.UNIT,
+                    count=n,
+                    rd=(1, 2),
+                    wr=(3,),
+                    op="vector.mul",
+                    domain=Domain.RAM,
+                )
+            ],
+        )
+    )
     return m, optimize(m, AVX, COOL)
 
 
 def test_qfixed_emits_bitint_with_a_portable_fallback():
     m, r = _mul_plan()
     c = emit_qfixed_kernel_c(m, r, "qk", lane_bits=16, frac_bits=8)
-    assert "_BitInt(16) q_lane_t" in c          # exact 16-bit lane (C23 6.2.5)
-    assert "_BitInt(32) q_acc_t" in c           # exact 2N-bit product accumulator
-    assert "__STDC_VERSION__ >= 202311L" in c   # gated on C23
-    assert "__BITINT_MAXWIDTH__" in c           # ... and the toolchain admitting 2N
-    assert "typedef int16_t q_lane_t" in c      # the standard-int fallback
-    assert ">> 8" in c                          # Q8 scaled multiply (the cost-model coupling)
-    assert "restrict" in c                      # non-aliasing contract preserved
+    assert "_BitInt(16) q_lane_t" in c  # exact 16-bit lane (C23 6.2.5)
+    assert "_BitInt(32) q_acc_t" in c  # exact 2N-bit product accumulator
+    assert "__STDC_VERSION__ >= 202311L" in c  # gated on C23
+    assert "__BITINT_MAXWIDTH__" in c  # ... and the toolchain admitting 2N
+    assert "typedef int16_t q_lane_t" in c  # the standard-int fallback
+    assert ">> 8" in c  # Q8 scaled multiply (the cost-model coupling)
+    assert "restrict" in c  # non-aliasing contract preserved
 
 
 def test_qfixed_exact_nonstandard_width_has_no_standard_type():
@@ -67,7 +83,7 @@ def test_qfixed_exact_nonstandard_width_has_no_standard_type():
 
 def test_qfixed_validates_format():
     m, r = _mul_plan()
-    for bad in ((16, 0), (16, 16), (40, 8)):   # frac>=lane, frac=0, 2*lane>64
+    for bad in ((16, 0), (16, 16), (40, 8)):  # frac>=lane, frac=0, 2*lane>64
         try:
             emit_qfixed_kernel_c(m, r, "qk", lane_bits=bad[0], frac_bits=bad[1])
             assert False, f"expected ValueError for {bad}"

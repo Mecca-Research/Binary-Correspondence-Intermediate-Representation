@@ -105,7 +105,8 @@ def spec_from_config(config: dict) -> DecoderSpec:
         activation="silu_gate",
         n_kv_heads=n_kv_heads,
         tied_embeddings=tied,
-        rms_norm_eps=_config_positive_float(config, "rms_norm_eps", 1e-6))
+        rms_norm_eps=_config_positive_float(config, "rms_norm_eps", 1e-6),
+    )
 
 
 def rope_interleave_order(n_heads: int, d_k: int) -> list[int]:
@@ -127,8 +128,11 @@ def _transpose(flat: list, rows: int, cols: int) -> list:
 
 def _require_finite(name: str, values) -> None:
     for index, value in enumerate(values):
-        if isinstance(value, bool) or not isinstance(value, (int, float)) \
-                or not math.isfinite(float(value)):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+        ):
             raise ValueError(f"{name}[{index}] is not a finite numeric weight")
 
 
@@ -141,7 +145,7 @@ def _proj(tensors: dict, name: str, out_dim: int, in_dim: int, perm: list | None
     if tuple(shape) != (out_dim, in_dim):
         raise ValueError(f"{name}: shape {tuple(shape)} != ({out_dim}, {in_dim})")
     _require_finite(name, flat)
-    if perm is not None:                               # reorder the OUT rows (HF layout)
+    if perm is not None:  # reorder the OUT rows (HF layout)
         flat = [flat[o * in_dim + c] for o in perm for c in range(in_dim)]
     return tuple(_transpose(flat, out_dim, in_dim))
 
@@ -171,31 +175,34 @@ def weights_from_tensors(spec: DecoderSpec, tensors: dict) -> DecoderWeights:
     layers = []
     for li in range(spec.n_layers):
         p = f"model.layers.{li}."
-        layers.append(LayerWeights(
-            g_attn=_vec(tensors, p + "input_layernorm.weight", d),
-            w_q=_proj(tensors, p + "self_attn.q_proj.weight", d, d, q_perm),
-            w_k=_proj(tensors, p + "self_attn.k_proj.weight", kvd, d, k_perm),
-            w_v=_proj(tensors, p + "self_attn.v_proj.weight", kvd, d),
-            w_o=_proj(tensors, p + "self_attn.o_proj.weight", d, d),
-            g_ff=_vec(tensors, p + "post_attention_layernorm.weight", d),
-            w1=_proj(tensors, p + "mlp.up_proj.weight", f, d),
-            b1=(),
-            w2=_proj(tensors, p + "mlp.down_proj.weight", d, f),
-            b2=(),
-            w_gate=_proj(tensors, p + "mlp.gate_proj.weight", f, d)))
+        layers.append(
+            LayerWeights(
+                g_attn=_vec(tensors, p + "input_layernorm.weight", d),
+                w_q=_proj(tensors, p + "self_attn.q_proj.weight", d, d, q_perm),
+                w_k=_proj(tensors, p + "self_attn.k_proj.weight", kvd, d, k_perm),
+                w_v=_proj(tensors, p + "self_attn.v_proj.weight", kvd, d),
+                w_o=_proj(tensors, p + "self_attn.o_proj.weight", d, d),
+                g_ff=_vec(tensors, p + "post_attention_layernorm.weight", d),
+                w1=_proj(tensors, p + "mlp.up_proj.weight", f, d),
+                b1=(),
+                w2=_proj(tensors, p + "mlp.down_proj.weight", d, f),
+                b2=(),
+                w_gate=_proj(tensors, p + "mlp.gate_proj.weight", f, d),
+            )
+        )
     lm_head: tuple = ()
     if not spec.tied_embeddings:
         _dt, hshape, hflat = tensors.get("lm_head.weight", (None, (), []))
         if tuple(hshape) != (spec.vocab_size, d):
-            raise ValueError(f"lm_head.weight: shape {tuple(hshape)} != "
-                             f"({spec.vocab_size}, {d})")
+            raise ValueError(f"lm_head.weight: shape {tuple(hshape)} != ({spec.vocab_size}, {d})")
         _require_finite("lm_head.weight", hflat)
-        lm_head = tuple(hflat)                         # [vocab, d] row-per-id: pass-through
+        lm_head = tuple(hflat)  # [vocab, d] row-per-id: pass-through
     return DecoderWeights(
         embedding=EmbeddingTable(table=tuple(eflat), n_vocab=spec.vocab_size, dim=d),
         layers=tuple(layers),
         g_final=_vec(tensors, "model.norm.weight", d),
-        lm_head=lm_head)
+        lm_head=lm_head,
+    )
 
 
 @dataclass(frozen=True)
@@ -213,15 +220,19 @@ def _consumed_tensor_names(spec: DecoderSpec) -> tuple[str, ...]:
     names = ["model.embed_tokens.weight"]
     for li in range(spec.n_layers):
         p = f"model.layers.{li}."
-        names.extend((p + "input_layernorm.weight",
-                      p + "self_attn.q_proj.weight",
-                      p + "self_attn.k_proj.weight",
-                      p + "self_attn.v_proj.weight",
-                      p + "self_attn.o_proj.weight",
-                      p + "post_attention_layernorm.weight",
-                      p + "mlp.gate_proj.weight",
-                      p + "mlp.up_proj.weight",
-                      p + "mlp.down_proj.weight"))
+        names.extend(
+            (
+                p + "input_layernorm.weight",
+                p + "self_attn.q_proj.weight",
+                p + "self_attn.k_proj.weight",
+                p + "self_attn.v_proj.weight",
+                p + "self_attn.o_proj.weight",
+                p + "post_attention_layernorm.weight",
+                p + "mlp.gate_proj.weight",
+                p + "mlp.up_proj.weight",
+                p + "mlp.down_proj.weight",
+            )
+        )
     names.append("model.norm.weight")
     if not spec.tied_embeddings:
         names.append("lm_head.weight")
@@ -233,7 +244,7 @@ def _rotary_aux_layer(name: str, spec: DecoderSpec) -> int | None:
     suffix = ".self_attn.rotary_emb.inv_freq"
     if not (name.startswith(prefix) and name.endswith(suffix)):
         return None
-    middle = name[len(prefix):-len(suffix)]
+    middle = name[len(prefix) : -len(suffix)]
     if not middle.isdigit():
         return None
     layer = int(middle)
@@ -249,10 +260,13 @@ def _validate_rotary_aux(name: str, tensor: tuple, spec: DecoderSpec) -> None:
     # F16/BF16 storage rounds the analytical frequencies more coarsely than F32/F64.
     rel_tol = 5e-3 if dtype in ("F16", "BF16") else 1e-6
     for i, (actual, want) in enumerate(zip(values, expected)):
-        if not math.isfinite(actual) or not math.isclose(actual, want, rel_tol=rel_tol,
-                                                         abs_tol=1e-8):
-            raise ValueError(f"{name}[{i}]={actual!r} does not match rope_base "
-                             f"{spec.rope_base!r} (expected {want!r})")
+        if not math.isfinite(actual) or not math.isclose(
+            actual, want, rel_tol=rel_tol, abs_tol=1e-8
+        ):
+            raise ValueError(
+                f"{name}[{i}]={actual!r} does not match rope_base "
+                f"{spec.rope_base!r} (expected {want!r})"
+            )
 
 
 def _build_ingest_report(spec: DecoderSpec, tensors: dict) -> IngestReport:
@@ -282,11 +296,13 @@ def _build_ingest_report(spec: DecoderSpec, tensors: dict) -> IngestReport:
         auxiliary_tensors=tuple(auxiliary),
         decoder_element_count=count(consumed),
         auxiliary_element_count=count(auxiliary),
-        shard_element_count=sum(len(tensor[2]) for tensor in tensors.values()))
+        shard_element_count=sum(len(tensor[2]) for tensor in tensors.values()),
+    )
 
 
-def ingest_checkpoint_with_report(model_dir: str) \
-        -> tuple[DecoderSpec, DecoderWeights, IngestReport]:
+def ingest_checkpoint_with_report(
+    model_dir: str,
+) -> tuple[DecoderSpec, DecoderWeights, IngestReport]:
     """Ingest one shard and return a strict, auditable tensor/element census.
 
     Llama's per-layer ``rotary_emb.inv_freq`` buffers are the sole permitted non-parameter

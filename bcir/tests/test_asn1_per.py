@@ -75,10 +75,14 @@ _PERSONNEL_RECORD = {
     "dateOfHire": "19710917",
     "nameOfSpouse": {"givenName": "Mary", "initial": "T", "familyName": "Smith"},
     "children": [
-        {"name": {"givenName": "Ralph", "initial": "T", "familyName": "Smith"},
-         "dateOfBirth": "19571111"},
-        {"name": {"givenName": "Susan", "initial": "B", "familyName": "Jones"},
-         "dateOfBirth": "19590717"},
+        {
+            "name": {"givenName": "Ralph", "initial": "T", "familyName": "Smith"},
+            "dateOfBirth": "19571111",
+        },
+        {
+            "name": {"givenName": "Susan", "initial": "B", "familyName": "Jones"},
+            "dateOfBirth": "19590717",
+        },
     ],
 }
 
@@ -115,7 +119,6 @@ _A2_UNALIGNED = bytes.fromhex(
 )
 
 
-
 # A.3 adds extension markers throughout: an extensible SET, extensible SEQUENCEs, an
 # extensible INTEGER constraint, and extensible SIZE constraints.
 _A3_MODULE = """
@@ -148,10 +151,15 @@ _A3_RECORD = {
     "dateOfHire": "19710917",
     "nameOfSpouse": {"givenName": "Mary", "initial": "T", "familyName": "Smith"},
     "children": [
-        {"name": {"givenName": "Ralph", "initial": "T", "familyName": "Smith"},
-         "dateOfBirth": "19571111"},
-        {"name": {"givenName": "Susan", "initial": "B", "familyName": "Jones"},
-         "dateOfBirth": "19590717", "sex": 2},
+        {
+            "name": {"givenName": "Ralph", "initial": "T", "familyName": "Smith"},
+            "dateOfBirth": "19571111",
+        },
+        {
+            "name": {"givenName": "Susan", "initial": "B", "familyName": "Jones"},
+            "dateOfBirth": "19590717",
+            "sex": 2,
+        },
     ],
 }
 
@@ -190,19 +198,18 @@ _A3_UNALIGNED = bytes.fromhex(
     "22985ce521842eaa60b832b20e2e0202"
     "80"
 )
-_A4_ALIGNED = bytes.fromhex(
-    "9e000180010291a4"
-)
-_A4_UNALIGNED = bytes.fromhex(
-    "9e000600040a4690"
-)
-
+_A4_ALIGNED = bytes.fromhex("9e000180010291a4")
+_A4_UNALIGNED = bytes.fromhex("9e000600040a4690")
 
 
 def _encode_annex(module: str, variant: PerVariant) -> bytes:
     lowered = compile_module(module, "<annex>")
-    return encode_per(lowered.module.types["PersonnelRecord"], _PERSONNEL_RECORD,
-                      variant=variant, rules=PerRules.CANONICAL)
+    return encode_per(
+        lowered.module.types["PersonnelRecord"],
+        _PERSONNEL_RECORD,
+        variant=variant,
+        rules=PerRules.CANONICAL,
+    )
 
 
 def test_annex_a1_aligned_matches_the_specification_octets():
@@ -259,7 +266,8 @@ def test_serial_constraint_application_keeps_the_inner_permitted_alphabet():
     assert (low, high) == (1, 1), "the outer SIZE(1) must win for the length"
     alphabet = initial.type.constraint.alphabet()
     assert alphabet is not None and len(set(alphabet)) == 54, (
-        "NameString's permitted alphabet must survive serial application")
+        "NameString's permitted alphabet must survive serial application"
+    )
 
 
 # --- clause 11: the whole-number and length machinery ------------------------------------
@@ -267,8 +275,23 @@ def test_serial_constraint_application_keeps_the_inner_permitted_alphabet():
 
 def test_bits_for_range_matches_the_aligned_table_in_11_5_7_1():
     """§11.5.6 and the §11.5.7.1 table have to agree; this pins both."""
-    table = {2: 1, 3: 2, 4: 2, 5: 3, 8: 3, 9: 4, 16: 4, 17: 5, 32: 5,
-             33: 6, 64: 6, 65: 7, 128: 7, 129: 8, 255: 8}
+    table = {
+        2: 1,
+        3: 2,
+        4: 2,
+        5: 3,
+        8: 3,
+        9: 4,
+        16: 4,
+        17: 5,
+        32: 5,
+        33: 6,
+        64: 6,
+        65: 7,
+        128: 7,
+        129: 8,
+        255: 8,
+    }
     for range_, expected in table.items():
         assert bits_for_range(range_) == expected, f"range {range_}"
     assert bits_for_range(1) == 0, "§11.5.4: a range of 1 is an empty bit-field"
@@ -331,8 +354,9 @@ def test_enumerated_encodes_the_index_not_the_value():
     This is the one place PER needs strictly more schema than DER/OER, both of which encode
     the value itself (X.690 §8.4, X.696 §11).
     """
-    kind = Primitive(Universal.ENUMERATED, "E",
-                     enumeration=(("red", 4), ("green", 9), ("blue", 25)))
+    kind = Primitive(
+        Universal.ENUMERATED, "E", enumeration=(("red", 4), ("green", 9), ("blue", 25))
+    )
     wrapper = Sequence((Component("v", kind),), name="S")
     # three enumerations -> indices 0..2 -> a 2-bit field, sorted ascending by value.
     assert encode_per(wrapper, {"v": 4}, variant=PerVariant.UNALIGNED) == b"\x00"
@@ -354,8 +378,10 @@ def test_enumerated_without_an_enumeration_is_refused_rather_than_guessed():
 
 
 def test_enumerated_rejects_a_value_outside_the_enumeration():
-    kind = Sequence((Component("v", Primitive(
-        Universal.ENUMERATED, "E", enumeration=(("a", 0), ("b", 1)))),), name="S")
+    kind = Sequence(
+        (Component("v", Primitive(Universal.ENUMERATED, "E", enumeration=(("a", 0), ("b", 1)))),),
+        name="S",
+    )
     try:
         encode_per(kind, {"v": 7})
         raise AssertionError("7 is not an enumeration value of this type")
@@ -367,15 +393,23 @@ def test_enumerated_rejects_a_value_outside_the_enumeration():
 
 
 def _extensible_pair():
-    base = Sequence((
-        Component("a", _int_range(0, 255)),
-        Component("b", _int_range(0, 255), optional=True),
-    ), name="S", extensible=True)
-    extended = Sequence((
-        Component("a", _int_range(0, 255)),
-        Component("b", _int_range(0, 255), optional=True),
-        Component("c", _int_range(0, 255), optional=True, extension=True),
-    ), name="S", extensible=True)
+    base = Sequence(
+        (
+            Component("a", _int_range(0, 255)),
+            Component("b", _int_range(0, 255), optional=True),
+        ),
+        name="S",
+        extensible=True,
+    )
+    extended = Sequence(
+        (
+            Component("a", _int_range(0, 255)),
+            Component("b", _int_range(0, 255), optional=True),
+            Component("c", _int_range(0, 255), optional=True, extension=True),
+        ),
+        name="S",
+        extensible=True,
+    )
     return base, extended
 
 
@@ -384,7 +418,8 @@ def test_extension_bit_is_zero_when_no_addition_is_present():
     base, extended = _extensible_pair()
     without = encode_per(extended, {"a": 1, "b": 2})
     assert encode_per(base, {"a": 1, "b": 2}) == without, (
-        "a type with additions, none present, must encode as the base type does")
+        "a type with additions, none present, must encode as the base type does"
+    )
 
 
 def test_an_older_reader_skips_an_unknown_extension_addition():
@@ -403,8 +438,7 @@ def test_an_older_reader_skips_an_unknown_extension_addition():
 def test_extension_additions_round_trip_in_both_variants():
     _, extended = _extensible_pair()
     for variant in (PerVariant.ALIGNED, PerVariant.UNALIGNED):
-        for value in ({"a": 1}, {"a": 1, "b": 2}, {"a": 1, "c": 9},
-                      {"a": 1, "b": 2, "c": 3}):
+        for value in ({"a": 1}, {"a": 1, "b": 2}, {"a": 1, "c": 9}, {"a": 1, "b": 2, "c": 3}):
             data = encode_per(extended, value, variant=variant)
             assert decode_per(data, extended, variant=variant) == value, (variant, value)
 
@@ -426,10 +460,11 @@ def test_trailing_octets_are_refused():
 def test_non_zero_padding_is_refused():
     """§11.1.4 pads with ZERO bits; a one bit there is a second spelling of one value."""
     octets = Primitive(Universal.OCTET_STRING, "OCTET STRING")
-    kind = Sequence((Component("f", Primitive(Universal.BOOLEAN, "BOOLEAN")),
-                     Component("v", octets)), name="S")
+    kind = Sequence(
+        (Component("f", Primitive(Universal.BOOLEAN, "BOOLEAN")), Component("v", octets)), name="S"
+    )
     data = bytearray(encode_per(kind, {"f": True, "v": b"\xaa"}, variant=PerVariant.ALIGNED))
-    data[0] |= 0x40                                   # a pad bit after the boolean
+    data[0] |= 0x40  # a pad bit after the boolean
     try:
         decode_per(bytes(data), kind, variant=PerVariant.ALIGNED)
         raise AssertionError("a non-zero pad bit must be refused")
@@ -463,7 +498,10 @@ def test_artifact_bundle_per_projection_is_byte_identical_and_smaller_than_der()
     """The A1-A4 laws restated for PER, plus the roadmap's size law."""
     from bcir.abi.artifact_bundle import encode_bundle
     from bcir.asn1.artifact_bundle import (
-        decode_bundle_per, native_to_der, native_to_per, per_to_native,
+        decode_bundle_per,
+        native_to_der,
+        native_to_per,
+        per_to_native,
     )
     from bcir.tests.test_asn1_artifact_bundle import _three_bundle
 
@@ -473,10 +511,10 @@ def test_artifact_bundle_per_projection_is_byte_identical_and_smaller_than_der()
     for aligned in (False, True):
         per = native_to_per(native, aligned=aligned)
         assert per_to_native(per, aligned=aligned) == native, (
-            f"native -> PER -> native must be byte-identical (aligned={aligned})")
+            f"native -> PER -> native must be byte-identical (aligned={aligned})"
+        )
         assert decode_bundle_per(per, aligned=aligned) == bundle
-        assert len(per) <= len(der), (
-            f"PER must not be larger than DER: {len(per)} vs {len(der)}")
+        assert len(per) <= len(der), f"PER must not be larger than DER: {len(per)} vs {len(der)}"
 
 
 def test_the_two_per_variants_do_not_interwork():
@@ -490,7 +528,7 @@ def test_the_two_per_variants_do_not_interwork():
     try:
         crossed = per_to_native(unaligned, aligned=True)
     except Exception:
-        return                                        # refused, which is the good outcome
+        return  # refused, which is the good outcome
     assert crossed != native, "the variants must not silently interwork"
 
 
@@ -526,16 +564,20 @@ def test_annex_a4_matches_the_specification_octets_in_both_variants():
     and `i`/`j`, written after the SECOND marker, are extension ROOT components (19.9
     NOTE 2), not additions.
     """
-    for variant, expected in ((PerVariant.ALIGNED, _A4_ALIGNED),
-                              (PerVariant.UNALIGNED, _A4_UNALIGNED)):
+    for variant, expected in (
+        (PerVariant.ALIGNED, _A4_ALIGNED),
+        (PerVariant.UNALIGNED, _A4_UNALIGNED),
+    ):
         got = _encode_named(_A4_MODULE, "Ax", _A4_RECORD, variant)
         assert len(got) == 8, f"A.4 is 8 octets, got {len(got)}"
         assert got == expected, "A.4 " + variant.value + ": " + got.hex() + " != " + expected.hex()
 
 
 def test_annex_a3_and_a4_round_trip_in_both_variants():
-    for module, name, value in ((_A3_MODULE, "PersonnelRecord", _A3_RECORD),
-                                (_A4_MODULE, "Ax", _A4_RECORD)):
+    for module, name, value in (
+        (_A3_MODULE, "PersonnelRecord", _A3_RECORD),
+        (_A4_MODULE, "Ax", _A4_RECORD),
+    ):
         lowered = compile_module(module, "<annex>")
         kind = lowered.module.types[name]
         for variant in (PerVariant.ALIGNED, PerVariant.UNALIGNED):
@@ -552,9 +594,11 @@ def test_serial_application_erases_the_parent_extension_marker():
     given = next(c for c in name.components if c.name == "givenName")
     initial = next(c for c in name.components if c.name == "initial")
     assert root_size_bounds(given.type.constraint) == ((1, 64), True), (
-        "the plain reference keeps NameString's extensible SIZE(1..64, ...)")
+        "the plain reference keeps NameString's extensible SIZE(1..64, ...)"
+    )
     assert root_size_bounds(initial.type.constraint) == ((1, 1), False), (
-        "the serially constrained one is fixed at 1 and NOT extensible")
+        "the serially constrained one is fixed at 1 and NOT extensible"
+    )
 
 
 def test_extensible_integer_outside_the_root_switches_to_unconstrained():
@@ -585,8 +629,9 @@ def test_half_open_integer_range_encodes_semi_constrained():
     UNBOUNDED sentinel TUPLE, which sent `INTEGER (0..MAX)` into int(None)."""
     from bcir.asn1.constraints import ValueRange
 
-    kind = Sequence((Component("v", Primitive(
-        Universal.INTEGER, "INTEGER", ValueRange(0, None))),), name="S")
+    kind = Sequence(
+        (Component("v", Primitive(Universal.INTEGER, "INTEGER", ValueRange(0, None))),), name="S"
+    )
     for variant in (PerVariant.ALIGNED, PerVariant.UNALIGNED):
         for value in (0, 5, 300, 70000):
             data = encode_per(kind, {"v": value}, variant=variant)
@@ -595,5 +640,4 @@ def test_half_open_integer_range_encodes_semi_constrained():
 
 def _encode_named(module: str, name: str, value, variant: PerVariant) -> bytes:
     lowered = compile_module(module, "<annex>")
-    return encode_per(lowered.module.types[name], value,
-                      variant=variant, rules=PerRules.CANONICAL)
+    return encode_per(lowered.module.types[name], value, variant=variant, rules=PerRules.CANONICAL)

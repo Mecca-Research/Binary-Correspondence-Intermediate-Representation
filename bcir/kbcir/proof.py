@@ -37,14 +37,14 @@ class ClaimDecision:
     chosen: str
     width: int
     score: int
-    candidates: tuple        # ((candidate_name, candidate_score), ...) ascending name
+    candidates: tuple  # ((candidate_name, candidate_score), ...) ascending name
 
 
 @dataclass(frozen=True)
 class RewriteCertificate:
     """A serializable record of one joint reorder (a `kbcir.bundle.BundleCertificate`)."""
 
-    kind: str                # "bundle"
+    kind: str  # "bundle"
     claim_ids: tuple
     detail: str
     gain: int
@@ -62,20 +62,22 @@ class DecisionRecord:
     policy: str
     digest: int
     total_score: int
-    decisions: tuple         # (ClaimDecision, ...)
-    certificates: tuple      # (RewriteCertificate, ...)
+    decisions: tuple  # (ClaimDecision, ...)
+    certificates: tuple  # (RewriteCertificate, ...)
 
     def to_json(self) -> str:
         d = asdict(self)
         d["decisions"] = [
-            {**asdict(dc), "candidates": [list(c) for c in dc.candidates]}
-            for dc in self.decisions]
+            {**asdict(dc), "candidates": [list(c) for c in dc.candidates]} for dc in self.decisions
+        ]
         d["certificates"] = [
-            {**asdict(c), "claim_ids": list(c.claim_ids)} for c in self.certificates]
+            {**asdict(c), "claim_ids": list(c.claim_ids)} for c in self.certificates
+        ]
         # The 0.4b STABLE-SCHEMA envelope: kind + schema version wrap the payload, so a record
         # is self-describing on disk and a decoder can upgrade (or refuse) by version alone.
-        return json.dumps({"kind": RECORD_KIND, "schema": SCHEMA_VERSION, "record": d},
-                          indent=2, sort_keys=True)
+        return json.dumps(
+            {"kind": RECORD_KIND, "schema": SCHEMA_VERSION, "record": d}, indent=2, sort_keys=True
+        )
 
     @staticmethod
     def from_json(text: str) -> "DecisionRecord":
@@ -86,7 +88,7 @@ class DecisionRecord:
         d = strict_json_loads(text, "decision record")
         if not isinstance(d, dict):
             raise ValueError("decision record JSON must be an object")
-        if "schema" not in d:                          # v1: the bare, unversioned payload
+        if "schema" not in d:  # v1: the bare, unversioned payload
             version, payload = 1, d
         else:
             if set(d) != {"kind", "schema", "record"}:
@@ -98,36 +100,54 @@ class DecisionRecord:
                 raise ValueError("decision-record schema must be a positive integer")
             payload = d["record"]
         if version > SCHEMA_VERSION:
-            raise ValueError(f"decision-record schema v{version} is newer than this build's "
-                             f"v{SCHEMA_VERSION}; upgrade BCIR to re-check this record")
-        while version < SCHEMA_VERSION:                # chain upgrades one revision at a time
+            raise ValueError(
+                f"decision-record schema v{version} is newer than this build's "
+                f"v{SCHEMA_VERSION}; upgrade BCIR to re-check this record"
+            )
+        while version < SCHEMA_VERSION:  # chain upgrades one revision at a time
             upgrade = _UPGRADES.get(version)
             if upgrade is None:
                 raise ValueError(f"decision-record schema v{version} is not supported")
             payload = upgrade(payload)
             version += 1
-        fields = {"module_name", "target", "theta", "policy", "digest", "total_score",
-                  "decisions", "certificates"}
+        fields = {
+            "module_name",
+            "target",
+            "theta",
+            "policy",
+            "digest",
+            "total_score",
+            "decisions",
+            "certificates",
+        }
         if not isinstance(payload, dict) or set(payload) != fields:
             raise ValueError(f"decision-record fields must be exactly {sorted(fields)}")
 
         def bounded_string(value, label):
-            if (not isinstance(value, str) or not value or len(value) > 4096 or
-                    any(ord(ch) < 0x20 for ch in value)):
+            if (
+                not isinstance(value, str)
+                or not value
+                or len(value) > 4096
+                or any(ord(ch) < 0x20 for ch in value)
+            ):
                 raise ValueError(f"{label} must be a bounded, non-control string")
             return value
 
         def nonnegative_i63(value, label):
-            if (isinstance(value, bool) or not isinstance(value, int) or
-                    not 0 <= value <= (1 << 63) - 1):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 0 <= value <= (1 << 63) - 1
+            ):
                 raise ValueError(f"{label} must be a non-negative i63")
             return value
 
-        labels = tuple(bounded_string(payload[key], f"decision-record {key}")
-                       for key in ("module_name", "target", "theta", "policy"))
+        labels = tuple(
+            bounded_string(payload[key], f"decision-record {key}")
+            for key in ("module_name", "target", "theta", "policy")
+        )
         digest = nonnegative_i63(payload["digest"], "decision-record digest")
-        total_score = nonnegative_i63(payload["total_score"],
-                                      "decision-record total_score")
+        total_score = nonnegative_i63(payload["total_score"], "decision-record total_score")
 
         raw_decisions = payload["decisions"]
         if not isinstance(raw_decisions, list) or len(raw_decisions) > 65536:
@@ -145,37 +165,47 @@ class DecisionRecord:
             op = bounded_string(dc["op"], f"decision[{index}].op")
             chosen = bounded_string(dc["chosen"], f"decision[{index}].chosen")
             width = dc["width"]
-            if (isinstance(width, bool) or not isinstance(width, int) or
-                    not 1 <= width <= 0xFFFFFFFF):
+            if (
+                isinstance(width, bool)
+                or not isinstance(width, int)
+                or not 1 <= width <= 0xFFFFFFFF
+            ):
                 raise ValueError(f"decision[{index}].width must be a positive u32")
             score = nonnegative_i63(dc["score"], f"decision[{index}].score")
             raw_candidates = dc["candidates"]
-            if (not isinstance(raw_candidates, list) or not raw_candidates or
-                    len(raw_candidates) > 4096):
+            if (
+                not isinstance(raw_candidates, list)
+                or not raw_candidates
+                or len(raw_candidates) > 4096
+            ):
                 raise ValueError(f"decision[{index}].candidates must be a bounded array")
             candidates = []
             seen_names = set()
             for candidate_index, candidate in enumerate(raw_candidates):
                 if not isinstance(candidate, list) or len(candidate) != 2:
                     raise ValueError(
-                        f"decision[{index}].candidates[{candidate_index}] must be [name, score]")
-                name = bounded_string(candidate[0],
-                                      f"decision[{index}].candidates[{candidate_index}].name")
+                        f"decision[{index}].candidates[{candidate_index}] must be [name, score]"
+                    )
+                name = bounded_string(
+                    candidate[0], f"decision[{index}].candidates[{candidate_index}].name"
+                )
                 candidate_score = nonnegative_i63(
-                    candidate[1], f"decision[{index}].candidates[{candidate_index}].score")
+                    candidate[1], f"decision[{index}].candidates[{candidate_index}].score"
+                )
                 if name in seen_names:
                     raise ValueError(f"decision[{index}] has duplicate candidate {name!r}")
                 seen_names.add(name)
                 candidates.append((name, candidate_score))
             if candidates != sorted(candidates):
                 raise ValueError(f"decision[{index}] candidates must be sorted by name")
-            chosen_scores = [candidate_score for name, candidate_score in candidates
-                             if name == chosen]
+            chosen_scores = [
+                candidate_score for name, candidate_score in candidates if name == chosen
+            ]
             if chosen_scores != [score]:
                 raise ValueError(
-                    f"decision[{index}] chosen candidate must exist and match its score")
-            decisions.append(ClaimDecision(claim_id, op, chosen, width, score,
-                                           tuple(candidates)))
+                    f"decision[{index}] chosen candidate must exist and match its score"
+                )
+            decisions.append(ClaimDecision(claim_id, op, chosen, width, score, tuple(candidates)))
         raw_certs = payload["certificates"]
         if not isinstance(raw_certs, list) or len(raw_certs) > 65536:
             raise ValueError("decision-record certificates must be a bounded array")
@@ -188,12 +218,11 @@ class DecisionRecord:
             if kind != "bundle":
                 raise ValueError(f"certificate[{index}] has unsupported kind {kind!r}")
             raw_ids = cert["claim_ids"]
-            if (not isinstance(raw_ids, list) or len(raw_ids) < 2 or
-                    len(raw_ids) > 65536):
+            if not isinstance(raw_ids, list) or len(raw_ids) < 2 or len(raw_ids) > 65536:
                 raise ValueError(f"certificate[{index}].claim_ids must be a bounded array")
-            claim_ids = tuple(nonnegative_i63(value,
-                                               f"certificate[{index}].claim_ids")
-                              for value in raw_ids)
+            claim_ids = tuple(
+                nonnegative_i63(value, f"certificate[{index}].claim_ids") for value in raw_ids
+            )
             if len(set(claim_ids)) != len(claim_ids):
                 raise ValueError(f"certificate[{index}] has duplicate claim ids")
             if any(claim_id not in seen_claims for claim_id in claim_ids):
@@ -205,8 +234,16 @@ class DecisionRecord:
                 raise ValueError(f"certificate[{index}].searched must be positive")
             certs.append(RewriteCertificate(kind, claim_ids, detail, gain, searched))
 
-        return DecisionRecord(labels[0], labels[1], labels[2], labels[3], digest,
-                              total_score, tuple(decisions), tuple(certs))
+        return DecisionRecord(
+            labels[0],
+            labels[1],
+            labels[2],
+            labels[3],
+            digest,
+            total_score,
+            tuple(decisions),
+            tuple(certs),
+        )
 
 
 RECORD_KIND = "bcir.decision_record"
@@ -230,13 +267,20 @@ def _theta_label(theta: Theta) -> str:
     return f"theta(thermal={theta.thermal},power={theta.power})"
 
 
-def explain(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
-            target_name: str = "", joint: bool = False) -> DecisionRecord:
+def explain(
+    module: Module,
+    h: HProfile,
+    theta: Theta,
+    policy: Policy = PERF,
+    *,
+    target_name: str = "",
+    joint: bool = False,
+) -> DecisionRecord:
     """Build the proof-carrying record for `module`'s plan: the provenance digest, the
     per-claim decision (candidates weighed + chosen + per-candidate scores), and -- with
     `joint=True` -- the bundle rewrite certificates. `target_name` labels the record (the
     digest, not the label, is what `replay` checks)."""
-    from ..lower.mlir import plan_view          # the IR-level candidate view (shared rail)
+    from ..lower.mlir import plan_view  # the IR-level candidate view (shared rail)
     from .bundle import optimize_bundled
     from .provenance import build_manifest
 
@@ -244,26 +288,45 @@ def explain(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
     weights = pv.weights
     decisions = []
     for cv in pv.claims:
-        cands = tuple(sorted(
-            (p.name, sum(c * w for c, w in zip(p.cost, weights))) for p in cv.paths))
-        decisions.append(ClaimDecision(
-            claim_id=cv.claim_id, op=cv.op, chosen=cv.selected, width=cv.width,
-            score=cv.score, candidates=cands))
+        cands = tuple(
+            sorted((p.name, sum(c * w for c, w in zip(p.cost, weights))) for p in cv.paths)
+        )
+        decisions.append(
+            ClaimDecision(
+                claim_id=cv.claim_id,
+                op=cv.op,
+                chosen=cv.selected,
+                width=cv.width,
+                score=cv.score,
+                candidates=cands,
+            )
+        )
 
     certs: list[RewriteCertificate] = []
     if joint:
         _res, bcerts = optimize_bundled(module, h, theta, policy)
         for bc in bcerts:
-            certs.append(RewriteCertificate(
-                kind="bundle", claim_ids=bc.bundle.claim_ids,
-                detail=f"reorder around shared rid {bc.bundle.shared_rid} -> {bc.order}",
-                gain=bc.gain, searched=bc.searched))
+            certs.append(
+                RewriteCertificate(
+                    kind="bundle",
+                    claim_ids=bc.bundle.claim_ids,
+                    detail=f"reorder around shared rid {bc.bundle.shared_rid} -> {bc.order}",
+                    gain=bc.gain,
+                    searched=bc.searched,
+                )
+            )
 
     manifest = build_manifest(module, h, theta, policy)
     return DecisionRecord(
-        module_name=module.name, target=target_name or getattr(h, "name", "?"),
-        theta=_theta_label(theta), policy=policy.name, digest=manifest.digest,
-        total_score=pv.total_score, decisions=tuple(decisions), certificates=tuple(certs))
+        module_name=module.name,
+        target=target_name or getattr(h, "name", "?"),
+        theta=_theta_label(theta),
+        policy=policy.name,
+        digest=manifest.digest,
+        total_score=pv.total_score,
+        decisions=tuple(decisions),
+        certificates=tuple(certs),
+    )
 
 
 @dataclass(frozen=True)
@@ -275,8 +338,15 @@ class ReplayResult:
         return self.reproduced
 
 
-def replay(record: DecisionRecord, module: Module, h: HProfile, theta: Theta,
-           policy: Policy = PERF, *, joint: bool = False) -> ReplayResult:
+def replay(
+    record: DecisionRecord,
+    module: Module,
+    h: HProfile,
+    theta: Theta,
+    policy: Policy = PERF,
+    *,
+    joint: bool = False,
+) -> ReplayResult:
     """Reproduce `record` from the supplied inputs and diff. Reproduction holds iff the
     R13 provenance digest matches (same commit) AND every per-claim decision + the total
     score + the rewrite certificates are identical -- the proof the deployed plan is
@@ -333,9 +403,13 @@ def explain_text(record: DecisionRecord) -> str:
     ]
     for d in record.decisions:
         alts = ", ".join(f"{n}={s}" for n, s in d.candidates)
-        lines.append(f"  claim {d.claim_id} [{d.op}] -> {d.chosen} (w{d.width}, score "
-                     f"{d.score}); weighed: {alts}")
+        lines.append(
+            f"  claim {d.claim_id} [{d.op}] -> {d.chosen} (w{d.width}, score "
+            f"{d.score}); weighed: {alts}"
+        )
     for c in record.certificates:
-        lines.append(f"  rewrite[{c.kind}] {list(c.claim_ids)}: {c.detail} "
-                     f"(gain {c.gain}, searched {c.searched})")
+        lines.append(
+            f"  rewrite[{c.kind}] {list(c.claim_ids)}: {c.detail} "
+            f"(gain {c.gain}, searched {c.searched})"
+        )
     return "\n".join(lines)

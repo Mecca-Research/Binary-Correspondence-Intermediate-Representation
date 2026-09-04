@@ -64,6 +64,7 @@ from .activation import sigmoid_reference, softmax_reference
 
 # === Path 1: the closed-set loss (MSE) -- built INTO the Tape, differentiated by the existing autodiff ===
 
+
 def mse(tape, pred_nids, targets) -> int:
     """Build mean-squared-error as CLOSED-SET Tape nodes over the model's prediction node ids and return
     the scalar loss node id.
@@ -86,8 +87,8 @@ def mse(tape, pred_nids, targets) -> int:
         raise ValueError(f"mse: pred/target length mismatch ({n} != {len(targets)})")
     # e_i = pred_i - target_i (a const target node per label).
     errs = tuple(tape.sub(p, tape.const(t)) for p, t in zip(pred_nids, targets))
-    sq = tape.dot(errs, errs)                       # sum_i e_i^2 -- the closed-set sum of products
-    return tape.mul(tape.const(1.0 / n), sq)        # scale by 1/n -> the mean
+    sq = tape.dot(errs, errs)  # sum_i e_i^2 -- the closed-set sum of products
+    return tape.mul(tape.const(1.0 / n), sq)  # scale by 1/n -> the mean
 
 
 def mse_value(pred, target) -> float:
@@ -116,6 +117,7 @@ def mse_grad(pred, target) -> list:
 
 # === Path 2: the transcendental losses -- (loss_value, grad_logits) where grad_logits SEEDS the backward ===
 
+
 def softmax_cross_entropy(logits, target_onehot) -> tuple:
     """Softmax cross-entropy: return ``(loss_value, grad_logits)``.
 
@@ -133,7 +135,9 @@ def softmax_cross_entropy(logits, target_onehot) -> tuple:
     logits = [float(z) for z in logits]
     onehot = [float(y) for y in target_onehot]
     if len(logits) != len(onehot) or not logits:
-        raise ValueError(f"softmax_cross_entropy: bad lengths logits={len(logits)} onehot={len(onehot)}")
+        raise ValueError(
+            f"softmax_cross_entropy: bad lengths logits={len(logits)} onehot={len(onehot)}"
+        )
     # softmax via the existing G1 reference (axis_len = K: a single row). It already does the stable
     # max-subtraction internally.
     probs = softmax_reference(logits, len(logits))
@@ -161,13 +165,15 @@ def binary_cross_entropy_with_logits(logits, target) -> tuple:
     logits = [float(z) for z in logits]
     target = [float(y) for y in target]
     if len(logits) != len(target) or not logits:
-        raise ValueError(f"binary_cross_entropy_with_logits: bad lengths "
-                         f"logits={len(logits)} target={len(target)}")
+        raise ValueError(
+            f"binary_cross_entropy_with_logits: bad lengths "
+            f"logits={len(logits)} target={len(target)}"
+        )
     n = len(logits)
     # stable per-element BCE: max(z,0) - z*y + log(1 + exp(-|z|)).
     per = [max(z, 0.0) - z * y + math.log1p(math.exp(-abs(z))) for z, y in zip(logits, target)]
     loss = sum(per) / n
-    probs = sigmoid_reference(logits)                       # the existing G1 sigmoid reference
+    probs = sigmoid_reference(logits)  # the existing G1 sigmoid reference
     grad_logits = [(p - y) / n for p, y in zip(probs, target)]
     return loss, grad_logits
 

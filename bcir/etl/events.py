@@ -10,8 +10,8 @@ class EventStream:
     """An input or runtime event stream descriptor."""
 
     name: str
-    kind: str = "text"        # text | binary | telemetry | packet | driver | token
-    encoding: str = "utf8"    # utf8 | bytes | le | be | records | custom
+    kind: str = "text"  # text | binary | telemetry | packet | driver | token
+    encoding: str = "utf8"  # utf8 | bytes | le | be | records | custom
     element_bits: int = 8
     max_window: int = 4096
 

@@ -59,10 +59,10 @@ class BundleCertificate:
     """The proof-carrying record of one joint reorder: what was searched and the win."""
 
     bundle: Bundle
-    searched: int            # orderings evaluated (<= max_size!)
-    greedy_score: int        # the plan score before this bundle's reorder
-    joint_score: int         # ... and after
-    order: tuple[int, ...]   # the adopted intra-bundle claim order
+    searched: int  # orderings evaluated (<= max_size!)
+    greedy_score: int  # the plan score before this bundle's reorder
+    joint_score: int  # ... and after
+    order: tuple[int, ...]  # the adopted intra-bundle claim order
 
     @property
     def gain(self) -> int:
@@ -116,8 +116,9 @@ def _legal_reorder(orig: list[Claim], new: list[Claim]) -> bool:
     return True
 
 
-def _reordered(module: Module, phase_id: int, bundle_ids: tuple[int, ...],
-               order: tuple[int, ...]) -> Module:
+def _reordered(
+    module: Module, phase_id: int, bundle_ids: tuple[int, ...], order: tuple[int, ...]
+) -> Module:
     """A deep copy of `module` with the bundle's claims placed contiguously, in `order`,
     at the bundle's anchor position (the earliest position any bundle claim held); the
     non-bundle claims keep their relative order. Only the intra-phase claim list changes."""
@@ -133,8 +134,9 @@ def _reordered(module: Module, phase_id: int, bundle_ids: tuple[int, ...],
     return m
 
 
-def optimize_bundled(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF,
-                     max_size: int = 4) -> tuple[RealizationResult, list[BundleCertificate]]:
+def optimize_bundled(
+    module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, max_size: int = 4
+) -> tuple[RealizationResult, list[BundleCertificate]]:
     """Greedy + per-bundle exhaustive joint optimization. Starts from the declared-order
     plan, then for each input-sharing bundle searches every intra-bundle ordering
     (contiguous at the anchor), adopting the one that strictly lowers the plan score.

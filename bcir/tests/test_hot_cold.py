@@ -17,17 +17,27 @@ _ROOT = pathlib.Path(__file__).resolve().parents[2]
 # violation): calibration, the soft/Bayesian/MoE/regret/accelerator learners, and
 # the e-graph / memory / operad / two-truth / mapping plan-time machinery.
 _LEARNING = {
-    "softdp", "bayescal", "moegate", "regret", "accel", "microbench", "calibrate",
-    "egraph", "memory", "operad", "twotruth", "mapping",
+    "softdp",
+    "bayescal",
+    "moegate",
+    "regret",
+    "accel",
+    "microbench",
+    "calibrate",
+    "egraph",
+    "memory",
+    "operad",
+    "twotruth",
+    "mapping",
 }
 # The plan-time search itself (execution replays decisions, it does not re-plan).
 _PLANNING = {"realize", "rcsp", "semiring", "portfolio"}
 
 # module path -> the import families it may NOT pull in.
 _HOT = {
-    "bcir/gem/execute.py": _LEARNING | _PLANNING,        # the executor: neither
+    "bcir/gem/execute.py": _LEARNING | _PLANNING,  # the executor: neither
     "bcir/abi/streampack_abi.py": _LEARNING | _PLANNING,  # the wire codec: neither
-    "bcir/gem/streampack.py": _LEARNING,                  # hydration carries the plan, not the models
+    "bcir/gem/streampack.py": _LEARNING,  # hydration carries the plan, not the models
 }
 
 
@@ -60,6 +70,7 @@ def test_executor_runtime_imports_no_learning():
     before = set(sys.modules)
     # a fresh import of the executor path
     import importlib
+
     importlib.import_module("bcir.gem.execute")
     pulled = (set(sys.modules) - before) & learning_mods
     assert not pulled, f"importing the executor pulled in learning modules: {pulled}"

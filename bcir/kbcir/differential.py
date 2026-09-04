@@ -45,14 +45,16 @@ THETAS = {"cool": Theta.cool(), "hot": Theta.hot(), "mem_bound": Theta.mem_bound
 
 # --- the law rail: an independent reimplementation of -bcir-select-realization ----
 
+
 def _scalarize(cost: tuple[int, ...], w: tuple[int, ...]) -> int:
     """score(path) = sum_d cost_d * w_d -- the K_BCIR dot product the min-plus
     selection minimizes (mirrors BCIRPasses.cpp `scalarize`)."""
     return sum(c * wi for c, wi in zip(cost, w))
 
 
-def law_select(pv: PlanView, budget: tuple[tuple[int, int], ...] = ()) \
-        -> dict[int, tuple[str, int]]:
+def law_select(
+    pv: PlanView, budget: tuple[tuple[int, int], ...] = ()
+) -> dict[int, tuple[str, int]]:
     """For each claim, recompute the budget-feasible min-plus argmin over its
     declared candidate costs and the policy weights -- exactly what the C++
     `-bcir-select-realization` pass does. Returns claim_id -> (selected_name, score).
@@ -106,13 +108,14 @@ def _respects_phase_dag(module: Module, order: list[int]) -> bool:
 
 # --- the diff -------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Mismatch:
-    kind: str           # select | score | total | budget | schedule
-    claim_id: int       # 0 for module-level (total / schedule)
+    kind: str  # select | score | total | budget | schedule
+    claim_id: int  # 0 for module-level (total / schedule)
     detail: str
-    coupling: bool = False   # True iff explainable by cross-claim coupling (a known
-                             # per-claim-rail capability gap, not an oracle bug)
+    coupling: bool = False  # True iff explainable by cross-claim coupling (a known
+    # per-claim-rail capability gap, not an oracle bug)
 
 
 @dataclass
@@ -145,8 +148,12 @@ def _coupling_active(cv: ClaimView, prev_selected_width: int | None) -> bool:
     return len({p.cost for p in cv.paths}) > 1
 
 
-def check_plan(module: Module, pv: PlanView, oracle: RealizationResult,
-               budget: tuple[tuple[int, int], ...] = ()) -> list[Mismatch]:
+def check_plan(
+    module: Module,
+    pv: PlanView,
+    oracle: RealizationResult,
+    budget: tuple[tuple[int, int], ...] = (),
+) -> list[Mismatch]:
     """Diff the law's recomputation of `pv` against the oracle's plan."""
     ms: list[Mismatch] = []
     law = law_select(pv, budget)
@@ -156,18 +163,23 @@ def check_plan(module: Module, pv: PlanView, oracle: RealizationResult,
         lname, lscore = law[cv.claim_id]
         law_total += lscore
         if lname != cv.selected:
-            ms.append(Mismatch(
-                "select", cv.claim_id,
-                f"law argmin {lname!r} != oracle selected {cv.selected!r}",
-                coupling=_coupling_active(cv, prev_w)))
+            ms.append(
+                Mismatch(
+                    "select",
+                    cv.claim_id,
+                    f"law argmin {lname!r} != oracle selected {cv.selected!r}",
+                    coupling=_coupling_active(cv, prev_w),
+                )
+            )
         elif lscore != cv.score:
-            ms.append(Mismatch(
-                "score", cv.claim_id,
-                f"law score {lscore} != oracle per-claim score {cv.score}"))
+            ms.append(
+                Mismatch(
+                    "score", cv.claim_id, f"law score {lscore} != oracle per-claim score {cv.score}"
+                )
+            )
         prev_w = cv.width
     if not budget and law_total != oracle.score:
-        ms.append(Mismatch("total", 0,
-                           f"law total {law_total} != oracle score {oracle.score}"))
+        ms.append(Mismatch("total", 0, f"law total {law_total} != oracle score {oracle.score}"))
     # schedule parity: the law's -bcir-schedule order must cover exactly the oracle's
     # claim set and be a legal topological order of the phase DAG (intra-phase claim
     # order is a free deterministic choice, not a parity invariant -- so we check
@@ -175,15 +187,19 @@ def check_plan(module: Module, pv: PlanView, oracle: RealizationResult,
     # that declare same-phase claims out of ascending-id order).
     law_ord = law_schedule(module)
     if sorted(law_ord) != sorted(oracle_schedule(module)):
-        ms.append(Mismatch("schedule", 0,
-                           f"law schedule {law_ord} != claim set {oracle_schedule(module)}"))
+        ms.append(
+            Mismatch(
+                "schedule", 0, f"law schedule {law_ord} != claim set {oracle_schedule(module)}"
+            )
+        )
     elif not _respects_phase_dag(module, law_ord):
         ms.append(Mismatch("schedule", 0, f"law schedule {law_ord} violates the phase DAG"))
     return ms
 
 
-def check_overlap(module: Module, h, theta: Theta, oracle: RealizationResult,
-                  policy: Policy = PERF) -> list[Mismatch]:
+def check_overlap(
+    module: Module, h, theta: Theta, oracle: RealizationResult, policy: Policy = PERF
+) -> list[Mismatch]:
     """The (max,+) scheduled-price law -- the conformance net for the deterministic
     optimizer core's *overlap* piece, the next slice to port to C++/MLIR. The oracle
     `gem.overlap.price_scheduled` must satisfy the same R9 invariant the MLIR
@@ -195,20 +211,24 @@ def check_overlap(module: Module, h, theta: Theta, oracle: RealizationResult,
     sp = price_scheduled(module, oracle, h, theta, policy)
     ms: list[Mismatch] = []
     if sp.makespan < 0 or sp.makespan + sp.overlap_gain != sp.serial:
-        ms.append(Mismatch("overlap", 0,
-                           f"inconsistent scheduled price (makespan {sp.makespan} + gain "
-                           f"{sp.overlap_gain} != serial {sp.serial})"))
+        ms.append(
+            Mismatch(
+                "overlap",
+                0,
+                f"inconsistent scheduled price (makespan {sp.makespan} + gain "
+                f"{sp.overlap_gain} != serial {sp.serial})",
+            )
+        )
     if sp.serial != oracle.score:
-        ms.append(Mismatch("overlap", 0,
-                           f"serial bound {sp.serial} != plan score {oracle.score}"))
+        ms.append(Mismatch("overlap", 0, f"serial bound {sp.serial} != plan score {oracle.score}"))
     if sp.makespan > sp.serial:
-        ms.append(Mismatch("overlap", 0,
-                           f"makespan {sp.makespan} exceeds serial {sp.serial}"))
+        ms.append(Mismatch("overlap", 0, f"makespan {sp.makespan} exceeds serial {sp.serial}"))
     return ms
 
 
-def check_module(module: Module, target: str = "x86_avx512", theta: str = "cool",
-                 policy: str = "latency") -> CheckResult:
+def check_module(
+    module: Module, target: str = "x86_avx512", theta: str = "cool", policy: str = "latency"
+) -> CheckResult:
     """Plan `module` on both rails and diff them. The single-call entry point."""
     h = TARGETS[target]
     th = THETAS[theta]
@@ -217,12 +237,20 @@ def check_module(module: Module, target: str = "x86_avx512", theta: str = "cool"
     pv = plan_view(module, h, th, pol, oracle)
     ms = check_plan(module, pv, oracle)
     ms += check_overlap(module, h, th, oracle, pol)
-    return CheckResult(module=module.name, target=target, theta=theta, policy=policy,
-                       n_claims=len(pv.claims), score=oracle.score, mismatches=ms)
+    return CheckResult(
+        module=module.name,
+        target=target,
+        theta=theta,
+        policy=policy,
+        n_claims=len(pv.claims),
+        score=oracle.score,
+        mismatches=ms,
+    )
 
 
-def check_budget(module: Module, budget, target: str = "x86_avx512",
-                 theta: str = "cool", policy: str = "latency") -> list[Mismatch]:
+def check_budget(
+    module: Module, budget, target: str = "x86_avx512", theta: str = "cool", policy: str = "latency"
+) -> list[Mismatch]:
     """Constrained (RCSP) parity for a single-claim module: the law's per-path
     budget-feasible argmin must equal `optimize_constrained`'s selection. (Per-path
     feasibility coincides with the accumulated RCSP cap only for one claim, which is
@@ -278,8 +306,8 @@ def gen_module(rng: random.Random) -> Module:
     for pid in range(nphases):
         deps = (pid - 1,) if pid else ()
         claims: list[Claim] = []
-        phase_reads: list[int] = []      # rids available to share within this phase
-        phase_writes: list[int] = []     # only non-sparse writes (safe to consume)
+        phase_reads: list[int] = []  # rids available to share within this phase
+        phase_writes: list[int] = []  # only non-sparse writes (safe to consume)
         nclaims = rng.randint(1, 4)
         for _ in range(nclaims):
             kind = rng.choice(_KINDS)
@@ -306,36 +334,79 @@ def _gen_claim(rng, kind, cid, pool, phase_reads, phase_writes) -> Claim:
         access = "ham" if rng.random() < 0.4 else "flat"
         src = pool.add(domain, count, access=access)
         dst = pool.add(domain, count)
-        return Claim(id=cid, opcode=Opcode.GGG_LOAD, lane=Lane.GGG,
-                     stride_class=StrideClass.RANDOM, count=count, rd=(src,), wr=(dst,),
-                     op="histogram.scatter", domain=domain, verify="bounds")
+        return Claim(
+            id=cid,
+            opcode=Opcode.GGG_LOAD,
+            lane=Lane.GGG,
+            stride_class=StrideClass.RANDOM,
+            count=count,
+            rd=(src,),
+            wr=(dst,),
+            op="histogram.scatter",
+            domain=domain,
+            verify="bounds",
+        )
     if kind == "reduce_gather":
         src = pool.add(domain, count)
         acc = pool.add(domain, count)
-        return Claim(id=cid, opcode=Opcode.ADD, lane=Lane.U,
-                     stride_class=StrideClass.UNIT, count=count, rd=(src,), wr=(acc,),
-                     op="reduce.gather", domain=domain)
+        return Claim(
+            id=cid,
+            opcode=Opcode.ADD,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=count,
+            rd=(src,),
+            wr=(acc,),
+            op="reduce.gather",
+            domain=domain,
+        )
     if kind == "cacheline":
         src = pool.add(domain, count)
         dst = pool.add(domain, count)
-        return Claim(id=cid, opcode=Opcode.ADD, lane=Lane.UX,
-                     stride_class=StrideClass.CACHELINE, count=count, rd=(src,),
-                     wr=(dst,), op="vector.add", domain=domain, verify="bounds")
+        return Claim(
+            id=cid,
+            opcode=Opcode.ADD,
+            lane=Lane.UX,
+            stride_class=StrideClass.CACHELINE,
+            count=count,
+            rd=(src,),
+            wr=(dst,),
+            op="vector.add",
+            domain=domain,
+            verify="bounds",
+        )
     if kind == "strided":
         k = rng.choice(_STRIDES)
-        src = pool.add(domain, count * k)        # extent (count-1)*k+1 <= count*k
+        src = pool.add(domain, count * k)  # extent (count-1)*k+1 <= count*k
         dst = pool.add(domain, count)
-        return Claim(id=cid, opcode=Opcode.MUL, lane=Lane.U,
-                     stride_class=StrideClass.STRIDED, count=count, stride_k=k,
-                     rd=(src,), wr=(dst,), op="vector.axpy", domain=domain)
+        return Claim(
+            id=cid,
+            opcode=Opcode.MUL,
+            lane=Lane.U,
+            stride_class=StrideClass.STRIDED,
+            count=count,
+            stride_k=k,
+            rd=(src,),
+            wr=(dst,),
+            op="vector.axpy",
+            domain=domain,
+        )
     if kind == "tile":
         tile = rng.choice((32, 64))
         a = pool.add(domain, tile * tile)
         b = pool.add(domain, tile * tile)
         c = pool.add(Domain.HBM, tile * tile)
-        return Claim(id=cid, opcode=Opcode.T_MACC, lane=Lane.T,
-                     stride_class=StrideClass.TILE, count=tile * tile, rd=(a, b),
-                     wr=(c,), op="linalg.matmul", domain=domain)
+        return Claim(
+            id=cid,
+            opcode=Opcode.T_MACC,
+            lane=Lane.T,
+            stride_class=StrideClass.TILE,
+            count=tile * tile,
+            rd=(a, b),
+            wr=(c,),
+            op="linalg.matmul",
+            domain=domain,
+        )
 
     # "unit": the multi-candidate elementwise claim -- the fusion/deforestation/CSE
     # surface. Pick operands to sometimes share a read (fusion), consume a prior
@@ -345,22 +416,31 @@ def _gen_claim(rng, kind, cid, pool, phase_reads, phase_writes) -> Claim:
     mode = rng.random()
     same_count_reads = [r for r in phase_reads if m_count(pool, r) == count]
     consumable = [w for w in phase_writes if m_count(pool, w) == count]
-    if mode < 0.25 and len(same_count_reads) >= 2:           # shared-input fusion
+    if mode < 0.25 and len(same_count_reads) >= 2:  # shared-input fusion
         a, b = rng.sample(same_count_reads, 2)
         rd = (a, b)
-    elif mode < 0.45 and consumable:                          # producer->consumer
+    elif mode < 0.45 and consumable:  # producer->consumer
         a = rng.choice(consumable)
         b = pool.add(domain, count)
         rd = (a, b)
-    else:                                                     # fresh operands
+    else:  # fresh operands
         a = pool.add(domain, count)
         b = pool.add(domain, count)
         rd = (a, b)
     dst = pool.add(domain, count)
     # R3: declare the domain of an actually-touched read resource.
     domain = pool.m.resource(rd[0]).domain
-    return Claim(id=cid, opcode=op, lane=Lane.U, stride_class=StrideClass.UNIT,
-                 count=count, rd=rd, wr=(dst,), op=opname, domain=domain)
+    return Claim(
+        id=cid,
+        opcode=op,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=count,
+        rd=rd,
+        wr=(dst,),
+        op=opname,
+        domain=domain,
+    )
 
 
 def m_count(pool: _RidPool, rid: int) -> int:
@@ -377,6 +457,7 @@ def m_count(pool: _RidPool, rid: int) -> int:
 # injection seeded off the same generator -- and the seed corpus for a future
 # structure-aware MLIR `-bcir-verify` fuzz once the toolchain is in the loop.
 
+
 def _verifier_base(rng: random.Random) -> Module:
     """A small, deterministically-clean single-claim module to inject faults into
     (gen_module would risk incidental diagnostics; this base verifies empty)."""
@@ -384,9 +465,25 @@ def _verifier_base(rng: random.Random) -> Module:
     m = Module(name=f"vbase{rng.randrange(1 << 24):06x}")
     for rid in (1, 2, 3):
         m.add_resource(Resource(rid=rid, domain=Domain.RAM, shape=(n,)))
-    m.add_phase(Phase(phase_id=0, deps=(), claims=[
-        Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=n, rd=(1, 2), wr=(3,), op="vector.add", domain=Domain.RAM)]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            deps=(),
+            claims=[
+                Claim(
+                    id=1,
+                    opcode=Opcode.ADD,
+                    lane=Lane.U,
+                    stride_class=StrideClass.UNIT,
+                    count=n,
+                    rd=(1, 2),
+                    wr=(3,),
+                    op="vector.add",
+                    domain=Domain.RAM,
+                )
+            ],
+        )
+    )
     return m
 
 
@@ -403,15 +500,24 @@ def _inject(m: Module, mut) -> Module:
 # belt-and-suspenders. It cannot be fault-injected through the model API (a dict cannot
 # carry the duplicate), so the campaign documents the invariant rather than faking it.
 _INJECTORS = {
-    "R2": lambda m, c: setattr(c, "rd", (1, 999)),                 # dangling resource ref
-    "R3": lambda m, c: setattr(c, "domain", Domain.HBM),          # domain not backed by any touched resource
-    "R4": lambda m, c: setattr(m.phases[0], "deps",               # phase depends on itself -> DAG cycle
-                               (m.phases[0].phase_id,)),
-    "R5": lambda m, c: (setattr(c, "opcode", Opcode.ATOMIC_ADD),  # atomic opcode + unique hazard
-                        setattr(c, "hazard", "unique")),
-    "R6": lambda m, c: setattr(c, "lane", Lane.T),                # lane illegal for UNIT stride
-    "R7": lambda m, c: setattr(c, "count", c.count + 1_000_000),  # affine read/write overruns the resource
-    "R8": lambda m, c: setattr(c, "cost_class", "__unknown__"),   # claim names no known cost class
+    "R2": lambda m, c: setattr(c, "rd", (1, 999)),  # dangling resource ref
+    "R3": lambda m, c: setattr(
+        c, "domain", Domain.HBM
+    ),  # domain not backed by any touched resource
+    "R4": lambda m, c: setattr(
+        m.phases[0],
+        "deps",  # phase depends on itself -> DAG cycle
+        (m.phases[0].phase_id,),
+    ),
+    "R5": lambda m, c: (
+        setattr(c, "opcode", Opcode.ATOMIC_ADD),  # atomic opcode + unique hazard
+        setattr(c, "hazard", "unique"),
+    ),
+    "R6": lambda m, c: setattr(c, "lane", Lane.T),  # lane illegal for UNIT stride
+    "R7": lambda m, c: setattr(
+        c, "count", c.count + 1_000_000
+    ),  # affine read/write overruns the resource
+    "R8": lambda m, c: setattr(c, "cost_class", "__unknown__"),  # claim names no known cost class
 }
 
 
@@ -429,12 +535,16 @@ def check_verifier(module: Module, expected_law: str) -> list[Mismatch]:
 
     laws = {d.law for d in verify(module)}
     if expected_law not in laws:
-        return [Mismatch("verify", 0,
-                         f"verifier missed injected {expected_law} (reported {sorted(laws)})")]
+        return [
+            Mismatch(
+                "verify", 0, f"verifier missed injected {expected_law} (reported {sorted(laws)})"
+            )
+        ]
     return []
 
 
 # --- the shrinker ---------------------------------------------------------------
+
 
 def shrink(module: Module, fails, max_passes: int = 40) -> Module:
     """Greedily minimize a module for which `fails(module)` is True, preserving the
@@ -455,6 +565,7 @@ def shrink(module: Module, fails, max_passes: int = 40) -> Module:
 
 def _legal(module: Module) -> bool:
     from ..verify import verify
+
     if not _flatten(module):
         return False
     if verify(module):
@@ -468,6 +579,7 @@ def _legal(module: Module) -> bool:
 
 def _shrink_candidates(module: Module):
     import copy
+
     # 1) drop a whole phase.
     for i in range(len(module.phases)):
         c = copy.deepcopy(module)
@@ -484,6 +596,7 @@ def _shrink_candidates(module: Module):
     # 3) shrink every claim's count to the smallest safe value.
     if any(cl.count != _SAFE_COUNTS[0] for ph in module.phases for cl in ph.claims):
         import copy as _c
+
         c = _c.deepcopy(module)
         for ph in c.phases:
             for cl in ph.claims:
@@ -500,6 +613,7 @@ def _reindex_deps(module: Module) -> None:
 
 # --- the campaign ---------------------------------------------------------------
 
+
 @dataclass
 class Report:
     checked: int = 0
@@ -508,12 +622,20 @@ class Report:
     coupling_gaps: int = 0
 
     def summary(self) -> str:
-        return (f"differential campaign: {self.checked} checks, {self.ok} clean, "
-                f"{len(self.bugs)} bug(s), {self.coupling_gaps} coupling-gap(s)")
+        return (
+            f"differential campaign: {self.checked} checks, {self.ok} clean, "
+            f"{len(self.bugs)} bug(s), {self.coupling_gaps} coupling-gap(s)"
+        )
 
 
-def run_campaign(n: int = 200, seed: int = 0, targets=None, thetas=None,
-                 policies=None, include_corpus: bool = True) -> Report:
+def run_campaign(
+    n: int = 200,
+    seed: int = 0,
+    targets=None,
+    thetas=None,
+    policies=None,
+    include_corpus: bool = True,
+) -> Report:
     """Generate `n` random modules and check each across a grid of (target, theta,
     policy); also check the widened corpus across the six targets. Returns a Report;
     `report.bugs` is the set of genuine (non-coupling) divergences -- empty == proof
@@ -536,6 +658,7 @@ def run_campaign(n: int = 200, seed: int = 0, targets=None, thetas=None,
 
     if include_corpus:
         from ..examples import CORPUS, PROGRAMS
+
         for name in CORPUS:
             for t in targets:
                 run_one(PROGRAMS[name](), t, "cool", "latency")
@@ -592,16 +715,22 @@ def gen_illegal_scoped_plan(rng: random.Random):
     return m, r, "R9", h, theta
 
 
-def check_plan_verifier(module: Module, result, expected_law: str, h=None,
-                        theta=None) -> list[Mismatch]:
+def check_plan_verifier(
+    module: Module, result, expected_law: str, h=None, theta=None
+) -> list[Mismatch]:
     """The injected plan-law fault must fire through verify_plan (scope-aware when the
     scope is handed over)."""
     from ..verify import verify_plan
 
     laws = {d.law for d in verify_plan(module, result, h, theta=theta)}
     if expected_law not in laws:
-        return [Mismatch("verify_plan", 0,
-                         f"verify_plan missed injected {expected_law} (reported {sorted(laws)})")]
+        return [
+            Mismatch(
+                "verify_plan",
+                0,
+                f"verify_plan missed injected {expected_law} (reported {sorted(laws)})",
+            )
+        ]
     return []
 
 
@@ -625,8 +754,15 @@ def _artifact_law_misses(rng: random.Random) -> list[Mismatch]:
     from ..kbcir.accel import AccelCertificate
     from ..kbcir import compose as _compose
     from ..lower.llvm import emit_kernel_ll
-    from ..verify import (verify_pack, verify_lowering, verify_provenance, verify_cim,
-                          verify_dvfs, verify_allocator, verify_accuracy)
+    from ..verify import (
+        verify_pack,
+        verify_lowering,
+        verify_provenance,
+        verify_cim,
+        verify_dvfs,
+        verify_allocator,
+        verify_accuracy,
+    )
     from ..model.graph import Claim, Resource, Module, Phase, Opcode, Lane, StrideClass, Domain
     from .realize import optimize
 
@@ -646,22 +782,39 @@ def _artifact_law_misses(rng: random.Random) -> list[Mismatch]:
     # R10 / R11 -- StreamPack provenance + generation validity.
     m = vector_add(1024)
     clean("verify_pack", verify_pack(m, hydrate(m, optimize(m, h, th))))
-    p10 = hydrate(m, optimize(m, h, th)); p10.trace_notes.clear()
+    p10 = hydrate(m, optimize(m, h, th))
+    p10.trace_notes.clear()
     fires("R10", "R10" in laws(verify_pack(m, p10)), "verify_pack")
-    m11 = vector_add(1024); pack11 = hydrate(m11, optimize(m11, h, th))
-    m11.resources[10] = replace(m11.resources[10], data_gen=5)      # registry drifts under a live pack
+    m11 = vector_add(1024)
+    pack11 = hydrate(m11, optimize(m11, h, th))
+    m11.resources[10] = replace(m11.resources[10], data_gen=5)  # registry drifts under a live pack
     fires("R11", "R11" in laws(verify_pack(m11, pack11)), "verify_pack")
 
     # R12 -- lowering contract (an invented instruction the plan never licensed).
-    res = optimize(m, h, th); ll = emit_kernel_ll(m, res)
+    res = optimize(m, h, th)
+    ll = emit_kernel_ll(m, res)
     clean("verify_lowering", verify_lowering(m, res, ll))
-    fires("R12", "R12" in laws(verify_lowering(m, res, ll.replace("fadd", "fdiv"))), "verify_lowering")
+    fires(
+        "R12", "R12" in laws(verify_lowering(m, res, ll.replace("fadd", "fdiv"))), "verify_lowering"
+    )
 
     # R13 -- accelerator-certificate provenance (a cert claiming deployment with a mismatch).
-    clean("verify_provenance",
-          verify_provenance(None, accel_certificates=[AccelCertificate("greedy", checked=4, mismatches=0)]))
-    fires("R13", "R13" in laws(verify_provenance(
-        None, accel_certificates=[AccelCertificate("learned", checked=10, mismatches=1)])), "verify_provenance")
+    clean(
+        "verify_provenance",
+        verify_provenance(
+            None, accel_certificates=[AccelCertificate("greedy", checked=4, mismatches=0)]
+        ),
+    )
+    fires(
+        "R13",
+        "R13"
+        in laws(
+            verify_provenance(
+                None, accel_certificates=[AccelCertificate("learned", checked=10, mismatches=1)]
+            )
+        ),
+        "verify_provenance",
+    )
 
     # R14 -- CIM/PIM dispatch legality (PIM on a non-reduction add).
     pack = hydrate(m, optimize(m, h, th))
@@ -672,23 +825,44 @@ def _artifact_law_misses(rng: random.Random) -> list[Mismatch]:
     # R15 -- DVFS clock legality (a clock far outside the legal Q8 range).
     mdv = vector_add(1 << 16)
     clean("verify_dvfs", verify_dvfs(plan_dvfs(mdv, optimize(mdv, h, th), th)))
-    fires("R15", "R15" in laws(verify_dvfs(
-        DVFSPlan(decisions=(DVFSDecision(0, 0, 0, "compute", 900, "x"),)))), "verify_dvfs")
+    fires(
+        "R15",
+        "R15"
+        in laws(verify_dvfs(DVFSPlan(decisions=(DVFSDecision(0, 0, 0, "compute", 900, "x"),)))),
+        "verify_dvfs",
+    )
 
     # R16 -- allocator on-chip capacity (4 MiB cannot fit the 64 KiB L1 cap).
     clean("verify_allocator", verify_allocator(m, Placement(tiers={10: MemTier.L1}, moved=(10,))))
-    fires("R16", "R16" in laws(verify_allocator(
-        vector_add(1 << 20), Placement(tiers={10: MemTier.L1}, moved=(10,)))), "verify_allocator")
+    fires(
+        "R16",
+        "R16"
+        in laws(
+            verify_allocator(vector_add(1 << 20), Placement(tiers={10: MemTier.L1}, moved=(10,)))
+        ),
+        "verify_allocator",
+    )
 
     # R17 -- accuracy contract (a tight tolerance the naive reduction cannot meet).
     def _accmod(tol: int) -> Module:
-        c = Claim(id=5000, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                  count=1000, rd=(50,), wr=(51,), op="reduce.add", domain=Domain.RAM, tolerance_ulp=tol)
+        c = Claim(
+            id=5000,
+            opcode=Opcode.ADD,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=1000,
+            rd=(50,),
+            wr=(51,),
+            op="reduce.add",
+            domain=Domain.RAM,
+            tolerance_ulp=tol,
+        )
         mm = Module(name="acc")
         mm.add_resource(Resource(rid=50, domain=Domain.RAM, shape=(1000,)))
         mm.add_resource(Resource(rid=51, domain=Domain.RAM, shape=(1,)))
         mm.add_phase(Phase(phase_id=0, deps=(), claims=[c]))
         return mm
+
     clean("verify_accuracy", verify_accuracy(_accmod(0)))
     fires("R17", "R17" in laws(verify_accuracy(_accmod(1))), "verify_accuracy")
 
@@ -701,9 +875,12 @@ def _artifact_law_misses(rng: random.Random) -> list[Mismatch]:
             return False
         except (KeyError, RecursionError):
             return True
+
     undefined = _raises(lambda: _compose.plan_composite(_compose.Call(fn="ghost"), {}, {}, h, th))
     recf = _compose.Function("rec", _compose.Call("rec"))
-    recursive = _raises(lambda: _compose.plan_composite(_compose.Call("rec"), {"rec": recf}, {}, h, th))
+    recursive = _raises(
+        lambda: _compose.plan_composite(_compose.Call("rec"), {"rec": recf}, {}, h, th)
+    )
     fires("R18", undefined and recursive, "plan_composite")
 
     return misses
@@ -740,8 +917,9 @@ def run_verifier_campaign(n: int = 200, seed: int = 0) -> list[Mismatch]:
         # scope-aware: the planner's own plan re-derives (offer, every cost) under its scope --
         # the regression guard for R9 re-deriving from the set the planner actually drew from.
         if verify_plan(clean, clean_plan, clean_h, theta=clean_theta):
-            misses.append(Mismatch("verify_plan", 0,
-                                   "scope-aware verify_plan flagged the planner's own plan"))
+            misses.append(
+                Mismatch("verify_plan", 0, "scope-aware verify_plan flagged the planner's own plan")
+            )
         m2, r2, plaw = gen_illegal_plan(rng)
         misses.extend(check_plan_verifier(m2, r2, plaw))
         m3, r3, plaw3, h3, th3 = gen_illegal_scoped_plan(rng)
@@ -752,6 +930,7 @@ def run_verifier_campaign(n: int = 200, seed: int = 0) -> list[Mismatch]:
 
 
 # --- corpus .mlir emission (the committed cross-rail artifact) --------------------
+
 
 def emit_corpus_mlir() -> str:
     """Emit the widened-corpus GEM-pipeline IR (one bcir.module per program, on the
@@ -772,8 +951,7 @@ def emit_corpus_mlir() -> str:
         "",
     ]
     for name in CORPUS:
-        body = to_mlir(PROGRAMS[name](), h, th, PERF, module_suffix="_avx512",
-                       filecheck=True)
+        body = to_mlir(PROGRAMS[name](), h, th, PERF, module_suffix="_avx512", filecheck=True)
         # keep one RUN line at the top of the file; strip the per-block RUN header.
         lines = body.splitlines()
         start = next(i for i, ln in enumerate(lines) if ln.startswith("bcir.module"))
@@ -782,10 +960,12 @@ def emit_corpus_mlir() -> str:
     return "\n".join(blocks) + "\n"
 
 
-_CORPUS_MLIR_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "mlir",
-                                 "test", "passes", "gem_corpus.mlir")
-_THETA_MLIR_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "mlir",
-                                "test", "passes", "theta_hot.mlir")
+_CORPUS_MLIR_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "mlir", "test", "passes", "gem_corpus.mlir"
+)
+_THETA_MLIR_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "mlir", "test", "passes", "theta_hot.mlir"
+)
 
 
 def emit_theta_test() -> str:
@@ -842,11 +1022,36 @@ def _two_independent_vec(n: int = 1024) -> Module:
     m = Module(name="two_vec")
     for rid in (1, 2, 3, 4, 5, 6):
         m.add_resource(Resource(rid=rid, domain=Domain.RAM, shape=(n,)))
-    m.add_phase(Phase(phase_id=0, deps=(), claims=[
-        Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=n, rd=(1, 2), wr=(3,), op="vector.add", domain=Domain.RAM),
-        Claim(id=2, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=n, rd=(4, 5), wr=(6,), op="vector.add", domain=Domain.RAM)]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            deps=(),
+            claims=[
+                Claim(
+                    id=1,
+                    opcode=Opcode.ADD,
+                    lane=Lane.U,
+                    stride_class=StrideClass.UNIT,
+                    count=n,
+                    rd=(1, 2),
+                    wr=(3,),
+                    op="vector.add",
+                    domain=Domain.RAM,
+                ),
+                Claim(
+                    id=2,
+                    opcode=Opcode.ADD,
+                    lane=Lane.U,
+                    stride_class=StrideClass.UNIT,
+                    count=n,
+                    rd=(4, 5),
+                    wr=(6,),
+                    op="vector.add",
+                    domain=Domain.RAM,
+                ),
+            ],
+        )
+    )
     return m
 
 
@@ -916,11 +1121,15 @@ def emit_target_matrix() -> str:
             body = to_mlir(module, h, th, PERF, module_suffix=f"_{tname}", result=res)
             out.append(body.rstrip())
             out.append("")
-            _matrix_check_block(out, f"{_module_label(module.name, tname)}", [
-                ("overlap_gain", sp.overlap_gain),
-                ("overlap_makespan", sp.makespan),
-                ("plan_score", res.score),
-            ])
+            _matrix_check_block(
+                out,
+                f"{_module_label(module.name, tname)}",
+                [
+                    ("overlap_gain", sp.overlap_gain),
+                    ("overlap_makespan", sp.makespan),
+                    ("plan_score", res.score),
+                ],
+            )
             out.append("")
 
     # --- -bcir-rcsp-plan: the plan-wide constrained optimum, per target ---------------
@@ -946,33 +1155,50 @@ def emit_target_matrix() -> str:
 def _module_label(module_name: str, target: str) -> str:
     """The emitted module symbol (to_mlir sanitizes name+suffix the same way)."""
     from ..lower.mlir import _ident
+
     return _ident(f"{module_name}_{target}")
 
 
-_MATRIX_MLIR_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "mlir",
-                                 "test", "passes", "target_matrix.mlir")
+_MATRIX_MLIR_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "mlir", "test", "passes", "target_matrix.mlir"
+)
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="bcir.kbcir.differential",
-                                description="Generated Python<->MLIR differential testing")
+    p = argparse.ArgumentParser(
+        prog="bcir.kbcir.differential", description="Generated Python<->MLIR differential testing"
+    )
     p.add_argument("-n", type=int, default=500, help="random modules to generate")
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--emit-corpus", action="store_true",
-                   help="(re)write mlir/test/passes/gem_corpus.mlir from the oracle")
-    p.add_argument("--emit-theta", action="store_true",
-                   help="(re)write mlir/test/passes/theta_hot.mlir (hot-Theta plan parity)")
-    p.add_argument("--emit-matrix", action="store_true",
-                   help="(re)write mlir/test/passes/target_matrix.mlir (six-target parity)")
-    p.add_argument("--emit", metavar="PROGRAM",
-                   help="print the GEM-pipeline MLIR for one program (see examples.PROGRAMS)")
+    p.add_argument(
+        "--emit-corpus",
+        action="store_true",
+        help="(re)write mlir/test/passes/gem_corpus.mlir from the oracle",
+    )
+    p.add_argument(
+        "--emit-theta",
+        action="store_true",
+        help="(re)write mlir/test/passes/theta_hot.mlir (hot-Theta plan parity)",
+    )
+    p.add_argument(
+        "--emit-matrix",
+        action="store_true",
+        help="(re)write mlir/test/passes/target_matrix.mlir (six-target parity)",
+    )
+    p.add_argument(
+        "--emit",
+        metavar="PROGRAM",
+        help="print the GEM-pipeline MLIR for one program (see examples.PROGRAMS)",
+    )
     p.add_argument("--target", default="x86_avx512")
     args = p.parse_args(argv)
 
     if args.emit:
         from ..examples import PROGRAMS
-        print(to_mlir(PROGRAMS[args.emit](), TARGETS[args.target], Theta.cool(), PERF,
-                      filecheck=True))
+
+        print(
+            to_mlir(PROGRAMS[args.emit](), TARGETS[args.target], Theta.cool(), PERF, filecheck=True)
+        )
         return 0
     if args.emit_corpus:
         path = os.path.normpath(_CORPUS_MLIR_PATH)
@@ -996,8 +1222,10 @@ def main(argv: list[str] | None = None) -> int:
     rep = run_campaign(n=args.n, seed=args.seed)
     print(rep.summary())
     for r in rep.bugs[:10]:
-        print(f"  BUG {r.module} {r.target}/{r.theta}/{r.policy}: "
-              f"{[ (m.kind, m.claim_id, m.detail) for m in r.bugs ]}")
+        print(
+            f"  BUG {r.module} {r.target}/{r.theta}/{r.policy}: "
+            f"{[(m.kind, m.claim_id, m.detail) for m in r.bugs]}"
+        )
     vmiss = run_verifier_campaign(n=max(50, args.n // 4), seed=args.seed)
     print(f"verifier differential: {len(vmiss)} miss(es)")
     for mm in vmiss[:10]:

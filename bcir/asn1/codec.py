@@ -101,7 +101,7 @@ def to_tlv(value) -> Tlv:
     """Build the `Tlv` tree for a Python value under the mapping above."""
     if value is NULL or isinstance(value, Asn1Null):
         return Tlv(_universal(Universal.NULL), b"")
-    if isinstance(value, bool):                       # before int: bool is an int
+    if isinstance(value, bool):  # before int: bool is an int
         return Tlv(_universal(Universal.BOOLEAN), encode_boolean(value))
     if isinstance(value, int):
         return Tlv(_universal(Universal.INTEGER), encode_integer(value))
@@ -112,21 +112,20 @@ def to_tlv(value) -> Tlv:
     if isinstance(value, (bytes, bytearray)):
         return Tlv(_universal(Universal.OCTET_STRING), bytes(value))
     if isinstance(value, str):
-        return Tlv(_universal(Universal.UTF8_STRING),
-                   encode_string(Universal.UTF8_STRING, value))
+        return Tlv(_universal(Universal.UTF8_STRING), encode_string(Universal.UTF8_STRING, value))
     if isinstance(value, Oid):
         return Tlv(_universal(Universal.OBJECT_IDENTIFIER), encode_oid(value))
     if isinstance(value, RelativeOid):
         from .values import encode_relative_oid
+
         return Tlv(_universal(Universal.RELATIVE_OID), encode_relative_oid(value))
     if isinstance(value, SetOf):
         children = [to_tlv(item) for item in value]
         width = max((len(encode_tlv(c)) for c in children), default=0)
-        children.sort(key=lambda c: encode_tlv(c).ljust(width, b"\x00"))   # §11.6
+        children.sort(key=lambda c: encode_tlv(c).ljust(width, b"\x00"))  # §11.6
         return Tlv(_universal(Universal.SET, True), b"", children)
     if isinstance(value, (list, tuple)):
-        return Tlv(_universal(Universal.SEQUENCE, True), b"",
-                   [to_tlv(item) for item in value])
+        return Tlv(_universal(Universal.SEQUENCE, True), b"", [to_tlv(item) for item in value])
     raise Asn1Error(f"no ASN.1 universal type is mapped to {type(value).__name__}")
 
 
@@ -135,8 +134,7 @@ def from_tlv(tlv: Tlv, *, strictness: Strictness = Strictness.DER):
     der = strictness is Strictness.DER
     tag = tlv.tag
     if not tag.is_universal:
-        raise Asn1Error(
-            f"{tag} has no universal type; decode it through a schema", tlv.offset)
+        raise Asn1Error(f"{tag} has no universal type; decode it through a schema", tlv.offset)
     number = tag.number
 
     if number == Universal.BOOLEAN:
@@ -166,8 +164,8 @@ def from_tlv(tlv: Tlv, *, strictness: Strictness = Strictness.DER):
         return decode_string(tlv, der=der)
     except Asn1Error:
         raise Asn1Error(
-            f"{tag} has no decoder in the value mapping; decode it through a schema",
-            tlv.offset) from None
+            f"{tag} has no decoder in the value mapping; decode it through a schema", tlv.offset
+        ) from None
 
 
 # --- the public surface --------------------------------------------------------------
@@ -207,6 +205,16 @@ def reencode_as_der(data: bytes) -> bytes:
 
 
 __all__ = [
-    "NULL", "Asn1Null", "Oid", "RelativeOid", "SetOf", "Strictness", "decode_der",
-    "decode_value", "encode_der", "from_tlv", "reencode_as_der", "to_tlv",
+    "NULL",
+    "Asn1Null",
+    "Oid",
+    "RelativeOid",
+    "SetOf",
+    "Strictness",
+    "decode_der",
+    "decode_value",
+    "encode_der",
+    "from_tlv",
+    "reencode_as_der",
+    "to_tlv",
 ]

@@ -49,19 +49,46 @@ class GenerateExerciseVariantsTests(unittest.TestCase):
                 records = [json.loads(line) for line in first.decode("utf-8").splitlines()]
                 self.assertEqual(len(records), 5)
                 self.assertEqual(first_report["accepted"], 5)
-                self.assertEqual(first_report["attempted"], first_report["accepted"] + first_report["rejected"])
+                self.assertEqual(
+                    first_report["attempted"], first_report["accepted"] + first_report["rejected"]
+                )
                 self.assertEqual(
                     {record["generator"]["seed"] for record in records},
                     {seed},
                 )
-                self.assertTrue(all(record["oracle_result"]["score_percent"] == 100.0 for record in records))
-                self.assertTrue(all(record["grading_manifest"]["safe_deterministic_lli"] is True for record in records))
-                self.assertTrue(all(record["review"]["markdown_solution_generated"] is False for record in records))
-                self.assertEqual(len({record["artifacts"]["reference_solution_sha256"] for record in records}), 5)
-                self.assertEqual(len({record["artifacts"]["normalized_ir_structure_sha256"] for record in records}), 5)
+                self.assertTrue(
+                    all(record["oracle_result"]["score_percent"] == 100.0 for record in records)
+                )
+                self.assertTrue(
+                    all(
+                        record["grading_manifest"]["safe_deterministic_lli"] is True
+                        for record in records
+                    )
+                )
+                self.assertTrue(
+                    all(
+                        record["review"]["markdown_solution_generated"] is False
+                        for record in records
+                    )
+                )
+                self.assertEqual(
+                    len({record["artifacts"]["reference_solution_sha256"] for record in records}), 5
+                )
+                self.assertEqual(
+                    len(
+                        {
+                            record["artifacts"]["normalized_ir_structure_sha256"]
+                            for record in records
+                        }
+                    ),
+                    5,
+                )
                 if seed == 294:
                     self.assertGreater(first_report["rejected"], 0)
-                    self.assertIn("constants cancel and make the task semantically trivial", first_report["rejection_counts"])
+                    self.assertIn(
+                        "constants cancel and make the task semantically trivial",
+                        first_report["rejection_counts"],
+                    )
 
     def test_existing_records_seed_all_deduplication_sets(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
@@ -97,7 +124,9 @@ class GenerateExerciseVariantsTests(unittest.TestCase):
             summary = json.loads(report.read_text(encoding="utf-8"))
             self.assertEqual(summary["existing_records"], 5)
             self.assertEqual(summary["accepted"], 1)
-            self.assertGreaterEqual(summary["rejection_counts"]["semantic-equivalence group already exists"], 1)
+            self.assertGreaterEqual(
+                summary["rejection_counts"]["semantic-equivalence group already exists"], 1
+            )
 
     def test_seed_is_required_and_budget_is_capped(self) -> None:
         missing_seed = subprocess.run(

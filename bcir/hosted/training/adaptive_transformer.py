@@ -5,6 +5,7 @@ they are not production kernels, BCIRQ8-compatible decoder replacements, or perf
 evidence.  The dependency-free shapes, costs, and verified StreamPack lowering live in
 ``bcir.kbcir.adaptive_transformer``.
 """
+
 from __future__ import annotations
 
 import math
@@ -15,11 +16,15 @@ try:
     import torch.nn.functional as F
 except ModuleNotFoundError as exc:  # pragma: no cover - dependency gate
     raise ModuleNotFoundError(
-        "adaptive transformer probes require PyTorch; install bcir[model-lab]") from exc
+        "adaptive transformer probes require PyTorch; install bcir[model-lab]"
+    ) from exc
 
 from ...kbcir.adaptive_transformer import (
-    AdaptiveLanguageSpec, ExogenousAnchorSpec, MultiPatchSpec,
-    assess_adaptive_language, assess_multi_patch,
+    AdaptiveLanguageSpec,
+    ExogenousAnchorSpec,
+    MultiPatchSpec,
+    assess_adaptive_language,
+    assess_multi_patch,
 )
 from .contracts import StageRunReport, StageTrainSpec, canonical_json, sha256_text
 from .stages import _deterministic_stage, _emit, _module_digest, _optimizer
@@ -49,8 +54,11 @@ class _HeadRMSNorm(nn.Module):
         self.epsilon = float(epsilon)
 
     def forward(self, values: torch.Tensor) -> torch.Tensor:
-        if values.ndim != 4 or values.shape[1] != self.weight.shape[0] \
-                or values.shape[-1] != self.weight.shape[1]:
+        if (
+            values.ndim != 4
+            or values.shape[1] != self.weight.shape[0]
+            or values.shape[-1] != self.weight.shape[1]
+        ):
             raise ValueError("head RMSNorm received an incompatible tensor")
         dtype = values.dtype
         stable = values.float()
@@ -61,20 +69,19 @@ class _HeadRMSNorm(nn.Module):
 def _rope(length: int, head_dim: int, device, dtype):
     half = head_dim // 2
     positions = torch.arange(length, device=device, dtype=torch.float32)
-    frequencies = 10000.0 ** (-2.0 * torch.arange(
-        half, device=device, dtype=torch.float32) / head_dim)
+    frequencies = 10000.0 ** (
+        -2.0 * torch.arange(half, device=device, dtype=torch.float32) / head_dim
+    )
     angles = positions[:, None] * frequencies[None, :]
     return angles.cos().to(dtype), angles.sin().to(dtype)
 
 
-def _apply_rope(values: torch.Tensor, cos: torch.Tensor,
-                sin: torch.Tensor) -> torch.Tensor:
+def _apply_rope(values: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
     half = values.shape[-1] // 2
     left, right = values[..., :half], values[..., half:]
     cos = cos[None, None, :, :]
     sin = sin[None, None, :, :]
-    return torch.cat((left * cos - right * sin,
-                      right * cos + left * sin), dim=-1)
+    return torch.cat((left * cos - right * sin, right * cos + left * sin), dim=-1)
 
 
 def _split_heads(values: torch.Tensor, heads: int) -> torch.Tensor:
@@ -94,14 +101,14 @@ class _AnchorBank(nn.Module):
         super().__init__()
         self.heads = heads
         head_dim = width // heads
-        self.projections = nn.ModuleList(
-            nn.Linear(width, width, bias=False) for _ in range(4))
-        self.norms = nn.ModuleList(
-            _HeadRMSNorm(heads, head_dim) for _ in range(4))
+        self.projections = nn.ModuleList(nn.Linear(width, width, bias=False) for _ in range(4))
+        self.norms = nn.ModuleList(_HeadRMSNorm(heads, head_dim) for _ in range(4))
 
     def forward(self, values: torch.Tensor) -> tuple[torch.Tensor, ...]:
-        return tuple(norm(_split_heads(projection(values), self.heads))
-                     for projection, norm in zip(self.projections, self.norms))
+        return tuple(
+            norm(_split_heads(projection(values), self.heads))
+            for projection, norm in zip(self.projections, self.norms)
+        )
 
 
 class _ProjectionMix(nn.Module):
@@ -113,8 +120,7 @@ class _ProjectionMix(nn.Module):
         self.heads = heads
         self.spec = spec
         channels = spec.coefficient_channels(width, heads)
-        self.base = nn.Parameter(torch.full(
-            (4, 2, channels), spec.initial_base_coefficient))
+        self.base = nn.Parameter(torch.full((4, 2, channels), spec.initial_base_coefficient))
         if spec.mode == "dynamic":
             self.dynamic_in = nn.Linear(width, spec.dynamic_hidden, bias=False)
             self.dynamic_out = nn.Linear(spec.dynamic_hidden, 8, bias=True)
@@ -132,8 +138,9 @@ class _ProjectionMix(nn.Module):
             return value.view(1, self.heads, 1, 1)
         return value.view(1, self.heads, 1, self.width // self.heads)
 
-    def forward(self, component: int, anchor: torch.Tensor,
-                current: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, component: int, anchor: torch.Tensor, current: torch.Tensor, context: torch.Tensor
+    ) -> torch.Tensor:
         if not 0 <= component < 4 or anchor.shape != current.shape:
             raise ValueError("projection mixing received incompatible sources")
         left = self._base(component, 0)
@@ -159,9 +166,15 @@ class _AdaptiveAttention(nn.Module):
         self.q_norm = _HeadRMSNorm(heads, head_dim)
         self.k_norm = _HeadRMSNorm(heads, head_dim)
 
-    def forward(self, values: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor,
-                mask: torch.Tensor | None, anchors: tuple[torch.Tensor, ...] | None,
-                mixing: _ProjectionMix | None) -> torch.Tensor:
+    def forward(
+        self,
+        values: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        mask: torch.Tensor | None,
+        anchors: tuple[torch.Tensor, ...] | None,
+        mixing: _ProjectionMix | None,
+    ) -> torch.Tensor:
         current = [
             _split_heads(self.q_proj(values), self.heads),
             _split_heads(self.k_proj(values), self.heads),
@@ -172,12 +185,15 @@ class _AdaptiveAttention(nn.Module):
         if anchors is not None:
             if mixing is None or len(current) != 4:
                 raise ValueError("anchor attention requires gated projection mixing")
-            current = [mixing(index, anchors[index], tensor, values)
-                       for index, tensor in enumerate(current)]
+            current = [
+                mixing(index, anchors[index], tensor, values)
+                for index, tensor in enumerate(current)
+            ]
         q = _apply_rope(self.q_norm(current[0]), cos, sin)
         k = _apply_rope(self.k_norm(current[1]), cos, sin)
         context = F.scaled_dot_product_attention(
-            q, k, current[2], attn_mask=mask, dropout_p=0.0, is_causal=mask is None)
+            q, k, current[2], attn_mask=mask, dropout_p=0.0, is_causal=mask is None
+        )
         merged = _merge_heads(context)
         if self.g_proj is not None:
             merged = merged * torch.sigmoid(_merge_heads(current[3]))
@@ -196,13 +212,11 @@ class _SwiGLU(nn.Module):
 
 
 class _AdaptiveBlock(nn.Module):
-    def __init__(self, width: int, heads: int, ff_width: int,
-                 architecture: AdaptiveLanguageSpec):
+    def __init__(self, width: int, heads: int, ff_width: int, architecture: AdaptiveLanguageSpec):
         super().__init__()
         self.residual_mode = architecture.residual_mode
         self.alpha = architecture.loop_alpha
-        self.attention = _AdaptiveAttention(
-            width, heads, gated=architecture.gated_attention)
+        self.attention = _AdaptiveAttention(width, heads, gated=architecture.gated_attention)
         self.mlp = _SwiGLU(width, ff_width)
         self.attention_inner = _RMSNorm(width)
         self.mlp_inner = _RMSNorm(width)
@@ -213,11 +227,16 @@ class _AdaptiveBlock(nn.Module):
             self.attention_post = None
             self.mlp_post = None
 
-    def forward(self, values: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor,
-                mask: torch.Tensor | None, anchors: tuple[torch.Tensor, ...] | None,
-                mixing: _ProjectionMix | None) -> torch.Tensor:
-        attention = self.attention(
-            self.attention_inner(values), cos, sin, mask, anchors, mixing)
+    def forward(
+        self,
+        values: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        mask: torch.Tensor | None,
+        anchors: tuple[torch.Tensor, ...] | None,
+        mixing: _ProjectionMix | None,
+    ) -> torch.Tensor:
+        attention = self.attention(self.attention_inner(values), cos, sin, mask, anchors, mixing)
         if self.residual_mode == "pre_norm":
             values = values + attention
             return values + self.mlp(self.mlp_inner(values))
@@ -234,8 +253,10 @@ class HostedAdaptiveLanguageModel(nn.Module):
             raise ValueError("spec must be AdaptiveLanguageSpec")
         if spec.context_length > _MAX_HOSTED_CONTEXT:
             raise ValueError("hosted adaptive context exceeds the bounded reference limit")
-        if assess_adaptive_language(spec, prefill_tokens=1).parameter_elements \
-                > _MAX_HOSTED_PARAMETER_ELEMENTS:
+        if (
+            assess_adaptive_language(spec, prefill_tokens=1).parameter_elements
+            > _MAX_HOSTED_PARAMETER_ELEMENTS
+        ):
             raise ValueError("hosted adaptive model exceeds the bounded parameter limit")
         self.spec = spec
         schedule = spec.schedule
@@ -243,14 +264,14 @@ class HostedAdaptiveLanguageModel(nn.Module):
         self.embed_tokens = nn.Embedding(spec.vocab_size, schedule.widths[0])
         self.blocks = nn.ModuleList(
             _AdaptiveBlock(width, heads, ff_width, spec)
-            for width, heads, ff_width in zip(
-                schedule.widths, schedule.heads, schedule.ff_widths))
+            for width, heads, ff_width in zip(schedule.widths, schedule.heads, schedule.ff_widths)
+        )
         if spec.anchor is not None:
             width, heads = schedule.widths[0], schedule.heads[0]
             self.anchor_bank = _AnchorBank(width, heads)
             self.mixers = nn.ModuleList(
-                _ProjectionMix(width, heads, spec.anchor)
-                for _ in range(schedule.physical_layers))
+                _ProjectionMix(width, heads, spec.anchor) for _ in range(schedule.physical_layers)
+            )
         else:
             self.anchor_bank = None
             self.mixers = None
@@ -284,14 +305,18 @@ class HostedAdaptiveLanguageModel(nn.Module):
         if self.spec.reference_window is None:
             return None
         return torch.tensor(
-            self.spec.reference_window.additive_mask(length),
-            device=device, dtype=dtype).view(length, length)
+            self.spec.reference_window.additive_mask(length), device=device, dtype=dtype
+        ).view(length, length)
 
     def _validate_ids(self, input_ids: torch.Tensor) -> None:
-        if not isinstance(input_ids, torch.Tensor) or input_ids.ndim != 2 \
-                or input_ids.dtype != torch.long or input_ids.shape[0] < 1 \
-                or input_ids.shape[1] < 1 \
-                or input_ids.shape[1] > self.spec.context_length:
+        if (
+            not isinstance(input_ids, torch.Tensor)
+            or input_ids.ndim != 2
+            or input_ids.dtype != torch.long
+            or input_ids.shape[0] < 1
+            or input_ids.shape[1] < 1
+            or input_ids.shape[1] > self.spec.context_length
+        ):
             raise ValueError("input_ids must be nonempty rank-2 torch.long within context")
         if torch.any(input_ids < 0) or torch.any(input_ids >= self.spec.vocab_size):
             raise ValueError("input token id is outside the vocabulary")
@@ -304,43 +329,56 @@ class HostedAdaptiveLanguageModel(nn.Module):
         if values.shape[-1] < self.residual_width:
             values = F.pad(values, (0, self.residual_width - values.shape[-1]))
         mask = self._mask(input_ids.shape[1], values.device, values.dtype)
-        anchors = self.anchor_bank(values[..., :self.spec.schedule.widths[0]]) \
-            if self.spec.anchor is not None and self.spec.anchor.source_depth == 0 else None
+        anchors = (
+            self.anchor_bank(values[..., : self.spec.schedule.widths[0]])
+            if self.spec.anchor is not None and self.spec.anchor.source_depth == 0
+            else None
+        )
         rope_cache = {}
         effective = 0
         for _repeat in range(self.spec.repeats):
-            for physical, (block, width, heads) in enumerate(zip(
-                    self.blocks, self.spec.schedule.widths, self.spec.schedule.heads)):
+            for physical, (block, width, heads) in enumerate(
+                zip(self.blocks, self.spec.schedule.widths, self.spec.schedule.heads)
+            ):
                 head_dim = width // heads
                 if head_dim not in rope_cache:
                     rope_cache[head_dim] = _rope(
-                        input_ids.shape[1], head_dim, values.device, values.dtype)
+                        input_ids.shape[1], head_dim, values.device, values.dtype
+                    )
                 active = values[..., :width]
-                use_anchor = anchors if self.spec.anchor is not None \
-                    and effective >= self.spec.anchor.source_depth else None
+                use_anchor = (
+                    anchors
+                    if self.spec.anchor is not None and effective >= self.spec.anchor.source_depth
+                    else None
+                )
                 mixing = self.mixers[physical] if use_anchor is not None else None
                 active = block(active, *rope_cache[head_dim], mask, use_anchor, mixing)
                 values = torch.cat((active, values[..., width:]), dim=-1)
                 effective += 1
-                if self.spec.anchor is not None \
-                        and self.spec.anchor.source_depth == effective:
-                    anchors = self.anchor_bank(
-                        values[..., :self.spec.schedule.widths[0]])
-        return self.final_norm(values[..., :self.spec.schedule.widths[-1]])
+                if self.spec.anchor is not None and self.spec.anchor.source_depth == effective:
+                    anchors = self.anchor_bank(values[..., : self.spec.schedule.widths[0]])
+        return self.final_norm(values[..., : self.spec.schedule.widths[-1]])
 
-    def forward(self, input_ids: torch.Tensor,
-                targets: torch.Tensor | None = None):
-        if targets is not None and (not isinstance(targets, torch.Tensor)
-                                    or targets.shape != input_ids.shape
-                                    or targets.dtype != torch.long
-                                    or targets.device != input_ids.device):
+    def forward(self, input_ids: torch.Tensor, targets: torch.Tensor | None = None):
+        if targets is not None and (
+            not isinstance(targets, torch.Tensor)
+            or targets.shape != input_ids.shape
+            or targets.dtype != torch.long
+            or targets.device != input_ids.device
+        ):
             raise ValueError("targets must be torch.long with the input shape and device")
-        if targets is not None \
-                and (torch.any(targets < 0) or torch.any(targets >= self.spec.vocab_size)):
+        if targets is not None and (
+            torch.any(targets < 0) or torch.any(targets >= self.spec.vocab_size)
+        ):
             raise ValueError("target token id is outside the vocabulary")
         logits = F.linear(self.hidden_states(input_ids), self.lm_head.weight)
-        loss = None if targets is None else F.cross_entropy(
-            logits.float().reshape(-1, self.spec.vocab_size), targets.reshape(-1))
+        loss = (
+            None
+            if targets is None
+            else F.cross_entropy(
+                logits.float().reshape(-1, self.spec.vocab_size), targets.reshape(-1)
+            )
+        )
         return logits, loss
 
     def unique_parameter_count(self) -> int:
@@ -348,8 +386,9 @@ class HostedAdaptiveLanguageModel(nn.Module):
 
 
 @torch.no_grad()
-def _language_loss(model: HostedAdaptiveLanguageModel,
-                   input_ids: torch.Tensor, targets: torch.Tensor) -> float:
+def _language_loss(
+    model: HostedAdaptiveLanguageModel, input_ids: torch.Tensor, targets: torch.Tensor
+) -> float:
     was_training = model.training
     model.eval()
     try:
@@ -362,28 +401,47 @@ def _language_loss(model: HostedAdaptiveLanguageModel,
     return value
 
 
-def train_adaptive_pretrain(model: HostedAdaptiveLanguageModel,
-                            input_ids: torch.Tensor, targets: torch.Tensor,
-                            spec: StageTrainSpec,
-                            telemetry_sink=None) -> StageRunReport:
+def train_adaptive_pretrain(
+    model: HostedAdaptiveLanguageModel,
+    input_ids: torch.Tensor,
+    targets: torch.Tensor,
+    spec: StageTrainSpec,
+    telemetry_sink=None,
+) -> StageRunReport:
     """Run a bounded repeated-batch pretraining confirmation."""
-    if not isinstance(model, HostedAdaptiveLanguageModel) \
-            or not isinstance(spec, StageTrainSpec) or spec.stage != "pretrain":
+    if (
+        not isinstance(model, HostedAdaptiveLanguageModel)
+        or not isinstance(spec, StageTrainSpec)
+        or spec.stage != "pretrain"
+    ):
         raise ValueError("adaptive pretraining requires its model and stage='pretrain'")
-    if not isinstance(input_ids, torch.Tensor) or not isinstance(targets, torch.Tensor) \
-            or input_ids.shape != targets.shape or input_ids.ndim != 2 \
-            or input_ids.shape[0] < 1 or input_ids.device != targets.device \
-            or input_ids.device != next(model.parameters()).device:
+    if (
+        not isinstance(input_ids, torch.Tensor)
+        or not isinstance(targets, torch.Tensor)
+        or input_ids.shape != targets.shape
+        or input_ids.ndim != 2
+        or input_ids.shape[0] < 1
+        or input_ids.device != targets.device
+        or input_ids.device != next(model.parameters()).device
+    ):
         raise ValueError("adaptive pretraining tensors are malformed or on the wrong device")
     model._validate_ids(input_ids)
-    if targets.dtype != torch.long or torch.any(targets < 0) \
-            or torch.any(targets >= model.spec.vocab_size):
+    if (
+        targets.dtype != torch.long
+        or torch.any(targets < 0)
+        or torch.any(targets >= model.spec.vocab_size)
+    ):
         raise ValueError("adaptive targets must be in-vocabulary torch.long")
     if telemetry_sink is not None and not callable(telemetry_sink):
         raise ValueError("telemetry_sink must be callable or None")
-    input_sha = sha256_text(canonical_json({
-        "inputs": input_ids.detach().cpu().tolist(),
-        "targets": targets.detach().cpu().tolist()}))
+    input_sha = sha256_text(
+        canonical_json(
+            {
+                "inputs": input_ids.detach().cpu().tolist(),
+                "targets": targets.detach().cpu().tolist(),
+            }
+        )
+    )
     with _deterministic_stage(spec.seed):
         initial = _language_loss(model, input_ids, targets)
         optimizer = _optimizer(spec, model.parameters())
@@ -396,12 +454,26 @@ def train_adaptive_pretrain(model: HostedAdaptiveLanguageModel,
             if not torch.isfinite(norm):
                 raise RuntimeError("adaptive language model produced non-finite gradients")
             optimizer.step()
-            _emit(telemetry_sink, "pretrain", step + 1, float(loss.detach().item()),
-                  float(norm.item()), (step + 1) * input_ids.shape[0])
+            _emit(
+                telemetry_sink,
+                "pretrain",
+                step + 1,
+                float(loss.detach().item()),
+                float(norm.item()),
+                (step + 1) * input_ids.shape[0],
+            )
         final = _language_loss(model, input_ids, targets)
-        return StageRunReport("pretrain", spec.digest, input_sha, initial, final,
-                              spec.steps, input_ids.shape[0], _module_digest(model),
-                              model.spec.digest)
+        return StageRunReport(
+            "pretrain",
+            spec.digest,
+            input_sha,
+            initial,
+            final,
+            spec.steps,
+            input_ids.shape[0],
+            _module_digest(model),
+            model.spec.digest,
+        )
 
 
 class _PatchBlock(nn.Module):
@@ -409,16 +481,14 @@ class _PatchBlock(nn.Module):
         super().__init__()
         self.norm1 = nn.LayerNorm(width, eps=1.0e-6)
         self.norm2 = nn.LayerNorm(width, eps=1.0e-6)
-        self.attention = nn.MultiheadAttention(
-            width, heads, dropout=0.0, batch_first=True)
+        self.attention = nn.MultiheadAttention(width, heads, dropout=0.0, batch_first=True)
         self.mlp = nn.Sequential(
-            nn.Linear(width, 4 * width), nn.GELU(approximate="tanh"),
-            nn.Linear(4 * width, width))
+            nn.Linear(width, 4 * width), nn.GELU(approximate="tanh"), nn.Linear(4 * width, width)
+        )
 
     def forward(self, values: torch.Tensor) -> torch.Tensor:
         normalized = self.norm1(values)
-        attention = self.attention(
-            normalized, normalized, normalized, need_weights=False)[0]
+        attention = self.attention(normalized, normalized, normalized, need_weights=False)[0]
         values = values + attention
         return values + self.mlp(self.norm2(values))
 
@@ -430,8 +500,9 @@ def _position_2d(side: int, width: int) -> torch.Tensor:
     x, y = torch.meshgrid(positions, positions, indexing="ij")
     x_angles = x.reshape(-1, 1) * frequencies.reshape(1, -1)
     y_angles = y.reshape(-1, 1) * frequencies.reshape(1, -1)
-    return torch.cat((x_angles.sin(), x_angles.cos(),
-                      y_angles.sin(), y_angles.cos()), dim=1).unsqueeze(0)
+    return torch.cat(
+        (x_angles.sin(), x_angles.cos(), y_angles.sin(), y_angles.cos()), dim=1
+    ).unsqueeze(0)
 
 
 class HostedMultiPatchTransformer(nn.Module):
@@ -446,28 +517,30 @@ class HostedMultiPatchTransformer(nn.Module):
         self.spec = spec
         width = spec.hidden_width
         self.coarse_embed = nn.Conv2d(
-            spec.input_channels, width, spec.coarse_patch, spec.coarse_patch)
-        self.fine_skip = nn.Conv2d(
-            spec.input_channels, width, spec.fine_patch, spec.fine_patch)
+            spec.input_channels, width, spec.coarse_patch, spec.coarse_patch
+        )
+        self.fine_skip = nn.Conv2d(spec.input_channels, width, spec.fine_patch, spec.fine_patch)
         self.condition = nn.Parameter(torch.zeros(1, spec.condition_tokens, width))
         self.coarse_blocks = nn.ModuleList(
-            _PatchBlock(width, spec.heads) for _ in range(spec.coarse_layers))
-        self.upsample = nn.Linear(
-            width, width * spec.upsample_factor ** 2)
+            _PatchBlock(width, spec.heads) for _ in range(spec.coarse_layers)
+        )
+        self.upsample = nn.Linear(width, width * spec.upsample_factor**2)
         self.upsample_norm = nn.LayerNorm(width, eps=1.0e-6)
         self.upsample_refine = nn.Linear(width, width)
         self.fine_blocks = nn.ModuleList(
-            _PatchBlock(width, spec.heads) for _ in range(spec.fine_layers))
-        self.output = nn.Linear(
-            width, spec.fine_patch ** 2 * spec.input_channels)
+            _PatchBlock(width, spec.heads) for _ in range(spec.fine_layers)
+        )
+        self.output = nn.Linear(width, spec.fine_patch**2 * spec.input_channels)
         self.register_buffer(
             "coarse_position",
             _position_2d(spec.image_size // spec.coarse_patch, width),
-            persistent=False)
+            persistent=False,
+        )
         self.register_buffer(
             "fine_position",
             _position_2d(spec.image_size // spec.fine_patch, width),
-            persistent=False)
+            persistent=False,
+        )
 
     def _upsample(self, values: torch.Tensor) -> torch.Tensor:
         batch, tokens, width = values.shape
@@ -475,23 +548,30 @@ class HostedMultiPatchTransformer(nn.Module):
         if side * side != tokens:
             raise ValueError("coarse spatial token count must be a square")
         factor = self.spec.upsample_factor
-        values = self.upsample(values).view(
-            batch, side, side, width, factor, factor)
-        values = values.permute(0, 1, 4, 2, 5, 3).contiguous().view(
-            batch, side * factor * side * factor, width)
+        values = self.upsample(values).view(batch, side, side, width, factor, factor)
+        values = (
+            values.permute(0, 1, 4, 2, 5, 3)
+            .contiguous()
+            .view(batch, side * factor * side * factor, width)
+        )
         return self.upsample_refine(self.upsample_norm(F.gelu(values)))
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
         spec = self.spec
-        if not isinstance(images, torch.Tensor) or images.ndim != 4 \
-                or images.shape[0] < 1 \
-                or images.shape[1:] != (spec.input_channels,
-                                        spec.image_size, spec.image_size) \
-                or not images.is_floating_point() or not torch.isfinite(images).all():
+        if (
+            not isinstance(images, torch.Tensor)
+            or images.ndim != 4
+            or images.shape[0] < 1
+            or images.shape[1:] != (spec.input_channels, spec.image_size, spec.image_size)
+            or not images.is_floating_point()
+            or not torch.isfinite(images).all()
+        ):
             raise ValueError("multi-patch images must be finite [batch,C,H,W] floats")
-        if images.numel() > _MAX_HOSTED_ACTIVATION_ELEMENTS \
-                or images.shape[0] * spec.fine_tokens * spec.hidden_width \
-                > _MAX_HOSTED_ACTIVATION_ELEMENTS:
+        if (
+            images.numel() > _MAX_HOSTED_ACTIVATION_ELEMENTS
+            or images.shape[0] * spec.fine_tokens * spec.hidden_width
+            > _MAX_HOSTED_ACTIVATION_ELEMENTS
+        ):
             raise ValueError("hosted multi-patch activation exceeds the bounded reference limit")
         coarse = self.coarse_embed(images).flatten(2).transpose(1, 2)
         coarse = coarse + self.coarse_position.to(coarse.dtype)
@@ -499,25 +579,22 @@ class HostedMultiPatchTransformer(nn.Module):
         values = torch.cat((condition, coarse), dim=1)
         for block in self.coarse_blocks:
             values = block(values)
-        condition, coarse = values[:, :spec.condition_tokens], \
-            values[:, spec.condition_tokens:]
+        condition, coarse = values[:, : spec.condition_tokens], values[:, spec.condition_tokens :]
         fine = self._upsample(coarse)
         skip = self.fine_skip(images).flatten(2).transpose(1, 2)
         fine = fine + skip + self.fine_position.to(fine.dtype)
         values = torch.cat((condition, fine), dim=1)
         for block in self.fine_blocks:
             values = block(values)
-        patches = self.output(values[:, spec.condition_tokens:])
+        patches = self.output(values[:, spec.condition_tokens :])
         side = spec.image_size // spec.fine_patch
         patch = spec.fine_patch
-        patches = patches.view(
-            images.shape[0], side, side, patch, patch, spec.input_channels)
+        patches = patches.view(images.shape[0], side, side, patch, patch, spec.input_channels)
         return patches.permute(0, 5, 1, 3, 2, 4).contiguous().view_as(images)
 
 
 @torch.no_grad()
-def _reconstruction_loss(model: HostedMultiPatchTransformer,
-                         images: torch.Tensor) -> float:
+def _reconstruction_loss(model: HostedMultiPatchTransformer, images: torch.Tensor) -> float:
     was_training = model.training
     model.eval()
     try:
@@ -529,12 +606,17 @@ def _reconstruction_loss(model: HostedMultiPatchTransformer,
     return value
 
 
-def train_multipatch_reconstruction(model: HostedMultiPatchTransformer,
-                                    images: torch.Tensor,
-                                    spec: StageTrainSpec,
-                                    telemetry_sink=None) -> StageRunReport:
-    if not isinstance(model, HostedMultiPatchTransformer) \
-            or not isinstance(spec, StageTrainSpec) or spec.stage != "supervised":
+def train_multipatch_reconstruction(
+    model: HostedMultiPatchTransformer,
+    images: torch.Tensor,
+    spec: StageTrainSpec,
+    telemetry_sink=None,
+) -> StageRunReport:
+    if (
+        not isinstance(model, HostedMultiPatchTransformer)
+        or not isinstance(spec, StageTrainSpec)
+        or spec.stage != "supervised"
+    ):
         raise ValueError("multi-patch training requires its model and stage='supervised'")
     if not isinstance(images, torch.Tensor) or images.device != next(model.parameters()).device:
         raise ValueError("multi-patch images must share the model device")
@@ -554,16 +636,31 @@ def train_multipatch_reconstruction(model: HostedMultiPatchTransformer,
             if not torch.isfinite(norm):
                 raise RuntimeError("multi-patch model produced non-finite gradients")
             optimizer.step()
-            _emit(telemetry_sink, "supervised", step + 1,
-                  float(loss.detach().item()), float(norm.item()),
-                  (step + 1) * images.shape[0])
+            _emit(
+                telemetry_sink,
+                "supervised",
+                step + 1,
+                float(loss.detach().item()),
+                float(norm.item()),
+                (step + 1) * images.shape[0],
+            )
         final = _reconstruction_loss(model, images)
-        return StageRunReport("supervised", spec.digest, input_sha, initial, final,
-                              spec.steps, images.shape[0], _module_digest(model),
-                              model.spec.digest)
+        return StageRunReport(
+            "supervised",
+            spec.digest,
+            input_sha,
+            initial,
+            final,
+            spec.steps,
+            images.shape[0],
+            _module_digest(model),
+            model.spec.digest,
+        )
 
 
 __all__ = [
-    "HostedAdaptiveLanguageModel", "HostedMultiPatchTransformer",
-    "train_adaptive_pretrain", "train_multipatch_reconstruction",
+    "HostedAdaptiveLanguageModel",
+    "HostedMultiPatchTransformer",
+    "train_adaptive_pretrain",
+    "train_multipatch_reconstruction",
 ]

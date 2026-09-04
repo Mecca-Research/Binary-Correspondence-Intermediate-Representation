@@ -65,8 +65,9 @@ from ..kbcir.autodiff import Tape, _BACKWARD, _topo_order
 # The closed primitive set this emitter lowers: the differentiable ops (each carries a local _BACKWARD
 # rule) plus the two leaves. This is EXACTLY autodiff's primitive set; anything else is rejected.
 _MATH_OPS = frozenset({"exp", "log", "sqrt", "tanh", "sin", "cos"})
-_LOWERABLE = frozenset({"const", "var", "neg", "add", "sub", "mul", "div", "dot", "select"}) \
-    | _MATH_OPS
+_LOWERABLE = (
+    frozenset({"const", "var", "neg", "add", "sub", "mul", "div", "dot", "select"}) | _MATH_OPS
+)
 
 
 def _fc(v) -> str:
@@ -86,8 +87,10 @@ def _validate(tape: Tape, order) -> None:
     for nid in order:
         op = tape.node(nid).op
         if op not in _LOWERABLE:
-            raise ValueError(f"autodiff_kernel: op {op!r} (node {nid}) is outside the closed lowerable "
-                             f"primitive set {sorted(_LOWERABLE)}; cannot emit a backward rule for it")
+            raise ValueError(
+                f"autodiff_kernel: op {op!r} (node {nid}) is outside the closed lowerable "
+                f"primitive set {sorted(_LOWERABLE)}; cannot emit a backward rule for it"
+            )
 
 
 def _param_index(tape: Tape, order, params) -> dict:
@@ -98,8 +101,10 @@ def _param_index(tape: Tape, order, params) -> dict:
     emit reads ``grad_out[i] = 0.0f`` for such a param. (A duplicate parameter name IS an error -- the ABI
     index would be ambiguous.)"""
     if len(set(params)) != len(params):
-        raise ValueError(f"autodiff_kernel: duplicate parameter name in {list(params)} (the params[] ABI "
-                         f"index would be ambiguous)")
+        raise ValueError(
+            f"autodiff_kernel: duplicate parameter name in {list(params)} (the params[] ABI "
+            f"index would be ambiguous)"
+        )
     return {name: i for i, name in enumerate(params)}
 
 
@@ -136,7 +141,7 @@ def _forward_expr(tape: Tape, nid: int, name_to_pidx: dict) -> str:
         if not us:
             return "0.0f"
         return " + ".join(f"v{u} * v{v}" for u, v in zip(us, vs))
-    raise ValueError(f"autodiff_kernel: cannot emit forward for op {op!r}")     # pragma: no cover
+    raise ValueError(f"autodiff_kernel: cannot emit forward for op {op!r}")  # pragma: no cover
 
 
 def _needed_adjoints(tape: Tape, order, output: int, param_nids: set) -> set:
@@ -189,7 +194,7 @@ def _backward_lines(tape: Tape, nid: int, needed: set) -> list[str]:
         return f"  g{operand} += {rhs};" if operand in needed else None
 
     if op in ("const", "var"):
-        return []                                            # a leaf -- no backward rule (boundary)
+        return []  # a leaf -- no backward rule (boundary)
     if op == "neg":
         cand = [acc(a[0], f"-{gz}")]
     elif op == "add":
@@ -230,8 +235,10 @@ def _backward_lines(tape: Tape, nid: int, needed: set) -> list[str]:
         yline = f"g{y} += {gz}" if y in needed else None
         if xline is None and yline is None:
             return []
-        return [f"  if (v{cond} > 0.0f) {{ {xline + ';' if xline else ''} }} "
-                f"else {{ {yline + ';' if yline else ''} }}"]
+        return [
+            f"  if (v{cond} > 0.0f) {{ {xline + ';' if xline else ''} }} "
+            f"else {{ {yline + ';' if yline else ''} }}"
+        ]
     else:
         raise ValueError(f"autodiff_kernel: cannot emit backward for op {op!r}")  # pragma: no cover
     return [ln for ln in cand if ln is not None]
@@ -270,8 +277,10 @@ def emit_autodiff_kernel_c(tape: Tape, output: int, params, fn_name: str = "bcir
     name_to_nid = {tape.node(nid).const: nid for nid in order if tape.node(nid).op == "var"}
     unbound = sorted(set(name_to_nid) - set(params))
     if unbound:
-        raise ValueError(f"autodiff_kernel: var(s) {unbound} appear in the DAG but are not in params "
-                         f"(the params[] vector is the forward env -- every var must be bound)")
+        raise ValueError(
+            f"autodiff_kernel: var(s) {unbound} appear in the DAG but are not in params "
+            f"(the params[] vector is the forward env -- every var must be bound)"
+        )
     # the var node id carrying each reachable requested parameter (read into grad_out, a needed adjoint
     # slot). An unreachable param has no var node here -> its gradient is 0 (the oracle's unused-input rule).
     param_nids = {name_to_nid[name] for name in params if name in name_to_nid}
@@ -297,43 +306,52 @@ def emit_autodiff_kernel_c(tape: Tape, output: int, params, fn_name: str = "bcir
         f" * Reference-verified: the emitted gradients MATCH autodiff.grad AND finite_difference_grad to\n"
         f" * float round-off. scope: the deployable forward+backward+SGD training primitive -- NOT a full\n"
         f" * optimizer/data-loader/mini-batch framework (that breadth is deferred). */\n"
-        "#include <stddef.h>\n"
-        + ("#include <math.h>\n" if needs_math else "")
+        "#include <stddef.h>\n" + ("#include <math.h>\n" if needs_math else "")
     )
 
     lines = [f"void {fn_name}(const float *params, float *value_out, float *grad_out) {{"]
     # If NO var reaches the output (a constant-valued DAG -> all gradients are 0), params is unreferenced;
     # mark it used so the degenerate case stays warning-free under -Wall -Wextra (-Wunused-parameter).
     if not name_to_nid:
-        lines.append("  (void)params;   /* no var reaches the output -> a constant DAG, all grads 0 */")
+        lines.append(
+            "  (void)params;   /* no var reaches the output -> a constant DAG, all grads 0 */"
+        )
 
     # --- the forward pass: one v<id> per node, in topo order (operands before users) ---
-    lines.append("  /* forward pass (topo order) -- the C twin of autodiff.evaluate / _forward_values. */")
+    lines.append(
+        "  /* forward pass (topo order) -- the C twin of autodiff.evaluate / _forward_values. */"
+    )
     for nid in order:
         lines.append(f"  float v{nid} = {_forward_expr(tape, nid, name_to_pidx)};")
     lines.append(f"  value_out[0] = v{output};")
     lines.append("")
 
     # --- the reverse pass: declare adjoint accumulators, seed the output adjoint, walk in reverse ---
-    lines.append("  /* reverse pass -- adjoint accumulators (one g<id> per NEEDED node; a never-read leaf")
-    lines.append("     slot is elided -> warning-free), output adjoint seeded to 1, operand adjoints")
+    lines.append(
+        "  /* reverse pass -- adjoint accumulators (one g<id> per NEEDED node; a never-read leaf"
+    )
+    lines.append(
+        "     slot is elided -> warning-free), output adjoint seeded to 1, operand adjoints"
+    )
     lines.append("     accumulated by each primitive's local _BACKWARD rule. */")
     for nid in order:
         if nid not in needed:
-            continue                                          # a dead leaf slot -- never read, so not declared
+            continue  # a dead leaf slot -- never read, so not declared
         seed = "1.0f" if nid == output else "0.0f"
         lines.append(f"  float g{nid} = {seed};")
     # reverse topo order: users before operands (autodiff._reverse_order).
     lines.append("")
     for nid in reversed(order):
         if nid not in needed:
-            continue                                          # a leaf (no rule) or a dead slot -> no firing
+            continue  # a leaf (no rule) or a dead slot -> no firing
         lines.extend(_backward_lines(tape, nid, needed))
     lines.append("")
 
     # --- read off the gradient of each requested parameter from its adjoint slot (0 if unreachable) ---
     lines.append("  /* read the gradient w.r.t. each parameter from its var node's adjoint slot")
-    lines.append("     (an unreachable/unused input has identically-zero gradient, as the oracle). */")
+    lines.append(
+        "     (an unreachable/unused input has identically-zero gradient, as the oracle). */"
+    )
     for name in params:
         rhs = f"g{name_to_nid[name]}" if name in name_to_nid else "0.0f"
         lines.append(f"  grad_out[{name_to_pidx[name]}] = {rhs};")
@@ -362,8 +380,14 @@ def emit_sgd_step_c(n_params: int, fn_name: str = "bcir_sgd_step") -> str:
     )
 
 
-def emit_train_step_c(tape: Tape, output: int, params, grad_fn: str = "bcir_grad",
-                      sgd_fn: str = "bcir_sgd_step", fn_name: str = "bcir_train_step") -> str:
+def emit_train_step_c(
+    tape: Tape,
+    output: int,
+    params,
+    grad_fn: str = "bcir_grad",
+    sgd_fn: str = "bcir_sgd_step",
+    fn_name: str = "bcir_train_step",
+) -> str:
     """Emit the grad-kernel + SGD step + a wiring function
 
         void fn_name(float *params, float lr, float *value_out)
@@ -391,14 +415,21 @@ def emit_train_step_c(tape: Tape, output: int, params, grad_fn: str = "bcir_grad
 
 # --- compile + run the emitted kernels against the Python oracle (the gate that matters) -------------
 
+
 def _which(name: str) -> str | None:
     from shutil import which
+
     return which(name)
 
 
-def compile_and_run_grad_c(tape: Tape, output: int, params, env: dict,
-                           fn_name: str = "bcir_grad",
-                           workdir: str | None = None) -> tuple[bool, float, list[float], str]:
+def compile_and_run_grad_c(
+    tape: Tape,
+    output: int,
+    params,
+    env: dict,
+    fn_name: str = "bcir_grad",
+    workdir: str | None = None,
+) -> tuple[bool, float, list[float], str]:
     """Emit the forward+backward kernel + a tiny ``main`` that runs it at the point ``env``, compile, run,
     and return ``(ok, value, grads, combined_output)`` where ``value`` is the forward value and ``grads``
     is the gradient list in ``params`` order. The caller compares ``value`` to ``autodiff.evaluate`` and
@@ -423,7 +454,8 @@ def compile_and_run_grad_c(tape: Tape, output: int, params, env: dict,
         f"  {fn_name}(params, &value, grad);\n"
         f'  printf("%.9g\\n", value);\n'
         f'  for (int i = 0; i < {n}; ++i) printf("%.9g ", grad[i]);\n'
-        f"  return 0;\n}}\n")
+        f"  return 0;\n}}\n"
+    )
 
     created = workdir is None
     workdir = workdir or tempfile.mkdtemp(prefix="bcir-grad-")
@@ -432,36 +464,48 @@ def compile_and_run_grad_c(tape: Tape, output: int, params, env: dict,
         exe = os.path.join(workdir, "grad")
         with open(src, "w") as f:
             f.write(kernel + main)
-        needs_math = any(tape.node(nid).op in _MATH_OPS
-                         for nid in _topo_order(tape, output))
+        needs_math = any(tape.node(nid).op in _MATH_OPS for nid in _topo_order(tape, output))
         build = None
         for std in ("-std=c23", "-std=c2x", "-std=c11"):
             from ..toolchain import host_link_args
+
             command = [cc, std, "-O2", "-Wall", "-Wextra", src, "-o", exe]
             if needs_math:
                 command.append("-lm")
-            build = subprocess.run(host_link_args(command),
-                                   capture_output=True, text=True)
+            build = subprocess.run(host_link_args(command), capture_output=True, text=True)
             if build.returncode == 0:
                 break
         if build is None or build.returncode != 0:
-            return False, 0.0, [], "grad build failed:\n" + (build.stdout + build.stderr if build else "")
+            return (
+                False,
+                0.0,
+                [],
+                "grad build failed:\n" + (build.stdout + build.stderr if build else ""),
+            )
         run = subprocess.run([exe], capture_output=True, text=True)
         if run.returncode != 0:
             return False, 0.0, [], "grad run failed:\n" + run.stdout + run.stderr
         toks = run.stdout.split()
         value = float(toks[0])
-        grads = [float(t) for t in toks[1:1 + n]]
+        grads = [float(t) for t in toks[1 : 1 + n]]
         return True, value, grads, run.stdout + run.stderr
     finally:
         if created:
             import shutil
+
             shutil.rmtree(workdir, ignore_errors=True)
 
 
-def compile_and_run_training_c(tape: Tape, output: int, params, env: dict, lr: float, steps: int,
-                               fn_name: str = "bcir_train_step",
-                               workdir: str | None = None) -> tuple[bool, list[float], list[float], str]:
+def compile_and_run_training_c(
+    tape: Tape,
+    output: int,
+    params,
+    env: dict,
+    lr: float,
+    steps: int,
+    fn_name: str = "bcir_train_step",
+    workdir: str | None = None,
+) -> tuple[bool, list[float], list[float], str]:
     """Emit the full train-step unit (grad kernel + SGD + wiring) + a ``main`` that runs ``steps`` training
     steps from the initial point ``env`` at learning rate ``lr``, and return ``(ok, losses, final_params,
     combined_output)``. ``losses[k]`` is the loss BEFORE step k (so a strictly decreasing list proves the
@@ -491,7 +535,8 @@ def compile_and_run_training_c(tape: Tape, output: int, params, env: dict, lr: f
         f'    printf("L %.9g\\n", value);\n'
         f"  }}\n"
         f'  for (int i = 0; i < {n}; ++i) printf("P %.9g\\n", params[i]);\n'
-        f"  return 0;\n}}\n")
+        f"  return 0;\n}}\n"
+    )
 
     created = workdir is None
     workdir = workdir or tempfile.mkdtemp(prefix="bcir-train-")
@@ -502,12 +547,18 @@ def compile_and_run_training_c(tape: Tape, output: int, params, env: dict, lr: f
             f.write(unit + main)
         build = None
         for std in ("-std=c23", "-std=c2x", "-std=c11"):
-            build = subprocess.run([cc, std, "-O2", "-Wall", "-Wextra", src, "-o", exe],
-                                   capture_output=True, text=True)
+            build = subprocess.run(
+                [cc, std, "-O2", "-Wall", "-Wextra", src, "-o", exe], capture_output=True, text=True
+            )
             if build.returncode == 0:
                 break
         if build is None or build.returncode != 0:
-            return False, [], [], "train build failed:\n" + (build.stdout + build.stderr if build else "")
+            return (
+                False,
+                [],
+                [],
+                "train build failed:\n" + (build.stdout + build.stderr if build else ""),
+            )
         run = subprocess.run([exe], capture_output=True, text=True)
         if run.returncode != 0:
             return False, [], [], "train run failed:\n" + run.stdout + run.stderr
@@ -522,18 +573,23 @@ def compile_and_run_training_c(tape: Tape, output: int, params, env: dict, lr: f
     finally:
         if created:
             import shutil
+
             shutil.rmtree(workdir, ignore_errors=True)
 
 
 # --- the oracle-side training loop (the reference the compiled C must match) -------------------------
 
-def oracle_train(tape: Tape, output: int, params, env: dict, lr: float, steps: int) -> tuple[list, dict]:
+
+def oracle_train(
+    tape: Tape, output: int, params, env: dict, lr: float, steps: int
+) -> tuple[list, dict]:
     """The reference SGD training loop, run purely in the Python oracle: ``steps`` iterations of
     forward (``autodiff.evaluate``) -> backward (``autodiff.grad``) -> SGD update ``w -= lr*g``, from the
     initial point ``env``. Returns ``(losses, final_env)`` where ``losses[k]`` is the loss BEFORE step k
     (so a strictly decreasing list proves the loop reduces the loss). This is the EXACT loop the compiled
     ``compile_and_run_training_c`` runs; the two loss curves must agree to float round-off."""
     from ..kbcir.autodiff import evaluate, grad
+
     cur = dict(env)
     losses = []
     for _ in range(int(steps)):

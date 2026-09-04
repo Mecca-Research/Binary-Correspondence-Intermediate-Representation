@@ -20,6 +20,7 @@ _SEVERITIES = ("error", "warning", "note")
 class Span:
     """A half-open `[start, end)` range of byte offsets into the translation-unit source. A zero-width
     span (`start == end`, e.g. an insertion point) still anchors a single caret."""
+
     start: int
     end: int
 
@@ -32,6 +33,7 @@ class Span:
 class FixIt:
     """A suggested edit: replace the source over `span` with `replacement` (an insertion has a
     zero-width span; a deletion has an empty replacement)."""
+
     span: Span
     replacement: str
 
@@ -40,6 +42,7 @@ class FixIt:
 class Note:
     """A secondary message attached to a diagnostic — an include-stack frame ("in file included
     from ..."), a macro-expansion site, or a "previous definition was here" back-reference."""
+
     message: str
     span: Span | None = None
 
@@ -49,11 +52,12 @@ class SourceDiagnostic:
     """One rendered-ready diagnostic. `phase` records which front-end stage raised it (lex /
     preprocess / parse / lower) for machine-readable provenance; `notes`/`fixits` are the secondary
     spans and suggested edits."""
+
     severity: str
     message: str
     span: Span | None = None
-    notes: list = field(default_factory=list)         # list[Note]
-    fixits: list = field(default_factory=list)         # list[FixIt]
+    notes: list = field(default_factory=list)  # list[Note]
+    fixits: list = field(default_factory=list)  # list[FixIt]
     phase: str = ""
 
     def __post_init__(self):
@@ -66,10 +70,11 @@ class DiagnosticReport:
     """A run's diagnostics bundled with the exact text their spans index into (the *preprocessed*
     translation unit, or the original source if preprocessing itself failed) plus the file name, so
     the report renders itself without the caller having to thread the right source back in."""
-    diagnostics: list                                 # list[SourceDiagnostic]
+
+    diagnostics: list  # list[SourceDiagnostic]
     source: str
     filename: str = "<source>"
-    line_map: list | None = None                      # per output line: (file, line, include-stack)
+    line_map: list | None = None  # per output line: (file, line, include-stack)
 
     @property
     def ok(self) -> bool:
@@ -84,16 +89,24 @@ class DiagnosticReport:
         return self.line_map[idx] if idx < len(self.line_map) else None
 
     def render(self) -> str:
-        return "\n".join(render(d, self.source, self.filename, origin=self._origin(d.span))
-                         for d in self.diagnostics)
+        return "\n".join(
+            render(d, self.source, self.filename, origin=self._origin(d.span))
+            for d in self.diagnostics
+        )
 
     def to_json(self, *, indent: int | None = 2) -> str:
         """The diagnostics as a JSON array of objects (a `-fdiagnostics-format=json`-style machine
         -readable feed for editors / CI). Each object carries severity, message, originating phase,
         the 1-based file:line:column, the byte range, the #include chain, and any fix-its and notes."""
         import json
-        return json.dumps([diagnostic_to_dict(d, self.source, self.filename, origin=self._origin(d.span))
-                           for d in self.diagnostics], indent=indent)
+
+        return json.dumps(
+            [
+                diagnostic_to_dict(d, self.source, self.filename, origin=self._origin(d.span))
+                for d in self.diagnostics
+            ],
+            indent=indent,
+        )
 
 
 def line_col(source: str, offset: int) -> tuple[int, int]:
@@ -125,8 +138,8 @@ def _snippet(source: str, span: Span) -> list[str]:
     diagnostic covers *within that first line* (a `^` then `~`s), with at least one caret."""
     lstart, lend = _line_bounds(source, span.start)
     line_text = source[lstart:lend]
-    col = span.start - lstart                                   # 0-based column of the caret
-    width = max(1, min(span.end, lend) - span.start)            # clamp the underline to the line
+    col = span.start - lstart  # 0-based column of the caret
+    width = max(1, min(span.end, lend) - span.start)  # clamp the underline to the line
     underline = _caret_prefix(line_text, col) + "^" + "~" * (width - 1)
     return [line_text, underline]
 
@@ -138,26 +151,36 @@ def render(diag: SourceDiagnostic, source: str, filename: str = "<source>", orig
     `In file included from ...:` frames (outermost first) above it."""
     out: list[str] = []
 
-    def banner(severity: str, message: str, span: Span | None,
-               loc_file: str = filename, loc_line: int | None = None) -> None:
+    def banner(
+        severity: str,
+        message: str,
+        span: Span | None,
+        loc_file: str = filename,
+        loc_line: int | None = None,
+    ) -> None:
         if span is None:
             out.append(f"{loc_file}: {severity}: {message}")
         else:
             ln, col = line_col(source, span.start)
-            out.append(f"{loc_file}:{loc_line if loc_line is not None else ln}:{col}: "
-                       f"{severity}: {message}")
-            out.extend(_snippet(source, span))            # not `out +=`: that would rebind in this closure
+            out.append(
+                f"{loc_file}:{loc_line if loc_line is not None else ln}:{col}: "
+                f"{severity}: {message}"
+            )
+            out.extend(_snippet(source, span))  # not `out +=`: that would rebind in this closure
 
     if origin is not None:
         ofile, oline, incstack = origin
-        for inc_file, inc_line in incstack:               # Clang-style include frames, outermost first
+        for inc_file, inc_line in incstack:  # Clang-style include frames, outermost first
             out.append(f"In file included from {inc_file}:{inc_line}:")
         banner(diag.severity, diag.message, diag.span, loc_file=ofile, loc_line=oline)
     else:
         banner(diag.severity, diag.message, diag.span)
-    for fx in diag.fixits:                                      # a one-line suggested edit under the caret
-        verb = "remove" if fx.replacement == "" else ("insert" if fx.span.start == fx.span.end
-                                                       else "replace with")
+    for fx in diag.fixits:  # a one-line suggested edit under the caret
+        verb = (
+            "remove"
+            if fx.replacement == ""
+            else ("insert" if fx.span.start == fx.span.end else "replace with")
+        )
         out.append(f"fix-it: {verb} {fx.replacement!r}".rstrip())
     for note in diag.notes:
         banner("note", note.message, note.span)
@@ -170,12 +193,17 @@ def _loc(source: str, filename: str, span: Span | None) -> dict:
     if span is None:
         return {"file": filename}
     ln, col = line_col(source, span.start)
-    return {"file": filename, "line": ln, "column": col,
-            "range": {"start": span.start, "end": span.end}}
+    return {
+        "file": filename,
+        "line": ln,
+        "column": col,
+        "range": {"start": span.start, "end": span.end},
+    }
 
 
-def diagnostic_to_dict(diag: SourceDiagnostic, source: str, filename: str = "<source>",
-                       origin=None) -> dict:
+def diagnostic_to_dict(
+    diag: SourceDiagnostic, source: str, filename: str = "<source>", origin=None
+) -> dict:
     """A `SourceDiagnostic` as a JSON-serializable dict: severity, message, originating phase, the
     file:line:column + byte range, and any fix-its / notes (each with its own location). `origin`
     (from the line map) relocates the location to the true source file/line and adds `includedFrom`."""
@@ -183,15 +211,23 @@ def diagnostic_to_dict(diag: SourceDiagnostic, source: str, filename: str = "<so
     if origin is not None and diag.span is not None:
         ofile, oline, incstack = origin
         _, col = line_col(source, diag.span.start)
-        d.update({"file": ofile, "line": oline, "column": col,
-                  "range": {"start": diag.span.start, "end": diag.span.end}})
+        d.update(
+            {
+                "file": ofile,
+                "line": oline,
+                "column": col,
+                "range": {"start": diag.span.start, "end": diag.span.end},
+            }
+        )
         if incstack:
             d["includedFrom"] = [{"file": f, "line": ln} for f, ln in incstack]
     else:
         d.update(_loc(source, filename, diag.span))
     if diag.fixits:
-        d["fixits"] = [{"replacement": fx.replacement,
-                        "range": {"start": fx.span.start, "end": fx.span.end}} for fx in diag.fixits]
+        d["fixits"] = [
+            {"replacement": fx.replacement, "range": {"start": fx.span.start, "end": fx.span.end}}
+            for fx in diag.fixits
+        ]
     if diag.notes:
         d["notes"] = [{"message": n.message, **_loc(source, filename, n.span)} for n in diag.notes]
     return d

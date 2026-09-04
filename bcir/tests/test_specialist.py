@@ -32,20 +32,22 @@ def _cc():
 
 # --- the hot-shape detector ------------------------------------------------------
 
+
 def test_ledger_counts_shapes_and_flags_hot_ones():
     led = ShapeLedger()
     for _ in range(DEFAULT_HOT_THRESHOLD):
         k = led.observe("vector.add", 1024)
     assert led.frequency(k) == DEFAULT_HOT_THRESHOLD and led.is_hot(k)
-    assert not led.is_hot(led.observe("vector.add", 99))   # seen once
+    assert not led.is_hot(led.observe("vector.add", 99))  # seen once
 
 
 # --- gating: specialize only hot AND small ---------------------------------------
 
+
 def test_cold_shape_keeps_the_generic_kernel():
     m, r = _plan(1024)
     led = ShapeLedger()
-    res = synthesize(m, r, led)               # first sight: not hot
+    res = synthesize(m, r, led)  # first sight: not hot
     assert not res.specialized and res.fn_name == "bcir_kernel"
     assert "n =" not in res.kernel_c or "baked" not in res.kernel_c
 
@@ -54,12 +56,12 @@ def test_hot_small_shape_synthesizes_a_baked_unrolled_specialist():
     m, r = _plan(1024)
     led = ShapeLedger()
     for _ in range(DEFAULT_HOT_THRESHOLD - 1):
-        synthesize(m, r, led)                 # warm it up to the threshold
+        synthesize(m, r, led)  # warm it up to the threshold
     res = synthesize(m, r, led)
     assert res.specialized and res.count == 1024
     assert "shape specialist: n = 1024 baked" in res.kernel_c
-    assert "size_t n" not in res.kernel_c     # the count is baked, not a parameter
-    assert "+ 7u]" in res.kernel_c or "+ 1u]" in res.kernel_c   # unrolled body
+    assert "size_t n" not in res.kernel_c  # the count is baked, not a parameter
+    assert "+ 7u]" in res.kernel_c or "+ 1u]" in res.kernel_c  # unrolled body
 
 
 def test_large_shape_is_never_specialized():
@@ -68,17 +70,18 @@ def test_large_shape_is_never_specialized():
     m, r = _plan(big)
     led = ShapeLedger()
     for _ in range(DEFAULT_HOT_THRESHOLD + 2):
-        res = synthesize(m, r, led)           # hot, but too large to bake
+        res = synthesize(m, r, led)  # hot, but too large to bake
     assert not res.specialized and "large shape" in res.reason
 
 
 def test_synthesis_is_deterministic():
     a = emit_specialist_c("vector.add", "+", 130, "f32")
     b = emit_specialist_c("vector.add", "+", 130, "f32")
-    assert a == b and "C[128u] =" in a and "C[129u] =" in a   # baked remainder (130 % 8)
+    assert a == b and "C[128u] =" in a and "C[129u] =" in a  # baked remainder (130 % 8)
 
 
 # --- correctness: the specialist computes the same result as the generic ----------
+
 
 def test_specialist_compiles_and_is_correct():
     cc = _cc()
@@ -86,7 +89,9 @@ def test_specialist_compiles_and_is_correct():
         return  # no compiler: skip cleanly
     n = 1024
     kernel = emit_specialist_c("vector.add", "+", n, "f32", "spec")
-    main = kernel + f"""
+    main = (
+        kernel
+        + f"""
 #include <stdlib.h>
 #include <stdio.h>
 int main(void) {{
@@ -97,6 +102,7 @@ int main(void) {{
   puts("OK"); return 0;
 }}
 """
+    )
     with tempfile.TemporaryDirectory() as d:
         src, exe = os.path.join(d, "s.c"), os.path.join(d, "s")
         open(src, "w").write(main)

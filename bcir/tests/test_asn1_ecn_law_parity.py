@@ -18,9 +18,18 @@ import os
 import re
 
 from bcir.asn1.ecn_user import (
-    AlternativeDetermination, Comparison, ComponentOrder, EncodingSpaceDetermination,
-    HandleValueKind, IntegerBounds, OptionalityDetermination, Padding, RangeCondition,
-    ReplaceAction, ReversalSpecification, UnusedBitsDetermination,
+    AlternativeDetermination,
+    Comparison,
+    ComponentOrder,
+    EncodingSpaceDetermination,
+    HandleValueKind,
+    IntegerBounds,
+    OptionalityDetermination,
+    Padding,
+    RangeCondition,
+    ReplaceAction,
+    ReversalSpecification,
+    UnusedBitsDetermination,
 )
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -35,8 +44,10 @@ def _cases(name: str) -> dict[str, int]:
     text = open(_ATTRS_TD, encoding="utf-8").read()
     match = re.search(rf"def BCIR_{name}\s*:\s*BCIR_Enum<.*?\]>;", text, re.S)
     assert match, f"BCIR_{name} not found in {_ATTRS_TD}"
-    return {m.group(3): int(m.group(2)) for m in
-            re.finditer(r'I32EnumAttrCase<"(\w+)",\s*(\d+),\s*"([\w.]+)">', match.group(0))}
+    return {
+        m.group(3): int(m.group(2))
+        for m in re.finditer(r'I32EnumAttrCase<"(\w+)",\s*(\d+),\s*"([\w.]+)">', match.group(0))
+    }
 
 
 def _oracle(enum) -> dict[str, int]:
@@ -46,11 +57,11 @@ def _oracle(enum) -> dict[str, int]:
     attribute mnemonic cannot contain a hyphen. So the *order* is what has to match, and the
     mapping between spellings is stated here once rather than assumed at each call.
     """
-    return {member.value.replace("-", "_"): index
-            for index, member in enumerate(enum)}
+    return {member.value.replace("-", "_"): index for index, member in enumerate(enum)}
 
 
 # --- the enums -------------------------------------------------------------------------
+
 
 def test_padding_values_match_the_clause_order_on_both_rails():
     """§21.9.1's `ENUMERATED {zero, one, pattern, encoder-option}`, in that order.
@@ -73,8 +84,12 @@ def test_reversal_values_match_the_enumerations_own_order_not_the_prose():
     and with what the names say, so that is what both rails encode — and this test exists so
     that a future reader who finds §21.14.6 first cannot quietly renumber one rail.
     """
-    expected = {"no_reversal": 0, "reverse_bits_in_units": 1, "reverse_half_units": 2,
-                "reverse_bits_in_half_units": 3}
+    expected = {
+        "no_reversal": 0,
+        "reverse_bits_in_units": 1,
+        "reverse_half_units": 2,
+        "reverse_bits_in_half_units": 3,
+    }
     assert _cases("EcnReversal") == expected
     assert _oracle(ReversalSpecification) == expected
 
@@ -106,17 +121,26 @@ def test_range_condition_values_match_and_the_first_five_still_partition():
     the second, and neither shows up as the other.
     """
     expected = {
-        "unbounded_or_no_lower_bound": 0, "semi_bounded_with_negatives": 1,
-        "bounded_with_negatives": 2, "semi_bounded_without_negatives": 3,
-        "bounded_without_negatives": 4, "test_lower_bound": 5, "test_upper_bound": 6,
+        "unbounded_or_no_lower_bound": 0,
+        "semi_bounded_with_negatives": 1,
+        "bounded_with_negatives": 2,
+        "semi_bounded_without_negatives": 3,
+        "bounded_without_negatives": 4,
+        "test_lower_bound": 5,
+        "test_upper_bound": 6,
         "test_range": 7,
     }
     assert _cases("EcnRangeCondition") == expected
     assert _oracle(RangeCondition) == expected
 
-    for bounds in (IntegerBounds(), IntegerBounds(high=9), IntegerBounds(low=-1),
-                   IntegerBounds(low=-1, high=9), IntegerBounds(low=0),
-                   IntegerBounds(low=0, high=9)):
+    for bounds in (
+        IntegerBounds(),
+        IntegerBounds(high=9),
+        IntegerBounds(low=-1),
+        IntegerBounds(low=-1, high=9),
+        IntegerBounds(low=0),
+        IntegerBounds(low=0, high=9),
+    ):
         assert bounds.exactly_one_shape() in RangeCondition, bounds
 
 
@@ -127,8 +151,14 @@ def test_comparison_values_match_and_the_type_has_no_default():
     optional and never treating absence as a value, which is checked here by the absence of a
     `DEFAULT` marker in the ODS comment block that documents the enum.
     """
-    expected = {"equal_to": 0, "not_equal_to": 1, "greater_than": 2, "less_than": 3,
-                "greater_than_or_equal_to": 4, "less_than_or_equal_to": 5}
+    expected = {
+        "equal_to": 0,
+        "not_equal_to": 1,
+        "greater_than": 2,
+        "less_than": 3,
+        "greater_than_or_equal_to": 4,
+        "less_than_or_equal_to": 5,
+    }
     assert _cases("EcnComparison") == expected
     assert _oracle(Comparison) == expected
 
@@ -157,8 +187,13 @@ def test_the_constructor_determinations_are_five_and_three_for_the_same_reason()
     where §21.5.1 lists five, and one shared enum would let an object state something the
     notation cannot express.
     """
-    optionality = {"field_to_be_set": 0, "field_to_be_used": 1, "container": 2,
-                   "handle": 3, "pointer": 4}
+    optionality = {
+        "field_to_be_set": 0,
+        "field_to_be_used": 1,
+        "container": 2,
+        "handle": 3,
+        "pointer": 4,
+    }
     alternative = {"field_to_be_set": 0, "field_to_be_used": 1, "handle": 2}
     assert _cases("EcnOptionalityDetermination") == optionality
     assert _oracle(OptionalityDetermination) == optionality
@@ -192,11 +227,19 @@ def test_the_handle_value_set_alternatives_match_the_choice_they_come_from():
 
 # --- the ops and the laws ---------------------------------------------------------------
 
+
 def test_law_rail_declares_every_op_the_oracle_module_needs():
     """`EcnModule`'s parts must all be nameable in the IR, or the projection has a hole."""
     text = open(_ECN_TD, encoding="utf-8").read()
-    for mnemonic in ("ecn.module", "ecn.class", "ecn.structure", "ecn.field", "ecn.object",
-                     "ecn.condition", "ecn.parameterized"):
+    for mnemonic in (
+        "ecn.module",
+        "ecn.class",
+        "ecn.structure",
+        "ecn.field",
+        "ecn.object",
+        "ecn.condition",
+        "ecn.parameterized",
+    ):
         assert f'BCIR_Op<"{mnemonic}"' in text, mnemonic
 
 
@@ -268,21 +311,26 @@ def test_every_attribute_and_enum_the_fixture_uses_is_declared_in_the_ods():
     """
     ecn_td = open(_ECN_TD, encoding="utf-8").read()
     attrs_td = open(_ATTRS_TD, encoding="utf-8").read()
-    body = "\n".join(line for line in open(_FIXTURE, encoding="utf-8").read().split("\n")
-                     if not line.lstrip().startswith("//"))
+    body = "\n".join(
+        line
+        for line in open(_FIXTURE, encoding="utf-8").read().split("\n")
+        if not line.lstrip().startswith("//")
+    )
 
     declared = set(re.findall(r"\$(\w+)", ecn_td))
     for used in sorted(set(re.findall(r"[{,]\s*(\w+)\s*=", body))):
         assert used in declared, f"{used!r} is not an argument of any bcir.ecn.* op"
 
     # `#bcir.<mnemonic><case>` — the attribute mnemonic and one of its enum's spellings.
-    enums = {mnemonic: enum for enum, mnemonic in
-             re.findall(r"def BCIR_\w+Attr\s*:\s*BCIR_EnumAttr<BCIR_(\w+),\s*\"(\w+)\">",
-                        attrs_td)}
+    enums = {
+        mnemonic: enum
+        for enum, mnemonic in re.findall(
+            r"def BCIR_\w+Attr\s*:\s*BCIR_EnumAttr<BCIR_(\w+),\s*\"(\w+)\">", attrs_td
+        )
+    }
     for mnemonic, case in re.findall(r"#bcir\.(\w+)<(\w+)>", body):
         assert mnemonic in enums, f"#bcir.{mnemonic} is not a declared attribute mnemonic"
-        assert case in _cases(enums[mnemonic]), \
-            f"{case!r} is not a case of BCIR_{enums[mnemonic]}"
+        assert case in _cases(enums[mnemonic]), f"{case!r} is not a case of BCIR_{enums[mnemonic]}"
 
 
 def test_the_fixture_carries_the_positive_cases_too():
@@ -328,10 +376,12 @@ def test_r25_governs_dummies_the_way_annex_c_does_in_the_oracle():
 
     source = Path(__file__).resolve().parents[2] / "mlir/lib/passes/BCIRVerifyPass.cpp"
     text = source.read_text(encoding="utf-8")
-    block = text[text.index('{"encoding-class", ""}'):]
-    block = block[:block.index("};")]
+    block = text[text.index('{"encoding-class", ""}') :]
+    block = block[: block.index("};")]
     in_rule = dict(re.findall(r'\{"([a-z-]+)",\s*"([A-Za-z#]*)"\}', block))
 
-    in_oracle = {kind.value: ("" if governor is None else governor.value)
-                 for kind, governor in _REQUIRED_GOVERNOR.items()}
+    in_oracle = {
+        kind.value: ("" if governor is None else governor.value)
+        for kind, governor in _REQUIRED_GOVERNOR.items()
+    }
     assert in_rule == in_oracle, (in_rule, in_oracle)

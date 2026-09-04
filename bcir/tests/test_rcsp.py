@@ -23,8 +23,9 @@ def test_unbounded_budget_is_the_degenerate_case():
             base = optimize(m, h, Theta.cool())
             rcsp = optimize_constrained(m, h, Theta.cool())
             assert rcsp.score == base.score
-            assert {cid: c.width for cid, c in rcsp.by_claim().items()} == \
-                   {cid: c.width for cid, c in base.by_claim().items()}
+            assert {cid: c.width for cid, c in rcsp.by_claim().items()} == {
+                cid: c.width for cid, c in base.by_claim().items()
+            }
 
 
 def test_thermal_budget_makes_vec16_infeasible_selects_vec8():
@@ -32,16 +33,14 @@ def test_thermal_budget_makes_vec16_infeasible_selects_vec8():
     # optimum is vec8 (thermal 640) at score 9472 -- a plan the PERF weight
     # vector alone can never select (thermal weight is 0 under PERF).
     m = vector_add(1024)
-    r = optimize_constrained(m, TARGETS["x86_avx512"], Theta.cool(),
-                             budget=Budget.of(thermal=700))
+    r = optimize_constrained(m, TARGETS["x86_avx512"], Theta.cool(), budget=Budget.of(thermal=700))
     assert r.by_claim()[1000].width == 8
     assert r.score == 9472
 
 
 def test_power_budget_constrains_like_thermal():
     m = vector_add(1024)
-    r = optimize_constrained(m, TARGETS["x86_avx512"], Theta.cool(),
-                             budget=Budget.of(power=700))
+    r = optimize_constrained(m, TARGETS["x86_avx512"], Theta.cool(), budget=Budget.of(power=700))
     assert r.by_claim()[1000].width == 8
 
 
@@ -50,8 +49,7 @@ def test_unsatisfiable_budget_raises_infeasible():
     # thermal >= 640: a 500 cap admits no legal plan.
     m = vector_add(1024)
     try:
-        optimize_constrained(m, TARGETS["x86_avx512"], Theta.cool(),
-                             budget=Budget.of(thermal=500))
+        optimize_constrained(m, TARGETS["x86_avx512"], Theta.cool(), budget=Budget.of(thermal=500))
         assert False, "expected Infeasible"
     except Infeasible:
         pass
@@ -63,13 +61,28 @@ def test_budget_accumulates_across_claims():
     m = Module(name="two")
     for rid in (10, 11, 12, 20, 21, 22):
         m.add_resource(Resource(rid=rid, shape=(1024,)))
-    a = Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=1024, rd=(10, 11), wr=(12,), op="vector.add")
-    b = Claim(id=2, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=1024, rd=(20, 21), wr=(22,), op="vector.add")
+    a = Claim(
+        id=1,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=1024,
+        rd=(10, 11),
+        wr=(12,),
+        op="vector.add",
+    )
+    b = Claim(
+        id=2,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=1024,
+        rd=(20, 21),
+        wr=(22,),
+        op="vector.add",
+    )
     m.add_phase(Phase(phase_id=0, claims=[a, b]))
-    r = optimize_constrained(m, TARGETS["x86_avx512"], Theta.cool(),
-                             budget=Budget.of(thermal=1500))
+    r = optimize_constrained(m, TARGETS["x86_avx512"], Theta.cool(), budget=Budget.of(thermal=1500))
     widths = {cid: c.width for cid, c in r.by_claim().items()}
     assert widths == {1: 8, 2: 8}
 
@@ -87,8 +100,9 @@ def test_constrained_plans_satisfy_R8_R9():
     # The verifier does not care who proposed the plan: RCSP output passes
     # verify_plan (coverage, lane legality, score == sum of step costs).
     m = vector_add(1024)
-    r = optimize_constrained(m, TARGETS["x86_avx512"], Theta.cool(),
-                             budget=Budget.of(thermal=700, power=700))
+    r = optimize_constrained(
+        m, TARGETS["x86_avx512"], Theta.cool(), budget=Budget.of(thermal=700, power=700)
+    )
     assert verify_plan(m, r) == []
 
 

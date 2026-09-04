@@ -44,6 +44,7 @@ def _laws(diags):
 
 # --- the fixpoint a = Lim(Res(U)) ------------------------------------------------
 
+
 def test_freeze_extracts_the_resolution_fixpoint():
     # freeze runs resolution to saturation and freezes the min-cost representative:
     # Extract(Lim(Res(U))). The factored form is the attractor.
@@ -60,14 +61,15 @@ def test_an_already_minimal_form_is_its_own_memory():
 
 # --- the admissibility law: saturated == True => admissible -----------------------
 
+
 def test_budget_cutoff_is_not_a_fixpoint_and_is_refused():
     # A 1-round budget stops before the fixpoint witness even when the extracted
     # value is already optimal: it is a partial Res^k(U), not Lim(Res(U)). freeze
     # refuses to pin a non-canonical artifact as memory.
     cutoff = try_freeze(_FACTOR, budget=1)
     assert not cutoff.saturated and not cutoff.admissible
-    assert cutoff.cost == 3                          # value is right ...
-    try:                                             # ... but the witness is absent
+    assert cutoff.cost == 3  # value is right ...
+    try:  # ... but the witness is absent
         freeze(_FACTOR, budget=1)
         assert False, "expected UnsaturatedMemory"
     except UnsaturatedMemory:
@@ -82,6 +84,7 @@ def test_an_untagged_artifact_is_not_memory():
 
 # --- idempotence: Res(Lim(Res(U))) = Lim(Res(U)) (the attractor property) --------
 
+
 def test_a_memory_module_is_its_own_attractor():
     mm = freeze(_FACTOR)
     assert is_idempotent(mm)
@@ -90,6 +93,7 @@ def test_a_memory_module_is_its_own_attractor():
 
 
 # --- determinism + content addressing (what the manifest needs) ------------------
+
 
 def test_two_saturated_runs_freeze_the_same_module():
     # Confluence: the fixpoint is canonical, so independent freezes agree exactly
@@ -141,13 +145,20 @@ def test_json_rejects_ambiguous_or_forged_memory_modules():
 
 # --- module-level memory (the CSE / liked-pair view) -----------------------------
 
+
 def _module_with(rd_a, rd_b):
     m = Module(name="cse")
     for rid in set(rd_a) | set(rd_b) | {90, 91}:
         m.add_resource(Resource(rid=rid, shape=(8,)))
-    m.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.ADD, rd=rd_a, wr=(90,), op="vector.add"),
-        Claim(id=2, opcode=Opcode.ADD, rd=rd_b, wr=(91,), op="vector.add")]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(id=1, opcode=Opcode.ADD, rd=rd_a, wr=(90,), op="vector.add"),
+                Claim(id=2, opcode=Opcode.ADD, rd=rd_b, wr=(91,), op="vector.add"),
+            ],
+        )
+    )
     return m
 
 
@@ -165,6 +176,7 @@ def test_module_memory_passes_the_fixpoint_recheck():
 
 
 # --- R13: the memory-module fixpoint law -----------------------------------------
+
 
 def test_admissible_module_satisfies_R13():
     mm = freeze(_FACTOR, generation=1)
@@ -192,9 +204,15 @@ def test_wrong_generation_is_R13():
 def test_tampered_representative_fails_the_recheck():
     # Forge a "saturated" module over a still-reducible expression. The verifier
     # does not trust the flag: re-resolving x+0 yields x, exposing the lie.
-    forged = MemoryModule(expr=Add(V("x"), C(0)), cost=1,
-                          fingerprint=fingerprint(Add(V("x"), C(0)), 1),
-                          generation=1, iterations=1, enodes=3, saturated=True)
+    forged = MemoryModule(
+        expr=Add(V("x"), C(0)),
+        cost=1,
+        fingerprint=fingerprint(Add(V("x"), C(0)), 1),
+        generation=1,
+        iterations=1,
+        enodes=3,
+        saturated=True,
+    )
     assert "R13" in _laws(verify_memory(forged))
 
 
@@ -204,6 +222,7 @@ def test_tampered_fingerprint_is_R13():
 
 
 # --- the bridge: a frozen memory module is part of a plan's commit hash ----------
+
 
 def test_memory_module_chains_into_the_manifest():
     m = vector_add(1024)

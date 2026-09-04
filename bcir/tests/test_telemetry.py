@@ -13,13 +13,30 @@ from bcir.kbcir.calibrate import (
     rehydrate_decide,
 )
 from bcir.kbcir.cost import TargetProfile, Theta
-from bcir.telemetry import (DataDNA, DurableLog, FileSink, KafkaSink, ListSink,
-                            TelemetryIntegrityError)
+from bcir.telemetry import (
+    DataDNA,
+    DurableLog,
+    FileSink,
+    KafkaSink,
+    ListSink,
+    TelemetryIntegrityError,
+)
 
 
 def _events(thermal, n=3):
-    return [DataDNA(segment_id=f"seg{i}", claim_id=1000, cycles=100, bytes=4096,
-                    misses=10, thermal=thermal, voltage=0, utilization=70) for i in range(n)]
+    return [
+        DataDNA(
+            segment_id=f"seg{i}",
+            claim_id=1000,
+            cycles=100,
+            bytes=4096,
+            misses=10,
+            thermal=thermal,
+            voltage=0,
+            utilization=70,
+        )
+        for i in range(n)
+    ]
 
 
 def test_list_and_file_sinks():
@@ -92,8 +109,12 @@ def test_hot_telemetry_replans_to_narrower_lane():
     # which replans vector_add from vec16 to vec8 on AVX-512.
     h = TargetProfile.x86_avx512()
     theta, policy, res = calibrate_and_replan(
-        vector_add(1024), h, _events(100), base_theta=Theta.cool(),
-        calibrator=EwmaCalibrator(alpha=256))
+        vector_add(1024),
+        h,
+        _events(100),
+        base_theta=Theta.cool(),
+        calibrator=EwmaCalibrator(alpha=256),
+    )
     assert theta.thermal == 100
     assert policy.name == "energy"
     assert res.by_claim()[1000].width == 8
@@ -109,8 +130,8 @@ def test_linear_calibrator_learns_thermal_model():
     for _ in range(300):
         cal.partial_fit(data)
     after = abs(cal.predict(probe) - 80)
-    assert after < before        # it learned
-    assert after < 8             # converged near the true thermal=80
+    assert after < before  # it learned
+    assert after < 8  # converged near the true thermal=80
 
 
 def test_linear_calibrator_drives_replan():
@@ -121,7 +142,8 @@ def test_linear_calibrator_drives_replan():
     for _ in range(200):
         cal.partial_fit(hot)
     theta, policy, res = calibrate_and_replan(
-        vector_add(1024), TargetProfile.x86_avx512(), hot, calibrator=cal)
+        vector_add(1024), TargetProfile.x86_avx512(), hot, calibrator=cal
+    )
     assert theta.thermal >= 60 and policy.name == "energy"
     assert res.by_claim()[1000].width == 8
 
@@ -150,11 +172,11 @@ def test_kafka_sink_serializes_to_producer():
 
 def test_rehydrate_decision():
     cool = Theta.cool()
-    assert rehydrate_decide(1, 4, 1, 5, cool) == "replan"   # data_gen drift
-    assert rehydrate_decide(1, 4, 2, 4, cool) == "repack"   # map_gen drift
+    assert rehydrate_decide(1, 4, 1, 5, cool) == "replan"  # data_gen drift
+    assert rehydrate_decide(1, 4, 2, 4, cool) == "repack"  # map_gen drift
     assert rehydrate_decide(1, 4, 1, 4, Theta(thermal=80)) == "replan"  # thermal drift >= 40
-    assert rehydrate_decide(1, 4, 1, 4, Theta(thermal=25)) == "patch"   # 20 <= drift < 40
-    assert rehydrate_decide(1, 4, 1, 4, cool) == "keep"     # in sync
+    assert rehydrate_decide(1, 4, 1, 4, Theta(thermal=25)) == "patch"  # 20 <= drift < 40
+    assert rehydrate_decide(1, 4, 1, 4, cool) == "keep"  # in sync
 
 
 def test_durable_log_round_trips_behind_the_live_broker():
@@ -165,26 +187,30 @@ def test_durable_log_round_trips_behind_the_live_broker():
     import os
     import tempfile
     from bcir.telemetry import Broker, DataDNA, DurableLog, TelemetryRing, load_durable_log
+
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "run.jsonl")
         broker = Broker()
         ring = broker.subscribe(TelemetryRing(capacity=8))
         broker.subscribe(DurableLog(path))
-        events = [DataDNA(f"seg{i}", i, cycles=i * 10, thermal=i % 100,
-                          provenance=f"p{i}") for i in range(24)]
-        for e in events:                                     # the fake producer
+        events = [
+            DataDNA(f"seg{i}", i, cycles=i * 10, thermal=i % 100, provenance=f"p{i}")
+            for i in range(24)
+        ]
+        for e in events:  # the fake producer
             broker.emit(e)
         back = load_durable_log(path)
-        assert [b.to_dict() for b in back] == [e.to_dict() for e in events]   # durable, exact
+        assert [b.to_dict() for b in back] == [e.to_dict() for e in events]  # durable, exact
         st = ring.stats
-        assert st.written == 24 and st.dropped == 16         # backpressure counted, not hidden
+        assert st.written == 24 and st.dropped == 16  # backpressure counted, not hidden
 
 
 def test_durable_log_refuses_foreign_and_newer_streams():
     import json
     import os
     import tempfile
-    from bcir.telemetry import (TELEMETRY_LOG_KIND, DataDNA, DurableLog, load_durable_log)
+    from bcir.telemetry import TELEMETRY_LOG_KIND, DataDNA, DurableLog, load_durable_log
+
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "t.jsonl")
         DurableLog(path).emit(DataDNA("s", 1))
@@ -192,9 +218,11 @@ def test_durable_log_refuses_foreign_and_newer_streams():
             lines = f.read().splitlines()
         head = json.loads(lines[0])
         assert head["kind"] == TELEMETRY_LOG_KIND and head["schema"] == 1
-        for bad_head, msg in ((dict(head, schema=99), "newer"),
-                              (dict(head, kind="not.telemetry"), TELEMETRY_LOG_KIND),
-                              (dict(head, fields=["wrong"]), "lies")):
+        for bad_head, msg in (
+            (dict(head, schema=99), "newer"),
+            (dict(head, kind="not.telemetry"), TELEMETRY_LOG_KIND),
+            (dict(head, fields=["wrong"]), "lies"),
+        ):
             bad = os.path.join(d, "bad.jsonl")
             with open(bad, "w", encoding="utf-8") as f:
                 f.write(json.dumps(bad_head) + "\n" + "\n".join(lines[1:]))

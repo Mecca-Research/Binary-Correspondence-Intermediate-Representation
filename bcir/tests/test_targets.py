@@ -42,7 +42,14 @@ def test_ham_access_beats_flat_gather():
 def test_memtier_enum_matches_the_mlir_law():
     # PARITY.md: MemTier values are normative and identical to BCIRAttrs.td.
     assert [(t.name, int(t)) for t in MemTier] == [
-        ("L1", 0), ("L2", 1), ("L3", 2), ("DRAM", 3), ("HBM", 4), ("CXL", 5), ("SSD", 6)]
+        ("L1", 0),
+        ("L2", 1),
+        ("L3", 2),
+        ("DRAM", 3),
+        ("HBM", 4),
+        ("CXL", 5),
+        ("SSD", 6),
+    ]
     hierarchy = MemoryHierarchy.default()
     for t in MemTier:
         assert hierarchy.by_name(t.name).mem_tier is t

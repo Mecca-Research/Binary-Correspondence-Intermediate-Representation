@@ -24,14 +24,31 @@ and clause 25's `#OUTER` names it — a reserved reference, not new syntax.
 """
 
 from bcir.asn1.ecn_props import (
-    UNIT_OCTET, UNIT_REPETITIONS, OptionalityDetermination, RepetitionSpaceDetermination,
+    UNIT_OCTET,
+    UNIT_REPETITIONS,
+    OptionalityDetermination,
+    RepetitionSpaceDetermination,
     SizeBounds,
 )
 from bcir.asn1.ecn_user import (
-    OUTER_CONTAINER, AuxIntSpec, ConcatenationSpec, ConditionalRepetitionSpec, ContainedType,
-    ContainerSpec, EncodingSpaceDetermination, IntSpec, Optionality, OptionalSpec, OuterSpec,
-    PadSpec, RepetitionSpace, RepetitionSpec, SpaceDeterminant, StringSpec,
-    UserEncodingObject, encode_with_user,
+    OUTER_CONTAINER,
+    AuxIntSpec,
+    ConcatenationSpec,
+    ConditionalRepetitionSpec,
+    ContainedType,
+    ContainerSpec,
+    EncodingSpaceDetermination,
+    IntSpec,
+    Optionality,
+    OptionalSpec,
+    OuterSpec,
+    PadSpec,
+    RepetitionSpace,
+    RepetitionSpec,
+    SpaceDeterminant,
+    StringSpec,
+    UserEncodingObject,
+    encode_with_user,
 )
 from bcir.asn1.ecn_transform import BoolToInt, TransformChain
 from bcir.asn1.tags import Asn1Error
@@ -57,6 +74,7 @@ def _refuses(citation: str, build):
 
 
 # --- §22.11: which rules encode a contained type ---------------------------------------------
+
 
 def test_the_combined_set_is_left_biased_and_never_the_other_way_round():
     """§9.23.2, which §22.11.1.4 defers to: the combined set is formed "by adding to the first
@@ -104,25 +122,36 @@ def test_the_five_rows_of_22_11_2_and_the_one_the_text_contradicts_itself_about(
 
     # §22.11.2.2 / §13.2.10.6 c) and b) — the group is set, and here too they agree.
     group = ContainedType(primary=mine)
-    assert ContainerSpec(contained_class="#A", contents=group,
-                         encoded_by=None).objects_for(outer) == mine
+    assert (
+        ContainerSpec(contained_class="#A", contents=group, encoded_by=None).objects_for(outer)
+        == mine
+    )
     overriding = ContainedType(primary=mine, override=True)
-    assert ContainerSpec(contained_class="#A", contents=overriding,
-                         encoded_by=theirs).objects_for(outer) == mine
+    assert (
+        ContainerSpec(contained_class="#A", contents=overriding, encoded_by=theirs).objects_for(
+            outer
+        )
+        == mine
+    )
 
     # THE CONTESTED ROW. §13.2.10.6 a)'s reading: the ENCODED BY stands.
-    assert ContainerSpec(contained_class="#A", contents=group,
-                         encoded_by=theirs).objects_for(outer) is theirs
+    assert (
+        ContainerSpec(contained_class="#A", contents=group, encoded_by=theirs).objects_for(outer)
+        is theirs
+    )
     # And explicitly NOT §22.11.2.2's, which would have given the containing type's set.
-    assert ContainerSpec(contained_class="#A", contents=group,
-                         encoded_by=theirs).objects_for(outer) is not outer
+    assert (
+        ContainerSpec(contained_class="#A", contents=group, encoded_by=theirs).objects_for(outer)
+        is not outer
+    )
 
 
 def test_a_contained_type_is_encoded_by_its_own_set_and_placed_whole():
     """The container's octets are the contained type's encoding, and the contained type's
     encoding is chosen by §22.11.2 rather than inherited."""
-    inner = ConcatenationSpec(fields={"a": IntSpec(width=8), "b": IntSpec(width=8)},
-                              order=("a", "b"))
+    inner = ConcatenationSpec(
+        fields={"a": IntSpec(width=8), "b": IntSpec(width=8)}, order=("a", "b")
+    )
     contents = ContainedType(primary={"#Inner": UserEncodingObject("#Inner", inner)})
     spec = ContainerSpec(contained_class="#Inner", contents=contents, name="wrapper")
     objects = _concat({"w": spec}, ("w",))
@@ -146,32 +175,43 @@ def test_a_contained_types_determinants_resolve_inside_it():
     offset in one encoding against a field in another, which no clause defines.
     """
     good = ConcatenationSpec(
-        fields={"len": AuxIntSpec(width=8),
-                "v": IntSpec(width=8,
-                             space_determinant=SpaceDeterminant(reference="len",
-                                                                unit=UNIT_OCTET))},
-        order=("len", "v"))
+        fields={
+            "len": AuxIntSpec(width=8),
+            "v": IntSpec(
+                width=8, space_determinant=SpaceDeterminant(reference="len", unit=UNIT_OCTET)
+            ),
+        },
+        order=("len", "v"),
+    )
     contents = ContainedType(primary={"#I": UserEncodingObject("#I", good)})
     spec = ContainerSpec(contained_class="#I", contents=contents)
     assert encode_with_user(_concat({"w": spec}, ("w",)), "#C", {"w": {"v": 9}}) == bytes((1, 9))
 
-    orphan = ConcatenationSpec(fields={"len": AuxIntSpec(width=8), "v": IntSpec(width=8)},
-                               order=("len", "v"))
+    orphan = ConcatenationSpec(
+        fields={"len": AuxIntSpec(width=8), "v": IntSpec(width=8)}, order=("len", "v")
+    )
     stranded = ContainerSpec(
         contained_class="#I",
-        contents=ContainedType(primary={"#I": UserEncodingObject("#I", orphan)}))
-    _refuses("9.24.2", lambda: encode_with_user(
-        _concat({"w": stranded}, ("w",)), "#C", {"w": {"v": 9}}))
+        contents=ContainedType(primary={"#I": UserEncodingObject("#I", orphan)}),
+    )
+    _refuses(
+        "9.24.2", lambda: encode_with_user(_concat({"w": stranded}, ("w",)), "#C", {"w": {"v": 9}})
+    )
 
 
 def test_a_contained_encoding_wider_than_its_container_is_refused():
-    inner = ConcatenationSpec(fields={"a": IntSpec(width=8), "b": IntSpec(width=8)},
-                              order=("a", "b"))
+    inner = ConcatenationSpec(
+        fields={"a": IntSpec(width=8), "b": IntSpec(width=8)}, order=("a", "b")
+    )
     spec = ContainerSpec(
-        contained_class="#I", width=8,
-        contents=ContainedType(primary={"#I": UserEncodingObject("#I", inner)}))
-    _refuses("encoding space is 8", lambda: encode_with_user(
-        _concat({"w": spec}, ("w",)), "#C", {"w": {"a": 1, "b": 2}}))
+        contained_class="#I",
+        width=8,
+        contents=ContainedType(primary={"#I": UserEncodingObject("#I", inner)}),
+    )
+    _refuses(
+        "encoding space is 8",
+        lambda: encode_with_user(_concat({"w": spec}, ("w",)), "#C", {"w": {"a": 1, "b": 2}}),
+    )
 
 
 def test_a_contained_encoding_narrower_than_its_container_is_refused_too():
@@ -185,46 +225,63 @@ def test_a_contained_encoding_narrower_than_its_container_is_refused_too():
     """
     inner = ConcatenationSpec(fields={"a": IntSpec(width=8)}, order=("a",))
     narrow = ContainerSpec(
-        contained_class="#I", width=16,
-        contents=ContainedType(primary={"#I": UserEncodingObject("#I", inner)}))
-    _refuses("must fill it", lambda: encode_with_user(
-        _concat({"w": narrow}, ("w",)), "#C", {"w": {"a": 1}}))
+        contained_class="#I",
+        width=16,
+        contents=ContainedType(primary={"#I": UserEncodingObject("#I", inner)}),
+    )
+    _refuses(
+        "must fill it",
+        lambda: encode_with_user(_concat({"w": narrow}, ("w",)), "#C", {"w": {"a": 1}}),
+    )
 
     # An exact fill is what the stated width asks for, and still encodes.
     exact = ContainerSpec(
-        contained_class="#I", width=8,
-        contents=ContainedType(primary={"#I": UserEncodingObject("#I", inner)}))
+        contained_class="#I",
+        width=8,
+        contents=ContainedType(primary={"#I": UserEncodingObject("#I", inner)}),
+    )
     assert encode_with_user(_concat({"w": exact}, ("w",)), "#C", {"w": {"a": 1}}) == bytes((1,))
 
     # A container with NO stated width is determined rather than fixed, and is unaffected.
     free = ContainerSpec(
         contained_class="#I",
-        contents=ContainedType(primary={"#I": UserEncodingObject("#I", inner)}))
+        contents=ContainedType(primary={"#I": UserEncodingObject("#I", inner)}),
+    )
     assert encode_with_user(_concat({"w": free}, ("w",)), "#C", {"w": {"a": 1}}) == bytes((1,))
 
 
 # --- §21.3.6: the other direction ------------------------------------------------------------
+
 
 def test_a_container_determination_needs_no_transforms_because_it_reads_no_field():
     """§22.4.2.3/§22.4.2.4 confine the transform lists to the two field determinations, and the
     reason is structural rather than arbitrary: a container's end is a *position*, not a number
     carried through a field, so there is nothing for a transform to convert."""
     from bcir.asn1.ecn_transform import IntOp, IntToInt, TransformChain
-    _refuses("22.4.2.3", lambda: SpaceDeterminant(
-        determination=EncodingSpaceDetermination.CONTAINER, reference="c",
-        encoder_transforms=TransformChain((IntToInt(IntOp.INCREMENT, 1),))))
+
+    _refuses(
+        "22.4.2.3",
+        lambda: SpaceDeterminant(
+            determination=EncodingSpaceDetermination.CONTAINER,
+            reference="c",
+            encoder_transforms=TransformChain((IntToInt(IntOp.INCREMENT, 1),)),
+        ),
+    )
     # And every determination still needs a reference — §22.4.1.6 says the `container` one is
     # a reference too, just to a different kind of thing.
-    _refuses("21.3.6", lambda: SpaceDeterminant(
-        determination=EncodingSpaceDetermination.CONTAINER))
+    _refuses("21.3.6", lambda: SpaceDeterminant(determination=EncodingSpaceDetermination.CONTAINER))
 
 
 def test_an_element_bounded_by_a_container_must_be_the_last_thing_in_it():
     """§21.3.6: "This specification can only be used if the encoding space of the element being
     encoded is the last encoding to be placed in the container." Its NOTE makes writing more
     afterwards an encoder's error, so this is checked rather than trusted."""
-    tail = IntSpec(width=8, space_determinant=SpaceDeterminant(
-        determination=EncodingSpaceDetermination.CONTAINER, reference="box"))
+    tail = IntSpec(
+        width=8,
+        space_determinant=SpaceDeterminant(
+            determination=EncodingSpaceDetermination.CONTAINER, reference="box"
+        ),
+    )
     inner = ConcatenationSpec(fields={"v": tail}, order=("v",))
     contents = ContainedType(primary={"#I": UserEncodingObject("#I", inner)})
     # `box` states its encoding space, which is what transmits its END -- §21.3.6 locates the
@@ -235,27 +292,36 @@ def test_an_element_bounded_by_a_container_must_be_the_last_thing_in_it():
     assert encode_with_user(_concat({"w": ok}, ("w",)), "#C", {"w": {"v": 7}}) == bytes((7,))
 
     # The same element, with two more octets written inside the container after it.
-    late = ContainerSpec(contained_class="#I", contents=contents, name="box", width=24,
-                         trailer=PadSpec(width=16))
-    _refuses("21.3.6", lambda: encode_with_user(
-        _concat({"w": late}, ("w",)), "#C", {"w": {"v": 7}}))
+    late = ContainerSpec(
+        contained_class="#I", contents=contents, name="box", width=24, trailer=PadSpec(width=16)
+    )
+    _refuses(
+        "21.3.6", lambda: encode_with_user(_concat({"w": late}, ("w",)), "#C", {"w": {"v": 7}})
+    )
 
 
 def test_a_container_reference_that_names_no_open_container_is_refused():
     """§21.3.6's REFERENCE is to a field "whose contents include this encoding space". A name
     that is not holding this element is not that field, whatever else it may be."""
-    stray = IntSpec(width=8, space_determinant=SpaceDeterminant(
-        determination=EncodingSpaceDetermination.CONTAINER, reference="nowhere"))
-    _refuses("21.3.6", lambda: encode_with_user(
-        _concat({"v": stray}, ("v",)), "#C", {"v": 1}))
+    stray = IntSpec(
+        width=8,
+        space_determinant=SpaceDeterminant(
+            determination=EncodingSpaceDetermination.CONTAINER, reference="nowhere"
+        ),
+    )
+    _refuses("21.3.6", lambda: encode_with_user(_concat({"v": stray}, ("v",)), "#C", {"v": 1}))
 
 
 def test_the_pdu_is_the_outermost_container_and_outer_names_it():
     """§21.3.6's second form. There is no `OUTER` keyword in §22.4.1.2's syntax — the reference
     does the work in every case (§22.4.1.6) — so `#OUTER` is a reserved reference naming the
     outermost container, and the grammar needed nothing new to read it."""
-    last = IntSpec(width=8, space_determinant=SpaceDeterminant(
-        determination=EncodingSpaceDetermination.CONTAINER, reference=OUTER_CONTAINER))
+    last = IntSpec(
+        width=8,
+        space_determinant=SpaceDeterminant(
+            determination=EncodingSpaceDetermination.CONTAINER, reference=OUTER_CONTAINER
+        ),
+    )
     objects = _concat({"a": IntSpec(width=8), "b": last}, ("a", "b"))
     assert encode_with_user(objects, "#C", {"a": 1, "b": 2}) == bytes((1, 2))
 
@@ -268,15 +334,21 @@ def test_outer_padding_is_not_a_further_encoding_placed_in_the_pdu():
     """The `#OUTER` check runs before §25's post-padding, and that ordering is a reading rather
     than an accident: padding the last octet is a decision about the whole encoding (§21.9.3),
     not "an additional encoding placed in the container"."""
-    last = IntSpec(width=4, space_determinant=SpaceDeterminant(
-        determination=EncodingSpaceDetermination.CONTAINER, reference=OUTER_CONTAINER))
+    last = IntSpec(
+        width=4,
+        space_determinant=SpaceDeterminant(
+            determination=EncodingSpaceDetermination.CONTAINER, reference=OUTER_CONTAINER
+        ),
+    )
     objects = _concat({"a": IntSpec(width=4), "b": last}, ("a", "b"))
-    assert encode_with_user(objects, "#C", {"a": 1, "b": 2},
-                            outer=OuterSpec(boundary_bits=8)) == bytes((0x12,))
+    assert encode_with_user(
+        objects, "#C", {"a": 1, "b": 2}, outer=OuterSpec(boundary_bits=8)
+    ) == bytes((0x12,))
     # A 4-bit pair needs padding to reach an octet; the claim still holds.
     narrow = _concat({"b": last}, ("b",))
-    assert encode_with_user(narrow, "#C", {"b": 2},
-                            outer=OuterSpec(boundary_bits=8)) == bytes((0x20,))
+    assert encode_with_user(narrow, "#C", {"b": 2}, outer=OuterSpec(boundary_bits=8)) == bytes(
+        (0x20,)
+    )
 
 
 def test_an_outer_determined_element_inside_a_container_is_refused():
@@ -284,18 +356,28 @@ def test_an_outer_determined_element_inside_a_container_is_refused():
     container that immediately holds the element, so claiming the PDU's from inside one is a
     statement about the wrong boundary."""
     inner = ConcatenationSpec(
-        fields={"v": IntSpec(width=8, space_determinant=SpaceDeterminant(
-            determination=EncodingSpaceDetermination.CONTAINER,
-            reference=OUTER_CONTAINER))},
-        order=("v",))
+        fields={
+            "v": IntSpec(
+                width=8,
+                space_determinant=SpaceDeterminant(
+                    determination=EncodingSpaceDetermination.CONTAINER, reference=OUTER_CONTAINER
+                ),
+            )
+        },
+        order=("v",),
+    )
     spec = ContainerSpec(
-        contained_class="#I", name="box",
-        contents=ContainedType(primary={"#I": UserEncodingObject("#I", inner)}))
-    _refuses("21.3.6", lambda: encode_with_user(
-        _concat({"w": spec}, ("w",)), "#C", {"w": {"v": 1}}))
+        contained_class="#I",
+        name="box",
+        contents=ContainedType(primary={"#I": UserEncodingObject("#I", inner)}),
+    )
+    _refuses(
+        "21.3.6", lambda: encode_with_user(_concat({"w": spec}, ("w",)), "#C", {"w": {"v": 1}})
+    )
 
 
 # --- §21.5.6 and §21.7.8: the same relationship, two more clauses ---------------------------
+
 
 def test_optionality_by_container_is_the_absence_of_anything_further():
     """§21.5.6: "If the container end is present when a decoder is looking for the start of
@@ -304,8 +386,10 @@ def test_optionality_by_container_is_the_absence_of_anything_further():
     further components follow inside the container."""
     optional = OptionalSpec(
         component=IntSpec(width=8),
-        presence=Optionality(determination=OptionalityDetermination.CONTAINER,
-                             reference=OUTER_CONTAINER))
+        presence=Optionality(
+            determination=OptionalityDetermination.CONTAINER, reference=OUTER_CONTAINER
+        ),
+    )
     objects = _concat({"a": IntSpec(width=8), "o": optional}, ("a", "o"))
     assert encode_with_user(objects, "#C", {"a": 1, "o": 2}) == bytes((1, 2))
     # Absent: nothing is written, and the container simply ends.
@@ -323,24 +407,30 @@ def test_a_repetition_can_end_where_its_container_does():
     encoding of the (repetition category) class is the last encoding to be placed in the
     container" — and it is the same check the other two clauses get.
     """
-    space = RepetitionSpace(determination=RepetitionSpaceDetermination.CONTAINER,
-                            reference=OUTER_CONTAINER, unit=UNIT_REPETITIONS)
-    rep = RepetitionSpec((ConditionalRepetitionSpec(element=_OCTET, space=space),),
-                         SizeBounds(0, None))
+    space = RepetitionSpace(
+        determination=RepetitionSpaceDetermination.CONTAINER,
+        reference=OUTER_CONTAINER,
+        unit=UNIT_REPETITIONS,
+    )
+    rep = RepetitionSpec(
+        (ConditionalRepetitionSpec(element=_OCTET, space=space),), SizeBounds(0, None)
+    )
     objects = _concat({"s": StringSpec(element=_OCTET, repetition=rep)}, ("s",))
     assert encode_with_user(objects, "#C", {"s": [72, 73]}) == b"HI"
     assert encode_with_user(objects, "#C", {"s": []}) == b""
 
-    trailing = _concat({"s": StringSpec(element=_OCTET, repetition=rep),
-                        "z": IntSpec(width=8)}, ("s", "z"))
+    trailing = _concat(
+        {"s": StringSpec(element=_OCTET, repetition=rep), "z": IntSpec(width=8)}, ("s", "z")
+    )
     _refuses("21.3.6", lambda: encode_with_user(trailing, "#C", {"s": [1], "z": 2}))
 
 
 def test_a_container_determination_takes_no_count_reference():
     """§21.7.8 finds the end by containment, so there is no count field for a USING reference
     to name — the reference names the container itself."""
-    _refuses("21.7.4", lambda: RepetitionSpace(
-        determination=RepetitionSpaceDetermination.CONTAINER))
+    _refuses(
+        "21.7.4", lambda: RepetitionSpace(determination=RepetitionSpaceDetermination.CONTAINER)
+    )
 
 
 def test_a_nested_container_inherits_the_set_one_level_out_and_not_the_pdus():
@@ -359,11 +449,19 @@ def test_a_nested_container_inherits_the_set_one_level_out_and_not_the_pdus():
     inner = ContainerSpec(contained_class="#Leaf", contents=None, name="inner")
     middle = ConcatenationSpec(fields={"x": inner}, order=("x",))
     outer_spec = ContainerSpec(
-        contained_class="#Mid", name="outer",
-        contents=ContainedType(primary={"#Mid": UserEncodingObject("#Mid", middle),
-                                        "#Leaf": UserEncodingObject("#Leaf", leaf_wide)}))
-    objects = {"#C": UserEncodingObject("#C", outer_spec),
-               "#Leaf": UserEncodingObject("#Leaf", leaf_narrow)}
+        contained_class="#Mid",
+        name="outer",
+        contents=ContainedType(
+            primary={
+                "#Mid": UserEncodingObject("#Mid", middle),
+                "#Leaf": UserEncodingObject("#Leaf", leaf_wide),
+            }
+        ),
+    )
+    objects = {
+        "#C": UserEncodingObject("#C", outer_spec),
+        "#Leaf": UserEncodingObject("#Leaf", leaf_narrow),
+    }
     # 16 bits, from the middle layer's set — not 8 from the PDU's.
     assert encode_with_user(objects, "#C", {"x": {"n": 0x0102}}) == bytes((1, 2))
 
@@ -376,17 +474,19 @@ def test_a_concatenation_is_a_container_a_reference_can_name():
     """
     optional = OptionalSpec(
         component=IntSpec(width=8),
-        presence=Optionality(determination=OptionalityDetermination.CONTAINER,
-                             reference="frame"))
-    named = ConcatenationSpec(fields={"a": IntSpec(width=8), "o": optional},
-                              order=("a", "o"), container_name="frame")
+        presence=Optionality(determination=OptionalityDetermination.CONTAINER, reference="frame"),
+    )
+    named = ConcatenationSpec(
+        fields={"a": IntSpec(width=8), "o": optional}, order=("a", "o"), container_name="frame"
+    )
     assert encode_with_user(_objects(named), "#C", {"a": 1, "o": 2}) == bytes((1, 2))
     assert encode_with_user(_objects(named), "#C", {"a": 1}) == bytes((1,))
 
     # The same structure with a component after the optional one: §21.5.6's NOTE calls it an
     # error, since a decoder that finds more bits cannot tell absence from presence.
-    trailing = ConcatenationSpec(fields={"o": optional, "z": IntSpec(width=8)},
-                                 order=("o", "z"), container_name="frame")
+    trailing = ConcatenationSpec(
+        fields={"o": optional, "z": IntSpec(width=8)}, order=("o", "z"), container_name="frame"
+    )
     _refuses("21.3.6", lambda: encode_with_user(_objects(trailing), "#C", {"o": 1, "z": 2}))
 
     # And an unnamed concatenation is not reachable by that reference, which the message says.
@@ -406,8 +506,10 @@ def test_an_absent_container_determined_component_still_ends_its_container():
     """
     optional = OptionalSpec(
         component=IntSpec(width=8),
-        presence=Optionality(determination=OptionalityDetermination.CONTAINER,
-                             reference=OUTER_CONTAINER))
+        presence=Optionality(
+            determination=OptionalityDetermination.CONTAINER, reference=OUTER_CONTAINER
+        ),
+    )
     trailing = _concat({"o": optional, "z": IntSpec(width=8)}, ("o", "z"))
     _refuses("21.3.6", lambda: encode_with_user(trailing, "#C", {"o": 1, "z": 2}))
     _refuses("21.3.6", lambda: encode_with_user(trailing, "#C", {"z": 2}))
@@ -429,8 +531,10 @@ def test_only_one_encoding_can_be_the_last_one_in_a_container():
     """
     optional = OptionalSpec(
         component=IntSpec(width=8),
-        presence=Optionality(determination=OptionalityDetermination.CONTAINER,
-                             reference=OUTER_CONTAINER))
+        presence=Optionality(
+            determination=OptionalityDetermination.CONTAINER, reference=OUTER_CONTAINER
+        ),
+    )
     both = _concat({"o": optional, "p": optional}, ("o", "p"))
 
     # `o` absent claims at bit 0; `p` present writes eight bits and claims at bit 8. Two
@@ -458,19 +562,22 @@ def test_a_container_reference_needs_a_determinant_unless_it_is_the_pdu():
     """
     optional = OptionalSpec(
         component=IntSpec(width=8),
-        presence=Optionality(determination=OptionalityDetermination.CONTAINER,
-                             reference="frame"))
+        presence=Optionality(determination=OptionalityDetermination.CONTAINER, reference="frame"),
+    )
 
     # The PDU itself, named: legitimate, determinant or no determinant.
-    pdu = ConcatenationSpec(fields={"a": IntSpec(width=8), "o": optional},
-                            order=("a", "o"), container_name="frame")
+    pdu = ConcatenationSpec(
+        fields={"a": IntSpec(width=8), "o": optional}, order=("a", "o"), container_name="frame"
+    )
     assert encode_with_user(_objects(pdu), "#C", {"a": 1, "o": 2}) == bytes((1, 2))
 
     # The SAME named concatenation one level down is not the PDU, and carries no determinant
     # of its own, so its end is not a boundary a decoder could locate.
     nested = ConcatenationSpec(fields={"inner": pdu}, order=("inner",))
-    _refuses("carries no length determinant", lambda: encode_with_user(
-        _objects(nested), "#C", {"inner": {"a": 1, "o": 2}}))
+    _refuses(
+        "carries no length determinant",
+        lambda: encode_with_user(_objects(nested), "#C", {"inner": {"a": 1, "o": 2}}),
+    )
 
 
 def test_outer_is_reachable_from_inside_the_pdus_own_named_container():
@@ -483,21 +590,25 @@ def test_outer_is_reachable_from_inside_the_pdus_own_named_container():
     """
     optional = OptionalSpec(
         component=IntSpec(width=8),
-        presence=Optionality(determination=OptionalityDetermination.CONTAINER,
-                             reference=OUTER_CONTAINER))
+        presence=Optionality(
+            determination=OptionalityDetermination.CONTAINER, reference=OUTER_CONTAINER
+        ),
+    )
 
-    unnamed = ConcatenationSpec(fields={"a": IntSpec(width=8), "o": optional},
-                                order=("a", "o"))
-    named = ConcatenationSpec(fields={"a": IntSpec(width=8), "o": optional},
-                              order=("a", "o"), container_name="frame")
+    unnamed = ConcatenationSpec(fields={"a": IntSpec(width=8), "o": optional}, order=("a", "o"))
+    named = ConcatenationSpec(
+        fields={"a": IntSpec(width=8), "o": optional}, order=("a", "o"), container_name="frame"
+    )
     # Naming the PDU must not change what its fields may be determined by.
     assert encode_with_user(_objects(unnamed), "#C", {"a": 1, "o": 2}) == bytes((1, 2))
     assert encode_with_user(_objects(named), "#C", {"a": 1, "o": 2}) == bytes((1, 2))
 
     # One level down, #OUTER is a different container's end and stays refused.
     nested = ConcatenationSpec(fields={"inner": named}, order=("inner",))
-    _refuses("end of the PDU", lambda: encode_with_user(
-        _objects(nested), "#C", {"inner": {"a": 1, "o": 2}}))
+    _refuses(
+        "end of the PDU",
+        lambda: encode_with_user(_objects(nested), "#C", {"inner": {"a": 1, "o": 2}}),
+    )
 
 
 def test_a_repetition_is_a_container_a_reference_can_name():
@@ -508,19 +619,24 @@ def test_a_repetition_is_a_container_a_reference_can_name():
     but only ConcatenationSpec carried a `container_name`, so a component inside a repetition
     that referenced it was told the name was "not an open container" (review, PR #707).
     """
-    space = RepetitionSpace(determination=RepetitionSpaceDetermination.NOT_NEEDED,
-                            unit=UNIT_REPETITIONS)
+    space = RepetitionSpace(
+        determination=RepetitionSpaceDetermination.NOT_NEEDED, unit=UNIT_REPETITIONS
+    )
     optional = OptionalSpec(
         component=IntSpec(width=8),
-        presence=Optionality(determination=OptionalityDetermination.CONTAINER,
-                             reference="items"))
+        presence=Optionality(determination=OptionalityDetermination.CONTAINER, reference="items"),
+    )
     element = ConcatenationSpec(fields={"o": optional}, order=("o",))
 
     def encode(container_name: str):
         rep = RepetitionSpec(
-            (ConditionalRepetitionSpec(element=element, space=space,
-                                       container_name=container_name),),
-            SizeBounds(1, 1))
+            (
+                ConditionalRepetitionSpec(
+                    element=element, space=space, container_name=container_name
+                ),
+            ),
+            SizeBounds(1, 1),
+        )
         objects = _concat({"s": StringSpec(element=_OCTET, repetition=rep)}, ("s",))
         return encode_with_user(objects, "#C", {"s": [{"o": 7}]})
 
@@ -545,14 +661,24 @@ def test_a_container_determined_repetition_takes_no_transforms():
     """
     for field_name in ("encoder_transforms", "decoder_transforms"):
         kwargs = {field_name: TransformChain((BoolToInt(),))}
-        _refuses("nothing for ENCODER-TRANSFORMS", lambda k=kwargs: RepetitionSpace(
-            determination=RepetitionSpaceDetermination.CONTAINER,
-            reference=OUTER_CONTAINER, unit=UNIT_REPETITIONS, **k))
+        _refuses(
+            "nothing for ENCODER-TRANSFORMS",
+            lambda k=kwargs: RepetitionSpace(
+                determination=RepetitionSpaceDetermination.CONTAINER,
+                reference=OUTER_CONTAINER,
+                unit=UNIT_REPETITIONS,
+                **k,
+            ),
+        )
 
     # The same determination without transforms is untouched, and still encodes.
-    space = RepetitionSpace(determination=RepetitionSpaceDetermination.CONTAINER,
-                            reference=OUTER_CONTAINER, unit=UNIT_REPETITIONS)
-    rep = RepetitionSpec((ConditionalRepetitionSpec(element=_OCTET, space=space),),
-                         SizeBounds(0, None))
+    space = RepetitionSpace(
+        determination=RepetitionSpaceDetermination.CONTAINER,
+        reference=OUTER_CONTAINER,
+        unit=UNIT_REPETITIONS,
+    )
+    rep = RepetitionSpec(
+        (ConditionalRepetitionSpec(element=_OCTET, space=space),), SizeBounds(0, None)
+    )
     objects = _concat({"s": StringSpec(element=_OCTET, repetition=rep)}, ("s",))
     assert encode_with_user(objects, "#C", {"s": [72, 73]}) == b"HI"

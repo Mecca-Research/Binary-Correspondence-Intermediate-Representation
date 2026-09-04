@@ -13,18 +13,44 @@ import importlib
 import importlib.util
 
 _EXPORTS: dict[str, tuple[str, ...]] = {
-    "streampack": ("Block", "LaneSegment", "Prefetch", "StreamPack", "TraceNote",
-                   "hydrate", "hydrate_pipelined"),
+    "streampack": (
+        "Block",
+        "LaneSegment",
+        "Prefetch",
+        "StreamPack",
+        "TraceNote",
+        "hydrate",
+        "hydrate_pipelined",
+    ),
     "execute": ("ExecResult", "PhaseStat", "execute"),
     "concurrency": ("ConcurrentSchedule", "schedule_concurrent"),
     "overlap": ("ScheduledPrice", "optimize_scheduled", "price_scheduled"),
-    "schedule": ("GemSchedule", "Slot", "TAIL_STREAM", "bandwidth_knee", "durations_from",
-                 "execute_tokens", "schedule_eft", "PowerRail", "PowerRailDecision",
-                 "schedule_power_rail"),
+    "schedule": (
+        "GemSchedule",
+        "Slot",
+        "TAIL_STREAM",
+        "bandwidth_knee",
+        "durations_from",
+        "execute_tokens",
+        "schedule_eft",
+        "PowerRail",
+        "PowerRailDecision",
+        "schedule_power_rail",
+    ),
     "async_tokens": ("AsyncPlan", "async_plan"),
     "cim": ("CIMDecision", "annotate_cim", "cim_decision"),
-    "dvfs": ("DVFSDecision", "DVFSPlan", "FreqTarget", "ActuationResult", "classify",
-             "clock_for", "phase_totals", "plan_dvfs", "quantize_to_silicon", "actuate"),
+    "dvfs": (
+        "DVFSDecision",
+        "DVFSPlan",
+        "FreqTarget",
+        "ActuationResult",
+        "classify",
+        "clock_for",
+        "phase_totals",
+        "plan_dvfs",
+        "quantize_to_silicon",
+        "actuate",
+    ),
 }
 
 _NAME_TO_MOD: dict[str, str] = {name: mod for mod, names in _EXPORTS.items() for name in names}

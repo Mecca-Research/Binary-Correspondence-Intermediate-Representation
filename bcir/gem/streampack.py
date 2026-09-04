@@ -18,10 +18,10 @@ from ..kbcir.realize import RealizationResult
 class Prefetch:
     name: str
     distance: int
-    targets: tuple[int, ...]   # operand RIDs (we prefetch operand data, not descriptors)
+    targets: tuple[int, ...]  # operand RIDs (we prefetch operand data, not descriptors)
     hint: str = "T0"
     pattern: str = "linear"
-    buffers: int = 1           # v2 (append-only): 2 = double-buffer contract
+    buffers: int = 1  # v2 (append-only): 2 = double-buffer contract
 
 
 @dataclass(frozen=True)
@@ -69,7 +69,7 @@ class StreamPack:
     topo_gen: int = 1
     map_gen: int = 0
     data_gen: int = 0
-    pipeline_depth: int = 1    # v2 (append-only): phases in flight (2 = double-buffered)
+    pipeline_depth: int = 1  # v2 (append-only): phases in flight (2 = double-buffered)
     segments: list[LaneSegment] = field(default_factory=list)
     prefetches: list[Prefetch] = field(default_factory=list)
     blocks: list[Block] = field(default_factory=list)
@@ -103,7 +103,8 @@ def hydrate(module: Module, result: RealizationResult, plan: str = "plan0") -> S
         actual_phase, claim = row
         if step.phase_id != actual_phase:
             raise ValueError(
-                f"claim {step.claim_id} plan phase {step.phase_id} != module phase {actual_phase}")
+                f"claim {step.claim_id} plan phase {step.phase_id} != module phase {actual_phase}"
+            )
         position = phase_position[actual_phase]
         if position < last_phase:
             raise ValueError(f"claim {step.claim_id} is out of topological phase order")
@@ -116,11 +117,19 @@ def hydrate(module: Module, result: RealizationResult, plan: str = "plan0") -> S
             pack.prefetches.append(pf)
             pf_name = pf.name
         pack.blocks.append(Block(base=claim.offset, count=claim.count, strides=(claim.stride_k,)))
-        pack.segments.append(LaneSegment(
-            name=f"seg{n}", claim_id=claim.id, phase_id=step.phase_id, lane=cand.lane,
-            width=cand.width, opcode=f"{claim.op or cand.name}", reads=tuple(claim.rd),
-            writes=tuple(claim.wr), prefetch=pf_name,
-        ))
+        pack.segments.append(
+            LaneSegment(
+                name=f"seg{n}",
+                claim_id=claim.id,
+                phase_id=step.phase_id,
+                lane=cand.lane,
+                width=cand.width,
+                opcode=f"{claim.op or cand.name}",
+                reads=tuple(claim.rd),
+                writes=tuple(claim.wr),
+                prefetch=pf_name,
+            )
+        )
         pack.trace_notes.append(TraceNote(claim_id=claim.id))
     missing = sorted(set(claim_by_id) - seen)
     if missing:
@@ -128,8 +137,9 @@ def hydrate(module: Module, result: RealizationResult, plan: str = "plan0") -> S
     return pack
 
 
-def hydrate_pipelined(module: Module, result: RealizationResult, plan: str = "plan0",
-                      depth: int = 2) -> StreamPack:
+def hydrate_pipelined(
+    module: Module, result: RealizationResult, plan: str = "plan0", depth: int = 2
+) -> StreamPack:
     """Hydrate with software-pipelined phases (StreamPack v2, append-only).
 
     On top of `hydrate`, each phase transition gains a **double-buffer prefetch
@@ -154,9 +164,16 @@ def hydrate_pipelined(module: Module, result: RealizationResult, plan: str = "pl
                     seen_rids.add(rid)
                     rids.append(rid)
         if rids:
-            pack.prefetches.append(Prefetch(
-                name=f"dbpf{prev_pid}_{next_pid}", distance=4, targets=tuple(rids),
-                hint="T1", pattern="double_buffer", buffers=2))
+            pack.prefetches.append(
+                Prefetch(
+                    name=f"dbpf{prev_pid}_{next_pid}",
+                    distance=4,
+                    targets=tuple(rids),
+                    hint="T1",
+                    pattern="double_buffer",
+                    buffers=2,
+                )
+            )
     return pack
 
 

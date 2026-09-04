@@ -33,30 +33,38 @@ from bcir.signal_registry import (
 )
 
 # the gap providers that must be honest-unavailable on any host without a vendor backend.
-_GAP_PROVIDERS = (GpuPowerProvider, BmcPowerProvider, MemBandwidthProvider,
-                  FabricBytesProvider, ThrottleStateProvider, ReliabilityProvider)
+_GAP_PROVIDERS = (
+    GpuPowerProvider,
+    BmcPowerProvider,
+    MemBandwidthProvider,
+    FabricBytesProvider,
+    ThrottleStateProvider,
+    ReliabilityProvider,
+)
 
 
 # --- every definition is valid + the namespace is unique -----------------------------
 
+
 def test_default_registry_builds_with_valid_unique_definitions():
     reg = default_registry()
     names = reg.names()
-    assert names and len(names) == len(set(names))         # unique PAPI namespace
+    assert names and len(names) == len(set(names))  # unique PAPI namespace
     ids = [p.definition.signal_id for p in reg.providers()]
     assert all(i > 0 for i in ids) and len(ids) == len(set(ids))
     for p in reg.providers():
         d = p.definition
         assert isinstance(d, MetricDefinition)
-        assert d.validate() == []                          # schema-valid
+        assert d.validate() == []  # schema-valid
         assert d.unit in Unit.ALL
-        assert d.cost_dim is None or d.cost_dim in DIMS    # maps to a real dim or None
+        assert d.cost_dim is None or d.cost_dim in DIMS  # maps to a real dim or None
         assert d.provenance in Provenance.ALL
         assert d.sampling_model in SamplingModel.ALL
         assert reg.get_by_id(d.signal_id) is p
 
 
 # --- available() and read() ALWAYS agree (the honest contract) -----------------------
+
 
 def test_provider_reads_are_well_typed_and_availability_is_boolean():
     reg = default_registry()
@@ -68,11 +76,11 @@ def test_provider_reads_are_well_typed_and_availability_is_boolean():
         assert isinstance(avail, bool)
         if r is not None:
             assert isinstance(r, Reading)
-            assert r.unit == p.definition.unit             # carried via the definition
+            assert r.unit == p.definition.unit  # carried via the definition
             assert r.cost_dim == p.definition.cost_dim
             assert r.name == p.definition.name
             assert isinstance(r.value, (int, float))
-            if r.unit == Unit.PERCENT:                     # in-range when present
+            if r.unit == Unit.PERCENT:  # in-range when present
                 assert 0 <= r.value <= 100
             if r.unit in (Unit.BYTES, Unit.KHZ, Unit.COUNT):
                 assert r.value >= 0
@@ -80,25 +88,27 @@ def test_provider_reads_are_well_typed_and_availability_is_boolean():
 
 # --- the gap providers NEVER fabricate (unavailable here) ----------------------------
 
+
 def test_gap_providers_are_honest_unavailable_and_never_fabricate():
     for cls in _GAP_PROVIDERS:
         p = cls()
         assert p.available() is False
-        assert p.read() is None                            # no fabricated value, ever
+        assert p.read() is None  # no fabricated value, ever
         assert p.definition.validate() == []
         assert p.definition.cost_dim in DIMS
 
 
 # --- snapshot() / availability() are one-per-provider and consistent -----------------
 
+
 def test_snapshot_and_availability_are_per_provider_and_consistent():
     reg = default_registry()
     snap = reg.snapshot()
     avail = reg.availability(snap)
-    assert set(snap) == set(reg.names()) == set(avail)     # one entry per provider
+    assert set(snap) == set(reg.names()) == set(avail)  # one entry per provider
     for name in reg.names():
         r = snap[name]
-        assert (r is None) == (not avail[name])            # snapshot agrees with availability
+        assert (r is None) == (not avail[name])  # snapshot agrees with availability
         if r is not None:
             # provenance is carried on the definition (Redfish split), surfaced on the read.
             assert r.provenance in Provenance.ALL
@@ -106,6 +116,7 @@ def test_snapshot_and_availability_are_per_provider_and_consistent():
 
 
 # --- dim mapping: providers_for_dim returns the right providers ----------------------
+
 
 def test_providers_for_dim_maps_correctly():
     reg = default_registry()
@@ -122,11 +133,18 @@ def test_providers_for_dim_maps_correctly():
 
 # --- the plugin seam: reject duplicates, accept a new custom provider ----------------
 
+
 class _FakeProvider(SignalProvider):
     """A tiny custom provider exercising the plugin seam (joins WITHOUT editing core)."""
 
-    _DEF = MetricDefinition("custom.fake_metric", Unit.COUNT, "accuracy",
-                            Provenance.SIMULATED, SamplingModel.POLLED, "a test provider")
+    _DEF = MetricDefinition(
+        "custom.fake_metric",
+        Unit.COUNT,
+        "accuracy",
+        Provenance.SIMULATED,
+        SamplingModel.POLLED,
+        "a test provider",
+    )
 
     @property
     def definition(self):
@@ -143,7 +161,7 @@ def test_register_rejects_duplicate_and_accepts_a_custom_provider():
     reg = default_registry()
     # duplicate name is rejected.
     try:
-        reg.register(GpuPowerProvider())   # power.gpu_energy_uj already registered
+        reg.register(GpuPowerProvider())  # power.gpu_energy_uj already registered
         raise AssertionError("expected duplicate-name rejection")
     except ValueError:
         pass
@@ -157,8 +175,7 @@ def test_register_rejects_duplicate_and_accepts_a_custom_provider():
 
 def test_registry_rejects_duplicate_nonzero_signal_id_but_allows_local_zero():
     class _IdCollision(_FakeProvider):
-        _DEF = MetricDefinition("custom.collision", Unit.COUNT, "accuracy",
-                                signal_id=1)
+        _DEF = MetricDefinition("custom.collision", Unit.COUNT, "accuracy", signal_id=1)
 
     reg = default_registry()
     try:
@@ -166,7 +183,7 @@ def test_registry_rejects_duplicate_nonzero_signal_id_but_allows_local_zero():
         raise AssertionError("expected duplicate signal-id rejection")
     except ValueError as exc:
         assert "signal_id" in str(exc)
-    reg.register(_FakeProvider())                         # ID 0 is local/unassigned
+    reg.register(_FakeProvider())  # ID 0 is local/unassigned
     assert reg.get_by_id(0) is None and reg.get_by_id(True) is None
 
 
@@ -206,12 +223,16 @@ def test_register_rejects_invalid_definition():
 
 
 def test_snapshot_rejects_malformed_provider_readings_before_export_or_theta():
-    percent = MetricDefinition("bad.percent", Unit.PERCENT, "thermal",
-                               Provenance.SIMULATED)
+    percent = MetricDefinition("bad.percent", Unit.PERCENT, "thermal", Provenance.SIMULATED)
     counter = MetricDefinition(
-        "bad.counter", Unit.COUNT, "compute", Provenance.SIMULATED,
-        metric_kind=MetricKind.COUNTER, temporality=Temporality.CUMULATIVE,
-        monotonic=True)
+        "bad.counter",
+        Unit.COUNT,
+        "compute",
+        Provenance.SIMULATED,
+        metric_kind=MetricKind.COUNTER,
+        temporality=Temporality.CUMULATIVE,
+        monotonic=True,
+    )
 
     class _Malformed(SignalProvider):
         def __init__(self, definition, reading):
@@ -228,8 +249,7 @@ def test_snapshot_rejects_malformed_provider_readings_before_export_or_theta():
         def read(self):
             return self._reading
 
-    wrong = MetricDefinition("bad.other", Unit.PERCENT, "thermal",
-                             Provenance.SIMULATED)
+    wrong = MetricDefinition("bad.other", Unit.PERCENT, "thermal", Provenance.SIMULATED)
     bad_cases = (
         (percent, "not-a-reading"),
         (percent, Reading(wrong, 10, Provenance.SIMULATED)),
@@ -262,19 +282,21 @@ def test_snapshot_rejects_malformed_provider_readings_before_export_or_theta():
 
 # --- registry_for_channel selects the power provider by energy_source ----------------
 
+
 def test_registry_for_channel_selects_power_by_energy_source():
     hc = host_channel()
     reg = registry_for_channel(hc)
     src = hc.runtime.energy_source
     expected = power_provider_for_energy_source(src)
     power_names = {p.name for p in reg.providers_for_dim("power")}
-    if expected is None:                                   # energy_source == "none"
+    if expected is None:  # energy_source == "none"
         # no dedicated in-band power provider; the gap power providers may still be present.
         assert "power.rapl_energy_uj" not in power_names
     else:
-        assert expected in power_names                     # the channel's source is registered
+        assert expected in power_names  # the channel's source is registered
     # an explicit x86/rapl channel selects the RAPL provider as its power source.
     from bcir.channels import channel
+
     rapl_reg = registry_for_channel(channel("x86_avx512"))
     assert channel("x86_avx512").runtime.energy_source == "rapl"
     assert "power.rapl_energy_uj" in {p.name for p in rapl_reg.providers_for_dim("power")}
@@ -286,12 +308,16 @@ def test_registry_for_channel_selects_power_by_energy_source():
 
 # --- the cache providers expose the real /sys topology (or honest-absent) ------------
 
+
 def test_cache_capacity_providers_match_silicon_topology():
     from bcir import silicon
+
     caps = silicon.tier_capacities() or {}
-    for tier, name in ((MemTier.L1, "memory.cache_l1_bytes"),
-                       (MemTier.L2, "memory.cache_l2_bytes"),
-                       (MemTier.L3, "memory.cache_l3_bytes")):
+    for tier, name in (
+        (MemTier.L1, "memory.cache_l1_bytes"),
+        (MemTier.L2, "memory.cache_l2_bytes"),
+        (MemTier.L3, "memory.cache_l3_bytes"),
+    ):
         p = CacheCapacityProvider(tier)
         if tier in caps:
             r = p.read()
@@ -301,6 +327,7 @@ def test_cache_capacity_providers_match_silicon_topology():
 
 
 # --- the two-truth boundary: off the legality path -----------------------------------
+
 
 def test_registry_is_off_the_legality_path():
     """Building + reading the registry produces NO Diagnostic and never touches the
@@ -320,7 +347,7 @@ def test_registry_is_off_the_legality_path():
     pressures = theta_pressures(reg)
     assert isinstance(pressures, dict)
     for dim, val in pressures.items():
-        assert dim in DIMS and 0 <= val <= 100             # 0..100 graded pressure
+        assert dim in DIMS and 0 <= val <= 100  # 0..100 graded pressure
 
 
 def test_theta_pressures_only_surfaces_present_percent_signals():
@@ -331,10 +358,11 @@ def test_theta_pressures_only_surfaces_present_percent_signals():
     if thermal.available():
         assert pressures.get("thermal") == thermal.read().value
     else:
-        assert "thermal" not in pressures                  # absent -> omitted, not defaulted
+        assert "thermal" not in pressures  # absent -> omitted, not defaulted
 
 
 # --- a host-adaptive sanity check on the real/unavailable split ----------------------
+
 
 def test_host_split_is_honest_and_self_adapting():
     reg = default_registry()
@@ -345,17 +373,21 @@ def test_host_split_is_honest_and_self_adapting():
         p = reg.get(name)
         assert (p.read() is None) == (not p.available())
     # the gap providers are unavailable here regardless of host.
-    for name in ("power.gpu_energy_uj", "power.bmc_node_milliwatt",
-                 "memory.bandwidth_bytes_per_s", "fabric.interconnect_bytes",
-                 "contention.throttle_state", "reliability.ecc_rul"):
+    for name in (
+        "power.gpu_energy_uj",
+        "power.bmc_node_milliwatt",
+        "memory.bandwidth_bytes_per_s",
+        "fabric.interconnect_bytes",
+        "contention.throttle_state",
+        "reliability.ecc_rul",
+    ):
         assert avail[name] is False
 
 
 if __name__ == "__main__":
     import sys
 
-    fns = [v for k, v in sorted(globals().items())
-           if k.startswith("test_") and callable(v)]
+    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0
     for fn in fns:
         try:

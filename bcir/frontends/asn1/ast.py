@@ -30,6 +30,7 @@ class OidArc:
 
 # --- values (X.680 clause 17) ---------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class IntValue:
     value: int
@@ -93,6 +94,7 @@ class BracedValue:
 
 # --- types (X.680 clauses 16-31) ------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class TypeRef:
     """A reference to a type assigned elsewhere, possibly in another module."""
@@ -127,10 +129,10 @@ class Tagged:
     lets the printer reproduce the source and lets `lower.py` own the §31.2.7 rule.
     """
 
-    tag_class: str            # "" (context) | UNIVERSAL | APPLICATION | PRIVATE
+    tag_class: str  # "" (context) | UNIVERSAL | APPLICATION | PRIVATE
     number: int
     inner: object
-    mode: str | None = None   # None | IMPLICIT | EXPLICIT
+    mode: str | None = None  # None | IMPLICIT | EXPLICIT
 
 
 @dataclass(frozen=True)
@@ -174,10 +176,10 @@ class OpenTypeNode:
 class ClassField:
     """One field of an information object class (X.681 §9)."""
 
-    name: str                      # including the leading `&`
+    name: str  # including the leading `&`
     #: A TYPE field (`&Type`, capitalised) versus a VALUE field (`&id`).
     is_type_field: bool
-    type: object | None = None     # the declared type of a value field
+    type: object | None = None  # the declared type of a value field
     optional: bool = False
     unique: bool = False
 
@@ -206,7 +208,7 @@ class FieldSetting:
     open type governed by this object resolves to.
     """
 
-    name: str                      # including the leading `&`
+    name: str  # including the leading `&`
     value: object
 
 
@@ -373,6 +375,7 @@ class ChoiceType:
 
 # --- module structure (X.680 clause 13) -----------------------------------------------
 
+
 @dataclass(frozen=True)
 class TypeAssignment:
     name: str
@@ -401,23 +404,45 @@ class ModuleNode:
     tag_default: str = "EXPLICIT"
     extensibility_implied: bool = False
     imports: tuple[SymbolsFromModule, ...] = ()
-    exports: tuple[str, ...] | None = None          # None = EXPORTS ALL
+    exports: tuple[str, ...] | None = None  # None = EXPORTS ALL
     assignments: list[object] = field(default_factory=list)
 
     def type_assignments(self) -> dict[str, object]:
-        return {a.name: a.type for a in self.assignments
-                if isinstance(a, TypeAssignment)}
+        return {a.name: a.type for a in self.assignments if isinstance(a, TypeAssignment)}
 
     def value_assignments(self) -> dict[str, ValueAssignment]:
-        return {a.name: a for a in self.assignments
-                if isinstance(a, ValueAssignment)}
+        return {a.name: a for a in self.assignments if isinstance(a, ValueAssignment)}
 
 
 __all__ = [
-    "BitsValue", "BoolValue", "BracedValue", "Builtin", "ChoiceType", "ClassAssignment",
-    "ClassField", "ComponentNode", "Constrained", "ExtensionMarker", "IntValue", "ModuleNode",
-    "NamedNumber", "NullValue", "ObjectAssignment", "ObjectSetAssignment", "OidArc",
-    "OidValue", "OpenTypeNode", "RefValue", "SequenceOfType", "SequenceType",
-    "SetOfType", "SetType", "StrValue", "SymbolsFromModule", "Tagged", "TypeAssignment",
-    "TypeRef", "ValueAssignment",
+    "BitsValue",
+    "BoolValue",
+    "BracedValue",
+    "Builtin",
+    "ChoiceType",
+    "ClassAssignment",
+    "ClassField",
+    "ComponentNode",
+    "Constrained",
+    "ExtensionMarker",
+    "IntValue",
+    "ModuleNode",
+    "NamedNumber",
+    "NullValue",
+    "ObjectAssignment",
+    "ObjectSetAssignment",
+    "OidArc",
+    "OidValue",
+    "OpenTypeNode",
+    "RefValue",
+    "SequenceOfType",
+    "SequenceType",
+    "SetOfType",
+    "SetType",
+    "StrValue",
+    "SymbolsFromModule",
+    "Tagged",
+    "TypeAssignment",
+    "TypeRef",
+    "ValueAssignment",
 ]

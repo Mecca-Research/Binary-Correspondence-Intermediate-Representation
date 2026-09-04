@@ -57,8 +57,12 @@ import hashlib
 from dataclasses import dataclass, field
 
 from .constraints import (
-    Constraint, effective_size_constraint, effective_value_constraint, root_alphabet,
-    root_size_bounds, root_value_bounds,
+    Constraint,
+    effective_size_constraint,
+    effective_value_constraint,
+    root_alphabet,
+    root_size_bounds,
+    root_value_bounds,
 )
 from .schema import Asn1Type, Choice, Primitive, Sequence, SequenceOf
 from .tags import Asn1Error, TagClass, Universal
@@ -101,8 +105,10 @@ _LEAF_KIND: dict[int, str] = {
 }
 
 _TAG_CLASS_NAME = {
-    TagClass.UNIVERSAL: "universal", TagClass.APPLICATION: "application",
-    TagClass.CONTEXT: "context", TagClass.PRIVATE: "private",
+    TagClass.UNIVERSAL: "universal",
+    TagClass.APPLICATION: "application",
+    TagClass.CONTEXT: "context",
+    TagClass.PRIVATE: "private",
 }
 _TAG_CLASS_BY_NAME = {name: value for value, name in _TAG_CLASS_NAME.items()}
 
@@ -273,7 +279,8 @@ def _serialize_node(node: EncodeNode, path: str, out: list[str]) -> None:
         f"node {here} kind={node.kind} universal={node.universal} "
         f"members={len(node.members)} element={'1' if node.element is not None else '0'} "
         f"enum={enumeration or '-'} ext={'1' if node.extensible else '0'} "
-        f"type={node.type_name or '-'}")
+        f"type={node.type_name or '-'}"
+    )
     if node.constraint is not None:
         out.append(_serialize_constraint(node.constraint, here))
     for member in node.members:
@@ -283,7 +290,8 @@ def _serialize_node(node: EncodeNode, path: str, out: list[str]) -> None:
             f"def={'1' if member.has_default else '0'} "
             f"tag={'-' if member.tag is None else member.tag} "
             f"class={member.tag_class} exp={'1' if member.explicit else '0'} "
-            f"dval={member.default_stream.hex() or '-'}")
+            f"dval={member.default_stream.hex() or '-'}"
+        )
         _serialize_node(member.node, f"{here}/{member.name}", out)
     if node.element is not None:
         _serialize_node(node.element, f"{here}[]", out)
@@ -313,25 +321,32 @@ def _serialize_constraint(constraint: EncodeConstraint, path: str) -> str:
         f"rslo={_bound(constraint.root_size_low)} rshi={_bound(constraint.root_size_high)} "
         f"vext={'1' if constraint.value_extensible else '0'} "
         f"sext={'1' if constraint.size_extensible else '0'} "
-        f"alpha={alphabet}")
+        f"alpha={alphabet}"
+    )
 
 
 # --- compilation ------------------------------------------------------------------------------
 
 
-def compile_encode_plan(kind: Asn1Type, *, module: str, type_name: str,
-                        source: bytes = b"") -> EncodePlan:
+def compile_encode_plan(
+    kind: Asn1Type, *, module: str, type_name: str, source: bytes = b""
+) -> EncodePlan:
     """Compile one type into a write-side plan, refusing what it cannot emit."""
-    return EncodePlan(module=module, type_name=type_name,
-                      source_sha256=hashlib.sha256(source).hexdigest(),
-                      root=_compile_node(kind, type_name, 0), _kind=kind)
+    return EncodePlan(
+        module=module,
+        type_name=type_name,
+        source_sha256=hashlib.sha256(source).hexdigest(),
+        root=_compile_node(kind, type_name, 0),
+        _kind=kind,
+    )
 
 
 def _compile_node(kind: Asn1Type, path: str, depth: int) -> EncodeNode:
     if depth > 32:
         raise Asn1Error(
             f"{path}: the write plan refuses recursion beyond depth 32; a descriptor whose "
-            f"depth is unbounded cannot state a scratch bound, and §5.1 requires one")
+            f"depth is unbounded cannot state a scratch bound, and §5.1 requires one"
+        )
     constraint = _record_constraint(kind, path)
     if isinstance(kind, Primitive):
         leaf = _LEAF_KIND.get(kind.universal)
@@ -339,32 +354,47 @@ def _compile_node(kind: Asn1Type, path: str, depth: int) -> EncodeNode:
             raise Asn1Error(
                 f"{path}: the write plan has no leaf rule for universal tag "
                 f"{kind.universal} ({kind.name}); refusing rather than guessing a spelling "
-                f"that three encoders would each get differently")
-        return EncodeNode(kind=leaf, universal=int(kind.universal), type_name=kind.name,
-                          constraint=constraint,
-                          enumeration=_record_enumeration(kind, path),
-                          extensible=bool(getattr(kind, "enum_extensible", False)))
+                f"that three encoders would each get differently"
+            )
+        return EncodeNode(
+            kind=leaf,
+            universal=int(kind.universal),
+            type_name=kind.name,
+            constraint=constraint,
+            enumeration=_record_enumeration(kind, path),
+            extensible=bool(getattr(kind, "enum_extensible", False)),
+        )
     if isinstance(kind, Sequence):
-        return EncodeNode(kind="sequence", universal=int(Universal.SEQUENCE),
-                          type_name=getattr(kind, "name", "") or "",
-                          members=_compile_members(kind, path, depth),
-                          constraint=constraint,
-                          extensible=bool(getattr(kind, "extensible", False)))
+        return EncodeNode(
+            kind="sequence",
+            universal=int(Universal.SEQUENCE),
+            type_name=getattr(kind, "name", "") or "",
+            members=_compile_members(kind, path, depth),
+            constraint=constraint,
+            extensible=bool(getattr(kind, "extensible", False)),
+        )
     if isinstance(kind, SequenceOf):
-        return EncodeNode(kind="sequence-of", universal=int(Universal.SEQUENCE),
-                          type_name=getattr(kind, "name", "") or "",
-                          element=_compile_node(kind.element, f"{path}[]", depth + 1),
-                          constraint=constraint)
+        return EncodeNode(
+            kind="sequence-of",
+            universal=int(Universal.SEQUENCE),
+            type_name=getattr(kind, "name", "") or "",
+            element=_compile_node(kind.element, f"{path}[]", depth + 1),
+            constraint=constraint,
+        )
     if isinstance(kind, Choice):
-        return EncodeNode(kind="choice", type_name=getattr(kind, "name", "") or "",
-                          members=_compile_members(kind, path, depth),
-                          constraint=constraint,
-                          extensible=bool(getattr(kind, "extensible", False)))
+        return EncodeNode(
+            kind="choice",
+            type_name=getattr(kind, "name", "") or "",
+            members=_compile_members(kind, path, depth),
+            constraint=constraint,
+            extensible=bool(getattr(kind, "extensible", False)),
+        )
     raise Asn1Error(
         f"{path}: the write plan does not compile {type(kind).__name__}; SET, SET OF and "
         f"OPEN TYPE each need a rule of their own (X.690 §11.6 orders a SET's components by "
         f"tag, and X.697 §41 gives an open type no JER fallback), and inventing one here "
-        f"would produce an emitter that silently disagrees with the oracle")
+        f"would produce an emitter that silently disagrees with the oracle"
+    )
 
 
 def _record_constraint(kind, path: str) -> EncodeConstraint | None:
@@ -387,14 +417,28 @@ def _record_constraint(kind, path: str) -> EncodeConstraint | None:
     (root_size_low, root_size_high), size_extensible = root_size_bounds(constraint)
     alphabet = root_alphabet(constraint)
     recorded = EncodeConstraint(
-        value_low=value_low, value_high=value_high,
-        size_low=size_low, size_high=size_high,
-        root_value_low=root_value_low, root_value_high=root_value_high,
-        root_size_low=root_size_low, root_size_high=root_size_high,
-        value_extensible=value_extensible, size_extensible=size_extensible,
-        alphabet="".join(sorted(alphabet)) if alphabet else "")
-    for name in ("value_low", "value_high", "size_low", "size_high",
-                 "root_value_low", "root_value_high", "root_size_low", "root_size_high"):
+        value_low=value_low,
+        value_high=value_high,
+        size_low=size_low,
+        size_high=size_high,
+        root_value_low=root_value_low,
+        root_value_high=root_value_high,
+        root_size_low=root_size_low,
+        root_size_high=root_size_high,
+        value_extensible=value_extensible,
+        size_extensible=size_extensible,
+        alphabet="".join(sorted(alphabet)) if alphabet else "",
+    )
+    for name in (
+        "value_low",
+        "value_high",
+        "size_low",
+        "size_high",
+        "root_value_low",
+        "root_value_high",
+        "root_size_low",
+        "root_size_high",
+    ):
         bound = getattr(recorded, name)
         if bound is not None and abs(bound) > BOUND_MAX:
             raise Asn1Error(
@@ -402,13 +446,15 @@ def _record_constraint(kind, path: str) -> EncodeConstraint | None:
                 f"plan format records; X.696 §10.3 d)'s widest fixed word is eight octets, "
                 f"so a bound beyond it selects the length-prefixed form anyway — but "
                 f"writing it down would truncate in the C reader, and a silently truncated "
-                f"bound is a different type")
+                f"bound is a different type"
+            )
     if len(recorded.alphabet.encode("utf-8")) > ALPHABET_MAX:
         raise Asn1Error(
             f"{path}: the permitted alphabet is {len(recorded.alphabet)} characters, past "
             f"the {ALPHABET_MAX}-octet buffer this plan format states; X.691 §30.5 makes "
             f"the alphabet decide bits-per-character, so a truncated one encodes a "
-            f"different document rather than a slightly wrong one")
+            f"different document rather than a slightly wrong one"
+        )
     return None if recorded.is_trivial() else recorded
 
 
@@ -435,14 +481,16 @@ def _record_enumeration(kind: Primitive, path: str) -> tuple[tuple[str, int], ..
             f"number, so this would look encodable — but X.697 §22.2 encodes the "
             f"IDENTIFIER and X.691 §14.1 encodes the index into the root, and neither can "
             f"be derived from a number alone. One plan drives all four, so it is refused "
-            f"here rather than producing a JER document of the wrong shape")
+            f"here rather than producing a JER document of the wrong shape"
+        )
     for name, _number in enumeration:
         if not name or any(character in name for character in "|: \n"):
             raise Asn1Error(
                 f"{path}: the enumeration identifier {name!r} contains a character the "
                 f"descriptor's `name:number|...` field uses as a separator; X.680 §12.4 "
                 f"gives an identifier no such character, so this is a malformed schema "
-                f"rather than a format limitation")
+                f"rather than a format limitation"
+            )
     return tuple((str(name), int(number)) for name, number in enumeration)
 
 
@@ -456,22 +504,27 @@ def _compile_members(kind, path: str, depth: int) -> tuple[EncodeMember, ...]:
             raise Asn1Error(
                 f"{path}/{component.name}: an extension addition is refused by the write "
                 f"plan; X.691 §19.7 splits root from additions and X.690 does not, so one "
-                f"plan cannot describe both until PER joins this harness")
+                f"plan cannot describe both until PER joins this harness"
+            )
         # `Component.has_default` is the schema's own property against its `_NO_DEFAULT`
         # sentinel. Re-deriving it here from `default is not None` would call a component
         # whose declared default IS None undefaulted, and X.690 §11.5 makes that the
         # difference between emitting the component and omitting it.
         node = _compile_node(component.type, f"{path}/{component.name}", depth + 1)
-        out.append(EncodeMember(
-            name=component.name, identifier=component.name, index=index,
-            optional=bool(getattr(component, "optional", False)),
-            has_default=bool(component.has_default),
-            tag=component.tag,
-            tag_class=_TAG_CLASS_NAME[getattr(component, "tag_class", TagClass.CONTEXT)],
-            explicit=bool(getattr(component, "explicit", False)),
-            node=node,
-            default_stream=_record_default(component, node,
-                                           f"{path}/{component.name}")))
+        out.append(
+            EncodeMember(
+                name=component.name,
+                identifier=component.name,
+                index=index,
+                optional=bool(getattr(component, "optional", False)),
+                has_default=bool(component.has_default),
+                tag=component.tag,
+                tag_class=_TAG_CLASS_NAME[getattr(component, "tag_class", TagClass.CONTEXT)],
+                explicit=bool(getattr(component, "explicit", False)),
+                node=node,
+                default_stream=_record_default(component, node, f"{path}/{component.name}"),
+            )
+        )
     return tuple(out)
 
 
@@ -497,12 +550,19 @@ def _record_default(component, node: EncodeNode, path: str) -> bytes:
             f"{path}: the DEFAULT value occupies {len(octets)} stream octets, past the "
             f"{DEFAULT_MAX} this plan format records. Truncating it would make the "
             f"comparison unequal and silently re-admit a component X.690 §11.5 requires "
-            f"omitted, so it is refused instead")
+            f"omitted, so it is refused instead"
+        )
     return octets
 
 
-
 __all__ = [
-    "ALPHABET_MAX", "BOUND_MAX", "PLAN_COMPILER", "PLAN_VERSION", "EncodeConstraint",
-    "EncodeMember", "EncodeNode", "EncodePlan", "compile_encode_plan",
+    "ALPHABET_MAX",
+    "BOUND_MAX",
+    "PLAN_COMPILER",
+    "PLAN_VERSION",
+    "EncodeConstraint",
+    "EncodeMember",
+    "EncodeNode",
+    "EncodePlan",
+    "compile_encode_plan",
 ]

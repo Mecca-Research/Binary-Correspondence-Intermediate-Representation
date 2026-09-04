@@ -27,7 +27,7 @@ class PhaseStat:
 
 @dataclass
 class ExecResult:
-    order: list[int] = field(default_factory=list)        # claim ids, in dispatch order
+    order: list[int] = field(default_factory=list)  # claim ids, in dispatch order
     phase_order: list[int] = field(default_factory=list)  # phase ids, in execution order
     phases: list[PhaseStat] = field(default_factory=list)
     executed: int = 0

@@ -52,10 +52,14 @@ _PERSONNEL_RECORD = {
     "dateOfHire": "19710917",
     "nameOfSpouse": {"givenName": "Mary", "initial": "T", "familyName": "Smith"},
     "children": [
-        {"name": {"givenName": "Ralph", "initial": "T", "familyName": "Smith"},
-         "dateOfBirth": "19571111"},
-        {"name": {"givenName": "Susan", "initial": "B", "familyName": "Jones"},
-         "dateOfBirth": "19590717"},
+        {
+            "name": {"givenName": "Ralph", "initial": "T", "familyName": "Smith"},
+            "dateOfBirth": "19571111",
+        },
+        {
+            "name": {"givenName": "Susan", "initial": "B", "familyName": "Jones"},
+            "dateOfBirth": "19590717",
+        },
     ],
 }
 
@@ -79,8 +83,12 @@ def test_the_five_selectable_candidates_are_the_ones_section_6_names():
     profile, and it truthfully carries no object identifier.
     """
     assert [c.name for c in SELECTABLE] == [
-        "DER", "CANONICAL-PER-UNALIGNED", "CANONICAL-PER-ALIGNED", "COER",
-        "JER-BCIR-CANONICAL"]
+        "DER",
+        "CANONICAL-PER-UNALIGNED",
+        "CANONICAL-PER-ALIGNED",
+        "COER",
+        "JER-BCIR-CANONICAL",
+    ]
     jer = next(c for c in SELECTABLE if c.name == "JER-BCIR-CANONICAL")
     assert jer.oid is None, "X.697 42.2 registers no canonical variant to point at"
     for candidate in SELECTABLE:
@@ -105,9 +113,9 @@ def test_the_wire_sizes_of_the_annex_a_record():
     than any of them alone: four independent encoders agreeing with one annex's arithmetic.
     """
     sizes = _sizes(_annex_a1(), _PERSONNEL_RECORD)
-    assert sizes["DER"] == 136                               # X.693 A.3, and X.690 Annex A
-    assert sizes["CANONICAL-PER-UNALIGNED"] == 84            # X.691 A.1.4
-    assert sizes["CANONICAL-PER-ALIGNED"] == 94              # X.691 A.1.3
+    assert sizes["DER"] == 136  # X.693 A.3, and X.690 Annex A
+    assert sizes["CANONICAL-PER-UNALIGNED"] == 84  # X.691 A.1.4
+    assert sizes["CANONICAL-PER-ALIGNED"] == 94  # X.691 A.1.3
     assert sizes["COER"] == 95
     assert sizes["JER-BCIR-CANONICAL"] == 385
     # The spread is what makes selection worth doing at all: 4.6x between the smallest and
@@ -128,7 +136,7 @@ def test_the_report_records_the_measurement_the_gate_asks_to_be_recorded():
 
 
 def test_an_unrepresentable_value_makes_a_candidate_not_a_candidate():
-    """"An encoding is a candidate only if the abstract value is representable in it,
+    """ "An encoding is a candidate only if the abstract value is representable in it,
     which is a verifier question, never a cost question."
 
     A bare ENUMERATED has no enumeration, so PER cannot find the §14.1 index and JER cannot
@@ -156,35 +164,37 @@ def test_a_round_trip_that_returns_a_different_value_is_illegal_not_cheap():
     set and win every wire-size selection. Making the round-trip comparison part of the
     *verdict* is what stops the optimizer preferring a lossy rail.
     """
-    liar = Measurement("LIAR", legal=False, octets=1,
-                       refusal="round trip returned a different value")
+    liar = Measurement(
+        "LIAR", legal=False, octets=1, refusal="round trip returned a different value"
+    )
     honest = Measurement("DER", legal=True, octets=1000)
     assert select((liar, honest), objective=Objective.WIRE_SIZE).candidate == "DER"
 
 
 def test_selection_returns_nothing_rather_than_something_illegal():
     """With no legal canonical candidate there is no answer, and `select` says so."""
-    assert select((Measurement("DER", legal=False, refusal="nope"),),
-                  objective=Objective.WIRE_SIZE) is None
+    assert (
+        select((Measurement("DER", legal=False, refusal="nope"),), objective=Objective.WIRE_SIZE)
+        is None
+    )
 
 
 # --- law 2: two-truth ---------------------------------------------------------------------
 
 
 def test_cost_never_becomes_a_legality_verdict():
-    """"A measured encode/decode cost is graded truth and must not become a legality
+    """ "A measured encode/decode cost is graded truth and must not become a legality
     verdict."
 
     Expressed structurally: the verdict and the measurements are different fields, and a
     measurement carrying an absurd cost is still legal, while one carrying a zero cost is
     still illegal. Nothing in `select` can convert between them.
     """
-    slow = Measurement("DER", legal=True, octets=10, encode_ns=10 ** 12,
-                       decode_ns=10 ** 12)
-    fast_but_broken = Measurement("COER", legal=False, octets=1, encode_ns=0,
-                                  decode_ns=0, refusal="encode: no")
-    for objective in (Objective.WIRE_SIZE, Objective.ENCODE_LATENCY,
-                      Objective.DECODE_LATENCY):
+    slow = Measurement("DER", legal=True, octets=10, encode_ns=10**12, decode_ns=10**12)
+    fast_but_broken = Measurement(
+        "COER", legal=False, octets=1, encode_ns=0, decode_ns=0, refusal="encode: no"
+    )
+    for objective in (Objective.WIRE_SIZE, Objective.ENCODE_LATENCY, Objective.DECODE_LATENCY):
         assert select((slow, fast_but_broken), objective=objective).candidate == "DER"
 
 
@@ -192,7 +202,7 @@ def test_cost_never_becomes_a_legality_verdict():
 
 
 def test_a_rule_with_no_canonical_variant_is_decodable_but_never_selected():
-    """"A rule with no canonical variant may be decoded but never selected for emission,
+    """ "A rule with no canonical variant may be decoded but never selected for emission,
     since a selected encoding is a digested artifact."
 
     BER and the BASIC-* variants are real decode targets and are measured — a peer may send
@@ -200,8 +210,7 @@ def test_a_rule_with_no_canonical_variant_is_decodable_but_never_selected():
     them, so a digest over the result would not be a digest over the value.
     """
     non_canonical = [c.name for c in ALL_CANDIDATES if not c.canonical]
-    assert non_canonical == ["BER", "BASIC-PER-UNALIGNED", "BASIC-PER-ALIGNED",
-                             "BASIC-OER", "JER"]
+    assert non_canonical == ["BER", "BASIC-PER-UNALIGNED", "BASIC-PER-ALIGNED", "BASIC-OER", "JER"]
     kind = _annex_a1()
     measurements = measure(kind, _PERSONNEL_RECORD, repeats=1)
     # They measure identically to their canonical siblings, so cost is not what excludes
@@ -256,8 +265,7 @@ def test_the_decode_latency_gate_does_not_hold_on_the_python_oracle_and_says_so(
     for it.
     """
     measurements = measure(_annex_a1(), _PERSONNEL_RECORD, repeats=3)
-    chosen = select(measurements, objective=Objective.DECODE_LATENCY,
-                    candidates=SELECTABLE)
+    chosen = select(measurements, objective=Objective.DECODE_LATENCY, candidates=SELECTABLE)
     assert chosen is not None and chosen.legal
     # The exact half is untouched by whatever the clock said.
     assert next(m for m in measurements if m.candidate == "COER").octets == 95
@@ -288,8 +296,8 @@ END
     kind = compile_module(constrained, "<annex>").module.types["PersonnelRecord"]
     tight = _sizes(kind, _PERSONNEL_RECORD)
     loose = _sizes(_annex_a1(), _PERSONNEL_RECORD)
-    assert tight["CANONICAL-PER-UNALIGNED"] == 61            # X.691 A.2.4
-    assert tight["CANONICAL-PER-ALIGNED"] == 74              # X.691 A.2.3
+    assert tight["CANONICAL-PER-UNALIGNED"] == 61  # X.691 A.2.4
+    assert tight["CANONICAL-PER-ALIGNED"] == 74  # X.691 A.2.3
     assert tight["CANONICAL-PER-UNALIGNED"] < loose["CANONICAL-PER-UNALIGNED"]
     assert tight["DER"] == loose["DER"], "X.690 encodes a value the same way regardless"
     assert tight["JER-BCIR-CANONICAL"] == loose["JER-BCIR-CANONICAL"], "7.2.2 l)"
@@ -299,11 +307,12 @@ def test_an_integer_constraint_moves_only_the_candidates_that_can_read_it():
     """The same asymmetry at its smallest, where it is easiest to see."""
     plain = Sequence((Component("v", Primitive(Universal.INTEGER, "INTEGER")),), "S")
     bounded = Sequence(
-        (Component("v", Primitive(Universal.INTEGER, "INTEGER", ValueRange(0, 255))),), "S")
+        (Component("v", Primitive(Universal.INTEGER, "INTEGER", ValueRange(0, 255))),), "S"
+    )
     before = _sizes(plain, {"v": 200})
     after = _sizes(bounded, {"v": 200})
     assert after["CANONICAL-PER-UNALIGNED"] < before["CANONICAL-PER-UNALIGNED"]
-    assert after["COER"] < before["COER"]                    # X.696 §10 sizes from it too
+    assert after["COER"] < before["COER"]  # X.696 §10 sizes from it too
     assert after["DER"] == before["DER"]
     assert after["JER-BCIR-CANONICAL"] == before["JER-BCIR-CANONICAL"]
 
@@ -321,9 +330,14 @@ def test_measure_one_reports_a_refusal_rather_than_raising():
 def test_selection_is_deterministic_across_repeated_measurement():
     """Ties break on the declared candidate order, never on whichever run was fastest."""
     kind = _annex_a1()
-    picks = {select(measure(kind, _PERSONNEL_RECORD, repeats=1),
-                    objective=Objective.WIRE_SIZE, candidates=SELECTABLE).candidate
-             for _ in range(5)}
+    picks = {
+        select(
+            measure(kind, _PERSONNEL_RECORD, repeats=1),
+            objective=Objective.WIRE_SIZE,
+            candidates=SELECTABLE,
+        ).candidate
+        for _ in range(5)
+    }
     assert picks == {"CANONICAL-PER-UNALIGNED"}
 
 

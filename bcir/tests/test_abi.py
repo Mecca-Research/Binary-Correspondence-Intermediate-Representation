@@ -29,17 +29,28 @@ def test_round_trip_is_lossless():
 
 def test_encoding_is_deterministic():
     pack = _pack()
-    assert encode(pack) == encode(pack)        # stable bytes
+    assert encode(pack) == encode(pack)  # stable bytes
     assert encode(decode(encode(pack))) == encode(pack)  # idempotent
 
 
 def test_rich_pack_round_trips():
     pack = StreamPack(source_plan="plan0", topo_gen=1, map_gen=7, data_gen=19)
     pack.prefetches.append(Prefetch("pf0", 4, (10, 11), "T0", "linear"))
-    pack.segments.append(LaneSegment(
-        name="seg0", claim_id=1000, phase_id=0, lane=Lane.UX, width=16,
-        opcode="f32.add", reads=(10, 11), writes=(12,), prefetch="pf0",
-        fence_before=(), fence_after=("f0",)))
+    pack.segments.append(
+        LaneSegment(
+            name="seg0",
+            claim_id=1000,
+            phase_id=0,
+            lane=Lane.UX,
+            width=16,
+            opcode="f32.add",
+            reads=(10, 11),
+            writes=(12,),
+            prefetch="pf0",
+            fence_before=(),
+            fence_after=("f0",),
+        )
+    )
     pack.trace_notes.append(TraceNote(claim_id=1000, src_hash=42, trace_hash=99))
     assert decode(encode(pack)) == pack
 
@@ -49,10 +60,10 @@ def test_v2_features_round_trip_append_only():
     # round-trips losslessly; the v1 layout is untouched (append-only).
     m = vector_add(1024)
     from bcir.gem import hydrate_pipelined
-    pack = hydrate_pipelined(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()),
-                             depth=2)
+
+    pack = hydrate_pipelined(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()), depth=2)
     blob = encode(pack)
-    assert blob[4] == 2                       # v2 on the wire
+    assert blob[4] == 2  # v2 on the wire
     assert decode(blob) == pack
     assert decode(blob).pipeline_depth == 2
 
@@ -68,8 +79,7 @@ def test_packs_without_v2_features_stay_byte_frozen_v1():
 
 def test_double_buffer_prefetch_round_trips():
     pack = StreamPack(source_plan="plan0", pipeline_depth=2)
-    pack.prefetches.append(Prefetch("dbpf0_1", 4, (10, 11), "T1", "double_buffer",
-                                    buffers=2))
+    pack.prefetches.append(Prefetch("dbpf0_1", 4, (10, 11), "T1", "double_buffer", buffers=2))
     out = decode(encode(pack))
     assert out.prefetches[0].buffers == 2
     assert out.pipeline_depth == 2
@@ -79,10 +89,21 @@ def _v3_pack():
     """A pack that USES v3 segment dispatch/channel (so it encodes as v3)."""
     pack = StreamPack(source_plan="plan0", topo_gen=1, map_gen=7, data_gen=19)
     pack.prefetches.append(Prefetch("pf0", 4, (10, 11)))
-    pack.segments.append(LaneSegment(
-        name="seg0", claim_id=1000, phase_id=0, lane=Lane.GGG, width=1,
-        opcode="reduce.add", reads=(10, 11), writes=(12,), prefetch="pf0",
-        dispatch="pim", channel="nvidia_ptx"))
+    pack.segments.append(
+        LaneSegment(
+            name="seg0",
+            claim_id=1000,
+            phase_id=0,
+            lane=Lane.GGG,
+            width=1,
+            opcode="reduce.add",
+            reads=(10, 11),
+            writes=(12,),
+            prefetch="pf0",
+            dispatch="pim",
+            channel="nvidia_ptx",
+        )
+    )
     pack.trace_notes.append(TraceNote(claim_id=1000))
     return pack
 
@@ -97,12 +118,12 @@ def test_v3_dispatch_channel_round_trips_append_only():
     # losslessly; decode(encode(x)) == x and encode is idempotent (byte-identity).
     pack = _v3_pack()
     blob = encode(pack)
-    assert blob[4] == 3                                  # v3 on the wire
+    assert blob[4] == 3  # v3 on the wire
     out = decode(blob)
-    assert out == pack                                   # decode(encode(x)) == x
+    assert out == pack  # decode(encode(x)) == x
     assert out.segments[0].dispatch == "pim"
     assert out.segments[0].channel == "nvidia_ptx"
-    assert encode(decode(blob)) == blob                  # encode(decode(encode(x))) == encode(x)
+    assert encode(decode(blob)) == blob  # encode(decode(encode(x))) == encode(x)
 
 
 def test_packs_without_v3_features_stay_byte_frozen_v1_v2():
@@ -110,9 +131,10 @@ def test_packs_without_v3_features_stay_byte_frozen_v1_v2():
     # dispatch/channel defaults ("core"/"host") is byte-identical to its v1/v2 encoding.
     v1 = _pack()
     assert all(s.dispatch == "core" and s.channel == "host" for s in v1.segments)
-    assert encode(v1)[4] == ABI_VERSION == 1             # still v1, no v3 tail
+    assert encode(v1)[4] == ABI_VERSION == 1  # still v1, no v3 tail
     # a v2-feature pack with default dispatch/channel stays v2 (not promoted to v3).
     from bcir.gem import hydrate_pipelined
+
     m = vector_add(1024)
     v2 = hydrate_pipelined(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()), depth=2)
     assert all(s.dispatch == "core" and s.channel == "host" for s in v2.segments)
@@ -124,13 +146,14 @@ def test_v3_decode_rejects_unknown_dispatch_code():
     # decode (mirrors Lane(bad) raising), instead of silently defaulting.
     import struct
     import zlib
+
     blob = bytearray(encode(_v3_pack()))
     needle = struct.pack("<H", len("nvidia_ptx")) + b"nvidia_ptx"
     idx = bytes(blob).find(needle)
     assert idx > 0
-    blob[idx - 1] = 7                                    # illegal dispatch code
+    blob[idx - 1] = 7  # illegal dispatch code
     body = bytes(blob[:-4])
-    blob[-4:] = struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)   # re-fix CRC
+    blob[-4:] = struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)  # re-fix CRC
     try:
         decode(bytes(blob))
         assert False, "expected AbiError on an unknown dispatch code"
@@ -141,12 +164,12 @@ def test_v3_decode_rejects_unknown_dispatch_code():
 def test_encoder_rejects_unrepresentable_or_semantically_invalid_fields():
     """The writer never masks, wraps, or silently substitutes another contract."""
     bad = _v3_pack()
-    bad.segments[0] = LaneSegment(**{
-        **bad.segments[0].__dict__, "dispatch": "unknown-device"})
+    bad.segments[0] = LaneSegment(**{**bad.segments[0].__dict__, "dispatch": "unknown-device"})
     cases = [bad, StreamPack(pipeline_depth=0), StreamPack(pipeline_depth=1 << 16)]
     unhashable_dispatch = _v3_pack()
-    unhashable_dispatch.segments[0] = LaneSegment(**{
-        **unhashable_dispatch.segments[0].__dict__, "dispatch": ["pim"]})
+    unhashable_dispatch.segments[0] = LaneSegment(
+        **{**unhashable_dispatch.segments[0].__dict__, "dispatch": ["pim"]}
+    )
     cases.append(unhashable_dispatch)
     invalid_buffers = StreamPack(pipeline_depth=2)
     invalid_buffers.prefetches.append(Prefetch("pf", 1, (), buffers=3))
@@ -154,8 +177,7 @@ def test_encoder_rejects_unrepresentable_or_semantically_invalid_fields():
     overflow_gen = StreamPack(topo_gen=1 << 32)
     cases.append(overflow_gen)
     invalid_width = _v3_pack()
-    invalid_width.segments[0] = LaneSegment(**{
-        **invalid_width.segments[0].__dict__, "width": 3})
+    invalid_width.segments[0] = LaneSegment(**{**invalid_width.segments[0].__dict__, "width": 3})
     cases.append(invalid_width)
     for pack in cases:
         try:
@@ -198,12 +220,15 @@ def test_v3_decode_rejects_out_of_range_lane():
     import struct
     import zlib
     from bcir.abi.streampack_abi import _HEADER_SIZE
+
     blob = bytearray(encode(_pack()))
     pos = _HEADER_SIZE
-    (slen,) = struct.unpack_from("<H", blob, pos); pos += 2 + slen      # source_plan
-    (nlen,) = struct.unpack_from("<H", blob, pos); pos += 2 + nlen      # seg0.name
-    pos += 8 + 4                                                        # claim_id, phase_id
-    blob[pos] = 9                                                       # lane (only 0..5 valid)
+    (slen,) = struct.unpack_from("<H", blob, pos)
+    pos += 2 + slen  # source_plan
+    (nlen,) = struct.unpack_from("<H", blob, pos)
+    pos += 2 + nlen  # seg0.name
+    pos += 8 + 4  # claim_id, phase_id
+    blob[pos] = 9  # lane (only 0..5 valid)
     body = bytes(blob[:-4])
     blob[-4:] = struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
     try:
@@ -217,17 +242,22 @@ def test_decode_rejects_bad_magic_version_and_crc():
     blob = bytearray(encode(_pack()))
     bad_magic = bytes(b"XXXX" + blob[4:])
     try:
-        decode(bad_magic); assert False, "expected AbiError"
+        decode(bad_magic)
+        assert False, "expected AbiError"
     except AbiError:
         pass
-    bad_ver = bytearray(blob); bad_ver[4] = 9
+    bad_ver = bytearray(blob)
+    bad_ver[4] = 9
     try:
-        decode(bytes(bad_ver)); assert False
+        decode(bytes(bad_ver))
+        assert False
     except AbiError:
         pass
-    corrupt = bytearray(blob); corrupt[80] ^= 0xFF  # flip a body byte -> CRC fails
+    corrupt = bytearray(blob)
+    corrupt[80] ^= 0xFF  # flip a body byte -> CRC fails
     try:
-        decode(bytes(corrupt)); assert False
+        decode(bytes(corrupt))
+        assert False
     except AbiError:
         pass
 
@@ -246,14 +276,20 @@ def test_decoder_rejects_crc_valid_reserved_fields_and_invalid_utf8():
 
     base = bytearray(encode(_pack()))
     variants = []
-    flags = bytearray(base); struct.pack_into("<H", flags, 6, 1); variants.append(refix(flags))
-    padding = bytearray(base); padding[63] = 1; variants.append(refix(padding))
+    flags = bytearray(base)
+    struct.pack_into("<H", flags, 6, 1)
+    variants.append(refix(flags))
+    padding = bytearray(base)
+    padding[63] = 1
+    variants.append(refix(padding))
 
     stride = bytearray(base)
     pos = _HEADER_SIZE
-    (n,) = struct.unpack_from("<H", stride, pos); pos += 2 + n       # source plan
-    (n,) = struct.unpack_from("<H", stride, pos); pos += 2 + n       # segment name
-    pos += 8 + 4 + 1 + 4                                             # id, phase, lane, width
+    (n,) = struct.unpack_from("<H", stride, pos)
+    pos += 2 + n  # source plan
+    (n,) = struct.unpack_from("<H", stride, pos)
+    pos += 2 + n  # segment name
+    pos += 8 + 4 + 1 + 4  # id, phase, lane, width
     struct.pack_into("<I", stride, pos, 1)
     variants.append(refix(stride))
 

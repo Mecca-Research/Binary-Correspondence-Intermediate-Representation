@@ -12,12 +12,12 @@ from enum import IntEnum
 class Lane(IntEnum):
     """Execution-geometry lane (LangRef Sec. 7) — not a vector hint."""
 
-    U = 0      # unit / constant stride (affine or stride-proven)
-    UX = 1     # cacheline-local indexed
-    T = 2      # tile (e.g. 16x16)
-    GGG = 3    # full gather/scatter (always legal, must be minimized)
-    A = 4      # atomic
-    H = 5      # hazard / provenance / control (barriers, fences)
+    U = 0  # unit / constant stride (affine or stride-proven)
+    UX = 1  # cacheline-local indexed
+    T = 2  # tile (e.g. 16x16)
+    GGG = 3  # full gather/scatter (always legal, must be minimized)
+    A = 4  # atomic
+    H = 5  # hazard / provenance / control (barriers, fences)
 
 
 class StrideClass(IntEnum):

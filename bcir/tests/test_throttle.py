@@ -16,6 +16,7 @@ def _laws(diags):
 
 # --- the amortization inequality -------------------------------------------------
 
+
 def test_l0_prohibition_zero_inference_is_admitted():
     # The hot path carries decisions, not models: an L0 component with zero
     # inference cost is admitted; any nonzero inference at L0 is not.
@@ -32,9 +33,9 @@ def test_component_must_pay_for_itself():
 
 def test_within_budget_is_the_throttle():
     # The L1 budget bounds plan-time inference cost regardless of gain.
-    over = certify("heavy", "L1", inference_cost=TIER_BUDGET["L1"] + 1, gain=10 ** 12)
+    over = certify("heavy", "L1", inference_cost=TIER_BUDGET["L1"] + 1, gain=10**12)
     assert not over.within_budget and not over.admitted
-    ok = certify("light", "L1", inference_cost=TIER_BUDGET["L1"], gain=10 ** 9)
+    ok = certify("light", "L1", inference_cost=TIER_BUDGET["L1"], gain=10**9)
     assert ok.within_budget and ok.admitted
 
 
@@ -50,10 +51,13 @@ def test_unknown_tier_is_not_admitted():
 
 # --- the throttle dashboard ------------------------------------------------------
 
+
 def test_report_renders_and_flags_offenders():
-    certs = [certify("calib", "L1", 10, 4000),
-             certify("gate", "L1", 300, 6000),
-             certify("rogue", "L0", 7, 9000)]
+    certs = [
+        certify("calib", "L1", 10, 4000),
+        certify("gate", "L1", 300, 6000),
+        certify("rogue", "L0", 7, 9000),
+    ]
     rep = ThrottleReport(certs=certs)
     assert not rep.admitted()
     assert [c.component for c in rep.offenders()] == ["rogue"]
@@ -69,10 +73,13 @@ def test_measure_inference_cost_is_positive():
 
 # --- R13: amortization provenance ------------------------------------------------
 
+
 def test_admitted_certificates_satisfy_R13():
-    certs = [certify("lane_promote", "L0", 0, 0),
-             certify("gate", "L1", 300, 6000),
-             certify("search_accel", "L1", 50, 900)]
+    certs = [
+        certify("lane_promote", "L0", 0, 0),
+        certify("gate", "L1", 300, 6000),
+        certify("search_accel", "L1", 50, 900),
+    ]
     assert verify_provenance(None, amortization_certificates=certs) == []
 
 
@@ -87,5 +94,5 @@ def test_nonamortizing_component_is_R13():
 
 
 def test_over_budget_component_is_R13():
-    bad = certify("heavy", "L1", inference_cost=TIER_BUDGET["L1"] + 1, gain=10 ** 12)
+    bad = certify("heavy", "L1", inference_cost=TIER_BUDGET["L1"] + 1, gain=10**12)
     assert "R13" in _laws(verify_provenance(None, amortization_certificates=[bad]))

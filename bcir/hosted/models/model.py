@@ -1,4 +1,5 @@
 """Independent PyTorch Llama reference for the opt-in hosted model laboratory."""
+
 from __future__ import annotations
 
 import math
@@ -9,7 +10,8 @@ try:
     import torch.nn.functional as F
 except ModuleNotFoundError as exc:  # pragma: no cover - exercised by dependency gate
     raise ModuleNotFoundError(
-        "bcir.hosted.models requires the 'model-lab' optional dependencies") from exc
+        "bcir.hosted.models requires the 'model-lab' optional dependencies"
+    ) from exc
 
 from ...frontends.models.decode import DecoderSpec
 
@@ -27,18 +29,17 @@ class HostedRMSNorm(nn.Module):
         return (stable * scale).to(dtype) * self.weight
 
 
-def _rope_cache(length: int, head_dim: int, base: float,
-                device: torch.device, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
+def _rope_cache(
+    length: int, head_dim: int, base: float, device: torch.device, dtype: torch.dtype
+) -> tuple[torch.Tensor, torch.Tensor]:
     half = head_dim // 2
     positions = torch.arange(length, device=device, dtype=torch.float32)
-    frequency = base ** (-2.0 * torch.arange(half, device=device,
-                                            dtype=torch.float32) / head_dim)
+    frequency = base ** (-2.0 * torch.arange(half, device=device, dtype=torch.float32) / head_dim)
     angles = positions[:, None] * frequency[None, :]
     return angles.cos().to(dtype), angles.sin().to(dtype)
 
 
-def _apply_half_rope(values: torch.Tensor, cos: torch.Tensor,
-                     sin: torch.Tensor) -> torch.Tensor:
+def _apply_half_rope(values: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
     """Standard Llama half-split RoPE; BCIR's strict ingest performs its permutation."""
     half = values.shape[-1] // 2
     left, right = values[..., :half], values[..., half:]
@@ -59,23 +60,18 @@ class HostedAttention(nn.Module):
         self.n_kv_heads = spec.kv_heads
         self.head_dim = spec.d_k
 
-    def forward(self, values: torch.Tensor, cos: torch.Tensor,
-                sin: torch.Tensor) -> torch.Tensor:
+    def forward(self, values: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         batch, length, width = values.shape
-        q = self.q_proj(values).view(batch, length, self.n_heads,
-                                    self.head_dim).transpose(1, 2)
-        k = self.k_proj(values).view(batch, length, self.n_kv_heads,
-                                    self.head_dim).transpose(1, 2)
-        v = self.v_proj(values).view(batch, length, self.n_kv_heads,
-                                    self.head_dim).transpose(1, 2)
+        q = self.q_proj(values).view(batch, length, self.n_heads, self.head_dim).transpose(1, 2)
+        k = self.k_proj(values).view(batch, length, self.n_kv_heads, self.head_dim).transpose(1, 2)
+        v = self.v_proj(values).view(batch, length, self.n_kv_heads, self.head_dim).transpose(1, 2)
         q = _apply_half_rope(q, cos, sin)
         k = _apply_half_rope(k, cos, sin)
         if self.n_kv_heads != self.n_heads:
             repeats = self.n_heads // self.n_kv_heads
             k = k.repeat_interleave(repeats, dim=1)
             v = v.repeat_interleave(repeats, dim=1)
-        context = F.scaled_dot_product_attention(
-            q, k, v, dropout_p=0.0, is_causal=True)
+        context = F.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=True)
         context = context.transpose(1, 2).contiguous().view(batch, length, width)
         return self.o_proj(context)
 
@@ -99,8 +95,7 @@ class HostedDecoderLayer(nn.Module):
         self.post_attention_layernorm = HostedRMSNorm(spec.d_model, spec.rms_norm_eps)
         self.mlp = HostedMLP(spec)
 
-    def forward(self, values: torch.Tensor, cos: torch.Tensor,
-                sin: torch.Tensor) -> torch.Tensor:
+    def forward(self, values: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         values = values + self.self_attn(self.input_layernorm(values), cos, sin)
         return values + self.mlp(self.post_attention_layernorm(values))
 
@@ -116,15 +111,19 @@ class HostedBackbone(nn.Module):
 class HostedLlama(nn.Module):
     """Small Llama-family model whose state keys match the strict HF ingest contract."""
 
-    def __init__(self, spec: DecoderSpec, *, activation_checkpointing: bool = False,
-                 context_length: int | None = None):
+    def __init__(
+        self,
+        spec: DecoderSpec,
+        *,
+        activation_checkpointing: bool = False,
+        context_length: int | None = None,
+    ):
         super().__init__()
         if not isinstance(spec, DecoderSpec) or spec.activation != "silu_gate":
             raise ValueError("HostedLlama requires a Llama/SwiGLU DecoderSpec")
         if type(activation_checkpointing) is not bool:
             raise ValueError("activation_checkpointing must be bool")
-        if context_length is not None \
-                and (type(context_length) is not int or context_length < 1):
+        if context_length is not None and (type(context_length) is not int or context_length < 1):
             raise ValueError("context_length must be None or a positive integer")
         self.spec = spec
         self.activation_checkpointing = activation_checkpointing
@@ -155,31 +154,45 @@ class HostedLlama(nn.Module):
         if torch.any(input_ids < 0) or torch.any(input_ids >= self.spec.vocab_size):
             raise ValueError("input token id is outside the vocabulary")
         values = self.model.embed_tokens(input_ids)
-        cos, sin = _rope_cache(input_ids.shape[1], self.spec.d_k, self.spec.rope_base,
-                               values.device, values.dtype)
+        cos, sin = _rope_cache(
+            input_ids.shape[1], self.spec.d_k, self.spec.rope_base, values.device, values.dtype
+        )
         use_checkpoint = self.activation_checkpointing and self.training
         for layer in self.model.layers:
             if use_checkpoint:
                 from torch.utils.checkpoint import checkpoint
+
                 values = checkpoint(layer, values, cos, sin, use_reentrant=False)
             else:
                 values = layer(values, cos, sin)
         return self.model.norm(values)
 
-    def forward(self, input_ids: torch.Tensor, targets: torch.Tensor | None = None,
-                loss_mask: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor | None]:
-        if targets is not None and (targets.shape != input_ids.shape or targets.dtype != torch.long):
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        targets: torch.Tensor | None = None,
+        loss_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        if targets is not None and (
+            targets.shape != input_ids.shape or targets.dtype != torch.long
+        ):
             raise ValueError("targets must be torch.long with the input shape")
         if targets is not None and targets.device != input_ids.device:
             raise ValueError("targets and input_ids must be on the same device")
-        if targets is not None \
-                and (torch.any(targets < 0) or torch.any(targets >= self.spec.vocab_size)):
+        if targets is not None and (
+            torch.any(targets < 0) or torch.any(targets >= self.spec.vocab_size)
+        ):
             raise ValueError("target token id is outside the vocabulary")
         if loss_mask is not None:
-            if targets is None or loss_mask.shape != input_ids.shape \
-                    or loss_mask.dtype not in (torch.bool, torch.float16, torch.float32,
-                                               torch.float64, torch.bfloat16):
-                raise ValueError("loss_mask requires targets and must be bool/float with the input shape")
+            if (
+                targets is None
+                or loss_mask.shape != input_ids.shape
+                or loss_mask.dtype
+                not in (torch.bool, torch.float16, torch.float32, torch.float64, torch.bfloat16)
+            ):
+                raise ValueError(
+                    "loss_mask requires targets and must be bool/float with the input shape"
+                )
             if loss_mask.device != input_ids.device:
                 raise ValueError("loss_mask and input_ids must be on the same device")
             if not torch.isfinite(loss_mask).all() or torch.any(loss_mask < 0):
@@ -190,8 +203,11 @@ class HostedLlama(nn.Module):
         logits = F.linear(values, self.lm_head.weight)
         loss = None
         if targets is not None:
-            losses = F.cross_entropy(logits.float().reshape(-1, self.spec.vocab_size),
-                                     targets.reshape(-1), reduction="none")
+            losses = F.cross_entropy(
+                logits.float().reshape(-1, self.spec.vocab_size),
+                targets.reshape(-1),
+                reduction="none",
+            )
             if loss_mask is None:
                 loss = losses.mean()
             else:
@@ -203,8 +219,9 @@ class HostedLlama(nn.Module):
     def greedy(self, prompt_ids: list[int], max_new: int = 1) -> list[int]:
         if not isinstance(prompt_ids, list) or not prompt_ids:
             raise ValueError("prompt_ids must be a nonempty list")
-        if any(type(token) is not int or not 0 <= token < self.spec.vocab_size
-               for token in prompt_ids):
+        if any(
+            type(token) is not int or not 0 <= token < self.spec.vocab_size for token in prompt_ids
+        ):
             raise ValueError("prompt_ids must contain only in-vocabulary integer IDs")
         if type(max_new) is not int or max_new < 0:
             raise ValueError("max_new must be an integer >= 0")

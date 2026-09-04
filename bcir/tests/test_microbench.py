@@ -24,8 +24,9 @@ AVX = TargetProfile.x86_avx512()
 def test_quantizer_is_pure_and_pinned():
     # Synthetic raw timings: random 32x streaming, strided 1x. The quantizer is
     # deterministic and reproduces the seeded constants at exactly these ratios.
-    raw = MicrobenchRaw(stream_ns=100, strided_ns=100, random_ns=3200,
-                        compute_ns=100, n=1 << 10, repeats=5)
+    raw = MicrobenchRaw(
+        stream_ns=100, strided_ns=100, random_ns=3200, compute_ns=100, n=1 << 10, repeats=5
+    )
     t = calibrate_from_raw(raw, AVX, cal_gen=3)
     assert (t.stream_q8, t.strided_q8, t.random_q8) == (256, 256, 8192)
     assert t.gather_penalty == 32 == AVX.gather_penalty
@@ -59,8 +60,8 @@ def test_apply_is_idempotent_and_data_only():
     t = reference_table()
     h1 = t.apply(AVX)
     h2 = t.apply(h1)
-    assert h1 == h2                      # frozen data in, frozen data out
-    assert AVX.cal_gen == 0              # the seeded profile is untouched
+    assert h1 == h2  # frozen data in, frozen data out
+    assert AVX.cal_gen == 0  # the seeded profile is untouched
 
 
 def test_table_json_round_trips_losslessly():
@@ -85,8 +86,7 @@ def test_table_json_rejects_ambiguous_or_noncanonical_artifacts():
     bad = dict(document)
     bad["unexpected"] = 1
     bad_documents.append(json.dumps(bad))
-    bad_documents.append(table.to_json().replace('"cal_gen": 1',
-                                                  '"cal_gen": 1, "cal_gen": 2'))
+    bad_documents.append(table.to_json().replace('"cal_gen": 1', '"cal_gen": 1, "cal_gen": 2'))
     bad_documents.append(json.dumps({**document, "provenance": "x" * ((1 << 20) + 1)}))
 
     for text in bad_documents:
@@ -106,7 +106,7 @@ def test_calibrated_gather_penalty_reaches_the_planner():
     m = histogram_gather(1024)
     seeded = optimize(m, AVX, Theta.cool()).score
     measured = optimize(m, h, Theta.cool()).score
-    assert measured < seeded             # cheaper gathers re-price the plan
+    assert measured < seeded  # cheaper gathers re-price the plan
 
 
 def test_live_harness_smoke_invariants_only():
@@ -137,11 +137,19 @@ def test_native_microbench_rejects_overflowing_cli_sizes():
     source = os.path.join(root, "runtime", "c", "bcir_microbench.c")
     with tempfile.TemporaryDirectory() as d:
         exe = os.path.join(d, "microbench")
-        build = subprocess.run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror", source, "-o", exe],
-                               capture_output=True, text=True)
+        build = subprocess.run(
+            [cc, "-std=c11", "-Wall", "-Wextra", "-Werror", source, "-o", exe],
+            capture_output=True,
+            text=True,
+        )
         assert build.returncode == 0, build.stderr
-        for argv in (("18446744073709551615", "1", "1"), (str((1 << 24) + 1), "1", "1"),
-                     ("16", "129", "1"), ("16", "1", "-1"), ("16", "-1", "1"),
-                     ("16", "1", "1", "extra")):
+        for argv in (
+            ("18446744073709551615", "1", "1"),
+            (str((1 << 24) + 1), "1", "1"),
+            ("16", "129", "1"),
+            ("16", "1", "-1"),
+            ("16", "-1", "1"),
+            ("16", "1", "1", "extra"),
+        ):
             run = subprocess.run([exe, *argv], capture_output=True, text=True)
             assert run.returncode == 2, (argv, run.stdout, run.stderr)

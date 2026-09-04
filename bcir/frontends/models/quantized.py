@@ -14,6 +14,7 @@ along the float trajectory (teacher-forced, so the two paths are compared on ide
 contexts), and the mean NLL of the float continuation under both models (the perplexity
 proxy). Records are deterministic (same weights, same prompt -> same record), the E3/R17
 posture: measure the drift, never hide it. Cost-side: imports no verifier (two-truth)."""
+
 from __future__ import annotations
 
 import math
@@ -22,8 +23,14 @@ from dataclasses import dataclass
 from ...kbcir.precision import quantization_error_bound
 from ...kbcir.quantize import dequantize, quantize_per_group
 from ...kbcir.unsupervised import EmbeddingTable
-from .decode import (DecoderSpec, DecoderWeights, LayerWeights, decoder_forward_reference,
-                     head_logits, reference_decode)
+from .decode import (
+    DecoderSpec,
+    DecoderWeights,
+    LayerWeights,
+    decoder_forward_reference,
+    head_logits,
+    reference_decode,
+)
 
 
 def _roundtrip(values, group_size: int, bits: int) -> tuple:
@@ -35,23 +42,32 @@ def quantize_decoder_weights(w: DecoderWeights, group_size: int, bits: int) -> D
     are the dequantized values -- shapes unchanged, so `check_decoder_weights` still holds
     and `reference_decode` over them IS the quantized inference artifact."""
     layers = tuple(
-        LayerWeights(g_attn=_roundtrip(lw.g_attn, group_size, bits),
-                     w_q=_roundtrip(lw.w_q, group_size, bits),
-                     w_k=_roundtrip(lw.w_k, group_size, bits),
-                     w_v=_roundtrip(lw.w_v, group_size, bits),
-                     w_o=_roundtrip(lw.w_o, group_size, bits),
-                     g_ff=_roundtrip(lw.g_ff, group_size, bits),
-                     w1=_roundtrip(lw.w1, group_size, bits),
-                     b1=_roundtrip(lw.b1, group_size, bits),
-                     w2=_roundtrip(lw.w2, group_size, bits),
-                     b2=_roundtrip(lw.b2, group_size, bits),
-                     w_gate=_roundtrip(lw.w_gate, group_size, bits))
-        for lw in w.layers)
-    emb = EmbeddingTable(table=_roundtrip(w.embedding.table, group_size, bits),
-                         n_vocab=w.embedding.n_vocab, dim=w.embedding.dim)
-    return DecoderWeights(embedding=emb, layers=layers,
-                          g_final=_roundtrip(w.g_final, group_size, bits),
-                          lm_head=_roundtrip(w.lm_head, group_size, bits))
+        LayerWeights(
+            g_attn=_roundtrip(lw.g_attn, group_size, bits),
+            w_q=_roundtrip(lw.w_q, group_size, bits),
+            w_k=_roundtrip(lw.w_k, group_size, bits),
+            w_v=_roundtrip(lw.w_v, group_size, bits),
+            w_o=_roundtrip(lw.w_o, group_size, bits),
+            g_ff=_roundtrip(lw.g_ff, group_size, bits),
+            w1=_roundtrip(lw.w1, group_size, bits),
+            b1=_roundtrip(lw.b1, group_size, bits),
+            w2=_roundtrip(lw.w2, group_size, bits),
+            b2=_roundtrip(lw.b2, group_size, bits),
+            w_gate=_roundtrip(lw.w_gate, group_size, bits),
+        )
+        for lw in w.layers
+    )
+    emb = EmbeddingTable(
+        table=_roundtrip(w.embedding.table, group_size, bits),
+        n_vocab=w.embedding.n_vocab,
+        dim=w.embedding.dim,
+    )
+    return DecoderWeights(
+        embedding=emb,
+        layers=layers,
+        g_final=_roundtrip(w.g_final, group_size, bits),
+        lm_head=_roundtrip(w.lm_head, group_size, bits),
+    )
 
 
 @dataclass(frozen=True)
@@ -76,7 +92,7 @@ class DriftRecord:
 def _step_logits(ids: list, spec: DecoderSpec, w: DecoderWeights) -> list:
     hfin = decoder_forward_reference(ids, spec, w)
     d = spec.d_model
-    return head_logits(hfin[(len(ids) - 1) * d:len(ids) * d], w)
+    return head_logits(hfin[(len(ids) - 1) * d : len(ids) * d], w)
 
 
 def _nll_of(logits: list, chosen: int) -> float:
@@ -86,8 +102,15 @@ def _nll_of(logits: list, chosen: int) -> float:
     return lse - logits[chosen]
 
 
-def decode_drift_record(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, *,
-                        group_size: int, bits: int, max_new: int) -> DriftRecord:
+def decode_drift_record(
+    prompt_ids: list,
+    spec: DecoderSpec,
+    w: DecoderWeights,
+    *,
+    group_size: int,
+    bits: int,
+    max_new: int,
+) -> DriftRecord:
     """Run the float decoder and its quantized artifact over one deterministic prompt and
     RECORD the drift. Greedy ids come from each path independently (what each artifact
     would actually emit); logit drift and NLL are measured teacher-forced along the float
@@ -98,7 +121,7 @@ def decode_drift_record(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, 
     ctx = list(prompt_ids)
     drift = 0.0
     nll_f = nll_q = 0.0
-    for tok in ids_f32:                                  # the float trajectory, teacher-forced
+    for tok in ids_f32:  # the float trajectory, teacher-forced
         lf = _step_logits(ctx, spec, w)
         lq = _step_logits(ctx, spec, wq)
         drift = max(drift, max(abs(a - b) for a, b in zip(lf, lq)))
@@ -106,7 +129,15 @@ def decode_drift_record(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, 
         nll_q += _nll_of(lq, tok)
         ctx.append(tok)
     n = max(1, len(ids_f32))
-    return DriftRecord(prompt=tuple(prompt_ids), ids_f32=tuple(ids_f32), ids_q=tuple(ids_q),
-                       ids_match=ids_f32 == ids_q, max_logit_drift=drift,
-                       nll_f32=nll_f / n, nll_q=nll_q / n, bits=bits, group_size=group_size,
-                       ulp_bound=quantization_error_bound())
+    return DriftRecord(
+        prompt=tuple(prompt_ids),
+        ids_f32=tuple(ids_f32),
+        ids_q=tuple(ids_q),
+        ids_match=ids_f32 == ids_q,
+        max_logit_drift=drift,
+        nll_f32=nll_f / n,
+        nll_q=nll_q / n,
+        bits=bits,
+        group_size=group_size,
+        ulp_bound=quantization_error_bound(),
+    )

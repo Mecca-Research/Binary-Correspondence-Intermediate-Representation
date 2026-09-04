@@ -8,7 +8,7 @@ def test_hazard_contract_to_ordering():
     assert hazard_to_ordering("unique") == "monotonic"
     assert hazard_to_ordering("atomic") == "acq_rel"
     assert hazard_to_ordering("barriered") == "seq_cst"
-    assert hazard_to_ordering("???") == "seq_cst"          # safe default
+    assert hazard_to_ordering("???") == "seq_cst"  # safe default
     assert set(HAZARD_ORDERING) == {"unique", "atomic", "barriered"}
 
 

@@ -94,8 +94,7 @@ _REQUIRED_GOVERNOR: dict = {
     ParameterKind.ORDERED_VALUE_LIST: GovernorKind.ENCODING_CLASS_FIELD_TYPE,
     ParameterKind.IDENTIFIER: GovernorKind.REFERENCE,
     ParameterKind.ENCODING_OBJECT: GovernorKind.DEFINED_OR_BUILTIN_ENCODING_CLASS,
-    ParameterKind.ORDERED_ENCODING_OBJECT_LIST:
-        GovernorKind.DEFINED_OR_BUILTIN_ENCODING_CLASS,
+    ParameterKind.ORDERED_ENCODING_OBJECT_LIST: GovernorKind.DEFINED_OR_BUILTIN_ENCODING_CLASS,
     ParameterKind.ENCODING_OBJECT_SET: GovernorKind.ENCODINGS,
 }
 
@@ -159,31 +158,39 @@ class Parameter:
                 governor = "no governor" if self.governor is None else self.governor.value
                 raise Asn1Error(
                     f"ECN: C.1 — {governor} stands for no dummy kind, so {self.dummy} "
-                    f"denotes nothing")
+                    f"denotes nothing"
+                )
             return
         required = _REQUIRED_GOVERNOR[self.kind]
         if required is None and self.governor is not None:
             raise Asn1Error(
                 f"ECN: C.1 a) — a dummy standing for an encoding class shall have no "
-                f"ParamGovernor; {self.dummy} declares {self.governor.value}")
+                f"ParamGovernor; {self.dummy} declares {self.governor.value}"
+            )
         if required is not None and self.governor is not required:
             got = "none" if self.governor is None else self.governor.value
             raise Asn1Error(
                 f"ECN: C.1 — a dummy standing for {self.kind.value} shall be governed by "
-                f"{required.value}; {self.dummy} is governed by {got}")
+                f"{required.value}; {self.dummy} is governed by {got}"
+            )
+
     def _check_governor_names(self) -> None:
-        names = self.governor in (GovernorKind.ENCODING_CLASS_FIELD_TYPE,
-                                  GovernorKind.DEFINED_OR_BUILTIN_ENCODING_CLASS,
-                                  GovernorKind.TYPE)
+        names = self.governor in (
+            GovernorKind.ENCODING_CLASS_FIELD_TYPE,
+            GovernorKind.DEFINED_OR_BUILTIN_ENCODING_CLASS,
+            GovernorKind.TYPE,
+        )
         if names and not self.governed_by:
             raise Asn1Error(
                 f"ECN: C.1 — {self.governor.value} is a governor that names something, and "
-                f"{self.dummy} names nothing")
+                f"{self.dummy} names nothing"
+            )
         if not names and self.governed_by:
             governor = "none" if self.governor is None else self.governor.value
             raise Asn1Error(
                 f"ECN: C.1 — {governor} is a keyword governor with nothing to name, and "
-                f"{self.dummy} names {self.governed_by!r}")
+                f"{self.dummy} names {self.governed_by!r}"
+            )
 
     def candidates(self) -> tuple:
         """The kinds this dummy may stand for: one when stated or when its governor is
@@ -212,20 +219,21 @@ class ParameterList:
     def __post_init__(self) -> None:
         if not self.parameters:
             raise Asn1Error(
-                "ECN: C.1 — a ParameterList is `\"{<\" Parameter \",\" + \">}\"`, which is "
-                "one or more; `{<>}` is C.3's empty ACTUAL list and means the opposite")
+                'ECN: C.1 — a ParameterList is `"{<" Parameter "," + ">}"`, which is '
+                "one or more; `{<>}` is C.3's empty ACTUAL list and means the opposite"
+            )
         seen: set[str] = set()
         for parameter in self.parameters:
             if parameter.dummy in seen:
-                raise Asn1Error(
-                    f"ECN: C.1 — {parameter.dummy} appears twice in one ParameterList")
+                raise Asn1Error(f"ECN: C.1 — {parameter.dummy} appears twice in one ParameterList")
             seen.add(parameter.dummy)
         for parameter in self.parameters:
             if parameter.governed_by and parameter.governed_by in seen:
                 raise Asn1Error(
-                    f"ECN: C.1's NOTE — \"DummyGovernors are not allowed in ECN\", and "
+                    f'ECN: C.1\'s NOTE — "DummyGovernors are not allowed in ECN", and '
                     f"{parameter.dummy} is governed by the sibling dummy "
-                    f"{parameter.governed_by}")
+                    f"{parameter.governed_by}"
+                )
 
     def __len__(self) -> int:
         return len(self.parameters)
@@ -256,7 +264,8 @@ class ParameterList:
         parts = []
         for parameter in self.parameters:
             governor = parameter.governed_by or (
-                parameter.governor.value if parameter.governor is not None else "")
+                parameter.governor.value if parameter.governor is not None else ""
+            )
             parts.append(f"{governor}:{parameter.dummy}" if governor else parameter.dummy)
         return "{<" + ", ".join(parts) + ">}"
 
@@ -304,8 +313,12 @@ _ACCEPTED_ACTUALS: dict = {
     ParameterKind.ENCODING_OBJECT: (ActualKind.ENCODING_OBJECT,),
     ParameterKind.ENCODING_OBJECT_SET: (ActualKind.ENCODING_OBJECT_SET,),
     ParameterKind.ORDERED_ENCODING_OBJECT_LIST: (ActualKind.ORDERED_ENCODING_OBJECT_LIST,),
-    ParameterKind.IDENTIFIER: (ActualKind.IDENTIFIER, ActualKind.COMPONENT_ID_LIST,
-                               ActualKind.STRUCTURE, ActualKind.OUTER),
+    ParameterKind.IDENTIFIER: (
+        ActualKind.IDENTIFIER,
+        ActualKind.COMPONENT_ID_LIST,
+        ActualKind.STRUCTURE,
+        ActualKind.OUTER,
+    ),
 }
 
 
@@ -325,7 +338,8 @@ class ActualParameter:
         if keyword and self.text:
             raise Asn1Error(
                 f"ECN: C.4 — {self.kind.value} is a keyword actual and denotes itself; "
-                f"{self.text!r} adds nothing it could mean")
+                f"{self.text!r} adds nothing it could mean"
+            )
         if not keyword and not self.text:
             raise Asn1Error(f"ECN: C.4 — a {self.kind.value} actual parameter needs a value")
         if self.kind is ActualKind.COMPONENT_ID_LIST:
@@ -333,14 +347,16 @@ class ActualParameter:
             parts = self.text.split(".")
             if not all(parts):
                 raise Asn1Error(
-                    f"ECN: §15.3.1 — a ComponentIdList is `identifier \".\" +`; "
-                    f"{self.text!r} has an empty component")
+                    f'ECN: §15.3.1 — a ComponentIdList is `identifier "." +`; '
+                    f"{self.text!r} has an empty component"
+                )
 
     def components(self) -> tuple[str, ...]:
         """The `ComponentIdList`'s path, outermost first."""
         if self.kind is not ActualKind.COMPONENT_ID_LIST:
             raise Asn1Error(
-                f"ECN: {self.kind.value} is not a ComponentIdList and has no component path")
+                f"ECN: {self.kind.value} is not a ComponentIdList and has no component path"
+            )
         return tuple(self.text.split("."))
 
 
@@ -362,8 +378,9 @@ class ActualParameterList:
         return "{<" + ", ".join(a.text or a.kind.value for a in self.actuals) + ">}"
 
 
-def check_actuals(parameters: ParameterList, actuals: ActualParameterList,
-                  *, what: str = "the reference") -> None:
+def check_actuals(
+    parameters: ParameterList, actuals: ActualParameterList, *, what: str = "the reference"
+) -> None:
     """X.683 §9.6 and C.4's a)-h): the actuals fit the dummies, in number and in kind.
 
     Two different faults, named as two, because a specification with the right count and the
@@ -373,17 +390,18 @@ def check_actuals(parameters: ParameterList, actuals: ActualParameterList,
     if len(actuals) != len(parameters):
         raise Asn1Error(
             f"ECN: X.683 9.6 — {what} supplies {len(actuals)} actual parameter(s) to a "
-            f"definition with {len(parameters)} dummy parameter(s)")
+            f"definition with {len(parameters)} dummy parameter(s)"
+        )
     for parameter, actual in zip(parameters.parameters, actuals.actuals):
         candidates = parameter.candidates()
-        accepted = {kind for candidate in candidates
-                    for kind in _ACCEPTED_ACTUALS[candidate]}
+        accepted = {kind for candidate in candidates for kind in _ACCEPTED_ACTUALS[candidate]}
         if actual.kind not in accepted:
             names = " or ".join(sorted(kind.value for kind in accepted))
             stands_for = " or ".join(candidate.value for candidate in candidates)
             raise Asn1Error(
                 f"ECN: C.4 — the dummy {parameter.dummy} stands for {stands_for}, so its "
-                f"actual shall use the {names} alternative; {actual.kind.value} was supplied")
+                f"actual shall use the {names} alternative; {actual.kind.value} was supplied"
+            )
 
 
 # --- C.2: the three parameterized assignments ----------------------------------------------
@@ -435,11 +453,13 @@ class ParameterizedAssignment:
             if not self.governor:
                 raise Asn1Error(
                     f"ECN: C.2 — a ParameterizedEncodingObjectAssignment carries a "
-                    f"DefinedOrBuiltinEncodingClass before its `::=`; {self.name} has none")
+                    f"DefinedOrBuiltinEncodingClass before its `::=`; {self.name} has none"
+                )
         elif self.governor:
             raise Asn1Error(
                 f"ECN: C.2 — only a ParameterizedEncodingObjectAssignment names a governor "
-                f"before its `::=`; {self.name} is a {self.kind.value}")
+                f"before its `::=`; {self.name} is a {self.kind.value}"
+            )
         if self.governor_actuals is None:
             return
         dummies = set(self.parameters.names())
@@ -449,7 +469,8 @@ class ParameterizedAssignment:
             raise Asn1Error(
                 f"ECN: C.2's 8.4 extends a dummy's scope across the `::=` only for a "
                 f"ParameterizedEncodingObjectAssignment; {self.name} is a {self.kind.value} "
-                f"and its governor uses {borrowed}")
+                f"and its governor uses {borrowed}"
+            )
 
     def instantiate(self, actuals: ActualParameterList) -> dict:
         """X.683 §9.7: bind each dummy to its actual, having checked C.4's correspondence.
@@ -542,12 +563,14 @@ class ReplacementParameterization:
         if self.head_end is not None:
             raise Asn1Error(
                 "ECN: §22.1.2.7 — the INSERT AT HEAD encoding structures shall not have "
-                "dummy parameters")
+                "dummy parameters"
+            )
         if self.encoded_by is None:
             if self.insert_at_head:
                 raise Asn1Error(
                     "ECN: §22.1.2.7 — the head-end structure's fields are set by the ENCODED "
-                    "BY object through its REFERENCE parameter, and there is no ENCODED BY")
+                    "BY object through its REFERENCE parameter, and there is no ENCODED BY"
+                )
             return
         self._check_encoded_by()
 
@@ -558,48 +581,57 @@ class ReplacementParameterization:
             raise Asn1Error(
                 f"ECN: §22.1.2.2 — the WITH replacement structures shall be parameterized "
                 f"encoding structures with a single encoding class parameter; this one is "
-                f"parameterized over {written}")
+                f"parameterized over {written}"
+            )
 
     def _check_encoded_by(self) -> None:
         kinds = list(self.encoded_by.kinds())
         if not kinds or kinds[0] is not ParameterKind.ENCODING_CLASS:
             raise Asn1Error(
                 "ECN: §22.1.2.4 — the ENCODED BY objects shall have a dummy parameter (#D) "
-                "that is an encoding class")
+                "that is an encoding class"
+            )
         extra = kinds[1:]
         object_sets = extra.count(ParameterKind.ENCODING_OBJECT_SET)
         references = extra.count(ParameterKind.IDENTIFIER)
         if object_sets > 1:
             raise Asn1Error(
                 "ECN: §22.1.2.5 — an ENCODED BY object may have another (but only one) dummy "
-                f"parameter that is an encoding object set; {object_sets} were declared")
+                f"parameter that is an encoding object set; {object_sets} were declared"
+            )
         if references > 1:
             raise Asn1Error(
                 "ECN: §22.1.2.5 — an ENCODED BY object may have another (but only one) dummy "
-                f"parameter that is a REFERENCE parameter; {references} were declared")
-        unexpected = [("an undetermined kind" if kind is None else kind.value)
-                      for kind in extra
-                      if kind not in (ParameterKind.ENCODING_OBJECT_SET,
-                                      ParameterKind.IDENTIFIER)]
+                f"parameter that is a REFERENCE parameter; {references} were declared"
+            )
+        unexpected = [
+            ("an undetermined kind" if kind is None else kind.value)
+            for kind in extra
+            if kind not in (ParameterKind.ENCODING_OBJECT_SET, ParameterKind.IDENTIFIER)
+        ]
         if unexpected:
             raise Asn1Error(
                 f"ECN: §22.1.2.5 lists the only further dummies an ENCODED BY object may "
-                f"have — one encoding object set and one REFERENCE; {unexpected} is neither")
+                f"have — one encoding object set and one REFERENCE; {unexpected} is neither"
+            )
         if references and not self.insert_at_head:
             raise Asn1Error(
                 "ECN: §22.1.2.5 — the REFERENCE parameter shall be present if and only if "
-                "INSERT AT HEAD is specified, and it is not")
+                "INSERT AT HEAD is specified, and it is not"
+            )
         if self.insert_at_head and not references:
             raise Asn1Error(
                 "ECN: §22.1.2.5 — the REFERENCE parameter shall be present if and only if "
-                "INSERT AT HEAD is specified, and it is")
+                "INSERT AT HEAD is specified, and it is"
+            )
         self._check_governor()
 
     def _check_governor(self) -> None:
         if self.governor_actuals is None:
             raise Asn1Error(
                 "ECN: §22.1.2.4 — the ENCODED BY object's governor is the corresponding WITH "
-                "structure instantiated with #D; this assignment instantiates it with nothing")
+                "structure instantiated with #D; this assignment instantiates it with nothing"
+            )
         dummy = self.encoded_by.names()[0]
         supplied = tuple(actual.text for actual in self.governor_actuals.actuals)
         if supplied != (dummy,):
@@ -607,7 +639,8 @@ class ReplacementParameterization:
             raise Asn1Error(
                 f"ECN: §22.1.2.4 — the governor shall be the WITH structure instantiated "
                 f"with {dummy}, the object's own encoding class dummy; it is instantiated "
-                f"with {written}")
+                f"with {written}"
+            )
 
     def takes_object_set(self) -> bool:
         """§22.1.2.5's optional object-set dummy, whose actual is "the current combined
@@ -631,7 +664,8 @@ def bare_use(reference: ParameterizedReference, *, clause: str) -> str:
     if reference.actuals is not None:
         raise Asn1Error(
             f"ECN: {clause} — only the name shall be given here, with no parameter list; "
-            f"{reference.render()} has one")
+            f"{reference.render()} has one"
+        )
     return reference.name
 
 
@@ -664,7 +698,8 @@ def resolve_component(structure: dict, path: tuple[str, ...]) -> tuple[str, ...]
         raise Asn1Error(
             f"ECN: §17.5.16 — the first identifier of a ComponentIdList shall be that of a "
             f"textually present NamedType of the de-referenced governor; {path[0]!r} is not "
-            f"present at any level of nesting")
+            f"present at any level of nesting"
+        )
     resolved = list(first)
     cursor = structure
     for step in first:
@@ -675,7 +710,8 @@ def resolve_component(structure: dict, path: tuple[str, ...]) -> tuple[str, ...]
         if not isinstance(cursor, dict) or step not in cursor:
             raise Asn1Error(
                 f"ECN: §17.5.18 — {step!r} shall be an identifier in a NamedType of the "
-                f"structure identified by {'.'.join(resolved)}, and it is not")
+                f"structure identified by {'.'.join(resolved)}, and it is not"
+            )
         cursor = cursor[step]
         resolved.append(step)
     return tuple(resolved)
@@ -697,8 +733,19 @@ def _breadth_first(structure: dict, wanted: str) -> tuple[str, ...] | None:
 
 
 __all__ = [
-    "ActualKind", "ActualParameter", "ActualParameterList", "AssignmentKind", "GovernorKind",
-    "Parameter", "ParameterKind", "ParameterList", "ParameterizedAssignment",
-    "ParameterizedReference", "ReplacementParameterization", "bare_use", "check_actuals",
-    "kinds_for", "resolve_component",
+    "ActualKind",
+    "ActualParameter",
+    "ActualParameterList",
+    "AssignmentKind",
+    "GovernorKind",
+    "Parameter",
+    "ParameterKind",
+    "ParameterList",
+    "ParameterizedAssignment",
+    "ParameterizedReference",
+    "ReplacementParameterization",
+    "bare_use",
+    "check_actuals",
+    "kinds_for",
+    "resolve_component",
 ]

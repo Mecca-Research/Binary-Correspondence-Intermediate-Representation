@@ -123,8 +123,13 @@ def _alias_params(claim) -> str:
     return ", ".join(parts) + ", i64 %n"
 
 
-def emit_kernel_ll(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel",
-                   elem: str = "f32", width_override: int | None = None) -> str:
+def emit_kernel_ll(
+    module: Module,
+    result: RealizationResult,
+    fn_name: str = "bcir_kernel",
+    elem: str = "f32",
+    width_override: int | None = None,
+) -> str:
     """Emit a legal LLVM IR kernel. `elem` is "f32" (float) or "i32" (integer, e.g.
     for FP-less targets like eBPF); `width_override` forces a vector/scalar width."""
     claim, cand = _find_elementwise(module, result)
@@ -142,7 +147,7 @@ def emit_kernel_ll(module: Module, result: RealizationResult, fn_name: str = "bc
     head = (
         f"; BCIR -> LLVM IR (legal-IR-only). op={claim.op or op_ll} "
         f"lane={cand.lane.name} width={w} elem={ety} (K_BCIR-selected; candidate={cand.name})\n"
-        f"source_filename = \"bcir.{module.name}.ll\"\n\n"
+        f'source_filename = "bcir.{module.name}.ll"\n\n'
     )
 
     if w == 1:
@@ -244,8 +249,7 @@ def compile_and_run(
             f.write(emit_kernel_ll(module, result, fn_name))
         with open(cc, "w") as f:
             f.write(emit_harness_c(module, result, fn_name))
-        build = subprocess.run([clang, "-O2", cc, ll, "-o", exe],
-                               capture_output=True, text=True)
+        build = subprocess.run([clang, "-O2", cc, ll, "-o", exe], capture_output=True, text=True)
         if build.returncode != 0:
             return False, "clang build failed:\n" + build.stdout + build.stderr
         run = subprocess.run([exe], capture_output=True, text=True)
@@ -254,4 +258,5 @@ def compile_and_run(
     finally:
         if created:
             import shutil
+
             shutil.rmtree(workdir, ignore_errors=True)

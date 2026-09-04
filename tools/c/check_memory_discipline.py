@@ -41,7 +41,9 @@ def read_manifest(errors: list[str]) -> dict[str, str]:
 
 
 def public_value_struct(text: str, name: str) -> str:
-    match = re.search(rf"typedef struct {re.escape(name)}\s*\{{(.*?)\}}\s*{re.escape(name)}\s*;", text, re.S)
+    match = re.search(
+        rf"typedef struct {re.escape(name)}\s*\{{(.*?)\}}\s*{re.escape(name)}\s*;", text, re.S
+    )
     return match.group(1) if match else ""
 
 
@@ -57,7 +59,9 @@ def main() -> int:
         fail(errors, MANIFEST, f"classification names missing file {name}")
 
     heap_call = re.compile(r"(?<![-\w\"])(?:malloc|calloc|realloc|free)\s*\(")
-    hosted_api = re.compile(r'#\s*include\s*[<"](?:stdio|stdlib|string)\.h[>"]|\bFILE\b|\bfopen\s*\(')
+    hosted_api = re.compile(
+        r'#\s*include\s*[<"](?:stdio|stdlib|string)\.h[>"]|\bFILE\b|\bfopen\s*\('
+    )
     for name, category in entries.items():
         path = C_DIR / name
         if not path.exists():
@@ -98,7 +102,9 @@ def main() -> int:
 
     channel_header = (C_DIR / "bcir_runtime_channel.h").read_text(encoding="utf-8")
     for struct_name in (
-        "bcir_channel_handle", "bcir_channel_mapping", "bcir_channel_submission",
+        "bcir_channel_handle",
+        "bcir_channel_mapping",
+        "bcir_channel_submission",
         "bcir_channel_event",
     ):
         body = public_value_struct(channel_header, struct_name)
@@ -111,9 +117,15 @@ def main() -> int:
             fail(errors, C_DIR / "bcir_runtime_channel.h", f"missing explicit ring policy {token}")
 
     driver_code = without_comments((C_DIR / "bcir_runtime_channel.c").read_text(encoding="utf-8"))
-    deferred_ipc = re.compile(r"\b(?:memfd_create|eventfd|epoll_|io_uring|shm_open|msgget|mq_open)\b|<sys/socket\.h>")
+    deferred_ipc = re.compile(
+        r"\b(?:memfd_create|eventfd|epoll_|io_uring|shm_open|msgget|mq_open)\b|<sys/socket\.h>"
+    )
     if deferred_ipc.search(driver_code):
-        fail(errors, C_DIR / "bcir_runtime_channel.c", "Linux IPC entered before the direct driver ABI stabilized")
+        fail(
+            errors,
+            C_DIR / "bcir_runtime_channel.c",
+            "Linux IPC entered before the direct driver ABI stabilized",
+        )
 
     ownership_headers = {
         "bcir_ai_kernels.h": ("borrowed", "must not overlap", "allocate no memory"),

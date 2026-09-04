@@ -17,6 +17,7 @@ Honest by construction:
     BCIR_BAREMETAL=1 python tools/perf/check_budgets.py # also enforce the perf floors
     python tools/perf/check_budgets.py --trend build/perf/trend.jsonl
 """
+
 from __future__ import annotations
 
 import argparse
@@ -47,23 +48,23 @@ def _cases():
     Imported late so the lowering path only loads when timing."""
     from bcir.bench import compare, compare_gather, compare_reduce, compare_strided
 
-    def dense_stream():                                    # doc: dense streaming 0.98x (match)
+    def dense_stream():  # doc: dense streaming 0.98x (match)
         c = compare("vector_add", opt="-O2", n=1 << 20, reps=30)
         return _Norm(c.bcir, c.baseline, c.speedup_milli)
 
-    def dense_l1():                                        # doc: dense L1-resident 1.00x (match)
-        c = compare("vector_add", opt="-O2", n=1 << 12, reps=200)   # small n stays L1-resident
+    def dense_l1():  # doc: dense L1-resident 1.00x (match)
+        c = compare("vector_add", opt="-O2", n=1 << 12, reps=200)  # small n stays L1-resident
         return _Norm(c.bcir, c.baseline, c.speedup_milli)
 
-    def gather():                                          # doc: gather avoidance 6.0x
+    def gather():  # doc: gather avoidance 6.0x
         c = compare_gather("vector_add", opt="-O2", n=1 << 18, reps=30, shuffle=True)
         return _Norm(c.direct, c.gather, c.speedup_milli)
 
-    def reduce():                                          # doc: reduction order 14.1x
+    def reduce():  # doc: reduction order 14.1x
         c = compare_reduce("gather_reduce", opt="-O2", n=1 << 18, reps=20)
         return _Norm(c.blocked, c.gather, c.speedup_milli)
 
-    def strided():                                         # doc: strided access 1.33x
+    def strided():  # doc: strided access 1.33x
         c = compare_strided("saxpy_strided", opt="-O2", n=1 << 20, reps=20)
         return _Norm(c.blocked, c.gather, c.speedup_milli)  # direct strided vs the gather form
 
@@ -81,38 +82,52 @@ def _cases():
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--trend", default=os.path.join(ROOT, "build", "perf", "trend.jsonl"),
-                    help="append a provenance-tagged measurement per budget to this JSONL log")
+    ap.add_argument(
+        "--trend",
+        default=os.path.join(ROOT, "build", "perf", "trend.jsonl"),
+        help="append a provenance-tagged measurement per budget to this JSONL log",
+    )
     args = ap.parse_args()
 
     from bcir.bench import bench_available
+
     if not bench_available():
-        sys.stderr.write("[check_budgets] no C compiler (clang/cc/gcc) — skipping the measured "
-                         "gate. Run under the silicon-degrade/thorough tier or on a build host.\n")
+        sys.stderr.write(
+            "[check_budgets] no C compiler (clang/cc/gcc) — skipping the measured "
+            "gate. Run under the silicon-degrade/thorough tier or on a build host.\n"
+        )
         return 0
 
     bare = is_baremetal()
-    sys.stderr.write(f"[check_budgets] baremetal={bare} "
-                     f"({'enforcing' if bare else 'waiving'} perf floors; correctness + "
-                     f"measurement validity are strict either way)\n")
+    sys.stderr.write(
+        f"[check_budgets] baremetal={bare} "
+        f"({'enforcing' if bare else 'waiving'} perf floors; correctness + "
+        f"measurement validity are strict either way)\n"
+    )
     failed = 0
     for budget, thunk in _cases():
         res = evaluate(thunk(), budget, baremetal=bare)
         record_trend(res, args.trend)
         mark = "ok " if res.ok else "FAIL"
         ref = f" (doc {res.reference_milli / 1000:.2f}x)" if res.reference_milli else ""
-        sys.stderr.write(f"  [{mark}] {res.name:<18} {res.speedup_milli / 1000:.2f}x{ref} "
-                         f"ns/call={res.ns_per_call}"
-                         f"{' waived=' + str(list(res.waived)) if res.waived else ''}\n")
+        sys.stderr.write(
+            f"  [{mark}] {res.name:<18} {res.speedup_milli / 1000:.2f}x{ref} "
+            f"ns/call={res.ns_per_call}"
+            f"{' waived=' + str(list(res.waived)) if res.waived else ''}\n"
+        )
         for why in res.reasons:
             sys.stderr.write(f"        - {why}\n")
         failed += not res.ok
 
-    sys.stderr.write(f"[check_budgets] continuous trend log: {args.trend} "
-                     f"(gather samples: {trend_summary(args.trend, 'gather avoidance').get('count', 0)})\n")
+    sys.stderr.write(
+        f"[check_budgets] continuous trend log: {args.trend} "
+        f"(gather samples: {trend_summary(args.trend, 'gather avoidance').get('count', 0)})\n"
+    )
     if failed:
-        sys.stderr.write(f"[check_budgets] {failed} budget(s) failed a STRICT (correctness / "
-                         f"measurement-validity) check.\n")
+        sys.stderr.write(
+            f"[check_budgets] {failed} budget(s) failed a STRICT (correctness / "
+            f"measurement-validity) check.\n"
+        )
         return 1
     return 0
 

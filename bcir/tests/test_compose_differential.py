@@ -13,7 +13,7 @@ is the property net under both the oracle and -- by construction equality -- the
 import random
 
 from bcir.kbcir import TARGETS
-from bcir.kbcir.compose import (Call, Cond, Function, Leaf, Seq, plan_composite, summarize)
+from bcir.kbcir.compose import Call, Cond, Function, Leaf, Seq, plan_composite, summarize
 from bcir.kbcir.cost import Theta
 from bcir.kbcir.rcsp import Budget, Infeasible
 from bcir.model import Claim, Domain, Lane, Opcode, Resource, StrideClass
@@ -37,10 +37,17 @@ class _Gen:
         self.cid += 1
         op, opc = self.rng.choice(_OPS)
         a, b, c = self.rng.sample(range(64), 3)
-        return Claim(id=self.cid, opcode=opc, lane=Lane.U,
-                     stride_class=self.rng.choice(_STRIDES),
-                     count=self.rng.choice((256, 1024, 4096)), rd=(a, b), wr=(c,),
-                     op=op, domain=Domain.RAM)
+        return Claim(
+            id=self.cid,
+            opcode=opc,
+            lane=Lane.U,
+            stride_class=self.rng.choice(_STRIDES),
+            count=self.rng.choice((256, 1024, 4096)),
+            rd=(a, b),
+            wr=(c,),
+            op=op,
+            domain=Domain.RAM,
+        )
 
     def leaf(self) -> Leaf:
         return Leaf(tuple(self.claim() for _ in range(self.rng.randint(1, 3))))
@@ -48,13 +55,16 @@ class _Gen:
     def region(self, funcs, depth: int = 0):
         if depth >= 3 or self.rng.random() < 0.45:
             if funcs and self.rng.random() < 0.3:
-                return Call(self.rng.choice(list(funcs)), ())   # empty arg_map -> formals
+                return Call(self.rng.choice(list(funcs)), ())  # empty arg_map -> formals
             return self.leaf()
         if self.rng.random() < 0.5:
-            return Seq(tuple(self.region(funcs, depth + 1)
-                             for _ in range(self.rng.randint(1, 3))))
-        return Cond("p", self.region(funcs, depth + 1), self.region(funcs, depth + 1),
-                    prob_then_milli=self.rng.randint(0, 1000))
+            return Seq(tuple(self.region(funcs, depth + 1) for _ in range(self.rng.randint(1, 3))))
+        return Cond(
+            "p",
+            self.region(funcs, depth + 1),
+            self.region(funcs, depth + 1),
+            prob_then_milli=self.rng.randint(0, 1000),
+        )
 
 
 def test_compose_metamorphic_laws_hold_over_generated_region_trees():

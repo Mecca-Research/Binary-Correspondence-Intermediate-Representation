@@ -24,11 +24,22 @@ is hidden (the quick tier), exactly like the inference / activation / fusion tes
 import random
 import shutil
 
-from bcir.kbcir.autodiff import (Tape, evaluate, finite_difference_grad, grad,
-                                 gradients_match, max_grad_error)
-from bcir.lower.autodiff_kernel import (compile_and_run_grad_c, compile_and_run_training_c,
-                                        emit_autodiff_kernel_c, emit_sgd_step_c, emit_train_step_c,
-                                        oracle_train)
+from bcir.kbcir.autodiff import (
+    Tape,
+    evaluate,
+    finite_difference_grad,
+    grad,
+    gradients_match,
+    max_grad_error,
+)
+from bcir.lower.autodiff_kernel import (
+    compile_and_run_grad_c,
+    compile_and_run_training_c,
+    emit_autodiff_kernel_c,
+    emit_sgd_step_c,
+    emit_train_step_c,
+    oracle_train,
+)
 
 
 def _cc():
@@ -36,6 +47,7 @@ def _cc():
 
 
 # --- the emit: valid C, the closed primitive set, the ABI, the attestation comment ----------------
+
 
 def test_emit_has_the_signature_attestation_and_is_self_contained():
     t = Tape()
@@ -48,18 +60,20 @@ def test_emit_has_the_signature_attestation_and_is_self_contained():
     assert "G6 autodiff forward+backward kernel" in src and "Pillar 5b" in src
     assert "reverse-mode" in src and "_BACKWARD rule" in src
     assert "closed set" in src and "neg/add/sub/mul/div/dot/select" in src
-    assert "NOT a full" in src and "optimizer" in src           # the honest depth boundary
+    assert "NOT a full" in src and "optimizer" in src  # the honest depth boundary
     # self-contained: only <stddef.h>, no libm (the closed primitive set is purely arithmetic).
     assert "#include <stddef.h>" in src and "math.h" not in src
     # the forward temporaries and the seeded output adjoint are present.
-    assert "value_out[0] = v" in src and "= 1.0f;" in src       # the output adjoint seed d(out)/d(out)=1
+    assert "value_out[0] = v" in src and "= 1.0f;" in src  # the output adjoint seed d(out)/d(out)=1
 
 
 def test_emit_is_deterministic():
     t = Tape()
     a, b = t.var("a"), t.var("b")
     f = t.div(t.mul(a, a), t.add(b, t.const(1.0)))
-    assert emit_autodiff_kernel_c(t, f, ("a", "b"), "g") == emit_autodiff_kernel_c(t, f, ("a", "b"), "g")
+    assert emit_autodiff_kernel_c(t, f, ("a", "b"), "g") == emit_autodiff_kernel_c(
+        t, f, ("a", "b"), "g"
+    )
 
 
 def test_out_of_set_op_is_rejected_deterministically():
@@ -69,6 +83,7 @@ def test_out_of_set_op_is_rejected_deterministically():
     f = t.mul(a, a)
     # forge a node with an unsupported op by reaching into the store (the closure boundary the oracle pins).
     from bcir.kbcir.autodiff import Node
+
     bogus = len(t._nodes)
     t._nodes.append(Node(bogus, "foreign", (f,), None, ("foreign", None, (f,))))
     try:
@@ -101,15 +116,18 @@ def test_unreachable_param_has_zero_gradient():
     # unused-input rule), not an error.
     t = Tape()
     a, b = t.var("a"), t.var("b")
-    f = t.mul(a, a)                                             # b never reaches f
+    f = t.mul(a, a)  # b never reaches f
     src = emit_autodiff_kernel_c(t, f, ("a", "b"))
-    assert "grad_out[1] = 0.0f;" in src                        # b's gradient is the zero literal
+    assert "grad_out[1] = 0.0f;" in src  # b's gradient is the zero literal
     cc = _cc()
     if not cc:
         return
     ok, value, grads, out = compile_and_run_grad_c(t, f, ("a", "b"), {"a": 3.0, "b": 99.0})
     assert ok, out
-    assert grads[1] == 0.0 and abs(grads[0] - 6.0) < 1e-5, (grads, out)   # d(a*a)/da = 2a = 6, d/db = 0
+    assert grads[1] == 0.0 and abs(grads[0] - 6.0) < 1e-5, (
+        grads,
+        out,
+    )  # d(a*a)/da = 2a = 6, d/db = 0
 
 
 def test_degenerate_dags_emit_warning_free_and_correct():
@@ -123,7 +141,7 @@ def test_degenerate_dags_emit_warning_free_and_correct():
     t2 = Tape()
     x = t2.var("x")
     bare = emit_autodiff_kernel_c(t2, x, ("x",))
-    assert "= 1.0f;" in bare                                    # the output adjoint seed feeds grad_out
+    assert "= 1.0f;" in bare  # the output adjoint seed feeds grad_out
     cc = _cc()
     if not cc:
         return
@@ -136,7 +154,7 @@ def test_degenerate_dags_emit_warning_free_and_correct():
 def test_sgd_step_emit():
     src = emit_sgd_step_c(3, "sgd")
     assert "void sgd(float *params, const float *grad, float lr)" in src
-    assert "params[i] -= lr * grad[i];" in src                  # the deployable update primitive
+    assert "params[i] -= lr * grad[i];" in src  # the deployable update primitive
     assert "minimal SGD weight-update step" in src
     try:
         emit_sgd_step_c(0)
@@ -151,10 +169,13 @@ def test_train_step_bundles_grad_sgd_and_wiring():
     f = t.mul(a, a)
     src = emit_train_step_c(t, f, ("a",), fn_name="step")
     assert "void step(float *params, float lr, float *value_out)" in src
-    assert "bcir_grad(params, value_out, grad);" in src and "bcir_sgd_step(params, grad, lr);" in src
+    assert (
+        "bcir_grad(params, value_out, grad);" in src and "bcir_sgd_step(params, grad, lr);" in src
+    )
 
 
 # --- the gate that matters: compiled-C grad == oracle grad == finite-difference grad --------------
+
 
 def _check_parity(t, f, params, env, tol=1e-4):
     """Compile+run the grad kernel at ``env`` and assert the C value+grads match the oracle reverse-mode
@@ -167,8 +188,8 @@ def _check_parity(t, f, params, env, tol=1e-4):
     cgrad = {name: grads[i] for i, name in enumerate(params)}
     e_oracle = max_grad_error(cgrad, oref.grads)
     e_fd = max_grad_error(cgrad, fd)
-    assert e_oracle < tol, (cgrad, oref.grads, out)             # C == oracle reverse-mode grad
-    assert e_fd < tol, (cgrad, fd, out)                         # C == finite-difference grad
+    assert e_oracle < tol, (cgrad, oref.grads, out)  # C == oracle reverse-mode grad
+    assert e_fd < tol, (cgrad, fd, out)  # C == finite-difference grad
     assert gradients_match(cgrad, oref.grads) and gradients_match(cgrad, fd)
     return e_oracle, e_fd
 
@@ -176,12 +197,14 @@ def _check_parity(t, f, params, env, tol=1e-4):
 def test_grad_kernel_matches_oracle_and_fd_on_a_polynomial():
     cc = _cc()
     if not cc:
-        return                                                  # quick tier hides the toolchain -> self-skip
+        return  # quick tier hides the toolchain -> self-skip
     # f = a*a*b + a*b*b - 3*a + 7  (neg/add/sub/mul/const).
     t = Tape()
     a, b = t.var("a"), t.var("b")
-    f = t.add(t.sub(t.add(t.mul(t.mul(a, a), b), t.mul(a, t.mul(b, b))), t.mul(t.const(3.0), a)),
-              t.const(7.0))
+    f = t.add(
+        t.sub(t.add(t.mul(t.mul(a, a), b), t.mul(a, t.mul(b, b))), t.mul(t.const(3.0), a)),
+        t.const(7.0),
+    )
     _check_parity(t, f, ("a", "b"), {"a": 1.5, "b": -0.7})
 
 
@@ -253,7 +276,9 @@ def test_grad_kernel_fuzz_matches_oracle_and_fd():
     names = ["a", "b", "c"]
     for _ in range(8):
         t = Tape()
-        leaves = [t.var(n) for n in names] + [t.const(round(rng.uniform(-2, 2), 3)) for _ in range(2)]
+        leaves = [t.var(n) for n in names] + [
+            t.const(round(rng.uniform(-2, 2), 3)) for _ in range(2)
+        ]
         pool = list(leaves)
         for _ in range(rng.randint(4, 9)):
             op = rng.choice(["add", "sub", "mul", "div", "neg"])
@@ -262,7 +287,7 @@ def test_grad_kernel_fuzz_matches_oracle_and_fd():
             else:
                 x, y = rng.choice(pool), rng.choice(pool)
                 if op == "div":
-                    pool.append(t.div(x, y))                    # the point is chosen to keep |denom| away from 0
+                    pool.append(t.div(x, y))  # the point is chosen to keep |denom| away from 0
                 else:
                     pool.append(getattr(t, op)(x, y))
         f = pool[-1]
@@ -277,12 +302,13 @@ def test_grad_kernel_fuzz_matches_oracle_and_fd():
 
 # --- the SGD training loop: it strictly reduces a loss, and the C loop matches the oracle ----------
 
+
 def _linear_regression_tape():
     """A tiny linear-regression loss tape: fit y = w*x + b over points on y = 2x + 1, loss = sum (pred-y)^2.
     Returns (tape, loss_node, params). The baked data are consts; w, b are the parameters."""
     t = Tape()
     w, b = t.var("w"), t.var("b")
-    data = [(1.0, 3.0), (2.0, 5.0), (3.0, 7.0), (4.0, 9.0)]     # y = 2x + 1
+    data = [(1.0, 3.0), (2.0, 5.0), (3.0, 7.0), (4.0, 9.0)]  # y = 2x + 1
     loss = t.const(0.0)
     for xi, yi in data:
         err = t.sub(t.add(t.mul(w, t.const(xi)), b), t.const(yi))
@@ -293,7 +319,7 @@ def _linear_regression_tape():
 def test_oracle_training_loop_strictly_decreases_the_loss():
     t, loss, params = _linear_regression_tape()
     losses, final = oracle_train(t, loss, params, {"w": 0.0, "b": 0.0}, lr=0.01, steps=20)
-    assert all(b < a for a, b in zip(losses, losses[1:])), losses   # strictly decreasing
+    assert all(b < a for a, b in zip(losses, losses[1:])), losses  # strictly decreasing
     assert losses[-1] < losses[0]
     # SGD drives w,b toward the true (2, 1); after 20 steps it is closing in (not asserting convergence).
     assert abs(final["w"] - 2.0) < abs(0.0 - 2.0) and abs(final["b"] - 1.0) < abs(0.0 - 1.0)
@@ -314,7 +340,10 @@ def test_compiled_c_training_loop_decreases_the_loss_and_matches_the_oracle():
     assert len(losses_c) == len(losses_o)
     assert max(abs(a - b) for a, b in zip(losses_o, losses_c)) < 1e-3, (losses_o, losses_c, out)
     # the final fitted parameters agree too.
-    assert abs(fparams[0] - final_o["w"]) < 1e-3 and abs(fparams[1] - final_o["b"]) < 1e-3, (fparams, final_o)
+    assert abs(fparams[0] - final_o["w"]) < 1e-3 and abs(fparams[1] - final_o["b"]) < 1e-3, (
+        fparams,
+        final_o,
+    )
 
 
 def test_compiled_c_training_loop_on_a_select_mlp_cell_decreases_and_matches():
@@ -329,12 +358,12 @@ def test_compiled_c_training_loop_on_a_select_mlp_cell_decreases_and_matches():
     loss = t.const(0.0)
     for xi, yi in data:
         pre = t.mul(w, t.const(xi))
-        h = t.select(pre, pre, t.const(0.0))                   # relu-ish gate on the pre-activation
+        h = t.select(pre, pre, t.const(0.0))  # relu-ish gate on the pre-activation
         err = t.sub(h, t.const(yi))
         loss = t.add(loss, t.mul(err, err))
     env, lr, steps = {"w": 0.0}, 0.02, 15
     losses_o, _ = oracle_train(t, loss, ("w",), env, lr, steps)
     ok, losses_c, _, out = compile_and_run_training_c(t, loss, ("w",), env, lr, steps)
     assert ok, out
-    assert losses_c[-1] <= losses_c[0]                          # non-increasing (a gated cell can plateau)
+    assert losses_c[-1] <= losses_c[0]  # non-increasing (a gated cell can plateau)
     assert max(abs(a - b) for a, b in zip(losses_o, losses_c)) < 1e-3, (losses_o, losses_c, out)

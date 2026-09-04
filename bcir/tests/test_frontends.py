@@ -54,9 +54,11 @@ def test_map_frontend_emits_verified_claims():
 def test_rop_resource_resolution_is_per_parse_not_process_global():
     import bcir.frontends.rop as rop
 
-    second = (_ROP.replace("rid 10 domain", "rid 110 domain")
-              .replace("rid 11 domain", "rid 111 domain")
-              .replace("rid 12 domain", "rid 112 domain"))
+    second = (
+        _ROP.replace("rid 10 domain", "rid 110 domain")
+        .replace("rid 11 domain", "rid 111 domain")
+        .replace("rid 12 domain", "rid 112 domain")
+    )
     rendezvous = threading.Barrier(2)
     original = rop._P.parse
 
@@ -96,9 +98,7 @@ def test_declarative_frontends_reject_ambiguous_or_silent_defaults():
     bad_rop = (
         _ROP.replace("op add", "op telepathy"),
         _ROP.replace("reads A B", "reads A MISSING"),
-        _ROP.replace("phase 0 {", "phase 0 {", 1).replace(
-            "\n  }\n}", "\n  }\n  phase 0 { }\n}", 1
-        ),
+        _ROP.replace("phase 0 {", "phase 0 {", 1).replace("\n  }\n}", "\n  }\n  phase 0 { }\n}", 1),
         _ROP + " trailing",
         _ROP.replace("count 1024 lane", "count 1024 count 3 lane"),
     )

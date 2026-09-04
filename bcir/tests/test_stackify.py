@@ -21,8 +21,11 @@ def _expr():
 def test_stackify_is_postfix():
     ops = stackify(_expr())
     assert [(o.kind, o.arg) for o in ops] == [
-        ("local_get", 0), ("local_get", 1), ("add", None),
-        ("local_get", 2), ("mul", None),
+        ("local_get", 0),
+        ("local_get", 1),
+        ("add", None),
+        ("local_get", 2),
+        ("mul", None),
     ]
 
 

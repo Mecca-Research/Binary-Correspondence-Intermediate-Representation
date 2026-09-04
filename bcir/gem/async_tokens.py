@@ -18,7 +18,7 @@ from .concurrency import _conflict_predecessors, _topo_phase_ids
 
 @dataclass
 class AsyncPlan:
-    forks: list[int] = field(default_factory=list)          # claim ids launched async
+    forks: list[int] = field(default_factory=list)  # claim ids launched async
     awaits: dict[int, list[int]] = field(default_factory=dict)  # claim id -> awaited claim ids
 
     def is_independent(self, claim_id: int) -> bool:

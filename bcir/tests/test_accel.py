@@ -32,9 +32,18 @@ def _multi(n_claims=3):
         a, b, c = 10 * (k + 1), 10 * (k + 1) + 1, 10 * (k + 1) + 2
         for rid in (a, b, c):
             m.add_resource(Resource(rid=rid, shape=(1024,)))
-        claims.append(Claim(id=k + 1, opcode=Opcode.ADD, lane=Lane.U,
-                            stride_class=StrideClass.UNIT, count=1024,
-                            rd=(a, b), wr=(c,), op="vector.add"))
+        claims.append(
+            Claim(
+                id=k + 1,
+                opcode=Opcode.ADD,
+                lane=Lane.U,
+                stride_class=StrideClass.UNIT,
+                count=1024,
+                rd=(a, b),
+                wr=(c,),
+                op="vector.add",
+            )
+        )
     m.add_phase(Phase(phase_id=0, claims=claims))
     return m
 
@@ -44,6 +53,7 @@ def _laws(diags):
 
 
 # --- exactness: the optimum is invariant to candidate order (the safety law) -----
+
 
 def test_ordered_search_matches_the_exact_optimum_everywhere():
     for name, build in PROGRAMS.items():
@@ -67,7 +77,7 @@ def test_exactness_holds_under_a_budget():
     b = Budget.of(thermal=700)
     exact = optimize_constrained(m, AVX, COOL, PERF, b).score
     fast, _ = optimize_ordered(m, AVX, COOL, PERF, b, greedy_order)
-    assert fast.score == exact == 9472          # the RCSP budgeted optimum (vec8)
+    assert fast.score == exact == 9472  # the RCSP budgeted optimum (vec8)
 
 
 def test_a_bad_order_still_returns_the_exact_optimum():
@@ -87,13 +97,14 @@ def test_returned_plan_is_legal_and_optimal():
 
 # --- acceleration: good ordering finds the optimum first and prunes more ---------
 
+
 def test_good_order_finds_the_optimum_first():
     m = _multi(3)
     exact = optimize_constrained(m, AVX, COOL).score
     _, gs = optimize_ordered(m, AVX, COOL, order=greedy_order)
     _, ws = optimize_ordered(m, AVX, COOL, order=worst_order)
-    assert gs.first_complete_cost == exact          # greedy nails it immediately
-    assert ws.first_complete_cost > exact           # worst surfaces a bad plan first
+    assert gs.first_complete_cost == exact  # greedy nails it immediately
+    assert ws.first_complete_cost > exact  # worst surfaces a bad plan first
 
 
 def test_good_order_expands_no_more_than_a_bad_one():
@@ -105,13 +116,14 @@ def test_good_order_expands_no_more_than_a_bad_one():
 
 # --- the learned ranker ----------------------------------------------------------
 
+
 def test_ranker_trains_and_preserves_the_optimum():
     r = train_ranker(ranker_samples(vector_add(1024), AVX, THETAS))
     m = _multi(3)
     exact = optimize_constrained(m, AVX, COOL).score
     fast, stats = optimize_ordered(m, AVX, COOL, order=r.order)
     assert fast.score == exact
-    assert stats.first_complete_cost == exact       # the learned order nails it too
+    assert stats.first_complete_cost == exact  # the learned order nails it too
 
 
 def test_ranker_training_is_deterministic():
@@ -131,9 +143,11 @@ def test_frozen_ranker_is_deterministic_integer_and_exact():
 
 # --- the equivalence certificate -------------------------------------------------
 
+
 def _cases():
-    return [(vector_add(1024), AVX, t, PERF, Budget.unbounded()) for t in THETAS] + \
-           [(_multi(3), AVX, COOL, PERF, Budget.unbounded())]
+    return [(vector_add(1024), AVX, t, PERF, Budget.unbounded()) for t in THETAS] + [
+        (_multi(3), AVX, COOL, PERF, Budget.unbounded())
+    ]
 
 
 def test_certificate_admits_every_order_because_all_are_exact():

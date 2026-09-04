@@ -40,7 +40,7 @@ UNBOUNDED: Bounds = (None, None)
 class Constraint:
     """Base of the constraint model. Subclasses describe a set of permitted values."""
 
-    def value_bounds(self) -> Bounds:              # pragma: no cover - abstract
+    def value_bounds(self) -> Bounds:  # pragma: no cover - abstract
         """The (lower, upper) integer bounds this constraint imposes on a value."""
         raise NotImplementedError
 
@@ -52,7 +52,7 @@ class Constraint:
         """The permitted characters, or None when the constraint does not restrict them."""
         return None
 
-    def permits(self, value) -> bool:              # pragma: no cover - abstract
+    def permits(self, value) -> bool:  # pragma: no cover - abstract
         raise NotImplementedError
 
 
@@ -197,20 +197,20 @@ class Intersection(Constraint):
         low, high = UNBOUNDED
         for part in self.parts:
             part_low, part_high = part.value_bounds()
-            low = part_low if low is None else (
-                low if part_low is None else max(low, part_low))
-            high = part_high if high is None else (
-                high if part_high is None else min(high, part_high))
+            low = part_low if low is None else (low if part_low is None else max(low, part_low))
+            high = (
+                part_high if high is None else (high if part_high is None else min(high, part_high))
+            )
         return (low, high)
 
     def size_bounds(self) -> Bounds:
         low, high = UNBOUNDED
         for part in self.parts:
             part_low, part_high = part.size_bounds()
-            low = part_low if low is None else (
-                low if part_low is None else max(low, part_low))
-            high = part_high if high is None else (
-                high if part_high is None else min(high, part_high))
+            low = part_low if low is None else (low if part_low is None else max(low, part_low))
+            high = (
+                part_high if high is None else (high if part_high is None else min(high, part_high))
+            )
         return (low, high)
 
     def alphabet(self) -> frozenset[str] | None:
@@ -246,13 +246,13 @@ class Extensible(Constraint):
     root: Constraint
 
     def value_bounds(self) -> Bounds:
-        return UNBOUNDED                            # X.696 8.2.2 g)
+        return UNBOUNDED  # X.696 8.2.2 g)
 
     def size_bounds(self) -> Bounds:
-        return UNBOUNDED                            # X.696 8.2.2 g)
+        return UNBOUNDED  # X.696 8.2.2 g)
 
     def alphabet(self) -> frozenset[str] | None:
-        return None                                 # X.696 8.2.2 g)
+        return None  # X.696 8.2.2 g)
 
     def permits(self, value) -> bool:
         # An extensible constraint admits its root today and anything a later version
@@ -298,10 +298,10 @@ def _root_bounds(constraint: Constraint, dimension: str) -> tuple[Bounds, bool]:
         for part in constraint.parts:
             (part_low, part_high), part_ext = _root_bounds(part, dimension)
             extensible = extensible or part_ext
-            low = part_low if low is None else (
-                low if part_low is None else max(low, part_low))
-            high = part_high if high is None else (
-                high if part_high is None else min(high, part_high))
+            low = part_low if low is None else (low if part_low is None else max(low, part_low))
+            high = (
+                part_high if high is None else (high if part_high is None else min(high, part_high))
+            )
         return (low, high), extensible
     if isinstance(constraint, Union):
         parts = [_root_bounds(part, dimension) for part in constraint.parts]
@@ -402,9 +402,10 @@ def _alphabet_of(constraint: Constraint) -> frozenset[str] | None:
         return frozenset(constraint.value) if isinstance(constraint.value, str) else None
     if isinstance(constraint, ValueRange):
         low, high = constraint.lower, constraint.upper
-        if not (isinstance(low, str) and isinstance(high, str)
-                and len(low) == 1 and len(high) == 1):
-            return None                             # §51.4.4 NOTE requires size-1 endpoints
+        if not (
+            isinstance(low, str) and isinstance(high, str) and len(low) == 1 and len(high) == 1
+        ):
+            return None  # §51.4.4 NOTE requires size-1 endpoints
         start = ord(low) + (1 if constraint.lower_open else 0)
         stop = ord(high) - (1 if constraint.upper_open else 0)
         return frozenset(chr(code) for code in range(start, stop + 1))
@@ -426,6 +427,7 @@ def _alphabet_of(constraint: Constraint) -> frozenset[str] | None:
 
 
 # --- the effective constraints the encoding rules ask for --------------------------------
+
 
 def effective_value_constraint(constraint: Constraint | None) -> Bounds:
     """X.696 §8.2.7 — the smallest integer range including every permitted value.
@@ -464,7 +466,7 @@ def is_unsatisfiable(constraint: Constraint | None) -> bool:
     if isinstance(constraint, Size):
         low, _ = constraint.size_bounds()
         if low is not None and low < 0:
-            return True                             # a negative length is unsatisfiable
+            return True  # a negative length is unsatisfiable
     alphabet = constraint.alphabet()
     if alphabet is not None and not alphabet:
         return True
@@ -477,10 +479,23 @@ def require_satisfiable(constraint: Constraint | None, where: str) -> None:
     if is_unsatisfiable(constraint):
         raise Asn1Error(
             f"{where}: constraint {constraint} permits no value at all (X.680 49); a "
-            f"type with an empty value set can never be encoded")
+            f"type with an empty value set can never be encoded"
+        )
 
 
-__all__ = ["Bounds", "Constraint", "Extensible", "Intersection", "PermittedAlphabet",
-           "Size", "SingleValue", "UNBOUNDED", "Union", "ValueRange",
-           "effective_size_constraint", "effective_value_constraint", "is_unsatisfiable",
-           "require_satisfiable"]
+__all__ = [
+    "Bounds",
+    "Constraint",
+    "Extensible",
+    "Intersection",
+    "PermittedAlphabet",
+    "Size",
+    "SingleValue",
+    "UNBOUNDED",
+    "Union",
+    "ValueRange",
+    "effective_size_constraint",
+    "effective_value_constraint",
+    "is_unsatisfiable",
+    "require_satisfiable",
+]

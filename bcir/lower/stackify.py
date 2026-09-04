@@ -30,7 +30,7 @@ class Local:
 
 @dataclass(frozen=True)
 class BinOp:
-    op: str           # add | sub | mul | div
+    op: str  # add | sub | mul | div
     lhs: "Expr"
     rhs: "Expr"
 
@@ -42,7 +42,7 @@ _BINOPS = {"add", "sub", "mul", "div"}
 
 @dataclass(frozen=True)
 class StackOp:
-    kind: str         # const | local_get | local_set | add | sub | mul | div
+    kind: str  # const | local_get | local_set | add | sub | mul | div
     arg: object = None
 
 

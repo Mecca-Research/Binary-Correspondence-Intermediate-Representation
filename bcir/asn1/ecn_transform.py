@@ -40,12 +40,17 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .ecn_props import (
-    UNIT_BIT, IntForm, Pattern, PatternKind, check_unit,
+    UNIT_BIT,
+    IntForm,
+    Pattern,
+    PatternKind,
+    check_unit,
 )
 from .tags import Asn1Error
 
 
 # --- clause 24's #TRANSFORM: the encoded value as a function of the abstract one ----------
+
 
 class IntOp(Enum):
     """§24.3.1's `&int-to-int` CHOICE. Exactly one of these per encoding object.
@@ -112,8 +117,8 @@ class Composite:
     """
 
     elements: tuple = ()
-    kind: str = "bits"     # "bits", "char", "bool", "int"
-    unit: int = 0          # bits per element, for bitstring composites only
+    kind: str = "bits"  # "bits", "char", "bool", "int"
+    unit: int = 0  # bits per element, for bitstring composites only
 
     def of(self, elements, kind: str | None = None) -> "Composite":
         """A composite of the same shape carrying transformed elements."""
@@ -156,8 +161,9 @@ class Transform:
         composite is the *subject* rather than a container to map through.
         """
         if isinstance(value, Composite):
-            return value.of([self.apply_one(element) for element in value.elements],
-                            self.result_kind)
+            return value.of(
+                [self.apply_one(element) for element in value.elements], self.result_kind
+            )
         return self.apply_one(value)
 
     def inverse(self, value):
@@ -206,12 +212,18 @@ class IntToInt(Transform):
     operand: int = 1
 
     def __post_init__(self) -> None:
-        floor = {IntOp.INCREMENT: 1, IntOp.DECREMENT: 1,
-                 IntOp.MULTIPLY: 2, IntOp.DIVIDE: 2, IntOp.MODULO: 2}.get(self.op)
+        floor = {
+            IntOp.INCREMENT: 1,
+            IntOp.DECREMENT: 1,
+            IntOp.MULTIPLY: 2,
+            IntOp.DIVIDE: 2,
+            IntOp.MODULO: 2,
+        }.get(self.op)
         if floor is not None and self.operand < floor:
             raise Asn1Error(
                 f"ECN: §24.3.1 constrains {self.op.value} to INTEGER ({floor}..MAX); "
-                f"got {self.operand}")
+                f"got {self.operand}"
+            )
 
     def apply_one(self, value: int) -> int:
         if self.op is IntOp.INCREMENT:
@@ -247,7 +259,8 @@ class IntToInt(Transform):
             return -value
         if self.op is IntOp.MODULO:
             raise Asn1Error(
-                "ECN: Table 6 lists modulo:n as Never reversible; there is no inverse to take")
+                "ECN: Table 6 lists modulo:n as Never reversible; there is no inverse to take"
+            )
         return value + self.operand
 
     def reversible_one(self, value: int) -> bool:
@@ -280,7 +293,8 @@ def _minimal_bits(value: int, form: IntForm) -> tuple[int, ...]:
         if value < 0:
             raise Asn1Error(
                 f"ECN: §24.8.12 — INT-TO-BITS AS positive-int cannot transform the negative "
-                f"value {value}; encoders shall not encode such values")
+                f"value {value}; encoders shall not encode such values"
+            )
         return _bits_of(value, max(value.bit_length(), 1), form)
     # Two's complement: grow until the value fits with its sign bit, which is exactly the
     # "no two successive leading zero or one bits" condition read as a width.
@@ -321,35 +335,37 @@ class IntToBits(Transform):
     def __post_init__(self) -> None:
         check_unit(self.unit, allow_repetitions=False)
         if self.size < RESULT_SIZE_VARIABLE:
-            raise Asn1Error(
-                f"ECN: §21.15.1 constrains ResultSize to (-1..MAX); got {self.size}")
+            raise Asn1Error(f"ECN: §21.15.1 constrains ResultSize to (-1..MAX); got {self.size}")
         if self.size == RESULT_SIZE_FIXED_TO_MAX and self.bounds is None:
             raise Asn1Error(
                 "ECN: §24.8.8 — SIZE shall not be set to `fixed-to-max` unless the source "
-                "class has both lower and upper bounds; none are stated")
+                "class has both lower and upper bounds; none are stated"
+            )
 
     def width(self) -> int | None:
         """The result width in bits, or `None` for §24.8.13's variable case."""
         if self.size == RESULT_SIZE_VARIABLE:
             return None
         if self.size > 0:
-            return self.size * self.unit          # §24.8.14
-        low, high = self.bounds                    # §24.8.15
-        widest = max(len(_minimal_bits(low, self.encoded_as)),
-                     len(_minimal_bits(high, self.encoded_as)))
-        units = -(-widest // self.unit)            # smallest multiple of the unit
+            return self.size * self.unit  # §24.8.14
+        low, high = self.bounds  # §24.8.15
+        widest = max(
+            len(_minimal_bits(low, self.encoded_as)), len(_minimal_bits(high, self.encoded_as))
+        )
+        units = -(-widest // self.unit)  # smallest multiple of the unit
         return units * self.unit
 
     def apply_one(self, value: int) -> tuple[int, ...]:
         initial = _minimal_bits(value, self.encoded_as)
         width = self.width()
         if width is None:
-            return initial                         # §24.8.13
+            return initial  # §24.8.13
         if len(initial) > width:
             raise Asn1Error(
                 f"ECN: §24.8.16 — the initial bitstring for {value} is {len(initial)} bits, "
                 f"too large for the fixed size of {width}; encoders shall not encode such "
-                f"values")
+                f"values"
+            )
         # §24.8.17: zero for positive-int, the ORIGINAL LEADING BIT for two's complement.
         fill = 0 if self.encoded_as is IntForm.POSITIVE_INT else initial[0]
         return (fill,) * (width - len(initial)) + initial
@@ -390,7 +406,7 @@ class BoolToBool(Transform):
         return not value
 
     def inverse_one(self, value: bool) -> bool:
-        return not value                          # §24.4.6: reversible for all values
+        return not value  # §24.4.6: reversible for all values
 
 
 @dataclass(frozen=True)
@@ -402,12 +418,12 @@ class BoolToInt(Transform):
     source class and not from an intermediate result.
     """
 
-    true_zero: bool = False                        # §24.5.1's DEFAULT is true-one
+    true_zero: bool = False  # §24.5.1's DEFAULT is true-one
     result_kind: str | None = "int"
 
     def apply_one(self, value: bool) -> int:
         if self.true_zero:
-            return 0 if value else 1              # §24.5.5
+            return 0 if value else 1  # §24.5.5
         return 1 if value else 0
 
     def inverse_one(self, value: int) -> bool:
@@ -427,7 +443,7 @@ class IntToBool(Transform):
     booleans, and a decoder cannot pick which integer it was.
     """
 
-    zero_true: bool = False                        # §24.6.1's DEFAULT is zero-false
+    zero_true: bool = False  # §24.6.1's DEFAULT is zero-false
     true_is: tuple[int, ...] | None = None
     false_is: tuple[int, ...] | None = None
     result_kind: str | None = "bool"
@@ -438,7 +454,8 @@ class IntToBool(Transform):
             if overlap:
                 raise Asn1Error(
                     f"ECN: §24.6.8 — the integer values in TRUE-IS and FALSE-IS shall be "
-                    f"disjoint; {sorted(overlap)} are in both")
+                    f"disjoint; {sorted(overlap)} are in both"
+                )
 
     def apply_one(self, value: int) -> bool:
         if self.true_is is not None and self.false_is is not None:
@@ -451,24 +468,30 @@ class IntToBool(Transform):
             # and encoders shall not generate encodings for such values."
             raise Asn1Error(
                 f"ECN: §24.6.8 — {value} is in neither TRUE-IS nor FALSE-IS, and encoders "
-                f"shall not generate encodings for such values")
+                f"shall not generate encodings for such values"
+            )
         if self.true_is is not None:
-            return value in self.true_is           # §24.6.6
+            return value in self.true_is  # §24.6.6
         if self.false_is is not None:
-            return value not in self.false_is      # §24.6.7
-        return (value == 0) if self.zero_true else (value != 0)   # §24.6.5
+            return value not in self.false_is  # §24.6.7
+        return (value == 0) if self.zero_true else (value != 0)  # §24.6.5
 
     def inverse_one(self, value: bool) -> int:
         if not self.reversible_one(value):
             raise Asn1Error(
                 "ECN: §24.6.9 — INT-TO-BOOL is reversible only when TRUE-IS and FALSE-IS are "
                 "both set to a single integer each; this one maps many integers onto two "
-                "booleans and no decoder can choose among them")
+                "booleans and no decoder can choose among them"
+            )
         return self.true_is[0] if value else self.false_is[0]
 
     def reversible_one(self, value) -> bool:
-        return (self.true_is is not None and self.false_is is not None
-                and len(self.true_is) == 1 and len(self.false_is) == 1)
+        return (
+            self.true_is is not None
+            and self.false_is is not None
+            and len(self.true_is) == 1
+            and len(self.false_is) == 1
+        )
 
 
 @dataclass(frozen=True)
@@ -495,18 +518,18 @@ class IntToChars(Transform):
 
     size: int = RESULT_SIZE_VARIABLE
     plus_sign: bool = False
-    pad_with_spaces: bool = False                  # §24.7.1's DEFAULT is zeros
+    pad_with_spaces: bool = False  # §24.7.1's DEFAULT is zeros
     bounds: tuple[int, int] | None = None
     result_kind: str | None = "char"
 
     def __post_init__(self) -> None:
         if self.size < RESULT_SIZE_VARIABLE:
-            raise Asn1Error(
-                f"ECN: §21.15.1 constrains ResultSize to (-1..MAX); got {self.size}")
+            raise Asn1Error(f"ECN: §21.15.1 constrains ResultSize to (-1..MAX); got {self.size}")
         if self.size == RESULT_SIZE_FIXED_TO_MAX and self.bounds is None:
             raise Asn1Error(
                 "ECN: §24.7.8 — SIZE shall not be set to `fixed-to-max` unless the source "
-                "class has both lower and upper bounds")
+                "class has both lower and upper bounds"
+            )
 
     def _digits(self, value: int) -> str:
         text = str(abs(value))
@@ -526,14 +549,15 @@ class IntToChars(Transform):
         text = self._digits(value)
         width = self.width()
         if width is None:
-            return text                            # §24.7.11
+            return text  # §24.7.11
         if len(text) > width:
             raise Asn1Error(
                 f"ECN: §24.7.12 — {text!r} is {len(text)} characters, too large for the "
                 f"fixed size of {width}; encoders shall not generate encodings for such "
-                f"abstract values")
+                f"abstract values"
+            )
         pad = " " if self.pad_with_spaces else "0"
-        return pad * (width - len(text)) + text    # §24.7.13: prefixed
+        return pad * (width - len(text)) + text  # §24.7.13: prefixed
 
     def inverse_one(self, value: str) -> int:
         # Strips SPACE and DIGIT ZERO padding from either side of the sign, so a decoder reads
@@ -553,7 +577,8 @@ class IntToChars(Transform):
         if not text.isascii() or not text.isdigit():
             raise Asn1Error(
                 f"ECN: §24.7.4 — {value!r} is not a string of DIGIT ZERO..DIGIT NINE; "
-                f"{text!r} contains a character the repertoire does not hold")
+                f"{text!r} contains a character the repertoire does not hold"
+            )
         return sign * int(text)
 
 
@@ -577,7 +602,8 @@ class BitsToInt(Transform):
     def inverse_one(self, value: int) -> tuple[int, ...]:
         raise Asn1Error(
             "ECN: §24.9.6 — BITS-TO-INT shall not be used where reversible transforms are "
-            "required; the source bitstring's width is not recoverable from the integer")
+            "required; the source bitstring's width is not recoverable from the integer"
+        )
 
     def reversible_one(self, value) -> bool:
         return False
@@ -599,10 +625,10 @@ class CharToBits(Transform):
     one.
     """
 
-    encoded_as: str = "compact"                    # §24.10.1's DEFAULT
-    alphabet: str = ""                             # the effective permitted alphabet
-    chars: tuple[str, ...] = ()                    # §24.10.10.1's CHAR-LIST
-    bit_values: tuple[tuple[int, ...], ...] = ()   # §24.10.10.1's BITS-LIST
+    encoded_as: str = "compact"  # §24.10.1's DEFAULT
+    alphabet: str = ""  # the effective permitted alphabet
+    chars: tuple[str, ...] = ()  # §24.10.10.1's CHAR-LIST
+    bit_values: tuple[tuple[int, ...], ...] = ()  # §24.10.10.1's BITS-LIST
     size: int = RESULT_SIZE_VARIABLE
     unit: int = UNIT_BIT
     result_kind: str | None = "bits"
@@ -611,47 +637,56 @@ class CharToBits(Transform):
         if self.encoded_as not in ("iso10646", "compact", "mapped"):
             raise Asn1Error(
                 f"ECN: §24.10.1's &char-to-bits-encoded-as is ENUMERATED "
-                f"{{iso10646, compact, mapped}}; got {self.encoded_as!r}")
+                f"{{iso10646, compact, mapped}}; got {self.encoded_as!r}"
+            )
         if self.encoded_as == "mapped":
             # §24.10.8: the two lists "are only used if AS is set to `mapped`, in which case
             # their presence is mandatory, and they shall then contain at least one element".
             if not self.chars or not self.bit_values:
                 raise Asn1Error(
                     "ECN: §24.10.8 — CHAR-LIST and BITS-LIST are mandatory for "
-                    "`AS mapped` and shall contain at least one element")
+                    "`AS mapped` and shall contain at least one element"
+                )
             if len(self.chars) != len(self.bit_values):
                 raise Asn1Error(
                     f"ECN: §24.10.10.2 — there shall be an equal number of values in each "
                     f"list; CHAR-LIST has {len(self.chars)} and BITS-LIST "
-                    f"{len(self.bit_values)}")
+                    f"{len(self.bit_values)}"
+                )
             if len(set(self.chars)) != len(self.chars):
                 raise Asn1Error(
-                    "ECN: §24.10.10.2 — all character values in CHAR-LIST shall be distinct")
+                    "ECN: §24.10.10.2 — all character values in CHAR-LIST shall be distinct"
+                )
         elif self.encoded_as == "compact" and not self.alphabet:
             raise Asn1Error(
                 "ECN: §24.10.12 — `AS compact` is an ECN specification error if there is no "
                 "effective permitted alphabet constraint; a character's index into an "
-                "alphabet that does not exist is not a number")
+                "alphabet that does not exist is not a number"
+            )
         else:
             check_unit(self.unit, allow_repetitions=False)
 
     def _nested(self, high: int) -> IntToBits:
         """§24.10.11.4/§24.10.12.3's nested `INT-TO-BITS AS positive-int`, built rather than
         restated — the clause defines this transform *in terms of* that one."""
-        return IntToBits(encoded_as=IntForm.POSITIVE_INT, size=self.size, unit=self.unit,
-                         bounds=(0, high) if self.size == RESULT_SIZE_FIXED_TO_MAX else None)
+        return IntToBits(
+            encoded_as=IntForm.POSITIVE_INT,
+            size=self.size,
+            unit=self.unit,
+            bounds=(0, high) if self.size == RESULT_SIZE_FIXED_TO_MAX else None,
+        )
 
     def apply_one(self, value: str) -> tuple[int, ...]:
         if len(value) != 1:
-            raise Asn1Error(
-                f"ECN: §24.10.4 — CHAR-TO-BITS takes a single character; got {value!r}")
+            raise Asn1Error(f"ECN: §24.10.4 — CHAR-TO-BITS takes a single character; got {value!r}")
         if self.encoded_as == "mapped":
             try:
-                return tuple(self.bit_values[self.chars.index(value)])   # §24.10.10.3
+                return tuple(self.bit_values[self.chars.index(value)])  # §24.10.10.3
             except ValueError:
                 raise Asn1Error(
                     f"ECN: §24.10.10.4 — {value!r} is not in the CHAR-LIST, which is an ECN "
-                    f"specification or application error") from None
+                    f"specification or application error"
+                ) from None
         if self.encoded_as == "compact":
             # §24.10.12.1: canonical order by ISO/IEC 10646 value, lowest first, then indexed
             # from zero. §24.10.12.2 gives the integer bounds 0..n-1.
@@ -659,7 +694,8 @@ class CharToBits(Transform):
             if value not in order:
                 raise Asn1Error(
                     f"ECN: {value!r} is not in the effective permitted alphabet, so "
-                    f"§24.10.12.1 gives it no index")
+                    f"§24.10.12.1 gives it no index"
+                )
             return self._nested(len(order) - 1).apply_one(order.index(value))
         # §24.10.11.1-3: the ISO/IEC 10646 value, bounded by the alphabet when there is one
         # and by 0..32767 when there is not.
@@ -684,7 +720,7 @@ class CharToBits(Transform):
 
     def reversible_one(self, value) -> bool:
         if self.encoded_as != "mapped":
-            return True                            # §24.10.11.5, §24.10.12.4
+            return True  # §24.10.11.5, §24.10.12.4
         # §24.10.10.5: reversible "if and only if the set of all bitstring values in BITS-LIST
         # are distinct".
         return len({tuple(bits) for bits in self.bit_values}) == len(self.bit_values)
@@ -700,7 +736,7 @@ class BitsToChar(Transform):
     identical bitstrings in the source list would make the transform itself ambiguous.
     """
 
-    decoded_assuming: str = "iso10646"              # §24.11.1's DEFAULT
+    decoded_assuming: str = "iso10646"  # §24.11.1's DEFAULT
     bit_values: tuple[tuple[int, ...], ...] = ()
     chars: tuple[str, ...] = ()
     result_kind: str | None = "char"
@@ -709,31 +745,37 @@ class BitsToChar(Transform):
         if self.decoded_assuming not in ("iso10646", "mapped"):
             raise Asn1Error(
                 f"ECN: §24.11.1's &bits-to-char-decoded-assuming is ENUMERATED "
-                f"{{iso10646, mapped}}; got {self.decoded_assuming!r}")
+                f"{{iso10646, mapped}}; got {self.decoded_assuming!r}"
+            )
         if self.decoded_assuming == "mapped":
             if len(self.chars) != len(self.bit_values) or not self.chars:
                 raise Asn1Error(
-                    "ECN: §24.11.6.2 — there shall be an equal number of values in each list")
+                    "ECN: §24.11.6.2 — there shall be an equal number of values in each list"
+                )
             if len(set(self.chars)) != len(self.chars) or len(
-                    {tuple(bits) for bits in self.bit_values}) != len(self.bit_values):
+                {tuple(bits) for bits in self.bit_values}
+            ) != len(self.bit_values):
                 raise Asn1Error(
                     "ECN: §24.11.6.2 — all character values AND all bitstring values in the "
-                    "list shall be distinct")
+                    "list shall be distinct"
+                )
 
     def apply_one(self, value: tuple[int, ...]) -> str:
         bits = tuple(value)
         if self.decoded_assuming == "mapped":
             for index, candidate in enumerate(self.bit_values):
                 if tuple(candidate) == bits:
-                    return self.chars[index]        # §24.11.6.3
+                    return self.chars[index]  # §24.11.6.3
             raise Asn1Error(
                 f"ECN: §24.11.6.4 — the bitstring {bits} is not in the BITS-LIST, which is an "
-                f"ECN specification or application error")
+                f"ECN specification or application error"
+            )
         number = _int_from_bits(bits, IntForm.POSITIVE_INT)
         if number > 32767:
             raise Asn1Error(
                 f"ECN: §24.11.5 — it is an ECN specification error if the integer value "
-                f"exceeds 32767; got {number}")
+                f"exceeds 32767; got {number}"
+            )
         return chr(number)
 
     def inverse_one(self, value: str) -> tuple[int, ...]:
@@ -758,32 +800,39 @@ class BitToBits(Transform):
     result_kind: str | None = "bits"
 
     def __post_init__(self) -> None:
-        for pattern, where in ((self.zero_pattern, "ZERO-PATTERN"),
-                               (self.one_pattern, "ONE-PATTERN")):
+        for pattern, where in (
+            (self.zero_pattern, "ZERO-PATTERN"),
+            (self.one_pattern, "ONE-PATTERN"),
+        ):
             if pattern.kind is PatternKind.ANY_OF_LENGTH:
                 raise Asn1Error(
-                    f"ECN: §24.12.7 — the `any-of-length` alternative shall not be used for "
-                    f"{where}")
+                    f"ECN: §24.12.7 — the `any-of-length` alternative shall not be used for {where}"
+                )
             pattern.require_non_null(where)
-        different = [pattern for pattern in (self.zero_pattern, self.one_pattern)
-                     if pattern.kind is PatternKind.DIFFERENT_ANY]
+        different = [
+            pattern
+            for pattern in (self.zero_pattern, self.one_pattern)
+            if pattern.kind is PatternKind.DIFFERENT_ANY
+        ]
         if len(different) > 1:
             raise Asn1Error(
                 "ECN: §24.12.6 — at most one of ZERO-PATTERN and ONE-PATTERN shall be "
-                "`different:any`")
+                "`different:any`"
+            )
         if different:
-            return                                  # the other's value is an encoder's option
+            return  # the other's value is an encoder's option
         zero = self.zero_pattern.bit_sequence()
         one = self.one_pattern.bit_sequence()
-        if zero == one or zero[:len(one)] == one or one[:len(zero)] == zero:
+        if zero == one or zero[: len(one)] == one or one[: len(zero)] == zero:
             raise Asn1Error(
                 f"ECN: §24.12.9 — it is an ECN specification error if ZERO-PATTERN and "
                 f"ONE-PATTERN are the same, or if one is an initial sub-string of the other; "
-                f"{zero} and {one} are not distinguishable in a stream")
+                f"{zero} and {one} are not distinguishable in a stream"
+            )
 
     def apply_one(self, value: int) -> tuple[int, ...]:
         pattern = self.one_pattern if value else self.zero_pattern
-        return pattern.bit_sequence()               # §24.12.8
+        return pattern.bit_sequence()  # §24.12.8
 
     def inverse_one(self, value: tuple[int, ...]) -> int:
         bits = tuple(value)
@@ -811,25 +860,29 @@ class BitsToBits(Transform):
         if not self.source_values or not self.result_values:
             raise Asn1Error(
                 "ECN: §24.13.5 — SOURCE-LIST and RESULT-LIST are required, and shall contain "
-                "at least one element in the ordered list")
+                "at least one element in the ordered list"
+            )
         if len(self.source_values) != len(self.result_values):
             raise Asn1Error(
                 f"ECN: §24.13.7 — there shall be an equal number of bitstring values in each "
-                f"list; got {len(self.source_values)} and {len(self.result_values)}")
+                f"list; got {len(self.source_values)} and {len(self.result_values)}"
+            )
         sources = [tuple(bits) for bits in self.source_values]
         if len(set(sources)) != len(sources):
             raise Asn1Error(
                 "ECN: §24.13.7 — all bitstring values in SOURCE-LIST shall be distinct, or "
-                "the transform is not a function")
+                "the transform is not a function"
+            )
 
     def apply_one(self, value: tuple[int, ...]) -> tuple[int, ...]:
         bits = tuple(value)
         for index, candidate in enumerate(self.source_values):
             if tuple(candidate) == bits:
-                return tuple(self.result_values[index])      # §24.13.8
+                return tuple(self.result_values[index])  # §24.13.8
         raise Asn1Error(
             f"ECN: §24.13.10 — the source bitstring {bits} is not in the SOURCE-LIST, which "
-            f"is an ECN specification or application error")
+            f"is an ECN specification or application error"
+        )
 
     def inverse_one(self, value: tuple[int, ...]) -> tuple[int, ...]:
         bits = tuple(value)
@@ -840,7 +893,7 @@ class BitsToBits(Transform):
 
     def reversible_one(self, value) -> bool:
         results = [tuple(bits) for bits in self.result_values]
-        return len(set(results)) == len(results)             # §24.13.11
+        return len(set(results)) == len(results)  # §24.13.11
 
 
 # --- §24.14-§24.19: the composite constructors and collapsers ------------------------------
@@ -851,12 +904,13 @@ class BitsToBits(Transform):
 # "procedures that map a characterstring, octetstring or bitstring source into a transform
 # composite" from the transforms that act on values.
 
+
 @dataclass(frozen=True)
 class CharsToCompositeChar(Transform):
     """§24.14: a characterstring to a single-character composite."""
 
     def apply(self, value: str) -> Composite:
-        return Composite(tuple(value), "char")               # §24.14.4
+        return Composite(tuple(value), "char")  # §24.14.4
 
     def inverse(self, value: Composite) -> str:
         return "".join(value.elements)
@@ -883,8 +937,9 @@ class BitsToCompositeBits(Transform):
             raise Asn1Error(
                 f"ECN: §24.15.6 — the source bitstring is {len(bits)} bits, which is not a "
                 f"multiple of the {self.unit}-bit UNIT; this is an ECN specification or "
-                f"application error")
-        elements = tuple(bits[at:at + self.unit] for at in range(0, len(bits), self.unit))
+                f"application error"
+            )
+        elements = tuple(bits[at : at + self.unit] for at in range(0, len(bits), self.unit))
         return Composite(elements, "bits", self.unit)
 
     def inverse(self, value: Composite) -> tuple[int, ...]:
@@ -897,12 +952,12 @@ class OctetsToCompositeBits(Transform):
 
     def apply(self, value: bytes) -> Composite:
         elements = tuple(
-            tuple((octet >> shift) & 1 for shift in range(7, -1, -1)) for octet in value)
+            tuple((octet >> shift) & 1 for shift in range(7, -1, -1)) for octet in value
+        )
         return Composite(elements, "bits", 8)
 
     def inverse(self, value: Composite) -> bytes:
-        return bytes(_int_from_bits(element, IntForm.POSITIVE_INT)
-                     for element in value.elements)
+        return bytes(_int_from_bits(element, IntForm.POSITIVE_INT) for element in value.elements)
 
 
 @dataclass(frozen=True)
@@ -910,7 +965,7 @@ class CompositeCharToChars(Transform):
     """§24.17: a single-character composite back to a characterstring."""
 
     def apply(self, value: Composite) -> str:
-        return "".join(value.elements)                       # §24.17.4
+        return "".join(value.elements)  # §24.17.4
 
     def inverse(self, value: str) -> Composite:
         return Composite(tuple(value), "char")
@@ -931,7 +986,8 @@ class CompositeBitsToBits(Transform):
     def inverse(self, value: tuple[int, ...]) -> Composite:
         raise Asn1Error(
             "ECN: §24.18 collapses a composite whose unit came from the transform that built "
-            "it; inverting needs that unit, so reverse the pair rather than this alone")
+            "it; inverting needs that unit, so reverse the pair rather than this alone"
+        )
 
 
 @dataclass(frozen=True)
@@ -947,9 +1003,9 @@ class CompositeBitsToOctets(Transform):
             raise Asn1Error(
                 f"ECN: §24.19.1 — it is an ECN specification error to apply "
                 f"COMPOSITE-BITS-TO-OCTETS to a bitstring composite whose unit size is "
-                f"{value.unit} rather than 8")
-        return bytes(_int_from_bits(element, IntForm.POSITIVE_INT)
-                     for element in value.elements)
+                f"{value.unit} rather than 8"
+            )
+        return bytes(_int_from_bits(element, IntForm.POSITIVE_INT) for element in value.elements)
 
     def inverse(self, value: bytes) -> Composite:
         return OctetsToCompositeBits().apply(value)
@@ -973,11 +1029,15 @@ class TransformChain:
 
     def __post_init__(self) -> None:
         for index, transform in enumerate(self.transforms):
-            if (isinstance(transform, IntToInt)
-                    and transform.op is IntOp.SUBTRACT_LOWER_BOUND and index != 0):
+            if (
+                isinstance(transform, IntToInt)
+                and transform.op is IntOp.SUBTRACT_LOWER_BOUND
+                and index != 0
+            ):
                 raise Asn1Error(
                     f"ECN: §24.3.9 — subtract:lower-bound shall only be used as the first of "
-                    f"an ordered list of transforms; it is at position {index}")
+                    f"an ordered list of transforms; it is at position {index}"
+                )
 
     def apply(self, value):
         for transform in self.transforms:

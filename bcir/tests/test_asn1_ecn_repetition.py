@@ -12,12 +12,29 @@ repetitions". Sibling, not subtype — which is why they are two enums with diff
 """
 
 from bcir.asn1.ecn_props import (
-    UNIT_OCTET, UNIT_REPETITIONS, Comparison, Padding, Pattern,
-    RepetitionSpaceDetermination, SizeBounds, SizeRangeCondition,
+    UNIT_OCTET,
+    UNIT_REPETITIONS,
+    Comparison,
+    Padding,
+    Pattern,
+    RepetitionSpaceDetermination,
+    SizeBounds,
+    SizeRangeCondition,
 )
 from bcir.asn1.ecn_user import (
-    AuxIntSpec, BitFieldSpec, BitWriter, ConcatenationSpec, ConditionalRepetitionSpec, IntSpec, NullSpec,
-    RepetitionSpace, RepetitionSpec, StringSpec, TagSpec, UserEncodingObject, encode_with_user,
+    AuxIntSpec,
+    BitFieldSpec,
+    BitWriter,
+    ConcatenationSpec,
+    ConditionalRepetitionSpec,
+    IntSpec,
+    NullSpec,
+    RepetitionSpace,
+    RepetitionSpec,
+    StringSpec,
+    TagSpec,
+    UserEncodingObject,
+    encode_with_user,
 )
 from bcir.asn1.tags import Asn1Error
 
@@ -25,8 +42,11 @@ _OCTET = IntSpec(width=8)
 
 
 def _concat(fields: dict, order: tuple, padding: tuple = ()) -> dict:
-    return {"#C": UserEncodingObject("#C", ConcatenationSpec(
-        fields=fields, order=order, padding=padding))}
+    return {
+        "#C": UserEncodingObject(
+            "#C", ConcatenationSpec(fields=fields, order=order, padding=padding)
+        )
+    }
 
 
 def _refuses(citation: str, build):
@@ -40,6 +60,7 @@ def _refuses(citation: str, build):
 
 # --- §21.13: the size sibling of §21.11, and where the two diverge -------------------------
 
+
 def test_the_size_shapes_overlap_where_the_integer_shapes_partition():
     """§21.11.4's NOTE says "exactly one predicate will be satisfied". §21.13.4's says "Only
     the `fixed-size` case overlaps with other predicates" — the opposite claim.
@@ -50,9 +71,13 @@ def test_the_size_shapes_overlap_where_the_integer_shapes_partition():
     wrong encoding for every fixed-size string, which is the common case rather than an edge.
     """
     assert SizeBounds(4, 4).shapes() == (
-        SizeRangeCondition.UB_WITH_NON_ZERO_LB, SizeRangeCondition.FIXED_SIZE)
+        SizeRangeCondition.UB_WITH_NON_ZERO_LB,
+        SizeRangeCondition.FIXED_SIZE,
+    )
     assert SizeBounds(0, 0).shapes() == (
-        SizeRangeCondition.UB_WITH_ZERO_LB, SizeRangeCondition.FIXED_SIZE)
+        SizeRangeCondition.UB_WITH_ZERO_LB,
+        SizeRangeCondition.FIXED_SIZE,
+    )
     # And the non-fixed shapes still partition among themselves.
     for bounds in (SizeBounds(0, None), SizeBounds(0, 9), SizeBounds(2, None)):
         assert len(bounds.shapes()) == 1, bounds
@@ -72,19 +97,23 @@ def test_the_comparison_rule_is_worded_identically_and_holds_both_ways():
     bounds = SizeBounds(0, 9)
     assert bounds.satisfies(SizeRangeCondition.TEST_UPPER_BOUND, Comparison.EQUAL_TO, 9)
     _refuses("21.13.5", lambda: bounds.satisfies(SizeRangeCondition.TEST_RANGE))
-    _refuses("21.13.5", lambda: bounds.satisfies(
-        SizeRangeCondition.FIXED_SIZE, Comparison.EQUAL_TO, 4))
+    _refuses(
+        "21.13.5", lambda: bounds.satisfies(SizeRangeCondition.FIXED_SIZE, Comparison.EQUAL_TO, 4)
+    )
 
 
 # --- §22.7: the repetition space ------------------------------------------------------------
 
+
 def test_a_count_field_is_written_from_the_number_of_repetitions():
     """§21.7.4's `field-to-be-set`, over the auxiliary-field machinery §22.8.3.7 describes."""
     space = RepetitionSpace(reference="n", unit=UNIT_REPETITIONS)
-    rep = RepetitionSpec((ConditionalRepetitionSpec(element=_OCTET, space=space),),
-                         SizeBounds(0, None))
-    objects = _concat({"n": AuxIntSpec(width=8),
-                       "s": StringSpec(element=_OCTET, repetition=rep)}, ("n", "s"))
+    rep = RepetitionSpec(
+        (ConditionalRepetitionSpec(element=_OCTET, space=space),), SizeBounds(0, None)
+    )
+    objects = _concat(
+        {"n": AuxIntSpec(width=8), "s": StringSpec(element=_OCTET, repetition=rep)}, ("n", "s")
+    )
     assert encode_with_user(objects, "#C", {"s": [1, 2, 3]}) == bytes((3, 1, 2, 3))
     assert encode_with_user(objects, "#C", {"s": []}) == bytes((0,))
 
@@ -98,16 +127,19 @@ def test_the_count_unit_decides_whether_the_field_holds_elements_or_octets():
     distinction to show, which is what this uses 16-bit elements for.
     """
     wide = IntSpec(width=16)
+
     def encode(unit: int) -> bytes:
         space = RepetitionSpace(reference="n", unit=unit)
-        rep = RepetitionSpec((ConditionalRepetitionSpec(element=wide, space=space),),
-                             SizeBounds(0, None))
-        objects = _concat({"n": AuxIntSpec(width=8),
-                           "s": StringSpec(element=wide, repetition=rep)}, ("n", "s"))
+        rep = RepetitionSpec(
+            (ConditionalRepetitionSpec(element=wide, space=space),), SizeBounds(0, None)
+        )
+        objects = _concat(
+            {"n": AuxIntSpec(width=8), "s": StringSpec(element=wide, repetition=rep)}, ("n", "s")
+        )
         return encode_with_user(objects, "#C", {"s": [1, 2, 3]})
 
-    assert encode(UNIT_REPETITIONS)[0] == 3      # three elements
-    assert encode(UNIT_OCTET)[0] == 6            # six octets of them
+    assert encode(UNIT_REPETITIONS)[0] == 3  # three elements
+    assert encode(UNIT_OCTET)[0] == 6  # six octets of them
 
 
 def test_a_termination_pattern_ends_the_repetition_instead_of_a_count():
@@ -116,18 +148,22 @@ def test_a_termination_pattern_ends_the_repetition_instead_of_a_count():
     This is the NUL-terminated string, which is why the group carries a `Pattern` at all — and
     it needs no auxiliary field, so a format with no length prefix is expressible.
     """
-    space = RepetitionSpace(determination=RepetitionSpaceDetermination.PATTERN,
-                            termination_pattern=Pattern.from_octets(b"\x00"))
-    rep = RepetitionSpec((ConditionalRepetitionSpec(element=_OCTET, space=space),),
-                         SizeBounds(0, None))
+    space = RepetitionSpace(
+        determination=RepetitionSpaceDetermination.PATTERN,
+        termination_pattern=Pattern.from_octets(b"\x00"),
+    )
+    rep = RepetitionSpec(
+        (ConditionalRepetitionSpec(element=_OCTET, space=space),), SizeBounds(0, None)
+    )
     objects = _concat({"s": StringSpec(element=_OCTET, repetition=rep)}, ("s",))
     assert encode_with_user(objects, "#C", {"s": [72, 73]}) == b"HI\x00"
     assert encode_with_user(objects, "#C", {"s": []}) == b"\x00"
 
 
 def test_a_pattern_determination_with_no_pattern_is_refused():
-    _refuses("22.7.1.1", lambda: RepetitionSpace(
-        determination=RepetitionSpaceDetermination.PATTERN))
+    _refuses(
+        "22.7.1.1", lambda: RepetitionSpace(determination=RepetitionSpaceDetermination.PATTERN)
+    )
 
 
 def test_the_two_unbuilt_determinations_each_name_what_they_would_need():
@@ -149,17 +185,23 @@ def test_the_two_unbuilt_determinations_each_name_what_they_would_need():
 
 def test_field_to_be_used_checks_the_applications_count():
     """§21.7.5, the repetition twin of §21.3.5: the encoder verifies rather than writes."""
-    space = RepetitionSpace(determination=RepetitionSpaceDetermination.FIELD_TO_BE_USED,
-                            reference="n", unit=UNIT_REPETITIONS)
-    rep = RepetitionSpec((ConditionalRepetitionSpec(element=_OCTET, space=space),),
-                         SizeBounds(0, None))
-    objects = _concat({"n": IntSpec(width=8),
-                       "s": StringSpec(element=_OCTET, repetition=rep)}, ("n", "s"))
+    space = RepetitionSpace(
+        determination=RepetitionSpaceDetermination.FIELD_TO_BE_USED,
+        reference="n",
+        unit=UNIT_REPETITIONS,
+    )
+    rep = RepetitionSpec(
+        (ConditionalRepetitionSpec(element=_OCTET, space=space),), SizeBounds(0, None)
+    )
+    objects = _concat(
+        {"n": IntSpec(width=8), "s": StringSpec(element=_OCTET, repetition=rep)}, ("n", "s")
+    )
     assert encode_with_user(objects, "#C", {"n": 2, "s": [1, 2]}) == bytes((2, 1, 2))
     _refuses("21.7.5", lambda: encode_with_user(objects, "#C", {"n": 9, "s": [1, 2]}))
 
 
 # --- §23.13: selecting an encoding by the size bounds ---------------------------------------
+
 
 def test_a_fixed_size_needs_no_length_field_and_the_schema_decides_that():
     """§23.13.3.1 selects the first object whose conditions hold, over §21.13's size bounds.
@@ -171,9 +213,11 @@ def test_a_fixed_size_needs_no_length_field_and_the_schema_decides_that():
     fixed = ConditionalRepetitionSpec(
         element=_OCTET,
         space=RepetitionSpace(RepetitionSpaceDetermination.NOT_NEEDED),
-        conditions=((SizeRangeCondition.FIXED_SIZE, None, None),))
+        conditions=((SizeRangeCondition.FIXED_SIZE, None, None),),
+    )
     counted = ConditionalRepetitionSpec(
-        element=_OCTET, space=RepetitionSpace(reference="n", unit=UNIT_REPETITIONS))
+        element=_OCTET, space=RepetitionSpace(reference="n", unit=UNIT_REPETITIONS)
+    )
 
     assert RepetitionSpec((fixed, counted), SizeBounds(2, 2)).select() is fixed
     assert RepetitionSpec((fixed, counted), SizeBounds(0, None)).select() is counted
@@ -188,23 +232,29 @@ def test_a_conditional_object_after_an_unconditional_one_is_dead_and_refused():
     someone wondering why their second encoding never fires.
     """
     unconditional = ConditionalRepetitionSpec(
-        element=_OCTET, space=RepetitionSpace(RepetitionSpaceDetermination.NOT_NEEDED))
+        element=_OCTET, space=RepetitionSpace(RepetitionSpaceDetermination.NOT_NEEDED)
+    )
     conditional = ConditionalRepetitionSpec(
-        element=_OCTET, space=RepetitionSpace(RepetitionSpaceDetermination.NOT_NEEDED),
-        conditions=((SizeRangeCondition.FIXED_SIZE, None, None),))
-    assert RepetitionSpec((conditional, unconditional))          # this order is fine
+        element=_OCTET,
+        space=RepetitionSpace(RepetitionSpaceDetermination.NOT_NEEDED),
+        conditions=((SizeRangeCondition.FIXED_SIZE, None, None),),
+    )
+    assert RepetitionSpec((conditional, unconditional))  # this order is fine
     _refuses("23.13.2.3", lambda: RepetitionSpec((unconditional, conditional)))
 
 
 def test_matching_no_conditional_encoding_is_a_refusal_not_a_default():
     """§23.13.3.1, worded exactly like §23.6.3.1 for integers."""
     only = ConditionalRepetitionSpec(
-        element=_OCTET, space=RepetitionSpace(RepetitionSpaceDetermination.NOT_NEEDED),
-        conditions=((SizeRangeCondition.FIXED_SIZE, None, None),))
+        element=_OCTET,
+        space=RepetitionSpace(RepetitionSpaceDetermination.NOT_NEEDED),
+        conditions=((SizeRangeCondition.FIXED_SIZE, None, None),),
+    )
     _refuses("23.13.3.1", lambda: RepetitionSpec((only,), SizeBounds(0, None)).select())
 
 
 # --- §23.2/§23.4/§23.9: the string categories -----------------------------------------------
+
 
 def test_a_string_category_has_no_encoding_space_and_says_so():
     """The finding this file is built around: §23.2.1's `#BITS` `WITH SYNTAX` has no
@@ -219,13 +269,17 @@ def test_value_reversal_reverses_elements_and_is_not_bit_reversal():
     either is ordinary, a format doing both is possible, and conflating them would silently
     produce the wrong one — so ECN spells them with two properties and so does this.
     """
-    space = RepetitionSpace(determination=RepetitionSpaceDetermination.PATTERN,
-                            termination_pattern=Pattern.from_octets(b"\x00"))
-    rep = RepetitionSpec((ConditionalRepetitionSpec(element=_OCTET, space=space),),
-                         SizeBounds(0, None))
+    space = RepetitionSpace(
+        determination=RepetitionSpaceDetermination.PATTERN,
+        termination_pattern=Pattern.from_octets(b"\x00"),
+    )
+    rep = RepetitionSpec(
+        (ConditionalRepetitionSpec(element=_OCTET, space=space),), SizeBounds(0, None)
+    )
     forward = _concat({"s": StringSpec(element=_OCTET, repetition=rep)}, ("s",))
     backward = _concat(
-        {"s": StringSpec(element=_OCTET, repetition=rep, value_reversal=True)}, ("s",))
+        {"s": StringSpec(element=_OCTET, repetition=rep, value_reversal=True)}, ("s",)
+    )
     assert encode_with_user(forward, "#C", {"s": [72, 73]}) == b"HI\x00"
     assert encode_with_user(backward, "#C", {"s": [72, 73]}) == b"IH\x00"
 
@@ -236,21 +290,27 @@ def test_a_transform_runs_before_the_repetition_splits_the_value():
     elements the repetition then writes one at a time."""
     from bcir.asn1.ecn_transform import OctetsToCompositeBits
 
-    space = RepetitionSpace(determination=RepetitionSpaceDetermination.PATTERN,
-                            termination_pattern=Pattern.from_bits("1" * 8))
-    rep = RepetitionSpec((ConditionalRepetitionSpec(
-        element=BitFieldSpec(width=8), space=space),), SizeBounds(0, None))
+    space = RepetitionSpace(
+        determination=RepetitionSpaceDetermination.PATTERN,
+        termination_pattern=Pattern.from_bits("1" * 8),
+    )
+    rep = RepetitionSpec(
+        (ConditionalRepetitionSpec(element=BitFieldSpec(width=8), space=space),),
+        SizeBounds(0, None),
+    )
     # §24.16 splits b"\xAB" into one 8-bit composite element; the repetition writes it. The
     # element writer is a BIT FIELD rather than an IntSpec, because after a transform the
     # elements ARE bits — an IntSpec would be choosing bits for an integer it does not have.
-    spec = StringSpec(element=BitFieldSpec(width=8), repetition=rep,
-                      transform=OctetsToCompositeBits())
+    spec = StringSpec(
+        element=BitFieldSpec(width=8), repetition=rep, transform=OctetsToCompositeBits()
+    )
     writer = BitWriter()
-    spec.write(b"\xAB", writer)
-    assert writer.octets() == b"\xAB\xFF"
+    spec.write(b"\xab", writer)
+    assert writer.octets() == b"\xab\xff"
 
 
 # --- §23.8 and §23.15: the two categories that needed nothing new ---------------------------
+
 
 def test_a_null_encoding_is_all_padding_because_there_is_nothing_to_encode():
     """§23.8's `#NUL`. X.680's NULL carries no information, so every bit of its encoding
@@ -260,7 +320,7 @@ def test_a_null_encoding_is_all_padding_because_there_is_nothing_to_encode():
     assert writer.octets() == b"\x00"
     writer = BitWriter()
     NullSpec(width=8, padding=Padding.ONE).write(None, writer)
-    assert writer.octets() == b"\xFF"
+    assert writer.octets() == b"\xff"
     # The commonest case: a NULL that occupies no bits at all.
     writer = BitWriter()
     NullSpec(width=0).write(None, writer)
@@ -292,8 +352,10 @@ def _flagged(determination, flag_spec):
     space = RepetitionSpace(determination=determination, reference="more")
     return StringSpec(
         element=element,
-        repetition=RepetitionSpec((ConditionalRepetitionSpec(element=element, space=space),),
-                                  SizeBounds(0, None)))
+        repetition=RepetitionSpec(
+            (ConditionalRepetitionSpec(element=element, space=space),), SizeBounds(0, None)
+        ),
+    )
 
 
 def test_flag_to_be_set_writes_a_continuation_flag_into_every_element():
@@ -309,13 +371,15 @@ def test_flag_to_be_set_writes_a_continuation_flag_into_every_element():
     """
     writer = BitWriter()
     _flagged(RepetitionSpaceDetermination.FLAG_TO_BE_SET, AuxIntSpec(width=8)).write(
-        [{"v": 7}, {"v": 8}, {"v": 9}], writer)
+        [{"v": 7}, {"v": 8}, {"v": 9}], writer
+    )
     assert writer.octets() == bytes((1, 7, 1, 8, 0, 9))
 
     # One element is the degenerate case and it is the last one, so its flag is zero.
     writer = BitWriter()
     _flagged(RepetitionSpaceDetermination.FLAG_TO_BE_SET, AuxIntSpec(width=8)).write(
-        [{"v": 7}], writer)
+        [{"v": 7}], writer
+    )
     assert writer.octets() == bytes((0, 7))
 
 
@@ -332,7 +396,8 @@ def test_the_flag_is_resolved_per_element_and_not_across_the_repetition():
     """
     writer = BitWriter()
     _flagged(RepetitionSpaceDetermination.FLAG_TO_BE_SET, AuxIntSpec(width=8)).write(
-        [{"v": 1}, {"v": 2}, {"v": 3}, {"v": 4}], writer)
+        [{"v": 1}, {"v": 2}, {"v": 3}, {"v": 4}], writer
+    )
     assert writer.octets() == bytes((1, 1, 1, 2, 1, 3, 0, 4))
 
 
@@ -361,8 +426,10 @@ def test_flag_to_be_used_checks_the_flag_rather_than_writing_it():
 def test_a_continuation_flag_needs_a_field_to_live_in():
     """§21.7.6 and §21.7.7 both "require the specification of a REFERENCE to a field that is
     part of the repeated element", so a flag determination with no reference names nothing."""
-    for determination in (RepetitionSpaceDetermination.FLAG_TO_BE_SET,
-                          RepetitionSpaceDetermination.FLAG_TO_BE_USED):
+    for determination in (
+        RepetitionSpaceDetermination.FLAG_TO_BE_SET,
+        RepetitionSpaceDetermination.FLAG_TO_BE_USED,
+    ):
         try:
             RepetitionSpace(determination=determination)
         except Asn1Error as error:
@@ -391,15 +458,20 @@ def test_a_continuation_flag_goes_through_its_encoder_transforms():
     """
     from bcir.asn1.ecn_user import BoolToInt, TransformChain
 
-    element = ConcatenationSpec(fields={"more": AuxIntSpec(width=8), "v": _OCTET},
-                                order=("more", "v"))
-    space = RepetitionSpace(determination=RepetitionSpaceDetermination.FLAG_TO_BE_SET,
-                            reference="more",
-                            encoder_transforms=TransformChain((BoolToInt(true_zero=True),)))
+    element = ConcatenationSpec(
+        fields={"more": AuxIntSpec(width=8), "v": _OCTET}, order=("more", "v")
+    )
+    space = RepetitionSpace(
+        determination=RepetitionSpaceDetermination.FLAG_TO_BE_SET,
+        reference="more",
+        encoder_transforms=TransformChain((BoolToInt(true_zero=True),)),
+    )
     spec = StringSpec(
         element=element,
-        repetition=RepetitionSpec((ConditionalRepetitionSpec(element=element, space=space),),
-                                  SizeBounds(0, None)))
+        repetition=RepetitionSpec(
+            (ConditionalRepetitionSpec(element=element, space=space),), SizeBounds(0, None)
+        ),
+    )
     writer = BitWriter()
     spec.write([{"v": 7}, {"v": 8}], writer)
     assert writer.octets() == bytes((0, 7, 1, 8))
@@ -419,14 +491,18 @@ def test_a_boolean_field_is_a_legal_continuation_flag():
     """
     from bcir.asn1.ecn_user import BoolSpec
 
-    element = ConcatenationSpec(fields={"more": BoolSpec(width=8), "v": _OCTET},
-                                order=("more", "v"))
-    space = RepetitionSpace(determination=RepetitionSpaceDetermination.FLAG_TO_BE_USED,
-                            reference="more")
+    element = ConcatenationSpec(
+        fields={"more": BoolSpec(width=8), "v": _OCTET}, order=("more", "v")
+    )
+    space = RepetitionSpace(
+        determination=RepetitionSpaceDetermination.FLAG_TO_BE_USED, reference="more"
+    )
     spec = StringSpec(
         element=element,
-        repetition=RepetitionSpec((ConditionalRepetitionSpec(element=element, space=space),),
-                                  SizeBounds(0, None)))
+        repetition=RepetitionSpec(
+            (ConditionalRepetitionSpec(element=element, space=space),), SizeBounds(0, None)
+        ),
+    )
     writer = BitWriter()
     spec.write([{"more": True, "v": 7}, {"more": False, "v": 8}], writer)
     assert writer.octets() == bytes((1, 7, 0, 8))

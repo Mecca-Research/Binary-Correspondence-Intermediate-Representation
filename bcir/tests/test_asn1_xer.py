@@ -17,8 +17,17 @@ set.
 from __future__ import annotations
 
 from bcir.asn1.codec import Asn1Error
-from bcir.asn1.schema import (Choice, Component, ObjectSetTable, OpenType, Primitive,
-                              Sequence, SequenceOf, Set, SetOf)
+from bcir.asn1.schema import (
+    Choice,
+    Component,
+    ObjectSetTable,
+    OpenType,
+    Primitive,
+    Sequence,
+    SequenceOf,
+    Set,
+    SetOf,
+)
 from bcir.asn1.tags import TagClass, Universal
 from bcir.asn1.tlv import encode_tlv
 from bcir.asn1.values import BitString
@@ -66,10 +75,14 @@ _PERSONNEL_RECORD = {
     "dateOfHire": "19710917",
     "nameOfSpouse": {"givenName": "Mary", "initial": "T", "familyName": "Smith"},
     "children": [
-        {"name": {"givenName": "Ralph", "initial": "T", "familyName": "Smith"},
-         "dateOfBirth": "19571111"},
-        {"name": {"givenName": "Susan", "initial": "B", "familyName": "Jones"},
-         "dateOfBirth": "19590717"},
+        {
+            "name": {"givenName": "Ralph", "initial": "T", "familyName": "Smith"},
+            "dateOfBirth": "19571111",
+        },
+        {
+            "name": {"givenName": "Susan", "initial": "B", "familyName": "Jones"},
+            "dateOfBirth": "19590717",
+        },
     ],
 }
 
@@ -162,8 +175,7 @@ def test_annex_a3_states_the_length_and_the_encoding_is_that_length():
 def test_annex_a3_as_printed_decodes_to_the_annex_a2_value():
     """§8.1.4/§8.3.4: the indentation A.3 prints is white-space an encoder may insert."""
     kind, names = _annex_a()
-    assert decode_xer(_ANNEX_A3, kind, names=names,
-                      rules=XerRules.BASIC) == _PERSONNEL_RECORD
+    assert decode_xer(_ANNEX_A3, kind, names=names, rules=XerRules.BASIC) == _PERSONNEL_RECORD
 
 
 def test_annex_a4_decodes_and_round_trips_under_both_rule_sets():
@@ -182,8 +194,7 @@ def test_a_cxer_encoding_is_also_a_basic_xer_encoding():
     """
     kind, names = _annex_a()
     canonical = encode_xer(kind, _PERSONNEL_RECORD, names=names)
-    assert decode_xer(canonical, kind, names=names,
-                      rules=XerRules.BASIC) == _PERSONNEL_RECORD
+    assert decode_xer(canonical, kind, names=names, rules=XerRules.BASIC) == _PERSONNEL_RECORD
 
 
 def test_the_set_components_move_into_canonical_tag_order():
@@ -195,8 +206,7 @@ def test_the_set_components_move_into_canonical_tag_order():
     """
     kind, names = _annex_a()
     canonical = encode_xer(kind, _PERSONNEL_RECORD, names=names).decode()
-    basic = encode_xer(kind, _PERSONNEL_RECORD, names=names,
-                       rules=XerRules.BASIC).decode()
+    basic = encode_xer(kind, _PERSONNEL_RECORD, names=names, rules=XerRules.BASIC).decode()
     assert canonical.index("<number>") < canonical.index("<title>")
     assert basic.index("<title>") < basic.index("<number>")
     # Reordering is not rewriting: the two encodings hold the same characters.
@@ -211,13 +221,20 @@ def test_a_set_of_untagged_choices_is_ordered_by_its_smallest_alternative_tag():
     type or any such choice types nested within it".
     """
     inner = Choice((Component("deep", Primitive(Universal.INTEGER, "INTEGER"), tag=9),))
-    kind = Set((
-        Component("plain", Primitive(Universal.INTEGER, "INTEGER"), tag=5),
-        Component("picked", Choice((
-            Component("small", Primitive(Universal.INTEGER, "INTEGER"), tag=1),
-            Component("nested", inner, tag=None, explicit=True),
-        ))),
-    ))
+    kind = Set(
+        (
+            Component("plain", Primitive(Universal.INTEGER, "INTEGER"), tag=5),
+            Component(
+                "picked",
+                Choice(
+                    (
+                        Component("small", Primitive(Universal.INTEGER, "INTEGER"), tag=1),
+                        Component("nested", inner, tag=None, explicit=True),
+                    )
+                ),
+            ),
+        )
+    )
     text = encode_xer(kind, {"plain": 1, "picked": ("small", 2)}, name="T").decode()
     assert text.index("<picked>") < text.index("<plain>"), text
 
@@ -227,20 +244,24 @@ def test_a_set_of_untagged_choices_is_ordered_by_its_smallest_alternative_tag():
 
 def test_a_default_valued_component_is_present_under_cxer_and_absent_under_basic():
     """§9.5/§9.6.3 against X.690 §11.5 — two canonical rule sets, opposite answers."""
-    kind = Sequence((
-        Component("x", Primitive(Universal.INTEGER, "INTEGER")),
-        Component("flag", Primitive(Universal.BOOLEAN, "BOOLEAN"), tag=0, default=False),
-    ))
-    assert encode_xer(kind, {"x": 1}, name="T").decode() \
+    kind = Sequence(
+        (
+            Component("x", Primitive(Universal.INTEGER, "INTEGER")),
+            Component("flag", Primitive(Universal.BOOLEAN, "BOOLEAN"), tag=0, default=False),
+        )
+    )
+    assert encode_xer(kind, {"x": 1}, name="T").decode() == "<T><x>1</x><flag><false/></flag></T>"
+    assert (
+        encode_xer(kind, {"x": 1, "flag": False}, name="T").decode()
         == "<T><x>1</x><flag><false/></flag></T>"
-    assert encode_xer(kind, {"x": 1, "flag": False}, name="T").decode() \
-        == "<T><x>1</x><flag><false/></flag></T>"
-    assert encode_xer(kind, {"x": 1, "flag": False}, name="T",
-                      rules=XerRules.BASIC).decode() == "<T><x>1</x></T>"
+    )
+    assert (
+        encode_xer(kind, {"x": 1, "flag": False}, name="T", rules=XerRules.BASIC).decode()
+        == "<T><x>1</x></T>"
+    )
     # Either spelling decodes to the same abstract value (X.680 §25.12).
     for text in ("<T><x>1</x><flag><false/></flag></T>", "<T><x>1</x></T>"):
-        assert decode_xer(text, kind, name="T",
-                          rules=XerRules.BASIC) == {"x": 1, "flag": False}
+        assert decode_xer(text, kind, name="T", rules=XerRules.BASIC) == {"x": 1, "flag": False}
 
 
 def test_set_of_is_sorted_by_the_code_points_of_its_element_encodings():
@@ -252,13 +273,15 @@ def test_set_of_is_sorted_by_the_code_points_of_its_element_encodings():
     """
     kind = SetOf(Primitive(Universal.UTF8_STRING, "UTF8String"))
     text = encode_xer(kind, ["b", "ab", "a"], name="T").decode()
-    assert text == ("<T><UTF8String>a</UTF8String><UTF8String>ab</UTF8String>"
-                    "<UTF8String>b</UTF8String></T>")
+    assert text == (
+        "<T><UTF8String>a</UTF8String><UTF8String>ab</UTF8String><UTF8String>b</UTF8String></T>"
+    )
     # BASIC has no such rule, so the caller's order survives (X.680 §28.3 NOTE 2).
-    assert encode_xer(kind, ["b", "ab", "a"], name="T",
-                      rules=XerRules.BASIC).decode().index("<UTF8String>b<") \
-        < encode_xer(kind, ["b", "ab", "a"], name="T",
-                     rules=XerRules.BASIC).decode().index("<UTF8String>a<")
+    assert encode_xer(kind, ["b", "ab", "a"], name="T", rules=XerRules.BASIC).decode().index(
+        "<UTF8String>b<"
+    ) < encode_xer(kind, ["b", "ab", "a"], name="T", rules=XerRules.BASIC).decode().index(
+        "<UTF8String>a<"
+    )
 
 
 def test_sequence_of_keeps_its_order_under_both_rule_sets():
@@ -271,13 +294,13 @@ def test_sequence_of_keeps_its_order_under_both_rule_sets():
 
 def test_canonical_real_normalization():
     """§9.2.1-§9.2.5: one non-zero integer digit, a trimmed fraction, `E`, no `+`."""
-    assert canonical_realnumber(0.0) == "0"                    # §9.2.1
-    assert canonical_realnumber(1.0) == "1.0E0"                # §9.2.3: a fraction digit
-    assert canonical_realnumber(-1.0) == "-1.0E0"              # §9.2.5: no "+" for "-1"
+    assert canonical_realnumber(0.0) == "0"  # §9.2.1
+    assert canonical_realnumber(1.0) == "1.0E0"  # §9.2.3: a fraction digit
+    assert canonical_realnumber(-1.0) == "-1.0E0"  # §9.2.5: no "+" for "-1"
     assert canonical_realnumber(0.5) == "5.0E-1"
     assert canonical_realnumber(314.159) == "3.14159E2"
-    assert canonical_realnumber(1234.0) == "1.234E3"           # trailing zeros trimmed
-    assert canonical_realnumber(1e300) == "1.0E300"            # §9.2.5: no "+" exponent
+    assert canonical_realnumber(1234.0) == "1.234E3"  # trailing zeros trimmed
+    assert canonical_realnumber(1e300) == "1.0E300"  # §9.2.5: no "+" exponent
     assert canonical_realnumber(1e-5) == "1.0E-5"
     for text in ("+", "e"):
         assert text not in canonical_realnumber(1e300)
@@ -287,8 +310,7 @@ def test_special_real_values_use_the_empty_element_form():
     """§8.3.8 — `XMLSpecialRealValue` shall only be `EmptyElementReal`."""
     kind = Primitive(Universal.REAL, "REAL")
     assert encode_xer(kind, float("inf"), name="T").decode() == "<T><PLUS-INFINITY/></T>"
-    assert encode_xer(kind, float("-inf"), name="T").decode() \
-        == "<T><MINUS-INFINITY/></T>"
+    assert encode_xer(kind, float("-inf"), name="T").decode() == "<T><MINUS-INFINITY/></T>"
     assert encode_xer(kind, float("nan"), name="T").decode() == "<T><NOT-A-NUMBER/></T>"
     assert decode_xer("<T><PLUS-INFINITY/></T>", kind, name="T") == float("inf")
     nan = decode_xer("<T><NOT-A-NUMBER/></T>", kind, name="T")
@@ -310,26 +332,32 @@ def test_bitstring_is_an_xmlbstring_and_never_an_identifier_list():
     assert encode_xer(kind, BitString(b"\xa0", 5), name="T").decode() == "<T>101</T>"
     assert decode_xer("<T>101</T>", kind, name="T") == BitString(b"\xa0", 5)
     assert decode_xer("<T/>", kind, name="T") == BitString(b"", 0)
-    _refuses(lambda: decode_xer("<T>1<flagName/>1</T>", kind, name="T"),
-             "an element interrupts")
+    _refuses(lambda: decode_xer("<T>1<flagName/>1</T>", kind, name="T"), "an element interrupts")
 
 
 def test_canonical_time_trims_the_fraction_and_demands_zulu_and_seconds():
     """§9.10.1-§9.10.4 and §9.11.1-§9.11.2, with no time arithmetic anywhere."""
     generalized = Primitive(Universal.GENERALIZED_TIME, "GeneralizedTime")
-    assert encode_xer(generalized, "19710917123456.500Z", name="T").decode() \
+    assert (
+        encode_xer(generalized, "19710917123456.500Z", name="T").decode()
         == "<T>19710917123456.5Z</T>"
-    assert encode_xer(generalized, "19710917123456.000Z", name="T").decode() \
-        == "<T>19710917123456Z</T>"                             # §9.10.3
-    assert encode_xer(generalized, "19710917123456,5Z", name="T").decode() \
-        == "<T>19710917123456.5Z</T>"                           # §9.10.4
-    _refuses(lambda: encode_xer(generalized, "19710917123456+0100", name="T"),
-             "terminate with")
+    )
+    assert (
+        encode_xer(generalized, "19710917123456.000Z", name="T").decode()
+        == "<T>19710917123456Z</T>"
+    )  # §9.10.3
+    assert (
+        encode_xer(generalized, "19710917123456,5Z", name="T").decode()
+        == "<T>19710917123456.5Z</T>"
+    )  # §9.10.4
+    _refuses(lambda: encode_xer(generalized, "19710917123456+0100", name="T"), "terminate with")
     utc = Primitive(Universal.UTC_TIME, "UTCTime")
     _refuses(lambda: encode_xer(utc, "9205211234Z", name="T"), "seconds")
     # BASIC-XER states no such rule, so the value notation passes through unchanged.
-    assert encode_xer(utc, "9205211234Z", name="T",
-                      rules=XerRules.BASIC).decode() == "<T>9205211234Z</T>"
+    assert (
+        encode_xer(utc, "9205211234Z", name="T", rules=XerRules.BASIC).decode()
+        == "<T>9205211234Z</T>"
+    )
 
 
 def test_the_time_type_is_refused_by_cxer_rather_than_approximated():
@@ -337,8 +365,7 @@ def test_the_time_type_is_refused_by_cxer_rather_than_approximated():
     for universal in (Universal.TIME, Universal.DURATION, Universal.DATE_TIME):
         kind = Primitive(universal, "TIME")
         _refuses(lambda k=kind: encode_xer(k, "P1Y2M", name="T"), "9.13")
-        assert encode_xer(kind, "P1Y2M", name="T",
-                          rules=XerRules.BASIC).decode() == "<T>P1Y2M</T>"
+        assert encode_xer(kind, "P1Y2M", name="T", rules=XerRules.BASIC).decode() == "<T>P1Y2M</T>"
 
 
 # --- clause 8: the BASIC-XER restrictions on X.680's notation ----------------------------
@@ -357,7 +384,7 @@ def test_integer_is_an_xmlsignednumber_only():
     """§8.3.6 removes both `identifier` forms of X.680 §19.9."""
     kind = Primitive(Universal.INTEGER, "INTEGER")
     assert encode_xer(kind, -42, name="T").decode() == "<T>-42</T>"
-    assert encode_xer(kind, 0, name="T").decode() == "<T>0</T>"       # X.680 §19.13
+    assert encode_xer(kind, 0, name="T").decode() == "<T>0</T>"  # X.680 §19.13
     assert decode_xer("<T> -42 </T>", kind, name="T") == -42
     _refuses(lambda: decode_xer("<T><one/></T>", kind, name="T"), "8.3.6")
     _refuses(lambda: decode_xer("<T>01</T>", kind, name="T"), "leading zero")
@@ -371,8 +398,9 @@ def test_enumerated_has_no_numeric_spelling_at_all():
     §14.1 index, and for the opposite reason: PER cannot find the index without it, XER
     cannot find a name.
     """
-    kind = Primitive(Universal.ENUMERATED, "ENUMERATED",
-                     enumeration=(("red", 0), ("green", 1), ("blue", 2)))
+    kind = Primitive(
+        Universal.ENUMERATED, "ENUMERATED", enumeration=(("red", 0), ("green", 1), ("blue", 2))
+    )
     assert encode_xer(kind, 1, name="T").decode() == "<T><green/></T>"
     assert encode_xer(kind, "blue", name="T").decode() == "<T><blue/></T>"
     assert decode_xer("<T><blue/></T>", kind, name="T") == 2
@@ -384,16 +412,19 @@ def test_enumerated_has_no_numeric_spelling_at_all():
 
 def test_null_and_every_empty_value_use_the_empty_element_tag():
     """X.680 §17.8 as an option, §9.1.4 as a requirement."""
-    assert encode_xer(Primitive(Universal.NULL, "NULL"), None, name="T").decode() \
+    assert encode_xer(Primitive(Universal.NULL, "NULL"), None, name="T").decode() == "<T/>"
+    assert (
+        encode_xer(Primitive(Universal.UTF8_STRING, "UTF8String"), "", name="T").decode() == "<T/>"
+    )
+    assert (
+        encode_xer(SequenceOf(Primitive(Universal.INTEGER, "INTEGER")), [], name="T").decode()
         == "<T/>"
-    assert encode_xer(Primitive(Universal.UTF8_STRING, "UTF8String"), "",
-                      name="T").decode() == "<T/>"
-    assert encode_xer(SequenceOf(Primitive(Universal.INTEGER, "INTEGER")), [],
-                      name="T").decode() == "<T/>"
+    )
     # X.680 §17.8: `<T></T>` denotes the same value and is what the option replaces.
     assert decode_xer("<T></T>", Primitive(Universal.NULL, "NULL"), name="T") is None
-    assert decode_xer("<T></T>", SequenceOf(
-        Primitive(Universal.INTEGER, "INTEGER")), name="T") == []
+    assert (
+        decode_xer("<T></T>", SequenceOf(Primitive(Universal.INTEGER, "INTEGER")), name="T") == []
+    )
 
 
 def test_sequence_of_null_spells_each_element_as_an_empty_element():
@@ -410,19 +441,25 @@ def test_the_list_notation_follows_table_5():
     condition by making the empty-element form the only one available.
     """
     boolean = SequenceOf(Primitive(Universal.BOOLEAN, "BOOLEAN"))
-    assert encode_xer(boolean, [True, False], name="T").decode() \
-        == "<T><true/><false/></T>"
-    enumerated = SequenceOf(Primitive(Universal.ENUMERATED, "ENUMERATED",
-                                      enumeration=(("red", 0), ("blue", 1))))
+    assert encode_xer(boolean, [True, False], name="T").decode() == "<T><true/><false/></T>"
+    enumerated = SequenceOf(
+        Primitive(Universal.ENUMERATED, "ENUMERATED", enumeration=(("red", 0), ("blue", 1)))
+    )
     assert encode_xer(enumerated, [0, 1], name="T").decode() == "<T><red/><blue/></T>"
-    choice = SequenceOf(Choice((
-        Component("a", Primitive(Universal.INTEGER, "INTEGER"), tag=0),
-        Component("b", Primitive(Universal.INTEGER, "INTEGER"), tag=1))))
-    assert encode_xer(choice, [("a", 1), ("b", 2)], name="T").decode() \
-        == "<T><a>1</a><b>2</b></T>"
+    choice = SequenceOf(
+        Choice(
+            (
+                Component("a", Primitive(Universal.INTEGER, "INTEGER"), tag=0),
+                Component("b", Primitive(Universal.INTEGER, "INTEGER"), tag=1),
+            )
+        )
+    )
+    assert encode_xer(choice, [("a", 1), ("b", 2)], name="T").decode() == "<T><a>1</a><b>2</b></T>"
     integer = SequenceOf(Primitive(Universal.INTEGER, "INTEGER"))
-    assert encode_xer(integer, [1, 2], name="T").decode() \
+    assert (
+        encode_xer(integer, [1, 2], name="T").decode()
         == "<T><INTEGER>1</INTEGER><INTEGER>2</INTEGER></T>"
+    )
 
 
 def test_a_delimited_item_is_named_by_the_typereference_when_there_is_one():
@@ -432,7 +469,7 @@ def test_a_delimited_item_is_named_by_the_typereference_when_there_is_one():
     children = lowered.module.types["PersonnelRecord"]
     element = next(c for c in children.components if c.name == "children").type.element
     assert xml_type_name(element, names) == "ChildInformation"
-    assert xml_type_name(element) == "SET"                    # X.680 Table 4, no names
+    assert xml_type_name(element) == "SET"  # X.680 Table 4, no names
     assert xml_type_name(Primitive(Universal.IA5_STRING, "IA5String")) == "IA5String"
     assert xml_type_name(SequenceOf(Primitive(Universal.NULL, "NULL"))) == "SEQUENCE_OF"
 
@@ -442,8 +479,7 @@ def test_a_type_name_beginning_with_xml_gets_a_low_line():
     kind = Sequence((Component("x", Primitive(Universal.INTEGER, "INTEGER")),))
     names = XerTypeNames({"XMLThing": kind})
     assert xml_type_name(kind, names) == "_XMLThing"
-    assert encode_xer(kind, {"x": 1}, names=names).decode() \
-        == "<_XMLThing><x>1</x></_XMLThing>"
+    assert encode_xer(kind, {"x": 1}, names=names).decode() == "<_XMLThing><x>1</x></_XMLThing>"
 
 
 def test_object_identifier_uses_the_number_form():
@@ -451,8 +487,7 @@ def test_object_identifier_uses_the_number_form():
     kind = Primitive(Universal.OBJECT_IDENTIFIER, "OBJECT IDENTIFIER")
     assert encode_xer(kind, (2, 1, 5, 1), name="T").decode() == "<T>2.1.5.1</T>"
     assert decode_xer("<T>2.1.5.1</T>", kind, name="T") == (2, 1, 5, 1)
-    _refuses(lambda: decode_xer("<T>joint-iso-itu-t.1</T>", kind, name="T"),
-             "XMLNumberForm")
+    _refuses(lambda: decode_xer("<T>joint-iso-itu-t.1</T>", kind, name="T"), "XMLNumberForm")
 
 
 # --- X.680 §12.15: the xmlcstring lexical item -------------------------------------------
@@ -481,8 +516,7 @@ def test_control_characters_become_the_table_3_empty_elements():
 def test_a_numeric_escape_is_basic_only():
     """§9.1.3: "The escape sequences specified in ... 12.15.8 shall not be used"."""
     kind = Primitive(Universal.UTF8_STRING, "UTF8String")
-    assert decode_xer("<T>a&#233;b&#xEE;c</T>", kind, name="T",
-                      rules=XerRules.BASIC) == "aébîc"
+    assert decode_xer("<T>a&#233;b&#xEE;c</T>", kind, name="T", rules=XerRules.BASIC) == "aébîc"
     _refuses(lambda: decode_xer("<T>a&#233;</T>", kind, name="T"), "9.1.3")
 
 
@@ -495,10 +529,11 @@ def test_a_character_outside_the_xmlcstring_repertoire_is_refused():
 
 def test_white_space_is_stripped_around_a_number_and_kept_inside_a_string():
     """X.680 §16.2 permits it around an XMLValue; §41.9 carves out the string case."""
-    assert decode_xer("<T>\n  42 </T>", Primitive(Universal.INTEGER, "INTEGER"),
-                      name="T") == 42
-    assert decode_xer("<T> a b </T>", Primitive(Universal.UTF8_STRING, "UTF8String"),
-                      name="T") == " a b "
+    assert decode_xer("<T>\n  42 </T>", Primitive(Universal.INTEGER, "INTEGER"), name="T") == 42
+    assert (
+        decode_xer("<T> a b </T>", Primitive(Universal.UTF8_STRING, "UTF8String"), name="T")
+        == " a b "
+    )
 
 
 # --- clause 8.6: decoding types with extension markers -----------------------------------
@@ -506,15 +541,15 @@ def test_white_space_is_stripped_around_a_number_and_kept_inside_a_string():
 
 def test_an_unknown_extension_element_is_skipped_whole():
     """§8.6.1/§8.6.2 — a decoder "shall accept" an encoding carrying unknown extensions."""
-    kind = Sequence((Component("x", Primitive(Universal.INTEGER, "INTEGER")),),
-                    extensible=True)
+    kind = Sequence((Component("x", Primitive(Universal.INTEGER, "INTEGER")),), extensible=True)
     assert decode_xer("<T><x>1</x><future>9</future></T>", kind, name="T") == {"x": 1}
     # The skip is structural, so a whole subtree goes with it.
-    assert decode_xer("<T><x>1</x><future><a>1</a><b/></future></T>", kind,
-                      name="T") == {"x": 1}
+    assert decode_xer("<T><x>1</x><future><a>1</a><b/></future></T>", kind, name="T") == {"x": 1}
     closed = Sequence((Component("x", Primitive(Universal.INTEGER, "INTEGER")),))
-    _refuses(lambda: decode_xer("<T><x>1</x><future>9</future></T>", closed, name="T"),
-             "no extension marker")
+    _refuses(
+        lambda: decode_xer("<T><x>1</x><future>9</future></T>", closed, name="T"),
+        "no extension marker",
+    )
 
 
 def test_an_unknown_choice_alternative_keeps_its_raw_xml():
@@ -524,25 +559,26 @@ def test_an_unknown_choice_alternative_keeps_its_raw_xml():
     the same posture an unresolvable open type takes with its octets. `encode_xer` refuses
     the pair rather than emitting text it did not build.
     """
-    kind = Choice((Component("a", Primitive(Universal.INTEGER, "INTEGER"), tag=0),),
-                  extensible=True)
-    assert decode_xer("<T><later>9</later></T>", kind, name="T") \
-        == ("later", "<later>9</later>")
-    _refuses(lambda: encode_xer(kind, ("later", "<later>9</later>"), name="T"),
-             "not re-encodable")
+    kind = Choice(
+        (Component("a", Primitive(Universal.INTEGER, "INTEGER"), tag=0),), extensible=True
+    )
+    assert decode_xer("<T><later>9</later></T>", kind, name="T") == ("later", "<later>9</later>")
+    _refuses(lambda: encode_xer(kind, ("later", "<later>9</later>"), name="T"), "not re-encodable")
     closed = Choice((Component("a", Primitive(Universal.INTEGER, "INTEGER"), tag=0),))
-    _refuses(lambda: decode_xer("<T><later>9</later></T>", closed, name="T"),
-             "no extension marker")
+    _refuses(lambda: decode_xer("<T><later>9</later></T>", closed, name="T"), "no extension marker")
 
 
 def test_a_set_accepts_its_components_in_any_order():
     """X.680 §27.9 NOTE — and a SEQUENCE does not (§25.20)."""
-    components = (Component("a", Primitive(Universal.INTEGER, "INTEGER"), tag=0),
-                  Component("b", Primitive(Universal.INTEGER, "INTEGER"), tag=1))
-    assert decode_xer("<T><b>2</b><a>1</a></T>", Set(components), name="T") \
-        == {"a": 1, "b": 2}
-    _refuses(lambda: decode_xer("<T><b>2</b><a>1</a></T>", Sequence(components),
-                                name="T"), "missing or out of order")
+    components = (
+        Component("a", Primitive(Universal.INTEGER, "INTEGER"), tag=0),
+        Component("b", Primitive(Universal.INTEGER, "INTEGER"), tag=1),
+    )
+    assert decode_xer("<T><b>2</b><a>1</a></T>", Set(components), name="T") == {"a": 1, "b": 2}
+    _refuses(
+        lambda: decode_xer("<T><b>2</b><a>1</a></T>", Sequence(components), name="T"),
+        "missing or out of order",
+    )
 
 
 # --- clause 8.2/8.1.2: the document, and what is not part of one -------------------------
@@ -551,14 +587,17 @@ def test_a_set_accepts_its_components_in_any_order():
 def test_the_prolog_is_optional_for_basic_and_forbidden_for_cxer():
     """§8.2.1 gives two alternatives; §9.1.1 deletes the second."""
     kind = Primitive(Universal.INTEGER, "INTEGER")
-    assert encode_xer(kind, 1, name="T", prolog=True,
-                      rules=XerRules.BASIC).decode() == XML_PROLOG + "<T>1</T>"
-    assert decode_xer(XML_PROLOG + " <T>1</T>", kind, name="T",
-                      rules=XerRules.BASIC) == 1
+    assert (
+        encode_xer(kind, 1, name="T", prolog=True, rules=XerRules.BASIC).decode()
+        == XML_PROLOG + "<T>1</T>"
+    )
+    assert decode_xer(XML_PROLOG + " <T>1</T>", kind, name="T", rules=XerRules.BASIC) == 1
     _refuses(lambda: encode_xer(kind, 1, name="T", prolog=True), "9.1.1")
     _refuses(lambda: decode_xer(XML_PROLOG + "<T>1</T>", kind, name="T"), "9.1.1")
-    _refuses(lambda: decode_xer('<?xml version="1.0"?><T>1</T>', kind, name="T",
-                                rules=XerRules.BASIC), "8.2.1")
+    _refuses(
+        lambda: decode_xer('<?xml version="1.0"?><T>1</T>', kind, name="T", rules=XerRules.BASIC),
+        "8.2.1",
+    )
 
 
 def test_the_constructs_a_conforming_encoder_never_produces_are_refused_by_name():
@@ -570,12 +609,12 @@ def test_the_constructs_a_conforming_encoder_never_produces_are_refused_by_name(
     """
     kind = Primitive(Universal.INTEGER, "INTEGER")
     for text, expected in (
-            ("<T><!-- c -->1</T>", "comments"),
-            ("<T><?go?>1</T>", "processing instruction"),
-            ("<!DOCTYPE T><T>1</T>", "document type declaration"),
-            ("<T><![CDATA[1]]></T>", "CDATA"),
-            ('<T a="1">1</T>', "ATTRIBUTE instruction"),
-            ("<a:T>1</a:T>", "NAMESPACE instruction"),
+        ("<T><!-- c -->1</T>", "comments"),
+        ("<T><?go?>1</T>", "processing instruction"),
+        ("<!DOCTYPE T><T>1</T>", "document type declaration"),
+        ("<T><![CDATA[1]]></T>", "CDATA"),
+        ('<T a="1">1</T>', "ATTRIBUTE instruction"),
+        ("<a:T>1</a:T>", "NAMESPACE instruction"),
     ):
         _refuses(lambda t=text: decode_xer(t, kind, name="T"), expected)
 
@@ -583,7 +622,7 @@ def test_the_constructs_a_conforming_encoder_never_produces_are_refused_by_name(
 def test_one_document_element_and_no_more():
     """§8.1.1 — an XER encoding is a prolog and ONE document element."""
     kind = Primitive(Universal.INTEGER, "INTEGER")
-    assert decode_xer("<T>1</T>\n ", kind, name="T") == 1        # §8.2.1 b) white-space
+    assert decode_xer("<T>1</T>\n ", kind, name="T") == 1  # §8.2.1 b) white-space
     _refuses(lambda: decode_xer("<T>1</T><T>2</T>", kind, name="T"), "8.1.1")
 
 
@@ -592,8 +631,14 @@ def test_the_encoding_is_utf_8_octets():
     kind = Primitive(Universal.UTF8_STRING, "UTF8String")
     assert encode_xer(kind, "é", name="T") == b"<T>\xc3\xa9</T>"
     assert decode_xer(b"<T>\xc3\xa9</T>", kind, name="T") == "é"
-    assert decode_xer(b"\xef\xbb\xbf<T>1</T>",                    # a byte order mark
-                      Primitive(Universal.INTEGER, "INTEGER"), name="T") == 1
+    assert (
+        decode_xer(
+            b"\xef\xbb\xbf<T>1</T>",  # a byte order mark
+            Primitive(Universal.INTEGER, "INTEGER"),
+            name="T",
+        )
+        == 1
+    )
     _refuses(lambda: decode_xer(b"<T>\xff</T>", kind, name="T"), "8.1.3")
 
 
@@ -610,12 +655,14 @@ def test_a_containing_constraint_chooses_the_encoding_under_cxer():
     inner, octets = _inner_and_octets()
     names = XerTypeNames({"Inner": inner})
     kind = Primitive(Universal.OCTET_STRING, "OCTET STRING", contains=inner)
-    assert encode_xer(kind, octets, name="T", names=names).decode() \
-        == "<T><Inner><n>7</n></Inner></T>"
-    assert encode_xer(kind, octets, name="T", names=names,
-                      rules=XerRules.BASIC).decode() == f"<T>{octets.hex().upper()}</T>"
-    assert decode_xer("<T><Inner><n>7</n></Inner></T>", kind, name="T",
-                      names=names) == octets
+    assert (
+        encode_xer(kind, octets, name="T", names=names).decode() == "<T><Inner><n>7</n></Inner></T>"
+    )
+    assert (
+        encode_xer(kind, octets, name="T", names=names, rules=XerRules.BASIC).decode()
+        == f"<T>{octets.hex().upper()}</T>"
+    )
+    assert decode_xer("<T><Inner><n>7</n></Inner></T>", kind, name="T", names=names) == octets
 
 
 def test_an_encoded_by_constraint_keeps_the_string_form():
@@ -625,8 +672,9 @@ def test_an_encoded_by_constraint_keeps_the_string_form():
     rail's own type — so the alternative stays unavailable and the hex form is emitted.
     """
     inner, octets = _inner_and_octets()
-    kind = Primitive(Universal.OCTET_STRING, "OCTET STRING", contains=inner,
-                     encoded_by=(2, 1, 2, 1))
+    kind = Primitive(
+        Universal.OCTET_STRING, "OCTET STRING", contains=inner, encoded_by=(2, 1, 2, 1)
+    )
     assert encode_xer(kind, octets, name="T").decode() == f"<T>{octets.hex().upper()}</T>"
 
 
@@ -635,18 +683,25 @@ def test_an_open_type_is_hex_under_basic_and_its_selected_type_under_cxer():
     inner, octets = _inner_and_octets()
     names = XerTypeNames({"Inner": inner})
     table = ObjectSetTable("C", ({"&id": 1, "&Type": inner},))
-    opened = OpenType("OPEN", table=table, field="&Type",
-                      governing=(("id",),), governing_fields=("&id",))
-    kind = Sequence((Component("id", Primitive(Universal.INTEGER, "INTEGER")),
-                     Component("body", opened)), "Outer")
+    opened = OpenType(
+        "OPEN", table=table, field="&Type", governing=(("id",),), governing_fields=("&id",)
+    )
+    kind = Sequence(
+        (Component("id", Primitive(Universal.INTEGER, "INTEGER")), Component("body", opened)),
+        "Outer",
+    )
     value = {"id": 1, "body": octets}
-    assert encode_xer(kind, value, name="T", names=names).decode() \
+    assert (
+        encode_xer(kind, value, name="T", names=names).decode()
         == "<T><id>1</id><body><Inner><n>7</n></Inner></body></T>"
-    assert encode_xer(kind, value, name="T", names=names,
-                      rules=XerRules.BASIC).decode() \
+    )
+    assert (
+        encode_xer(kind, value, name="T", names=names, rules=XerRules.BASIC).decode()
         == f"<T><id>1</id><body>{octets.hex().upper()}</body></T>"
-    decoded = decode_xer("<T><id>1</id><body><Inner><n>7</n></Inner></body></T>", kind,
-                         name="T", names=names)
+    )
+    decoded = decode_xer(
+        "<T><id>1</id><body><Inner><n>7</n></Inner></body></T>", kind, name="T", names=names
+    )
     assert decoded["body"] == octets
     # The X.682 §10.19 enrichment lands here exactly as it does on the DER rail.
     assert decoded["body.resolved"] == {"n": 7}
@@ -656,14 +711,19 @@ def test_an_unresolvable_open_type_has_no_canonical_encoding():
     """§9.12 leaves only the typed form, and X.681 §12.9 permits an unknown object."""
     inner, octets = _inner_and_octets()
     table = ObjectSetTable("C", ({"&id": 1, "&Type": inner},), extensible=True)
-    opened = OpenType("OPEN", table=table, field="&Type",
-                      governing=(("id",),), governing_fields=("&id",))
-    kind = Sequence((Component("id", Primitive(Universal.INTEGER, "INTEGER")),
-                     Component("body", opened)), "Outer")
+    opened = OpenType(
+        "OPEN", table=table, field="&Type", governing=(("id",),), governing_fields=("&id",)
+    )
+    kind = Sequence(
+        (Component("id", Primitive(Universal.INTEGER, "INTEGER")), Component("body", opened)),
+        "Outer",
+    )
     unknown = {"id": 9, "body": octets}
     _refuses(lambda: encode_xer(kind, unknown, name="T"), "9.12")
-    assert encode_xer(kind, unknown, name="T", rules=XerRules.BASIC).decode() \
+    assert (
+        encode_xer(kind, unknown, name="T", rules=XerRules.BASIC).decode()
         == f"<T><id>9</id><body>{octets.hex().upper()}</body></T>"
+    )
 
 
 # --- clause 40 ---------------------------------------------------------------------------
@@ -675,7 +735,7 @@ def test_the_rule_object_identifiers():
     assert CANONICAL_XER_OID == (2, 1, 5, 1)
     assert EXTENDED_XER_OID == (2, 1, 5, 2)
     assert ASN1_NAMESPACE_OID == (2, 1, 5, 2, 0, 1)
-    assert ASN1_NAMESPACE == "urn:oid:2.1.5.2.0.1"            # §16.9
+    assert ASN1_NAMESPACE == "urn:oid:2.1.5.2.0.1"  # §16.9
     assert rules_oid(XerRules.BASIC) == BASIC_XER_OID
     assert rules_oid(XerRules.CANONICAL) == CANONICAL_XER_OID
 

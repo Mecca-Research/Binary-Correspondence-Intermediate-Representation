@@ -62,15 +62,17 @@ def stats_reference(data: list[float], kind: str) -> float:
     n = len(data)
     if n < 1:
         raise ValueError("gsl_stats: need at least one sample for the mean")
-    mean = math.fsum(float(v) for v in data) / n          # (1/n) sum x  -- GSL gsl_stats_mean
+    mean = math.fsum(float(v) for v in data) / n  # (1/n) sum x  -- GSL gsl_stats_mean
     if kind == "mean":
         return mean
     if n < 2:
         raise ValueError("gsl_stats: variance/sd need at least two samples (the n-1 divisor)")
-    var = math.fsum((float(v) - mean) ** 2 for v in data) / (n - 1)   # UNBIASED variance (n-1 divisor)
+    var = math.fsum((float(v) - mean) ** 2 for v in data) / (
+        n - 1
+    )  # UNBIASED variance (n-1 divisor)
     if kind == "variance":
         return var
-    return math.sqrt(var)                                 # sd = sqrt(variance) -- the only transcendental
+    return math.sqrt(var)  # sd = sqrt(variance) -- the only transcendental
 
 
 def stats_via_bridge(data: list[float], kind: str, group_size: int, bits: int) -> float:

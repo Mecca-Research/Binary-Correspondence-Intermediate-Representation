@@ -10,6 +10,7 @@ lowering.  It deliberately contains no tensor framework or target-specific kerne
 Operation counts are analytic lower bounds.  A CUDA provider, production diffusion
 decoder, or native model format requires measured parity evidence before promotion.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -47,26 +48,35 @@ def _digest(value) -> str:
 
 
 def _sha256(value, field: str) -> str:
-    if not isinstance(value, str) or len(value) != 64 or value != value.lower() \
-            or any(character not in "0123456789abcdef" for character in value):
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or value != value.lower()
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
         raise ValueError(f"{field} must be a lowercase SHA-256 digest")
     return value
 
 
-def _integer(value, field: str, *, minimum: int = 0,
-             maximum: int = _MAX_U63) -> int:
+def _integer(value, field: str, *, minimum: int = 0, maximum: int = _MAX_U63) -> int:
     if type(value) is not int or not minimum <= value <= maximum:
         raise ValueError(f"{field} must be an integer in [{minimum}, {maximum}]")
     return value
 
 
-def _finite(value, field: str, *, minimum: float | None = None,
-            maximum: float | None = None) -> float:
+def _finite(
+    value, field: str, *, minimum: float | None = None, maximum: float | None = None
+) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{field} must be a finite number")
     result = float(value)
-    if not math.isfinite(result) or minimum is not None and result < minimum \
-            or maximum is not None and result > maximum:
+    if (
+        not math.isfinite(result)
+        or minimum is not None
+        and result < minimum
+        or maximum is not None
+        and result > maximum
+    ):
         raise ValueError(f"{field} is outside its valid range")
     return result
 
@@ -132,13 +142,13 @@ class UnicodeByteReference:
 
     def __post_init__(self) -> None:
         _integer(self.byte_start, "byte_start", maximum=_MAX_CONTEXT)
-        _integer(self.byte_end, "byte_end", minimum=self.byte_start + 1,
-                 maximum=_MAX_CONTEXT)
+        _integer(self.byte_end, "byte_end", minimum=self.byte_start + 1, maximum=_MAX_CONTEXT)
         _integer(self.codepoint, "codepoint", maximum=0x10FFFF)
         if 0xD800 <= self.codepoint <= 0xDFFF:
             raise ValueError("Unicode references cannot contain surrogate codepoints")
         if not isinstance(self.utf8_hex, str) or len(self.utf8_hex) != 2 * (
-                self.byte_end - self.byte_start):
+            self.byte_end - self.byte_start
+        ):
             raise ValueError("utf8_hex length does not match its byte span")
         try:
             encoded = bytes.fromhex(self.utf8_hex)
@@ -156,14 +166,15 @@ class RawByteSequence:
     def __post_init__(self) -> None:
         if type(self.payload) is not bytes or len(self.payload) > _MAX_CONTEXT:
             raise ValueError(f"payload must be bytes no longer than {_MAX_CONTEXT}")
-        if not isinstance(self.references, tuple) \
-                or any(not isinstance(item, UnicodeByteReference) for item in self.references):
+        if not isinstance(self.references, tuple) or any(
+            not isinstance(item, UnicodeByteReference) for item in self.references
+        ):
             raise ValueError("references must be UnicodeByteReference values")
         cursor = 0
         for item in self.references:
             if item.byte_start != cursor:
                 raise ValueError("Unicode references must exactly partition the payload")
-            if self.payload[item.byte_start:item.byte_end].hex() != item.utf8_hex:
+            if self.payload[item.byte_start : item.byte_end].hex() != item.utf8_hex:
                 raise ValueError("Unicode reference does not match payload bytes")
             cursor = item.byte_end
         if self.references and cursor != len(self.payload):
@@ -174,9 +185,12 @@ class RawByteSequence:
         return hashlib.sha256(self.payload).hexdigest()
 
     def to_dict(self) -> dict:
-        return {"schema": "bcir.raw_bytes.v1", "length": len(self.payload),
-                "sha256": self.sha256,
-                "references": [asdict(item) for item in self.references]}
+        return {
+            "schema": "bcir.raw_bytes.v1",
+            "length": len(self.payload),
+            "sha256": self.sha256,
+            "references": [asdict(item) for item in self.references],
+        }
 
 
 def encode_raw_sequence(value: str | bytes | bytearray | memoryview) -> RawByteSequence:
@@ -195,8 +209,9 @@ def encode_raw_sequence(value: str | bytes | bytearray | memoryview) -> RawByteS
             if start > _MAX_CONTEXT - len(encoded):
                 raise ValueError(f"UTF-8 payload exceeds {_MAX_CONTEXT} bytes")
             payload.extend(encoded)
-            references.append(UnicodeByteReference(
-                start, len(payload), ord(character), encoded.hex()))
+            references.append(
+                UnicodeByteReference(start, len(payload), ord(character), encoded.hex())
+            )
         return RawByteSequence(bytes(payload), tuple(references))
     if isinstance(value, memoryview):
         if value.nbytes > _MAX_CONTEXT:
@@ -261,13 +276,19 @@ class PatchLayout:
     def byte_to_patch(self) -> tuple[int, ...]:
         result = [0] * self.byte_length
         for patch, (start, length) in enumerate(zip(self.starts, self.lengths)):
-            result[start:start + length] = [patch] * length
+            result[start : start + length] = [patch] * length
         return tuple(result)
 
     @property
     def digest(self) -> str:
-        return _digest({"byte_length": self.byte_length, "starts": self.starts,
-                        "method": self.method, "score_sha256": self.score_sha256})
+        return _digest(
+            {
+                "byte_length": self.byte_length,
+                "starts": self.starts,
+                "method": self.method,
+                "score_sha256": self.score_sha256,
+            }
+        )
 
 
 @dataclass(frozen=True)
@@ -292,33 +313,39 @@ class BytePatchSpec:
         if self.method not in ("stride", "entropy_global", "entropy_monotonic", "learned"):
             raise ValueError("unsupported byte patch method")
         _integer(self.stride, "stride", minimum=1, maximum=_MAX_PATCH_BYTES)
-        _integer(self.min_patch_bytes, "min_patch_bytes", minimum=1,
-                 maximum=_MAX_PATCH_BYTES)
-        _integer(self.max_patch_bytes, "max_patch_bytes", minimum=self.min_patch_bytes,
-                 maximum=_MAX_PATCH_BYTES)
-        _integer(self.entropy_threshold_millibits, "entropy_threshold_millibits",
-                 maximum=16000)
-        _integer(self.entropy_delta_millibits, "entropy_delta_millibits",
-                 maximum=16000)
+        _integer(self.min_patch_bytes, "min_patch_bytes", minimum=1, maximum=_MAX_PATCH_BYTES)
+        _integer(
+            self.max_patch_bytes,
+            "max_patch_bytes",
+            minimum=self.min_patch_bytes,
+            maximum=_MAX_PATCH_BYTES,
+        )
+        _integer(self.entropy_threshold_millibits, "entropy_threshold_millibits", maximum=16000)
+        _integer(self.entropy_delta_millibits, "entropy_delta_millibits", maximum=16000)
         _integer(self.learned_threshold_q20, "learned_threshold_q20", maximum=_Q20)
         _integer(self.learned_window, "learned_window", minimum=1, maximum=32)
         if self.stride > self.max_patch_bytes:
             raise ValueError("stride cannot exceed max_patch_bytes")
 
-    def layout(self, byte_length: int, *,
-               entropy_millibits: Sequence[int] | None = None,
-               learned_scores_q20: Sequence[int] | None = None) -> PatchLayout:
+    def layout(
+        self,
+        byte_length: int,
+        *,
+        entropy_millibits: Sequence[int] | None = None,
+        learned_scores_q20: Sequence[int] | None = None,
+    ) -> PatchLayout:
         _integer(byte_length, "byte_length", minimum=1, maximum=_MAX_CONTEXT)
         if self.method.startswith("entropy"):
-            if not isinstance(entropy_millibits, Sequence) \
-                    or len(entropy_millibits) != byte_length:
+            if not isinstance(entropy_millibits, Sequence) or len(entropy_millibits) != byte_length:
                 raise ValueError("entropy patching requires one causal score per byte")
             scores = tuple(entropy_millibits)
             for value in scores:
                 _integer(value, "entropy score", maximum=16000)
         elif self.method == "learned":
-            if not isinstance(learned_scores_q20, Sequence) \
-                    or len(learned_scores_q20) != byte_length:
+            if (
+                not isinstance(learned_scores_q20, Sequence)
+                or len(learned_scores_q20) != byte_length
+            ):
                 raise ValueError("learned patching requires one causal score per byte")
             scores = tuple(learned_scores_q20)
             for value in scores:
@@ -339,8 +366,7 @@ class BytePatchSpec:
             elif self.method == "entropy_global":
                 candidate = scores[index] > self.entropy_threshold_millibits
             elif self.method == "entropy_monotonic":
-                candidate = scores[index] - scores[index - 1] \
-                    > self.entropy_delta_millibits
+                candidate = scores[index] - scores[index - 1] > self.entropy_delta_millibits
             elif self.method == "learned":
                 candidate = scores[index] >= self.learned_threshold_q20
             if forced or distance >= self.min_patch_bytes and candidate:
@@ -348,13 +374,15 @@ class BytePatchSpec:
                 last = index
         score_sha = hashlib.sha256(_canonical(scores).encode("utf-8")).hexdigest()
         result = PatchLayout(byte_length, tuple(starts), self.method, score_sha)
-        if any(length < self.min_patch_bytes for length in result.lengths[:-1]) \
-                or any(length > self.max_patch_bytes for length in result.lengths):
+        if any(length < self.min_patch_bytes for length in result.lengths[:-1]) or any(
+            length > self.max_patch_bytes for length in result.lengths
+        ):
             raise AssertionError("patch layout violated configured bounds")
         return result
 
-    def validate_layout(self, layout: PatchLayout, *,
-                        byte_length: int | None = None) -> PatchLayout:
+    def validate_layout(
+        self, layout: PatchLayout, *, byte_length: int | None = None
+    ) -> PatchLayout:
         """Validate an externally carried layout against this patch policy.
 
         Entropy/learned score streams are not recoverable from a layout, so their
@@ -362,13 +390,17 @@ class BytePatchSpec:
         configured patch bounds are nevertheless mandatory.  Stride layouts have no
         external scores and therefore must equal the canonical layout exactly.
         """
-        if not isinstance(layout, PatchLayout) \
-                or layout.method != self.method \
-                or byte_length is not None and layout.byte_length != byte_length:
+        if (
+            not isinstance(layout, PatchLayout)
+            or layout.method != self.method
+            or byte_length is not None
+            and layout.byte_length != byte_length
+        ):
             raise ValueError("patch layout is incompatible with the byte patch policy")
         lengths = layout.lengths
-        if any(length < self.min_patch_bytes for length in lengths[:-1]) \
-                or any(length > self.max_patch_bytes for length in lengths):
+        if any(length < self.min_patch_bytes for length in lengths[:-1]) or any(
+            length > self.max_patch_bytes for length in lengths
+        ):
             raise ValueError("patch layout violates the configured patch bounds")
         if self.method == "stride" and layout != self.layout(layout.byte_length):
             raise ValueError("stride patch layout is not the canonical layout")
@@ -392,29 +424,42 @@ class ByteDiffusionSpec:
         _integer(self.max_steps, "max_steps", minimum=1, maximum=self.block_size)
         if self.unmask_strategy not in ("confidence", "entropy_bounded", "all"):
             raise ValueError("unsupported diffusion unmask strategy")
-        _integer(self.confidence_threshold_q20, "confidence_threshold_q20",
-                 maximum=_Q20)
-        _integer(self.entropy_budget_millibits, "entropy_budget_millibits",
-                 maximum=16000 * self.block_size)
+        _integer(self.confidence_threshold_q20, "confidence_threshold_q20", maximum=_Q20)
+        _integer(
+            self.entropy_budget_millibits,
+            "entropy_budget_millibits",
+            maximum=16000 * self.block_size,
+        )
         _integer(self.loss_weight_q20, "loss_weight_q20", minimum=1, maximum=16 * _Q20)
 
-    def corrupt(self, clean: Sequence[int], vocabulary: ByteVocabularySpec, *,
-                mask_probability_q20: int, seed: int) -> tuple[int, ...]:
+    def corrupt(
+        self,
+        clean: Sequence[int],
+        vocabulary: ByteVocabularySpec,
+        *,
+        mask_probability_q20: int,
+        seed: int,
+    ) -> tuple[int, ...]:
         if not isinstance(vocabulary, ByteVocabularySpec):
             raise ValueError("vocabulary must be ByteVocabularySpec")
         clean = tuple(clean)
-        if not clean or len(clean) > self.block_size \
-                or any(type(value) is not int or not 0 <= value < vocabulary.size
-                       or value == vocabulary.mask_id for value in clean):
+        if (
+            not clean
+            or len(clean) > self.block_size
+            or any(
+                type(value) is not int
+                or not 0 <= value < vocabulary.size
+                or value == vocabulary.mask_id
+                for value in clean
+            )
+        ):
             raise ValueError("clean diffusion block is malformed")
-        _integer(mask_probability_q20, "mask_probability_q20", minimum=1,
-                 maximum=_Q20)
+        _integer(mask_probability_q20, "mask_probability_q20", minimum=1, maximum=_Q20)
         _integer(seed, "seed", maximum=(1 << 63) - 1)
         result = list(clean)
         masked = []
         for index in range(len(result)):
-            raw = hashlib.sha256(
-                f"bcir-byte-diffusion-v1:{seed}:{index}".encode("ascii")).digest()
+            raw = hashlib.sha256(f"bcir-byte-diffusion-v1:{seed}:{index}".encode("ascii")).digest()
             draw = int.from_bytes(raw[:8], "little") % _Q20
             if draw < mask_probability_q20:
                 result[index] = vocabulary.mask_id
@@ -424,17 +469,26 @@ class ByteDiffusionSpec:
             result[index] = vocabulary.mask_id
         return tuple(result)
 
-    def select_positions(self, masked: Sequence[int], *,
-                         confidences_q20: Sequence[int],
-                         entropies_millibits: Sequence[int]) -> tuple[int, ...]:
+    def select_positions(
+        self,
+        masked: Sequence[int],
+        *,
+        confidences_q20: Sequence[int],
+        entropies_millibits: Sequence[int],
+    ) -> tuple[int, ...]:
         masked = tuple(masked)
-        if not masked or len(set(masked)) != len(masked) \
-                or any(type(index) is not int or index < 0 for index in masked):
+        if (
+            not masked
+            or len(set(masked)) != len(masked)
+            or any(type(index) is not int or index < 0 for index in masked)
+        ):
             raise ValueError("masked positions must be distinct non-negative integers")
         upper = max(masked)
-        if len(confidences_q20) != len(entropies_millibits) \
-                or not 1 <= len(confidences_q20) <= self.block_size \
-                or len(confidences_q20) <= upper:
+        if (
+            len(confidences_q20) != len(entropies_millibits)
+            or not 1 <= len(confidences_q20) <= self.block_size
+            or len(confidences_q20) <= upper
+        ):
             raise ValueError("diffusion scores do not cover every masked position")
         for value in confidences_q20:
             _integer(value, "confidence", maximum=_Q20)
@@ -443,8 +497,9 @@ class ByteDiffusionSpec:
         if self.unmask_strategy == "all":
             return masked
         if self.unmask_strategy == "confidence":
-            chosen = tuple(index for index in masked
-                           if confidences_q20[index] >= self.confidence_threshold_q20)
+            chosen = tuple(
+                index for index in masked if confidences_q20[index] >= self.confidence_threshold_q20
+            )
             if chosen:
                 return chosen
             return (min(masked, key=lambda index: (-confidences_q20[index], index)),)
@@ -470,7 +525,9 @@ class ByteSpeculationSpec:
     def __post_init__(self) -> None:
         _integer(self.draft_bytes, "draft_bytes", minimum=1, maximum=256)
         if self.verifier != "exact_greedy":
-            raise ValueError("the first byte-speculation rail admits only exact greedy verification")
+            raise ValueError(
+                "the first byte-speculation rail admits only exact greedy verification"
+            )
 
 
 @dataclass(frozen=True)
@@ -481,21 +538,30 @@ class DraftVerification:
     matched_all: bool
 
     def __post_init__(self) -> None:
-        if not isinstance(self.accepted, tuple) or not isinstance(self.emitted, tuple) \
-                or any(type(value) is not int or value < 0
-                       for value in self.accepted + self.emitted):
+        if (
+            not isinstance(self.accepted, tuple)
+            or not isinstance(self.emitted, tuple)
+            or any(type(value) is not int or value < 0 for value in self.accepted + self.emitted)
+        ):
             raise ValueError("draft verification ids must be non-negative integer tuples")
         _integer(self.rejected, "rejected", maximum=256)
-        if type(self.matched_all) is not bool \
-                or len(self.emitted) != len(self.accepted) + 1 \
-                or self.emitted[:len(self.accepted)] != self.accepted:
+        if (
+            type(self.matched_all) is not bool
+            or len(self.emitted) != len(self.accepted) + 1
+            or self.emitted[: len(self.accepted)] != self.accepted
+        ):
             raise ValueError("draft verification shape is inconsistent")
         if self.matched_all != (self.rejected == 0):
             raise ValueError("draft verification match/rejection state is inconsistent")
 
 
-def verify_byte_draft(draft: Sequence[int], verifier_predictions: Sequence[int],
-                      *, free_prediction: int, vocabulary_size: int) -> DraftVerification:
+def verify_byte_draft(
+    draft: Sequence[int],
+    verifier_predictions: Sequence[int],
+    *,
+    free_prediction: int,
+    vocabulary_size: int,
+) -> DraftVerification:
     draft = tuple(draft)
     verifier_predictions = tuple(verifier_predictions)
     _integer(vocabulary_size, "vocabulary_size", minimum=2, maximum=1 << 24)
@@ -508,8 +574,9 @@ def verify_byte_draft(draft: Sequence[int], verifier_predictions: Sequence[int],
     accepted = []
     for candidate, prediction in zip(draft, verifier_predictions):
         if candidate != prediction:
-            return DraftVerification(tuple(accepted), tuple(accepted) + (prediction,),
-                                     len(draft) - len(accepted), False)
+            return DraftVerification(
+                tuple(accepted), tuple(accepted) + (prediction,), len(draft) - len(accepted), False
+            )
         accepted.append(candidate)
     return DraftVerification(tuple(accepted), tuple(accepted) + (free_prediction,), 0, True)
 
@@ -524,8 +591,7 @@ class LearnedPatchPolicySpec:
     early_weight_q20: int = _Q20 // 10
 
     def __post_init__(self) -> None:
-        _integer(self.target_boundary_q20, "target_boundary_q20", minimum=1,
-                 maximum=_Q20 - 1)
+        _integer(self.target_boundary_q20, "target_boundary_q20", minimum=1, maximum=_Q20 - 1)
         _integer(self.discount_q20, "discount_q20", minimum=1, maximum=_Q20)
         _integer(self.logit_scale, "logit_scale", minimum=1, maximum=1024)
         for field in ("policy_weight_q20", "target_weight_q20", "early_weight_q20"):
@@ -536,8 +602,9 @@ class LearnedPatchPolicySpec:
         return self.discount_q20 / _Q20
 
 
-def discounted_batch_advantages(rewards: Sequence[Sequence[float]],
-                                discount: float) -> tuple[tuple[float, ...], ...]:
+def discounted_batch_advantages(
+    rewards: Sequence[Sequence[float]], discount: float
+) -> tuple[tuple[float, ...], ...]:
     """Future discounted rewards centered across the batch at each byte position."""
     discount = _finite(discount, "discount", minimum=0.0, maximum=1.0)
     if not isinstance(rewards, Sequence) or not 1 <= len(rewards) <= 1 << 16:
@@ -548,8 +615,7 @@ def discounted_batch_advantages(rewards: Sequence[Sequence[float]],
             raise ValueError("rewards must be a bounded nonempty rectangular batch")
         if width is None:
             width = len(row)
-            if not 1 <= width <= _MAX_CONTEXT \
-                    or len(rewards) > _MAX_POLICY_ELEMENTS // width:
+            if not 1 <= width <= _MAX_CONTEXT or len(rewards) > _MAX_POLICY_ELEMENTS // width:
                 raise ValueError("reward batch exceeds the bounded element count")
         elif len(row) != width:
             raise ValueError("rewards must be a bounded nonempty rectangular batch")
@@ -572,20 +638,23 @@ def discounted_batch_advantages(rewards: Sequence[Sequence[float]],
 
 
 def _transformer_elements(width: int, ff_width: int) -> int:
-    return _checked_add(_checked_mul(4, width, width),
-                        _checked_mul(3, width, ff_width),
-                        _checked_mul(2, width))
+    return _checked_add(
+        _checked_mul(4, width, width), _checked_mul(3, width, ff_width), _checked_mul(2, width)
+    )
 
 
-def _ssm_elements(width: int, state_size: int, expansion: int,
-                  conv_width: int) -> int:
+def _ssm_elements(width: int, state_size: int, expansion: int, conv_width: int) -> int:
     inner = _checked_mul(width, expansion)
     # norm; in/out projections; depthwise convolution; dt projection+bias;
     # B, C and diagonal A; learned direct path D.
-    return _checked_add(width, _checked_mul(3, width, inner),
-                        _checked_mul(inner, conv_width),
-                        _checked_mul(inner, inner), _checked_mul(2, inner),
-                        _checked_mul(3, inner, state_size))
+    return _checked_add(
+        width,
+        _checked_mul(3, width, inner),
+        _checked_mul(inner, conv_width),
+        _checked_mul(inner, inner),
+        _checked_mul(2, inner),
+        _checked_mul(3, inner, state_size),
+    )
 
 
 @dataclass(frozen=True)
@@ -607,13 +676,12 @@ class MambaByteSpec:
         _integer(self.state_size, "state_size", minimum=1, maximum=_MAX_STATE)
         _integer(self.expansion, "expansion", minimum=1, maximum=16)
         _integer(self.conv_width, "conv_width", minimum=1, maximum=256)
-        if type(self.tied_embeddings) is not bool \
-                or not isinstance(self.vocabulary, ByteVocabularySpec):
+        if type(self.tied_embeddings) is not bool or not isinstance(
+            self.vocabulary, ByteVocabularySpec
+        ):
             raise ValueError("MambaByte vocabulary/tied_embeddings are malformed")
-        _finite(self.rms_norm_epsilon, "rms_norm_epsilon", minimum=1.0e-12,
-                maximum=1.0)
-        _checked_mul(self.context_bytes, self.width, self.layers,
-                     self.state_size, self.expansion)
+        _finite(self.rms_norm_epsilon, "rms_norm_epsilon", minimum=1.0e-12, maximum=1.0)
+        _checked_mul(self.context_bytes, self.width, self.layers, self.state_size, self.expansion)
 
     def to_dict(self) -> dict:
         result = asdict(self)
@@ -636,36 +704,47 @@ class MambaByteCostReport:
 
     def __post_init__(self) -> None:
         _sha256(self.spec_sha256, "spec_sha256")
-        for field in ("parameter_elements", "recurrent_state_bytes",
-                      "convolution_state_bytes", "sequence_flops_lower_bound"):
+        for field in (
+            "parameter_elements",
+            "recurrent_state_bytes",
+            "convolution_state_bytes",
+            "sequence_flops_lower_bound",
+        ):
             _integer(getattr(self, field), field)
         if self.classification != "exact-size+analytic-lower-bound":
             raise ValueError("MambaByte cost classification is fixed")
 
 
-def assess_mambabyte(spec: MambaByteSpec, *, sequence_bytes: int,
-                     bytes_per_element: int = 2) -> MambaByteCostReport:
+def assess_mambabyte(
+    spec: MambaByteSpec, *, sequence_bytes: int, bytes_per_element: int = 2
+) -> MambaByteCostReport:
     if not isinstance(spec, MambaByteSpec):
         raise ValueError("spec must be MambaByteSpec")
     _integer(sequence_bytes, "sequence_bytes", minimum=1, maximum=spec.context_bytes)
     _integer(bytes_per_element, "bytes_per_element", minimum=1, maximum=16)
     vocab = spec.vocabulary.size
-    parameters = _checked_add(_checked_mul(vocab, spec.width),
-                              _checked_mul(spec.layers, _ssm_elements(
-                                  spec.width, spec.state_size, spec.expansion,
-                                  spec.conv_width)), spec.width)
+    parameters = _checked_add(
+        _checked_mul(vocab, spec.width),
+        _checked_mul(
+            spec.layers, _ssm_elements(spec.width, spec.state_size, spec.expansion, spec.conv_width)
+        ),
+        spec.width,
+    )
     if not spec.tied_embeddings:
         parameters = _checked_add(parameters, _checked_mul(vocab, spec.width))
     inner = _checked_mul(spec.width, spec.expansion)
     state = _checked_mul(spec.layers, inner, spec.state_size, bytes_per_element)
-    convolution = _checked_mul(spec.layers, inner, spec.conv_width - 1,
-                               bytes_per_element)
+    convolution = _checked_mul(spec.layers, inner, spec.conv_width - 1, bytes_per_element)
     # Dominant projections and diagonal selective recurrence only.
-    per_layer = _checked_add(_checked_mul(6, spec.width, inner),
-                             _checked_mul(2, inner, inner),
-                             _checked_mul(8, inner, spec.state_size))
-    flops = _checked_add(_checked_mul(sequence_bytes, spec.layers, per_layer),
-                         _checked_mul(2, sequence_bytes, spec.width, vocab))
+    per_layer = _checked_add(
+        _checked_mul(6, spec.width, inner),
+        _checked_mul(2, inner, inner),
+        _checked_mul(8, inner, spec.state_size),
+    )
+    flops = _checked_add(
+        _checked_mul(sequence_bytes, spec.layers, per_layer),
+        _checked_mul(2, sequence_bytes, spec.width, vocab),
+    )
     return MambaByteCostReport(spec.digest, parameters, state, convolution, flops)
 
 
@@ -704,23 +783,32 @@ class ByteLatentSpec:
             raise ValueError("patcher must be BytePatchSpec")
         for field in ("local_width", "global_width"):
             _integer(getattr(self, field), field, minimum=4, maximum=_MAX_WIDTH)
-        for width, heads, label in ((self.local_width, self.local_heads, "local"),
-                                    (self.global_width, self.global_heads, "global")):
+        for width, heads, label in (
+            (self.local_width, self.local_heads, "local"),
+            (self.global_width, self.global_heads, "global"),
+        ):
             _integer(heads, f"{label}_heads", minimum=1, maximum=width)
             if width % heads or width // heads % 2:
                 raise ValueError(f"{label} width needs an even integral head dimension")
         for field in ("local_encoder_layers", "global_layers", "local_decoder_layers"):
             _integer(getattr(self, field), field, minimum=1, maximum=_MAX_LAYERS)
-        _integer(self.local_ff_width, "local_ff_width", minimum=self.local_width,
-                 maximum=16 * _MAX_WIDTH)
-        _integer(self.global_ff_width, "global_ff_width", minimum=self.global_width,
-                 maximum=16 * _MAX_WIDTH)
-        _integer(self.local_window_bytes, "local_window_bytes", minimum=1,
-                 maximum=self.context_bytes)
-        if not isinstance(self.hash_ngram_sizes, tuple) \
-                or any(type(size) is not int or not 2 <= size <= 16
-                       for size in self.hash_ngram_sizes) \
-                or tuple(sorted(set(self.hash_ngram_sizes))) != self.hash_ngram_sizes:
+        _integer(
+            self.local_ff_width, "local_ff_width", minimum=self.local_width, maximum=16 * _MAX_WIDTH
+        )
+        _integer(
+            self.global_ff_width,
+            "global_ff_width",
+            minimum=self.global_width,
+            maximum=16 * _MAX_WIDTH,
+        )
+        _integer(
+            self.local_window_bytes, "local_window_bytes", minimum=1, maximum=self.context_bytes
+        )
+        if (
+            not isinstance(self.hash_ngram_sizes, tuple)
+            or any(type(size) is not int or not 2 <= size <= 16 for size in self.hash_ngram_sizes)
+            or tuple(sorted(set(self.hash_ngram_sizes))) != self.hash_ngram_sizes
+        ):
             raise ValueError("hash_ngram_sizes must be sorted unique integers in [2, 16]")
         _integer(self.hash_buckets, "hash_buckets", maximum=1 << 24)
         if bool(self.hash_ngram_sizes) != bool(self.hash_buckets):
@@ -731,7 +819,11 @@ class ByteLatentSpec:
         _integer(self.ssm_expansion, "ssm_expansion", minimum=1, maximum=16)
         _integer(self.ssm_conv_width, "ssm_conv_width", minimum=1, maximum=256)
         if self.generation_mode not in (
-                "autoregressive", "diffusion", "self_speculative", "diffusion_verify"):
+            "autoregressive",
+            "diffusion",
+            "self_speculative",
+            "diffusion_verify",
+        ):
             raise ValueError("unsupported byte generation mode")
         needs_diffusion = self.generation_mode in ("diffusion", "diffusion_verify")
         needs_speculation = self.generation_mode in ("self_speculative", "diffusion_verify")
@@ -741,47 +833,55 @@ class ByteLatentSpec:
             raise ValueError("diffusion must be ByteDiffusionSpec or None")
         if needs_speculation != isinstance(self.speculation, ByteSpeculationSpec):
             raise ValueError("speculation settings must appear exactly for verified modes")
-        if self.patcher.method == "learned" \
-                and not isinstance(self.learned_policy, LearnedPatchPolicySpec):
+        if self.patcher.method == "learned" and not isinstance(
+            self.learned_policy, LearnedPatchPolicySpec
+        ):
             raise ValueError("learned patching requires LearnedPatchPolicySpec")
         if self.patcher.method != "learned" and self.learned_policy is not None:
             raise ValueError("learned_policy is only valid for learned patching")
-        if type(self.tied_embeddings) is not bool \
-                or not isinstance(self.vocabulary, ByteVocabularySpec):
+        if type(self.tied_embeddings) is not bool or not isinstance(
+            self.vocabulary, ByteVocabularySpec
+        ):
             raise ValueError("byte model vocabulary/tied_embeddings are malformed")
         _integer(self.rope_base, "rope_base", minimum=2, maximum=1 << 30)
-        _finite(self.rms_norm_epsilon, "rms_norm_epsilon", minimum=1.0e-12,
-                maximum=1.0)
-        _checked_mul(self.context_bytes, self.local_width, self.global_width,
-                     self.local_encoder_layers + self.global_layers
-                     + self.local_decoder_layers)
+        _finite(self.rms_norm_epsilon, "rms_norm_epsilon", minimum=1.0e-12, maximum=1.0)
+        _checked_mul(
+            self.context_bytes,
+            self.local_width,
+            self.global_width,
+            self.local_encoder_layers + self.global_layers + self.local_decoder_layers,
+        )
 
     def to_dict(self) -> dict:
-        return {"schema": "bcir.byte_latent.v1", "context_bytes": self.context_bytes,
-                "patcher": self.patcher.to_dict(), "local_width": self.local_width,
-                "global_width": self.global_width, "local_heads": self.local_heads,
-                "global_heads": self.global_heads,
-                "local_encoder_layers": self.local_encoder_layers,
-                "global_layers": self.global_layers,
-                "local_decoder_layers": self.local_decoder_layers,
-                "local_ff_width": self.local_ff_width,
-                "global_ff_width": self.global_ff_width,
-                "local_window_bytes": self.local_window_bytes,
-                "hash_ngram_sizes": self.hash_ngram_sizes,
-                "hash_buckets": self.hash_buckets,
-                "local_backbone": self.local_backbone,
-                "ssm_state_size": self.ssm_state_size,
-                "ssm_expansion": self.ssm_expansion,
-                "ssm_conv_width": self.ssm_conv_width,
-                "generation_mode": self.generation_mode,
-                "diffusion": None if self.diffusion is None else self.diffusion.to_dict(),
-                "speculation": None if self.speculation is None else asdict(self.speculation),
-                "learned_policy": None if self.learned_policy is None
-                else asdict(self.learned_policy),
-                "tied_embeddings": self.tied_embeddings,
-                "vocabulary": self.vocabulary.to_dict(),
-                "rope_base": self.rope_base,
-                "rms_norm_epsilon": self.rms_norm_epsilon}
+        return {
+            "schema": "bcir.byte_latent.v1",
+            "context_bytes": self.context_bytes,
+            "patcher": self.patcher.to_dict(),
+            "local_width": self.local_width,
+            "global_width": self.global_width,
+            "local_heads": self.local_heads,
+            "global_heads": self.global_heads,
+            "local_encoder_layers": self.local_encoder_layers,
+            "global_layers": self.global_layers,
+            "local_decoder_layers": self.local_decoder_layers,
+            "local_ff_width": self.local_ff_width,
+            "global_ff_width": self.global_ff_width,
+            "local_window_bytes": self.local_window_bytes,
+            "hash_ngram_sizes": self.hash_ngram_sizes,
+            "hash_buckets": self.hash_buckets,
+            "local_backbone": self.local_backbone,
+            "ssm_state_size": self.ssm_state_size,
+            "ssm_expansion": self.ssm_expansion,
+            "ssm_conv_width": self.ssm_conv_width,
+            "generation_mode": self.generation_mode,
+            "diffusion": None if self.diffusion is None else self.diffusion.to_dict(),
+            "speculation": None if self.speculation is None else asdict(self.speculation),
+            "learned_policy": None if self.learned_policy is None else asdict(self.learned_policy),
+            "tied_embeddings": self.tied_embeddings,
+            "vocabulary": self.vocabulary.to_dict(),
+            "rope_base": self.rope_base,
+            "rms_norm_epsilon": self.rms_norm_epsilon,
+        }
 
     @property
     def digest(self) -> str:
@@ -793,31 +893,32 @@ def _byte_latent_parameter_elements(spec: ByteLatentSpec) -> int:
     vocab = spec.vocabulary.size
     parameters = _checked_add(_checked_mul(vocab, local), global_)
     if spec.hash_ngram_sizes:
-        parameters = _checked_add(parameters, _checked_mul(
-            len(spec.hash_ngram_sizes), spec.hash_buckets, local))
+        parameters = _checked_add(
+            parameters, _checked_mul(len(spec.hash_ngram_sizes), spec.hash_buckets, local)
+        )
     if spec.local_backbone == "transformer":
         encoder = _transformer_elements(local, spec.local_ff_width)
     else:
-        encoder = _ssm_elements(local, spec.ssm_state_size, spec.ssm_expansion,
-                                spec.ssm_conv_width)
+        encoder = _ssm_elements(local, spec.ssm_state_size, spec.ssm_expansion, spec.ssm_conv_width)
     parameters = _checked_add(
-        parameters, _checked_mul(spec.local_encoder_layers, encoder),
+        parameters,
+        _checked_mul(spec.local_encoder_layers, encoder),
         # Patch pool q/k/v local->global and o global->global.
-        _checked_mul(3, local, global_), _checked_mul(global_, global_),
-        _checked_mul(spec.global_layers,
-                     _transformer_elements(global_, spec.global_ff_width)),
+        _checked_mul(3, local, global_),
+        _checked_mul(global_, global_),
+        _checked_mul(spec.global_layers, _transformer_elements(global_, spec.global_ff_width)),
         # Decoder cross-attention q/o local->local and k/v global->local.
-        _checked_mul(2, local, local), _checked_mul(2, global_, local),
-        _checked_mul(spec.local_decoder_layers,
-                     _transformer_elements(local, spec.local_ff_width)),
-        local)
+        _checked_mul(2, local, local),
+        _checked_mul(2, global_, local),
+        _checked_mul(spec.local_decoder_layers, _transformer_elements(local, spec.local_ff_width)),
+        local,
+    )
     if not spec.tied_embeddings:
         parameters = _checked_add(parameters, _checked_mul(vocab, local))
     if spec.patcher.method in ("entropy_global", "entropy_monotonic", "learned"):
         parameters = _checked_add(parameters, _checked_mul(vocab, local))
     if spec.patcher.method == "learned":
-        parameters = _checked_add(parameters, _checked_mul(
-            spec.patcher.learned_window + 1, local))
+        parameters = _checked_add(parameters, _checked_mul(spec.patcher.learned_window + 1, local))
     return parameters
 
 
@@ -854,8 +955,14 @@ class ByteLatentCostReport:
         return _digest(asdict(self))
 
 
-def assess_byte_latent(spec: ByteLatentSpec, *, byte_count: int, patch_count: int,
-                       batch: int = 1, bytes_per_element: int = 2) -> ByteLatentCostReport:
+def assess_byte_latent(
+    spec: ByteLatentSpec,
+    *,
+    byte_count: int,
+    patch_count: int,
+    batch: int = 1,
+    bytes_per_element: int = 2,
+) -> ByteLatentCostReport:
     if not isinstance(spec, ByteLatentSpec):
         raise ValueError("spec must be ByteLatentSpec")
     _integer(byte_count, "byte_count", minimum=1, maximum=spec.context_bytes)
@@ -867,72 +974,127 @@ def assess_byte_latent(spec: ByteLatentSpec, *, byte_count: int, patch_count: in
     local_pairs = window * (window + 1) // 2 + (byte_count - window) * window
     patch_pairs = patch_count * (patch_count + 1) // 2
     local_block = _checked_add(
-        _checked_mul(2, byte_count,
-                     _checked_add(_checked_mul(4, local, local),
-                                  _checked_mul(3, local, spec.local_ff_width))),
-        _checked_mul(4, local, local_pairs))
+        _checked_mul(
+            2,
+            byte_count,
+            _checked_add(
+                _checked_mul(4, local, local), _checked_mul(3, local, spec.local_ff_width)
+            ),
+        ),
+        _checked_mul(4, local, local_pairs),
+    )
     if spec.local_backbone == "selective_ssm":
         inner = _checked_mul(local, spec.ssm_expansion)
-        local_block = _checked_mul(byte_count, _checked_add(
-            _checked_mul(6, local, inner), _checked_mul(2, inner, inner),
-            _checked_mul(8, inner, spec.ssm_state_size)))
+        local_block = _checked_mul(
+            byte_count,
+            _checked_add(
+                _checked_mul(6, local, inner),
+                _checked_mul(2, inner, inner),
+                _checked_mul(8, inner, spec.ssm_state_size),
+            ),
+        )
     local_flops = _checked_mul(batch, spec.local_encoder_layers, local_block)
-    patch_flops = _checked_mul(batch, 2, patch_count,
-                               _checked_add(_checked_mul(3, local, global_),
-                                            _checked_mul(global_, global_)))
+    patch_flops = _checked_mul(
+        batch,
+        2,
+        patch_count,
+        _checked_add(_checked_mul(3, local, global_), _checked_mul(global_, global_)),
+    )
     global_block = _checked_add(
-        _checked_mul(2, patch_count,
-                     _checked_add(_checked_mul(4, global_, global_),
-                                  _checked_mul(3, global_, spec.global_ff_width))),
-        _checked_mul(4, global_, patch_pairs))
+        _checked_mul(
+            2,
+            patch_count,
+            _checked_add(
+                _checked_mul(4, global_, global_), _checked_mul(3, global_, spec.global_ff_width)
+            ),
+        ),
+        _checked_mul(4, global_, patch_pairs),
+    )
     global_flops = _checked_mul(batch, spec.global_layers, global_block)
     decoder_block = _checked_add(
-        _checked_mul(2, byte_count,
-                     _checked_add(_checked_mul(4, local, local),
-                                  _checked_mul(3, local, spec.local_ff_width))),
-        _checked_mul(4, local, byte_count * (byte_count + 1) // 2))
+        _checked_mul(
+            2,
+            byte_count,
+            _checked_add(
+                _checked_mul(4, local, local), _checked_mul(3, local, spec.local_ff_width)
+            ),
+        ),
+        _checked_mul(4, local, byte_count * (byte_count + 1) // 2),
+    )
     decoder_flops = _checked_mul(batch, spec.local_decoder_layers, decoder_block)
     decoder_flops = _checked_add(
-        decoder_flops, _checked_mul(batch, 2, byte_count,
-                                    _checked_add(_checked_mul(2, local, local),
-                                                 _checked_mul(2, global_, local))),
-        _checked_mul(batch, 2, byte_count, local, spec.vocabulary.size))
+        decoder_flops,
+        _checked_mul(
+            batch,
+            2,
+            byte_count,
+            _checked_add(_checked_mul(2, local, local), _checked_mul(2, global_, local)),
+        ),
+        _checked_mul(batch, 2, byte_count, local, spec.vocabulary.size),
+    )
     diffusion_flops = 0
     diffusion_scratch = 0
     if spec.diffusion is not None:
         block = spec.diffusion.block_size
         steps = spec.diffusion.max_steps
         diffusion_block_flops = _checked_add(
-            _checked_mul(2, block,
-                         _checked_add(_checked_mul(4, local, local),
-                                      _checked_mul(3, local, spec.local_ff_width))),
-            _checked_mul(4, local, block, block))
-        diffusion_flops = _checked_mul(batch, steps, _checked_add(
-            _checked_mul(spec.local_decoder_layers, diffusion_block_flops),
-            _checked_mul(2, block, local, spec.vocabulary.size)))
-        diffusion_scratch = _checked_mul(batch, block,
-                                         _checked_add(local * bytes_per_element, 8))
+            _checked_mul(
+                2,
+                block,
+                _checked_add(
+                    _checked_mul(4, local, local), _checked_mul(3, local, spec.local_ff_width)
+                ),
+            ),
+            _checked_mul(4, local, block, block),
+        )
+        diffusion_flops = _checked_mul(
+            batch,
+            steps,
+            _checked_add(
+                _checked_mul(spec.local_decoder_layers, diffusion_block_flops),
+                _checked_mul(2, block, local, spec.vocabulary.size),
+            ),
+        )
+        diffusion_scratch = _checked_mul(batch, block, _checked_add(local * bytes_per_element, 8))
     if spec.local_backbone == "transformer":
-        local_cache = _checked_mul(batch, 2, spec.local_encoder_layers,
-                                   min(byte_count, spec.local_window_bytes), local,
-                                   bytes_per_element)
+        local_cache = _checked_mul(
+            batch,
+            2,
+            spec.local_encoder_layers,
+            min(byte_count, spec.local_window_bytes),
+            local,
+            bytes_per_element,
+        )
         recurrent = 0
     else:
         local_cache = 0
         inner = _checked_mul(local, spec.ssm_expansion)
-        recurrent = _checked_mul(batch, spec.local_encoder_layers, inner,
-                                 spec.ssm_state_size, bytes_per_element)
-    global_kv = _checked_mul(batch, 2, spec.global_layers, patch_count, global_,
-                             bytes_per_element)
-    decoder_kv = _checked_mul(batch, 2, spec.local_decoder_layers, byte_count, local,
-                              bytes_per_element)
-    total = _checked_add(local_flops, patch_flops, global_flops,
-                         decoder_flops, diffusion_flops)
+        recurrent = _checked_mul(
+            batch, spec.local_encoder_layers, inner, spec.ssm_state_size, bytes_per_element
+        )
+    global_kv = _checked_mul(batch, 2, spec.global_layers, patch_count, global_, bytes_per_element)
+    decoder_kv = _checked_mul(
+        batch, 2, spec.local_decoder_layers, byte_count, local, bytes_per_element
+    )
+    total = _checked_add(local_flops, patch_flops, global_flops, decoder_flops, diffusion_flops)
     return ByteLatentCostReport(
-        spec.digest, byte_count, patch_count, _byte_latent_parameter_elements(spec),
-        _checked_mul(batch, patch_count + byte_count, 4), local_cache, global_kv,
-        decoder_kv, recurrent, diffusion_scratch, local_flops, patch_flops,
-        global_flops, decoder_flops, diffusion_flops, total)
+        spec.digest,
+        byte_count,
+        patch_count,
+        _byte_latent_parameter_elements(spec),
+        _checked_mul(batch, patch_count + byte_count, 4),
+        local_cache,
+        global_kv,
+        decoder_kv,
+        recurrent,
+        diffusion_scratch,
+        local_flops,
+        patch_flops,
+        global_flops,
+        decoder_flops,
+        diffusion_flops,
+        total,
+    )
 
 
 @dataclass(frozen=True)
@@ -941,8 +1103,7 @@ class TensorShape:
     dimensions: tuple[int, ...]
 
     def __post_init__(self) -> None:
-        if not isinstance(self.name, str) or not self.name \
-                or len(self.name.encode("utf-8")) > 4096:
+        if not isinstance(self.name, str) or not self.name or len(self.name.encode("utf-8")) > 4096:
             raise ValueError("tensor name must be a bounded nonempty string")
         if not isinstance(self.dimensions, tuple) or not self.dimensions:
             raise ValueError("tensor dimensions must be a nonempty tuple")
@@ -973,18 +1134,23 @@ class ByteifiedTransplantPlan:
         targets = []
         sources = []
         for pair in self.mappings:
-            if not isinstance(pair, tuple) or len(pair) != 2 \
-                    or any(not isinstance(name, str) or not name for name in pair):
+            if (
+                not isinstance(pair, tuple)
+                or len(pair) != 2
+                or any(not isinstance(name, str) or not name for name in pair)
+            ):
                 raise ValueError("transplant mapping names are malformed")
-            targets.append(pair[0]); sources.append(pair[1])
+            targets.append(pair[0])
+            sources.append(pair[1])
         if len(set(targets)) != len(targets) or len(set(sources)) != len(sources):
             raise ValueError("transplant mappings must be one-to-one")
         _integer(self.reused_elements, "reused_elements", minimum=1)
         _integer(self.initialized_elements, "initialized_elements")
-        _integer(self.global_learning_rate_q20, "global_learning_rate_q20",
-                 maximum=_Q20)
-        if type(self.freeze_global) is not bool \
-                or self.classification != "partial-exact-global-transplant":
+        _integer(self.global_learning_rate_q20, "global_learning_rate_q20", maximum=_Q20)
+        if (
+            type(self.freeze_global) is not bool
+            or self.classification != "partial-exact-global-transplant"
+        ):
             raise ValueError("transplant policy/classification is malformed")
 
     @property
@@ -992,31 +1158,33 @@ class ByteifiedTransplantPlan:
         return _digest(asdict(self))
 
 
-def plan_byteified_transplant(spec: ByteLatentSpec, *, source_sha256: str,
-                              source_shapes: Sequence[TensorShape],
-                              target_shapes: Sequence[TensorShape],
-                              mappings: Mapping[str, str],
-                              global_learning_rate_q20: int = _Q20 // 10,
-                              freeze_global: bool = False) -> ByteifiedTransplantPlan:
+def plan_byteified_transplant(
+    spec: ByteLatentSpec,
+    *,
+    source_sha256: str,
+    source_shapes: Sequence[TensorShape],
+    target_shapes: Sequence[TensorShape],
+    mappings: Mapping[str, str],
+    global_learning_rate_q20: int = _Q20 // 10,
+    freeze_global: bool = False,
+) -> ByteifiedTransplantPlan:
     """Admit only exact-shape global-block copies; local byte organs stay newly initialized."""
     if not isinstance(spec, ByteLatentSpec):
         raise ValueError("spec must be ByteLatentSpec")
     _sha256(source_sha256, "source_sha256")
-    if not isinstance(mappings, Mapping) or not mappings \
-            or len(mappings) > _MAX_TENSOR_INVENTORY:
+    if not isinstance(mappings, Mapping) or not mappings or len(mappings) > _MAX_TENSOR_INVENTORY:
         raise ValueError("mappings must be a nonempty mapping")
     try:
-        source_items = tuple(itertools.islice(
-            source_shapes, _MAX_TENSOR_INVENTORY + 1))
-        target_items = tuple(itertools.islice(
-            target_shapes, _MAX_TENSOR_INVENTORY + 1))
-        mapping_items = tuple(itertools.islice(
-            mappings.items(), _MAX_TENSOR_INVENTORY + 1))
+        source_items = tuple(itertools.islice(source_shapes, _MAX_TENSOR_INVENTORY + 1))
+        target_items = tuple(itertools.islice(target_shapes, _MAX_TENSOR_INVENTORY + 1))
+        mapping_items = tuple(itertools.islice(mappings.items(), _MAX_TENSOR_INVENTORY + 1))
     except TypeError as exc:
         raise ValueError("tensor inventories and mappings must be iterable") from exc
-    if len(source_items) > _MAX_TENSOR_INVENTORY \
-            or len(target_items) > _MAX_TENSOR_INVENTORY \
-            or len(mapping_items) > _MAX_TENSOR_INVENTORY:
+    if (
+        len(source_items) > _MAX_TENSOR_INVENTORY
+        or len(target_items) > _MAX_TENSOR_INVENTORY
+        or len(mapping_items) > _MAX_TENSOR_INVENTORY
+    ):
         raise ValueError("tensor inventory exceeds the bounded entry count")
     if any(not isinstance(item, TensorShape) for item in source_items + target_items):
         raise ValueError("tensor inventories must contain TensorShape values")
@@ -1026,10 +1194,14 @@ def plan_byteified_transplant(spec: ByteLatentSpec, *, source_sha256: str,
         raise ValueError("tensor inventories contain duplicate names")
     normalized = []
     reused = 0
-    if any(not isinstance(item, tuple) or len(item) != 2
-           or not isinstance(item[0], str) or not isinstance(item[1], str)
-           or not item[0].startswith("global_blocks.")
-           for item in mapping_items):
+    if any(
+        not isinstance(item, tuple)
+        or len(item) != 2
+        or not isinstance(item[0], str)
+        or not isinstance(item[1], str)
+        or not item[0].startswith("global_blocks.")
+        for item in mapping_items
+    ):
         raise ValueError("only global_blocks tensors may be transplanted")
     for target_name, source_name in sorted(mapping_items):
         if not target_name or not source_name:
@@ -1047,9 +1219,14 @@ def plan_byteified_transplant(spec: ByteLatentSpec, *, source_sha256: str,
     if reused > total:
         raise ValueError("reused element count exceeds target inventory")
     return ByteifiedTransplantPlan(
-        source_sha256, spec.digest, tuple(normalized), reused, total - reused,
+        source_sha256,
+        spec.digest,
+        tuple(normalized),
+        reused,
+        total - reused,
         _integer(global_learning_rate_q20, "global_learning_rate_q20", maximum=_Q20),
-        freeze_global)
+        freeze_global,
+    )
 
 
 @dataclass(frozen=True)
@@ -1099,16 +1276,20 @@ def choose_byte_ingest(profile: ByteIngestProfile, byte_count: int) -> ByteInges
     _integer(byte_count, "byte_count", minimum=1, maximum=_MAX_CONTEXT)
     host_product = _checked_mul(profile.host_ns_per_byte_q20, byte_count)
     host = max(1, host_product // _Q20 + int(bool(host_product % _Q20)))
-    if not profile.exact_roundtrip or not profile.device_ns_per_byte_q20 \
-            or byte_count > profile.device_pool_bytes:
+    if (
+        not profile.exact_roundtrip
+        or not profile.device_ns_per_byte_q20
+        or byte_count > profile.device_pool_bytes
+    ):
         return ByteIngestDecision("host", byte_count, host, profile.profile_sha256)
     chunks = 1 + (byte_count - 1) // profile.max_chunk_bytes
     device_product = _checked_mul(profile.device_ns_per_byte_q20, byte_count)
-    device = _checked_add(_checked_mul(chunks, profile.device_launch_ns),
-                          device_product // _Q20 + int(bool(device_product % _Q20)))
+    device = _checked_add(
+        _checked_mul(chunks, profile.device_launch_ns),
+        device_product // _Q20 + int(bool(device_product % _Q20)),
+    )
     if device < host:
-        return ByteIngestDecision("device", byte_count, max(1, device),
-                                  profile.profile_sha256)
+        return ByteIngestDecision("device", byte_count, max(1, device), profile.profile_sha256)
     return ByteIngestDecision("host", byte_count, host, profile.profile_sha256)
 
 
@@ -1122,9 +1303,14 @@ class LoweredByteLatentPlan:
     artifact_sha256: str
 
 
-def lower_byte_latent(spec: ByteLatentSpec, layout: PatchLayout, *, batch: int = 1,
-                      bytes_per_element: int = 2,
-                      target: TargetProfile | None = None) -> LoweredByteLatentPlan:
+def lower_byte_latent(
+    spec: ByteLatentSpec,
+    layout: PatchLayout,
+    *,
+    batch: int = 1,
+    bytes_per_element: int = 2,
+    target: TargetProfile | None = None,
+) -> LoweredByteLatentPlan:
     """Lower one bounded byte-model pass into R-law verified claims and StreamPack."""
     if not isinstance(spec, ByteLatentSpec) or not isinstance(layout, PatchLayout):
         raise ValueError("byte lowering requires ByteLatentSpec and PatchLayout")
@@ -1133,117 +1319,238 @@ def lower_byte_latent(spec: ByteLatentSpec, layout: PatchLayout, *, batch: int =
     spec.patcher.validate_layout(layout, byte_length=layout.byte_length)
     _integer(batch, "batch", minimum=1, maximum=1 << 16)
     _integer(bytes_per_element, "bytes_per_element", minimum=1, maximum=16)
-    report = assess_byte_latent(spec, byte_count=layout.byte_length,
-                                patch_count=layout.patch_count, batch=batch,
-                                bytes_per_element=bytes_per_element)
+    report = assess_byte_latent(
+        spec,
+        byte_count=layout.byte_length,
+        patch_count=layout.patch_count,
+        batch=batch,
+        bytes_per_element=bytes_per_element,
+    )
     rows = _checked_mul(batch, layout.byte_length)
     patches = _checked_mul(batch, layout.patch_count)
     module = Module(name=f"byte-latent:{spec.digest[:16]}")
     module.add_resource(Resource(1, Domain.RAM, 1, (rows,), name="raw_bytes"))
-    module.add_resource(Resource(
-        2, Domain.RAM, 4, (_checked_add(patches, rows),), name="patch_map"))
-    module.add_resource(Resource(3, Domain.RAM, bytes_per_element,
-                                 (rows, spec.local_width),
-                                 name="byte_hidden"))
-    module.add_resource(Resource(4, Domain.RAM, bytes_per_element,
-                                 (patches, spec.global_width),
-                                 name="patch_hidden"))
-    module.add_resource(Resource(5, Domain.RAM, bytes_per_element,
-                                 (report.parameter_elements,),
-                                 name="weights"))
-    state_bytes = max(1, _checked_add(
-        report.local_cache_bytes, report.global_kv_bytes,
-        report.decoder_kv_bytes, report.recurrent_state_bytes))
+    module.add_resource(
+        Resource(2, Domain.RAM, 4, (_checked_add(patches, rows),), name="patch_map")
+    )
+    module.add_resource(
+        Resource(3, Domain.RAM, bytes_per_element, (rows, spec.local_width), name="byte_hidden")
+    )
+    module.add_resource(
+        Resource(
+            4, Domain.RAM, bytes_per_element, (patches, spec.global_width), name="patch_hidden"
+        )
+    )
+    module.add_resource(
+        Resource(5, Domain.RAM, bytes_per_element, (report.parameter_elements,), name="weights")
+    )
+    state_bytes = max(
+        1,
+        _checked_add(
+            report.local_cache_bytes,
+            report.global_kv_bytes,
+            report.decoder_kv_bytes,
+            report.recurrent_state_bytes,
+        ),
+    )
     module.add_resource(Resource(6, Domain.RAM, 1, (state_bytes,), name="model_state"))
-    module.add_resource(Resource(7, Domain.RAM, bytes_per_element,
-                                 (rows, spec.vocabulary.size), name="byte_logits"))
+    module.add_resource(
+        Resource(7, Domain.RAM, bytes_per_element, (rows, spec.vocabulary.size), name="byte_logits")
+    )
     if spec.diffusion is not None:
-        module.add_resource(Resource(8, Domain.RAM, 1,
-                                     (max(1, report.diffusion_scratch_bytes),),
-                                     name="diffusion_block"))
+        module.add_resource(
+            Resource(
+                8, Domain.RAM, 1, (max(1, report.diffusion_scratch_bytes),), name="diffusion_block"
+            )
+        )
     if spec.speculation is not None:
-        module.add_resource(Resource(
-            9, Domain.RAM, 1,
-            (_checked_mul(batch, spec.speculation.draft_bytes + 1),),
-            name="verified_bytes"))
+        module.add_resource(
+            Resource(
+                9,
+                Domain.RAM,
+                1,
+                (_checked_mul(batch, spec.speculation.draft_bytes + 1),),
+                name="verified_bytes",
+            )
+        )
 
     phase_id = 0
     claim_id = 0
 
-    def emit(opcode: Opcode, lane: Lane, stride: StrideClass, *, count: int,
-             reads: tuple[int, ...], writes: tuple[int, ...], op: str,
-             cost_class: str) -> None:
+    def emit(
+        opcode: Opcode,
+        lane: Lane,
+        stride: StrideClass,
+        *,
+        count: int,
+        reads: tuple[int, ...],
+        writes: tuple[int, ...],
+        op: str,
+        cost_class: str,
+    ) -> None:
         nonlocal phase_id, claim_id
-        phase_id += 1; claim_id += 1
-        claim = Claim(claim_id, opcode, lane, stride, count=max(1, count),
-                      rd=reads, wr=writes, hazard="barriered", bounds="assumed_safe",
-                      domain=Domain.RAM, op=op, cost_class=cost_class)
+        phase_id += 1
+        claim_id += 1
+        claim = Claim(
+            claim_id,
+            opcode,
+            lane,
+            stride,
+            count=max(1, count),
+            rd=reads,
+            wr=writes,
+            hazard="barriered",
+            bounds="assumed_safe",
+            domain=Domain.RAM,
+            op=op,
+            cost_class=cost_class,
+        )
         module.add_phase(Phase(phase_id, (phase_id - 1,) if phase_id > 1 else (), [claim]))
 
-    emit(Opcode.LOAD, Lane.U, StrideClass.UNIT, count=rows, reads=(1,), writes=(3,),
-         op="model.byte.ingest.exact", cost_class="bandwidth")
-    emit(Opcode.LOAD, Lane.GGG, StrideClass.RANDOM,
-         count=_checked_mul(batch, layout.patch_count + layout.byte_length),
-         reads=(1, 3, 5), writes=(2,), op=f"model.byte.patch.{layout.method}",
-         cost_class="latency")
+    emit(
+        Opcode.LOAD,
+        Lane.U,
+        StrideClass.UNIT,
+        count=rows,
+        reads=(1,),
+        writes=(3,),
+        op="model.byte.ingest.exact",
+        cost_class="bandwidth",
+    )
+    emit(
+        Opcode.LOAD,
+        Lane.GGG,
+        StrideClass.RANDOM,
+        count=_checked_mul(batch, layout.patch_count + layout.byte_length),
+        reads=(1, 3, 5),
+        writes=(2,),
+        op=f"model.byte.patch.{layout.method}",
+        cost_class="latency",
+    )
     if spec.local_backbone == "transformer":
-        emit(Opcode.T_MACC, Lane.T, StrideClass.TILE,
-             count=max(1, report.local_flops_lower_bound // 2),
-             reads=(3, 5), writes=(3, 6), op="model.byte.encoder.local_attention",
-             cost_class="compute")
+        emit(
+            Opcode.T_MACC,
+            Lane.T,
+            StrideClass.TILE,
+            count=max(1, report.local_flops_lower_bound // 2),
+            reads=(3, 5),
+            writes=(3, 6),
+            op="model.byte.encoder.local_attention",
+            cost_class="compute",
+        )
     else:
-        emit(Opcode.MUL, Lane.U, StrideClass.UNIT,
-             count=max(1, report.local_flops_lower_bound // 2),
-             reads=(3, 5, 6), writes=(3, 6), op="model.byte.encoder.selective_scan",
-             cost_class="compute")
-    emit(Opcode.T_MACC, Lane.T, StrideClass.TILE,
-         count=max(1, report.patch_flops_lower_bound // 2),
-         reads=(2, 3, 5), writes=(4,), op="model.byte.patch.cross_attention",
-         cost_class="compute")
-    emit(Opcode.T_MACC, Lane.T, StrideClass.TILE,
-         count=max(1, report.global_flops_lower_bound // 2),
-         reads=(4, 5, 6), writes=(4, 6), op="model.byte.global.causal_transformer",
-         cost_class="compute")
-    emit(Opcode.T_MACC, Lane.T, StrideClass.TILE,
-         count=max(1, report.decoder_flops_lower_bound // 2),
-         reads=(2, 3, 4, 5, 6), writes=(3, 6, 7),
-         op="model.byte.decoder.causal_cross_attention", cost_class="compute")
+        emit(
+            Opcode.MUL,
+            Lane.U,
+            StrideClass.UNIT,
+            count=max(1, report.local_flops_lower_bound // 2),
+            reads=(3, 5, 6),
+            writes=(3, 6),
+            op="model.byte.encoder.selective_scan",
+            cost_class="compute",
+        )
+    emit(
+        Opcode.T_MACC,
+        Lane.T,
+        StrideClass.TILE,
+        count=max(1, report.patch_flops_lower_bound // 2),
+        reads=(2, 3, 5),
+        writes=(4,),
+        op="model.byte.patch.cross_attention",
+        cost_class="compute",
+    )
+    emit(
+        Opcode.T_MACC,
+        Lane.T,
+        StrideClass.TILE,
+        count=max(1, report.global_flops_lower_bound // 2),
+        reads=(4, 5, 6),
+        writes=(4, 6),
+        op="model.byte.global.causal_transformer",
+        cost_class="compute",
+    )
+    emit(
+        Opcode.T_MACC,
+        Lane.T,
+        StrideClass.TILE,
+        count=max(1, report.decoder_flops_lower_bound // 2),
+        reads=(2, 3, 4, 5, 6),
+        writes=(3, 6, 7),
+        op="model.byte.decoder.causal_cross_attention",
+        cost_class="compute",
+    )
     if spec.diffusion is not None:
-        emit(Opcode.T_MACC, Lane.T, StrideClass.TILE,
-             count=max(1, report.diffusion_flops_lower_bound // 2),
-             reads=(4, 5, 8), writes=(7, 8),
-             op="model.byte.decoder.block_diffusion", cost_class="compute")
+        emit(
+            Opcode.T_MACC,
+            Lane.T,
+            StrideClass.TILE,
+            count=max(1, report.diffusion_flops_lower_bound // 2),
+            reads=(4, 5, 8),
+            writes=(7, 8),
+            op="model.byte.decoder.block_diffusion",
+            cost_class="compute",
+        )
     if spec.speculation is not None:
-        emit(Opcode.BARRIER, Lane.H, StrideClass.SCALAR,
-             count=_checked_mul(batch, spec.speculation.draft_bytes + 1),
-             reads=(1, 7), writes=(9,),
-             op="model.byte.verify.exact_greedy", cost_class="latency")
+        emit(
+            Opcode.BARRIER,
+            Lane.H,
+            StrideClass.SCALAR,
+            count=_checked_mul(batch, spec.speculation.draft_bytes + 1),
+            reads=(1, 7),
+            writes=(9,),
+            op="model.byte.verify.exact_greedy",
+            cost_class="latency",
+        )
 
     chosen_target = target or TargetProfile.for_host()
     realization = optimize(module, chosen_target, Theta.cool())
-    pack = hydrate_pipelined(module, realization,
-                             plan=f"byte-latent:{spec.digest[:16]}", depth=2)
-    diagnostics = verify_all(module, result=realization, pack=pack, h=chosen_target,
-                             theta=Theta.cool())
+    pack = hydrate_pipelined(module, realization, plan=f"byte-latent:{spec.digest[:16]}", depth=2)
+    diagnostics = verify_all(
+        module, result=realization, pack=pack, h=chosen_target, theta=Theta.cool()
+    )
     diagnostics += verify_smart_lowering(module, pack=pack)
     if diagnostics:
         message = "; ".join(f"{row.law}: {row.message}" for row in diagnostics)
         raise ValueError("byte-model lowering failed verification: " + message)
     data = encode(pack)
-    artifact = _digest({"spec": spec.digest, "layout": layout.digest,
-                        "report": report.digest, "module": hash_module(module),
-                        "streampack": hashlib.sha256(data).hexdigest()})
+    artifact = _digest(
+        {
+            "spec": spec.digest,
+            "layout": layout.digest,
+            "report": report.digest,
+            "module": hash_module(module),
+            "streampack": hashlib.sha256(data).hexdigest(),
+        }
+    )
     return LoweredByteLatentPlan(report, module, realization, pack, data, artifact)
 
 
 __all__ = [
-    "ByteDiffusionSpec", "ByteIngestDecision", "ByteIngestProfile",
-    "ByteLatentCostReport", "ByteLatentSpec", "BytePatchSpec",
-    "ByteSpeculationSpec", "ByteVocabularySpec", "ByteifiedTransplantPlan",
-    "DraftVerification", "LearnedPatchPolicySpec", "LoweredByteLatentPlan",
-    "MambaByteCostReport", "MambaByteSpec", "PatchLayout", "RawByteSequence",
-    "TensorShape", "UnicodeByteReference", "assess_byte_latent", "assess_mambabyte",
-    "choose_byte_ingest", "decode_raw_bytes", "discounted_batch_advantages",
-    "encode_raw_sequence", "lower_byte_latent", "plan_byteified_transplant",
+    "ByteDiffusionSpec",
+    "ByteIngestDecision",
+    "ByteIngestProfile",
+    "ByteLatentCostReport",
+    "ByteLatentSpec",
+    "BytePatchSpec",
+    "ByteSpeculationSpec",
+    "ByteVocabularySpec",
+    "ByteifiedTransplantPlan",
+    "DraftVerification",
+    "LearnedPatchPolicySpec",
+    "LoweredByteLatentPlan",
+    "MambaByteCostReport",
+    "MambaByteSpec",
+    "PatchLayout",
+    "RawByteSequence",
+    "TensorShape",
+    "UnicodeByteReference",
+    "assess_byte_latent",
+    "assess_mambabyte",
+    "choose_byte_ingest",
+    "decode_raw_bytes",
+    "discounted_batch_advantages",
+    "encode_raw_sequence",
+    "lower_byte_latent",
+    "plan_byteified_transplant",
     "verify_byte_draft",
 ]

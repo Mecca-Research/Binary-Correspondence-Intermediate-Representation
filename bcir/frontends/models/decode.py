@@ -21,6 +21,7 @@ trusted libm edge (the quarantine posture of every oracle reference).
 Not imported by the package `__init__` on purpose: rungs 1-2 (manifest, tokenizer) stay
 dep-free stdlib; this module pulls in the kbcir reference kernels. Cost-side: imports no
 verifier (two-truth)."""
+
 from __future__ import annotations
 
 import math
@@ -56,10 +57,10 @@ class DecoderSpec:
     d_ff: int
     rope_base: float = 10000.0
     activation: str = "gelu"
-    n_kv_heads: int = 0                 # 0 == n_heads (MHA); the Llama/Gemma GQA knob
-    tied_embeddings: bool = True        # False == a separate lm_head (the Llama choice); the
-                                        #   logits then read lm_head, not the embedding table
-    rms_norm_eps: float = 1e-6          # checkpoint-declared RMSNorm epsilon
+    n_kv_heads: int = 0  # 0 == n_heads (MHA); the Llama/Gemma GQA knob
+    tied_embeddings: bool = True  # False == a separate lm_head (the Llama choice); the
+    #   logits then read lm_head, not the embedding table
+    rms_norm_eps: float = 1e-6  # checkpoint-declared RMSNorm epsilon
 
     def __post_init__(self) -> None:
         dims = (self.vocab_size, self.d_model, self.n_heads, self.n_layers, self.d_ff)
@@ -82,8 +83,10 @@ class DecoderSpec:
         if self.n_kv_heads < 0 or self.n_kv_heads > self.n_heads:
             raise ValueError(f"n_kv_heads {self.n_kv_heads} must be in [0, n_heads]")
         if self.n_kv_heads and self.n_heads % self.n_kv_heads:
-            raise ValueError(f"n_heads {self.n_heads} not divisible by "
-                             f"n_kv_heads {self.n_kv_heads} (GQA shares whole head groups)")
+            raise ValueError(
+                f"n_heads {self.n_heads} not divisible by "
+                f"n_kv_heads {self.n_kv_heads} (GQA shares whole head groups)"
+            )
         if not math.isfinite(self.rms_norm_eps) or self.rms_norm_eps <= 0.0:
             raise ValueError(f"rms_norm_eps must be finite and > 0; got {self.rms_norm_eps!r}")
 
@@ -108,18 +111,18 @@ class LayerWeights:
     the attention projections (w_k/w_v are d_model x kv_dim -- narrower under GQA), and the
     FF weights/biases."""
 
-    g_attn: tuple          # d_model            (attention pre-norm gamma)
-    w_q: tuple             # d_model x d_model
-    w_k: tuple             # d_model x kv_dim   (== d_model for MHA)
-    w_v: tuple             # d_model x kv_dim
-    w_o: tuple             # d_model x d_model
-    g_ff: tuple            # d_model            (FF pre-norm gamma)
-    w1: tuple              # d_model x d_ff
-    b1: tuple              # d_ff
-    w2: tuple              # d_ff x d_model
-    b2: tuple              # d_model
-    w_gate: tuple = ()     # d_model x d_ff -- the gated-SiLU MLP's gate projection
-                           #   (silu_gate only; empty for relu/gelu, every existing layer)
+    g_attn: tuple  # d_model            (attention pre-norm gamma)
+    w_q: tuple  # d_model x d_model
+    w_k: tuple  # d_model x kv_dim   (== d_model for MHA)
+    w_v: tuple  # d_model x kv_dim
+    w_o: tuple  # d_model x d_model
+    g_ff: tuple  # d_model            (FF pre-norm gamma)
+    w1: tuple  # d_model x d_ff
+    b1: tuple  # d_ff
+    w2: tuple  # d_ff x d_model
+    b2: tuple  # d_model
+    w_gate: tuple = ()  # d_model x d_ff -- the gated-SiLU MLP's gate projection
+    #   (silu_gate only; empty for relu/gelu, every existing layer)
 
 
 @dataclass(frozen=True)
@@ -128,10 +131,10 @@ class DecoderWeights:
     the per-layer weights, and the final-norm gamma."""
 
     embedding: EmbeddingTable
-    layers: tuple            # tuple[LayerWeights, ...]
-    g_final: tuple           # d_model
-    lm_head: tuple = ()      # vocab x d_model -- the UNTIED logits head (empty == tied to the
-                             #   embedding table, the Gemma choice; every existing model)
+    layers: tuple  # tuple[LayerWeights, ...]
+    g_final: tuple  # d_model
+    lm_head: tuple = ()  # vocab x d_model -- the UNTIED logits head (empty == tied to the
+    #   embedding table, the Gemma choice; every existing model)
 
 
 def check_decoder_weights(spec: DecoderSpec, w: DecoderWeights) -> list[str]:
@@ -150,18 +153,28 @@ def check_decoder_weights(spec: DecoderSpec, w: DecoderWeights) -> list[str]:
         return ["lm_head is not a tuple/list"]
     d, f, kvd = spec.d_model, spec.d_ff, spec.kv_dim
     if (w.embedding.n_vocab, w.embedding.dim) != (spec.vocab_size, d):
-        msgs.append(f"embedding is {w.embedding.n_vocab}x{w.embedding.dim}, "
-                    f"spec says {spec.vocab_size}x{d}")
+        msgs.append(
+            f"embedding is {w.embedding.n_vocab}x{w.embedding.dim}, spec says {spec.vocab_size}x{d}"
+        )
     if len(w.layers) != spec.n_layers:
         msgs.append(f"{len(w.layers)} layers, spec says {spec.n_layers}")
     if len(w.g_final) != d:
         msgs.append(f"g_final has {len(w.g_final)} entries, want {d}")
     gated = spec.activation == "silu_gate"
-    want = {"g_attn": d, "w_q": d * d, "w_k": d * kvd, "w_v": d * kvd, "w_o": d * d,
-            "g_ff": d, "w1": d * f, "w2": f * d,
-            # the Llama MLP has NO biases and a gate projection; relu/gelu is the inverse
-            "b1": 0 if gated else f, "b2": 0 if gated else d,
-            "w_gate": d * f if gated else 0}
+    want = {
+        "g_attn": d,
+        "w_q": d * d,
+        "w_k": d * kvd,
+        "w_v": d * kvd,
+        "w_o": d * d,
+        "g_ff": d,
+        "w1": d * f,
+        "w2": f * d,
+        # the Llama MLP has NO biases and a gate projection; relu/gelu is the inverse
+        "b1": 0 if gated else f,
+        "b2": 0 if gated else d,
+        "w_gate": d * f if gated else 0,
+    }
     for li, lw in enumerate(w.layers):
         if not isinstance(lw, LayerWeights):
             msgs.append(f"layer {li}: not a LayerWeights value")
@@ -180,8 +193,9 @@ def check_decoder_weights(spec: DecoderSpec, w: DecoderWeights) -> list[str]:
     return msgs
 
 
-def _validate_decode_request(prompt_ids, spec: DecoderSpec, w: DecoderWeights,
-                             max_new: int, eos_id: int | None = None) -> list[int]:
+def _validate_decode_request(
+    prompt_ids, spec: DecoderSpec, w: DecoderWeights, max_new: int, eos_id: int | None = None
+) -> list[int]:
     """Validate an externally supplied decode request before cache/model mutation.
 
     Public reference/serving entries share this one strict boundary: token IDs are
@@ -194,13 +208,16 @@ def _validate_decode_request(prompt_ids, spec: DecoderSpec, w: DecoderWeights,
         raise ValueError("max_new must be an integer >= 0")
     if not isinstance(prompt_ids, (list, tuple)) or not prompt_ids:
         raise ValueError("decode needs a non-empty list/tuple prompt")
-    if len(prompt_ids) > _MAX_REFERENCE_CONTEXT or max_new > _MAX_REFERENCE_CONTEXT - len(prompt_ids):
+    if len(prompt_ids) > _MAX_REFERENCE_CONTEXT or max_new > _MAX_REFERENCE_CONTEXT - len(
+        prompt_ids
+    ):
         raise ValueError(f"decode context exceeds {_MAX_REFERENCE_CONTEXT} tokens")
     prompt = list(prompt_ids)
     for i, tid in enumerate(prompt):
         if type(tid) is not int or not 0 <= tid < spec.vocab_size:
             raise ValueError(
-                f"prompt token {i} must be an integer in [0, {spec.vocab_size}); got {tid!r}")
+                f"prompt token {i} must be an integer in [0, {spec.vocab_size}); got {tid!r}"
+            )
     if eos_id is not None and (type(eos_id) is not int or not 0 <= eos_id < spec.vocab_size):
         raise ValueError(f"eos_id must be an integer in [0, {spec.vocab_size})")
     bad = check_decoder_weights(spec, w)
@@ -213,9 +230,9 @@ def decoder_param_count(spec: DecoderSpec) -> int:
     """The parameter count the spec implies -- the manifest tie (rung 1's `param_count` over
     a shard census of these tensors must equal it)."""
     d, f, kvd = spec.d_model, spec.d_ff, spec.kv_dim
-    if spec.activation == "silu_gate":                     # gate+up+down, NO biases
+    if spec.activation == "silu_gate":  # gate+up+down, NO biases
         mlp = 3 * d * f
-    else:                                                  # up+down with biases
+    else:  # up+down with biases
         mlp = d * f + f + f * d + d
     per_layer = 2 * d + 2 * d * d + 2 * d * kvd + mlp
     head = 0 if spec.tied_embeddings else spec.vocab_size * d
@@ -224,14 +241,25 @@ def decoder_param_count(spec: DecoderSpec) -> int:
 
 # --- the shared row arithmetic (BOTH decode paths call these on identical values) -----------
 
+
 def _ff(h2: list, rows: int, spec: DecoderSpec, lw: LayerWeights) -> list:
     """The layer's MLP: the gated-SiLU form (silu_gate -- gate/up/down, no biases) or the
     classic two-matmul feed-forward (relu/gelu). One dispatch point, both decode paths."""
     if spec.activation == "silu_gate":
-        return swiglu_reference(h2, rows, spec.d_model, spec.d_ff,
-                                list(lw.w_gate), list(lw.w1), list(lw.w2))
-    return feedforward_reference(h2, rows, spec.d_model, spec.d_ff, list(lw.w1), list(lw.b1),
-                                 list(lw.w2), list(lw.b2), activation=spec.activation)
+        return swiglu_reference(
+            h2, rows, spec.d_model, spec.d_ff, list(lw.w_gate), list(lw.w1), list(lw.w2)
+        )
+    return feedforward_reference(
+        h2,
+        rows,
+        spec.d_model,
+        spec.d_ff,
+        list(lw.w1),
+        list(lw.b1),
+        list(lw.w2),
+        list(lw.b2),
+        activation=spec.activation,
+    )
 
 
 def head_logits(h_row: list, w: DecoderWeights) -> list:
@@ -239,8 +267,9 @@ def head_logits(h_row: list, w: DecoderWeights) -> list:
     [vocab x d] row-major layout, so both read through `_tied_logits`)."""
     if w.lm_head:
         emb = w.embedding
-        return _tied_logits(h_row, EmbeddingTable(table=tuple(w.lm_head),
-                                                  n_vocab=emb.n_vocab, dim=emb.dim))
+        return _tied_logits(
+            h_row, EmbeddingTable(table=tuple(w.lm_head), n_vocab=emb.n_vocab, dim=emb.dim)
+        )
     return _tied_logits(h_row, w.embedding)
 
 
@@ -260,12 +289,15 @@ def _concat_heads(heads: list, n: int, d_k: int) -> list:
     out = [0.0] * (n * nh * d_k)
     for h, rows in enumerate(heads):
         for i in range(n):
-            out[i * nh * d_k + h * d_k:i * nh * d_k + (h + 1) * d_k] = rows[i * d_k:(i + 1) * d_k]
+            out[i * nh * d_k + h * d_k : i * nh * d_k + (h + 1) * d_k] = rows[
+                i * d_k : (i + 1) * d_k
+            ]
     return out
 
 
-def gqa_attention_reference(q: list, k: list, v: list, seq: int,
-                            n_heads: int, n_kv_heads: int, d_k: int) -> list:
+def gqa_attention_reference(
+    q: list, k: list, v: list, seq: int, n_heads: int, n_kv_heads: int, d_k: int
+) -> list:
     """Causal GROUPED-QUERY attention over PRE-ROPED projections (rung 5's GQA primitive --
     and the C twin's differential target): `q` is seq x (n_heads*d_k); `k`/`v` are
     seq x (n_kv_heads*d_k); query head h reads kv head h // (n_heads // n_kv_heads). Per head:
@@ -273,8 +305,10 @@ def gqa_attention_reference(q: list, k: list, v: list, seq: int,
     everywhere (the shared arithmetic order both decode paths and the C twin reproduce).
     n_kv_heads == n_heads is exactly multi-head attention. Returns seq x (n_heads*d_k)."""
     if n_kv_heads < 1 or n_kv_heads > n_heads or n_heads % n_kv_heads:
-        raise ValueError(f"n_heads {n_heads} not divisible by n_kv_heads {n_kv_heads} "
-                         f"(GQA shares whole head groups)")
+        raise ValueError(
+            f"n_heads {n_heads} not divisible by n_kv_heads {n_kv_heads} "
+            f"(GQA shares whole head groups)"
+        )
     group = n_heads // n_kv_heads
     d = n_heads * d_k
     mask = causal_mask(seq)
@@ -282,15 +316,15 @@ def gqa_attention_reference(q: list, k: list, v: list, seq: int,
     concat = [0.0] * (seq * d)
     for hd in range(n_heads):
         qh = _split_head(q, seq, hd, n_heads, d_k)
-        g = hd // group                                           # the shared kv head
+        g = hd // group  # the shared kv head
         kh = _split_head(k, seq, g, n_kv_heads, d_k)
         vh = _split_head(v, seq, g, n_kv_heads, d_k)
-        s = scores_reference(qh, kh, aspec)                       # (Q_h @ K_g^T) / sqrt(d_k)
-        s = [s[i] + mask[i] for i in range(seq * seq)]            # causal: exp(-inf) = 0
+        s = scores_reference(qh, kh, aspec)  # (Q_h @ K_g^T) / sqrt(d_k)
+        s = [s[i] + mask[i] for i in range(seq * seq)]  # causal: exp(-inf) = 0
         a = softmax_reference(s, axis_len=seq)
-        ctx = matmul_reference(a, vh, seq, d_k, seq)              # A @ V_g
+        ctx = matmul_reference(a, vh, seq, d_k, seq)  # A @ V_g
         for i in range(seq):
-            concat[i * d + hd * d_k:i * d + (hd + 1) * d_k] = ctx[i * d_k:(i + 1) * d_k]
+            concat[i * d + hd * d_k : i * d + (hd + 1) * d_k] = ctx[i * d_k : (i + 1) * d_k]
     return concat
 
 
@@ -320,6 +354,7 @@ def _argmax(logits: list) -> int:
 
 # --- the naive full-sequence path (the obviously-correct reference) -------------------------
 
+
 def decoder_layer_reference(x: list, seq: int, spec: DecoderSpec, lw: LayerWeights) -> list:
     """One pre-norm decoder layer over the FULL seq x d_model input: RMSNorm -> RoPE'd causal
     grouped-query attention (`gqa_attention_reference`; n_kv_heads == n_heads is plain MHA)
@@ -328,18 +363,30 @@ def decoder_layer_reference(x: list, seq: int, spec: DecoderSpec, lw: LayerWeigh
     d, nh, dk, kvh, kvd = spec.d_model, spec.n_heads, spec.d_k, spec.kv_heads, spec.kv_dim
     h = rmsnorm_reference(x, seq, d, list(lw.g_attn), eps=spec.rms_norm_eps)
     q = matmul_reference(h, lw.w_q, seq, d, d)
-    k = matmul_reference(h, lw.w_k, seq, kvd, d)                  # seq x kv_dim (GQA: narrower)
+    k = matmul_reference(h, lw.w_k, seq, kvd, d)  # seq x kv_dim (GQA: narrower)
     v = matmul_reference(h, lw.w_v, seq, kvd, d)
-    q_r = _concat_heads([rope_reference(_split_head(q, seq, hd, nh, dk), seq, dk,
-                                        spec.rope_base) for hd in range(nh)], seq, dk)
-    k_r = _concat_heads([rope_reference(_split_head(k, seq, g, kvh, dk), seq, dk,
-                                        spec.rope_base) for g in range(kvh)], seq, dk)
+    q_r = _concat_heads(
+        [
+            rope_reference(_split_head(q, seq, hd, nh, dk), seq, dk, spec.rope_base)
+            for hd in range(nh)
+        ],
+        seq,
+        dk,
+    )
+    k_r = _concat_heads(
+        [
+            rope_reference(_split_head(k, seq, g, kvh, dk), seq, dk, spec.rope_base)
+            for g in range(kvh)
+        ],
+        seq,
+        dk,
+    )
     concat = gqa_attention_reference(q_r, k_r, v, seq, nh, kvh, dk)
     attn = matmul_reference(concat, lw.w_o, seq, d, d)
-    x = [x[i] + attn[i] for i in range(seq * d)]                  # residual
+    x = [x[i] + attn[i] for i in range(seq * d)]  # residual
     h2 = rmsnorm_reference(x, seq, d, list(lw.g_ff), eps=spec.rms_norm_eps)
     ff = _ff(h2, seq, spec, lw)
-    return [x[i] + ff[i] for i in range(seq * d)]                 # residual
+    return [x[i] + ff[i] for i in range(seq * d)]  # residual
 
 
 def decoder_forward_reference(ids: list, spec: DecoderSpec, w: DecoderWeights) -> list:
@@ -355,11 +402,12 @@ def next_token_logits(ids: list, spec: DecoderSpec, w: DecoderWeights) -> list:
     """The selected head's logits at the LAST position (the next-token distribution's scores)."""
     hfin = decoder_forward_reference(ids, spec, w)
     d = spec.d_model
-    return head_logits(hfin[(len(ids) - 1) * d:len(ids) * d], w)
+    return head_logits(hfin[(len(ids) - 1) * d : len(ids) * d], w)
 
 
-def reference_decode(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int,
-                     eos_id: int | None = None) -> list:
+def reference_decode(
+    prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int, eos_id: int | None = None
+) -> list:
     """GREEDY decode by naive full-context recompute -- the slow, obviously-correct rung-3
     reference. Returns the NEW ids (up to `max_new`; stops after emitting `eos_id`)."""
     ids = _validate_decode_request(prompt_ids, spec, w, max_new, eos_id)
@@ -375,6 +423,7 @@ def reference_decode(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max
 
 # --- the incremental KV-cache twin (the rung's KV primitive) --------------------------------
 
+
 class KVCache:
     """Per-layer, per-KV-HEAD cached K/V rows (K stored POST-RoPE at each token's absolute
     position, so an appended row never needs re-rotation). Grows one row per decoded token.
@@ -384,7 +433,7 @@ class KVCache:
     def __init__(self, spec: DecoderSpec) -> None:
         self.k = [[[] for _ in range(spec.kv_heads)] for _ in range(spec.n_layers)]
         self.v = [[[] for _ in range(spec.kv_heads)] for _ in range(spec.n_layers)]
-        self.pos = 0                                             # rows cached so far
+        self.pos = 0  # rows cached so far
 
     def _step_row(self, x_row: list, spec: DecoderSpec, w: DecoderWeights) -> list:
         """Advance the cache by ONE token (position `self.pos`): run the row through every
@@ -392,24 +441,26 @@ class KVCache:
         final-norm row."""
         d, nh, dk, kvh, kvd = spec.d_model, spec.n_heads, spec.d_k, spec.kv_heads, spec.kv_dim
         group = nh // kvh
-        sc = AttentionSpec(self.pos + 1, dk).scale               # 1/sqrt(d_k), like the naive path
+        sc = AttentionSpec(self.pos + 1, dk).scale  # 1/sqrt(d_k), like the naive path
         for li, lw in enumerate(w.layers):
             h = rmsnorm_reference(x_row, 1, d, list(lw.g_attn), eps=spec.rms_norm_eps)
             q = matmul_reference(h, lw.w_q, 1, d, d)
             k = matmul_reference(h, lw.w_k, 1, kvd, d)
             v = matmul_reference(h, lw.w_v, 1, kvd, d)
-            for g in range(kvh):                                 # append ONCE per kv head
-                kh = rope_reference(_split_head(k, 1, g, kvh, dk), 1, dk, spec.rope_base,
-                                    pos_offset=self.pos)
+            for g in range(kvh):  # append ONCE per kv head
+                kh = rope_reference(
+                    _split_head(k, 1, g, kvh, dk), 1, dk, spec.rope_base, pos_offset=self.pos
+                )
                 self.k[li][g].append(kh)
                 self.v[li][g].append(_split_head(v, 1, g, kvh, dk))
             concat = [0.0] * d
             for hd in range(nh):
-                qh = rope_reference(_split_head(q, 1, hd, nh, dk), 1, dk, spec.rope_base,
-                                    pos_offset=self.pos)
-                g = hd // group                                  # the shared kv lane
+                qh = rope_reference(
+                    _split_head(q, 1, hd, nh, dk), 1, dk, spec.rope_base, pos_offset=self.pos
+                )
+                g = hd // group  # the shared kv lane
                 t_len = len(self.k[li][g])
-                s = [0.0] * t_len                                # this row of (Q@K^T)/sqrt(d_k)
+                s = [0.0] * t_len  # this row of (Q@K^T)/sqrt(d_k)
                 for j in range(t_len):
                     acc = 0.0
                     kr = self.k[li][g][j]
@@ -417,13 +468,13 @@ class KVCache:
                         acc += qh[c] * kr[c]
                     s[j] = acc * sc
                 a = softmax_reference(s, axis_len=t_len)
-                ctx = [0.0] * dk                                 # A @ V_g, ascending j like matmul
+                ctx = [0.0] * dk  # A @ V_g, ascending j like matmul
                 for c in range(dk):
                     acc = 0.0
                     for j in range(t_len):
                         acc += a[j] * self.v[li][g][j][c]
                     ctx[c] = acc
-                concat[hd * dk:(hd + 1) * dk] = ctx
+                concat[hd * dk : (hd + 1) * dk] = ctx
             attn = matmul_reference(concat, lw.w_o, 1, d, d)
             x_row = [x_row[i] + attn[i] for i in range(d)]
             h2 = rmsnorm_reference(x_row, 1, d, list(lw.g_ff), eps=spec.rms_norm_eps)
@@ -433,8 +484,9 @@ class KVCache:
         return rmsnorm_reference(x_row, 1, d, list(w.g_final), eps=spec.rms_norm_eps)
 
 
-def decode_with_kv_cache(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int,
-                         eos_id: int | None = None) -> list:
+def decode_with_kv_cache(
+    prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int, eos_id: int | None = None
+) -> list:
     """GREEDY decode with an incremental KV cache: prefill the prompt one row at a time, then
     one `_step_row` per generated token. Every row runs the SAME arithmetic as the naive path
     (row-independent stages; a masked naive score is an exact trailing zero), so the emitted
@@ -442,7 +494,7 @@ def decode_with_kv_cache(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights,
     prompt = _validate_decode_request(prompt_ids, spec, w, max_new, eos_id)
     cache = KVCache(spec)
     hrow: list = []
-    for tid in prompt:                                           # prefill
+    for tid in prompt:  # prefill
         hrow = cache._step_row(w.embedding.row(tid), spec, w)
     out: list = []
     for _ in range(max_new):

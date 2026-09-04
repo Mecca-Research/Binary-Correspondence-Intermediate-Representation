@@ -40,30 +40,47 @@ from .portfolio import PolicyPortfolio, ReplayCertificate
 from .weights import PERF, Policy
 
 Q8 = 256
-_THETA_FEATS = 5         # thermal, power, mem_pressure, contention, voltage (each /100)
+_THETA_FEATS = 5  # thermal, power, mem_pressure, contention, voltage (each /100)
 _NODE_FEATS = 15
 
 
 # --- claim-graph feature extraction (deterministic) ------------------------------
 
+
 def node_features(c: Claim) -> list[float]:
     """The fixed geometry features of a claim node (length _NODE_FEATS)."""
     import math
+
     lane = [c.lane == L for L in (Lane.U, Lane.UX, Lane.T, Lane.GGG, Lane.A)]
-    stride = [c.stride_class == S for S in (StrideClass.UNIT, StrideClass.STRIDED,
-              StrideClass.CACHELINE, StrideClass.TILE, StrideClass.RANDOM)]
-    return [1.0,
-            *[float(x) for x in lane],
-            *[float(x) for x in stride],
-            math.log2(max(1, c.count)) / 16.0,
-            float(c.domain == Domain.HBM),
-            float(c.domain == Domain.RAM),
-            float(c.hazard in ("atomic", "barriered"))]
+    stride = [
+        c.stride_class == S
+        for S in (
+            StrideClass.UNIT,
+            StrideClass.STRIDED,
+            StrideClass.CACHELINE,
+            StrideClass.TILE,
+            StrideClass.RANDOM,
+        )
+    ]
+    return [
+        1.0,
+        *[float(x) for x in lane],
+        *[float(x) for x in stride],
+        math.log2(max(1, c.count)) / 16.0,
+        float(c.domain == Domain.HBM),
+        float(c.domain == Domain.RAM),
+        float(c.hazard in ("atomic", "barriered")),
+    ]
 
 
 def theta_features(theta: Theta) -> list[float]:
-    return [theta.thermal / 100.0, theta.power / 100.0, theta.mem_pressure / 100.0,
-            theta.contention / 100.0, theta.voltage / 100.0]
+    return [
+        theta.thermal / 100.0,
+        theta.power / 100.0,
+        theta.mem_pressure / 100.0,
+        theta.contention / 100.0,
+        theta.voltage / 100.0,
+    ]
 
 
 def _claims(module: Module) -> list[Claim]:
@@ -96,6 +113,7 @@ def _aggregated(module: Module) -> list[list[float]]:
 
 
 # --- math helpers (pure Python, no deps) -----------------------------------------
+
 
 def _hardtanh(x: float) -> float:
     return -1.0 if x < -1.0 else (1.0 if x > 1.0 else x)
@@ -131,20 +149,21 @@ def _lcg(seed: int):
     state = seed & 0xFFFFFFFFFFFFFFFF
     while True:
         state = (state * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
-        yield ((state >> 33) / float(1 << 31) - 1.0) * 0.1   # in [-0.1, 0.1]
+        yield ((state >> 33) / float(1 << 31) - 1.0) * 0.1  # in [-0.1, 0.1]
 
 
 # --- the trained gate ------------------------------------------------------------
+
 
 @dataclass
 class GNNGate:
     """A trained GNN routing head over the claim graph (float; the training form)."""
 
-    experts: list                      # list[Policy], expert k = experts[k]
-    W: list                            # H x F
-    b: list                            # H
-    U: list                            # K x (H + T)
-    c: list                            # K
+    experts: list  # list[Policy], expert k = experts[k]
+    W: list  # H x F
+    b: list  # H
+    U: list  # K x (H + T)
+    c: list  # K
     hidden: int
 
     @property
@@ -164,8 +183,10 @@ class GNNGate:
 
     def distribution(self, module: Module, theta: Theta) -> list[float]:
         z = self._embed(module) + theta_features(theta)
-        logits = [self.c[k] + sum(self.U[k][j] * z[j] for j in range(len(z)))
-                  for k in range(self.num_experts)]
+        logits = [
+            self.c[k] + sum(self.U[k][j] * z[j] for j in range(len(z)))
+            for k in range(self.num_experts)
+        ]
         return _softmax(logits)
 
     def route(self, module: Module, theta: Theta) -> int:
@@ -186,12 +207,15 @@ class GNNGate:
         flows *partially* through every path so gradients can be gathered from all
         optimizations at once. Anneal `temperature` toward 0 to harden the choice."""
         z = self._embed(module) + theta_features(theta)
-        logits = [self.c[k] + sum(self.U[k][j] * z[j] for j in range(len(z)))
-                  for k in range(self.num_experts)]
+        logits = [
+            self.c[k] + sum(self.U[k][j] * z[j] for j in range(len(z)))
+            for k in range(self.num_experts)
+        ]
         return _softmax_t(logits, temperature)
 
-    def blend(self, module: Module, theta: Theta,
-              temperature: float = 1.0) -> list[tuple[Policy, float]]:
+    def blend(
+        self, module: Module, theta: Theta, temperature: float = 1.0
+    ) -> list[tuple[Policy, float]]:
         """The fuzzy route as (expert, weight) pairs -- the partial flows."""
         return list(zip(self.experts, self.route_fuzzy(module, theta, temperature)))
 
@@ -206,8 +230,14 @@ def _new_gate(experts: list, hidden: int, seed: int) -> GNNGate:
     return GNNGate(experts=list(experts), W=W, b=b, U=U, c=c, hidden=hidden)
 
 
-def train_gate(samples: list, experts: list, hidden: int = 8, epochs: int = 300,
-               lr: float = 0.2, seed: int = 0x9E3779B97F4A7C15) -> GNNGate:
+def train_gate(
+    samples: list,
+    experts: list,
+    hidden: int = 8,
+    epochs: int = 300,
+    lr: float = 0.2,
+    seed: int = 0x9E3779B97F4A7C15,
+) -> GNNGate:
     """Exact softmax-cross-entropy SGD. `samples` = [(module, theta, expert_idx)].
     Deterministic: seeded init, fixed sample order, fixed lr/epochs."""
     gate = _new_gate(experts, hidden, seed)
@@ -219,16 +249,17 @@ def train_gate(samples: list, experts: list, hidden: int = 8, epochs: int = 300,
             hsum = [0.0] * H
             pre_cache = []
             for a in agg:
-                pre = [gate.b[h] + sum(gate.W[h][k] * a[k] for k in range(_NODE_FEATS))
-                       for h in range(H)]
+                pre = [
+                    gate.b[h] + sum(gate.W[h][k] * a[k] for k in range(_NODE_FEATS))
+                    for h in range(H)
+                ]
                 pre_cache.append(pre)
                 for h in range(H):
                     hsum[h] += _hardtanh(pre[h])
             n = max(1, len(agg))
             g = [v / n for v in hsum]
             z = g + theta_features(theta)
-            logits = [gate.c[k] + sum(gate.U[k][j] * z[j] for j in range(H + T))
-                      for k in range(K)]
+            logits = [gate.c[k] + sum(gate.U[k][j] * z[j] for j in range(H + T)) for k in range(K)]
             p = _softmax(logits)
             dlogits = [p[k] - (1.0 if k == label else 0.0) for k in range(K)]
             # head grads + dz
@@ -243,8 +274,8 @@ def train_gate(samples: list, experts: list, hidden: int = 8, epochs: int = 300,
             dg = dz[:H]
             for i, a in enumerate(agg):
                 for h in range(H):
-                    if -1.0 < pre_cache[i][h] < 1.0:        # hardtanh gradient
-                        dpre = (dg[h] / n)
+                    if -1.0 < pre_cache[i][h] < 1.0:  # hardtanh gradient
+                        dpre = dg[h] / n
                         gate.b[h] -= lr * dpre
                         for k in range(_NODE_FEATS):
                             gate.W[h][k] -= lr * dpre * a[k]
@@ -252,6 +283,7 @@ def train_gate(samples: list, experts: list, hidden: int = 8, epochs: int = 300,
 
 
 # --- the frozen gate (Q8 integer forward; the certified-rail artifact) -----------
+
 
 @dataclass(frozen=True)
 class FrozenGate:
@@ -272,8 +304,12 @@ class FrozenGate:
     @property
     def fingerprint(self) -> int:
         """A stable provenance hash of the frozen parameters (witnessed by R13)."""
-        flat = [v for row in self.Wq for v in row] + list(self.bq) + \
-               [v for row in self.Uq for v in row] + list(self.cq)
+        flat = (
+            [v for row in self.Wq for v in row]
+            + list(self.bq)
+            + [v for row in self.Uq for v in row]
+            + list(self.cq)
+        )
         h = 1469598103934665603
         for v in flat:
             h = ((h ^ (v & 0xFFFFFFFF)) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
@@ -287,14 +323,15 @@ class FrozenGate:
         hsum = [0] * H
         for a in xq:
             for h in range(H):
-                pre = self.bq[h] + (sum(self.Wq[h][k] * a[k]
-                                        for k in range(_NODE_FEATS)) >> 8)
+                pre = self.bq[h] + (sum(self.Wq[h][k] * a[k] for k in range(_NODE_FEATS)) >> 8)
                 hsum[h] += -Q8 if pre < -Q8 else (Q8 if pre > Q8 else pre)
         n = max(1, len(agg))
         g = [s // n for s in hsum]
         zq = g + [round(t * Q8) for t in theta_features(theta)]
-        return [self.cq[k] + (sum(self.Uq[k][j] * zq[j] for j in range(H + T)) >> 8)
-                for k in range(self.num_experts)]
+        return [
+            self.cq[k] + (sum(self.Uq[k][j] * zq[j] for j in range(H + T)) >> 8)
+            for k in range(self.num_experts)
+        ]
 
     def route(self, module: Module, theta: Theta) -> int:
         logits = self.logits(module, theta)
@@ -312,11 +349,11 @@ class FrozenGate:
         lg = self.logits(module, theta)
         lo = min(lg)
         t = max(1, int(temperature))
-        shifted = [(v - lo) // t + 1 for v in lg]      # strictly positive, monotone
+        shifted = [(v - lo) // t + 1 for v in lg]  # strictly positive, monotone
         tot = sum(shifted) or 1
         w = [(s * Q8) // tot for s in shifted]
         bi = max(range(len(w)), key=lambda k: (w[k], -k))
-        w[bi] += Q8 - sum(w)                            # exact: weights sum to Q8
+        w[bi] += Q8 - sum(w)  # exact: weights sum to Q8
         return w
 
     def route_policy(self, module: Module, theta: Theta) -> Policy:
@@ -325,16 +362,23 @@ class FrozenGate:
 
 def freeze(gate: GNNGate, gate_gen: int = 1) -> FrozenGate:
     q = lambda m: [[round(v * Q8) for v in row] for row in m]
-    return FrozenGate(experts=list(gate.experts),
-                      Wq=q(gate.W), bq=[round(v * Q8) for v in gate.b],
-                      Uq=q(gate.U), cq=[round(v * Q8) for v in gate.c],
-                      hidden=gate.hidden, gate_gen=max(1, gate_gen))
+    return FrozenGate(
+        experts=list(gate.experts),
+        Wq=q(gate.W),
+        bq=[round(v * Q8) for v in gate.b],
+        Uq=q(gate.U),
+        cq=[round(v * Q8) for v in gate.c],
+        hidden=gate.hidden,
+        gate_gen=max(1, gate_gen),
+    )
 
 
 # --- training labels from the regret ledger --------------------------------------
 
-def ledger_labels(module: Module, h, thetas: list, portfolio: PolicyPortfolio,
-                  judge: Policy = PERF) -> list:
+
+def ledger_labels(
+    module: Module, h, thetas: list, portfolio: PolicyPortfolio, judge: Policy = PERF
+) -> list:
     """Per-episode label = the hindsight-best expert (least scheduled cost under
     the neutral judge). The training signal IS the regret ledger."""
     from ..gem.overlap import price_scheduled
@@ -354,8 +398,10 @@ def ledger_labels(module: Module, h, thetas: list, portfolio: PolicyPortfolio,
 
 # --- the replay gate for routers (deploys the gate behind a no-regression cert) --
 
-def gate_replay_gate(module: Module, h, thetas: list, gate, portfolio: PolicyPortfolio,
-                     judge: Policy = PERF) -> ReplayCertificate:
+
+def gate_replay_gate(
+    module: Module, h, thetas: list, gate, portfolio: PolicyPortfolio, judge: Policy = PERF
+) -> ReplayCertificate:
     """Counterfactual no-regression check of the learned router vs the incumbent
     `classify` router, judged under the neutral metric M(pi, Theta). Admit iff the
     learned gate never prices worse than `portfolio.select` over the episodes."""
@@ -367,8 +413,11 @@ def gate_replay_gate(module: Module, h, thetas: list, gate, portfolio: PolicyPor
         learned = gate.route_policy(module, theta)
         incumbent = portfolio.select(theta)
         m_l = price_scheduled(module, optimize(module, h, theta, learned), h, theta, judge).makespan
-        m_i = price_scheduled(module, optimize(module, h, theta, incumbent), h, theta, judge).makespan
+        m_i = price_scheduled(
+            module, optimize(module, h, theta, incumbent), h, theta, judge
+        ).makespan
         if m_l > m_i:
             regressions += 1
-    return ReplayCertificate(candidate="moe_gate", incumbent="classify",
-                             episodes=len(thetas), regressions=regressions)
+    return ReplayCertificate(
+        candidate="moe_gate", incumbent="classify", episodes=len(thetas), regressions=regressions
+    )

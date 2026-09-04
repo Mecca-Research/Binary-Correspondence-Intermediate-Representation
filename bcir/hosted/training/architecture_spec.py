@@ -1,4 +1,5 @@
 """Dependency-free specifications for bounded non-LLM hosted model tests."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -19,8 +20,14 @@ class SmallModelSpec:
     def __post_init__(self) -> None:
         if self.family not in ("mlp", "gru", "transformer_encoder"):
             raise ValueError("small model family must be mlp, gru, or transformer_encoder")
-        for field in ("input_dim", "hidden_dim", "output_dim", "layers", "heads",
-                      "sequence_length"):
+        for field in (
+            "input_dim",
+            "hidden_dim",
+            "output_dim",
+            "layers",
+            "heads",
+            "sequence_length",
+        ):
             require_int(getattr(self, field), field, minimum=1, maximum=1 << 20)
         if self.family == "transformer_encoder" and self.hidden_dim % self.heads:
             raise ValueError("transformer hidden_dim must be divisible by heads")

@@ -37,7 +37,7 @@ def test_c_executor_runs_the_train_step_pack():
     assert c_order == er.order == [1, 2, 3, 4, 5, 6], (c_order, er.order)
     assert [p[0] for p in c_phases] == er.phase_order
     assert c_phases == [(ps.phase_id, ps.scheduled, ps.executed) for ps in er.phases]
-    assert all(sched == 1 and ex == 1 for _pid, sched, ex in c_phases)   # one stage per phase
+    assert all(sched == 1 and ex == 1 for _pid, sched, ex in c_phases)  # one stage per phase
 
 
 def test_binary_dispatch_order_is_the_real_training_order():
@@ -48,14 +48,17 @@ def test_binary_dispatch_order_is_the_real_training_order():
         return
     from bcir.kbcir.train_graph import train_planned
     from bcir.tests.test_train_graph import _toy_logistic
+
     spec = TrainStepSpec()
     X, y = _toy_logistic()
     run = train_planned(spec, X, y, [0.0] * spec.n_params, epochs=2, lr=0.5, h=AVX, theta=COOL)
     with tempfile.TemporaryDirectory() as tmp:
         exe = _build_harness(tmp)
         c_order, _phases = _run(exe, tmp, encode(run.pack))
-    assert run.exec_orders and all(o == c_order for o in run.exec_orders), \
-        (c_order, run.exec_orders[:2])
+    assert run.exec_orders and all(o == c_order for o in run.exec_orders), (
+        c_order,
+        run.exec_orders[:2],
+    )
 
 
 def test_cross_shape_train_packs_keep_parity():
@@ -65,8 +68,7 @@ def test_cross_shape_train_packs_keep_parity():
         return
     with tempfile.TemporaryDirectory() as tmp:
         exe = _build_harness(tmp)
-        for spec in (TrainStepSpec(n_features=2, batch=4),
-                     TrainStepSpec(n_features=16, batch=32)):
+        for spec in (TrainStepSpec(n_features=2, batch=4), TrainStepSpec(n_features=16, batch=32)):
             pack, _result = hydrate_train_step(spec, AVX, COOL)
             c_order, c_phases = _run(exe, tmp, encode(pack))
             er = execute(train_step_module(spec))

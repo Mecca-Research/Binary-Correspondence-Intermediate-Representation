@@ -96,11 +96,10 @@ def format_hexdump(data: bytes, *, width: int = 16) -> str:
     for span in sorted(info.spans, key=lambda item: item.offset):
         index = "" if span.index is None else f"[{span.index}]"
         lines.append(
-            f"# {span.kind}{index} {span.name!r} "
-            f"offset=0x{span.offset:08x} length={span.length}"
+            f"# {span.kind}{index} {span.name!r} offset=0x{span.offset:08x} length={span.length}"
         )
         for offset in range(span.offset, span.end, width):
-            chunk = data[offset:min(offset + width, span.end)]
+            chunk = data[offset : min(offset + width, span.end)]
             hex_bytes = " ".join(f"{byte:02x}" for byte in chunk)
             ascii_bytes = "".join(chr(byte) if 32 <= byte < 127 else "." for byte in chunk)
             lines.append(f"{offset:08x}  {hex_bytes:<{width * 3 - 1}}  |{ascii_bytes}|")
@@ -184,8 +183,13 @@ def disassemble_variant(variant) -> str:
         with open(path, "wb") as stream:
             stream.write(variant.payload)
         if variant.format in (
-                ArtifactFormat.ELF, ArtifactFormat.COFF, ArtifactFormat.MACHO,
-                ArtifactFormat.WASM, ArtifactFormat.ARCHIVE, ArtifactFormat.PE):
+            ArtifactFormat.ELF,
+            ArtifactFormat.COFF,
+            ArtifactFormat.MACHO,
+            ArtifactFormat.WASM,
+            ArtifactFormat.ARCHIVE,
+            ArtifactFormat.PE,
+        ):
             tool = _find_tool("llvm-objdump", "objdump")
             if not tool:
                 raise BundleError("no llvm-objdump/objdump is available for this payload")
@@ -260,7 +264,9 @@ def _read_bounded(
 
 def _atomic_write(path: Path, payload: bytes) -> None:
     fd, temporary_name = tempfile.mkstemp(
-        prefix=path.name + ".", suffix=".tmp", dir=path.parent,
+        prefix=path.name + ".",
+        suffix=".tmp",
+        dir=path.parent,
     )
     temporary = Path(temporary_name)
     try:
@@ -285,16 +291,24 @@ def _enum_set(values, enum_type):
 
 
 def _envelope(args) -> CompatibilityEnvelope:
-    endian = {"neutral": Endianness.NEUTRAL, "little": Endianness.LITTLE,
-              "big": Endianness.BIG}[args.endianness]
+    endian = {"neutral": Endianness.NEUTRAL, "little": Endianness.LITTLE, "big": Endianness.BIG}[
+        args.endianness
+    ]
     return CompatibilityEnvelope(
-        triple=args.triple, architecture=args.architecture, os_abi=args.os_abi,
-        channel=args.channel, features=frozenset(args.feature),
+        triple=args.triple,
+        architecture=args.architecture,
+        os_abi=args.os_abi,
+        channel=args.channel,
+        features=frozenset(args.feature),
         accepted_kinds=_enum_set(args.kind, ArtifactKind),
         accepted_formats=_enum_set(args.format, ArtifactFormat),
-        endianness=endian, pointer_bits=args.pointer_bits, e_machine=args.machine,
-        target_manifest_sha256=args.manifest_sha256, cal_gen=args.cal_gen,
-        require_r12=not args.allow_unattested, allow_debug=args.allow_debug,
+        endianness=endian,
+        pointer_bits=args.pointer_bits,
+        e_machine=args.machine,
+        target_manifest_sha256=args.manifest_sha256,
+        cal_gen=args.cal_gen,
+        require_r12=not args.allow_unattested,
+        allow_debug=args.allow_debug,
     )
 
 
@@ -318,7 +332,8 @@ def _add_selector_options(parser: argparse.ArgumentParser) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="bcir-bundle", description="validate, inspect, and select BCIR artifact bundles")
+        prog="bcir-bundle", description="validate, inspect, and select BCIR artifact bundles"
+    )
     parser.add_argument(
         "--max-bytes",
         type=int,
@@ -356,12 +371,14 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("output", type=Path)
         if name == "from-der":
             command.add_argument(
-                "--ber", action="store_true",
+                "--ber",
+                action="store_true",
                 help="admit BER sender choices; output is still canonical native BCAB",
             )
         if name == "from-oer":
             command.add_argument(
-                "--canonical", action="store_true",
+                "--canonical",
+                action="store_true",
                 help="require CANONICAL-OER instead of accepting BASIC-OER",
             )
     args = parser.parse_args(argv)
@@ -413,7 +430,9 @@ def main(argv: list[str] | None = None) -> int:
             variant = select_variant(info.bundle, envelope, variant_id=args.id)
             if args.command == "extract":
                 _atomic_write(args.output, variant.payload)
-                output = f"{variant.variant_id} {len(variant.payload)} bytes {variant.payload_sha256}\n"
+                output = (
+                    f"{variant.variant_id} {len(variant.payload)} bytes {variant.payload_sha256}\n"
+                )
             elif args.command == "select":
                 output = f"{variant.variant_id}\n"
             elif args.command == "dis":

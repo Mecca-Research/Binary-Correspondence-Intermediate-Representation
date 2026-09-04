@@ -66,8 +66,7 @@ def validate_registry(registry: dict[str, Any], root: Path) -> list[str]:
         return ["registry must have schema_version 1 and an examples array"]
     seen: set[str] = set()
     registered_sources = {
-        path.relative_to(root).as_posix()
-        for path in root.glob("llvm-training/**/examples/*.mlir")
+        path.relative_to(root).as_posix() for path in root.glob("llvm-training/**/examples/*.mlir")
     }
     registered_sources.add("llvm-training/autograder/fixtures/mlir/incomplete-bcir-conversion.mlir")
     for index, entry in enumerate(examples):
@@ -75,7 +74,14 @@ def validate_registry(registry: dict[str, Any], root: Path) -> list[str]:
         if not isinstance(entry, dict):
             errors.append(f"{label}: entry must be an object")
             continue
-        required = {"source", "required_dialects", "required_plugins_tools", "pass_pipeline", "expected_tier", "expected_lowered_artifact"}
+        required = {
+            "source",
+            "required_dialects",
+            "required_plugins_tools",
+            "pass_pipeline",
+            "expected_tier",
+            "expected_lowered_artifact",
+        }
         missing = required - set(entry)
         if missing:
             errors.append(f"{label}: missing fields: {', '.join(sorted(missing))}")
@@ -96,9 +102,13 @@ def validate_registry(registry: dict[str, Any], root: Path) -> list[str]:
         if tier < 3 and pipeline is not None:
             errors.append(f"{label}: Tier {tier} must not claim a conversion pipeline")
         if tier == 1 and entry.get("classification") != "unregistered-dialect-sketch":
-            errors.append(f"{label}: Tier 1 entries must be explicitly classified as unregistered sketches")
+            errors.append(
+                f"{label}: Tier 1 entries must be explicitly classified as unregistered sketches"
+            )
         artifact = entry["expected_lowered_artifact"]
-        if artifact is not None and (not isinstance(artifact, str) or not (root / artifact).is_file()):
+        if artifact is not None and (
+            not isinstance(artifact, str) or not (root / artifact).is_file()
+        ):
             errors.append(f"{label}: expected lowered artifact does not exist: {artifact}")
         tools = entry["required_plugins_tools"]
         if not isinstance(tools, list) or any(tool not in TOOL_BASES for tool in tools):
@@ -117,8 +127,14 @@ def validate_registry(registry: dict[str, Any], root: Path) -> list[str]:
 def main() -> int:
     root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--registry", type=Path, default=root / "llvm-training/autograder/mlir-examples.json")
-    parser.add_argument("--require-tools", action="store_true", help="fail instead of reporting reduced coverage when declared tools are absent")
+    parser.add_argument(
+        "--registry", type=Path, default=root / "llvm-training/autograder/mlir-examples.json"
+    )
+    parser.add_argument(
+        "--require-tools",
+        action="store_true",
+        help="fail instead of reporting reduced coverage when declared tools are absent",
+    )
     args = parser.parse_args()
 
     registry = json.loads(args.registry.read_text(encoding="utf-8"))
@@ -166,12 +182,28 @@ def main() -> int:
             if artifact:
                 artifact_path = root / artifact
                 artifact_text = artifact_path.read_text(encoding="utf-8")
-                require_strings(artifact_text, checks.get("required_artifact_metadata", []), artifact, errors)
-                require_strings(artifact_text, checks.get("required_artifact_runtime_calls", []), artifact, errors)
-                ok, output = run([tools["llvm-as"], str(artifact_path), "-o", str(temp / f"artifact-{index}.bc")])
+                require_strings(
+                    artifact_text, checks.get("required_artifact_metadata", []), artifact, errors
+                )
+                require_strings(
+                    artifact_text,
+                    checks.get("required_artifact_runtime_calls", []),
+                    artifact,
+                    errors,
+                )
+                ok, output = run(
+                    [tools["llvm-as"], str(artifact_path), "-o", str(temp / f"artifact-{index}.bc")]
+                )
                 if not ok:
                     errors.append(f"{artifact}: llvm-as failed\n{output}")
-                elif not run([tools["opt"], "-passes=verify", "-disable-output", str(temp / f"artifact-{index}.bc")])[0]:
+                elif not run(
+                    [
+                        tools["opt"],
+                        "-passes=verify",
+                        "-disable-output",
+                        str(temp / f"artifact-{index}.bc"),
+                    ]
+                )[0]:
                     errors.append(f"{artifact}: opt -passes=verify failed")
 
             if tier == 0:
@@ -213,16 +245,22 @@ def main() -> int:
                 if expected_failure.get("kind") == "illegal-ops-remaining" and observed:
                     del errors[before:]
                     expected_failures += 1
-                    print(f"  expected failure observed: illegal operation(s) remain: {', '.join(observed)}")
+                    print(
+                        f"  expected failure observed: illegal operation(s) remain: {', '.join(observed)}"
+                    )
                 else:
-                    errors.append(f"{source_rel}: expected illegal-operation failure was not observed")
+                    errors.append(
+                        f"{source_rel}: expected illegal-operation failure was not observed"
+                    )
                 continue
 
             if tier == 3:
                 continue
 
             llvm_ir = temp / f"translated-{index}.ll"
-            ok, output = run([tools["mlir-translate"], "--mlir-to-llvmir", str(lowered)], output=llvm_ir)
+            ok, output = run(
+                [tools["mlir-translate"], "--mlir-to-llvmir", str(lowered)], output=llvm_ir
+            )
             if not ok:
                 errors.append(f"{source_rel}: mlir-translate --mlir-to-llvmir failed\n{output}")
                 continue
@@ -236,14 +274,18 @@ def main() -> int:
             else:
                 ok, output = run([tools["opt"], "-passes=verify", "-disable-output", str(bitcode)])
                 if not ok:
-                    errors.append(f"{source_rel}: translated LLVM IR failed opt -passes=verify\n{output}")
+                    errors.append(
+                        f"{source_rel}: translated LLVM IR failed opt -passes=verify\n{output}"
+                    )
 
     if errors:
         print("MLIR tier grading failed:", file=sys.stderr)
         for error in errors:
             print(f"  - {error}", file=sys.stderr)
         return 1
-    print("MLIR tier grading passed: " + ", ".join(f"Tier {tier}={counts[tier]}" for tier in range(5)))
+    print(
+        "MLIR tier grading passed: " + ", ".join(f"Tier {tier}={counts[tier]}" for tier in range(5))
+    )
     print(f"Expected conversion failures demonstrated: {expected_failures}")
     return 0
 

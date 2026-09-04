@@ -66,81 +66,99 @@ _STRINGS = SequenceOf(_UTF8, "SEQUENCE OF UTF8String")
 # does not produce, and the two rails could not be compared on one file. The point of this
 # module is to sit beside the existing loader, so it speaks the existing loader's document.
 
-TIER_TYPE = Sequence((
-    Component("name", _UTF8),
-    Component("latency_cyc", _INT),
-    Component("bw_factor", _INT),
-    Component("lat_factor", _INT),
-    # REQUIRED, not DEFAULT 0 — and the first draft of this schema got it wrong.
-    #
-    # `Tier.capacity` defaults to 0 in the dataclass and `_tier_from_schema` reads it with
-    # `.get("capacity", 0)`, which makes "DEFAULT 0" look like the faithful ASN.1 spelling.
-    # It is not, because X.690 §11.5 (via X.697 §21.2) makes a canonical encoder OMIT a
-    # component equal to its default — and `channel_plugin._parse_manifest_document`
-    # requires the key to be present. So the canonical JER for a zero-capacity tier was a
-    # document the repository's own loader refused as `missing ['capacity']`.
-    #
-    # The schema was the wrong rail. `profile_to_schema` always writes `capacity`, so the
-    # document format genuinely carries it and a DEFAULT was an ASN.1 idiom imposed on a
-    # file that does not have that shape — exactly what this module's docstring warns
-    # against. The loader is unchanged: loosening a third-party-input validator to match a
-    # schema I wrote would be fixing the wrong side.
-    Component("capacity", _INT),
-), name="MemoryTier")
+TIER_TYPE = Sequence(
+    (
+        Component("name", _UTF8),
+        Component("latency_cyc", _INT),
+        Component("bw_factor", _INT),
+        Component("lat_factor", _INT),
+        # REQUIRED, not DEFAULT 0 — and the first draft of this schema got it wrong.
+        #
+        # `Tier.capacity` defaults to 0 in the dataclass and `_tier_from_schema` reads it with
+        # `.get("capacity", 0)`, which makes "DEFAULT 0" look like the faithful ASN.1 spelling.
+        # It is not, because X.690 §11.5 (via X.697 §21.2) makes a canonical encoder OMIT a
+        # component equal to its default — and `channel_plugin._parse_manifest_document`
+        # requires the key to be present. So the canonical JER for a zero-capacity tier was a
+        # document the repository's own loader refused as `missing ['capacity']`.
+        #
+        # The schema was the wrong rail. `profile_to_schema` always writes `capacity`, so the
+        # document format genuinely carries it and a DEFAULT was an ASN.1 idiom imposed on a
+        # file that does not have that shape — exactly what this module's docstring warns
+        # against. The loader is unchanged: loosening a third-party-input validator to match a
+        # schema I wrote would be fixing the wrong side.
+        Component("capacity", _INT),
+    ),
+    name="MemoryTier",
+)
 
-PROFILE_TYPE = Sequence((
-    Component("name", _UTF8),
-    Component("triple", _UTF8),
-    Component("cacheline", _INT),
-    Component("elem_bytes", _INT),
-    Component("lane_widths", _INTS),
-    Component("warp", _INT),
-    Component("scalable", _BOOL),
-    Component("gather_penalty", _INT),
-    Component("mem_unit", _INT),
-    Component("base_overhead", _INT),
-    Component("thermal_density", _INT),
-    Component("power_density", _INT),
-    Component("per_op_heat", _INT),
-    Component("fma", _BOOL),
-    Component("isa_features", _STRINGS),
-    Component("affinity_domains", _INT),
-    Component("mem_channels", _INT),
-    Component("cal_gen", _INT),
-    Component("mem_tiers", SequenceOf(TIER_TYPE, "SEQUENCE OF MemoryTier")),
-), name="TargetProfile")
+PROFILE_TYPE = Sequence(
+    (
+        Component("name", _UTF8),
+        Component("triple", _UTF8),
+        Component("cacheline", _INT),
+        Component("elem_bytes", _INT),
+        Component("lane_widths", _INTS),
+        Component("warp", _INT),
+        Component("scalable", _BOOL),
+        Component("gather_penalty", _INT),
+        Component("mem_unit", _INT),
+        Component("base_overhead", _INT),
+        Component("thermal_density", _INT),
+        Component("power_density", _INT),
+        Component("per_op_heat", _INT),
+        Component("fma", _BOOL),
+        Component("isa_features", _STRINGS),
+        Component("affinity_domains", _INT),
+        Component("mem_channels", _INT),
+        Component("cal_gen", _INT),
+        Component("mem_tiers", SequenceOf(TIER_TYPE, "SEQUENCE OF MemoryTier")),
+    ),
+    name="TargetProfile",
+)
 
-CODEGEN_TYPE = Sequence((
-    Component("llvm_triple", _UTF8),
-    Component("e_machine", _INT),
-), name="Codegen")
+CODEGEN_TYPE = Sequence(
+    (
+        Component("llvm_triple", _UTF8),
+        Component("e_machine", _INT),
+    ),
+    name="Codegen",
+)
 
-RUNTIME_TYPE = Sequence((
-    Component("perf_syscall_nr", _INT),
-    Component("energy_source", _UTF8),
-    Component("thermal_zone_types", _STRINGS),
-), name="RuntimeSignals")
+RUNTIME_TYPE = Sequence(
+    (
+        Component("perf_syscall_nr", _INT),
+        Component("energy_source", _UTF8),
+        Component("thermal_zone_types", _STRINGS),
+    ),
+    name="RuntimeSignals",
+)
 
-CALIBRATION_TYPE = Sequence((
-    Component("ref", _UTF8),
-    Component("digest", _UTF8),
-    Component("cal_gen", _INT),
-    Component("provenance", _UTF8),
-), name="Calibration")
+CALIBRATION_TYPE = Sequence(
+    (
+        Component("ref", _UTF8),
+        Component("digest", _UTF8),
+        Component("cal_gen", _INT),
+        Component("provenance", _UTF8),
+    ),
+    name="Calibration",
+)
 
-CHANNEL_MANIFEST = Sequence((
-    Component("format_version", _INT),
-    Component("name", _UTF8),
-    Component("kind", _UTF8),
-    Component("provenance", _UTF8),
-    Component("modeled", _BOOL),
-    Component("arch_match", _STRINGS),
-    Component("capabilities", _STRINGS),
-    Component("codegen", CODEGEN_TYPE),
-    Component("runtime", RUNTIME_TYPE),
-    Component("calibration", CALIBRATION_TYPE),
-    Component("profile", PROFILE_TYPE),
-), name="ChannelManifest")
+CHANNEL_MANIFEST = Sequence(
+    (
+        Component("format_version", _INT),
+        Component("name", _UTF8),
+        Component("kind", _UTF8),
+        Component("provenance", _UTF8),
+        Component("modeled", _BOOL),
+        Component("arch_match", _STRINGS),
+        Component("capabilities", _STRINGS),
+        Component("codegen", CODEGEN_TYPE),
+        Component("runtime", RUNTIME_TYPE),
+        Component("calibration", CALIBRATION_TYPE),
+        Component("profile", PROFILE_TYPE),
+    ),
+    name="ChannelManifest",
+)
 
 
 # --- the device manifest (kbcir/device_manifest.py) ------------------------------------------
@@ -150,27 +168,33 @@ CHANNEL_MANIFEST = Sequence((
 # named members. A schema that described a nicer document than the one on disk would be a
 # schema for a file this repository does not write.
 
-BANK_TYPE = Sequence((
-    Component("name", _UTF8),
-    Component("domain", _INT),
-    Component("capacity_bytes", _INT),
-    Component("native_tile", _INT),
-    Component("align", _INT),
-), name="MemoryBank")
+BANK_TYPE = Sequence(
+    (
+        Component("name", _UTF8),
+        Component("domain", _INT),
+        Component("capacity_bytes", _INT),
+        Component("native_tile", _INT),
+        Component("align", _INT),
+    ),
+    name="MemoryBank",
+)
 
-DEVICE_MANIFEST = Sequence((
-    Component("kind", _UTF8),
-    Component("schema", _INT),
-    Component("device", _UTF8),
-    Component("target", _UTF8),
-    Component("cal_gen", _INT),
-    Component("banks", SequenceOf(BANK_TYPE, "SEQUENCE OF MemoryBank")),
-    #: The Q8 interconnect distance matrix, row-major. SEQUENCE OF SEQUENCE OF INTEGER
-    #: rather than a flattened array with a stride: a matrix whose row length is implied by
-    #: a separate field is a matrix a truncated document can misread as a different shape.
-    Component("distance", SequenceOf(_INTS, "SEQUENCE OF SEQUENCE OF INTEGER")),
-    Component("digest", _UTF8),
-), name="DeviceManifest")
+DEVICE_MANIFEST = Sequence(
+    (
+        Component("kind", _UTF8),
+        Component("schema", _INT),
+        Component("device", _UTF8),
+        Component("target", _UTF8),
+        Component("cal_gen", _INT),
+        Component("banks", SequenceOf(BANK_TYPE, "SEQUENCE OF MemoryBank")),
+        #: The Q8 interconnect distance matrix, row-major. SEQUENCE OF SEQUENCE OF INTEGER
+        #: rather than a flattened array with a stride: a matrix whose row length is implied by
+        #: a separate field is a matrix a truncated document can misread as a different shape.
+        Component("distance", SequenceOf(_INTS, "SEQUENCE OF SEQUENCE OF INTEGER")),
+        Component("digest", _UTF8),
+    ),
+    name="DeviceManifest",
+)
 
 
 # --- the §6.2 selection envelope --------------------------------------------------------------
@@ -180,38 +204,48 @@ DEVICE_MANIFEST = Sequence((
 # `refusal` are one member group, the measurements another, and a consumer reading only the
 # first has read the whole verdict.
 
-MEASUREMENT_TYPE = Sequence((
-    Component("candidate", _UTF8),
-    Component("legal", _BOOL),
-    #: Absent when the candidate was refused. OPTIONAL rather than DEFAULT 0, because "no
-    #: encoding exists" and "the encoding is zero octets long" are different facts and a
-    #: certificate that spelled them the same would be lying about one of them.
-    Component("octets", _INT, optional=True),
-    Component("refusal", _UTF8, optional=True),
-    #: Graded truth, kept in its own members and named `_ns` so nobody mistakes an oracle
-    #: timing for the calibrated cost table phase H actually selects on.
-    Component("encode_ns", _INT, default=0),
-    Component("decode_ns", _INT, default=0),
-), name="Measurement")
+MEASUREMENT_TYPE = Sequence(
+    (
+        Component("candidate", _UTF8),
+        Component("legal", _BOOL),
+        #: Absent when the candidate was refused. OPTIONAL rather than DEFAULT 0, because "no
+        #: encoding exists" and "the encoding is zero octets long" are different facts and a
+        #: certificate that spelled them the same would be lying about one of them.
+        Component("octets", _INT, optional=True),
+        Component("refusal", _UTF8, optional=True),
+        #: Graded truth, kept in its own members and named `_ns` so nobody mistakes an oracle
+        #: timing for the calibrated cost table phase H actually selects on.
+        Component("encode_ns", _INT, default=0),
+        Component("decode_ns", _INT, default=0),
+    ),
+    name="Measurement",
+)
 
-SELECTION_ENVELOPE = Sequence((
-    Component("version", _INT),
-    Component("objective", _UTF8),
-    Component("typeName", _UTF8),
-    #: The winner, or absent when nothing was legal. A certificate that named a winner it
-    #: had not measured, or omitted the field to mean "the first one", would be exactly the
-    #: kind of implicit that §6.2 exists to remove.
-    Component("selected", _UTF8, optional=True),
-    Component("measurements", SequenceOf(MEASUREMENT_TYPE, "SEQUENCE OF Measurement")),
-), name="SelectionEnvelope")
+SELECTION_ENVELOPE = Sequence(
+    (
+        Component("version", _INT),
+        Component("objective", _UTF8),
+        Component("typeName", _UTF8),
+        #: The winner, or absent when nothing was legal. A certificate that named a winner it
+        #: had not measured, or omitted the field to mean "the first one", would be exactly the
+        #: kind of implicit that §6.2 exists to remove.
+        Component("selected", _UTF8, optional=True),
+        Component("measurements", SequenceOf(MEASUREMENT_TYPE, "SEQUENCE OF Measurement")),
+    ),
+    name="SelectionEnvelope",
+)
 
 SELECTION_ENVELOPE_VERSION = 1
 
-MODULE = Module("BCIR-Manifests", MANIFEST_MODULE_OID, {
-    "ChannelManifest": CHANNEL_MANIFEST,
-    "DeviceManifest": DEVICE_MANIFEST,
-    "SelectionEnvelope": SELECTION_ENVELOPE,
-})
+MODULE = Module(
+    "BCIR-Manifests",
+    MANIFEST_MODULE_OID,
+    {
+        "ChannelManifest": CHANNEL_MANIFEST,
+        "DeviceManifest": DEVICE_MANIFEST,
+        "SelectionEnvelope": SELECTION_ENVELOPE,
+    },
+)
 
 
 # --- §5.4's two sinks ---------------------------------------------------------------------------
@@ -234,7 +268,7 @@ class ManifestSink:
     def begin(self, path: tuple[str, ...], shape: str) -> None:  # pragma: no cover - no-op
         """A container of `shape` ("record" or "list") opens at `path`."""
 
-    def end(self, path: tuple[str, ...]) -> None:        # pragma: no cover - default no-op
+    def end(self, path: tuple[str, ...]) -> None:  # pragma: no cover - default no-op
         """The container at `path` closes."""
 
     def member(self, path: tuple[str, ...], value) -> None:
@@ -326,7 +360,7 @@ class _ChannelUnderConstruction:
     arch_match: tuple = ()
     modeled: bool = True
     capabilities: frozenset = frozenset()
-    profile: dict = None            # type: ignore[assignment]
+    profile: dict = None  # type: ignore[assignment]
 
 
 class DirectChannelSink(ManifestSink):
@@ -404,15 +438,20 @@ class DirectChannelSink(ManifestSink):
 
         self._profile["mem_tiers"] = self._tiers
         return HardwareChannel(
-            name=self._state.name, kind=self._state.kind,
+            name=self._state.name,
+            kind=self._state.kind,
             profile=schema_to_profile(self._profile),
-            llvm_triple=self._state.llvm_triple, e_machine=self._state.e_machine,
+            llvm_triple=self._state.llvm_triple,
+            e_machine=self._state.e_machine,
             runtime=RuntimeChannel(
                 perf_syscall_nr=self._state.perf_syscall_nr,
                 energy_source=self._state.energy_source,
-                thermal_zone_types=self._state.thermal_zone_types),
-            arch_match=self._state.arch_match, modeled=self._state.modeled,
-            capabilities=frozenset(self._state.capabilities))
+                thermal_zone_types=self._state.thermal_zone_types,
+            ),
+            arch_match=self._state.arch_match,
+            modeled=self._state.modeled,
+            capabilities=frozenset(self._state.capabilities),
+        )
 
 
 # --- the two paths §5.4 names --------------------------------------------------------------------
@@ -421,21 +460,25 @@ class DirectChannelSink(ManifestSink):
 def channel_to_jer(manifest, *, rules: JerRules = JerRules.CANONICAL) -> bytes:
     """Encode a `ChannelManifest` under the schema, from the dict it already writes."""
     from .jer import encode_jer
+
     return encode_jer(CHANNEL_MANIFEST, manifest.to_dict(), rules=rules)
 
 
-def channel_via_typed_value(data: bytes, *, limits: JerLimits = JerLimits(),
-                            rules: JerRules = JerRules.CANONICAL):
+def channel_via_typed_value(
+    data: bytes, *, limits: JerLimits = JerLimits(), rules: JerRules = JerRules.CANONICAL
+):
     """`JER -> typed value -> claims`: through the existing programmatic constructor."""
     from ..channel_plugin import ChannelManifest
+
     value = decode_bounded(data, CHANNEL_MANIFEST, rules=rules, limits=limits)
     sink = TypedValueSink(CHANNEL_MANIFEST)
     walk(CHANNEL_MANIFEST, value, sink)
     return ChannelManifest.from_dict(sink.finish()).to_channel()
 
 
-def channel_direct(data: bytes, *, limits: JerLimits = JerLimits(),
-                   rules: JerRules = JerRules.CANONICAL):
+def channel_direct(
+    data: bytes, *, limits: JerLimits = JerLimits(), rules: JerRules = JerRules.CANONICAL
+):
     """`JER -> direct claim builder`: no intermediate `ChannelManifest`."""
     value = decode_bounded(data, CHANNEL_MANIFEST, rules=rules, limits=limits)
     sink = DirectChannelSink()
@@ -449,12 +492,23 @@ def channel_direct(data: bytes, *, limits: JerLimits = JerLimits(),
 def device_manifest_to_value(man) -> dict:
     """The same document `save_device_manifest` writes, as an ASN.1 value."""
     from ..kbcir.device_manifest import MANIFEST_KIND, MANIFEST_SCHEMA
+
     return {
-        "kind": MANIFEST_KIND, "schema": MANIFEST_SCHEMA, "device": man.device,
-        "target": man.target, "cal_gen": int(man.cal_gen),
-        "banks": tuple({"name": b.name, "domain": int(b.domain),
-                        "capacity_bytes": b.capacity_bytes, "native_tile": b.native_tile,
-                        "align": b.align} for b in man.banks),
+        "kind": MANIFEST_KIND,
+        "schema": MANIFEST_SCHEMA,
+        "device": man.device,
+        "target": man.target,
+        "cal_gen": int(man.cal_gen),
+        "banks": tuple(
+            {
+                "name": b.name,
+                "domain": int(b.domain),
+                "capacity_bytes": b.capacity_bytes,
+                "native_tile": b.native_tile,
+                "align": b.align,
+            }
+            for b in man.banks
+        ),
         "distance": tuple(tuple(row) for row in man.distance),
         "digest": man.digest,
     }
@@ -463,17 +517,28 @@ def device_manifest_to_value(man) -> dict:
 def value_to_device_manifest(value: dict):
     from ..kbcir.device_manifest import DeviceManifest, MemoryBank
     from ..model import Domain
+
     return DeviceManifest(
-        device=value["device"], target=value["target"], cal_gen=value["cal_gen"],
-        banks=tuple(MemoryBank(name=b["name"], domain=Domain(b["domain"]),
-                               capacity_bytes=b["capacity_bytes"],
-                               native_tile=b["native_tile"], align=b["align"])
-                    for b in value["banks"]),
-        distance=tuple(tuple(row) for row in value["distance"]))
+        device=value["device"],
+        target=value["target"],
+        cal_gen=value["cal_gen"],
+        banks=tuple(
+            MemoryBank(
+                name=b["name"],
+                domain=Domain(b["domain"]),
+                capacity_bytes=b["capacity_bytes"],
+                native_tile=b["native_tile"],
+                align=b["align"],
+            )
+            for b in value["banks"]
+        ),
+        distance=tuple(tuple(row) for row in value["distance"]),
+    )
 
 
-def selection_envelope(measurements, *, objective: str, type_name: str,
-                       selected: str | None) -> dict:
+def selection_envelope(
+    measurements, *, objective: str, type_name: str, selected: str | None
+) -> dict:
     """§6.2's certificate as an ASN.1 value.
 
     Legality is recorded independently of cost, which is the two-truth law made structural:
@@ -482,25 +547,50 @@ def selection_envelope(measurements, *, objective: str, type_name: str,
     """
     rows = []
     for m in measurements:
-        row = {"candidate": m.candidate, "legal": m.legal,
-               "encode_ns": m.encode_ns, "decode_ns": m.decode_ns}
+        row = {
+            "candidate": m.candidate,
+            "legal": m.legal,
+            "encode_ns": m.encode_ns,
+            "decode_ns": m.decode_ns,
+        }
         if m.octets is not None:
             row["octets"] = m.octets
         if getattr(m, "refusal", ""):
             row["refusal"] = m.refusal
         rows.append(row)
-    out = {"version": SELECTION_ENVELOPE_VERSION, "objective": objective,
-           "typeName": type_name, "measurements": tuple(rows)}
+    out = {
+        "version": SELECTION_ENVELOPE_VERSION,
+        "objective": objective,
+        "typeName": type_name,
+        "measurements": tuple(rows),
+    }
     if selected is not None:
         out["selected"] = selected
     return out
 
 
 __all__ = [
-    "BANK_TYPE", "CALIBRATION_TYPE", "CHANNEL_MANIFEST", "CODEGEN_TYPE", "DEVICE_MANIFEST",
-    "MANIFEST_MODULE_OID", "MEASUREMENT_TYPE", "MODULE", "PROFILE_TYPE", "RUNTIME_TYPE",
-    "SELECTION_ENVELOPE", "SELECTION_ENVELOPE_VERSION", "TIER_TYPE", "DirectChannelSink",
-    "ManifestSink", "TypedValueSink", "channel_direct", "channel_to_jer",
-    "channel_via_typed_value", "device_manifest_to_value", "selection_envelope",
-    "value_to_device_manifest", "walk",
+    "BANK_TYPE",
+    "CALIBRATION_TYPE",
+    "CHANNEL_MANIFEST",
+    "CODEGEN_TYPE",
+    "DEVICE_MANIFEST",
+    "MANIFEST_MODULE_OID",
+    "MEASUREMENT_TYPE",
+    "MODULE",
+    "PROFILE_TYPE",
+    "RUNTIME_TYPE",
+    "SELECTION_ENVELOPE",
+    "SELECTION_ENVELOPE_VERSION",
+    "TIER_TYPE",
+    "DirectChannelSink",
+    "ManifestSink",
+    "TypedValueSink",
+    "channel_direct",
+    "channel_to_jer",
+    "channel_via_typed_value",
+    "device_manifest_to_value",
+    "selection_envelope",
+    "value_to_device_manifest",
+    "walk",
 ]

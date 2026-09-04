@@ -35,8 +35,8 @@ def test_only_thorough_runs_the_full_campaigns():
 
 def test_c_runtime_exposes_a_compiler_but_not_the_llvm_jit_wasm_tools():
     vis = R.TIERS["c-runtime"]["visible"]
-    assert {"clang", "cc", "gcc"} <= vis                       # can build the C runtime
-    assert not (R._LLVM_JIT_WASM & vis)                        # IR/JIT/WASM still deferred
+    assert {"clang", "cc", "gcc"} <= vis  # can build the C runtime
+    assert not (R._LLVM_JIT_WASM & vis)  # IR/JIT/WASM still deferred
 
 
 def test_resolve_tier_precedence():
@@ -94,7 +94,10 @@ def test_versioned_and_windows_tool_names_are_gated_by_family():
 
 
 def test_pool_context_uses_spawn_when_fork_is_unavailable():
-    saved_methods, saved_context = R.multiprocessing.get_all_start_methods, R.multiprocessing.get_context
+    saved_methods, saved_context = (
+        R.multiprocessing.get_all_start_methods,
+        R.multiprocessing.get_context,
+    )
     seen = []
     try:
         R.multiprocessing.get_all_start_methods = lambda: ["spawn"]

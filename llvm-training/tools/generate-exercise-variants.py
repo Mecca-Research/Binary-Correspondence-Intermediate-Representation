@@ -33,7 +33,7 @@ TYPED_POINTER_RE = re.compile(
     r"(?:\bi\d+|\bhalf|\bfloat|\bdouble|%[-A-Za-z$._0-9]+|\[[^\]\n]+\]|\{[^}\n]+\})\s*\*"
 )
 TARGET_ASSUMPTION_RE = re.compile(
-    r'^\s*(?:target\s+(?:triple|datalayout)|attributes\s+#\d+\s*=.*\btarget-(?:cpu|features)\b)',
+    r"^\s*(?:target\s+(?:triple|datalayout)|attributes\s+#\d+\s*=.*\btarget-(?:cpu|features)\b)",
     re.MULTILINE,
 )
 
@@ -93,7 +93,9 @@ def scalar_sample(rng: random.Random) -> VariantParameters:
     limit = min((1 << (width - 2)) - 1, 1000)
     lhs = rng.randint(-limit, limit)
     rhs = rng.randint(-limit, limit)
-    return VariantParameters("scalar-add", {"integer_width": width, "lhs_constant": lhs, "rhs_constant": rhs})
+    return VariantParameters(
+        "scalar-add", {"integer_width": width, "lhs_constant": lhs, "rhs_constant": rhs}
+    )
 
 
 def scalar_prompt(p: VariantParameters) -> str:
@@ -131,10 +133,21 @@ def scalar_manifest(p: VariantParameters) -> dict[str, Any]:
     return llvm_manifest(
         p,
         structural=[
-            assertion("structure.function", "function", rf"define\s+i{width}\s+@variant_add\s*\(\s*i{width}"),
+            assertion(
+                "structure.function",
+                "function",
+                rf"define\s+i{width}\s+@variant_add\s*\(\s*i{width}",
+            ),
             count_assertion("structure.two-adds", rf"\badd\s+i{width}\b", 2, 2),
         ],
-        semantic=[{"function": "variant_add", "return_type": f"i{width}", "args": [{"type": f"i{width}", "value": "3"}], "expected": str(expected)}],
+        semantic=[
+            {
+                "function": "variant_add",
+                "return_type": f"i{width}",
+                "args": [{"type": f"i{width}", "value": "3"}],
+                "expected": str(expected),
+            }
+        ],
     )
 
 
@@ -155,7 +168,13 @@ def aggregate_sample(rng: random.Random) -> VariantParameters:
     value = rng.randint(11, 200)
     return VariantParameters(
         "aggregate-access",
-        {"array_length": length, "struct_field_count": fields, "struct_field_position": position, "legal_alignment": alignment, "stored_value": value},
+        {
+            "array_length": length,
+            "struct_field_count": fields,
+            "struct_field_position": position,
+            "legal_alignment": alignment,
+            "stored_value": value,
+        },
     )
 
 
@@ -165,10 +184,10 @@ def aggregate_prompt(p: VariantParameters) -> str:
     return f"""# Generated exercise: array-of-struct field access
 
 Define `%Record = type {{ {fields} }}` and a no-argument function
-`define i32 @variant_aggregate()` that allocates `[{v['array_length']} x %Record]`,
-addresses array element `{v['array_length'] - 1}` and struct field
-`{v['struct_field_position']}`, stores then reloads `i32 {v['stored_value']}`, and
-returns it. Both memory operations must use legal alignment `{v['legal_alignment']}`.
+`define i32 @variant_aggregate()` that allocates `[{v["array_length"]} x %Record]`,
+addresses array element `{v["array_length"] - 1}` and struct field
+`{v["struct_field_position"]}`, stores then reloads `i32 {v["stored_value"]}`, and
+returns it. Both memory operations must use legal alignment `{v["legal_alignment"]}`.
 Use opaque pointers and explicit array and struct GEP indices.
 """
 
@@ -180,10 +199,10 @@ def aggregate_solution(p: VariantParameters) -> str:
 
 define i32 @variant_aggregate() {{
 entry:
-  %records = alloca [{v['array_length']} x %Record], align 4
-  %field = getelementptr inbounds [{v['array_length']} x %Record], ptr %records, i32 0, i32 {v['array_length'] - 1}, i32 {v['struct_field_position']}
-  store i32 {v['stored_value']}, ptr %field, align {v['legal_alignment']}
-  %value = load i32, ptr %field, align {v['legal_alignment']}
+  %records = alloca [{v["array_length"]} x %Record], align 4
+  %field = getelementptr inbounds [{v["array_length"]} x %Record], ptr %records, i32 0, i32 {v["array_length"] - 1}, i32 {v["struct_field_position"]}
+  store i32 {v["stored_value"]}, ptr %field, align {v["legal_alignment"]}
+  %value = load i32, ptr %field, align {v["legal_alignment"]}
   ret i32 %value
 }}
 """
@@ -195,10 +214,25 @@ def aggregate_manifest(p: VariantParameters) -> dict[str, Any]:
         p,
         structural=[
             assertion("structure.array", "contains", rf"\[{v['array_length']}\s+x\s+%Record\]"),
-            assertion("structure.gep", "instruction", rf"getelementptr\s+inbounds\s+\[{v['array_length']}\s+x\s+%Record\].*i32\s+{v['struct_field_position']}"),
-            assertion("structure.alignment", "contains", rf"(?:load|store)\s+i32.*align\s+{v['legal_alignment']}"),
+            assertion(
+                "structure.gep",
+                "instruction",
+                rf"getelementptr\s+inbounds\s+\[{v['array_length']}\s+x\s+%Record\].*i32\s+{v['struct_field_position']}",
+            ),
+            assertion(
+                "structure.alignment",
+                "contains",
+                rf"(?:load|store)\s+i32.*align\s+{v['legal_alignment']}",
+            ),
         ],
-        semantic=[{"function": "variant_aggregate", "return_type": "i32", "args": [], "expected": str(v["stored_value"])}],
+        semantic=[
+            {
+                "function": "variant_aggregate",
+                "return_type": "i32",
+                "args": [],
+                "expected": str(v["stored_value"]),
+            }
+        ],
     )
 
 
@@ -218,7 +252,15 @@ def branch_sample(rng: random.Random) -> VariantParameters:
     threshold = rng.randint(-9, 9)
     true_value = rng.randint(10, 50)
     false_value = rng.randint(-50, -10)
-    return VariantParameters("branch-shape", {"branch_shape": shape, "threshold": threshold, "true_value": true_value, "false_value": false_value})
+    return VariantParameters(
+        "branch-shape",
+        {
+            "branch_shape": shape,
+            "threshold": threshold,
+            "true_value": true_value,
+            "false_value": false_value,
+        },
+    )
 
 
 def branch_prompt(p: VariantParameters) -> str:
@@ -226,8 +268,8 @@ def branch_prompt(p: VariantParameters) -> str:
     return f"""# Generated exercise: controlled branch shape
 
 Define `i32 @variant_branch(i32 %x)`. Compare `%x` signed-greater-than
-`{v['threshold']}` and return `{v['true_value']}` when true or `{v['false_value']}`
-when false. Realize the control flow as a **{v['branch_shape']}**. A diamond must
+`{v["threshold"]}` and return `{v["true_value"]}` when true or `{v["false_value"]}`
+when false. Realize the control flow as a **{v["branch_shape"]}**. A diamond must
 merge with a `phi`; an inverted diamond reverses branch destinations and the
 predicate while preserving behavior; an early-return shape returns directly
 from both successors. Do not replace the branch with `select`.
@@ -290,8 +332,18 @@ def branch_manifest(p: VariantParameters) -> dict[str, Any]:
             absent_assertion("structure.no-select", [r"\bselect\s+i1\b"]),
         ],
         semantic=[
-            {"function": "variant_branch", "return_type": "i32", "args": [{"type": "i32", "value": str(v["threshold"] + 1)}], "expected": str(v["true_value"])},
-            {"function": "variant_branch", "return_type": "i32", "args": [{"type": "i32", "value": str(v["threshold"])}], "expected": str(v["false_value"])},
+            {
+                "function": "variant_branch",
+                "return_type": "i32",
+                "args": [{"type": "i32", "value": str(v["threshold"] + 1)}],
+                "expected": str(v["true_value"]),
+            },
+            {
+                "function": "variant_branch",
+                "return_type": "i32",
+                "args": [{"type": "i32", "value": str(v["threshold"])}],
+                "expected": str(v["false_value"]),
+            },
         ],
     )
 
@@ -310,17 +362,20 @@ def metadata_sample(rng: random.Random) -> VariantParameters:
     lane = rng.randint(1, 31)
     locality = rng.randint(1, 7)
     payload = rng.randint(20, 200)
-    return VariantParameters("metadata-payload", {"domain": domain, "lane": lane, "locality": locality, "payload_value": payload})
+    return VariantParameters(
+        "metadata-payload",
+        {"domain": domain, "lane": lane, "locality": locality, "payload_value": payload},
+    )
 
 
 def metadata_prompt(p: VariantParameters) -> str:
     v = p.values
     return f"""# Generated exercise: deterministic metadata payload
 
-Define `i32 @variant_metadata()` returning `{v['payload_value']}`. Attach
+Define `i32 @variant_metadata()` returning `{v["payload_value"]}`. Attach
 `!bcir.variant !0` to its `ret` instruction. Node `!0` must contain the exact
-payload `!{{!\"domain\", !\"{v['domain']}\", !\"lane\", i32 {v['lane']},
-!\"locality\", i32 {v['locality']}}}` and must also be reachable from named
+payload `!{{!\"domain\", !\"{v["domain"]}\", !\"lane\", i32 {v["lane"]},
+!\"locality\", i32 {v["locality"]}}}` and must also be reachable from named
 metadata `!bcir.variant.catalog`. The metadata is descriptive and must not alter
 runtime behavior.
 """
@@ -330,11 +385,11 @@ def metadata_solution(p: VariantParameters) -> str:
     v = p.values
     return f"""define i32 @variant_metadata() {{
 entry:
-  ret i32 {v['payload_value']}, !bcir.variant !0
+  ret i32 {v["payload_value"]}, !bcir.variant !0
 }}
 
 !bcir.variant.catalog = !{{!0}}
-!0 = !{{!"domain", !"{v['domain']}", !"lane", i32 {v['lane']}, !"locality", i32 {v['locality']}}}
+!0 = !{{!"domain", !"{v["domain"]}", !"lane", i32 {v["lane"]}, !"locality", i32 {v["locality"]}}}
 """
 
 
@@ -345,9 +400,20 @@ def metadata_manifest(p: VariantParameters) -> dict[str, Any]:
         structural=[
             assertion("structure.attachment", "metadata", r"!bcir\.variant\s+!\d+"),
             assertion("structure.named-metadata", "metadata", r"!bcir\.variant\.catalog\s*="),
-            assertion("structure.payload", "metadata", rf'!"{re.escape(v["domain"])}".*i32\s+{v["lane"]}.*i32\s+{v["locality"]}'),
+            assertion(
+                "structure.payload",
+                "metadata",
+                rf'!"{re.escape(v["domain"])}".*i32\s+{v["lane"]}.*i32\s+{v["locality"]}',
+            ),
         ],
-        semantic=[{"function": "variant_metadata", "return_type": "i32", "args": [], "expected": str(v["payload_value"])}],
+        semantic=[
+            {
+                "function": "variant_metadata",
+                "return_type": "i32",
+                "args": [],
+                "expected": str(v["payload_value"]),
+            }
+        ],
     )
 
 
@@ -362,7 +428,10 @@ def binding_sample(rng: random.Random) -> VariantParameters:
     claim_id = rng.randint(100, 999)
     register_id = rng.randint(1, 63)
     success_value = rng.randint(2, 100)
-    return VariantParameters("register-claim-identifiers", {"claim_id": claim_id, "register_id": register_id, "success_value": success_value})
+    return VariantParameters(
+        "register-claim-identifiers",
+        {"claim_id": claim_id, "register_id": register_id, "success_value": success_value},
+    )
 
 
 def binding_prompt(p: VariantParameters) -> str:
@@ -370,10 +439,10 @@ def binding_prompt(p: VariantParameters) -> str:
     return f"""# Generated exercise: register/claim identifier matching
 
 Define `i32 @variant_binding(i32 %claim, i32 %register)`. Return
-`{v['success_value']}` only when `%claim == {v['claim_id']}` **and** `%register ==
-{v['register_id']}`; otherwise return zero. Use two `icmp eq`, one `and i1`, and
+`{v["success_value"]}` only when `%claim == {v["claim_id"]}` **and** `%register ==
+{v["register_id"]}`; otherwise return zero. Use two `icmp eq`, one `and i1`, and
 one `select`. Attach named metadata recording the exact strings
-`claim.{v['claim_id']}` and `register.{v['register_id']}`.
+`claim.{v["claim_id"]}` and `register.{v["register_id"]}`.
 """
 
 
@@ -381,15 +450,15 @@ def binding_solution(p: VariantParameters) -> str:
     v = p.values
     return f"""define i32 @variant_binding(i32 %claim, i32 %register) {{
 entry:
-  %claim_ok = icmp eq i32 %claim, {v['claim_id']}
-  %register_ok = icmp eq i32 %register, {v['register_id']}
+  %claim_ok = icmp eq i32 %claim, {v["claim_id"]}
+  %register_ok = icmp eq i32 %register, {v["register_id"]}
   %matched = and i1 %claim_ok, %register_ok
-  %result = select i1 %matched, i32 {v['success_value']}, i32 0
+  %result = select i1 %matched, i32 {v["success_value"]}, i32 0
   ret i32 %result
 }}
 
 !bcir.variant.bindings = !{{!0}}
-!0 = !{{!"claim.{v['claim_id']}", !"register.{v['register_id']}"}}
+!0 = !{{!"claim.{v["claim_id"]}", !"register.{v["register_id"]}"}}
 """
 
 
@@ -401,11 +470,31 @@ def binding_manifest(p: VariantParameters) -> dict[str, Any]:
             count_assertion("structure.two-comparisons", r"\bicmp\s+eq\s+i32\b", 2, 2),
             assertion("structure.and", "instruction", r"\band\s+i1\b"),
             assertion("structure.select", "instruction", r"\bselect\s+i1\b"),
-            assertion("structure.identifiers", "metadata", rf'!"claim\.{v["claim_id"]}".*!"register\.{v["register_id"]}"'),
+            assertion(
+                "structure.identifiers",
+                "metadata",
+                rf'!"claim\.{v["claim_id"]}".*!"register\.{v["register_id"]}"',
+            ),
         ],
         semantic=[
-            {"function": "variant_binding", "return_type": "i32", "args": [{"type": "i32", "value": str(v["claim_id"])}, {"type": "i32", "value": str(v["register_id"])}], "expected": str(v["success_value"])},
-            {"function": "variant_binding", "return_type": "i32", "args": [{"type": "i32", "value": str(v["claim_id"] + 1)}, {"type": "i32", "value": str(v["register_id"])}], "expected": "0"},
+            {
+                "function": "variant_binding",
+                "return_type": "i32",
+                "args": [
+                    {"type": "i32", "value": str(v["claim_id"])},
+                    {"type": "i32", "value": str(v["register_id"])},
+                ],
+                "expected": str(v["success_value"]),
+            },
+            {
+                "function": "variant_binding",
+                "return_type": "i32",
+                "args": [
+                    {"type": "i32", "value": str(v["claim_id"] + 1)},
+                    {"type": "i32", "value": str(v["register_id"])},
+                ],
+                "expected": "0",
+            },
         ],
     )
 
@@ -424,14 +513,23 @@ def assertion(identifier: str, kind: str, pattern: str) -> dict[str, Any]:
 
 
 def count_assertion(identifier: str, pattern: str, minimum: int, maximum: int) -> dict[str, Any]:
-    return {"id": identifier, "dimension": "structure", "type": "count", "pattern": pattern, "min": minimum, "max": maximum}
+    return {
+        "id": identifier,
+        "dimension": "structure",
+        "type": "count",
+        "pattern": pattern,
+        "min": minimum,
+        "max": maximum,
+    }
 
 
 def absent_assertion(identifier: str, patterns: list[str]) -> dict[str, Any]:
     return {"id": identifier, "dimension": "structure", "type": "absent", "patterns": patterns}
 
 
-def llvm_manifest(p: VariantParameters, structural: list[dict[str, Any]], semantic: list[dict[str, Any]]) -> dict[str, Any]:
+def llvm_manifest(
+    p: VariantParameters, structural: list[dict[str, Any]], semantic: list[dict[str, Any]]
+) -> dict[str, Any]:
     return {
         "id": "000",
         "prompt_path": "generated/prompt.md",
@@ -448,10 +546,18 @@ def llvm_manifest(p: VariantParameters, structural: list[dict[str, Any]], semant
             {"id": "structure", "points": 40},
             {"id": "semantics", "points": 20},
         ],
-        "structural_assertions": structural + [
-            absent_assertion("safety.opaque-pointers", [r"(?:\bi\d+|%[-A-Za-z$._0-9]+|\[[^\]\n]+\]|\{[^}\n]+\})\s*\*"])
+        "structural_assertions": structural
+        + [
+            absent_assertion(
+                "safety.opaque-pointers",
+                [r"(?:\bi\d+|%[-A-Za-z$._0-9]+|\[[^\]\n]+\]|\{[^}\n]+\})\s*\*"],
+            )
         ],
-        "comparison_strategy": {"type": "structural-and-execution", "normalize_with": "opt -S", "raw_reference_diff": False},
+        "comparison_strategy": {
+            "type": "structural-and-execution",
+            "normalize_with": "opt -S",
+            "raw_reference_diff": False,
+        },
         # Generated variants are trusted, oracle-authored modules whose execution
         # vectors are deterministic and contain no external calls. Keep this
         # explicit because the baseline grader denies lli by default.
@@ -462,11 +568,61 @@ def llvm_manifest(p: VariantParameters, structural: list[dict[str, Any]], semant
 
 
 FAMILIES = (
-    Family("scalar-add", "001", ("integer_width", "constant_values"), scalar_sample, scalar_prompt, scalar_solution, scalar_manifest, scalar_trivial, "parent:001:i32:add-two-inputs"),
-    Family("aggregate-access", "006", ("array_length", "struct_field_position", "legal_alignment"), aggregate_sample, aggregate_prompt, aggregate_solution, aggregate_manifest, aggregate_trivial, "parent:006:entry-array-field-1"),
-    Family("branch-shape", "002", ("branch_shape", "constant_values"), branch_sample, branch_prompt, branch_solution, branch_manifest, branch_trivial, "parent:002:max-diamond"),
-    Family("metadata-payload", "014", ("metadata_payload_values", "constant_values"), metadata_sample, metadata_prompt, metadata_solution, metadata_manifest, metadata_trivial, "parent:014:ham-default"),
-    Family("register-claim-identifiers", "011", ("register_claim_identifiers", "constant_values"), binding_sample, binding_prompt, binding_solution, binding_manifest, binding_trivial, "parent:011:first-read-write"),
+    Family(
+        "scalar-add",
+        "001",
+        ("integer_width", "constant_values"),
+        scalar_sample,
+        scalar_prompt,
+        scalar_solution,
+        scalar_manifest,
+        scalar_trivial,
+        "parent:001:i32:add-two-inputs",
+    ),
+    Family(
+        "aggregate-access",
+        "006",
+        ("array_length", "struct_field_position", "legal_alignment"),
+        aggregate_sample,
+        aggregate_prompt,
+        aggregate_solution,
+        aggregate_manifest,
+        aggregate_trivial,
+        "parent:006:entry-array-field-1",
+    ),
+    Family(
+        "branch-shape",
+        "002",
+        ("branch_shape", "constant_values"),
+        branch_sample,
+        branch_prompt,
+        branch_solution,
+        branch_manifest,
+        branch_trivial,
+        "parent:002:max-diamond",
+    ),
+    Family(
+        "metadata-payload",
+        "014",
+        ("metadata_payload_values", "constant_values"),
+        metadata_sample,
+        metadata_prompt,
+        metadata_solution,
+        metadata_manifest,
+        metadata_trivial,
+        "parent:014:ham-default",
+    ),
+    Family(
+        "register-claim-identifiers",
+        "011",
+        ("register_claim_identifiers", "constant_values"),
+        binding_sample,
+        binding_prompt,
+        binding_solution,
+        binding_manifest,
+        binding_trivial,
+        "parent:011:first-read-write",
+    ),
 )
 
 
@@ -492,13 +648,20 @@ def split_assignments(training_root: Path) -> dict[str, dict[str, str]]:
 def normalize_ir_structure(solution: str, opt: str, work: Path) -> tuple[str, str]:
     source = work / "normalize.ll"
     source.write_text(solution, encoding="utf-8")
-    completed = subprocess.run([opt, "-S", str(source), "-o", "-"], text=True, capture_output=True, check=False)
+    completed = subprocess.run(
+        [opt, "-S", str(source), "-o", "-"], text=True, capture_output=True, check=False
+    )
     if completed.returncode != 0:
         raise ValueError("normalization failed: " + completed.stderr.strip())
     lines = []
     for line in completed.stdout.splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith(";") or stripped.startswith("source_filename") or stripped.startswith("ModuleID"):
+        if (
+            not stripped
+            or stripped.startswith(";")
+            or stripped.startswith("source_filename")
+            or stripped.startswith("ModuleID")
+        ):
             continue
         lines.append(stripped)
     text = "\n".join(lines)
@@ -519,21 +682,29 @@ def normalize_ir_structure(solution: str, opt: str, work: Path) -> tuple[str, st
     return text, sha256_text(text)
 
 
-def preflight_rejection(parameters: VariantParameters, family: Family, prompt: str, solution: str) -> str | None:
-    if parameters.polarity == "negative" and not (parameters.expected_diagnostic or parameters.expected_classification != "valid"):
+def preflight_rejection(
+    parameters: VariantParameters, family: Family, prompt: str, solution: str
+) -> str | None:
+    if parameters.polarity == "negative" and not (
+        parameters.expected_diagnostic or parameters.expected_classification != "valid"
+    ):
         return "negative variant lacks a deterministic diagnostic or semantic classification"
     if parameters.polarity not in {"positive", "negative"}:
         return "unknown polarity"
     if TYPED_POINTER_RE.search(solution):
         return "solution violates the opaque-pointer policy"
-    if TARGET_ASSUMPTION_RE.search(solution) or re.search(r"\b(?:x86|aarch64|amdgpu|nvvm|wasm)\.", solution, re.IGNORECASE):
+    if TARGET_ASSUMPTION_RE.search(solution) or re.search(
+        r"\b(?:x86|aarch64|amdgpu|nvvm|wasm)\.", solution, re.IGNORECASE
+    ):
         return "solution introduces an unsupported target assumption"
     if "solution" in prompt.casefold() or "reference answer" in prompt.casefold():
         return "prompt leaks solution-oriented wording"
     return family.triviality_reason(parameters)
 
 
-def artifact_hashes(prompt: str, solution: str, manifest: dict[str, Any], normalized_hash: str) -> dict[str, str]:
+def artifact_hashes(
+    prompt: str, solution: str, manifest: dict[str, Any], normalized_hash: str
+) -> dict[str, str]:
     return {
         "prompt_sha256": sha256_text(prompt),
         "reference_solution_sha256": sha256_text(solution),
@@ -544,13 +715,38 @@ def artifact_hashes(prompt: str, solution: str, manifest: dict[str, Any], normal
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--seed", type=int, required=True, help="fixed integer seed; recorded in every generated record")
-    parser.add_argument("--budget", type=int, default=DEFAULT_BUDGET, help=f"maximum accepted records (default: {DEFAULT_BUDGET})")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        required=True,
+        help="fixed integer seed; recorded in every generated record",
+    )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=DEFAULT_BUDGET,
+        help=f"maximum accepted records (default: {DEFAULT_BUDGET})",
+    )
     parser.add_argument("--max-attempts-per-family", type=int, default=24)
-    parser.add_argument("--output", type=Path, help="write accepted JSON Lines records here (default: stdout)")
-    parser.add_argument("--report", type=Path, help="write deterministic acceptance/rejection summary JSON here")
-    parser.add_argument("--existing", action="append", type=Path, default=[], help="existing variant JSONL used to seed semantic/text/structure deduplication (repeatable)")
-    parser.add_argument("--family", action="append", choices=[item.name for item in FAMILIES], help="limit generation to selected family (repeatable)")
+    parser.add_argument(
+        "--output", type=Path, help="write accepted JSON Lines records here (default: stdout)"
+    )
+    parser.add_argument(
+        "--report", type=Path, help="write deterministic acceptance/rejection summary JSON here"
+    )
+    parser.add_argument(
+        "--existing",
+        action="append",
+        type=Path,
+        default=[],
+        help="existing variant JSONL used to seed semantic/text/structure deduplication (repeatable)",
+    )
+    parser.add_argument(
+        "--family",
+        action="append",
+        choices=[item.name for item in FAMILIES],
+        help="limit generation to selected family (repeatable)",
+    )
     return parser.parse_args(argv)
 
 
@@ -595,7 +791,9 @@ def main(argv: list[str] | None = None) -> int:
                 text_hashes.add(record["artifacts"]["reference_solution_sha256"])
                 normalized_hashes.add(record["artifacts"]["normalized_ir_structure_sha256"])
             except (json.JSONDecodeError, KeyError, TypeError) as error:
-                raise SystemExit(f"invalid existing variant record {existing_path}:{line_number}: {error}") from error
+                raise SystemExit(
+                    f"invalid existing variant record {existing_path}:{line_number}: {error}"
+                ) from error
             existing_records += 1
 
     def reject(reason: str) -> None:
@@ -637,7 +835,9 @@ def main(argv: list[str] | None = None) -> int:
                     reject("grading manifest rejected reference: " + ",".join(failed))
                     continue
                 try:
-                    normalized_structure, normalized_hash = normalize_ir_structure(solution, tools["opt"], variant_dir)
+                    normalized_structure, normalized_hash = normalize_ir_structure(
+                        solution, tools["opt"], variant_dir
+                    )
                 except ValueError as error:
                     reject(str(error))
                     continue
@@ -651,7 +851,11 @@ def main(argv: list[str] | None = None) -> int:
                     "record_schema_version": RECORD_SCHEMA_VERSION,
                     "id": variant_id,
                     "parent_exercise_id": f"llvm-training-exercise-{family.parent_id}",
-                    "generator": {"name": "generate-exercise-variants.py", "version": GENERATOR_VERSION, "seed": args.seed},
+                    "generator": {
+                        "name": "generate-exercise-variants.py",
+                        "version": GENERATOR_VERSION,
+                        "seed": args.seed,
+                    },
                     "parameters": parameters.as_dict(),
                     "supported_parameter_kinds": list(family.parameter_kinds),
                     "prompt": prompt,
@@ -660,7 +864,10 @@ def main(argv: list[str] | None = None) -> int:
                     "oracle_result": {
                         "score_percent": result["score_percent"],
                         "executed_score_percent": result["executed_score_percent"],
-                        "checks": [{"id": check["id"], "status": check["status"]} for check in result["checks"]],
+                        "checks": [
+                            {"id": check["id"], "status": check["status"]}
+                            for check in result["checks"]
+                        ],
                     },
                     "semantic_family": {
                         "name": family.name,
@@ -671,7 +878,11 @@ def main(argv: list[str] | None = None) -> int:
                     },
                     "artifacts": hashes,
                     "normalized_ir_structure": normalized_structure,
-                    "review": {"status": "generated-unreviewed", "human_review_required": True, "markdown_solution_generated": False},
+                    "review": {
+                        "status": "generated-unreviewed",
+                        "human_review_required": True,
+                        "markdown_solution_generated": False,
+                    },
                 }
                 accepted.append(record)
                 semantic_keys.add(key)

@@ -40,13 +40,24 @@ class Violation:
 
 
 #: Types whose constructed form clause 10.2 forbids outright.
-_STRING_TAGS = frozenset({
-    Universal.BIT_STRING, Universal.OCTET_STRING, Universal.UTF8_STRING,
-    Universal.NUMERIC_STRING, Universal.PRINTABLE_STRING, Universal.TELETEX_STRING,
-    Universal.VIDEOTEX_STRING, Universal.IA5_STRING, Universal.GRAPHIC_STRING,
-    Universal.VISIBLE_STRING, Universal.GENERAL_STRING, Universal.UNIVERSAL_STRING,
-    Universal.BMP_STRING, Universal.OBJECT_DESCRIPTOR,
-})
+_STRING_TAGS = frozenset(
+    {
+        Universal.BIT_STRING,
+        Universal.OCTET_STRING,
+        Universal.UTF8_STRING,
+        Universal.NUMERIC_STRING,
+        Universal.PRINTABLE_STRING,
+        Universal.TELETEX_STRING,
+        Universal.VIDEOTEX_STRING,
+        Universal.IA5_STRING,
+        Universal.GRAPHIC_STRING,
+        Universal.VISIBLE_STRING,
+        Universal.GENERAL_STRING,
+        Universal.UNIVERSAL_STRING,
+        Universal.BMP_STRING,
+        Universal.OBJECT_DESCRIPTOR,
+    }
+)
 
 
 def der_violations(tlv: Tlv) -> list[Violation]:
@@ -66,19 +77,29 @@ def require_der(tlv: Tlv) -> None:
     if bad:
         raise Asn1Error(
             f"encoding is not DER: {bad[0]}"
-            + (f" (and {len(bad) - 1} more)" if len(bad) > 1 else ""), bad[0].offset)
+            + (f" (and {len(bad) - 1} more)" if len(bad) > 1 else ""),
+            bad[0].offset,
+        )
 
 
 def _walk(tlv: Tlv, out: list[Violation]) -> None:
     # 10.1 — the definite form, in the minimum number of octets.
     if tlv.indefinite:
-        out.append(Violation(
-            "10.1", f"{tlv.tag} uses the indefinite length form; DER requires the "
-                    f"definite form", tlv.offset))
+        out.append(
+            Violation(
+                "10.1",
+                f"{tlv.tag} uses the indefinite length form; DER requires the definite form",
+                tlv.offset,
+            )
+        )
     if tlv.non_minimal_length:
-        out.append(Violation(
-            "10.1", f"{tlv.tag} length is not encoded in the minimum number of octets",
-            tlv.offset))
+        out.append(
+            Violation(
+                "10.1",
+                f"{tlv.tag} length is not encoded in the minimum number of octets",
+                tlv.offset,
+            )
+        )
 
     if tlv.tag.is_universal:
         _walk_universal(tlv, out)
@@ -92,26 +113,37 @@ def _walk_universal(tlv: Tlv, out: list[Violation]) -> None:
 
     # 10.2 — no constructed strings.
     if tlv.constructed and number in _STRING_TAGS:
-        out.append(Violation(
-            "10.2", f"{tlv.tag} uses the constructed form; DER forbids it for "
-                    f"bitstring, octetstring and restricted character string types",
-            tlv.offset))
+        out.append(
+            Violation(
+                "10.2",
+                f"{tlv.tag} uses the constructed form; DER forbids it for "
+                f"bitstring, octetstring and restricted character string types",
+                tlv.offset,
+            )
+        )
 
     # 11.1 — boolean TRUE is all ones.
     if number == Universal.BOOLEAN and not tlv.constructed:
         if len(tlv.content) == 1 and tlv.content[0] not in (0x00, 0xFF):
-            out.append(Violation(
-                "11.1", f"boolean TRUE is encoded as 0x{tlv.content[0]:02x}; DER "
-                        f"requires all eight bits set", tlv.offset))
+            out.append(
+                Violation(
+                    "11.1",
+                    f"boolean TRUE is encoded as 0x{tlv.content[0]:02x}; DER "
+                    f"requires all eight bits set",
+                    tlv.offset,
+                )
+            )
 
     # 11.2.1 — every unused bit in a bitstring's final octet is zero.
     if number == Universal.BIT_STRING and not tlv.constructed and tlv.content:
         unused = tlv.content[0]
         body = tlv.content[1:]
         if unused <= 7 and body and body[-1] & ((1 << unused) - 1):
-            out.append(Violation(
-                "11.2.1", "bitstring has non-zero unused bits in its final octet",
-                tlv.offset))
+            out.append(
+                Violation(
+                    "11.2.1", "bitstring has non-zero unused bits in its final octet", tlv.offset
+                )
+            )
 
     # 11.6 — SET OF components appear in ascending octet order, shorter encodings
     # padded with trailing zero octets for the comparison only.
@@ -120,8 +152,9 @@ def _walk_universal(tlv: Tlv, out: list[Violation]) -> None:
         width = max(len(e) for e in encoded)
         padded = [e.ljust(width, b"\x00") for e in encoded]
         if padded != sorted(padded):
-            out.append(Violation(
-                "11.6", "set-of components are not in ascending order", tlv.offset))
+            out.append(
+                Violation("11.6", "set-of components are not in ascending order", tlv.offset)
+            )
 
     # 11.7 / 11.8 — the canonical time spellings.
     if number == Universal.UTC_TIME and not tlv.constructed:
@@ -149,6 +182,7 @@ def _walk_universal(tlv: Tlv, out: list[Violation]) -> None:
 
 def _reencode(tlv: Tlv) -> bytes:
     from .tlv import encode_tlv
+
     return encode_tlv(tlv)
 
 
@@ -169,10 +203,14 @@ def to_der(tlv: Tlv) -> Tlv:
         # into the value — the failure X.690 §8.6.4.2's own example exposes.
         if tlv.tag.number == Universal.BIT_STRING:
             from .values import decode_bitstring, encode_bitstring
-            return Tlv(tlv.tag.as_primitive(),
-                       encode_bitstring(decode_bitstring(tlv)), [], offset=tlv.offset)
-        return Tlv(tlv.tag.as_primitive(), tlv.flatten_content(), [],
-                   offset=tlv.offset)
+
+            return Tlv(
+                tlv.tag.as_primitive(),
+                encode_bitstring(decode_bitstring(tlv)),
+                [],
+                offset=tlv.offset,
+            )
+        return Tlv(tlv.tag.as_primitive(), tlv.flatten_content(), [], offset=tlv.offset)
 
     if not tlv.constructed:
         content = tlv.content
@@ -190,6 +228,7 @@ def to_der(tlv: Tlv) -> Tlv:
     children = [to_der(child) for child in tlv.children]
     if tlv.tag.is_universal and tlv.tag.number == Universal.SET:
         from .tlv import encode_tlv
+
         width = max((len(encode_tlv(c)) for c in children), default=0)
         children = sorted(children, key=lambda c: encode_tlv(c).ljust(width, b"\x00"))
     return Tlv(tlv.tag, b"", children, offset=tlv.offset)

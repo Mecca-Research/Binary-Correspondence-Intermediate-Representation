@@ -70,12 +70,13 @@ class Tlv:
             return self.content
         parts = []
         for child in self.children:
-            if expect is not None and not (child.tag.is_universal
-                                           and child.tag.number == expect):
+            if expect is not None and not (child.tag.is_universal and child.tag.number == expect):
                 raise Asn1Error(
                     f"a segment of a constructed string carries {child.tag}; every "
                     f"segment is an encoding of the same type, UNIVERSAL {expect} "
-                    f"(X.690 8.7.3.2)", child.offset)
+                    f"(X.690 8.7.3.2)",
+                    child.offset,
+                )
             parts.append(child.flatten_content(expect))
         return b"".join(parts)
 
@@ -104,8 +105,7 @@ def _is_eoc(data: bytes, pos: int) -> bool:
     return pos + 1 < len(data) and data[pos] == 0x00 and data[pos + 1] == 0x00
 
 
-def decode_tlv(data: bytes, pos: int = 0, *, max_depth: int = DEFAULT_MAX_DEPTH
-               ) -> tuple[Tlv, int]:
+def decode_tlv(data: bytes, pos: int = 0, *, max_depth: int = DEFAULT_MAX_DEPTH) -> tuple[Tlv, int]:
     """Decode one encoding at `pos`; return (tlv, next position).
 
     Trailing bytes after the encoding are the caller's business — use `decode_one`
@@ -116,14 +116,13 @@ def decode_tlv(data: bytes, pos: int = 0, *, max_depth: int = DEFAULT_MAX_DEPTH
 
 def _decode(data: bytes, pos: int, max_depth: int, depth: int) -> tuple[Tlv, int]:
     if depth > max_depth:
-        raise Asn1Error(
-            f"constructed nesting deeper than the decoder bound ({max_depth})", pos)
+        raise Asn1Error(f"constructed nesting deeper than the decoder bound ({max_depth})", pos)
     start = pos
     tag, pos = decode_tag(data, pos)
     if tag.cls is TagClass.UNIVERSAL and tag.number == 0:
         raise Asn1Error(
-            "unexpected end-of-contents octets: no indefinite-length encoding is open",
-            start)
+            "unexpected end-of-contents octets: no indefinite-length encoding is open", start
+        )
     length, pos = decode_length(data, pos)
 
     if length.indefinite:
@@ -131,13 +130,15 @@ def _decode(data: bytes, pos: int, max_depth: int, depth: int) -> tuple[Tlv, int
         if not tag.constructed:
             raise Asn1Error(
                 f"{tag} uses the indefinite length form but the encoding is primitive "
-                f"(X.690 8.1.3.2 a)", start)
+                f"(X.690 8.1.3.2 a)",
+                start,
+            )
         children: list[Tlv] = []
         while True:
             if pos >= len(data):
                 raise Asn1Error(
-                    "indefinite-length encoding is not terminated by end-of-contents "
-                    "octets", start)
+                    "indefinite-length encoding is not terminated by end-of-contents octets", start
+                )
             if _is_eoc(data, pos):
                 pos += 2
                 break
@@ -148,12 +149,12 @@ def _decode(data: bytes, pos: int, max_depth: int, depth: int) -> tuple[Tlv, int
     end = pos + (length.value or 0)
     if end > len(data):
         raise Asn1Error(
-            f"{tag} declares {length.value} contents octets but only "
-            f"{len(data) - pos} remain", start)
+            f"{tag} declares {length.value} contents octets but only {len(data) - pos} remain",
+            start,
+        )
 
     if not tag.constructed:
-        return Tlv(tag, data[pos:end], [], non_minimal_length=length.non_minimal,
-                   offset=start), end
+        return Tlv(tag, data[pos:end], [], non_minimal_length=length.non_minimal, offset=start), end
 
     children = []
     inner = pos
@@ -161,10 +162,8 @@ def _decode(data: bytes, pos: int, max_depth: int, depth: int) -> tuple[Tlv, int
         child, inner = _decode(data, inner, max_depth, depth + 1)
         children.append(child)
     if inner != end:
-        raise Asn1Error(
-            f"{tag} children overrun the declared contents length", start)
-    return Tlv(tag, b"", children, non_minimal_length=length.non_minimal,
-               offset=start), end
+        raise Asn1Error(f"{tag} children overrun the declared contents length", start)
+    return Tlv(tag, b"", children, non_minimal_length=length.non_minimal, offset=start), end
 
 
 def decode_one(data: bytes, *, max_depth: int = DEFAULT_MAX_DEPTH) -> Tlv:
@@ -177,8 +176,7 @@ def decode_one(data: bytes, *, max_depth: int = DEFAULT_MAX_DEPTH) -> Tlv:
     """
     tlv, pos = decode_tlv(data, 0, max_depth=max_depth)
     if pos != len(data):
-        raise Asn1Error(
-            f"{len(data) - pos} trailing octet(s) after a complete encoding", pos)
+        raise Asn1Error(f"{len(data) - pos} trailing octet(s) after a complete encoding", pos)
     return tlv
 
 
@@ -190,5 +188,13 @@ def iter_tlv(data: bytes, *, max_depth: int = DEFAULT_MAX_DEPTH):
         yield tlv
 
 
-__all__ = ["DEFAULT_MAX_DEPTH", "EOC", "INDEFINITE", "Tlv", "decode_one", "decode_tlv",
-           "encode_tlv", "iter_tlv"]
+__all__ = [
+    "DEFAULT_MAX_DEPTH",
+    "EOC",
+    "INDEFINITE",
+    "Tlv",
+    "decode_one",
+    "decode_tlv",
+    "encode_tlv",
+    "iter_tlv",
+]

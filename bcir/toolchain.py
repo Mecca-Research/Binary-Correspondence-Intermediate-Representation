@@ -65,13 +65,21 @@ def host_bash(
         # one ancestor higher for installations that expose mingw64/bin/git.exe.
         parent = os.path.dirname(os.path.abspath(git))
         for root in (os.path.dirname(parent), os.path.dirname(os.path.dirname(parent))):
-            candidates.extend((os.path.join(root, "bin", "bash.exe"),
-                               os.path.join(root, "usr", "bin", "bash.exe")))
+            candidates.extend(
+                (
+                    os.path.join(root, "bin", "bash.exe"),
+                    os.path.join(root, "usr", "bin", "bash.exe"),
+                )
+            )
     for key in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
         root = environ.get(key)
         if root:
-            candidates.extend((os.path.join(root, "Git", "bin", "bash.exe"),
-                               os.path.join(root, "Git", "usr", "bin", "bash.exe")))
+            candidates.extend(
+                (
+                    os.path.join(root, "Git", "bin", "bash.exe"),
+                    os.path.join(root, "Git", "usr", "bin", "bash.exe"),
+                )
+            )
 
     seen: set[str] = set()
     for candidate in candidates:
@@ -109,8 +117,7 @@ class LLVMToolchain:
             label = "unversioned" if self.major is None else f"LLVM {self.major}"
             return f"{self.pipeline}: resolved coherent {label} toolchain"
         tried = ", ".join(self.attempted) or "(none)"
-        return (f"missing tool(s) for {self.pipeline}: {', '.join(self.missing)}; "
-                f"attempted {tried}")
+        return f"missing tool(s) for {self.pipeline}: {', '.join(self.missing)}; attempted {tried}"
 
 
 def _suffix_value(value: str | None) -> str | None:
@@ -149,8 +156,9 @@ def _find_named(name: str, dirs: Sequence[str]) -> str | None:
     return os.path.abspath(found) if found else None
 
 
-def _resolve_exact(names: Sequence[str], spelling, dirs: Sequence[str],
-                   attempted: list[str]) -> dict[str, str] | None:
+def _resolve_exact(
+    names: Sequence[str], spelling, dirs: Sequence[str], attempted: list[str]
+) -> dict[str, str] | None:
     spellings = {name: spelling(name) for name in names}
     for candidate in spellings.values():
         if candidate not in attempted:
@@ -198,20 +206,22 @@ def _reported_llvm_major(path: str) -> int | None:
     if match:
         return int(match.group(1))
     try:
-        result = subprocess.run([path, "--version"], capture_output=True, text=True,
-                                timeout=5, check=False)
+        result = subprocess.run(
+            [path, "--version"], capture_output=True, text=True, timeout=5, check=False
+        )
     except (OSError, subprocess.SubprocessError):
         return None
     banner = (result.stdout + "\n" + result.stderr)[:16384]
-    for pattern in (r"\b(?:clang|LLVM)\s+version\s+(\d+)",
-                    r"\bLLD\s+(\d+)(?:\.|\b)"):
+    for pattern in (r"\b(?:clang|LLVM)\s+version\s+(\d+)", r"\bLLD\s+(\d+)(?:\.|\b)"):
         match = re.search(pattern, banner, re.IGNORECASE)
         if match:
             return int(match.group(1))
     return None
 
 
-def _coherent_reported_major(paths: Mapping[str, str], minimum_major: int) -> tuple[bool, int | None]:
+def _coherent_reported_major(
+    paths: Mapping[str, str], minimum_major: int
+) -> tuple[bool, int | None]:
     majors = {_reported_llvm_major(path) for path in paths.values()}
     majors.discard(None)
     if not majors:
@@ -270,11 +280,19 @@ def resolve_llvm_tools(
             spelling = f"{name}-{major}"
             if spelling not in attempted:
                 attempted.append(spelling)
-    missing = tuple(name for name in names if not any(
-        _find_named(candidate, dirs) for candidate in
-        ([name + suffix] if suffix else []) + [name] +
-        [f"{name}-{major}" for major in sorted(_available_majors(name, dirs, minimum_major), reverse=True)]
-    ))
+    missing = tuple(
+        name
+        for name in names
+        if not any(
+            _find_named(candidate, dirs)
+            for candidate in ([name + suffix] if suffix else [])
+            + [name]
+            + [
+                f"{name}-{major}"
+                for major in sorted(_available_majors(name, dirs, minimum_major), reverse=True)
+            ]
+        )
+    )
     if not missing:
         # Every tool exists, but not at one common major: report all as incompatible.
         missing = names

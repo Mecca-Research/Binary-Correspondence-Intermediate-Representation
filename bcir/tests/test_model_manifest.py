@@ -11,8 +11,12 @@ import os
 import struct
 import tempfile
 
-from bcir.frontends.models import (build_manifest, manifest_from_json,
-                                   parse_safetensors_header, shard_digest)
+from bcir.frontends.models import (
+    build_manifest,
+    manifest_from_json,
+    parse_safetensors_header,
+    shard_digest,
+)
 
 
 def _shard(d, fname, tensors):
@@ -20,8 +24,11 @@ def _shard(d, fname, tensors):
     offset = 0
     header = {}
     for name, (dtype, shape, nbytes) in tensors.items():
-        header[name] = {"dtype": dtype, "shape": list(shape),
-                        "data_offsets": [offset, offset + nbytes]}
+        header[name] = {
+            "dtype": dtype,
+            "shape": list(shape),
+            "data_offsets": [offset, offset + nbytes],
+        }
         offset += nbytes
     header["__metadata__"] = {"format": "pt"}
     blob = json.dumps(header).encode()
@@ -31,17 +38,31 @@ def _shard(d, fname, tensors):
     return path
 
 
-_CFG = {"architectures": ["GemmaForCausalLM"], "model_type": "gemma",
-        "max_position_embeddings": 8192, "vocab_size": 256000}
+_CFG = {
+    "architectures": ["GemmaForCausalLM"],
+    "model_type": "gemma",
+    "max_position_embeddings": 8192,
+    "vocab_size": 256000,
+}
 
 
 def _two_shards(d):
-    a = _shard(d, "model-00001-of-00002.safetensors",
-               {"model.embed_tokens.weight": ("F32", (16, 8), 16 * 8 * 4),
-                "model.layers.0.mlp.up.weight": ("F32", (8, 8), 8 * 8 * 4)})
-    b = _shard(d, "model-00002-of-00002.safetensors",
-               {"model.layers.0.attn.q.weight": ("BF16", (8, 8), 8 * 8 * 2),
-                "lm_head.weight": ("F32", (16, 8), 16 * 8 * 4)})
+    a = _shard(
+        d,
+        "model-00001-of-00002.safetensors",
+        {
+            "model.embed_tokens.weight": ("F32", (16, 8), 16 * 8 * 4),
+            "model.layers.0.mlp.up.weight": ("F32", (8, 8), 8 * 8 * 4),
+        },
+    )
+    b = _shard(
+        d,
+        "model-00002-of-00002.safetensors",
+        {
+            "model.layers.0.attn.q.weight": ("BF16", (8, 8), 8 * 8 * 2),
+            "lm_head.weight": ("F32", (16, 8), 16 * 8 * 4),
+        },
+    )
     return [a, b]
 
 
@@ -55,13 +76,16 @@ def test_header_parse_reads_dtype_shape_census_only():
 
 def test_manifest_census_params_dtypes_shards():
     with tempfile.TemporaryDirectory() as d:
-        m = build_manifest(_two_shards(d), _CFG, tokenizer_ref="tokenizer.model",
-                           license="gemma", source=d)
+        m = build_manifest(
+            _two_shards(d), _CFG, tokenizer_ref="tokenizer.model", license="gemma", source=d
+        )
         assert m.architecture == "GemmaForCausalLM"
         assert m.param_count == 16 * 8 + 8 * 8 + 8 * 8 + 16 * 8 and m.tensor_count == 4
         assert m.dtypes == (("BF16", 1), ("F32", 3))
-        assert [s.file for s in m.shards] == ["model-00001-of-00002.safetensors",
-                                              "model-00002-of-00002.safetensors"]
+        assert [s.file for s in m.shards] == [
+            "model-00001-of-00002.safetensors",
+            "model-00002-of-00002.safetensors",
+        ]
         assert m.context_length == 8192 and m.vocab_size == 256000
         assert all(len(s.sha256) == 64 for s in m.shards)
 
@@ -71,8 +95,8 @@ def test_manifest_is_deterministic_and_round_trips():
         shards = _two_shards(d)
         m1 = build_manifest(shards, _CFG, tokenizer_ref="t", source="s")
         m2 = build_manifest(list(reversed(shards)), _CFG, tokenizer_ref="t", source="s")
-        assert m1 == m2 and m1.digest == m2.digest        # ingestion order never matters
-        assert manifest_from_json(m1.to_json()) == m1     # the record survives serialization
+        assert m1 == m2 and m1.digest == m2.digest  # ingestion order never matters
+        assert manifest_from_json(m1.to_json()) == m1  # the record survives serialization
 
 
 def test_persisted_manifest_rejects_ambiguous_or_inconsistent_state():
@@ -80,9 +104,11 @@ def test_persisted_manifest_rejects_ambiguous_or_inconsistent_state():
         manifest = build_manifest(_two_shards(d), _CFG)
         base = json.loads(manifest.to_json())
         variants = []
-        wrong_total = json.loads(json.dumps(base)); wrong_total["param_count"] += 1
+        wrong_total = json.loads(json.dumps(base))
+        wrong_total["param_count"] += 1
         variants.append(wrong_total)
-        bad_hash = json.loads(json.dumps(base)); bad_hash["shards"][0]["sha256"] = "x" * 64
+        bad_hash = json.loads(json.dumps(base))
+        bad_hash["shards"][0]["sha256"] = "x" * 64
         variants.append(bad_hash)
         duplicate_file = json.loads(json.dumps(base))
         duplicate_file["shards"][1]["file"] = duplicate_file["shards"][0]["file"]
@@ -126,7 +152,7 @@ def test_malformed_shards_are_rejected_loudly():
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "short.safetensors")
         with open(p, "wb") as f:
-            f.write(b"\x01\x02")                          # short header length
+            f.write(b"\x01\x02")  # short header length
         for bad in (p,):
             try:
                 parse_safetensors_header(bad)
@@ -135,7 +161,7 @@ def test_malformed_shards_are_rejected_loudly():
                 pass
         q = os.path.join(d, "lying.safetensors")
         with open(q, "wb") as f:
-            f.write(struct.pack("<Q", 1 << 40) + b"{}")   # implausible header length
+            f.write(struct.pack("<Q", 1 << 40) + b"{}")  # implausible header length
         try:
             parse_safetensors_header(q)
             assert False, "implausible header length must be rejected"
@@ -149,13 +175,16 @@ def test_header_rejects_aliases_holes_negative_shapes_and_duplicate_keys():
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "ambiguous.safetensors")
         cases = (
-            ({"a": {"dtype": "F32", "shape": [2], "data_offsets": [0, 8]},
-              "b": {"dtype": "F32", "shape": [2], "data_offsets": [4, 12]}},
-             b"\0" * 12, "overlap"),
-            ({"a": {"dtype": "F32", "shape": [1], "data_offsets": [4, 8]}},
-             b"\0" * 8, "hole"),
-            ({"a": {"dtype": "F32", "shape": [-1], "data_offsets": [0, 0]}},
-             b"", "shape"),
+            (
+                {
+                    "a": {"dtype": "F32", "shape": [2], "data_offsets": [0, 8]},
+                    "b": {"dtype": "F32", "shape": [2], "data_offsets": [4, 12]},
+                },
+                b"\0" * 12,
+                "overlap",
+            ),
+            ({"a": {"dtype": "F32", "shape": [1], "data_offsets": [4, 8]}}, b"\0" * 8, "hole"),
+            ({"a": {"dtype": "F32", "shape": [-1], "data_offsets": [0, 0]}}, b"", "shape"),
         )
         for header, payload, needle in cases:
             blob = json.dumps(header).encode()
@@ -167,8 +196,10 @@ def test_header_rejects_aliases_holes_negative_shapes_and_duplicate_keys():
             except ValueError as exc:
                 assert needle in str(exc), str(exc)
 
-        duplicate = (b'{"a":{"dtype":"F32","shape":[1],"data_offsets":[0,4]},'
-                     b'"a":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}')
+        duplicate = (
+            b'{"a":{"dtype":"F32","shape":[1],"data_offsets":[0,4]},'
+            b'"a":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}'
+        )
         with open(path, "wb") as f:
             f.write(struct.pack("<Q", len(duplicate)) + duplicate + b"\0" * 4)
         try:
@@ -178,8 +209,10 @@ def test_header_rejects_aliases_holes_negative_shapes_and_duplicate_keys():
             assert "duplicate" in str(exc)
 
         canonical = b'{"a":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}'
-        for label, blob in (("leading whitespace", b" " + canonical),
-                            ("non-space trailing padding", canonical + b"\n")):
+        for label, blob in (
+            ("leading whitespace", b" " + canonical),
+            ("non-space trailing padding", canonical + b"\n"),
+        ):
             with open(path, "wb") as f:
                 f.write(struct.pack("<Q", len(blob)) + blob + b"\0" * 4)
             try:
@@ -192,10 +225,12 @@ def test_header_rejects_aliases_holes_negative_shapes_and_duplicate_keys():
             f.write(struct.pack("<Q", len(padded)) + padded + b"\0" * 4)
         assert "a" in parse_safetensors_header(path)[0]
         for invalid_metadata in (None, False, 0, "", []):
-            blob = json.dumps({
-                "a": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]},
-                "__metadata__": invalid_metadata,
-            }).encode()
+            blob = json.dumps(
+                {
+                    "a": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]},
+                    "__metadata__": invalid_metadata,
+                }
+            ).encode()
             with open(path, "wb") as f:
                 f.write(struct.pack("<Q", len(blob)) + blob + b"\0" * 4)
             try:
@@ -216,6 +251,7 @@ def test_header_rejects_aliases_holes_negative_shapes_and_duplicate_keys():
 
 def test_shard_digest_is_the_streamed_sha256():
     import hashlib
+
     with tempfile.TemporaryDirectory() as d:
         (a, _b) = _two_shards(d)
         with open(a, "rb") as f:

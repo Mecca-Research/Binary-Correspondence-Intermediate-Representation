@@ -71,6 +71,7 @@ from .quantize import dequantize, quantize_per_group
 # 1. KNN PREDICT -- baked training set; squared-distance ranking (no sqrt); majority vote / mean.
 # ============================================================================================================
 
+
 @dataclass(frozen=True)
 class KnnModel:
     """A baked KNN model: the stored training set is the model (KNN has no separate trained parameters -- its
@@ -88,11 +89,12 @@ class KnnModel:
         if not self.y_train:
             raise ValueError("knn needs at least one training sample")
         if len(self.X_train) != len(self.y_train) * self.n_feat:
-            raise ValueError(f"knn X_train must be n_train*n_feat = {len(self.y_train) * self.n_feat}; "
-                             f"got {len(self.X_train)}")
+            raise ValueError(
+                f"knn X_train must be n_train*n_feat = {len(self.y_train) * self.n_feat}; "
+                f"got {len(self.X_train)}"
+            )
         try:
-            finite = all(math.isfinite(float(value))
-                         for value in chain(self.X_train, self.y_train))
+            finite = all(math.isfinite(float(value)) for value in chain(self.X_train, self.y_train))
         except (TypeError, ValueError, OverflowError) as exc:
             raise ValueError("knn training values must be finite numbers") from exc
         if not finite:
@@ -133,8 +135,9 @@ def _validate_knn_query(model: KnnModel, x, k) -> list[float]:
     if len(x) != model.n_feat:
         raise ValueError(f"knn query must be length n_feat = {model.n_feat}; got {len(x)}")
     if type(k) is not int or not 1 <= k <= model.n_train:
-        raise ValueError(f"knn k must be an integer in [1, n_train] = "
-                         f"[1, {model.n_train}]; got {k!r}")
+        raise ValueError(
+            f"knn k must be an integer in [1, n_train] = [1, {model.n_train}]; got {k!r}"
+        )
     try:
         values = [float(value) for value in x]
     except (TypeError, ValueError, OverflowError) as exc:
@@ -151,14 +154,18 @@ def knn_neighbours(model: KnnModel, x: list[float], k: int) -> list[int]:
     so this is fully deterministic / reproducible. ``x`` must be length ``n_feat``; ``k`` in ``[1, n_train]``."""
     nf = model.n_feat
     xf = _validate_knn_query(model, x, k)
+
     def scored():
-        return ((_squared_distance_at(xf, 0, model.X_train, i * nf, nf), i)
-                for i in range(model.n_train))
+        return (
+            (_squared_distance_at(xf, 0, model.X_train, i * nf, nf), i)
+            for i in range(model.n_train)
+        )
+
     # Keep only k rows when k is small; heapq preserves the tuple's deterministic
     # (distance, index) ordering and avoids materializing/sorting the whole corpus.
     import heapq
-    nearest = (heapq.nsmallest(k, scored()) if k * 4 <= model.n_train
-               else sorted(scored())[:k])
+
+    nearest = heapq.nsmallest(k, scored()) if k * 4 <= model.n_train else sorted(scored())[:k]
     return [i for _, i in nearest]
 
 
@@ -194,7 +201,10 @@ def knn_neighbours_independent(model: KnnModel, x: list[float], k: int) -> list[
     order as ``knn_neighbours`` (which uses one ``sort``); a genuine cross-check that the ranking is correct."""
     nf = model.n_feat
     xf = _validate_knn_query(model, x, k)
-    dists = [squared_distance(xf, list(model.X_train[i * nf:(i + 1) * nf])) for i in range(model.n_train)]
+    dists = [
+        squared_distance(xf, list(model.X_train[i * nf : (i + 1) * nf]))
+        for i in range(model.n_train)
+    ]
     chosen: list[int] = []
     remaining = set(range(model.n_train))
     for _ in range(k):
@@ -205,8 +215,9 @@ def knn_neighbours_independent(model: KnnModel, x: list[float], k: int) -> list[
     return chosen
 
 
-def knn_classify_via_bridge(model: KnnModel, x: list[float], k: int,
-                            group_size: int, bits: int) -> int:
+def knn_classify_via_bridge(
+    model: KnnModel, x: list[float], k: int, group_size: int, bits: int
+) -> int:
     """E5: the Q8<->float32<->Q8 bridge wrapped around the TRUSTED KNN classify -- the FEATURE vector ``x``
     arrives as per-group quantized storage; the bridge dequantizes it and the trusted ``knn_classify`` runs on
     the round-tripped query. The SOLE certified error is the INPUT round-trip (R17-certified by
@@ -218,6 +229,7 @@ def knn_classify_via_bridge(model: KnnModel, x: list[float], k: int,
 # ============================================================================================================
 # 2. DECISION-TREE PREDICT -- a baked flat-array tree; exact threshold traversal (NO transcendental).
 # ============================================================================================================
+
 
 @dataclass(frozen=True)
 class TreeModel:
@@ -240,16 +252,22 @@ class TreeModel:
             raise ValueError("tree needs at least one node (the root)")
         if self.n_feat < 1:
             raise ValueError(f"tree n_feat must be >= 1; got {self.n_feat}")
-        for nm, arr in (("threshold", self.threshold), ("left", self.left),
-                        ("right", self.right), ("leaf_value", self.leaf_value)):
+        for nm, arr in (
+            ("threshold", self.threshold),
+            ("left", self.left),
+            ("right", self.right),
+            ("leaf_value", self.leaf_value),
+        ):
             if len(arr) != n:
                 raise ValueError(f"tree {nm} must have {n} entries (one per node); got {len(arr)}")
         for node in range(n):
             if self.feature[node] == -1:
-                continue                                    # a leaf -- children / feature unused
+                continue  # a leaf -- children / feature unused
             if not (0 <= self.feature[node] < self.n_feat):
-                raise ValueError(f"tree node {node}: feature {self.feature[node]} out of range "
-                                 f"[0, {self.n_feat})")
+                raise ValueError(
+                    f"tree node {node}: feature {self.feature[node]} out of range "
+                    f"[0, {self.n_feat})"
+                )
             for child in (self.left[node], self.right[node]):
                 if not (0 <= child < n):
                     raise ValueError(f"tree node {node}: child {child} out of range [0, {n})")
@@ -269,7 +287,7 @@ def tree_predict(model: TreeModel, x: list[float]) -> float:
     if len(x) != model.n_feat:
         raise ValueError(f"tree query must be length n_feat = {model.n_feat}; got {len(x)}")
     node = 0
-    for _ in range(model.n_nodes + 1):                      # bounded: at most n_nodes internal hops to a leaf
+    for _ in range(model.n_nodes + 1):  # bounded: at most n_nodes internal hops to a leaf
         if model.feature[node] == -1:
             return float(model.leaf_value[node])
         if float(x[model.feature[node]]) <= float(model.threshold[node]):
@@ -279,7 +297,9 @@ def tree_predict(model: TreeModel, x: list[float]) -> float:
     raise ValueError("tree_predict: traversal exceeded the depth bound (malformed / cyclic tree)")
 
 
-def tree_predict_recursive(model: TreeModel, x: list[float], node: int = 0, depth: int = 0) -> float:
+def tree_predict_recursive(
+    model: TreeModel, x: list[float], node: int = 0, depth: int = 0
+) -> float:
     """INDEPENDENT verifier for ``tree_predict``: a separate RECURSIVE traversal (vs the iterative array walk),
     on the SAME baked tree -- it must return the SAME leaf value. The two reach the leaf by independent control
     flow (recursion vs a bounded loop), so agreement cross-checks the traversal. A depth bound (= n_nodes) raises
@@ -333,6 +353,7 @@ def tree_predict_via_bridge(model: TreeModel, x: list[float], group_size: int, b
 # 3. SVM DECISION-FUNCTION PREDICT -- baked support vectors + dual coeffs + bias; linear or RBF kernel.
 # ============================================================================================================
 
+
 @dataclass(frozen=True)
 class SvmModel:
     """A baked SVM model (what a trained libsvm / scikit-learn SVC bakes for prediction -- the dual QP solve that
@@ -352,7 +373,9 @@ class SvmModel:
         if not self.alpha_y:
             raise ValueError("svm needs at least one support vector")
         if len(self.SV) != len(self.alpha_y) * self.n_feat:
-            raise ValueError(f"svm SV must be n_sv*n_feat = {len(self.alpha_y) * self.n_feat}; got {len(self.SV)}")
+            raise ValueError(
+                f"svm SV must be n_sv*n_feat = {len(self.alpha_y) * self.n_feat}; got {len(self.SV)}"
+            )
 
     @property
     def n_sv(self) -> int:
@@ -393,9 +416,11 @@ def svm_decision_rbf(model: SvmModel, x: list[float], gamma: float) -> float:
     xf = [float(v) for v in x]
     acc = float(model.b)
     for i in range(model.n_sv):
-        sv = list(model.SV[i * nf:(i + 1) * nf])
+        sv = list(model.SV[i * nf : (i + 1) * nf])
         d2 = squared_distance(xf, sv)
-        acc += float(model.alpha_y[i]) * math.exp(-float(gamma) * d2)   # exp: the sole transcendental (libm edge)
+        acc += float(model.alpha_y[i]) * math.exp(
+            -float(gamma) * d2
+        )  # exp: the sole transcendental (libm edge)
     return acc
 
 
@@ -441,7 +466,9 @@ def svm_decision_rbf_independent(model: SvmModel, x: list[float], gamma: float) 
     return sum(terms) + float(model.b)
 
 
-def svm_predict_linear_via_bridge(model: SvmModel, x: list[float], group_size: int, bits: int) -> int:
+def svm_predict_linear_via_bridge(
+    model: SvmModel, x: list[float], group_size: int, bits: int
+) -> int:
     """E5: the Q8<->float32<->Q8 bridge wrapped around the TRUSTED linear-SVM predict -- the FEATURE vector ``x``
     is round-tripped, the trusted ``svm_decision_linear`` runs, and the sign is the class. The SOLE certified
     error is the INPUT round-trip (R17). Keep the bridged point off the decision boundary so the round-trip never
@@ -453,6 +480,7 @@ def svm_predict_linear_via_bridge(model: SvmModel, x: list[float], group_size: i
 # ============================================================================================================
 # 4. NAIVE-BAYES PREDICT -- Gaussian NB; baked log-prior + per-class mean/var; the log(2*pi*var) baked.
 # ============================================================================================================
+
 
 @dataclass(frozen=True)
 class GaussianNbModel:
@@ -474,11 +502,17 @@ class GaussianNbModel:
         if nc < 1:
             raise ValueError("nb needs at least one class")
         if len(self.mean) != nc * self.n_feat:
-            raise ValueError(f"nb mean must be n_class*n_feat = {nc * self.n_feat}; got {len(self.mean)}")
+            raise ValueError(
+                f"nb mean must be n_class*n_feat = {nc * self.n_feat}; got {len(self.mean)}"
+            )
         if len(self.var) != nc * self.n_feat:
-            raise ValueError(f"nb var must be n_class*n_feat = {nc * self.n_feat}; got {len(self.var)}")
+            raise ValueError(
+                f"nb var must be n_class*n_feat = {nc * self.n_feat}; got {len(self.var)}"
+            )
         if any(v <= 0.0 for v in self.var):
-            raise ValueError("nb var entries must all be > 0 (a Gaussian likelihood needs a positive variance)")
+            raise ValueError(
+                "nb var entries must all be > 0 (a Gaussian likelihood needs a positive variance)"
+            )
 
     @property
     def n_class(self) -> int:
@@ -506,7 +540,7 @@ def gaussian_nb_log_posterior(model: GaussianNbModel, x: list[float]) -> list[fl
         raise ValueError(f"nb query must be length n_feat = {model.n_feat}; got {len(x)}")
     nf = model.n_feat
     xf = [float(v) for v in x]
-    log_norm = model.baked_log_norm()                      # the baked log(2*pi*var) -- data-independent constant
+    log_norm = model.baked_log_norm()  # the baked log(2*pi*var) -- data-independent constant
     out = []
     for c in range(model.n_class):
         acc = 0.0
@@ -550,7 +584,9 @@ def gaussian_nb_log_posterior_independent(model: GaussianNbModel, x: list[float]
     return out
 
 
-def nb_predict_via_bridge(model: GaussianNbModel, x: list[float], group_size: int, bits: int) -> int:
+def nb_predict_via_bridge(
+    model: GaussianNbModel, x: list[float], group_size: int, bits: int
+) -> int:
     """E5: the Q8<->float32<->Q8 bridge wrapped around the TRUSTED Gaussian-NB predict -- the FEATURE vector
     ``x`` is round-tripped, the trusted ``nb_predict`` runs on the round-tripped query. The SOLE certified error
     is the INPUT round-trip (R17); the quadratic term is exact and the ``log`` normaliser is baked. Keep the
@@ -568,8 +604,15 @@ _DTYPES = ("f32", "i32")
 _KINDS = ("knn", "tree", "svm", "nb")
 
 
-def check_classical(kind: str, *, n_feat: int, n_param: int, in_dtype: str, out_dtype: str,
-                    svm_kernel: str = "linear") -> list[str]:
+def check_classical(
+    kind: str,
+    *,
+    n_feat: int,
+    n_param: int,
+    in_dtype: str,
+    out_dtype: str,
+    svm_kernel: str = "linear",
+) -> list[str]:
     """Op-level well-formedness for a classical-ML PREDICT claim, returned as a list of error strings (empty ==
     well-formed) -- the shape/dtype-law shape, lifted into one named checker. NOT a globally-numbered R-law
     (matches ``check_recurrent`` / ``check_transformer``). ``kind`` in ``{"knn","tree","svm","nb"}``; ``n_feat``
@@ -599,8 +642,10 @@ def check_classical(kind: str, *, n_feat: int, n_param: int, in_dtype: str, out_
     uses_transcendental = (kind == "nb") or (kind == "svm" and svm_kernel == "rbf")
     if uses_transcendental and in_dtype != "f32":
         which = "Gaussian-NB (log)" if kind == "nb" else "RBF-SVM (exp)"
-        errs.append(f"classical: {which} uses a transcendental (the libm edge returns float), so it needs f32, "
-                    f"got {in_dtype!r}")
+        errs.append(
+            f"classical: {which} uses a transcendental (the libm edge returns float), so it needs f32, "
+            f"got {in_dtype!r}"
+        )
     if kind == "svm" and svm_kernel not in ("linear", "rbf"):
         errs.append(f"classical: svm kernel {svm_kernel!r} is not a known kernel ('linear'/'rbf')")
     return errs

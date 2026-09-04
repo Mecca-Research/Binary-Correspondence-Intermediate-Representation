@@ -1,4 +1,5 @@
 """Append-only, content-addressed orchestration ledger for hosted training stages."""
+
 from __future__ import annotations
 
 import json
@@ -11,10 +12,21 @@ from ..._artifact_json import read_bounded_text, strict_json_loads
 from .contracts import canonical_json, require_sha256, sha256_text
 
 
-_PIPELINE_STAGES = frozenset({
-    "data", "tokenizer", "pretrain", "sft", "reward", "dpo", "ppo", "reasoning",
-    "embedding", "evaluate", "export",
-})
+_PIPELINE_STAGES = frozenset(
+    {
+        "data",
+        "tokenizer",
+        "pretrain",
+        "sft",
+        "reward",
+        "dpo",
+        "ppo",
+        "reasoning",
+        "embedding",
+        "evaluate",
+        "export",
+    }
+)
 _TRAINED = frozenset({"pretrain", "sft", "dpo", "ppo", "reasoning", "embedding"})
 
 
@@ -29,9 +41,9 @@ class PipelineStageRecord:
     def __post_init__(self) -> None:
         if self.stage not in _PIPELINE_STAGES:
             raise ValueError("unknown pipeline stage")
-        if not isinstance(self.parent_sha256, (tuple, list)) \
-                or any(require_sha256(value, "parent_sha256") != value
-                       for value in self.parent_sha256):
+        if not isinstance(self.parent_sha256, (tuple, list)) or any(
+            require_sha256(value, "parent_sha256") != value for value in self.parent_sha256
+        ):
             raise ValueError("pipeline parents must be SHA-256 digests")
         object.__setattr__(self, "parent_sha256", tuple(self.parent_sha256))
         if len(set(self.parent_sha256)) != len(self.parent_sha256):
@@ -75,50 +87,77 @@ class TrainingPipelineLedger:
         parents = self._parent_stages(record)
         stage = record.stage
         valid = False
-        if stage == "data": valid = not parents
-        elif stage == "tokenizer": valid = parents == ["data"]
-        elif stage == "pretrain": valid = parents == ["tokenizer"]
-        elif stage == "sft": valid = parents == ["pretrain"]
-        elif stage == "reward": valid = parents == ["sft"]
-        elif stage == "dpo": valid = parents == ["sft"]
-        elif stage == "ppo": valid = len(parents) == 2 and "reward" in parents \
-            and any(parent in ("sft", "dpo") for parent in parents)
-        elif stage == "reasoning": valid = len(parents) == 1 and parents[0] in ("sft", "dpo", "ppo")
-        elif stage == "embedding": valid = len(parents) == 1 and parents[0] in ("pretrain", "sft")
-        elif stage == "evaluate": valid = len(parents) >= 1 and all(parent in _TRAINED for parent in parents)
-        elif stage == "export": valid = parents == ["evaluate"]
+        if stage == "data":
+            valid = not parents
+        elif stage == "tokenizer":
+            valid = parents == ["data"]
+        elif stage == "pretrain":
+            valid = parents == ["tokenizer"]
+        elif stage == "sft":
+            valid = parents == ["pretrain"]
+        elif stage == "reward":
+            valid = parents == ["sft"]
+        elif stage == "dpo":
+            valid = parents == ["sft"]
+        elif stage == "ppo":
+            valid = (
+                len(parents) == 2
+                and "reward" in parents
+                and any(parent in ("sft", "dpo") for parent in parents)
+            )
+        elif stage == "reasoning":
+            valid = len(parents) == 1 and parents[0] in ("sft", "dpo", "ppo")
+        elif stage == "embedding":
+            valid = len(parents) == 1 and parents[0] in ("pretrain", "sft")
+        elif stage == "evaluate":
+            valid = len(parents) >= 1 and all(parent in _TRAINED for parent in parents)
+        elif stage == "export":
+            valid = parents == ["evaluate"]
         if not valid:
             raise ValueError(f"pipeline stage {stage!r} has invalid parent stages {parents}")
         self._records.append(record)
 
     def to_json(self) -> str:
-        return canonical_json({"schema": "bcir.training_pipeline_ledger.v1",
-                               "records": [asdict(record) for record in self._records]})
+        return canonical_json(
+            {
+                "schema": "bcir.training_pipeline_ledger.v1",
+                "records": [asdict(record) for record in self._records],
+            }
+        )
 
     @classmethod
     def from_json(cls, text: str) -> "TrainingPipelineLedger":
         value = strict_json_loads(text, "training pipeline ledger", max_bytes=16 * 1024 * 1024)
-        if not isinstance(value, dict) or set(value) != {"schema", "records"} \
-                or value["schema"] != "bcir.training_pipeline_ledger.v1" \
-                or not isinstance(value["records"], list):
+        if (
+            not isinstance(value, dict)
+            or set(value) != {"schema", "records"}
+            or value["schema"] != "bcir.training_pipeline_ledger.v1"
+            or not isinstance(value["records"], list)
+        ):
             raise ValueError("training pipeline ledger has missing or unknown fields")
         if len(value["records"]) > 100_000:
             raise ValueError("training pipeline ledger contains too many records")
         records = []
         try:
-            expected = {"stage", "parent_sha256", "output_sha256", "report_sha256",
-                        "artifact_kind"}
+            expected = {"stage", "parent_sha256", "output_sha256", "report_sha256", "artifact_kind"}
             for index, row in enumerate(value["records"]):
                 if not isinstance(row, dict) or set(row) != expected:
                     raise ValueError(
-                        f"training pipeline record {index} has missing or unknown fields")
+                        f"training pipeline record {index} has missing or unknown fields"
+                    )
                 if not isinstance(row["parent_sha256"], list):
                     raise ValueError(
-                        f"training pipeline record {index} parents must be a JSON list")
-                records.append(PipelineStageRecord(
-                    stage=row["stage"], parent_sha256=tuple(row["parent_sha256"]),
-                    output_sha256=row["output_sha256"], report_sha256=row["report_sha256"],
-                    artifact_kind=row["artifact_kind"]))
+                        f"training pipeline record {index} parents must be a JSON list"
+                    )
+                records.append(
+                    PipelineStageRecord(
+                        stage=row["stage"],
+                        parent_sha256=tuple(row["parent_sha256"]),
+                        output_sha256=row["output_sha256"],
+                        report_sha256=row["report_sha256"],
+                        artifact_kind=row["artifact_kind"],
+                    )
+                )
             return cls(records)
         except (KeyError, TypeError) as exc:
             raise ValueError(f"malformed training pipeline ledger: {exc}") from exc
@@ -127,12 +166,14 @@ class TrainingPipelineLedger:
 def write_pipeline_ledger(path: os.PathLike | str, ledger: TrainingPipelineLedger) -> None:
     if not isinstance(ledger, TrainingPipelineLedger):
         raise ValueError("ledger must be a TrainingPipelineLedger")
-    target = Path(path); target.parent.mkdir(parents=True, exist_ok=True)
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{target.name}.tmp-", dir=target.parent)
     try:
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(ledger.to_json().encode("utf-8") + b"\n")
-            stream.flush(); os.fsync(stream.fileno())
+            stream.flush()
+            os.fsync(stream.fileno())
         os.replace(temporary, target)
     finally:
         try:
@@ -142,5 +183,6 @@ def write_pipeline_ledger(path: os.PathLike | str, ledger: TrainingPipelineLedge
 
 
 def read_pipeline_ledger(path: os.PathLike | str) -> TrainingPipelineLedger:
-    return TrainingPipelineLedger.from_json(read_bounded_text(
-        str(path), "training pipeline ledger", max_bytes=16 * 1024 * 1024))
+    return TrainingPipelineLedger.from_json(
+        read_bounded_text(str(path), "training pipeline ledger", max_bytes=16 * 1024 * 1024)
+    )

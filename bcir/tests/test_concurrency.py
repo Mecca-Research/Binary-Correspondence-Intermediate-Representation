@@ -50,6 +50,7 @@ def test_oversubscription_is_contention():
     assert s.contention == 0
     # NEON has 8 domains; force a small-domain target via a tweaked profile.
     from dataclasses import replace
+
     narrow = replace(TargetProfile.x86_avx512(), affinity_domains=2)
     s2 = schedule_concurrent(m, narrow)
     assert s2.contention == 1  # wave of 3 on 2 domains -> 1 oversubscribed

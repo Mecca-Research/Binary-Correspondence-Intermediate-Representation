@@ -10,6 +10,7 @@ Policy (the requested allowlist):
 
     python tools/docs/check_retired_paths.py
 """
+
 from __future__ import annotations
 
 import os
@@ -40,7 +41,7 @@ def offenders() -> list[tuple[str, int, str]]:
         except OSError:
             continue
         if ALLOW_MARKER in text:
-            continue                                   # historical doc: explicitly allowed
+            continue  # historical doc: explicitly allowed
         rel = os.path.relpath(md, ROOT)
         for i, line in enumerate(text.splitlines(), 1):
             if any(r in line for r in RETIRED):
@@ -51,9 +52,11 @@ def offenders() -> list[tuple[str, int, str]]:
 def main() -> int:
     bad = offenders()
     if bad:
-        sys.stderr.write(f"[check_retired_paths] {len(bad)} active-doc reference(s) to a retired "
-                         f"tree (mark the doc historical with <!-- {ALLOW_MARKER} --> or remove "
-                         f"the reference):\n")
+        sys.stderr.write(
+            f"[check_retired_paths] {len(bad)} active-doc reference(s) to a retired "
+            f"tree (mark the doc historical with <!-- {ALLOW_MARKER} --> or remove "
+            f"the reference):\n"
+        )
         for f, ln, txt in bad:
             sys.stderr.write(f"  {f}:{ln}  {txt}\n")
         return 1

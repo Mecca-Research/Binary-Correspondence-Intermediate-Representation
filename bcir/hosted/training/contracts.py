@@ -5,6 +5,7 @@ the replay and admission boundary shared by local micro-model tests and future r
 compute adapters.  A stage name describes an optimization objective; it never weakens
 BCIR legality or lets telemetry steer an in-flight update.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -15,8 +16,9 @@ from dataclasses import asdict, dataclass
 from ..._artifact_json import strict_json_loads
 
 
-_STAGES = frozenset({"pretrain", "sft", "reward", "dpo", "ppo", "reasoning",
-                     "embedding", "supervised"})
+_STAGES = frozenset(
+    {"pretrain", "sft", "reward", "dpo", "ppo", "reasoning", "embedding", "supervised"}
+)
 
 
 def canonical_json(value) -> str:
@@ -28,26 +30,35 @@ def sha256_text(text: str) -> str:
 
 
 def require_sha256(value, field: str) -> str:
-    if not isinstance(value, str) or len(value) != 64 or value != value.lower() \
-            or any(ch not in "0123456789abcdef" for ch in value):
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or value != value.lower()
+        or any(ch not in "0123456789abcdef" for ch in value)
+    ):
         raise ValueError(f"{field} must be a lowercase SHA-256 digest")
     return value
 
 
-def require_int(value, field: str, *, minimum: int = 0,
-                maximum: int = 0x7FFFFFFF) -> int:
+def require_int(value, field: str, *, minimum: int = 0, maximum: int = 0x7FFFFFFF) -> int:
     if type(value) is not int or not minimum <= value <= maximum:
         raise ValueError(f"{field} must be an integer in [{minimum}, {maximum}]")
     return value
 
 
-def require_finite(value, field: str, *, minimum: float | None = None,
-                   maximum: float | None = None) -> float:
+def require_finite(
+    value, field: str, *, minimum: float | None = None, maximum: float | None = None
+) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{field} must be a finite number")
     result = float(value)
-    if not math.isfinite(result) or minimum is not None and result < minimum \
-            or maximum is not None and result > maximum:
+    if (
+        not math.isfinite(result)
+        or minimum is not None
+        and result < minimum
+        or maximum is not None
+        and result > maximum
+    ):
         raise ValueError(f"{field} is outside its valid range")
     return result
 
@@ -105,8 +116,16 @@ class StageTrainSpec:
         require_finite(self.epsilon, "epsilon", minimum=0.0)
         if self.epsilon == 0.0:
             raise ValueError("epsilon must be positive")
-        for field in ("weight_decay", "grad_clip", "preference_beta", "ppo_clip",
-                      "value_clip", "gamma", "gae_lambda", "kl_coefficient"):
+        for field in (
+            "weight_decay",
+            "grad_clip",
+            "preference_beta",
+            "ppo_clip",
+            "value_clip",
+            "gamma",
+            "gae_lambda",
+            "kl_coefficient",
+        ):
             require_finite(getattr(self, field), field, minimum=0.0)
         if self.grad_clip == 0.0 or self.preference_beta == 0.0:
             raise ValueError("grad_clip and preference_beta must be positive")
@@ -121,11 +140,13 @@ class StageTrainSpec:
 
     @classmethod
     def from_json(cls, text: str) -> "StageTrainSpec":
-        value = strict_json_loads(
-            text, "hosted stage specification", max_bytes=1024 * 1024)
+        value = strict_json_loads(text, "hosted stage specification", max_bytes=1024 * 1024)
         fields = set(cls.__dataclass_fields__)
-        if not isinstance(value, dict) or set(value) != fields | {"schema"} \
-                or value["schema"] != "bcir.hosted_stage.v1":
+        if (
+            not isinstance(value, dict)
+            or set(value) != fields | {"schema"}
+            or value["schema"] != "bcir.hosted_stage.v1"
+        ):
             raise ValueError("hosted stage specification has missing or unknown fields")
         arguments = {name: value[name] for name in fields}
         try:
@@ -185,8 +206,11 @@ class ReasoningExample:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "prompt_ids", token_tuple(self.prompt_ids, "prompt_ids"))
-        object.__setattr__(self, "rationale_ids", token_tuple(
-            self.rationale_ids, "rationale_ids", allow_empty=True))
+        object.__setattr__(
+            self,
+            "rationale_ids",
+            token_tuple(self.rationale_ids, "rationale_ids", allow_empty=True),
+        )
         object.__setattr__(self, "answer_ids", token_tuple(self.answer_ids, "answer_ids"))
         require_sha256(self.provenance_sha256, "provenance_sha256")
         if not isinstance(self.verifier, str) or not self.verifier:
@@ -197,8 +221,9 @@ class ReasoningExample:
     def as_sft(self) -> SFTExample:
         if not self.verified:
             raise ValueError("unverified reasoning traces cannot enter supervised training")
-        return SFTExample(self.prompt_ids, self.rationale_ids + self.answer_ids,
-                          self.provenance_sha256)
+        return SFTExample(
+            self.prompt_ids, self.rationale_ids + self.answer_ids, self.provenance_sha256
+        )
 
 
 @dataclass(frozen=True)

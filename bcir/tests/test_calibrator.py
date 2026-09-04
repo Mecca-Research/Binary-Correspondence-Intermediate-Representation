@@ -11,11 +11,13 @@ from bcir.telemetry import Broker, DataDNA, ListSink
 
 def _dataset():
     # thermal is perfectly correlated with utilization -> a learnable signal.
-    return [DataDNA(segment_id="s", claim_id=0, utilization=u, thermal=u)
-            for u in range(0, 100, 10)] * 12
+    return [
+        DataDNA(segment_id="s", claim_id=0, utilization=u, thermal=u) for u in range(0, 100, 10)
+    ] * 12
 
 
 # --- the trained, frozen calibrator ----------------------------------------------
+
 
 def test_trained_calibrator_learns_the_signal():
     fc = train_calibrator(_dataset(), epochs=400, gen=2)
@@ -28,7 +30,7 @@ def test_trained_calibrator_learns_the_signal():
 def test_frozen_calibrator_is_deterministic_and_serializable():
     a = train_calibrator(_dataset(), epochs=300, gen=1)
     b = train_calibrator(_dataset(), epochs=300, gen=1)
-    assert a.w_q8 == b.w_q8                                    # frozen: bit-identical
+    assert a.w_q8 == b.w_q8  # frozen: bit-identical
     assert FrozenCalibrator.from_json(a.to_json()) == a
 
 
@@ -40,6 +42,7 @@ def test_frozen_predict_is_integer_and_clamped():
 
 # --- the live broker (pub/sub fan-out) -------------------------------------------
 
+
 def test_broker_fans_out_to_every_subscriber():
     b = Broker()
     s1 = b.subscribe(ListSink())
@@ -47,11 +50,11 @@ def test_broker_fans_out_to_every_subscriber():
     for e in _dataset()[:5]:
         b.emit(e)
     assert len(s1.events) == 5 and len(s2.events) == 5
-    assert s1.events[0] is s2.events[0]                       # same event delivered to both
+    assert s1.events[0] is s2.events[0]  # same event delivered to both
 
 
 def test_broker_with_no_subscribers_is_a_noop():
-    Broker().emit(DataDNA(segment_id="s", claim_id=0))         # does not raise
+    Broker().emit(DataDNA(segment_id="s", claim_id=0))  # does not raise
 
 
 def test_broker_bridges_to_kafka_and_local_sinks():
@@ -74,20 +77,21 @@ def test_broker_bridges_to_kafka_and_local_sinks():
 
     fp = FakeProducer()
     b = Broker()
-    local = b.subscribe(ListSink())                            # local calibrator feed
-    b.subscribe(KafkaSink(fp, topic="bcir.dna"))               # production bridge
+    local = b.subscribe(ListSink())  # local calibrator feed
+    b.subscribe(KafkaSink(fp, topic="bcir.dna"))  # production bridge
     b.emit(DataDNA(segment_id="s", claim_id=9, thermal=55))
     b.flush()
-    assert len(local.events) == 1                              # local subscriber got it
+    assert len(local.events) == 1  # local subscriber got it
     assert len(fp.sent) == 1 and fp.sent[0][0] == "bcir.dna"
     assert json.loads(fp.sent[0][1].decode())["claim_id"] == 9  # serialized to Kafka
 
 
 # --- the loop driven by the trained calibrator (closing the last half) -----------
 
+
 def test_frozen_calibrator_drives_the_loop():
     fc = train_calibrator(_dataset(), epochs=400)
     hot = [DataDNA(segment_id="s", claim_id=0, utilization=95, voltage=80, thermal=95)] * 4
     cert = close_loop(vector_add(1024), TARGETS["x86_avx512"], events=hot, calibrator=fc)
-    assert cert.measured_thermal >= 60                        # learned hot from telemetry
-    assert cert.replanned and cert.win > 0                    # vec16 -> vec8, a measured win
+    assert cert.measured_thermal >= 60  # learned hot from telemetry
+    assert cert.replanned and cert.win > 0  # vec16 -> vec8, a measured win

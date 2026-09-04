@@ -59,19 +59,18 @@ class SoftResult:
     """The finite-temperature plan distribution (the soft twin of RealizationResult)."""
 
     temperature: float
-    free_energy: float                         # F_T = softmin path cost; <= hard_score
-    hard_score: int                            # the T=0 tropical score (the gap reference)
-    marginals: dict[int, dict[str, float]]     # claim id -> {candidate name: P(selected)}
-    expected_cost: tuple[float, ...]           # E_pi[ total coupled 12-d cost vector ]
-    map_by_claim: dict[int, str]               # argmax-marginal candidate per claim
+    free_energy: float  # F_T = softmin path cost; <= hard_score
+    hard_score: int  # the T=0 tropical score (the gap reference)
+    marginals: dict[int, dict[str, float]]  # claim id -> {candidate name: P(selected)}
+    expected_cost: tuple[float, ...]  # E_pi[ total coupled 12-d cost vector ]
+    map_by_claim: dict[int, str]  # argmax-marginal candidate per claim
 
     @property
     def gap(self) -> float:
         """hard_score - F_T >= 0: the free energy never exceeds the hard minimum."""
         return self.hard_score - self.free_energy
 
-    def expected_score(self, h, theta: Theta, policy: Policy = PERF,
-                       phase_id: int = 0) -> float:
+    def expected_score(self, h, theta: Theta, policy: Policy = PERF, phase_id: int = 0) -> float:
         """E_pi[score] = E[C] . w >= F_T (Jensen/Gibbs bound; equality at T=0)."""
         w = weights(h, theta, phase_id, policy)
         return float(sum(c * wi for c, wi in zip(self.expected_cost, w)))
@@ -89,9 +88,9 @@ def _build_dag(module: Module, h, theta: Theta, policy: Policy):
     cost vector. Returns (n_nodes, columns, out_edges, in_edges) where an edge is
     (other_node, scalar_weight, coupled_cost_vector)."""
     flat = _flatten(module)
-    cand_map = fused_candidates(module, h)            # producer->consumer deforestation (shared)
+    cand_map = fused_candidates(module, h)  # producer->consumer deforestation (shared)
     n0 = 1
-    node_meta: list[tuple | None] = [None]            # 0 = SOURCE
+    node_meta: list[tuple | None] = [None]  # 0 = SOURCE
     out_edges: list[list[tuple[int, float, tuple]]] = [[]]
     in_edges: list[list[tuple[int, float, tuple]]] = [[]]
     columns: list[tuple[int, list[int], list[Candidate]]] = []  # (claim_id, nodes, cands)
@@ -129,8 +128,9 @@ def _build_dag(module: Module, h, theta: Theta, policy: Policy):
     return sink + 1, sink, columns, out_edges, in_edges
 
 
-def _expected_cost_at_zero(module: Module, h, theta: Theta, policy: Policy,
-                           result: RealizationResult) -> tuple[float, ...]:
+def _expected_cost_at_zero(
+    module: Module, h, theta: Theta, policy: Policy, result: RealizationResult
+) -> tuple[float, ...]:
     """The coupled cost vector summed along the hard-chosen path (the T=0 E[C])."""
     acc = [0.0] * N
     prev: Candidate | None = None
@@ -143,8 +143,9 @@ def _expected_cost_at_zero(module: Module, h, theta: Theta, policy: Policy,
     return tuple(acc)
 
 
-def softselect(module: Module, h, theta: Theta, policy: Policy = PERF,
-               temperature: float = 0.0) -> SoftResult:
+def softselect(
+    module: Module, h, theta: Theta, policy: Policy = PERF, temperature: float = 0.0
+) -> SoftResult:
     """The finite-temperature plan distribution. At temperature 0 this is the
     exact integer optimizer; at T > 0 it runs the soft forward-backward DP."""
     if temperature < 0:
@@ -154,8 +155,11 @@ def softselect(module: Module, h, theta: Theta, policy: Policy = PERF,
     if temperature == 0:
         marg = {s.claim_id: {s.candidate.name: 1.0} for s in hard.steps}
         return SoftResult(
-            temperature=0.0, free_energy=float(hard.score), hard_score=hard.score,
-            marginals=marg, map_by_claim={s.claim_id: s.candidate.name for s in hard.steps},
+            temperature=0.0,
+            free_energy=float(hard.score),
+            hard_score=hard.score,
+            marginals=marg,
+            map_by_claim={s.claim_id: s.candidate.name for s in hard.steps},
             expected_cost=_expected_cost_at_zero(module, h, theta, policy, hard),
         )
 
@@ -169,7 +173,7 @@ def softselect(module: Module, h, theta: Theta, policy: Policy = PERF,
         ins = in_edges[node]
         if ins:
             alpha[node] = _softmin([alpha[u] + w for u, w, _ in ins], T)
-    beta = [0.0] * n   # soft cost node -> SINK
+    beta = [0.0] * n  # soft cost node -> SINK
     for node in range(n - 2, -1, -1):
         outs = out_edges[node]
         if outs:
@@ -194,13 +198,19 @@ def softselect(module: Module, h, theta: Theta, policy: Policy = PERF,
                 p = math.exp(-(alpha[u] + w + beta[v] - F) / T)
                 for d, c in enumerate(cvec):
                     acc[d] += p * c
-    return SoftResult(temperature=T, free_energy=F, hard_score=hard.score,
-                      marginals=marginals, expected_cost=tuple(acc),
-                      map_by_claim=map_by_claim)
+    return SoftResult(
+        temperature=T,
+        free_energy=F,
+        hard_score=hard.score,
+        marginals=marginals,
+        expected_cost=tuple(acc),
+        map_by_claim=map_by_claim,
+    )
 
 
-def free_energy(module: Module, h, theta: Theta, policy: Policy = PERF,
-                temperature: float = 0.0) -> float:
+def free_energy(
+    module: Module, h, theta: Theta, policy: Policy = PERF, temperature: float = 0.0
+) -> float:
     """F_T(G|H,Theta) -- the Gibbs free energy over realization plans."""
     return softselect(module, h, theta, policy, temperature).free_energy
 
@@ -212,9 +222,13 @@ def grad_free_energy_wrt_weights(soft: SoftResult) -> tuple[float, ...]:
     return soft.expected_cost
 
 
-def temperature_sweep(module: Module, h, theta: Theta, policy: Policy = PERF,
-                      temperatures=(0.0, 1.0, 100.0, 1000.0, 10000.0)
-                      ) -> list[tuple[float, float]]:
+def temperature_sweep(
+    module: Module,
+    h,
+    theta: Theta,
+    policy: Policy = PERF,
+    temperatures=(0.0, 1.0, 100.0, 1000.0, 10000.0),
+) -> list[tuple[float, float]]:
     """(T, F_T) across an annealing schedule. F_T rises toward the hard minimum as
     T -> 0 (always F_T <= hard_score); the dashboard for the anneal-and-freeze step."""
     return [(float(t), free_energy(module, h, theta, policy, t)) for t in temperatures]

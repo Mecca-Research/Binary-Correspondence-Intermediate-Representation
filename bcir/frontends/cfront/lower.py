@@ -12,6 +12,7 @@ Mapping:
   * **calls** (L4) -> a `GEM_DISPATCH` claim + a `compose.Call`, so `plan_composite` enforces R18
     (callee resolution + no recursion).
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -41,13 +42,24 @@ from .ctype_model import (
 
 # C operator -> (cost-class Opcode, op-suffix the emitter maps back to a C operator).
 _BIN = {
-    "+": (Opcode.ADD, "add"), "-": (Opcode.SUB, "sub"), "*": (Opcode.MUL, "mul"),
-    "/": (Opcode.MUL, "div"), "%": (Opcode.MUL, "mod"),
-    "&": (Opcode.ADD, "and"), "|": (Opcode.ADD, "or"), "^": (Opcode.ADD, "xor"),
-    "<<": (Opcode.ADD, "shl"), ">>": (Opcode.ADD, "shr"),
-    "==": (Opcode.SUB, "eq"), "!=": (Opcode.SUB, "ne"), "<": (Opcode.SUB, "lt"),
-    ">": (Opcode.SUB, "gt"), "<=": (Opcode.SUB, "le"), ">=": (Opcode.SUB, "ge"),
-    "&&": (Opcode.ADD, "land"), "||": (Opcode.ADD, "lor"),
+    "+": (Opcode.ADD, "add"),
+    "-": (Opcode.SUB, "sub"),
+    "*": (Opcode.MUL, "mul"),
+    "/": (Opcode.MUL, "div"),
+    "%": (Opcode.MUL, "mod"),
+    "&": (Opcode.ADD, "and"),
+    "|": (Opcode.ADD, "or"),
+    "^": (Opcode.ADD, "xor"),
+    "<<": (Opcode.ADD, "shl"),
+    ">>": (Opcode.ADD, "shr"),
+    "==": (Opcode.SUB, "eq"),
+    "!=": (Opcode.SUB, "ne"),
+    "<": (Opcode.SUB, "lt"),
+    ">": (Opcode.SUB, "gt"),
+    "<=": (Opcode.SUB, "le"),
+    ">=": (Opcode.SUB, "ge"),
+    "&&": (Opcode.ADD, "land"),
+    "||": (Opcode.ADD, "lor"),
 }
 _UN = {"-": (Opcode.SUB, "neg"), "~": (Opcode.ADD, "bnot"), "!": (Opcode.SUB, "lnot")}
 
@@ -70,13 +82,13 @@ def _cast_name(ct: CType) -> str:
     if ct.kind == "pointer":
         return _cast_name(ct.of) + " *" if ct.of else "void *"
     if ct.is_bitint:
-        return ct.name                                # `_BitInt(N)` / `unsigned _BitInt(N)` -- faithful, exact width
+        return ct.name  # `_BitInt(N)` / `unsigned _BitInt(N)` -- faithful, exact width
     if ct.is_float:
-        return ct.name                                # float / double / long double
+        return ct.name  # float / double / long double
     if ct.name in ("_Bool", "bool"):
-        return "_Bool"                                # a bool cast normalizes any nonzero to 1 on the
-                                                      # FULL value -- (uint8_t) would truncate first
-                                                      # (so (_Bool)256 must be 1, not 0; (_Bool)0.5 is 1)
+        return "_Bool"  # a bool cast normalizes any nonzero to 1 on the
+        # FULL value -- (uint8_t) would truncate first
+        # (so (_Bool)256 must be 1, not 0; (_Bool)0.5 is 1)
     return _CAST_W.get(ct.size, "uint32_t")
 
 
@@ -87,7 +99,7 @@ _RANK_FLOAT = {0: "float", 1: "double", 2: "long double"}
 def _elem_float_name(t) -> str:
     """The element float spelling of a (possibly complex) float type: `double _Complex` -> `double`,
     a plain `double` -> `double`. Used to promote complex arithmetic by element rank."""
-    return t.name[:-len(" _Complex")] if t.is_complex else t.name
+    return t.name[: -len(" _Complex")] if t.is_complex else t.name
 
 
 def _float_lit_type(spelling: str) -> CType:
@@ -107,24 +119,72 @@ def _float_lit_type(spelling: str) -> CType:
 # lower to an opaque external library edge: the emit calls the real libm function (the harness links
 # -lm) so the IEEE-754 result is delegated to the backend, and the call graph sees no callee to
 # resolve (R18 treats it like an indirect call).
-_LIBM = frozenset({
-    "acos", "asin", "atan", "atan2", "cos", "sin", "tan",
-    "acosh", "asinh", "atanh", "cosh", "sinh", "tanh",
-    "exp", "exp2", "expm1", "log", "log10", "log1p", "log2", "logb",
-    "cbrt", "fabs", "hypot", "pow", "sqrt",
-    "ceil", "floor", "round", "trunc", "nearbyint", "rint",
-    "erf", "erfc", "lgamma", "tgamma",
-    "copysign", "fdim", "fmax", "fmin", "fmod", "remainder", "fma", "nextafter",
-    "ldexp", "scalbn", "scalbln", "nan",
-    "frexp", "modf", "remquo",                            # a pointer out-param (rides c.addrof); double result
-})
+_LIBM = frozenset(
+    {
+        "acos",
+        "asin",
+        "atan",
+        "atan2",
+        "cos",
+        "sin",
+        "tan",
+        "acosh",
+        "asinh",
+        "atanh",
+        "cosh",
+        "sinh",
+        "tanh",
+        "exp",
+        "exp2",
+        "expm1",
+        "log",
+        "log10",
+        "log1p",
+        "log2",
+        "logb",
+        "cbrt",
+        "fabs",
+        "hypot",
+        "pow",
+        "sqrt",
+        "ceil",
+        "floor",
+        "round",
+        "trunc",
+        "nearbyint",
+        "rint",
+        "erf",
+        "erfc",
+        "lgamma",
+        "tgamma",
+        "copysign",
+        "fdim",
+        "fmax",
+        "fmin",
+        "fmod",
+        "remainder",
+        "fma",
+        "nextafter",
+        "ldexp",
+        "scalbn",
+        "scalbln",
+        "nan",
+        "frexp",
+        "modf",
+        "remquo",  # a pointer out-param (rides c.addrof); double result
+    }
+)
 # <math.h> functions with a fixed *integer* result (the f/l suffix types only the argument): ilogb
 # returns int; lround/lrint return long and llround/llrint return long long. The emitted result temp
 # is declared at the rid type's true width, so the 8-byte returns are not truncated to the 4-byte
 # value model. (frexp/modf/remquo, which take a pointer out-param, ride the address-of-argument path.)
-_LIBM_INT = {"ilogb": "int",
-             "lround": "long", "lrint": "long",
-             "llround": "long long", "llrint": "long long"}
+_LIBM_INT = {
+    "ilogb": "int",
+    "lround": "long",
+    "lrint": "long",
+    "llround": "long long",
+    "llrint": "long long",
+}
 
 # <complex.h> functions, lowered like a libm call (opaque external edge, emitted verbatim against
 # <complex.h>). The result type differs by function: creal/cimag/cabs/carg return the *real* element
@@ -136,12 +196,29 @@ _LIBM_INT = {"ilogb": "int",
 # original, so it resolves to the same imaginary unit. Honored only when NOT shadowed by a declared name.
 _IMAG_UNIT = frozenset({"I", "_Complex_I"})
 
-_CPLX_REAL = frozenset({"creal", "cimag", "cabs", "carg"})    # -> real element float
-_CPLX_CPLX = frozenset({                                      # -> the complex type (same width)
-    "conj", "cproj",                                          #   algebraic
-    "cexp", "clog", "csqrt", "cpow",                          #   exp / log / sqrt / power
-    "csin", "ccos", "ctan", "casin", "cacos", "catan",        #   circular + inverse
-    "csinh", "ccosh", "ctanh", "casinh", "cacosh", "catanh"}) #   hyperbolic + inverse
+_CPLX_REAL = frozenset({"creal", "cimag", "cabs", "carg"})  # -> real element float
+_CPLX_CPLX = frozenset(
+    {  # -> the complex type (same width)
+        "conj",
+        "cproj",  #   algebraic
+        "cexp",
+        "clog",
+        "csqrt",
+        "cpow",  #   exp / log / sqrt / power
+        "csin",
+        "ccos",
+        "ctan",
+        "casin",
+        "cacos",
+        "catan",  #   circular + inverse
+        "csinh",
+        "ccosh",
+        "ctanh",
+        "casinh",
+        "cacosh",
+        "catanh",
+    }
+)  #   hyperbolic + inverse
 
 
 def _complex_libm_type(name: str) -> "CType | None":
@@ -158,11 +235,26 @@ def _complex_libm_type(name: str) -> "CType | None":
         return scalar(f"{'float' if suf == 'f' else 'long double'} _Complex")
     return None
 
+
 # the printf / scanf family of external variadic <stdio.h> functions -- not defined in the unit and not
 # lowered, they emit verbatim (like a libm call, opaque to R18) and return int.
-_EXTERN_VARIADIC = frozenset({
-    "snprintf", "vsnprintf", "sprintf", "vsprintf", "printf", "fprintf", "vprintf",
-    "vfprintf", "sscanf", "vsscanf", "scanf", "fscanf", "dprintf"})
+_EXTERN_VARIADIC = frozenset(
+    {
+        "snprintf",
+        "vsnprintf",
+        "sprintf",
+        "vsprintf",
+        "printf",
+        "fprintf",
+        "vprintf",
+        "vfprintf",
+        "sscanf",
+        "vsscanf",
+        "scanf",
+        "fscanf",
+        "dprintf",
+    }
+)
 
 # <stdlib.h> memory management -- external libc edges (emitted VERBATIM, opaque to R18, NOT bcir_-renamed),
 # the seam the naked-pointer safety track (§5.12) hangs lifetime annotations on. The allocators return a
@@ -170,14 +262,36 @@ _EXTERN_VARIADIC = frozenset({
 _STDLIB_ALLOC = frozenset({"malloc", "calloc", "realloc", "aligned_alloc"})
 
 # GCC/Clang integer builtins -- emitted verbatim (no bcir_ twin, opaque to R18) with a fixed result type.
-_BUILTIN_INT = frozenset({                            # the bit-count family + abs -> int
-    "__builtin_popcount", "__builtin_popcountl", "__builtin_popcountll",
-    "__builtin_clz", "__builtin_clzl", "__builtin_clzll", "__builtin_ctz", "__builtin_ctzl", "__builtin_ctzll",
-    "__builtin_ffs", "__builtin_ffsl", "__builtin_ffsll", "__builtin_parity", "__builtin_parityl",
-    "__builtin_parityll", "__builtin_clrsb", "__builtin_clrsbl", "__builtin_clrsbll", "__builtin_abs"})
-_BUILTIN_OTHER = {"__builtin_labs": "long", "__builtin_llabs": "long long",
-                  "__builtin_bswap16": "uint16_t", "__builtin_bswap32": "uint32_t",
-                  "__builtin_bswap64": "uint64_t"}
+_BUILTIN_INT = frozenset(
+    {  # the bit-count family + abs -> int
+        "__builtin_popcount",
+        "__builtin_popcountl",
+        "__builtin_popcountll",
+        "__builtin_clz",
+        "__builtin_clzl",
+        "__builtin_clzll",
+        "__builtin_ctz",
+        "__builtin_ctzl",
+        "__builtin_ctzll",
+        "__builtin_ffs",
+        "__builtin_ffsl",
+        "__builtin_ffsll",
+        "__builtin_parity",
+        "__builtin_parityl",
+        "__builtin_parityll",
+        "__builtin_clrsb",
+        "__builtin_clrsbl",
+        "__builtin_clrsbll",
+        "__builtin_abs",
+    }
+)
+_BUILTIN_OTHER = {
+    "__builtin_labs": "long",
+    "__builtin_llabs": "long long",
+    "__builtin_bswap16": "uint16_t",
+    "__builtin_bswap32": "uint32_t",
+    "__builtin_bswap64": "uint64_t",
+}
 
 # ASM2 -- port-mapped I/O intrinsics. Each is a CALL expression (no new syntax), recognized at lowering
 # like `_LIBM`, and lowered to a typed, isolated, BARRIERED I/O-port edge (`c.portio.in.<w>:` /
@@ -204,13 +318,13 @@ def _libm_type(name: str) -> CType | None:
     (base -> double, `f` -> float, `l` -> long double); a fixed-integer one (`ilogb`) returns its
     int type for any suffix. None if `name` is not a recognized libm function. The full name is
     tried first so a base that ends in `f` (`erf`) is not misread as the float variant of `er`."""
-    cx = _complex_libm_type(name)                     # <complex.h> creal/cimag/conj/... (typed first)
+    cx = _complex_libm_type(name)  # <complex.h> creal/cimag/conj/... (typed first)
     if cx is not None:
         return cx
     base = name[:-1] if name[-1:] in "fl" else name
     if name in _LIBM_INT:
         return scalar(_LIBM_INT[name])
-    if base in _LIBM_INT:                             # a suffixed variant (ilogbf/ilogbl) -> same int
+    if base in _LIBM_INT:  # a suffixed variant (ilogbf/ilogbl) -> same int
         return scalar(_LIBM_INT[base])
     if name in _LIBM:
         return scalar("double")
@@ -231,26 +345,26 @@ def _str_bytes(spelling: str) -> int:
     i, n, inq = 0, 0, False
     while i < len(spelling):
         ch = spelling[i]
-        if not inq:                                            # between pieces: only `"` opens one
+        if not inq:  # between pieces: only `"` opens one
             inq = ch == '"'
             i += 1
             continue
-        if ch == '"':                                          # closing quote of this piece
+        if ch == '"':  # closing quote of this piece
             inq = False
             i += 1
             continue
         if ch == "\\" and i + 1 < len(spelling):
             c = spelling[i + 1]
-            if c == "x":                                       # \xHH.. -> consume all hex digits
+            if c == "x":  # \xHH.. -> consume all hex digits
                 i += 2
                 while i < len(spelling) and spelling[i] in "0123456789abcdefABCDEF":
                     i += 1
-            elif c in "01234567":                              # \NNN  -> up to three octal digits
+            elif c in "01234567":  # \NNN  -> up to three octal digits
                 i += 1
                 k = 0
                 while k < 3 and i < len(spelling) and spelling[i] in "01234567":
                     i, k = i + 1, k + 1
-            else:                                              # \n, \t, \\, \", \0, ...
+            else:  # \n, \t, \\, \", \0, ...
                 i += 2
         else:
             i += 1
@@ -276,12 +390,14 @@ def _fold_const(node, resolve=None) -> int:
         return node.value
     if isinstance(node, cast.SizeOf) and resolve is not None:
         if node.type is not None:
-            return resolve(node.type).size                 # the CHOSEN ABI's answer (Part VII A4)
+            return resolve(node.type).size  # the CHOSEN ABI's answer (Part VII A4)
         if isinstance(node.expr, cast.StringLit):
             prefix, _ = split_lit_prefix(node.expr.value)
             return (_str_bytes(node.expr.value) + 1) * str_elem_size(prefix)
-        raise CLowerError("sizeof over a non-type operand is not a constant initializer "
-                          "in this slice (no scope at global-init time)")
+        raise CLowerError(
+            "sizeof over a non-type operand is not a constant initializer "
+            "in this slice (no scope at global-init time)"
+        )
     if isinstance(node, cast.AlignOf) and resolve is not None:
         return resolve(node.type).align
     if isinstance(node, cast.Unary) and node.op in ("-", "~", "!", "+"):
@@ -289,18 +405,35 @@ def _fold_const(node, resolve=None) -> int:
         return {"-": -v, "~": ~v, "!": int(not v), "+": v}[node.op]
     if isinstance(node, cast.Binary):
         a, b = _fold_const(node.lhs, resolve), _fold_const(node.rhs, resolve)
-        ops = {"+": a + b, "-": a - b, "*": a * b, "/": a // b if b else 0,
-               "%": a % b if b else 0, "&": a & b, "|": a | b, "^": a ^ b,
-               "<<": a << b, ">>": a >> b,
-               "<": int(a < b), "<=": int(a <= b), ">": int(a > b), ">=": int(a >= b),
-               "==": int(a == b), "!=": int(a != b),
-               "&&": int(bool(a) and bool(b)), "||": int(bool(a) or bool(b))}
+        ops = {
+            "+": a + b,
+            "-": a - b,
+            "*": a * b,
+            "/": a // b if b else 0,
+            "%": a % b if b else 0,
+            "&": a & b,
+            "|": a | b,
+            "^": a ^ b,
+            "<<": a << b,
+            ">>": a >> b,
+            "<": int(a < b),
+            "<=": int(a <= b),
+            ">": int(a > b),
+            ">=": int(a >= b),
+            "==": int(a == b),
+            "!=": int(a != b),
+            "&&": int(bool(a) and bool(b)),
+            "||": int(bool(a) or bool(b)),
+        }
         if node.op not in ops:
             raise CLowerError(f"non-constant operator {node.op!r} in a constant initializer")
         return ops[node.op]
     if isinstance(node, cast.Ternary):
-        return (_fold_const(node.then, resolve) if _fold_const(node.cond, resolve)
-                else _fold_const(node.els, resolve))
+        return (
+            _fold_const(node.then, resolve)
+            if _fold_const(node.cond, resolve)
+            else _fold_const(node.els, resolve)
+        )
     raise CLowerError("static initializer is not a constant expression")
 
 
@@ -312,10 +445,13 @@ def _is_pure(node) -> bool:
     if isinstance(node, (cast.IntLit, cast.Name, cast.SizeOf, cast.AlignOf)):
         return True
     if isinstance(node, cast.Unary):
-        return node.op in ("-", "~", "+") and _is_pure(node.operand)       # arithmetic only (NOT * / &)
+        return node.op in ("-", "~", "+") and _is_pure(node.operand)  # arithmetic only (NOT * / &)
     if isinstance(node, cast.Binary):
-        return (node.op in {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"}
-                and _is_pure(node.lhs) and _is_pure(node.rhs))
+        return (
+            node.op in {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"}
+            and _is_pure(node.lhs)
+            and _is_pure(node.rhs)
+        )
     if isinstance(node, cast.Cast):
         return _is_pure(node.operand)
     return False
@@ -343,10 +479,14 @@ def _scan_mutations(node, assigned: dict, body: dict, addr: set) -> None:
     if isinstance(node, cast.Assign):
         if isinstance(node.target, cast.Name):
             assigned[node.target.ident] = assigned.get(node.target.ident, 0) + 1
-            body[node.target.ident] = body.get(node.target.ident, 0) + 1   # an ordinary (non-decl-init) write
+            body[node.target.ident] = (
+                body.get(node.target.ident, 0) + 1
+            )  # an ordinary (non-decl-init) write
     elif isinstance(node, cast.Decl):
         if node.init is not None:
-            assigned[node.name] = assigned.get(node.name, 0) + 1           # a decl-init: counted, but NOT body
+            assigned[node.name] = (
+                assigned.get(node.name, 0) + 1
+            )  # a decl-init: counted, but NOT body
     elif isinstance(node, cast.Unary) and node.op == "&" and isinstance(node.operand, cast.Name):
         addr.add(node.operand.ident)
     for f in dataclasses.fields(node):
@@ -355,6 +495,7 @@ def _scan_mutations(node, assigned: dict, body: dict, addr: set) -> None:
 
 class CLowerError(Exception):
     """A lowering error (an unsupported construct). `pos` is a source byte offset when known."""
+
     def __init__(self, message: str, pos: int | None = None):
         super().__init__(message)
         self.pos = pos
@@ -364,20 +505,21 @@ class CLowerError(Exception):
 class _LV:
     """A resolved lvalue: a scalar variable, or a memory access (member/index/deref) that may be a
     bitfield (`bit_width > 0`) and/or MMIO (decided from the base resource's domain)."""
-    kind: str                              # "var" | "mem"
-    rid: int                               # variable rid OR base rid
-    ct: CType                              # variable type OR accessed element/field type
-    idx: int | None = None                 # index rid for base[idx]
-    byte_off: int = 0                      # member byte offset (in imm, not the strict-bounds field)
-    bit_off: int = 0                       # bitfield bit offset within its storage unit
-    bit_width: int = 0                     # bitfield width (0 == plain access)
-    member: bool = False                   # a member-array element `s.arr[i]` (carries offset+size even
-                                           # at offset 0, distinct from a plain `base[idx]`)
-    stride: int = 0                        # array-of-structs element stride (`s.arr[i].field`): the access
-                                           # lands at &base + byte_off + idx*stride but copies ct.size bytes
-                                           # (stride sizeof(element) != the field copy size). 0 == stride is ct.size.
-    packed: bool = False                   # a bitfield in a PACKED struct: its storage unit spans only
-                                           # ceil((bit_off+bit_width)/8) bytes, possibly straddling words
+
+    kind: str  # "var" | "mem"
+    rid: int  # variable rid OR base rid
+    ct: CType  # variable type OR accessed element/field type
+    idx: int | None = None  # index rid for base[idx]
+    byte_off: int = 0  # member byte offset (in imm, not the strict-bounds field)
+    bit_off: int = 0  # bitfield bit offset within its storage unit
+    bit_width: int = 0  # bitfield width (0 == plain access)
+    member: bool = False  # a member-array element `s.arr[i]` (carries offset+size even
+    # at offset 0, distinct from a plain `base[idx]`)
+    stride: int = 0  # array-of-structs element stride (`s.arr[i].field`): the access
+    # lands at &base + byte_off + idx*stride but copies ct.size bytes
+    # (stride sizeof(element) != the field copy size). 0 == stride is ct.size.
+    packed: bool = False  # a bitfield in a PACKED struct: its storage unit spans only
+    # ceil((bit_off+bit_width)/8) bytes, possibly straddling words
 
     def unit_bytes(self) -> int:
         """The bitfield storage-unit byte span: a PACKED field covers only the bytes it straddles; otherwise
@@ -402,50 +544,52 @@ def _is_scalar_member_lv(target, lv: "_LV") -> bool:
 # --- the structured body tree (L6): a block is a list mixing straight-line Claims with these. ---
 @dataclass
 class IfNode:
-    cond: int                              # rid of the condition value
-    then: list                             # block (list of Claim | IfNode | WhileNode)
+    cond: int  # rid of the condition value
+    then: list  # block (list of Claim | IfNode | WhileNode)
     els: list
 
 
 @dataclass
 class WhileNode:
-    cond_block: list                       # claims that recompute the condition each iteration
-    cond: int                              # rid of the condition value
+    cond_block: list  # claims that recompute the condition each iteration
+    cond: int  # rid of the condition value
     body: list
-    bound: int = 1024                      # static iteration upper bound (for the cost model)
-    test_at_end: bool = False              # do/while: run body first, then test the condition
-    step: list = field(default_factory=list)   # for-loop step: runs after body, at the continue point
-    loop_id: int = 0                       # unique id for the emitter's `__cont_<id>` label
+    bound: int = 1024  # static iteration upper bound (for the cost model)
+    test_at_end: bool = False  # do/while: run body first, then test the condition
+    step: list = field(
+        default_factory=list
+    )  # for-loop step: runs after body, at the continue point
+    loop_id: int = 0  # unique id for the emitter's `__cont_<id>` label
 
 
 @dataclass
 class ReturnNode:
-    rid: int | None                        # the returned value's rid (None == `return;`)
+    rid: int | None  # the returned value's rid (None == `return;`)
 
 
 @dataclass
 class BreakNode:
-    pass                                   # `break;` -- exit the nearest enclosing loop (emit-only)
+    pass  # `break;` -- exit the nearest enclosing loop (emit-only)
 
 
 @dataclass
 class ContinueNode:
-    pass                                   # `continue;` -- jump to the loop's continue point (emit-only)
+    pass  # `continue;` -- jump to the loop's continue point (emit-only)
 
 
 @dataclass
 class GotoNode:
-    label: str                             # `goto label;` -- an unconditional jump (emit-only)
+    label: str  # `goto label;` -- an unconditional jump (emit-only)
 
 
 @dataclass
 class LabelNode:
-    name: str                              # `name:` -- a jump target (emit-only)
+    name: str  # `name:` -- a jump target (emit-only)
 
 
 @dataclass
 class ComputedGotoNode:
-    target: int                            # `goto *<target>;` -- an indirect jump to a label address (GNU)
+    target: int  # `goto *<target>;` -- an indirect jump to a label address (GNU)
 
 
 @dataclass
@@ -459,32 +603,33 @@ class AsmInfo:
     source order so the constraints pair up 1:1 with their refs. `is_basic` records the BASIC source form (no
     colon sections) so the emit re-renders the basic 1-colon form ONLY there -- an all-empty EXTENDED asm
     re-emits with its (empty) `:` sections, so a non-volatile `asm("x" : :)` round-trips as non-volatile."""
+
     template: str
-    out_names: tuple                       # per-output (symbolic_name | None)
-    out_constraints: tuple                 # per-output constraint source spelling ("=r", "+r", …)
-    out_rids: tuple                        # per-output destination RID
-    in_names: tuple                        # per-input  (symbolic_name | None)
-    in_constraints: tuple                  # per-input  constraint source spelling ("r", "m", …)
-    in_rids: tuple                         # per-input  value RID
-    clobbers: tuple                        # clobber source spellings ("\"memory\"", "\"cc\"", …)
+    out_names: tuple  # per-output (symbolic_name | None)
+    out_constraints: tuple  # per-output constraint source spelling ("=r", "+r", …)
+    out_rids: tuple  # per-output destination RID
+    in_names: tuple  # per-input  (symbolic_name | None)
+    in_constraints: tuple  # per-input  constraint source spelling ("r", "m", …)
+    in_rids: tuple  # per-input  value RID
+    clobbers: tuple  # clobber source spellings ("\"memory\"", "\"cc\"", …)
     is_volatile: bool
-    is_basic: bool                         # the BASIC source form (no colon sections) -- gates the basic-form emit
+    is_basic: bool  # the BASIC source form (no colon sections) -- gates the basic-form emit
 
 
 @dataclass
 class SwitchNode:
-    disc: int                              # the discriminant rid (lowered once)
-    body: list                             # flat: CaseLabel | DefaultLabel | Claim | control nodes
+    disc: int  # the discriminant rid (lowered once)
+    body: list  # flat: CaseLabel | DefaultLabel | Claim | control nodes
 
 
 @dataclass
 class CaseLabel:
-    value: int                             # `case <value>:` -- a folded integer constant
+    value: int  # `case <value>:` -- a folded integer constant
 
 
 @dataclass
 class DefaultLabel:
-    pass                                   # `default:`
+    pass  # `default:`
 
 
 def _flatten_block(block: list) -> list:
@@ -494,7 +639,11 @@ def _flatten_block(block: list) -> list:
         if isinstance(node, IfNode):
             out += _flatten_block(node.then) + _flatten_block(node.els)
         elif isinstance(node, WhileNode):
-            out += _flatten_block(node.cond_block) + _flatten_block(node.body) + _flatten_block(node.step)
+            out += (
+                _flatten_block(node.cond_block)
+                + _flatten_block(node.body)
+                + _flatten_block(node.step)
+            )
         elif isinstance(node, SwitchNode):
             out += _flatten_block(node.body)
         elif isinstance(node, (Claim,)):
@@ -543,7 +692,7 @@ def own_footprint(lf, shared_min: int = 900000) -> tuple:
                 walk(n.body)
                 walk(n.step)
             elif isinstance(n, SwitchNode):
-                if n.disc >= shared_min:                    # the discriminant is a read
+                if n.disc >= shared_min:  # the discriminant is a read
                     reads.add(n.disc)
                 walk(n.body)
 
@@ -555,59 +704,68 @@ def own_footprint(lf, shared_min: int = 900000) -> tuple:
 class LoweredFunc:
     """One C function lowered: its claim-graph `Module`, the value/SSA bookkeeping the emitter needs,
     and the call sites (for the call graph / R18)."""
+
     name: str
     module: Module
     ret_type: CType
-    params: list                          # (name, rid, CType) in C order
+    params: list  # (name, rid, CType) in C order
     return_rid: int | None
-    claims: list                          # all claims, flat (== the single phase) for verify/plan
-    resources: dict                       # rid -> Resource
-    rid_types: dict = field(default_factory=dict)   # rid -> CType (for faithful C emission)
-    calls: list = field(default_factory=list)   # (callee, (actual_rids...))
-    region: object = None                 # compose.Region
-    body: list = field(default_factory=list)        # the structured body tree (for emission)
-    locals: list = field(default_factory=list)      # (rid, name, CType) mutable named locals
-    vla_locals: list = field(default_factory=list)  # (rid, name, CType) 1-D stack VLAs -- declared IN-BODY
-    statics: list = field(default_factory=list)     # (rid, name, CType, init) static-storage locals
-    globals_used: dict = field(default_factory=dict)   # rid -> name (file-scope globals referenced)
+    claims: list  # all claims, flat (== the single phase) for verify/plan
+    resources: dict  # rid -> Resource
+    rid_types: dict = field(default_factory=dict)  # rid -> CType (for faithful C emission)
+    calls: list = field(default_factory=list)  # (callee, (actual_rids...))
+    region: object = None  # compose.Region
+    body: list = field(default_factory=list)  # the structured body tree (for emission)
+    locals: list = field(default_factory=list)  # (rid, name, CType) mutable named locals
+    vla_locals: list = field(
+        default_factory=list
+    )  # (rid, name, CType) 1-D stack VLAs -- declared IN-BODY
+    statics: list = field(default_factory=list)  # (rid, name, CType, init) static-storage locals
+    globals_used: dict = field(default_factory=dict)  # rid -> name (file-scope globals referenced)
     zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {0}`
-    tu_protos: dict = field(default_factory=dict)   # cross-TU callee -> (ret CType, (param CType, ...))
-                                          #   -- prototyped, not defined here; the emit declares them
-    variadic: bool = False                # a trailing `...` after the named params (variadic function)
-    reproducible: bool = False            # a C23 `[[reproducible]]`/`[[unsequenced]]` hint is on the
-                                          #   definition -- a fusion-legality signal (the hint is value-
-                                          #   neutral, so the emit drops it). Default False == every
-                                          #   un-annotated function, undisturbed.
-    static_fn: bool = False               # source `static` on the definition -- the linkable emit keeps
-                                          #   the rendered definition `static` (internal linkage honored)
-    ptr_extent: dict = field(default_factory=dict)      # §5.12: pointer rid -> recovered extent (count) variable rid
-    asm_meta: dict = field(default_factory=dict)        # ASM1: claim id -> AsmInfo (the verbatim inline-asm payload
-                                                        #   the emitter reconstructs the `__asm__(...)` statement from)
-    target: str = HOST.name                             # ASM2: the target ABI short name the unit lays out for --
-                                                        #   threaded to the emit so the per-ISA port-I/O `in`/`out`
-                                                        #   realization keys off `--target` (x86 emits; non-x86 is
-                                                        #   an honest unsupported diagnostic -> LLVM fallback)
-    target_explicit: bool = False                       # ASM3: True iff the caller chose `--target` EXPLICITLY.
-                                                        #   The native per-ISA memory-fence asm (mfence / dmb ish /
-                                                        #   fence rw,rw) is emitted only then; an unspecified
-                                                        #   (host-default) target emits the PORTABLE
-                                                        #   __atomic_thread_fence, so the default emit compiles on
-                                                        #   ANY host (a cross-arch native compile never sees foreign
-                                                        #   asm). Port-I/O has no portable form, so it is unaffected.
+    tu_protos: dict = field(
+        default_factory=dict
+    )  # cross-TU callee -> (ret CType, (param CType, ...))
+    #   -- prototyped, not defined here; the emit declares them
+    variadic: bool = False  # a trailing `...` after the named params (variadic function)
+    reproducible: bool = False  # a C23 `[[reproducible]]`/`[[unsequenced]]` hint is on the
+    #   definition -- a fusion-legality signal (the hint is value-
+    #   neutral, so the emit drops it). Default False == every
+    #   un-annotated function, undisturbed.
+    static_fn: bool = False  # source `static` on the definition -- the linkable emit keeps
+    #   the rendered definition `static` (internal linkage honored)
+    ptr_extent: dict = field(
+        default_factory=dict
+    )  # §5.12: pointer rid -> recovered extent (count) variable rid
+    asm_meta: dict = field(
+        default_factory=dict
+    )  # ASM1: claim id -> AsmInfo (the verbatim inline-asm payload
+    #   the emitter reconstructs the `__asm__(...)` statement from)
+    target: str = HOST.name  # ASM2: the target ABI short name the unit lays out for --
+    #   threaded to the emit so the per-ISA port-I/O `in`/`out`
+    #   realization keys off `--target` (x86 emits; non-x86 is
+    #   an honest unsupported diagnostic -> LLVM fallback)
+    target_explicit: bool = False  # ASM3: True iff the caller chose `--target` EXPLICITLY.
+    #   The native per-ISA memory-fence asm (mfence / dmb ish /
+    #   fence rw,rw) is emitted only then; an unspecified
+    #   (host-default) target emits the PORTABLE
+    #   __atomic_thread_fence, so the default emit compiles on
+    #   ANY host (a cross-arch native compile never sees foreign
+    #   asm). Port-I/O has no portable form, so it is unaffected.
 
 
 @dataclass
 class LoweredUnit:
-    functions: dict                       # name -> LoweredFunc
+    functions: dict  # name -> LoweredFunc
     entry: str
-    aggregates: dict                      # tag -> CType
-    compose_functions: dict               # name -> compose.Function
-    resources: dict                       # rid -> Resource (whole unit)
-    globals_decl: tuple = ()              # (name, CType, rendered-init str tuple | None, extern,
-                                          #   static) -- what the LINKABLE emit renders (definitions
-                                          #   with constant inits: ints, signed ints, float/string
-                                          #   spellings; extern -> a declaration; static -> kept
-                                          #   file-local). None == not renderable in this slice.
+    aggregates: dict  # tag -> CType
+    compose_functions: dict  # name -> compose.Function
+    resources: dict  # rid -> Resource (whole unit)
+    globals_decl: tuple = ()  # (name, CType, rendered-init str tuple | None, extern,
+    #   static) -- what the LINKABLE emit renders (definitions
+    #   with constant inits: ints, signed ints, float/string
+    #   spellings; extern -> a declaration; static -> kept
+    #   file-local). None == not renderable in this slice.
 
 
 # the rid `_call` returns for a void callee -- never read as a value (a void call is a statement); the
@@ -637,54 +795,79 @@ def _check_band_rid(rid: int) -> int:
     if rid == _IO_PORT_RID:
         raise CLowerError(
             "translation unit exhausted the rid band: reached the reserved I/O-port rid -- too many "
-            "globals / string literals in one unit")
+            "globals / string literals in one unit"
+        )
     return rid
 
 
 class _FuncLowerer:
-    def __init__(self, func: cast.Func, aggregates: dict, base_rid: int, cid: list,
-                 genv: dict | None = None, gres: dict | None = None, strctr: list | None = None,
-                 func_rets: dict | None = None, abi=None, protos: dict | None = None):
+    def __init__(
+        self,
+        func: cast.Func,
+        aggregates: dict,
+        base_rid: int,
+        cid: list,
+        genv: dict | None = None,
+        gres: dict | None = None,
+        strctr: list | None = None,
+        func_rets: dict | None = None,
+        abi=None,
+        protos: dict | None = None,
+    ):
         self.func = func
-        self.abi = abi or HOST            # the target data model for laying out user types (long/ptr)
-        self.func_rets = func_rets or {}  # callee name -> return CType (for void / wide / float returns)
-        self.protos = protos or {}        # PROTOTYPED cross-TU callee -> (ret CType, (param CType, ...))
-        self.tu_used: dict = {}           # the tu callees THIS function actually calls (for the emit decl)
+        self.abi = abi or HOST  # the target data model for laying out user types (long/ptr)
+        self.func_rets = (
+            func_rets or {}
+        )  # callee name -> return CType (for void / wide / float returns)
+        self.protos = protos or {}  # PROTOTYPED cross-TU callee -> (ret CType, (param CType, ...))
+        self.tu_used: dict = {}  # the tu callees THIS function actually calls (for the emit decl)
         self.aggregates = aggregates
         self.rid = base_rid
-        self.cid = cid                    # shared mutable [next_claim_id]
-        self.genv = genv or {}            # file-scope globals: name -> (rid, CType)
-        self.gres = gres or {}            # global rid -> Resource
-        self.strctr = strctr if strctr is not None else [0]   # shared string-literal counter (unique rids)
-        self.str_globals: dict[int, str] = {}          # string-literal global rid -> the source spelling
-        self.str_pool: dict[str, int] = {}             # spelling -> rid (dedup identical literals)
-        self.func_globals: dict[int, str] = {}         # function-as-value rid -> the function name (emit verbatim)
-        self.func_pool: dict[str, int] = {}            # function name -> rid (dedup)
-        self.env: dict[str, tuple[int, CType]] = {}    # name -> (storage rid, type)
+        self.cid = cid  # shared mutable [next_claim_id]
+        self.genv = genv or {}  # file-scope globals: name -> (rid, CType)
+        self.gres = gres or {}  # global rid -> Resource
+        self.strctr = (
+            strctr if strctr is not None else [0]
+        )  # shared string-literal counter (unique rids)
+        self.str_globals: dict[int, str] = {}  # string-literal global rid -> the source spelling
+        self.str_pool: dict[str, int] = {}  # spelling -> rid (dedup identical literals)
+        self.func_globals: dict[
+            int, str
+        ] = {}  # function-as-value rid -> the function name (emit verbatim)
+        self.func_pool: dict[str, int] = {}  # function name -> rid (dedup)
+        self.env: dict[str, tuple[int, CType]] = {}  # name -> (storage rid, type)
         self.resources: dict[int, Resource] = {}
-        self.rtypes: dict[int, CType] = {}             # rid -> CType (for emission)
+        self.rtypes: dict[int, CType] = {}  # rid -> CType (for emission)
         self.params: list = []
-        self.locals: list = []                         # (rid, name, CType) mutable named locals
-        self.vla_locals: list = []                     # (rid, name, CType) 1-D stack VLAs -- declared IN-BODY
-                                                       #   (`T a[__ext];`) at the source decl, NOT up front
-        self.vla_strides: dict = {}                    # multi-dim VLA array rid -> per-dim snapshot rids (the
-                                                       #   runtime Horner multipliers: m[i][j] -> i*dim1 + j)
-        self.zero_init: set = set()                    # aggregate-local rids that emit a `= {0}` baseline
-        self.statics: list = []                        # (rid, name, CType, init) static-storage locals
+        self.locals: list = []  # (rid, name, CType) mutable named locals
+        self.vla_locals: list = []  # (rid, name, CType) 1-D stack VLAs -- declared IN-BODY
+        #   (`T a[__ext];`) at the source decl, NOT up front
+        self.vla_strides: dict = {}  # multi-dim VLA array rid -> per-dim snapshot rids (the
+        #   runtime Horner multipliers: m[i][j] -> i*dim1 + j)
+        self.zero_init: set = set()  # aggregate-local rids that emit a `= {0}` baseline
+        self.statics: list = []  # (rid, name, CType, init) static-storage locals
         self.calls: list = []
-        self.block_stack: list = [[]]                  # claims/control nodes append to the top block
-        self.loop_ctr = 0                              # unique loop ids (the `continue` label numbering)
-        self.cl_ctr = 0                                # unique compound-literal ids (anonymous `_cl<N>` locals)
+        self.block_stack: list = [[]]  # claims/control nodes append to the top block
+        self.loop_ctr = 0  # unique loop ids (the `continue` label numbering)
+        self.cl_ctr = 0  # unique compound-literal ids (anonymous `_cl<N>` locals)
         # §5.12 recoverable extents: a pointer local bound to malloc(N*sizeof(T)) / calloc(N, sizeof(T)) carries
         # a RECOVERED element-count -> its `p[i]` accesses promote to `masked` (runtime-bounds-checked against N).
-        self.ptr_extent: dict[int, int] = {}           # pointer rid -> the count VARIABLE's rid (re-emitted by name)
-        self.ptr_extent_kind: dict[int, str] = {}      # pointer rid -> extent-provenance kind (§5.14 Phase 2:
-                                                       #   "recovered_count" stable-Name | "snapshot_extent")
-        self._mut_assigned: dict[str, int] = {}        # name -> TOTAL assignments incl. decl-init (pointer gate)
-        self._mut_body: dict[str, int] = {}            # name -> NON-decl-init assignments only (count gate)
-        self._mut_addr: set[str] = set()               # names whose address is taken anywhere (`&x`)
-        self._ext_ctr = 0                              # unique hidden extent-snapshot locals (`__bcir_extK`)
-        self.asm_meta: dict[int, AsmInfo] = {}         # ASM1: claim id -> AsmInfo (verbatim inline-asm payload)
+        self.ptr_extent: dict[
+            int, int
+        ] = {}  # pointer rid -> the count VARIABLE's rid (re-emitted by name)
+        self.ptr_extent_kind: dict[
+            int, str
+        ] = {}  # pointer rid -> extent-provenance kind (§5.14 Phase 2:
+        #   "recovered_count" stable-Name | "snapshot_extent")
+        self._mut_assigned: dict[
+            str, int
+        ] = {}  # name -> TOTAL assignments incl. decl-init (pointer gate)
+        self._mut_body: dict[str, int] = {}  # name -> NON-decl-init assignments only (count gate)
+        self._mut_addr: set[str] = set()  # names whose address is taken anywhere (`&x`)
+        self._ext_ctr = 0  # unique hidden extent-snapshot locals (`__bcir_extK`)
+        self.asm_meta: dict[
+            int, AsmInfo
+        ] = {}  # ASM1: claim id -> AsmInfo (verbatim inline-asm payload)
 
     def _next_loop_id(self) -> int:
         self.loop_ctr += 1
@@ -696,32 +879,33 @@ class _FuncLowerer:
         return self.rid
 
     def _resolve_type(self, tref: cast.TypeRef) -> CType:
-        if tref.vla is not None:                           # `T a[n]` (runtime size): native lowering is a
-            raise CLowerError(                             # follow-on (the emitter's up-front local declaration
-                "variable-length array native lowering is a follow-on")   # can't size it) -- route to fallback
-        if tref.funcptr:                                   # a function-pointer alias (HAL dispatch)
+        if tref.vla is not None:  # `T a[n]` (runtime size): native lowering is a
+            raise CLowerError(  # follow-on (the emitter's up-front local declaration
+                "variable-length array native lowering is a follow-on"
+            )  # can't size it) -- route to fallback
+        if tref.funcptr:  # a function-pointer alias (HAL dispatch)
             ret = self._resolve_type(tref.func_ret)
             params = tuple(self._resolve_type(p) for p in tref.func_params)
             return funcptr(tref.base, ret, params, self.abi)
-        if tref.typeof_var:                                # `typeof(var)` -> the in-scope variable's type
+        if tref.typeof_var:  # `typeof(var)` -> the in-scope variable's type
             if tref.typeof_var not in self.env:
                 raise CLowerError(f"typeof of unknown variable {tref.typeof_var!r}")
             base = self.env[tref.typeof_var][1]
-        elif tref.typeof_expr is not None:                 # `typeof(expr)` -> the operand's static type
+        elif tref.typeof_expr is not None:  # `typeof(expr)` -> the operand's static type
             base = self._type_of(tref.typeof_expr)
         elif tref.aggregate:
             base = self.aggregates[tref.base]
-        elif tref.base == "va_list":                       # the <stdarg.h> variadic cursor (opaque)
+        elif tref.base == "va_list":  # the <stdarg.h> variadic cursor (opaque)
             base = valist(self.abi)
-        elif tref.bit_width:                               # C23 `_BitInt(N)`: an exact-width, non-promoting int
+        elif tref.bit_width:  # C23 `_BitInt(N)`: an exact-width, non-promoting int
             base = bitint(tref.bit_width, signed="unsigned" not in tref.base)
         elif is_scalar_name(tref.base):
             base = scalar(tref.base, self.abi)
         else:
             raise CLowerError(f"unknown type {tref.base!r}")
-        if "volatile" in tref.quals:                       # volatile pointee/object -> MMIO region
+        if "volatile" in tref.quals:  # volatile pointee/object -> MMIO region
             base = with_volatile(base)
-        if "_Atomic" in tref.quals:                        # _Atomic-qualified object (C11/C23)
+        if "_Atomic" in tref.quals:  # _Atomic-qualified object (C11/C23)
             base = with_atomic(base)
         t = base
         for _ in range(tref.ptr):
@@ -731,31 +915,65 @@ class _FuncLowerer:
         return t
 
     def _resource(self, rid: int, ct: CType, name: str) -> None:
-        mmio = ct.touches_mmio                              # a volatile object / pointer-to-volatile
+        mmio = ct.touches_mmio  # a volatile object / pointer-to-volatile
         if ct.kind == "array":
             shape, elem = (ct.count or 1,), ct.of.size
         elif ct.kind == "pointer":
-            shape, elem = (1 << 16,), ct.of.size if ct.of else 1     # symbolic pointee extent
+            shape, elem = (1 << 16,), ct.of.size if ct.of else 1  # symbolic pointee extent
         elif ct.is_aggregate:
             shape, elem = (1,), max(1, ct.size)
         else:
             shape, elem = (1,), max(1, ct.size)
         self.resources[rid] = Resource(
-            rid=rid, domain=Domain.MMIO if mmio else Domain.RAM, elem_bytes=elem, shape=shape,
-            access="volatile" if mmio else "rw", name=name)
+            rid=rid,
+            domain=Domain.MMIO if mmio else Domain.RAM,
+            elem_bytes=elem,
+            shape=shape,
+            access="volatile" if mmio else "rw",
+            name=name,
+        )
         self.rtypes[rid] = ct
 
-    def _emit(self, op: str, opcode: Opcode, rd: tuple, wr: tuple, *, imm: tuple = (),
-              lane=Lane.U, stride=StrideClass.SCALAR, count: int = 1, domain=Domain.RAM,
-              bounds: str = "strict", hazard: str = "unique", lifetime=None,
-              volatile: bool = False, bounds_provenance: str = "",
-              callee_sig: str = "") -> int:
+    def _emit(
+        self,
+        op: str,
+        opcode: Opcode,
+        rd: tuple,
+        wr: tuple,
+        *,
+        imm: tuple = (),
+        lane=Lane.U,
+        stride=StrideClass.SCALAR,
+        count: int = 1,
+        domain=Domain.RAM,
+        bounds: str = "strict",
+        hazard: str = "unique",
+        lifetime=None,
+        volatile: bool = False,
+        bounds_provenance: str = "",
+        callee_sig: str = "",
+    ) -> int:
         self.cid[0] += 1
-        self.block_stack[-1].append(Claim(
-            id=self.cid[0], opcode=opcode, lane=lane, stride_class=stride, count=count,
-            rd=tuple(rd), wr=tuple(wr), imm=tuple(imm), domain=domain, op=op, bounds=bounds,
-            hazard=hazard, lifetime=lifetime, volatile=volatile,
-            bounds_provenance=bounds_provenance, callee_sig=callee_sig))
+        self.block_stack[-1].append(
+            Claim(
+                id=self.cid[0],
+                opcode=opcode,
+                lane=lane,
+                stride_class=stride,
+                count=count,
+                rd=tuple(rd),
+                wr=tuple(wr),
+                imm=tuple(imm),
+                domain=domain,
+                op=op,
+                bounds=bounds,
+                hazard=hazard,
+                lifetime=lifetime,
+                volatile=volatile,
+                bounds_provenance=bounds_provenance,
+                callee_sig=callee_sig,
+            )
+        )
         return wr[0] if wr else -1
 
     def _storage(self, ct: CType, name: str) -> int:
@@ -803,7 +1021,9 @@ class _FuncLowerer:
         if isinstance(node, cast.Name):
             rid, ct = self._lookup(node.ident, node.pos)
             return _LV("var", rid, ct)
-        if isinstance(node, cast.CompoundLiteral):        # `&(int){v}`, `(struct P){...}.field` -- an lvalue
+        if isinstance(
+            node, cast.CompoundLiteral
+        ):  # `&(int){v}`, `(struct P){...}.field` -- an lvalue
             rid, ct = self._compound_literal(node)
             return _LV("var", rid, ct)
         if isinstance(node, cast.Index):
@@ -825,7 +1045,9 @@ class _FuncLowerer:
                 base_rid, struct_ct, base_off = self._addr(n.base)
                 agg = struct_ct.of if n.arrow else struct_ct
                 ftype, byte_off, _bo, _bw = agg.field(n.field)
-                byte_off += 0 if n.arrow else base_off    # ride the enclosing offset (a non-first member array)
+                byte_off += (
+                    0 if n.arrow else base_off
+                )  # ride the enclosing offset (a non-first member array)
                 if ftype.kind == "pointer":
                     # a *pointer* member subscripted (`s->p[i]` == `*(s->p + i)`): load the full pointer
                     # field, then index the loaded pointer like a plain `base[idx]` (no member offset).
@@ -833,31 +1055,36 @@ class _FuncLowerer:
                     base_rid = self._read(_LV("mem", base_rid, ftype, byte_off=byte_off))
                     base_ct, byte_off, ptr_member = ftype, 0, True
                 elif ftype.kind == "array":
-                    dims, t = [], ftype                       # descend the (nested) member array:
-                    while t.kind == "array":                  # per-dim sizes + the ultimate scalar element
+                    dims, t = [], ftype  # descend the (nested) member array:
+                    while t.kind == "array":  # per-dim sizes + the ultimate scalar element
                         dims.append(t.count)
                         t = t.of if t.of is not None else scalar("uint32_t")
                     if len(dims) > 3:
                         # the dim table (oracle shape / twin field.adims) holds at most 3 dims; defer deeper.
                         raise CLowerError(
-                            f"indexing a >3-dimensional struct member array ('{n.field}') is not yet supported")
+                            f"indexing a >3-dimensional struct member array ('{n.field}') is not yet supported"
+                        )
                     if len(idx_nodes) != len(dims):
                         # partial indexing of a member array (a row pointer `s.m[i]`): defer to fallback.
                         raise CLowerError(
-                            f"partial indexing of a struct member array ('{n.field}') is not yet supported")
+                            f"partial indexing of a struct member array ('{n.field}') is not yet supported"
+                        )
                     base_ct, mem_shape, mem_elem = ftype, tuple(dims), t
                 else:
                     raise CLowerError(
-                        f"indexing a non-array struct member ('{n.field}[...]') is not yet supported")
+                        f"indexing a non-array struct member ('{n.field}[...]') is not yet supported"
+                    )
             else:
-                base_rid, base_ct, byte_off = self._addr(n)   # a non-Member base: its accumulated offset
+                base_rid, base_ct, byte_off = self._addr(
+                    n
+                )  # a non-Member base: its accumulated offset
             idx_rids = [self._rvalue(ix) for ix in idx_nodes]
             shape = mem_shape if mem_shape is not None else base_ct.shape
             lin = idx_rids[0]
-            vla_str = self.vla_strides.get(base_rid)          # a multi-dim VLA -> runtime dim multipliers
+            vla_str = self.vla_strides.get(base_rid)  # a multi-dim VLA -> runtime dim multipliers
             for d in range(1, len(idx_rids)):
-                if vla_str is not None:                       # dim d's snapshot rid (NO c.const -- the runtime
-                    k = vla_str[d]                            # extent), so `m[i][j]` -> i*dim1 + j masks the total
+                if vla_str is not None:  # dim d's snapshot rid (NO c.const -- the runtime
+                    k = vla_str[d]  # extent), so `m[i][j]` -> i*dim1 + j masks the total
                 else:
                     dim = shape[d] if d < len(shape) else 1
                     k = self._temp(scalar("uint32_t"), f"k{dim}")
@@ -867,28 +1094,65 @@ class _FuncLowerer:
                 a1 = self._temp(scalar("uint32_t"), "b_add")
                 self._emit("c.bin.add", Opcode.ADD, (m1, idx_rids[d]), (a1,))
                 lin = a1
-            elem = mem_elem if mem_elem is not None else (base_ct.of if base_ct.of else scalar("uint32_t"))
-            return _LV("mem", base_rid, elem, idx=lin, byte_off=byte_off,
-                       member=isinstance(n, cast.Member) and not ptr_member)
+            elem = (
+                mem_elem
+                if mem_elem is not None
+                else (base_ct.of if base_ct.of else scalar("uint32_t"))
+            )
+            return _LV(
+                "mem",
+                base_rid,
+                elem,
+                idx=lin,
+                byte_off=byte_off,
+                member=isinstance(n, cast.Member) and not ptr_member,
+            )
         if isinstance(node, cast.Member):
-            if isinstance(node.base, cast.Index):                 # `arr[i].field` -- index into an ARRAY-OF-STRUCTS
-                el = self._lvalue(node.base)                      # member, then descend into the struct element.
+            if isinstance(
+                node.base, cast.Index
+            ):  # `arr[i].field` -- index into an ARRAY-OF-STRUCTS
+                el = self._lvalue(node.base)  # member, then descend into the struct element.
                 if el.kind == "mem" and el.idx is not None and el.ct.kind in ("struct", "union"):
-                    agg = el.ct                                   # the element struct: add the field offset, keep
-                    ftype, foff, fbo, fbw = agg.field(node.field) # the runtime index, and stride by the element size
-                    if fbw or ftype.kind != "scalar":             # a bitfield / nested / array / pointer element
-                        raise CLowerError(                        # field is a follow-on -- both rails fall back
-                            f"array-of-structs non-scalar element field ('.{node.field}') is not yet supported")
-                    return _LV("mem", el.rid, ftype, idx=el.idx, byte_off=el.byte_off + foff,
-                               bit_off=fbo, bit_width=fbw, member=True, stride=agg.size, packed=agg.packed)
+                    agg = el.ct  # the element struct: add the field offset, keep
+                    ftype, foff, fbo, fbw = agg.field(
+                        node.field
+                    )  # the runtime index, and stride by the element size
+                    if (
+                        fbw or ftype.kind != "scalar"
+                    ):  # a bitfield / nested / array / pointer element
+                        raise CLowerError(  # field is a follow-on -- both rails fall back
+                            f"array-of-structs non-scalar element field ('.{node.field}') is not yet supported"
+                        )
+                    return _LV(
+                        "mem",
+                        el.rid,
+                        ftype,
+                        idx=el.idx,
+                        byte_off=el.byte_off + foff,
+                        bit_off=fbo,
+                        bit_width=fbw,
+                        member=True,
+                        stride=agg.size,
+                        packed=agg.packed,
+                    )
             base_rid, base_ct, base_off = self._addr(node.base)
             agg = base_ct.of if node.arrow else base_ct
             ftype, byte_off, bit_off, bit_w = agg.field(node.field)
-            off = byte_off if node.arrow else base_off + byte_off   # `->` resets to *base; `.` accumulates
-            return _LV("mem", base_rid, ftype, byte_off=off, bit_off=bit_off, bit_width=bit_w, packed=agg.packed)
+            off = (
+                byte_off if node.arrow else base_off + byte_off
+            )  # `->` resets to *base; `.` accumulates
+            return _LV(
+                "mem",
+                base_rid,
+                ftype,
+                byte_off=off,
+                bit_off=bit_off,
+                bit_width=bit_w,
+                packed=agg.packed,
+            )
         if isinstance(node, cast.Unary) and node.op == "*":
             operand = node.operand
-            if isinstance(operand, cast.Binary) and operand.op == "+":   # *(p + i) == p[i]
+            if isinstance(operand, cast.Binary) and operand.op == "+":  # *(p + i) == p[i]
                 return self._lvalue(cast.Index(operand.lhs, operand.rhs))
             base_rid, base_ct, base_off = self._addr(operand)
             return _LV("mem", base_rid, base_ct.of or scalar("uint32_t"), byte_off=base_off)
@@ -899,19 +1163,26 @@ class _FuncLowerer:
         pointer to it (decay). The emitter renders references to it as the inline literal, which is
         Clang-equivalent, so no synthesized global declaration is needed. A wide/UTF prefix
         (`L`/`u`/`U`/`u8`) sets the element width (`wchar_t`/`char16_t`/`char32_t`/`char`)."""
-        existing = self.str_pool.get(spelling)                # dedup: identical literals share a global
+        existing = self.str_pool.get(spelling)  # dedup: identical literals share a global
         if existing is not None:
             return existing
         prefix, _ = split_lit_prefix(spelling)
-        elem = str_elem_size(prefix)                          # 1 (char/u8) / 2 (u) / 4 (L/U)
-        nunits = _str_bytes(spelling) + 1                     # the decoded code units + the NUL
+        elem = str_elem_size(prefix)  # 1 (char/u8) / 2 (u) / 4 (L/U)
+        nunits = _str_bytes(spelling) + 1  # the decoded code units + the NUL
         idx = self.strctr[0]
         self.strctr[0] += 1
-        rid = _check_band_rid(970000 + idx)               # guard the reserved I/O-port rid (belt + suspenders)
-        self.gres[rid] = Resource(rid=rid, domain=Domain.RAM, elem_bytes=elem, shape=(nunits,),
-                                  access="ro", data_gen=1, name=f"__str{idx}")
+        rid = _check_band_rid(970000 + idx)  # guard the reserved I/O-port rid (belt + suspenders)
+        self.gres[rid] = Resource(
+            rid=rid,
+            domain=Domain.RAM,
+            elem_bytes=elem,
+            shape=(nunits,),
+            access="ro",
+            data_gen=1,
+            name=f"__str{idx}",
+        )
         self.rtypes[rid] = array(scalar("char" if elem == 1 else f"uint{elem * 8}_t"), nunits)
-        self.str_globals[rid] = spelling                      # rid -> the literal spelling (for emit)
+        self.str_globals[rid] = spelling  # rid -> the literal spelling (for emit)
         self.str_pool[spelling] = rid
         return rid
 
@@ -923,13 +1194,20 @@ class _FuncLowerer:
         existing = self.func_pool.get(name)
         if existing is not None:
             return existing
-        idx = self.strctr[0]                              # share the literal-global rid space (unique rids)
+        idx = self.strctr[0]  # share the literal-global rid space (unique rids)
         self.strctr[0] += 1
-        rid = _check_band_rid(970000 + idx)               # guard the reserved I/O-port rid (belt + suspenders)
-        self.gres[rid] = Resource(rid=rid, domain=Domain.RAM, elem_bytes=self.abi.pointer_size, shape=(1,),
-                                  access="ro", data_gen=1, name=name)
+        rid = _check_band_rid(970000 + idx)  # guard the reserved I/O-port rid (belt + suspenders)
+        self.gres[rid] = Resource(
+            rid=rid,
+            domain=Domain.RAM,
+            elem_bytes=self.abi.pointer_size,
+            shape=(1,),
+            access="ro",
+            data_gen=1,
+            name=name,
+        )
         self.rtypes[rid] = funcptr(name, self.func_rets[name], (), self.abi)
-        self.func_globals[rid] = name                     # rid -> the function name (rendered verbatim by emit)
+        self.func_globals[rid] = name  # rid -> the function name (rendered verbatim by emit)
         self.func_pool[name] = rid
         return rid
 
@@ -942,29 +1220,41 @@ class _FuncLowerer:
         if isinstance(node, cast.Name):
             rid, ct = self._lookup(node.ident, node.pos)
             return rid, ct, 0
-        if isinstance(node, cast.CompoundLiteral):        # `(struct P){...}.field` / indexing the literal
+        if isinstance(node, cast.CompoundLiteral):  # `(struct P){...}.field` / indexing the literal
             rid, ct = self._compound_literal(node)
             return rid, ct, 0
-        if isinstance(node, cast.StringLit):                  # "abc"[i] -> index the anonymous global
+        if isinstance(node, cast.StringLit):  # "abc"[i] -> index the anonymous global
             rid = self._string_ptr(node.value)
             return rid, self.rtypes[rid], 0
         if isinstance(node, cast.Member):
             base_rid, base_ct, base_off = self._addr(node.base)
             agg = base_ct.of if node.arrow else base_ct
             ftype, byte_off, bit_off, bit_w = agg.field(node.field)
-            off = byte_off if node.arrow else base_off + byte_off   # `->` resets to *base; `.` accumulates
-            if ftype.kind == "pointer":                       # a pointer-valued field used as a *base*
+            off = (
+                byte_off if node.arrow else base_off + byte_off
+            )  # `->` resets to *base; `.` accumulates
+            if ftype.kind == "pointer":  # a pointer-valued field used as a *base*
                 # (`*(s->p)`, `s->t->a`): load the full pointer (at its field offset) and use the loaded
                 # pointer as the new base -- the same move as `*q` below. Returning (struct_rid, T*) would
                 # instead deref the struct's own address as if it held the pointee. (Pointer-value 2b.)
-                lv = _LV("mem", base_rid, ftype, byte_off=off, bit_off=bit_off, bit_width=bit_w, packed=agg.packed)
+                lv = _LV(
+                    "mem",
+                    base_rid,
+                    ftype,
+                    byte_off=off,
+                    bit_off=bit_off,
+                    bit_width=bit_w,
+                    packed=agg.packed,
+                )
                 return self._read(lv), ftype, 0
             return base_rid, ftype, off
-        if isinstance(node, cast.Unary) and node.op == "*":   # `*q` as a base (`**pp`): load the pointer it
-            rid = self._read(self._lvalue(node))              # holds, and use that loaded pointer as the base
+        if (
+            isinstance(node, cast.Unary) and node.op == "*"
+        ):  # `*q` as a base (`**pp`): load the pointer it
+            rid = self._read(self._lvalue(node))  # holds, and use that loaded pointer as the base
             return rid, self.rtypes.get(rid, pointer(scalar("uint32_t"))), 0
-        if isinstance(node, cast.CallExpr):                   # `mk(x).field` -- a struct-returning call's result is
-            rid = self._call(node)                            # a by-value struct temp; address it for member access
+        if isinstance(node, cast.CallExpr):  # `mk(x).field` -- a struct-returning call's result is
+            rid = self._call(node)  # a by-value struct temp; address it for member access
             return rid, self.rtypes.get(rid, scalar("uint32_t")), 0
         raise CLowerError(f"unsupported base expression {type(node).__name__}")
 
@@ -1008,12 +1298,14 @@ class _FuncLowerer:
         C23 result is a STANDARD integer type (the bit-precise operand does NOT win the rank -- equal or
         lesser width). Those collapse long/long-long in the value model, so they stay fallback (correctness
         over coverage). `a`/`b` (the rids) are unused now that the constant flows through the real model."""
-        del a, b                                              # the constant case uses ta/tb's real literal type
+        del a, b  # the constant case uses ta/tb's real literal type
         ba = ta is not None and ta.is_bitint
-        if op in ("<<", ">>"):                                # shift: the (non-promoting) `_BitInt` left operand;
-            if ba:                                            # the right operand may be any integer (it is not
-                return ta                                     # part of the result type)
-            raise CLowerError("a `_BitInt` shift count without a `_BitInt` left operand is not supported")
+        if op in ("<<", ">>"):  # shift: the (non-promoting) `_BitInt` left operand;
+            if ba:  # the right operand may be any integer (it is not
+                return ta  # part of the result type)
+            raise CLowerError(
+                "a `_BitInt` shift count without a `_BitInt` left operand is not supported"
+            )
         # Apply the C23 6.3.1.8 model to the operands' REAL types, keeping ONLY the cases whose result is a
         # `_BitInt(N)`. A bare integer constant carries its true literal type (`int`/`long`/...), so the
         # rank comparison matches Clang exactly (`bi64 + 5` -> `_BitInt(64)`, `bi8 + 5` -> fallback).
@@ -1021,7 +1313,7 @@ class _FuncLowerer:
             r = usual_arith_int(ta, tb, self.abi)
         except BitIntMix as e:
             raise CLowerError(str(e)) from e
-        if not r.is_bitint:                                   # defensive: the subset must yield a `_BitInt`
+        if not r.is_bitint:  # defensive: the subset must yield a `_BitInt`
             raise CLowerError("`_BitInt` arithmetic whose C23 result is a standard integer type")
         return r
 
@@ -1040,16 +1332,20 @@ class _FuncLowerer:
                     er = max(_FLOAT_RANK.get(_elem_float_name(t), 1) for t in floats)
                     return scalar(f"{_RANK_FLOAT[er]} _Complex")
                 return scalar(max(floats, key=lambda t: _FLOAT_RANK.get(t.name, 1)).name)
-        if op in ("+", "-"):                                  # pointer arithmetic: p + i / i + p / p - i ->
-            pa = ta if (ta is not None and ta.kind == "pointer") else None   # a pointer carrying the pointee.
-            pb = tb if (tb is not None and tb.kind == "pointer") else None   # (p - q, both pointers, is a
-            if (pa is None) != (pb is None):                                 # ptrdiff and stays integer below.)
+        if op in ("+", "-"):  # pointer arithmetic: p + i / i + p / p - i ->
+            pa = (
+                ta if (ta is not None and ta.kind == "pointer") else None
+            )  # a pointer carrying the pointee.
+            pb = (
+                tb if (tb is not None and tb.kind == "pointer") else None
+            )  # (p - q, both pointers, is a
+            if (pa is None) != (pb is None):  # ptrdiff and stays integer below.)
                 return pa or pb
         if op in ("<", ">", "<=", ">=", "==", "!=", "&&", "||"):
-            return scalar("int", self.abi)                    # a relational / logical result is int
+            return scalar("int", self.abi)  # a relational / logical result is int
         ia = ta if (ta is not None and ta.is_integer) else scalar("int", self.abi)
         if op in ("<<", ">>"):
-            return promote_int(ia, self.abi)                  # the shift result carries the promoted LHS type
+            return promote_int(ia, self.abi)  # the shift result carries the promoted LHS type
         ib = tb if (tb is not None and tb.is_integer) else scalar("int", self.abi)
         # `_BitInt(N)` does not canonicalize: a same-type pair stays itself; any other mix raises BitIntMix,
         # which is an unsupported form here (the rid-aware `_bin_result_type` already handled the legal
@@ -1066,53 +1362,65 @@ class _FuncLowerer:
         whose type both rails infer identically (the twin reads it off a speculatively-lowered value);
         calls / address-of / ternary are a deferred follow-on (raised here rather than silently mistyped)."""
         if isinstance(node, cast.IntLit):
-            return scalar(node.ctype, self.abi) if is_scalar_name(node.ctype) else scalar("int", self.abi)
+            return (
+                scalar(node.ctype, self.abi)
+                if is_scalar_name(node.ctype)
+                else scalar("int", self.abi)
+            )
         if isinstance(node, cast.FloatLit):
             return _float_lit_type(node.value)
         if isinstance(node, cast.Name):
             return self._lookup(node.ident, node.pos)[1]
-        if isinstance(node, cast.StringLit):                  # a string literal has type `char[N]` (not char*)
+        if isinstance(node, cast.StringLit):  # a string literal has type `char[N]` (not char*)
             prefix, _ = split_lit_prefix(node.value)
             elem = str_elem_size(prefix)
-            n = _str_bytes(node.value) + 1                    # decoded code units + the NUL
+            n = _str_bytes(node.value) + 1  # decoded code units + the NUL
             return array(scalar("char" if elem == 1 else f"uint{elem * 8}_t"), n)
         if isinstance(node, cast.Binary):
-            return self._bin_result_type_ct(node.op, self._type_of(node.lhs), self._type_of(node.rhs))
+            return self._bin_result_type_ct(
+                node.op, self._type_of(node.lhs), self._type_of(node.rhs)
+            )
         if isinstance(node, cast.Unary):
-            if node.op == "*":                                # deref -> the pointee / element type
+            if node.op == "*":  # deref -> the pointee / element type
                 t = self._type_of(node.operand)
                 return t.of if t.of is not None else scalar("uint32_t")
-            if node.op == "!":                                # logical not -> int (0/1)
+            if node.op == "!":  # logical not -> int (0/1)
                 return scalar("int", self.abi)
-            t = self._type_of(node.operand)                   # `-` / `~`: the integer-promoted operand
-            if t.is_float:                                    # (a float stays float -- floats don't promote)
+            t = self._type_of(node.operand)  # `-` / `~`: the integer-promoted operand
+            if t.is_float:  # (a float stays float -- floats don't promote)
                 return t
             if t.is_integer:
                 return promote_int(t, self.abi)
             return scalar("uint32_t")
         if isinstance(node, (cast.Cast, cast.CompoundLiteral)):
             return self._resolve_type(node.type)
-        if isinstance(node, cast.Member):                     # `s.f` / `p->f` -> the field's type
+        if isinstance(node, cast.Member):  # `s.f` / `p->f` -> the field's type
             base_t = self._type_of(node.base)
             agg = base_t.of if node.arrow else base_t
             return agg.field(node.field)[0]
-        if isinstance(node, cast.Index):                      # `a[i]` -> the element (pointee) type
+        if isinstance(node, cast.Index):  # `a[i]` -> the element (pointee) type
             base_t = self._type_of(node.base)
             return base_t.of if base_t.of is not None else scalar("uint32_t")
-        if isinstance(node, cast.Generic):                    # _Generic -> the selected association's type
+        if isinstance(node, cast.Generic):  # _Generic -> the selected association's type
             return self._type_of(self._generic_select(node))
-        if isinstance(node, cast.StmtExpr):                   # `({ ...; e; })` -> the type of the last expr
+        if isinstance(node, cast.StmtExpr):  # `({ ...; e; })` -> the type of the last expr
             if node.stmts and isinstance(node.stmts[-1], cast.ExprStmt):
                 return self._type_of(node.stmts[-1].expr)
             return scalar("void")
-        raise CLowerError(f"typeof of this expression form ({type(node).__name__}) is not yet supported")
+        raise CLowerError(
+            f"typeof of this expression form ({type(node).__name__}) is not yet supported"
+        )
 
     def _type_key(self, t: CType):
         """A canonical, comparable identity for a type used by `_Generic` matching (C11 §6.5.1.1, after
         lvalue/array decay; qualifiers do not affect the key). int / int32_t collapse (same width + sign);
         plain `char` stays distinct from signed/unsigned char; floats key on width; aggregates on tag."""
         if t.kind == "array":
-            t = pointer(t.of, self.abi) if t.of is not None else pointer(scalar("uint32_t"), self.abi)
+            t = (
+                pointer(t.of, self.abi)
+                if t.of is not None
+                else pointer(scalar("uint32_t"), self.abi)
+            )
         if t.kind in ("struct", "union"):
             return (t.kind, t.name)
         if t.kind == "pointer":
@@ -1123,7 +1431,7 @@ class _FuncLowerer:
             return ("void",)
         if t.name in ("_Bool", "bool"):
             return ("bool",)
-        if t.name == "char":                              # plain char -- a distinct type from signed/unsigned char
+        if t.name == "char":  # plain char -- a distinct type from signed/unsigned char
             return ("char",)
         if t.is_float:
             return ("float", t.size)
@@ -1146,34 +1454,42 @@ class _FuncLowerer:
 
     def _rvalue(self, node) -> int:
         if isinstance(node, cast.IntLit):
-            ct = scalar(node.ctype, self.abi) if is_scalar_name(node.ctype) else scalar("int", self.abi)
+            ct = (
+                scalar(node.ctype, self.abi)
+                if is_scalar_name(node.ctype)
+                else scalar("int", self.abi)
+            )
             t = self._temp(ct, f"k{node.value}")
             r = self._emit("c.const", Opcode.LOAD, (), (t,), imm=(node.value,))
             return r
-        if isinstance(node, cast.FloatLit):                   # a float constant -> a typed c.fconst
-            ct = _float_lit_type(node.value)                  # f/F -> float, l/L -> long double, else double
+        if isinstance(node, cast.FloatLit):  # a float constant -> a typed c.fconst
+            ct = _float_lit_type(node.value)  # f/F -> float, l/L -> long double, else double
             t = self._temp(ct, "fk")
             return self._emit(f"c.fconst:{node.value}", Opcode.LOAD, (), (t,))
         if isinstance(node, cast.Name):
             if node.ident not in self.env:
                 if node.ident in self.func_rets:
-                    return self._func_ptr_value(node.ident)   # a function NAME as a value -> its funcptr
-                if node.ident in _IMAG_UNIT:                  # <complex.h> imaginary unit (unless shadowed)
+                    return self._func_ptr_value(
+                        node.ident
+                    )  # a function NAME as a value -> its funcptr
+                if node.ident in _IMAG_UNIT:  # <complex.h> imaginary unit (unless shadowed)
                     t = self._temp(scalar("float _Complex"), "imag_unit")
                     return self._emit(f"c.cconst:{node.ident}", Opcode.LOAD, (), (t,))
-                if node.ident in self._MEMORDER:              # SEG6.1: a `memory_order_*` / `__ATOMIC_*`
-                    val = self._MEMORDER[node.ident]          # constant (unless shadowed by a real decl) ->
-                    t = self._temp(scalar("int", self.abi), f"k{val}")   # an int const, like an IntLit
+                if node.ident in self._MEMORDER:  # SEG6.1: a `memory_order_*` / `__ATOMIC_*`
+                    val = self._MEMORDER[node.ident]  # constant (unless shadowed by a real decl) ->
+                    t = self._temp(
+                        scalar("int", self.abi), f"k{val}"
+                    )  # an int const, like an IntLit
                     return self._emit("c.const", Opcode.LOAD, (), (t,), imm=(val,))
             return self._lookup(node.ident, node.pos)[0]
-        if isinstance(node, cast.StringLit):                  # a string value -> the global pointer
+        if isinstance(node, cast.StringLit):  # a string value -> the global pointer
             return self._string_ptr(node.value)
         if isinstance(node, cast.Binary) and node.op == ",":
-            self._rvalue(node.lhs)                            # the comma operator: evaluate the left operand for
-            return self._rvalue(node.rhs)                     # its side effects, discard it, yield the right value
+            self._rvalue(node.lhs)  # the comma operator: evaluate the left operand for
+            return self._rvalue(node.rhs)  # its side effects, discard it, yield the right value
         if isinstance(node, cast.IncDec):
             return self._incdec_value(node)
-        if isinstance(node, cast.LabelAddr):              # `&&L` -- a label's address as a `void *` value (GNU)
+        if isinstance(node, cast.LabelAddr):  # `&&L` -- a label's address as a `void *` value (GNU)
             t = self._temp(pointer(scalar("void")), f"labeladdr_{node.label}")
             return self._emit(f"c.labeladdr:{node.label}", Opcode.LOAD, (), (t,))
         if isinstance(node, cast.Binary):
@@ -1185,17 +1501,19 @@ class _FuncLowerer:
             t = self._temp(rt, f"b_{suf}")
             return self._emit(f"c.bin.{suf}", opcode, (a, b), (t,))
         if isinstance(node, cast.Unary):
-            if node.op in ("__real__", "__imag__"):       # GNU complex part -> the real element float
+            if node.op in ("__real__", "__imag__"):  # GNU complex part -> the real element float
                 v = self._rvalue(node.operand)
                 vt = self.rtypes.get(v)
                 if vt is not None and vt.is_complex:
-                    rt = scalar({4: "float", 8: "double", 16: "long double"}.get(vt.size // 2, "double"))
-                elif vt is not None and vt.is_float:       # __real__ of a real float is the value itself
+                    rt = scalar(
+                        {4: "float", 8: "double", 16: "long double"}.get(vt.size // 2, "double")
+                    )
+                elif vt is not None and vt.is_float:  # __real__ of a real float is the value itself
                     rt = vt
                 else:
                     rt = scalar("double")
                 suf = "creal" if node.op == "__real__" else "cimag"
-                t = self._temp(rt, f"u_{suf}")             # emitted `__real__ x` -- not integer-computed
+                t = self._temp(rt, f"u_{suf}")  # emitted `__real__ x` -- not integer-computed
                 return self._emit(f"c.un.{suf}", Opcode.GEM_DISPATCH, (v,), (t,))
             if node.op == "*":
                 return self._read(self._lvalue(node))
@@ -1208,32 +1526,42 @@ class _FuncLowerer:
                 # pointer VARIABLE). The emit uses `_base_ptr` (decays a pointer/array base, addresses a value
                 # base), so every form lands the right byte address.
                 operand = node.operand
-                if isinstance(operand, cast.Unary) and operand.op == "*":  # &*p == p (the pointer itself;
-                    return self._rvalue(operand.operand)                   # &*(p+i) == p+i) -- 0 claims, both rails
+                if (
+                    isinstance(operand, cast.Unary) and operand.op == "*"
+                ):  # &*p == p (the pointer itself;
+                    return self._rvalue(operand.operand)  # &*(p+i) == p+i) -- 0 claims, both rails
                 lv = self._lvalue(operand)
-                if lv.bit_width:                              # &bitfield is illegal in C (no addressable unit)
+                if lv.bit_width:  # &bitfield is illegal in C (no addressable unit)
                     raise CLowerError("cannot take the address of a bit-field")
                 if lv.kind == "mem" and lv.idx is None and lv.ct.kind == "array":
-                    raise CLowerError(                        # &s.arr -- the result is a pointer-TO-ARRAY
-                        "address-of an array member is not yet supported")  # (needs (*)[] declarators; follow-on)
+                    raise CLowerError(  # &s.arr -- the result is a pointer-TO-ARRAY
+                        "address-of an array member is not yet supported"
+                    )  # (needs (*)[] declarators; follow-on)
                 t = self._temp(pointer(lv.ct), "addr")
-                if lv.kind == "var":                          # &name / &(compound literal) -> the object's address
+                if lv.kind == "var":  # &name / &(compound literal) -> the object's address
                     return self._emit("c.addrof", Opcode.ADD, (lv.rid,), (t,))
-                if lv.idx is not None:                        # &arr[i] / &s.arr[i] / &arr[i].field
-                    stride = lv.stride or (lv.ct.size or 4)   # array-of-structs strides by the STRUCT, else the elem
-                    return self._emit("c.addrof", Opcode.ADD, (lv.rid, lv.idx), (t,),
-                                      imm=(lv.byte_off, stride))
-                return self._emit("c.addrof", Opcode.ADD, (lv.rid,), (t,), imm=(lv.byte_off,))  # &base.member
+                if lv.idx is not None:  # &arr[i] / &s.arr[i] / &arr[i].field
+                    stride = lv.stride or (
+                        lv.ct.size or 4
+                    )  # array-of-structs strides by the STRUCT, else the elem
+                    return self._emit(
+                        "c.addrof", Opcode.ADD, (lv.rid, lv.idx), (t,), imm=(lv.byte_off, stride)
+                    )
+                return self._emit(
+                    "c.addrof", Opcode.ADD, (lv.rid,), (t,), imm=(lv.byte_off,)
+                )  # &base.member
             v = self._rvalue(node.operand)
             opcode, suf = _UN[node.op]
-            if node.op == "!":                                # logical not -> int (0/1)
+            if node.op == "!":  # logical not -> int (0/1)
                 rt = scalar("int", self.abi)
-            else:                                             # `-` / `~`: the promoted operand type, so
-                vt = self.rtypes.get(v)                       # negating a `long` stays 64-bit, and `-x` on
-                if vt is not None and vt.is_float:            # a float stays float (floats don't promote --
-                    rt = vt                                   # was forced to uint32, truncating -2.5 -> 4.29e9)
-                elif vt is not None and vt.is_integer:        # integer promotion: a sub-int operand (e.g.
-                    rt = promote_int(vt, self.abi)            # `unsigned char`) becomes signed int -> ~c is -1
+            else:  # `-` / `~`: the promoted operand type, so
+                vt = self.rtypes.get(v)  # negating a `long` stays 64-bit, and `-x` on
+                if vt is not None and vt.is_float:  # a float stays float (floats don't promote --
+                    rt = vt  # was forced to uint32, truncating -2.5 -> 4.29e9)
+                elif vt is not None and vt.is_integer:  # integer promotion: a sub-int operand (e.g.
+                    rt = promote_int(
+                        vt, self.abi
+                    )  # `unsigned char`) becomes signed int -> ~c is -1
                 else:
                     rt = scalar("uint32_t")
             t = self._temp(rt, f"u_{suf}")
@@ -1250,23 +1578,35 @@ class _FuncLowerer:
             # diverges by target (x86 wraps, aarch64 saturates to 0) -- and even on x86 a sub-int signed
             # target loses the sign. Emit the signed fixed-width operator so `(int)(-5.0f)` is -5.
             vt = self.rtypes.get(v)
-            cname = (_CAST_W_SIGNED.get(ct.size, "int32_t")
-                     if (vt is not None and vt.is_float and ct.is_integer and ct.signed and not ct.is_bitint)
-                     else _cast_name(ct))   # a `_BitInt` target keeps its exact spelling (no width-named fallback)
+            cname = (
+                _CAST_W_SIGNED.get(ct.size, "int32_t")
+                if (
+                    vt is not None
+                    and vt.is_float
+                    and ct.is_integer
+                    and ct.signed
+                    and not ct.is_bitint
+                )
+                else _cast_name(ct)
+            )  # a `_BitInt` target keeps its exact spelling (no width-named fallback)
             return self._emit(f"c.cast:{cname}", Opcode.ADD, (v,), (t,))
         if isinstance(node, (cast.Index, cast.Member)):
             return self._read(self._lvalue(node))
-        if isinstance(node, cast.CompoundLiteral):        # `(struct P){a,b}` by value / `(int){v}` as a value
+        if isinstance(
+            node, cast.CompoundLiteral
+        ):  # `(struct P){a,b}` by value / `(int){v}` as a value
             return self._compound_literal(node)[0]
-        if isinstance(node, cast.VaArg):                  # va_arg(ap, T) -> the next variadic argument (type T)
-            ap = self._rvalue(node.ap)                    # the va_list cursor (by name)
-            vt = self._resolve_type(node.type)            # the result has type T (drives the temp + emit)
+        if isinstance(node, cast.VaArg):  # va_arg(ap, T) -> the next variadic argument (type T)
+            ap = self._rvalue(node.ap)  # the va_list cursor (by name)
+            vt = self._resolve_type(node.type)  # the result has type T (drives the temp + emit)
             t = self._temp(vt, "vaarg")
             return self._emit("c.call.vaarg", Opcode.GEM_DISPATCH, (ap,), (t,))
-        if isinstance(node, cast.Generic):                # _Generic(ctrl, T: e, ..., default: e) -- select on
-            return self._rvalue(self._generic_select(node))   # ctrl's static type; only the chosen e is lowered
-        if isinstance(node, cast.StmtExpr):               # `({ s1; ...; e; })` -> lower the prefix stmts inline
-            if not node.stmts:                            # (its own scope), then yield the last expr's value
+        if isinstance(node, cast.Generic):  # _Generic(ctrl, T: e, ..., default: e) -- select on
+            return self._rvalue(
+                self._generic_select(node)
+            )  # ctrl's static type; only the chosen e is lowered
+        if isinstance(node, cast.StmtExpr):  # `({ s1; ...; e; })` -> lower the prefix stmts inline
+            if not node.stmts:  # (its own scope), then yield the last expr's value
                 raise CLowerError("empty statement expression")
             saved_env = dict(self.env)
             for s in node.stmts[:-1]:
@@ -1282,7 +1622,7 @@ class _FuncLowerer:
                     val = self._read(self._lvalue(last.expr), declared_bitfield_type=True)
                 else:
                     val = self._rvalue(last.expr)
-            else:                                         # a non-expression last stmt -> void (rarely used)
+            else:  # a non-expression last stmt -> void (rarely used)
                 self._stmt(last)
                 val = _VOID_RID
             self.env = saved_env
@@ -1295,7 +1635,9 @@ class _FuncLowerer:
                 size = self._resolve_type(node.type).size
             elif isinstance(node.expr, cast.StringLit):
                 prefix, _ = split_lit_prefix(node.expr.value)
-                size = (_str_bytes(node.expr.value) + 1) * str_elem_size(prefix)   # units incl. NUL × width
+                size = (_str_bytes(node.expr.value) + 1) * str_elem_size(
+                    prefix
+                )  # units incl. NUL × width
             elif isinstance(node.expr, cast.Name):
                 rid, ct = self._lookup(node.expr.ident, node.expr.pos)
                 if ct.kind == "array" and ct.count == 0 and rid in self.ptr_extent:
@@ -1304,15 +1646,17 @@ class _FuncLowerer:
                     ext = self.ptr_extent[rid]
                     t = self._temp(scalar("size_t", self.abi), "szof")
                     return self._emit("c.sizeof.vla", Opcode.ADD, (ext,), (t,), imm=(ct.of.size,))
-                size = ct.size                                  # the variable's declared (static) type size
+                size = ct.size  # the variable's declared (static) type size
             else:
-                size = 4                                       # an integer expression -> int
+                size = 4  # an integer expression -> int
             t = self._temp(scalar("uint32_t"), "szof")
             return self._emit("c.const", Opcode.LOAD, (), (t,), imm=(size,))
         if isinstance(node, cast.AlignOf):
             # _Alignof folds to the target type's alignment (operand never evaluated, like sizeof).
             t = self._temp(scalar("uint32_t"), "alof")
-            return self._emit("c.const", Opcode.LOAD, (), (t,), imm=(self._resolve_type(node.type).align,))
+            return self._emit(
+                "c.const", Opcode.LOAD, (), (t,), imm=(self._resolve_type(node.type).align,)
+            )
         if isinstance(node, cast.Ternary):
             # A scalar select: both arms are evaluated (the straight-line subset has no branches),
             # then one is chosen. The emitter renders the real C `(cond ? a : b)` -- behaviour-exact
@@ -1325,8 +1669,12 @@ class _FuncLowerer:
             # select goes unsigned) and a FLOAT arm is truncated to int (`(c?x:y)` of doubles becomes an
             # int, dropping the value / mis-converting a nan). (pointer arms keep the 4-byte unit.)
             ta, tb = self.rtypes.get(a), self.rtypes.get(b)
-            if (ta is not None and tb is not None and (ta.is_integer or ta.is_float)
-                    and (tb.is_integer or tb.is_float)):
+            if (
+                ta is not None
+                and tb is not None
+                and (ta.is_integer or ta.is_float)
+                and (tb.is_integer or tb.is_float)
+            ):
                 rt = self._bin_result_type_ct("+", ta, tb)
             else:
                 rt = scalar("uint32_t")
@@ -1344,26 +1692,35 @@ class _FuncLowerer:
         base, then the actuals) emitted as `o->fn(args)`, so no 8-byte function-pointer value has to
         ride in the 4-byte value model. Not added to the call graph (R18: an opaque external edge)."""
         m = node.callee
-        base_rid, base_ct, _base_off = self._addr(m.base)    # a dispatch base is a pointer (offset 0)
+        base_rid, base_ct, _base_off = self._addr(m.base)  # a dispatch base is a pointer (offset 0)
         actuals = tuple(self._rvalue(a) for a in node.args)
-        agg = base_ct.of if m.arrow else base_ct             # the struct carrying the funcptr field
-        try:                                                 # the member's funcptr CType -> its return type
+        agg = base_ct.of if m.arrow else base_ct  # the struct carrying the funcptr field
+        try:  # the member's funcptr CType -> its return type
             fct = agg.field(m.field)[0] if agg is not None else None
         except KeyError:
             fct = None
         ret_ct = fct.of if (fct is not None and fct.kind == "funcptr") else None
-        t = self._temp(self._call_result_ct(ret_ct), f"icall_{m.field}")   # a signed member return reads back signed
-        return self._emit(f"c.call.imember:{m.field}", Opcode.GEM_DISPATCH,
-                          (base_rid, *actuals), (t,), imm=(1 if m.arrow else 0,),
-                          callee_sig=callee_signature(fct))
+        t = self._temp(
+            self._call_result_ct(ret_ct), f"icall_{m.field}"
+        )  # a signed member return reads back signed
+        return self._emit(
+            f"c.call.imember:{m.field}",
+            Opcode.GEM_DISPATCH,
+            (base_rid, *actuals),
+            (t,),
+            imm=(1 if m.arrow else 0,),
+            callee_sig=callee_signature(fct),
+        )
 
     # --- memory read/write, with bitfield (mask/shift) + MMIO (ordered) handling ---
     def _read(self, lv: "_LV", *, declared_bitfield_type: bool = False) -> int:
         if lv.kind == "var":
             return lv.rid
         unit = self._load_unit(lv)
-        if lv.bit_width:                                     # bitfield extract: (unit >> off) & mask
-            signed = lv.ct.is_integer and lv.ct.signed       # a signed bitfield read sign-extends from bit w-1
+        if lv.bit_width:  # bitfield extract: (unit >> off) & mask
+            signed = (
+                lv.ct.is_integer and lv.ct.signed
+            )  # a signed bitfield read sign-extends from bit w-1
             # integer promotion (6.3.1.1): a bitfield narrower than int promotes to int (int holds all its
             # values), so an UNSIGNED sub-int bitfield reads as a SIGNED int -- `bf < x` is a signed compare,
             # not an unsigned one. A full-width (== 32) unsigned bitfield stays unsigned; a WIDE bitfield
@@ -1371,11 +1728,15 @@ class _FuncLowerer:
             # Clang's GNU statement-expression rule is the deliberate exception:
             # a bare terminal bitfield retains its declared type after ceasing to be
             # a bitfield expression. Thus `-({ s.u; })` is unsigned, unlike `-(s.u)`.
-            rt = (lv.ct if declared_bitfield_type or lv.bit_width > 32
-                  else scalar("int" if (signed or lv.bit_width < 32) else "uint32_t", self.abi))
+            rt = (
+                lv.ct
+                if declared_bitfield_type or lv.bit_width > 32
+                else scalar("int" if (signed or lv.bit_width < 32) else "uint32_t", self.abi)
+            )
             t = self._temp(rt, "bf")
-            return self._emit("c.bf.get", Opcode.ADD, (unit,), (t,),
-                              imm=(lv.bit_off, lv.bit_width, int(signed)))
+            return self._emit(
+                "c.bf.get", Opcode.ADD, (unit,), (t,), imm=(lv.bit_off, lv.bit_width, int(signed))
+            )
         return unit
 
     def _access_bounds(self, lv: "_LV") -> str:
@@ -1389,13 +1750,18 @@ class _FuncLowerer:
         in lockstep. A naked POINTER with a RECOVERED extent (malloc/calloc'd, `self.ptr_extent`) also promotes
         -- the runtime-checked extent is the allocation's element count. This is metadata only -- no
         emit/behaviour change; `verify` already defaults to `bounds`."""
-        if (lv.kind == "mem" and lv.idx is not None and not lv.member
-                and not self._mmio(lv.rid) and lv.rid not in self.str_globals):
+        if (
+            lv.kind == "mem"
+            and lv.idx is not None
+            and not lv.member
+            and not self._mmio(lv.rid)
+            and lv.rid not in self.str_globals
+        ):
             rt = self.rtypes.get(lv.rid)
             if rt is not None and rt.kind == "array" and rt.count:
-                return "masked"                       # a known-extent local/static array -> runtime-bounds-checked
+                return "masked"  # a known-extent local/static array -> runtime-bounds-checked
             if lv.rid in self.ptr_extent:
-                return "masked"                       # a malloc/calloc pointer with a recovered element count
+                return "masked"  # a malloc/calloc pointer with a recovered element count
         return "assumed_safe"
 
     def _bounds_provenance(self, lv: "_LV") -> str:
@@ -1414,7 +1780,7 @@ class _FuncLowerer:
             if lv.rid in self.ptr_extent:
                 return self.ptr_extent_kind.get(lv.rid, "recovered_count")
             return "unknown_extent"
-        return ""                                     # a scalar / member / non-indexed access: no extent story
+        return ""  # a scalar / member / non-indexed access: no extent story
 
     def _alloc_count_node(self, call, pointee_size: int):
         """The element-COUNT AST node of a recoverable `malloc(N*sizeof(T))` / `malloc(sizeof(T)*N)` /
@@ -1424,7 +1790,7 @@ class _FuncLowerer:
         if not isinstance(call, cast.CallExpr) or pointee_size <= 0:
             return None
 
-        def size_bytes(e):                                   # a per-element size operand -> its byte width
+        def size_bytes(e):  # a per-element size operand -> its byte width
             if isinstance(e, cast.SizeOf) and e.type is not None and e.expr is None:
                 try:
                     return self._resolve_type(e.type).size
@@ -1442,7 +1808,7 @@ class _FuncLowerer:
                 if size_bytes(a.lhs) == pointee_size:
                     return a.rhs
                 return None
-            if pointee_size == 1:                            # a byte buffer: malloc(N) bytes == N elements
+            if pointee_size == 1:  # a byte buffer: malloc(N) bytes == N elements
                 return a
         return None
 
@@ -1463,14 +1829,18 @@ class _FuncLowerer:
         count = self._alloc_count_node(init, p_ct.of.size)
         if count is None:
             return
-        if isinstance(count, cast.Name) and count.ident in self.env:       # the stable-Name fast path
+        if isinstance(count, cast.Name) and count.ident in self.env:  # the stable-Name fast path
             rid, ct = self.env[count.ident]
-            if (ct.kind == "scalar" and not getattr(ct, "is_float", False)
-                    and self._mut_body.get(count.ident, 0) == 0 and count.ident not in self._mut_addr):
+            if (
+                ct.kind == "scalar"
+                and not getattr(ct, "is_float", False)
+                and self._mut_body.get(count.ident, 0) == 0
+                and count.ident not in self._mut_addr
+            ):
                 self.ptr_extent[p_rid] = rid
                 self.ptr_extent_kind[p_rid] = "recovered_count"
-            return                                                         # a Name is captured by name or not at all
-        if _is_pure(count):                                                # an EXPRESSION count -> snapshot it
+            return  # a Name is captured by name or not at all
+        if _is_pure(count):  # an EXPRESSION count -> snapshot it
             v = self._rvalue(count)
             vct = self.rtypes.get(v)
             if vct is not None and vct.kind == "scalar" and not getattr(vct, "is_float", False):
@@ -1490,9 +1860,19 @@ class _FuncLowerer:
             t = self._temp(scalar("uint32_t" if ub <= 4 else "uint64_t", self.abi), "ld")
             rd = (lv.rid,) if lv.idx is None else (lv.rid, lv.idx)
             mmio = self._mmio(lv.rid)
-            return self._emit("c.load", Opcode.LOAD, rd, (t,), imm=(lv.byte_off, ub),
-                              domain=Domain.MMIO if mmio else Domain.RAM, bounds=self._access_bounds(lv), bounds_provenance=self._bounds_provenance(lv),
-                              lane=Lane.H if mmio else Lane.U, hazard="barriered" if mmio else "unique", volatile=mmio)
+            return self._emit(
+                "c.load",
+                Opcode.LOAD,
+                rd,
+                (t,),
+                imm=(lv.byte_off, ub),
+                domain=Domain.MMIO if mmio else Domain.RAM,
+                bounds=self._access_bounds(lv),
+                bounds_provenance=self._bounds_provenance(lv),
+                lane=Lane.H if mmio else Lane.U,
+                hazard="barriered" if mmio else "unique",
+                volatile=mmio,
+            )
         unit_ct = lv.ct
         t = self._temp(unit_ct, "ld")
         rd = (lv.rid,) if lv.idx is None else (lv.rid, lv.idx)
@@ -1502,37 +1882,64 @@ class _FuncLowerer:
         # array `s.arr[i]` carries BOTH (member offset, element size) and an index -- so the emit lands
         # the element at `&s + member_off + i*elem_size`, distinct from a plain `base[idx]` (no imm).
         if lv.idx is not None:
-            imm = ((lv.byte_off, max(1, lv.ct.size)) + ((lv.stride,) if lv.stride else ())   # member array: even
-                   if lv.member else ())                # off 0; array-of-structs adds the element stride (imm[2])
+            imm = (
+                (lv.byte_off, max(1, lv.ct.size))
+                + ((lv.stride,) if lv.stride else ())  # member array: even
+                if lv.member
+                else ()
+            )  # off 0; array-of-structs adds the element stride (imm[2])
         else:
             imm = (lv.byte_off,) if lv.byte_off else ()
-        return self._emit("c.load", Opcode.LOAD, rd, (t,), imm=imm,
-                          domain=Domain.MMIO if mmio else Domain.RAM, bounds=self._access_bounds(lv), bounds_provenance=self._bounds_provenance(lv),
-                          lane=Lane.H if mmio else Lane.U,
-                          hazard="barriered" if mmio else "unique", volatile=mmio)
+        return self._emit(
+            "c.load",
+            Opcode.LOAD,
+            rd,
+            (t,),
+            imm=imm,
+            domain=Domain.MMIO if mmio else Domain.RAM,
+            bounds=self._access_bounds(lv),
+            bounds_provenance=self._bounds_provenance(lv),
+            lane=Lane.H if mmio else Lane.U,
+            hazard="barriered" if mmio else "unique",
+            volatile=mmio,
+        )
 
     def _write(self, lv: "_LV", v: int) -> None:
-        if lv.bit_width:                                     # read-modify-write the storage unit
+        if lv.bit_width:  # read-modify-write the storage unit
             old = self._load_unit(lv)
-            t = self._temp(scalar("uint32_t" if lv.unit_bytes() <= 4 else "uint64_t", self.abi), "bf")
+            t = self._temp(
+                scalar("uint32_t" if lv.unit_bytes() <= 4 else "uint64_t", self.abi), "bf"
+            )
             v = self._emit("c.bf.set", Opcode.ADD, (old, v), (t,), imm=(lv.bit_off, lv.bit_width))
         mmio = self._mmio(lv.rid)
-        if lv.idx is None:                                    # member/deref: carry (offset, size) -- a packed
-            rd, imm = (lv.rid, v), (lv.byte_off, lv.unit_bytes())   # bitfield writes only its spanned bytes back
-        elif lv.member:                                       # s.arr[i]: (member offset, element size)
+        if lv.idx is None:  # member/deref: carry (offset, size) -- a packed
+            rd, imm = (
+                (lv.rid, v),
+                (lv.byte_off, lv.unit_bytes()),
+            )  # bitfield writes only its spanned bytes back
+        elif lv.member:  # s.arr[i]: (member offset, element size)
             rd, imm = (lv.rid, lv.idx, v), (lv.byte_off, max(1, lv.ct.size))
-        else:                                                 # base[idx]: a typed array store
+        else:  # base[idx]: a typed array store
             rd, imm = (lv.rid, lv.idx, v), ()
-        if imm and lv.ct.name in ("_Bool", "bool"):           # a _Bool slot: flag it so the emit normalizes
-            imm = imm + (1,)                                  # the stored value (any nonzero -> 1, §6.3.1.2)
-        if lv.stride:                                         # array-of-structs element store: land at
-            if len(imm) == 2:                                 # &base + off + idx*stride but copy ct.size bytes --
-                imm = imm + (0,)                              # keep (off,size,bool_flag,stride): pad the flag slot
-            imm = imm + (lv.stride,)                          # (0 == not a _Bool field) so stride is always imm[3]
-        self._emit("c.store", Opcode.STORE, rd, (), imm=imm,
-                   domain=Domain.MMIO if mmio else Domain.RAM, bounds=self._access_bounds(lv), bounds_provenance=self._bounds_provenance(lv),
-                   lane=Lane.H if mmio else Lane.U,
-                   hazard="barriered" if mmio else "unique", volatile=mmio)
+        if imm and lv.ct.name in ("_Bool", "bool"):  # a _Bool slot: flag it so the emit normalizes
+            imm = imm + (1,)  # the stored value (any nonzero -> 1, §6.3.1.2)
+        if lv.stride:  # array-of-structs element store: land at
+            if len(imm) == 2:  # &base + off + idx*stride but copy ct.size bytes --
+                imm = imm + (0,)  # keep (off,size,bool_flag,stride): pad the flag slot
+            imm = imm + (lv.stride,)  # (0 == not a _Bool field) so stride is always imm[3]
+        self._emit(
+            "c.store",
+            Opcode.STORE,
+            rd,
+            (),
+            imm=imm,
+            domain=Domain.MMIO if mmio else Domain.RAM,
+            bounds=self._access_bounds(lv),
+            bounds_provenance=self._bounds_provenance(lv),
+            lane=Lane.H if mmio else Lane.U,
+            hazard="barriered" if mmio else "unique",
+            volatile=mmio,
+        )
 
     def _compound_literal(self, node: "cast.CompoundLiteral") -> tuple[int, CType]:
         """Materialize a compound literal `(type){init}` as an anonymous local and initialize it, exactly
@@ -1546,28 +1953,33 @@ class _FuncLowerer:
             # it the SAME way the regular multi-dim declarator does (lower.py ~1751): a FLAT `array(leaf, total)`
             # carrying the per-dim `shape`, so `_array_row` descends nested braces by row and `_lvalue` flattens
             # `[i][j]` row-major via `shape`. Capped at 3 dims (the shape / twin-adims table holds 3).
-            elem = self._resolve_type(replace(node.type, array=()))   # the scalar leaf
+            elem = self._resolve_type(replace(node.type, array=()))  # the scalar leaf
             dims = node.type.array
             if len(dims) > 3:
-                raise CLowerError("a multi-dimensional array compound literal of more than 3 dims is not supported")
-            if dims[0] in (0, None):                      # `(T[][N]){...}` -- infer the OUTER dim from the init
-                n, cursor = 0, 0                          # (max top-level index + 1; positional advances, `[i]=` jumps)
+                raise CLowerError(
+                    "a multi-dimensional array compound literal of more than 3 dims is not supported"
+                )
+            if dims[0] in (0, None):  # `(T[][N]){...}` -- infer the OUTER dim from the init
+                n, cursor = 0, 0  # (max top-level index + 1; positional advances, `[i]=` jumps)
                 for key, _expr in node.init.entries:
-                    if isinstance(key, tuple):            # a nested chain `[i]...` -> its outer array index
+                    if isinstance(key, tuple):  # a nested chain `[i]...` -> its outer array index
                         idx = key[0][1] if key and key[0][0] == "a" else cursor
                     else:
                         idx = key if isinstance(key, int) else cursor
                     cursor = idx + 1
                     n = max(n, cursor)
-                dims = (n or 1,) + tuple(dims[1:])        # inferred outer + the fixed inner dims
+                dims = (n or 1,) + tuple(dims[1:])  # inferred outer + the fixed inner dims
             total = 1
             for d in dims:
                 total *= d
             ct = replace(array(elem, total), shape=tuple(dims))
         if ct.kind == "array" and len(node.type.array or ()) <= 1 and ct.count == 0:
-            n, cursor = 0, 0                              # `(T[]){...}` -- infer the length from the init
-            for key, _expr in node.init.entries:         # (max index + 1; positional advances, `[i]=` jumps)
-                if isinstance(key, tuple):               # a nested chain `[i]...` -> its outer array index
+            n, cursor = 0, 0  # `(T[]){...}` -- infer the length from the init
+            for (
+                key,
+                _expr,
+            ) in node.init.entries:  # (max index + 1; positional advances, `[i]=` jumps)
+                if isinstance(key, tuple):  # a nested chain `[i]...` -> its outer array index
                     idx = key[0][1] if key and key[0][0] == "a" else cursor
                 else:
                     idx = key if isinstance(key, int) else cursor
@@ -1578,10 +1990,10 @@ class _FuncLowerer:
         rid = self._storage(ct, f"_cl{self.cl_ctr}")
         if ct.kind in ("struct", "union", "array"):
             self._agg_init(rid, ct, node.init)
-        else:                                             # a scalar compound literal: one positional value
+        else:  # a scalar compound literal: one positional value
             if node.init.entries:
                 v = self._rvalue(node.init.entries[0][1])
-            else:                                         # `(int){}` (C23 empty init) -> zero
+            else:  # `(int){}` (C23 empty init) -> zero
                 v = self._temp(scalar("int", self.abi), "clz")
                 self._emit("c.const", Opcode.LOAD, (), (v,), imm=(0,))
             self._emit("c.copy", Opcode.ADD, (v,), (rid,))
@@ -1594,13 +2006,15 @@ class _FuncLowerer:
         inner dims * leaf size) so a nested brace `{...}` descends by row. A 1-D array (or no `shape`) keeps
         the scalar element + leaf-sized stride."""
         leaf = ct.of or scalar("uint32_t")
-        if len(ct.shape) <= 1:                                # 1-D: element IS the scalar leaf
+        if len(ct.shape) <= 1:  # 1-D: element IS the scalar leaf
             return leaf, leaf.size
         inner = ct.shape[1:]
         stride = leaf.size
         for d in inner:
             stride *= d
-        row = replace(array(leaf, stride // leaf.size), shape=tuple(inner))   # `T row[d1*..]`, carrying shape[1:]
+        row = replace(
+            array(leaf, stride // leaf.size), shape=tuple(inner)
+        )  # `T row[d1*..]`, carrying shape[1:]
         return row, stride
 
     def _agg_init(self, rid: int, ct: CType, ag: cast.AggInit) -> None:
@@ -1620,7 +2034,9 @@ class _FuncLowerer:
                 elif ct.kind == "array":
                     idx = key if isinstance(key, int) else cursor
                     cursor = idx + 1
-                    elem, stride = self._array_row(ct)        # multi-dim: the element is a ROW sub-array, not the leaf
+                    elem, stride = self._array_row(
+                        ct
+                    )  # multi-dim: the element is a ROW sub-array, not the leaf
                     self._init_subagg(rid, elem, idx * stride, expr)
                 else:
                     if isinstance(key, str):
@@ -1631,7 +2047,7 @@ class _FuncLowerer:
                     self._init_subagg(rid, ftype, boff, expr)
                 continue
             v = self._rvalue(expr)
-            if isinstance(key, tuple):                        # a nested designator chain (.a.b / .v[i] / .m[i][j])
+            if isinstance(key, tuple):  # a nested designator chain (.a.b / .v[i] / .m[i][j])
                 self._write(self._designate(rid, ct, key), v)
                 continue
             if ct.kind == "array":
@@ -1640,13 +2056,15 @@ class _FuncLowerer:
                 ti = self._temp(scalar("int", self.abi), "ai")
                 self._emit("c.const", Opcode.LOAD, (), (ti,), imm=(idx,))
                 lv = _LV("mem", rid, ct.of or scalar("uint32_t"), idx=ti)
-            else:                                             # struct / union member
+            else:  # struct / union member
                 if isinstance(key, str):
                     ftype, boff, bo, bw = ct.field(key)
                 else:
                     _fn, ftype, boff, bo, bw = ct.fields[cursor]
                     cursor += 1
-                lv = _LV("mem", rid, ftype, byte_off=boff, bit_off=bo, bit_width=bw, packed=ct.packed)
+                lv = _LV(
+                    "mem", rid, ftype, byte_off=boff, bit_off=bo, bit_width=bw, packed=ct.packed
+                )
             self._write(lv, v)
 
     def _init_subagg(self, rid: int, ct: CType, base_off: int, ag: "cast.AggInit") -> None:
@@ -1659,20 +2077,26 @@ class _FuncLowerer:
             if ct.kind == "array":
                 idx = key if isinstance(key, int) else cursor
                 cursor = idx + 1
-                ftype, stride = self._array_row(ct)           # multi-dim row sub-array (or the scalar leaf, 1-D)
+                ftype, stride = self._array_row(
+                    ct
+                )  # multi-dim row sub-array (or the scalar leaf, 1-D)
                 off, bo, bw = base_off + idx * stride, 0, 0
-            else:                                             # struct / union member
+            else:  # struct / union member
                 if isinstance(key, str):
                     ftype, mboff, bo, bw = ct.field(key)
                 else:
                     _fn, ftype, mboff, bo, bw = ct.fields[cursor]
                     cursor += 1
                 off = base_off + mboff
-            if isinstance(expr, cast.AggInit):                # deeper nesting
+            if isinstance(expr, cast.AggInit):  # deeper nesting
                 self._init_subagg(rid, ftype, off, expr)
             else:
-                self._write(_LV("mem", rid, ftype, byte_off=off, bit_off=bo, bit_width=bw, packed=ct.packed),
-                            self._rvalue(expr))
+                self._write(
+                    _LV(
+                        "mem", rid, ftype, byte_off=off, bit_off=bo, bit_width=bw, packed=ct.packed
+                    ),
+                    self._rvalue(expr),
+                )
 
     def _designate(self, rid: int, ct: CType, steps: tuple) -> "_LV":
         """Resolve a nested designator chain to an lvalue: walk the aggregate type accumulating a byte
@@ -1681,15 +2105,17 @@ class _FuncLowerer:
         off, cur, bit_off, bit_w, parent_packed = 0, ct, 0, 0, False
         for kind, val in steps:
             if kind == "m":
-                parent_packed = cur.packed                    # the struct that DECLARES this (maybe bitfield) member
+                parent_packed = cur.packed  # the struct that DECLARES this (maybe bitfield) member
                 ftype, boff, bo, bw = cur.field(val)
                 off += boff
                 cur, bit_off, bit_w = ftype, bo, bw
-            else:                                             # an array element: fold the constant index
+            else:  # an array element: fold the constant index
                 elem = cur.of if cur.of is not None else scalar("uint32_t")
                 off += val * elem.size
                 cur, bit_off, bit_w = elem, 0, 0
-        return _LV("mem", rid, cur, byte_off=off, bit_off=bit_off, bit_width=bit_w, packed=parent_packed)
+        return _LV(
+            "mem", rid, cur, byte_off=off, bit_off=bit_off, bit_width=bit_w, packed=parent_packed
+        )
 
     def _incdec_value(self, node: cast.IncDec) -> int:
         """`a++` / `++a` / `a--` / `--a` in EXPRESSION position -> a read-modify-write yielding the OLD value
@@ -1701,29 +2127,45 @@ class _FuncLowerer:
         lv = self._lvalue(node.operand)
         if lv.bit_width and lv.kind == "mem" and self._mmio(lv.rid):
             raise CLowerError("inc/dec of a volatile/MMIO bitfield is a follow-on")
-        if lv.kind != "var" and not (_is_scalar_member_lv(node.operand, lv) and not self._mmio(lv.rid)):
-            raise CLowerError("inc/dec of this lvalue form is a follow-on")  # MMIO / non-scalar member
+        if lv.kind != "var" and not (
+            _is_scalar_member_lv(node.operand, lv) and not self._mmio(lv.rid)
+        ):
+            raise CLowerError(
+                "inc/dec of this lvalue form is a follow-on"
+            )  # MMIO / non-scalar member
         cur = self._read(lv)
-        if not node.prefix and lv.kind == "var":         # snapshot: _read hands back the mutable storage rid,
-            old = self._temp(lv.ct, "id_old")            # which the store below would clobber -- a same-type
-            self._emit(f"c.cast:{_cast_name(lv.ct)}", Opcode.ADD, (cur,), (old,))  # cast DECLARES the temp
+        if (
+            not node.prefix and lv.kind == "var"
+        ):  # snapshot: _read hands back the mutable storage rid,
+            old = self._temp(lv.ct, "id_old")  # which the store below would clobber -- a same-type
+            self._emit(
+                f"c.cast:{_cast_name(lv.ct)}", Opcode.ADD, (cur,), (old,)
+            )  # cast DECLARES the temp
         else:
-            old = cur                                     # a memory read is already a fresh declared temp
+            old = cur  # a memory read is already a fresh declared temp
         one = self._rvalue(cast.IntLit(1))
-        if lv.ct.kind == "pointer":                       # a pointer steps by sizeof(*p): c.ptradd MUTATES the
-            self._emit("c.ptradd" if node.op == "+" else "c.ptrsub",   # storage IN PLACE (`p += 1`), so only a
-                       Opcode.ADD, (lv.rid, one), (lv.rid,))           # named-local pointer reaches here (mem
-            return old if not node.prefix else lv.rid     # pointer lvalues fall back); no separate write/re-read
+        if lv.ct.kind == "pointer":  # a pointer steps by sizeof(*p): c.ptradd MUTATES the
+            self._emit(
+                "c.ptradd"
+                if node.op == "+"
+                else "c.ptrsub",  # storage IN PLACE (`p += 1`), so only a
+                Opcode.ADD,
+                (lv.rid, one),
+                (lv.rid,),
+            )  # named-local pointer reaches here (mem
+            return (
+                old if not node.prefix else lv.rid
+            )  # pointer lvalues fall back); no separate write/re-read
         opcode, suf = _BIN[node.op]
         rt = self._bin_result_type(node.op, cur, one)
         new = self._temp(rt, f"id_{suf}")
         self._emit(f"c.bin.{suf}", opcode, (cur, one), (new,))
         self._write(lv, new)
         if not node.prefix:
-            return old                                    # postfix: the pre-step value
-        nt = self.rtypes.get(new)                         # prefix: the STORED new value -- re-read if the target
+            return old  # postfix: the pre-step value
+        nt = self.rtypes.get(new)  # prefix: the STORED new value -- re-read if the target
         if lv.bit_width or (nt is not None and lv.ct.size < nt.size):
-            return self._read(lv)                         # narrows (a bitfield / sub-int local), else `new`
+            return self._read(lv)  # narrows (a bitfield / sub-int local), else `new`
         return new
 
     def _assign(self, node: cast.Assign, stmt: bool = False) -> int:
@@ -1738,25 +2180,36 @@ class _FuncLowerer:
         # pointer compound-assign  p += n / p -= n  (and p++/p--, which desugar to `p = p + 1`):
         # a single pointer-arithmetic claim, so the result stays a pointer (the integer binary result
         # would truncate the pointer). The emit renders `p += n;` and lets C scale by the element size.
-        if (isinstance(node.target, cast.Name) and node.target.ident in self.env
-                and isinstance(node.value, cast.Binary) and node.value.op in ("+", "-")
-                and isinstance(node.value.lhs, cast.Name)
-                and node.value.lhs.ident == node.target.ident):
+        if (
+            isinstance(node.target, cast.Name)
+            and node.target.ident in self.env
+            and isinstance(node.value, cast.Binary)
+            and node.value.op in ("+", "-")
+            and isinstance(node.value.lhs, cast.Name)
+            and node.value.lhs.ident == node.target.ident
+        ):
             rid, ct = self._lookup(node.target.ident, node.target.pos)
             if ct.kind == "pointer":
                 n = self._rvalue(node.value.rhs)
-                self._emit("c.ptradd" if node.value.op == "+" else "c.ptrsub", Opcode.ADD, (rid, n), (rid,))
+                self._emit(
+                    "c.ptradd" if node.value.op == "+" else "c.ptrsub", Opcode.ADD, (rid, n), (rid,)
+                )
                 return rid
         # compound assignment to a MEMORY lvalue (`a[i] OP= e`, `s.m OP= e`, `*p OP= e`): the parser desugars
         # `lhs OP= e` to `lhs = lhs OP e` REUSING the same target node, so resolve the lvalue ONCE (C
         # evaluates `lhs` once) -- one index/address, read + stored through it -- instead of recomputing it
         # for the read and again for the store (which both diverges from the twin and would double-run a
         # side-effecting index). The node-IDENTITY test distinguishes this from an explicit `a[i]=a[i]*e`.
-        if (isinstance(node.value, cast.Binary) and node.value.lhs is node.target
-                and not isinstance(node.target, cast.Name)):
+        if (
+            isinstance(node.value, cast.Binary)
+            and node.value.lhs is node.target
+            and not isinstance(node.target, cast.Name)
+        ):
             lv = self._lvalue(node.target)
             if not stmt and not (_is_scalar_member_lv(node.target, lv) and not self._mmio(lv.rid)):
-                raise CLowerError("this lvalue form's compound assignment as a value is a follow-on")
+                raise CLowerError(
+                    "this lvalue form's compound assignment as a value is a follow-on"
+                )
             cur = self._read(lv)
             b = self._rvalue(node.value.rhs)
             opcode, suf = _BIN[node.value.op]
@@ -1773,15 +2226,21 @@ class _FuncLowerer:
             return res if (stmt or not narrows) else self._read(lv)
         v = self._rvalue(node.value)
         if named_local:
-            rid, _ct = self._lookup(node.target.ident, node.target.pos)           # copy into the mutable storage
+            rid, _ct = self._lookup(
+                node.target.ident, node.target.pos
+            )  # copy into the mutable storage
             self._emit("c.copy", Opcode.ADD, (v,), (rid,))
-            self._bind_extent(rid, _ct, node.target.ident, node.value)            # §5.12: `p = malloc(N*…)` -> N
+            self._bind_extent(
+                rid, _ct, node.target.ident, node.value
+            )  # §5.12: `p = malloc(N*…)` -> N
             return rid
         lv = self._lvalue(node.target)
         if not stmt and not (_is_scalar_member_lv(node.target, lv) and not self._mmio(lv.rid)):
-            raise CLowerError("this lvalue form's assignment as a value is a follow-on")  # MMIO re-read unsound
+            raise CLowerError(
+                "this lvalue form's assignment as a value is a follow-on"
+            )  # MMIO re-read unsound
         self._write(lv, v)
-        return v if stmt else self._read(lv)                   # value context: the stored/converted value (re-read)
+        return v if stmt else self._read(lv)  # value context: the stored/converted value (re-read)
 
     # --- inline assembly (ASM1): an ISA-neutral TRUSTED OPAQUE EFFECT EDGE, modeled on c.call.libm.void: ---
     def _asm_output_rid(self, name_or_none, constraint: str, lvalue) -> int:
@@ -1794,11 +2253,13 @@ class _FuncLowerer:
             rid, ct = self._lookup(lvalue.ident, lvalue.pos)
             if ct.kind != "scalar":
                 raise CLowerError(
-                    f"inline-asm output to a non-scalar lvalue ('{lvalue.ident}') is a follow-on")
+                    f"inline-asm output to a non-scalar lvalue ('{lvalue.ident}') is a follow-on"
+                )
             return rid
         raise CLowerError(
             "inline-asm output operand must be a scalar local variable in this subset (a member / array / "
-            "deref / bitfield / MMIO output lvalue is a follow-on)")
+            "deref / bitfield / MMIO output lvalue is a follow-on)"
+        )
 
     def _asm_stmt(self, st: cast.AsmStmt) -> None:
         """Lower a GNU inline-asm statement to a TRUSTED OPAQUE EFFECT EDGE -- a `c.asm:` (or
@@ -1818,24 +2279,26 @@ class _FuncLowerer:
             ordering fence, never to be reordered or fused across.
           * `asm goto` (a label list) is rejected with an honest diagnostic -- its control flow is deferred."""
         if st.is_goto or st.goto_labels:
-            raise CLowerError("`asm goto` (label operands) is not yet supported (deferred to a later slice)")
+            raise CLowerError(
+                "`asm goto` (label operands) is not yet supported (deferred to a later slice)"
+            )
         in_rids: list = []
         in_names: list = []
         in_constraints: list = []
-        for nm, constraint, expr in st.inputs:                # inputs first: their value rids are pure reads
+        for nm, constraint, expr in st.inputs:  # inputs first: their value rids are pure reads
             in_rids.append(self._rvalue(expr))
             in_names.append(nm)
             in_constraints.append(_strip_quotes(constraint))
         out_rids: list = []
         out_names: list = []
         out_constraints: list = []
-        rw_reads: list = []                                   # `"+"` outputs are also reads
+        rw_reads: list = []  # `"+"` outputs are also reads
         for nm, constraint, lvalue in st.outputs:
             dest = self._asm_output_rid(nm, constraint, lvalue)
             out_rids.append(dest)
             out_names.append(nm)
             out_constraints.append(_strip_quotes(constraint))
-            if "+" in constraint:                             # read-write output: the lvalue is read too
+            if "+" in constraint:  # read-write output: the lvalue is read too
                 rw_reads.append(dest)
         # a `"memory"` clobber OR a volatile asm is an ordering barrier; mark it with the existing
         # `barriered` hazard so it is treated as a fence (never reordered/fused across) -- else `unique`.
@@ -1843,20 +2306,29 @@ class _FuncLowerer:
         is_barrier = st.is_volatile or any(_strip_quotes(c) == "memory" for c in clob_spellings)
         hazard = "barriered" if is_barrier else "unique"
         op = "c.asm.volatile:" if st.is_volatile else "c.asm:"
-        rd = tuple(in_rids) + tuple(rw_reads)                 # inputs + read-write output lvalues (reads)
-        wr = tuple(out_rids)                                  # write-only + read-write output lvalues (writes)
+        rd = tuple(in_rids) + tuple(rw_reads)  # inputs + read-write output lvalues (reads)
+        wr = tuple(out_rids)  # write-only + read-write output lvalues (writes)
         self._emit(op, Opcode.GEM_DISPATCH, rd, wr, hazard=hazard)
-        claim_id = self.cid[0]                                # the id `_emit` just assigned (== the claim's .id)
+        claim_id = self.cid[0]  # the id `_emit` just assigned (== the claim's .id)
         self.asm_meta[claim_id] = AsmInfo(
-            template=st.template, out_names=tuple(out_names), out_constraints=tuple(out_constraints),
-            out_rids=tuple(out_rids), in_names=tuple(in_names), in_constraints=tuple(in_constraints),
-            in_rids=tuple(in_rids), clobbers=tuple(_strip_quotes(c) for c in clob_spellings),
-            is_volatile=st.is_volatile, is_basic=st.is_basic)
+            template=st.template,
+            out_names=tuple(out_names),
+            out_constraints=tuple(out_constraints),
+            out_rids=tuple(out_rids),
+            in_names=tuple(in_names),
+            in_constraints=tuple(in_constraints),
+            in_rids=tuple(in_rids),
+            clobbers=tuple(_strip_quotes(c) for c in clob_spellings),
+            is_volatile=st.is_volatile,
+            is_basic=st.is_basic,
+        )
 
     # GCC/Clang atomic + fence builtins -> the BCIR ATOMIC_*/BARRIER opcodes (§5.8).
-    _ATOMIC = {"__atomic_fetch_add": ("c.atomic.add", Opcode.ATOMIC_ADD),
-               "__atomic_fetch_sub": ("c.atomic.sub", Opcode.ATOMIC_SUB),
-               "__atomic_fetch_xor": ("c.atomic.xor", Opcode.ATOMIC_XOR)}
+    _ATOMIC = {
+        "__atomic_fetch_add": ("c.atomic.add", Opcode.ATOMIC_ADD),
+        "__atomic_fetch_sub": ("c.atomic.sub", Opcode.ATOMIC_SUB),
+        "__atomic_fetch_xor": ("c.atomic.xor", Opcode.ATOMIC_XOR),
+    }
     # ASM3 -- memory-fence (hardware barrier) intrinsics -> the BARRIER opcode, keyed by KIND. The op string
     # carries the kind so emit.py realizes the per-ISA instruction behind `--target` (full -> mfence/dmb ish/
     # fence rw,rw; acquire -> lfence/dmb ishld/fence r,rw; release -> sfence/dmb ishst/fence rw,w). The full
@@ -1870,25 +2342,44 @@ class _FuncLowerer:
     # entry below is the FALLBACK (no-arg) op for these names: a degenerate `atomic_thread_fence()` with no
     # argument keeps the full fence. The x86-conventional `_mm_{m,l,s}fence` intrinsic NAMES encode the kind
     # directly (they take no order argument), so their kind is read off the name.
-    _FENCE = {"__atomic_thread_fence": "c.fence", "__sync_synchronize": "c.fence",
-              "atomic_thread_fence": "c.fence",                  # C11 <stdatomic.h> -- order-parameterized
-              "_mm_mfence": "c.fence",                           # x86 mfence -- full (load+store) fence
-              "_mm_lfence": "c.fence.acquire",                   # x86 lfence -- load (acquire) fence
-              "_mm_sfence": "c.fence.release"}                   # x86 sfence -- store (release) fence
+    _FENCE = {
+        "__atomic_thread_fence": "c.fence",
+        "__sync_synchronize": "c.fence",
+        "atomic_thread_fence": "c.fence",  # C11 <stdatomic.h> -- order-parameterized
+        "_mm_mfence": "c.fence",  # x86 mfence -- full (load+store) fence
+        "_mm_lfence": "c.fence.acquire",  # x86 lfence -- load (acquire) fence
+        "_mm_sfence": "c.fence.release",
+    }  # x86 sfence -- store (release) fence
     # The order-taking fence forms (SEG6.1): these parse `node.args[0]` as a `memory_order` and route to the
     # kind it implies. The no-arg forms (`__sync_synchronize`, `_mm_*`) are NOT in this set and keep `_FENCE`.
     _FENCE_ORDERED = frozenset({"__atomic_thread_fence", "atomic_thread_fence"})
     # The C11 `memory_order_*` constants AND the GCC/Clang `__ATOMIC_*` macro spellings (they share the same
     # integer values). A `memory_order` arg spelled as one of these named constants folds to its value.
-    _MEMORDER = {"memory_order_relaxed": 0, "memory_order_consume": 1, "memory_order_acquire": 2,
-                 "memory_order_release": 3, "memory_order_acq_rel": 4, "memory_order_seq_cst": 5,
-                 "__ATOMIC_RELAXED": 0, "__ATOMIC_CONSUME": 1, "__ATOMIC_ACQUIRE": 2,
-                 "__ATOMIC_RELEASE": 3, "__ATOMIC_ACQ_REL": 4, "__ATOMIC_SEQ_CST": 5}
+    _MEMORDER = {
+        "memory_order_relaxed": 0,
+        "memory_order_consume": 1,
+        "memory_order_acquire": 2,
+        "memory_order_release": 3,
+        "memory_order_acq_rel": 4,
+        "memory_order_seq_cst": 5,
+        "__ATOMIC_RELAXED": 0,
+        "__ATOMIC_CONSUME": 1,
+        "__ATOMIC_ACQUIRE": 2,
+        "__ATOMIC_RELEASE": 3,
+        "__ATOMIC_ACQ_REL": 4,
+        "__ATOMIC_SEQ_CST": 5,
+    }
     # order value -> fence-kind op string. acquire(2)/consume(1) -> a load (acquire) fence; release(3) -> a
     # store (release) fence; seq_cst(5)/acq_rel(4)/relaxed(0) -> the full fence (a sound over-approximation --
     # a stronger fence never under-synchronizes, so acq_rel and relaxed both conservatively fold to full).
-    _ORDER_KIND = {0: "c.fence", 1: "c.fence.acquire", 2: "c.fence.acquire", 3: "c.fence.release",
-                   4: "c.fence", 5: "c.fence"}
+    _ORDER_KIND = {
+        0: "c.fence",
+        1: "c.fence.acquire",
+        2: "c.fence.acquire",
+        3: "c.fence.release",
+        4: "c.fence",
+        5: "c.fence",
+    }
 
     def _fence_order_kind(self, arg_node) -> str:
         """Resolve a `memory_order` ARGUMENT AST node to a fence-kind op string (SEG6.1). An integer literal
@@ -1897,25 +2388,33 @@ class _FuncLowerer:
         FULL fence (`c.fence`) -- sound (a stronger fence never under-synchronizes) and never crashes."""
         if isinstance(arg_node, cast.IntLit):
             order = arg_node.value
-        elif (isinstance(arg_node, cast.Name) and arg_node.ident in self._MEMORDER
-              and arg_node.ident not in self.env
-              and arg_node.ident not in self.func_rets):         # the constant ONLY when NOT shadowed by a real
-            order = self._MEMORDER[arg_node.ident]               #   decl OR a same-named function -- EXACTLY
+        elif (
+            isinstance(arg_node, cast.Name)
+            and arg_node.ident in self._MEMORDER
+            and arg_node.ident not in self.env
+            and arg_node.ident not in self.func_rets
+        ):  # the constant ONLY when NOT shadowed by a real
+            order = self._MEMORDER[arg_node.ident]  #   decl OR a same-named function -- EXACTLY
             #   _rvalue's precedence (an env local, then a func name -> a funcptr value, only THEN the _MEMORDER
             #   constant), so the kind rail never disagrees with the value rail on a shadowed name.
         else:
-            order = 5                                            # non-constant / shadowed / unknown -> seq_cst (full)
-        return self._ORDER_KIND.get(order, "c.fence")            # an out-of-range int folds to full too
+            order = 5  # non-constant / shadowed / unknown -> seq_cst (full)
+        return self._ORDER_KIND.get(order, "c.fence")  # an out-of-range int folds to full too
+
     # Compare-and-swap -> the CMPXCHG opcode: a 3-read claim (ptr, expected, desired). The `val`
     # form returns the pre-swap value, the `bool` form returns whether the swap happened.
-    _CMPXCHG = {"__sync_val_compare_and_swap": "c.cmpxchg.val",
-                "__sync_bool_compare_and_swap": "c.cmpxchg.bool"}
+    _CMPXCHG = {
+        "__sync_val_compare_and_swap": "c.cmpxchg.val",
+        "__sync_bool_compare_and_swap": "c.cmpxchg.bool",
+    }
     # C11 <stdatomic.h> generics on _Atomic objects -> the same ATOMIC opcodes, but emitted as the C11
     # functions (which accept an _Atomic* -- the __atomic_* builtins do not).
-    _C11_RMW = {"atomic_fetch_add": ("c.c11atom.fetch_add", Opcode.ATOMIC_ADD),
-                "atomic_fetch_sub": ("c.c11atom.fetch_sub", Opcode.ATOMIC_SUB),
-                "atomic_fetch_xor": ("c.c11atom.fetch_xor", Opcode.ATOMIC_XOR),
-                "atomic_exchange":  ("c.c11atom.exchange", Opcode.ATOMIC_ADD)}  # swap: set + return old
+    _C11_RMW = {
+        "atomic_fetch_add": ("c.c11atom.fetch_add", Opcode.ATOMIC_ADD),
+        "atomic_fetch_sub": ("c.c11atom.fetch_sub", Opcode.ATOMIC_SUB),
+        "atomic_fetch_xor": ("c.c11atom.fetch_xor", Opcode.ATOMIC_XOR),
+        "atomic_exchange": ("c.c11atom.exchange", Opcode.ATOMIC_ADD),
+    }  # swap: set + return old
 
     def _call(self, node: cast.CallExpr) -> int:
         actuals = tuple(self._rvalue(a) for a in node.args)
@@ -1924,10 +2423,17 @@ class _FuncLowerer:
         # value then the actuals) and is *not* added to the call graph, leaving R18 to treat it as an
         # opaque external edge (no recursion / callee-resolution constraint can apply).
         if node.callee in self.env and self.env[node.callee][1].kind == "funcptr":
-            fptr, fpct = self.env[node.callee]              # the funcptr CType carries its return type in `.of`
-            t = self._temp(self._call_result_ct(fpct.of), f"icall_{node.callee}")   # a signed return reads back signed
-            return self._emit("c.call.indirect", Opcode.GEM_DISPATCH, (fptr, *actuals), (t,),
-                              callee_sig=callee_signature(fpct))
+            fptr, fpct = self.env[node.callee]  # the funcptr CType carries its return type in `.of`
+            t = self._temp(
+                self._call_result_ct(fpct.of), f"icall_{node.callee}"
+            )  # a signed return reads back signed
+            return self._emit(
+                "c.call.indirect",
+                Opcode.GEM_DISPATCH,
+                (fptr, *actuals),
+                (t,),
+                callee_sig=callee_signature(fpct),
+            )
         # Atomics run on the A lane. A scalar atomic counter is a single-location RMW (not on
         # the decoupled GGG/scatter tail), so it stays SCALAR-shaped -- the lane law (R6) admits
         # lane A for SCALAR, and the atomic/barriered hazard discharges R5.
@@ -1939,7 +2445,9 @@ class _FuncLowerer:
             if node.callee in self._FENCE_ORDERED and node.args:
                 op = self._fence_order_kind(node.args[0])
             else:
-                op = self._FENCE[node.callee]            # c.fence | c.fence.acquire | c.fence.release (the KIND)
+                op = self._FENCE[
+                    node.callee
+                ]  # c.fence | c.fence.acquire | c.fence.release (the KIND)
             t = self._temp(scalar("uint32_t"), "fence")
             self._emit(op, Opcode.BARRIER, (), (), lane=Lane.A, hazard="barriered")
             return t
@@ -1957,71 +2465,113 @@ class _FuncLowerer:
             des = actuals[2] if len(actuals) > 2 else exp
             t = self._temp(scalar("uint32_t"), "cas")
             dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
-            return self._emit(op, Opcode.CMPXCHG, (ptr, exp, des), (t,),
-                              lane=Lane.A, domain=dom, hazard="atomic")
+            return self._emit(
+                op, Opcode.CMPXCHG, (ptr, exp, des), (t,), lane=Lane.A, domain=dom, hazard="atomic"
+            )
         if node.callee in ("atomic_compare_exchange_strong", "atomic_compare_exchange_weak"):
             # C11 bool atomic_compare_exchange_strong/weak(A *obj, C *expected, C desired): if *obj ==
             # *expected set *obj = desired (true), else load *obj into *expected (false). `expected` is a
             # POINTER -- the headline use of address-of (`&exp`), which is why this waited on `&`. Emitted
             # verbatim; the atomic semantics are delegated to the resident backend / Clang.
-            op = ("c.c11atom.cas_strong" if node.callee.endswith("strong") else "c.c11atom.cas_weak")
+            op = "c.c11atom.cas_strong" if node.callee.endswith("strong") else "c.c11atom.cas_weak"
             ptr, exp = actuals[0], (actuals[1] if len(actuals) > 1 else actuals[0])
             des = actuals[2] if len(actuals) > 2 else exp
-            t = self._temp(scalar("_Bool"), "c11cas")                 # the comparison result is _Bool
+            t = self._temp(scalar("_Bool"), "c11cas")  # the comparison result is _Bool
             dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
-            return self._emit(op, Opcode.CMPXCHG, (ptr, exp, des), (t,),
-                              lane=Lane.A, domain=dom, hazard="atomic")
-        if node.callee in self._C11_RMW:               # atomic_fetch_add/sub/xor(p, v) -> old value
+            return self._emit(
+                op, Opcode.CMPXCHG, (ptr, exp, des), (t,), lane=Lane.A, domain=dom, hazard="atomic"
+            )
+        if node.callee in self._C11_RMW:  # atomic_fetch_add/sub/xor(p, v) -> old value
             op, oc = self._C11_RMW[node.callee]
             ptr = actuals[0]
             val = actuals[1] if len(actuals) > 1 else actuals[0]
             t = self._temp(scalar("uint32_t"), "c11")
             dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
             return self._emit(op, oc, (ptr, val), (t,), lane=Lane.A, domain=dom, hazard="atomic")
-        if node.callee == "atomic_load":               # atomic_load(p) -> *p (ordered)
+        if node.callee == "atomic_load":  # atomic_load(p) -> *p (ordered)
             ptr = actuals[0]
             t = self._temp(scalar("uint32_t"), "c11ld")
             dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
-            return self._emit("c.c11atom.load", Opcode.LOAD, (ptr,), (t,),
-                              lane=Lane.A, domain=dom, hazard="atomic")
-        if node.callee == "atomic_store":              # atomic_store(p, v) (ordered, no value)
+            return self._emit(
+                "c.c11atom.load",
+                Opcode.LOAD,
+                (ptr,),
+                (t,),
+                lane=Lane.A,
+                domain=dom,
+                hazard="atomic",
+            )
+        if node.callee == "atomic_store":  # atomic_store(p, v) (ordered, no value)
             ptr = actuals[0]
             val = actuals[1] if len(actuals) > 1 else actuals[0]
             dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
-            self._emit("c.c11atom.store", Opcode.STORE, (ptr, val), (),
-                       lane=Lane.A, domain=dom, hazard="atomic")
+            self._emit(
+                "c.c11atom.store",
+                Opcode.STORE,
+                (ptr, val),
+                (),
+                lane=Lane.A,
+                domain=dom,
+                hazard="atomic",
+            )
             return ptr
-        if node.callee in ("va_start", "va_end", "va_copy"):   # opaque void variadic builtins (verbatim emit)
+        if node.callee in (
+            "va_start",
+            "va_end",
+            "va_copy",
+        ):  # opaque void variadic builtins (verbatim emit)
             self._emit(f"c.call.vabuiltin:{node.callee}", Opcode.GEM_DISPATCH, actuals, ())
-            return _VOID_RID                           # not added to self.calls: opaque to the R18 call graph
-        if (node.callee in _PORTIO_IN or node.callee in _PORTIO_OUT) and node.callee not in self.func_rets:
-            return self._portio(node, actuals)         # ASM2: a typed, isolated, barriered I/O-port edge
+            return _VOID_RID  # not added to self.calls: opaque to the R18 call graph
+        if (
+            node.callee in _PORTIO_IN or node.callee in _PORTIO_OUT
+        ) and node.callee not in self.func_rets:
+            return self._portio(node, actuals)  # ASM2: a typed, isolated, barriered I/O-port edge
         libm = _libm_type(node.callee)
-        if libm is not None:                           # a <math.h> call -> a typed external library edge
-            t = self._temp(libm, f"libm_{node.callee}")    # not added to self.calls: opaque to the call
-            return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))  # graph
+        if libm is not None:  # a <math.h> call -> a typed external library edge
+            t = self._temp(
+                libm, f"libm_{node.callee}"
+            )  # not added to self.calls: opaque to the call
+            return self._emit(
+                f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,)
+            )  # graph
         if node.callee in _EXTERN_VARIADIC and node.callee not in self.func_rets:
-            t = self._temp(scalar("int", self.abi), f"ext_{node.callee}")   # a printf/scanf-family external
-            return self._emit(f"c.call.extern:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))  # variadic
+            t = self._temp(
+                scalar("int", self.abi), f"ext_{node.callee}"
+            )  # a printf/scanf-family external
+            return self._emit(
+                f"c.call.extern:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,)
+            )  # variadic
         if node.callee in _STDLIB_ALLOC and node.callee not in self.func_rets:
-            t = self._temp(pointer(scalar("void")), f"mem_{node.callee}")   # malloc/calloc/realloc -> void *
+            t = self._temp(
+                pointer(scalar("void")), f"mem_{node.callee}"
+            )  # malloc/calloc/realloc -> void *
             # a R21 lifetime ALLOC event on the result: it (re-)validates the allocation, so a pointer assigned
             # from it is live again after an earlier free (`p=malloc; free(p); p=malloc; p[i]` is legal). Pairs
             # with the `free` event below; digest-excluded + vacuous unless the smart-lowering verifier runs R21.
-            return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,),  # verbatim, opaque
-                              lifetime=Lifetime("alloc"))
+            return self._emit(
+                f"c.call.libm:{node.callee}",
+                Opcode.GEM_DISPATCH,
+                actuals,
+                (t,),  # verbatim, opaque
+                lifetime=Lifetime("alloc"),
+            )
         if node.callee == "free" and node.callee not in self.func_rets:
             # void external (verbatim, opaque) + a R21 lifetime FREE event: the freed pointer (the actual it
             # reads) dies after this claim, so a later dereference of it is a use-after-free (§5.12). Vacuous
             # unless the smart-lowering verifier runs R21 -- the frontend pass/fail is unchanged.
-            self._emit("c.call.libm.void:free", Opcode.GEM_DISPATCH, actuals, (),
-                       lifetime=Lifetime("free"))
+            self._emit(
+                "c.call.libm.void:free", Opcode.GEM_DISPATCH, actuals, (), lifetime=Lifetime("free")
+            )
             return _VOID_RID
         bt = _builtin_type(node.callee, self.abi)
-        if bt is not None:                             # a GCC/Clang integer builtin -> verbatim, typed, opaque
-            t = self._temp(bt, "blt")                  # the op carries the suffix (the `__builtin_` is re-added
-            return self._emit(f"c.call.builtin:{node.callee[len('__builtin_'):]}",  # in emit; the op buffer is small)
-                              Opcode.GEM_DISPATCH, actuals, (t,))
+        if bt is not None:  # a GCC/Clang integer builtin -> verbatim, typed, opaque
+            t = self._temp(bt, "blt")  # the op carries the suffix (the `__builtin_` is re-added
+            return self._emit(
+                f"c.call.builtin:{node.callee[len('__builtin_') :]}",  # in emit; the op buffer is small)
+                Opcode.GEM_DISPATCH,
+                actuals,
+                (t,),
+            )
         if node.callee in self.protos and node.callee not in self.func_rets:
             # Phase 3 LINKING: a PROTOTYPED cross-TU callee -- a TYPED external edge the host LINKER
             # resolves from a sibling object. Like a libm edge it is opaque to the in-unit R18 call
@@ -2035,11 +2585,15 @@ class _FuncLowerer:
                 return _VOID_RID
             t = self._temp(self._call_result_ct(ret_ct), f"tu_{node.callee}")
             return self._emit(f"c.call.tu:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))
-        self.calls.append((node.callee, actuals))      # a defined-in-unit callee: a real R18 edge
+        self.calls.append((node.callee, actuals))  # a defined-in-unit callee: a real R18 edge
         ret_ct = self.func_rets.get(node.callee)
-        if ret_ct is not None and ret_ct.name == "void":   # a void callee -> a bare call statement, no
-            self._emit(f"c.call.void:{node.callee}", Opcode.GEM_DISPATCH, actuals, ())   # result temp
-            return _VOID_RID                           # the value of a void call is never read
+        if (
+            ret_ct is not None and ret_ct.name == "void"
+        ):  # a void callee -> a bare call statement, no
+            self._emit(
+                f"c.call.void:{node.callee}", Opcode.GEM_DISPATCH, actuals, ()
+            )  # result temp
+            return _VOID_RID  # the value of a void call is never read
         # type the result temp by the callee's return type: a float return propagates (so downstream
         # arithmetic stays float), a wide (8-byte) integer return keeps its width, and a signed `int` return
         # keeps its SIGN -- else a downstream `>>` / comparison on the call result would go unsigned (a
@@ -2057,10 +2611,15 @@ class _FuncLowerer:
     def _io_port_space(self) -> int:
         rid = getattr(self, "_io_port_rid", None)
         if rid is None:
-            rid = _IO_PORT_RID                             # reserved sentinel: never produced by base+count
+            rid = _IO_PORT_RID  # reserved sentinel: never produced by base+count
             self.resources[rid] = Resource(
-                rid=rid, domain=Domain.MMIO, elem_bytes=1, shape=(1 << 16,),   # the 64K I/O port address space
-                access="volatile", name="__ioport")
+                rid=rid,
+                domain=Domain.MMIO,
+                elem_bytes=1,
+                shape=(1 << 16,),  # the 64K I/O port address space
+                access="volatile",
+                name="__ioport",
+            )
             self._io_port_rid = rid
         return rid
 
@@ -2084,34 +2643,52 @@ class _FuncLowerer:
         the function's target (x86 -> the real instruction as `__asm__ __volatile__`; a non-x86 target raises
         the honest unsupported diagnostic). Arity + operand width are validated here (an honest CLowerError)."""
         io = self._io_port_space()
-        if node.callee in _PORTIO_IN:                       # inb/inw/inl(port) -> u8/u16/u32
+        if node.callee in _PORTIO_IN:  # inb/inw/inl(port) -> u8/u16/u32
             width, rty = _PORTIO_IN[node.callee]
             if len(actuals) != 1:
                 raise CLowerError(
-                    f"{node.callee}(port) takes exactly 1 argument (the u16 I/O port), got {len(actuals)}")
+                    f"{node.callee}(port) takes exactly 1 argument (the u16 I/O port), got {len(actuals)}"
+                )
             port = actuals[0]
             self._check_port_operand(node.callee, port)
             suf = {1: "b", 2: "w", 4: "l"}[width]
             t = self._temp(scalar(rty, self.abi), f"portio_{node.callee}")
             # rd = (port value, the I/O-port space); wr = (the result temp). The io rid on BOTH sides makes a
             # read ALSO an effect on the port space, so two reads do not commute (ordered, never fused).
-            return self._emit(f"c.portio.in.{suf}:{node.callee}", Opcode.GEM_DISPATCH, (port, io), (t, io),
-                              imm=(width,), domain=Domain.MMIO, lane=Lane.H, hazard="barriered")
+            return self._emit(
+                f"c.portio.in.{suf}:{node.callee}",
+                Opcode.GEM_DISPATCH,
+                (port, io),
+                (t, io),
+                imm=(width,),
+                domain=Domain.MMIO,
+                lane=Lane.H,
+                hazard="barriered",
+            )
         # outb/outw/outl(value, port) -- the Linux <asm/io.h> convention: VALUE first, PORT second (void).
         width = _PORTIO_OUT[node.callee]
         if len(actuals) != 2:
             raise CLowerError(
                 f"{node.callee}(value, port) takes exactly 2 arguments (value, then the u16 I/O port), "
-                f"got {len(actuals)} -- note the Linux out*(value, port) order")
+                f"got {len(actuals)} -- note the Linux out*(value, port) order"
+            )
         value, port = actuals[0], actuals[1]
         self._check_port_operand(node.callee, port)
         self._check_value_operand(node.callee, value, width)
         suf = {1: "b", 2: "w", 4: "l"}[width]
         # rd = (value, port, the I/O-port space); wr = (the port space). The void write produces no value
         # temp; its write of `io` makes the edge a real effect that orders against every other port op.
-        self._emit(f"c.portio.out.{suf}:{node.callee}", Opcode.GEM_DISPATCH, (value, port, io), (io,),
-                   imm=(width,), domain=Domain.MMIO, lane=Lane.H, hazard="barriered")
-        return _VOID_RID                                    # a void write: its value is never read
+        self._emit(
+            f"c.portio.out.{suf}:{node.callee}",
+            Opcode.GEM_DISPATCH,
+            (value, port, io),
+            (io,),
+            imm=(width,),
+            domain=Domain.MMIO,
+            lane=Lane.H,
+            hazard="barriered",
+        )
+        return _VOID_RID  # a void write: its value is never read
 
     def _check_port_operand(self, callee: str, port: int) -> None:
         """The `port` operand is the I/O port address -- conceptually a u16. Accept any integer operand
@@ -2121,17 +2698,22 @@ class _FuncLowerer:
         if pct is not None and not pct.is_integer and pct.kind != "scalar":
             raise CLowerError(f"{callee}: the I/O port must be an integer (u16), not a {pct.kind}")
         if pct is not None and pct.is_float:
-            raise CLowerError(f"{callee}: the I/O port must be an integer (u16), not a floating value")
+            raise CLowerError(
+                f"{callee}: the I/O port must be an integer (u16), not a floating value"
+            )
 
     def _check_value_operand(self, callee: str, value: int, width: int) -> None:
         """The `value` written by out{b,w,l} is a u8/u16/u32 matching the suffix width. Accept any integer
         (the x86 `"a"` accumulator constraint takes the low byte/word/dword); reject a non-integer value."""
         vct = self.rtypes.get(value)
         if vct is not None and vct.is_float:
-            raise CLowerError(f"{callee}: the written value must be an integer (u{width * 8}), not a float")
+            raise CLowerError(
+                f"{callee}: the written value must be an integer (u{width * 8}), not a float"
+            )
         if vct is not None and not vct.is_integer and vct.kind != "scalar":
-            raise CLowerError(f"{callee}: the written value must be an integer (u{width * 8}), "
-                              f"not a {vct.kind}")
+            raise CLowerError(
+                f"{callee}: the written value must be an integer (u{width * 8}), not a {vct.kind}"
+            )
 
     def _call_result_ct(self, ret_ct):
         """The result-temp CType for a call, by the callee's return type -- shared by direct, indirect
@@ -2141,9 +2723,11 @@ class _FuncLowerer:
         funcptr whose return type wasn't captured (`ret_ct is None`) stays uint32 -- today's behaviour."""
         if ret_ct is not None and ret_ct.is_aggregate:
             return ret_ct
-        if ret_ct is not None and ret_ct.is_bitint:       # a C23 `_BitInt(N)` return keeps its exact width
-            return ret_ct                                 # (it does not promote, and same-type arithmetic on
-                                                          # the result must stay `_BitInt(N)`, not canonicalize)
+        if (
+            ret_ct is not None and ret_ct.is_bitint
+        ):  # a C23 `_BitInt(N)` return keeps its exact width
+            return ret_ct  # (it does not promote, and same-type arithmetic on
+            # the result must stay `_BitInt(N)`, not canonicalize)
         if ret_ct is not None and (ret_ct.is_float or (ret_ct.is_integer and ret_ct.size > 4)):
             return ret_ct
         if ret_ct is not None and ret_ct.is_integer and ret_ct.signed and ret_ct.size <= 4:
@@ -2154,19 +2738,19 @@ class _FuncLowerer:
     def _block(self, stmts) -> list:
         block: list = []
         self.block_stack.append(block)
-        saved_env = dict(self.env)                            # a `{ ... }` is a scope: locals declared
-        for s in stmts:                                       # inside it do not leak to the enclosing
-            self._stmt(s)                                     # block (so a shadow does not clobber an
-        self.env = saved_env                                 # outer same-named var read after the block)
+        saved_env = dict(self.env)  # a `{ ... }` is a scope: locals declared
+        for s in stmts:  # inside it do not leak to the enclosing
+            self._stmt(s)  # block (so a shadow does not clobber an
+        self.env = saved_env  # outer same-named var read after the block)
         self.block_stack.pop()
         return block
 
     def _stmt(self, st):
-        if isinstance(st, cast.Seq):                          # several declarators of one declaration
+        if isinstance(st, cast.Seq):  # several declarators of one declaration
             for s in st.stmts:
                 self._stmt(s)
             return None
-        if isinstance(st, cast.Block):                        # a bare `{ ... }` -> its scoped nodes,
+        if isinstance(st, cast.Block):  # a bare `{ ... }` -> its scoped nodes,
             self.block_stack[-1].extend(self._block(st.stmts))  # appended inline (no if(1) wrapper)
             return None
         if isinstance(st, cast.Decl):
@@ -2178,16 +2762,22 @@ class _FuncLowerer:
                     raise CLowerError("a VLA cannot have static storage or an initializer")
                 elem = self._resolve_type(replace(st.type, vla=None, array=()))
                 if elem.size <= 0 or elem.kind == "array":
-                    raise CLowerError("VLA of an incomplete / void / array element is not supported")
-                nval = self._rvalue(st.type.vla)              # the size expression, evaluated exactly once
+                    raise CLowerError(
+                        "VLA of an incomplete / void / array element is not supported"
+                    )
+                nval = self._rvalue(st.type.vla)  # the size expression, evaluated exactly once
                 nct = self.rtypes.get(nval)
                 if nct is None or nct.kind != "scalar" or nct.is_float:
                     raise CLowerError("a VLA size must be an integer expression")
-                ext = self._storage(nct, f"__bcir_ext{self._ext_ctr}")     # the snapshot: immutable extent
+                ext = self._storage(
+                    nct, f"__bcir_ext{self._ext_ctr}"
+                )  # the snapshot: immutable extent
                 self._ext_ctr += 1
                 self._emit("c.copy", Opcode.ADD, (nval,), (ext,))
-                ct = array(elem, 0)                           # count 0 -> a runtime extent; bounds via ptr_extent
-                rid = self._vla_storage(ct, st.name, ext)     # declared in-body; masked `a[i]` vs the snapshot
+                ct = array(elem, 0)  # count 0 -> a runtime extent; bounds via ptr_extent
+                rid = self._vla_storage(
+                    ct, st.name, ext
+                )  # declared in-body; masked `a[i]` vs the snapshot
                 self.env[st.name] = (rid, ct)
                 self.ptr_extent[rid] = ext
                 return None
@@ -2200,32 +2790,36 @@ class _FuncLowerer:
                     raise CLowerError("a VLA cannot have static storage or an initializer")
                 elem = self._resolve_type(replace(st.type, vla=None, vla_dims=(), array=()))
                 if elem.size <= 0 or elem.kind == "array":
-                    raise CLowerError("a multi-dimensional VLA of an incomplete / array element is not supported")
+                    raise CLowerError(
+                        "a multi-dimensional VLA of an incomplete / array element is not supported"
+                    )
                 u32 = scalar("uint32_t", self.abi)
-                dim_exts = []                                 # 1. snapshot each dim into a named __bcir_extK
+                dim_exts = []  # 1. snapshot each dim into a named __bcir_extK
                 for d in st.type.vla_dims:
                     ext = self._storage(u32, f"__bcir_ext{self._ext_ctr}")
                     self._ext_ctr += 1
-                    if isinstance(d, int):                    # a literal dim -> a const temp, copied into the ext
+                    if isinstance(d, int):  # a literal dim -> a const temp, copied into the ext
                         kt = self._temp(u32, "kd")
                         self._emit("c.const", Opcode.LOAD, (), (kt,), imm=(d,))
                         self._emit("c.copy", Opcode.ADD, (kt,), (ext,))
-                    else:                                     # a runtime dim -> evaluated once, copied in
+                    else:  # a runtime dim -> evaluated once, copied in
                         self._emit("c.copy", Opcode.ADD, (self._rvalue(d),), (ext,))
                     dim_exts.append(ext)
-                total = dim_exts[0]                           # 2. total extent = product of all dim snapshots
+                total = dim_exts[0]  # 2. total extent = product of all dim snapshots
                 for d in range(1, len(dim_exts)):
                     prod = self._temp(u32, "b_mul")
                     self._emit("c.bin.mul", Opcode.MUL, (total, dim_exts[d]), (prod,))
                     total = prod
                 ext_total = self._storage(u32, f"__bcir_ext{self._ext_ctr}")
                 self._ext_ctr += 1
-                self._emit("c.copy", Opcode.ADD, (total,), (ext_total,))   # stable name for the decl + the mask
-                ct = array(elem, 0)                           # 3. a FLAT runtime-extent array
+                self._emit(
+                    "c.copy", Opcode.ADD, (total,), (ext_total,)
+                )  # stable name for the decl + the mask
+                ct = array(elem, 0)  # 3. a FLAT runtime-extent array
                 rid = self._vla_storage(ct, st.name, ext_total)
                 self.env[st.name] = (rid, ct)
                 self.ptr_extent[rid] = ext_total
-                self.vla_strides[rid] = tuple(dim_exts)       # the per-dim Horner multipliers
+                self.vla_strides[rid] = tuple(dim_exts)  # the per-dim Horner multipliers
                 return None
             if len(st.type.array) > 1:
                 # a multi-dimensional local array `T m[A][B]`: a flat resource of A*B elements carrying
@@ -2235,14 +2829,18 @@ class _FuncLowerer:
                 dims = st.type.array
                 if len(dims) > 3:
                     raise CLowerError(
-                        f"multi-dimensional local array '{st.name}' of more than 3 dims is not yet supported")
+                        f"multi-dimensional local array '{st.name}' of more than 3 dims is not yet supported"
+                    )
                 elem = self._resolve_type(replace(st.type, array=()))
                 total = 1
                 for d in dims:
                     total *= d
                 ct = replace(array(elem, total), shape=tuple(dims))
-            elif (len(st.type.array) == 1 and st.type.array[0] in (0, None)
-                  and isinstance(st.init, cast.AggInit)):
+            elif (
+                len(st.type.array) == 1
+                and st.type.array[0] in (0, None)
+                and isinstance(st.init, cast.AggInit)
+            ):
                 # an INFERRED-size local array `T a[] = {...}` (scalar OR struct element): `_resolve_type`
                 # would size it `array(elem, 0)` -> `a[0]`, so the per-element init stores write past the
                 # storage (UB, a #500-class silent miscompile). Infer the outer count from the initializer
@@ -2251,7 +2849,7 @@ class _FuncLowerer:
                 elem = self._resolve_type(replace(st.type, array=()))
                 n, cursor = 0, 0
                 for key, _expr in st.init.entries:
-                    if isinstance(key, tuple):                # a nested chain `[i]...` -> its outer array index
+                    if isinstance(key, tuple):  # a nested chain `[i]...` -> its outer array index
                         idx = key[0][1] if key and key[0][0] == "a" else cursor
                     else:
                         idx = key if isinstance(key, int) else cursor
@@ -2260,31 +2858,35 @@ class _FuncLowerer:
                 ct = array(elem, n or 1)
             else:
                 ct = self._resolve_type(st.type)
-            if st.static_storage:                             # static storage: init once, in the decl
+            if st.static_storage:  # static storage: init once, in the decl
                 rid = self._static_storage(ct, st.name, _fold_const(st.init))
                 self.env[st.name] = (rid, ct)
                 return None
-            rid = self._storage(ct, st.name)                  # a mutable named local
+            rid = self._storage(ct, st.name)  # a mutable named local
             self.env[st.name] = (rid, ct)
-            if isinstance(st.init, cast.AggInit):             # struct/union/array `= { ... }`
+            if isinstance(st.init, cast.AggInit):  # struct/union/array `= { ... }`
                 self._agg_init(rid, ct, st.init)
             elif st.init is not None:
                 self._emit("c.copy", Opcode.ADD, (self._rvalue(st.init),), (rid,))
-                self._bind_extent(rid, ct, st.name, st.init)  # §5.12: `T *p = malloc(N*sizeof(T))` -> extent N
+                self._bind_extent(
+                    rid, ct, st.name, st.init
+                )  # §5.12: `T *p = malloc(N*sizeof(T))` -> extent N
         elif isinstance(st, cast.ExprStmt):
-            if isinstance(st.expr, cast.Assign):              # a statement assignment: any lvalue form is fine
-                self._assign(st.expr, stmt=True)              # (the value is unused -- no named-local restriction)
+            if isinstance(st.expr, cast.Assign):  # a statement assignment: any lvalue form is fine
+                self._assign(
+                    st.expr, stmt=True
+                )  # (the value is unused -- no named-local restriction)
             else:
                 self._rvalue(st.expr)
         elif isinstance(st, cast.Return):
             rid = None if st.value is None else self._rvalue(st.value)
-            if rid == _VOID_RID:                              # `return void_call();` -> the call stmt is
-                rid = None                                    # already emitted; a void function `return;`s
+            if rid == _VOID_RID:  # `return void_call();` -> the call stmt is
+                rid = None  # already emitted; a void function `return;`s
             self.block_stack[-1].append(ReturnNode(rid))
             if rid is not None:
                 self.last_return = rid
         elif isinstance(st, cast.If):
-            cond = self._rvalue(st.cond)                       # condition claims -> current block
+            cond = self._rvalue(st.cond)  # condition claims -> current block
             node = IfNode(cond, self._block(st.then), self._block(st.els))
             self.block_stack[-1].append(node)
         elif isinstance(st, cast.While):
@@ -2293,9 +2895,10 @@ class _FuncLowerer:
             cond = self._rvalue(st.cond)
             self.block_stack.pop()
             self.block_stack[-1].append(
-                WhileNode(cond_block, cond, self._block(st.body), loop_id=self._next_loop_id()))
+                WhileNode(cond_block, cond, self._block(st.body), loop_id=self._next_loop_id())
+            )
         elif isinstance(st, cast.Switch):
-            disc = self._rvalue(st.disc)                      # the discriminant, lowered once
+            disc = self._rvalue(st.disc)  # the discriminant, lowered once
             block: list = []
             self.block_stack.append(block)
             for item in st.body:
@@ -2304,41 +2907,43 @@ class _FuncLowerer:
                 elif isinstance(item, cast.Default):
                     block.append(DefaultLabel())
                 else:
-                    self._stmt(item)                          # body stmts (break preserved as BreakNode)
+                    self._stmt(item)  # body stmts (break preserved as BreakNode)
             self.block_stack.pop()
             self.block_stack[-1].append(SwitchNode(disc, block))
         elif isinstance(st, cast.For):
-            saved_env = dict(self.env)                         # the for-init + body declarations are
-            if st.init is not None:                            # loop-scoped: a `for(unsigned i = ...)`
-                self._stmt(st.init)                            # must not leak `i` past the loop (where it
-            cond_block2: list = []                             # would shadow a same-named param / outer)
+            saved_env = dict(self.env)  # the for-init + body declarations are
+            if st.init is not None:  # loop-scoped: a `for(unsigned i = ...)`
+                self._stmt(st.init)  # must not leak `i` past the loop (where it
+            cond_block2: list = []  # would shadow a same-named param / outer)
             self.block_stack.append(cond_block2)
             cond = self._rvalue(st.cond)
             self.block_stack.pop()
             body = self._block(st.body)
             step: list = []
-            if st.step is not None:                            # the step runs after body (the continue point)
+            if st.step is not None:  # the step runs after body (the continue point)
                 self.block_stack.append(step)
                 self._stmt(st.step)
                 self.block_stack.pop()
             self.block_stack[-1].append(
-                WhileNode(cond_block2, cond, body, step=step, loop_id=self._next_loop_id()))
-            self.env = saved_env                               # pop the loop scope (restore outer bindings)
-        elif isinstance(st, cast.DoWhile):                     # body runs, then the cond is tested
+                WhileNode(cond_block2, cond, body, step=step, loop_id=self._next_loop_id())
+            )
+            self.env = saved_env  # pop the loop scope (restore outer bindings)
+        elif isinstance(st, cast.DoWhile):  # body runs, then the cond is tested
             body = self._block(st.body)
             cond_block3: list = []
             self.block_stack.append(cond_block3)
             cond = self._rvalue(st.cond)
             self.block_stack.pop()
             self.block_stack[-1].append(
-                WhileNode(cond_block3, cond, body, test_at_end=True, loop_id=self._next_loop_id()))
+                WhileNode(cond_block3, cond, body, test_at_end=True, loop_id=self._next_loop_id())
+            )
         elif isinstance(st, cast.Break):
             self.block_stack[-1].append(BreakNode())
         elif isinstance(st, cast.Continue):
             self.block_stack[-1].append(ContinueNode())
         elif isinstance(st, cast.Goto):
             self.block_stack[-1].append(GotoNode(st.label))
-        elif isinstance(st, cast.ComputedGoto):           # `goto *p;` -- the target is lowered to a void*
+        elif isinstance(st, cast.ComputedGoto):  # `goto *p;` -- the target is lowered to a void*
             self.block_stack[-1].append(ComputedGotoNode(self._rvalue(st.target)))
         elif isinstance(st, cast.Label):
             self.block_stack[-1].append(LabelNode(st.name))
@@ -2350,11 +2955,13 @@ class _FuncLowerer:
 
     def lower(self) -> LoweredFunc:
         self.last_return = None
-        _scan_mutations(self.func.body, self._mut_assigned, self._mut_body, self._mut_addr)  # §5.12 stability pre-pass
-        self.env.update(self.genv)                            # file-scope globals are in scope
+        _scan_mutations(
+            self.func.body, self._mut_assigned, self._mut_body, self._mut_addr
+        )  # §5.12 stability pre-pass
+        self.env.update(self.genv)  # file-scope globals are in scope
         for rid, ct in self.genv.values():
             self.rtypes.setdefault(rid, ct)
-        for p in self.func.params:                            # params -> input resources (shadowing)
+        for p in self.func.params:  # params -> input resources (shadowing)
             if p.type.vla is not None:
                 # a VLA parameter `T a[n]`: like any array param it decays to a pointer, BUT we recover the
                 # runtime extent `n` (a prior in-scope integer parameter) and bind it via ptr_extent so the
@@ -2364,22 +2971,30 @@ class _FuncLowerer:
                 # `n` is already in env and a later param is not.)
                 elem = self._resolve_type(replace(p.type, vla=None, array=()))
                 if elem.size <= 0 or elem.kind == "array":
-                    raise CLowerError("a VLA parameter of an incomplete / array element is not supported")
+                    raise CLowerError(
+                        "a VLA parameter of an incomplete / array element is not supported"
+                    )
                 ct = replace(pointer(elem), shape=(0,))
                 rid = self._new_rid()
                 self._resource(rid, ct, p.name)
                 self.env[p.name] = (rid, ct)
                 self.params.append((p.name, rid, ct))
-                n = p.type.vla                                # bind ONLY for a STABLE prior integer param `n`
-                if isinstance(n, cast.Name) and n.ident in self.env:   # (unmutated, not address-taken --
-                    n_rid, n_ct = self.env[n.ident]                    #  the _bind_extent stable-Name contract,
-                    if (n_ct.kind == "scalar" and not n_ct.is_float    #  so re-emitting `n` by name is sound)
-                            and self._mut_body.get(n.ident, 0) == 0 and n.ident not in self._mut_addr):
+                n = p.type.vla  # bind ONLY for a STABLE prior integer param `n`
+                if (
+                    isinstance(n, cast.Name) and n.ident in self.env
+                ):  # (unmutated, not address-taken --
+                    n_rid, n_ct = self.env[n.ident]  #  the _bind_extent stable-Name contract,
+                    if (
+                        n_ct.kind == "scalar"
+                        and not n_ct.is_float  #  so re-emitting `n` by name is sound)
+                        and self._mut_body.get(n.ident, 0) == 0
+                        and n.ident not in self._mut_addr
+                    ):
                         self.ptr_extent[rid] = n_rid
                 continue
             ct = self._resolve_type(p.type)
-            if ct.kind == "array":                            # an array param decays to a flat
-                dims, elem = [], ct                           # element pointer + a recorded shape
+            if ct.kind == "array":  # an array param decays to a flat
+                dims, elem = [], ct  # element pointer + a recorded shape
                 while elem.kind == "array":
                     dims.append(elem.count)
                     elem = elem.of
@@ -2394,11 +3009,11 @@ class _FuncLowerer:
         claims = _flatten_block(body)
         touched = {r for c in claims for r in (tuple(c.rd) + tuple(c.wr))}
         if self.last_return is not None:
-            touched.add(self.last_return)                 # a BARE `return g;` reaches a global
-                                                          # with ZERO claims -- it must still be
-                                                          # pulled in and NAMED (else it renders
-                                                          # as the raw rid temp)
-        for rid in touched & set(self.gres):                  # pull in referenced global resources
+            touched.add(self.last_return)  # a BARE `return g;` reaches a global
+            # with ZERO claims -- it must still be
+            # pulled in and NAMED (else it renders
+            # as the raw rid temp)
+        for rid in touched & set(self.gres):  # pull in referenced global resources
             if rid == _IO_PORT_RID:
                 # belt + suspenders: NEVER let a (guarded-impossible) global/string-band collision overwrite
                 # the reserved `__ioport` MMIO resource with a RAM resource -- that would make a port access
@@ -2407,25 +3022,38 @@ class _FuncLowerer:
                 continue
             self.resources[rid] = self.gres[rid]
         gnames = {rid: nm for nm, (rid, _ct) in self.genv.items() if rid in touched}
-        gnames.update(self.str_globals)                       # string globals render as inline literals
-        gnames.update(self.func_globals)                      # function-as-value globals render as the bare name
+        gnames.update(self.str_globals)  # string globals render as inline literals
+        gnames.update(self.func_globals)  # function-as-value globals render as the bare name
         m = Module(name=self.func.name)
         for rid in sorted(self.resources):
             m.add_resource(self.resources[rid])
         m.add_phase(Phase(phase_id=0, deps=(), claims=list(claims)))
         ret_ct = self._resolve_type(self.func.ret)
-        return LoweredFunc(name=self.func.name, module=m, ret_type=ret_ct, params=self.params,
-                           return_rid=self.last_return, claims=list(claims),
-                           resources=dict(self.resources), rid_types=dict(self.rtypes),
-                           calls=list(self.calls), region=None, body=body, locals=list(self.locals),
-                           vla_locals=list(self.vla_locals),
-                           statics=list(self.statics), globals_used=gnames,
-                           zero_init_locals=set(self.zero_init), variadic=self.func.variadic,
-                           tu_protos=dict(self.tu_used),
-                           reproducible=getattr(self.func, "reproducible", False),
-                           static_fn=getattr(self.func, "static_fn", False),
-                           ptr_extent=dict(self.ptr_extent),
-                           asm_meta=dict(self.asm_meta), target=self.abi.name)
+        return LoweredFunc(
+            name=self.func.name,
+            module=m,
+            ret_type=ret_ct,
+            params=self.params,
+            return_rid=self.last_return,
+            claims=list(claims),
+            resources=dict(self.resources),
+            rid_types=dict(self.rtypes),
+            calls=list(self.calls),
+            region=None,
+            body=body,
+            locals=list(self.locals),
+            vla_locals=list(self.vla_locals),
+            statics=list(self.statics),
+            globals_used=gnames,
+            zero_init_locals=set(self.zero_init),
+            variadic=self.func.variadic,
+            tu_protos=dict(self.tu_used),
+            reproducible=getattr(self.func, "reproducible", False),
+            static_fn=getattr(self.func, "static_fn", False),
+            ptr_extent=dict(self.ptr_extent),
+            asm_meta=dict(self.asm_meta),
+            target=self.abi.name,
+        )
 
 
 def _block_region(block: list, functions: dict, calls_iter: list) -> "compose.Region":
@@ -2443,17 +3071,37 @@ def _block_region(block: list, functions: dict, calls_iter: list) -> "compose.Re
     for node in block:
         if isinstance(node, IfNode):
             flush_run()
-            parts.append(compose.Cond("c", _block_region(node.then, functions, calls_iter),
-                                      _block_region(node.els, functions, calls_iter)))
+            parts.append(
+                compose.Cond(
+                    "c",
+                    _block_region(node.then, functions, calls_iter),
+                    _block_region(node.els, functions, calls_iter),
+                )
+            )
         elif isinstance(node, WhileNode):
             flush_run()
-            _block_region(node.cond_block, functions, calls_iter)   # cond claims (cost folded in body)
+            _block_region(
+                node.cond_block, functions, calls_iter
+            )  # cond claims (cost folded in body)
             parts.append(_block_region(node.body + node.step, functions, calls_iter))
         elif isinstance(node, SwitchNode):
             flush_run()
-            parts.append(_block_region(node.body, functions, calls_iter))   # the clause bodies, in order
-        elif isinstance(node, (ReturnNode, BreakNode, ContinueNode, GotoNode, ComputedGotoNode, LabelNode,
-                               CaseLabel, DefaultLabel)):
+            parts.append(
+                _block_region(node.body, functions, calls_iter)
+            )  # the clause bodies, in order
+        elif isinstance(
+            node,
+            (
+                ReturnNode,
+                BreakNode,
+                ContinueNode,
+                GotoNode,
+                ComputedGotoNode,
+                LabelNode,
+                CaseLabel,
+                DefaultLabel,
+            ),
+        ):
             continue
         elif node.op.startswith("c.call:"):
             flush_run()
@@ -2484,14 +3132,17 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         b = AggregateBuilder(agg.kind, tag, packed=agg.packed, force_align=agg.align)
         for tref, mname, width, malign in agg.members:
             mt = _resolve_member_type(tref, aggregates, abi)
-            if mt.is_bitint and width:                    # a `_BitInt(N)` BITFIELD `_BitInt(N) m : W` is now
+            if mt.is_bitint and width:  # a `_BitInt(N)` BITFIELD `_BitInt(N) m : W` is now
                 # first-class: it packs into the `_BitInt(N)` STORAGE UNIT (its `mt.size` = 1/2/4/8 bytes,
                 # the Clang slot) with the same LSB-first packing as a standard-int bitfield of that storage
                 # size -- VERIFIED byte-identical to Clang (size/align/bit-layout) for 2<=N<=64, 1<=W<=N.
                 # The field value is typed `_BitInt(N)` (its W bits), and the emit prints `_BitInt(N) m : W;`.
-                if not (1 <= width <= mt.bit_width):       # W>N is invalid C (Clang errors); W<1 not a named
-                    raise CLowerError(                     # field -> conservatively route to fallback.
-                        "a `_BitInt` bitfield width outside 1..N is not supported")
+                if not (
+                    1 <= width <= mt.bit_width
+                ):  # W>N is invalid C (Clang errors); W<1 not a named
+                    raise CLowerError(  # field -> conservatively route to fallback.
+                        "a `_BitInt` bitfield width outside 1..N is not supported"
+                    )
             # a PLAIN `_BitInt(N)` member is also first-class: its `bitint` CType carries the Clang storage
             # width (1/2/4/8 bytes) and alignment, so AggregateBuilder lays it out exactly like the
             # equivalent power-of-two int (sizeof/offsetof match Clang); the member load/store uses that
@@ -2499,102 +3150,153 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
             b.members.append((mname, mt, width, malign))
         aggregates[tag] = b.build()
 
-    genv: dict[str, tuple] = {}                            # file-scope globals: name -> (rid, CType)
+    genv: dict[str, tuple] = {}  # file-scope globals: name -> (rid, CType)
     gres: dict[int, Resource] = {}
-    gdecls: list = []                                      # the linkable emit's global surface
+    gdecls: list = []  # the linkable emit's global surface
     for gi, g in enumerate(unit.globals):
         ct = _resolve_member_type(g.type, aggregates, abi)
-        ct_src = ct                                       # the SOURCE-shaped type (a scalar stays a
+        ct_src = ct  # the SOURCE-shaped type (a scalar stays a
         # a string init is only the CHARACTER-ARRAY form when the element is a character-code
         # scalar of the literal's unit width -- `char *tab[] = {"hi"}` (a pointer table) must
         # NOT take this path (it would size the array from the string bytes and mis-render);
         # it falls through to vals=None and the linkable emit refuses it loudly.
-        is_string = (len(g.init) == 1 and isinstance(g.init[0], cast.StringLit)
-                     and ct.kind == "array" and ct.of is not None
-                     and ct.of.kind == "scalar"
-                     and ct.of.size == str_elem_size(split_lit_prefix(g.init[0].value)[0]))
-        if is_string:                                     # `char s[] = "..."` -- sized from the LITERAL
-            if ct.count == 0:                             # (decoded code units + the NUL), not the init
-                ct = array(ct.of, _str_bytes(g.init[0].value) + 1)   # tuple length (which is 1)
+        is_string = (
+            len(g.init) == 1
+            and isinstance(g.init[0], cast.StringLit)
+            and ct.kind == "array"
+            and ct.of is not None
+            and ct.of.kind == "scalar"
+            and ct.of.size == str_elem_size(split_lit_prefix(g.init[0].value)[0])
+        )
+        if is_string:  # `char s[] = "..."` -- sized from the LITERAL
+            if ct.count == 0:  # (decoded code units + the NUL), not the init
+                ct = array(ct.of, _str_bytes(g.init[0].value) + 1)  # tuple length (which is 1)
                 ct_src = ct
-        elif g.init and ct.kind == "array" and ct.count == 0:   # scalar in the linkable declaration)
-            ct = array(ct.of, len(g.init))                # `T name[] = {...}` -> sized from the init
+        elif g.init and ct.kind == "array" and ct.count == 0:  # scalar in the linkable declaration)
+            ct = array(ct.of, len(g.init))  # `T name[] = {...}` -> sized from the init
             ct_src = ct
         elif g.init and ct.kind != "array":
             ct = array(ct, len(g.init))
-        rid = _check_band_rid(900000 + gi)                # guard the reserved I/O-port rid (belt + suspenders)
-        gres[rid] = Resource(rid=rid, domain=Domain.RAM, elem_bytes=(ct.of.size if ct.of else ct.size),
-                             shape=(ct.count or len(g.init) or 1,), access="ro",
-                             data_gen=1, name=g.name)
+        rid = _check_band_rid(900000 + gi)  # guard the reserved I/O-port rid (belt + suspenders)
+        gres[rid] = Resource(
+            rid=rid,
+            domain=Domain.RAM,
+            elem_bytes=(ct.of.size if ct.of else ct.size),
+            shape=(ct.count or len(g.init) or 1,),
+            access="ro",
+            data_gen=1,
+            name=g.name,
+        )
         genv[g.name] = (rid, ct)
-        vals: list = []                                    # render CONSTANT inits (linkable emit):
-        for el in g.init:                                  # ints, signed ints, float/string spellings
+        vals: list = []  # render CONSTANT inits (linkable emit):
+        for el in g.init:  # ints, signed ints, float/string spellings
             if isinstance(el, cast.IntLit):
                 vals.append(str(el.value))
             elif isinstance(el, cast.FloatLit):
-                vals.append(el.value)                      # the source spelling, suffix included
-            elif (isinstance(el, cast.Unary) and el.op in ("-", "+")
-                  and isinstance(el.operand, cast.IntLit)):
+                vals.append(el.value)  # the source spelling, suffix included
+            elif (
+                isinstance(el, cast.Unary)
+                and el.op in ("-", "+")
+                and isinstance(el.operand, cast.IntLit)
+            ):
                 vals.append(str(-el.operand.value if el.op == "-" else el.operand.value))
-            elif (isinstance(el, cast.Unary) and el.op in ("-", "+")
-                  and isinstance(el.operand, cast.FloatLit)):
+            elif (
+                isinstance(el, cast.Unary)
+                and el.op in ("-", "+")
+                and isinstance(el.operand, cast.FloatLit)
+            ):
                 vals.append(("-" if el.op == "-" else "") + el.operand.value)
             elif isinstance(el, cast.StringLit) and is_string:
-                vals.append(el.value)                      # spelling incl. quotes (char-array init)
-            elif (isinstance(el, cast.Unary) and el.op == "&"
-                  and isinstance(el.operand, cast.Name) and el.operand.ident in genv):
+                vals.append(el.value)  # spelling incl. quotes (char-array init)
+            elif (
+                isinstance(el, cast.Unary)
+                and el.op == "&"
+                and isinstance(el.operand, cast.Name)
+                and el.operand.ident in genv
+            ):
                 # Part VII A4: an ADDRESS CONSTANT (&x of a file-scope object declared
                 # earlier in the unit) -- the platform linker resolves the relocation;
                 # the rendering is just the name. Forward references stay refused
                 # (genv accumulates in declaration order -- conservative, recorded).
                 vals.append(f"&{el.operand.ident}")
             else:
-                try:                                       # the §5.9 constant-expression evaluator
-                    vals.append(str(_fold_const(          # WITH the chosen ABI's layout oracle:
-                        el, lambda tr: _resolve_member_type(tr, aggregates, abi))))
-                except CLowerError:                        # anything else: not renderable in this
-                    vals = None                            # slice -- the linkable emit raises
+                try:  # the §5.9 constant-expression evaluator
+                    vals.append(
+                        str(
+                            _fold_const(  # WITH the chosen ABI's layout oracle:
+                                el, lambda tr: _resolve_member_type(tr, aggregates, abi)
+                            )
+                        )
+                    )
+                except CLowerError:  # anything else: not renderable in this
+                    vals = None  # slice -- the linkable emit raises
                     break
-        gdecls.append((g.name, ct_src, tuple(vals) if vals is not None else None,
-                       getattr(g, "extern_decl", False), getattr(g, "static_storage", False)))
+        gdecls.append(
+            (
+                g.name,
+                ct_src,
+                tuple(vals) if vals is not None else None,
+                getattr(g, "extern_decl", False),
+                getattr(g, "static_storage", False),
+            )
+        )
 
     functions: dict[str, LoweredFunc] = {}
     compose_functions: dict[str, compose.Function] = {}
     resources: dict[int, Resource] = dict(gres)
     cid = [1000]
-    strctr = [0]                                          # unit-wide string-literal counter (unique rids)
+    strctr = [0]  # unit-wide string-literal counter (unique rids)
     # pre-scan every function's return type (forward references resolve too), so a call can be typed
     # by its callee: a void call emits a bare statement, a wide/float return keeps its real type.
     func_rets = {fn.name: _resolve_member_type(fn.ret, aggregates, abi) for fn in unit.funcs}
     # PROTOTYPED cross-TU callees (Phase 3 linking): a prototype whose definition is in this unit is
     # just a forward declaration (the definition wins); the rest resolve at LINK time.
-    protos = {name: (_resolve_member_type(ret, aggregates, abi),
-                     tuple(_resolve_member_type(p, aggregates, abi) for p in params))
-              for name, (ret, params) in unit.protos.items() if name not in func_rets}
+    protos = {
+        name: (
+            _resolve_member_type(ret, aggregates, abi),
+            tuple(_resolve_member_type(p, aggregates, abi) for p in params),
+        )
+        for name, (ret, params) in unit.protos.items()
+        if name not in func_rets
+    }
     for idx, fn in enumerate(unit.funcs):
-        lf = _FuncLowerer(fn, aggregates, base_rid=100 + idx * 1000, cid=cid,
-                          genv=genv, gres=gres, strctr=strctr, func_rets=func_rets, abi=abi,
-                          protos=protos).lower()
+        lf = _FuncLowerer(
+            fn,
+            aggregates,
+            base_rid=100 + idx * 1000,
+            cid=cid,
+            genv=genv,
+            gres=gres,
+            strctr=strctr,
+            func_rets=func_rets,
+            abi=abi,
+            protos=protos,
+        ).lower()
         functions[fn.name] = lf
         resources.update(lf.resources)
-    for lf in functions.values():                          # regions need every callee's param rids
+    for lf in functions.values():  # regions need every callee's param rids
         lf.region = _region_for(lf, functions)
         compose_functions[lf.name] = compose.Function(lf.name, lf.region)
     entry = unit.funcs[-1].name if unit.funcs else ""
-    return LoweredUnit(functions=functions, entry=entry, aggregates=aggregates,
-                       compose_functions=compose_functions, resources=resources,
-                       globals_decl=tuple(gdecls))
+    return LoweredUnit(
+        functions=functions,
+        entry=entry,
+        aggregates=aggregates,
+        compose_functions=compose_functions,
+        resources=resources,
+        globals_decl=tuple(gdecls),
+    )
 
 
 def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CType:
     abi = abi or HOST
-    if tref.funcptr:                                       # a function-pointer member (dispatch table)
+    if tref.funcptr:  # a function-pointer member (dispatch table)
         ret = _resolve_member_type(tref.func_ret, aggregates, abi)
         params = tuple(_resolve_member_type(p, aggregates, abi) for p in tref.func_params)
         return funcptr(tref.base, ret, params, abi)
     if tref.aggregate:
         base = aggregates[tref.base]
-    elif tref.bit_width:                                  # C23 `_BitInt(N)` (e.g. a function return type)
+    elif tref.bit_width:  # C23 `_BitInt(N)` (e.g. a function return type)
         base = bitint(tref.bit_width, signed="unsigned" not in tref.base)
     else:
         base = scalar(tref.base, abi)

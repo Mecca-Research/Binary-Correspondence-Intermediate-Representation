@@ -79,19 +79,60 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from .ecn_props import (
-    UNIT_BIT, UNIT_DWORD32, UNIT_MAX, UNIT_NAMES, UNIT_NIBBLE, UNIT_OCTET,
-    UNIT_REPETITIONS, UNIT_WORD16, AlternativeDetermination, Comparison, ComponentOrder,
-    ConcatenationAlignment, HandleValueKind, HandleValueSet, IntForm, IntegerBounds,
-    Justification, JustificationSide, OptionalityDetermination, Padding, Pattern, PatternKind,
-    RangeCondition, RepetitionSpaceDetermination, ReversalSpecification, SizeBounds,
-    SizeRangeCondition, _padding_bits, check_unit,
+    UNIT_BIT,
+    UNIT_DWORD32,
+    UNIT_MAX,
+    UNIT_NAMES,
+    UNIT_NIBBLE,
+    UNIT_OCTET,
+    UNIT_REPETITIONS,
+    UNIT_WORD16,
+    AlternativeDetermination,
+    Comparison,
+    ComponentOrder,
+    ConcatenationAlignment,
+    HandleValueKind,
+    HandleValueSet,
+    IntForm,
+    IntegerBounds,
+    Justification,
+    JustificationSide,
+    OptionalityDetermination,
+    Padding,
+    Pattern,
+    PatternKind,
+    RangeCondition,
+    RepetitionSpaceDetermination,
+    ReversalSpecification,
+    SizeBounds,
+    SizeRangeCondition,
+    _padding_bits,
+    check_unit,
 )
 from .ecn_transform import (
-    RESULT_SIZE_FIXED_TO_MAX, RESULT_SIZE_VARIABLE, BitsToBits, BitsToChar,
-    BitsToCompositeBits, BitsToInt, BitToBits, BoolToBool, BoolToInt, CharsToCompositeChar,
-    CharToBits, CompositeBitsToBits, CompositeBitsToOctets, CompositeCharToChars,
-    Composite, IntOp, IntToBits, IntToBool, IntToChars, IntToInt, OctetsToCompositeBits,
-    Transform, TransformChain,
+    RESULT_SIZE_FIXED_TO_MAX,
+    RESULT_SIZE_VARIABLE,
+    BitsToBits,
+    BitsToChar,
+    BitsToCompositeBits,
+    BitsToInt,
+    BitToBits,
+    BoolToBool,
+    BoolToInt,
+    CharsToCompositeChar,
+    CharToBits,
+    CompositeBitsToBits,
+    CompositeBitsToOctets,
+    CompositeCharToChars,
+    Composite,
+    IntOp,
+    IntToBits,
+    IntToBool,
+    IntToChars,
+    IntToInt,
+    OctetsToCompositeBits,
+    Transform,
+    TransformChain,
 )
 from .tags import Asn1Error
 
@@ -115,6 +156,7 @@ OUTER_CONTAINER = "#OUTER"
 
 
 # --- clause 22's property groups: the encoder actions, in the stated order -----------------
+
 
 @dataclass(frozen=True)
 class PreAlignment:
@@ -150,7 +192,8 @@ class PreAlignment:
             if self.pattern.kind is PatternKind.DIFFERENT_ANY:
                 raise Asn1Error(
                     "ECN: §22.2.1.1 declares the pre-pattern `(ALL EXCEPT different:any)`; "
-                    "§21.10.9 needs a second Pattern in the group for it to differ from")
+                    "§21.10.9 needs a second Pattern in the group for it to differ from"
+                )
             self.pattern.require_non_null("the pre-alignment pattern")
 
     def apply(self, out: "BitWriter") -> None:
@@ -163,8 +206,7 @@ class PreAlignment:
         if self.unit <= UNIT_BIT:
             return
         short = (-out.bit_length) % self.unit
-        for bit in _padding_bits(self.padding, self.pattern, short,
-                                 "the pre-alignment padding"):
+        for bit in _padding_bits(self.padding, self.pattern, short, "the pre-alignment padding"):
             out.put_bit(bit)
 
 
@@ -215,7 +257,8 @@ def _determinant_value(chain: "TransformChain | None", value: int, where: str) -
         raise Asn1Error(
             f"ECN: §22.8.2.4 / §22.3.2.3 — {where}'s ENCODER-TRANSFORMS are not reversible "
             f"for {value}, so a decoder could not recover it; a determinant has to be "
-            f"invertible even where a value need not be")
+            f"invertible even where a value need not be"
+        )
     return chain.apply(value)
 
 
@@ -248,37 +291,49 @@ class UnusedBits:
             raise Asn1Error(
                 f"ECN: §22.8.2.2 — USING shall be specified if and only if DETERMINED BY is "
                 f"not `not-needed`; {self.determination.value} "
-                f"{'has no' if needed else 'has a'} reference")
-        if (self.encoder_transforms is not None
-                and self.determination is not UnusedBitsDetermination.FIELD_TO_BE_SET):
+                f"{'has no' if needed else 'has a'} reference"
+            )
+        if (
+            self.encoder_transforms is not None
+            and self.determination is not UnusedBitsDetermination.FIELD_TO_BE_SET
+        ):
             raise Asn1Error(
                 "ECN: §22.8.2.3 — ENCODER-TRANSFORMS shall be present only if DETERMINED BY "
-                "is `field-to-be-set`")
-        if (self.decoder_transforms is not None
-                and self.determination is not UnusedBitsDetermination.FIELD_TO_BE_USED):
+                "is `field-to-be-set`"
+            )
+        if (
+            self.decoder_transforms is not None
+            and self.determination is not UnusedBitsDetermination.FIELD_TO_BE_USED
+        ):
             raise Asn1Error(
                 "ECN: §22.8.2.5 — DECODER-TRANSFORMS shall be present only if DETERMINED BY "
-                "is `field-to-be-used`")
+                "is `field-to-be-used`"
+            )
 
     def record(self, out: "BitWriter", padding_bits: int) -> None:
         """§22.8.3.6–§22.8.3.8, given the "b" the justification actually inserted."""
         if self.determination is UnusedBitsDetermination.NOT_NEEDED:
             return  # §22.8.3.6: this completes the encoder's actions.
         if self.determination is UnusedBitsDetermination.FIELD_TO_BE_SET:
-            out.patch(self.reference,
-                      _determinant_value(self.encoder_transforms, padding_bits,
-                                         f"UNUSED BITS USING {self.reference}"))
+            out.patch(
+                self.reference,
+                _determinant_value(
+                    self.encoder_transforms, padding_bits, f"UNUSED BITS USING {self.reference}"
+                ),
+            )
             return
         # §22.8.3.8: the encoder CHECKS rather than writes. "It is an application error if
         # this condition is not met, and encoding shall not proceed."
         carried = out.value_of(self.reference)
-        recovered = (carried if self.decoder_transforms is None
-                     else self.decoder_transforms.apply(carried))
+        recovered = (
+            carried if self.decoder_transforms is None else self.decoder_transforms.apply(carried)
+        )
         if recovered != padding_bits:
             raise Asn1Error(
                 f"ECN: §22.8.3.8 — the field {self.reference!r} carries {carried}, which "
                 f"reduces to {recovered} unused bits, but the encoding inserted "
-                f"{padding_bits}; encoding shall not proceed")
+                f"{padding_bits}; encoding shall not proceed"
+            )
 
 
 @dataclass(frozen=True)
@@ -303,8 +358,9 @@ class ValuePadding:
     #: §22.8.1.1's determinant sub-group. Absent is §22.8.4.1's `not-needed`.
     unused_bits: UnusedBits | None = None
 
-    def place(self, value_bits: tuple[int, ...], space: int,
-              out: "BitWriter | None" = None) -> tuple[int, ...]:
+    def place(
+        self, value_bits: tuple[int, ...], space: int, out: "BitWriter | None" = None
+    ) -> tuple[int, ...]:
         """`value_bits` positioned in a `space`-bit encoding space, padding included.
 
         §22.8.3.2 defines "b" as the number of added padding bits; §22.8.3.5 sets them "in
@@ -319,17 +375,21 @@ class ValuePadding:
         if b < 0:
             raise Asn1Error(
                 f"ECN: a {len(value_bits)}-bit value encoding does not fit a {space}-bit "
-                f"encoding space")
+                f"encoding space"
+            )
         pre, post = self.justification.split(b)
         if self.unused_bits is not None:
             if out is None:
                 raise Asn1Error(
                     "ECN: an UNUSED BITS determination refers to another field, so it can "
-                    "only be resolved while writing into a stream")
+                    "only be resolved while writing into a stream"
+                )
             self.unused_bits.record(out, b)
-        return (_padding_bits(self.pre_padding, self.pre_pattern, pre, "PRE-PADDING")
-                + tuple(value_bits)
-                + _padding_bits(self.post_padding, self.post_pattern, post, "POST-PADDING"))
+        return (
+            _padding_bits(self.pre_padding, self.pre_pattern, pre, "PRE-PADDING")
+            + tuple(value_bits)
+            + _padding_bits(self.post_padding, self.post_pattern, post, "POST-PADDING")
+        )
 
 
 @dataclass(frozen=True)
@@ -356,11 +416,12 @@ class SpaceDeterminant:
         if not self.reference:
             raise Asn1Error(
                 "ECN: §21.3.4/§21.3.5/§21.3.6 — every determination requires a REFERENCE; "
-                "§22.4.1.6 says it is one \"to an auxiliary field or to a field carrying "
-                "abstract values, or to a container, depending on the value of DETERMINED BY\"")
-        if (self.determination is EncodingSpaceDetermination.CONTAINER
-                and (self.encoder_transforms is not None
-                     or self.decoder_transforms is not None)):
+                '§22.4.1.6 says it is one "to an auxiliary field or to a field carrying '
+                'abstract values, or to a container, depending on the value of DETERMINED BY"'
+            )
+        if self.determination is EncodingSpaceDetermination.CONTAINER and (
+            self.encoder_transforms is not None or self.decoder_transforms is not None
+        ):
             # §22.4.2.3 and §22.4.2.4 confine the transform lists to the two field
             # determinations, and the reason is structural rather than a restriction: a
             # container's end is a position, not a number carried through a field, so there is
@@ -368,7 +429,8 @@ class SpaceDeterminant:
             raise Asn1Error(
                 "ECN: §22.4.2.3/§22.4.2.4 — a `container` determination reads no field's "
                 "value, so there is nothing for ENCODER-TRANSFORMS or DECODER-TRANSFORMS to "
-                "convert; §21.3.4 and §21.3.5 are the determinations that carry a length")
+                "convert; §21.3.4 and §21.3.5 are the determinations that carry a length"
+            )
         check_unit(self.unit, allow_repetitions=False)
 
     def record(self, out: "BitWriter", space_bits: int) -> None:
@@ -386,22 +448,28 @@ class SpaceDeterminant:
         if space_bits % self.unit:
             raise Asn1Error(
                 f"ECN: a {space_bits}-bit encoding space is not a whole number of "
-                f"{self.unit}-bit units, so no determinant can state its size")
+                f"{self.unit}-bit units, so no determinant can state its size"
+            )
         count = space_bits // self.unit
         if self.determination is EncodingSpaceDetermination.FIELD_TO_BE_SET:
-            out.patch(self.reference,
-                      _determinant_value(self.encoder_transforms, count,
-                                         f"ENCODING-SPACE USING {self.reference}"))
+            out.patch(
+                self.reference,
+                _determinant_value(
+                    self.encoder_transforms, count, f"ENCODING-SPACE USING {self.reference}"
+                ),
+            )
             return
         carried = out.value_of(self.reference)
-        recovered = (carried if self.decoder_transforms is None
-                     else self.decoder_transforms.apply(carried))
+        recovered = (
+            carried if self.decoder_transforms is None else self.decoder_transforms.apply(carried)
+        )
         if recovered != count:
             raise Asn1Error(
                 f"ECN: §21.3.5 — the field {self.reference!r} carries {carried}, which "
                 f"reduces to {recovered} units, but the encoding space is {count}; a "
                 f"conforming encoder shall not produce encodings whose determinant does not "
-                f"identify the end of the encoding space")
+                f"identify the end of the encoding space"
+            )
 
 
 @dataclass(frozen=True)
@@ -436,13 +504,18 @@ class StartPointer:
             raise Asn1Error(
                 f"ECN: §22.3.3.1 — the offset from {self.reference!r} is {offset} bits, which "
                 f"is not an integral number of {self.unit}-bit units; the clause makes a "
-                f"non-integral `n` a specification error")
-        out.patch(self.reference,
-                  _determinant_value(self.encoder_transforms, offset // self.unit,
-                                     f"START-POINTER {self.reference}"))
+                f"non-integral `n` a specification error"
+            )
+        out.patch(
+            self.reference,
+            _determinant_value(
+                self.encoder_transforms, offset // self.unit, f"START-POINTER {self.reference}"
+            ),
+        )
 
 
 # --- clause 22.9: identification handles, and the three determinations that read them ------
+
 
 @dataclass(frozen=True)
 class IdentificationHandle:
@@ -484,23 +557,27 @@ class IdentificationHandle:
     def __post_init__(self) -> None:
         if not self.name:
             raise Asn1Error(
-                "ECN: §22.9.1.1 gives &exhibited-handle a DEFAULT of \"default-handle\"; a "
-                "handle with an empty name cannot be the one §22.10.2.1 names by default")
+                'ECN: §22.9.1.1 gives &exhibited-handle a DEFAULT of "default-handle"; a '
+                "handle with an empty name cannot be the one §22.10.2.1 names by default"
+            )
         if not self.positions:
             raise Asn1Error(
                 "ECN: §22.9.1.2's syntax makes `AT` part of `EXHIBITS HANDLE` rather than an "
                 "optional tail; a handle with no positions is a zero-bit field that no value "
-                "set could characterize")
+                "set could characterize"
+            )
         for position in self.positions:
             if position < 0:
                 raise Asn1Error(
                     f"ECN: §22.9.1.1 constrains &Handle-positions to INTEGER (0..MAX); "
-                    f"got {position}")
+                    f"got {position}"
+                )
         if len(set(self.positions)) != len(self.positions):
             raise Asn1Error(
-                f"ECN: §22.9.1.6 calls the positions \"a set of integer values\"; "
+                f'ECN: §22.9.1.6 calls the positions "a set of integer values"; '
                 f"{sorted(self.positions)} repeats one, and a bit cannot appear twice in the "
-                f"conceptual handle field")
+                f"conceptual handle field"
+            )
 
     @property
     def width(self) -> int:
@@ -526,12 +603,12 @@ class IdentificationHandle:
                 raise Asn1Error(
                     f"ECN: the handle {self.name!r} names bit {position} of an encoding that "
                     f"is only {out.bit_length - start} bits long; §22.9.1.5 counts positions "
-                    f"in the final encoding of the object exhibiting the handle")
+                    f"in the final encoding of the object exhibiting the handle"
+                )
             value = (value << 1) | out.bit_at(index)
         return value
 
-    def check(self, out: "BitWriter", start: int,
-              value_set: "HandleValueSet | None" = None) -> int:
+    def check(self, out: "BitWriter", start: int, value_set: "HandleValueSet | None" = None) -> int:
         """§22.9.3.1, the one encoder action a handle has.
 
         "The encoder shall check that the value of the identification handle occurring in the
@@ -546,7 +623,8 @@ class IdentificationHandle:
             raise Asn1Error(
                 f"ECN: §22.9.3.1 — this encoding puts {value} in the handle {self.name!r}, "
                 f"which declares {effective.describe()}; an encoder shall diagnose a value "
-                f"outside its own handle value set rather than transmit it")
+                f"outside its own handle value set rather than transmit it"
+            )
         return value
 
 
@@ -567,7 +645,8 @@ def _exhibited(spec) -> "IdentificationHandle | None":
         raise Asn1Error(
             f"ECN: §22.9.1.9 — the handle value set shall not be specified as `tag:any` "
             f"unless the specification is for an encoding object of the #TAG class; "
-            f"{type(spec).__name__} is not one")
+            f"{type(spec).__name__} is not one"
+        )
     return handle
 
 
@@ -624,8 +703,9 @@ class HandleRegistry:
         self._alignment: dict[str, int] = {}
         self._sets: dict[str, list[tuple[str, HandleValueSet]]] = {}
 
-    def declare(self, handle: IdentificationHandle, *, where: str,
-                alignment_unit: "int | None" = None) -> None:
+    def declare(
+        self, handle: IdentificationHandle, *, where: str, alignment_unit: "int | None" = None
+    ) -> None:
         unit = UNIT_BIT if alignment_unit is None else alignment_unit
         positions = handle.ordered()
         seen = self._positions.get(handle.name)
@@ -633,13 +713,15 @@ class HandleRegistry:
             raise Asn1Error(
                 f"ECN: §22.9.2.1 — all identification handles named {handle.name!r} shall "
                 f"specify the same set of bit positions; {where} says {list(positions)} where "
-                f"an earlier one said {list(seen)}")
+                f"an earlier one said {list(seen)}"
+            )
         aligned = self._alignment.get(handle.name)
         if aligned is not None and aligned != unit:
             raise Asn1Error(
                 f"ECN: §22.9.2.3 — objects exhibiting {handle.name!r} shall align to the same "
                 f"pre-alignment unit so a decoder can reach the handle; {where} aligns to "
-                f"{unit} where an earlier one aligned to {aligned}")
+                f"{unit} where an earlier one aligned to {aligned}"
+            )
         self._positions[handle.name] = positions
         self._alignment[handle.name] = unit
         self._sets.setdefault(handle.name, []).append((where, handle.value_set))
@@ -649,17 +731,19 @@ class HandleRegistry:
         entries = self._sets.get(name, ())
         width = len(self._positions.get(name, ()))
         for index, (where, value_set) in enumerate(entries):
-            for other_where, other_set in entries[index + 1:]:
+            for other_where, other_set in entries[index + 1 :]:
                 if not value_set.disjoint_from(other_set, width):
                     raise Asn1Error(
                         f"ECN: {clause} — the handle value sets of the objects exhibiting "
                         f"{name!r} shall all be disjoint; {where} declares "
                         f"{value_set.describe()} and {other_where} declares "
-                        f"{other_set.describe()}, which overlap")
+                        f"{other_set.describe()}, which overlap"
+                    )
 
 
-def _handles_of(named_specs, *, handle_id: str, clause: str, what: str,
-                alignment_unit: "int | None" = None) -> HandleRegistry:
+def _handles_of(
+    named_specs, *, handle_id: str, clause: str, what: str, alignment_unit: "int | None" = None
+) -> HandleRegistry:
     """Collect and validate the handles a handle-driven determination depends on.
 
     One helper for four clauses because they ask for exactly the same three things: every
@@ -674,7 +758,8 @@ def _handles_of(named_specs, *, handle_id: str, clause: str, what: str,
             exhibits = "none" if handle is None else repr(handle.name)
             raise Asn1Error(
                 f"ECN: {clause} — {what} determined by the handle {handle_id!r} requires every "
-                f"participant to exhibit it; {name!r} exhibits {exhibits}")
+                f"participant to exhibit it; {name!r} exhibits {exhibits}"
+            )
         registry.declare(handle, where=repr(name), alignment_unit=alignment_unit)
     registry.require_disjoint(handle_id, clause)
     return registry
@@ -713,28 +798,39 @@ class Optionality:
         if self.handle_set and not by_handle:
             raise Asn1Error(
                 f"ECN: §22.5.2.2 — HANDLE shall not be specified unless DETERMINED BY is "
-                f"`handle`; this object says `{self.determination.value}`")
-        uses_field = self.determination in (OptionalityDetermination.FIELD_TO_BE_SET,
-                                            OptionalityDetermination.FIELD_TO_BE_USED,
-                                            OptionalityDetermination.CONTAINER)
+                f"`handle`; this object says `{self.determination.value}`"
+            )
+        uses_field = self.determination in (
+            OptionalityDetermination.FIELD_TO_BE_SET,
+            OptionalityDetermination.FIELD_TO_BE_USED,
+            OptionalityDetermination.CONTAINER,
+        )
         if self.reference and not uses_field:
             raise Asn1Error(
                 f"ECN: §22.5.2.3 — USING shall not be specified if DETERMINED BY is `handle` "
-                f"or `pointer`; this object says `{self.determination.value}`")
+                f"or `pointer`; this object says `{self.determination.value}`"
+            )
         if uses_field and not self.reference:
             raise Asn1Error(
                 f"ECN: §21.5.4/§21.5.5/§21.5.6 — `{self.determination.value}` requires a USING "
-                f"reference to the field that carries the presence information")
-        if (self.encoder_transforms is not None
-                and self.determination is not OptionalityDetermination.FIELD_TO_BE_SET):
+                f"reference to the field that carries the presence information"
+            )
+        if (
+            self.encoder_transforms is not None
+            and self.determination is not OptionalityDetermination.FIELD_TO_BE_SET
+        ):
             raise Asn1Error(
                 "ECN: §22.5.2.6 — ENCODER-TRANSFORMS shall be present only if DETERMINED BY "
-                "is set to (or defaults to) `field-to-be-set`")
-        if (self.decoder_transforms is not None
-                and self.determination is not OptionalityDetermination.FIELD_TO_BE_USED):
+                "is set to (or defaults to) `field-to-be-set`"
+            )
+        if (
+            self.decoder_transforms is not None
+            and self.determination is not OptionalityDetermination.FIELD_TO_BE_USED
+        ):
             raise Asn1Error(
                 "ECN: §22.5.2.8 — DECODER-TRANSFORMS shall be present only if DETERMINED BY "
-                "is set to `field-to-be-used`")
+                "is set to `field-to-be-used`"
+            )
 
     def record(self, out: "BitWriter", present: bool) -> None:
         """§22.5.3.2–§22.5.3.7, given the `element-is-present` the application implied.
@@ -746,21 +842,26 @@ class Optionality:
         spellings agree on the octets.
         """
         if self.determination is OptionalityDetermination.FIELD_TO_BE_SET:
-            carried = _determinant_value(self.encoder_transforms, present,
-                                         f"PRESENCE USING {self.reference}")
+            carried = _determinant_value(
+                self.encoder_transforms, present, f"PRESENCE USING {self.reference}"
+            )
             out.patch(self.reference, int(carried))
             return
         if self.determination is OptionalityDetermination.FIELD_TO_BE_USED:
             # §22.5.3.4: the encoder CHECKS. The application owns this field's value, and a
             # disagreement is its error rather than something to correct silently.
             carried = out.value_of(self.reference)
-            recovered = (carried if self.decoder_transforms is None
-                         else self.decoder_transforms.apply(carried))
+            recovered = (
+                carried
+                if self.decoder_transforms is None
+                else self.decoder_transforms.apply(carried)
+            )
             if bool(recovered) != present:
                 raise Asn1Error(
                     f"ECN: §22.5.3.4 — the field {self.reference!r} carries {carried}, which "
                     f"reduces to `element-is-present` {bool(recovered)}, but the component is "
-                    f"{'present' if present else 'absent'}")
+                    f"{'present' if present else 'absent'}"
+                )
             return
         if self.determination is OptionalityDetermination.CONTAINER:
             # §22.5.3.5 gives the encoder no value to write and one thing to *detect*: it must
@@ -780,7 +881,8 @@ class Optionality:
             out.claim_container_end(
                 self.reference,
                 f"an optional component that is {'present' if present else 'absent'} and whose "
-                f"presence")
+                f"presence",
+            )
         # §22.5.3.6 (handle) and §22.5.3.7 (pointer) say there is no further encoder action.
         # The handle's bits and the start pointer's zero are already in the encoding.
 
@@ -813,46 +915,63 @@ class AlternativeSelection:
         if self.handle_set and not by_handle:
             raise Asn1Error(
                 f"ECN: §22.6.2.2 — HANDLE shall not be specified unless DETERMINED BY is "
-                f"`handle`; this object says `{self.determination.value}`")
+                f"`handle`; this object says `{self.determination.value}`"
+            )
         if by_handle and self.reference:
             raise Asn1Error(
-                "ECN: §22.6.2.3 — USING shall not be specified if DETERMINED BY is `handle`")
+                "ECN: §22.6.2.3 — USING shall not be specified if DETERMINED BY is `handle`"
+            )
         if not by_handle and not self.reference:
             raise Asn1Error(
                 f"ECN: §21.6.4/§21.6.5 — `{self.determination.value}` requires a USING "
-                f"reference to the field that carries the alternative's identity")
-        if (self.encoder_transforms is not None
-                and self.determination is not AlternativeDetermination.FIELD_TO_BE_SET):
+                f"reference to the field that carries the alternative's identity"
+            )
+        if (
+            self.encoder_transforms is not None
+            and self.determination is not AlternativeDetermination.FIELD_TO_BE_SET
+        ):
             raise Asn1Error(
                 "ECN: §22.6.2.5 — ENCODER-TRANSFORMS shall be present only if DETERMINED BY "
-                "is set to (or defaults to) `field-to-be-set`")
-        if (self.decoder_transforms is not None
-                and self.determination is not AlternativeDetermination.FIELD_TO_BE_USED):
+                "is set to (or defaults to) `field-to-be-set`"
+            )
+        if (
+            self.decoder_transforms is not None
+            and self.determination is not AlternativeDetermination.FIELD_TO_BE_USED
+        ):
             raise Asn1Error(
                 "ECN: §22.6.2.7 — DECODER-TRANSFORMS shall be present only if DETERMINED BY "
-                "is set to `field-to-be-used`")
+                "is set to `field-to-be-used`"
+            )
         if self.ordering is ComponentOrder.RANDOM:
             raise Asn1Error(
                 "ECN: §22.6.1.1 declares &alternative-ordering as ENUMERATED {textual, tag}; "
                 "`random` belongs to §22.10's concatenation order, where there are several "
-                "components to permute")
+                "components to permute"
+            )
 
     def record(self, out: "BitWriter", index: int) -> None:
         """§22.6.3.5–§22.6.3.7, given the `alternative-index` the ordering produced."""
         if self.determination is AlternativeDetermination.FIELD_TO_BE_SET:
-            out.patch(self.reference,
-                      _determinant_value(self.encoder_transforms, index,
-                                         f"ALTERNATIVE USING {self.reference}"))
+            out.patch(
+                self.reference,
+                _determinant_value(
+                    self.encoder_transforms, index, f"ALTERNATIVE USING {self.reference}"
+                ),
+            )
             return
         if self.determination is AlternativeDetermination.FIELD_TO_BE_USED:
             carried = out.value_of(self.reference)
-            recovered = (carried if self.decoder_transforms is None
-                         else self.decoder_transforms.apply(carried))
+            recovered = (
+                carried
+                if self.decoder_transforms is None
+                else self.decoder_transforms.apply(carried)
+            )
             if recovered != index:
                 raise Asn1Error(
                     f"ECN: §22.6.3.6 — the field {self.reference!r} carries {carried}, which "
                     f"reduces to alternative-index {recovered}, but the alternative being "
-                    f"encoded has index {index}")
+                    f"encoded has index {index}"
+                )
             return
         # §22.6.3.7: `handle` needs no encoder action. The alternative's own encoding already
         # carries the bits, and §22.9.3.1 has checked they are in its declared set.
@@ -995,8 +1114,9 @@ class ContainerSpec:
         if self.contained_class is None:
             raise Asn1Error(
                 "ECN: a container class encodes a contained type; §22.11.1.3 makes this "
-                "group's purpose \"to determine the encoding of a contained type\", and there "
-                "is none here")
+                'group\'s purpose "to determine the encoding of a contained type", and there '
+                "is none here"
+            )
 
     def objects_for(self, containing: dict) -> dict:
         """§22.11.2 and §13.2.10.6's selection, against the set applied to this container."""
@@ -1022,15 +1142,21 @@ class ContainerSpec:
             raise Asn1Error(
                 f"ECN: §9.5.1 — the encoding object set §22.11.2 selected for this contained "
                 f"type has no object for {named!r}"
-                + (", and the set it selected is the one applied to the containing type "
-                   "(§22.11.2's fallback), which is where an ENCODED BY that OVERRIDE did "
-                   "not claim sends it" if fell_back else ""))
+                + (
+                    ", and the set it selected is the one applied to the containing type "
+                    "(§22.11.2's fallback), which is where an ENCODED BY that OVERRIDE did "
+                    "not claim sends it"
+                    if fell_back
+                    else ""
+                )
+            )
         # A stated width or a space determinant is what transmits this container's END, and
         # §21.3.6's determination is only usable when something does.
         out.open_container(
             self.name,
             locatable=bool(self.space_determinant is not None or self.width),
-            is_pdu=out.is_root_spec(self))
+            is_pdu=out.is_root_spec(self),
+        )
         scope = out.push_reference_scope()
         # §9.24.2's application point moves with the set, so a container nested inside this
         # contained type inherits *this* type's set as "the set applied to the containing
@@ -1052,7 +1178,8 @@ class ContainerSpec:
             raise Asn1Error(
                 f"ECN: the container's contents are {size} bits and its stated encoding space "
                 f"is {self.width}; a stated space is the exact width the container occupies, "
-                f"so the contents must fill it")
+                f"so the contents must fill it"
+            )
         if self.space_determinant is not None:
             self.space_determinant.record(out, size)
         _exhibit(self, out, handle_start)
@@ -1081,6 +1208,7 @@ class Concatenation:
 
 
 # --- the bit-level output the fixed candidate set never needed ---------------------------
+
 
 class BitWriter:
     """Bits, most significant first, with an explicit octet-alignment operation.
@@ -1146,7 +1274,8 @@ class BitWriter:
             raise Asn1Error(
                 f"ECN: bit {index} is outside the {len(self._bits)}-bit encoding written so "
                 f"far; §22.9.1.5 counts handle positions within the encoding that exhibits "
-                f"the handle")
+                f"the handle"
+            )
         return self._bits[index]
 
     # --- auxiliary fields: the mechanism every REFERENCE in clause 22 needs ----------------
@@ -1182,17 +1311,20 @@ class BitWriter:
         if name not in self._slots:
             raise Asn1Error(
                 f"ECN: nothing reserved a field named {name!r}, so there is no room to set "
-                f"it; a REFERENCE names a field that appears EARLIER in the encoding")
+                f"it; a REFERENCE names a field that appears EARLIER in the encoding"
+            )
         if name in self._patched:
             raise Asn1Error(
                 f"ECN: §21.3.4 — the field {name!r} is set more than once, and an encoder "
-                f"shall not generate an encoding whose determinants disagree")
+                f"shall not generate an encoding whose determinants disagree"
+            )
         at, width, form = self._slots[name]
         if form is IntForm.TWOS_COMPLEMENT:
             if value < -(1 << (width - 1)) or value >= (1 << (width - 1)):
                 raise Asn1Error(
                     f"ECN: the determinant {value} does not fit the {width}-bit field "
-                    f"{name!r} as two's complement")
+                    f"{name!r} as two's complement"
+                )
             encoded = value & ((1 << width) - 1)
         else:
             if value < 0 or (width and value >> width):
@@ -1200,7 +1332,8 @@ class BitWriter:
                     f"ECN: the determinant {value} does not fit the {width}-bit field "
                     f"{name!r}; §21.3.4 leaves the field's range a specification decision, "
                     f"so a value that overruns it is a specification error and not a "
-                    f"wider field")
+                    f"wider field"
+                )
             encoded = value
         for index, shift in enumerate(range(width - 1, -1, -1)):
             self._bits[at + index] = (encoded >> shift) & 1
@@ -1215,7 +1348,8 @@ class BitWriter:
             raise Asn1Error(
                 f"ECN: {name!r} has no recorded position, so no offset can be measured from "
                 f"it; §22.3.3.1 counts from the start of the START-POINTER field's own "
-                f"encoding, which therefore has to come first")
+                f"encoding, which therefore has to come first"
+            )
         return self._starts[name]
 
     def record_value(self, name: str, value: int) -> None:
@@ -1233,7 +1367,8 @@ class BitWriter:
             raise Asn1Error(
                 f"ECN: {name!r} carries no abstract value, so a `field-to-be-used` "
                 f"determination has nothing to read; §21.3.5's field is one that appears in "
-                f"the ASN.1 specification, not an auxiliary field the encoder sets")
+                f"the ASN.1 specification, not an auxiliary field the encoder sets"
+            )
         return self._values[name]
 
     # --- containment: the relationship §21.3.6, §21.5.6 and §21.7.8 all end something with ---
@@ -1254,8 +1389,7 @@ class BitWriter:
     def is_root_spec(self, spec: object) -> bool:
         return self._root_spec is not None and spec is self._root_spec
 
-    def open_container(self, name: str, *, locatable: bool = False,
-                       is_pdu: bool = False) -> None:
+    def open_container(self, name: str, *, locatable: bool = False, is_pdu: bool = False) -> None:
         """Open `name`. `locatable` says a decoder can find this container's END.
 
         `is_pdu` marks the outermost structure. The PDU's end is known from OUTSIDE the
@@ -1273,7 +1407,8 @@ class BitWriter:
         if any(open_name == name for open_name, _at, _loc, _pdu in self._containers):
             raise Asn1Error(
                 f"ECN: the container {name!r} is already open; a container cannot contain "
-                f"itself, and two with one name make every REFERENCE to it ambiguous")
+                f"itself, and two with one name make every REFERENCE to it ambiguous"
+            )
         self._containers.append((name, len(self._bits), locatable or is_pdu, is_pdu))
 
     def close_container(self, name: str) -> int:
@@ -1281,7 +1416,8 @@ class BitWriter:
         if not self._containers or self._containers[-1][0] != name:
             raise Asn1Error(
                 f"ECN: {name!r} is not the innermost open container, so closing it would "
-                f"cross a containment boundary")
+                f"cross a containment boundary"
+            )
         _name, at, _locatable, _is_pdu = self._containers.pop()
         claim = self._container_claims.pop(name, None)
         if claim is not None:
@@ -1292,7 +1428,8 @@ class BitWriter:
                     f"{name!r}, so it has to be the last encoding placed in it; "
                     f"{len(self._bits) - offset} further bits were written inside {name!r} "
                     f"afterwards. The three clauses word this rule identically; which one "
-                    f"applies is what the description above names")
+                    f"applies is what the description above names"
+                )
         return len(self._bits) - at
 
     def claim_container_end(self, name: str, what: str) -> None:
@@ -1303,7 +1440,8 @@ class BitWriter:
                 raise Asn1Error(
                     f"ECN: a `container` determination names {name!r}, which is not an open "
                     f"container here; §21.3.6's REFERENCE is to a field \"whose contents "
-                    f"include this encoding space\"")
+                    f'include this encoding space"'
+                )
             if not found[-1][2]:
                 # §21.3.6 locates this element's end at the container's end, so the
                 # determination is only usable when the encoding says where that end IS. The
@@ -1316,7 +1454,8 @@ class BitWriter:
                     f"ECN: a `container` determination names {name!r}, which is not the PDU and "
                     f"carries no length determinant and no stated encoding space; §21.3.6 "
                     f"locates this element's end at that container's end, and nothing in the "
-                    f"encoding says where it is. Give it a space determinant or a stated width")
+                    f"encoding says where it is. Give it a space determinant or a stated width"
+                )
             # KNOWN LIMITATION (review, PR #707), and the SAME missing fact as the #OUTER
             # branch below. §21.3.6 locates this element's end at the container's end, so the
             # determination is only usable when the encoding transmits where that end is -- a
@@ -1340,7 +1479,8 @@ class BitWriter:
                 f"ECN: this element is determined by {OUTER_CONTAINER}, the end of the PDU, "
                 f"but it sits inside the container {self._containers[-1][0]!r}; the PDU's end "
                 f"is not this element's container's end, and §21.3.6's rule is about the "
-                f"container that immediately holds it")
+                f"container that immediately holds it"
+            )
         here = len(self._bits)
         previous = self._container_claims.get(name)
         if previous is not None and previous[0] != here:
@@ -1356,7 +1496,8 @@ class BitWriter:
             raise Asn1Error(
                 f"ECN: {what} claims the end of the container {name!r}, but "
                 f"{previous[1]} already claimed it {here - previous[0]} bits earlier; "
-                f"§21.3.6/§21.5.6/§21.7.8 let only ONE encoding be the last one in a container")
+                f"§21.3.6/§21.5.6/§21.7.8 let only ONE encoding be the last one in a container"
+            )
         self._container_claims[name] = (here, what)
 
     def open_containers(self) -> tuple[str, ...]:
@@ -1395,7 +1536,8 @@ class BitWriter:
                 f"{', '.join(repr(name) for name in missing)} "
                 f"{'were' if len(missing) > 1 else 'was'} never set. §9.24.2 moves the "
                 f"application point into a contained type, so its determinants resolve inside "
-                f"it and cannot be supplied by the container")
+                f"it and cannot be supplied by the container"
+            )
         self._slots, self._patched, self._starts, self._values, self._objects = saved
 
     def outer_claim(self) -> "tuple[int, str] | None":
@@ -1417,7 +1559,8 @@ class BitWriter:
         if missing:
             raise Asn1Error(
                 f"ECN: {', '.join(missing)} still need their determinants, and a #OUTER bit "
-                f"reversal would move the bits they occupy")
+                f"reversal would move the bits they occupy"
+            )
         self._bits = list(reversal.apply(tuple(self._bits), unit))
 
     def put_bits(self, value: int, width: int) -> None:
@@ -1427,7 +1570,8 @@ class BitWriter:
             raise Asn1Error(
                 f"ECN: {value} does not fit the {width}-bit encoding space this object "
                 f"declares; a user-defined encoding states its width, so a value that "
-                f"overflows it is a specification error rather than a wider field")
+                f"overflows it is a specification error rather than a wider field"
+            )
         for shift in range(width - 1, -1, -1):
             self._bits.append((value >> shift) & 1)
 
@@ -1462,17 +1606,19 @@ class BitWriter:
             raise Asn1Error(
                 f"ECN: the encoding is {len(self._bits)} bits, which is not a whole number "
                 f"of octets; an object set that can end mid-octet needs a #OUTER encoding "
-                f"object to say how the last octet is completed")
+                f"object to say how the last octet is completed"
+            )
         out = bytearray()
         for index in range(0, len(self._bits), 8):
             byte = 0
-            for bit in self._bits[index:index + 8]:
+            for bit in self._bits[index : index + 8]:
                 byte = (byte << 1) | bit
             out.append(byte)
         return bytes(out)
 
 
 # --- clauses 20-23's defined syntax, as the properties it denotes -------------------------
+
 
 @dataclass(frozen=True)
 class IntSpec:
@@ -1540,22 +1686,22 @@ class IntSpec:
             value = self.transform.apply(value)
         if self.form is IntForm.TWOS_COMPLEMENT:
             if value < -(1 << (self.width - 1)) or value >= (1 << (self.width - 1)):
-                raise Asn1Error(
-                    f"ECN: {value} does not fit {self.width} bits two's complement")
+                raise Asn1Error(f"ECN: {value} does not fit {self.width} bits two's complement")
             encoded = value & ((1 << self.width) - 1)
         else:
             if value < 0:
                 raise Asn1Error(
                     f"ECN: {value} is negative but this #INT object declares "
-                    f"{IntForm.POSITIVE_INT.value}")
+                    f"{IntForm.POSITIVE_INT.value}"
+                )
             encoded = value
         if self.value_padding is None:
-            space_bits = tuple(
-                (encoded >> shift) & 1 for shift in range(self.width - 1, -1, -1))
+            space_bits = tuple((encoded >> shift) & 1 for shift in range(self.width - 1, -1, -1))
             if encoded >> self.width:
                 raise Asn1Error(
                     f"ECN: {value} does not fit the {self.width}-bit encoding space this "
-                    f"object declares")
+                    f"object declares"
+                )
         else:
             # f) Value padding and justification. §22.8.3.2's "b" is the difference between
             #    the space and the *value encoding*, so the value's own width has to be a
@@ -1565,11 +1711,11 @@ class IntSpec:
             #    exactly `width` and no padding arises.
             if self.form is IntForm.TWOS_COMPLEMENT:
                 value_bits = tuple(
-                    (encoded >> shift) & 1 for shift in range(self.width - 1, -1, -1))
+                    (encoded >> shift) & 1 for shift in range(self.width - 1, -1, -1)
+                )
             else:
                 used = max(encoded.bit_length(), 1)
-                value_bits = tuple(
-                    (encoded >> shift) & 1 for shift in range(used - 1, -1, -1))
+                value_bits = tuple((encoded >> shift) & 1 for shift in range(used - 1, -1, -1))
             space_bits = self.value_padding.place(value_bits, self.width, out)
         # h) Bit reversal, over the encoding space's contents and nothing else.
         space_bits = self.bit_reversal.apply(space_bits, self.reversal_unit)
@@ -1646,12 +1792,12 @@ class BoolSpec:
         if self.start_pointer is not None:
             self.start_pointer.record(out)
         pattern = self.true_value if value else self.false_value
-        space_bits = tuple(
-            (pattern >> shift) & 1 for shift in range(self.width - 1, -1, -1))
+        space_bits = tuple((pattern >> shift) & 1 for shift in range(self.width - 1, -1, -1))
         if pattern >> self.width:
             raise Asn1Error(
                 f"ECN: the pattern {pattern} does not fit this #BOOL object's "
-                f"{self.width}-bit encoding space")
+                f"{self.width}-bit encoding space"
+            )
         space_bits = self.bit_reversal.apply(space_bits, self.reversal_unit)
         for bit in space_bits:
             out.put_bit(bit)
@@ -1699,14 +1845,19 @@ class ConditionalIntSpec:
             raise Asn1Error(
                 "ECN: §23.7.2.7 — the INT-TO-INT transform `subtract:lower-bound` shall be "
                 "included only if the IF or IF-ALL condition restricts this encoding to "
-                "classes with a lower bound; none of these conditions does")
+                "classes with a lower bound; none of these conditions does"
+            )
 
     def _subtracts_lower_bound(self) -> bool:
         chain = self.spec.transform
-        steps = chain.transforms if isinstance(chain, TransformChain) else (
-            (chain,) if chain is not None else ())
-        return any(isinstance(step, IntToInt)
-                   and step.op is IntOp.SUBTRACT_LOWER_BOUND for step in steps)
+        steps = (
+            chain.transforms
+            if isinstance(chain, TransformChain)
+            else ((chain,) if chain is not None else ())
+        )
+        return any(
+            isinstance(step, IntToInt) and step.op is IntOp.SUBTRACT_LOWER_BOUND for step in steps
+        )
 
     def _guarantees_a_lower_bound(self) -> bool:
         """Whether every set of bounds satisfying these conditions has a lower bound.
@@ -1726,8 +1877,10 @@ class ConditionalIntSpec:
 
     def applies(self, bounds: IntegerBounds) -> bool:
         """§23.7.2.2: no condition means it always applies; `IF-ALL` means all of them."""
-        return all(bounds.satisfies(condition, comparison, comparator)
-                   for condition, comparison, comparator in self.conditions)
+        return all(
+            bounds.satisfies(condition, comparison, comparator)
+            for condition, comparison, comparator in self.conditions
+        )
 
 
 @dataclass(frozen=True)
@@ -1756,7 +1909,8 @@ class IntSelector:
         raise Asn1Error(
             f"ECN: §23.6.3.1 — no #CONDITIONAL-INT object's conditions are satisfied by "
             f"{self.bounds}; the clause makes that an ECN specification error rather than a "
-            f"reason to fall back on a default encoding")
+            f"reason to fall back on a default encoding"
+        )
 
     def write(self, value: int, out: BitWriter) -> None:
         self.select().write(value, out)
@@ -1843,12 +1997,14 @@ class ReplacementStructure:
         if self.dummy not in self.order:
             raise Asn1Error(
                 f"ECN: §22.1.2.2 gives {self.name} a single encoding class parameter, and "
-                f"{self.dummy!r} is not one of its fields")
+                f"{self.dummy!r} is not one of its fields"
+            )
         holes = [name for name in self.order if name not in self.auxiliary]
         if holes != [self.dummy]:
             raise Asn1Error(
                 f"ECN: §22.1.2.2 — {self.name} shall have exactly one encoding class "
-                f"parameter; {sorted(holes)} have no encoding object")
+                f"parameter; {sorted(holes)} have no encoding object"
+            )
 
     def expand(self, field_name: str, spec) -> tuple[tuple[str, object], ...]:
         """Instantiate this structure around `spec`, per §22.1.3.1 and §22.1.3.5.
@@ -1873,14 +2029,20 @@ class ReplacementStructure:
         if not hasattr(spec, "space_determinant"):
             raise Asn1Error(
                 f"ECN: {type(spec).__name__} has no encoding space, so {self.name}'s "
-                f"ENCODED BY object has nothing to determine")
+                f"ENCODED BY object has nothing to determine"
+            )
         if spec.space_determinant is not None:
             raise Asn1Error(
                 f"ECN: {field_name!r} already carries an encoding-space determinant, and "
                 f"{self.name} would add a second; §21.2's NOTE calls a disagreement between "
-                f"two determinations an error, so two are refused rather than raced")
-        return replace(spec, space_determinant=replace(
-            self.determinant, reference=f"{field_name}${self.determinant.reference}"))
+                f"two determinations an error, so two are refused rather than raced"
+            )
+        return replace(
+            spec,
+            space_determinant=replace(
+                self.determinant, reference=f"{field_name}${self.determinant.reference}"
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -1905,11 +2067,11 @@ class HeadEndStructure:
         if unbacked:
             raise Asn1Error(
                 f"ECN: §22.1.2.7 — all fields of the head-end structure {self.name} are "
-                f"auxiliary fields; {sorted(unbacked)} have no encoding object")
+                f"auxiliary fields; {sorted(unbacked)} have no encoding object"
+            )
 
     def expand(self, field_name: str) -> tuple[tuple[str, object], ...]:
-        return tuple((f"{field_name}^{member}", self.auxiliary[member])
-                     for member in self.order)
+        return tuple((f"{field_name}^{member}", self.auxiliary[member]) for member in self.order)
 
 
 @dataclass(frozen=True)
@@ -1966,11 +2128,13 @@ class Replacement:
             if self.head_end is not None:
                 raise Asn1Error(
                     "ECN: §22.1.2.8 — an encoding object with a REPLACE STRUCTURE clause "
-                    "shall not have an INSERT AT HEAD clause")
+                    "shall not have an INSERT AT HEAD clause"
+                )
             if self.structure.determinant is None:
                 raise Asn1Error(
                     "ECN: §22.1.2.8 — an encoding object with a REPLACE STRUCTURE clause "
-                    "shall have an ENCODED BY clause")
+                    "shall have an ENCODED BY clause"
+                )
         if self.paired is None:
             return
         # §22.1.1.7 e) names the pair in one direction only, and §22.1.1.2's syntax has no slot
@@ -1980,14 +2144,15 @@ class Replacement:
         if self.action is not ReplaceAction.NON_OPTIONALS:
             raise Asn1Error(
                 f"ECN: §22.1.1.7 e) pairs a second replacement group with REPLACE "
-                f"NON-OPTIONALS; this one is REPLACE {self.action.value}")
+                f"NON-OPTIONALS; this one is REPLACE {self.action.value}"
+            )
         if self.paired.action is not ReplaceAction.OPTIONALS:
             raise Asn1Error(
                 f"ECN: §22.1.1.2 spells the second group `AND OPTIONALS WITH`, so its action "
-                f"is OPTIONALS; this one is {self.paired.action.value}")
+                f"is OPTIONALS; this one is {self.paired.action.value}"
+            )
         if self.paired.paired is not None:
-            raise Asn1Error(
-                "ECN: §22.1.1.2 gives one `AND OPTIONALS` tail, not a chain of them")
+            raise Asn1Error("ECN: §22.1.1.2 gives one `AND OPTIONALS` tail, not a chain of them")
 
 
 @dataclass(frozen=True)
@@ -2030,9 +2195,13 @@ class ConcatenationSpec:
             # §22.10.2.1's prerequisite, checked when the object is written rather than when
             # it first encodes something: an object that can never be decoded is invalid on
             # its own terms.
-            _handles_of(self._laid_out(), handle_id=group.handle_id,
-                        clause="§22.10.2.1", what="a concatenation whose ORDER is `random`",
-                        alignment_unit=self._component_alignment())
+            _handles_of(
+                self._laid_out(),
+                handle_id=group.handle_id,
+                clause="§22.10.2.1",
+                what="a concatenation whose ORDER is `random`",
+                alignment_unit=self._component_alignment(),
+            )
         elif group.order is ComponentOrder.TAG:
             self._tag_order()
 
@@ -2058,13 +2227,15 @@ class ConcatenationSpec:
             if number is None:
                 raise Asn1Error(
                     f"ECN: §22.10.2.4 — when ORDER is `tag`, every component shall start with "
-                    f"an encoding class in the tag category; {name!r} does not")
+                    f"an encoding class in the tag category; {name!r} does not"
+                )
             tagged.append((number, name, spec))
         numbers = [number for number, _name, _spec in tagged]
         if len(set(numbers)) != len(numbers):
             raise Asn1Error(
                 f"ECN: §22.10.2.5 — the component-tags shall be distinct; {sorted(numbers)} "
-                f"repeats one, so `ORDER tag` would not fix an order")
+                f"repeats one, so `ORDER tag` would not fix an order"
+            )
         return tuple((name, spec) for _number, name, spec in sorted(tagged))
 
     def transmission_order(self) -> tuple[str, ...]:
@@ -2102,7 +2273,8 @@ class ConcatenationSpec:
                 raise Asn1Error(
                     f"ECN: this #CONCATENATION object states a transmission order that does "
                     f"not match its fields (missing {sorted(missing)}, unknown "
-                    f"{sorted(extra)})")
+                    f"{sorted(extra)})"
+                )
             names = self.order
         else:
             names = tuple(self.fields)
@@ -2113,7 +2285,8 @@ class ConcatenationSpec:
                 "ECN: §22.1.3.2 replaces the ENTIRE construction for a class in the encoding "
                 "constructor category, so a #CONCATENATION object with REPLACE STRUCTURE "
                 "describes a structure other than this one; apply the replacement object to "
-                "the field whose class it replaces instead")
+                "the field whose class it replaces instead"
+            )
         heads: list[tuple[str, object]] = []
         body: list[tuple[str, object]] = []
         for name in names:
@@ -2150,8 +2323,7 @@ class ConcatenationSpec:
             # A named concatenation is addressable but carries no length determinant of its
             # own, so a decoder cannot find where it ends -- UNLESS it is the PDU, whose
             # extent comes from whatever delivered the octets.
-            out.open_container(self.container_name, locatable=False,
-                               is_pdu=out.is_root_spec(self))
+            out.open_container(self.container_name, locatable=False, is_pdu=out.is_root_spec(self))
         group = self.concatenation or Concatenation()
         aligned = group.alignment is ConcatenationAlignment.ALIGNED
         for name, spec in self._ordered():
@@ -2183,7 +2355,8 @@ class ConcatenationSpec:
                 raise Asn1Error(
                     f"ECN: this #CONCATENATION object encodes {name!r}, which the value does "
                     f"not carry; a user-defined encoding has no optionality unless an "
-                    f"#OPTIONAL object supplies it")
+                    f"#OPTIONAL object supplies it"
+                )
             out.mark_start(name)
             # Recorded before writing so §21.3.5's `field-to-be-used` can read the abstract
             # value rather than re-derive it from bits it would have to un-transform.
@@ -2240,6 +2413,7 @@ class OuterSpec:
 
 # --- clause 22.7 and clause 23.13/23.14: repetition ----------------------------------------
 
+
 @dataclass(frozen=True)
 class RepetitionSpace:
     """§22.7's repetition space: how a decoder finds the end of a repetition.
@@ -2291,16 +2465,18 @@ class RepetitionSpace:
     _BUILT = tuple(RepetitionSpaceDetermination)
 
     def __post_init__(self) -> None:
-        if self.determination in (RepetitionSpaceDetermination.FLAG_TO_BE_SET,
-                                  RepetitionSpaceDetermination.FLAG_TO_BE_USED) and (
-                not self.reference):
+        if self.determination in (
+            RepetitionSpaceDetermination.FLAG_TO_BE_SET,
+            RepetitionSpaceDetermination.FLAG_TO_BE_USED,
+        ) and (not self.reference):
             raise Asn1Error(
-                f"ECN: §21.7.6 and §21.7.7 both \"require the specification of a REFERENCE to "
-                f"a field that is part of the repeated element\"; "
-                f"`{self.determination.value}` names none, so there is no flag to set or read")
-        if (self.determination is RepetitionSpaceDetermination.CONTAINER
-                and (self.encoder_transforms is not None
-                     or self.decoder_transforms is not None)):
+                f'ECN: §21.7.6 and §21.7.7 both "require the specification of a REFERENCE to '
+                f'a field that is part of the repeated element"; '
+                f"`{self.determination.value}` names none, so there is no flag to set or read"
+            )
+        if self.determination is RepetitionSpaceDetermination.CONTAINER and (
+            self.encoder_transforms is not None or self.decoder_transforms is not None
+        ):
             # The same rule `SpaceDeterminant` already applies one clause over, for the same
             # structural reason: a container's end is a POSITION, not a number carried through
             # a field, so there is nothing for a transform to convert. `record` returns without
@@ -2311,23 +2487,27 @@ class RepetitionSpace:
             raise Asn1Error(
                 "ECN: §21.7.8's `container` determination reads no field's value, so there is "
                 "nothing for ENCODER-TRANSFORMS or DECODER-TRANSFORMS to convert; the "
-                "determinations that carry a count are the ones that take them")
+                "determinations that carry a count are the ones that take them"
+            )
         if self.determination is RepetitionSpaceDetermination.PATTERN:
             if self.termination_pattern is None:
                 raise Asn1Error(
                     "ECN: §22.7.1.1's `pattern` determination ends the repetition with the "
-                    "&termination-pattern, and none is set")
+                    "&termination-pattern, and none is set"
+                )
             self.termination_pattern.require_non_null("the termination pattern")
         elif self.determination is RepetitionSpaceDetermination.HANDLE:
             if self.reference:
                 raise Asn1Error(
                     "ECN: §21.7.10's `handle` determination reads the identification handle "
-                    "the elements already exhibit; it takes no USING reference to a count")
+                    "the elements already exhibit; it takes no USING reference to a count"
+                )
         elif self.determination is not RepetitionSpaceDetermination.NOT_NEEDED:
             if not self.reference:
                 raise Asn1Error(
                     f"ECN: §21.7.4/§21.7.5 — `{self.determination.value}` requires a USING "
-                    f"reference to the field carrying the count")
+                    f"reference to the field carrying the count"
+                )
         check_unit(self.unit, allow_repetitions=True)
 
     def count_in_units(self, repetitions: int, space_bits: int) -> int:
@@ -2343,7 +2523,8 @@ class RepetitionSpace:
         if space_bits % self.unit:
             raise Asn1Error(
                 f"ECN: a {space_bits}-bit repetition space is not a whole number of "
-                f"{self.unit}-bit units, so no determinant can state its size")
+                f"{self.unit}-bit units, so no determinant can state its size"
+            )
         return space_bits // self.unit
 
     def flag(self, out: "BitWriter", *, more: bool) -> None:
@@ -2368,20 +2549,25 @@ class RepetitionSpace:
             # raw boolean would make an active-low continuation bit — a `BoolToInt` with
             # `true_zero` — emit the complement of what its specification asks for, and it
             # would do so silently, since nothing downstream re-derives the flag.
-            out.patch(self.reference,
-                      _determinant_value(self.encoder_transforms, int(more),
-                                         f"the continuation flag {self.reference}"))
+            out.patch(
+                self.reference,
+                _determinant_value(
+                    self.encoder_transforms, int(more), f"the continuation flag {self.reference}"
+                ),
+            )
             return
         carried = out.value_of(self.reference)
-        recovered = (carried if self.decoder_transforms is None
-                     else self.decoder_transforms.apply(carried))
+        recovered = (
+            carried if self.decoder_transforms is None else self.decoder_transforms.apply(carried)
+        )
         if bool(recovered) != more:
             raise Asn1Error(
                 f"ECN: §21.7.7 — the flag {self.reference!r} carries {carried}, which reduces "
                 f"to {'more elements follow' if recovered else 'this is the last element'}, "
                 f"and this element "
                 f"{'is not the last' if more else 'is the last'}; a conforming encoder shall "
-                f"not produce an encoding whose flag misidentifies the end of the repetition")
+                f"not produce an encoding whose flag misidentifies the end of the repetition"
+            )
 
     def record(self, out: "BitWriter", repetitions: int, space_bits: int) -> None:
         """Set or check the count field, after the elements have been written."""
@@ -2394,30 +2580,39 @@ class RepetitionSpace:
             return
         # §22.7.3.11: "If DETERMINED BY is `handle` there is no further action needed by the
         # encoder." The elements' own §22.9.3.1 checks have already run by the time this does.
-        if self.determination in (RepetitionSpaceDetermination.NOT_NEEDED,
-                                  RepetitionSpaceDetermination.PATTERN,
-                                  RepetitionSpaceDetermination.HANDLE):
+        if self.determination in (
+            RepetitionSpaceDetermination.NOT_NEEDED,
+            RepetitionSpaceDetermination.PATTERN,
+            RepetitionSpaceDetermination.HANDLE,
+        ):
             return
         # §21.7.6 and §21.7.7 carry no count at all: the end of the repetition is announced by
         # a flag inside each element, which `flag` has already set or checked per element. There
         # is nothing left for a determinant outside them to say, and reading `reference` here
         # would look for the count field in a name that belongs to the elements.
-        if self.determination in (RepetitionSpaceDetermination.FLAG_TO_BE_SET,
-                                  RepetitionSpaceDetermination.FLAG_TO_BE_USED):
+        if self.determination in (
+            RepetitionSpaceDetermination.FLAG_TO_BE_SET,
+            RepetitionSpaceDetermination.FLAG_TO_BE_USED,
+        ):
             return
         count = self.count_in_units(repetitions, space_bits)
         if self.determination is RepetitionSpaceDetermination.FIELD_TO_BE_SET:
-            out.patch(self.reference,
-                      _determinant_value(self.encoder_transforms, count,
-                                         f"REPETITION-SPACE USING {self.reference}"))
+            out.patch(
+                self.reference,
+                _determinant_value(
+                    self.encoder_transforms, count, f"REPETITION-SPACE USING {self.reference}"
+                ),
+            )
             return
         carried = out.value_of(self.reference)
-        recovered = (carried if self.decoder_transforms is None
-                     else self.decoder_transforms.apply(carried))
+        recovered = (
+            carried if self.decoder_transforms is None else self.decoder_transforms.apply(carried)
+        )
         if recovered != count:
             raise Asn1Error(
                 f"ECN: §21.7.5 — the field {self.reference!r} carries {carried}, which reduces "
-                f"to {recovered} repetition-space units, but the encoding used {count}")
+                f"to {recovered} repetition-space units, but the encoding used {count}"
+            )
 
     def terminate(self, out: "BitWriter") -> None:
         """Emit §22.7.1.1's termination pattern, if that is how this space ends."""
@@ -2453,8 +2648,7 @@ class ConditionalRepetitionSpec:
 
     def __post_init__(self) -> None:
         if self.element is None:
-            raise Asn1Error(
-                "ECN: a #CONDITIONAL-REPETITION object encodes a repeated element")
+            raise Asn1Error("ECN: a #CONDITIONAL-REPETITION object encodes a repeated element")
         if self.space.determination is RepetitionSpaceDetermination.HANDLE:
             # §21.7.10 requires the handle from two sides: "the encoding object applied to the
             # component being repeated, **and** the encoding object applied to each possible
@@ -2463,15 +2657,19 @@ class ConditionalRepetitionSpec:
             # this checks the element and the enclosing concatenation is where the other half
             # would go. Half a rule enforced is worth more than none, and the half that is
             # missing is named rather than silently skipped.
-            _handles_of((("the repeated element", self.element),),
-                        handle_id=self.space.handle_id, clause="§21.7.10",
-                        what="a repetition whose end is",
-                        alignment_unit=None if self.pre_alignment is None
-                        else self.pre_alignment.unit)
+            _handles_of(
+                (("the repeated element", self.element),),
+                handle_id=self.space.handle_id,
+                clause="§21.7.10",
+                what="a repetition whose end is",
+                alignment_unit=None if self.pre_alignment is None else self.pre_alignment.unit,
+            )
 
     def applies(self, bounds: SizeBounds) -> bool:
-        return all(bounds.satisfies(condition, comparison, comparator)
-                   for condition, comparison, comparator in self.conditions)
+        return all(
+            bounds.satisfies(condition, comparison, comparator)
+            for condition, comparison, comparator in self.conditions
+        )
 
     def write(self, values, out: "BitWriter") -> None:
         if self.pre_alignment is not None:
@@ -2485,11 +2683,12 @@ class ConditionalRepetitionSpec:
             # in turn bound a component inside it.
             out.open_container(
                 self.container_name,
-                locatable=self.space.determination
-                is not RepetitionSpaceDetermination.CONTAINER)
+                locatable=self.space.determination is not RepetitionSpaceDetermination.CONTAINER,
+            )
         flagged = self.space.determination in (
             RepetitionSpaceDetermination.FLAG_TO_BE_SET,
-            RepetitionSpaceDetermination.FLAG_TO_BE_USED)
+            RepetitionSpaceDetermination.FLAG_TO_BE_USED,
+        )
         for index, value in enumerate(values):
             if not flagged:
                 self.element.write(value, out)
@@ -2540,7 +2739,8 @@ class RepetitionSpec:
                 raise Asn1Error(
                     f"ECN: §23.13.2.3 — a conditional #CONDITIONAL-REPETITION object at "
                     f"position {index} follows an unconditional one, which always matches; "
-                    f"every object preceding a conditional one shall itself be conditional")
+                    f"every object preceding a conditional one shall itself be conditional"
+                )
             if not candidate.conditions:
                 seen_unconditional = True
 
@@ -2550,13 +2750,15 @@ class RepetitionSpec:
                 return candidate
         raise Asn1Error(
             f"ECN: §23.13.3.1 — no #CONDITIONAL-REPETITION object's conditions are satisfied "
-            f"by {self.bounds}; the clause makes that an ECN specification error")
+            f"by {self.bounds}; the clause makes that an ECN specification error"
+        )
 
     def write(self, values, out: "BitWriter") -> None:
         self.select().write(values, out)
 
 
 # --- clause 23's string, null and tag categories -------------------------------------------
+
 
 @dataclass(frozen=True)
 class StringSpec:
@@ -2603,13 +2805,16 @@ class StringSpec:
         if self.repetition is None:
             raise Asn1Error(
                 "ECN: §23.2.1 gives a string category no ENCODING-SPACE; its size comes from "
-                "the §22.7 repetition space, so a REPETITION-ENCODING is required")
+                "the §22.7 repetition space, so a REPETITION-ENCODING is required"
+            )
         if (self.contents is not None or self.encoded_by is not None) and (
-                self.contained_class is None):
+            self.contained_class is None
+        ):
             raise Asn1Error(
                 "ECN: §22.11.1.3 makes this group's purpose \"to determine the encoding of a "
-                "contained type\", and this object names no contained class for it to "
-                "determine the encoding of")
+                'contained type", and this object names no contained class for it to '
+                "determine the encoding of"
+            )
 
     def contained_objects(self, containing: dict) -> dict:
         """§22.11.2 and §13.2.10.6's five-row selection, for a string class.
@@ -2657,7 +2862,8 @@ class BitFieldSpec:
         if self.width and len(bits) != self.width:
             raise Asn1Error(
                 f"ECN: this bit-field element is {self.width} bits wide; the value carries "
-                f"{len(bits)}")
+                f"{len(bits)}"
+            )
         for bit in bits:
             out.put_bit(bit)
 
@@ -2719,8 +2925,9 @@ class TagSpec:
         if self.pre_alignment is not None:
             self.pre_alignment.apply(out)
         handle_start = out.bit_length
-        IntSpec(width=self.width, form=self.form,
-                value_padding=self.value_padding).write(self.number, out)
+        IntSpec(width=self.width, form=self.form, value_padding=self.value_padding).write(
+            self.number, out
+        )
         if self.tagged is not None:
             self.tagged.write(value, out)
         # Checked over the tag *and* what it tags, because §22.9.1.5 counts positions in the
@@ -2730,6 +2937,7 @@ class TagSpec:
 
 
 # --- clause 23.1 and 23.11: the constructor categories -------------------------------------
+
 
 @dataclass(frozen=True)
 class OptionalSpec:
@@ -2769,18 +2977,21 @@ class OptionalSpec:
         if self.component is None:
             raise Asn1Error(
                 "ECN: an #OPTIONAL object wraps the encoding of the component it makes "
-                "optional; there is nothing here to encode when the component is present")
+                "optional; there is nothing here to encode when the component is present"
+            )
         if self.presence is None:
             raise Asn1Error(
                 "ECN: §22.5.1.6 — the PRESENCE specification is mandatory wherever the defined "
                 "syntax allows it, and defaulting every part of it "
-                "\"would not satisfy the above constraints\"; this #OPTIONAL object states "
-                "none, so nothing says how a decoder detects absence")
+                '"would not satisfy the above constraints"; this #OPTIONAL object states '
+                "none, so nothing says how a decoder detects absence"
+            )
         if self.presence.determination is OptionalityDetermination.POINTER:
             if self.start_pointer is None:
                 raise Asn1Error(
                     "ECN: §22.5.2.4 — if DETERMINED BY is `pointer`, there shall be a "
-                    "START-POINTER specification in the same encoding object")
+                    "START-POINTER specification in the same encoding object"
+                )
             # §22.5.2.4's NOTE stays a diagnostic rather than a rule: "A start pointer
             # specification normally also needs a pre-alignment specification with ALIGNED TO
             # ANY". `normally` is not `shall`, and it is the ANY case that makes the pointer
@@ -2790,14 +3001,16 @@ class OptionalSpec:
                 raise Asn1Error(
                     "ECN: §23.11.1 gives `#OPTIONAL` structure-only replacement — only "
                     "`&#Replacement-structure`, with no COMPONENT, OPTIONALS or NON-OPTIONALS "
-                    "actions; those belong to the concatenation category")
+                    "actions; those belong to the concatenation category"
+                )
             raise Asn1Error(
                 "ECN: §23.11.3.2's REPLACE STRUCTURE hands \"the entire component (including "
                 "any classes in the tag category, but excluding classes in the optionality "
-                "category)\" to the replacement structure as its actual parameter, and the "
-                "component \"becomes a mandatory component\". That is X.683 parameterization "
+                'category)" to the replacement structure as its actual parameter, and the '
+                'component "becomes a mandatory component". That is X.683 parameterization '
                 "applied to an optional class, which is not built; applying the replacement "
-                "object to the component's own class expresses the same encoding")
+                "object to the component's own class expresses the same encoding"
+            )
 
     def write(self, value, out: "BitWriter") -> None:
         present = value is not None
@@ -2855,12 +3068,14 @@ class AlternativesSpec:
         if not self.alternatives:
             raise Asn1Error(
                 "ECN: an #ALTERNATIVES object encodes a construction in the alternatives "
-                "category, and a construction with no alternatives has no encodings")
+                "category, and a construction with no alternatives has no encodings"
+            )
         if self.selection is None:
             raise Asn1Error(
-                "ECN: §22.6.2.9 — the ALTERNATIVE specification \"is mandatory for it to be "
-                "set in all places in the defined syntax where it is allowed\"; this "
-                "#ALTERNATIVES object states none")
+                'ECN: §22.6.2.9 — the ALTERNATIVE specification "is mandatory for it to be '
+                'set in all places in the defined syntax where it is allowed"; this '
+                "#ALTERNATIVES object states none"
+            )
         if self.order:
             missing = set(self.alternatives) - set(self.order)
             extra = set(self.order) - set(self.alternatives)
@@ -2868,7 +3083,8 @@ class AlternativesSpec:
                 raise Asn1Error(
                     f"ECN: this #ALTERNATIVES object states a textual order that does not "
                     f"match its alternatives (missing {sorted(missing)}, unknown "
-                    f"{sorted(extra)})")
+                    f"{sorted(extra)})"
+                )
         if self.selection.ordering is ComponentOrder.TAG:
             self._tag_order()
         if self.selection.determination is AlternativeDetermination.HANDLE:
@@ -2876,10 +3092,13 @@ class AlternativesSpec:
             # of the alternatives ... The handle value sets specified by those encoding
             # objects shall all be disjoint." Both halves are checked; without the second the
             # decoder's §22.6.4.4 lookup would have more than one answer.
-            _handles_of(tuple(self._textual()), handle_id=self.selection.handle_id,
-                        clause="§21.6.6", what="an alternatives construction",
-                        alignment_unit=None if self.pre_alignment is None
-                        else self.pre_alignment.unit)
+            _handles_of(
+                tuple(self._textual()),
+                handle_id=self.selection.handle_id,
+                clause="§21.6.6",
+                what="an alternatives construction",
+                alignment_unit=None if self.pre_alignment is None else self.pre_alignment.unit,
+            )
 
     def _textual(self):
         names = self.order or tuple(self.alternatives)
@@ -2893,13 +3112,15 @@ class AlternativesSpec:
             if number is None:
                 raise Asn1Error(
                     f"ECN: §22.6.2.10 — when ORDER is `tag`, every alternative shall start "
-                    f"with an encoding class in the tag category; {name!r} does not")
+                    f"with an encoding class in the tag category; {name!r} does not"
+                )
             tagged.append((number, name))
         numbers = [number for number, _name in tagged]
         if len(set(numbers)) != len(numbers):
             raise Asn1Error(
                 f"ECN: §22.6.2.11 — the component-tags of each alternative shall be distinct; "
-                f"{sorted(numbers)} repeats one")
+                f"{sorted(numbers)} repeats one"
+            )
         return tuple(name for _number, name in sorted(tagged))
 
     def ordering(self) -> tuple[str, ...]:
@@ -2914,7 +3135,8 @@ class AlternativesSpec:
         if name not in order:
             raise Asn1Error(
                 f"ECN: {name!r} is not one of this #ALTERNATIVES object's alternatives "
-                f"({', '.join(order)})")
+                f"({', '.join(order)})"
+            )
         return order.index(name)
 
     def write(self, value, out: "BitWriter") -> None:
@@ -2928,7 +3150,8 @@ class AlternativesSpec:
             if len(value) != 1:
                 raise Asn1Error(
                     f"ECN: a class in the alternatives category encodes exactly one "
-                    f"alternative; this value carries {len(value)}")
+                    f"alternative; this value carries {len(value)}"
+                )
             name, chosen = next(iter(value.items()))
         else:
             name, chosen = value
@@ -2947,6 +3170,7 @@ class AlternativesSpec:
 
 
 # --- the encoding object, and applying a set of them --------------------------------------
+
 
 @dataclass(frozen=True)
 class UserEncodingObject:
@@ -2976,8 +3200,8 @@ def encode_with_user(objects, cls, value, *, outer: OuterSpec | None = None) -> 
     obj = objects.get(cls)
     if obj is None:
         raise Asn1Error(
-            f"ECN: no user-defined encoding object for "
-            f"{getattr(cls, 'name', cls)!r} (9.5.1)")
+            f"ECN: no user-defined encoding object for {getattr(cls, 'name', cls)!r} (9.5.1)"
+        )
     out = BitWriter()
     out.set_objects(objects)
     # §21.3.6 and the #OUTER rule both need to know which structure is the PDU, and only the
@@ -2990,7 +3214,8 @@ def encode_with_user(objects, cls, value, *, outer: OuterSpec | None = None) -> 
         raise Asn1Error(
             f"ECN: the container{'s' if len(still_open) > 1 else ''} "
             f"{', '.join(repr(name) for name in still_open)} "
-            f"{'were' if len(still_open) > 1 else 'was'} opened and never closed")
+            f"{'were' if len(still_open) > 1 else 'was'} opened and never closed"
+        )
     # §21.3.6's second form: "a specification that the end of the PDU determines the end of
     # the encoding space (using OUTER)". Its check can only run here, because the PDU's end is
     # what this function is producing — and it runs BEFORE `#OUTER` pads, since padding to an
@@ -3001,7 +3226,8 @@ def encode_with_user(objects, cls, value, *, outer: OuterSpec | None = None) -> 
             f"ECN: §21.3.6 — {claim[1]} is determined by {OUTER_CONTAINER}, the end of the "
             f"PDU, so it "
             f"has to be the last encoding in it; {out.bit_length - claim[0]} further bits "
-            f"follow")
+            f"follow"
+        )
     # Every auxiliary field is a determinant, and a determinant nobody wrote is not zero — it
     # is a length, an offset or an unused-bit count that no clause ever produced. Checked
     # before `#OUTER` runs, since a reversal there would relocate the reserved bits.
@@ -3013,13 +3239,15 @@ def encode_with_user(objects, cls, value, *, outer: OuterSpec | None = None) -> 
             f"{'were' if len(missing) > 1 else 'was'} reserved and never set; an auxiliary "
             f"field exists to carry a determinant, so one that no ENCODING-SPACE, "
             f"START-POINTER or UNUSED BITS group references would transmit zeros as though "
-            f"they meant something")
+            f"they meant something"
+        )
     if outer is not None:
         outer.finish(out)
     return out.octets()
 
 
 # --- the workload the gate asks for, and the refutation it asks for -----------------------
+
 
 def legacy_frame_workload():
     """The measured workload: a fixed-layout frame header with a **scaled** length field.
@@ -3042,11 +3270,14 @@ def legacy_frame_workload():
     def bounded(low: int, high: int) -> Primitive:
         return Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(low, high))
 
-    header = Sequence((
-        Component("version", bounded(0, 7)),
-        Component("urgent", Primitive(Universal.BOOLEAN, "BOOLEAN")),
-        Component("payloadOctets", bounded(0, 60)),
-    ), name="FrameHeader")
+    header = Sequence(
+        (
+            Component("version", bounded(0, 7)),
+            Component("urgent", Primitive(Universal.BOOLEAN, "BOOLEAN")),
+            Component("payloadOctets", bounded(0, 60)),
+        ),
+        name="FrameHeader",
+    )
     value = {"version": 5, "urgent": True, "payloadOctets": 40}
 
     #  payloadOctets/4 = 10 -> 1010 | version 5 -> 101 | urgent TRUE active-low -> 0 | rr 00
@@ -3063,8 +3294,12 @@ def legacy_frame_objects():
             # §24.3.5: one object, one operation. A field scaled in 4-octet units is a
             # single `divide:4`; had it also carried an offset it would be a two-element
             # chain, which is exactly why `TransformChain` exists.
-            "payloadOctets": IntSpec(width=4, transform=TransformChain(
-                (IntToInt(op=IntOp.DIVIDE, operand=4, name="OCTETS-TO-UNITS"),))),
+            "payloadOctets": IntSpec(
+                width=4,
+                transform=TransformChain(
+                    (IntToInt(op=IntOp.DIVIDE, operand=4, name="OCTETS-TO-UNITS"),)
+                ),
+            ),
             "version": IntSpec(width=3),
             "urgent": BoolSpec(true_value=0, false_value=1),
             "reserved": PadSpec(width=2),
@@ -3077,7 +3312,11 @@ def legacy_frame_objects():
 
 #: The fixed candidate set the §6 reduction gate was signed off against.
 FIXED_CANDIDATES = (
-    "DER", "CANONICAL-PER-ALIGNED", "CANONICAL-PER-UNALIGNED", "COER", "CJER",
+    "DER",
+    "CANONICAL-PER-ALIGNED",
+    "CANONICAL-PER-UNALIGNED",
+    "COER",
+    "CJER",
 )
 
 
@@ -3110,12 +3349,16 @@ def refuted_by(asn1_type, value, target: bytes) -> dict:
     # built-in BER/DER object sets dispatch to, so this measures the rail the roadmap means.
     module = Module("<ecn-workload>", (), {"T": asn1_type})
     record("DER", lambda: module.encode("T", value))
-    record("CANONICAL-PER-ALIGNED",
-           lambda: encode_per(asn1_type, value, variant=PerVariant.ALIGNED,
-                              rules=PerRules.CANONICAL))
-    record("CANONICAL-PER-UNALIGNED",
-           lambda: encode_per(asn1_type, value, variant=PerVariant.UNALIGNED,
-                              rules=PerRules.CANONICAL))
+    record(
+        "CANONICAL-PER-ALIGNED",
+        lambda: encode_per(asn1_type, value, variant=PerVariant.ALIGNED, rules=PerRules.CANONICAL),
+    )
+    record(
+        "CANONICAL-PER-UNALIGNED",
+        lambda: encode_per(
+            asn1_type, value, variant=PerVariant.UNALIGNED, rules=PerRules.CANONICAL
+        ),
+    )
     record("COER", lambda: encode_oer(asn1_type, value, rules=OerRules.CANONICAL))
     record("CJER", lambda: encode_jer(asn1_type, value, rules=JerRules.CANONICAL))
     for name, (octets, _note) in results.items():
@@ -3126,32 +3369,101 @@ def refuted_by(asn1_type, value, target: bytes) -> dict:
 
 
 __all__ = [
-    "UNIT_BIT", "UNIT_DWORD32", "UNIT_MAX", "UNIT_NAMES", "UNIT_NIBBLE", "UNIT_OCTET",
-    "UNIT_REPETITIONS", "UNIT_WORD16",
-    "AuxIntSpec", "BitWriter", "BoolSpec", "Comparison", "ConcatenationSpec",
-    "ConditionalIntSpec", "EncodingSpaceDetermination", "FIXED_CANDIDATES", "IntForm",
-    "BitToBits", "BitsToBits", "BitsToChar", "BitsToCompositeBits", "BitsToInt",
-    "BoolToBool", "BoolToInt", "CharToBits", "CharsToCompositeChar", "Composite",
-    "CompositeBitsToBits", "CompositeBitsToOctets", "CompositeCharToChars",
-    "IntOp", "IntSelector", "IntSpec", "IntToBits", "IntToBool", "IntToChars", "IntToInt",
-    "IntegerBounds", "OctetsToCompositeBits", "RESULT_SIZE_FIXED_TO_MAX",
+    "UNIT_BIT",
+    "UNIT_DWORD32",
+    "UNIT_MAX",
+    "UNIT_NAMES",
+    "UNIT_NIBBLE",
+    "UNIT_OCTET",
+    "UNIT_REPETITIONS",
+    "UNIT_WORD16",
+    "AuxIntSpec",
+    "BitWriter",
+    "BoolSpec",
+    "Comparison",
+    "ConcatenationSpec",
+    "ConditionalIntSpec",
+    "EncodingSpaceDetermination",
+    "FIXED_CANDIDATES",
+    "IntForm",
+    "BitToBits",
+    "BitsToBits",
+    "BitsToChar",
+    "BitsToCompositeBits",
+    "BitsToInt",
+    "BoolToBool",
+    "BoolToInt",
+    "CharToBits",
+    "CharsToCompositeChar",
+    "Composite",
+    "CompositeBitsToBits",
+    "CompositeBitsToOctets",
+    "CompositeCharToChars",
+    "IntOp",
+    "IntSelector",
+    "IntSpec",
+    "IntToBits",
+    "IntToBool",
+    "IntToChars",
+    "IntToInt",
+    "IntegerBounds",
+    "OctetsToCompositeBits",
+    "RESULT_SIZE_FIXED_TO_MAX",
     "RESULT_SIZE_VARIABLE",
-    "Justification", "JustificationSide", "OuterSpec", "PadSpec", "Padding", "Pattern",
-    "PatternKind", "PreAlignment", "RangeCondition", "ReplaceAction",
-    "Replacement", "ReplacementStructure", "HeadEndStructure",
+    "Justification",
+    "JustificationSide",
+    "OuterSpec",
+    "PadSpec",
+    "Padding",
+    "Pattern",
+    "PatternKind",
+    "PreAlignment",
+    "RangeCondition",
+    "ReplaceAction",
+    "Replacement",
+    "ReplacementStructure",
+    "HeadEndStructure",
     "ReversalSpecification",
-    "BitFieldSpec", "ConditionalRepetitionSpec", "NullSpec", "RepetitionSpaceDetermination",
-    "RepetitionSpace", "RepetitionSpec", "SizeBounds", "SizeRangeCondition",
-    "SpaceDeterminant", "StartPointer", "StringSpec", "TagSpec", "Transform",
-    "TransformChain", "UnusedBits",
+    "BitFieldSpec",
+    "ConditionalRepetitionSpec",
+    "NullSpec",
+    "RepetitionSpaceDetermination",
+    "RepetitionSpace",
+    "RepetitionSpec",
+    "SizeBounds",
+    "SizeRangeCondition",
+    "SpaceDeterminant",
+    "StartPointer",
+    "StringSpec",
+    "TagSpec",
+    "Transform",
+    "TransformChain",
+    "UnusedBits",
     # The constructor categories and the identification handle four clauses read (§21.5,
     # §21.6, §21.16, §22.5, §22.6, §22.9, §22.10, §23.1, §23.11).
-    "AlternativeDetermination", "AlternativeSelection", "AlternativesSpec",
-    "ComponentOrder", "Concatenation", "ConcatenationAlignment", "HandleRegistry",
-    "HandleValueKind", "HandleValueSet", "IdentificationHandle", "Optionality",
-    "OptionalityDetermination", "OptionalSpec",
+    "AlternativeDetermination",
+    "AlternativeSelection",
+    "AlternativesSpec",
+    "ComponentOrder",
+    "Concatenation",
+    "ConcatenationAlignment",
+    "HandleRegistry",
+    "HandleValueKind",
+    "HandleValueSet",
+    "IdentificationHandle",
+    "Optionality",
+    "OptionalityDetermination",
+    "OptionalSpec",
     # Containment, in both directions (§22.11, §21.3.6/§21.5.6/§21.7.8).
-    "ContainedType", "ContainerSpec", "OUTER_CONTAINER",
-    "UnusedBitsDetermination", "UserEncodingObject", "ValuePadding", "check_unit",
-    "encode_with_user", "legacy_frame_objects", "legacy_frame_workload", "refuted_by",
+    "ContainedType",
+    "ContainerSpec",
+    "OUTER_CONTAINER",
+    "UnusedBitsDetermination",
+    "UserEncodingObject",
+    "ValuePadding",
+    "check_unit",
+    "encode_with_user",
+    "legacy_frame_objects",
+    "legacy_frame_workload",
+    "refuted_by",
 ]

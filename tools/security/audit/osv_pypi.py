@@ -20,6 +20,7 @@ text, because text order puts 2.13 below 2.6 and produced nine false positives o
 pass of the 2026-09-04 audit. GIT ranges are never evaluated (commit hashes are not
 versions). Exit 1 when any pair is affected.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,8 +36,10 @@ try:
     from packaging.utils import canonicalize_name
     from packaging.version import InvalidVersion, Version
 except ModuleNotFoundError:
-    print("osv_pypi: needs the `packaging` distribution (run inside pip-audit's environment)",
-          file=sys.stderr)
+    print(
+        "osv_pypi: needs the `packaging` distribution (run inside pip-audit's environment)",
+        file=sys.stderr,
+    )
     raise SystemExit(2) from None
 
 EXPORT = "https://osv-vulnerabilities.storage.googleapis.com/PyPI/all.zip"
@@ -143,30 +146,61 @@ def main(argv: list[str] | None = None) -> int:
     findings = 0
     for name, ver in sorted(pairs_from(args.report, args.pin)):
         entries = index.get(canonicalize_name(name), [])
-        hits = [(rec["id"], rec.get("aliases", []), rec.get("summary", "")[:100])
-                for rec, entry in entries if affected(entry, ver)]
-        fixed_here = sorted({
-            rec["id"] for rec, entry in entries for r in entry.get("ranges", [])
-            if r.get("type") in ("ECOSYSTEM", "SEMVER")
-            for e in r.get("events", []) if "fixed" in e and cmp(e["fixed"], ver) == 0
-        })
-        rows.append({"name": name, "version": ver, "advisories_on_record": len({rec["id"] for rec, _ in entries}),
-                     "affected_by": [{"id": i, "aliases": a, "summary": s} for i, a, s in hits],
-                     "fixed_exactly_at_this_version": fixed_here})
+        hits = [
+            (rec["id"], rec.get("aliases", []), rec.get("summary", "")[:100])
+            for rec, entry in entries
+            if affected(entry, ver)
+        ]
+        fixed_here = sorted(
+            {
+                rec["id"]
+                for rec, entry in entries
+                for r in entry.get("ranges", [])
+                if r.get("type") in ("ECOSYSTEM", "SEMVER")
+                for e in r.get("events", [])
+                if "fixed" in e and cmp(e["fixed"], ver) == 0
+            }
+        )
+        rows.append(
+            {
+                "name": name,
+                "version": ver,
+                "advisories_on_record": len({rec["id"] for rec, _ in entries}),
+                "affected_by": [{"id": i, "aliases": a, "summary": s} for i, a, s in hits],
+                "fixed_exactly_at_this_version": fixed_here,
+            }
+        )
         findings += bool(hits)
-    print(f"osv_pypi: export {total} advisories ({withdrawn} withdrawn skipped), "
-          f"{len(index)} packages; {len(rows)} pairs checked; {findings} affected")
+    print(
+        f"osv_pypi: export {total} advisories ({withdrawn} withdrawn skipped), "
+        f"{len(index)} packages; {len(rows)} pairs checked; {findings} affected"
+    )
     for r in rows:
         if r["advisories_on_record"]:
-            tail = f"  first clean release for {r['fixed_exactly_at_this_version']}" if r["fixed_exactly_at_this_version"] else ""
-            print(f"  {r['name']:22s} {r['version']:12s} on record {r['advisories_on_record']:3d}  "
-                  f"affected {[h['id'] for h in r['affected_by']] or 'none'}{tail}")
+            tail = (
+                f"  first clean release for {r['fixed_exactly_at_this_version']}"
+                if r["fixed_exactly_at_this_version"]
+                else ""
+            )
+            print(
+                f"  {r['name']:22s} {r['version']:12s} on record {r['advisories_on_record']:3d}  "
+                f"affected {[h['id'] for h in r['affected_by']] or 'none'}{tail}"
+            )
     if UNEVALUABLE:
         print(f"  unevaluable feed values recorded (never text-compared): {len(UNEVALUABLE)}")
     if args.out:
         with open(args.out, "w", encoding="utf-8") as handle:
-            json.dump({"source": EXPORT, "advisories": total, "withdrawn_skipped": withdrawn,
-                       "unevaluable_feed_values": sorted(UNEVALUABLE), "rows": rows}, handle, indent=1)
+            json.dump(
+                {
+                    "source": EXPORT,
+                    "advisories": total,
+                    "withdrawn_skipped": withdrawn,
+                    "unevaluable_feed_values": sorted(UNEVALUABLE),
+                    "rows": rows,
+                },
+                handle,
+                indent=1,
+            )
             handle.write("\n")
     return 1 if findings else 0
 

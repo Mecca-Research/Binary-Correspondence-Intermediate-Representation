@@ -78,8 +78,15 @@ NEG_INF = float("-inf")
 # 1. LayerNorm -- the ONE new numeric primitive (the only net-new reference; rides the libm sqrtf edge).
 # ============================================================================================================
 
-def layernorm_reference(x: list[float], rows: int, dim: int,
-                        gamma: list[float], beta: list[float], eps: float = _DEFAULT_EPS) -> list[float]:
+
+def layernorm_reference(
+    x: list[float],
+    rows: int,
+    dim: int,
+    gamma: list[float],
+    beta: list[float],
+    eps: float = _DEFAULT_EPS,
+) -> list[float]:
     """Per-ROW layer normalization over the ``dim`` feature axis -- the single source of truth, the net-new
     numeric primitive of E3. ``x`` is ``rows x dim`` row-major (``x[r*dim + c]``); for each row r:
 
@@ -120,8 +127,8 @@ def layernorm_reference(x: list[float], rows: int, dim: int,
         for c in range(dim):
             d = float(x[base + c]) - mean
             var += d * d
-        var /= dim                                          # population variance (/dim, biased -- the LN rule)
-        inv = 1.0 / math.sqrt(var + eps)                    # the rsqrt -- the ONLY transcendental (libm sqrtf)
+        var /= dim  # population variance (/dim, biased -- the LN rule)
+        inv = 1.0 / math.sqrt(var + eps)  # the rsqrt -- the ONLY transcendental (libm sqrtf)
         for c in range(dim):
             out[base + c] = float(gamma[c]) * (float(x[base + c]) - mean) * inv + float(beta[c])
     return out
@@ -133,8 +140,10 @@ def layernorm_stats(y: list[float], rows: int, dim: int) -> list[tuple[float, fl
     normalized with gamma=1, beta=0 must have mean ~ 0 and variance ~ 1; a test asserts exactly that against
     this. ``y`` is ``rows x dim`` row-major; returns a length-``rows`` list of (mean, var) pairs."""
     if rows < 1 or dim < 1 or len(y) != rows * dim:
-        raise ValueError(f"layernorm_stats: need rows>=1, dim>=1, len(y)==rows*dim; "
-                         f"got rows={rows} dim={dim} len(y)={len(y)}")
+        raise ValueError(
+            f"layernorm_stats: need rows>=1, dim>=1, len(y)==rows*dim; "
+            f"got rows={rows} dim={dim} len(y)={len(y)}"
+        )
     stats: list[tuple[float, float]] = []
     for r in range(rows):
         base = r * dim
@@ -148,6 +157,7 @@ def layernorm_stats(y: list[float], rows: int, dim: int) -> list[tuple[float, fl
 # 2. Masked multi-head attention -- REUSES attention.scores_reference + softmax_reference + matmul_reference.
 # ============================================================================================================
 
+
 def causal_mask(seq_len: int, neg: float = NEG_INF) -> list[float]:
     """The additive CAUSAL (look-ahead) mask: a flat ``seq_len x seq_len`` row-major matrix with ``0.0`` for
     j <= i (token i may attend to token j at or before it) and ``neg`` (``-inf`` by default) for j > i (the
@@ -160,7 +170,7 @@ def causal_mask(seq_len: int, neg: float = NEG_INF) -> list[float]:
     m = [0.0] * (seq_len * seq_len)
     for i in range(seq_len):
         for j in range(i + 1, seq_len):
-            m[i * seq_len + j] = neg                        # mask the strictly-upper triangle (the future)
+            m[i * seq_len + j] = neg  # mask the strictly-upper triangle (the future)
     return m
 
 
@@ -177,31 +187,41 @@ def _split_head(proj: list[float], seq: int, h: int, n_heads: int, d_k: int) -> 
     return [proj[i * d_model + h * d_k + t] for i in range(seq) for t in range(d_k)]
 
 
-def _single_head(qh: list[float], kh: list[float], vh: list[float], seq: int, d_k: int,
-                 mask: list[float] | None) -> list[float]:
+def _single_head(
+    qh: list[float], kh: list[float], vh: list[float], seq: int, d_k: int, mask: list[float] | None
+) -> list[float]:
     """One head's masked scaled-dot-product attention, REUSING the existing pieces: ``attention.scores_reference``
     for the scaled ``Q_h @ K_h^T / sqrt(d_k)``, ADD the additive mask (if any), then ``softmax_reference`` over
     each row, then ``matmul.matmul_reference`` for ``A @ V_h``. Returns the ``seq x d_k`` head context. This is
     exactly the single-head attention path -- NOT reinvented, composed from attention.py + activation + matmul."""
     spec = attention.AttentionSpec(seq, d_k)
-    scores = attention.scores_reference(qh, kh, spec)       # (Q_h @ K_h^T) / sqrt(d_k)  -- REUSED
+    scores = attention.scores_reference(qh, kh, spec)  # (Q_h @ K_h^T) / sqrt(d_k)  -- REUSED
     if mask is not None:
-        scores = [scores[idx] + float(mask[idx]) for idx in range(seq * seq)]   # additive mask -> -inf -> exp=0
-    weights = softmax_reference(scores, axis_len=seq)       # the EXISTING softmax over each row -- REUSED
-    return matmul.matmul_reference(weights, vh, seq, d_k, seq)   # A @ V_h -- REUSED
+        scores = [
+            scores[idx] + float(mask[idx]) for idx in range(seq * seq)
+        ]  # additive mask -> -inf -> exp=0
+    weights = softmax_reference(
+        scores, axis_len=seq
+    )  # the EXISTING softmax over each row -- REUSED
+    return matmul.matmul_reference(weights, vh, seq, d_k, seq)  # A @ V_h -- REUSED
 
 
 @dataclass(frozen=True)
 class _MHAParams:
     """The four projection weights of one multi-head attention sublayer (each d_model x d_model row-major)."""
+
     w_q: list[float]
     w_k: list[float]
     w_v: list[float]
     w_o: list[float]
 
 
-def multihead_attention_reference(x: list[float], spec: "TransformerBlockSpec", params: "_MHAParams",
-                                  mask: list[float] | None = None) -> list[float]:
+def multihead_attention_reference(
+    x: list[float],
+    spec: "TransformerBlockSpec",
+    params: "_MHAParams",
+    mask: list[float] | None = None,
+) -> list[float]:
     """Masked MULTI-HEAD attention over a BATCH of sequences, composing the existing ops (no reinvention).
     ``x`` is (batch*seq) x d_model row-major. Per sequence in the batch (a SIMPLE OUTER LOOP -- the documented
     batch handling): project ``x`` by ``W_q/W_k/W_v`` (each d_model x d_model) into Q,K,V; split into
@@ -210,27 +230,41 @@ def multihead_attention_reference(x: list[float], spec: "TransformerBlockSpec", 
     head contexts back to ``seq x d_model``; project by ``W_o`` (d_model x d_model). Returns the (batch*seq) x
     d_model output. The same additive ``mask`` (a ``seq x seq`` row-major matrix, e.g. ``causal_mask(seq)``) is
     applied to every head of every sequence; pass ``None`` for full (unmasked) attention. Side-effect-free."""
-    d_model, n_heads, d_k, seq, batch = spec.d_model, spec.n_heads, spec.d_k, spec.seq_len, spec.batch
+    d_model, n_heads, d_k, seq, batch = (
+        spec.d_model,
+        spec.n_heads,
+        spec.d_k,
+        spec.seq_len,
+        spec.batch,
+    )
     if len(x) != batch * seq * d_model:
-        raise ValueError(f"mha input must have batch*seq*d_model = {batch * seq * d_model} entries; got {len(x)}")
+        raise ValueError(
+            f"mha input must have batch*seq*d_model = {batch * seq * d_model} entries; got {len(x)}"
+        )
     if mask is not None and len(mask) != seq * seq:
         raise ValueError(f"mha mask must be seq*seq = {seq * seq} entries; got {len(mask)}")
     out = [0.0] * (batch * seq * d_model)
-    for b in range(batch):                                  # the batch outer loop (independent sequences)
-        xs = x[b * seq * d_model:(b + 1) * seq * d_model]   # this sequence: seq x d_model
-        q = _project(xs, params.w_q, seq, d_model)          # Q,K,V projections (each seq x d_model) -- REUSED
+    for b in range(batch):  # the batch outer loop (independent sequences)
+        xs = x[b * seq * d_model : (b + 1) * seq * d_model]  # this sequence: seq x d_model
+        q = _project(
+            xs, params.w_q, seq, d_model
+        )  # Q,K,V projections (each seq x d_model) -- REUSED
         k = _project(xs, params.w_k, seq, d_model)
         v = _project(xs, params.w_v, seq, d_model)
-        concat = [0.0] * (seq * d_model)                    # the concatenated per-head contexts (seq x d_model)
+        concat = [0.0] * (seq * d_model)  # the concatenated per-head contexts (seq x d_model)
         for h in range(n_heads):
-            qh = _split_head(q, seq, h, n_heads, d_k)        # head h's seq x d_k slices of Q,K,V
+            qh = _split_head(q, seq, h, n_heads, d_k)  # head h's seq x d_k slices of Q,K,V
             kh = _split_head(k, seq, h, n_heads, d_k)
             vh = _split_head(v, seq, h, n_heads, d_k)
-            ctx = _single_head(qh, kh, vh, seq, d_k, mask)   # masked single-head attention -- REUSED pieces
-            for i in range(seq):                             # write head h back into channels [h*d_k:(h+1)*d_k]
+            ctx = _single_head(
+                qh, kh, vh, seq, d_k, mask
+            )  # masked single-head attention -- REUSED pieces
+            for i in range(seq):  # write head h back into channels [h*d_k:(h+1)*d_k]
                 for t in range(d_k):
                     concat[i * d_model + h * d_k + t] = ctx[i * d_k + t]
-        proj = _project(concat, params.w_o, seq, d_model)   # the output projection W_o (seq x d_model) -- REUSED
+        proj = _project(
+            concat, params.w_o, seq, d_model
+        )  # the output projection W_o (seq x d_model) -- REUSED
         for idx in range(seq * d_model):
             out[b * seq * d_model + idx] = proj[idx]
     return out
@@ -240,9 +274,16 @@ def multihead_attention_reference(x: list[float], spec: "TransformerBlockSpec", 
 # 3. Feed-forward -- REUSES matmul.matmul_reference + the existing activation references.
 # ============================================================================================================
 
-def swiglu_reference(x: list[float], rows: int, d_model: int, d_ff: int,
-                     w_gate: list[float], w_up: list[float],
-                     w_down: list[float]) -> list[float]:
+
+def swiglu_reference(
+    x: list[float],
+    rows: int,
+    d_model: int,
+    d_ff: int,
+    w_gate: list[float],
+    w_up: list[float],
+    w_down: list[float],
+) -> list[float]:
     """The GATED-SiLU feed-forward (the Llama/Gemma MLP): ``out = (silu(x @ Wg) * (x @ Wu)) @ Wd``
     -- three matmuls and an elementwise gate, all reusing ``matmul.matmul_reference``; silu(v) =
     v * sigmoid(v) with the guarded two-branch sigmoid (kbcir/recurrent.py -- the libm exp edge,
@@ -251,21 +292,33 @@ def swiglu_reference(x: list[float], rows: int, d_model: int, d_ff: int,
     Returns a fresh rows x d_model buffer. Validates the weight shapes."""
     from .matmul import matmul_reference
     from .recurrent import sigmoid
+
     if len(x) != rows * d_model:
         raise ValueError(f"swiglu: x has {len(x)} values, want rows*d_model = {rows * d_model}")
-    for nm, w, want in (("w_gate", w_gate, d_model * d_ff), ("w_up", w_up, d_model * d_ff),
-                        ("w_down", w_down, d_ff * d_model)):
+    for nm, w, want in (
+        ("w_gate", w_gate, d_model * d_ff),
+        ("w_up", w_up, d_model * d_ff),
+        ("w_down", w_down, d_ff * d_model),
+    ):
         if len(w) != want:
             raise ValueError(f"swiglu: {nm} has {len(w)} values, want {want}")
     g = matmul_reference(x, w_gate, rows, d_ff, d_model)
     u = matmul_reference(x, w_up, rows, d_ff, d_model)
-    h = [g[i] * sigmoid(g[i]) * u[i] for i in range(rows * d_ff)]   # silu(g) * u, elementwise
+    h = [g[i] * sigmoid(g[i]) * u[i] for i in range(rows * d_ff)]  # silu(g) * u, elementwise
     return matmul_reference(h, w_down, rows, d_model, d_ff)
 
 
-def feedforward_reference(x: list[float], rows: int, d_model: int, d_ff: int,
-                          W1: list[float], b1: list[float], W2: list[float], b2: list[float],
-                          activation: str = "relu") -> list[float]:
+def feedforward_reference(
+    x: list[float],
+    rows: int,
+    d_model: int,
+    d_ff: int,
+    W1: list[float],
+    b1: list[float],
+    W2: list[float],
+    b2: list[float],
+    activation: str = "relu",
+) -> list[float]:
     """The position-wise FEED-FORWARD network ``out = act(x @ W1 + b1) @ W2 + b2`` -- two matmuls + a bias add +
     an activation, all REUSING ``matmul.matmul_reference`` and the existing activation references. ``x`` is
     ``rows x d_model`` row-major; ``W1`` is d_model x d_ff, ``b1`` length d_ff; ``W2`` is d_ff x d_model, ``b2``
@@ -273,25 +326,36 @@ def feedforward_reference(x: list[float], rows: int, d_model: int, d_ff: int,
     "gelu" (the GPT/BERT tanh-approx, which rides the libm tanhf edge). Returns a FRESH ``rows x d_model``
     buffer. Side-effect-free. Validates the weight/bias shapes."""
     if rows < 1 or d_model < 1 or d_ff < 1:
-        raise ValueError(f"feedforward dims must be >= 1; got rows={rows} d_model={d_model} d_ff={d_ff}")
+        raise ValueError(
+            f"feedforward dims must be >= 1; got rows={rows} d_model={d_model} d_ff={d_ff}"
+        )
     if len(x) != rows * d_model:
-        raise ValueError(f"feedforward input must have rows*d_model = {rows * d_model} entries; got {len(x)}")
+        raise ValueError(
+            f"feedforward input must have rows*d_model = {rows * d_model} entries; got {len(x)}"
+        )
     if len(W1) != d_model * d_ff or len(b1) != d_ff:
-        raise ValueError(f"feedforward W1 must be d_model*d_ff = {d_model * d_ff}, b1 length d_ff = {d_ff}")
+        raise ValueError(
+            f"feedforward W1 must be d_model*d_ff = {d_model * d_ff}, b1 length d_ff = {d_ff}"
+        )
     if len(W2) != d_ff * d_model or len(b2) != d_model:
-        raise ValueError(f"feedforward W2 must be d_ff*d_model = {d_ff * d_model}, b2 length d_model = {d_model}")
+        raise ValueError(
+            f"feedforward W2 must be d_ff*d_model = {d_ff * d_model}, b2 length d_model = {d_model}"
+        )
     if activation not in ("relu", "gelu"):
         raise ValueError(f"feedforward activation must be 'relu' or 'gelu'; got {activation!r}")
-    h = matmul.matmul_reference(x, W1, rows, d_ff, d_model)          # x @ W1 : rows x d_ff -- REUSED
-    h = [h[i * d_ff + j] + float(b1[j]) for i in range(rows) for j in range(d_ff)]   # + b1 (broadcast per row)
-    h = relu_reference(h) if activation == "relu" else gelu_reference(h)             # the activation -- REUSED
-    o = matmul.matmul_reference(h, W2, rows, d_model, d_ff)          # . @ W2 : rows x d_model -- REUSED
-    return [o[i * d_model + j] + float(b2[j]) for i in range(rows) for j in range(d_model)]   # + b2
+    h = matmul.matmul_reference(x, W1, rows, d_ff, d_model)  # x @ W1 : rows x d_ff -- REUSED
+    h = [
+        h[i * d_ff + j] + float(b1[j]) for i in range(rows) for j in range(d_ff)
+    ]  # + b1 (broadcast per row)
+    h = relu_reference(h) if activation == "relu" else gelu_reference(h)  # the activation -- REUSED
+    o = matmul.matmul_reference(h, W2, rows, d_model, d_ff)  # . @ W2 : rows x d_model -- REUSED
+    return [o[i * d_model + j] + float(b2[j]) for i in range(rows) for j in range(d_model)]  # + b2
 
 
 # ============================================================================================================
 # 4./5. The block + the shape/param carriers.
 # ============================================================================================================
+
 
 @dataclass(frozen=True)
 class TransformerBlockSpec:
@@ -350,9 +414,15 @@ class TransformerBlockParams:
         return _MHAParams(self.w_q, self.w_k, self.w_v, self.w_o)
 
 
-def transformer_block_reference(x: list[float], spec: TransformerBlockSpec, params: TransformerBlockParams,
-                                mask: list[float] | None = None, activation: str = "relu",
-                                eps: float = _DEFAULT_EPS, pre_ln: bool = False) -> list[float]:
+def transformer_block_reference(
+    x: list[float],
+    spec: TransformerBlockSpec,
+    params: TransformerBlockParams,
+    mask: list[float] | None = None,
+    activation: str = "relu",
+    eps: float = _DEFAULT_EPS,
+    pre_ln: bool = False,
+) -> list[float]:
     """The canonical POST-LN Transformer encoder block (the original "Attention Is All You Need" block), a pure
     COMPOSITION of the components above (each itself REUSING matmul / softmax / the existing activations). ``x``
     is (batch*seq) x d_model row-major. POST-LN (default):
@@ -374,23 +444,46 @@ def transformer_block_reference(x: list[float], spec: TransformerBlockSpec, para
     edge -- the quarantine boundary, so the emitted C reproduces this to float round-off."""
     rows, d_model = spec.rows, spec.d_model
     if len(x) != rows * d_model:
-        raise ValueError(f"block input must have rows*d_model = {rows * d_model} entries; got {len(x)}")
+        raise ValueError(
+            f"block input must have rows*d_model = {rows * d_model} entries; got {len(x)}"
+        )
     if pre_ln:
         # PRE-LN: normalize, sublayer, residual around the RAW input (the modern deep-stack variant).
         a = multihead_attention_reference(
-            layernorm_reference(x, rows, d_model, params.gamma1, params.beta1, eps), spec, params.mha, mask)
+            layernorm_reference(x, rows, d_model, params.gamma1, params.beta1, eps),
+            spec,
+            params.mha,
+            mask,
+        )
         x1 = [float(x[i]) + a[i] for i in range(rows * d_model)]
         f = feedforward_reference(
             layernorm_reference(x1, rows, d_model, params.gamma2, params.beta2, eps),
-            rows, d_model, spec.d_ff, params.W1, params.b1, params.W2, params.b2, activation)
+            rows,
+            d_model,
+            spec.d_ff,
+            params.W1,
+            params.b1,
+            params.W2,
+            params.b2,
+            activation,
+        )
         return [x1[i] + f[i] for i in range(rows * d_model)]
     # POST-LN (default): sublayer, residual add, THEN normalize.
-    a = multihead_attention_reference(x, spec, params.mha, mask)            # MHA sublayer
-    res1 = [float(x[i]) + a[i] for i in range(rows * d_model)]              # residual add (x + a)
-    x1 = layernorm_reference(res1, rows, d_model, params.gamma1, params.beta1, eps)   # LN1
-    f = feedforward_reference(x1, rows, d_model, spec.d_ff,                 # feed-forward sublayer
-                              params.W1, params.b1, params.W2, params.b2, activation)
-    res2 = [x1[i] + f[i] for i in range(rows * d_model)]                    # residual add (x1 + f)
+    a = multihead_attention_reference(x, spec, params.mha, mask)  # MHA sublayer
+    res1 = [float(x[i]) + a[i] for i in range(rows * d_model)]  # residual add (x + a)
+    x1 = layernorm_reference(res1, rows, d_model, params.gamma1, params.beta1, eps)  # LN1
+    f = feedforward_reference(
+        x1,
+        rows,
+        d_model,
+        spec.d_ff,  # feed-forward sublayer
+        params.W1,
+        params.b1,
+        params.W2,
+        params.b2,
+        activation,
+    )
+    res2 = [x1[i] + f[i] for i in range(rows * d_model)]  # residual add (x1 + f)
     return layernorm_reference(res2, rows, d_model, params.gamma2, params.beta2, eps)  # LN2
 
 
@@ -398,15 +491,24 @@ def transformer_block_reference(x: list[float], spec: TransformerBlockSpec, para
 # 6. The Q8 bridge -- round-trip the input (and optionally the weights) then run the trusted block.
 # ============================================================================================================
 
+
 def _roundtrip(values: list[float], group_size: int, bits: int) -> list[float]:
     """Q8<->float32<->Q8 round-trip of a flat vector (the bridge step)."""
     return dequantize(quantize_per_group(values, group_size, bits))
 
 
-def transformer_block_via_bridge(x: list[float], spec: TransformerBlockSpec, params: TransformerBlockParams,
-                                 group_size: int, bits: int, mask: list[float] | None = None,
-                                 activation: str = "relu", eps: float = _DEFAULT_EPS, pre_ln: bool = False,
-                                 quantize_weights: bool = False) -> list[float]:
+def transformer_block_via_bridge(
+    x: list[float],
+    spec: TransformerBlockSpec,
+    params: TransformerBlockParams,
+    group_size: int,
+    bits: int,
+    mask: list[float] | None = None,
+    activation: str = "relu",
+    eps: float = _DEFAULT_EPS,
+    pre_ln: bool = False,
+    quantize_weights: bool = False,
+) -> list[float]:
     """E3: the Q8<->float32<->Q8 bridge wrapped around the TRUSTED transformer block (integrate, don't
     reinvent) -- the block analog of ``attention_via_bridge`` / ``pca_via_bridge`` / ``ols_via_bridge``. The
     INPUT ``x`` arrives as per-group quantized storage; the bridge dequantizes it to float32 and the trusted
@@ -420,12 +522,19 @@ def transformer_block_via_bridge(x: list[float], spec: TransformerBlockSpec, par
     p = params
     if quantize_weights:
         p = TransformerBlockParams(
-            w_q=_roundtrip(params.w_q, group_size, bits), w_k=_roundtrip(params.w_k, group_size, bits),
-            w_v=_roundtrip(params.w_v, group_size, bits), w_o=_roundtrip(params.w_o, group_size, bits),
-            W1=_roundtrip(params.W1, group_size, bits), b1=list(params.b1),
-            W2=_roundtrip(params.W2, group_size, bits), b2=list(params.b2),
-            gamma1=list(params.gamma1), beta1=list(params.beta1),
-            gamma2=list(params.gamma2), beta2=list(params.beta2))
+            w_q=_roundtrip(params.w_q, group_size, bits),
+            w_k=_roundtrip(params.w_k, group_size, bits),
+            w_v=_roundtrip(params.w_v, group_size, bits),
+            w_o=_roundtrip(params.w_o, group_size, bits),
+            W1=_roundtrip(params.W1, group_size, bits),
+            b1=list(params.b1),
+            W2=_roundtrip(params.W2, group_size, bits),
+            b2=list(params.b2),
+            gamma1=list(params.gamma1),
+            beta1=list(params.beta1),
+            gamma2=list(params.gamma2),
+            beta2=list(params.beta2),
+        )
     return transformer_block_reference(dx, spec, p, mask, activation, eps, pre_ln)
 
 
@@ -438,8 +547,13 @@ def transformer_block_via_bridge(x: list[float], spec: TransformerBlockSpec, par
 _DTYPES = ("f32", "i32")
 
 
-def check_transformer(spec: TransformerBlockSpec, x_shape: tuple[int, ...], in_dtype: str,
-                      out_shape: tuple[int, ...], out_dtype: str) -> list[str]:
+def check_transformer(
+    spec: TransformerBlockSpec,
+    x_shape: tuple[int, ...],
+    in_dtype: str,
+    out_shape: tuple[int, ...],
+    out_dtype: str,
+) -> list[str]:
     """Op-level well-formedness for a gem.transformer_block claim, returned as a list of error strings (empty ==
     well-formed) -- the shape/dtype-law shape gem.matmul/gem.attention use inline, lifted into one named checker.
     NOT a globally-numbered R-law (matches check_attention / check_activation, which add none). The laws:
@@ -452,8 +566,13 @@ def check_transformer(spec: TransformerBlockSpec, x_shape: tuple[int, ...], in_d
          edges return float), so it needs an f32 result -- never i32 (mirrors attention's quarantine rule)."""
     errs: list[str] = []
     # (1) positive extents.
-    for nm, v in (("d_model", spec.d_model), ("n_heads", spec.n_heads), ("d_ff", spec.d_ff),
-                  ("seq_len", spec.seq_len), ("batch", spec.batch)):
+    for nm, v in (
+        ("d_model", spec.d_model),
+        ("n_heads", spec.n_heads),
+        ("d_ff", spec.d_ff),
+        ("seq_len", spec.seq_len),
+        ("batch", spec.batch),
+    ):
         if v < 1:
             errs.append(f"transformer: {nm} must be >= 1; got {v}")
     # (2) head divisibility.
@@ -474,8 +593,10 @@ def check_transformer(spec: TransformerBlockSpec, x_shape: tuple[int, ...], in_d
             errs.append(f"transformer: {nm} shape {tuple(sh)} != (batch*seq, d_model) {want}")
     # (5) the quarantine dtype rule: the softmax + layernorm transcendentals need an f32 result.
     if in_dtype != "f32":
-        errs.append(f"transformer: contains a softmax + a layernorm (transcendentals; the libm edges return "
-                    f"float), so it needs f32, got {in_dtype!r}")
+        errs.append(
+            f"transformer: contains a softmax + a layernorm (transcendentals; the libm edges return "
+            f"float), so it needs f32, got {in_dtype!r}"
+        )
     return errs
 
 
@@ -483,8 +604,10 @@ def check_transformer(spec: TransformerBlockSpec, x_shape: tuple[int, ...], in_d
 # 8. Independent verifiers (recomputed independently of the block code path -- the genuine checks).
 # ============================================================================================================
 
-def causal_weights_upper_triangle_max(qh: list[float], kh: list[float], seq: int, d_k: int,
-                                       mask: list[float]) -> float:
+
+def causal_weights_upper_triangle_max(
+    qh: list[float], kh: list[float], seq: int, d_k: int, mask: list[float]
+) -> float:
     """INDEPENDENT causal-mask check: recompute the post-softmax attention weights for ONE head (directly, from
     Q_h/K_h + the additive mask) and return the LARGEST weight in the strictly-upper triangle (j > i). With a
     causal mask this must be EXACTLY 0.0 -- the mask truly prevents a token from attending to the future. (The
@@ -496,13 +619,14 @@ def causal_weights_upper_triangle_max(qh: list[float], kh: list[float], seq: int
     weights = softmax_reference(scores, axis_len=seq)
     worst = 0.0
     for i in range(seq):
-        for j in range(i + 1, seq):                          # the strictly-upper (future) triangle
+        for j in range(i + 1, seq):  # the strictly-upper (future) triangle
             worst = max(worst, abs(weights[i * seq + j]))
     return worst
 
 
-def softmax_rowsum_residual(qh: list[float], kh: list[float], seq: int, d_k: int,
-                            mask: list[float] | None = None) -> float:
+def softmax_rowsum_residual(
+    qh: list[float], kh: list[float], seq: int, d_k: int, mask: list[float] | None = None
+) -> float:
     """INDEPENDENT softmax check: recompute the per-head attention weights directly and return ``max_i |sum_j
     A[i,j] - 1|`` -- every softmax row is a probability distribution that sums to 1 (even masked rows, since the
     causal mask keeps >= 1 finite entry). ~0 at a correct softmax."""
@@ -517,25 +641,35 @@ def softmax_rowsum_residual(qh: list[float], kh: list[float], seq: int, d_k: int
     return worst
 
 
-def multihead_concat_residual(x: list[float], spec: TransformerBlockSpec, params: TransformerBlockParams,
-                              mask: list[float] | None = None) -> float:
+def multihead_concat_residual(
+    x: list[float],
+    spec: TransformerBlockSpec,
+    params: TransformerBlockParams,
+    mask: list[float] | None = None,
+) -> float:
     """INDEPENDENT multi-head check (single sequence, batch==1): recompute the multi-head output a SECOND,
     fully-independent way -- project, split, run EACH head's single-head attention by a SEPARATE direct path
     (a fresh softmax composition), concatenate, then project by W_o -- and return the max abs difference vs
     ``multihead_attention_reference``. ~0: multi-head == concat-of-independently-computed-heads then W_o.
     Recomputed without calling the block's _single_head helper (a genuinely separate path)."""
     d_model, n_heads, d_k, seq = spec.d_model, spec.n_heads, spec.d_k, spec.seq_len
-    xs = x[:seq * d_model]                                   # batch==1 sequence
+    xs = x[: seq * d_model]  # batch==1 sequence
     q = matmul.matmul_reference(xs, params.w_q, seq, d_model, d_model)
     k = matmul.matmul_reference(xs, params.w_k, seq, d_model, d_model)
     v = matmul.matmul_reference(xs, params.w_v, seq, d_model, d_model)
     concat = [0.0] * (seq * d_model)
     scale = 1.0 / math.sqrt(d_k)
     for h in range(n_heads):
-        for i in range(seq):                                 # a from-scratch single-head attention for head h
+        for i in range(seq):  # a from-scratch single-head attention for head h
             logits = []
             for j in range(seq):
-                s = sum(q[i * d_model + h * d_k + t] * k[j * d_model + h * d_k + t] for t in range(d_k)) * scale
+                s = (
+                    sum(
+                        q[i * d_model + h * d_k + t] * k[j * d_model + h * d_k + t]
+                        for t in range(d_k)
+                    )
+                    * scale
+                )
                 if mask is not None:
                     s += float(mask[i * seq + j])
                 logits.append(s)
@@ -544,9 +678,14 @@ def multihead_concat_residual(x: list[float], spec: TransformerBlockSpec, params
             z = sum(ex) or 1.0
             a = [e / z for e in ex]
             for t in range(d_k):
-                concat[i * d_model + h * d_k + t] = sum(a[j] * v[j * d_model + h * d_k + t] for j in range(seq))
+                concat[i * d_model + h * d_k + t] = sum(
+                    a[j] * v[j * d_model + h * d_k + t] for j in range(seq)
+                )
     direct = matmul.matmul_reference(concat, params.w_o, seq, d_model, d_model)
-    got = multihead_attention_reference(x[:seq * d_model],
-                                        TransformerBlockSpec(d_model, n_heads, spec.d_ff, seq, 1, spec.dtype),
-                                        params.mha, mask)
+    got = multihead_attention_reference(
+        x[: seq * d_model],
+        TransformerBlockSpec(d_model, n_heads, spec.d_ff, seq, 1, spec.dtype),
+        params.mha,
+        mask,
+    )
     return max(abs(direct[idx] - got[idx]) for idx in range(seq * d_model))

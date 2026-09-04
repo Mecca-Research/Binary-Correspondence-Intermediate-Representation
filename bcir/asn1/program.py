@@ -41,8 +41,16 @@ _CLAIM_INTS = ("id", "count", "stride_k", "offset", "tolerance_ulp", "quantized_
 #: Plain strings. `verify` is here rather than with the booleans: it LOOKS boolean and is
 #: a string on every real claim, and treating it as a flag would silently rewrite every
 #: value that is not exactly "" into "1" — a projection that changes what it carries.
-_CLAIM_STRS = ("hazard", "op", "cost_class", "precision", "callee_sig",
-               "bounds_provenance", "bounds", "verify")
+_CLAIM_STRS = (
+    "hazard",
+    "op",
+    "cost_class",
+    "precision",
+    "callee_sig",
+    "bounds_provenance",
+    "bounds",
+    "verify",
+)
 _CLAIM_BOOLS = ("dynamic", "volatile")
 #: Integer-or-None. `primary_rid` distinguishes "no primary resource" from resource 0, so
 #: it cannot default to zero the way the plain integers can.
@@ -51,14 +59,16 @@ _CLAIM_OPT_INTS = ("primary_rid",)
 _CLAIM_TUPLES = ("imm",)
 #: Enumerations, carried by NAME. The name is stable across a renumbering of the enum and
 #: is what a human reading the JSON needs; the number is an implementation detail.
-_CLAIM_ENUMS = (("opcode", "Opcode"), ("lane", "Lane"),
-                ("stride_class", "StrideClass"), ("domain", "Domain"))
-_TIMING_INTS = ("latency_cycles", "min_throughput_q16", "clock_frequency_mhz",
-                "setup_hold_margin")
+_CLAIM_ENUMS = (
+    ("opcode", "Opcode"),
+    ("lane", "Lane"),
+    ("stride_class", "StrideClass"),
+    ("domain", "Domain"),
+)
+_TIMING_INTS = ("latency_cycles", "min_throughput_q16", "clock_frequency_mhz", "setup_hold_margin")
 _TIMING_STRS = ("clock_domain", "power_domain", "sync_type")
 
-_RESOURCE_INTS = ("rid", "elem_bytes", "align", "priority", "map_gen",
-                  "data_gen")
+_RESOURCE_INTS = ("rid", "elem_bytes", "align", "priority", "map_gen", "data_gen")
 _RESOURCE_STRS = ("layout", "access", "name")
 
 
@@ -88,11 +98,21 @@ def module_to_graph(module) -> Graph:
         raise Asn1Error("module_to_graph takes a bcir.model.graph.Module")
     nodes: list[Node] = []
     root = 0
-    nodes.append(Node(kind=PROGRAM, label=module.name, attributes=tuple(sorted((
-        ("cacheline", str(module.cacheline)),
-        ("align", str(module.align)),
-        ("target", _text(module.target)),
-    )))))
+    nodes.append(
+        Node(
+            kind=PROGRAM,
+            label=module.name,
+            attributes=tuple(
+                sorted(
+                    (
+                        ("cacheline", str(module.cacheline)),
+                        ("align", str(module.align)),
+                        ("target", _text(module.target)),
+                    )
+                )
+            ),
+        )
+    )
 
     root_edges: list[Edge] = []
     # `module.resources` is a MAPPING from rid to Resource, not a sequence. Carried in
@@ -101,25 +121,43 @@ def module_to_graph(module) -> Graph:
     for rid in sorted(module.resources):
         resource = module.resources[rid]
         at = len(nodes)
-        nodes.append(Node(kind=RESOURCE, label=_text(resource.name), attributes=tuple(sorted(
-            [(k, _text(getattr(resource, k))) for k in _RESOURCE_INTS]
-            + [(k, _text(getattr(resource, k))) for k in _RESOURCE_STRS]
-            + [("domain", resource.domain.name), ("shape", _rids(resource.shape))]))))
+        nodes.append(
+            Node(
+                kind=RESOURCE,
+                label=_text(resource.name),
+                attributes=tuple(
+                    sorted(
+                        [(k, _text(getattr(resource, k))) for k in _RESOURCE_INTS]
+                        + [(k, _text(getattr(resource, k))) for k in _RESOURCE_STRS]
+                        + [("domain", resource.domain.name), ("shape", _rids(resource.shape))]
+                    )
+                ),
+            )
+        )
         root_edges.append(Edge("resource", at))
 
     for phase in module.phases:
         phase_at = len(nodes)
-        nodes.append(Node(kind=PHASE, label=str(phase.phase_id), attributes=tuple(sorted((
-            ("deps", _rids(phase.deps)),
-            ("event", _text(getattr(phase, "event", "") or "")),
-        )))))
+        nodes.append(
+            Node(
+                kind=PHASE,
+                label=str(phase.phase_id),
+                attributes=tuple(
+                    sorted(
+                        (
+                            ("deps", _rids(phase.deps)),
+                            ("event", _text(getattr(phase, "event", "") or "")),
+                        )
+                    )
+                ),
+            )
+        )
         root_edges.append(Edge("phase", phase_at))
 
         claim_edges: list[Edge] = []
         for claim in phase.claims:
             at = len(nodes)
-            attributes: list[tuple[str, str]] = [("rd", _rids(claim.rd)),
-                                                 ("wr", _rids(claim.wr))]
+            attributes: list[tuple[str, str]] = [("rd", _rids(claim.rd)), ("wr", _rids(claim.wr))]
             attributes += [(k, _text(getattr(claim, k))) for k in _CLAIM_INTS]
             attributes += [(k, _text(getattr(claim, k))) for k in _CLAIM_STRS]
             attributes += [(k, "1" if getattr(claim, k) else "0") for k in _CLAIM_BOOLS]
@@ -127,32 +165,43 @@ def module_to_graph(module) -> Graph:
             attributes += [(k, getattr(claim, k).name) for k, _cls in _CLAIM_ENUMS]
             # An absent optional integer carries no attribute at all, so "unset" and
             # "zero" stay distinguishable.
-            attributes += [(k, str(getattr(claim, k))) for k in _CLAIM_OPT_INTS
-                           if getattr(claim, k) is not None]
+            attributes += [
+                (k, str(getattr(claim, k)))
+                for k in _CLAIM_OPT_INTS
+                if getattr(claim, k) is not None
+            ]
             timing = getattr(claim, "timing", None)
             if timing is not None:
                 # A PRESENCE marker, separate from the fields. R19 is vacuous when
                 # `claim.timing is None` and constraining when it is a zero-valued block, so
                 # "absent" and "all defaults" must not collapse into one spelling.
                 attributes.append(("timing", "1"))
-                attributes += [(f"timing.{k}", _text(getattr(timing, k)))
-                               for k in _TIMING_INTS + _TIMING_STRS]
-                attributes.append(("timing.critical_path",
-                                   "1" if timing.critical_path else "0"))
+                attributes += [
+                    (f"timing.{k}", _text(getattr(timing, k))) for k in _TIMING_INTS + _TIMING_STRS
+                ]
+                attributes.append(("timing.critical_path", "1" if timing.critical_path else "0"))
             lifetime = getattr(claim, "lifetime", None)
             if lifetime is not None:
                 attributes.append(("lifetime", "1"))
                 attributes.append(("lifetime.event", _text(lifetime.event)))
                 attributes.append(("lifetime.epoch", _text(lifetime.epoch)))
-            nodes.append(Node(kind=CLAIM, label=str(claim.id),
-                              attributes=tuple(sorted(attributes))))
+            nodes.append(
+                Node(kind=CLAIM, label=str(claim.id), attributes=tuple(sorted(attributes)))
+            )
             claim_edges.append(Edge("claim", at))
-        nodes[phase_at] = Node(kind=PHASE, label=nodes[phase_at].label,
-                               attributes=nodes[phase_at].attributes,
-                               edges=tuple(claim_edges))
+        nodes[phase_at] = Node(
+            kind=PHASE,
+            label=nodes[phase_at].label,
+            attributes=nodes[phase_at].attributes,
+            edges=tuple(claim_edges),
+        )
 
-    nodes[root] = Node(kind=PROGRAM, label=nodes[root].label,
-                       attributes=nodes[root].attributes, edges=tuple(root_edges))
+    nodes[root] = Node(
+        kind=PROGRAM,
+        label=nodes[root].label,
+        attributes=nodes[root].attributes,
+        edges=tuple(root_edges),
+    )
     return Graph(nodes=tuple(nodes), roots=(root,))
 
 
@@ -161,8 +210,7 @@ def graph_to_module(graph: Graph):
     from ..model.graph import Claim, Lifetime, Module, Phase, Resource, Timing
     from ..model import Domain, Lane, Opcode, StrideClass
 
-    roots = [i for i in graph.roots
-             if 0 <= i < len(graph.nodes) and graph.nodes[i].kind == PROGRAM]
+    roots = [i for i in graph.roots if 0 <= i < len(graph.nodes) and graph.nodes[i].kind == PROGRAM]
     if len(roots) != 1:
         raise Asn1Error(f"a program graph has exactly one program root, found {len(roots)}")
     root = roots[0]
@@ -185,29 +233,40 @@ def graph_to_module(graph: Graph):
                 timing = Timing(
                     **{k: int(attr(c, f"timing.{k}") or 0) for k in _TIMING_INTS},
                     **{k: attr(c, f"timing.{k}") for k in _TIMING_STRS},
-                    critical_path=attr(c, "timing.critical_path") == "1")
+                    critical_path=attr(c, "timing.critical_path") == "1",
+                )
             lifetime = None
             if attr(c, "lifetime") == "1":
-                lifetime = Lifetime(event=attr(c, "lifetime.event"),
-                                    epoch=int(attr(c, "lifetime.epoch") or 0))
-            enums = {"Opcode": Opcode, "Lane": Lane, "StrideClass": StrideClass,
-                     "Domain": Domain}
-            optional_ints = {k: (None if graph.attribute(c, k, None) is None
-                                 else int(attr(c, k)))
-                             for k in _CLAIM_OPT_INTS}
-            claims.append(Claim(
-                rd=_unrids(attr(c, "rd")), wr=_unrids(attr(c, "wr")),
-                timing=timing, lifetime=lifetime,
-                **{k: enums[cls][attr(c, k)] for k, cls in _CLAIM_ENUMS},
-                **{k: _unrids(attr(c, k)) for k in _CLAIM_TUPLES},
-                **optional_ints,
-                **{k: int(attr(c, k) or 0) for k in _CLAIM_INTS},
-                **{k: attr(c, k) for k in _CLAIM_STRS},
-                **{k: attr(c, k) == "1" for k in _CLAIM_BOOLS}))
-        phases.append(Phase(phase_id=int(graph.nodes[at].label),
-                            deps=_unrids(attr(at, "deps")),
-                            claims=claims,
-                            event=attr(at, "event") or ""))
+                lifetime = Lifetime(
+                    event=attr(c, "lifetime.event"), epoch=int(attr(c, "lifetime.epoch") or 0)
+                )
+            enums = {"Opcode": Opcode, "Lane": Lane, "StrideClass": StrideClass, "Domain": Domain}
+            optional_ints = {
+                k: (None if graph.attribute(c, k, None) is None else int(attr(c, k)))
+                for k in _CLAIM_OPT_INTS
+            }
+            claims.append(
+                Claim(
+                    rd=_unrids(attr(c, "rd")),
+                    wr=_unrids(attr(c, "wr")),
+                    timing=timing,
+                    lifetime=lifetime,
+                    **{k: enums[cls][attr(c, k)] for k, cls in _CLAIM_ENUMS},
+                    **{k: _unrids(attr(c, k)) for k in _CLAIM_TUPLES},
+                    **optional_ints,
+                    **{k: int(attr(c, k) or 0) for k in _CLAIM_INTS},
+                    **{k: attr(c, k) for k in _CLAIM_STRS},
+                    **{k: attr(c, k) == "1" for k in _CLAIM_BOOLS},
+                )
+            )
+        phases.append(
+            Phase(
+                phase_id=int(graph.nodes[at].label),
+                deps=_unrids(attr(at, "deps")),
+                claims=claims,
+                event=attr(at, "event") or "",
+            )
+        )
 
     from ..model import Domain as _Domain
 
@@ -220,14 +279,18 @@ def graph_to_module(graph: Graph):
             domain=_Domain[attr(at, "domain")],
             shape=_unrids(attr(at, "shape")),
             **{k: int(attr(at, k) or 0) for k in _RESOURCE_INTS},
-            **{k: attr(at, k) for k in _RESOURCE_STRS})
+            **{k: attr(at, k) for k in _RESOURCE_STRS},
+        )
         resources[resource.rid] = resource
 
-    return Module(name=graph.nodes[root].label,
-                  cacheline=int(attr(root, "cacheline") or 0),
-                  align=int(attr(root, "align") or 0),
-                  target=attr(root, "target"),
-                  resources=resources, phases=phases)
+    return Module(
+        name=graph.nodes[root].label,
+        cacheline=int(attr(root, "cacheline") or 0),
+        align=int(attr(root, "align") or 0),
+        target=attr(root, "target"),
+        resources=resources,
+        phases=phases,
+    )
 
 
 def module_to_jer(module, **kwargs) -> bytes:
@@ -249,11 +312,19 @@ def verdicts(module) -> tuple[tuple[str, str], ...]:
     """
     from ..verify import verify_lifetime, verify_timing
 
-    return tuple((d.law, d.message) for d in
-                 list(verify_timing(module)) + list(verify_lifetime(module)))
+    return tuple(
+        (d.law, d.message) for d in list(verify_timing(module)) + list(verify_lifetime(module))
+    )
 
 
 __all__ = [
-    "CLAIM", "PHASE", "PROGRAM", "RESOURCE", "graph_to_module", "jer_to_module",
-    "module_to_graph", "module_to_jer", "verdicts",
+    "CLAIM",
+    "PHASE",
+    "PROGRAM",
+    "RESOURCE",
+    "graph_to_module",
+    "jer_to_module",
+    "module_to_graph",
+    "module_to_jer",
+    "verdicts",
 ]

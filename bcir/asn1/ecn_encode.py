@@ -141,7 +141,8 @@ class EncodeStructure:
                 f"ECN: §17.5.11 — an identifier is omitted if and only if the governing "
                 f"encoding constructor is a class in the repetition category with no "
                 f"identifier on the repeated element; this governor is "
-                f"{self.governor.value}")
+                f"{self.governor.value}"
+            )
         seen: list[str] = []
         for component in self.components:
             if not component.identifier:
@@ -149,22 +150,26 @@ class EncodeStructure:
                     raise Asn1Error(
                         "ECN: §17.5.11 — the identifier shall be omitted if and only if the "
                         "governing encoding constructor is a repetition class with no "
-                        "identifier on the repeated element, and this one has identifiers")
+                        "identifier on the repeated element, and this one has identifiers"
+                    )
                 continue
             if self.unnamed_element:
                 raise Asn1Error(
                     f"ECN: §17.5.11 — {component.identifier!r} names a component of a "
                     f"repetition whose element has no identifier; the biconditional runs both "
-                    f"ways, so a name here is as much a fault as a missing one there")
+                    f"ways, so a name here is as much a fault as a missing one there"
+                )
             if component.identifier not in self.component_names:
                 raise Asn1Error(
                     f"ECN: §17.5.11 — the identifier shall be that of a component of the "
                     f"governing encoding constructor; {component.identifier!r} is not one of "
-                    f"{list(self.component_names)}")
+                    f"{list(self.component_names)}"
+                )
             if component.identifier in seen:
                 raise Asn1Error(
                     f"ECN: §17.5.8 — there shall be at most one ComponentEncoding for each "
-                    f"component; {component.identifier!r} has two")
+                    f"component; {component.identifier!r} has two"
+                )
             seen.append(component.identifier)
         # §17.5.8's second sentence: "The `ComponentEncoding`s shall be in the same textual
         # order." A SUBSET is allowed (§17.5.10 covers the rest), so this is a subsequence
@@ -173,7 +178,8 @@ class EncodeStructure:
         if seen != order:
             raise Asn1Error(
                 f"ECN: §17.5.8 — the ComponentEncodings shall be in the same textual order as "
-                f"the components; {seen} against {order}")
+                f"the components; {seen} against {order}"
+            )
 
     # --- the three independent reasons CombinedEncodings must be present -------------------
 
@@ -181,26 +187,33 @@ class EncodeStructure:
         if self.structure_encoding is None and not self.combined:
             raise Asn1Error(
                 "ECN: §17.5.3 — if the StructureEncoding is absent, the CombinedEncodings "
-                "shall be present; its NOTE gives the reason, that \"a complete encoding has "
-                "to be produced\"")
+                'shall be present; its NOTE gives the reason, that "a complete encoding has '
+                'to be produced"'
+            )
         if not self.combined:
-            using = [component.identifier or "<element>" for component in self.components
-                     if component.uses_set()]
+            using = [
+                component.identifier or "<element>"
+                for component in self.components
+                if component.uses_set()
+            ]
             if using:
                 raise Asn1Error(
-                    f"ECN: §17.5.6 — USE-SET means the encoding \"is obtained by applying the "
-                    f"CombinedEncodings, which shall be present\", and there are none; "
-                    f"{using} say USE-SET")
+                    f'ECN: §17.5.6 — USE-SET means the encoding "is obtained by applying the '
+                    f'CombinedEncodings, which shall be present", and there are none; '
+                    f"{using} say USE-SET"
+                )
             if self.structure_encoding == USE_SET:
                 raise Asn1Error(
                     "ECN: §17.5.6 — the StructureEncoding says USE-SET and there are no "
-                    "CombinedEncodings for it to apply")
+                    "CombinedEncodings for it to apply"
+                )
             missing = self.missing_components()
             if missing:
                 raise Asn1Error(
                     f"ECN: §17.5.10 — a component with no ComponentEncoding is encoded by the "
-                    f"CombinedEncodings, which \"shall be present\" and provide \"a complete "
-                    f"encoding of that component\"; {list(missing)} have none")
+                    f'CombinedEncodings, which "shall be present" and provide "a complete '
+                    f'encoding of that component"; {list(missing)} have none'
+                )
 
     def missing_components(self) -> tuple:
         """§17.5.10's components: named by the constructor, absent from the list."""
@@ -221,12 +234,14 @@ class EncodeStructure:
                 raise Asn1Error(
                     f"ECN: §17.5.9 — the OptionalComponentEncodingSpec shall be used if and "
                     f"only if the component is optional, and {component.identifier!r} is "
-                    f"optional with no OPTIONAL-ENCODING")
+                    f"optional with no OPTIONAL-ENCODING"
+                )
             if written and not optional:
                 raise Asn1Error(
                     f"ECN: §17.5.9 — {component.identifier!r} carries an OPTIONAL-ENCODING and "
-                    f"is not optional; §17.5.14 makes that clause encode \"the class in the "
-                    f"optionality category of the component\", and there is none")
+                    f'is not optional; §17.5.14 makes that clause encode "the class in the '
+                    f'optionality category of the component", and there is none'
+                )
 
     # --- what the replacement machinery actually wants out of this -------------------------
 
@@ -246,7 +261,8 @@ class EncodeStructure:
             # §17.5.10 already guaranteed the set is present and complete for this component.
             return self.combined
         raise Asn1Error(
-            f"ECN: {component_name!r} is not a component of the governing encoding constructor")
+            f"ECN: {component_name!r} is not a component of the governing encoding constructor"
+        )
 
     def replacement_actions_allowed(self) -> bool:
         """§17.5.4: with a non-empty `ComponentEncodingList`, the object applied to the
@@ -260,5 +276,8 @@ class EncodeStructure:
 
 
 __all__ = [
-    "USE_SET", "ComponentEncoding", "EncodeStructure", "GovernorCategory",
+    "USE_SET",
+    "ComponentEncoding",
+    "EncodeStructure",
+    "GovernorCategory",
 ]

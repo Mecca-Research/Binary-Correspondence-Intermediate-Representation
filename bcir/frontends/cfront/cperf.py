@@ -6,6 +6,7 @@ bare-metal-gated in `bcir.perf_budget`). The guard's invariants are *self-relati
 and the IPO property), not magic numbers, so ordinary lowering changes pass while a super-linear
 blowup or a broken inter-procedural summary fails.
 """
+
 from __future__ import annotations
 
 
@@ -13,10 +14,13 @@ def frontend_cost(source: str, **kwargs) -> dict:
     """The unit's compile cost: total claims across functions, the composite plan's leaf count, and
     the IPO reuse count. Deterministic for a given source (the regression baseline)."""
     from .pipeline import compile_unit
+
     r = compile_unit(source, check_clang=False, **kwargs)
-    return {"claims": sum(len(lf.claims) for lf in r.lowered.functions.values()),
-            "leaves": r.ipo.get("leaves", 0),
-            "reused": r.ipo.get("reused", 0)}
+    return {
+        "claims": sum(len(lf.claims) for lf in r.lowered.functions.values()),
+        "leaves": r.ipo.get("leaves", 0),
+        "reused": r.ipo.get("reused", 0),
+    }
 
 
 def chain_program(n: int) -> str:

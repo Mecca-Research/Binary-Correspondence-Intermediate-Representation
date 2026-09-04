@@ -13,6 +13,7 @@ from bcir.frontends.cfront.abi import TARGETS, abi_contract_for, verify_abi_cont
 
 def _unit(src, target=None):
     from bcir.frontends.cfront import compile_unit
+
     r = compile_unit(src, check_clang=False, target=target)
     assert r.is_clean, r.diagnostics
     return r
@@ -29,7 +30,7 @@ def test_every_compile_records_a_clean_contract():
     names = [p[0] for p in c.params]
     assert names == ["p", "n", "x"]
     sizes = dict((p[0], p[1]) for p in c.params)
-    assert sizes["p"] == 8 and sizes["n"] == 8 and sizes["x"] == 4     # LP64 facts
+    assert sizes["p"] == 8 and sizes["n"] == 8 and sizes["x"] == 4  # LP64 facts
     assert c.ret == (4, 4)
 
 
@@ -43,6 +44,7 @@ def test_cross_target_contracts_record_the_data_model():
 
 def test_a_tampered_contract_is_caught_by_the_law():
     from dataclasses import replace
+
     r = _unit(_SRC)
     lf = r.lowered.functions["f"]
     abi = TARGETS["x86_64-linux"]

@@ -51,23 +51,25 @@ class _FakeSilicon:
 
 # --- the honest degrade path (this sandbox) --------------------------------------
 
+
 def test_sandbox_reports_unavailable_not_faked():
     # no real signals here: probes return None, the certificate is synthetic.
     assert silicon.read_rapl_uj() is None and silicon.thermal_pressure() is None
     mc = measured_replan(vector_add(1024), AVX, samples=4)
     assert not mc.measured and mc.provenance == ("synthetic",) and mc.win == 0
-    assert mc.cert.admissible                                  # win >= 0 by construction
+    assert mc.cert.admissible  # win >= 0 by construction
 
 
 # --- the parsing/sampling logic (faked sysfs) ------------------------------------
 
+
 def test_thermal_pressure_maps_temperature_to_0_100():
     with _FakeSilicon(temp_c=40):
-        assert silicon.thermal_pressure() == 0          # floor
+        assert silicon.thermal_pressure() == 0  # floor
     with _FakeSilicon(temp_c=95):
-        assert silicon.thermal_pressure() == 100        # ceil
+        assert silicon.thermal_pressure() == 100  # ceil
     with _FakeSilicon(temp_c=67.5):
-        assert silicon.thermal_pressure() == 50         # midpoint
+        assert silicon.thermal_pressure() == 50  # midpoint
 
 
 def test_rapl_sampler_measures_a_positive_energy_delta():
@@ -75,25 +77,26 @@ def test_rapl_sampler_measures_a_positive_energy_delta():
         assert silicon.rapl_available()
         s = silicon.RaplSampler()
         assert s.available
-        assert s.lap_uj() == 250_000                    # one step between construction and lap
+        assert s.lap_uj() == 250_000  # one step between construction and lap
 
 
 def test_rapl_wraparound_is_handled():
     with _FakeSilicon() as fk:
         s = silicon.RaplSampler()
-        fk.energy = 10                                  # next read wraps below the start
+        fk.energy = 10  # next read wraps below the start
         delta = s.lap_uj()
-        assert delta is not None and delta >= 0         # wrap corrected via max_energy_range
+        assert delta is not None and delta >= 0  # wrap corrected via max_energy_range
 
 
 def test_silicon_dna_records_real_signal_provenance():
     with _FakeSilicon(temp_c=85):
         dna, prov = silicon.silicon_dna(lambda: sum(range(2000)), claim_id=7)
         assert "thermal" in prov and "rapl" in prov
-        assert dna.thermal == 82                        # round((85-40)*100/55) = 82
+        assert dna.thermal == 82  # round((85-40)*100/55) = 82
 
 
 # --- the measured replan win (faked hot silicon) ---------------------------------
+
 
 def test_measured_replan_on_hot_silicon_flips_the_plan():
     # a real thermal signal (85 C -> pressure 81) drives the recalibrated planner to
@@ -107,14 +110,14 @@ def test_measured_replan_on_hot_silicon_flips_the_plan():
 
 
 def test_measured_replan_on_cool_silicon_holds_the_plan():
-    with _FakeSilicon(temp_c=42):                       # ~3/100 pressure: no replan
+    with _FakeSilicon(temp_c=42):  # ~3/100 pressure: no replan
         mc = measured_replan(vector_add(1024), AVX, samples=6)
     assert mc.measured and mc.win == 0 and not mc.replanned
 
 
 def test_summary_reports_the_real_unavailable_split():
     s = silicon.summary()
-    assert s["rapl_energy"] is False and s["thermal_zone"] is False   # sandbox
+    assert s["rapl_energy"] is False and s["thermal_zone"] is False  # sandbox
     with _FakeSilicon():
         s2 = silicon.summary()
         assert s2["rapl_energy"] is True and s2["thermal_zone"] is True

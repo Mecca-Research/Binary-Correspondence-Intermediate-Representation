@@ -69,13 +69,13 @@ from .training import _lcg_permutation
 #    bounded, deterministic Lloyd's iteration; INERTIA is the objective + the monotone-non-increasing verifier.
 # ============================================================================================================
 
+
 def _kmeans_assign_flat(centroids, point, point_offset: int, k: int, n_feat: int) -> int:
     """Nearest centroid over validated flat storage, with no temporary row slices."""
     best_c = 0
     best_d = _squared_distance_at(point, point_offset, centroids, 0, n_feat)
     for centroid in range(1, k):
-        distance = _squared_distance_at(
-            point, point_offset, centroids, centroid * n_feat, n_feat)
+        distance = _squared_distance_at(point, point_offset, centroids, centroid * n_feat, n_feat)
         if distance < best_d:
             best_d = distance
             best_c = centroid
@@ -113,8 +113,9 @@ def kmeans_assign(centroids: list[float], x: list[float], k: int, n_feat: int) -
     return _kmeans_assign_flat(centroids, xf, 0, k, n_feat)
 
 
-def kmeans_fit(X: list[float], n_samples: int, n_feat: int, k: int,
-               init_indices: list[int], n_iter: int) -> tuple[list[float], list[int]]:
+def kmeans_fit(
+    X: list[float], n_samples: int, n_feat: int, k: int, init_indices: list[int], n_iter: int
+) -> tuple[list[float], list[int]]:
     """Bounded, DETERMINISTIC Lloyd's iteration -- the K-means FIT (the bounded-iterative half, like training).
     Fixed ``init_indices`` choose the initial centroids from ``X`` (row ``init_indices[c]`` is centroid c's
     seed), a fixed ``n_iter`` bounds the loop, so the whole fit is fully reproducible (no randomness). Each
@@ -163,7 +164,7 @@ def kmeans_fit(X: list[float], n_samples: int, n_feat: int, k: int,
         new_centroids = list(centroids)
         for c in range(k):
             if counts[c] == 0:
-                continue                                        # EMPTY cluster -> keep the previous centroid
+                continue  # EMPTY cluster -> keep the previous centroid
             cbase = c * n_feat
             for j in range(n_feat):
                 new_centroids[cbase + j] = sums[cbase + j] / counts[c]
@@ -177,8 +178,9 @@ def kmeans_fit(X: list[float], n_samples: int, n_feat: int, k: int,
     return centroids, labels
 
 
-def kmeans_inertia(X: list[float], n_samples: int, n_feat: int,
-                   centroids: list[float], labels: list[int]) -> float:
+def kmeans_inertia(
+    X: list[float], n_samples: int, n_feat: int, centroids: list[float], labels: list[int]
+) -> float:
     """The K-means OBJECTIVE (within-cluster sum of squares):
     ``inertia = Sum_i squared_distance(X_i, centroid[label_i])`` -- the quantity Lloyd's iteration minimizes.
     REUSES ``classical.squared_distance`` (exact). ``X`` is ``n_samples x n_feat`` row-major; ``centroids`` is
@@ -193,7 +195,9 @@ def kmeans_inertia(X: list[float], n_samples: int, n_feat: int,
     if len(X) != n_samples * n_feat:
         raise ValueError(f"kmeans X must be n_samples*n_feat = {n_samples * n_feat}; got {len(X)}")
     if len(labels) != n_samples:
-        raise ValueError(f"kmeans labels must have n_samples = {n_samples} entries; got {len(labels)}")
+        raise ValueError(
+            f"kmeans labels must have n_samples = {n_samples} entries; got {len(labels)}"
+        )
     Xf = [float(v) for v in X]
     _finite(Xf, "kmeans X")
     _finite(centroids, "kmeans centroids")
@@ -208,8 +212,9 @@ def kmeans_inertia(X: list[float], n_samples: int, n_feat: int,
     return acc
 
 
-def kmeans_assign_via_bridge(centroids: list[float], x: list[float], k: int, n_feat: int,
-                             group_size: int, bits: int) -> int:
+def kmeans_assign_via_bridge(
+    centroids: list[float], x: list[float], k: int, n_feat: int, group_size: int, bits: int
+) -> int:
     """E6: the Q8<->float32<->Q8 bridge wrapped around the TRUSTED K-means assign -- the point ``x`` arrives as
     per-group quantized storage; the bridge dequantizes it and the trusted :func:`kmeans_assign` runs on the
     round-tripped point. The SOLE certified error is the INPUT round-trip (R17-certified by
@@ -224,6 +229,7 @@ def kmeans_assign_via_bridge(centroids: list[float], x: list[float], k: int, n_f
 #    fixed kernel. INDEPENDENT verifiers: standardized training data has mean ~ 0 / std ~ 1; min-max lies in
 #    [0, 1].
 # ============================================================================================================
+
 
 @dataclass(frozen=True)
 class StandardScaler:
@@ -240,12 +246,16 @@ class StandardScaler:
         if not self.mean:
             raise ValueError("StandardScaler needs at least one feature")
         if len(self.std) != len(self.mean):
-            raise ValueError(f"StandardScaler mean/std length mismatch ({len(self.mean)} != {len(self.std)})")
+            raise ValueError(
+                f"StandardScaler mean/std length mismatch ({len(self.mean)} != {len(self.std)})"
+            )
         _finite(self.mean, "StandardScaler mean")
         _finite(self.std, "StandardScaler std")
         if any(float(s) <= 0.0 for s in self.std):
-            raise ValueError("StandardScaler std entries must all be > 0 (a constant feature has std 0; "
-                             "drop it or use a different scaler)")
+            raise ValueError(
+                "StandardScaler std entries must all be > 0 (a constant feature has std 0; "
+                "drop it or use a different scaler)"
+            )
 
     @property
     def n_feat(self) -> int:
@@ -279,8 +289,8 @@ def standard_scaler_fit(X: list[float], n_samples: int, n_feat: int) -> Standard
         for j in range(n_feat):
             d = Xf[base + j] - mean[j]
             var[j] += d * d
-    var = [v / n_samples for v in var]                          # POPULATION variance (/n_samples)
-    std = [math.sqrt(v) for v in var]                           # the SOLE transcendental, at FIT time -> baked
+    var = [v / n_samples for v in var]  # POPULATION variance (/n_samples)
+    std = [math.sqrt(v) for v in var]  # the SOLE transcendental, at FIT time -> baked
     return StandardScaler(tuple(mean), tuple(std))
 
 
@@ -289,7 +299,9 @@ def standard_scaler_transform(x: list[float], mean, std) -> list[float]:
     division (the baked mean/std make this transcendental-free; the ``sqrt`` was paid at fit time). ``x`` /
     ``mean`` / ``std`` are equal length. Returns a fresh list (side-effect-free)."""
     if len(x) != len(mean) or len(x) != len(std):
-        raise ValueError(f"scaler transform length mismatch (x={len(x)} mean={len(mean)} std={len(std)})")
+        raise ValueError(
+            f"scaler transform length mismatch (x={len(x)} mean={len(mean)} std={len(std)})"
+        )
     _finite(x, "scaler transform x")
     _finite(mean, "scaler transform mean")
     _finite(std, "scaler transform std")
@@ -314,12 +326,16 @@ class MinMaxScaler:
         if not self.mn:
             raise ValueError("MinMaxScaler needs at least one feature")
         if len(self.mx) != len(self.mn):
-            raise ValueError(f"MinMaxScaler mn/mx length mismatch ({len(self.mn)} != {len(self.mx)})")
+            raise ValueError(
+                f"MinMaxScaler mn/mx length mismatch ({len(self.mn)} != {len(self.mx)})"
+            )
         _finite(self.mn, "MinMaxScaler min")
         _finite(self.mx, "MinMaxScaler max")
         if any(float(self.mx[j]) <= float(self.mn[j]) for j in range(len(self.mn))):
-            raise ValueError("MinMaxScaler needs mx > mn per feature (a constant feature has mx == mn; "
-                             "drop it or use a different scaler)")
+            raise ValueError(
+                "MinMaxScaler needs mx > mn per feature (a constant feature has mx == mn; "
+                "drop it or use a different scaler)"
+            )
 
     @property
     def n_feat(self) -> int:
@@ -365,7 +381,9 @@ def minmax_transform(x: list[float], mn, mx) -> list[float]:
     for j in range(len(x)):
         denom = float(mx[j]) - float(mn[j])
         if denom <= 0.0:
-            raise ValueError(f"scaler transform: mx[{j}] must be > mn[{j}]; got mx={mx[j]} mn={mn[j]}")
+            raise ValueError(
+                f"scaler transform: mx[{j}] must be > mn[{j}]; got mx={mx[j]} mn={mn[j]}"
+            )
         out.append((float(x[j]) - float(mn[j])) / denom)
     return out
 
@@ -374,6 +392,7 @@ def minmax_transform(x: list[float], mn, mx) -> list[float]:
 # 3. CROSS-VALIDATION FOLDS -- a deterministic partition of [0, n) via the M3 LCG shuffle (REUSED, not
 #    reinvented). INDEPENDENT verifier: the folds are a genuine partition (disjoint + cover) with balanced sizes.
 # ============================================================================================================
+
 
 def k_fold_indices(n_samples: int, n_folds: int, seed: int) -> list[list[int]]:
     """A deterministic K-FOLD partition of ``[0, n_samples)`` into ``n_folds`` index lists. REUSES the M3
@@ -391,14 +410,14 @@ def k_fold_indices(n_samples: int, n_folds: int, seed: int) -> list[list[int]]:
         raise ValueError(f"k_fold seed must be an integer; got {seed!r}")
     if n_folds > n_samples:
         raise ValueError(f"k_fold n_folds must be <= n_samples = {n_samples}; got {n_folds}")
-    order = _lcg_permutation(n_samples, seed)                   # REUSE the M3 deterministic LCG shuffle
+    order = _lcg_permutation(n_samples, seed)  # REUSE the M3 deterministic LCG shuffle
     base = n_samples // n_folds
-    extra = n_samples % n_folds                                 # the first `extra` folds get one more element
+    extra = n_samples % n_folds  # the first `extra` folds get one more element
     folds: list[list[int]] = []
     start = 0
     for f in range(n_folds):
         size = base + (1 if f < extra else 0)
-        folds.append(sorted(order[start:start + size]))         # sorted within a fold (stable, readable)
+        folds.append(sorted(order[start : start + size]))  # sorted within a fold (stable, readable)
         start += size
     return folds
 
@@ -423,8 +442,10 @@ def k_fold_is_partition(folds: list[list[int]], n_samples: int) -> bool:
 #    reconstruction_error is the MSE. INDEPENDENT verifier: tied-identity weights reconstruct the input (err ~ 0).
 # ============================================================================================================
 
-def autoencoder_forward(x: list[float], n_in: int, n_hidden: int, W_enc, b_enc, W_dec, b_dec,
-                        activation: str = "relu") -> list[float]:
+
+def autoencoder_forward(
+    x: list[float], n_in: int, n_hidden: int, W_enc, b_enc, W_dec, b_dec, activation: str = "relu"
+) -> list[float]:
     """Autoencoder FORWARD -- a COMPOSITION of ops BCIR already ships (do NOT reinvent matmul / activation):
 
         h     = activation(x @ W_enc + b_enc)        (encode: REUSE matmul + the G1 activation reference)
@@ -469,8 +490,18 @@ def reconstruction_error(x: list[float], recon: list[float]) -> float:
     return mse_value(list(x), list(recon))
 
 
-def autoencoder_via_bridge(x: list[float], n_in: int, n_hidden: int, W_enc, b_enc, W_dec, b_dec,
-                           group_size: int, bits: int, activation: str = "relu") -> list[float]:
+def autoencoder_via_bridge(
+    x: list[float],
+    n_in: int,
+    n_hidden: int,
+    W_enc,
+    b_enc,
+    W_dec,
+    b_dec,
+    group_size: int,
+    bits: int,
+    activation: str = "relu",
+) -> list[float]:
     """E6: the Q8<->float32<->Q8 bridge wrapped around the TRUSTED autoencoder forward -- the INPUT ``x``
     arrives as per-group quantized storage; the bridge dequantizes it and the trusted
     :func:`autoencoder_forward` runs on the round-tripped input (the baked weights are trusted/exact). The SOLE
@@ -483,6 +514,7 @@ def autoencoder_via_bridge(x: list[float], n_in: int, n_hidden: int, W_enc, b_en
 # 5. EMBEDDING LOOKUP -- a baked n_vocab x dim table; exact row gather. INDEPENDENT verifier: the lookup equals
 #    the direct row slice; an out-of-range id raises.
 # ============================================================================================================
+
 
 @dataclass(frozen=True)
 class EmbeddingTable:
@@ -500,8 +532,10 @@ class EmbeddingTable:
         if type(self.dim) is not int or self.dim < 1:
             raise ValueError(f"embedding dim must be >= 1; got {self.dim}")
         if len(self.table) != self.n_vocab * self.dim:
-            raise ValueError(f"embedding table must be n_vocab*dim = {self.n_vocab * self.dim}; "
-                             f"got {len(self.table)}")
+            raise ValueError(
+                f"embedding table must be n_vocab*dim = {self.n_vocab * self.dim}; "
+                f"got {len(self.table)}"
+            )
         _finite(self.table, "embedding table")
 
     def row(self, vid: int) -> list[float]:
@@ -509,7 +543,7 @@ class EmbeddingTable:
         :func:`embedding_lookup`. Validates the id range."""
         if type(vid) is not int or not (0 <= vid < self.n_vocab):
             raise ValueError(f"embedding id {vid} out of range [0, {self.n_vocab})")
-        return list(self.table[vid * self.dim:(vid + 1) * self.dim])
+        return list(self.table[vid * self.dim : (vid + 1) * self.dim])
 
 
 def embedding_lookup(table: EmbeddingTable, ids: list[int], dim: int) -> list[float]:
@@ -526,7 +560,7 @@ def embedding_lookup(table: EmbeddingTable, ids: list[int], dim: int) -> list[fl
         if type(vid) is not int or not (0 <= vid < table.n_vocab):
             raise ValueError(f"embedding id {vid} out of range [0, {table.n_vocab})")
         start = vid * dim
-        out.extend(table.table[start:start + dim])
+        out.extend(table.table[start : start + dim])
     return out
 
 
@@ -541,8 +575,9 @@ _KINDS = ("kmeans", "scaler", "autoencoder", "embedding")
 _TRANSCENDENTAL_ACTS = ("sigmoid", "tanh", "gelu", "softmax")
 
 
-def check_unsupervised(kind: str, *, n_feat: int, n_unit: int, in_dtype: str, out_dtype: str,
-                       activation: str = "relu") -> list[str]:
+def check_unsupervised(
+    kind: str, *, n_feat: int, n_unit: int, in_dtype: str, out_dtype: str, activation: str = "relu"
+) -> list[str]:
     """Op-level well-formedness for an unsupervised / pipeline claim, returned as a list of error strings (empty
     == well-formed) -- the shape/dtype-law shape, lifted into one named checker. NOT a globally-numbered R-law
     (matches ``check_classical`` / ``check_recurrent``). ``kind`` in
@@ -571,10 +606,14 @@ def check_unsupervised(kind: str, *, n_feat: int, n_unit: int, in_dtype: str, ou
     if in_dtype != out_dtype:
         errs.append(f"unsupervised: dtype not preserved (in {in_dtype!r} != out {out_dtype!r})")
     # the quarantine dtype rule: only a transcendental-activation autoencoder uses a runtime transcendental.
-    uses_transcendental = (kind == "autoencoder" and activation in _TRANSCENDENTAL_ACTS)
+    uses_transcendental = kind == "autoencoder" and activation in _TRANSCENDENTAL_ACTS
     if uses_transcendental and in_dtype != "f32":
-        errs.append(f"unsupervised: an autoencoder with a {activation!r} activation uses a transcendental "
-                    f"(the libm edge returns float), so it needs f32, got {in_dtype!r}")
+        errs.append(
+            f"unsupervised: an autoencoder with a {activation!r} activation uses a transcendental "
+            f"(the libm edge returns float), so it needs f32, got {in_dtype!r}"
+        )
     if kind == "autoencoder" and activation not in ("relu",) + _TRANSCENDENTAL_ACTS:
-        errs.append(f"unsupervised: autoencoder activation {activation!r} is not a known activation")
+        errs.append(
+            f"unsupervised: autoencoder activation {activation!r} is not a known activation"
+        )
     return errs

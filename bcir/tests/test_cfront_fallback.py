@@ -4,6 +4,7 @@
 `needs_fallback` signals that a construct is outside BCIR's supported subset (or the unit is malformed)
 so a driver routes it to the LLVM backend -- it never crashes. `compile_unit` keeps raising.
 """
+
 from __future__ import annotations
 
 import os
@@ -27,11 +28,14 @@ def _build_c_twin():
     if not cc:
         return None
     out = os.path.join(tempfile.gettempdir(), "bcir_twin_fallback_test")
-    srcs = [os.path.join(_C, s) for s in
-            ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c", "bcir_runtime.c", "test_cfront.c")]
+    srcs = [
+        os.path.join(_C, s)
+        for s in ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c", "bcir_runtime.c", "test_cfront.c")
+    ]
     for std in ("c23", "c2x", "c11"):
-        b = subprocess.run([cc, f"-std={std}", "-O1", "-I", _C, *srcs, "-o", out],
-                           capture_output=True, text=True)
+        b = subprocess.run(
+            [cc, f"-std={std}", "-O1", "-I", _C, *srcs, "-o", out], capture_output=True, text=True
+        )
         if b.returncode == 0:
             return out
     return None
@@ -44,9 +48,11 @@ def test_supported_program_does_not_fall_back():
 
 def test_unsupported_construct_falls_back_with_a_reason():
     # a non-constant static initializer is outside the supported subset -> fall back, do not crash.
-    r = compile_with_fallback("int g; int f(void){ static int x = g; return x; }\n", check_clang=False)
+    r = compile_with_fallback(
+        "int g; int f(void){ static int x = g; return x; }\n", check_clang=False
+    )
     assert r.needs_fallback and not r.is_clean
-    assert r.fallback.startswith("lower:")                    # the rejecting stage is tagged
+    assert r.fallback.startswith("lower:")  # the rejecting stage is tagged
 
 
 def test_malformed_unit_falls_back_at_the_parse_stage():
@@ -56,9 +62,11 @@ def test_malformed_unit_falls_back_at_the_parse_stage():
 
 def test_fallback_is_total_over_several_unsupported_constructs():
     # whatever the construct, the contract returns a CompileResult (never raises).
-    for src in ("int f(void){ 5 = 3; return 0; }\n",           # not an lvalue
-                "int f(void){ goto nowhere; return 0; }\n",     # a statement beyond the subset
-                "@bad\n"):                                      # garbage
+    for src in (
+        "int f(void){ 5 = 3; return 0; }\n",  # not an lvalue
+        "int f(void){ goto nowhere; return 0; }\n",  # a statement beyond the subset
+        "@bad\n",
+    ):  # garbage
         r = compile_with_fallback(src, check_clang=False)
         assert isinstance(r, type(compile_with_fallback("int x;\n", check_clang=False)))
         # either it compiled or it asked for fallback -- but it returned, not crashed
@@ -87,7 +95,7 @@ def test_bitint_mixed_width_where_bitint_wins_is_first_class():
         # `_BitInt(N>32)` + a standard int VARIABLE -> the `_BitInt` wins (N > 32 = width(int)).
         "_BitInt(33) f(_BitInt(33) a, int b){ return a + b; }\n",
         "unsigned _BitInt(64) f(unsigned _BitInt(64) a, unsigned b){ return a + b; }\n",
-        "_BitInt(64) f(_BitInt(64) a, unsigned b){ return a * b; }\n",       # bi64 + uint -> bi64 (own sign)
+        "_BitInt(64) f(_BitInt(64) a, unsigned b){ return a * b; }\n",  # bi64 + uint -> bi64 (own sign)
         # a WIDER `_BitInt` mixed with a NARROWER `_BitInt` -> the wider wins.
         "_BitInt(16) f(_BitInt(16) a, _BitInt(8) b){ return a + b; }\n",
         "unsigned _BitInt(20) f(unsigned _BitInt(20) a, _BitInt(12) b){ return a | (unsigned _BitInt(20))b; }\n",
@@ -191,8 +199,10 @@ def test_compile_unit_keeps_its_raise_contract():
 # previously SEGFAULTed / ASan `stack-overflow`) may crash, and both must route it to fallback / a clean
 # parse error. The depth, in tokens, stays well under the C twin's MAXTOK=16384 cap so it is the DEPTH
 # guard (not the token cap) that stops it on the C side -- matching the oracle's parser depth guard.
-_DEEP_N = 3000   # nesting levels: above both depth caps (Python _MAX_DEPTH=50, C BCIR_MAXDEPTH=1200),
-                 # below MAXTOK so the depth guard fires, and ~6000 tokens stays inside the token cap.
+_DEEP_N = (
+    3000  # nesting levels: above both depth caps (Python _MAX_DEPTH=50, C BCIR_MAXDEPTH=1200),
+)
+# below MAXTOK so the depth guard fires, and ~6000 tokens stays inside the token cap.
 _DEEP_PAREN = "int deep_paren(void){ return " + "(" * _DEEP_N + "0" + ")" * _DEEP_N + "; }\n"
 _DEEP_BLOCK = "int deep_block(void){ " + "{" * _DEEP_N + " ; " + "}" * _DEEP_N + " return 0; }\n"
 
@@ -203,7 +213,9 @@ def test_deeply_nested_input_routes_to_fallback_not_recursionerror():
     for src in (_DEEP_PAREN, _DEEP_BLOCK):
         r = compile_with_fallback(src, check_clang=False)
         assert r.needs_fallback and not r.is_clean, src[:30]
-        assert r.fallback.startswith("parse:"), r.fallback     # the depth guard rejects at the parse stage
+        assert r.fallback.startswith("parse:"), (
+            r.fallback
+        )  # the depth guard rejects at the parse stage
         assert "nesting too deep" in r.fallback, r.fallback
 
 
@@ -214,7 +226,9 @@ def test_deeply_nested_compile_unit_raises_cparseerror_not_recursionerror():
         compile_unit(_DEEP_PAREN, check_clang=False)
         raise AssertionError("deep input must raise, not compile")
     except RecursionError:
-        raise AssertionError("deep input must raise CParseError, never RecursionError (the pre-fix crash)")
+        raise AssertionError(
+            "deep input must raise CParseError, never RecursionError (the pre-fix crash)"
+        )
     except CParseError:
         pass
 

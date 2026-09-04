@@ -28,10 +28,29 @@ COOL = Theta.cool()
 
 def _build(tmp):
     exe = os.path.join(tmp, "test_train")
-    srcs = [os.path.join(_RUNTIME_C, f)
-            for f in ("test_train.c", "bcir_train.c", "bcir_exec.c", "bcir_runtime.c")]
-    r = subprocess.run(host_link_args([_cc(), "-std=c11", "-O2", "-Wall", "-Wextra", "-I", _RUNTIME_C,
-                        *srcs, "-o", exe, "-lm"]), capture_output=True, text=True)
+    srcs = [
+        os.path.join(_RUNTIME_C, f)
+        for f in ("test_train.c", "bcir_train.c", "bcir_exec.c", "bcir_runtime.c")
+    ]
+    r = subprocess.run(
+        host_link_args(
+            [
+                _cc(),
+                "-std=c11",
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-I",
+                _RUNTIME_C,
+                *srcs,
+                "-o",
+                exe,
+                "-lm",
+            ]
+        ),
+        capture_output=True,
+        text=True,
+    )
     assert r.returncode == 0, r.stderr
     return exe
 
@@ -75,8 +94,9 @@ def test_c_training_matches_the_oracle_curve_and_weights():
         losses, order, weights = _run_c_training(tmp, _build(tmp), run, spec, X, y, w0, 12, 0.5)
     assert order == [1, 2, 3, 4, 5, 6], order
     assert len(losses) == len(run.losses) == 12
-    assert all(abs(c - p) <= 1e-12 for c, p in zip(losses, run.losses)), \
-        [(c, p) for c, p in zip(losses, run.losses) if abs(c - p) > 1e-12]
+    assert all(abs(c - p) <= 1e-12 for c, p in zip(losses, run.losses)), [
+        (c, p) for c, p in zip(losses, run.losses) if abs(c - p) > 1e-12
+    ]
     assert len(weights) == spec.n_params
     assert all(abs(c - p) <= 1e-12 for c, p in zip(weights, run.weights)), (weights, run.weights)
 
@@ -88,6 +108,7 @@ def test_c_training_genuinely_converges():
     if _cc() is None:
         return
     from bcir.tests._convergence import assert_converged
+
     spec = TrainStepSpec()
     X, y = _toy_logistic()
     w0 = [0.0] * spec.n_params
@@ -112,7 +133,8 @@ def test_c_streamed_training_matches_both_oracle_paths():
     from bcir.gem.streampack import hydrate
     from bcir.kbcir.realize import optimize
     from bcir.kbcir.train_graph import train_stream_module, train_streamed
-    spec = TrainStepSpec()                                   # batch 8
+
+    spec = TrainStepSpec()  # batch 8
     streams = 4
     X, y = _toy_logistic()
     w0 = [0.0] * spec.n_params
@@ -122,11 +144,29 @@ def test_c_streamed_training_matches_both_oracle_paths():
     pack = hydrate(m, optimize(m, AVX, COOL), plan=m.name)
     with tempfile.TemporaryDirectory() as tmp:
         exe = os.path.join(tmp, "test_train_stream")
-        srcs = [os.path.join(_RUNTIME_C, f)
-                for f in ("test_train_stream.c", "bcir_train.c", "bcir_exec.c",
-                          "bcir_runtime.c")]
-        r = subprocess.run(host_link_args([_cc(), "-std=c11", "-O2", "-Wall", "-Wextra", "-I", _RUNTIME_C,
-                            *srcs, "-o", exe, "-lm"]), capture_output=True, text=True)
+        srcs = [
+            os.path.join(_RUNTIME_C, f)
+            for f in ("test_train_stream.c", "bcir_train.c", "bcir_exec.c", "bcir_runtime.c")
+        ]
+        r = subprocess.run(
+            host_link_args(
+                [
+                    _cc(),
+                    "-std=c11",
+                    "-O2",
+                    "-Wall",
+                    "-Wextra",
+                    "-I",
+                    _RUNTIME_C,
+                    *srcs,
+                    "-o",
+                    exe,
+                    "-lm",
+                ]
+            ),
+            capture_output=True,
+            text=True,
+        )
         assert r.returncode == 0, r.stderr
         pack_path = os.path.join(tmp, "stream.pack")
         with open(pack_path, "wb") as f:
@@ -154,14 +194,14 @@ def test_c_streamed_training_matches_both_oracle_paths():
     assert len(losses) == 12
     assert all(abs(c - p) <= 1e-12 for c, p in zip(losses, streamed.losses))
     assert all(abs(c - p) <= 1e-12 for c, p in zip(weights, streamed.weights))
-    assert all(abs(c - p) <= 1e-12 for c, p in zip(losses, planned.losses))   # the identity,
+    assert all(abs(c - p) <= 1e-12 for c, p in zip(losses, planned.losses))  # the identity,
     assert all(abs(c - p) <= 1e-12 for c, p in zip(weights, planned.weights))  # C end-to-end
 
 
 def test_c_training_callbacks_reject_invalid_state_before_mutation():
     if _cc() is None:
         return
-    source = r'''
+    source = r"""
 #include <math.h>
 #include <string.h>
 #include "bcir_train.h"
@@ -176,16 +216,33 @@ int main(void){
   if(bcir_stream_kernel(0,0)!=1||bcir_stream_kernel(&item,&ss)!=1)return 4;
   return 0;
 }
-'''
+"""
     with tempfile.TemporaryDirectory() as tmp:
         src = os.path.join(tmp, "invalid_train.c")
         with open(src, "w", encoding="utf-8") as f:
             f.write(source)
         exe = os.path.join(tmp, "invalid_train")
-        build = subprocess.run(host_link_args(
-            [_cc(), "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror", "-I", _RUNTIME_C,
-             os.path.join(_RUNTIME_C, "bcir_train.c"), src, "-o", exe, "-lm"]),
-            capture_output=True, text=True)
+        build = subprocess.run(
+            host_link_args(
+                [
+                    _cc(),
+                    "-std=c11",
+                    "-O1",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    "-I",
+                    _RUNTIME_C,
+                    os.path.join(_RUNTIME_C, "bcir_train.c"),
+                    src,
+                    "-o",
+                    exe,
+                    "-lm",
+                ]
+            ),
+            capture_output=True,
+            text=True,
+        )
         assert build.returncode == 0, build.stderr
         run = subprocess.run([exe], capture_output=True, text=True)
         assert run.returncode == 0, (run.stdout, run.stderr)

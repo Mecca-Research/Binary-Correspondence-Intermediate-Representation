@@ -84,12 +84,18 @@ def test_sequence_of_and_basic_per_keep_the_order_they_were_given() -> None:
     ordered = SequenceOf(_BYTE, name="Q")
     unordered = SetOf(_BYTE, name="S")
     for variant in _VARIANTS:
-        assert (encode_per(ordered, [2, 1], variant=variant)
-                != encode_per(ordered, [1, 2], variant=variant))
-        assert decode_per(encode_per(ordered, [2, 1], variant=variant), ordered,
-                          variant=variant) == [2, 1]
-        assert decode_per(encode_per(unordered, [2, 1], variant=variant, rules=PerRules.BASIC),
-                          unordered, variant=variant, rules=PerRules.BASIC) == [2, 1]
+        assert encode_per(ordered, [2, 1], variant=variant) != encode_per(
+            ordered, [1, 2], variant=variant
+        )
+        assert decode_per(
+            encode_per(ordered, [2, 1], variant=variant), ordered, variant=variant
+        ) == [2, 1]
+        assert decode_per(
+            encode_per(unordered, [2, 1], variant=variant, rules=PerRules.BASIC),
+            unordered,
+            variant=variant,
+            rules=PerRules.BASIC,
+        ) == [2, 1]
 
 
 def test_canonical_per_refuses_a_present_default_equal_to_its_default() -> None:
@@ -108,7 +114,8 @@ def test_canonical_per_refuses_a_present_default_equal_to_its_default() -> None:
         # b"\x80" is the BASIC spelling: presence bit set, then the value 0.
         assert "18.2" in _refused(
             lambda v=variant: decode_per(b"\x80", kind, variant=v, rules=PerRules.CANONICAL),
-            "a present DEFAULT equal to its default under CANONICAL-PER")
+            "a present DEFAULT equal to its default under CANONICAL-PER",
+        )
         # ... and BASIC-PER still accepts it, because that rule set permits both spellings.
         assert decode_per(b"\x80", kind, variant=variant, rules=PerRules.BASIC) == {"x": 0}
 
@@ -126,13 +133,17 @@ def _extension_encoding(variant: PerVariant, payload: bytes) -> bytes:
     makes this a test of the inner check rather than of the outer one.
     """
     writer = BitWriter(variant)
-    writer.put_bit(1)                              # §18.1: extension additions are present
-    _encode_constrained(writer, 1, 0, 255)         # a = 1
-    _encode_normally_small_length(writer, 1)       # §19.7: one addition in the type
-    writer.put_bit(1)                              # ... and it is present
+    writer.put_bit(1)  # §18.1: extension additions are present
+    _encode_constrained(writer, 1, 0, 255)  # a = 1
+    _encode_normally_small_length(writer, 1)  # §19.7: one addition in the type
+    writer.put_bit(1)  # ... and it is present
     _encode_length_and_payload(
-        writer, len(payload), 0, None,
-        lambda start, stop: (writer.align(), writer.put_octets(payload[start:stop])))
+        writer,
+        len(payload),
+        0,
+        None,
+        lambda start, stop: (writer.align(), writer.put_octets(payload[start:stop])),
+    )
     return writer.to_bytes()
 
 
@@ -143,21 +154,23 @@ def test_an_extension_wrapper_must_be_exactly_the_complete_encoding() -> None:
     trailing pad bits are zero. A wrapper carrying more octets, or the same octet with a pad
     bit set, decoded to the identical component value before this check existed.
     """
-    kind = Sequence((Component("a", _BYTE), Component("b", _BIT, extension=True)),
-                    name="X", extensible=True)
+    kind = Sequence(
+        (Component("a", _BYTE), Component("b", _BIT, extension=True)), name="X", extensible=True
+    )
     for variant in _VARIANTS:
-        good = _extension_encoding(variant, b"\x80")          # b = 1, pad bits zero
+        good = _extension_encoding(variant, b"\x80")  # b = 1, pad bits zero
         assert decode_per(good, kind, variant=variant) == {"a": 1, "b": 1}
         # The encoder produces exactly this, which is what makes the hand-built case fair.
         assert encode_per(kind, {"a": 1, "b": 1}, variant=variant) == good
 
         assert "19.9" in _refused(
-            lambda v=variant: decode_per(_extension_encoding(v, b"\x80\xff"), kind,
-                                         variant=v),
-            "a trailing octet inside the extension wrapper")
+            lambda v=variant: decode_per(_extension_encoding(v, b"\x80\xff"), kind, variant=v),
+            "a trailing octet inside the extension wrapper",
+        )
         assert "19.9" in _refused(
             lambda v=variant: decode_per(_extension_encoding(v, b"\x81"), kind, variant=v),
-            "a non-zero pad bit inside the extension wrapper")
+            "a non-zero pad bit inside the extension wrapper",
+        )
 
 
 def test_the_canonical_rules_did_not_narrow_the_corpus() -> None:
@@ -169,8 +182,9 @@ def test_the_canonical_rules_did_not_narrow_the_corpus() -> None:
     setof = SetOf(_BYTE, name="S")
     seqof = SequenceOf(_BYTE, name="Q")
     defaulted = Sequence((Component("x", _BIT, default=0), Component("y", _BYTE)), name="D")
-    extended = Sequence((Component("a", _BYTE), Component("b", _BIT, extension=True)),
-                        name="X", extensible=True)
+    extended = Sequence(
+        (Component("a", _BYTE), Component("b", _BIT, extension=True)), name="X", extensible=True
+    )
     cases = [
         (setof, ([], [7], [1, 2, 3], [3, 3, 3])),
         (seqof, ([], [7], [3, 1, 2])),

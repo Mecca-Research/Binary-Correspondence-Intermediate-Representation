@@ -70,12 +70,12 @@ from .realize import candidates_for
 
 # Layout tokens -- the spelling matches ``Resource.layout`` (model/graph.py) and the MLIR
 # ``#bcir.layout<...>`` attribute, so a chosen layout flows straight into the resource + the emit.
-SOA = "soa"   # structure-of-arrays: one contiguous array per field (the declared default)
-AOS = "aos"   # array-of-structures: records interleaved, each F fields wide
+SOA = "soa"  # structure-of-arrays: one contiguous array per field (the declared default)
+AOS = "aos"  # array-of-structures: records interleaved, each F fields wide
 
 # The two access shapes a claim can have over a multi-field resource.
-SINGLE_FIELD = "single_field_sweep"   # one field, all records   (UNIT under SoA, STRIDED under AoS)
-WHOLE_RECORD = "whole_record"         # all F fields, per record  (UNIT under AoS, STRIDED under SoA)
+SINGLE_FIELD = "single_field_sweep"  # one field, all records   (UNIT under SoA, STRIDED under AoS)
+WHOLE_RECORD = "whole_record"  # all F fields, per record  (UNIT under AoS, STRIDED under SoA)
 
 
 @dataclass(frozen=True)
@@ -84,9 +84,9 @@ class FieldAccess:
     ``records`` records of an ``fields``-field layout. ``shape`` is SINGLE_FIELD or WHOLE_RECORD."""
 
     claim_id: int
-    shape: str               # SINGLE_FIELD | WHOLE_RECORD
-    records: int             # how many records this claim sweeps (the cost-model `count`)
-    fields: int              # the record width F (fields per record)
+    shape: str  # SINGLE_FIELD | WHOLE_RECORD
+    records: int  # how many records this claim sweeps (the cost-model `count`)
+    fields: int  # the record width F (fields per record)
 
     def stride_class_under(self, layout: str) -> StrideClass:
         """The access's stride class under ``layout`` -- the cost-model shape the EXISTING ``candidates_for``
@@ -95,8 +95,9 @@ class FieldAccess:
           * SINGLE_FIELD: contiguous under SoA (the field's own array), strided under AoS (step over F).
           * WHOLE_RECORD: contiguous under AoS (the record is local), strided under SoA (fields F arrays apart).
         """
-        contiguous = (layout == SOA and self.shape == SINGLE_FIELD) or \
-                     (layout == AOS and self.shape == WHOLE_RECORD)
+        contiguous = (layout == SOA and self.shape == SINGLE_FIELD) or (
+            layout == AOS and self.shape == WHOLE_RECORD
+        )
         return StrideClass.UNIT if contiguous else StrideClass.STRIDED
 
     def stride_k_under(self, layout: str) -> int:
@@ -114,10 +115,10 @@ class LayoutPlan:
     plan changes ONLY addressing -- never the computed values (the invariance the tests prove)."""
 
     rid: int
-    fields: int              # the record width F (1 => single-field, a no-op resource)
-    layout: str              # the chosen layout: "soa" | "aos"
-    soa_cost: int            # the workload's priced memory cost under SoA
-    aos_cost: int            # ... and under AoS
+    fields: int  # the record width F (1 => single-field, a no-op resource)
+    layout: str  # the chosen layout: "soa" | "aos"
+    soa_cost: int  # the workload's priced memory cost under SoA
+    aos_cost: int  # ... and under AoS
     accesses: tuple[FieldAccess, ...]
 
     @property
@@ -147,7 +148,9 @@ class LayoutCertificate:
     bit-exact)."""
 
     plan: LayoutPlan
-    declared_layout: str     # the resource's declared/default layout ("soa") -- the baseline we pivot from
+    declared_layout: (
+        str  # the resource's declared/default layout ("soa") -- the baseline we pivot from
+    )
 
     @property
     def rid(self) -> int:
@@ -190,8 +193,16 @@ def _access_memory_cost(access: FieldAccess, layout: str, target: TargetProfile)
     not a bespoke layout discount."""
     sc = access.stride_class_under(layout)
     sk = access.stride_k_under(layout)
-    claim = Claim(id=access.claim_id, opcode=Opcode.ADD, lane=Lane.U, stride_class=sc,
-                  stride_k=sk, count=max(1, access.records), rd=(1, 2), wr=(3,))
+    claim = Claim(
+        id=access.claim_id,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=sc,
+        stride_k=sk,
+        count=max(1, access.records),
+        rd=(1, 2),
+        wr=(3,),
+    )
     cands = candidates_for(claim, target)
     return min(c.base.v[MEMORY] for c in cands)
 
@@ -203,8 +214,12 @@ def _layout_cost(accesses: tuple[FieldAccess, ...], layout: str, target: TargetP
     return sum(_access_memory_cost(a, layout, target) for a in accesses)
 
 
-def plan_layout(rid: int, fields: int, accesses: tuple[FieldAccess, ...] | list[FieldAccess],
-                target: TargetProfile | None = None) -> LayoutPlan:
+def plan_layout(
+    rid: int,
+    fields: int,
+    accesses: tuple[FieldAccess, ...] | list[FieldAccess],
+    target: TargetProfile | None = None,
+) -> LayoutPlan:
     """K_BCIR's deterministic SoA<->AoS choice for one multi-field resource. Prices the whole workload
     (``accesses``) under SoA and under AoS through the EXISTING cost model (``_layout_cost`` ->
     ``candidates_for``'s memory/stride terms) and picks the MINIMUM-cost layout. Ties keep the declared
@@ -217,14 +232,26 @@ def plan_layout(rid: int, fields: int, accesses: tuple[FieldAccess, ...] | list[
     if fields <= 1 or not accesses:
         # No multi-field distinction (or nothing touches it): SoA, equal costs, a clean no-op.
         cost = _layout_cost(accesses, SOA, target) if accesses else 0
-        return LayoutPlan(rid=rid, fields=max(1, fields), layout=SOA,
-                          soa_cost=cost, aos_cost=cost, accesses=accesses)
+        return LayoutPlan(
+            rid=rid,
+            fields=max(1, fields),
+            layout=SOA,
+            soa_cost=cost,
+            aos_cost=cost,
+            accesses=accesses,
+        )
     soa_cost = _layout_cost(accesses, SOA, target)
     aos_cost = _layout_cost(accesses, AOS, target)
     # min,+ selection over the two layouts; AoS adopted ONLY on a STRICT win (ties keep the default SoA).
     layout = AOS if aos_cost < soa_cost else SOA
-    return LayoutPlan(rid=rid, fields=fields, layout=layout,
-                      soa_cost=soa_cost, aos_cost=aos_cost, accesses=accesses)
+    return LayoutPlan(
+        rid=rid,
+        fields=fields,
+        layout=layout,
+        soa_cost=soa_cost,
+        aos_cost=aos_cost,
+        accesses=accesses,
+    )
 
 
 def certify_layout(plan: LayoutPlan, declared_layout: str = SOA) -> LayoutCertificate:
@@ -252,16 +279,23 @@ def analyze_resource_accesses(module, rid: int, fields: int) -> tuple[FieldAcces
             if rid not in claim.io_rids():
                 continue
             op = claim.op or ""
-            whole = op.endswith(":whole_record") or ":whole_record" in op or \
-                claim.stride_class == StrideClass.TILE
+            whole = (
+                op.endswith(":whole_record")
+                or ":whole_record" in op
+                or claim.stride_class == StrideClass.TILE
+            )
             shape = WHOLE_RECORD if whole else SINGLE_FIELD
-            out.append(FieldAccess(claim_id=claim.id, shape=shape,
-                                   records=max(1, claim.count), fields=fields))
+            out.append(
+                FieldAccess(
+                    claim_id=claim.id, shape=shape, records=max(1, claim.count), fields=fields
+                )
+            )
     return tuple(out)
 
 
-def pivot_resource_layout(module, rid: int, fields: int, target: TargetProfile | None = None
-                          ) -> tuple[LayoutPlan, LayoutCertificate]:
+def pivot_resource_layout(
+    module, rid: int, fields: int, target: TargetProfile | None = None
+) -> tuple[LayoutPlan, LayoutCertificate]:
     """The one-call G3 entry point for a resource living in a ``module``: analyze how the module's claims
     access resource ``rid`` (``analyze_resource_accesses``), price SoA vs AoS (``plan_layout``), and certify
     the choice (``certify_layout``). Returns the (plan, certificate). The plan's chosen layout is what the

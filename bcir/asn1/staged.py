@@ -146,8 +146,7 @@ class TrustedLoader:
         proposal's digest or another generation — the signature would still verify and it
         would be attesting to something nobody admitted.
         """
-        message = b"|".join((str(generation).encode(), proposal_digest.encode(),
-                             artifact_code))
+        message = b"|".join((str(generation).encode(), proposal_digest.encode(), artifact_code))
         return hmac.new(self.key, message, hashlib.sha256).hexdigest()
 
     def verify_signature(self, artifact: Artifact) -> bool:
@@ -172,18 +171,28 @@ class TrustedLoader:
             # A proposal that will not even decode is refused here, not at compile time.
             return Admission(False, self.generation, f"undecodable proposal: {error}")
         if diagnostics:
-            return Admission(False, self.generation,
-                             "verification failed; nothing was compiled",
-                             diagnostics=diagnostics)
+            return Admission(
+                False,
+                self.generation,
+                "verification failed; nothing was compiled",
+                diagnostics=diagnostics,
+            )
         if self.compile_fn is None:
             raise Asn1Error("a loader with no compiler cannot admit anything")
         self.compilations += 1
         code = self.compile_fn(proposal)
         generation = self.generation + 1
         digest = proposal.digest()
-        return Admission(True, generation, artifact=Artifact(
-            generation=generation, proposal_digest=digest, code=code,
-            signature=self.sign(code, digest, generation)))
+        return Admission(
+            True,
+            generation,
+            artifact=Artifact(
+                generation=generation,
+                proposal_digest=digest,
+                code=code,
+                signature=self.sign(code, digest, generation),
+            ),
+        )
 
     # --- liveness ----------------------------------------------------------------------
 
@@ -207,15 +216,18 @@ class TrustedLoader:
             raise NotSigned(
                 f"generation {artifact.generation} carries no signature this key produces; "
                 f"a matching SHA-256 would prove the octets are intact and says nothing "
-                f"about who admitted them")
+                f"about who admitted them"
+            )
         if artifact.generation <= self.generation:
             raise Asn1Error(
                 f"generation {artifact.generation} is not newer than the live generation "
-                f"{self.generation}; a replayed artifact is a rollback nobody asked for")
+                f"{self.generation}; a replayed artifact is a rollback nobody asked for"
+            )
         if self.in_flight:
             raise NotQuiescent(
                 f"{self.in_flight} call(s) still in flight; a swap now would move the "
-                f"ground under a running call, which no amount of verification prevents")
+                f"ground under a running call, which no amount of verification prevents"
+            )
         self.previous, self.live = self.live, artifact
         self.generation = artifact.generation
         self.history.append(("install", artifact.generation))
@@ -229,24 +241,34 @@ class TrustedLoader:
         """
         if self.previous is None:
             raise NothingToRollBack(
-                "there is no previous generation; the first install has nothing behind it")
+                "there is no previous generation; the first install has nothing behind it"
+            )
         if self.in_flight:
             raise NotQuiescent(
                 f"{self.in_flight} call(s) still in flight; rolling back under a live call "
-                f"has the same hazard as installing under one")
+                f"has the same hazard as installing under one"
+            )
         restored = self.previous
         self.generation += 1
         # Re-signed at its new generation, so the live artifact's signature always covers
         # the generation it is actually live at.
         self.live = Artifact(
-            generation=self.generation, proposal_digest=restored.proposal_digest,
+            generation=self.generation,
+            proposal_digest=restored.proposal_digest,
             code=restored.code,
-            signature=self.sign(restored.code, restored.proposal_digest, self.generation))
+            signature=self.sign(restored.code, restored.proposal_digest, self.generation),
+        )
         self.previous = None
         self.history.append(("rollback", self.generation))
 
 
 __all__ = [
-    "Admission", "Artifact", "NotQuiescent", "NotSigned", "NotVerified",
-    "NothingToRollBack", "Proposal", "TrustedLoader",
+    "Admission",
+    "Artifact",
+    "NotQuiescent",
+    "NotSigned",
+    "NotVerified",
+    "NothingToRollBack",
+    "Proposal",
+    "TrustedLoader",
 ]

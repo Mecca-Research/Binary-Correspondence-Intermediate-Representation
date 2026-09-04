@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 
 # --- expressions (the building blocks) -------------------------------------------
 
+
 @dataclass(frozen=True)
 class Expr:
     """An expression tree: leaf ("const",val) / ("var",name) or op ("add"/"sub"/"mul")."""
@@ -76,12 +77,13 @@ DEFAULT_COSTS = {"const": 0, "var": 0, "add": 1, "sub": 1, "mul": 2}
 
 # --- the e-graph -----------------------------------------------------------------
 
+
 @dataclass
 class SaturationStats:
     iterations: int = 0
     merges: int = 0
     enodes: int = 0
-    saturated: bool = False           # reached a fixpoint within budget?
+    saturated: bool = False  # reached a fixpoint within budget?
 
 
 class EGraph:
@@ -93,12 +95,12 @@ class EGraph:
         # enode id -> (op, val, child class-ids); class root -> set of enode ids
         self._enodes: dict[int, tuple] = {}
         self._class_nodes: dict[int, set] = {}
-        self._memo: dict[tuple, int] = {}    # canonical enode key -> class id
+        self._memo: dict[tuple, int] = {}  # canonical enode key -> class id
         self._enode_next = 0
 
     # union-find
     def find(self, c: int) -> int:
-        parent = self._parent                # localize the hot dict lookup
+        parent = self._parent  # localize the hot dict lookup
         root = c
         while parent[root] != root:
             root = parent[root]
@@ -159,18 +161,18 @@ class EGraph:
                 else:
                     seen[key] = cls
         # refresh the memo to canonical keys
-        self._memo = {self._canon_key(eid): self.find(self._enode_of_class[eid])
-                      for eid in self._enodes}
+        self._memo = {
+            self._canon_key(eid): self.find(self._enode_of_class[eid]) for eid in self._enodes
+        }
         return total
 
     def classes(self) -> dict:
         """root class id -> list of (op, val, child-roots) canonical enodes."""
-        find = self.find                     # localize hot lookups (called O(enodes))
+        find = self.find  # localize hot lookups (called O(enodes))
         eoc = self._enode_of_class
         out: dict[int, list] = {}
         for eid, (op, val, children) in self._enodes.items():
-            out.setdefault(find(eoc[eid]), []).append(
-                (op, val, tuple(find(c) for c in children)))
+            out.setdefault(find(eoc[eid]), []).append((op, val, tuple(find(c) for c in children)))
         return out
 
     def class_has_const(self, cid: int, value: int) -> bool:
@@ -195,9 +197,10 @@ class EGraph:
         while changed:
             changed = False
             for c, nodes in classes.items():
-                for (op, val, children) in nodes:
-                    cc = costs.get(op, 1) + sum(best_cost.get(self.find(ch), INF)
-                                                for ch in children)
+                for op, val, children in nodes:
+                    cc = costs.get(op, 1) + sum(
+                        best_cost.get(self.find(ch), INF) for ch in children
+                    )
                     if cc < best_cost[c]:
                         best_cost[c], best_node[c] = cc, (op, val, children)
                         changed = True
@@ -212,11 +215,12 @@ class EGraph:
 
 # --- rewrites (the unliked operators that merge classes) -------------------------
 
+
 def rw_identities(eg: EGraph) -> int:
     """x+0->x, 0+x->x, x*1->x, 1*x->x, x*0->0, x-x->0 (identity elimination)."""
     merges = 0
     for c, nodes in list(eg.classes().items()):
-        for (op, val, ch) in nodes:
+        for op, val, ch in nodes:
             if op == "add" and len(ch) == 2:
                 if eg.class_has_const(ch[1], 0):
                     merges += eg.union(c, ch[0])
@@ -239,7 +243,7 @@ def rw_constant_fold(eg: EGraph) -> int:
     liked atom (the synthesized element that joins the system's memory)."""
     merges = 0
     for c, nodes in list(eg.classes().items()):
-        for (op, val, ch) in nodes:
+        for op, val, ch in nodes:
             if len(ch) != 2:
                 continue
             a, b = _const_value(eg, ch[0]), _const_value(eg, ch[1])
@@ -256,17 +260,18 @@ def rw_factor(eg: EGraph) -> int:
     blocks into a cheaper form."""
     merges = 0
     classes = eg.classes()
-    muls = {c: [tuple(n[2]) for n in nodes if n[0] == "mul" and len(n[2]) == 2]
-            for c, nodes in classes.items()}
+    muls = {
+        c: [tuple(n[2]) for n in nodes if n[0] == "mul" and len(n[2]) == 2]
+        for c, nodes in classes.items()
+    }
     for c, nodes in list(classes.items()):
-        for (op, val, ch) in nodes:
+        for op, val, ch in nodes:
             if op != "add" or len(ch) != 2:
                 continue
-            for (a1, b1) in muls.get(eg.find(ch[0]), []):
-                for (a2, b2) in muls.get(eg.find(ch[1]), []):
-                    pairs = [(a1, b1, a2, b2), (a1, b1, b2, a2),
-                             (b1, a1, a2, b2), (b1, a1, b2, a2)]
-                    for (f1, o1, f2, o2) in pairs:
+            for a1, b1 in muls.get(eg.find(ch[0]), []):
+                for a2, b2 in muls.get(eg.find(ch[1]), []):
+                    pairs = [(a1, b1, a2, b2), (a1, b1, b2, a2), (b1, a1, a2, b2), (b1, a1, b2, a2)]
+                    for f1, o1, f2, o2 in pairs:
                         if eg.find(f1) == eg.find(f2):
                             summ = eg.add_class_sum(o1, o2)
                             factored = eg.add_mul(f1, summ)
@@ -277,9 +282,10 @@ def rw_factor(eg: EGraph) -> int:
 
 # helpers that add structural nodes by class id (not Expr) ------------------------
 
+
 def _const_class(eg: EGraph, value: int):
     for c, nodes in eg.classes().items():
-        for (op, val, _ch) in nodes:
+        for op, val, _ch in nodes:
             if op == "const" and val == value:
                 return c
     return None
@@ -294,6 +300,7 @@ def _const_value(eg: EGraph, cid: int):
 
 
 # class-id-level constructors (used by rewrites) ----------------------------------
+
 
 def _add_node(eg: EGraph, op: str, children: tuple) -> int:
     key = (op, None, tuple(eg.find(c) for c in children))
@@ -336,6 +343,7 @@ def saturate(eg: EGraph, rules=None, budget: int = 30) -> SaturationStats:
 
 # --- the end-to-end optimizer (build -> saturate -> extract) ---------------------
 
+
 @dataclass(frozen=True)
 class EGraphResult:
     original_cost: int
@@ -347,7 +355,7 @@ class EGraphResult:
 
     @property
     def improved(self) -> int:
-        return self.original_cost - self.optimized_cost      # >= 0 (rewrites never raise cost)
+        return self.original_cost - self.optimized_cost  # >= 0 (rewrites never raise cost)
 
 
 def _expr_cost(expr: Expr, costs: dict) -> int:
@@ -357,8 +365,7 @@ def _expr_cost(expr: Expr, costs: dict) -> int:
     return costs.get(expr.op, 1) + sum(_expr_cost(a, costs) for a in expr.args)
 
 
-def optimize_expr(expr: Expr, rules=None, costs: dict = None,
-                  budget: int = 30) -> EGraphResult:
+def optimize_expr(expr: Expr, rules=None, costs: dict = None, budget: int = 30) -> EGraphResult:
     """Optimize an expression through the e-graph; the result cost is always
     <= the original (R9: a rewrite never increases the selected cost)."""
     costs = costs or DEFAULT_COSTS
@@ -368,18 +375,30 @@ def optimize_expr(expr: Expr, rules=None, costs: dict = None,
     root = eg.add(expr)
     st = saturate(eg, rules, budget)
     best, opt_cost = eg.extract(root, costs)
-    return EGraphResult(original_cost=int(original_cost), optimized_cost=int(opt_cost),
-                        optimized=best, iterations=st.iterations, enodes=st.enodes,
-                        saturated=st.saturated)
+    return EGraphResult(
+        original_cost=int(original_cost),
+        optimized_cost=int(opt_cost),
+        optimized=best,
+        iterations=st.iterations,
+        enodes=st.enodes,
+        saturated=st.saturated,
+    )
 
 
 # --- BCIR bridge: claims compose as expressions; CSE is the liked-pair memory ----
 
+
 def module_exprs(module) -> dict:
     """Map a module's binary-elementwise claims to expressions over operand RIDs.
     Two claims with the same op + operands share an e-class (CSE = liked pair)."""
-    _OP = {"vector.add": "add", "vector.sub": "sub", "vector.axpy": "mul",
-           "add": "add", "sub": "sub", "mul": "mul"}
+    _OP = {
+        "vector.add": "add",
+        "vector.sub": "sub",
+        "vector.axpy": "mul",
+        "add": "add",
+        "sub": "sub",
+        "mul": "mul",
+    }
     out = {}
     for ph in module.phases:
         for c in ph.claims:
@@ -402,6 +421,7 @@ def shared_blocks(module) -> int:
 
 
 # --- the resident (persistent) e-graph: re-extract on telemetry, no re-parse -----
+
 
 @dataclass
 class ResidentEGraph:
@@ -426,20 +446,31 @@ class ResidentEGraph:
     _built_enodes: int = 0
 
     @classmethod
-    def build(cls, expr: Expr, rules=None, costs: dict = None,
-              budget: int = 30) -> "ResidentEGraph":
+    def build(
+        cls, expr: Expr, rules=None, costs: dict = None, budget: int = 30
+    ) -> "ResidentEGraph":
         eg = EGraph()
         root = eg.add(expr)
         st = saturate(eg, rules, budget)
-        return cls(eg=eg, root=root, costs=dict(costs or DEFAULT_COSTS),
-                   stats=st, _built_enodes=len(eg._enodes))
+        return cls(
+            eg=eg,
+            root=root,
+            costs=dict(costs or DEFAULT_COSTS),
+            stats=st,
+            _built_enodes=len(eg._enodes),
+        )
 
     def current(self) -> EGraphResult:
         """Extract the best composition for the resident root under the live costs."""
         best, cost = self.eg.extract(self.root, self.costs)
-        return EGraphResult(original_cost=int(cost), optimized_cost=int(cost),
-                            optimized=best, iterations=0, enodes=len(self.eg._enodes),
-                            saturated=self.stats.saturated)
+        return EGraphResult(
+            original_cost=int(cost),
+            optimized_cost=int(cost),
+            optimized=best,
+            iterations=0,
+            enodes=len(self.eg._enodes),
+            saturated=self.stats.saturated,
+        )
 
     def pivot(self, *, costs: dict = None, bump: dict = None) -> EGraphResult:
         """Re-cost and re-extract over the standing graph (no rebuild, no re-parse).

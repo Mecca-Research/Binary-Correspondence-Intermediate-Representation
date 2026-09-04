@@ -61,7 +61,13 @@ import tempfile
 import zlib
 
 from bcir.asn1.jer_bounded import (
-    FRAME_HEADER_SIZE, STRICT_LIMITS, JerBoundedError, JerErrorCode, JerLimits, frame, scan,
+    FRAME_HEADER_SIZE,
+    STRICT_LIMITS,
+    JerBoundedError,
+    JerErrorCode,
+    JerLimits,
+    frame,
+    scan,
 )
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -100,17 +106,31 @@ def _build(tmp: str) -> str | None:
     proc = None
     for std in ("c23", "c2x", "c11"):
         proc = subprocess.run(
-            [cc, f"-std={std}", "-O1", "-Wall", "-Wextra", "-Werror", "-I", _C,
-             *[os.path.join(_C, name) for name in _SOURCES], "-o", out],
-            capture_output=True, text=True)
+            [
+                cc,
+                f"-std={std}",
+                "-O1",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C,
+                *[os.path.join(_C, name) for name in _SOURCES],
+                "-o",
+                out,
+            ],
+            capture_output=True,
+            text=True,
+        )
         if proc.returncode == 0:
             return out
     raise AssertionError(f"the JER twin must build warning-clean:\n{proc.stderr[:3000]}")
 
 
 def _run(binary: str, lines: list[str]) -> list[str]:
-    proc = subprocess.run([binary], input="\n".join(lines) + "\n",
-                          capture_output=True, text=True, timeout=180)
+    proc = subprocess.run(
+        [binary], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=180
+    )
     assert proc.returncode == 0, f"driver exited {proc.returncode}: {proc.stderr[:2000]}"
     return proc.stdout.splitlines()
 
@@ -143,23 +163,95 @@ def _blocks(answers: list[str]) -> list[list[str]]:
 #: scalar, the trailing-comma and missing-separator forms permissive readers accept, every
 #: escape, the surrogate cases, and the truncations one octet short of each.
 _DOCS: list[bytes] = [
-    b"", b" ", b"\t\n\r ", b"null", b"true", b"false",
-    b"0", b"-0", b"1", b"-1", b"10", b"1.5", b"-0.5e+3", b"1E-2", b"1e0",
-    b"01", b"-01", b"00", b"1.", b".5", b"-", b"1e", b"1e+", b"1.e3", b"+1",
-    b'""', b'"a"', b'"ab\\ncd"', b'"\\"\\\\\\/\\b\\f\\n\\r\\t"', b'"\\u0041"',
-    b'"\\u00e9"', b'"\\uD83D\\uDE00"', b'"\\ud800"', b'"\\udc00"', b'"\\ud800\\ud800"',
-    b'"\\ud800x"', b'"\\uZZZZ"', b'"\\u041"', b'"\\q"', b'"a', b'"\\', b'"\\u',
-    b"[]", b"{}", b"[1]", b"[1,2,3]", b'{"a":1}', b'{"a":1,"b":2}',
-    b'{"a":{"b":{"c":[1,[2,[3]]]}}}', b'[[[[[]]]]]',
-    b"[1,]", b'{"a":1,}', b"[,]", b"{,}", b"[1 2]", b'{"a" 1}', b'{"a":}', b'{:1}',
-    b"[", b"]", b"{", b"}", b"[{", b'{"a"', b'{"a":', b"[1", b"1 2", b"[]]", b"{}}",
-    b"nan", b"NaN", b"Infinity", b"-Infinity", b"undefined", b"'a'", b"tru", b"nul",
-    b'{"a":1,"a":2}',                              # a duplicate: the schema layer's problem
+    b"",
+    b" ",
+    b"\t\n\r ",
+    b"null",
+    b"true",
+    b"false",
+    b"0",
+    b"-0",
+    b"1",
+    b"-1",
+    b"10",
+    b"1.5",
+    b"-0.5e+3",
+    b"1E-2",
+    b"1e0",
+    b"01",
+    b"-01",
+    b"00",
+    b"1.",
+    b".5",
+    b"-",
+    b"1e",
+    b"1e+",
+    b"1.e3",
+    b"+1",
+    b'""',
+    b'"a"',
+    b'"ab\\ncd"',
+    b'"\\"\\\\\\/\\b\\f\\n\\r\\t"',
+    b'"\\u0041"',
+    b'"\\u00e9"',
+    b'"\\uD83D\\uDE00"',
+    b'"\\ud800"',
+    b'"\\udc00"',
+    b'"\\ud800\\ud800"',
+    b'"\\ud800x"',
+    b'"\\uZZZZ"',
+    b'"\\u041"',
+    b'"\\q"',
+    b'"a',
+    b'"\\',
+    b'"\\u',
+    b"[]",
+    b"{}",
+    b"[1]",
+    b"[1,2,3]",
+    b'{"a":1}',
+    b'{"a":1,"b":2}',
+    b'{"a":{"b":{"c":[1,[2,[3]]]}}}',
+    b"[[[[[]]]]]",
+    b"[1,]",
+    b'{"a":1,}',
+    b"[,]",
+    b"{,}",
+    b"[1 2]",
+    b'{"a" 1}',
+    b'{"a":}',
+    b"{:1}",
+    b"[",
+    b"]",
+    b"{",
+    b"}",
+    b"[{",
+    b'{"a"',
+    b'{"a":',
+    b"[1",
+    b"1 2",
+    b"[]]",
+    b"{}}",
+    b"nan",
+    b"NaN",
+    b"Infinity",
+    b"-Infinity",
+    b"undefined",
+    b"'a'",
+    b"tru",
+    b"nul",
+    b'{"a":1,"a":2}',  # a duplicate: the schema layer's problem
     b'[null,true,false,0,"",{},[]]',
-    "[\"é\", \"中\", \"\U0001f600\"]".encode(),
-    b'"\x00"', b'"\x1f"', b'"\x7f"',               # control characters, literal
-    b"\xef\xbb\xbf{}",                             # a byte-order mark
-    b"\x80", b'"\x80"', b'"\xc3"', b'"\xc0\x80"', b'"\xed\xa0\x80"',
+    '["é", "中", "\U0001f600"]'.encode(),
+    b'"\x00"',
+    b'"\x1f"',
+    b'"\x7f"',  # control characters, literal
+    b"\xef\xbb\xbf{}",  # a byte-order mark
+    b"\x80",
+    b'"\x80"',
+    b'"\xc3"',
+    b'"\xc0\x80"',
+    b'"\xed\xa0\x80"',
 ]
 
 
@@ -205,9 +297,13 @@ def _reference(raw: bytes) -> list[str] | None:
     except UnicodeDecodeError:
         return None
     try:
-        value = json.loads(text, object_pairs_hook=_Object, parse_float=_Number,
-                           parse_int=_Number,
-                           parse_constant=lambda name: (_ for _ in ()).throw(ValueError(name)))
+        value = json.loads(
+            text,
+            object_pairs_hook=_Object,
+            parse_float=_Number,
+            parse_int=_Number,
+            parse_constant=lambda name: (_ for _ in ()).throw(ValueError(name)),
+        )
     except ValueError:
         return None
     out: list[str] = []
@@ -240,7 +336,7 @@ def _reference(raw: bytes) -> list[str] | None:
                 # spelling for it; §7.6.2 makes the document UTF-8. The C rail refuses it,
                 # and so — since this build — does the Python rail.
                 out.append("str <unencodable>")
-        else:                                                # pragma: no cover - defensive
+        else:  # pragma: no cover - defensive
             raise AssertionError(f"an unexpected node: {node!r}")
 
     walk(value)
@@ -262,6 +358,7 @@ def _strip_offsets(block: list[str]) -> list[str]:
 
 
 # --- stage 1: the bounding pass ------------------------------------------------------------
+
 
 def test_the_bounding_pass_diagnoses_identically_on_both_rails():
     """§4.3's limits, compared by code, offset and required capacity.
@@ -285,19 +382,24 @@ def test_the_bounding_pass_diagnoses_identically_on_both_rails():
                 diagnostic = error.diagnostic
                 assert got.startswith("ERR "), (
                     f"{raw!r} (strict={strict}): C accepted it ({got}), "
-                    f"Python refused it ({diagnostic})")
+                    f"Python refused it ({diagnostic})"
+                )
                 code, offset, needed = got.split()[1:4]
                 assert _STATUS[int(code)] is diagnostic.code, (
-                    f"{raw!r}: C said {_STATUS.get(int(code))}, Python {diagnostic.code}")
+                    f"{raw!r}: C said {_STATUS.get(int(code))}, Python {diagnostic.code}"
+                )
                 assert int(offset) == diagnostic.offset, (
                     f"{raw!r} ({diagnostic.code.value}): C at octet {offset}, "
-                    f"Python at {diagnostic.offset}")
+                    f"Python at {diagnostic.offset}"
+                )
                 assert int(needed) == (diagnostic.needed or 0), (
                     f"{raw!r} ({diagnostic.code.value}): C needs {needed}, "
-                    f"Python {diagnostic.needed}")
+                    f"Python {diagnostic.needed}"
+                )
             else:
                 assert got == f"OK {nodes}", (
-                    f"{raw!r} (strict={strict}): C said {got}, Python counted {nodes} nodes")
+                    f"{raw!r} (strict={strict}): C said {got}, Python counted {nodes} nodes"
+                )
 
 
 def test_every_limit_is_reached_and_named_by_both_rails():
@@ -308,8 +410,7 @@ def test_every_limit_is_reached_and_named_by_both_rails():
     """
     limits = STRICT_LIMITS
     cases: list[tuple[bytes, JerErrorCode]] = [
-        (b"[" * (limits.depth + 1) + b"]" * (limits.depth + 1),
-         JerErrorCode.DEPTH_EXCEEDED),
+        (b"[" * (limits.depth + 1) + b"]" * (limits.depth + 1), JerErrorCode.DEPTH_EXCEEDED),
         # Bare separators, not values. `elements` and `nodes` are both 512 under this
         # profile, so 514 scalar elements are 514 nodes and NODES_EXCEEDED fires first —
         # the ceiling under test never gets reached. Commas are counted as elements by the
@@ -320,8 +421,7 @@ def test_every_limit_is_reached_and_named_by_both_rails():
         (b"{" + b"," * (limits.members + 1) + b"}", JerErrorCode.MEMBERS_EXCEEDED),
         (b'"' + b"a" * (limits.string_bytes + 1) + b'"', JerErrorCode.STRING_TOO_LONG),
         (b"1" * (limits.integer_digits + 1), JerErrorCode.DIGITS_EXCEEDED),
-        (b"1e" + str(limits.exponent_magnitude + 1).encode(),
-         JerErrorCode.EXPONENT_EXCEEDED),
+        (b"1e" + str(limits.exponent_magnitude + 1).encode(), JerErrorCode.EXPONENT_EXCEEDED),
         (b"x" * (limits.input_bytes + 1), JerErrorCode.INPUT_TOO_LARGE),
     ]
     with tempfile.TemporaryDirectory() as tmp:
@@ -334,7 +434,8 @@ def test_every_limit_is_reached_and_named_by_both_rails():
                 scan(raw, limits)
             except JerBoundedError as error:
                 assert error.diagnostic.code is want, (
-                    f"the Python rail said {error.diagnostic.code} for the {want.value} case")
+                    f"the Python rail said {error.diagnostic.code} for the {want.value} case"
+                )
             else:
                 raise AssertionError(f"the Python rail accepted the {want.value} case")
             assert got.startswith("ERR "), f"{want.value}: C accepted it ({got})"
@@ -352,8 +453,7 @@ def test_a_number_token_ceiling_and_a_work_ceiling_are_both_reachable():
     limits = STRICT_LIMITS
     long_fraction = b"0." + b"1" * limits.number_bytes
     much_work = b"[" + b",".join(b"1" for _ in range(400)) + b"]"
-    cases = [(long_fraction, JerErrorCode.NUMBER_TOO_LONG),
-             (much_work, JerErrorCode.WORK_EXCEEDED)]
+    cases = [(long_fraction, JerErrorCode.NUMBER_TOO_LONG), (much_work, JerErrorCode.WORK_EXCEEDED)]
     tight = limits.tightened(work=64)
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
@@ -381,8 +481,18 @@ def test_a_number_token_ceiling_and_a_work_ceiling_are_both_reachable():
 def test_a_limit_may_be_tightened_and_never_expanded_on_both_rails():
     """§4.3: limits "are part of the compiled plan and may be tightened by a caller, never
     silently expanded". A struct assignment cannot say that, so both rails check it."""
-    fields = ["input_bytes", "depth", "nodes", "members", "elements", "string_bytes",
-              "number_bytes", "integer_digits", "exponent_magnitude", "work"]
+    fields = [
+        "input_bytes",
+        "depth",
+        "nodes",
+        "members",
+        "elements",
+        "string_bytes",
+        "number_bytes",
+        "integer_digits",
+        "exponent_magnitude",
+        "work",
+    ]
     base = JerLimits()
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
@@ -398,7 +508,8 @@ def test_a_limit_may_be_tightened_and_never_expanded_on_both_rails():
             expected.append(False)
         answers = _run(binary, lines)
         for field, line, want, got in zip(
-                [f for f in fields for _ in (0, 1)], lines, expected, answers):
+            [f for f in fields for _ in (0, 1)], lines, expected, answers
+        ):
             assert got.startswith("OK") == want, f"{line}: C said {got}"
             current = getattr(base, field)
             try:
@@ -411,6 +522,7 @@ def test_a_limit_may_be_tightened_and_never_expanded_on_both_rails():
 
 # --- stage 2: the encoding -----------------------------------------------------------------
 
+
 def test_the_document_utf8_check_names_the_same_octet_on_both_rails():
     """§7.6.2 — and the offset matters as much as the verdict.
 
@@ -419,9 +531,18 @@ def test_the_document_utf8_check_names_the_same_octet_on_both_rails():
     either rail.
     """
     cases = list(_DOCS) + [
-        b"\xc0\x80", b"\xe0\x80\x80", b"\xf0\x80\x80\x80", b"\xed\xa0\x80",
-        b"\xf5\x80\x80\x80", b"\x80", b"\xc3", b"\xc3\xa9", b"a\xc3", b"ab\xed\xa0\x80c",
-        b"\xf4\x8f\xbf\xbf", b"\xf4\x90\x80\x80",
+        b"\xc0\x80",
+        b"\xe0\x80\x80",
+        b"\xf0\x80\x80\x80",
+        b"\xed\xa0\x80",
+        b"\xf5\x80\x80\x80",
+        b"\x80",
+        b"\xc3",
+        b"\xc3\xa9",
+        b"a\xc3",
+        b"ab\xed\xa0\x80c",
+        b"\xf4\x8f\xbf\xbf",
+        b"\xf4\x90\x80\x80",
     ]
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
@@ -436,7 +557,8 @@ def test_the_document_utf8_check_names_the_same_octet_on_both_rails():
                 code, offset = got.split()[1:3]
                 assert _STATUS[int(code)] is JerErrorCode.NOT_UTF8, f"{raw!r}: {got}"
                 assert int(offset) == error.start, (
-                    f"{raw!r}: C at octet {offset}, Python at {error.start}")
+                    f"{raw!r}: C at octet {offset}, Python at {error.start}"
+                )
             else:
                 assert got == "OK", f"{raw!r}: C refused it ({got})"
 
@@ -447,9 +569,21 @@ def test_the_scalar_utf8_decoder_refuses_what_is_not_a_character():
     Two decoders that disagree about what a byte sequence means is the classic
     validator/consumer split, and it is how an ASCII-looking filter gets bypassed.
     """
-    cases = [b"\xc0\x80", b"\xe0\x80\x80", b"\xf0\x80\x80\x80", b"\xed\xa0\x80",
-             b"\xf5\x80\x80\x80", b"\x80", b"\xc3", b"\xc3\xa9", b"\xf0\x9f\x98\x80",
-             b"\xf4\x8f\xbf\xbf", b"\xf4\x90\x80\x80", b"A", b"\xc1\xbf"]
+    cases = [
+        b"\xc0\x80",
+        b"\xe0\x80\x80",
+        b"\xf0\x80\x80\x80",
+        b"\xed\xa0\x80",
+        b"\xf5\x80\x80\x80",
+        b"\x80",
+        b"\xc3",
+        b"\xc3\xa9",
+        b"\xf0\x9f\x98\x80",
+        b"\xf4\x8f\xbf\xbf",
+        b"\xf4\x90\x80\x80",
+        b"A",
+        b"\xc1\xbf",
+    ]
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
@@ -468,6 +602,7 @@ def test_the_scalar_utf8_decoder_refuses_what_is_not_a_character():
 
 
 # --- stage 3: the grammar ------------------------------------------------------------------
+
 
 def test_the_parser_and_json_loads_accept_exactly_the_same_documents():
     """The grammar, where the C rail has no `json.loads` behind it and must be one.
@@ -503,8 +638,11 @@ def test_the_event_trace_matches_json_loads_value_for_value():
     A reader that gets a document's shape right and a string's contents wrong returns a
     value the sender did not mean, and no structural check catches it.
     """
-    accepted = [raw for raw in _DOCS
-                if (want := _reference(raw)) is not None and "str <unencodable>" not in want]
+    accepted = [
+        raw
+        for raw in _DOCS
+        if (want := _reference(raw)) is not None and "str <unencodable>" not in want
+    ]
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
@@ -513,8 +651,8 @@ def test_the_event_trace_matches_json_loads_value_for_value():
         for raw, block in zip(accepted, blocks):
             assert block[-1] == "OK", f"{raw!r}: {block[-1]}"
             assert _strip_offsets(block[:-1]) == _reference(raw), (
-                f"{raw!r}:\n  C      {_strip_offsets(block[:-1])}\n"
-                f"  Python {_reference(raw)}")
+                f"{raw!r}:\n  C      {_strip_offsets(block[:-1])}\n  Python {_reference(raw)}"
+            )
 
 
 def test_the_trace_offsets_point_at_the_construct_they_name():
@@ -530,19 +668,28 @@ def test_the_trace_offsets_point_at_the_construct_they_name():
             return
         block = _blocks(_run(binary, [f"parse 0 {_hex(document)}"]))[0]
         assert block[-1] == "OK", block[-1]
-        openers = {"{": b"{", "}": b"}", "[": b"[", "]": b"]",
-                   "true": b"true", "false": b"false", "null": b"null"}
+        openers = {
+            "{": b"{",
+            "}": b"}",
+            "[": b"[",
+            "]": b"]",
+            "true": b"true",
+            "false": b"false",
+            "null": b"null",
+        }
         for line in block[:-1]:
             parts = line.split()
             offset = int(parts[1])
             if parts[0] in openers:
-                assert document[offset:offset + len(openers[parts[0]])] == openers[parts[0]], (
-                    f"{line!r} does not address its own construct")
+                assert document[offset : offset + len(openers[parts[0]])] == openers[parts[0]], (
+                    f"{line!r} does not address its own construct"
+                )
             elif parts[0] in ("key", "str"):
-                assert document[offset:offset + 1] == b'"', f"{line!r} is not at a quote"
+                assert document[offset : offset + 1] == b'"', f"{line!r} is not at a quote"
             else:
-                assert document[offset:offset + len(bytes.fromhex(parts[2]))] == \
-                    bytes.fromhex(parts[2]), f"{line!r} does not address its own token"
+                assert document[offset : offset + len(bytes.fromhex(parts[2]))] == bytes.fromhex(
+                    parts[2]
+                ), f"{line!r} does not address its own token"
 
 
 def test_a_sink_can_refuse_mid_walk_and_still_get_a_structured_diagnostic():
@@ -562,11 +709,12 @@ def test_a_sink_can_refuse_mid_walk_and_still_get_a_structured_diagnostic():
         for at, block in enumerate(blocks):
             assert block[-1].startswith("ERR "), f"refusing at event {at}: {block[-1]}"
             code, offset, sink = block[-1].split()[1:4]
-            assert int(code) == 17, f"refusing at event {at}: {block[-1]}"   # SINK_REFUSED
+            assert int(code) == 17, f"refusing at event {at}: {block[-1]}"  # SINK_REFUSED
             assert int(sink) == 7, f"the sink's own code was not carried: {block[-1]}"
             assert 0 <= int(offset) < len(document), block[-1]
             assert len(block) == at + 1, (
-                f"refusing at event {at} emitted {len(block) - 1} events first")
+                f"refusing at event {at} emitted {len(block) - 1} events first"
+            )
 
 
 def test_a_deeper_document_than_the_limit_is_refused_before_the_c_stack_is_touched():
@@ -593,9 +741,26 @@ def test_a_deeper_document_than_the_limit_is_refused_before_the_c_stack_is_touch
 # --- the escape decoder ----------------------------------------------------------------------
 
 _ESCAPES = [
-    b"", b"a", b"ab", b"\\n", b"\\t", b"\\r", b"\\b", b"\\f", b"\\/", b"\\\\", b'\\"',
-    b"\\u0041", b"\\u00e9", b"\\u4e2d", b"\\uD83D\\uDE00", b"a\\nb\\u0041c",
-    b"\\u0000", b"\\u001f", b"\\uffff", b"\\ufffe",
+    b"",
+    b"a",
+    b"ab",
+    b"\\n",
+    b"\\t",
+    b"\\r",
+    b"\\b",
+    b"\\f",
+    b"\\/",
+    b"\\\\",
+    b'\\"',
+    b"\\u0041",
+    b"\\u00e9",
+    b"\\u4e2d",
+    b"\\uD83D\\uDE00",
+    b"a\\nb\\u0041c",
+    b"\\u0000",
+    b"\\u001f",
+    b"\\uffff",
+    b"\\ufffe",
     "é中\U0001f600".encode(),
 ]
 
@@ -613,7 +778,8 @@ def test_the_escape_decoder_agrees_with_json_character_for_character():
             payload = got.split(maxsplit=1)[1]
             octets = b"" if payload == "-" else bytes.fromhex(payload)
             assert octets == want.encode(), (
-                f"{raw!r}: C produced {octets!r}, json produced {want.encode()!r}")
+                f"{raw!r}: C produced {octets!r}, json produced {want.encode()!r}"
+            )
 
 
 def test_an_unpaired_surrogate_is_not_utf8_rather_than_malformed():
@@ -628,8 +794,7 @@ def test_an_unpaired_surrogate_is_not_utf8_rather_than_malformed():
     pass, and both call it NOT_UTF8 rather than MALFORMED: the JSON is well formed, and it
     is the *encoding* that has no answer.
     """
-    cases = [b"\\ud800", b"\\udc00", b"\\ud800\\ud800", b"\\ud800x", b"\\udbff",
-             b"\\ud800\\u0041"]
+    cases = [b"\\ud800", b"\\udc00", b"\\ud800\\ud800", b"\\ud800x", b"\\udbff", b"\\ud800\\u0041"]
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
@@ -669,18 +834,19 @@ def test_a_short_output_buffer_reports_the_capacity_it_needed():
             want = len(json.loads(b'"' + raw + b'"').encode())
             assert got.startswith("ERR "), f"{raw!r}: {got}"
             code, _offset, needed = got.split()[1:4]
-            assert int(code) == 16, f"{raw!r}: {got}"        # OVERFLOW, a C-only status
+            assert int(code) == 16, f"{raw!r}: {got}"  # OVERFLOW, a C-only status
             assert int(needed) == want, (
-                f"{raw!r}: measuring reported {needed}, the value needs {want}")
+                f"{raw!r}: measuring reported {needed}, the value needs {want}"
+            )
         # And the figure it reported is exactly enough.
         sizes = [len(json.loads(b'"' + raw + b'"').encode()) for raw in cases]
-        exact = _run(binary, [f"unescape {size} {_hex(raw)}"
-                              for raw, size in zip(cases, sizes)])
+        exact = _run(binary, [f"unescape {size} {_hex(raw)}" for raw, size in zip(cases, sizes)])
         for raw, got in zip(cases, exact):
             assert got.startswith("OK "), f"{raw!r}: an exact-size buffer was refused ({got})"
 
 
 # --- §3.3 framing ---------------------------------------------------------------------------
+
 
 def test_a_frame_is_verified_before_its_payload_is_visible_on_both_rails():
     """§3.3: nothing becomes visible before the frame passes its integrity check.
@@ -721,8 +887,9 @@ def test_a_frame_is_verified_before_its_payload_is_visible_on_both_rails():
                 assert _STATUS[int(got.split()[1])] is JerErrorCode.FRAME_INTEGRITY, got
             else:
                 assert got.startswith("ERR "), f"{kind}: C accepted a bad frame ({got})"
-                assert _STATUS[int(got.split()[1])] is JerErrorCode.FRAME_MALFORMED, \
+                assert _STATUS[int(got.split()[1])] is JerErrorCode.FRAME_MALFORMED, (
                     f"{kind}: {got}"
+                )
 
 
 def test_the_two_rails_agree_on_the_frame_header_layout():
@@ -734,8 +901,10 @@ def test_the_two_rails_agree_on_the_frame_header_layout():
         if binary is None:
             return
         rng = random.Random(_SEED)
-        cases = [(rng.getrandbits(64), rng.getrandbits(64), bytes(rng.randbytes(n)))
-                 for n in (0, 1, 17, 300)]
+        cases = [
+            (rng.getrandbits(64), rng.getrandbits(64), bytes(rng.randbytes(n)))
+            for n in (0, 1, 17, 300)
+        ]
         built = [frame(body, sequence=seq, generation=gen) for seq, gen, body in cases]
         answers = _run(binary, [f"unframe {_hex(raw)}" for raw in built])
         for (seq, gen, body), got in zip(cases, answers):
@@ -748,13 +917,15 @@ def test_the_two_rails_agree_on_the_frame_header_layout():
         # And the layout the C rail reads is the one `struct` writes.
         assert FRAME_HEADER_SIZE == 32
         magic, version, sequence, generation, length, crc = struct.unpack(
-            "<4sBxxxQQII", built[2][:FRAME_HEADER_SIZE])
+            "<4sBxxxQQII", built[2][:FRAME_HEADER_SIZE]
+        )
         assert magic == b"BJER" and version == 1
         assert length == len(cases[2][2])
         assert crc == (zlib.crc32(cases[2][2]) & 0xFFFFFFFF)
 
 
 # --- a randomized sweep -----------------------------------------------------------------------
+
 
 def test_a_generated_corpus_keeps_the_two_rails_in_step():
     """Random documents, and random mutations of them, through every stage.
@@ -767,14 +938,26 @@ def test_a_generated_corpus_keeps_the_two_rails_in_step():
 
     def build(depth: int) -> bytes:
         if depth <= 0 or rng.random() < 0.35:
-            return rng.choice([
-                b"null", b"true", b"false", b"0", b"-1", b"1.5", b"2e3", b"-0.25e-2",
-                b'""', b'"a"', b'"\\n"', b'"\\u0041"', b'"\\uD83D\\uDE00"',
-                "\"é中\"".encode(),
-            ])
+            return rng.choice(
+                [
+                    b"null",
+                    b"true",
+                    b"false",
+                    b"0",
+                    b"-1",
+                    b"1.5",
+                    b"2e3",
+                    b"-0.25e-2",
+                    b'""',
+                    b'"a"',
+                    b'"\\n"',
+                    b'"\\u0041"',
+                    b'"\\uD83D\\uDE00"',
+                    '"é中"'.encode(),
+                ]
+            )
         if rng.random() < 0.5:
-            return b"[" + b",".join(build(depth - 1)
-                                    for _ in range(rng.randint(0, 4))) + b"]"
+            return b"[" + b",".join(build(depth - 1) for _ in range(rng.randint(0, 4))) + b"]"
         members = [b'"k%d":%s' % (n, build(depth - 1)) for n in range(rng.randint(0, 4))]
         return b"{" + b",".join(members) + b"}"
 
@@ -787,7 +970,7 @@ def test_a_generated_corpus_keeps_the_two_rails_in_step():
             at = rng.randrange(len(mutated))
             mutated[at] = rng.randrange(256)
             corpus.append(bytes(mutated))
-            corpus.append(document[:rng.randrange(len(document))])
+            corpus.append(document[: rng.randrange(len(document))])
 
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)

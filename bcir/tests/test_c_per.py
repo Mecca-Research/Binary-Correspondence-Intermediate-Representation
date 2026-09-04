@@ -47,17 +47,31 @@ def _build(tmp: str) -> str | None:
     out = os.path.join(tmp, "test_per")
     for std in ("c23", "c2x", "c11"):
         proc = subprocess.run(
-            [cc, f"-std={std}", "-O1", "-Wall", "-Wextra", "-Werror", "-I", _C,
-             *[os.path.join(_C, name) for name in _SOURCES], "-o", out],
-            capture_output=True, text=True)
+            [
+                cc,
+                f"-std={std}",
+                "-O1",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C,
+                *[os.path.join(_C, name) for name in _SOURCES],
+                "-o",
+                out,
+            ],
+            capture_output=True,
+            text=True,
+        )
         if proc.returncode == 0:
             return out
     raise AssertionError(f"the PER twin must build warning-clean:\n{proc.stderr[:3000]}")
 
 
 def _run(binary: str, lines: list[str]) -> list[str]:
-    proc = subprocess.run([binary], input="\n".join(lines) + "\n",
-                          capture_output=True, text=True, timeout=120)
+    proc = subprocess.run(
+        [binary], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=120
+    )
     assert proc.returncode == 0, f"driver exited {proc.returncode}: {proc.stderr[:2000]}"
     return proc.stdout.strip().splitlines()
 
@@ -74,40 +88,61 @@ def _cases(rng: random.Random) -> list[tuple[str, str, object, int]]:
     out: list[tuple[str, str, object, int]] = []
     for variant, flag in ((PerVariant.UNALIGNED, 0), (PerVariant.ALIGNED, 1)):
         # 11.5: constrained whole numbers across every range-selection branch.
-        for lb, ub in [(0, 1), (0, 7), (0, 254), (0, 255), (0, 256), (0, 65535),
-                       (0, 65536), (1, 1), (-5, 5), (250, 253), (0, 9999),
-                       (-(1 << 31), (1 << 31) - 1), (0, (1 << 40))]:
+        for lb, ub in [
+            (0, 1),
+            (0, 7),
+            (0, 254),
+            (0, 255),
+            (0, 256),
+            (0, 65535),
+            (0, 65536),
+            (1, 1),
+            (-5, 5),
+            (250, 253),
+            (0, 9999),
+            (-(1 << 31), (1 << 31) - 1),
+            (0, (1 << 40)),
+        ]:
             for _ in range(6):
                 value = rng.randint(lb, ub)
                 hexed, bits = _encoded(_encode_constrained, variant, value, lb, ub)
-                out.append((f"constrained {lb} {ub} {flag} {hexed}",
-                            f"constrained({lb},{ub}) {variant.value}", value, bits))
+                out.append(
+                    (
+                        f"constrained {lb} {ub} {flag} {hexed}",
+                        f"constrained({lb},{ub}) {variant.value}",
+                        value,
+                        bits,
+                    )
+                )
         # 11.7 semi-constrained, 11.8 unconstrained.
         for lb in (0, 1, -1000, 1 << 20):
             for _ in range(6):
                 value = lb + rng.randint(0, 1 << rng.randint(0, 40))
                 hexed, bits = _encoded(_encode_semi_constrained, variant, value, lb)
-                out.append((f"semi {lb} {flag} {hexed}",
-                            f"semi({lb}) {variant.value}", value, bits))
+                out.append(
+                    (f"semi {lb} {flag} {hexed}", f"semi({lb}) {variant.value}", value, bits)
+                )
         for _ in range(24):
             value = rng.randint(-(1 << 40), 1 << 40)
             hexed, bits = _encoded(_encode_unconstrained, variant, value)
-            out.append((f"unconstrained {flag} {hexed}",
-                        f"unconstrained {variant.value}", value, bits))
+            out.append(
+                (f"unconstrained {flag} {hexed}", f"unconstrained {variant.value}", value, bits)
+            )
         # 11.6 normally small, and 11.9.3.4's biased normally small LENGTH.
         for value in [0, 1, 62, 63, 64, 65, 300, 70000]:
             hexed, bits = _encoded(_encode_normally_small, variant, value)
-            out.append((f"small {flag} {hexed}", f"small({value}) {variant.value}",
-                        value, bits))
+            out.append((f"small {flag} {hexed}", f"small({value}) {variant.value}", value, bits))
         for value in [1, 2, 63, 64, 65, 200]:
             hexed, bits = _encoded(_encode_normally_small_length, variant, value)
-            out.append((f"smalllen {flag} {hexed}",
-                        f"smalllen({value}) {variant.value}", value, bits))
+            out.append(
+                (f"smalllen {flag} {hexed}", f"smalllen({value}) {variant.value}", value, bits)
+            )
         # 11.9.3.6 / 11.9.3.7 unconstrained length forms.
         for value in [0, 1, 127, 128, 200, 16383]:
             hexed, bits = _encoded(_encode_unconstrained_length, variant, value)
-            out.append((f"length 0 0 0 {flag} {hexed}",
-                        f"length({value}) {variant.value}", value, bits))
+            out.append(
+                (f"length 0 0 0 {flag} {hexed}", f"length({value}) {variant.value}", value, bits)
+            )
     return out
 
 
@@ -116,12 +151,13 @@ def test_per_primitives_agree_across_the_python_and_c_rails():
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
-            return                                   # no C compiler on this host
+            return  # no C compiler on this host
         rng = random.Random(_SEED)
         cases = _cases(rng)
         replies = _run(binary, [line for line, _, _, _ in cases])
         assert len(replies) == len(cases), (
-            f"driver returned {len(replies)} answers for {len(cases)} cases")
+            f"driver returned {len(replies)} answers for {len(cases)} cases"
+        )
         for (line, label, expected, bits), reply in zip(cases, replies):
             parts = reply.split()
             assert parts[0] == "OK", f"{label}: C refused a valid encoding ({reply})\n{line}"
@@ -130,7 +166,8 @@ def test_per_primitives_agree_across_the_python_and_c_rails():
                 got = got - (1 << 64) if got >= (1 << 63) else got
             assert got == expected, f"{label}: C decoded {got}, Python encoded {expected}"
             assert int(parts[2]) == bits, (
-                f"{label}: C consumed {parts[2]} bits, Python wrote {bits}")
+                f"{label}: C consumed {parts[2]} bits, Python wrote {bits}"
+            )
 
 
 def test_bits_for_range_agrees_across_rails():
@@ -153,8 +190,7 @@ def test_bits_for_range_agrees_across_rails():
         for reply, width in zip(_run(binary, lines), expected):
             parts = reply.split()
             assert parts[0] == "OK", reply
-            assert int(parts[2]) == width, (
-                f"C spent {parts[2]} bits where Python spends {width}")
+            assert int(parts[2]) == width, f"C spent {parts[2]} bits where Python spends {width}"
 
 
 def test_fragmented_length_reports_more_and_terminates():
@@ -176,7 +212,8 @@ def test_fragmented_length_reports_more_and_terminates():
             assert int(parts[1]) == blocks * 16 * 1024, reply
         for reply in replies[4:]:
             assert reply.split()[0] == "ERR", (
-                f"a block count outside 1..4 is malformed, got {reply}")
+                f"a block count outside 1..4 is malformed, got {reply}"
+            )
 
 
 def test_c_twin_refuses_a_non_zero_pad_bit():
@@ -207,8 +244,12 @@ def test_c_twin_never_reads_past_the_end():
         lines = []
         for cut in range(len(full) + 1):
             prefix = full[:cut].hex()
-            for op in (f"semi 0 1 {prefix}", f"unconstrained 1 {prefix}",
-                       f"small 1 {prefix}", f"length 0 0 0 1 {prefix}"):
+            for op in (
+                f"semi 0 1 {prefix}",
+                f"unconstrained 1 {prefix}",
+                f"small 1 {prefix}",
+                f"length 0 0 0 1 {prefix}",
+            ):
                 lines.append(op)
         for reply in _run(binary, lines):
             assert reply.split()[0] in ("OK", "ERR"), f"unexpected reply {reply!r}"

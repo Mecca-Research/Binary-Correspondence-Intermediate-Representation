@@ -125,36 +125,43 @@ class HostRecord:
             out.append(
                 f"declared dedicated, but the CPU accumulated {self.steal_ticks} steal "
                 f"tick(s) during the measured rounds: a hypervisor gave that time to another "
-                f"tenant, which is what `dedicated` denies")
+                f"tenant, which is what `dedicated` denies"
+            )
         if self.tenancy == DEDICATED and self.throttled_usec:
             out.append(
                 f"declared dedicated, but the cgroup throttled the run for "
                 f"{self.throttled_usec} us: a quota took CPU away mid-measurement, so the "
-                f"samples describe the quota as much as the code")
+                f"samples describe the quota as much as the code"
+            )
         if self.tenancy != DEDICATED:
             out.append(
                 f"tenancy is {self.tenancy!r}: §8 admits SIMD on a declared target and "
                 f"refuses timing thresholds on a shared runner, so a contended CPU cannot "
-                f"support an advantage claim however clean its samples look")
+                f"support an advantage claim however clean its samples look"
+            )
         if self.tier == "scalar":
             out.append(
                 "the resolved tier is `scalar`, so this measures the scalar rail against "
-                "itself; the build had no vector tier for this CPU")
+                "itself; the build had no vector tier for this CPU"
+            )
         for name, samples in (("scalar", self.scalar_ns), ("vector", self.vector_ns)):
             if len(samples) < MIN_SAMPLES:
                 out.append(
                     f"{name} has {len(samples)} rounds, below the {MIN_SAMPLES} an "
-                    f"order-statistic interval needs to cover a median at all")
+                    f"order-statistic interval needs to cover a median at all"
+                )
         if len(self.cpus) > 1:
             out.append(
                 f"the rounds ran on CPUs {sorted(self.cpus)}: on a big.LITTLE host that is "
                 f"two machines averaged, and the difference between a Cortex-X4 and an A520 "
                 f"exceeds the advantage being measured. Pin the run (`taskset -c N`) and "
-                f"measure again")
+                f"measure again"
+            )
         if self.cpus == (-1,):
             out.append(
                 "the host could not report which CPU each round ran on, so core migration "
-                "is unobserved rather than absent — which is not the same thing")
+                "is unobserved rather than absent — which is not the same thing"
+            )
         return tuple(out)
 
     def admissible(self) -> bool:
@@ -204,29 +211,44 @@ def two_host_verdict(records: list[HostRecord]) -> Verdict:
             rejected.append((record.host, why))
             continue
         if not record.shows_advantage():
-            rejected.append((record.host, (
-                f"the intervals overlap: scalar {record.scalar_interval()!r} against vector "
-                f"{record.vector_interval()!r}. That is 'no advantage demonstrated', not "
-                f"'advantage too small' — a wider run may separate them",)))
+            rejected.append(
+                (
+                    record.host,
+                    (
+                        f"the intervals overlap: scalar {record.scalar_interval()!r} against vector "
+                        f"{record.vector_interval()!r}. That is 'no advantage demonstrated', not "
+                        f"'advantage too small' — a wider run may separate them",
+                    ),
+                )
+            )
             continue
         admitted.append(record)
 
     architectures = {record.arch for record in admitted}
     if len(admitted) < 2:
         return Verdict(
-            met=False, admitted=tuple(r.host for r in admitted), rejected=tuple(rejected),
+            met=False,
+            admitted=tuple(r.host for r in admitted),
+            rejected=tuple(rejected),
             reason=f"{len(admitted)} admissible host(s) with a demonstrated advantage; the "
-                   f"clause asks for at least two")
+            f"clause asks for at least two",
+        )
     if len(architectures) < 2:
         return Verdict(
-            met=False, admitted=tuple(r.host for r in admitted), rejected=tuple(rejected),
+            met=False,
+            admitted=tuple(r.host for r in admitted),
+            rejected=tuple(rejected),
             reason=f"all {len(admitted)} admissible hosts are {sorted(architectures)}; a "
-                   f"vector rail fast on one ISA says nothing about another, so two hosts of "
-                   f"the same architecture are the same evidence twice")
+            f"vector rail fast on one ISA says nothing about another, so two hosts of "
+            f"the same architecture are the same evidence twice",
+        )
     return Verdict(
-        met=True, admitted=tuple(r.host for r in admitted), rejected=tuple(rejected),
+        met=True,
+        admitted=tuple(r.host for r in admitted),
+        rejected=tuple(rejected),
         reason=f"{len(admitted)} dedicated hosts across {sorted(architectures)}, each with a "
-               f"vector interval strictly below its scalar interval")
+        f"vector interval strictly below its scalar interval",
+    )
 
 
 # --- the record store ---------------------------------------------------------------------
@@ -244,29 +266,38 @@ def load_records(path: str) -> list[HostRecord]:
         raise Asn1Error(f"{path}: a measurement store is {{'hosts': [...]}}")
     out: list[HostRecord] = []
     for index, entry in enumerate(raw["hosts"]):
-        missing = [name for name in ("host", "arch", "tenancy", "tier", "scalar_ns",
-                                     "vector_ns") if name not in entry]
+        missing = [
+            name
+            for name in ("host", "arch", "tenancy", "tier", "scalar_ns", "vector_ns")
+            if name not in entry
+        ]
         if missing:
             raise Asn1Error(f"{path}: host {index} is missing {missing}")
-        out.append(HostRecord(
-            host=str(entry["host"]), arch=str(entry["arch"]),
-            tenancy=str(entry["tenancy"]), tier=str(entry["tier"]),
-            scalar_ns=tuple(int(value) for value in entry["scalar_ns"]),
-            vector_ns=tuple(int(value) for value in entry["vector_ns"]),
-            cpus=tuple(int(value) for value in entry.get("cpus", (-1,))),
-            notes=str(entry.get("notes", "")),
-            steal_ticks=(None if entry.get("steal_ticks") is None
-                         else int(entry["steal_ticks"])),
-            throttled_usec=(None if entry.get("throttled_usec") is None
-                            else int(entry["throttled_usec"]))))
+        out.append(
+            HostRecord(
+                host=str(entry["host"]),
+                arch=str(entry["arch"]),
+                tenancy=str(entry["tenancy"]),
+                tier=str(entry["tier"]),
+                scalar_ns=tuple(int(value) for value in entry["scalar_ns"]),
+                vector_ns=tuple(int(value) for value in entry["vector_ns"]),
+                cpus=tuple(int(value) for value in entry.get("cpus", (-1,))),
+                notes=str(entry.get("notes", "")),
+                steal_ticks=(
+                    None if entry.get("steal_ticks") is None else int(entry["steal_ticks"])
+                ),
+                throttled_usec=(
+                    None if entry.get("throttled_usec") is None else int(entry["throttled_usec"])
+                ),
+            )
+        )
     return out
 
 
 def render(records: list[HostRecord]) -> str:
     """A human-readable report, for pasting into §7.3."""
     verdict = two_host_verdict(records)
-    lines = [f"J5 advantage clause: {'MET' if verdict.met else 'UNMET'} — {verdict.reason}",
-             ""]
+    lines = [f"J5 advantage clause: {'MET' if verdict.met else 'UNMET'} — {verdict.reason}", ""]
     for record in records:
         why = record.refusals()
         state = "admitted" if not why else "not admissible"
@@ -274,8 +305,10 @@ def render(records: list[HostRecord]) -> str:
         if not why:
             lines.append(f"    scalar {record.scalar_interval()!r}")
             lines.append(f"    vector {record.vector_interval()!r}")
-            lines.append(f"    speedup {record.speedup():.2f}x, "
-                         f"advantage {'shown' if record.shows_advantage() else 'NOT shown'}")
+            lines.append(
+                f"    speedup {record.speedup():.2f}x, "
+                f"advantage {'shown' if record.shows_advantage() else 'NOT shown'}"
+            )
         for reason in why:
             lines.append(f"    - {reason}")
         if record.notes:
@@ -283,8 +316,15 @@ def render(records: list[HostRecord]) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["DEDICATED", "SHARED", "HostRecord", "Verdict", "load_records", "render",
-           "two_host_verdict"]
+__all__ = [
+    "DEDICATED",
+    "SHARED",
+    "HostRecord",
+    "Verdict",
+    "load_records",
+    "render",
+    "two_host_verdict",
+]
 
 
 #: Where the records live. A path rather than embedded data: a measurement is evidence

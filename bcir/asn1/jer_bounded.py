@@ -116,8 +116,14 @@ class JerBoundedError(Asn1Error):
         self.diagnostic = diagnostic
 
 
-def _fail(code: JerErrorCode, offset: int = -1, *, path: str = "",
-          needed: int | None = None, detail: str = "") -> JerBoundedError:
+def _fail(
+    code: JerErrorCode,
+    offset: int = -1,
+    *,
+    path: str = "",
+    needed: int | None = None,
+    detail: str = "",
+) -> JerBoundedError:
     return JerBoundedError(JerDiagnostic(code, offset, path, needed, detail))
 
 
@@ -149,17 +155,28 @@ class JerLimits:
         for name, value in changes.items():
             current = getattr(self, name)
             if value > current:
-                raise _fail(JerErrorCode.MALFORMED,
-                            detail=f"limit {name} may be tightened, not raised from "
-                                   f"{current} to {value} (4.3)")
+                raise _fail(
+                    JerErrorCode.MALFORMED,
+                    detail=f"limit {name} may be tightened, not raised from "
+                    f"{current} to {value} (4.3)",
+                )
         return replace(self, **changes)
 
 
 #: §8.1 asks the corpus to cover limit boundaries, so a tiny profile is provided for tests
 #: and for callers that know their documents are small control messages.
-STRICT_LIMITS = JerLimits(input_bytes=8192, depth=16, nodes=512, members=128,
-                          elements=512, string_bytes=1024, number_bytes=40,
-                          integer_digits=20, exponent_magnitude=308, work=1 << 18)
+STRICT_LIMITS = JerLimits(
+    input_bytes=8192,
+    depth=16,
+    nodes=512,
+    members=128,
+    elements=512,
+    string_bytes=1024,
+    number_bytes=40,
+    integer_digits=20,
+    exponent_magnitude=308,
+    work=1 << 18,
+)
 
 _WS = frozenset(b" \t\n\r")
 _DIGITS = frozenset(b"0123456789")
@@ -175,8 +192,12 @@ def scan(data: bytes, limits: JerLimits = JerLimits()) -> int:
     ceiling.
     """
     if len(data) > limits.input_bytes:
-        raise _fail(JerErrorCode.INPUT_TOO_LARGE, 0, needed=len(data),
-                    detail=f"limit is {limits.input_bytes} octets")
+        raise _fail(
+            JerErrorCode.INPUT_TOO_LARGE,
+            0,
+            needed=len(data),
+            detail=f"limit is {limits.input_bytes} octets",
+        )
     pos = 0
     end = len(data)
     depth = 0
@@ -198,8 +219,9 @@ def scan(data: bytes, limits: JerLimits = JerLimits()) -> int:
         nonlocal work
         work += amount
         if work > limits.work:
-            raise _fail(JerErrorCode.WORK_EXCEEDED, offset, needed=work,
-                        detail=f"limit is {limits.work}")
+            raise _fail(
+                JerErrorCode.WORK_EXCEEDED, offset, needed=work, detail=f"limit is {limits.work}"
+            )
 
     while pos < end:
         byte = data[pos]
@@ -212,64 +234,87 @@ def scan(data: bytes, limits: JerLimits = JerLimits()) -> int:
         if byte in b"{[":
             depth += 1
             if depth > limits.depth:
-                raise _fail(JerErrorCode.DEPTH_EXCEEDED, pos, needed=depth,
-                            detail=f"limit is {limits.depth}")
+                raise _fail(
+                    JerErrorCode.DEPTH_EXCEEDED,
+                    pos,
+                    needed=depth,
+                    detail=f"limit is {limits.depth}",
+                )
             counts.append(0)
             kinds.append(byte)
             nonempty.append(False)
             nodes += 1
             if nodes > limits.nodes:
-                raise _fail(JerErrorCode.NODES_EXCEEDED, pos, needed=nodes,
-                            detail=f"limit is {limits.nodes}")
+                raise _fail(
+                    JerErrorCode.NODES_EXCEEDED,
+                    pos,
+                    needed=nodes,
+                    detail=f"limit is {limits.nodes}",
+                )
             pos += 1
             continue
         if byte in b"}]":
             if not kinds:
-                raise _fail(JerErrorCode.MALFORMED, pos,
-                            detail="a closing bracket with nothing open")
+                raise _fail(
+                    JerErrorCode.MALFORMED, pos, detail="a closing bracket with nothing open"
+                )
             opened = kinds.pop()
             separators = counts.pop()
             had_child = nonempty.pop()
             if (opened == 0x7B) != (byte == 0x7D):
-                raise _fail(JerErrorCode.MALFORMED, pos,
-                            detail="mismatched brackets")
+                raise _fail(JerErrorCode.MALFORMED, pos, detail="mismatched brackets")
             children = separators + 1 if had_child else 0
             cap = limits.members if opened == 0x7B else limits.elements
             if children > cap:
-                raise _fail(JerErrorCode.MEMBERS_EXCEEDED if opened == 0x7B
-                            else JerErrorCode.ELEMENTS_EXCEEDED,
-                            pos, needed=children, detail=f"limit is {cap}")
+                raise _fail(
+                    JerErrorCode.MEMBERS_EXCEEDED
+                    if opened == 0x7B
+                    else JerErrorCode.ELEMENTS_EXCEEDED,
+                    pos,
+                    needed=children,
+                    detail=f"limit is {cap}",
+                )
             depth -= 1
             pos += 1
             continue
-        if byte == 0x2C:                                     # ","
+        if byte == 0x2C:  # ","
             if not counts:
-                raise _fail(JerErrorCode.MALFORMED, pos,
-                            detail="a comma outside any container")
+                raise _fail(JerErrorCode.MALFORMED, pos, detail="a comma outside any container")
             counts[-1] += 1
             cap = limits.members if kinds[-1] == 0x7B else limits.elements
-            code = (JerErrorCode.MEMBERS_EXCEEDED if kinds[-1] == 0x7B
-                    else JerErrorCode.ELEMENTS_EXCEEDED)
+            code = (
+                JerErrorCode.MEMBERS_EXCEEDED
+                if kinds[-1] == 0x7B
+                else JerErrorCode.ELEMENTS_EXCEEDED
+            )
             if counts[-1] + 1 > cap:
                 raise _fail(code, pos, needed=counts[-1] + 1, detail=f"limit is {cap}")
             pos += 1
             continue
-        if byte == 0x3A:                                     # ":"
+        if byte == 0x3A:  # ":"
             pos += 1
             continue
-        if byte == 0x22:                                     # a string
+        if byte == 0x22:  # a string
             pos = _scan_string(data, pos, limits, spend)
             nodes += 1
             if nodes > limits.nodes:
-                raise _fail(JerErrorCode.NODES_EXCEEDED, pos, needed=nodes,
-                            detail=f"limit is {limits.nodes}")
+                raise _fail(
+                    JerErrorCode.NODES_EXCEEDED,
+                    pos,
+                    needed=nodes,
+                    detail=f"limit is {limits.nodes}",
+                )
             continue
-        if byte == 0x2D or byte in _DIGITS:                  # a number
+        if byte == 0x2D or byte in _DIGITS:  # a number
             pos = _scan_number(data, pos, limits, spend)
             nodes += 1
             if nodes > limits.nodes:
-                raise _fail(JerErrorCode.NODES_EXCEEDED, pos, needed=nodes,
-                            detail=f"limit is {limits.nodes}")
+                raise _fail(
+                    JerErrorCode.NODES_EXCEEDED,
+                    pos,
+                    needed=nodes,
+                    detail=f"limit is {limits.nodes}",
+                )
             continue
         # `true`, `false`, `null` -- and nothing else. Rejecting here rather than leaving it
         # to `json.loads` is what keeps the non-JSON `NaN`/`Infinity` literals out of the
@@ -280,15 +325,23 @@ def scan(data: bytes, limits: JerLimits = JerLimits()) -> int:
                 pos += len(literal)
                 nodes += 1
                 if nodes > limits.nodes:
-                    raise _fail(JerErrorCode.NODES_EXCEEDED, pos, needed=nodes,
-                                detail=f"limit is {limits.nodes}")
+                    raise _fail(
+                        JerErrorCode.NODES_EXCEEDED,
+                        pos,
+                        needed=nodes,
+                        detail=f"limit is {limits.nodes}",
+                    )
                 break
         else:
-            raise _fail(JerErrorCode.MALFORMED, pos,
-                        detail=f"{data[pos:pos + 12]!r} begins no JSON value")
+            raise _fail(
+                JerErrorCode.MALFORMED, pos, detail=f"{data[pos : pos + 12]!r} begins no JSON value"
+            )
     if kinds:
-        raise _fail(JerErrorCode.MALFORMED, end, detail=f"{len(kinds)} container(s) left "
-                                                        f"unclosed at end of input")
+        raise _fail(
+            JerErrorCode.MALFORMED,
+            end,
+            detail=f"{len(kinds)} container(s) left unclosed at end of input",
+        )
     return nodes
 
 
@@ -326,30 +379,38 @@ def _scan_u_escape(data: bytes, pos: int, spend) -> tuple[int, int]:
             # invites a retry against an input that is simply wrong. `needed` is reserved
             # for the §4.3 limits, where "how much would have been enough" is a real answer.
             raise _fail(JerErrorCode.MALFORMED, at, detail="a truncated \\u escape")
-        digits = data[at + 2:at + 6]
+        digits = data[at + 2 : at + 6]
         if any(digit not in _HEX for digit in digits):
-            raise _fail(JerErrorCode.MALFORMED, at + 2,
-                        detail=f"{digits!r} is not four hexadecimal digits")
+            raise _fail(
+                JerErrorCode.MALFORMED, at + 2, detail=f"{digits!r} is not four hexadecimal digits"
+            )
         spend(6, at)
         return int(digits, 16)
 
     code = scalar(pos)
     pos += 6
-    if 0xD800 <= code <= 0xDBFF:                             # a high surrogate: expect a low
+    if 0xD800 <= code <= 0xDBFF:  # a high surrogate: expect a low
         if pos + 1 < end and data[pos] == 0x5C and data[pos + 1] == 0x75:
             low = scalar(pos)
             if not 0xDC00 <= low <= 0xDFFF:
-                raise _fail(JerErrorCode.NOT_UTF8, start,
-                            detail=f"U+{code:04X} is a high surrogate followed by "
-                                   f"U+{low:04X}, which is not a low surrogate (7.6.2)")
+                raise _fail(
+                    JerErrorCode.NOT_UTF8,
+                    start,
+                    detail=f"U+{code:04X} is a high surrogate followed by "
+                    f"U+{low:04X}, which is not a low surrogate (7.6.2)",
+                )
             return pos + 6, 4
-        raise _fail(JerErrorCode.NOT_UTF8, start,
-                    detail=f"U+{code:04X} is an unpaired high surrogate and has no UTF-8 "
-                           f"encoding (7.6.2)")
+        raise _fail(
+            JerErrorCode.NOT_UTF8,
+            start,
+            detail=f"U+{code:04X} is an unpaired high surrogate and has no UTF-8 encoding (7.6.2)",
+        )
     if 0xDC00 <= code <= 0xDFFF:
-        raise _fail(JerErrorCode.NOT_UTF8, start,
-                    detail=f"U+{code:04X} is an unpaired low surrogate and has no UTF-8 "
-                           f"encoding (7.6.2)")
+        raise _fail(
+            JerErrorCode.NOT_UTF8,
+            start,
+            detail=f"U+{code:04X} is an unpaired low surrogate and has no UTF-8 encoding (7.6.2)",
+        )
     return pos, 1 if code < 0x80 else (2 if code < 0x800 else 3)
 
 
@@ -364,12 +425,11 @@ def _scan_string(data: bytes, pos: int, limits: JerLimits, spend) -> int:
         spend(1, pos)
         if byte == 0x22:
             return pos + 1
-        if byte == 0x5C:                                     # a backslash escape
+        if byte == 0x5C:  # a backslash escape
             if pos + 1 >= end:
-                raise _fail(JerErrorCode.MALFORMED, pos,
-                            detail="an escape at end of input")
+                raise _fail(JerErrorCode.MALFORMED, pos, detail="an escape at end of input")
             following = data[pos + 1]
-            if following == 0x75:                            # \\uXXXX
+            if following == 0x75:  # \\uXXXX
                 pos, grew = _scan_u_escape(data, pos, spend)
                 decoded += grew
             else:
@@ -377,14 +437,19 @@ def _scan_string(data: bytes, pos: int, limits: JerLimits, spend) -> int:
                 decoded += 1
         elif byte < 0x20:
             # ECMA-404 clause 9: a control character may not appear literally in a string.
-            raise _fail(JerErrorCode.MALFORMED, pos,
-                        detail=f"an unescaped control character U+{byte:04X}")
+            raise _fail(
+                JerErrorCode.MALFORMED, pos, detail=f"an unescaped control character U+{byte:04X}"
+            )
         else:
             pos += 1
             decoded += 1
         if decoded > limits.string_bytes:
-            raise _fail(JerErrorCode.STRING_TOO_LONG, start, needed=decoded,
-                        detail=f"limit is {limits.string_bytes}")
+            raise _fail(
+                JerErrorCode.STRING_TOO_LONG,
+                start,
+                needed=decoded,
+                detail=f"limit is {limits.string_bytes}",
+            )
     raise _fail(JerErrorCode.MALFORMED, start, detail="an unterminated string")
 
 
@@ -413,8 +478,7 @@ def _scan_number(data: bytes, pos: int, limits: JerLimits, spend) -> int:
     # reproduce. The accept/reject decision is unchanged (`json.loads` refused it too); what
     # changes is that the diagnostic now names the octet instead of arriving as SCHEMA.
     if pos < end and data[pos] == 0x30 and pos + 1 < end and data[pos + 1] in _DIGITS:
-        raise _fail(JerErrorCode.MALFORMED, pos + 1,
-                    detail="a number may not have a leading zero")
+        raise _fail(JerErrorCode.MALFORMED, pos + 1, detail="a number may not have a leading zero")
     digits = 0
     while pos < end and data[pos] in _DIGITS:
         digits += 1
@@ -423,9 +487,13 @@ def _scan_number(data: bytes, pos: int, limits: JerLimits, spend) -> int:
     if digits == 0:
         raise _fail(JerErrorCode.MALFORMED, start, detail="a number with no digits")
     if digits > limits.integer_digits:
-        raise _fail(JerErrorCode.DIGITS_EXCEEDED, start, needed=digits,
-                    detail=f"limit is {limits.integer_digits}")
-    if pos < end and data[pos] == 0x2E:                      # a fraction
+        raise _fail(
+            JerErrorCode.DIGITS_EXCEEDED,
+            start,
+            needed=digits,
+            detail=f"limit is {limits.integer_digits}",
+        )
+    if pos < end and data[pos] == 0x2E:  # a fraction
         pos += 1
         fraction = 0
         while pos < end and data[pos] in _DIGITS:
@@ -433,8 +501,9 @@ def _scan_number(data: bytes, pos: int, limits: JerLimits, spend) -> int:
             spend(1, pos)
             pos += 1
         if fraction == 0:
-            raise _fail(JerErrorCode.MALFORMED, pos,
-                        detail="a decimal point with no digits after it")
+            raise _fail(
+                JerErrorCode.MALFORMED, pos, detail="a decimal point with no digits after it"
+            )
     if pos < end and data[pos] in b"eE":
         pos += 1
         if pos < end and data[pos] in b"+-":
@@ -447,11 +516,19 @@ def _scan_number(data: bytes, pos: int, limits: JerLimits, spend) -> int:
             raise _fail(JerErrorCode.MALFORMED, pos, detail="an exponent with no digits")
         magnitude = int(data[exponent_start:pos])
         if magnitude > limits.exponent_magnitude:
-            raise _fail(JerErrorCode.EXPONENT_EXCEEDED, start, needed=magnitude,
-                        detail=f"limit is {limits.exponent_magnitude}")
+            raise _fail(
+                JerErrorCode.EXPONENT_EXCEEDED,
+                start,
+                needed=magnitude,
+                detail=f"limit is {limits.exponent_magnitude}",
+            )
     if pos - start > limits.number_bytes:
-        raise _fail(JerErrorCode.NUMBER_TOO_LONG, start, needed=pos - start,
-                    detail=f"limit is {limits.number_bytes}")
+        raise _fail(
+            JerErrorCode.NUMBER_TOO_LONG,
+            start,
+            needed=pos - start,
+            detail=f"limit is {limits.number_bytes}",
+        )
     return pos
 
 
@@ -465,17 +542,26 @@ def _canonical(data: bytes, kind: Asn1Type, value, instructions) -> None:
     again = encode_jer(kind, value, rules=JerRules.CANONICAL, instructions=instructions)
     if again == data:
         return
-    offset = next((at for at in range(min(len(again), len(data)))
-                   if again[at] != data[at]), min(len(again), len(data)))
-    raise _fail(JerErrorCode.NOT_CANONICAL, offset,
-                detail=f"the canonical encoding has {again[offset:offset + 12]!r} here, "
-                       f"the input has {data[offset:offset + 12]!r}")
+    offset = next(
+        (at for at in range(min(len(again), len(data))) if again[at] != data[at]),
+        min(len(again), len(data)),
+    )
+    raise _fail(
+        JerErrorCode.NOT_CANONICAL,
+        offset,
+        detail=f"the canonical encoding has {again[offset : offset + 12]!r} here, "
+        f"the input has {data[offset : offset + 12]!r}",
+    )
 
 
-def decode_bounded(data: bytes | str, kind: Asn1Type, *,
-                   rules: JerRules = JerRules.CANONICAL,
-                   limits: JerLimits = JerLimits(),
-                   instructions=None):
+def decode_bounded(
+    data: bytes | str,
+    kind: Asn1Type,
+    *,
+    rules: JerRules = JerRules.CANONICAL,
+    limits: JerLimits = JerLimits(),
+    instructions=None,
+):
     """Decode a JER document under explicit limits, in §4.2's order.
 
     Frame, then structure and limits, then UTF-8, then JSON, then the schema, then canonical
@@ -484,12 +570,15 @@ def decode_bounded(data: bytes | str, kind: Asn1Type, *,
     on failure" for a pure decode.
     """
     octets = data.encode("utf-8") if isinstance(data, str) else bytes(data)
-    scan(octets, limits)                                     # §4.3, before anything exists
+    scan(octets, limits)  # §4.3, before anything exists
     try:
         octets.decode("utf-8")
     except UnicodeDecodeError as error:
-        raise _fail(JerErrorCode.NOT_UTF8, error.start,
-                    detail=f"7.6.2 makes the encoding UTF-8: {error.reason}") from None
+        raise _fail(
+            JerErrorCode.NOT_UTF8,
+            error.start,
+            detail=f"7.6.2 makes the encoding UTF-8: {error.reason}",
+        ) from None
     try:
         # Always decode with BASIC, even when CANONICAL was asked for. §6.3 makes BASIC the
         # decoder that "shall support all JER encoding alternatives", so this reads the
@@ -504,8 +593,7 @@ def decode_bounded(data: bytes | str, kind: Asn1Type, *,
     except JerBoundedError:
         raise
     except Asn1Error as error:
-        raise _fail(JerErrorCode.SCHEMA, getattr(error, "offset", -1),
-                    detail=str(error)) from None
+        raise _fail(JerErrorCode.SCHEMA, getattr(error, "offset", -1), detail=str(error)) from None
     if rules is JerRules.CANONICAL:
         _canonical(octets, kind, value, instructions)
     return value
@@ -527,8 +615,17 @@ def frame(payload: bytes, *, sequence: int = 0, generation: int = 0) -> bytes:
     if not isinstance(payload, (bytes, bytearray)):
         raise _fail(JerErrorCode.FRAME_MALFORMED, detail="a frame payload is octets")
     body = bytes(payload)
-    return _FRAME_HEADER.pack(FRAME_MAGIC, FRAME_VERSION, sequence, generation,
-                              len(body), zlib.crc32(body) & 0xFFFFFFFF) + body
+    return (
+        _FRAME_HEADER.pack(
+            FRAME_MAGIC,
+            FRAME_VERSION,
+            sequence,
+            generation,
+            len(body),
+            zlib.crc32(body) & 0xFFFFFFFF,
+        )
+        + body
+    )
 
 
 @dataclass(frozen=True)
@@ -549,47 +646,91 @@ def unframe(data: bytes) -> Frame:
     """
     octets = bytes(data)
     if len(octets) < FRAME_HEADER_SIZE:
-        raise _fail(JerErrorCode.FRAME_MALFORMED, 0, needed=FRAME_HEADER_SIZE,
-                    detail=f"a frame header is {FRAME_HEADER_SIZE} octets")
+        raise _fail(
+            JerErrorCode.FRAME_MALFORMED,
+            0,
+            needed=FRAME_HEADER_SIZE,
+            detail=f"a frame header is {FRAME_HEADER_SIZE} octets",
+        )
     magic, version, sequence, generation, length, crc = _FRAME_HEADER.unpack(
-        octets[:FRAME_HEADER_SIZE])
+        octets[:FRAME_HEADER_SIZE]
+    )
     if magic != FRAME_MAGIC:
-        raise _fail(JerErrorCode.FRAME_MALFORMED, 0,
-                    detail=f"expected {FRAME_MAGIC!r}, got {magic!r}")
+        raise _fail(
+            JerErrorCode.FRAME_MALFORMED, 0, detail=f"expected {FRAME_MAGIC!r}, got {magic!r}"
+        )
     if version != FRAME_VERSION:
-        raise _fail(JerErrorCode.FRAME_MALFORMED, 4,
-                    detail=f"frame version {version} is not {FRAME_VERSION}")
+        raise _fail(
+            JerErrorCode.FRAME_MALFORMED,
+            4,
+            detail=f"frame version {version} is not {FRAME_VERSION}",
+        )
     want = FRAME_HEADER_SIZE + length
     if len(octets) != want:
-        raise _fail(JerErrorCode.FRAME_MALFORMED, FRAME_HEADER_SIZE, needed=want,
-                    detail=f"the frame declares {length} payload octets and carries "
-                           f"{len(octets) - FRAME_HEADER_SIZE}")
+        raise _fail(
+            JerErrorCode.FRAME_MALFORMED,
+            FRAME_HEADER_SIZE,
+            needed=want,
+            detail=f"the frame declares {length} payload octets and carries "
+            f"{len(octets) - FRAME_HEADER_SIZE}",
+        )
     payload = octets[FRAME_HEADER_SIZE:]
     if (zlib.crc32(payload) & 0xFFFFFFFF) != crc:
         # An integrity failure, never an authenticity one -- §6.3 of the roadmap keeps
         # those separate and so does this message.
-        raise _fail(JerErrorCode.FRAME_INTEGRITY, FRAME_HEADER_SIZE,
-                    detail="the payload CRC-32 does not match; this detects corruption "
-                           "and is not a signature")
+        raise _fail(
+            JerErrorCode.FRAME_INTEGRITY,
+            FRAME_HEADER_SIZE,
+            detail="the payload CRC-32 does not match; this detects corruption "
+            "and is not a signature",
+        )
     return Frame(version, sequence, generation, payload)
 
 
-def encode_framed(kind: Asn1Type, value, *, rules: JerRules = JerRules.CANONICAL,
-                  sequence: int = 0, generation: int = 0, instructions=None) -> bytes:
-    return frame(encode_jer(kind, value, rules=rules, instructions=instructions),
-                 sequence=sequence, generation=generation)
+def encode_framed(
+    kind: Asn1Type,
+    value,
+    *,
+    rules: JerRules = JerRules.CANONICAL,
+    sequence: int = 0,
+    generation: int = 0,
+    instructions=None,
+) -> bytes:
+    return frame(
+        encode_jer(kind, value, rules=rules, instructions=instructions),
+        sequence=sequence,
+        generation=generation,
+    )
 
 
-def decode_framed(data: bytes, kind: Asn1Type, *,
-                  rules: JerRules = JerRules.CANONICAL,
-                  limits: JerLimits = JerLimits(), instructions=None):
+def decode_framed(
+    data: bytes,
+    kind: Asn1Type,
+    *,
+    rules: JerRules = JerRules.CANONICAL,
+    limits: JerLimits = JerLimits(),
+    instructions=None,
+):
     """Frame, limits, UTF-8, JSON, schema, canonical bytes — then, and only then, a value."""
-    return decode_bounded(unframe(data).payload, kind, rules=rules, limits=limits,
-                          instructions=instructions)
+    return decode_bounded(
+        unframe(data).payload, kind, rules=rules, limits=limits, instructions=instructions
+    )
 
 
 __all__ = [
-    "FRAME_HEADER_SIZE", "FRAME_MAGIC", "FRAME_VERSION", "STRICT_LIMITS", "Frame",
-    "JerBoundedError", "JerDiagnostic", "JerErrorCode", "JerLimits", "decode_bounded",
-    "decode_framed", "encode_framed", "frame", "scan", "unframe",
+    "FRAME_HEADER_SIZE",
+    "FRAME_MAGIC",
+    "FRAME_VERSION",
+    "STRICT_LIMITS",
+    "Frame",
+    "JerBoundedError",
+    "JerDiagnostic",
+    "JerErrorCode",
+    "JerLimits",
+    "decode_bounded",
+    "decode_framed",
+    "encode_framed",
+    "frame",
+    "scan",
+    "unframe",
 ]

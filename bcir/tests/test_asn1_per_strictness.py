@@ -49,15 +49,18 @@ def test_a_constrained_offset_outside_the_range_is_refused() -> None:
     number the type does not contain, at the point where untrusted octets become a value.
     """
     kind = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 2))
-    message = _refused(lambda: decode_per(b"\xc0", kind, variant=PerVariant.UNALIGNED),
-                       "the unused bit pattern 11 for INTEGER (0..2)")
+    message = _refused(
+        lambda: decode_per(b"\xc0", kind, variant=PerVariant.UNALIGNED),
+        "the unused bit pattern 11 for INTEGER (0..2)",
+    )
     assert "11.5.3" in message
 
     # The three values the type DOES contain still round-trip, in both variants.
     for variant in _VARIANTS:
         for value in (0, 1, 2):
-            assert decode_per(encode_per(kind, value, variant=variant), kind,
-                              variant=variant) == value
+            assert (
+                decode_per(encode_per(kind, value, variant=variant), kind, variant=variant) == value
+            )
 
 
 def test_a_whole_number_needs_at_least_one_contents_octet() -> None:
@@ -68,9 +71,10 @@ def test_a_whole_number_needs_at_least_one_contents_octet() -> None:
     encoding is `01 00`.
     """
     unconstrained = Primitive(Universal.INTEGER, "INTEGER")
-    message = _refused(lambda: decode_per(b"\x00", unconstrained,
-                                          variant=PerVariant.UNALIGNED),
-                       "a zero-length unconstrained INTEGER")
+    message = _refused(
+        lambda: decode_per(b"\x00", unconstrained, variant=PerVariant.UNALIGNED),
+        "a zero-length unconstrained INTEGER",
+    )
     assert "11.8.2" in message
 
     # The genuine encoding of zero is one octet of contents, and it still decodes.
@@ -79,8 +83,10 @@ def test_a_whole_number_needs_at_least_one_contents_octet() -> None:
 
     # §11.7.4's semi-constrained form has the same shape and the same fix.
     semi = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, None))
-    message = _refused(lambda: decode_per(b"\x00", semi, variant=PerVariant.UNALIGNED),
-                       "a zero-length semi-constrained INTEGER")
+    message = _refused(
+        lambda: decode_per(b"\x00", semi, variant=PerVariant.UNALIGNED),
+        "a zero-length semi-constrained INTEGER",
+    )
     assert "11.7.4" in message
 
 
@@ -104,10 +110,28 @@ def test_a_negative_unconstrained_integer_uses_the_minimum_octets() -> None:
     assert encode_per(kind, 128, variant=U).hex() == "020080"
 
     for variant in _VARIANTS:
-        for value in (0, 1, -1, 127, 128, -127, -128, -129, 255, 256, -255, -256,
-                      32767, -32768, -32769, 1 << 40, -(1 << 40)):
-            assert decode_per(encode_per(kind, value, variant=variant), kind,
-                              variant=variant) == value, value
+        for value in (
+            0,
+            1,
+            -1,
+            127,
+            128,
+            -127,
+            -128,
+            -129,
+            255,
+            256,
+            -255,
+            -256,
+            32767,
+            -32768,
+            -32769,
+            1 << 40,
+            -(1 << 40),
+        ):
+            assert (
+                decode_per(encode_per(kind, value, variant=variant), kind, variant=variant) == value
+            ), value
 
 
 def test_an_unconstrained_length_still_honours_its_lower_bound() -> None:
@@ -118,26 +142,31 @@ def test_an_unconstrained_length_still_honours_its_lower_bound() -> None:
     part of the ASN.1 type, and nothing enforced it -- `OCTET STRING (SIZE(5..MAX))` emitted
     and admitted a one-octet value.
     """
-    kind = Primitive(Universal.OCTET_STRING, "OCTET STRING",
-                     constraint=Size(ValueRange(5, None)))
+    kind = Primitive(Universal.OCTET_STRING, "OCTET STRING", constraint=Size(ValueRange(5, None)))
     U = PerVariant.UNALIGNED
 
-    assert "11.9" in _refused(lambda: encode_per(kind, b"x", variant=U),
-                              "encoding one octet for SIZE(5..MAX)")
+    assert "11.9" in _refused(
+        lambda: encode_per(kind, b"x", variant=U), "encoding one octet for SIZE(5..MAX)"
+    )
     # b"\x01\x78" is the encoding the old encoder produced: a determinant of 1, then 'x'.
-    assert "11.9" in _refused(lambda: decode_per(b"\x01\x78", kind, variant=U),
-                              "decoding one octet for SIZE(5..MAX)")
+    assert "11.9" in _refused(
+        lambda: decode_per(b"\x01\x78", kind, variant=U), "decoding one octet for SIZE(5..MAX)"
+    )
 
     for variant in _VARIANTS:
         for payload in (b"abcde", b"abcdefghij"):
-            assert decode_per(encode_per(kind, payload, variant=variant), kind,
-                              variant=variant) == payload
+            assert (
+                decode_per(encode_per(kind, payload, variant=variant), kind, variant=variant)
+                == payload
+            )
 
     # An upper endpoint at 64K is dropped by the same path, so it needs the same guard.
-    wide = Primitive(Universal.OCTET_STRING, "OCTET STRING",
-                     constraint=Size(ValueRange(5, 1 << 16)))
-    assert "11.9" in _refused(lambda: encode_per(wide, b"x", variant=U),
-                              "encoding one octet for SIZE(5..65536)")
+    wide = Primitive(
+        Universal.OCTET_STRING, "OCTET STRING", constraint=Size(ValueRange(5, 1 << 16))
+    )
+    assert "11.9" in _refused(
+        lambda: encode_per(wide, b"x", variant=U), "encoding one octet for SIZE(5..65536)"
+    )
 
 
 def test_an_empty_field_list_is_exactly_one_zero_octet() -> None:
@@ -154,17 +183,21 @@ def test_an_empty_field_list_is_exactly_one_zero_octet() -> None:
         assert encode_per(pinned, 7, variant=variant) == b"\x00"
         assert decode_per(b"\x00", pinned, variant=variant) == 7
 
-        for bad, why in ((b"", "zero octets"), (b"\xff", "a non-zero octet"),
-                         (b"\x00\x00", "two octets")):
+        for bad, why in (
+            (b"", "zero octets"),
+            (b"\xff", "a non-zero octet"),
+            (b"\x00\x00", "two octets"),
+        ):
             assert "11.1.4" in _refused(
                 lambda b=bad, v=variant: decode_per(b, pinned, variant=v),
-                f"{why} for an empty field-list")
+                f"{why} for an empty field-list",
+            )
 
         # NULL is the other type that reaches this path, and it behaves the same way.
         assert encode_per(null, None, variant=variant) == b"\x00"
         assert "11.1.4" in _refused(
-            lambda v=variant: decode_per(b"\xff", null, variant=v),
-            "a non-zero octet for NULL")
+            lambda v=variant: decode_per(b"\xff", null, variant=v), "a non-zero octet for NULL"
+        )
 
 
 def test_the_strictness_did_not_narrow_the_canonical_corpus() -> None:
@@ -180,12 +213,13 @@ def test_the_strictness_did_not_narrow_the_canonical_corpus() -> None:
         (Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 255)), (0, 255)),
         (Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 256)), (0, 256)),
         (Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 65535)), (0, 65535)),
-        (Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 1 << 20)),
-         (0, 1 << 20)),
+        (Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 1 << 20)), (0, 1 << 20)),
         (Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(7, 7)), (7,)),
         (Primitive(Universal.INTEGER, "INTEGER"), (0, -1, 1, -128, 128)),
-        (Primitive(Universal.OCTET_STRING, "OCTET STRING",
-                   constraint=Size(ValueRange(0, 4))), (b"", b"ab", b"abcd")),
+        (
+            Primitive(Universal.OCTET_STRING, "OCTET STRING", constraint=Size(ValueRange(0, 4))),
+            (b"", b"ab", b"abcd"),
+        ),
         (Primitive(Universal.OCTET_STRING, "OCTET STRING"), (b"", b"abcdefgh")),
     ]
     for variant in _VARIANTS:

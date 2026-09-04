@@ -50,34 +50,40 @@ def bundle_to_mlir(bundle: ArtifactBundle, *, symbol_name: str = "artifact_bundl
     ]
     for index, variant in enumerate(bundle.variants):
         span = payload_spans[index]
-        lines.extend([
-            f"  bcir.artifact.variant {_symbol(variant.variant_id)} {{",
-            f"    kind = {_string(variant.kind.name.lower())}, "
-            f"format = {_string(variant.format.name.lower())},",
-            f"    triple = {_string(variant.triple)}, architecture = {_string(variant.architecture)},",
-            f"    os_abi = {_string(variant.os_abi)}, channel = {_string(variant.channel)},",
-            f"    entry_symbol = {_string(variant.entry_symbol)}, "
-            f"endianness = {_string(variant.endianness.name.lower())},",
-            f"    pointer_bits = {variant.pointer_bits} : i32, machine = {variant.e_machine} : i64,",
-            f"    priority = {variant.priority} : i32, flags = {variant.flags} : i32,",
-            f"    provenance_digest = {_string(f'{variant.provenance_digest:016x}')},",
-            f"    required_features = {_array(variant.required_features)},",
-            f"    prohibited_features = {_array(variant.prohibited_features)},",
-            f"    payload_offset = {span.offset} : i64, payload_size = {span.length} : i64,",
-            f"    payload_crc32 = {variant.payload_crc32} : i64,",
-            f"    payload_sha256 = {_string(variant.payload_sha256)},",
-            f"    target_manifest_sha256 = {_string(variant.target_manifest_sha256)},",
-            f"    cal_gen = {variant.cal_gen} : i64",
-            "  }",
-        ])
+        lines.extend(
+            [
+                f"  bcir.artifact.variant {_symbol(variant.variant_id)} {{",
+                f"    kind = {_string(variant.kind.name.lower())}, "
+                f"format = {_string(variant.format.name.lower())},",
+                f"    triple = {_string(variant.triple)}, architecture = {_string(variant.architecture)},",
+                f"    os_abi = {_string(variant.os_abi)}, channel = {_string(variant.channel)},",
+                f"    entry_symbol = {_string(variant.entry_symbol)}, "
+                f"endianness = {_string(variant.endianness.name.lower())},",
+                f"    pointer_bits = {variant.pointer_bits} : i32, machine = {variant.e_machine} : i64,",
+                f"    priority = {variant.priority} : i32, flags = {variant.flags} : i32,",
+                f"    provenance_digest = {_string(f'{variant.provenance_digest:016x}')},",
+                f"    required_features = {_array(variant.required_features)},",
+                f"    prohibited_features = {_array(variant.prohibited_features)},",
+                f"    payload_offset = {span.offset} : i64, payload_size = {span.length} : i64,",
+                f"    payload_crc32 = {variant.payload_crc32} : i64,",
+                f"    payload_sha256 = {_string(variant.payload_sha256)},",
+                f"    target_manifest_sha256 = {_string(variant.target_manifest_sha256)},",
+                f"    cal_gen = {variant.cal_gen} : i64",
+                "  }",
+            ]
+        )
     lines.append("}")
     return "\n".join(lines) + "\n"
 
 
-def selection_to_mlir(bundle: ArtifactBundle, envelope: CompatibilityEnvelope, *,
-                      bundle_symbol: str = "artifact_bundle",
-                      selection_symbol: str = "artifact_selection",
-                      classification: str = "exact") -> str:
+def selection_to_mlir(
+    bundle: ArtifactBundle,
+    envelope: CompatibilityEnvelope,
+    *,
+    bundle_symbol: str = "artifact_bundle",
+    selection_symbol: str = "artifact_selection",
+    classification: str = "exact",
+) -> str:
     """Emit the deterministic selector decision as a bundle-companion verifier op."""
     if classification not in ("exact", "quantized", "approximate"):
         raise BundleError("classification must be exact, quantized, or approximate")
@@ -137,8 +143,7 @@ def asn1_contract_to_mlir(*, module_symbol: str = "BCIR_ArtifactBundle") -> str:
         '  bcir.asn1.type @Enum attributes { kind = "primitive", universal = 10 : i64 } { }',
         '  bcir.asn1.type @Utf8 attributes { kind = "primitive", universal = 12 : i64 } { }',
         '  bcir.asn1.type @Octets attributes { kind = "primitive", universal = 4 : i64 } { }',
-        '  bcir.asn1.type @FeatureList attributes { kind = "sequence_of", '
-        "element = @Utf8 } { }",
+        '  bcir.asn1.type @FeatureList attributes { kind = "sequence_of", element = @Utf8 } { }',
         '  bcir.asn1.type @ArtifactVariant attributes { kind = "sequence" } {',
     ]
     for name, type_name, tag, optional in component_rows:
@@ -148,32 +153,34 @@ def asn1_contract_to_mlir(*, module_symbol: str = "BCIR_ArtifactBundle") -> str:
             f"name = {_string(name)}, type = @{type_name}, tag = {tag} : i64, "
             f"tagging = #bcir.asn1_tagging<implicit>{suffix} }}"
         )
-    lines.extend([
-        "  }",
-        '  bcir.asn1.type @ArtifactVariants attributes { kind = "sequence_of", '
-        "element = @ArtifactVariant } { }",
-        '  bcir.asn1.type @ArtifactBundle attributes { kind = "sequence" } {',
-        '    bcir.asn1.component { name = "version", type = @U8, tag = 0 : i64, '
-        "tagging = #bcir.asn1_tagging<implicit> }",
-        '    bcir.asn1.component { name = "rootVariant", type = @Utf8, tag = 1 : i64, '
-        "tagging = #bcir.asn1_tagging<implicit>, optional }",
-        '    bcir.asn1.component { name = "defaultVariant", type = @Utf8, tag = 2 : i64, '
-        "tagging = #bcir.asn1_tagging<implicit>, optional }",
-        '    bcir.asn1.component { name = "provenanceDigest", type = @U64, tag = 3 : i64, '
-        "tagging = #bcir.asn1_tagging<implicit> }",
-        '    bcir.asn1.component { name = "generation", type = @U64, tag = 4 : i64, '
-        "tagging = #bcir.asn1_tagging<implicit> }",
-        '    bcir.asn1.component { name = "variants", type = @ArtifactVariants, '
-        "tag = 5 : i64, tagging = #bcir.asn1_tagging<implicit> }",
-        "  }",
-        "  bcir.asn1.encode @emit_bundle_der { type = @ArtifactBundle, "
-        "rules = #bcir.asn1_rules<der> }",
-        "  bcir.asn1.decode @accept_bundle_ber { type = @ArtifactBundle, "
-        "rules = #bcir.asn1_rules<ber> }",
-        '  bcir.asn1.projection @artifact_bundle_projection { native = "artifact_bundle", '
-        "type = @ArtifactBundle, additive }",
-        "}",
-    ])
+    lines.extend(
+        [
+            "  }",
+            '  bcir.asn1.type @ArtifactVariants attributes { kind = "sequence_of", '
+            "element = @ArtifactVariant } { }",
+            '  bcir.asn1.type @ArtifactBundle attributes { kind = "sequence" } {',
+            '    bcir.asn1.component { name = "version", type = @U8, tag = 0 : i64, '
+            "tagging = #bcir.asn1_tagging<implicit> }",
+            '    bcir.asn1.component { name = "rootVariant", type = @Utf8, tag = 1 : i64, '
+            "tagging = #bcir.asn1_tagging<implicit>, optional }",
+            '    bcir.asn1.component { name = "defaultVariant", type = @Utf8, tag = 2 : i64, '
+            "tagging = #bcir.asn1_tagging<implicit>, optional }",
+            '    bcir.asn1.component { name = "provenanceDigest", type = @U64, tag = 3 : i64, '
+            "tagging = #bcir.asn1_tagging<implicit> }",
+            '    bcir.asn1.component { name = "generation", type = @U64, tag = 4 : i64, '
+            "tagging = #bcir.asn1_tagging<implicit> }",
+            '    bcir.asn1.component { name = "variants", type = @ArtifactVariants, '
+            "tag = 5 : i64, tagging = #bcir.asn1_tagging<implicit> }",
+            "  }",
+            "  bcir.asn1.encode @emit_bundle_der { type = @ArtifactBundle, "
+            "rules = #bcir.asn1_rules<der> }",
+            "  bcir.asn1.decode @accept_bundle_ber { type = @ArtifactBundle, "
+            "rules = #bcir.asn1_rules<ber> }",
+            '  bcir.asn1.projection @artifact_bundle_projection { native = "artifact_bundle", '
+            "type = @ArtifactBundle, additive }",
+            "}",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 

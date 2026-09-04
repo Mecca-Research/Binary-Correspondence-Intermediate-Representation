@@ -114,7 +114,7 @@ def erfcx_reference_full(data: list[float]) -> list[float]:
         if x >= 8.0:
             inv2x2 = 1.0 / (2.0 * x * x)
             term, s, sign, dfact = 1.0, 1.0, -1.0, 1.0
-            for k in range(1, 9):                    # (2k-1)!! / (2x^2)^k, alternating
+            for k in range(1, 9):  # (2k-1)!! / (2x^2)^k, alternating
                 dfact *= 2 * k - 1
                 term *= inv2x2
                 s += sign * dfact * term
@@ -123,6 +123,6 @@ def erfcx_reference_full(data: list[float]) -> list[float]:
         else:
             try:
                 out.append(math.exp(x * x) * math.erfc(x))
-            except OverflowError:                    # x < ~-26.6: the VALUE > 1.8e308
+            except OverflowError:  # x < ~-26.6: the VALUE > 1.8e308
                 out.append(math.inf)
     return out

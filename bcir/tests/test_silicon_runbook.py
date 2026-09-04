@@ -33,15 +33,19 @@ def _runbook(*args: str):
         return None
     env = os.environ.copy()
     env["BCIR_PYTHON"] = sys.executable
-    return subprocess.run([bash, _RUNBOOK, *args], capture_output=True, text=True, cwd=_ROOT,
-                          env=env)
+    return subprocess.run(
+        [bash, _RUNBOOK, *args], capture_output=True, text=True, cwd=_ROOT, env=env
+    )
 
 
 def _rig_ready() -> bool:
     """The rig contract: the measured win is live iff the host exposes ALL THREE real
     signals -- a hardware PMU, RAPL energy, and a cpufreq userspace governor."""
-    return (perf_counters_available() and rapl_available()
-            and bool(getattr(cpufreq_info(), "actuatable", False)))
+    return (
+        perf_counters_available()
+        and rapl_available()
+        and bool(getattr(cpufreq_info(), "actuatable", False))
+    )
 
 
 def test_runbook_runs_end_to_end_and_is_honest():
@@ -111,4 +115,4 @@ def test_certificate_provenance_is_tagged_honestly():
     assert cert.cert.admissible
     if not perf_counters_available():
         assert "synthetic" in cert.provenance and not cert.measured
-        assert cert.win == 0          # honest: no measured value without the rig
+        assert cert.win == 0  # honest: no measured value without the rig

@@ -41,6 +41,7 @@ def _valid_cost(cost) -> bool:
         return math.isfinite(cost) and cost >= 0
     return False
 
+
 # A path is "uncertain" once its coefficient of variation (stdev/mean) exceeds this
 # many milli-units (200 == 0.20 == 20% relative spread). Below it the model is
 # confident enough that high-resolution telemetry is not worth the overhead.
@@ -90,10 +91,10 @@ class PathSamples:
 @dataclass(frozen=True)
 class TelemetryDecision:
     path: str
-    resolution: str        # "high" | "low" | "off"
+    resolution: str  # "high" | "low" | "off"
     cv_milli: int
     samples: int
-    forced_off: bool = False   # "off" rests on < min_samples -> the verdict is unwitnessed
+    forced_off: bool = False  # "off" rests on < min_samples -> the verdict is unwitnessed
 
     @property
     def overhead(self) -> int:
@@ -105,7 +106,7 @@ class RegretSensor:
     """Accumulates per-path samples and decides where to spend telemetry."""
 
     paths: dict[str, PathSamples] = field(default_factory=dict)
-    rejected: int = 0          # cost samples dropped as non-finite/negative (injection)
+    rejected: int = 0  # cost samples dropped as non-finite/negative (injection)
 
     def observe(self, path: str, cost: int) -> None:
         """Record one cost sample for `path`. A non-finite or negative `cost` is a bogus
@@ -121,8 +122,13 @@ class RegretSensor:
         s = self.paths.get(path)
         return s.cv_milli if s else 0
 
-    def sense(self, *, cv_threshold_milli: int = DEFAULT_CV_THRESHOLD_MILLI,
-              budget: int = DEFAULT_HIRES_BUDGET, min_samples: int = 2) -> list[TelemetryDecision]:
+    def sense(
+        self,
+        *,
+        cv_threshold_milli: int = DEFAULT_CV_THRESHOLD_MILLI,
+        budget: int = DEFAULT_HIRES_BUDGET,
+        min_samples: int = 2,
+    ) -> list[TelemetryDecision]:
         """Per-path telemetry resolution. Uncertain paths (cv over threshold, with
         enough samples to trust the estimate) get high-resolution -- most uncertain
         first, capped at `budget`. Everything else is low (a trickle) or off (a path
@@ -140,18 +146,29 @@ class RegretSensor:
                 res = "low"
             else:
                 res = "off"
-                forced_off = True            # "off" with too few samples to judge: unwitnessed
-            out.append(TelemetryDecision(path=s.path, resolution=res,
-                                         cv_milli=s.cv_milli, samples=s.n,
-                                         forced_off=forced_off))
+                forced_off = True  # "off" with too few samples to judge: unwitnessed
+            out.append(
+                TelemetryDecision(
+                    path=s.path,
+                    resolution=res,
+                    cv_milli=s.cv_milli,
+                    samples=s.n,
+                    forced_off=forced_off,
+                )
+            )
         return sorted(out, key=lambda d: d.path)
 
 
-DEFAULT_MARGIN_THRESHOLD = 64    # Q8 ranker margin below which a column is "uncertain"
+DEFAULT_MARGIN_THRESHOLD = 64  # Q8 ranker margin below which a column is "uncertain"
 
 
-def sense_by_ranker(ranker, blocks, *, margin_threshold: int = DEFAULT_MARGIN_THRESHOLD,
-                    budget: int = DEFAULT_HIRES_BUDGET) -> list[TelemetryDecision]:
+def sense_by_ranker(
+    ranker,
+    blocks,
+    *,
+    margin_threshold: int = DEFAULT_MARGIN_THRESHOLD,
+    budget: int = DEFAULT_HIRES_BUDGET,
+) -> list[TelemetryDecision]:
     """A-priori telemetry gating by the LearnedRanker's predictive confidence (the
     complement of `RegretSensor.sense`, which gates a posteriori on observed
     variance). For each block `(path, cands, scores)` the ranker reports its decision
@@ -161,7 +178,7 @@ def sense_by_ranker(ranker, blocks, *, margin_threshold: int = DEFAULT_MARGIN_TH
     the column is instrumented at high resolution -- narrowest margin first, capped at
     `budget`. Deterministic; sorted by path. (`cv_milli` carries the margin here.)"""
     scored = [(path, ranker.confidence(cands, scores)) for path, cands, scores in blocks]
-    ranked = sorted(scored, key=lambda t: (t[1], t[0]))     # least-confident first
+    ranked = sorted(scored, key=lambda t: (t[1], t[0]))  # least-confident first
     out: list[TelemetryDecision] = []
     hires = 0
     for path, margin in ranked:
@@ -169,9 +186,8 @@ def sense_by_ranker(ranker, blocks, *, margin_threshold: int = DEFAULT_MARGIN_TH
             res = "high"
             hires += 1
         else:
-            res = "off"                                      # confident: no telemetry
-        out.append(TelemetryDecision(path=path, resolution=res, cv_milli=margin,
-                                     samples=0))
+            res = "off"  # confident: no telemetry
+        out.append(TelemetryDecision(path=path, resolution=res, cv_milli=margin, samples=0))
     return sorted(out, key=lambda d: d.path)
 
 

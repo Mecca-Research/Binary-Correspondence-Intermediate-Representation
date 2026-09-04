@@ -68,7 +68,7 @@ def solve_reference(a: list[float], b: list[float], n: int, nrhs: int = 1) -> li
                 pivot = row
         if best == 0.0:
             raise ValueError(f"singular matrix: zero pivot in column {col} (no unique solution)")
-        if pivot != col:                      # swap the pivot row into place (both A and the RHS)
+        if pivot != col:  # swap the pivot row into place (both A and the RHS)
             m[col], m[pivot] = m[pivot], m[col]
             x[col], x[pivot] = x[pivot], x[col]
         # Eliminate column `col` below the pivot.
@@ -107,8 +107,9 @@ def residual(a: list[float], x: list[float], b: list[float], n: int, nrhs: int =
     return worst
 
 
-def solve_via_bridge(a: list[float], b: list[float], n: int, nrhs: int,
-                     group_size: int, bits: int) -> list[float]:
+def solve_via_bridge(
+    a: list[float], b: list[float], n: int, nrhs: int, group_size: int, bits: int
+) -> list[float]:
     """B-breadth: the Q8<->float32<->Q8 bridge wrapped around a TRUSTED external linear solve (integrate,
     don't reinvent) -- the solve analog of ``matmul.gemm_via_bridge`` / ``fft.fft_via_bridge``. The
     coefficient matrix and right-hand side arrive as per-group quantized storage; the bridge dequantizes

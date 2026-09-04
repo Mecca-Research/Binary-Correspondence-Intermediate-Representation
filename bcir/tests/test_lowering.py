@@ -20,6 +20,7 @@ def test_emitted_kernel_is_legal_llvm():
     import subprocess
     import tempfile
     import os
+
     module, res = _result()
     ll = emit_kernel_ll(module, res, fn_name="bcir_kernel")
     assert "<16 x float>" in ll  # cool AVX-512 -> vec16
@@ -27,8 +28,9 @@ def test_emitted_kernel_is_legal_llvm():
         path = os.path.join(d, "k.ll")
         with open(path, "w") as f:
             f.write(ll)
-        out = subprocess.run(["llvm-as", path, "-o", os.path.join(d, "k.bc")],
-                             capture_output=True, text=True)
+        out = subprocess.run(
+            ["llvm-as", path, "-o", os.path.join(d, "k.bc")], capture_output=True, text=True
+        )
         assert out.returncode == 0, out.stderr
 
 

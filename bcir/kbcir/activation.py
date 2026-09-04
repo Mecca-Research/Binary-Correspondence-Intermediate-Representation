@@ -49,7 +49,7 @@ from .quantize import dequantize, quantize_per_group
 # The activation family. ``exact`` activations are integer/Q-fixed clean (0 ULP, no transcendental, no
 # accuracy contract); the rest route a transcendental through the trusted ``c.call.libm:`` edge.
 ACTIVATIONS = ("relu", "sigmoid", "tanh", "gelu", "softmax")
-EXACT_ACTIVATIONS = ("relu",)                                 # max(0,x): deterministic, 0 ULP
+EXACT_ACTIVATIONS = ("relu",)  # max(0,x): deterministic, 0 ULP
 TRANSCENDENTAL_ACTIVATIONS = ("sigmoid", "tanh", "gelu", "softmax")  # need expf/tanhf via libm
 
 # Which trusted libm symbol each transcendental activation's C kernel calls through the c.call.libm:
@@ -57,7 +57,7 @@ TRANSCENDENTAL_ACTIVATIONS = ("sigmoid", "tanh", "gelu", "softmax")  # need expf
 _LIBM_EDGE = {
     "sigmoid": ("expf",),
     "tanh": ("tanhf",),
-    "gelu": ("tanhf",),       # the standard tanh-approximation GELU (no erf): 0.5x(1+tanh(...))
+    "gelu": ("tanhf",),  # the standard tanh-approximation GELU (no erf): 0.5x(1+tanh(...))
     "softmax": ("expf",),
 }
 
@@ -123,10 +123,10 @@ def softmax_reference(x: list[float], axis_len: int) -> list[float]:
         raise ValueError(f"softmax: len(x)={len(x)} not a multiple of axis_len={axis_len}")
     out = [0.0] * len(x)
     for r in range(0, len(x), axis_len):
-        row = x[r:r + axis_len]
-        m = max(row)                              # reduce-max (the stability shift)
-        ex = [math.exp(v - m) for v in row]       # exp over the shifted row
-        s = sum(ex) or 1.0                        # normalize (sum is exact-positive, never 0)
+        row = x[r : r + axis_len]
+        m = max(row)  # reduce-max (the stability shift)
+        ex = [math.exp(v - m) for v in row]  # exp over the shifted row
+        s = sum(ex) or 1.0  # normalize (sum is exact-positive, never 0)
         for j in range(axis_len):
             out[r + j] = ex[j] / s
     return out
@@ -148,8 +148,9 @@ def activation_reference(kind: str, x: list[float], axis_len: int | None = None)
     return softmax_reference(x, axis_len if axis_len is not None else len(x))
 
 
-def activation_via_bridge(kind: str, x: list[float], group_size: int, bits: int,
-                          axis_len: int | None = None) -> list[float]:
+def activation_via_bridge(
+    kind: str, x: list[float], group_size: int, bits: int, axis_len: int | None = None
+) -> list[float]:
     """The Q8<->float32<->Q8 bridge wrapped around the TRUSTED activation (integrate, don't reinvent) --
     the activation analog of matmul.gemm_via_bridge. The input arrives as per-group quantized storage; the
     bridge dequantizes to float32, the trusted activation (relu's exact max, or the libm-edge expf/tanhf
@@ -163,6 +164,7 @@ def activation_via_bridge(kind: str, x: list[float], group_size: int, bits: int,
 
 # ---- the planned-claim shape metadata (mirrors matmul.TilePlan) ----------------------------------
 
+
 @dataclass(frozen=True)
 class ActivationSpec:
     """A gem.activation as a FIRST-CLASS planned claim: the op kind + its tensor shape/dtype metadata,
@@ -174,8 +176,8 @@ class ActivationSpec:
     kind: str
     shape: tuple[int, ...]
     dtype: str = "f32"
-    axis_len: int = 0          # softmax last-axis length (0 for the elementwise activations)
-    width: int = 1             # the K_BCIR-selected lane width (the realization choice)
+    axis_len: int = 0  # softmax last-axis length (0 for the elementwise activations)
+    width: int = 1  # the K_BCIR-selected lane width (the realization choice)
 
     @property
     def count(self) -> int:
@@ -203,8 +205,13 @@ class ActivationSpec:
 _DTYPES = ("f32", "i32")
 
 
-def check_activation(spec: ActivationSpec, in_shape: tuple[int, ...], in_dtype: str,
-                     out_shape: tuple[int, ...], out_dtype: str) -> list[str]:
+def check_activation(
+    spec: ActivationSpec,
+    in_shape: tuple[int, ...],
+    in_dtype: str,
+    out_shape: tuple[int, ...],
+    out_dtype: str,
+) -> list[str]:
     """Op-level well-formedness for a gem.activation claim, returned as a list of error strings (empty ==
     well-formed) -- the shape/dtype-law shape gem.matmul uses inline, lifted into one named checker so the
     oracle rail and the tests can call it. NOT a globally-numbered R-law (matches gem.matmul, which adds
@@ -233,14 +240,18 @@ def check_activation(spec: ActivationSpec, in_shape: tuple[int, ...], in_dtype: 
         errs.append(f"{spec.kind}: spec dtype {spec.dtype!r} != input dtype {in_dtype!r}")
     # (1) shape-preserving (elementwise).
     if tuple(in_shape) != tuple(out_shape):
-        errs.append(f"{spec.kind}: not shape-preserving (in {tuple(in_shape)} != out {tuple(out_shape)})")
+        errs.append(
+            f"{spec.kind}: not shape-preserving (in {tuple(in_shape)} != out {tuple(out_shape)})"
+        )
     # (3) spec metadata consistent with the input shape.
     if tuple(spec.shape) != tuple(in_shape):
         errs.append(f"{spec.kind}: spec shape {tuple(spec.shape)} != input shape {tuple(in_shape)}")
     # (4) the quarantine dtype rule: a transcendental needs a float result.
     if spec.kind in TRANSCENDENTAL_ACTIVATIONS and in_dtype != "f32":
-        errs.append(f"{spec.kind}: transcendental activation needs f32 (the libm edge returns float), "
-                    f"got {in_dtype!r}")
+        errs.append(
+            f"{spec.kind}: transcendental activation needs f32 (the libm edge returns float), "
+            f"got {in_dtype!r}"
+        )
     # (5) the softmax axis.
     if spec.kind == "softmax":
         if not in_shape:
@@ -250,13 +261,18 @@ def check_activation(spec: ActivationSpec, in_shape: tuple[int, ...], in_dtype: 
             if spec.axis_len != last:
                 errs.append(f"softmax: axis_len {spec.axis_len} != last shape dim {last}")
             if spec.axis_len < 1 or (spec.count % spec.axis_len != 0):
-                errs.append(f"softmax: axis_len {spec.axis_len} must be >=1 and divide count {spec.count}")
+                errs.append(
+                    f"softmax: axis_len {spec.axis_len} must be >=1 and divide count {spec.count}"
+                )
     elif spec.axis_len != 0:
-        errs.append(f"{spec.kind}: elementwise activation must declare axis_len 0, got {spec.axis_len}")
+        errs.append(
+            f"{spec.kind}: elementwise activation must declare axis_len 0, got {spec.axis_len}"
+        )
     return errs
 
 
 # ---- the cost / realization plug-in (mirrors matmul.cost_of / cost_vector / plan_*) ---------------
+
 
 def cost_of(spec: ActivationSpec, width: int, target: TargetProfile) -> tuple[int, int]:
     """The analytic (compute, mem) cost of realizing an activation at lane `width`, in target units --
@@ -273,7 +289,7 @@ def cost_of(spec: ActivationSpec, width: int, target: TargetProfile) -> tuple[in
     # is heavier still (a cube + a tanh), softmax adds the exp.
     op_weight = {"relu": 1, "sigmoid": 8, "tanh": 8, "gelu": 12, "softmax": 8}[spec.kind]
     compute = ((n * op_weight) + thr - 1) // thr
-    streams = 3 if spec.kind == "softmax" else 2     # softmax: max + exp/sum + normalize re-reads
+    streams = 3 if spec.kind == "softmax" else 2  # softmax: max + exp/sum + normalize re-reads
     bw = max(1, target.mem_unit * target.mem_channels)
     mem = (n * streams + bw - 1) // bw
     return compute, mem
@@ -306,8 +322,13 @@ def _divisor_widths(target: TargetProfile, count: int) -> list[int]:
     return sorted({w for w in target.widths() if w <= max(1, count)} | {1})
 
 
-def plan_activation(kind: str, shape: tuple[int, ...], dtype: str = "f32", axis_len: int = 0,
-                    target: TargetProfile | None = None) -> ActivationSpec:
+def plan_activation(
+    kind: str,
+    shape: tuple[int, ...],
+    dtype: str = "f32",
+    axis_len: int = 0,
+    target: TargetProfile | None = None,
+) -> ActivationSpec:
     """K_BCIR's deterministic lane-width choice for an activation -- the elementwise analog of
     matmul.plan_matmul. For every candidate width: compute the roofline BOTTLENECK = max(compute, mem)
     (the max,+ step) and select the minimum-bottleneck width (the min,+ step), ties broken on the WIDER
@@ -319,10 +340,10 @@ def plan_activation(kind: str, shape: tuple[int, ...], dtype: str = "f32", axis_
     best_key: tuple | None = None
     for w in _divisor_widths(target, base.count):
         compute, mem = cost_of(base, w, target)
-        bn = max(compute, mem)                       # max,+ : the binding roofline resource
+        bn = max(compute, mem)  # max,+ : the binding roofline resource
         # min,+ selection: min bottleneck, then prefer the WIDER lane (more throughput), stable.
         key = (bn, -w)
-        if best is None or key < best_key:           # type: ignore[operator]
+        if best is None or key < best_key:  # type: ignore[operator]
             best, best_key = ActivationSpec(kind, tuple(shape), dtype, axis_len, w), key
     assert best is not None
     return best

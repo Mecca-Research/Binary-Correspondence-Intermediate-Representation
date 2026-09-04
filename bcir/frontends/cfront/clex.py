@@ -4,6 +4,7 @@ C `0x1.8p3` hex floats, with `f`/`l` suffixes), the operators L1–L4 need, and
 punctuation; skips whitespace, `//` + `/* */` comments, and (for now) preprocessor `#` lines —
 `#include <stdint.h>` is recognized but its types are built in, so the L7 preprocessor is deferred.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from dataclasses import dataclass
 
 class CLexError(Exception):
     """A lexing error. `pos` is the source byte offset of the offending character (for the caret)."""
+
     def __init__(self, message: str, pos: int | None = None):
         super().__init__(message)
         self.pos = pos
@@ -18,28 +20,87 @@ class CLexError(Exception):
 
 @dataclass(frozen=True)
 class Tok:
-    kind: str           # IDENT | INT | CHAR | STRING | OP | PUNCT | EOF
+    kind: str  # IDENT | INT | CHAR | STRING | OP | PUNCT | EOF
     text: str
     pos: int
 
 
-KEYWORDS = frozenset({
-    "struct", "union", "return", "if", "else", "while", "for", "do", "break", "continue",
-    "void", "_Bool", "bool", "char", "short", "int", "long", "unsigned", "signed",
-    "const", "volatile", "static", "inline", "sizeof", "typedef", "enum",
-    "_BitInt",                                   # C23 bit-precise integer type `_BitInt(N)` (§6.2.5)
-    "__asm__", "__volatile__",                   # GNU inline assembly (ASM1 trusted opaque edge): only the
-                                                 #   DOUBLE-UNDERSCORE spellings are reserved keywords (benign;
-                                                 #   implementation-reserved). Plain `asm` is NOT a keyword -- it
-                                                 #   stays a usable ISO-C identifier under -std=c11; the parser
-                                                 #   recognizes the `asm` STATEMENT contextually (a following `(`
-                                                 #   or a volatile/__volatile__/goto qualifier), see cparse._stmt.
-})
+KEYWORDS = frozenset(
+    {
+        "struct",
+        "union",
+        "return",
+        "if",
+        "else",
+        "while",
+        "for",
+        "do",
+        "break",
+        "continue",
+        "void",
+        "_Bool",
+        "bool",
+        "char",
+        "short",
+        "int",
+        "long",
+        "unsigned",
+        "signed",
+        "const",
+        "volatile",
+        "static",
+        "inline",
+        "sizeof",
+        "typedef",
+        "enum",
+        "_BitInt",  # C23 bit-precise integer type `_BitInt(N)` (§6.2.5)
+        "__asm__",
+        "__volatile__",  # GNU inline assembly (ASM1 trusted opaque edge): only the
+        #   DOUBLE-UNDERSCORE spellings are reserved keywords (benign;
+        #   implementation-reserved). Plain `asm` is NOT a keyword -- it
+        #   stays a usable ISO-C identifier under -std=c11; the parser
+        #   recognizes the `asm` STATEMENT contextually (a following `(`
+        #   or a volatile/__volatile__/goto qualifier), see cparse._stmt.
+    }
+)
 
 # Multi-char operators first (longest-match), then single-char.
-_OPS = ["<<=", ">>=", "->", "++", "--", "<<", ">>", "<=", ">=", "==", "!=", "&&", "||",
-        "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
-        "+", "-", "*", "/", "%", "&", "|", "^", "~", "!", "<", ">", "="]
+_OPS = [
+    "<<=",
+    ">>=",
+    "->",
+    "++",
+    "--",
+    "<<",
+    ">>",
+    "<=",
+    ">=",
+    "==",
+    "!=",
+    "&&",
+    "||",
+    "+=",
+    "-=",
+    "*=",
+    "/=",
+    "%=",
+    "&=",
+    "|=",
+    "^=",
+    "+",
+    "-",
+    "*",
+    "/",
+    "%",
+    "&",
+    "|",
+    "^",
+    "~",
+    "!",
+    "<",
+    ">",
+    "=",
+]
 _PUNCT = set("(){}[];,.:?")
 
 
@@ -60,7 +121,7 @@ def _scan_decimal_float(src: str, i: int, n: int) -> int | None:
             j += 1
             has_digit = True
     has_exp = False
-    if has_digit and j < n and src[j] in "eE":                # an exponent: e[+-]?digits
+    if has_digit and j < n and src[j] in "eE":  # an exponent: e[+-]?digits
         k = j + 1
         if k < n and src[k] in "+-":
             k += 1
@@ -69,14 +130,14 @@ def _scan_decimal_float(src: str, i: int, n: int) -> int | None:
             j = k
             while j < n and src[j].isdigit():
                 j += 1
-    if not has_digit or not (has_dot or has_exp):             # no fraction/exponent -> not a float
+    if not has_digit or not (has_dot or has_exp):  # no fraction/exponent -> not a float
         return None
-    if j < n and src[j] in "fFlL":                            # f/F (float) or l/L (long double) suffix
+    if j < n and src[j] in "fFlL":  # f/F (float) or l/L (long double) suffix
         j += 1
     return j
 
 
-_HEXD = "0123456789abcdefABCDEF'"      # hex digits (with the C23 ' separator)
+_HEXD = "0123456789abcdefABCDEF'"  # hex digits (with the C23 ' separator)
 
 
 def _scan_hex_float(src: str, i: int, n: int) -> int | None:
@@ -84,30 +145,30 @@ def _scan_hex_float(src: str, i: int, n: int) -> int | None:
     return its end index, else None. A hex float needs the `0x` prefix, at least one significand hex
     digit, and a *mandatory* binary `p`/`P` exponent (decimal digits) — the `p` is what distinguishes
     it from a plain hex integer like `0x1f`. The significand may carry a `.` and C23 `'` separators."""
-    if src[i:i + 2] not in ("0x", "0X"):
+    if src[i : i + 2] not in ("0x", "0X"):
         return None
     j = i + 2
     start = j
-    while j < n and src[j] in _HEXD:                          # the integer part of the significand
+    while j < n and src[j] in _HEXD:  # the integer part of the significand
         j += 1
     has_sig = j > start
-    if j < n and src[j] == ".":                               # an optional fractional part
+    if j < n and src[j] == ".":  # an optional fractional part
         j += 1
         fstart = j
         while j < n and src[j] in _HEXD:
             j += 1
         has_sig = has_sig or j > fstart
-    if not has_sig or j >= n or src[j] not in "pP":           # need digits AND the binary exponent
+    if not has_sig or j >= n or src[j] not in "pP":  # need digits AND the binary exponent
         return None
     j += 1
-    if j < n and src[j] in "+-":                              # an optionally-signed exponent
+    if j < n and src[j] in "+-":  # an optionally-signed exponent
         j += 1
     estart = j
     while j < n and (src[j].isdigit() or src[j] == "'"):
         j += 1
-    if j == estart:                                           # the exponent needs at least one digit
+    if j == estart:  # the exponent needs at least one digit
         return None
-    if j < n and src[j] in "fFlL":                            # f/F (float) or l/L (long double) suffix
+    if j < n and src[j] in "fFlL":  # f/F (float) or l/L (long double) suffix
         j += 1
     return j
 
@@ -120,23 +181,23 @@ def tokenize(src: str) -> list[Tok]:
         if c in " \t\r\n":
             i += 1
             continue
-        if c == "/" and i + 1 < n and src[i + 1] == "/":          # line comment
+        if c == "/" and i + 1 < n and src[i + 1] == "/":  # line comment
             while i < n and src[i] != "\n":
                 i += 1
             continue
-        if c == "/" and i + 1 < n and src[i + 1] == "*":          # block comment
+        if c == "/" and i + 1 < n and src[i + 1] == "*":  # block comment
             i += 2
             while i + 1 < n and not (src[i] == "*" and src[i + 1] == "/"):
                 i += 1
             i += 2
             continue
-        if c == "#":                                              # preprocessor line (skipped)
+        if c == "#":  # preprocessor line (skipped)
             while i < n and src[i] != "\n":
                 i += 1
             continue
-        if c in "LuU":                                            # wide/UTF literal prefix L/u/U/u8
-            pfx = ""                                              # before a " or ' (else an identifier)
-            if src[i:i + 2] == "u8" and i + 2 < n and src[i + 2] in "\"'":
+        if c in "LuU":  # wide/UTF literal prefix L/u/U/u8
+            pfx = ""  # before a " or ' (else an identifier)
+            if src[i : i + 2] == "u8" and i + 2 < n and src[i + 2] in "\"'":
                 pfx = "u8"
             elif i + 1 < n and src[i + 1] in "\"'":
                 pfx = c
@@ -147,63 +208,69 @@ def tokenize(src: str) -> list[Tok]:
                 while j < n and src[j] != quote:
                     j += 2 if (src[j] == "\\" and j + 1 < n) else 1
                 if j >= n:
-                    raise CLexError(f"unterminated {'string' if quote == chr(34) else 'character'} "
-                                    f"literal", pos=i)
-                toks.append(Tok("STRING" if quote == '"' else "CHAR", src[i:j + 1], i))
+                    raise CLexError(
+                        f"unterminated {'string' if quote == chr(34) else 'character'} literal",
+                        pos=i,
+                    )
+                toks.append(Tok("STRING" if quote == '"' else "CHAR", src[i : j + 1], i))
                 i = j + 1
                 continue
-        if c.isalpha() or c == "_":                               # identifier / keyword
+        if c.isalpha() or c == "_":  # identifier / keyword
             j = i
             while j < n and (src[j].isalnum() or src[j] == "_"):
                 j += 1
             toks.append(Tok("IDENT", src[i:j], i))
             i = j
             continue
-        if ((c.isdigit() and src[i:i + 2] not in ("0x", "0X", "0b", "0B"))   # decimal float literal
-                or (c == "." and i + 1 < n and src[i + 1].isdigit())):        # (.5 / 1.5 / 1e10 / 3.14f)
+        if (
+            (
+                c.isdigit() and src[i : i + 2] not in ("0x", "0X", "0b", "0B")
+            )  # decimal float literal
+            or (c == "." and i + 1 < n and src[i + 1].isdigit())
+        ):  # (.5 / 1.5 / 1e10 / 3.14f)
             end = _scan_decimal_float(src, i, n)
             if end is not None:
                 toks.append(Tok("FLOAT", src[i:end], i))
                 i = end
                 continue
-        if src[i:i + 2] in ("0x", "0X"):                          # hex float (0x1p4) vs hex int (0x1f)
-            end = _scan_hex_float(src, i, n)                      # only matches when a `p` exponent is present
+        if src[i : i + 2] in ("0x", "0X"):  # hex float (0x1p4) vs hex int (0x1f)
+            end = _scan_hex_float(src, i, n)  # only matches when a `p` exponent is present
             if end is not None:
                 toks.append(Tok("FLOAT", src[i:end], i))
                 i = end
                 continue
-        if c.isdigit():                                           # integer literal
+        if c.isdigit():  # integer literal
             j = i
-            if src[j:j + 2] in ("0x", "0X", "0b", "0B"):
+            if src[j : j + 2] in ("0x", "0X", "0b", "0B"):
                 j += 2
             while j < n and (src[j].isalnum() or src[j] == "'"):  # digits, suffix, C23 separators
                 j += 1
             toks.append(Tok("INT", src[i:j], i))
             i = j
             continue
-        if c == '"':                                              # string literal
+        if c == '"':  # string literal
             j = i + 1
             while j < n and src[j] != '"':
-                j += 2 if (src[j] == "\\" and j + 1 < n) else 1   # skip an escaped char as a unit
+                j += 2 if (src[j] == "\\" and j + 1 < n) else 1  # skip an escaped char as a unit
             if j >= n:
                 raise CLexError("unterminated string literal", pos=i)
-            toks.append(Tok("STRING", src[i:j + 1], i))           # text includes the surrounding quotes
+            toks.append(Tok("STRING", src[i : j + 1], i))  # text includes the surrounding quotes
             i = j + 1
             continue
-        if c == "'":                                              # character constant
+        if c == "'":  # character constant
             j = i + 1
             while j < n and src[j] != "'":
-                j += 2 if (src[j] == "\\" and j + 1 < n) else 1   # skip an escaped char as a unit
+                j += 2 if (src[j] == "\\" and j + 1 < n) else 1  # skip an escaped char as a unit
             if j >= n:
                 raise CLexError("unterminated character constant", pos=i)
-            toks.append(Tok("CHAR", src[i:j + 1], i))             # text includes the surrounding quotes
+            toks.append(Tok("CHAR", src[i : j + 1], i))  # text includes the surrounding quotes
             i = j + 1
             continue
-        if src.startswith("...", i):                              # the variadic ellipsis (one 3-char token)
+        if src.startswith("...", i):  # the variadic ellipsis (one 3-char token)
             toks.append(Tok("PUNCT", "...", i))
             i += 3
             continue
-        for op in _OPS:                                           # operators (longest match)
+        for op in _OPS:  # operators (longest match)
             if src.startswith(op, i):
                 toks.append(Tok("OP", op, i))
                 i += len(op)
@@ -218,10 +285,21 @@ def tokenize(src: str) -> list[Tok]:
     return toks
 
 
-_SIMPLE_ESCAPE = {"n": 10, "t": 9, "r": 13, "\\": 92, "'": 39, '"': 34,
-                  "a": 7, "b": 8, "f": 12, "v": 11, "?": 63}
+_SIMPLE_ESCAPE = {
+    "n": 10,
+    "t": 9,
+    "r": 13,
+    "\\": 92,
+    "'": 39,
+    '"': 34,
+    "a": 7,
+    "b": 8,
+    "f": 12,
+    "v": 11,
+    "?": 63,
+}
 
-_LIT_PREFIXES = ("u8", "L", "u", "U")           # wide/UTF string + character literal prefixes
+_LIT_PREFIXES = ("u8", "L", "u", "U")  # wide/UTF string + character literal prefixes
 
 
 def split_lit_prefix(text: str) -> tuple[str, str]:
@@ -229,7 +307,7 @@ def split_lit_prefix(text: str) -> tuple[str, str]:
     spelling, returning ``(prefix, rest)`` where ``rest`` begins with the opening quote."""
     for p in _LIT_PREFIXES:
         if text.startswith(p) and len(text) > len(p) and text[len(p)] in "\"'":
-            return p, text[len(p):]
+            return p, text[len(p) :]
     return "", text
 
 
@@ -249,17 +327,17 @@ def decode_c_bytes(inner: str) -> list[int]:
         ch = inner[i]
         if ch == "\\" and i + 1 < ln:
             e = inner[i + 1]
-            if e == "x":                                       # \xHH.. -> all following hex digits
+            if e == "x":  # \xHH.. -> all following hex digits
                 i, val = i + 2, 0
                 while i < ln and inner[i] in "0123456789abcdefABCDEF":
                     val, i = val * 16 + int(inner[i], 16), i + 1
                 out.append(val & 0xFF)
-            elif e in "01234567":                              # \NNN -> up to three octal digits
+            elif e in "01234567":  # \NNN -> up to three octal digits
                 i, val, k = i + 1, 0, 0
                 while k < 3 and i < ln and inner[i] in "01234567":
                     val, i, k = val * 8 + int(inner[i], 8), i + 1, k + 1
                 out.append(val & 0xFF)
-            else:                                              # \n, \t, \\, \", \0-less simple escapes
+            else:  # \n, \t, \\, \", \0-less simple escapes
                 out.append(_SIMPLE_ESCAPE.get(e, ord(e)) & 0xFF)
                 i += 2
         else:
@@ -280,11 +358,11 @@ def parse_char_literal(text: str) -> int:
         return 0
     if len(bs) == 1:
         b = bs[0]
-        return b - 256 if b >= 128 else b                      # a single char is a signed char
+        return b - 256 if b >= 128 else b  # a single char is a signed char
     v = 0
     for b in bs:
         v = ((v << 8) | b) & 0xFFFFFFFF
-    return v - (1 << 32) if v >= (1 << 31) else v              # an int32 multi-character constant
+    return v - (1 << 32) if v >= (1 << 31) else v  # an int32 multi-character constant
 
 
 def parse_int_literal(text: str) -> int:

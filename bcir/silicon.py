@@ -59,10 +59,11 @@ def _parse_size(text: str | None) -> int | None:
 
 # --- cache topology --------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class CacheLevel:
     level: int
-    kind: str          # "Data" | "Instruction" | "Unified"
+    kind: str  # "Data" | "Instruction" | "Unified"
     size_bytes: int
 
 
@@ -103,12 +104,13 @@ def tier_capacities() -> dict[MemTier, int] | None:
 
 # --- cpufreq (read; actuation gated) ---------------------------------------------
 
+
 @dataclass(frozen=True)
 class CpuFreq:
     nominal_khz: int | None
-    steps_khz: tuple[int, ...]          # discrete scaling steps ((),) if none exposed
+    steps_khz: tuple[int, ...]  # discrete scaling steps ((),) if none exposed
     governor: str | None
-    actuatable: bool                    # can we set the frequency here?
+    actuatable: bool  # can we set the frequency here?
 
     @property
     def available(self) -> bool:
@@ -127,8 +129,9 @@ def cpufreq_info() -> CpuFreq:
     nominal_khz = int(nominal) if nominal else _cpuinfo_khz()
     setspeed = f"{fq}/scaling_setspeed"
     actuatable = governor == "userspace" and os.access(setspeed, os.W_OK)
-    return CpuFreq(nominal_khz=nominal_khz, steps_khz=steps,
-                   governor=governor, actuatable=actuatable)
+    return CpuFreq(
+        nominal_khz=nominal_khz, steps_khz=steps, governor=governor, actuatable=actuatable
+    )
 
 
 def _cpuinfo_khz() -> int | None:
@@ -144,6 +147,7 @@ def _cpuinfo_khz() -> int | None:
 
 
 # --- OS / hardware counters (the telemetry-ring feed) ----------------------------
+
 
 @dataclass(frozen=True)
 class Counters:
@@ -164,19 +168,25 @@ class CounterSampler:
     def __init__(self):
         self._w = time.perf_counter_ns()
         self._c = time.process_time_ns()
-        self._r = (_resource.getrusage(_resource.RUSAGE_SELF)
-                   if _resource is not None else None)
+        self._r = _resource.getrusage(_resource.RUSAGE_SELF) if _resource is not None else None
 
     def lap(self) -> Counters:
         w, c = time.perf_counter_ns(), time.process_time_ns()
-        r = (_resource.getrusage(_resource.RUSAGE_SELF)
-             if _resource is not None else None)
+        r = _resource.getrusage(_resource.RUSAGE_SELF) if _resource is not None else None
         out = Counters(
-            wall_ns=w - self._w, cpu_ns=c - self._c,
-            minor_faults=(r.ru_minflt - self._r.ru_minflt) if r is not None and self._r is not None else 0,
-            major_faults=(r.ru_majflt - self._r.ru_majflt) if r is not None and self._r is not None else 0,
+            wall_ns=w - self._w,
+            cpu_ns=c - self._c,
+            minor_faults=(r.ru_minflt - self._r.ru_minflt)
+            if r is not None and self._r is not None
+            else 0,
+            major_faults=(r.ru_majflt - self._r.ru_majflt)
+            if r is not None and self._r is not None
+            else 0,
             vol_ctx=(r.ru_nvcsw - self._r.ru_nvcsw) if r is not None and self._r is not None else 0,
-            invol_ctx=(r.ru_nivcsw - self._r.ru_nivcsw) if r is not None and self._r is not None else 0)
+            invol_ctx=(r.ru_nivcsw - self._r.ru_nivcsw)
+            if r is not None and self._r is not None
+            else 0,
+        )
         self._w, self._c, self._r = w, c, r
         return out
 
@@ -189,8 +199,14 @@ def perf_counters_available() -> bool:
 
 # --- hardware PMU counters (perf_event_open; degrades to None with no PMU) --------
 
-_PERF_HW = {"cycles": 0, "instructions": 1, "cache_refs": 2, "cache_misses": 3,
-            "branches": 4, "branch_misses": 5}
+_PERF_HW = {
+    "cycles": 0,
+    "instructions": 1,
+    "cache_refs": 2,
+    "cache_misses": 3,
+    "branches": 4,
+    "branch_misses": 5,
+}
 _IOC_ENABLE, _IOC_DISABLE, _IOC_RESET = 0x2400, 0x2401, 0x2403
 
 
@@ -199,6 +215,7 @@ _IOC_ENABLE, _IOC_DISABLE, _IOC_RESET = 0x2400, 0x2401, 0x2403
 # ABI rules never collide here (the regression #255 fixed, now structural). See bcir/channels.py.
 def _perf_syscall_nr() -> int:
     from .channels import host_perf_syscall_nr
+
     return host_perf_syscall_nr()
 
 
@@ -210,17 +227,29 @@ def _perf_open(config: int):
     not permitted. Caller closes the fd."""
     try:
         import ctypes
+
         libc = ctypes.CDLL(None, use_errno=True)
 
         class _attr(ctypes.Structure):
-            _fields_ = [("type", ctypes.c_uint32), ("size", ctypes.c_uint32),
-                        ("config", ctypes.c_uint64), ("sample_period", ctypes.c_uint64),
-                        ("sample_type", ctypes.c_uint64), ("read_format", ctypes.c_uint64),
-                        ("flags", ctypes.c_uint64), ("wakeup", ctypes.c_uint32),
-                        ("bp_type", ctypes.c_uint32), ("bp_addr", ctypes.c_uint64),
-                        ("bp_len", ctypes.c_uint64)]
-        a = _attr(); a.type = 0; a.size = ctypes.sizeof(a); a.config = config
-        a.flags = (1 << 0) | (1 << 20)            # disabled + exclude_kernel
+            _fields_ = [
+                ("type", ctypes.c_uint32),
+                ("size", ctypes.c_uint32),
+                ("config", ctypes.c_uint64),
+                ("sample_period", ctypes.c_uint64),
+                ("sample_type", ctypes.c_uint64),
+                ("read_format", ctypes.c_uint64),
+                ("flags", ctypes.c_uint64),
+                ("wakeup", ctypes.c_uint32),
+                ("bp_type", ctypes.c_uint32),
+                ("bp_addr", ctypes.c_uint64),
+                ("bp_len", ctypes.c_uint64),
+            ]
+
+        a = _attr()
+        a.type = 0
+        a.size = ctypes.sizeof(a)
+        a.config = config
+        a.flags = (1 << 0) | (1 << 20)  # disabled + exclude_kernel
         fd = libc.syscall(_SYS_perf_event_open, ctypes.byref(a), 0, -1, -1, 0)
         return int(fd) if fd >= 0 else None
     except Exception:
@@ -245,9 +274,12 @@ def read_hw_counters(work) -> HwSample | None:
     `work()` is NOT run, so the caller can run it once under the OS-counter fallback.
     Closes every fd it opens."""
     import ctypes
-    fds = {name: _perf_open(cfg) for name, cfg in
-           (("cycles", 0), ("instructions", 1), ("cache_misses", 3))}
-    if any(fd is None for fd in fds.values()):     # no PMU: do NOT run work here
+
+    fds = {
+        name: _perf_open(cfg)
+        for name, cfg in (("cycles", 0), ("instructions", 1), ("cache_misses", 3))
+    }
+    if any(fd is None for fd in fds.values()):  # no PMU: do NOT run work here
         for fd in fds.values():
             if fd is not None:
                 os.close(fd)
@@ -257,7 +289,7 @@ def read_hw_counters(work) -> HwSample | None:
         for fd in fds.values():
             libc.ioctl(fd, _IOC_RESET, 0)
             libc.ioctl(fd, _IOC_ENABLE, 0)
-        work()                                     # committed: work runs exactly once
+        work()  # committed: work runs exactly once
         vals = {}
         for name, fd in fds.items():
             libc.ioctl(fd, _IOC_DISABLE, 0)
@@ -265,8 +297,11 @@ def read_hw_counters(work) -> HwSample | None:
                 vals[name] = int.from_bytes(os.read(fd, 8), "little", signed=False)
             except OSError:
                 vals[name] = 0
-        return HwSample(cycles=vals["cycles"], instructions=vals["instructions"],
-                        cache_misses=vals["cache_misses"])
+        return HwSample(
+            cycles=vals["cycles"],
+            instructions=vals["instructions"],
+            cache_misses=vals["cache_misses"],
+        )
     finally:
         for fd in fds.values():
             os.close(fd)
@@ -353,7 +388,7 @@ class RaplSampler:
         if now is None or self._start is None:
             return None
         delta = now - self._start
-        if delta < 0 and self._max:                  # the counter wrapped
+        if delta < 0 and self._max:  # the counter wrapped
             delta += self._max
         self._start = now
         return max(0, delta)
@@ -388,7 +423,7 @@ def read_thermal_millideg() -> int | None:
         ztype = (_read(f"{_THERMAL_BASE}/{z}/type") or "").lower()
         if any(tag in ztype for tag in _CPU_ZONE_TYPES):
             cpu_temps.append(v)
-    pool = cpu_temps or all_temps                 # prefer CPU zones; else any zone
+    pool = cpu_temps or all_temps  # prefer CPU zones; else any zone
     return max(pool) if pool else None
 
 
@@ -421,9 +456,9 @@ def silicon_dna(work, claim_id: int = 0):
     provenance: set[str] = set()
     rapl = RaplSampler()
     sampler = CounterSampler()
-    hw = read_hw_counters(work)                       # runs work() iff a PMU is present
+    hw = read_hw_counters(work)  # runs work() iff a PMU is present
     if hw is None:
-        work()                                       # no PMU: run once under OS counters
+        work()  # no PMU: run once under OS counters
     else:
         provenance.add("pmu")
     c = sampler.lap()
@@ -443,12 +478,21 @@ def silicon_dna(work, claim_id: int = 0):
     voltage = 0
     if energy_uj is not None and c.wall_ns > 0:
         voltage = min(100, (energy_uj * 1000) // max(1, c.wall_ns))
-    dna = DataDNA(segment_id="silicon", claim_id=claim_id, cycles=(hw.cycles if hw else c.cpu_ns),
-                  bytes=0, misses=misses, thermal=thermal, voltage=int(voltage), utilization=util)
+    dna = DataDNA(
+        segment_id="silicon",
+        claim_id=claim_id,
+        cycles=(hw.cycles if hw else c.cpu_ns),
+        bytes=0,
+        misses=misses,
+        thermal=thermal,
+        voltage=int(voltage),
+        utilization=util,
+    )
     return dna, provenance
 
 
 # --- the telemetry-ring feed -----------------------------------------------------
+
 
 def sample_into_ring(ring, claim_id: int, work) -> Counters:
     """Run `work()` once, measure it, and write one record into the zero-copy
@@ -459,20 +503,31 @@ def sample_into_ring(ring, claim_id: int, work) -> Counters:
     faults. The raw ``Counters`` delta remains unchanged. The kernel writes, the
     consumer `drain()`s the same buffer -- a real measured signal."""
     from .telemetry import DataDNA
+
     sampler = CounterSampler()
-    hw = read_hw_counters(work)              # runs work() iff a PMU is present
+    hw = read_hw_counters(work)  # runs work() iff a PMU is present
     if hw is None:
-        work()                              # no PMU: run once under OS counters
+        work()  # no PMU: run once under OS counters
     c = sampler.lap()
     cycles = hw.cycles if hw else (c.cpu_ns if c.cpu_ns > 0 else c.wall_ns)
     misses = hw.cache_misses if hw else (c.minor_faults + c.major_faults)
-    ring.write(DataDNA(segment_id="", claim_id=claim_id, cycles=cycles, bytes=0,
-                       misses=misses, thermal=0, voltage=0,
-                       utilization=min(100, (c.cpu_ns * 100) // max(1, c.wall_ns))))
+    ring.write(
+        DataDNA(
+            segment_id="",
+            claim_id=claim_id,
+            cycles=cycles,
+            bytes=0,
+            misses=misses,
+            thermal=0,
+            voltage=0,
+            utilization=min(100, (c.cpu_ns * 100) // max(1, c.wall_ns)),
+        )
+    )
     return c
 
 
 # --- honest provenance -----------------------------------------------------------
+
 
 def summary() -> dict:
     """What the current host actually exposes -- the real/unavailable split."""

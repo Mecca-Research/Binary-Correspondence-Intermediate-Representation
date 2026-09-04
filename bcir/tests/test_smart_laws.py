@@ -20,12 +20,13 @@ COOL = Theta.cool()
 
 # --- R14: CIM/PIM dispatch legality ----------------------------------------------
 
+
 def test_r14_pim_on_a_reduction_is_legal():
     pim = dataclasses.replace(TargetProfile.x86_avx512(), isa_features=frozenset({"pim"}))
     m = gather_reduce(1 << 20)
     pack, decisions = annotate_cim(m, optimize(m, pim, COOL), pim)
-    assert any(d.offload for d in decisions)          # the reduction did offload
-    assert verify_cim(pack) == []                     # ... and that is legal (R14 clean)
+    assert any(d.offload for d in decisions)  # the reduction did offload
+    assert verify_cim(pack) == []  # ... and that is legal (R14 clean)
 
 
 def test_r14_pim_on_a_non_reduction_is_rejected():
@@ -37,6 +38,7 @@ def test_r14_pim_on_a_non_reduction_is_rejected():
 
 
 # --- R15: DVFS clock legality ----------------------------------------------------
+
 
 def test_r15_a_real_dvfs_plan_is_legal():
     m = vector_add(1 << 16)
@@ -55,6 +57,7 @@ def test_r15_memory_bound_overclock_is_rejected():
 
 # --- R16: allocator placement legality -------------------------------------------
 
+
 def test_r16_a_fitting_placement_is_legal():
     # 1024 * 4 B = 4 KiB fits the 64 KiB L1 cap.
     m = vector_add(1024)
@@ -69,17 +72,20 @@ def test_r16_oversized_l1_placement_is_rejected():
 
 
 def test_r16_l2_cap_is_four_mib():
-    m = vector_add(1 << 20)                # 4 MiB: == the L2 cap (legal), > L1 (illegal)
+    m = vector_add(1 << 20)  # 4 MiB: == the L2 cap (legal), > L1 (illegal)
     assert verify_allocator(m, Placement(tiers={10: MemTier.L2}, moved=(10,))) == []
-    assert [d.law for d in verify_allocator(m, Placement(tiers={10: MemTier.L1}, moved=(10,)))] == ["R16"]
+    assert [d.law for d in verify_allocator(m, Placement(tiers={10: MemTier.L1}, moved=(10,)))] == [
+        "R16"
+    ]
 
 
 def test_r16_offchip_tiers_have_no_cap():
-    m = vector_add(1 << 24)                # huge, but DRAM/HBM carry no static cap
+    m = vector_add(1 << 24)  # huge, but DRAM/HBM carry no static cap
     assert verify_allocator(m, Placement(tiers={10: MemTier.DRAM}, moved=())) == []
 
 
 # --- the aggregator --------------------------------------------------------------
+
 
 def test_verify_smart_lowering_runs_the_provided_laws():
     m = vector_add(1024)

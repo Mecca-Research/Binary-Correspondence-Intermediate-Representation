@@ -45,6 +45,7 @@ from .c_kernel import emit_sycl_matmul_c, emit_sycl_reduce_c, emit_sycl_saxpy_c
 
 # --- compiler detection (mirrors test_sycl_channel.py _cxx / _sycl_cxx) --------------------------------
 
+
 def host_cxx() -> str | None:
     """A host C++ compiler (g++/clang++/c++), or None (the fallback compile/run self-skips)."""
     return shutil.which("g++") or shutil.which("clang++") or shutil.which("c++")
@@ -60,21 +61,21 @@ def sycl_cxx() -> tuple[str, list[str]] | None:
     if shutil.which("icpx"):
         candidates.append((shutil.which("icpx"), ["-fsycl"]))
     if shutil.which("acpp"):
-        candidates.append((shutil.which("acpp"), []))         # acpp/Open SYCL drives -fsycl itself
+        candidates.append((shutil.which("acpp"), []))  # acpp/Open SYCL drives -fsycl itself
     if shutil.which("clang++"):
         candidates.append((shutil.which("clang++"), ["-fsycl"]))
     if not candidates:
         return None
-    probe = ("#include <sycl/sycl.hpp>\n"
-             "int main(){ sycl::queue q; (void)q; return 0; }\n")
+    probe = "#include <sycl/sycl.hpp>\nint main(){ sycl::queue q; (void)q; return 0; }\n"
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "probe.cpp")
         with open(src, "w") as f:
             f.write(probe)
         for cxx, extra in candidates:
             exe = os.path.join(d, "probe")
-            r = subprocess.run([cxx, "-std=c++17", *extra, src, "-o", exe],
-                               capture_output=True, text=True)
+            r = subprocess.run(
+                [cxx, "-std=c++17", *extra, src, "-o", exe], capture_output=True, text=True
+            )
             if r.returncode == 0:
                 return cxx, extra
     return None
@@ -87,10 +88,12 @@ class DispatchUnavailable(RuntimeError):
 
 def _serialized_dispatch(method):
     """Keep compile-cache, temporary-directory, execution, and close one lifecycle."""
+
     @functools.wraps(method)
     def wrapped(self, *args, **kwargs):
         with self._lock:
             return method(self, *args, **kwargs)
+
     return wrapped
 
 
@@ -98,6 +101,7 @@ _MAX_DISPATCH_ELEMENTS = 1 << 18
 
 
 # --- the dispatcher interface + the SYCL SAXPY implementation -----------------------------------------
+
 
 class ChannelDispatcher:
     """A resident channel backend that EXECUTES routed work: given a claim's input arrays, it produces the
@@ -181,13 +185,14 @@ class SyclDispatcher(ChannelDispatcher):
             return self._exe_cache[key], mode
 
         if device:
-            cxx, extra = self._sycl                          # type: ignore[misc]
+            cxx, extra = self._sycl  # type: ignore[misc]
             define, flags = "-DBCIR_USE_SYCL", list(extra)
         else:
             if self._cxx is None:
                 raise DispatchUnavailable(
                     "no C++ compiler (g++/clang++/c++); the SYCL dispatch path cannot execute "
-                    "(self-skip -- this is not a failure and not a legality verdict)")
+                    "(self-skip -- this is not a failure and not a legality verdict)"
+                )
             cxx, define, flags = self._cxx, None, []
 
         wd = self._workdir()
@@ -203,7 +208,8 @@ class SyclDispatcher(ChannelDispatcher):
         bld = subprocess.run(cmd, capture_output=True, text=True)
         if bld.returncode != 0:
             raise DispatchUnavailable(
-                f"the SYCL dispatch kernel did not build ({mode} path):\n{bld.stderr.strip()}")
+                f"the SYCL dispatch kernel did not build ({mode} path):\n{bld.stderr.strip()}"
+            )
         self._exe_cache[key] = exe
         return exe, mode
 
@@ -215,13 +221,14 @@ class SyclDispatcher(ChannelDispatcher):
         main = (
             "\n#include <cstdio>\n#include <cstddef>\n"
             f"int main(void){{\n"
-            f"  float a;\n  if (std::scanf(\"%f\", &a) != 1) return 2;\n"
+            f'  float a;\n  if (std::scanf("%f", &a) != 1) return 2;\n'
             f"  float x[{n}], y[{n}], out[{n}];\n"
-            f"  for (int i = 0; i < {n}; ++i) if (std::scanf(\"%f\", &x[i]) != 1) return 2;\n"
-            f"  for (int i = 0; i < {n}; ++i) if (std::scanf(\"%f\", &y[i]) != 1) return 2;\n"
+            f'  for (int i = 0; i < {n}; ++i) if (std::scanf("%f", &x[i]) != 1) return 2;\n'
+            f'  for (int i = 0; i < {n}; ++i) if (std::scanf("%f", &y[i]) != 1) return 2;\n'
             f"  {fn_name}(a, x, y, out);\n"
-            f"  for (int i = 0; i < {n}; ++i) std::printf(\"%.8f\\n\", (double)out[i]);\n"
-            f"  return 0;\n}}\n")
+            f'  for (int i = 0; i < {n}; ++i) std::printf("%.8f\\n", (double)out[i]);\n'
+            f"  return 0;\n}}\n"
+        )
         return self._build(f"saxpy_{n}", kernel, main)
 
     @_serialized_dispatch
@@ -242,7 +249,8 @@ class SyclDispatcher(ChannelDispatcher):
         run = subprocess.run([exe], input=stdin, capture_output=True, text=True)
         if run.returncode != 0:
             raise DispatchUnavailable(
-                f"the SYCL dispatch kernel did not run ({mode} path):\n{run.stdout}{run.stderr}")
+                f"the SYCL dispatch kernel did not run ({mode} path):\n{run.stdout}{run.stderr}"
+            )
         self._mode = mode
         return [float(v) for v in run.stdout.split()]
 
@@ -254,10 +262,11 @@ class SyclDispatcher(ChannelDispatcher):
             "\n#include <cstdio>\n#include <cstddef>\n"
             f"int main(void){{\n"
             f"  float x[{n}], out;\n"
-            f"  for (int i = 0; i < {n}; ++i) if (std::scanf(\"%f\", &x[i]) != 1) return 2;\n"
+            f'  for (int i = 0; i < {n}; ++i) if (std::scanf("%f", &x[i]) != 1) return 2;\n'
             f"  {fn_name}(x, &out);\n"
-            f"  std::printf(\"%.8f\\n\", (double)out);\n"
-            f"  return 0;\n}}\n")
+            f'  std::printf("%.8f\\n", (double)out);\n'
+            f"  return 0;\n}}\n"
+        )
         return self._build(f"reduce_{n}", kernel, main)
 
     @_serialized_dispatch
@@ -278,7 +287,8 @@ class SyclDispatcher(ChannelDispatcher):
         run = subprocess.run([exe], input=stdin, capture_output=True, text=True)
         if run.returncode != 0:
             raise DispatchUnavailable(
-                f"the SYCL reduce dispatch kernel did not run ({mode} path):\n{run.stdout}{run.stderr}")
+                f"the SYCL reduce dispatch kernel did not run ({mode} path):\n{run.stdout}{run.stderr}"
+            )
         self._mode = mode
         return float(run.stdout.split()[0])
 
@@ -291,11 +301,12 @@ class SyclDispatcher(ChannelDispatcher):
             "\n#include <cstdio>\n#include <cstddef>\n"
             f"int main(void){{\n"
             f"  float A[{na}], B[{nb}], C[{nc}];\n"
-            f"  for (int i = 0; i < {na}; ++i) if (std::scanf(\"%f\", &A[i]) != 1) return 2;\n"
-            f"  for (int i = 0; i < {nb}; ++i) if (std::scanf(\"%f\", &B[i]) != 1) return 2;\n"
+            f'  for (int i = 0; i < {na}; ++i) if (std::scanf("%f", &A[i]) != 1) return 2;\n'
+            f'  for (int i = 0; i < {nb}; ++i) if (std::scanf("%f", &B[i]) != 1) return 2;\n'
             f"  {fn_name}(A, B, C);\n"
-            f"  for (int i = 0; i < {nc}; ++i) std::printf(\"%.8f\\n\", (double)C[i]);\n"
-            f"  return 0;\n}}\n")
+            f'  for (int i = 0; i < {nc}; ++i) std::printf("%.8f\\n", (double)C[i]);\n'
+            f"  return 0;\n}}\n"
+        )
         return self._build(f"matmul_{m}x{k}x{n}", kernel, main)
 
     @_serialized_dispatch
@@ -321,7 +332,8 @@ class SyclDispatcher(ChannelDispatcher):
         run = subprocess.run([exe], input=stdin, capture_output=True, text=True)
         if run.returncode != 0:
             raise DispatchUnavailable(
-                f"the SYCL matmul dispatch kernel did not run ({mode} path):\n{run.stdout}{run.stderr}")
+                f"the SYCL matmul dispatch kernel did not run ({mode} path):\n{run.stdout}{run.stderr}"
+            )
         self._mode = mode
         return [float(v) for v in run.stdout.split()]
 
@@ -393,9 +405,9 @@ def build_execute_kernels(module, plan, store: dict, dispatchers: dict):
         def kernel():
             a, x, y = _inputs(claim)
             if disp is not None:
-                out = disp.run_saxpy(a, x, y)           # the routed channel EXECUTES the claim
+                out = disp.run_saxpy(a, x, y)  # the routed channel EXECUTES the claim
             else:
-                out = saxpy_reference(a, x, y)          # minimal reference for non-dispatched claims
+                out = saxpy_reference(a, x, y)  # minimal reference for non-dispatched claims
             _write(claim, out)
 
         return kernel
@@ -430,6 +442,7 @@ def seed_store(module, data: dict) -> dict:
 
 # --- the SPIR-V emission hook: the "SPIR-V" half of the dispatch path is reachable --------------------
 
+
 def try_emit_spirv(module, result, fn_name: str = "bcir_kernel") -> tuple[bool, str]:
     """Attempt SPIR-V emission for ``module`` via the EXISTING ``codegen(..., target_name="spirv64")`` path
     (triple ``spirv64-unknown-unknown``, asm, marker ``OpEntryPoint``). Returns ``(ok, note)``: ``ok=True``
@@ -439,9 +452,10 @@ def try_emit_spirv(module, result, fn_name: str = "bcir_kernel") -> tuple[bool, 
     reporting that stock ``llc`` has no SPIR-V backend in this environment (the gated case)."""
     try:
         from ..codegen import codegen
+
         r = codegen(module, result, target_name="spirv64", fn_name=fn_name)
         if r.ok and isinstance(r.artifact, str) and "OpEntryPoint" in r.artifact:
             return True, f"spirv64 asm emitted ({r.message})"
         return False, f"no SPIR-V backend: {r.message}"
-    except Exception as exc:                              # never crash: honest depth, gated path
+    except Exception as exc:  # never crash: honest depth, gated path
         return False, f"no SPIR-V backend: {type(exc).__name__}: {exc}"

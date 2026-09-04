@@ -18,6 +18,7 @@ from bcir.verify import verify
 
 def _unit(src):
     from bcir.frontends.cfront import compile_unit
+
     r = compile_unit(src, check_clang=False)
     assert r.is_clean, r.diagnostics
     return [c for fn in r.lowered.functions.values() for ph in fn.module.phases for c in ph.claims]
@@ -34,17 +35,25 @@ def test_declared_extent_is_stamped_on_known_array_accesses():
 
 
 def test_recovered_count_is_stamped_on_stable_malloc_extents():
-    claims = _unit("unsigned f(unsigned n){ unsigned m = n & 7u; unsigned *p = malloc(m * 4u);"
-                   " p[0] = 1u; unsigned r = p[0]; free(p); return r; }")
+    claims = _unit(
+        "unsigned f(unsigned n){ unsigned m = n & 7u; unsigned *p = malloc(m * 4u);"
+        " p[0] = 1u; unsigned r = p[0]; free(p); return r; }"
+    )
     got = _accesses(claims, "recovered_count")
-    assert got and all(c.bounds == "masked" for c in got), [(c.bounds_provenance, c.bounds) for c in claims]
+    assert got and all(c.bounds == "masked" for c in got), [
+        (c.bounds_provenance, c.bounds) for c in claims
+    ]
 
 
 def test_snapshot_extent_is_stamped_on_expression_counts():
-    claims = _unit("unsigned f(unsigned n){ unsigned *p = malloc(((n & 7u) + 1u) * 4u);"
-                   " p[0] = 2u; unsigned r = p[0]; free(p); return r; }")
+    claims = _unit(
+        "unsigned f(unsigned n){ unsigned *p = malloc(((n & 7u) + 1u) * 4u);"
+        " p[0] = 2u; unsigned r = p[0]; free(p); return r; }"
+    )
     got = _accesses(claims, "snapshot_extent")
-    assert got and all(c.bounds == "masked" for c in got), [(c.bounds_provenance, c.bounds) for c in claims]
+    assert got and all(c.bounds == "masked" for c in got), [
+        (c.bounds_provenance, c.bounds) for c in claims
+    ]
 
 
 def test_trusted_accesses_carry_their_reason():
@@ -53,8 +62,10 @@ def test_trusted_accesses_carry_their_reason():
     got = _accesses(claims, "unknown_extent")
     assert got and all(c.bounds == "assumed_safe" for c in got)
     # an MMIO register access: trusted with the mmio reason (and volatile+barriered, from Phase 2).
-    claims = _unit("typedef volatile unsigned int reg32;\nstruct dev { reg32 r; };\n"
-                   "unsigned int rd(volatile struct dev *p){ return p->r; }\n")
+    claims = _unit(
+        "typedef volatile unsigned int reg32;\nstruct dev { reg32 r; };\n"
+        "unsigned int rd(volatile struct dev *p){ return p->r; }\n"
+    )
     got = [c for c in claims if c.bounds_provenance == "mmio_register"]
     assert got and all(c.domain == Domain.MMIO for c in got)
 
@@ -63,9 +74,20 @@ def test_r7_diagnostic_surfaces_the_provenance():
     m = Module(name="p")
     m.add_resource(Resource(rid=1, domain=Domain.RAM, shape=(64,)))
     m.add_resource(Resource(rid=2, domain=Domain.RAM, shape=(64,)))
-    c = Claim(id=1, opcode=Opcode.LOAD, lane=Lane.U, stride_class=StrideClass.UNIT, count=64,
-              rd=(1,), wr=(2,), op="c.load", domain=Domain.RAM, verify="none", bounds="masked",
-              bounds_provenance="declared_extent")
+    c = Claim(
+        id=1,
+        opcode=Opcode.LOAD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=64,
+        rd=(1,),
+        wr=(2,),
+        op="c.load",
+        domain=Domain.RAM,
+        verify="none",
+        bounds="masked",
+        bounds_provenance="declared_extent",
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=[c]))
     d = [x for x in verify(m) if x.law == "R7"]
     assert d and "extent provenance: declared_extent" in d[0].message, d

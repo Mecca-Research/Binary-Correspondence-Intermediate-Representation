@@ -50,8 +50,12 @@ UNIT_MAX = 256
 
 #: The six §21.1.1 spellings, for the surface syntax to resolve and for diagnostics to use.
 UNIT_NAMES = {
-    "repetitions": UNIT_REPETITIONS, "bit": UNIT_BIT, "nibble": UNIT_NIBBLE,
-    "octet": UNIT_OCTET, "word16": UNIT_WORD16, "dword32": UNIT_DWORD32,
+    "repetitions": UNIT_REPETITIONS,
+    "bit": UNIT_BIT,
+    "nibble": UNIT_NIBBLE,
+    "octet": UNIT_OCTET,
+    "word16": UNIT_WORD16,
+    "dword32": UNIT_DWORD32,
 }
 
 
@@ -64,12 +68,12 @@ def check_unit(bits: int, *, allow_repetitions: bool) -> int:
     it, and §21.1.5 says what it means there.
     """
     if not 0 <= bits <= UNIT_MAX:
-        raise Asn1Error(
-            f"ECN: §21.1.1 constrains Unit to (0..{UNIT_MAX}); got {bits}")
+        raise Asn1Error(f"ECN: §21.1.1 constrains Unit to (0..{UNIT_MAX}); got {bits}")
     if bits == UNIT_REPETITIONS and not allow_repetitions:
         raise Asn1Error(
             "ECN: this encoding property is declared Unit (ALL EXCEPT repetitions); "
-            "§21.1.5 admits `repetitions` only in the repetition category")
+            "§21.1.5 admits `repetitions` only in the repetition category"
+        )
     return bits
 
 
@@ -135,29 +139,27 @@ class Pattern:
         """§21.10.4's `bits` alternative, written as a BIT STRING's `'0101'B` body."""
         for character in spelling:
             if character not in "01":
-                raise Asn1Error(
-                    f"ECN: a bits: pattern is a BIT STRING; {character!r} is not a bit")
+                raise Asn1Error(f"ECN: a bits: pattern is a BIT STRING; {character!r} is not a bit")
         return cls(PatternKind.BITS, tuple(int(c) for c in spelling))
 
     @classmethod
     def from_octets(cls, data: bytes) -> "Pattern":
         """§21.10.4's `octets` alternative: the octet string's own bits."""
-        bits = tuple(
-            (byte >> shift) & 1 for byte in data for shift in range(7, -1, -1))
+        bits = tuple((byte >> shift) & 1 for byte in data for shift in range(7, -1, -1))
         return cls(PatternKind.OCTETS, bits)
 
     @classmethod
     def from_chars(cls, text: str, width: int) -> "Pattern":
         """§21.10.5–§21.10.7: each character as its ISO/IEC 10646 value, `width` bits wide."""
-        kind = {8: PatternKind.CHAR8, 16: PatternKind.CHAR16,
-                32: PatternKind.CHAR32}[width]
+        kind = {8: PatternKind.CHAR8, 16: PatternKind.CHAR16, 32: PatternKind.CHAR32}[width]
         bits: list[int] = []
         for character in text:
             point = ord(character)
             if point >> width:
                 raise Asn1Error(
                     f"ECN: {character!r} has ISO/IEC 10646 value {point}, which does not fit "
-                    f"the {width}-bit {kind.value} alternative")
+                    f"the {width}-bit {kind.value} alternative"
+                )
             bits.extend((point >> shift) & 1 for shift in range(width - 1, -1, -1))
         return cls(kind, tuple(bits))
 
@@ -165,7 +167,8 @@ class Pattern:
     def any_of_length(cls, length: int) -> "Pattern":
         if length < 1:
             raise Asn1Error(
-                f"ECN: §21.10.1 constrains any-of-length to INTEGER (1..MAX); got {length}")
+                f"ECN: §21.10.1 constrains any-of-length to INTEGER (1..MAX); got {length}"
+            )
         return cls(PatternKind.ANY_OF_LENGTH, (), length)
 
     @classmethod
@@ -174,14 +177,17 @@ class Pattern:
 
     def is_null(self) -> bool:
         """§21.10.2's `Non-Null-Pattern` exclusion: the five empty concrete alternatives."""
-        return self.kind not in (
-            PatternKind.ANY_OF_LENGTH, PatternKind.DIFFERENT_ANY) and not self.bits
+        return (
+            self.kind not in (PatternKind.ANY_OF_LENGTH, PatternKind.DIFFERENT_ANY)
+            and not self.bits
+        )
 
     def require_non_null(self, where: str) -> "Pattern":
         if self.is_null():
             raise Asn1Error(
                 f"ECN: {where} is declared Non-Null-Pattern, and §21.10.2 excludes the empty "
-                f"alternatives; a zero-length pattern cannot fill a padding bit")
+                f"alternatives; a zero-length pattern cannot fill a padding bit"
+            )
         return self
 
     def bit_sequence(self) -> tuple[int, ...]:
@@ -189,7 +195,8 @@ class Pattern:
             raise Asn1Error(
                 f"ECN: §21.10.8/§21.10.9 make {self.kind.value} an encoder's option, so it "
                 f"denotes a length and not a bit sequence; two conforming encoders may write "
-                f"different bits here and this rail will not choose one for them")
+                f"different bits here and this rail will not choose one for them"
+            )
         return self.bits
 
     def fill(self, count: int) -> tuple[int, ...]:
@@ -207,8 +214,9 @@ class Pattern:
         return tuple(source[index % len(source)] for index in range(count))
 
 
-def _padding_bits(padding: Padding, pattern: "Pattern | None", count: int,
-                  where: str) -> tuple[int, ...]:
+def _padding_bits(
+    padding: Padding, pattern: "Pattern | None", count: int, where: str
+) -> tuple[int, ...]:
     """The `count` bits a §21.9 `Padding` value produces, given the group's `Pattern`."""
     if count <= 0:
         return ()
@@ -220,7 +228,8 @@ def _padding_bits(padding: Padding, pattern: "Pattern | None", count: int,
         if pattern is None:
             raise Asn1Error(
                 f"ECN: {where} is `pattern`, which §21.9.6 resolves through the group's "
-                f"Pattern property; none is set")
+                f"Pattern property; none is set"
+            )
         return pattern.require_non_null(where).fill(count)
     # §21.9.7 — `encoder-option`. Zeros are *a* conforming choice, not *the* conforming
     # choice, and the difference matters to anything comparing octets: an encoding using
@@ -290,8 +299,11 @@ class RangeCondition(Enum):
         A predicate rather than an inline check because the clause works in both directions —
         supplying one where it is not wanted is as much an error as omitting one where it is.
         """
-        return self in (RangeCondition.TEST_LOWER_BOUND, RangeCondition.TEST_UPPER_BOUND,
-                        RangeCondition.TEST_RANGE)
+        return self in (
+            RangeCondition.TEST_LOWER_BOUND,
+            RangeCondition.TEST_UPPER_BOUND,
+            RangeCondition.TEST_RANGE,
+        )
 
 
 @dataclass(frozen=True)
@@ -306,19 +318,25 @@ class IntegerBounds:
     low: int | None = None
     high: int | None = None
 
-    def satisfies(self, condition: RangeCondition, comparison: "Comparison | None" = None,
-                  comparator: int | None = None) -> bool:
+    def satisfies(
+        self,
+        condition: RangeCondition,
+        comparison: "Comparison | None" = None,
+        comparator: int | None = None,
+    ) -> bool:
         """§21.11.4's five shapes and §21.11.5's three comparisons."""
         if condition.needs_comparison() != (comparison is not None):
             raise Asn1Error(
                 f"ECN: §21.11.5 — {condition.value} "
                 f"{'requires' if condition.needs_comparison() else 'does not admit'} a "
-                f"Comparison and an integer comparator")
+                f"Comparison and an integer comparator"
+            )
         if comparison is not None:
             if comparator is None:
                 raise Asn1Error(
                     f"ECN: §21.11.5 gives {condition.value} a Comparison *and* an integer "
-                    f"comparator; the comparator is missing")
+                    f"comparator; the comparator is missing"
+                )
             if condition is RangeCondition.TEST_LOWER_BOUND:
                 # A bound that does not exist cannot compare. §21.11.4's shapes are how a
                 # specification asks "is there one at all", so a missing bound fails the test
@@ -352,12 +370,16 @@ class IntegerBounds:
         hand, and a partition that stopped partitioning would make integer selection pick the
         wrong object, or none, with no other symptom.
         """
-        shapes = [condition for condition in RangeCondition
-                  if not condition.needs_comparison() and self.satisfies(condition)]
+        shapes = [
+            condition
+            for condition in RangeCondition
+            if not condition.needs_comparison() and self.satisfies(condition)
+        ]
         if len(shapes) != 1:  # pragma: no cover - the clause's NOTE says this cannot happen
             raise Asn1Error(
                 f"ECN: §21.11.4's NOTE says exactly one predicate holds for any bounds; "
-                f"{self} satisfies {[shape.value for shape in shapes]}")
+                f"{self} satisfies {[shape.value for shape in shapes]}"
+            )
         return shapes[0]
 
 
@@ -391,12 +413,20 @@ class ReversalSpecification(Enum):
         if unit <= 1:
             raise Asn1Error(
                 f"ECN: §22.12.2.3 — BIT-REVERSAL shall not be set unless MULTIPLE OF is "
-                f"greater than one bit; reversing a {unit}-bit unit is the identity")
-        if self in (ReversalSpecification.REVERSE_HALF_UNITS,
-                    ReversalSpecification.REVERSE_BITS_IN_HALF_UNITS) and unit % 2:
+                f"greater than one bit; reversing a {unit}-bit unit is the identity"
+            )
+        if (
+            self
+            in (
+                ReversalSpecification.REVERSE_HALF_UNITS,
+                ReversalSpecification.REVERSE_BITS_IN_HALF_UNITS,
+            )
+            and unit % 2
+        ):
             raise Asn1Error(
                 f"ECN: §21.14.5 / §22.12.2.2 — {self.value} needs an even Unit; {unit} is "
-                f"odd and has no half")
+                f"odd and has no half"
+            )
 
     def apply(self, bits: tuple[int, ...], unit: int) -> tuple[int, ...]:
         """§22.12.3's reversal over an encoding space's contents.
@@ -416,11 +446,12 @@ class ReversalSpecification(Enum):
         if len(bits) % unit:
             raise Asn1Error(
                 f"ECN: §21.14.7 — {len(bits)} bits is not an integral multiple of the "
-                f"{unit}-bit Unit that BIT-REVERSAL divides them into")
+                f"{unit}-bit Unit that BIT-REVERSAL divides them into"
+            )
         out: list[int] = []
         half = unit // 2
         for start in range(0, len(bits), unit):
-            chunk = tuple(bits[start:start + unit])
+            chunk = tuple(bits[start : start + unit])
             if self is ReversalSpecification.REVERSE_BITS_IN_UNITS:
                 out.extend(reversed(chunk))
             elif self is ReversalSpecification.REVERSE_HALF_UNITS:
@@ -464,7 +495,8 @@ class Justification:
         if self.offset < 0:
             raise Asn1Error(
                 f"ECN: §21.8.1 constrains both alternatives to INTEGER (0..MAX); "
-                f"got {self.side.value}:{self.offset}")
+                f"got {self.side.value}:{self.offset}"
+            )
 
     @classmethod
     def left(cls, offset: int = 0) -> "Justification":
@@ -482,15 +514,18 @@ class Justification:
         justification shall be less than or equal to the total number of padding bits".
         """
         if padding_bits < 0:
-            raise Asn1Error(f"ECN: a value cannot overrun its encoding space by "
-                            f"{-padding_bits} bits")
+            raise Asn1Error(
+                f"ECN: a value cannot overrun its encoding space by {-padding_bits} bits"
+            )
         if self.offset > padding_bits:
             raise Asn1Error(
                 f"ECN: §22.8.2.1 — {self.side.value}:{self.offset} needs {self.offset} "
-                f"padding bits but the encoding space leaves {padding_bits}")
+                f"padding bits but the encoding space leaves {padding_bits}"
+            )
         if self.side is JustificationSide.LEFT:
             return self.offset, padding_bits - self.offset
         return padding_bits - self.offset, self.offset
+
 
 class SizeRangeCondition(Enum):
     """§21.13.1's `SizeRangeCondition`: §21.11's sibling, over the **size** constraint.
@@ -520,9 +555,11 @@ class SizeRangeCondition(Enum):
 
     def needs_comparison(self) -> bool:
         """§21.13.5, worded identically to §21.11.5: the last three take a Comparison."""
-        return self in (SizeRangeCondition.TEST_LOWER_BOUND,
-                        SizeRangeCondition.TEST_UPPER_BOUND,
-                        SizeRangeCondition.TEST_RANGE)
+        return self in (
+            SizeRangeCondition.TEST_LOWER_BOUND,
+            SizeRangeCondition.TEST_UPPER_BOUND,
+            SizeRangeCondition.TEST_RANGE,
+        )
 
 
 @dataclass(frozen=True)
@@ -537,20 +574,25 @@ class SizeBounds:
     low: int = 0
     high: int | None = None
 
-    def satisfies(self, condition: SizeRangeCondition,
-                  comparison: "Comparison | None" = None,
-                  comparator: int | None = None) -> bool:
+    def satisfies(
+        self,
+        condition: SizeRangeCondition,
+        comparison: "Comparison | None" = None,
+        comparator: int | None = None,
+    ) -> bool:
         """§21.13.4's five shapes and §21.13.5's three comparisons."""
         if condition.needs_comparison() != (comparison is not None):
             raise Asn1Error(
                 f"ECN: §21.13.5 — {condition.value} "
                 f"{'requires' if condition.needs_comparison() else 'does not admit'} a "
-                f"Comparison and an integer comparator")
+                f"Comparison and an integer comparator"
+            )
         if comparison is not None:
             if comparator is None:
                 raise Asn1Error(
                     f"ECN: §21.13.5 gives {condition.value} a Comparison *and* an integer "
-                    f"comparator; the comparator is missing")
+                    f"comparator; the comparator is missing"
+                )
             if condition is SizeRangeCondition.TEST_LOWER_BOUND:
                 return comparison.holds(self.low, comparator)
             if condition is SizeRangeCondition.TEST_UPPER_BOUND:
@@ -567,7 +609,7 @@ class SizeBounds:
             return not has_high and self.low != 0
         if condition is SizeRangeCondition.UB_WITH_NON_ZERO_LB:
             return has_high and self.low != 0
-        return has_high and self.high == self.low          # §21.13.4 e)
+        return has_high and self.high == self.low  # §21.13.4 e)
 
     def shapes(self) -> tuple[SizeRangeCondition, ...]:
         """Every §21.13.4 shape these bounds satisfy — plural, unlike §21.11.4's.
@@ -575,8 +617,11 @@ class SizeBounds:
         §21.13.4's NOTE says `fixed-size` overlaps, so this returns a tuple where the integer
         sibling returns one value. Asserting a single answer here would fail on `SIZE(4)`.
         """
-        return tuple(condition for condition in SizeRangeCondition
-                     if not condition.needs_comparison() and self.satisfies(condition))
+        return tuple(
+            condition
+            for condition in SizeRangeCondition
+            if not condition.needs_comparison() and self.satisfies(condition)
+        )
 
 
 class OptionalityDetermination(Enum):
@@ -700,25 +745,30 @@ class HandleValueSet:
         if self.kind is HandleValueKind.NUMBER and self.number < 0:
             raise Asn1Error(
                 f"ECN: §21.16.1 constrains the `number` alternative to INTEGER (0..MAX); "
-                f"got {self.number}")
+                f"got {self.number}"
+            )
         if self.kind in (HandleValueKind.RANGE, HandleValueKind.RANGES):
             if not self.ranges:
                 raise Asn1Error(
                     "ECN: §21.16.1 gives `ranges` SIZE(1..MAX), and `range` is a single "
-                    "SEQUENCE; an empty handle value set matches no encoding at all")
+                    "SEQUENCE; an empty handle value set matches no encoding at all"
+                )
             if self.kind is HandleValueKind.RANGE and len(self.ranges) != 1:
                 raise Asn1Error(
                     f"ECN: §21.16.1's `range` alternative is one SEQUENCE {{low, high}}; "
-                    f"{len(self.ranges)} were given, which is the `ranges` alternative")
+                    f"{len(self.ranges)} were given, which is the `ranges` alternative"
+                )
             for low, high in self.ranges:
                 if low < 0:
                     raise Asn1Error(
                         f"ECN: §21.16.1 constrains a range's bounds to INTEGER (0..MAX); "
-                        f"got low {low}")
+                        f"got low {low}"
+                    )
                 if high < low:
                     raise Asn1Error(
                         f"ECN: §21.16.6/§21.16.7 require high greater than or equal to low; "
-                        f"got {low}..{high}")
+                        f"got {low}..{high}"
+                    )
 
     @classmethod
     def from_bits(cls, spelling: str) -> "HandleValueSet":
@@ -727,14 +777,17 @@ class HandleValueSet:
             if character not in "01":
                 raise Asn1Error(
                     f"ECN: a handle value set's `bits` alternative is a BIT STRING; "
-                    f"{character!r} is not a bit")
+                    f"{character!r} is not a bit"
+                )
         return cls(HandleValueKind.BITS, tuple(int(c) for c in spelling))
 
     @classmethod
     def from_octets(cls, data: bytes) -> "HandleValueSet":
         """§21.16.4's `octets` alternative: the octet string's own bits."""
-        return cls(HandleValueKind.OCTETS,
-                   tuple((byte >> shift) & 1 for byte in data for shift in range(7, -1, -1)))
+        return cls(
+            HandleValueKind.OCTETS,
+            tuple((byte >> shift) & 1 for byte in data for shift in range(7, -1, -1)),
+        )
 
     @classmethod
     def of_number(cls, number: int) -> "HandleValueSet":
@@ -767,7 +820,8 @@ class HandleValueSet:
                 raise Asn1Error(
                     f"ECN: §22.9.1.9 — this #TAG object's handle value set does not admit its "
                     f"own tag number {tag_number}; a stated set that differs from the tag "
-                    f"number is an ECN specification error, not an override")
+                    f"number is an ECN specification error, not an override"
+                )
             return self
         return HandleValueSet.of_number(tag_number)
 
@@ -781,7 +835,8 @@ class HandleValueSet:
             return any(low <= value <= high for low, high in self.ranges)
         raise Asn1Error(
             "ECN: §21.16.5 — a `tag:any` handle value set has no value of its own until a tag "
-            "number determines it; resolve it against the #TAG object's number first")
+            "number determines it; resolve it against the #TAG object's number first"
+        )
 
     def ranges_over(self, width: int) -> tuple[tuple[int, int], ...]:
         """This set as inclusive integer ranges over a `width`-bit conceptual handle field.
@@ -802,24 +857,28 @@ class HandleValueSet:
                 raise Asn1Error(
                     f"ECN: §22.9.1.8 — a `{self.kind.value}` handle value has to have the same "
                     f"number of bits as the handle's AT positions; the value is "
-                    f"{len(self.bits)} bits and the handle is {width}")
+                    f"{len(self.bits)} bits and the handle is {width}"
+                )
             point = _int_of_bits(self.bits)
             return ((point, point),)
         if self.kind is HandleValueKind.NUMBER:
             if self.number >= limit:
                 raise Asn1Error(
                     f"ECN: §22.9.1.7 / §21.16.4 — the handle value {self.number} does not fit "
-                    f"the {width}-bit conceptual handle field")
+                    f"the {width}-bit conceptual handle field"
+                )
             return ((self.number, self.number),)
         if self.kind is HandleValueKind.TAG_ANY:
             raise Asn1Error(
                 "ECN: §21.16.5 — a `tag:any` handle value set is determined by a tag number; "
-                "it has no range until it is resolved against the #TAG object's number")
+                "it has no range until it is resolved against the #TAG object's number"
+            )
         for low, high in self.ranges:
             if high >= limit:
                 raise Asn1Error(
                     f"ECN: §21.16.4 — the range bound {high} does not fit the {width}-bit "
-                    f"conceptual handle field")
+                    f"conceptual handle field"
+                )
         return _normalize_ranges(self.ranges)
 
     def contains(self, value: int, width: int) -> bool:
@@ -830,8 +889,11 @@ class HandleValueSet:
         """§21.5.7 / §21.6.6 / §21.7.10 / §22.10.2.1's disjointness, at a given width."""
         mine = self.ranges_over(width)
         theirs = other.ranges_over(width)
-        return not any(low <= other_high and other_low <= high
-                       for low, high in mine for other_low, other_high in theirs)
+        return not any(
+            low <= other_high and other_low <= high
+            for low, high in mine
+            for other_low, other_high in theirs
+        )
 
     def describe(self) -> str:  # pragma: no cover - diagnostics only
         if self.kind in (HandleValueKind.BITS, HandleValueKind.OCTETS):
@@ -852,8 +914,7 @@ def _int_of_bits(bits: tuple[int, ...]) -> int:
     return value
 
 
-def _normalize_ranges(
-        ranges: tuple[tuple[int, int], ...]) -> tuple[tuple[int, int], ...]:
+def _normalize_ranges(ranges: tuple[tuple[int, int], ...]) -> tuple[tuple[int, int], ...]:
     """Sorted, coalesced, non-overlapping — so disjointness is a linear scan and not a set.
 
     §21.16.7 lets `ranges` be any set of ranges and does not require them to be disjoint from

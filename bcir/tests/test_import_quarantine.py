@@ -40,8 +40,8 @@ def test_cold_manifest_is_nontrivial_and_resolves_to_real_modules():
         base = os.path.join(_ROOT, *mod.split("."))
         candidates = (base + ".py", os.path.join(base, "__init__.py"))
         assert any(os.path.exists(path) for path in candidates), (
-            f"cold manifest names a missing module: {mod} "
-            f"(tried {', '.join(candidates)})")
+            f"cold manifest names a missing module: {mod} (tried {', '.join(candidates)})"
+        )
 
 
 def test_every_hot_entry_actually_imports_some_bcir():

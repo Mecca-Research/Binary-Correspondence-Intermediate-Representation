@@ -21,28 +21,44 @@ import os
 import pathlib
 
 from bcir.asn1.certified import (
-    MIN_SAMPLES, CostRow, EncodingCostTable, UnmeasuredTarget, interval_of,
+    MIN_SAMPLES,
+    CostRow,
+    EncodingCostTable,
+    UnmeasuredTarget,
+    interval_of,
     select_certified,
 )
 from bcir.asn1.codec import decode_one, encode_der, encode_tlv
 from bcir.asn1.jer import encode_jer
 from bcir.asn1.native_bench import (
-    ENCODE_OPS, NATIVE_OPS, NativeOp, build_harness, measured_table, native_available,
-    directed_decode_table, observed_encode_partition, oer_fields_for, run_native_bench,
-    run_native_directed_decode_bench, run_native_encode_bench,
+    ENCODE_OPS,
+    NATIVE_OPS,
+    NativeOp,
+    build_harness,
+    measured_table,
+    native_available,
+    directed_decode_table,
+    observed_encode_partition,
+    oer_fields_for,
+    run_native_bench,
+    run_native_directed_decode_bench,
+    run_native_encode_bench,
 )
 from bcir.asn1.schema import Component, Primitive, Sequence
 from bcir.asn1.selection import ALL_CANDIDATES, Objective, measure_one
 from bcir.asn1.tags import Asn1Error, Universal
 
 _ROOT_C = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "runtime", "c")
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "runtime", "c"
+)
 
-_RECORD = Sequence((
-    Component("id", Primitive(Universal.INTEGER)),
-    Component("name", Primitive(Universal.UTF8_STRING)),
-), name="Record")
+_RECORD = Sequence(
+    (
+        Component("id", Primitive(Universal.INTEGER)),
+        Component("name", Primitive(Universal.UTF8_STRING)),
+    ),
+    name="Record",
+)
 _VALUE = {"id": 42, "name": "a-name"}
 
 
@@ -67,18 +83,21 @@ def test_the_oracle_ordering_is_inverted_by_the_native_measurement():
     """
     if not native_available():
         return
-    oracle = {m.candidate: m for m in
-              (measure_one(c, _RECORD, _VALUE)
-               for c in _named("DER", "JER-BCIR-CANONICAL"))}
+    oracle = {
+        m.candidate: m
+        for m in (measure_one(c, _RECORD, _VALUE) for c in _named("DER", "JER-BCIR-CANONICAL"))
+    }
     assert oracle["JER-BCIR-CANONICAL"].decode_ns < oracle["DER"].decode_ns, (
         "the Python harness no longer reports JER as the faster decode; §2's caveat and "
-        "this test both need revisiting")
+        "this test both need revisiting"
+    )
 
     table = measured_table(_RECORD, _VALUE, target="host", cal_gen=1)
     rows = {row.candidate: row for row in table.rows}
     assert rows["DER"].decode.median < rows["JER-BCIR-CANONICAL"].decode.median, (
         "the native measurement agrees with the oracle; that would be a real change in "
-        "the C rail, not a flaky benchmark")
+        "the C rail, not a flaky benchmark"
+    )
     # And the two are separable, so this is not a coin flip between overlapping intervals.
     assert not rows["DER"].decode.overlaps(rows["JER-BCIR-CANONICAL"].decode)
 
@@ -93,8 +112,9 @@ def test_a_measured_table_lets_a_timing_objective_be_decided_at_last():
         return
     only = _named("DER", "JER-BCIR-CANONICAL")
     table = measured_table(_RECORD, _VALUE, target="host", cal_gen=1, candidates=only)
-    certificate = select_certified(_RECORD, _VALUE, table,
-                                   objective=Objective.DECODE_LATENCY, candidates=only)
+    certificate = select_certified(
+        _RECORD, _VALUE, table, objective=Objective.DECODE_LATENCY, candidates=only
+    )
     assert certificate.selected == "DER"
     assert certificate.provenance == "measured"
     assert certificate.table_digest == table.digest()
@@ -131,8 +151,12 @@ def test_per_and_oer_are_both_refused_by_law_not_by_a_missing_decoder():
     work and report the difference as an encoding cost, which is the error §2 warns about
     one level up. So the decoder exists AND the row is still absent, for a stated reason.
     """
-    for name in ("CANONICAL-PER-ALIGNED", "CANONICAL-PER-UNALIGNED",
-                 "BASIC-PER-ALIGNED", "BASIC-PER-UNALIGNED"):
+    for name in (
+        "CANONICAL-PER-ALIGNED",
+        "CANONICAL-PER-UNALIGNED",
+        "BASIC-PER-ALIGNED",
+        "BASIC-PER-UNALIGNED",
+    ):
         entry = NATIVE_OPS[name]
         assert entry.op is None and entry.permanent, name
         assert "7.2" in entry.reason and "self-delimiting" in entry.reason, name
@@ -140,8 +164,7 @@ def test_per_and_oer_are_both_refused_by_law_not_by_a_missing_decoder():
         entry = NATIVE_OPS[name]
         assert entry.op is None and entry.permanent, name
         assert "6.2" in entry.reason, name
-        assert "yet" not in entry.reason, (
-            f"{name} still describes a law as a temporary gap")
+        assert "yet" not in entry.reason, f"{name} still describes a law as a temporary gap"
     # The native decoder really is there — the absence is about comparability, not capability.
     assert os.path.exists(os.path.join(_ROOT_C, "bcir_oer.c"))
 
@@ -174,8 +197,9 @@ def test_an_unmeasurable_candidate_still_blocks_the_objective_that_needs_it():
     table = measured_table(_RECORD, _VALUE, target="host", cal_gen=1, candidates=only)
     assert {row.candidate for row in table.rows} == {"DER"}
     try:
-        select_certified(_RECORD, _VALUE, table, objective=Objective.DECODE_LATENCY,
-                         candidates=only)
+        select_certified(
+            _RECORD, _VALUE, table, objective=Objective.DECODE_LATENCY, candidates=only
+        )
     except UnmeasuredTarget as error:
         assert "COER" in str(error)
     else:
@@ -196,6 +220,7 @@ def test_a_candidate_that_cannot_carry_the_value_is_skipped_with_its_refusal():
 def test_the_harness_builds_warning_clean():
     """Strict warnings, like every other C translation unit in the repository."""
     import tempfile
+
     if not native_available():
         return
     with tempfile.TemporaryDirectory() as tmp:
@@ -215,8 +240,9 @@ def test_too_few_rounds_is_refused_rather_than_averaged():
     if not native_available():
         return
     try:
-        measured_table(_RECORD, _VALUE, target="host", cal_gen=1, rounds=3,
-                       candidates=_named("DER"))
+        measured_table(
+            _RECORD, _VALUE, target="host", cal_gen=1, rounds=3, candidates=_named("DER")
+        )
     except Asn1Error as error:
         assert str(MIN_SAMPLES) in str(error)
     else:
@@ -255,11 +281,9 @@ def test_a_measured_table_is_content_addressed_and_generation_tagged():
     """It is data with an identity, so a certificate can bind to it."""
     if not native_available():
         return
-    table = measured_table(_RECORD, _VALUE, target="alpha", cal_gen=7,
-                           candidates=_named("DER"))
+    table = measured_table(_RECORD, _VALUE, target="alpha", cal_gen=7, candidates=_named("DER"))
     assert (table.target, table.cal_gen, table.provenance) == ("alpha", 7, "measured")
-    rebuilt = EncodingCostTable(target="alpha", cal_gen=7, provenance="measured",
-                                rows=table.rows)
+    rebuilt = EncodingCostTable(target="alpha", cal_gen=7, provenance="measured", rows=table.rows)
     assert rebuilt.digest() == table.digest()
 
 
@@ -277,7 +301,8 @@ def test_the_recorded_encode_partition_matches_the_encoders_themselves():
     observed = observed_encode_partition()
     assert {name: op.schema_free for name, op in ENCODE_OPS.items()} == observed
     assert set(ENCODE_OPS) == {c.name for c in ALL_CANDIDATES}, (
-        "every candidate needs an encode verdict, or the column has a silent hole")
+        "every candidate needs an encode verdict, or the column has a silent hole"
+    )
 
 
 def test_only_the_x690_family_can_be_encoded_without_a_schema():
@@ -319,8 +344,10 @@ def test_the_encode_and_decode_absences_are_different_absences():
     assert {"JER", "JER-BCIR-CANONICAL"} <= encode_directed - decode_permanent
     # And the ones absent from decode are NOT absent for a write-side reason.
     for name in decode_permanent:
-        assert "not self-delimiting" in NATIVE_OPS[name].reason or "structure" in \
-            NATIVE_OPS[name].reason
+        assert (
+            "not self-delimiting" in NATIVE_OPS[name].reason
+            or "structure" in NATIVE_OPS[name].reason
+        )
         assert "self-delimiting" not in ENCODE_OPS[name].reason
 
 
@@ -344,9 +371,14 @@ def test_the_encode_column_is_measured_natively_and_covers_oer_and_per():
         return
     samples, skipped = run_native_encode_bench(_RECORD, _VALUE)
     assert set(samples) >= {
-        "DER", "BER", "JER", "COER",
-        "CANONICAL-PER-ALIGNED", "CANONICAL-PER-UNALIGNED",
-        "BASIC-PER-ALIGNED", "BASIC-PER-UNALIGNED",
+        "DER",
+        "BER",
+        "JER",
+        "COER",
+        "CANONICAL-PER-ALIGNED",
+        "CANONICAL-PER-UNALIGNED",
+        "BASIC-PER-ALIGNED",
+        "BASIC-PER-UNALIGNED",
     }, sorted(samples)
     for name, rounds in samples.items():
         assert len(rounds) >= MIN_SAMPLES, f"{name}: {len(rounds)} rounds"
@@ -380,8 +412,9 @@ def test_a_measured_table_now_carries_a_real_encode_interval():
     """It used to copy the decode figure, because the C rail had no encoder. It has one."""
     if not native_available():
         return
-    table = measured_table(_RECORD, _VALUE, target="host", cal_gen=1,
-                           candidates=_named("DER", "BER"))
+    table = measured_table(
+        _RECORD, _VALUE, target="host", cal_gen=1, candidates=_named("DER", "BER")
+    )
     rows = {row.candidate: row for row in table.rows}
     assert set(rows) == {"DER", "BER"}
     # The two axes are now independent measurements, so demanding they differ would be
@@ -409,6 +442,7 @@ def test_oer_has_an_encode_row_but_still_no_two_axis_row():
 
 # --- the schema-directed decode table, which is a second table and not a column ------------
 
+
 def test_the_two_decode_tables_answer_different_questions_and_cannot_be_confused():
     """`measured_table` asks *can these octets be walked with no type in hand* — a
     trust-boundary cost. `directed_decode_table` asks *what does decode cost in deployment,
@@ -426,7 +460,8 @@ def test_the_two_decode_tables_answer_different_questions_and_cannot_be_confused
     assert directed.decode_kind == "schema-directed"
     assert free.decode_kind == "schema-free"
     assert directed.digest() != free.digest(), (
-        "two tables answering different questions must not share a digest")
+        "two tables answering different questions must not share a digest"
+    )
 
     # The rows are disjoint, and that is the clause rather than a coincidence: X.696 §6.2
     # bars OER from the schema-free table, and the X.690/X.697 candidates have no
@@ -446,22 +481,32 @@ def test_oer_gains_a_two_axis_row_it_could_never_have_had():
     it a schema-free decode permanently. A schema-directed decode closes the row."""
     if not native_available():
         return
-    row = next(r for r in directed_decode_table(
-        _RECORD, _VALUE, target="host", cal_gen=1).rows if r.candidate == "COER")
+    row = next(
+        r
+        for r in directed_decode_table(_RECORD, _VALUE, target="host", cal_gen=1).rows
+        if r.candidate == "COER"
+    )
     assert row.encode.median > 0 and row.decode.median > 0
     assert row.octets == len(_named("COER")[0].encode(_RECORD, _VALUE))
 
 
 def test_a_table_is_exactly_one_of_the_two_kinds():
     """Not a flag with a default that could drift — a value the constructor checks."""
-    rows = (CostRow(candidate="COER", octets=9,
-                    encode=interval_of([10] * MIN_SAMPLES),
-                    decode=interval_of([10] * MIN_SAMPLES)),)
-    EncodingCostTable(target="t", cal_gen=1, provenance="measured", rows=rows,
-                      decode_kind="schema-directed")
+    rows = (
+        CostRow(
+            candidate="COER",
+            octets=9,
+            encode=interval_of([10] * MIN_SAMPLES),
+            decode=interval_of([10] * MIN_SAMPLES),
+        ),
+    )
+    EncodingCostTable(
+        target="t", cal_gen=1, provenance="measured", rows=rows, decode_kind="schema-directed"
+    )
     try:
-        EncodingCostTable(target="t", cal_gen=1, provenance="measured", rows=rows,
-                          decode_kind="whichever")
+        EncodingCostTable(
+            target="t", cal_gen=1, provenance="measured", rows=rows, decode_kind="whichever"
+        )
     except Asn1Error as error:
         assert "schema-free or schema-directed" in str(error), str(error)
     else:
@@ -478,8 +523,8 @@ def test_the_field_array_refuses_a_member_it_cannot_map():
     fields = oer_fields_for(plan)
     # Eight octets per member, and _RECORD has two.
     assert len(fields) == 16
-    assert fields[0] == 0            # BCIR_OER_INTEGER for `id`
-    assert fields[8] == 4            # BCIR_OER_VAR_OCTETS for `name`
+    assert fields[0] == 0  # BCIR_OER_INTEGER for `id`
+    assert fields[8] == 4  # BCIR_OER_VAR_OCTETS for `name`
 
     nested = Sequence((Component("inner", _RECORD),))
     try:
@@ -535,11 +580,12 @@ def test_the_gate_and_the_harness_link_the_same_sources():
     text = gate.read_text()
     start = text.index("bcir_asn1_bench.c")
     # The link line runs to the -o that names the binary.
-    line = text[start:text.index('-o "${tmp}/asn1_bench"', start)]
+    line = text[start : text.index('-o "${tmp}/asn1_bench"', start)]
     linked = set(re.findall(r"bcir_[a-z0-9_]+\.c", line))
     assert linked == set(_SOURCES), (
         f"the #asn1bench gate links {sorted(linked)} and native_bench._SOURCES has "
-        f"{sorted(_SOURCES)}; they must be the same set")
+        f"{sorted(_SOURCES)}; they must be the same set"
+    )
 
 
 def test_the_directed_table_now_has_something_to_select_against():
@@ -579,8 +625,10 @@ def test_the_two_per_variants_are_timed_separately_because_they_differ_everywher
 
     assert DIRECTED_DECODE_OPS["CANONICAL-PER-ALIGNED"] == "per-d-aligned"
     assert DIRECTED_DECODE_OPS["CANONICAL-PER-UNALIGNED"] == "per-d-unaligned"
-    assert DIRECTED_DECODE_OPS["CANONICAL-PER-ALIGNED"] != \
-        DIRECTED_DECODE_OPS["CANONICAL-PER-UNALIGNED"]
+    assert (
+        DIRECTED_DECODE_OPS["CANONICAL-PER-ALIGNED"]
+        != DIRECTED_DECODE_OPS["CANONICAL-PER-UNALIGNED"]
+    )
 
 
 def test_the_per_field_table_refuses_a_member_it_cannot_map():

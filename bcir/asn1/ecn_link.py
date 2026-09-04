@@ -69,12 +69,14 @@ class EncodingApplication:
         if not self.classes:
             raise Asn1Error(
                 "ECN: §12.2.1 gives `ENCODE` one or more encoding classes; an application "
-                "that names none applies encodings to nothing")
+                "that names none applies encodings to nothing"
+            )
         if len(set(self.classes)) != len(self.classes):
             raise Asn1Error(
-                f"ECN: §12.2.5 — an ELM \"shall not apply encodings more than once to the "
-                f"same ASN.1 type\"; {sorted(self.classes)} repeats one within a single "
-                f"application")
+                f'ECN: §12.2.5 — an ELM "shall not apply encodings more than once to the '
+                f'same ASN.1 type"; {sorted(self.classes)} repeats one within a single '
+                f"application"
+            )
 
     def combined(self) -> dict:
         """§13.2.2 and §13.2.3's combined encoding object set.
@@ -121,17 +123,19 @@ class ElmModule:
             raise Asn1Error("ECN: §12.1.3 gives an ELM a ModuleIdentifier")
         if not self.applications:
             raise Asn1Error(
-                "ECN: §12.1.9 — the `EncodingApplicationList` \"is required to contain at "
+                'ECN: §12.1.9 — the `EncodingApplicationList` "is required to contain at '
                 "least one `EncodingApplication`, as the sole function of an ELM is to apply "
-                "encodings\"")
+                'encodings"'
+            )
         seen: dict = {}
         for index, application in enumerate(self.applications):
             for cls in application.classes:
                 if cls in seen:
                     raise Asn1Error(
-                        f"ECN: §12.2.5 — an ELM \"shall not apply encodings more than once to "
-                        f"the same ASN.1 type\"; {cls!r} is applied by applications "
-                        f"{seen[cls]} and {index}")
+                        f'ECN: §12.2.5 — an ELM "shall not apply encodings more than once to '
+                        f'the same ASN.1 type"; {cls!r} is applied by applications '
+                        f"{seen[cls]} and {index}"
+                    )
                 seen[cls] = index
         if self.imports:
             allowed = set(self.imports)
@@ -139,10 +143,11 @@ class ElmModule:
                 for cls in application.classes:
                     if cls not in allowed:
                         raise Asn1Error(
-                            f"ECN: §12.1.7 — \"All reference names used in the ELMModuleBody "
-                            f"shall be imported into the ELM\"; {cls!r} is not among "
-                            f"{sorted(allowed)}. Its NOTE calls this \"a stronger requirement "
-                            f"than that imposed for ASN.1 modules\"")
+                            f'ECN: §12.1.7 — "All reference names used in the ELMModuleBody '
+                            f'shall be imported into the ELM"; {cls!r} is not among '
+                            f'{sorted(allowed)}. Its NOTE calls this "a stronger requirement '
+                            f'than that imposed for ASN.1 modules"'
+                        )
 
     def set_for(self, class_name: str) -> dict:
         """The combined encoding object set this ELM applies to a top-level class."""
@@ -151,7 +156,8 @@ class ElmModule:
                 return application.combined()
         raise Asn1Error(
             f"ECN: this ELM applies no encodings to {class_name!r}; §12.2.2 makes an "
-            f"`EncodingApplication` the only thing that binds a class to an object set")
+            f"`EncodingApplication` the only thing that binds a class to an object set"
+        )
 
 
 def resolve(objects: dict, class_name: str, assignments: "dict | None" = None):
@@ -184,7 +190,8 @@ def resolve(objects: dict, class_name: str, assignments: "dict | None" = None):
             raise Asn1Error(
                 f"ECN: the class assignment chain from {class_name!r} is circular "
                 f"({' -> '.join(seen + [current])}); a class that is its own base names no "
-                f"encoding category, so no object could realize it")
+                f"encoding category, so no object could realize it"
+            )
         seen.append(current)
         if current not in assignments:
             # §13.2.10.8. Named as the specification error it is, with the chain that was
@@ -194,7 +201,8 @@ def resolve(objects: dict, class_name: str, assignments: "dict | None" = None):
             raise Asn1Error(
                 f"ECN: §13.2.10.8 — the ECN specification is in error: no encoding object in "
                 f"the combined set has the class {class_name!r}, and de-referencing reached "
-                f"{current!r} which no assignment defines (tried {tried})")
+                f"{current!r} which no assignment defines (tried {tried})"
+            )
         current = assignments[current]
 
 
@@ -220,7 +228,8 @@ class LinkedStructure:
         if components is None:
             raise Asn1Error(
                 f"ECN: a linked structure compares an encoding structure's fields with the "
-                f"ASN.1 type's components; {type(self.asn1_type).__name__} has none")
+                f"ASN.1 type's components; {type(self.asn1_type).__name__} has none"
+            )
         return tuple(component.name for component in components)
 
     def auxiliary_fields(self) -> tuple:
@@ -269,7 +278,8 @@ class LinkedStructure:
             return IntegerBounds(low, high)
         raise Asn1Error(
             f"ECN: {component_name!r} is not a component of this ASN.1 type "
-            f"({', '.join(self.component_names())})")
+            f"({', '.join(self.component_names())})"
+        )
 
     def check(self) -> None:
         """Every component reachable, and every extra field accounted for as auxiliary.
@@ -284,7 +294,8 @@ class LinkedStructure:
                 f"ECN: the encoding structure has no field for the component"
                 f"{'s' if len(missing) > 1 else ''} {', '.join(repr(n) for n in missing)}; "
                 f"§9.24.2 makes the structure's encodings the encodings of the type's abstract "
-                f"values, so a component with no field has nowhere to be encoded")
+                f"values, so a component with no field has nowhere to be encoded"
+            )
 
 
 __all__ = ["ElmModule", "EncodingApplication", "LinkedStructure", "resolve"]

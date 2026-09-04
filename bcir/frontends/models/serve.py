@@ -48,8 +48,15 @@ from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF, Policy
 from ...model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
 from ...telemetry import Broker, DataDNA, DurableLog, TelemetryRing
-from .decode import (_MAX_REFERENCE_CONTEXT, DecoderSpec, DecoderWeights, KVCache, _argmax,
-                     _head_logits, _validate_decode_request)
+from .decode import (
+    _MAX_REFERENCE_CONTEXT,
+    DecoderSpec,
+    DecoderWeights,
+    KVCache,
+    _argmax,
+    _head_logits,
+    _validate_decode_request,
+)
 
 # RIDs of the session's resources (a closed universe, the train_graph convention).
 _TOK, _WTS, _KV, _LOGITS = 1, 2, 3, 4
@@ -70,33 +77,58 @@ def _validate_session_shape(prompt_len: int, max_new: int) -> None:
 
 
 def _session_resources(spec: DecoderSpec, capacity: int) -> tuple:
-    return (Resource(rid=_TOK, domain=Domain.RAM, shape=(capacity,), name="TOK"),
-            Resource(rid=_WTS, domain=Domain.RAM, shape=(max(1, spec.n_layers),), name="WTS"),
-            Resource(rid=_KV, domain=Domain.RAM,
-                     shape=(capacity, max(1, spec.n_layers * spec.kv_dim)), name="KV"),
-            Resource(rid=_LOGITS, domain=Domain.RAM, shape=(spec.vocab_size,), name="LOGITS"))
+    return (
+        Resource(rid=_TOK, domain=Domain.RAM, shape=(capacity,), name="TOK"),
+        Resource(rid=_WTS, domain=Domain.RAM, shape=(max(1, spec.n_layers),), name="WTS"),
+        Resource(
+            rid=_KV,
+            domain=Domain.RAM,
+            shape=(capacity, max(1, spec.n_layers * spec.kv_dim)),
+            name="KV",
+        ),
+        Resource(rid=_LOGITS, domain=Domain.RAM, shape=(spec.vocab_size,), name="LOGITS"),
+    )
 
 
 def _prefill_claim(spec: DecoderSpec, rows: int, cid: int) -> Claim:
     """The BATCHED prefill: one tile claim advancing `rows` prompt tokens through every
     layer (reads the token tape + weights, fills the KV store). A structured tile walk --
     `assumed_safe`, the train_graph posture; the tensor law is R22 on the gem rail."""
-    return Claim(id=cid, opcode=Opcode.T_MACC, lane=Lane.T, stride_class=StrideClass.TILE,
-                 count=max(1, rows * spec.n_layers), rd=(_TOK, _WTS), wr=(_KV,),
-                 op="gem.prefill", domain=Domain.RAM, bounds="assumed_safe")
+    return Claim(
+        id=cid,
+        opcode=Opcode.T_MACC,
+        lane=Lane.T,
+        stride_class=StrideClass.TILE,
+        count=max(1, rows * spec.n_layers),
+        rd=(_TOK, _WTS),
+        wr=(_KV,),
+        op="gem.prefill",
+        domain=Domain.RAM,
+        bounds="assumed_safe",
+    )
 
 
 def _decode_claim(spec: DecoderSpec, cid: int) -> Claim:
     """One generated token: reads the tape + weights + the WHOLE cache so far, appends
     its KV rows, writes the logits, appends the sampled id to the tape -- reading AND
     writing TOK/KV is what serializes the autoregression (the true hazard chain)."""
-    return Claim(id=cid, opcode=Opcode.T_MACC, lane=Lane.T, stride_class=StrideClass.TILE,
-                 count=max(1, spec.n_layers), rd=(_TOK, _WTS, _KV), wr=(_KV, _LOGITS, _TOK),
-                 op="gem.decode_step", domain=Domain.RAM, bounds="assumed_safe")
+    return Claim(
+        id=cid,
+        opcode=Opcode.T_MACC,
+        lane=Lane.T,
+        stride_class=StrideClass.TILE,
+        count=max(1, spec.n_layers),
+        rd=(_TOK, _WTS, _KV),
+        wr=(_KV, _LOGITS, _TOK),
+        op="gem.decode_step",
+        domain=Domain.RAM,
+        bounds="assumed_safe",
+    )
 
 
-def decode_session_module(spec: DecoderSpec, prompt_len: int, max_new: int, *,
-                          batched_prefill: bool = True) -> Module:
+def decode_session_module(
+    spec: DecoderSpec, prompt_len: int, max_new: int, *, batched_prefill: bool = True
+) -> Module:
     """The generation session as a Module: phase 0 = the prefill (ONE batched claim, or
     `prompt_len` sequential decode-shaped claims when `batched_prefill=False` -- the
     certificate's comparison arm), then one decode phase per generated token, each
@@ -117,13 +149,14 @@ def decode_session_module(spec: DecoderSpec, prompt_len: int, max_new: int, *,
         m.add_phase(Phase(phase_id=pid, deps=prev, claims=[_prefill_claim(spec, prompt_len, 1)]))
         prev = (pid,)
         pid += 1
-    else:                                              # the sequential arm: token-by-token
+    else:  # the sequential arm: token-by-token
         # Keep the historical 1..prompt_len IDs for ordinary prompts, but move a long
         # prefill above the decode band so prompt_len >= 100 cannot alias claim 100.
         prefill_base = 1 if prompt_len < 100 else 100 + max_new
         for i in range(prompt_len):
-            m.add_phase(Phase(phase_id=pid, deps=prev,
-                              claims=[_decode_claim(spec, prefill_base + i)]))
+            m.add_phase(
+                Phase(phase_id=pid, deps=prev, claims=[_decode_claim(spec, prefill_base + i)])
+            )
             prev = (pid,)
             pid += 1
     for t in range(max_new):
@@ -153,19 +186,30 @@ class SessionCertificate:
         return 0 < self.prefill_batched <= self.prefill_sequential
 
 
-def certify_session(spec: DecoderSpec, prompt_len: int, max_new: int, h: HProfile,
-                    theta: Theta, policy: Policy = PERF) -> SessionCertificate:
+def certify_session(
+    spec: DecoderSpec,
+    prompt_len: int,
+    max_new: int,
+    h: HProfile,
+    theta: Theta,
+    policy: Policy = PERF,
+) -> SessionCertificate:
     """Price both prefill arms (the decode tail is identical in both modules) and
     certify the split."""
+
     def prefill_cost(batched: bool) -> int:
         m = decode_session_module(spec, prompt_len, max_new, batched_prefill=batched)
         result = optimize(m, h, theta, policy)
         n_phases = 1 if batched else prompt_len
         prefill_ids = {c.id for ph in m.phases[:n_phases] for c in ph.claims}
         return sum(s.cost for s in result.steps if s.claim_id in prefill_ids)
-    return SessionCertificate(prompt_len=prompt_len, max_new=max_new,
-                              prefill_batched=prefill_cost(True),
-                              prefill_sequential=prefill_cost(False))
+
+    return SessionCertificate(
+        prompt_len=prompt_len,
+        max_new=max_new,
+        prefill_batched=prefill_cost(True),
+        prefill_sequential=prefill_cost(False),
+    )
 
 
 @dataclass
@@ -175,13 +219,14 @@ class GenerationResult:
     position), the R13 manifest, and the split certificate."""
 
     ids: list
-    frames: list                      # one DataDNA per emitted token
-    kv_record: dict                   # {n_layers, n_kv_heads, d_k, capacity, pos, dtype}
+    frames: list  # one DataDNA per emitted token
+    kv_record: dict  # {n_layers, n_kv_heads, d_k, capacity, pos, dtype}
     manifest: ProvenanceManifest
     certificate: SessionCertificate
 
 
 # --- schema-constrained emission (rung-6 slice 2) ---------------------------------------------
+
 
 @dataclass(frozen=True)
 class TokenDFA:
@@ -191,8 +236,8 @@ class TokenDFA:
     the candidates; the DFA merely forbids off-schema ids. An empty allowed set is a
     DEADLOCK: the engine refuses loudly rather than emit outside the schema."""
 
-    allowed: tuple                    # allowed[s]: tuple of admissible token ids
-    edges: tuple                      # edges[s]: {token id -> successor state}
+    allowed: tuple  # allowed[s]: tuple of admissible token ids
+    edges: tuple  # edges[s]: {token id -> successor state}
     start: int = 0
 
 
@@ -233,8 +278,9 @@ def check_token_dfa(dfa: TokenDFA, vocab_size: int) -> list:
         seen_tokens: set[int] = set()
         for tok in allowed:
             if type(tok) is not int or not 0 <= tok < vocab_size:
-                msgs.append(f"TokenDFA state {s} allows token {tok} outside the "
-                            f"vocab [0, {vocab_size})")
+                msgs.append(
+                    f"TokenDFA state {s} allows token {tok} outside the vocab [0, {vocab_size})"
+                )
                 continue
             if tok in seen_tokens:
                 msgs.append(f"TokenDFA state {s} has duplicate allowed token {tok}")
@@ -246,18 +292,22 @@ def check_token_dfa(dfa: TokenDFA, vocab_size: int) -> list:
                 msgs.append(f"TokenDFA state {s} has a non-integer edge token {tok!r}")
                 continue
             if tok not in allowed:
-                msgs.append(f"TokenDFA state {s} has an edge over token {tok} it does "
-                            "not allow")
+                msgs.append(f"TokenDFA state {s} has an edge over token {tok} it does not allow")
             if type(nxt) is not int or not 0 <= nxt < n:
-                msgs.append(f"TokenDFA state {s} edge on token {tok} targets state "
-                            f"{nxt} which does not exist")
+                msgs.append(
+                    f"TokenDFA state {s} edge on token {tok} targets state "
+                    f"{nxt} which does not exist"
+                )
     return msgs
 
 
 def _snapshot_token_dfa(dfa: TokenDFA) -> TokenDFA:
     """Own the validated schema tables so caller mutation cannot race the walk."""
-    return TokenDFA(allowed=tuple(tuple(row) for row in dfa.allowed),
-                    edges=tuple(dict(row) for row in dfa.edges), start=dfa.start)
+    return TokenDFA(
+        allowed=tuple(tuple(row) for row in dfa.allowed),
+        edges=tuple(dict(row) for row in dfa.edges),
+        start=dfa.start,
+    )
 
 
 def _masked_argmax(logits: list, allowed: tuple) -> int:
@@ -273,6 +323,7 @@ def _masked_argmax(logits: list, allowed: tuple) -> int:
 
 # --- streaming emission (rung-6 slice 2) -------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class StreamEvent:
     """One streamed emission. kind "token": `token` + `frame` surface the moment the id
@@ -280,17 +331,26 @@ class StreamEvent:
     kind "done": `result` carries the complete GenerationResult -- the terminal event IS
     the batch answer, which is why `generate()` is just the stream drained."""
 
-    kind: str                         # "token" | "done"
-    index: int                        # 0-based emission index; the token count on "done"
+    kind: str  # "token" | "done"
+    index: int  # 0-based emission index; the token count on "done"
     token: int = -1
     frame: DataDNA | None = None
     result: GenerationResult | None = None
 
 
-def generate_stream(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int,
-                    *, h: HProfile, theta: Theta, policy: Policy = PERF,
-                    eos_id: int | None = None, log_path: str | None = None,
-                    schema: TokenDFA | None = None):
+def generate_stream(
+    prompt_ids: list,
+    spec: DecoderSpec,
+    w: DecoderWeights,
+    max_new: int,
+    *,
+    h: HProfile,
+    theta: Theta,
+    policy: Policy = PERF,
+    eos_id: int | None = None,
+    log_path: str | None = None,
+    schema: TokenDFA | None = None,
+):
     """The rung-6 slice-2 entry: the same generation as `generate`, yielded token-by-
     token -- one "token" StreamEvent per emission, then ONE terminal "done" event with
     the full GenerationResult. Argument errors and a malformed `schema` refuse HERE (at
@@ -307,14 +367,25 @@ def generate_stream(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_
     # write.  A malformed target/policy must not fail after partial generation.
     cert = certify_session(spec, len(prompt), max_new, h, theta, policy)
     module = decode_session_module(spec, len(prompt), max_new)
-    return _stream(prompt, spec, w, max_new, h, theta, policy, eos_id,
-                   log_path, schema, cert, module)
+    return _stream(
+        prompt, spec, w, max_new, h, theta, policy, eos_id, log_path, schema, cert, module
+    )
 
 
-def _stream(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int,
-            h: HProfile, theta: Theta, policy: Policy, eos_id: int | None,
-            log_path: str | None, schema: TokenDFA | None,
-            cert: SessionCertificate, module: Module):
+def _stream(
+    prompt_ids: list,
+    spec: DecoderSpec,
+    w: DecoderWeights,
+    max_new: int,
+    h: HProfile,
+    theta: Theta,
+    policy: Policy,
+    eos_id: int | None,
+    log_path: str | None,
+    schema: TokenDFA | None,
+    cert: SessionCertificate,
+    module: Module,
+):
     """The generator body behind `generate_stream` (split so validation is eager)."""
     broker = Broker()
     ring = broker.subscribe(TelemetryRing(capacity=max(16, 2 * (max_new + 1))))
@@ -322,7 +393,7 @@ def _stream(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int
         broker.subscribe(DurableLog(log_path))
     cache = KVCache(spec)
     hrow: list = []
-    for tid in prompt_ids:                             # the prefill (phase 0, executed)
+    for tid in prompt_ids:  # the prefill (phase 0, executed)
         hrow = cache._step_row(w.embedding.row(tid), spec, w)
     capacity = len(prompt_ids) + max_new
     state = schema.start if schema is not None else 0
@@ -337,42 +408,67 @@ def _stream(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int
             if not allowed:
                 raise ValueError(
                     f"TokenDFA deadlock: state {state} admits no token at step {t} -- "
-                    "constrained generation refuses rather than emit off-schema")
+                    "constrained generation refuses rather than emit off-schema"
+                )
             nxt = _masked_argmax(logits, allowed)
             state = schema.edges[state][nxt]
         out.append(nxt)
         frame = DataDNA(
             segment_id=f"serve:{spec.n_layers}L:{spec.d_model}d",
-            claim_id=100 + t,                          # the decode claim's id band
-            cycles=cache.pos,                          # positions attended this step
-            bytes=spec.d_model * 8,                    # one f64 hidden row emitted
+            claim_id=100 + t,  # the decode claim's id band
+            cycles=cache.pos,  # positions attended this step
+            bytes=spec.d_model * 8,  # one f64 hidden row emitted
             utilization=min(100, 100 * (cache.pos + 1) // max(1, capacity)),
-            provenance=f"tok:{nxt}")
+            provenance=f"tok:{nxt}",
+        )
         broker.emit(frame)
         frames.append(frame)
         yield StreamEvent(kind="token", index=t, token=nxt, frame=frame)
         if eos_id is not None and nxt == eos_id:
             break
         hrow = cache._step_row(w.embedding.row(nxt), spec, w)
-    kv_record = {"n_layers": spec.n_layers, "n_kv_heads": spec.kv_heads, "d_k": spec.d_k,
-                 "capacity": capacity, "pos": cache.pos, "dtype": "f32"}
-    artifacts = (("prompt_sha", int(hashlib.sha256(
-                      ",".join(str(i) for i in prompt_ids).encode()).hexdigest()[:12], 16)),
-                 ("ids_sha", int(hashlib.sha256(
-                      ",".join(str(i) for i in out).encode()).hexdigest()[:12], 16)),
-                 ("tokens", len(out)), ("kv_pos", cache.pos))
+    kv_record = {
+        "n_layers": spec.n_layers,
+        "n_kv_heads": spec.kv_heads,
+        "d_k": spec.d_k,
+        "capacity": capacity,
+        "pos": cache.pos,
+        "dtype": "f32",
+    }
+    artifacts = (
+        (
+            "prompt_sha",
+            int(hashlib.sha256(",".join(str(i) for i in prompt_ids).encode()).hexdigest()[:12], 16),
+        ),
+        (
+            "ids_sha",
+            int(hashlib.sha256(",".join(str(i) for i in out).encode()).hexdigest()[:12], 16),
+        ),
+        ("tokens", len(out)),
+        ("kv_pos", cache.pos),
+    )
     if schema is not None:
         artifacts += (("constrained", 1),)
     manifest = build_manifest(module, h, theta, policy, artifacts=artifacts)
-    result = GenerationResult(ids=out, frames=frames, kv_record=kv_record,
-                              manifest=manifest, certificate=cert)
+    result = GenerationResult(
+        ids=out, frames=frames, kv_record=kv_record, manifest=manifest, certificate=cert
+    )
     yield StreamEvent(kind="done", index=len(out), result=result)
 
 
-def generate(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int, *,
-             h: HProfile, theta: Theta, policy: Policy = PERF, eos_id: int | None = None,
-             log_path: str | None = None,
-             schema: TokenDFA | None = None) -> GenerationResult:
+def generate(
+    prompt_ids: list,
+    spec: DecoderSpec,
+    w: DecoderWeights,
+    max_new: int,
+    *,
+    h: HProfile,
+    theta: Theta,
+    policy: Policy = PERF,
+    eos_id: int | None = None,
+    log_path: str | None = None,
+    schema: TokenDFA | None = None,
+) -> GenerationResult:
     """The rung-6 batch entry: greedy generation over the rung-3 KV-cache decoder (the
     emitted ids are `decode_with_kv_cache`'s BIT-FOR-BIT), with the flight recorder on:
     one DataDNA frame per token through a Broker (ring + optional DurableLog at
@@ -381,10 +477,19 @@ def generate(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: in
     Since slice 2 this is `generate_stream` DRAINED -- one code path, so the stream and
     the batch cannot drift."""
     result: GenerationResult | None = None
-    for ev in generate_stream(prompt_ids, spec, w, max_new, h=h, theta=theta,
-                              policy=policy, eos_id=eos_id, log_path=log_path,
-                              schema=schema):
+    for ev in generate_stream(
+        prompt_ids,
+        spec,
+        w,
+        max_new,
+        h=h,
+        theta=theta,
+        policy=policy,
+        eos_id=eos_id,
+        log_path=log_path,
+        schema=schema,
+    ):
         if ev.kind == "done":
             result = ev.result
-    assert result is not None                          # the stream always terminates in "done"
+    assert result is not None  # the stream always terminates in "done"
     return result

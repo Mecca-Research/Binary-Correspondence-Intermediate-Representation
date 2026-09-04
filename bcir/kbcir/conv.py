@@ -56,6 +56,7 @@ STRATEGIES = ("direct", "im2col")
 
 # ---- the planned-claim shape metadata (mirrors matmul.TilePlan / activation.ActivationSpec) -----
 
+
 @dataclass(frozen=True)
 class ConvSpec:
     """A gem.conv as a FIRST-CLASS planned claim: a single-group 2-D convolution's shape/dtype metadata --
@@ -64,17 +65,17 @@ class ConvSpec:
     ("f32" or "i32"). ``strategy`` records the K_BCIR-selected lowering (direct vs im2col+gemm); the inner
     ``tile`` is the chosen matmul TilePlan for the im2col gemm (None until planned / for the direct form)."""
 
-    in_c: int                  # C_in  (input channels)
-    in_h: int                  # H     (input height)
-    in_w: int                  # W     (input width)
-    out_c: int                 # C_out (output channels / filters)
-    kh: int                    # kernel height
-    kw: int                    # kernel width
+    in_c: int  # C_in  (input channels)
+    in_h: int  # H     (input height)
+    in_w: int  # W     (input width)
+    out_c: int  # C_out (output channels / filters)
+    kh: int  # kernel height
+    kw: int  # kernel width
     stride: int = 1
     pad: int = 0
     dtype: str = "f32"
-    strategy: str = "im2col"   # the K_BCIR-selected lowering (direct | im2col)
-    tile: "matmul.TilePlan | None" = None   # the chosen matmul plan for the im2col gemm
+    strategy: str = "im2col"  # the K_BCIR-selected lowering (direct | im2col)
+    tile: "matmul.TilePlan | None" = None  # the chosen matmul plan for the im2col gemm
 
     @property
     def out_h(self) -> int:
@@ -181,7 +182,9 @@ def weights_as_matrix(w, spec: ConvSpec) -> list[float]:
         for ic in range(spec.in_c):
             for ky in range(spec.kh):
                 for kx in range(spec.kw):
-                    wm[t * spec.out_c + oc] = w[((oc * spec.in_c + ic) * spec.kh + ky) * spec.kw + kx]
+                    wm[t * spec.out_c + oc] = w[
+                        ((oc * spec.in_c + ic) * spec.kh + ky) * spec.kw + kx
+                    ]
                     t += 1
     return wm
 
@@ -195,8 +198,11 @@ def conv2d_im2col(x, w, spec: ConvSpec, plan: "matmul.TilePlan | None" = None) -
     m, n, k = spec.gemm_dims
     p = im2col(x, spec)
     wm = weights_as_matrix(w, spec)
-    pm = matmul.matmul_tiled(p, wm, m, n, k, plan) if plan is not None \
+    pm = (
+        matmul.matmul_tiled(p, wm, m, n, k, plan)
+        if plan is not None
         else matmul.matmul_reference(p, wm, m, n, k)
+    )
     # scatter Pm[out_pixel, oc] -> out[oc, oy, ox] (the gemm is pixel-major; the conv output is channel-major)
     oh, ow = spec.out_h, spec.out_w
     out = [0.0] * (spec.out_c * oh * ow)
@@ -236,8 +242,14 @@ def conv_via_bridge(x, w, spec: ConvSpec, group_size: int, bits: int) -> list[fl
 _DTYPES = ("f32", "i32")
 
 
-def check_conv(spec: ConvSpec, in_shape: tuple[int, ...], in_dtype: str,
-               w_shape: tuple[int, ...], out_shape: tuple[int, ...], out_dtype: str) -> list[str]:
+def check_conv(
+    spec: ConvSpec,
+    in_shape: tuple[int, ...],
+    in_dtype: str,
+    w_shape: tuple[int, ...],
+    out_shape: tuple[int, ...],
+    out_dtype: str,
+) -> list[str]:
     """Op-level well-formedness for a gem.conv claim, returned as a list of error strings (empty ==
     well-formed) -- the shape/dtype-law shape gem.matmul/gem.activation use inline, lifted into one named
     checker so the oracle rail and the tests can call it. NOT a globally-numbered R-law (matches
@@ -255,15 +267,23 @@ def check_conv(spec: ConvSpec, in_shape: tuple[int, ...], in_dtype: str,
     if spec.pad < 0:
         errs.append(f"conv: pad must be >= 0; got {spec.pad}")
     # (1) positive extents + the kernel fits the padded frame.
-    for nm, v in (("in_c", spec.in_c), ("in_h", spec.in_h), ("in_w", spec.in_w),
-                  ("out_c", spec.out_c), ("kh", spec.kh), ("kw", spec.kw)):
+    for nm, v in (
+        ("in_c", spec.in_c),
+        ("in_h", spec.in_h),
+        ("in_w", spec.in_w),
+        ("out_c", spec.out_c),
+        ("kh", spec.kh),
+        ("kw", spec.kw),
+    ):
         if v < 1:
             errs.append(f"conv: {nm} must be >= 1; got {v}")
     if errs:
-        return errs                                       # later checks assume the extents are usable
+        return errs  # later checks assume the extents are usable
     if spec.kh > spec.in_h + 2 * spec.pad or spec.kw > spec.in_w + 2 * spec.pad:
-        errs.append(f"conv: kernel {spec.kh}x{spec.kw} does not fit the padded input "
-                    f"{spec.in_h + 2 * spec.pad}x{spec.in_w + 2 * spec.pad}")
+        errs.append(
+            f"conv: kernel {spec.kh}x{spec.kw} does not fit the padded input "
+            f"{spec.in_h + 2 * spec.pad}x{spec.in_w + 2 * spec.pad}"
+        )
     if spec.out_h < 1 or spec.out_w < 1:
         errs.append(f"conv: output is empty (out_h={spec.out_h}, out_w={spec.out_w})")
     # (2) dtype known + preserved.
@@ -276,21 +296,28 @@ def check_conv(spec: ConvSpec, in_shape: tuple[int, ...], in_dtype: str,
         errs.append(f"conv: spec dtype {spec.dtype!r} != input dtype {in_dtype!r}")
     # (3) shapes consistent with the spec's metadata.
     if tuple(in_shape) != (spec.in_c, spec.in_h, spec.in_w):
-        errs.append(f"conv: input shape {tuple(in_shape)} != (C_in,H,W) "
-                    f"{(spec.in_c, spec.in_h, spec.in_w)}")
+        errs.append(
+            f"conv: input shape {tuple(in_shape)} != (C_in,H,W) {(spec.in_c, spec.in_h, spec.in_w)}"
+        )
     if tuple(w_shape) != (spec.out_c, spec.in_c, spec.kh, spec.kw):
-        errs.append(f"conv: weight shape {tuple(w_shape)} != (C_out,C_in,Kh,Kw) "
-                    f"{(spec.out_c, spec.in_c, spec.kh, spec.kw)}")
+        errs.append(
+            f"conv: weight shape {tuple(w_shape)} != (C_out,C_in,Kh,Kw) "
+            f"{(spec.out_c, spec.in_c, spec.kh, spec.kw)}"
+        )
     if tuple(out_shape) != (spec.out_c, spec.out_h, spec.out_w):
-        errs.append(f"conv: output shape {tuple(out_shape)} != (C_out,out_h,out_w) "
-                    f"{(spec.out_c, spec.out_h, spec.out_w)}")
+        errs.append(
+            f"conv: output shape {tuple(out_shape)} != (C_out,out_h,out_w) "
+            f"{(spec.out_c, spec.out_h, spec.out_w)}"
+        )
     return errs
 
 
 # ---- the cost / realization plug-in (reuses matmul.cost_of -- a conv IS a structured matmul) ------
 
-def cost_of(spec: ConvSpec, strategy: str, target: TargetProfile,
-            tile: "matmul.TilePlan | None" = None) -> tuple[int, int, bool]:
+
+def cost_of(
+    spec: ConvSpec, strategy: str, target: TargetProfile, tile: "matmul.TilePlan | None" = None
+) -> tuple[int, int, bool]:
     """The analytic (compute, mem, fits_cache) cost of a conv realization, PRICED THROUGH THE EXISTING
     matmul roofline (matmul.cost_of) -- the conv-is-a-structured-matmul wiring the task requires (no new
     roofline terms). M,N,K are the im2col gemm dims (out_pixels, out_c, taps); the strategy only changes how
@@ -307,7 +334,7 @@ def cost_of(spec: ConvSpec, strategy: str, target: TargetProfile,
         SEE when blocking the im2col gemm beats the direct stream (and when it does not)."""
     m, n, k = spec.gemm_dims
     if strategy == "direct":
-        return matmul.cost_of(m, n, k, m, n, k, target)   # untiled: the direct stream, no blocking
+        return matmul.cost_of(m, n, k, m, n, k, target)  # untiled: the direct stream, no blocking
     pl = tile or matmul.plan_matmul(m, n, k, target)
     return matmul.cost_of(m, n, k, pl.tile_m, pl.tile_n, pl.tile_k, target)
 
@@ -329,9 +356,18 @@ def bottleneck(cv: CostVector) -> int:
     return max(cv.v[COMPUTE], cv.v[MEMORY])
 
 
-def plan_conv(in_c: int, in_h: int, in_w: int, out_c: int, kh: int, kw: int,
-              stride: int = 1, pad: int = 0, dtype: str = "f32",
-              target: TargetProfile | None = None) -> ConvSpec:
+def plan_conv(
+    in_c: int,
+    in_h: int,
+    in_w: int,
+    out_c: int,
+    kh: int,
+    kw: int,
+    stride: int = 1,
+    pad: int = 0,
+    dtype: str = "f32",
+    target: TargetProfile | None = None,
+) -> ConvSpec:
     """K_BCIR's deterministic conv-lowering choice -- the conv analog of matmul.plan_matmul. For each
     strategy (direct, im2col): compute its roofline BOTTLENECK = max(compute, mem) (the max,+ step), prefer
     a cache-fitting realization, and select the minimum-bottleneck strategy (the min,+ step); ties break on
@@ -340,17 +376,17 @@ def plan_conv(in_c: int, in_h: int, in_w: int, out_c: int, kh: int, kw: int,
     target = target or TargetProfile.for_host()
     base = ConvSpec(in_c, in_h, in_w, out_c, kh, kw, stride, pad, dtype)
     m, n, k = base.gemm_dims
-    inner = matmul.plan_matmul(m, n, k, target)           # the im2col gemm's own tile/loop plan
+    inner = matmul.plan_matmul(m, n, k, target)  # the im2col gemm's own tile/loop plan
     best: ConvSpec | None = None
     best_key: tuple | None = None
     for strat in STRATEGIES:
         tile = inner if strat == "im2col" else None
         compute, mem, fits = cost_of(base, strat, target, tile)
-        bn = max(compute, mem)                            # max,+ : the binding roofline resource
+        bn = max(compute, mem)  # max,+ : the binding roofline resource
         # min,+ selection: cache-fitting first, then min bottleneck, then prefer im2col (the blocked gemm
         # reuse) on a tie -- all deterministic.
         key = (not fits, bn, 0 if strat == "im2col" else 1)
-        if best is None or key < best_key:                # type: ignore[operator]
+        if best is None or key < best_key:  # type: ignore[operator]
             best = ConvSpec(in_c, in_h, in_w, out_c, kh, kw, stride, pad, dtype, strat, tile)
             best_key = key
     assert best is not None

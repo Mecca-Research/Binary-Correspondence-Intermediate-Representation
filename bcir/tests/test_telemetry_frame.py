@@ -20,11 +20,20 @@ import tempfile
 import zlib
 
 from bcir.telemetry import DataDNA, TelemetryIntegrity, TelemetryRing, sanitize_events
-from bcir.telemetry_frame import (CRC_SIZE, HEADER_SIZE, RECORD_STRIDE,
-                                  TELEMETRY_FRAME_MAGIC, TELEMETRY_FRAME_VERSION,
-                                  TelemetryFrameError, decode_frame, decode_frames,
-                                  drain_ring_to_frame, encode_frame, frame_length,
-                                  parse_uart_frames)
+from bcir.telemetry_frame import (
+    CRC_SIZE,
+    HEADER_SIZE,
+    RECORD_STRIDE,
+    TELEMETRY_FRAME_MAGIC,
+    TELEMETRY_FRAME_VERSION,
+    TelemetryFrameError,
+    decode_frame,
+    decode_frames,
+    drain_ring_to_frame,
+    encode_frame,
+    frame_length,
+    parse_uart_frames,
+)
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _RUNTIME_C = os.path.join(_ROOT, "runtime", "c")
@@ -35,12 +44,36 @@ def _batch():
     band extremes 0/100, counters non-negative -- so it passes sanitize_events unchanged
     and the witness is `clean`). Used for the RT3-reuse + round-trip assertions."""
     return [
-        DataDNA(segment_id="", claim_id=1, cycles=100, bytes=200, misses=5,
-                thermal=40, voltage=10, utilization=30),
-        DataDNA(segment_id="", claim_id=2, cycles=999999, bytes=4096, misses=0,
-                thermal=0, voltage=0, utilization=100),
-        DataDNA(segment_id="", claim_id=3, cycles=12345, bytes=0, misses=100,
-                thermal=99, voltage=50, utilization=0),
+        DataDNA(
+            segment_id="",
+            claim_id=1,
+            cycles=100,
+            bytes=200,
+            misses=5,
+            thermal=40,
+            voltage=10,
+            utilization=30,
+        ),
+        DataDNA(
+            segment_id="",
+            claim_id=2,
+            cycles=999999,
+            bytes=4096,
+            misses=0,
+            thermal=0,
+            voltage=0,
+            utilization=100,
+        ),
+        DataDNA(
+            segment_id="",
+            claim_id=3,
+            cycles=12345,
+            bytes=0,
+            misses=100,
+            thermal=99,
+            voltage=50,
+            utilization=0,
+        ),
     ]
 
 
@@ -50,23 +83,48 @@ def _wire_batch():
     Used for the round-trip + byte-identity rails (NOT the RT3-reuse path, which is value-
     gated and would legitimately reject the negative)."""
     return [
-        DataDNA(segment_id="", claim_id=-7, cycles=-50, bytes=0, misses=0,
-                thermal=99, voltage=0, utilization=100),
-        DataDNA(segment_id="", claim_id=9223372036854775807, cycles=-1, bytes=200,
-                misses=5, thermal=40, voltage=10, utilization=30),
-        DataDNA(segment_id="", claim_id=-(1 << 63), cycles=-(1 << 63), bytes=0,
-                misses=5, thermal=40, voltage=10, utilization=30),
+        DataDNA(
+            segment_id="",
+            claim_id=-7,
+            cycles=-50,
+            bytes=0,
+            misses=0,
+            thermal=99,
+            voltage=0,
+            utilization=100,
+        ),
+        DataDNA(
+            segment_id="",
+            claim_id=9223372036854775807,
+            cycles=-1,
+            bytes=200,
+            misses=5,
+            thermal=40,
+            voltage=10,
+            utilization=30,
+        ),
+        DataDNA(
+            segment_id="",
+            claim_id=-(1 << 63),
+            cycles=-(1 << 63),
+            bytes=0,
+            misses=5,
+            thermal=40,
+            voltage=10,
+            utilization=30,
+        ),
     ]
 
 
 # --- Python round-trip ----------------------------------------------------------
+
 
 def test_frame_layout_constants():
     """The frozen frame ABI: magic "BTLM", v1, 22-byte header, 56-byte record, 4-byte CRC."""
     assert TELEMETRY_FRAME_MAGIC == b"BTLM"
     assert TELEMETRY_FRAME_VERSION == 1
     assert HEADER_SIZE == 22
-    assert RECORD_STRIDE == 56                      # reuses TelemetryRing._FMT ("<7q")
+    assert RECORD_STRIDE == 56  # reuses TelemetryRing._FMT ("<7q")
     assert CRC_SIZE == 4
     assert frame_length(3) == 22 + 56 * 3 + 4 == len(encode_frame(_batch()))
     for invalid in (-1, 1 << 16, True, 1.0):
@@ -82,7 +140,7 @@ def test_python_round_trip_preserves_records_and_meta():
     frame = encode_frame(recs, seq=42, timestamp=0xDEADBEEF)
     assert frame[:4] == b"BTLM"
     out, meta = decode_frame(frame)
-    assert out == recs                              # every field round-trips
+    assert out == recs  # every field round-trips
     assert meta.seq == 42 and meta.timestamp == 0xDEADBEEF
     assert meta.version == 1 and meta.n_records == len(recs)
 
@@ -97,13 +155,14 @@ def test_wire_round_trip_signed_int64():
 
 def test_empty_frame_round_trips():
     frame = encode_frame([], seq=1, timestamp=7)
-    assert len(frame) == HEADER_SIZE + CRC_SIZE     # an empty, well-formed frame
+    assert len(frame) == HEADER_SIZE + CRC_SIZE  # an empty, well-formed frame
     out, meta = decode_frame(frame)
     assert out == [] and meta.seq == 1 and meta.timestamp == 7
 
 
 def test_writer_rejects_values_it_cannot_represent_without_masking():
     """The v1 writer never silently wraps metadata or accepts a non-i64 body field."""
+
     class UnstableRecords:
         def __init__(self, declared, actual):
             self.declared = declared
@@ -159,6 +218,7 @@ def test_drain_ring_to_frame_preserves_shared_record_layout():
 
 # --- resync-on-magic ------------------------------------------------------------
 
+
 def test_resync_recovers_after_garbage_prefix():
     """Joining a stream mid-flight: a garbage prefix -> the decoder scans to BTLM and
     recovers the frame (no crash, nothing rejected since the garbage held no magic-aligned
@@ -177,10 +237,10 @@ def test_resync_recovers_good_frames_around_a_corrupt_one():
     f2 = encode_frame(_batch(), seq=2)
     f3 = encode_frame(_batch(), seq=3)
     bad = bytearray(f2)
-    bad[HEADER_SIZE + 3] ^= 0xFF                     # flip a payload byte -> CRC fails
+    bad[HEADER_SIZE + 3] ^= 0xFF  # flip a payload byte -> CRC fails
     stream = decode_frames(f1 + bytes(bad) + f3)
     seqs = [fr.meta.seq for fr in stream.frames]
-    assert seqs == [1, 3]                            # f2 dropped, f1 + f3 recovered
+    assert seqs == [1, 3]  # f2 dropped, f1 + f3 recovered
     assert stream.rejected == 1
 
 
@@ -189,14 +249,15 @@ def test_resync_handles_injected_garbage_between_frames():
     f2 = encode_frame(_batch(), seq=2)
     stream = decode_frames(f1 + b"\xde\xad\xbe\xef garbage \x00\x00" + f2)
     assert [fr.meta.seq for fr in stream.frames] == [1, 2]
-    assert stream.rejected == 0                      # the junk held no magic-aligned frame
+    assert stream.rejected == 0  # the junk held no magic-aligned frame
 
 
 # --- per-frame CRC --------------------------------------------------------------
 
+
 def test_crc_mismatch_rejects_single_frame_not_crash():
     frame = bytearray(encode_frame(_batch(), seq=9))
-    frame[HEADER_SIZE + 1] ^= 0x01                   # corrupt one payload byte
+    frame[HEADER_SIZE + 1] ^= 0x01  # corrupt one payload byte
     # strict single-frame path raises (never crashes); stream path rejects + counts
     try:
         decode_frame(bytes(frame))
@@ -209,7 +270,8 @@ def test_crc_mismatch_rejects_single_frame_not_crash():
 
 def test_bad_magic_and_version_rejected():
     frame = bytearray(encode_frame(_batch()))
-    bad_magic = bytes(frame); bad_magic = b"XXXX" + bad_magic[4:]
+    bad_magic = bytes(frame)
+    bad_magic = b"XXXX" + bad_magic[4:]
     for exc_sub, buf in (("magic", bad_magic),):
         try:
             decode_frame(buf)
@@ -218,9 +280,11 @@ def test_bad_magic_and_version_rejected():
             assert exc_sub in str(e)
     # a future version is rejected by the v1 gate
     bumped = bytearray(encode_frame(_batch()))
-    bumped[4] = 2                                    # version u16 low byte -> 2
-    body = bytes(bumped[:HEADER_SIZE + len(_batch()) * RECORD_STRIDE])
-    bumped[-4:] = (zlib.crc32(body) & 0xFFFFFFFF).to_bytes(4, "little")  # fix CRC so version is the only fault
+    bumped[4] = 2  # version u16 low byte -> 2
+    body = bytes(bumped[: HEADER_SIZE + len(_batch()) * RECORD_STRIDE])
+    bumped[-4:] = (zlib.crc32(body) & 0xFFFFFFFF).to_bytes(
+        4, "little"
+    )  # fix CRC so version is the only fault
     try:
         decode_frame(bytes(bumped))
         assert False, "expected a version rejection"
@@ -241,10 +305,10 @@ def test_bad_magic_and_version_rejected():
 def test_truncated_frame_rejected_not_crashed():
     frame = encode_frame(_batch(), seq=1)
     for cut in (0, 4, HEADER_SIZE - 1, HEADER_SIZE, len(frame) - 1):
-        stream = decode_frames(frame[:cut])          # never raises, never OOB
+        stream = decode_frames(frame[:cut])  # never raises, never OOB
         assert isinstance(stream.frames, list)
     # a header claiming more records than the buffer holds is rejected
-    short = frame[: HEADER_SIZE + RECORD_STRIDE]     # header says 3 records, body holds <1
+    short = frame[: HEADER_SIZE + RECORD_STRIDE]  # header says 3 records, body holds <1
     try:
         decode_frame(short)
         assert False, "expected truncation rejection"
@@ -265,11 +329,11 @@ def test_u32_frame_sequence_continuity_and_wraparound():
     reorder = stream(10, 9, 11)
     assert reorder.reordered_frames == 1 and reorder.missing_frames == 0
     wrapped = stream(0xFFFFFFFF, 0)
-    assert (wrapped.missing_frames, wrapped.reordered_frames,
-            wrapped.duplicate_frames) == (0, 0, 0)
+    assert (wrapped.missing_frames, wrapped.reordered_frames, wrapped.duplicate_frames) == (0, 0, 0)
 
 
 # --- RT3 reuse (the host decoder reuses sanitize_events) ------------------------
+
 
 def test_parse_uart_frames_reuses_rt3_clean():
     """A clean batch reuses the ring path's RT3 record verdict and adds explicit
@@ -281,10 +345,19 @@ def test_parse_uart_frames_reuses_rt3_clean():
     assert isinstance(witness, TelemetryIntegrity)
     ref_out, ref_witness = sanitize_events(recs)
     assert out == ref_out
-    assert (witness.accepted, witness.rejected, witness.dropped,
-            witness.monotonic, witness.seq_span) == (
-                ref_witness.accepted, ref_witness.rejected, ref_witness.dropped,
-                ref_witness.monotonic, ref_witness.seq_span)
+    assert (
+        witness.accepted,
+        witness.rejected,
+        witness.dropped,
+        witness.monotonic,
+        witness.seq_span,
+    ) == (
+        ref_witness.accepted,
+        ref_witness.rejected,
+        ref_witness.dropped,
+        ref_witness.monotonic,
+        ref_witness.seq_span,
+    )
     assert witness.frames_accepted == 1 and witness.frames_rejected == 0
     assert witness.clean and not witness.blind
 
@@ -296,7 +369,7 @@ def test_parse_uart_frames_rejects_out_of_band_record():
     poisoned = good + [DataDNA(segment_id="", claim_id=4, thermal=10000)]  # forged reading
     frame = encode_frame(poisoned, seq=1)
     out, witness = parse_uart_frames(frame)
-    assert all(r.thermal <= 100 for r in out)        # the forged record never survives
+    assert all(r.thermal <= 100 for r in out)  # the forged record never survives
     assert witness.rejected == 1 and witness.accepted == len(good)
 
 
@@ -308,7 +381,7 @@ def test_parse_uart_frames_surfaces_rejected_frames_without_guessing_record_loss
     bad[HEADER_SIZE] ^= 0xFF
     out, witness = parse_uart_frames(f1 + bytes(bad))
     assert witness.frames_accepted == 1 and witness.frames_rejected == 1
-    assert witness.dropped == 0                      # no invented record-loss count
+    assert witness.dropped == 0  # no invented record-loss count
     assert witness.accepted == len(_batch())
 
 
@@ -317,15 +390,27 @@ def test_parse_uart_frames_blind_on_empty_stream():
     out, witness = parse_uart_frames(b"")
     assert out == [] and witness.blind
     # a stream of only corrupt frames is also blind, with frame rejection counted
-    bad = bytearray(encode_frame(_batch(), seq=1)); bad[HEADER_SIZE] ^= 0xFF
+    bad = bytearray(encode_frame(_batch(), seq=1))
+    bad[HEADER_SIZE] ^= 0xFF
     out2, w2 = parse_uart_frames(bytes(bad))
-    assert (out2 == [] and w2.blind and w2.frames_accepted == 0
-            and w2.frames_rejected == 1 and w2.dropped == 0)
+    assert (
+        out2 == []
+        and w2.blind
+        and w2.frames_accepted == 0
+        and w2.frames_rejected == 1
+        and w2.dropped == 0
+    )
 
 
 def test_parse_uart_frames_surfaces_frame_sequence_anomalies():
-    frames = b"".join((encode_frame([], seq=4), encode_frame([], seq=6),
-                       encode_frame([], seq=6), encode_frame([], seq=5)))
+    frames = b"".join(
+        (
+            encode_frame([], seq=4),
+            encode_frame([], seq=6),
+            encode_frame([], seq=6),
+            encode_frame([], seq=5),
+        )
+    )
     _, witness = parse_uart_frames(frames)
     assert witness.frames_accepted == 4
     assert witness.frames_missing == 1
@@ -337,13 +422,16 @@ def test_parse_uart_frames_surfaces_frame_sequence_anomalies():
 def test_parse_uart_frames_reorder_surfaces_non_monotonic():
     """A reordered/replayed batch (a decreasing claim_id, a stale record resent after a
     newer one) makes the witness non-monotonic -- the seq/reorder signal RT3 provides."""
-    reordered = [DataDNA(segment_id="", claim_id=5),
-                 DataDNA(segment_id="", claim_id=2)]   # decrease == reorder/replay
+    reordered = [
+        DataDNA(segment_id="", claim_id=5),
+        DataDNA(segment_id="", claim_id=2),
+    ]  # decrease == reorder/replay
     out, witness = parse_uart_frames(encode_frame(reordered, seq=1))
     assert not witness.monotonic
 
 
 # --- two-truth ------------------------------------------------------------------
+
 
 def test_two_truth_frame_path_touches_no_verifier():
     """The frame path produces records + an integrity witness, NEVER a Diagnostic and
@@ -358,6 +446,7 @@ def test_two_truth_frame_path_touches_no_verifier():
 
 # --- byte-identical dual-rail (toolchain-gated, like test_c_encoder) ------------
 
+
 def _cc():
     return shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
 
@@ -367,11 +456,24 @@ def _build(tmp):
     if cc is None:
         return None
     exe = os.path.join(tmp, "test_telemetry_frame")
-    r = subprocess.run([cc, "-std=c23", "-O2", "-Wall", "-Wextra", "-I", _RUNTIME_C,
-                        os.path.join(_RUNTIME_C, "bcir_telemetry_frame.c"),
-                        os.path.join(_RUNTIME_C, "bcir_runtime.c"),
-                        os.path.join(_RUNTIME_C, "test_telemetry_frame.c"), "-o", exe],
-                       capture_output=True, text=True)
+    r = subprocess.run(
+        [
+            cc,
+            "-std=c23",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-I",
+            _RUNTIME_C,
+            os.path.join(_RUNTIME_C, "bcir_telemetry_frame.c"),
+            os.path.join(_RUNTIME_C, "bcir_runtime.c"),
+            os.path.join(_RUNTIME_C, "test_telemetry_frame.c"),
+            "-o",
+            exe,
+        ],
+        capture_output=True,
+        text=True,
+    )
     assert r.returncode == 0, r.stderr
     return exe
 
@@ -383,10 +485,24 @@ def test_c_twin_builds_freestanding():
     if cc is None:
         return
     for std in ("c11", "c23"):
-        r = subprocess.run([cc, "-ffreestanding", "-nostdlib", f"-std={std}", "-Wall",
-                            "-Wextra", "-I", _RUNTIME_C, "-c",
-                            os.path.join(_RUNTIME_C, "bcir_telemetry_frame.c"), "-o", os.devnull],
-                           capture_output=True, text=True)
+        r = subprocess.run(
+            [
+                cc,
+                "-ffreestanding",
+                "-nostdlib",
+                f"-std={std}",
+                "-Wall",
+                "-Wextra",
+                "-I",
+                _RUNTIME_C,
+                "-c",
+                os.path.join(_RUNTIME_C, "bcir_telemetry_frame.c"),
+                "-o",
+                os.devnull,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert r.returncode == 0, f"{std}: {r.stderr}"
 
 
@@ -402,26 +518,28 @@ def test_c_decode_round_trips_and_reencode_is_byte_identical():
         exe = _build(tmp)
         assert exe is not None
         for recs in (_batch(), _wire_batch()):
-          for seq, ts in ((0, 0), (7, 123456), (0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF)):
-            blob = encode_frame(recs, seq=seq, timestamp=ts)
-            ip = os.path.join(tmp, "frame.bin")
-            op = os.path.join(tmp, "reenc.bin")
-            with open(ip, "wb") as f:
-                f.write(blob)
-            if os.path.exists(op):
-                os.unlink(op)
-            r = subprocess.run([exe, ip, op], capture_output=True, text=True)
-            assert r.returncode == 0, r.stdout + r.stderr
-            # the C harness printed the decoded records -- confirm they match the input
-            lines = r.stdout.strip().splitlines()
-            assert lines[0] == f"seq={seq} ts={ts} n={len(recs)}", (lines[0], seq, ts)
-            for i, rec in enumerate(recs):
-                want = (f"rec {i}: {rec.claim_id} {rec.cycles} {rec.bytes} {rec.misses} "
-                        f"{rec.thermal} {rec.voltage} {rec.utilization}")
-                assert lines[1 + i] == want, (lines[1 + i], want)
-            with open(op, "rb") as f:
-                reenc = f.read()
-            assert reenc == blob, f"seq={seq} ts={ts}: C re-encode not byte-identical"
+            for seq, ts in ((0, 0), (7, 123456), (0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF)):
+                blob = encode_frame(recs, seq=seq, timestamp=ts)
+                ip = os.path.join(tmp, "frame.bin")
+                op = os.path.join(tmp, "reenc.bin")
+                with open(ip, "wb") as f:
+                    f.write(blob)
+                if os.path.exists(op):
+                    os.unlink(op)
+                r = subprocess.run([exe, ip, op], capture_output=True, text=True)
+                assert r.returncode == 0, r.stdout + r.stderr
+                # the C harness printed the decoded records -- confirm they match the input
+                lines = r.stdout.strip().splitlines()
+                assert lines[0] == f"seq={seq} ts={ts} n={len(recs)}", (lines[0], seq, ts)
+                for i, rec in enumerate(recs):
+                    want = (
+                        f"rec {i}: {rec.claim_id} {rec.cycles} {rec.bytes} {rec.misses} "
+                        f"{rec.thermal} {rec.voltage} {rec.utilization}"
+                    )
+                    assert lines[1 + i] == want, (lines[1 + i], want)
+                with open(op, "rb") as f:
+                    reenc = f.read()
+                assert reenc == blob, f"seq={seq} ts={ts}: C re-encode not byte-identical"
 
 
 def test_c_rejects_corrupt_frame():
@@ -432,13 +550,22 @@ def test_c_rejects_corrupt_frame():
     with tempfile.TemporaryDirectory() as tmp:
         exe = _build(tmp)
         good = encode_frame(_batch(), seq=1)
-        bad_crc = bytearray(good); bad_crc[HEADER_SIZE] ^= 0xFF
+        bad_crc = bytearray(good)
+        bad_crc[HEADER_SIZE] ^= 0xFF
         bad_magic = b"XXXX" + good[4:]
         flagged = bytearray(good)
         flagged[6:8] = (1).to_bytes(2, "little")
         flagged[-CRC_SIZE:] = (zlib.crc32(flagged[:-CRC_SIZE]) & 0xFFFFFFFF).to_bytes(4, "little")
-        for bad in (b"", b"BTLM", good[:HEADER_SIZE], good[:-1], bytes(bad_crc),
-                    bad_magic, bytes(flagged), good + b"trailing"):
+        for bad in (
+            b"",
+            b"BTLM",
+            good[:HEADER_SIZE],
+            good[:-1],
+            bytes(bad_crc),
+            bad_magic,
+            bytes(flagged),
+            good + b"trailing",
+        ):
             ip = os.path.join(tmp, "bad.bin")
             with open(ip, "wb") as f:
                 f.write(bad)
@@ -449,6 +576,7 @@ def test_c_rejects_corrupt_frame():
 
 def _run_all():
     import inspect
+
     g = dict(globals())
     fns = [(n, f) for n, f in g.items() if n.startswith("test_") and inspect.isfunction(f)]
     fns.sort(key=lambda nf: nf[0])

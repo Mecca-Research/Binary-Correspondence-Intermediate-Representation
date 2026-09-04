@@ -1,7 +1,15 @@
 """BCIR semantic model (BCIR-0..2): lanes, opcodes, resources, claims, phases."""
 
-from .graph import (Claim, Lifetime, Module, Phase, Resource, Timing,
-                    phase_graph_has_cycle, topological_phase_ids)
+from .graph import (
+    Claim,
+    Lifetime,
+    Module,
+    Phase,
+    Resource,
+    Timing,
+    phase_graph_has_cycle,
+    topological_phase_ids,
+)
 from .lanes import Domain, Lane, StrideClass
 from .opcodes import ATOMIC_OPCODES, Opcode
 
@@ -11,7 +19,8 @@ __all__ = [
     "Lane",
     "Lifetime",
     "Module",
-    "ATOMIC_OPCODES", "Opcode",
+    "ATOMIC_OPCODES",
+    "Opcode",
     "Phase",
     "Resource",
     "StrideClass",

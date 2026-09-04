@@ -15,6 +15,7 @@ VERSION (v1/v2/v3 is a function of content, and the module's own `version` field
 omits by design, and the CRC. Getting any of them wrong changes the digest of an
 artifact that is supposed to be frozen.
 """
+
 from __future__ import annotations
 
 import os
@@ -33,8 +34,7 @@ from bcir.model import Lane
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _RUNTIME_C = os.path.join(_ROOT, "runtime", "c")
-_SOURCES = ("bcir_asn1_streampack.c", "bcir_asn1.c", "bcir_runtime.c",
-            "test_asn1_streampack.c")
+_SOURCES = ("bcir_asn1_streampack.c", "bcir_asn1.c", "bcir_runtime.c", "test_asn1_streampack.c")
 
 
 def _compiler() -> str | None:
@@ -48,8 +48,11 @@ def _build(tmp: str) -> str | None:
     exe = os.path.join(tmp, "test_asn1_sp")
     build = subprocess.run(
         [cc, "-std=c23", "-O2", "-Wall", "-Wextra", "-Werror", "-I", _RUNTIME_C]
-        + [os.path.join(_RUNTIME_C, name) for name in _SOURCES] + ["-o", exe],
-        capture_output=True, text=True)
+        + [os.path.join(_RUNTIME_C, name) for name in _SOURCES]
+        + ["-o", exe],
+        capture_output=True,
+        text=True,
+    )
     assert build.returncode == 0, build.stderr
     return exe
 
@@ -82,10 +85,24 @@ def test_fast_path_is_freestanding_under_c11_and_c23():
         return
     for std in ("c11", "c23"):
         result = subprocess.run(
-            [cc, "-ffreestanding", "-nostdlib", f"-std={std}", "-Wall", "-Wextra",
-             "-Werror", "-I", _RUNTIME_C, "-c",
-             os.path.join(_RUNTIME_C, "bcir_asn1_streampack.c"), "-o", os.devnull],
-            capture_output=True, text=True)
+            [
+                cc,
+                "-ffreestanding",
+                "-nostdlib",
+                f"-std={std}",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _RUNTIME_C,
+                "-c",
+                os.path.join(_RUNTIME_C, "bcir_asn1_streampack.c"),
+                "-o",
+                os.devnull,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert result.returncode == 0, f"-std={std}: {result.stderr}"
 
 
@@ -113,15 +130,26 @@ def test_the_reconstruction_picks_the_same_version_the_native_encoder_would():
     still produce a decodable pack -- just not the same octets, and so not the same
     digest.
     """
+
     def build(pipeline_depth=1, buffers=1, dispatch="core", channel="host"):
         pack = StreamPack(source_plan="plan0", topo_gen=1, map_gen=7, data_gen=19)
         pack.pipeline_depth = pipeline_depth
-        pack.prefetches.append(Prefetch("pf0", 4, (10, 11), "T0", "linear",
-                                        buffers=buffers))
-        pack.segments.append(LaneSegment(
-            name="seg0", claim_id=1000, phase_id=0, lane=Lane.GGG, width=16,
-            opcode="f32.add", reads=(10, 11), writes=(12,), prefetch="pf0",
-            dispatch=dispatch, channel=channel))
+        pack.prefetches.append(Prefetch("pf0", 4, (10, 11), "T0", "linear", buffers=buffers))
+        pack.segments.append(
+            LaneSegment(
+                name="seg0",
+                claim_id=1000,
+                phase_id=0,
+                lane=Lane.GGG,
+                width=16,
+                opcode="f32.add",
+                reads=(10, 11),
+                writes=(12,),
+                prefetch="pf0",
+                dispatch=dispatch,
+                channel=channel,
+            )
+        )
         pack.trace_notes.append(TraceNote(claim_id=1000))
         return pack
 
@@ -145,8 +173,13 @@ def test_the_reconstruction_picks_the_same_version_the_native_encoder_would():
             # was already asserted above, so reading it here names WHICH version the two
             # rails agreed on -- the point being that all three are actually exercised.
             seen[label] = int.from_bytes(native[4:6], "little")
-        assert seen == {"v1": 1, "v2-pipeline": 2, "v2-buffers": 2,
-                        "v3-dispatch": 3, "v3-channel": 3}, seen
+        assert seen == {
+            "v1": 1,
+            "v2-pipeline": 2,
+            "v2-buffers": 2,
+            "v3-dispatch": 3,
+            "v3-channel": 3,
+        }, seen
 
 
 def test_a_malformed_or_ber_only_projection_is_refused_not_partially_reconstructed():
@@ -156,17 +189,18 @@ def test_a_malformed_or_ber_only_projection_is_refused_not_partially_reconstruct
     octets a peer chose, and BCIR digests what it exchanges -- so accepting a
     non-minimal length here would let a peer pick the digest by picking a spelling.
     """
-    pack = hydrate(vector_add(1024),
-                   optimize(vector_add(1024), TargetProfile.x86_avx512(), Theta.cool()))
+    pack = hydrate(
+        vector_add(1024), optimize(vector_add(1024), TargetProfile.x86_avx512(), Theta.cool())
+    )
     der = encode_pack(pack)
     bad: list[bytes] = [der[:n] for n in (0, 1, 5, len(der) // 2, len(der) - 1)]
     for index in (0, 1, 3, 10):
         mutated = bytearray(der)
         mutated[index] ^= 0xFF
         bad.append(bytes(mutated))
-    if der[1] < 0x80:      # the same value with a non-minimal length: legal BER, not DER
+    if der[1] < 0x80:  # the same value with a non-minimal length: legal BER, not DER
         bad.append(bytes([der[0], 0x81, der[1]]) + der[2:])
-    bad.append(der + b"\x00")                                  # trailing garbage
+    bad.append(der + b"\x00")  # trailing garbage
 
     with tempfile.TemporaryDirectory() as tmp:
         exe = _build(tmp)

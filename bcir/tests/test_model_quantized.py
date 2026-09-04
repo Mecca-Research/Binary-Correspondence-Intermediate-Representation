@@ -20,20 +20,21 @@ W = _toy_weights(SPEC)
 
 def test_the_bridge_is_the_per_tensor_roundtrip_and_preserves_shapes():
     wq = quantize_decoder_weights(W, group_size=8, bits=8)
-    assert check_decoder_weights(SPEC, wq) == []                 # shapes intact -> still a decoder
+    assert check_decoder_weights(SPEC, wq) == []  # shapes intact -> still a decoder
     want = tuple(dequantize(quantize_per_group(list(W.layers[0].w_q), 8, 8)))
-    assert wq.layers[0].w_q == want                              # exactly the round-trip, no extra math
+    assert wq.layers[0].w_q == want  # exactly the round-trip, no extra math
     assert wq.embedding.n_vocab == W.embedding.n_vocab and wq.embedding.dim == W.embedding.dim
     # the artifact IS the reference decoder over the round-tripped weights (no new kernel).
-    assert reference_decode([1, 2, 3], SPEC, wq, max_new=3) == \
-        reference_decode([1, 2, 3], SPEC, quantize_decoder_weights(W, 8, 8), max_new=3)
+    assert reference_decode([1, 2, 3], SPEC, wq, max_new=3) == reference_decode(
+        [1, 2, 3], SPEC, quantize_decoder_weights(W, 8, 8), max_new=3
+    )
 
 
 def test_drift_records_are_deterministic_and_r17_stamped():
     a = decode_drift_record([260, 259], SPEC, W, group_size=8, bits=8, max_new=4)
     b = decode_drift_record([260, 259], SPEC, W, group_size=8, bits=8, max_new=4)
-    assert a == b                                                # same weights+prompt -> same record
-    assert a.ulp_bound == quantization_error_bound() == 1        # the certified per-value bound
+    assert a == b  # same weights+prompt -> same record
+    assert a.ulp_bound == quantization_error_bound() == 1  # the certified per-value bound
     assert len(a.ids_f32) == len(a.ids_q) == 4
     assert a.nll_f32 > 0 and a.nll_q > 0
 
@@ -64,11 +65,12 @@ def test_untied_zero_head_controls_quantized_drift_and_nll():
     import dataclasses
     import math
     from bcir.frontends.models.quantized import _step_logits
+
     spec = dataclasses.replace(SPEC, tied_embeddings=False)
     w = dataclasses.replace(W, lm_head=(0.0,) * (spec.vocab_size * spec.d_model))
     assert _step_logits([1, 2, 3], spec, w) == [0.0] * spec.vocab_size
     record = decode_drift_record([1, 2, 3], spec, w, group_size=8, bits=8, max_new=2)
-    assert record.ids_f32 == record.ids_q == (0, 0)       # lowest-id tie break
+    assert record.ids_f32 == record.ids_q == (0, 0)  # lowest-id tie break
     assert record.max_logit_drift == 0.0
     assert abs(record.nll_f32 - math.log(spec.vocab_size)) < 1e-12
     assert record.nll_q == record.nll_f32

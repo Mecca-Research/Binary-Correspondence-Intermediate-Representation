@@ -5,6 +5,7 @@ targets that a later local training stage consumes.  A remote-compute provider i
 runs BCIR-owned code and returns BCIR-owned artifacts.  Keeping these interfaces separate
 prevents an opaque embedding API from being mistaken for outsourced backpropagation.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -143,12 +144,14 @@ class RecordedTeacherProvider:
         responses = []
         try:
             with source.open("rb") as stream:
-                total = 0; index = 0
+                total = 0
+                index = 0
                 while True:
                     raw = stream.readline(_MAX_RECORD_BYTES + 1)
                     if not raw:
                         break
-                    index += 1; total += len(raw)
+                    index += 1
+                    total += len(raw)
                     if total > _MAX_RECORDING_BYTES:
                         raise ValueError("teacher recording exceeds 256 MiB")
                     if len(raw) > _MAX_RECORD_BYTES:
@@ -156,11 +159,11 @@ class RecordedTeacherProvider:
                     try:
                         line = raw.decode("utf-8")
                         value = strict_json_loads(
-                            line, "teacher recording line", max_bytes=_MAX_RECORD_BYTES)
+                            line, "teacher recording line", max_bytes=_MAX_RECORD_BYTES
+                        )
                         responses.append(TeacherResponse(**value))
                     except (TypeError, UnicodeError, ValueError) as exc:
-                        raise ValueError(
-                            f"invalid teacher recording line {index}: {exc}") from exc
+                        raise ValueError(f"invalid teacher recording line {index}: {exc}") from exc
         except OSError as exc:
             raise ValueError(f"cannot read teacher recording: {exc}") from exc
         return cls(responses)
@@ -192,18 +195,26 @@ class RemoteTrainingBundle:
     schema: str = "bcir.remote_training_bundle.v1"
 
     def __post_init__(self) -> None:
-        if self.schema != "bcir.remote_training_bundle.v1" \
-                or not isinstance(self.source_commit, str) \
-                or not 7 <= len(self.source_commit) <= 64 \
-                or self.source_commit != self.source_commit.lower() \
-                or any(character not in "0123456789abcdef" for character in self.source_commit):
+        if (
+            self.schema != "bcir.remote_training_bundle.v1"
+            or not isinstance(self.source_commit, str)
+            or not 7 <= len(self.source_commit) <= 64
+            or self.source_commit != self.source_commit.lower()
+            or any(character not in "0123456789abcdef" for character in self.source_commit)
+        ):
             raise ValueError("remote bundle has an invalid schema or source commit")
-        for field in ("train_spec_sha256", "corpus_sha256", "tokenizer_sha256",
-                      "dependency_lock_sha256", "container_sha256"):
+        for field in (
+            "train_spec_sha256",
+            "corpus_sha256",
+            "tokenizer_sha256",
+            "dependency_lock_sha256",
+            "container_sha256",
+        ):
             require_sha256(getattr(self, field), field)
         require_int(self.seed, "seed")
-        if not isinstance(self.inputs, (tuple, list)) \
-                or any(not isinstance(item, ArtifactFile) for item in self.inputs):
+        if not isinstance(self.inputs, (tuple, list)) or any(
+            not isinstance(item, ArtifactFile) for item in self.inputs
+        ):
             raise ValueError("remote bundle inputs must be ArtifactFile values")
         names = [item.name for item in self.inputs]
         if len(names) != len(set(names)):
@@ -211,7 +222,8 @@ class RemoteTrainingBundle:
 
     @property
     def digest(self) -> str:
-        value = asdict(self); value["inputs"] = [asdict(item) for item in self.inputs]
+        value = asdict(self)
+        value["inputs"] = [asdict(item) for item in self.inputs]
         return sha256_text(canonical_json(value))
 
 
@@ -230,8 +242,11 @@ class RemoteTrainingResult:
         require_sha256(self.run_report_sha256, "run_report_sha256")
         if not isinstance(self.executor, str) or not self.executor:
             raise ValueError("remote executor must be nonempty")
-        if not isinstance(self.outputs, (tuple, list)) or not self.outputs \
-                or any(not isinstance(item, ArtifactFile) for item in self.outputs):
+        if (
+            not isinstance(self.outputs, (tuple, list))
+            or not self.outputs
+            or any(not isinstance(item, ArtifactFile) for item in self.outputs)
+        ):
             raise ValueError("remote result outputs must be nonempty ArtifactFile values")
         names = [item.name for item in self.outputs]
         if len(names) != len(set(names)):
@@ -291,5 +306,4 @@ def relational_embedding_targets(vectors) -> tuple[tuple[float, ...], ...]:
         if norm == 0.0:
             raise ValueError("zero embedding cannot define cosine targets")
         rows.append(tuple(value / norm for value in values))
-    return tuple(tuple(sum(a * b for a, b in zip(left, right)) for right in rows)
-                 for left in rows)
+    return tuple(tuple(sum(a * b for a, b in zip(left, right)) for right in rows) for left in rows)

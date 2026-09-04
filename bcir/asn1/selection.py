@@ -98,13 +98,11 @@ def _der_encode(kind: Asn1Type, value) -> bytes:
 
 
 def _der_decode(data: bytes, kind: Asn1Type):
-    return Module("<selection>", (), {"T": kind}).decode(
-        "T", data, strictness=Strictness.DER)
+    return Module("<selection>", (), {"T": kind}).decode("T", data, strictness=Strictness.DER)
 
 
 def _ber_decode(data: bytes, kind: Asn1Type):
-    return Module("<selection>", (), {"T": kind}).decode(
-        "T", data, strictness=Strictness.BER)
+    return Module("<selection>", (), {"T": kind}).decode("T", data, strictness=Strictness.BER)
 
 
 def _per(rules, variant):
@@ -149,8 +147,12 @@ def _build_candidates() -> tuple[Candidate, ...]:
     from .jer import JerRules as _JerRules
     from .oer import BASIC_OER_OID, CANONICAL_OER_OID
     from .oer import OerRules as _OerRules
-    from .per import (BASIC_PER_ALIGNED_OID, BASIC_PER_UNALIGNED_OID,
-                      CANONICAL_PER_ALIGNED_OID, CANONICAL_PER_UNALIGNED_OID)
+    from .per import (
+        BASIC_PER_ALIGNED_OID,
+        BASIC_PER_UNALIGNED_OID,
+        CANONICAL_PER_ALIGNED_OID,
+        CANONICAL_PER_UNALIGNED_OID,
+    )
     from .per import PerRules as _PerRules
     from .per import PerVariant as _PerVariant
 
@@ -166,20 +168,40 @@ def _build_candidates() -> tuple[Candidate, ...]:
     return (
         # --- selectable: one abstract value, one encoding ---------------------------------
         Candidate("DER", DER_OID, True, _der_encode, _der_decode, "der"),
-        Candidate("CANONICAL-PER-UNALIGNED", CANONICAL_PER_UNALIGNED_OID, True, *unaligned,
-                  rules="canonical_per_unaligned"),
-        Candidate("CANONICAL-PER-ALIGNED", CANONICAL_PER_ALIGNED_OID, True, *aligned,
-                  rules="canonical_per_aligned"),
+        Candidate(
+            "CANONICAL-PER-UNALIGNED",
+            CANONICAL_PER_UNALIGNED_OID,
+            True,
+            *unaligned,
+            rules="canonical_per_unaligned",
+        ),
+        Candidate(
+            "CANONICAL-PER-ALIGNED",
+            CANONICAL_PER_ALIGNED_OID,
+            True,
+            *aligned,
+            rules="canonical_per_aligned",
+        ),
         Candidate("COER", CANONICAL_OER_OID, True, *coer, rules="coer"),
         # X.697 registers no canonical variant, so this names BCIR's profile and carries no
         # object identifier of its own -- see the module docstring of `jer.py`.
         Candidate("JER-BCIR-CANONICAL", None, True, *cjer, rules="bcir_canonical_jer"),
         # --- decode targets only: a value has more than one legal encoding ----------------
         Candidate("BER", BER_OID, False, _der_encode, _ber_decode, "ber"),
-        Candidate("BASIC-PER-UNALIGNED", BASIC_PER_UNALIGNED_OID, False, *basic_unaligned,
-                  rules="basic_per_unaligned"),
-        Candidate("BASIC-PER-ALIGNED", BASIC_PER_ALIGNED_OID, False, *basic_aligned,
-                  rules="basic_per_aligned"),
+        Candidate(
+            "BASIC-PER-UNALIGNED",
+            BASIC_PER_UNALIGNED_OID,
+            False,
+            *basic_unaligned,
+            rules="basic_per_unaligned",
+        ),
+        Candidate(
+            "BASIC-PER-ALIGNED",
+            BASIC_PER_ALIGNED_OID,
+            False,
+            *basic_aligned,
+            rules="basic_per_aligned",
+        ),
         Candidate("BASIC-OER", BASIC_OER_OID, False, *basic_oer, rules="oer"),
         Candidate("JER", JER_OID, False, *bjer, rules="jer"),
     )
@@ -229,8 +251,7 @@ def _time(action, repeats: int) -> tuple[object, int]:
     return result, int(best or 0)
 
 
-def measure_one(candidate: Candidate, kind: Asn1Type, value, *,
-                repeats: int = 5) -> Measurement:
+def measure_one(candidate: Candidate, kind: Asn1Type, value, *, repeats: int = 5) -> Measurement:
     """Encode, decode and compare — then, and only then, report cost.
 
     Legality is a **round trip**, not merely "the encoder did not raise". An encoder that
@@ -243,18 +264,22 @@ def measure_one(candidate: Candidate, kind: Asn1Type, value, *,
     except (Asn1Error, ValueError, TypeError, OverflowError) as error:
         return Measurement(candidate.name, False, refusal=f"encode: {error}")
     if not isinstance(data, (bytes, bytearray)):
-        return Measurement(candidate.name, False,
-                           refusal="encode: did not produce octets")
+        return Measurement(candidate.name, False, refusal="encode: did not produce octets")
     try:
         back, decode_ns = _time(lambda: candidate.decode(bytes(data), kind), repeats)
     except (Asn1Error, ValueError, TypeError, OverflowError) as error:
-        return Measurement(candidate.name, False, octets=len(data),
-                           encode_ns=encode_ns, refusal=f"decode: {error}")
+        return Measurement(
+            candidate.name, False, octets=len(data), encode_ns=encode_ns, refusal=f"decode: {error}"
+        )
     if not _equivalent(back, value):
         return Measurement(
-            candidate.name, False, octets=len(data), encode_ns=encode_ns,
+            candidate.name,
+            False,
+            octets=len(data),
+            encode_ns=encode_ns,
             decode_ns=decode_ns,
-            refusal="round trip returned a different value")
+            refusal="round trip returned a different value",
+        )
     return Measurement(candidate.name, True, len(data), encode_ns, decode_ns)
 
 
@@ -282,16 +307,22 @@ def _equivalent(decoded, original) -> bool:
     return decoded == original
 
 
-def measure(kind: Asn1Type, value, *, candidates: _Seq[Candidate] | None = None,
-            repeats: int = 5) -> tuple[Measurement, ...]:
+def measure(
+    kind: Asn1Type, value, *, candidates: _Seq[Candidate] | None = None, repeats: int = 5
+) -> tuple[Measurement, ...]:
     """Measure one abstract value against every candidate."""
-    return tuple(measure_one(c, kind, value, repeats=repeats)
-                 for c in (candidates if candidates is not None else ALL_CANDIDATES))
+    return tuple(
+        measure_one(c, kind, value, repeats=repeats)
+        for c in (candidates if candidates is not None else ALL_CANDIDATES)
+    )
 
 
-def select(measurements: _Seq[Measurement], *,
-           objective: Objective = Objective.NONE,
-           candidates: _Seq[Candidate] | None = None) -> Measurement | None:
+def select(
+    measurements: _Seq[Measurement],
+    *,
+    objective: Objective = Objective.NONE,
+    candidates: _Seq[Candidate] | None = None,
+) -> Measurement | None:
     """Choose an encoding for emission, applying the three laws in order.
 
     The order is the point. Legality is settled first and without reference to any number;
@@ -326,26 +357,37 @@ def report(kind: Asn1Type, value, *, label: str = "", repeats: int = 5) -> str:
     """A human-readable table — the artefact the roadmap's §6 gate asks to be recorded."""
     measurements = measure(kind, value, repeats=repeats)
     widest = max(len(m.candidate) for m in measurements)
-    lines = [f"{label}" if label else "",
-             f"{'candidate'.ljust(widest)}  octets  canonical  encode_ns  decode_ns  note"]
+    lines = [
+        f"{label}" if label else "",
+        f"{'candidate'.ljust(widest)}  octets  canonical  encode_ns  decode_ns  note",
+    ]
     by_name = {c.name: c for c in ALL_CANDIDATES}
     baseline = next((m.octets for m in measurements if m.candidate == "DER"), None)
     for measurement in measurements:
         candidate = by_name[measurement.candidate]
         if not measurement.legal:
-            lines.append(f"{measurement.candidate.ljust(widest)}       -          -"
-                         f"          -          -  {measurement.refusal}")
+            lines.append(
+                f"{measurement.candidate.ljust(widest)}       -          -"
+                f"          -          -  {measurement.refusal}"
+            )
             continue
-        share = (f"{100 * measurement.octets / baseline:5.1f}% of DER"
-                 if baseline else "")
+        share = f"{100 * measurement.octets / baseline:5.1f}% of DER" if baseline else ""
         lines.append(
             f"{measurement.candidate.ljust(widest)}  {measurement.octets:6d}  "
             f"{'yes' if candidate.canonical else 'no ':>9}  "
-            f"{measurement.encode_ns:9d}  {measurement.decode_ns:9d}  {share}")
+            f"{measurement.encode_ns:9d}  {measurement.decode_ns:9d}  {share}"
+        )
     return "\n".join(line for line in lines if line)
 
 
 __all__ = [
-    "ALL_CANDIDATES", "SELECTABLE", "Candidate", "Measurement", "Objective",
-    "measure", "measure_one", "report", "select",
+    "ALL_CANDIDATES",
+    "SELECTABLE",
+    "Candidate",
+    "Measurement",
+    "Objective",
+    "measure",
+    "measure_one",
+    "report",
+    "select",
 ]

@@ -68,8 +68,7 @@ def test_promotion_behind_the_gate_bumps_the_generation():
 
 def test_certificate_must_cover_the_promotion():
     p = PolicyPortfolio.default()
-    forged = ReplayCertificate(candidate="other", incumbent="latency",
-                               episodes=3, regressions=0)
+    forged = ReplayCertificate(candidate="other", incumbent="latency", episodes=3, regressions=0)
     try:
         p.promote("latency", ENERGY, forged)
         assert False, "expected a coverage check"

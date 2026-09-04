@@ -53,95 +53,151 @@ _CHOICE = Choice((Component("num", _I, tag=0), Component("txt", _S, tag=1)), nam
 #: octet, an implicit tag on a constructed type, and a length past the short form.
 _CORPUS = (
     ("a negative integer", _seq(Component("v", _I)), {"v": -1}),
-    ("a 70-bit negative", _seq(Component("v", _I)), {"v": -(2 ** 70)}),
-    ("an integer past 64 bits", _seq(Component("v", _I)), {"v": 2 ** 64 + 7}),
-    ("a 400-bit integer", _seq(Component("v", _I)), {"v": 2 ** 400 + 12345}),
+    ("a 70-bit negative", _seq(Component("v", _I)), {"v": -(2**70)}),
+    ("an integer past 64 bits", _seq(Component("v", _I)), {"v": 2**64 + 7}),
+    ("a 400-bit integer", _seq(Component("v", _I)), {"v": 2**400 + 12345}),
     ("zero", _seq(Component("v", _I)), {"v": 0}),
     ("the 128 length boundary", _seq(Component("v", _I)), {"v": 128}),
-    ("both booleans", _seq(Component("a", _B), Component("b", _B)),
-     {"a": True, "b": False}),
+    ("both booleans", _seq(Component("a", _B), Component("b", _B)), {"a": True, "b": False}),
     ("a bare NULL", _seq(Component("v", _N)), {"v": NULL}),
-    ("a NULL between integers",
-     _seq(Component("a", _I), Component("v", _N), Component("b", _I)),
-     {"a": 1, "v": NULL, "b": 2}),
+    (
+        "a NULL between integers",
+        _seq(Component("a", _I), Component("v", _N), Component("b", _I)),
+        {"a": 1, "v": NULL, "b": 2},
+    ),
     ("an octet string", _seq(Component("v", _O)), {"v": b"\x00\xff\x10"}),
     ("an empty octet string", _seq(Component("v", _O)), {"v": b""}),
     ("an empty string", _seq(Component("v", _S)), {"v": ""}),
     ("a non-ASCII string", _seq(Component("v", _S)), {"v": "café \U0001f600"}),
-    ("a string of JSON escapes", _seq(Component("v", _S)), {"v": "a\nb\tc\"d\\e\x01"}),
+    ("a string of JSON escapes", _seq(Component("v", _S)), {"v": 'a\nb\tc"d\\e\x01'}),
     ("a string past the short length form", _seq(Component("v", _S)), {"v": "x" * 300}),
-    ("an object identifier", _seq(Component("v", _OID)),
-     {"v": Oid((1, 3, 6, 1, 4, 1, 62596, 1))}),
+    ("an object identifier", _seq(Component("v", _OID)), {"v": Oid((1, 3, 6, 1, 4, 1, 62596, 1))}),
     ("an OID with a large arc", _seq(Component("v", _OID)), {"v": Oid((2, 999, 1234567))}),
-    ("an optional present", _seq(Component("a", _I), Component("b", _I, optional=True)),
-     {"a": 1, "b": 2}),
-    ("an optional absent", _seq(Component("a", _I), Component("b", _I, optional=True)),
-     {"a": 1}),
-    ("a default absent", _seq(Component("a", _I), Component("b", _B, default=False)),
-     {"a": 1}),
-    ("a default present", _seq(Component("a", _I), Component("b", _B, default=False)),
-     {"a": 1, "b": True}),
+    (
+        "an optional present",
+        _seq(Component("a", _I), Component("b", _I, optional=True)),
+        {"a": 1, "b": 2},
+    ),
+    ("an optional absent", _seq(Component("a", _I), Component("b", _I, optional=True)), {"a": 1}),
+    ("a default absent", _seq(Component("a", _I), Component("b", _B, default=False)), {"a": 1}),
+    (
+        "a default present",
+        _seq(Component("a", _I), Component("b", _B, default=False)),
+        {"a": 1, "b": True},
+    ),
     # Version 5's rows. Their absence hid a bug in every emitter for four plan versions:
     # X.690 §11.5, X.696 §31.9 and CJER require a component EQUAL to its default to be
     # omitted, and both rails emitted it.
-    ("a default supplied but equal to the default",
-     _seq(Component("a", _I), Component("b", _B, default=False)), {"a": 1, "b": False}),
-    ("an integer default supplied and equal",
-     _seq(Component("a", _I), Component("b", _I, default=7)), {"a": 1, "b": 7}),
-    ("a string default supplied and equal",
-     _seq(Component("a", _I), Component("b", _S, default="hi")), {"a": 1, "b": "hi"}),
-    ("a SEQUENCE OF default supplied and equal",
-     _seq(Component("a", _I), Component("b", SequenceOf(_I, "S"), default=[1, 2])),
-     {"a": 1, "b": [1, 2]}),
-    ("a SEQUENCE OF default supplied and differing",
-     _seq(Component("a", _I), Component("b", SequenceOf(_I, "S"), default=[1, 2])),
-     {"a": 1, "b": [1, 3]}),
-    ("twelve defaults, every other one equal",
-     _seq(*[Component(f"c{i}", _I, default=i) for i in range(12)]),
-     {f"c{i}": (i if i % 2 else 99) for i in range(12)}),
-    ("twelve optionals, alternate present",
-     _seq(*[Component(f"c{i}", _I, optional=True) for i in range(12)]),
-     {f"c{i}": i for i in range(0, 12, 2)}),
-    ("twelve optionals, none present",
-     _seq(*[Component(f"c{i}", _I, optional=True) for i in range(12)]), {}),
+    (
+        "a default supplied but equal to the default",
+        _seq(Component("a", _I), Component("b", _B, default=False)),
+        {"a": 1, "b": False},
+    ),
+    (
+        "an integer default supplied and equal",
+        _seq(Component("a", _I), Component("b", _I, default=7)),
+        {"a": 1, "b": 7},
+    ),
+    (
+        "a string default supplied and equal",
+        _seq(Component("a", _I), Component("b", _S, default="hi")),
+        {"a": 1, "b": "hi"},
+    ),
+    (
+        "a SEQUENCE OF default supplied and equal",
+        _seq(Component("a", _I), Component("b", SequenceOf(_I, "S"), default=[1, 2])),
+        {"a": 1, "b": [1, 2]},
+    ),
+    (
+        "a SEQUENCE OF default supplied and differing",
+        _seq(Component("a", _I), Component("b", SequenceOf(_I, "S"), default=[1, 2])),
+        {"a": 1, "b": [1, 3]},
+    ),
+    (
+        "twelve defaults, every other one equal",
+        _seq(*[Component(f"c{i}", _I, default=i) for i in range(12)]),
+        {f"c{i}": (i if i % 2 else 99) for i in range(12)},
+    ),
+    (
+        "twelve optionals, alternate present",
+        _seq(*[Component(f"c{i}", _I, optional=True) for i in range(12)]),
+        {f"c{i}": i for i in range(0, 12, 2)},
+    ),
+    (
+        "twelve optionals, none present",
+        _seq(*[Component(f"c{i}", _I, optional=True) for i in range(12)]),
+        {},
+    ),
     ("an empty SEQUENCE OF", _seq(Component("v", SequenceOf(_I, "SEQ"))), {"v": []}),
     ("a short SEQUENCE OF", _seq(Component("v", SequenceOf(_I, "SEQ"))), {"v": [1, 2, 3]}),
-    ("a SEQUENCE OF past 255", _seq(Component("v", SequenceOf(_I, "SEQ"))),
-     {"v": list(range(300))}),
-    ("a SEQUENCE OF SEQUENCE",
-     _seq(Component("v", SequenceOf(_seq(Component("a", _I), name="E"), "SEQ"))),
-     {"v": [{"a": 1}, {"a": 2}]}),
-    ("a nested SEQUENCE", _seq(Component("in", _seq(Component("a", _I), name="In"))),
-     {"in": {"a": 5}}),
-    ("three levels of nesting",
-     _seq(Component("a", _seq(Component("b", _seq(Component("c", _I), name="C")),
-                              name="B"))), {"a": {"b": {"c": 7}}}),
-    ("implicit context tags", _seq(Component("a", _I, tag=0), Component("b", _S, tag=1)),
-     {"a": 1, "b": "x"}),
+    (
+        "a SEQUENCE OF past 255",
+        _seq(Component("v", SequenceOf(_I, "SEQ"))),
+        {"v": list(range(300))},
+    ),
+    (
+        "a SEQUENCE OF SEQUENCE",
+        _seq(Component("v", SequenceOf(_seq(Component("a", _I), name="E"), "SEQ"))),
+        {"v": [{"a": 1}, {"a": 2}]},
+    ),
+    (
+        "a nested SEQUENCE",
+        _seq(Component("in", _seq(Component("a", _I), name="In"))),
+        {"in": {"a": 5}},
+    ),
+    (
+        "three levels of nesting",
+        _seq(Component("a", _seq(Component("b", _seq(Component("c", _I), name="C")), name="B"))),
+        {"a": {"b": {"c": 7}}},
+    ),
+    (
+        "implicit context tags",
+        _seq(Component("a", _I, tag=0), Component("b", _S, tag=1)),
+        {"a": 1, "b": "x"},
+    ),
     ("an explicit context tag", _seq(Component("a", _I, tag=0, explicit=True)), {"a": 1}),
-    ("an explicit tag past the low-tag form",
-     _seq(Component("a", _I, tag=100, explicit=True)), {"a": 1}),
+    (
+        "an explicit tag past the low-tag form",
+        _seq(Component("a", _I, tag=100, explicit=True)),
+        {"a": 1},
+    ),
     ("an implicit tag past the low-tag form", _seq(Component("a", _I, tag=100)), {"a": 1}),
-    ("a CHOICE on its integer arm",
-     _seq(Component("v", _CHOICE, tag=5, explicit=True)), {"v": ("num", 7)}),
-    ("a CHOICE on its string arm",
-     _seq(Component("v", _CHOICE, tag=5, explicit=True)), {"v": ("txt", "hi")}),
-    ("an implicit tag on a SEQUENCE",
-     _seq(Component("s", _seq(Component("a", _I), name="In"), tag=3)), {"s": {"a": 9}}),
-    ("an implicit tag on a SEQUENCE OF",
-     _seq(Component("v", SequenceOf(_I, "SEQ"), tag=4)), {"v": [1, 2]}),
+    (
+        "a CHOICE on its integer arm",
+        _seq(Component("v", _CHOICE, tag=5, explicit=True)),
+        {"v": ("num", 7)},
+    ),
+    (
+        "a CHOICE on its string arm",
+        _seq(Component("v", _CHOICE, tag=5, explicit=True)),
+        {"v": ("txt", "hi")},
+    ),
+    (
+        "an implicit tag on a SEQUENCE",
+        _seq(Component("s", _seq(Component("a", _I), name="In"), tag=3)),
+        {"s": {"a": 9}},
+    ),
+    (
+        "an implicit tag on a SEQUENCE OF",
+        _seq(Component("v", SequenceOf(_I, "SEQ"), tag=4)),
+        {"v": [1, 2]},
+    ),
     ("content past the three-octet length", _seq(Component("v", _S)), {"v": "y" * 70000}),
 )
 
 #: Every rule the twin serves, paired with the driver's spelling. PER is four rows: the
 #: ALIGNED/UNALIGNED split is a real cost trade and CANONICAL/BASIC decides §19.5's DEFAULT
 #: rule, so collapsing them would put one number in the table for two encodings.
-_RULES = ((EmitRules.DER, "der"), (EmitRules.BER, "ber"), (EmitRules.JER, "jer"),
-          (EmitRules.COER, "coer"),
-          (EmitRules.CANONICAL_PER_ALIGNED, "cper-a"),
-          (EmitRules.CANONICAL_PER_UNALIGNED, "cper-u"),
-          (EmitRules.BASIC_PER_ALIGNED, "bper-a"),
-          (EmitRules.BASIC_PER_UNALIGNED, "bper-u"))
+_RULES = (
+    (EmitRules.DER, "der"),
+    (EmitRules.BER, "ber"),
+    (EmitRules.JER, "jer"),
+    (EmitRules.COER, "coer"),
+    (EmitRules.CANONICAL_PER_ALIGNED, "cper-a"),
+    (EmitRules.CANONICAL_PER_UNALIGNED, "cper-u"),
+    (EmitRules.BASIC_PER_ALIGNED, "bper-a"),
+    (EmitRules.BASIC_PER_UNALIGNED, "bper-u"),
+)
 
 
 def _available() -> bool:
@@ -156,17 +212,31 @@ def _build(tmp: str, optimization: str = "-O2") -> str | None:
     proc = None
     for std in ("c2x", "c11"):
         proc = subprocess.run(
-            [cc, f"-std={std}", optimization, "-Wall", "-Wextra", "-Werror", "-I", _C,
-             *[os.path.join(_C, name) for name in _SOURCES], "-o", out],
-            capture_output=True, text=True)
+            [
+                cc,
+                f"-std={std}",
+                optimization,
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C,
+                *[os.path.join(_C, name) for name in _SOURCES],
+                "-o",
+                out,
+            ],
+            capture_output=True,
+            text=True,
+        )
         if proc.returncode == 0:
             return out
     raise AssertionError(f"the emit driver must build warning-clean:\n{proc.stderr[:2000]}")
 
 
 def _drive(binary: str, lines: list[str]) -> list[str]:
-    proc = subprocess.run([binary], input="\n".join(lines) + "\n", capture_output=True,
-                          text=True, timeout=300)
+    proc = subprocess.run(
+        [binary], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=300
+    )
     assert proc.returncode == 0, proc.stderr[:2000]
     return proc.stdout.splitlines()
 
@@ -235,9 +305,8 @@ def test_an_integer_past_64_bits_is_not_silently_truncated():
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         lines, expect = [], []
-        for value in (2 ** 64 + 7, 2 ** 64, 2 ** 128 - 1, -(2 ** 64) - 7, 2 ** 400 + 12345):
-            stream = flatten(plan, value := {"v": value} if not isinstance(value, dict)
-                             else value)
+        for value in (2**64 + 7, 2**64, 2**128 - 1, -(2**64) - 7, 2**400 + 12345):
+            stream = flatten(plan, value := {"v": value} if not isinstance(value, dict) else value)
             lines.append("plan " + plan.serialize().hex())
             lines.append(f"emit jer {stream.hex()}")
             expect.append(emit(plan, stream, rules=EmitRules.JER))
@@ -260,14 +329,21 @@ def test_a_short_output_buffer_reports_the_capacity_it_needed():
     stream = flatten(plan, {"a": 1, "b": "hello"})
     full = emit(plan, stream, rules=EmitRules.DER)
     with tempfile.TemporaryDirectory() as tmp:
-        replies = [line for line in _drive(_build(tmp), [
-            "plan " + plan.serialize().hex(),
-            f"emitcap der 2 {stream.hex()}",
-            f"emitcap der {len(full)} {stream.hex()}",
-        ]) if line != "ok"]
-    assert replies[0].startswith("err 6 "), replies[0]      # BCIR_EMIT_OUT_SHORT
+        replies = [
+            line
+            for line in _drive(
+                _build(tmp),
+                [
+                    "plan " + plan.serialize().hex(),
+                    f"emitcap der 2 {stream.hex()}",
+                    f"emitcap der {len(full)} {stream.hex()}",
+                ],
+            )
+            if line != "ok"
+        ]
+    assert replies[0].startswith("err 6 "), replies[0]  # BCIR_EMIT_OUT_SHORT
     assert replies[0].split()[3] == str(len(full)), replies[0]
-    assert bytes.fromhex(replies[1][3:]) == full            # exactly enough is enough
+    assert bytes.fromhex(replies[1][3:]) == full  # exactly enough is enough
 
 
 def test_a_truncated_or_overlong_stream_is_refused():
@@ -277,15 +353,22 @@ def test_a_truncated_or_overlong_stream_is_refused():
     plan = compile_encode_plan(kind, module="Test", type_name="stream")
     stream = flatten(plan, {"a": 1, "b": "hello"})
     with tempfile.TemporaryDirectory() as tmp:
-        replies = [line for line in _drive(_build(tmp), [
-            "plan " + plan.serialize().hex(),
-            f"emit der {stream[:-3].hex()}",
-            f"emit der {(stream + b'zz').hex()}",
-            f"emit jer {stream[:-3].hex()}",
-            f"emit coer {(stream + b'zz').hex()}",
-        ]) if line != "ok"]
-    assert replies[0].startswith("err 4 "), replies[0]      # STREAM_SHORT
-    assert replies[1].startswith("err 5 "), replies[1]      # STREAM_LONG
+        replies = [
+            line
+            for line in _drive(
+                _build(tmp),
+                [
+                    "plan " + plan.serialize().hex(),
+                    f"emit der {stream[:-3].hex()}",
+                    f"emit der {(stream + b'zz').hex()}",
+                    f"emit jer {stream[:-3].hex()}",
+                    f"emit coer {(stream + b'zz').hex()}",
+                ],
+            )
+            if line != "ok"
+        ]
+    assert replies[0].startswith("err 4 "), replies[0]  # STREAM_SHORT
+    assert replies[1].startswith("err 5 "), replies[1]  # STREAM_LONG
     assert replies[2].startswith("err 4 "), replies[2]
     assert replies[3].startswith("err 5 "), replies[3]
 
@@ -305,15 +388,17 @@ def test_a_plan_of_another_version_is_refused_rather_than_read_hopefully():
     text = plan.serialize().replace(current, b"plan-version 9999")
     with tempfile.TemporaryDirectory() as tmp:
         replies = _drive(_build(tmp), ["plan " + text.hex()])
-    assert replies[0].startswith("err 2 "), replies[0]      # PLAN_VERSION_BAD
+    assert replies[0].startswith("err 2 "), replies[0]  # PLAN_VERSION_BAD
 
 
 def test_a_plan_larger_than_the_caller_s_tables_is_refused():
     if not _available():
         return
     plan = compile_encode_plan(_seq(Component("a", _I)), module="Test", type_name="junk")
-    for mangled, status in ((plan.serialize().replace(b"kind=integer", b"kind=nonsense"), 1),
-                            (plan.serialize()[:40], 1)):
+    for mangled, status in (
+        (plan.serialize().replace(b"kind=integer", b"kind=nonsense"), 1),
+        (plan.serialize()[:40], 1),
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             replies = _drive(_build(tmp), ["plan " + mangled.hex()])
         assert replies[0].startswith(f"err {status} "), replies[0]
@@ -327,13 +412,20 @@ def test_a_short_scratch_reports_the_visit_count_it_needed():
     plan = compile_encode_plan(kind, module="Test", type_name="scratch")
     stream = flatten(plan, {"v": list(range(50))})
     with tempfile.TemporaryDirectory() as tmp:
-        replies = [line for line in _drive(_build(tmp), [
-            "plan " + plan.serialize().hex(),
-            "scratchcap 4",
-            f"emit der {stream.hex()}",
-            f"emit jer {stream.hex()}",
-        ]) if line != "ok"]
-    assert replies[0].startswith("err 7 "), replies[0]      # SCRATCH_SHORT
+        replies = [
+            line
+            for line in _drive(
+                _build(tmp),
+                [
+                    "plan " + plan.serialize().hex(),
+                    "scratchcap 4",
+                    f"emit der {stream.hex()}",
+                    f"emit jer {stream.hex()}",
+                ],
+            )
+            if line != "ok"
+        ]
+    assert replies[0].startswith("err 7 "), replies[0]  # SCRATCH_SHORT
     assert int(replies[0].split()[3]) > 4, replies[0]
     # JER never touches the scratch, so a tiny one is irrelevant to it.
     assert replies[1].startswith("ok "), replies[1]
@@ -356,26 +448,35 @@ def test_a_sequence_of_cannot_declare_more_elements_than_the_stream_could_hold()
     if not _available():
         return
     counting = compile_encode_plan(
-        _seq(Component("v", SequenceOf(_I, "SEQ"))), module="Test", type_name="bound")
+        _seq(Component("v", SequenceOf(_I, "SEQ"))), module="Test", type_name="bound"
+    )
     free = compile_encode_plan(
-        _seq(Component("v", SequenceOf(_N, "SEQ"))), module="Test", type_name="free")
+        _seq(Component("v", SequenceOf(_N, "SEQ"))), module="Test", type_name="free"
+    )
     # A count of 2^32-1 with a one-octet minimum element, and a three-octet stream.
     hostile = (0xFFFFFFFF).to_bytes(4, "big")
     with tempfile.TemporaryDirectory() as tmp:
-        replies = [line for line in _drive(_build(tmp), [
-            "plan " + counting.serialize().hex(),
-            f"emit der {hostile.hex()}",
-            f"emit jer {hostile.hex()}",
-            f"emit coer {hostile.hex()}",
-            f"emit ber {hostile.hex()}",
-            "plan " + free.serialize().hex(),
-            f"emit jer {hostile.hex()}",
-        ]) if line != "ok"]
+        replies = [
+            line
+            for line in _drive(
+                _build(tmp),
+                [
+                    "plan " + counting.serialize().hex(),
+                    f"emit der {hostile.hex()}",
+                    f"emit jer {hostile.hex()}",
+                    f"emit coer {hostile.hex()}",
+                    f"emit ber {hostile.hex()}",
+                    "plan " + free.serialize().hex(),
+                    f"emit jer {hostile.hex()}",
+                ],
+            )
+            if line != "ok"
+        ]
     # An element that costs at least one octet: refused as a short stream, exactly.
     for reply in replies[:4]:
-        assert reply.startswith("err 4 "), reply          # STREAM_SHORT
+        assert reply.startswith("err 4 "), reply  # STREAM_SHORT
     # A zero-cost element has no stream bound at all, so it meets an explicit ceiling.
-    assert replies[4].startswith("err 9 "), replies[4]    # UNSUPPORTED
+    assert replies[4].startswith("err 9 "), replies[4]  # UNSUPPORTED
 
 
 def test_a_nested_sequence_does_not_cost_exponential_time_in_oer():
@@ -392,18 +493,26 @@ def test_a_nested_sequence_does_not_cost_exponential_time_in_oer():
         return
     kind = _seq(Component("a", _I, optional=True))
     for _ in range(8):
-        kind = Sequence((Component("inner", kind, optional=True),
-                         Component("x", _I, optional=True)), name="N")
+        kind = Sequence(
+            (Component("inner", kind, optional=True), Component("x", _I, optional=True)), name="N"
+        )
     plan = compile_encode_plan(kind, module="Test", type_name="deep")
     value: dict = {"a": 1}
     for _ in range(8):
         value = {"inner": value, "x": 2}
     stream = flatten(plan, value)
     with tempfile.TemporaryDirectory() as tmp:
-        replies = [line for line in _drive(_build(tmp), [
-            "plan " + plan.serialize().hex(),
-            f"emit coer {stream.hex()}",
-        ]) if line != "ok"]
+        replies = [
+            line
+            for line in _drive(
+                _build(tmp),
+                [
+                    "plan " + plan.serialize().hex(),
+                    f"emit coer {stream.hex()}",
+                ],
+            )
+            if line != "ok"
+        ]
     assert bytes.fromhex(replies[0][3:]) == emit(plan, stream, rules=EmitRules.COER)
 
 
@@ -416,10 +525,10 @@ _CONSTRAINED = (
     ("§10.3 a) one unsigned octet", "ValueRange(0, 255)", 42),
     ("§10.3 b) two unsigned octets", "ValueRange(0, 65535)", 42),
     ("§10.3 c) four unsigned octets", "ValueRange(0, 2 ** 32 - 1)", 70000),
-    ("§10.3 d) eight unsigned octets", "ValueRange(0, 2 ** 64 - 1)", 2 ** 63),
+    ("§10.3 d) eight unsigned octets", "ValueRange(0, 2 ** 64 - 1)", 2**63),
     ("§10.4 a) one signed octet", "ValueRange(-128, 127)", -5),
     ("§10.4 b) two signed octets", "ValueRange(-32768, 32767)", -5),
-    ("§10.4 d) eight signed octets", "ValueRange(-(2 ** 63), 2 ** 63 - 1)", -(2 ** 62)),
+    ("§10.4 d) eight signed octets", "ValueRange(-(2 ** 63), 2 ** 63 - 1)", -(2**62)),
     ("§10.3 e) a lower bound alone", "ValueRange(0, None)", 300),
     ("§10.4 e) an upper bound alone", "ValueRange(None, 255)", -300),
     ("an extensible bound is invisible to OER", "Extensible(ValueRange(0, 255))", 42),
@@ -435,54 +544,142 @@ def _constrained_cases():
     """Build the constrained corpus. Imported lazily so the module stays cheap to import."""
     from bcir.asn1.constraints import Extensible, PermittedAlphabet, Size, ValueRange
 
-    scope = {"Extensible": Extensible, "PermittedAlphabet": PermittedAlphabet,
-             "Size": Size, "ValueRange": ValueRange}
-    cases = [(label, _seq(Component("v", Primitive(Universal.INTEGER, "I",
-                                                   constraint=eval(spelling, scope)))),
-              {"v": value})
-             for label, spelling, value in _CONSTRAINED]
+    scope = {
+        "Extensible": Extensible,
+        "PermittedAlphabet": PermittedAlphabet,
+        "Size": Size,
+        "ValueRange": ValueRange,
+    }
+    cases = [
+        (
+            label,
+            _seq(
+                Component("v", Primitive(Universal.INTEGER, "I", constraint=eval(spelling, scope)))
+            ),
+            {"v": value},
+        )
+        for label, spelling, value in _CONSTRAINED
+    ]
     cases += [
-        ("§14.1 a fixed-size OCTET STRING",
-         _seq(Component("v", Primitive(Universal.OCTET_STRING, "O",
-                                       constraint=Size(ValueRange(3, 3))))), {"v": b"abc"}),
-        ("§14.2 a size RANGE keeps its determinant",
-         _seq(Component("v", Primitive(Universal.OCTET_STRING, "O",
-                                       constraint=Size(ValueRange(1, 3))))), {"v": b"abc"}),
-        ("§27.2 a fixed-size known-multiplier string",
-         _seq(Component("v", Primitive(Universal.IA5_STRING, "A",
-                                       constraint=Size(ValueRange(3, 3))))), {"v": "abc"}),
-        ("§27.1 UTF8String is never known-multiplier",
-         _seq(Component("v", Primitive(Universal.UTF8_STRING, "U",
-                                       constraint=Size(ValueRange(3, 3))))), {"v": "abc"}),
-        ("a permitted alphabet, which OER does not read",
-         _seq(Component("v", Primitive(Universal.IA5_STRING, "A",
-                                       constraint=PermittedAlphabet(
-                                           ValueRange("0", "9"))))), {"v": "019"}),
+        (
+            "§14.1 a fixed-size OCTET STRING",
+            _seq(
+                Component(
+                    "v", Primitive(Universal.OCTET_STRING, "O", constraint=Size(ValueRange(3, 3)))
+                )
+            ),
+            {"v": b"abc"},
+        ),
+        (
+            "§14.2 a size RANGE keeps its determinant",
+            _seq(
+                Component(
+                    "v", Primitive(Universal.OCTET_STRING, "O", constraint=Size(ValueRange(1, 3)))
+                )
+            ),
+            {"v": b"abc"},
+        ),
+        (
+            "§27.2 a fixed-size known-multiplier string",
+            _seq(
+                Component(
+                    "v", Primitive(Universal.IA5_STRING, "A", constraint=Size(ValueRange(3, 3)))
+                )
+            ),
+            {"v": "abc"},
+        ),
+        (
+            "§27.1 UTF8String is never known-multiplier",
+            _seq(
+                Component(
+                    "v", Primitive(Universal.UTF8_STRING, "U", constraint=Size(ValueRange(3, 3)))
+                )
+            ),
+            {"v": "abc"},
+        ),
+        (
+            "a permitted alphabet, which OER does not read",
+            _seq(
+                Component(
+                    "v",
+                    Primitive(
+                        Universal.IA5_STRING,
+                        "A",
+                        constraint=PermittedAlphabet(ValueRange("0", "9")),
+                    ),
+                )
+            ),
+            {"v": "019"},
+        ),
         # Version 4: an ENUMERATED needs its enumeration, because X.697 22.2 spells the
         # value as the IDENTIFIER and X.691 14.1 indexes the root. The three rows below are
         # X.696 11.3's short form, 11.4's long form and 11.4's SIGNED body.
-        ("an ENUMERATED, short form", _seq(Component("v", Primitive(
-            Universal.ENUMERATED, "E", enumeration=_ENUM))), {"v": 5}),
-        ("an ENUMERATED, long form", _seq(Component("v", Primitive(
-            Universal.ENUMERATED, "E", enumeration=_ENUM))), {"v": 200}),
-        ("a negative ENUMERATED", _seq(Component("v", Primitive(
-            Universal.ENUMERATED, "E", enumeration=_ENUM))), {"v": -1}),
-        ("an extensible ENUMERATED", _seq(Component("v", Primitive(
-            Universal.ENUMERATED, "E", enumeration=_ENUM, enum_extensible=True))),
-         {"v": 5}),
-        ("an extensible SEQUENCE", Sequence(
-            (Component("a", _I),), name="X", extensible=True), {"a": 1}),
-        ("an extensible CHOICE", _seq(Component("v", Choice(
-            (Component("num", _I, tag=0),), name="C", extensible=True), tag=5,
-            explicit=True)), {"v": ("num", 7)}),
-        ("a constrained integer inside a SEQUENCE OF",
-         _seq(Component("v", SequenceOf(Primitive(Universal.INTEGER, "I",
-                                                  constraint=ValueRange(0, 255)), "S"))),
-         {"v": [1, 2, 250]}),
-        ("an optional constrained integer, absent",
-         _seq(Component("a", _I), Component("b", Primitive(
-             Universal.INTEGER, "I", constraint=ValueRange(0, 255)), optional=True)),
-         {"a": 1}),
+        (
+            "an ENUMERATED, short form",
+            _seq(Component("v", Primitive(Universal.ENUMERATED, "E", enumeration=_ENUM))),
+            {"v": 5},
+        ),
+        (
+            "an ENUMERATED, long form",
+            _seq(Component("v", Primitive(Universal.ENUMERATED, "E", enumeration=_ENUM))),
+            {"v": 200},
+        ),
+        (
+            "a negative ENUMERATED",
+            _seq(Component("v", Primitive(Universal.ENUMERATED, "E", enumeration=_ENUM))),
+            {"v": -1},
+        ),
+        (
+            "an extensible ENUMERATED",
+            _seq(
+                Component(
+                    "v",
+                    Primitive(Universal.ENUMERATED, "E", enumeration=_ENUM, enum_extensible=True),
+                )
+            ),
+            {"v": 5},
+        ),
+        (
+            "an extensible SEQUENCE",
+            Sequence((Component("a", _I),), name="X", extensible=True),
+            {"a": 1},
+        ),
+        (
+            "an extensible CHOICE",
+            _seq(
+                Component(
+                    "v",
+                    Choice((Component("num", _I, tag=0),), name="C", extensible=True),
+                    tag=5,
+                    explicit=True,
+                )
+            ),
+            {"v": ("num", 7)},
+        ),
+        (
+            "a constrained integer inside a SEQUENCE OF",
+            _seq(
+                Component(
+                    "v",
+                    SequenceOf(
+                        Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, 255)), "S"
+                    ),
+                )
+            ),
+            {"v": [1, 2, 250]},
+        ),
+        (
+            "an optional constrained integer, absent",
+            _seq(
+                Component("a", _I),
+                Component(
+                    "b",
+                    Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, 255)),
+                    optional=True,
+                ),
+            ),
+            {"a": 1},
+        ),
     ]
     return cases
 
@@ -510,8 +707,7 @@ def test_the_twin_reaches_the_same_octets_for_a_constrained_type():
     assert len(replies) == len(expect), f"{len(replies)} replies for {len(expect)} cases"
     for (label, name, want), reply in zip(expect, replies):
         assert reply.startswith("ok "), f"{label} / {name}: {reply}"
-        assert bytes.fromhex(reply[3:]) == want, (
-            f"{label} / {name}: {reply[3:]} != {want.hex()}")
+        assert bytes.fromhex(reply[3:]) == want, f"{label} / {name}: {reply[3:]} != {want.hex()}"
 
 
 def test_the_c_reader_stores_every_constraint_field_the_compiler_wrote():
@@ -528,29 +724,34 @@ def test_the_c_reader_stores_every_constraint_field_the_compiler_wrote():
     if not _available():
         return
     from bcir.asn1.constraints import (
-        Extensible, Intersection, PermittedAlphabet, Size, ValueRange,
+        Extensible,
+        Intersection,
+        PermittedAlphabet,
+        Size,
+        ValueRange,
     )
 
     cases = [
         ("plain bounds", ValueRange(0, 255)),
-        ("a negative lower bound", ValueRange(-(2 ** 63), 2 ** 63 - 1)),
-        ("the widest unsigned bound", ValueRange(0, 2 ** 64 - 1)),
+        ("a negative lower bound", ValueRange(-(2**63), 2**63 - 1)),
+        ("the widest unsigned bound", ValueRange(0, 2**64 - 1)),
         ("MIN..255", ValueRange(None, 255)),
         ("a size", Size(ValueRange(1, 4))),
         ("an alphabet", PermittedAlphabet(ValueRange("0", "9"))),
         # The case that proves the two bound pairs are separate facts rather than one: OER
         # reads 0..1000 here (§8.2.2 g) drops the extensible part) while PER's extension
         # root is 0..255. A reader that stored one and derived the other gets this wrong.
-        ("an extensible bound met by a plain one",
-         Intersection((Extensible(ValueRange(0, 255)), ValueRange(0, 1000)))),
+        (
+            "an extensible bound met by a plain one",
+            Intersection((Extensible(ValueRange(0, 255)), ValueRange(0, 1000))),
+        ),
     ]
     lines, expect = [], []
     for label, constraint in cases:
-        kind = _seq(Component("v", Primitive(Universal.IA5_STRING, "A",
-                                             constraint=constraint)))
+        kind = _seq(Component("v", Primitive(Universal.IA5_STRING, "A", constraint=constraint)))
         plan = compile_encode_plan(kind, module="Test", type_name=label)
         lines.append("plan " + plan.serialize().hex())
-        lines.append("constraint 1")           # node 0 is the SEQUENCE, node 1 the member
+        lines.append("constraint 1")  # node 0 is the SEQUENCE, node 1 the member
         expect.append((label, plan.root.members[0].node.constraint))
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -561,9 +762,16 @@ def test_the_c_reader_stores_every_constraint_field_the_compiler_wrote():
         fields = reply[3:].split()
         assert want is not None, label
         bounds = [None if f == "-" else int(f) for f in fields[:8]]
-        assert bounds == [want.value_low, want.value_high, want.size_low, want.size_high,
-                          want.root_value_low, want.root_value_high,
-                          want.root_size_low, want.root_size_high], label
+        assert bounds == [
+            want.value_low,
+            want.value_high,
+            want.size_low,
+            want.size_high,
+            want.root_value_low,
+            want.root_value_high,
+            want.root_size_low,
+            want.root_size_high,
+        ], label
         assert fields[8] == ("1" if want.value_extensible else "0"), label
         assert fields[9] == ("1" if want.size_extensible else "0"), label
         alphabet = "" if fields[10] == "-" else bytes.fromhex(fields[10]).decode("utf-8")
@@ -607,16 +815,16 @@ def test_the_c_reader_stores_the_enumeration_and_the_extension_marker():
     if not _available():
         return
     cases = [
-        ("a plain enumeration", Primitive(Universal.ENUMERATED, "E", enumeration=_ENUM),
-         False),
-        ("an extensible enumeration",
-         Primitive(Universal.ENUMERATED, "E", enumeration=_ENUM, enum_extensible=True),
-         True),
+        ("a plain enumeration", Primitive(Universal.ENUMERATED, "E", enumeration=_ENUM), False),
+        (
+            "an extensible enumeration",
+            Primitive(Universal.ENUMERATED, "E", enumeration=_ENUM, enum_extensible=True),
+            True,
+        ),
     ]
     lines, expect = [], []
     for label, kind, extensible in cases:
-        plan = compile_encode_plan(_seq(Component("v", kind)), module="Test",
-                                   type_name=label)
+        plan = compile_encode_plan(_seq(Component("v", kind)), module="Test", type_name=label)
         lines.append("plan " + plan.serialize().hex())
         lines.append("enum 1")
         expect.append((label, kind.enumeration, extensible))
@@ -663,8 +871,7 @@ def test_a_value_outside_its_constraint_is_refused_rather_than_truncated():
         return
     from bcir.asn1.constraints import ValueRange
 
-    kind = _seq(Component("v", Primitive(Universal.INTEGER, "I",
-                                         constraint=ValueRange(0, 255))))
+    kind = _seq(Component("v", Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, 255))))
     plan = compile_encode_plan(kind, module="Test", type_name="narrow")
     # The stream is built against an UNCONSTRAINED plan of the same shape, so the value is
     # well-formed as a stream and only the constraint makes it impossible.
@@ -673,13 +880,20 @@ def test_a_value_outside_its_constraint_is_refused_rather_than_truncated():
         stream = flatten(free, {"v": value})
         try:
             emit(plan, stream, rules=EmitRules.COER)
-        except Exception as error:               # noqa: BLE001 - the type is the oracle's
+        except Exception as error:  # noqa: BLE001 - the type is the oracle's
             assert "10.3" in str(error) or "10.4" in str(error), error
         else:
             raise AssertionError(f"{value} encoded into a one-octet unsigned field")
         with tempfile.TemporaryDirectory() as tmp:
-            replies = [line for line in _drive(_build(tmp), [
-                "plan " + plan.serialize().hex(),
-                f"emit coer {stream.hex()}",
-            ]) if line != "ok"]
-        assert replies[0].startswith("err 9 "), f"{value}: {replies[0]}"   # UNSUPPORTED
+            replies = [
+                line
+                for line in _drive(
+                    _build(tmp),
+                    [
+                        "plan " + plan.serialize().hex(),
+                        f"emit coer {stream.hex()}",
+                    ],
+                )
+                if line != "ok"
+            ]
+        assert replies[0].startswith("err 9 "), f"{value}: {replies[0]}"  # UNSUPPORTED

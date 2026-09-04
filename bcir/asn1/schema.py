@@ -30,6 +30,7 @@ from .codec import Strictness, from_tlv, to_tlv
 from .tags import Asn1Error, Tag, TagClass, Universal
 from .tlv import Tlv, decode_one, encode_tlv
 
+
 class _NoDefault:
     """Sentinel distinguishing "no DEFAULT" from "DEFAULT is None".
 
@@ -106,10 +107,13 @@ class Component:
             if isinstance(self.type, (Choice, OpenType)):
                 return None
             return self.type.base_tag()
-        if self.explicit:                                  # §8.14.3
+        if self.explicit:  # §8.14.3
             return Tag(self.tag_class, self.tag, True)
-        return Tag(self.tag_class, self.tag,               # §8.14.4
-                   self.type.base_tag().constructed)
+        return Tag(
+            self.tag_class,
+            self.tag,  # §8.14.4
+            self.type.base_tag().constructed,
+        )
 
     def expected_tags(self) -> tuple[Tag, ...]:
         """Every tag this component may present on the wire.
@@ -129,13 +133,13 @@ class Asn1Type:
 
     name: str = "?"
 
-    def encode(self, value) -> Tlv:                      # pragma: no cover - abstract
+    def encode(self, value) -> Tlv:  # pragma: no cover - abstract
         raise NotImplementedError
 
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> object:  # pragma: no cover
         raise NotImplementedError
 
-    def base_tag(self) -> Tag:                            # pragma: no cover - abstract
+    def base_tag(self) -> Tag:  # pragma: no cover - abstract
         raise NotImplementedError
 
     def require_tag(self, tlv: Tlv) -> None:
@@ -161,8 +165,9 @@ class Asn1Type:
         want = self.base_tag()
         if tlv.tag.cls is not want.cls or tlv.tag.number != want.number:
             raise Asn1Error(
-                f"{self.name}: expected {want} but the encoding carries {tlv.tag} "
-                f"(X.690 8.1.2)", tlv.offset)
+                f"{self.name}: expected {want} but the encoding carries {tlv.tag} (X.690 8.1.2)",
+                tlv.offset,
+            )
 
 
 @dataclass
@@ -229,7 +234,8 @@ class Primitive(Asn1Type):
         if not self.enumeration:
             raise Asn1Error(
                 f"{self.name}: ENUMERATED has no enumeration; PER encodes the enumeration "
-                f"index (X.691 §14.1), which cannot be derived from the value alone")
+                f"index (X.691 §14.1), which cannot be derived from the value alone"
+            )
         ordered = sorted({number for _name, number in self.enumeration})
         return {number: index for index, number in enumerate(ordered)}
 
@@ -242,20 +248,22 @@ class Primitive(Asn1Type):
 
         if self.universal in _STRING_UNIVERSALS:
             if not isinstance(value, str):
-                raise Asn1Error(
-                    f"{self.name}: expected str, got {type(value).__name__}")
+                raise Asn1Error(f"{self.name}: expected str, got {type(value).__name__}")
             return Tlv(self.base_tag(), encode_string(self.universal, value))
 
         tlv = to_tlv(value)
         if tlv.tag.is_universal and tlv.tag.number == self.universal:
             return tlv
         # §8.4: ENUMERATED borrows the integer contents octets.
-        if (self.universal == Universal.ENUMERATED
-                and tlv.tag.is_universal and tlv.tag.number == Universal.INTEGER):
+        if (
+            self.universal == Universal.ENUMERATED
+            and tlv.tag.is_universal
+            and tlv.tag.number == Universal.INTEGER
+        ):
             return Tlv(self.base_tag(), tlv.content)
         raise Asn1Error(
-            f"{self.name}: value maps to {tlv.tag}, not "
-            f"{Tag(TagClass.UNIVERSAL, self.universal)}")
+            f"{self.name}: value maps to {tlv.tag}, not {Tag(TagClass.UNIVERSAL, self.universal)}"
+        )
 
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> object:
         self.require_tag(tlv)
@@ -264,12 +272,22 @@ class Primitive(Asn1Type):
 
 #: The restricted character string types of X.680 §41, which §8.23.3 unifies as
 #: implicitly-tagged octet strings and which therefore all accept a Python `str`.
-_STRING_UNIVERSALS = frozenset({
-    Universal.UTF8_STRING, Universal.NUMERIC_STRING, Universal.PRINTABLE_STRING,
-    Universal.TELETEX_STRING, Universal.VIDEOTEX_STRING, Universal.IA5_STRING,
-    Universal.GRAPHIC_STRING, Universal.VISIBLE_STRING, Universal.GENERAL_STRING,
-    Universal.UNIVERSAL_STRING, Universal.BMP_STRING, Universal.OBJECT_DESCRIPTOR,
-})
+_STRING_UNIVERSALS = frozenset(
+    {
+        Universal.UTF8_STRING,
+        Universal.NUMERIC_STRING,
+        Universal.PRINTABLE_STRING,
+        Universal.TELETEX_STRING,
+        Universal.VIDEOTEX_STRING,
+        Universal.IA5_STRING,
+        Universal.GRAPHIC_STRING,
+        Universal.VISIBLE_STRING,
+        Universal.GENERAL_STRING,
+        Universal.UNIVERSAL_STRING,
+        Universal.BMP_STRING,
+        Universal.OBJECT_DESCRIPTOR,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -302,8 +320,10 @@ class ObjectSetTable:
     def select(self, criteria: dict) -> tuple[dict, ...]:
         """§10.19: the rows whose referenced columns all equal the given values."""
         return tuple(
-            row for row in self.rows
-            if all(field in row and row[field] == want for field, want in criteria.items()))
+            row
+            for row in self.rows
+            if all(field in row and row[field] == want for field, want in criteria.items())
+        )
 
 
 @dataclass
@@ -359,8 +379,8 @@ class OpenType(Asn1Type):
         criteria = {}
         for path, column in zip(self.governing, self.governing_fields):
             if path not in context:
-                return None                                # §10.18: a referenced component
-            criteria[column] = context[path]               #         is absent
+                return None  # §10.18: a referenced component
+            criteria[column] = context[path]  #         is absent
         selected = self.table.select(criteria)
         if len(selected) != 1:
             # §10.21 wants exactly one row when the field is a type field and a referenced
@@ -372,13 +392,15 @@ class OpenType(Asn1Type):
     def base_tag(self) -> Tag:
         raise Asn1Error(
             f"{self.name}: an open type has no tag of its own (X.681 14); it shows the "
-            f"tag of whatever value it contains")
+            f"tag of whatever value it contains"
+        )
 
     def encode(self, value) -> Tlv:
         if not isinstance(value, (bytes, bytearray)):
             raise Asn1Error(
                 f"{self.name}: an open type value is the contained value's complete "
-                f"encoding, so it must be bytes, not {type(value).__name__}")
+                f"encoding, so it must be bytes, not {type(value).__name__}"
+            )
         return decode_one(bytes(value))
 
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> bytes:
@@ -403,8 +425,7 @@ class SequenceOf(Asn1Type):
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> list:
         self.require_tag(tlv)
         if not tlv.constructed:
-            raise Asn1Error(
-                f"{self.name} must be constructed (X.690 8.10.1)", tlv.offset)
+            raise Asn1Error(f"{self.name} must be constructed (X.690 8.10.1)", tlv.offset)
         return [self.element.decode(c, strictness=strictness) for c in tlv.children]
 
 
@@ -444,32 +465,35 @@ class Sequence(Asn1Type):
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> dict:
         self.require_tag(tlv)
         if not tlv.constructed:
-            raise Asn1Error(
-                f"{self.name} must be constructed (X.690 8.9.1)", tlv.offset)
+            raise Asn1Error(f"{self.name} must be constructed (X.690 8.9.1)", tlv.offset)
         out: dict[str, object] = {}
         children = list(tlv.children)
         index = 0
         for comp in self.components:
             if index < len(children) and _matches_any(children[index], comp):
                 out[comp.name] = comp.type.decode(
-                    _strip_tag(comp, children[index]), strictness=strictness)
-                _refuse_present_default(self, comp, out[comp.name], strictness,
-                                        children[index].offset)
+                    _strip_tag(comp, children[index]), strictness=strictness
+                )
+                _refuse_present_default(
+                    self, comp, out[comp.name], strictness, children[index].offset
+                )
                 _resolve_open_type(comp, out, strictness)
                 index += 1
             elif comp.has_default:
-                out[comp.name] = comp.default          # §11.5: absent means DEFAULT
+                out[comp.name] = comp.default  # §11.5: absent means DEFAULT
             elif comp.optional:
                 continue
             else:
                 shown = " | ".join(str(t) for t in comp.expected_tags())
                 raise Asn1Error(
                     f"{self.name}: mandatory component {comp.name!r} ({shown}) is "
-                    f"missing or out of order (X.690 8.9.2)", tlv.offset)
+                    f"missing or out of order (X.690 8.9.2)",
+                    tlv.offset,
+                )
         if index != len(children):
             raise Asn1Error(
-                f"{self.name}: {len(children) - index} unexpected trailing "
-                f"component(s)", tlv.offset)
+                f"{self.name}: {len(children) - index} unexpected trailing component(s)", tlv.offset
+            )
         return out
 
 
@@ -498,8 +522,7 @@ class SetOf(Asn1Type):
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> list:
         self.require_tag(tlv)
         if not tlv.constructed:
-            raise Asn1Error(
-                f"{self.name} must be constructed (X.690 8.12.1)", tlv.offset)
+            raise Asn1Error(f"{self.name} must be constructed (X.690 8.12.1)", tlv.offset)
         return [self.element.decode(c, strictness=strictness) for c in tlv.children]
 
 
@@ -539,17 +562,16 @@ class Set(Asn1Type):
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> dict:
         self.require_tag(tlv)
         if not tlv.constructed:
-            raise Asn1Error(
-                f"{self.name} must be constructed (X.690 8.11.1)", tlv.offset)
+            raise Asn1Error(f"{self.name} must be constructed (X.690 8.11.1)", tlv.offset)
         remaining = list(tlv.children)
         out: dict[str, object] = {}
         for comp in self.components:
             for position, child in enumerate(remaining):
                 if _matches_any(child, comp):
                     out[comp.name] = comp.type.decode(
-                        _strip_tag(comp, child), strictness=strictness)
-                    _refuse_present_default(self, comp, out[comp.name], strictness,
-                                            child.offset)
+                        _strip_tag(comp, child), strictness=strictness
+                    )
+                    _refuse_present_default(self, comp, out[comp.name], strictness, child.offset)
                     del remaining[position]
                     break
             else:
@@ -557,12 +579,13 @@ class Set(Asn1Type):
                     out[comp.name] = comp.default
                 elif not comp.optional:
                     raise Asn1Error(
-                        f"{self.name}: mandatory component {comp.name!r} is missing "
-                        f"(X.690 8.11.2)", tlv.offset)
+                        f"{self.name}: mandatory component {comp.name!r} is missing (X.690 8.11.2)",
+                        tlv.offset,
+                    )
         if remaining:
             raise Asn1Error(
-                f"{self.name}: {len(remaining)} component(s) match no alternative",
-                tlv.offset)
+                f"{self.name}: {len(remaining)} component(s) match no alternative", tlv.offset
+            )
         return out
 
 
@@ -594,18 +617,21 @@ class Choice(Asn1Type):
             if alt.tag is not None and not alt.explicit and isinstance(alt.type, Choice):
                 raise Asn1Error(
                     f"{self.name}: alternative {alt.name!r} tags a CHOICE implicitly; "
-                    f"X.680 31.2.7 requires EXPLICIT")
+                    f"X.680 31.2.7 requires EXPLICIT"
+                )
         tags = [t for alt in self.alternatives for t in alt.expected_tags()]
         duplicate = {t for t in tags if tags.count(t) > 1}
         if duplicate:
             raise Asn1Error(
                 f"{self.name}: alternatives share tag {sorted(map(str, duplicate))}; "
-                f"X.680 29.3 requires distinct tags")
+                f"X.680 29.3 requires distinct tags"
+            )
 
     def base_tag(self) -> Tag:
         raise Asn1Error(
             f"{self.name}: a CHOICE has no tag of its own (X.680 29.1); tag the "
-            f"component that references it, EXPLICITly (X.680 31.2.7)")
+            f"component that references it, EXPLICITly (X.680 31.2.7)"
+        )
 
     def alternative_tags(self) -> tuple[Tag, ...]:
         return tuple(t for alt in self.alternatives for t in alt.expected_tags())
@@ -614,7 +640,8 @@ class Choice(Asn1Type):
         if not (isinstance(value, tuple) and len(value) == 2):
             raise Asn1Error(
                 f"{self.name}: value must be an (alternative, value) pair, got "
-                f"{type(value).__name__}")
+                f"{type(value).__name__}"
+            )
         chosen, payload = value
         for alt in self.alternatives:
             if alt.name == chosen:
@@ -624,10 +651,8 @@ class Choice(Asn1Type):
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> tuple:
         for alt in self.alternatives:
             if _matches_any(tlv, alt):
-                return (alt.name,
-                        alt.type.decode(_strip_tag(alt, tlv), strictness=strictness))
-        raise Asn1Error(
-            f"{self.name}: {tlv.tag} matches no alternative (X.680 29.1)", tlv.offset)
+                return (alt.name, alt.type.decode(_strip_tag(alt, tlv), strictness=strictness))
+        raise Asn1Error(f"{self.name}: {tlv.tag} matches no alternative (X.680 29.1)", tlv.offset)
 
 
 def _resolve_open_type(comp: Component, decoded: dict, strictness: Strictness) -> None:
@@ -653,7 +678,8 @@ def _resolve_open_type(comp: Component, decoded: dict, strictness: Strictness) -
         if isinstance(octets, (bytes, bytearray)):
             try:
                 decoded[f"{comp.name}.resolved"] = inner.contains.decode(
-                    decode_one(bytes(octets)), strictness=strictness)
+                    decode_one(bytes(octets)), strictness=strictness
+                )
             except Asn1Error:
                 pass
         return
@@ -662,14 +688,14 @@ def _resolve_open_type(comp: Component, decoded: dict, strictness: Strictness) -
     octets = decoded.get(comp.name)
     if not isinstance(octets, (bytes, bytearray)):
         return
-    context = {path: decoded.get(path[-1]) for path in inner.governing
-               if path[-1] in decoded}
+    context = {path: decoded.get(path[-1]) for path in inner.governing if path[-1] in decoded}
     contained = inner.resolve(context)
     if contained is None:
         return
     try:
         decoded[f"{comp.name}.resolved"] = contained.decode(
-            decode_one(bytes(octets)), strictness=strictness)
+            decode_one(bytes(octets)), strictness=strictness
+        )
     except Asn1Error:
         # The row said one type and the octets are another. That is a real disagreement, but
         # it belongs to the caller that chose to trust the table, not to the structural
@@ -688,8 +714,9 @@ def _sorted_set_of(children: list[Tlv]) -> list[Tlv]:
         return children
     encoded = [encode_tlv(c) for c in children]
     width = max(len(e) for e in encoded)
-    return [c for _, c in sorted(zip(encoded, children),
-                                 key=lambda pair: pair[0].ljust(width, b"\x00"))]
+    return [
+        c for _, c in sorted(zip(encoded, children), key=lambda pair: pair[0].ljust(width, b"\x00"))
+    ]
 
 
 def _matches(tlv: Tlv, expected: Tag) -> bool:
@@ -706,8 +733,9 @@ def _matches_any(tlv: Tlv, comp: Component) -> bool:
     return any(_matches(tlv, tag) for tag in comp.expected_tags())
 
 
-def _refuse_present_default(kind, comp: Component, value, strictness: Strictness,
-                            offset: int) -> None:
+def _refuse_present_default(
+    kind, comp: Component, value, strictness: Strictness, offset: int
+) -> None:
     """X.690 §11.5: under DER a component equal to its DEFAULT shall not be encoded.
 
     The encoders have always honoured this -- `encode` skips such a component -- but the
@@ -725,30 +753,41 @@ def _refuse_present_default(kind, comp: Component, value, strictness: Strictness
     if value == comp.default:
         raise Asn1Error(
             f"{kind.name}: component {comp.name!r} is present and equal to its DEFAULT "
-            f"{comp.default!r}; DER shall not encode it (X.690 11.5)", offset)
+            f"{comp.default!r}; DER shall not encode it (X.690 11.5)",
+            offset,
+        )
 
 
 def _apply_tag(comp: Component, base: Tlv) -> Tlv:
     if comp.tag is None:
         return base
-    if comp.explicit:                                     # §8.14.3
+    if comp.explicit:  # §8.14.3
         return Tlv(Tag(comp.tag_class, comp.tag, True), b"", [base])
-    return Tlv(Tag(comp.tag_class, comp.tag, base.tag.constructed),    # §8.14.4
-               base.content, base.children, offset=base.offset)
+    return Tlv(
+        Tag(comp.tag_class, comp.tag, base.tag.constructed),  # §8.14.4
+        base.content,
+        base.children,
+        offset=base.offset,
+    )
 
 
 def _strip_tag(comp: Component, tlv: Tlv) -> Tlv:
     if comp.tag is None:
         return tlv
-    if comp.explicit:                                     # §8.14.3: unwrap the nesting
+    if comp.explicit:  # §8.14.3: unwrap the nesting
         if len(tlv.children) != 1:
             raise Asn1Error(
-                f"explicitly tagged [{comp.tag}] must wrap exactly one encoding "
-                f"(X.690 8.14.3)", tlv.offset)
+                f"explicitly tagged [{comp.tag}] must wrap exactly one encoding (X.690 8.14.3)",
+                tlv.offset,
+            )
         return tlv.children[0]
-    base = comp.type.base_tag()                           # §8.14.4: restore the base tag
-    return Tlv(Tag(base.cls, base.number, tlv.tag.constructed), tlv.content,
-               tlv.children, offset=tlv.offset)
+    base = comp.type.base_tag()  # §8.14.4: restore the base tag
+    return Tlv(
+        Tag(base.cls, base.number, tlv.tag.constructed),
+        tlv.content,
+        tlv.children,
+        offset=tlv.offset,
+    )
 
 
 @dataclass
@@ -762,14 +801,24 @@ class Module:
     def encode(self, type_name: str, value) -> bytes:
         return encode_tlv(self.types[type_name].encode(value))
 
-    def decode(self, type_name: str, data: bytes, *,
-               strictness: Strictness = Strictness.DER):
+    def decode(self, type_name: str, data: bytes, *, strictness: Strictness = Strictness.DER):
         tlv = decode_one(data)
         if strictness is Strictness.DER:
             from .der import require_der
+
             require_der(tlv)
         return self.types[type_name].decode(tlv, strictness=strictness)
 
 
-__all__ = ["Asn1Type", "Choice", "Component", "Module", "OpenType", "Primitive",
-           "Sequence", "SequenceOf", "Set", "SetOf"]
+__all__ = [
+    "Asn1Type",
+    "Choice",
+    "Component",
+    "Module",
+    "OpenType",
+    "Primitive",
+    "Sequence",
+    "SequenceOf",
+    "Set",
+    "SetOf",
+]

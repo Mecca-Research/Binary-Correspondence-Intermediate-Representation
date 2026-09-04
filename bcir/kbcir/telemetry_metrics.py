@@ -93,14 +93,12 @@ class FieldMetrics:
 def empty_metrics(field: str) -> FieldMetrics:
     """The well-defined empty result for a batch with no records: count 0, every
     figure-of-merit ``None`` (there is no max/min/avg/rms of nothing). Never raises."""
-    return FieldMetrics(field=field, count=0, minimum=None, maximum=None,
-                        avg=None, rms=None)
+    return FieldMetrics(field=field, count=0, minimum=None, maximum=None, avg=None, rms=None)
 
 
 def _validate_field(field: str) -> None:
     if field not in METRIC_FIELDS:
-        raise KeyError(
-            f"unknown DataDNA metric field {field!r}; choose from {METRIC_FIELDS}")
+        raise KeyError(f"unknown DataDNA metric field {field!r}; choose from {METRIC_FIELDS}")
 
 
 def derive_field_metrics(records, field: str) -> FieldMetrics:
@@ -126,10 +124,11 @@ def derive_field_metrics(records, field: str) -> FieldMetrics:
         return empty_metrics(field)
     sum_x = sum(vals)
     sum_x2 = sum(v * v for v in vals)
-    avg = (sum_x + n // 2) // n                 # round-half-up integer mean
-    rms = round(math.sqrt(sum_x2 / n))          # round-to-nearest of the true RMS
-    return FieldMetrics(field=field, count=n, minimum=min(vals), maximum=max(vals),
-                        avg=avg, rms=rms)
+    avg = (sum_x + n // 2) // n  # round-half-up integer mean
+    rms = round(math.sqrt(sum_x2 / n))  # round-to-nearest of the true RMS
+    return FieldMetrics(
+        field=field, count=n, minimum=min(vals), maximum=max(vals), avg=avg, rms=rms
+    )
 
 
 def derive_all(records) -> dict[str, FieldMetrics]:
@@ -289,8 +288,9 @@ def signal_sensitivity(
 
     # Resolve which signals to score and each one's cost_dim, from the T1 registry.
     if signals is None:
-        names = [p.name for p in reg.providers()
-                 if p.definition.cost_dim in _COST_DIM_TO_THETA_FIELD]
+        names = [
+            p.name for p in reg.providers() if p.definition.cost_dim in _COST_DIM_TO_THETA_FIELD
+        ]
     else:
         names = list(signals)
 
@@ -305,18 +305,31 @@ def signal_sensitivity(
         cost_dim = prov.definition.cost_dim if prov is not None else None
         theta_field = _COST_DIM_TO_THETA_FIELD.get(cost_dim) if cost_dim else None
         if theta_field is None:
-            rows.append(SignalSensitivity(
-                signal=name, cost_dim=cost_dim, theta_field=None,
-                baseline_score=baseline, perturbed_score=baseline, delta=0))
+            rows.append(
+                SignalSensitivity(
+                    signal=name,
+                    cost_dim=cost_dim,
+                    theta_field=None,
+                    baseline_score=baseline,
+                    perturbed_score=baseline,
+                    delta=0,
+                )
+            )
             continue
         if theta_field not in score_for_field:
             perturbed = _perturb_theta(theta, theta_field, delta)
             score_for_field[theta_field] = optimize(module, h, perturbed, pol).score
         perturbed_score = score_for_field[theta_field]
-        rows.append(SignalSensitivity(
-            signal=name, cost_dim=cost_dim, theta_field=theta_field,
-            baseline_score=baseline, perturbed_score=perturbed_score,
-            delta=perturbed_score - baseline))
+        rows.append(
+            SignalSensitivity(
+                signal=name,
+                cost_dim=cost_dim,
+                theta_field=theta_field,
+                baseline_score=baseline,
+                perturbed_score=perturbed_score,
+                delta=perturbed_score - baseline,
+            )
+        )
 
     # Rank by |Δscore| desc, deterministic tie-break by name asc.
     rows.sort(key=lambda r: (-r.abs_delta, r.signal))
@@ -347,17 +360,18 @@ def sampling_budget(ranked, total: int, *, floor: int = 1) -> dict[str, int]:
     if total < floor * n:
         raise ValueError(
             f"sampling_budget total {total} cannot cover the floor "
-            f"({floor} x {n} signals = {floor * n})")
+            f"({floor} x {n} signals = {floor * n})"
+        )
 
     names = [r.signal for r in rows]
     weights = [max(0, r.abs_delta) for r in rows]
-    remaining = total - floor * n                  # the proportional pool above floors
+    remaining = total - floor * n  # the proportional pool above floors
     alloc = {name: floor for name in names}
 
     wsum = sum(weights)
     if remaining > 0 and wsum > 0:
         # Largest-remainder (Hamilton) apportionment of `remaining` by weight.
-        exact = [remaining * w for w in weights]   # numerator (denominator wsum)
+        exact = [remaining * w for w in weights]  # numerator (denominator wsum)
         base = [e // wsum for e in exact]
         rema = [e - b * wsum for e, b in zip(exact, base)]
         for name, b in zip(names, base):
@@ -373,7 +387,7 @@ def sampling_budget(ranked, total: int, *, floor: int = 1) -> dict[str, int]:
         per = remaining // n
         for name in names:
             alloc[name] += per
-        for name in names[:remaining - per * n]:
+        for name in names[: remaining - per * n]:
             alloc[name] += 1
 
     return alloc

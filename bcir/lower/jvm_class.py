@@ -60,17 +60,13 @@ class _ConstantPool:
     def fieldref(self, owner: str, name: str, descriptor: str) -> int:
         return self._add(
             ("field", owner, name, descriptor),
-            b"\x09" + struct.pack(
-                ">HH", self.class_(owner), self.name_and_type(name, descriptor)
-            ),
+            b"\x09" + struct.pack(">HH", self.class_(owner), self.name_and_type(name, descriptor)),
         )
 
     def methodref(self, owner: str, name: str, descriptor: str) -> int:
         return self._add(
             ("method", owner, name, descriptor),
-            b"\x0a" + struct.pack(
-                ">HH", self.class_(owner), self.name_and_type(name, descriptor)
-            ),
+            b"\x0a" + struct.pack(">HH", self.class_(owner), self.name_and_type(name, descriptor)),
         )
 
     def encode(self) -> bytes:
@@ -133,8 +129,15 @@ def _assemble_run(pool: _ConstantPool, mnemonics: tuple[str, ...]) -> tuple[byte
     return bytes(code), max_local, max_depth
 
 
-def _method(code_index: int, access: int, name: int, descriptor: int,
-            code: bytes, max_stack: int, max_locals: int) -> bytes:
+def _method(
+    code_index: int,
+    access: int,
+    name: int,
+    descriptor: int,
+    code: bytes,
+    max_stack: int,
+    max_locals: int,
+) -> bytes:
     body = struct.pack(">HHI", max_stack, max_locals, len(code))
     body += code + struct.pack(">HH", 0, 0)
     attribute = struct.pack(">HI", code_index, len(body)) + body
@@ -152,9 +155,7 @@ def build_jvm_class(class_name: str, jvm_program) -> bytes:
     program = []
     for index, mnemonic in enumerate(iterator):
         if index >= _MAX_PROGRAM_INSTRUCTIONS:
-            raise JVMClassError(
-                f"JVM program exceeds {_MAX_PROGRAM_INSTRUCTIONS} instructions"
-            )
+            raise JVMClassError(f"JVM program exceeds {_MAX_PROGRAM_INSTRUCTIONS} instructions")
         program.append(mnemonic)
     pool = _ConstantPool()
     run_code, run_locals, run_stack = _assemble_run(pool, tuple(program))
@@ -168,14 +169,22 @@ def build_jvm_class(class_name: str, jvm_program) -> bytes:
     system_out = pool.fieldref("java/lang/System", "out", "Ljava/io/PrintStream;")
     println = pool.methodref("java/io/PrintStream", "println", "(F)V")
     main_code = (
-        b"\xb2" + struct.pack(">H", system_out)
-        + b"\xb8" + struct.pack(">H", run_ref)
-        + b"\xb6" + struct.pack(">H", println)
+        b"\xb2"
+        + struct.pack(">H", system_out)
+        + b"\xb8"
+        + struct.pack(">H", run_ref)
+        + b"\xb6"
+        + struct.pack(">H", println)
         + b"\xb1"
     )
     methods = _method(
-        code_name, 0x0009, run_name, run_descriptor, run_code,
-        max(run_stack, 1), run_locals,
+        code_name,
+        0x0009,
+        run_name,
+        run_descriptor,
+        run_code,
+        max(run_stack, 1),
+        run_locals,
     ) + _method(code_name, 0x0009, main_name, main_descriptor, main_code, 2, 1)
     output = struct.pack(">IHH", 0xCAFEBABE, 0, 52)
     output += pool.encode()

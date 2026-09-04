@@ -35,9 +35,9 @@ RETUNE_FREE_PARAMS = 1
 class RegretMeasurement:
     """One episode's verdict: deployed outcome vs the hindsight best."""
 
-    rule: str            # the deployed decision rule (policy name)
-    deployed: int        # M(deployed plan) under the judge metric
-    best: int            # min over candidate rules, same metric
+    rule: str  # the deployed decision rule (policy name)
+    deployed: int  # M(deployed plan) under the judge metric
+    best: int  # min over candidate rules, same metric
     best_rule: str
 
     @property
@@ -96,15 +96,19 @@ class RegretLedger:
         e.total_fit_milli += round(1000 * m.regret / m.best) if m.best else 0
 
     def dashboard(self) -> str:
-        lines = [f"regret ledger (gen {self.gen})",
-                 f"{'rule':<12} {'episodes':>8} {'total':>8} {'rate':>8} "
-                 f"{'fit':>7} {'cost':>7} {'verdict':>8}"]
+        lines = [
+            f"regret ledger (gen {self.gen})",
+            f"{'rule':<12} {'episodes':>8} {'total':>8} {'rate':>8} "
+            f"{'fit':>7} {'cost':>7} {'verdict':>8}",
+        ]
         for name in sorted(self.entries):
             e = self.entries[name]
             fit, cx = e.data_fit_nats(), e.complexity_nats()
             verdict = "retune" if fit > cx else "keep"
-            lines.append(f"{e.rule:<12} {e.episodes:>8} {e.total_regret:>8} "
-                         f"{e.regret_rate:>8} {fit:>7.3f} {cx:>7.3f} {verdict:>8}")
+            lines.append(
+                f"{e.rule:<12} {e.episodes:>8} {e.total_regret:>8} "
+                f"{e.regret_rate:>8} {fit:>7.3f} {cx:>7.3f} {verdict:>8}"
+            )
         return "\n".join(lines)
 
 
@@ -115,11 +119,11 @@ class BoundaryVerdict:
     its MDL/evidence justification so R13 can witness it (`verify_provenance`)."""
 
     rule: str
-    verdict: str            # "keep" | "retune"
+    verdict: str  # "keep" | "retune"
     regret_rate: int
     episodes: int
-    data_fit_nats: float = 0.0      # MDL data term: bits a swap would save
-    complexity_nats: float = 0.0    # BIC penalty: bits a swap costs
+    data_fit_nats: float = 0.0  # MDL data term: bits a swap would save
+    complexity_nats: float = 0.0  # BIC penalty: bits a swap costs
 
     @property
     def evidence_margin(self) -> float:
@@ -127,8 +131,14 @@ class BoundaryVerdict:
         return self.data_fit_nats - self.complexity_nats
 
 
-def measure_regret(module: Module, h, theta: Theta, deployed: Policy,
-                   candidates: list[Policy], judge: Policy = PERF) -> RegretMeasurement:
+def measure_regret(
+    module: Module,
+    h,
+    theta: Theta,
+    deployed: Policy,
+    candidates: list[Policy],
+    judge: Policy = PERF,
+) -> RegretMeasurement:
     """Hindsight regret of the deployed rule against the candidate set.
 
     Every candidate plans; every plan is priced under the *judge* metric
@@ -151,12 +161,14 @@ def measure_regret(module: Module, h, theta: Theta, deployed: Policy,
         if best_m is None or m < best_m:
             best_m, best_rule = m, pol.name
     assert deployed_m is not None
-    return RegretMeasurement(rule=deployed.name, deployed=deployed_m,
-                             best=best_m, best_rule=best_rule)
+    return RegretMeasurement(
+        rule=deployed.name, deployed=deployed_m, best=best_m, best_rule=best_rule
+    )
 
 
-def ledger_from_episodes(module: Module, h, episodes: list[Theta], portfolio,
-                         judge: Policy = PERF, gen: int = 1) -> RegretLedger:
+def ledger_from_episodes(
+    module: Module, h, episodes: list[Theta], portfolio, judge: Policy = PERF, gen: int = 1
+) -> RegretLedger:
     """Replay the log: for each episode, the portfolio's deployed selection is
     measured against every certified alternative."""
     ledger = RegretLedger(gen=max(1, gen))
@@ -167,8 +179,9 @@ def ledger_from_episodes(module: Module, h, episodes: list[Theta], portfolio,
     return ledger
 
 
-def boundary_report(ledger: RegretLedger,
-                    free_params: int = RETUNE_FREE_PARAMS) -> list[BoundaryVerdict]:
+def boundary_report(
+    ledger: RegretLedger, free_params: int = RETUNE_FREE_PARAMS
+) -> list[BoundaryVerdict]:
     """The boundary dashboard, on a principled (MDL / Bayesian-evidence) trigger.
 
     A rule is a retune candidate iff switching shortens the total two-part code:
@@ -189,8 +202,14 @@ def boundary_report(ledger: RegretLedger,
         e = ledger.entries[name]
         fit = e.data_fit_nats()
         cx = e.complexity_nats(free_params)
-        out.append(BoundaryVerdict(
-            rule=name, verdict="retune" if fit > cx else "keep",
-            regret_rate=e.regret_rate, episodes=e.episodes,
-            data_fit_nats=fit, complexity_nats=cx))
+        out.append(
+            BoundaryVerdict(
+                rule=name,
+                verdict="retune" if fit > cx else "keep",
+                regret_rate=e.regret_rate,
+                episodes=e.episodes,
+                data_fit_nats=fit,
+                complexity_nats=cx,
+            )
+        )
     return out

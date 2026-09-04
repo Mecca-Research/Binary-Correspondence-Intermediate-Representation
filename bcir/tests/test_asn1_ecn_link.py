@@ -36,14 +36,18 @@ def _refuses(citation: str, build):
 
 def _frame() -> Sequence:
     """A header type with one bounded component and one unbounded one."""
-    return Sequence((
-        Component("version", Primitive(Universal.INTEGER, "INTEGER",
-                                       constraint=ValueRange(0, 7))),
-        Component("payloadOctets", Primitive(Universal.INTEGER, "INTEGER")),
-    ))
+    return Sequence(
+        (
+            Component(
+                "version", Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 7))
+            ),
+            Component("payloadOctets", Primitive(Universal.INTEGER, "INTEGER")),
+        )
+    )
 
 
 # --- §13.2.2 / §13.2.3: the combined encoding object set --------------------------------------
+
 
 def test_completed_by_fills_gaps_and_never_overrides():
     """§13.2.3 b): a secondary object is added "if (and only if) there is no encoding object
@@ -53,15 +57,17 @@ def test_completed_by_fills_gaps_and_never_overrides():
     `COMPLETED BY PER-BASIC-UNALIGNED` safe to write under a handful of specialized objects.
     """
     application = EncodingApplication(
-        classes=("#Frame",), primary={"#A": "mine"},
-        secondary={"#A": "theirs", "#B": "gap"})
+        classes=("#Frame",), primary={"#A": "mine"}, secondary={"#A": "theirs", "#B": "gap"}
+    )
     assert application.combined() == {"#A": "mine", "#B": "gap"}
     # §13.2.2: with no CompletionClause the primary set IS the combined set.
-    assert EncodingApplication(classes=("#Frame",),
-                               primary={"#A": "mine"}).combined() == {"#A": "mine"}
+    assert EncodingApplication(classes=("#Frame",), primary={"#A": "mine"}).combined() == {
+        "#A": "mine"
+    }
 
 
 # --- clause 12's ELM ---------------------------------------------------------------------------
+
 
 def test_an_elm_applies_encodings_and_must_apply_at_least_one():
     """§12.1.9: the list "is required to contain at least one `EncodingApplication`, as the
@@ -81,11 +87,17 @@ def test_no_type_is_encoded_twice_within_an_elm():
     §13.2.5 leans on it — "the rules of 12.2 ensure that applications are non-overlapping.
     They proceed independently." Two applications naming one class would make that false.
     """
-    _refuses("12.2.5", lambda: EncodingApplication(
-        classes=("#Frame", "#Frame"), primary={"#A": 1}))
-    _refuses("12.2.5", lambda: ElmModule(name="Link", applications=(
-        EncodingApplication(classes=("#Frame",), primary={"#A": 1}),
-        EncodingApplication(classes=("#Frame",), primary={"#B": 2}))))
+    _refuses("12.2.5", lambda: EncodingApplication(classes=("#Frame", "#Frame"), primary={"#A": 1}))
+    _refuses(
+        "12.2.5",
+        lambda: ElmModule(
+            name="Link",
+            applications=(
+                EncodingApplication(classes=("#Frame",), primary={"#A": 1}),
+                EncodingApplication(classes=("#Frame",), primary={"#B": 2}),
+            ),
+        ),
+    )
     _refuses("12.2.1", lambda: EncodingApplication(primary={"#A": 1}))
 
 
@@ -98,13 +110,15 @@ def test_every_reference_must_be_imported_which_asn1_does_not_require():
     importing nothing — only the second is checkable, so only it is checked.
     """
     application = EncodingApplication(classes=("#Frame",), primary={"#A": 1})
-    ElmModule(name="Link", applications=(application,))                      # not stated
+    ElmModule(name="Link", applications=(application,))  # not stated
     ElmModule(name="Link", applications=(application,), imports=("#Frame",))
-    _refuses("12.1.7", lambda: ElmModule(
-        name="Link", applications=(application,), imports=("#Other",)))
+    _refuses(
+        "12.1.7", lambda: ElmModule(name="Link", applications=(application,), imports=("#Other",))
+    )
 
 
 # --- §13.2.10's application-point algorithm ----------------------------------------------------
+
 
 def test_dereferencing_is_what_makes_a_class_assignment_mean_something():
     """§13.2.10.1 a) and §13.2.10.7: with no object of the class, the class "is de-referenced,
@@ -120,8 +134,9 @@ def test_dereferencing_is_what_makes_a_class_assignment_mean_something():
     assert resolve(objects, "#INT", assignments) == "int-object"
     # §9.5.2's one-object-per-class rule is what makes the first step unambiguous: a direct
     # object wins over the chain.
-    assert resolve({"#INT": "int-object", "#Version": "special"},
-                   "#Version", assignments) == "special"
+    assert (
+        resolve({"#INT": "int-object", "#Version": "special"}, "#Version", assignments) == "special"
+    )
 
 
 def test_a_class_no_object_reaches_is_the_specification_error_the_clause_names():
@@ -140,6 +155,7 @@ def test_a_circular_assignment_chain_is_refused_rather_than_followed():
 
 # --- the two deviations, retired ---------------------------------------------------------------
 
+
 def test_auxiliary_is_computed_from_the_link_and_not_declared():
     """§22.1.2.6's auxiliary fields are those "not part of the encoding class parameter", and
     §19.3.1 gives the same set from clause 19's side: a structure "has fields corresponding to
@@ -149,16 +165,14 @@ def test_auxiliary_is_computed_from_the_link_and_not_declared():
     `AUXILIARY` keyword — a stated deviation, since X.692 has no such notation — is a fallback
     for when there is no ASN.1 type in hand, not the source of truth.
     """
-    linked = LinkedStructure(asn1_type=_frame(),
-                             fields=("len", "version", "payloadOctets"))
+    linked = LinkedStructure(asn1_type=_frame(), fields=("len", "version", "payloadOctets"))
     assert linked.auxiliary_fields() == ("len",)
     assert linked.missing_fields() == ()
     linked.check()
 
     # Order in the structure is the structure's business (§16.5), not the type's, so an
     # auxiliary field anywhere is found.
-    trailing = LinkedStructure(asn1_type=_frame(),
-                               fields=("version", "payloadOctets", "crc"))
+    trailing = LinkedStructure(asn1_type=_frame(), fields=("version", "payloadOctets", "crc"))
     assert trailing.auxiliary_fields() == ("crc",)
 
 
@@ -179,8 +193,7 @@ def test_bounds_come_from_the_asn1_component_not_from_the_encoding_object():
     That retires `ecn_syntax.py`'s `BOUNDS` clause as the *source* of the bounds — it stays as
     a fallback for a specification with no ASN.1 type behind it.
     """
-    linked = LinkedStructure(asn1_type=_frame(),
-                             fields=("len", "version", "payloadOctets"))
+    linked = LinkedStructure(asn1_type=_frame(), fields=("len", "version", "payloadOctets"))
     assert linked.bounds_for("version") == IntegerBounds(0, 7)
     # An unconstrained INTEGER has no bounds, and "no bounds" is an ANSWER here rather than a
     # gap: §21.11.4 a)'s `unbounded-or-no-lower-bound` is the predicate for exactly this.
@@ -190,10 +203,15 @@ def test_bounds_come_from_the_asn1_component_not_from_the_encoding_object():
     # And the bounded one selects a different §21.11.4 shape, which is the whole point of
     # deriving them: the encoding chosen for `version` differs from `payloadOctets`'.
     assert linked.bounds_for("version").exactly_one_shape() is (
-        RangeCondition.BOUNDED_WITHOUT_NEGATIVES)
+        RangeCondition.BOUNDED_WITHOUT_NEGATIVES
+    )
     _refuses("is not a component", lambda: linked.bounds_for("nope"))
 
 
 def test_a_linked_structure_needs_a_type_with_components():
-    _refuses("has none", lambda: LinkedStructure(
-        asn1_type=Primitive(Universal.INTEGER, "INTEGER"), fields=("a",)).auxiliary_fields())
+    _refuses(
+        "has none",
+        lambda: LinkedStructure(
+            asn1_type=Primitive(Universal.INTEGER, "INTEGER"), fields=("a",)
+        ).auxiliary_fields(),
+    )

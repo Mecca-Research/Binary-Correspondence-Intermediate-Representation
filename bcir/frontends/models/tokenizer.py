@@ -48,10 +48,10 @@ _U2B = {u: b for b, u in _B2U.items()}
 class Tokenizer:
     """A loaded byte-level BPE tokenizer: vocab, merge ranks, specials, and its file digest."""
 
-    vocab: dict                     # token string (byte-alphabet space) -> id
-    merges: dict                    # (left, right) -> rank
-    specials: dict                  # special token text -> id (never split)
-    digest: str = ""                # sha256 of the tokenizer.json bytes (the manifest tie)
+    vocab: dict  # token string (byte-alphabet space) -> id
+    merges: dict  # (left, right) -> rank
+    specials: dict  # special token text -> id (never split)
+    digest: str = ""  # sha256 of the tokenizer.json bytes (the manifest tie)
     ids_to_tokens: dict = field(default_factory=dict)
 
     def encode(self, text: str) -> list[int]:
@@ -86,7 +86,7 @@ class Tokenizer:
                         best, at = r, k
                 if best is None:
                     break
-                sym[at:at + 2] = [sym[at] + sym[at + 1]]
+                sym[at : at + 2] = [sym[at] + sym[at + 1]]
             ids.extend(self.vocab[s] for s in sym)
         return ids
 
@@ -162,8 +162,7 @@ def load_tokenizer(path: str, *, max_bytes: int = _DEFAULT_MAX_TOKENIZER_BYTES) 
         raise ValueError(f"{path}: tokenizer.json exceeds {max_bytes} bytes")
     try:
         d = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
-    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError,
-            RecursionError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError, RecursionError) as exc:
         raise ValueError(f"{path}: malformed tokenizer.json: {exc}") from exc
     if not isinstance(d, dict):
         raise ValueError(f"{path}: tokenizer.json root must be an object")
@@ -182,21 +181,31 @@ def load_tokenizer(path: str, *, max_bytes: int = _DEFAULT_MAX_TOKENIZER_BYTES) 
             raise ValueError(f"{path}: vocab tokens must be nonempty strings")
         token_id = _token_id(raw_id, path=path, where=f"vocab id for {token!r}")
         if token_id in ids:
-            raise ValueError(f"{path}: duplicate token id {token_id} for {ids[token_id]!r} and {token!r}")
+            raise ValueError(
+                f"{path}: duplicate token id {token_id} for {ids[token_id]!r} and {token!r}"
+            )
         if any(ch not in _U2B for ch in token):
             raise ValueError(f"{path}: vocab token {token!r} is outside the byte alphabet")
         vocab[token] = token_id
         ids[token_id] = token
     missing_bytes = [byte for byte, token in _B2U.items() if token not in vocab]
     if missing_bytes:
-        raise ValueError(f"{path}: byte-level BPE vocab is missing {len(missing_bytes)} base byte tokens")
+        raise ValueError(
+            f"{path}: byte-level BPE vocab is missing {len(missing_bytes)} base byte tokens"
+        )
 
     raw_merges = model.get("merges", [])
     if not isinstance(raw_merges, list):
         raise ValueError(f"{path}: tokenizer merges must be an array")
     merges: dict = {}
     for rank, mg in enumerate(raw_merges):
-        pair = tuple(mg.split(" ")) if isinstance(mg, str) else tuple(mg) if isinstance(mg, list) else ()
+        pair = (
+            tuple(mg.split(" "))
+            if isinstance(mg, str)
+            else tuple(mg)
+            if isinstance(mg, list)
+            else ()
+        )
         if len(pair) != 2 or not all(isinstance(part, str) and part for part in pair):
             raise ValueError(f"{path}: malformed merge {mg!r}")
         if pair in merges:
@@ -210,8 +219,11 @@ def load_tokenizer(path: str, *, max_bytes: int = _DEFAULT_MAX_TOKENIZER_BYTES) 
         raise ValueError(f"{path}: added_tokens must be an array")
     specials: dict[str, int] = {}
     for index, item in enumerate(raw_specials):
-        if not isinstance(item, dict) or not isinstance(item.get("content"), str) \
-                or not item["content"]:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("content"), str)
+            or not item["content"]
+        ):
             raise ValueError(f"{path}: added token {index} must have nonempty string content")
         content = item["content"]
         token_id = _token_id(item.get("id"), path=path, where=f"added token {index} id")
@@ -223,8 +235,13 @@ def load_tokenizer(path: str, *, max_bytes: int = _DEFAULT_MAX_TOKENIZER_BYTES) 
             raise ValueError(f"{path}: added token id {token_id} conflicts with {ids[token_id]!r}")
         specials[content] = token_id
         ids[token_id] = content
-    return Tokenizer(vocab=vocab, merges=merges, specials=specials,
-                     digest=hashlib.sha256(raw).hexdigest(), ids_to_tokens=ids)
+    return Tokenizer(
+        vocab=vocab,
+        merges=merges,
+        specials=specials,
+        digest=hashlib.sha256(raw).hexdigest(),
+        ids_to_tokens=ids,
+    )
 
 
 # --- the chat-template fixture (a fixed named contract, not a template engine) ------------------
@@ -232,8 +249,9 @@ def load_tokenizer(path: str, *, max_bytes: int = _DEFAULT_MAX_TOKENIZER_BYTES) 
 _GEMMA_TURN = "<start_of_turn>{role}\n{text}<end_of_turn>\n"
 
 
-def render_chat(turns: list[tuple[str, str]], template: str = "gemma",
-                add_generation_prompt: bool = True) -> str:
+def render_chat(
+    turns: list[tuple[str, str]], template: str = "gemma", add_generation_prompt: bool = True
+) -> str:
     """Render a conversation under a NAMED chat template. `turns` is [(role, text), ...].
     "gemma": <start_of_turn>{role}\\n{text}<end_of_turn>\\n per turn, then the generation
     prompt opens a model turn. A fixture contract: the goldens in `test_model_tokenizer.py`

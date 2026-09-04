@@ -1,4 +1,5 @@
 """Security-assurance rails: secrets, inventory, campaigns, boundaries, fail-closed review."""
+
 from __future__ import annotations
 
 import json
@@ -43,6 +44,7 @@ def test_secret_scan_fails_closed_on_a_planted_text_secret() -> None:
 def test_secret_scan_records_archive_path_traversal_without_extracting() -> None:
     import io
     import zipfile
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -69,11 +71,14 @@ def test_secret_scan_of_the_current_tree_is_non_vacuous() -> None:
 def test_dependency_inventory_must_be_asserted_before_advisories() -> None:
     from unittest.mock import patch
     from tools.security import audit_dependencies as deps
+
     # The advisory engine is opportunistic; a host that happens to have
     # pip-audit installed (or PIP_AUDIT naming one) must not turn this unit
     # test into a live network scan whose result decides the verdict.
-    with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
-            patch.object(deps.shutil, "which", return_value=None):
+    with (
+        patch.dict(os.environ, {"PIP_AUDIT": ""}),
+        patch.object(deps.shutil, "which", return_value=None),
+    ):
         report = audit_deps(_ROOT)
     assert report["inventory_asserted"] is True
     assert report["expected_packages"] >= 1
@@ -85,12 +90,17 @@ def test_dependency_inventory_must_be_asserted_before_advisories() -> None:
 def test_dependency_inventory_mismatch_fails() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         expected = Path(tmp) / "expected.json"
-        expected.write_text(json.dumps({
-            "schema": "bcir-dependency-inventory.v1",
-            "runtime": ["definitely-not-a-bcir-dep==1.0"],
-            "build_system": ["setuptools>=83.0.0"],
-            "optional": {},
-        }), encoding="utf-8")
+        expected.write_text(
+            json.dumps(
+                {
+                    "schema": "bcir-dependency-inventory.v1",
+                    "runtime": ["definitely-not-a-bcir-dep==1.0"],
+                    "build_system": ["setuptools>=83.0.0"],
+                    "optional": {},
+                }
+            ),
+            encoding="utf-8",
+        )
         report = audit_deps(_ROOT, expected)
         assert report["state"] == "FAIL"
         assert report["mismatches"]
@@ -106,6 +116,7 @@ def test_decoder_campaign_hits_required_python_surfaces() -> None:
 
 def test_malformed_differential_runs_required_rails() -> None:
     from unittest.mock import patch
+
     with patch("tools.security.run_malformed_differential.find_bcir_opt", return_value=None):
         report = run_differential(_ROOT)
     assert report["state"] == "PASS", report.get("error") or report["disagreements"]
@@ -127,14 +138,16 @@ def test_malformed_differential_runs_required_rails() -> None:
 def test_find_bcir_opt_never_returns_stock_mlir_opt() -> None:
     from unittest.mock import patch
     from tools.security.run_malformed_differential import find_bcir_opt
+
     # Searched under a root with NO build tree: the finder also walks build/mlir-build, and
     # on a host that has built the MLIR rail in-tree it rightly returns that real bcir-opt.
     # The verdict here is about the stock NAME never passing, so it must not depend on
     # what this host has built (laws.md L19).
     with tempfile.TemporaryDirectory() as tmp:
         with patch.dict(os.environ, {"BCIR_OPT": str(Path(tmp) / "mlir-opt")}, clear=False):
-            with patch("tools.security.run_malformed_differential.shutil.which",
-                       return_value="mlir-opt"):
+            with patch(
+                "tools.security.run_malformed_differential.shutil.which", return_value="mlir-opt"
+            ):
                 assert find_bcir_opt(Path(tmp)) is None
     # Version-suffixed stock binaries are stock too; only a bcir-opt passes.
     with tempfile.TemporaryDirectory() as tmp:
@@ -152,6 +165,7 @@ def test_find_bcir_opt_never_returns_stock_mlir_opt() -> None:
 def test_r5_witness_matches_official_compiled_fixture() -> None:
     from tools.security.run_malformed_differential import _r5_module
     from bcir.verify import verify
+
     laws = {diag.law for diag in verify(_r5_module())}
     assert "R5" in laws
     assert "R6" not in laws
@@ -169,10 +183,18 @@ def test_independent_review_is_fail_closed() -> None:
     report = review_self_check()
     assert report["fail_closed"] is True
     assert report["cases"]["valid-json"] == "PASS"
-    for case in ("missing-command", "unparseable", "empty-output",
-                 "missing-executable", "timeout", "duplicate-keys",
-                 "null-summary", "non-utf8", "depth-bomb",
-                 "malformed-env-command"):
+    for case in (
+        "missing-command",
+        "unparseable",
+        "empty-output",
+        "missing-executable",
+        "timeout",
+        "duplicate-keys",
+        "null-summary",
+        "non-utf8",
+        "depth-bomb",
+        "malformed-env-command",
+    ):
         assert report["cases"][case] == "FAIL", case
     assert report["state"] == "PASS", report["mismatches"]
 
@@ -183,7 +205,8 @@ def test_placeholder_on_the_line_does_not_hide_a_real_token() -> None:
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
         planted = "ghp_" + ("ab" * 18)
         (root / "leak.py").write_text(
-            'token = "' + planted + '"  # example configuration\n', encoding="utf-8",
+            'token = "' + planted + '"  # example configuration\n',
+            encoding="utf-8",
         )
         subprocess.run(["git", "add", "leak.py"], cwd=root, check=True)
         report = scan_tree(root)
@@ -206,6 +229,7 @@ def test_unreadable_archive_fails_the_scan() -> None:
 def test_archive_scan_normalizes_windows_separators() -> None:
     import io
     import zipfile
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -224,6 +248,7 @@ def test_archive_member_cap_is_enforced() -> None:
     import io
     import zipfile
     from tools.security import scan_secrets as secrets
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -249,10 +274,7 @@ def test_boundary_audit_ignores_unrelated_run_methods() -> None:
         (root / "bcir").mkdir()
         (root / "tools").mkdir()
         (root / "bcir" / "job.py").write_text(
-            "class Job:\n"
-            "    def run(self, cmd):\n"
-            "        return cmd\n"
-            "Job().run('safe')\n",
+            "class Job:\n    def run(self, cmd):\n        return cmd\nJob().run('safe')\n",
             encoding="utf-8",
         )
         report = audit_boundaries(root)
@@ -302,8 +324,7 @@ def test_unseeded_c_fuzzing_is_recorded_as_unavailable() -> None:
         pid = 4242
         returncode = 0
         stdout = io.BytesIO(
-            b"  SKIP BCIRQ8 seed corpus (could not build a seed artifact); "
-            b"fuzzing unseeded\n"
+            b"  SKIP BCIRQ8 seed corpus (could not build a seed artifact); fuzzing unseeded\n"
         )
         stderr = io.BytesIO(b"")
 
@@ -324,13 +345,16 @@ def test_compiled_verifier_timeout_is_a_structured_failure() -> None:
         return  # the fixture verifier is a POSIX shell script
     from unittest.mock import patch
     from tools.security import run_malformed_differential as differential
+
     with tempfile.TemporaryDirectory() as tmp:
         hang = Path(tmp) / "fake-bcir-opt"
         hang.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
         hang.chmod(0o755)
         with patch.object(differential, "find_bcir_opt", return_value=str(hang)):
             with patch.object(
-                differential.subprocess.Popen, "wait", autospec=True,
+                differential.subprocess.Popen,
+                "wait",
+                autospec=True,
                 side_effect=[
                     differential.subprocess.TimeoutExpired(cmd="bcir-opt", timeout=20),
                     0,
@@ -345,6 +369,7 @@ def test_single_file_compression_is_binary_not_archive() -> None:
     """A legitimate tracked .gz or .7z has no inspection path; it must follow
     the binary policy instead of failing the scan as an unreadable archive."""
     import gzip
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -359,6 +384,7 @@ def test_single_file_compression_is_binary_not_archive() -> None:
         # A real tar.gz archive is still inspected as an archive.
         import io
         import tarfile
+
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as archive:
             info = tarfile.TarInfo("inner.txt")
@@ -387,6 +413,7 @@ def test_single_file_compression_is_binary_not_archive() -> None:
 def test_tar_link_targets_are_checked_for_traversal() -> None:
     import io
     import tarfile
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -406,6 +433,7 @@ def test_tar_link_targets_are_checked_for_traversal() -> None:
 def test_zip_symlink_targets_are_checked_for_traversal() -> None:
     import io
     import zipfile as zf
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -413,13 +441,13 @@ def test_zip_symlink_targets_are_checked_for_traversal() -> None:
         with zf.ZipFile(buf, "w") as archive:
             info = zf.ZipInfo("safe-name")
             info.create_system = 3
-            info.external_attr = (0o120777 << 16)
+            info.external_attr = 0o120777 << 16
             archive.writestr(info, "../../escape")
             # Symlink mode bits without the Unix create_system byte are still
             # honored by permissive extractors — the target must be checked.
             other = zf.ZipInfo("other-name")
             other.create_system = 0
-            other.external_attr = (0o120777 << 16)
+            other.external_attr = 0o120777 << 16
             archive.writestr(other, "../../also-escapes")
         (root / "links.zip").write_bytes(buf.getvalue())
         subprocess.run(["git", "add", "links.zip"], cwd=root, check=True)
@@ -452,6 +480,7 @@ def test_tracked_symlinks_are_recorded_not_followed() -> None:
 def test_compressed_tar_aliases_are_inspected() -> None:
     import io
     import tarfile
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -473,6 +502,7 @@ def test_python_verifier_crash_is_a_structured_disagreement() -> None:
     must become a recorded disagreement, never an escaping traceback."""
     from unittest.mock import patch
     from tools.security import run_malformed_differential as differential
+
     with patch.object(differential, "find_bcir_opt", return_value=None):
         with patch("bcir.verify.verify", side_effect=RuntimeError("boom")):
             report = differential.run_differential(_ROOT)
@@ -483,13 +513,19 @@ def test_python_verifier_crash_is_a_structured_disagreement() -> None:
 def test_gitleaks_nonzero_fails_the_scan() -> None:
     from unittest.mock import patch
     from tools.security import scan_secrets as secrets
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
         (root / "ok.py").write_text("x = 1\n", encoding="utf-8")
         subprocess.run(["git", "add", "ok.py"], cwd=root, check=True)
-        fake = {"engine": "gitleaks", "returncode": 2, "stdout_bytes": 10,
-                "stderr_tail": "", "available": True}
+        fake = {
+            "engine": "gitleaks",
+            "returncode": 2,
+            "stdout_bytes": 10,
+            "stderr_tail": "",
+            "available": True,
+        }
         with patch.object(secrets, "_try_gitleaks", return_value=fake):
             code = secrets.main(["--root", str(root), "--allow-gitleaks"])
         assert code == 1
@@ -499,6 +535,7 @@ def test_reviewer_command_keeps_its_own_flags() -> None:
     import io
     from contextlib import redirect_stdout
     from tools.security.independent_review import main as review_main
+
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "report.json"
         script = (
@@ -508,10 +545,18 @@ def test_reviewer_command_keeps_its_own_flags() -> None:
             " 'logic_errors': [], 'summary': 'flags kept: ' + a.format}))"
         )
         with redirect_stdout(io.StringIO()):
-            code = review_main([
-                "--json-out", str(out),
-                "--command", sys.executable, "-c", script, "--format", "json",
-            ])
+            code = review_main(
+                [
+                    "--json-out",
+                    str(out),
+                    "--command",
+                    sys.executable,
+                    "-c",
+                    script,
+                    "--format",
+                    "json",
+                ]
+            )
         assert code == 0
         payload = json.loads(out.read_text(encoding="utf-8"))
         assert payload["review"]["summary"] == "flags kept: json"
@@ -519,6 +564,7 @@ def test_reviewer_command_keeps_its_own_flags() -> None:
 
 def test_reviewer_env_command_preserves_quoting() -> None:
     from tools.security.independent_review import env_command
+
     parsed = env_command('reviewer --note "two words"')
     assert parsed == ["reviewer", "--note", "two words"]
     failed = env_command('reviewer "unterminated')
@@ -531,6 +577,7 @@ def test_reviewer_env_command_preserves_quoting() -> None:
 
 def test_decoder_campaign_rejects_vacuous_mutation_counts() -> None:
     from tools.security.run_decoder_campaign import run_campaign
+
     report = run_campaign(_ROOT, mutations=0, seed=1, fuzz_runs=1, fuzz_seconds=1)
     assert report["state"] == "INVALID/VACUOUS"
     report = run_campaign(_ROOT, mutations=-4, seed=1, fuzz_runs=1, fuzz_seconds=1)
@@ -545,9 +592,16 @@ def test_decoder_campaign_rejects_vacuous_mutation_counts() -> None:
 def test_decoder_campaign_require_c_fails_when_unavailable() -> None:
     from unittest.mock import patch
     from tools.security import run_decoder_campaign as campaign
+
     rows = [
-        {"surface": name, "state": "PASS", "accepted": 1, "rejected": 1,
-         "mutations": 1, "findings": []}
+        {
+            "surface": name,
+            "state": "PASS",
+            "accepted": 1,
+            "rejected": 1,
+            "mutations": 1,
+            "findings": [],
+        }
         for name in campaign.REQUIRED_PYTHON
     ]
     unavailable = {"state": "UNAVAILABLE/SKIPPED", "reason": "clang missing"}
@@ -582,8 +636,7 @@ def test_non_utf8_text_files_are_still_scanned() -> None:
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
         planted = "ghp_" + ("ab" * 18)
         (root / "legacy.py").write_bytes(
-            b"# -*- coding: latin-1 -*-\n# caf\xe9\n"
-            + f'token = "{planted}"\n'.encode("latin-1")
+            b"# -*- coding: latin-1 -*-\n# caf\xe9\n" + f'token = "{planted}"\n'.encode("latin-1")
         )
         subprocess.run(["git", "add", "legacy.py"], cwd=root, check=True)
         report = scan_tree(root)
@@ -595,6 +648,7 @@ def test_tar_logical_size_cap_is_enforced() -> None:
     import io
     import tarfile
     from tools.security import scan_secrets as secrets
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -635,9 +689,7 @@ def test_boundary_audit_honors_encoding_declarations() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "tools").mkdir()
-        (root / "tools" / "legacy.py").write_bytes(
-            b"# -*- coding: latin-1 -*-\n# caf\xe9\nx = 1\n"
-        )
+        (root / "tools" / "legacy.py").write_bytes(b"# -*- coding: latin-1 -*-\n# caf\xe9\nx = 1\n")
         report = audit_boundaries(root)
         assert report["findings"] == []
         (root / "tools" / "junk.py").write_bytes(b"\x00\x01 not python")
@@ -649,6 +701,7 @@ def test_mlir_text_duplicate_checks_are_per_module() -> None:
     """IDs are unique per Module in the oracle; two independent modules
     reusing an ID must not be rejected by the text rail."""
     from tools.security.run_malformed_differential import parse_mlir_text
+
     two_modules = (
         "bcir.module @a { bcir.claim @c attributes { claim_id = 1 : i32 } { } }\n"
         "bcir.module @b { bcir.claim @c attributes { claim_id = 1 : i32 } { } }\n"
@@ -678,6 +731,7 @@ def test_dependency_audit_rejects_dynamic_dependencies() -> None:
 
 def test_r5_text_check_is_per_claim() -> None:
     from tools.security.run_malformed_differential import parse_mlir_text
+
     legal = (
         "bcir.module @ok {\n"
         "  bcir.claim @a attributes { lane = #bcir.lane<a>, "
@@ -703,6 +757,7 @@ def test_corrupt_zip_symlink_payload_is_unreadable_not_a_crash() -> None:
     import io
     import struct
     import zipfile as zf
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -714,9 +769,9 @@ def test_corrupt_zip_symlink_payload_is_unreadable_not_a_crash() -> None:
             archive.writestr(info, "target/path")
         raw = bytearray(buf.getvalue())
         header = raw.find(b"PK\x03\x04")
-        name_len, extra_len = struct.unpack("<HH", raw[header + 26:header + 30])
+        name_len, extra_len = struct.unpack("<HH", raw[header + 26 : header + 30])
         payload = header + 30 + name_len + extra_len
-        raw[payload:payload + 4] = b"\xff\xff\xff\xff"
+        raw[payload : payload + 4] = b"\xff\xff\xff\xff"
         (root / "links.zip").write_bytes(bytes(raw))
         subprocess.run(["git", "add", "links.zip"], cwd=root, check=True)
         report = scan_tree(root)
@@ -729,6 +784,7 @@ def test_corrupt_tar_xz_payload_is_unreadable_not_a_crash() -> None:
     escape; iterating a corrupt .tar.xz must fail closed as unreadable."""
     import io
     import tarfile
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -743,7 +799,7 @@ def test_corrupt_tar_xz_payload_is_unreadable_not_a_crash() -> None:
             archive.addfile(second, io.BytesIO(b"0123456789"))
         raw = bytearray(buf.getvalue())
         middle = len(raw) // 2
-        raw[middle:middle + 8] = b"\xff" * 8
+        raw[middle : middle + 8] = b"\xff" * 8
         (root / "bundle.tar.xz").write_bytes(bytes(raw))
         subprocess.run(["git", "add", "bundle.tar.xz"], cwd=root, check=True)
         report = scan_tree(root)
@@ -771,6 +827,7 @@ def test_suffix_binaries_are_recorded_without_reading() -> None:
     """Bounds are enforced at ingress: a suffix-classified binary (a model or
     dataset blob) is recorded from its name alone, never materialized."""
     from unittest.mock import patch
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -798,6 +855,7 @@ def test_oversized_archive_is_a_finding_not_an_oom() -> None:
     import zipfile as zf
     from unittest.mock import patch
     from tools.security import scan_secrets as secrets
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -821,14 +879,20 @@ def test_gitleaks_is_invoked_redacted() -> None:
         return  # the gitleaks rail is POSIX-gated
     from unittest.mock import patch
     from tools.security import scan_secrets as secrets
+
     seen: dict[str, list[str]] = {}
 
     def capture(cmd, **kwargs):
         seen["cmd"] = cmd
         return {
-            "launched": True, "timed_out": False, "overflow": False,
-            "pipes_held": False, "returncode": 0, "stdout": b"",
-            "stderr": b"", "error": "",
+            "launched": True,
+            "timed_out": False,
+            "overflow": False,
+            "pipes_held": False,
+            "returncode": 0,
+            "stdout": b"",
+            "stderr": b"",
+            "error": "",
         }
 
     with patch.object(secrets, "run_bounded", side_effect=capture):
@@ -842,6 +906,7 @@ def test_depth_bomb_reviewer_output_is_a_structured_failure() -> None:
     """json.loads raises RecursionError on pathologically nested output; the
     reviewer contract turns it into the unparseable FAIL, never a traceback."""
     from tools.security.independent_review import run_reviewer
+
     with tempfile.TemporaryDirectory() as tmp:
         bomb = Path(tmp) / "bomb.py"
         bomb.write_text("print('[' * 200000)\n", encoding="utf-8")
@@ -857,6 +922,7 @@ def test_c_campaign_survives_non_utf8_fuzzer_output() -> None:
         return  # the fixture fuzz script needs a real POSIX shell
     from unittest.mock import patch
     from tools.security import run_decoder_campaign as campaign
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         script_dir = root / "tools" / "c"
@@ -882,6 +948,7 @@ def test_compiled_verifier_output_is_never_strict_decoded() -> None:
         return  # the fixture verifier is a POSIX shell script
     from unittest.mock import patch
     from tools.security import run_malformed_differential as differential
+
     with tempfile.TemporaryDirectory() as tmp:
         fake = Path(tmp) / "fake-bcir-opt"
         fake.write_text("#!/bin/sh\nprintf '\\377\\376 diag'\nexit 1\n", encoding="utf-8")
@@ -932,6 +999,7 @@ def test_boundary_audit_unreadable_file_is_a_finding() -> None:
     """A tracked file the auditor cannot read was not audited — that is a
     failing finding, never an escaping OSError."""
     from unittest.mock import patch
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -952,6 +1020,7 @@ def test_truncated_compressed_tar_is_unreadable_not_a_crash() -> None:
     EOFError mid-iteration; that must be the unreadable finding."""
     import io
     import tarfile
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -1003,7 +1072,8 @@ def test_boundary_audit_flags_shell_helper_calls() -> None:
         tools = root / "tools"
         tools.mkdir()
         (tools / "x.py").write_text(
-            "import subprocess\nsubprocess.getoutput('ls -la')\n", encoding="utf-8",
+            "import subprocess\nsubprocess.getoutput('ls -la')\n",
+            encoding="utf-8",
         )
         subprocess.run(["git", "add", "tools/x.py"], cwd=root, check=True)
         report = audit_boundaries(root)
@@ -1017,7 +1087,8 @@ def test_malformed_pyproject_fails_structured_on_both_parser_paths() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "pyproject.toml").write_text(
-            "[project\ndependencies = [\n", encoding="utf-8",
+            "[project\ndependencies = [\n",
+            encoding="utf-8",
         )
         report = audit_deps(root)
     assert report["state"] == "FAIL"
@@ -1107,9 +1178,14 @@ def test_hanging_decoder_is_a_structured_finding() -> None:
     import random
     import time
     from tools.security.run_decoder_campaign import _probe
+
     report = _probe(
-        "sleepy", lambda blob: time.sleep(5), b"seed",
-        random.Random(0), mutations=1, timeout=0.5,
+        "sleepy",
+        lambda blob: time.sleep(5),
+        b"seed",
+        random.Random(0),
+        mutations=1,
+        timeout=0.5,
     )
     assert report["state"] == "FAIL"
     assert any(f["kind"] == "decoder-hang" for f in report["findings"])
@@ -1121,8 +1197,11 @@ def test_campaign_io_failure_is_not_a_graceful_rejection() -> None:
     (RuntimeError, outside the graceful set), never count as rejection."""
     from unittest.mock import patch
     from tools.security import run_decoder_campaign as campaign
+
     with patch.object(
-        campaign.tempfile, "TemporaryDirectory", side_effect=OSError("disk full"),
+        campaign.tempfile,
+        "TemporaryDirectory",
+        side_effect=OSError("disk full"),
     ):
         try:
             campaign._decode_q8_bytes(b"\x00")
@@ -1160,6 +1239,7 @@ def test_zip_member_cap_fires_before_the_central_directory_is_read() -> None:
     import zipfile as zf
     from unittest.mock import patch
     from tools.security import scan_secrets as secrets
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -1186,6 +1266,7 @@ def test_differential_requires_the_compiled_rail_when_told() -> None:
     --require-c): the CI job that builds the binary must not pass without it."""
     from unittest.mock import patch
     from tools.security import run_malformed_differential as differential
+
     with patch.object(differential, "find_bcir_opt", return_value=None):
         report = differential.run_differential(_ROOT, require_compiled=True)
     assert report["state"] == "FAIL"
@@ -1209,8 +1290,7 @@ def test_r1_python_construction_guard_is_paired_in_the_differential() -> None:
             report = differential.run_differential(_ROOT)
     assert report["state"] == "FAIL"
     assert any(
-        "compiled-official-r1-duplicate-rid/python" in item
-        for item in report["disagreements"]
+        "compiled-official-r1-duplicate-rid/python" in item for item in report["disagreements"]
     ), report["disagreements"]
 
 
@@ -1219,6 +1299,7 @@ def test_verbose_reviewer_output_is_bounded() -> None:
     before the timeout fires; the budget produces the structured FAIL."""
     from unittest.mock import patch
     from tools.security import independent_review as review
+
     with tempfile.TemporaryDirectory() as tmp:
         chatty = Path(tmp) / "chatty.py"
         chatty.write_text(
@@ -1262,6 +1343,7 @@ def test_tar_metadata_bomb_is_bounded_before_iteration() -> None:
     import tarfile
     from unittest.mock import patch
     from tools.security import scan_secrets as secrets
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -1288,6 +1370,7 @@ def test_reviewer_descendants_cannot_hold_the_harness_open() -> None:
     import time
     from unittest.mock import patch
     from tools.security import independent_review as review
+
     with tempfile.TemporaryDirectory() as tmp:
         parent = Path(tmp) / "parent.py"
         parent.write_text(
@@ -1311,6 +1394,7 @@ def test_duplicate_key_detection_is_linear() -> None:
     minutes of CPU after the process timeout already finished."""
     import time
     from tools.security.independent_review import parse_review
+
     body = ", ".join(f'"k{index}": 1' for index in range(60000))
     text = (
         '{"passed": true, "security_concerns": [], "logic_errors": [], '
@@ -1332,6 +1416,7 @@ def test_zip_magic_under_a_foreign_suffix_is_inspected() -> None:
     of hiding behind the binary policy via its NUL bytes."""
     import io
     import zipfile as zf
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -1351,6 +1436,7 @@ def test_boundary_audit_fails_when_git_discovery_fails() -> None:
     to the fixture walk that no longer knows what is tracked."""
     from unittest.mock import patch
     from tools.security import audit_tool_boundaries as atb
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / ".git").mkdir()
@@ -1372,6 +1458,7 @@ def test_hanging_python_verifier_is_a_structured_disagreement() -> None:
     import time
     from unittest.mock import patch
     from tools.security import run_malformed_differential as differential
+
     with patch.object(differential, "find_bcir_opt", return_value=None):
         with patch.object(differential, "PYTHON_VERIFY_TIMEOUT", 0.5):
             with patch("bcir.verify.verify", side_effect=lambda module: time.sleep(5)):
@@ -1384,6 +1471,7 @@ def test_nonstandard_json_constants_are_rejected() -> None:
     """NaN and Infinity are not JSON; the permissive json.loads default must
     not let them ride under the fail-closed parse contract."""
     from tools.security.independent_review import parse_review
+
     text = (
         '{"passed": true, "security_concerns": [], "logic_errors": [], '
         '"summary": "ok", "metric": NaN}'
@@ -1402,6 +1490,7 @@ def test_zip_magic_under_a_binary_suffix_is_inspected() -> None:
     while true model blobs stay unmaterialized."""
     import io
     import zipfile as zf
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -1430,9 +1519,7 @@ def test_boundary_audit_flags_fstring_commands() -> None:
         subprocess.run(["git", "add", "tools/x.py"], cwd=root, check=True)
         report = audit_boundaries(root)
         assert report["state"] == "FAIL"
-        assert any(
-            item["rule"] == "subprocess-string-command" for item in report["findings"]
-        )
+        assert any(item["rule"] == "subprocess-string-command" for item in report["findings"])
 
 
 def test_compressed_tar_magic_under_foreign_suffixes_is_inspected() -> None:
@@ -1441,6 +1528,7 @@ def test_compressed_tar_magic_under_foreign_suffixes_is_inspected() -> None:
     magic table covers the compressed-tar formats _archive_entries parses."""
     import io
     import tarfile
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -1456,8 +1544,7 @@ def test_compressed_tar_magic_under_foreign_suffixes_is_inspected() -> None:
         report = scan_tree(root)
         assert report["state"] == "FAIL"
         traversals = [
-            item for item in report["findings"]
-            if item["rule"] == "archive-path-traversal"
+            item for item in report["findings"] if item["rule"] == "archive-path-traversal"
         ]
         assert len(traversals) == 2, report["findings"]
 
@@ -1468,6 +1555,7 @@ def test_witness_rejected_for_the_wrong_law_is_a_disagreement() -> None:
     name the law the case exists to test."""
     from unittest.mock import patch
     from tools.security import run_malformed_differential as differential
+
     real = differential.parse_mlir_text
 
     def wrong_reason(text):
@@ -1489,6 +1577,7 @@ def test_prefixed_zip_under_foreign_suffixes_is_inspected() -> None:
     offset-zero magic only — under foreign and binary suffixes alike."""
     import io
     import zipfile as zf
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -1502,8 +1591,7 @@ def test_prefixed_zip_under_foreign_suffixes_is_inspected() -> None:
         report = scan_tree(root)
         assert report["state"] == "FAIL"
         traversals = [
-            item for item in report["findings"]
-            if item["rule"] == "archive-path-traversal"
+            item for item in report["findings"] if item["rule"] == "archive-path-traversal"
         ]
         assert len(traversals) == 2, report["findings"]
 
@@ -1513,6 +1601,7 @@ def test_oversized_text_candidate_is_refused_at_ingress() -> None:
     no recognized suffix cannot OOM the scan out of its verdict."""
     from unittest.mock import patch
     from tools.security import scan_secrets as secrets
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -1533,6 +1622,7 @@ def test_compiled_diagnostic_marker_survives_long_notes() -> None:
         return  # the fixture verifier is a POSIX shell script
     from unittest.mock import patch
     from tools.security import run_malformed_differential as differential
+
     with tempfile.TemporaryDirectory() as tmp:
         fake = Path(tmp) / "fake-bcir-opt"
         fake.write_text(
@@ -1559,6 +1649,7 @@ def test_tar_probe_never_parses_compressed_bytes() -> None:
     import tarfile as tf
     from unittest.mock import patch
     from tools.security import scan_secrets as secrets
+
     real = tf.is_tarfile
 
     def guarded(target):
@@ -1593,6 +1684,7 @@ def test_q8_read_io_failure_is_not_graceful() -> None:
     graceful malformed-input rejection."""
     from unittest.mock import patch
     from tools.security import run_decoder_campaign as campaign
+
     with patch(
         "bcir.frontends.models.weights_io.read_q8_decoder",
         side_effect=OSError("EIO"),
@@ -1626,6 +1718,7 @@ def test_c_campaign_runs_in_its_own_session() -> None:
     from types import SimpleNamespace
     from unittest.mock import patch
     from tools.security import run_decoder_campaign as campaign
+
     captured: dict[str, object] = {}
 
     import io
@@ -1659,6 +1752,7 @@ def test_verbose_compiled_verifier_is_bounded() -> None:
         return  # the fixture verifier is a POSIX shell script
     from unittest.mock import patch
     from tools.security import run_malformed_differential as differential
+
     with tempfile.TemporaryDirectory() as tmp:
         fake = Path(tmp) / "fake-bcir-opt"
         fake.write_text(
@@ -1681,6 +1775,7 @@ def test_oversized_python_source_is_a_finding() -> None:
     must be stat-gated into a finding, never an OOM of the audit."""
     from unittest.mock import patch
     from tools.security import audit_tool_boundaries as atb
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -1700,6 +1795,7 @@ def test_find_bcir_opt_searches_the_build_tree_layout() -> None:
     mirror check_passes.sh's find over the build tree, not a fixed path."""
     from unittest.mock import patch
     from tools.security import run_malformed_differential as differential
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         nested = root / "build" / "mlir-build" / "tools" / "bcir-opt-target"
@@ -1742,11 +1838,14 @@ def test_c_campaign_timeout_keeps_the_captured_tails() -> None:
     # patching ITS os too: otherwise a Windows host takes the tree-kill
     # branch and shells out mid-test, which is not what this pins.
     from tools.security import proc_bounds
+
     posix_os = SimpleNamespace(name="posix", environ=dict(os.environ))
     with patch.object(campaign, "os", posix_os):
         with patch.object(proc_bounds, "os", posix_os):
             with patch.object(campaign.shutil, "which", return_value="/usr/bin/tool"):
-                with patch.object(campaign.subprocess, "Popen", side_effect=lambda *a, **k: FakeProc()):
+                with patch.object(
+                    campaign.subprocess, "Popen", side_effect=lambda *a, **k: FakeProc()
+                ):
                     report = campaign.run_c_campaign(_ROOT, runs=1, seconds=1)
     assert report["state"] == "FAIL"
     assert "hung" in report["stdout_tail"]
@@ -1762,6 +1861,7 @@ def test_xz_dictionary_memory_is_bounded() -> None:
     import tarfile as tf
     from unittest.mock import patch
     from tools.security import scan_secrets as secrets
+
     buf = io.BytesIO()
     with tf.open(fileobj=buf, mode="w:xz") as archive:
         info = tf.TarInfo("member.txt")
@@ -1787,6 +1887,7 @@ def test_flooding_c_campaign_is_bounded() -> None:
         return  # the fixture wrapper is a POSIX shell script
     from unittest.mock import patch
     from tools.security import run_decoder_campaign as campaign
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         script = root / "tools" / "c" / "fuzz_streampack.sh"
@@ -1801,7 +1902,8 @@ def test_flooding_c_campaign_is_bounded() -> None:
         script.chmod(0o755)
         with patch.object(campaign, "CAMPAIGN_OUTPUT_CAP", 1 << 16):
             with patch.object(
-                campaign.shutil, "which",
+                campaign.shutil,
+                "which",
                 side_effect=lambda name: "/usr/bin/" + name,
             ):
                 report = campaign.run_c_campaign(root, runs=1, seconds=1)
@@ -1818,9 +1920,14 @@ def test_stalled_pip_audit_is_bounded() -> None:
 
     def stalled(cmd, **kwargs):
         return {
-            "launched": True, "timed_out": True, "overflow": False,
-            "pipes_held": False, "returncode": -9, "stdout": b"",
-            "stderr": b"", "error": "",
+            "launched": True,
+            "timed_out": True,
+            "overflow": False,
+            "pipes_held": False,
+            "returncode": -9,
+            "stdout": b"",
+            "stderr": b"",
+            "error": "",
         }
 
     with patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"):
@@ -1837,16 +1944,19 @@ def test_oversized_pyproject_is_unasserted() -> None:
     verdict, never an OOM of the required audit."""
     from unittest.mock import patch
     from tools.security import audit_dependencies as deps
+
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "pyproject.toml"
         path.write_text(
-            '[project]\nname = "x"\n' + "#" * 4096 + "\n", encoding="utf-8",
+            '[project]\nname = "x"\n' + "#" * 4096 + "\n",
+            encoding="utf-8",
         )
         parsed = deps.parse_pyproject(path)
         assert parsed.get("_unasserted", False) is False  # below cap: normal
         with patch.object(deps, "PYPROJECT_SIZE_CAP", 1024):
             gated = deps.parse_pyproject(path)
     assert gated["_unasserted"] is True
+
 
 def test_temporary_aws_keys_are_findings() -> None:
     """ASIA-prefixed STS keys are real credentials in the same 20-character
@@ -1869,9 +1979,16 @@ def test_colon_delimited_mappings_are_scanned() -> None:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
         payload = (
-            "password" + ': "' + "correct-horse-battery-123" + '"\n'
-            + "token" + ': "${{ secrets.GITHUB_TOKEN }}"\n'
-            + '"api_key"' + ': "' + "correct-horse-battery-456" + '"\n'
+            "password"
+            + ': "'
+            + "correct-horse-battery-123"
+            + '"\n'
+            + "token"
+            + ': "${{ secrets.GITHUB_TOKEN }}"\n'
+            + '"api_key"'
+            + ': "'
+            + "correct-horse-battery-456"
+            + '"\n'
         )
         (root / "config.yaml").write_text(payload, encoding="utf-8")
         subprocess.run(["git", "add", "config.yaml"], cwd=root, check=True)
@@ -1895,15 +2012,14 @@ def test_symlink_target_text_is_scanned() -> None:
     assert "link" in report["symlinks"]
     assert report["state"] == "FAIL"
     assert any(
-        item["rule"] == "github-token" and item["path"] == "link"
-        for item in report["findings"]
+        item["rule"] == "github-token" and item["path"] == "link" for item in report["findings"]
     )
 
 
 def _v7_tar(name: bytes, payload: bytes) -> bytes:
     """A checksum-valid legacy V7 tar: no ustar magic at offset 257."""
     header = bytearray(512)
-    header[0:len(name)] = name
+    header[0 : len(name)] = name
     header[100:108] = b"0000644\x00"
     header[108:116] = b"0000000\x00"
     header[116:124] = b"0000000\x00"
@@ -1929,9 +2045,7 @@ def test_legacy_v7_tar_members_are_inspected() -> None:
         report = scan_tree(root)
     assert report["archive_files"] >= 1
     assert report["state"] == "FAIL"
-    assert any(
-        item["rule"] == "archive-path-traversal" for item in report["findings"]
-    )
+    assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])
 
 
 def test_bounded_runner_expires_and_caps() -> None:
@@ -1940,15 +2054,22 @@ def test_bounded_runner_expires_and_caps() -> None:
     if os.name == "nt":
         return  # the fixture commands are POSIX shell
     from tools.security.proc_bounds import run_bounded
+
     bash = "/bin/bash"
     stalled = run_bounded(
-        [bash, "-c", "sleep 30"], timeout=0.5, cap=1 << 16,
+        [bash, "-c", "sleep 30"],
+        timeout=0.5,
+        cap=1 << 16,
     )
     assert stalled["timed_out"] is True
     flooded = run_bounded(
-        [bash, "-c",
-         "i=0; while [ $i -lt 16 ]; do printf 'x%.0s' $(seq 1 65536); i=$((i+1)); done; sleep 30"],
-        timeout=30.0, cap=1 << 16,
+        [
+            bash,
+            "-c",
+            "i=0; while [ $i -lt 16 ]; do printf 'x%.0s' $(seq 1 65536); i=$((i+1)); done; sleep 30",
+        ],
+        timeout=30.0,
+        cap=1 << 16,
     )
     assert flooded["overflow"] is True
     assert flooded["timed_out"] is False
@@ -1965,9 +2086,14 @@ def test_stalled_gitleaks_is_bounded() -> None:
 
     def stalled(cmd, **kwargs):
         return {
-            "launched": True, "timed_out": True, "overflow": False,
-            "pipes_held": False, "returncode": 0, "stdout": b"",
-            "stderr": b"", "error": "",
+            "launched": True,
+            "timed_out": True,
+            "overflow": False,
+            "pipes_held": False,
+            "returncode": 0,
+            "stdout": b"",
+            "stderr": b"",
+            "error": "",
         }
 
     with patch.object(secrets, "run_bounded", side_effect=stalled):
@@ -1983,6 +2109,7 @@ def test_dependency_groups_fail_closed() -> None:
     expected-inventory schema cannot express; the parser must surface them
     and the audit must refuse to assert around them."""
     from tools.security import audit_dependencies as deps
+
     text = (
         '[project]\nname = "x"\ndependencies = []\n'
         '[build-system]\nrequires = ["setuptools>=83.0.0"]\n'
@@ -1994,13 +2121,21 @@ def test_dependency_groups_fail_closed() -> None:
         parsed = deps.parse_pyproject(root / "pyproject.toml")
         assert parsed["dependency_groups"] == ["qa"]
         expected = root / "expected.json"
-        expected.write_text(json.dumps({
-            "schema": "bcir-dependency-inventory.v1",
-            "runtime": [], "build_system": ["setuptools>=83.0.0"], "optional": {},
-        }), encoding="utf-8")
+        expected.write_text(
+            json.dumps(
+                {
+                    "schema": "bcir-dependency-inventory.v1",
+                    "runtime": [],
+                    "build_system": ["setuptools>=83.0.0"],
+                    "optional": {},
+                }
+            ),
+            encoding="utf-8",
+        )
         report = audit_deps(root, expected)
     assert report["state"] == "FAIL"
     assert "dependency-groups" in report["error"]
+
 
 def test_unquoted_passphrases_are_findings() -> None:
     """Separator-delimited lowercase passphrases are a standard credential
@@ -2009,8 +2144,14 @@ def test_unquoted_passphrases_are_findings() -> None:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
         payload = (
-            "password" + ": " + "correct-horse-battery-staple" + "\n"
-            + "password" + ": " + "your-password-here" + "\n"
+            "password"
+            + ": "
+            + "correct-horse-battery-staple"
+            + "\n"
+            + "password"
+            + ": "
+            + "your-password-here"
+            + "\n"
         )
         (root / "config.yaml").write_text(payload, encoding="utf-8")
         subprocess.run(["git", "add", "config.yaml"], cwd=root, check=True)
@@ -2025,6 +2166,7 @@ def test_uppercase_python_suffix_is_audited() -> None:
     boundary violation must be discovered and flagged, not silently skipped
     while the same tree passes on case-folding hosts."""
     from tools.security.audit_tool_boundaries import audit_boundaries
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -2032,7 +2174,8 @@ def test_uppercase_python_suffix_is_audited() -> None:
         tools.mkdir()
         (tools / "ok.py").write_text("x = 1\n", encoding="utf-8")
         (tools / "check.PY").write_text(
-            "import os\nos.system(" + '"ls"' + ")\n", encoding="utf-8",
+            "import os\nos.system(" + '"ls"' + ")\n",
+            encoding="utf-8",
         )
         subprocess.run(["git", "add", "-A"], cwd=root, check=True)
         report = audit_boundaries(root)
@@ -2042,15 +2185,17 @@ def test_uppercase_python_suffix_is_audited() -> None:
         for item in report["findings"]
     )
 
+
 def test_scalar_dependency_fields_are_unasserted() -> None:
     """Valid TOML can still carry a nonsense metadata shape; the parser
     must fail closed, never traceback (list(42)) and never silently shred
     a bare string into characters."""
     from tools.security import audit_dependencies as deps
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         path = root / "pyproject.toml"
-        for body in ('dependencies = 42\n', 'dependencies = "requests"\n'):
+        for body in ("dependencies = 42\n", 'dependencies = "requests"\n'):
             path.write_text('[project]\nname = "x"\n' + body, encoding="utf-8")
             parsed = deps.parse_pyproject(path)
             assert parsed["_unasserted"] is True, body
@@ -2064,6 +2209,7 @@ def test_reviewer_put_down_kills_the_tree_on_windows() -> None:
     from types import SimpleNamespace
     from unittest.mock import patch
     from tools.security import proc_bounds
+
     killed: dict[str, object] = {}
 
     class FakeProc:
@@ -2102,6 +2248,7 @@ def test_credential_shaped_filenames_are_findings() -> None:
     assert hits[0]["path"] == "keys/<redacted>"
     assert "ghp_" not in json.dumps(report)
 
+
 def test_put_down_never_raises_from_the_tree_terminator() -> None:
     """The put-down runs inside timeout and overflow paths that must still
     return a structured verdict; no failure of the terminator may escape and
@@ -2109,6 +2256,7 @@ def test_put_down_never_raises_from_the_tree_terminator() -> None:
     from types import SimpleNamespace
     from unittest.mock import patch
     from tools.security import proc_bounds
+
     killed: dict[str, object] = {}
 
     class FakeProc:
@@ -2130,7 +2278,8 @@ def test_wrong_shaped_metadata_tables_are_unasserted() -> None:
     """A scalar or list where a metadata TABLE belongs raises on .get (or is
     coerced away by `or {}`); the parser must fail closed instead."""
     from tools.security import audit_dependencies as deps
-    bodies = ('project = "x"\n', 'project = []\n', 'build-system = 42\n')
+
+    bodies = ('project = "x"\n', "project = []\n", "build-system = 42\n")
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "pyproject.toml"
         for body in bodies:
@@ -2164,6 +2313,7 @@ def test_credential_shaped_names_are_redacted_in_every_report_field() -> None:
     assert report["binaries"] == ["<redacted>"]
     assert report["symlinks"] == ["<redacted>"]
 
+
 def test_secret_bearing_directories_are_redacted() -> None:
     """A credential can name a DIRECTORY; copying the parent through
     verbatim republishes it just as surely as the basename would."""
@@ -2186,6 +2336,7 @@ def test_schema_prose_is_not_a_secret() -> None:
     requirement, so prose lands in it. A short whitespace-bearing value is
     a description; a passphrase-length one is still a credential."""
     from tools.security.scan_secrets import _scan_text
+
     prose = _scan_text("f", '"token_counts": "object or null",')
     assert prose == []
     for line in (
@@ -2203,9 +2354,14 @@ def test_compiled_verifier_descendants_are_a_structured_failure() -> None:
 
     def held(cmd, **kwargs):
         return {
-            "launched": True, "timed_out": False, "overflow": False,
-            "pipes_held": True, "returncode": 0, "stdout": b"",
-            "stderr": b"", "error": "",
+            "launched": True,
+            "timed_out": False,
+            "overflow": False,
+            "pipes_held": True,
+            "returncode": 0,
+            "stdout": b"",
+            "stderr": b"",
+            "error": "",
         }
 
     with patch.object(differential, "find_bcir_opt", return_value="/usr/bin/fake"):
@@ -2214,6 +2370,7 @@ def test_compiled_verifier_descendants_are_a_structured_failure() -> None:
     assert result["state"] == "FAIL"
     assert "descendants" in result["reason"]
 
+
 def test_python_witness_paired_to_its_intended_law() -> None:
     """A witness that keeps rejecting under a DIFFERENT law leaves the rail
     green while the law it exists to test has regressed; the Python rail
@@ -2221,6 +2378,7 @@ def test_python_witness_paired_to_its_intended_law() -> None:
     from unittest.mock import patch
     from types import SimpleNamespace
     from tools.security import run_malformed_differential as differential
+
     real = differential._bounded_verify
 
     def wrong_law(probe):
@@ -2231,9 +2389,9 @@ def test_python_witness_paired_to_its_intended_law() -> None:
     with patch.object(differential, "_bounded_verify", side_effect=wrong_law):
         report = differential.run_differential(_ROOT)
     assert report["state"] == "FAIL"
-    assert any(
-        "/python: rejected under laws" in item for item in report["disagreements"]
-    ), report["disagreements"]
+    assert any("/python: rejected under laws" in item for item in report["disagreements"]), report[
+        "disagreements"
+    ]
 
 
 def test_zip_symlink_under_lzma_is_uninspectable() -> None:
@@ -2242,6 +2400,7 @@ def test_zip_symlink_under_lzma_is_uninspectable() -> None:
     symlink member under that method must fail closed, never be opened."""
     import io
     import zipfile as zf
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -2250,7 +2409,7 @@ def test_zip_symlink_under_lzma_is_uninspectable() -> None:
         with zf.ZipFile(buf, "w") as archive:
             info = zf.ZipInfo("link")
             info.create_system = 3
-            info.external_attr = (0o120777 << 16)  # S_IFLNK
+            info.external_attr = 0o120777 << 16  # S_IFLNK
             info.compress_type = 14  # ZIP_LZMA
             archive.writestr(info, "target")
         (root / "bundle.zip").write_bytes(buf.getvalue())
@@ -2267,6 +2426,7 @@ def test_symlinked_pyproject_is_unasserted() -> None:
     if os.name == "nt":
         return  # symlink creation is privilege-gated on Windows
     from tools.security import audit_dependencies as deps
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         link = root / "pyproject.toml"
@@ -2278,6 +2438,7 @@ def test_symlinked_pyproject_is_unasserted() -> None:
         real = root / "real.toml"
         real.write_text('[project]\ndependencies = ["a>=1"]\n', encoding="utf-8")
         assert deps.parse_pyproject(real)["runtime"] == ["a>=1"]
+
 
 def test_credential_in_non_utf8_filename_is_redacted() -> None:
     """Replacement decoding rewrites only the invalid byte, so an ASCII
@@ -2304,6 +2465,7 @@ def test_nested_build_directories_are_still_audited() -> None:
     excluded tracked developer scripts under any nested directory so
     called, and the missing-file reconciliation excluded them too."""
     from tools.security.audit_tool_boundaries import audit_boundaries
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -2311,18 +2473,20 @@ def test_nested_build_directories_are_still_audited() -> None:
         nested.mkdir(parents=True)
         (root / "tools" / "ok.py").write_text("x = 1\n", encoding="utf-8")
         (nested / "release.py").write_text(
-            "import os\nos.system(" + '"ls"' + ")\n", encoding="utf-8",
+            "import os\nos.system(" + '"ls"' + ")\n",
+            encoding="utf-8",
         )
         generated = root / "build"
         generated.mkdir()
         (generated / "gen.py").write_text(
-            "import os\nos.system(" + '"ls"' + ")\n", encoding="utf-8",
+            "import os\nos.system(" + '"ls"' + ")\n",
+            encoding="utf-8",
         )
         subprocess.run(["git", "add", "-A"], cwd=root, check=True)
         report = audit_boundaries(root)
     flagged = {item["path"] for item in report["findings"]}
     assert report["state"] == "FAIL"
-    assert "tools/build/release.py" in flagged   # nested: audited
+    assert "tools/build/release.py" in flagged  # nested: audited
     assert not any(p.startswith("build/") for p in flagged)  # root: generated
 
 
@@ -2332,6 +2496,7 @@ def test_debug_preset_build_is_discovered() -> None:
     unavailable beside a valid official build."""
     from unittest.mock import patch
     from tools.security import run_malformed_differential as differential
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         binary = root / "build" / "mlir-build-debug" / "bin" / "bcir-opt"
@@ -2350,6 +2515,7 @@ def test_configured_clang_is_honored() -> None:
     from types import SimpleNamespace
     from unittest.mock import patch
     from tools.security import run_decoder_campaign as campaign
+
     seen: dict[str, object] = {}
 
     def which(name):
@@ -2371,13 +2537,12 @@ def test_configured_clang_is_honored() -> None:
     # real spawn of the resolved path would depend on the host (it does not
     # exist on Windows, where the launch guard would then report FAIL).
     posix_os = SimpleNamespace(
-        name="posix", environ={**os.environ, "CLANG": "/opt/llvm/bin/clang-19"},
+        name="posix",
+        environ={**os.environ, "CLANG": "/opt/llvm/bin/clang-19"},
     )
     with patch.object(campaign, "os", posix_os):
         with patch.object(campaign.shutil, "which", side_effect=which):
-            with patch.object(
-                campaign.subprocess, "Popen", side_effect=lambda *a, **k: FakeProc()
-            ):
+            with patch.object(campaign.subprocess, "Popen", side_effect=lambda *a, **k: FakeProc()):
                 report = campaign.run_c_campaign(_ROOT, runs=1, seconds=1)
     assert "/opt/llvm/bin/clang-19" in seen["asked"]  # type: ignore[operator]
     assert report["state"] == "PASS", report
@@ -2419,6 +2584,7 @@ def test_implementation_errors_are_never_graceful() -> None:
     assert "ungraceful-seed" in kinds and "ungraceful" in kinds
     assert all(item.get("type") == "IndexError" for item in row["findings"])
 
+
 def test_decoder_watchdog_cannot_be_swallowed() -> None:
     """Decoders wrap broad `except Exception` around inner decodes; an
     Exception-derived watchdog is caught there and re-raised as the
@@ -2427,6 +2593,7 @@ def test_decoder_watchdog_cannot_be_swallowed() -> None:
     import random
     from tools.security.run_decoder_campaign import _DecodeHang, _probe
     from bcir.abi.streampack_abi import AbiError
+
     assert not issubclass(_DecodeHang, Exception)
 
     def swallowing(_data: bytes):
@@ -2454,9 +2621,7 @@ def test_bomless_utf16_text_is_scanned() -> None:
             report = scan_tree(root)
         assert report["state"] == "FAIL", encoding
         assert report["text_files"] == 1, encoding
-        assert any(
-            item["rule"] == "assignment-secret" for item in report["findings"]
-        ), encoding
+        assert any(item["rule"] == "assignment-secret" for item in report["findings"]), encoding
 
 
 def test_archive_member_names_are_scanned_for_secrets() -> None:
@@ -2464,6 +2629,7 @@ def test_archive_member_names_are_scanned_for_secrets() -> None:
     the traversal predicate read those strings but the secret rules did not."""
     import io
     import zipfile as zf
+
     token = "ghp_" + "k9J2mQ4pR6sT1vX3zB5dF7hL0nCwEyGa"
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -2476,9 +2642,7 @@ def test_archive_member_names_are_scanned_for_secrets() -> None:
         subprocess.run(["git", "add", "-A"], cwd=root, check=True)
         report = scan_tree(root)
     assert report["state"] == "FAIL"
-    assert any(
-        item["rule"] == "archive-metadata-secret" for item in report["findings"]
-    )
+    assert any(item["rule"] == "archive-metadata-secret" for item in report["findings"])
     assert token not in json.dumps(report)  # the member name is never echoed
 
 
@@ -2489,8 +2653,14 @@ def test_yaml_block_scalar_secrets_are_findings() -> None:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
         body = (
-            "password" + ": |-\n  " + "correct-horse-battery-staple" + "\n"
-            + "note" + ": |-\n  " + "your-password-here" + "\n"
+            "password"
+            + ": |-\n  "
+            + "correct-horse-battery-staple"
+            + "\n"
+            + "note"
+            + ": |-\n  "
+            + "your-password-here"
+            + "\n"
         )
         (root / "config.yaml").write_text(body, encoding="utf-8")
         subprocess.run(["git", "add", "-A"], cwd=root, check=True)
@@ -2498,6 +2668,7 @@ def test_yaml_block_scalar_secrets_are_findings() -> None:
     hits = [i for i in report["findings"] if i["rule"] == "assignment-secret"]
     assert report["state"] == "FAIL"
     assert [i["line"] for i in hits] == [1]  # the placeholder stays suppressed
+
 
 def test_non_utf8_archive_member_names_are_findings_not_crashes() -> None:
     """tarfile exposes a member's invalid byte as a surrogate; a strict
@@ -2511,9 +2682,7 @@ def test_non_utf8_archive_member_names_are_findings_not_crashes() -> None:
         subprocess.run(["git", "add", "-A"], cwd=root, check=True)
         report = scan_tree(root)
     assert report["state"] == "FAIL"
-    assert any(
-        item["rule"] == "archive-path-traversal" for item in report["findings"]
-    )
+    assert any(item["rule"] == "archive-path-traversal" for item in report["findings"])
 
 
 def test_boundary_findings_survive_strict_stdout() -> None:
@@ -2523,6 +2692,7 @@ def test_boundary_findings_survive_strict_stdout() -> None:
     if os.name == "nt":
         return  # the raw byte cannot be written into an NT filename
     from tools.security.audit_tool_boundaries import audit_boundaries
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -2543,9 +2713,8 @@ def test_json_escaped_credential_keys_are_findings() -> None:
     """JSON resolves ASCII \\uXXXX escapes at runtime, so an escaped key
     names the same credential; the raw-line rule never saw it."""
     from tools.security.scan_secrets import _scan_text
-    line = (
-        '{"passw' + "\\u006f" + 'rd": "' + "correct-horse-battery-staple" + '"}'
-    )
+
+    line = '{"passw' + "\\u006f" + 'rd": "' + "correct-horse-battery-staple" + '"}'
     hits = _scan_text("f", line)
     assert [h["rule"] for h in hits] == ["assignment-secret"]
     benign = '{"c\\u006flor": "blue-green-teal-cyan"}'
@@ -2557,13 +2726,26 @@ def test_toml_multiline_string_secrets_are_findings() -> None:
     lines, exactly like a YAML block scalar; neither line is
     credential-shaped alone."""
     from tools.security.scan_secrets import _scan_text
+
     basic = '"' * 3
     literal = "'" * 3
     body = (
-        "password" + " = " + basic + "\n"
-        + "correct-horse-battery-staple" + "\n" + basic + "\n"
-        + "token" + " = " + literal + "\n"
-        + "example" + "\n" + literal + "\n"
+        "password"
+        + " = "
+        + basic
+        + "\n"
+        + "correct-horse-battery-staple"
+        + "\n"
+        + basic
+        + "\n"
+        + "token"
+        + " = "
+        + literal
+        + "\n"
+        + "example"
+        + "\n"
+        + literal
+        + "\n"
     )
     hits = _scan_text("config.toml", body)
     assert [h["line"] for h in hits] == [1]  # the placeholder stays suppressed
@@ -2574,10 +2756,8 @@ def test_bomless_utf16_with_cjk_preamble_is_scanned() -> None:
     the sample's parity vote is silent — but the ASCII credential further
     down still interleaves NULs the whole-file vote can see."""
     from tools.security.scan_secrets import _decode_text, _scan_text, _utf16_bomless
-    text = (
-        "汉" * 5000 + "\n"
-        + "password" + ": " + "correct-horse-battery-staple" + "\n"
-    )
+
+    text = "汉" * 5000 + "\n" + "password" + ": " + "correct-horse-battery-staple" + "\n"
     blob = text.encode("utf-16-le")
     assert _utf16_bomless(blob) == "utf-16-le"
     hits = _scan_text("notes.txt", _decode_text(blob))
@@ -2623,9 +2803,7 @@ def test_seed_construction_failure_is_a_structured_campaign_verdict() -> None:
     by_name = {item["surface"]: item for item in results}
     assert set(by_name) == {"streampack", "bcab", "bcirq8"}
     assert by_name["bcirq8"]["state"] == "FAIL"
-    assert [f["kind"] for f in by_name["bcirq8"]["findings"]] == [
-        "seed-construction-failed"
-    ]
+    assert [f["kind"] for f in by_name["bcirq8"]["findings"]] == ["seed-construction-failed"]
     assert by_name["streampack"]["state"] == "PASS"
 
 
@@ -2636,6 +2814,7 @@ def test_assignment_matcher_is_linear_time() -> None:
     ~1000x inside it, the quadratic one was half a minute outside."""
     import time
     from tools.security.scan_secrets import RULES
+
     rule = dict(RULES)["assignment-secret"]
     lines = ["a-" * 20000 + "b", ("password" + "_") * 8000 + "x"]
     start = time.perf_counter()
@@ -2656,16 +2835,18 @@ def test_single_line_toml_multiline_secrets_are_findings() -> None:
     and the delimiter's second quote ends it immediately, so this form
     matched nothing on either path."""
     from tools.security.scan_secrets import _scan_text
+
     basic = '"' * 3
     literal = "'" * 3
     value = "correct-horse-battery-staple"
-    assert [h["line"] for h in _scan_text(
-        "c.toml", "password" + " = " + basic + value + basic + "\n")] == [1]
-    assert [h["line"] for h in _scan_text(
-        "c.toml", "token" + " = " + literal + value + literal + "\n")] == [1]
+    assert [
+        h["line"] for h in _scan_text("c.toml", "password" + " = " + basic + value + basic + "\n")
+    ] == [1]
+    assert [
+        h["line"] for h in _scan_text("c.toml", "token" + " = " + literal + value + literal + "\n")
+    ] == [1]
     # The value still faces the placeholder rules.
-    assert _scan_text(
-        "c.toml", "password" + " = " + basic + "your-password-here" + basic) == []
+    assert _scan_text("c.toml", "password" + " = " + basic + "your-password-here" + basic) == []
 
 
 def test_index_flagged_paths_are_staged_scanned() -> None:
@@ -2681,8 +2862,7 @@ def test_index_flagged_paths_are_staged_scanned() -> None:
             target = root / "x.py"
             target.write_text('token = "' + token + '"\n', encoding="utf-8")
             subprocess.run(["git", "add", "-A"], cwd=root, check=True)
-            subprocess.run(
-                ["git", "update-index", flag, "x.py"], cwd=root, check=True)
+            subprocess.run(["git", "update-index", flag, "x.py"], cwd=root, check=True)
             target.write_text("token = None\n", encoding="utf-8")
             report = scan_tree(root)
         assert report["state"] == "FAIL", flag
@@ -2697,6 +2877,7 @@ def test_staged_blobs_are_bounded_before_materializing() -> None:
     OBJECT, before a byte is materialized."""
     from tools.security.git_index import STAGED_OVERSIZED, staged_blob
     from tools.security.scan_secrets import ARCHIVE_LOGICAL_CAP
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -2734,12 +2915,21 @@ def test_utf16_probe_survives_a_split_surrogate_pair() -> None:
     astride the sample boundary, and the strict probe decode then rejects a
     file that is in fact valid UTF-16."""
     from tools.security.scan_secrets import (
-        _decode_text, _kind_for, _scan_text, _utf16_bomless,
+        _decode_text,
+        _kind_for,
+        _scan_text,
+        _utf16_bomless,
     )
+
     for encoding in ("utf-16-le", "utf-16-be"):
         text = (
-            "A" * 4095 + "\U0001F600" + "\n"
-            + "password" + ": " + "correct-horse-battery-staple" + "\n"
+            "A" * 4095
+            + "\U0001f600"
+            + "\n"
+            + "password"
+            + ": "
+            + "correct-horse-battery-staple"
+            + "\n"
         )
         blob = text.encode(encoding)
         assert _utf16_bomless(blob) == encoding
@@ -2760,6 +2950,7 @@ def test_concatenated_xz_streams_are_bounded() -> None:
     import lzma
     import time
     from tools.security.scan_secrets import _xz_bounded
+
     empty = lzma.compress(b"", format=lzma.FORMAT_XZ)
     start = time.perf_counter()
     try:
@@ -2785,6 +2976,7 @@ def test_escaped_toml_delimiters_do_not_end_the_value() -> None:
     the credential that follows."""
     import tomllib
     from tools.security.scan_secrets import _scan_text
+
     basic = '"' * 3
     literal = "'" * 3
     value = "correct-horse-battery-staple"
@@ -2806,6 +2998,7 @@ def test_registered_suite_survives_missing_repo_only_trees() -> None:
     source checkout the tree is present, so the same import error stays
     fatal there."""
     from bcir.tests import run_all
+
     assert run_all._is_source_checkout() is True  # this repo, right now
     sentinel = "bcir.tests._not_a_real_module"
     real_import = run_all.importlib.import_module
@@ -2844,6 +3037,7 @@ def test_staged_python_blobs_are_audited() -> None:
     now reconcile through one shared predicate."""
     from tools.security import audit_tool_boundaries, git_index, scan_secrets
     from tools.security.audit_tool_boundaries import audit_boundaries
+
     # L14: one predicate, not a second copy.
     assert audit_tool_boundaries.staged_divergent is git_index.staged_divergent
     assert scan_secrets.staged_divergent is git_index.staged_divergent
@@ -2867,13 +3061,12 @@ def test_yaml_escaped_credential_keys_are_findings() -> None:
     shadow-line scan only understood the JSON form, and its trigger only
     looked for that form's prefix."""
     from tools.security.scan_secrets import _scan_text
+
     value = "correct-horse-battery-staple"
     back = chr(92)
     for escape in (back + "x6f", back + "U0000006f", back + "u006f"):
         line = '"passw' + escape + 'rd": "' + value + '"'
-        assert [h["rule"] for h in _scan_text("c.yaml", line)] == [
-            "assignment-secret"
-        ], escape
+        assert [h["rule"] for h in _scan_text("c.yaml", line)] == ["assignment-secret"], escape
     # Decoding must not manufacture findings: a benign escaped key stays
     # benign, and an escaped SPACE does not stitch a keyword together.
     assert _scan_text("c.yaml", '{"c' + back + 'x6flor": "blue-green-teal-cyan"}') == []
@@ -2886,8 +3079,9 @@ def test_secret_scan_discovery_failure_is_a_verdict() -> None:
     --json-out artifact. The boundary audit already answered this shape with
     a finding; both rails now do."""
     from tools.security.scan_secrets import scan_tree
+
     with tempfile.TemporaryDirectory() as tmp:
-        report = scan_tree(Path(tmp))          # no .git anywhere
+        report = scan_tree(Path(tmp))  # no .git anywhere
     assert report["state"] == "FAIL"
     assert [i["rule"] for i in report["findings"]] == ["tracked-discovery-failed"]
     assert report["tracked_files"] == 0
@@ -2905,6 +3099,7 @@ def test_configured_bcir_opt_command_name_is_resolved() -> None:
     import os
     import stat as stat_module
     from tools.security.run_malformed_differential import find_bcir_opt
+
     with tempfile.TemporaryDirectory() as tmp:
         bindir = Path(tmp)
         exe = bindir / "custom-bcir-opt"
@@ -2932,11 +3127,10 @@ def test_repo_only_modules_are_classified_before_import() -> None:
     runner classifies them by declaration — before import, and only outside a
     source checkout."""
     from bcir.tests import run_all
+
     # Anti-drift: every declared name is a module the runner actually runs.
     registered = set(run_all._MODULES)
-    assert run_all._REPO_ONLY_MODULES <= registered, (
-        run_all._REPO_ONLY_MODULES - registered
-    )
+    assert run_all._REPO_ONLY_MODULES <= registered, run_all._REPO_ONLY_MODULES - registered
     # The two modules the finding named must be covered by the declaration.
     assert "bcir.tests.test_docs_claims" in run_all._REPO_ONLY_MODULES
     assert "bcir.tests.test_asn1_ecn_law_parity" in run_all._REPO_ONLY_MODULES
@@ -2980,13 +3174,15 @@ def test_wrapped_mapping_values_are_findings() -> None:
     line by line neither half is credential-shaped: the key has no value and
     the value has no key. Same split as a block scalar without the marker."""
     from tools.security.scan_secrets import _scan_text
+
     value = "correct-horse-battery-staple"
     nl = "\n"
-    document = '{' + nl + '  "password":' + nl + '    "' + value + '"' + nl + '}'
-    assert json.loads(document)["password"] == value      # the oracle
+    document = "{" + nl + '  "password":' + nl + '    "' + value + '"' + nl + "}"
+    assert json.loads(document)["password"] == value  # the oracle
     assert [h["rule"] for h in _scan_text("c.json", document)] == ["assignment-secret"]
-    assert [h["rule"] for h in _scan_text(
-        "c.yaml", "password:" + nl + "  " + value)] == ["assignment-secret"]
+    assert [h["rule"] for h in _scan_text("c.yaml", "password:" + nl + "  " + value)] == [
+        "assignment-secret"
+    ]
     # Negatives: the placeholder rules still apply across the break, a
     # nested mapping is not a value, and neither is the next key.
     assert _scan_text("c.yaml", "password:" + nl + "  your-password-here") == []
@@ -3000,20 +3196,22 @@ def test_staged_dependency_metadata_is_audited() -> None:
     on this rail, after the secret scan and the boundary audit had both
     already learned to reconcile against the index."""
     from tools.security.audit_dependencies import audit
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
         metadata = root / "pyproject.toml"
         metadata.write_text(
-            '[project]\nname="x"\nversion="1"\ndependencies = ["requests==2.0"]\n',
-            encoding="utf-8")
+            '[project]\nname="x"\nversion="1"\ndependencies = ["requests==2.0"]\n', encoding="utf-8"
+        )
         subprocess.run(["git", "add", "-A"], cwd=root, check=True)
         metadata.write_text(
-            '[project]\nname="x"\nversion="1"\ndependencies = []\n', encoding="utf-8")
+            '[project]\nname="x"\nversion="1"\ndependencies = []\n', encoding="utf-8"
+        )
         expected = root / "expected.json"
         expected.write_text(
-            json.dumps({"runtime": [], "build_system": [], "optional": {}}),
-            encoding="utf-8")
+            json.dumps({"runtime": [], "build_system": [], "optional": {}}), encoding="utf-8"
+        )
         report = audit(root, expected)
     assert report["state"] == "FAIL"
     assert any(m["field"] == "staged:runtime" for m in report["mismatches"])
@@ -3025,10 +3223,10 @@ def test_unreadable_expected_inventory_is_a_failing_report() -> None:
     required audit raising before it built a verdict — no exit-code
     contract, no --json-out artifact."""
     from tools.security.audit_dependencies import audit
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        (root / "pyproject.toml").write_text(
-            '[project]\nname="x"\nversion="1"\n', encoding="utf-8")
+        (root / "pyproject.toml").write_text('[project]\nname="x"\nversion="1"\n', encoding="utf-8")
         cases = {
             "missing.json": None,
             "malformed.json": "{not json",
@@ -3043,7 +3241,7 @@ def test_unreadable_expected_inventory_is_a_failing_report() -> None:
             assert report["state"] == "FAIL", name
             assert report["inventory_asserted"] is False, name
             assert "expected inventory could not be read" in report["error"], name
-            json.dumps(report)          # still a serializable REPORT
+            json.dumps(report)  # still a serializable REPORT
 
 
 def test_worktree_source_read_is_bounded() -> None:
@@ -3052,6 +3250,7 @@ def test_worktree_source_read_is_bounded() -> None:
     ast.parse. The staged blob was already read at cap + 1; the worktree
     file now is too."""
     from tools.security.audit_tool_boundaries import SOURCE_SIZE_CAP, audit_boundaries
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -3071,16 +3270,16 @@ def test_worktree_source_read_is_bounded() -> None:
             st_size = 6
             st_mode = target.stat().st_mode
 
-        def _stale_stat(self, *args, **kwargs):      # type: ignore[no-untyped-def]
+        def _stale_stat(self, *args, **kwargs):  # type: ignore[no-untyped-def]
             if self == target:
                 return _Stale()
             return real_stat(self, *args, **kwargs)
 
-        Path.stat = _stale_stat                      # type: ignore[method-assign]
+        Path.stat = _stale_stat  # type: ignore[method-assign]
         try:
             report = audit_boundaries(root)
         finally:
-            Path.stat = real_stat                    # type: ignore[method-assign]
+            Path.stat = real_stat  # type: ignore[method-assign]
     assert report["state"] == "FAIL"
     assert "file-oversized" in {f["rule"] for f in report["findings"]}
 
@@ -3092,6 +3291,7 @@ def test_staged_symlinks_are_recorded_not_parsed() -> None:
     branch and never parses it."""
     from tools.security.audit_tool_boundaries import audit_boundaries
     from tools.security.git_index import staged_mode
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -3099,7 +3299,7 @@ def test_staged_symlinks_are_recorded_not_parsed() -> None:
         (root / "pkg").mkdir()
         (root / "pkg" / "target.py").write_text("x = 1\n", encoding="utf-8")
         link = root / "tools" / "link.py"
-        link.symlink_to("../pkg/target.py")     # target is not valid Python
+        link.symlink_to("../pkg/target.py")  # target is not valid Python
         (root / "tools" / "real.py").write_text("z = 3\n", encoding="utf-8")
         subprocess.run(["git", "add", "-A"], cwd=root, check=True)
         link.unlink()
@@ -3117,6 +3317,7 @@ def test_dotted_toml_keys_reach_the_continuation_collectors() -> None:
     cannot cross a triple-quote delimiter — so the value was invisible."""
     import tomllib
     from tools.security.scan_secrets import _scan_text
+
     value = "correct-horse-battery-staple"
     quote = '"' * 3
     # Built by concatenation: written out whole, these fixture lines are
@@ -3125,7 +3326,7 @@ def test_dotted_toml_keys_reach_the_continuation_collectors() -> None:
     deep = "a.b." + "password" + " = "
     same_line = key + quote + value + quote + "\n"
     wrapped = key + quote + "\n" + value + "\n" + quote + "\n"
-    assert tomllib.loads(same_line)["auth"]["password"] == value       # oracle
+    assert tomllib.loads(same_line)["auth"]["password"] == value  # oracle
     assert tomllib.loads(wrapped)["auth"]["password"].strip() == value
     assert [h["line"] for h in _scan_text("c.toml", same_line)] == [1]
     assert [h["line"] for h in _scan_text("c.toml", wrapped)] == [1]
@@ -3140,13 +3341,13 @@ def test_escaped_keys_reach_the_continuation_collectors() -> None:
     rules, where the key and its value are still on different lines."""
     import json
     from tools.security.scan_secrets import _scan_text
+
     value = "correct-horse-battery-staple"
     back = chr(92)
     document = (
-        '{' + "\n" + '  "passw' + back + 'u006frd":' + "\n"
-        + '    "' + value + '"' + "\n" + '}'
+        "{" + "\n" + '  "passw' + back + 'u006frd":' + "\n" + '    "' + value + '"' + "\n" + "}"
     )
-    assert json.loads(document)["password"] == value                   # oracle
+    assert json.loads(document)["password"] == value  # oracle
     assert [h["rule"] for h in _scan_text("c.json", document)] == ["assignment-secret"]
     # YAML's \\xNN spelling on the same shape, and a block scalar too.
     assert _scan_text("c.yaml", '"passw' + back + 'x6frd":' + "\n" + "  " + value)
@@ -3161,6 +3362,7 @@ def test_secret_scan_worktree_read_is_bounded() -> None:
     then classified, decoded and scanned past the ingress cap. The boundary
     audit and the staged blob were already read at cap + 1."""
     from tools.security.scan_secrets import ARCHIVE_LOGICAL_CAP, scan_tree
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -3174,16 +3376,16 @@ def test_secret_scan_worktree_read_is_bounded() -> None:
             st_size = 6
             st_mode = target.stat().st_mode
 
-        def _stale_stat(self, *args, **kwargs):      # type: ignore[no-untyped-def]
+        def _stale_stat(self, *args, **kwargs):  # type: ignore[no-untyped-def]
             if self == target:
                 return _Stale()
             return real_stat(self, *args, **kwargs)
 
-        Path.stat = _stale_stat                      # type: ignore[method-assign]
+        Path.stat = _stale_stat  # type: ignore[method-assign]
         try:
             report = scan_tree(root)
         finally:
-            Path.stat = real_stat                    # type: ignore[method-assign]
+            Path.stat = real_stat  # type: ignore[method-assign]
     assert report["state"] == "FAIL"
     assert "file-oversized" in {item["rule"] for item in report["findings"]}
 
@@ -3194,10 +3396,10 @@ def test_expected_inventory_requires_its_fields() -> None:
     for optional pyproject metadata, the wrong one for the inventory this
     gate asserts against, where it raised KeyError instead."""
     from tools.security.audit_dependencies import audit
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        (root / "pyproject.toml").write_text(
-            '[project]\nname="x"\nversion="1"\n', encoding="utf-8")
+        (root / "pyproject.toml").write_text('[project]\nname="x"\nversion="1"\n', encoding="utf-8")
         for name, body in {
             "empty.json": {},
             "no_runtime.json": {"build_system": [], "optional": {}},
@@ -3219,6 +3421,7 @@ def test_differential_setup_failure_is_a_verdict() -> None:
     from unittest.mock import patch
     import bcir.kbcir as kbcir
     from tools.security.run_malformed_differential import run_differential
+
     with patch.object(kbcir, "optimize", side_effect=RuntimeError("regressed")):
         report = run_differential(_ROOT)
     assert report["state"] == "FAIL"
@@ -3236,10 +3439,9 @@ def test_repo_only_registry_covers_the_compiling_tiers() -> None:
     23 modules, 122 failures. A registry validated only at the tier that
     cannot reach the defect is not validated."""
     from bcir.tests import run_all
+
     registered = set(run_all._MODULES)
-    assert run_all._REPO_ONLY_MODULES <= registered, (
-        run_all._REPO_ONLY_MODULES - registered
-    )
+    assert run_all._REPO_ONLY_MODULES <= registered, run_all._REPO_ONLY_MODULES - registered
     # The modules the finding named, plus the rest of the C-compiling set
     # the c-runtime tier exposed.
     for name in (
@@ -3258,6 +3460,7 @@ def test_dependency_declarations_are_redacted_in_reports() -> None:
     --json-out republished it — and the scanner's rules do not recognize
     URL userinfo, so nothing else caught the leak."""
     from tools.security.audit_dependencies import audit
+
     # Named `value`, not `secret`: the scanner's own rule matches a
     # keyword-named variable holding a passphrase, and this file is scanned.
     value = "correct-horse-battery-staple"
@@ -3265,16 +3468,17 @@ def test_dependency_declarations_are_redacted_in_reports() -> None:
         root = Path(tmp)
         dependency = "private @ https://user:" + value + "@example.com/pkg.whl"
         (root / "pyproject.toml").write_text(
-            '[project]\nname="x"\nversion="1"\ndependencies = ["'
-            + dependency + '"]\n', encoding="utf-8")
+            '[project]\nname="x"\nversion="1"\ndependencies = ["' + dependency + '"]\n',
+            encoding="utf-8",
+        )
         expected = root / "expected.json"
         expected.write_text(
-            json.dumps({"runtime": [], "build_system": [], "optional": {}}),
-            encoding="utf-8")
+            json.dumps({"runtime": [], "build_system": [], "optional": {}}), encoding="utf-8"
+        )
         report = audit(root, expected)
     serialized = json.dumps(report)
     assert report["state"] == "FAIL"
-    assert value not in serialized                  # the whole report, not just findings
+    assert value not in serialized  # the whole report, not just findings
     # Exact, not a substring search: `"example.com" in serialized` reads as
     # a URL host check to a static analyser (CodeQL's
     # py/incomplete-url-substring-sanitization, and fairly — that shape IS
@@ -3283,9 +3487,7 @@ def test_dependency_declarations_are_redacted_in_reports() -> None:
     # gone, the package, host and path survive, and nothing else moved.
     # The whole userinfo goes, not the password half: a token is as often
     # the username as the password, so the redaction is by POSITION.
-    assert report["declared"]["runtime"] == [
-        "private @ https://<redacted>@example.com/pkg.whl"
-    ]
+    assert report["declared"]["runtime"] == ["private @ https://<redacted>@example.com/pkg.whl"]
 
 
 def test_bomless_utf32_text_is_scanned() -> None:
@@ -3293,11 +3495,12 @@ def test_bomless_utf32_text_is_scanned() -> None:
     heuristic filed such a file as binary and never scanned it — while
     `json.loads` reads it back normally."""
     from tools.security.scan_secrets import _decode_text, _kind_for, _scan_text
+
     value = "correct-horse-battery-staple"
     document = '{"' + "password" + '":"' + value + '"}'
     for encoding in ("utf-32-le", "utf-32-be"):
         blob = document.encode(encoding)
-        assert json.loads(blob)["password"] == value          # the oracle
+        assert json.loads(blob)["password"] == value  # the oracle
         assert _kind_for("c.json", blob) == "text", encoding
         assert [h["rule"] for h in _scan_text("c.json", _decode_text(blob))] == [
             "assignment-secret"
@@ -3313,16 +3516,18 @@ def test_quoted_dotted_key_segments_are_matched() -> None:
     bare segments only, and the inline rule cannot cross a triple quote."""
     import tomllib
     from tools.security.scan_secrets import _scan_text
+
     value = "correct-horse-battery-staple"
     quote = '"' * 3
-    for prefix in ('"auth".' + "password", "auth." + '"password"',
-                   "'auth'." + "password"):
+    for prefix in ('"auth".' + "password", "auth." + '"password"', "'auth'." + "password"):
         document = prefix + " = " + quote + value + quote + "\n"
         assert tomllib.loads(document)["auth"]["password"] == value, prefix
         assert [h["line"] for h in _scan_text("c.toml", document)] == [1], prefix
     # Placeholder suppression survives the quoted prefix.
-    assert _scan_text(
-        "c.toml", '"auth".' + "password" + " = " + quote + "your-password-here" + quote) == []
+    assert (
+        _scan_text("c.toml", '"auth".' + "password" + " = " + quote + "your-password-here" + quote)
+        == []
+    )
 
 
 def test_staged_symlinks_are_not_classified_by_suffix() -> None:
@@ -3333,6 +3538,7 @@ def test_staged_symlinks_are_not_classified_by_suffix() -> None:
     import io
     import zipfile
     from tools.security.scan_secrets import scan_tree
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -3354,6 +3560,7 @@ def test_staged_symlink_targets_are_still_scanned() -> None:
     """Handling the staged symlink must not stop scanning it: the target
     string is committed text and a credential can hide in a path."""
     from tools.security.scan_secrets import scan_tree
+
     token = "ghp_" + ("ab" * 18)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -3375,14 +3582,17 @@ def test_expected_inventory_is_bounded_at_ingress() -> None:
     multiple of its text, so a padding-heavy inventory could exhaust the
     job before any shape check ran, even though pyproject.toml is capped."""
     from tools.security.audit_dependencies import INVENTORY_SIZE_CAP, audit
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        (root / "pyproject.toml").write_text(
-            '[project]\nname="x"\nversion="1"\n', encoding="utf-8")
+        (root / "pyproject.toml").write_text('[project]\nname="x"\nversion="1"\n', encoding="utf-8")
         oversized = root / "big.json"
         oversized.write_text(
             '{"runtime":[],"build_system":[],"optional":{},"pad":"'
-            + "a" * (INVENTORY_SIZE_CAP + 4096) + '"}', encoding="utf-8")
+            + "a" * (INVENTORY_SIZE_CAP + 4096)
+            + '"}',
+            encoding="utf-8",
+        )
         report = audit(root, oversized)
     assert report["state"] == "FAIL"
     assert report["inventory_asserted"] is False
@@ -3397,6 +3607,7 @@ def test_malformed_verifier_diagnostics_are_a_disagreement() -> None:
     from unittest.mock import patch
     import bcir.verify as verifier
     from tools.security.run_malformed_differential import run_differential
+
     with patch.object(verifier, "verify", return_value=[object()]):
         report = run_differential(_ROOT)
     assert report["state"] == "FAIL"
@@ -3416,6 +3627,7 @@ def test_staged_archive_spool_failure_is_a_finding() -> None:
     from unittest.mock import patch
     import tools.security.scan_secrets as scanner
     from tools.security.scan_secrets import scan_tree
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -3431,9 +3643,7 @@ def test_staged_archive_spool_failure_is_a_finding() -> None:
         with zipfile.ZipFile(second, "w") as archive:
             archive.writestr("other.txt", "different")
         target.write_bytes(second.getvalue())
-        with patch.object(
-            scanner.tempfile, "NamedTemporaryFile", side_effect=OSError("no space")
-        ):
+        with patch.object(scanner.tempfile, "NamedTemporaryFile", side_effect=OSError("no space")):
             report = scan_tree(root)
     assert report["state"] == "FAIL"
     staged = [i for i in report["findings"] if i["path"].endswith("(staged)")]
@@ -3451,6 +3661,7 @@ def test_advisory_output_is_redacted() -> None:
     import stat as stat_module
     from unittest.mock import patch
     from tools.security.audit_dependencies import audit
+
     value = "correct-horse-battery-staple"
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -3505,30 +3716,32 @@ printf '{"dependencies":[{"name":"%s","version":"1","vulns":[{"id":"GHSA-stub","
 exit 1
 """
 
+
 def test_staged_expected_inventory_is_audited() -> None:
     """The audit asserts declared metadata AGAINST the inventory, so both
     sides of that comparison are index-sensitive. Reconciling only
     pyproject.toml left the mirror-image hole."""
     from tools.security.audit_dependencies import audit
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-        (root / "pyproject.toml").write_text(
-            '[project]\nname="x"\nversion="1"\n', encoding="utf-8")
+        (root / "pyproject.toml").write_text('[project]\nname="x"\nversion="1"\n', encoding="utf-8")
         inventory = root / "expected.json"
         inventory.write_text(
-            json.dumps({"runtime": ["requests==2.0"], "build_system": [],
-                        "optional": {}}), encoding="utf-8")
+            json.dumps({"runtime": ["requests==2.0"], "build_system": [], "optional": {}}),
+            encoding="utf-8",
+        )
         subprocess.run(["git", "add", "-A"], cwd=root, check=True)
         # Staged inventory demands a dependency; worktree copy is benign.
         inventory.write_text(
-            json.dumps({"runtime": [], "build_system": [], "optional": {}}),
-            encoding="utf-8")
+            json.dumps({"runtime": [], "build_system": [], "optional": {}}), encoding="utf-8"
+        )
         report = audit(root, inventory)
     assert report["state"] == "FAIL"
-    assert any(
-        m["field"] == "staged-inventory:runtime" for m in report["mismatches"]
-    ), report["mismatches"]
+    assert any(m["field"] == "staged-inventory:runtime" for m in report["mismatches"]), report[
+        "mismatches"
+    ]
 
 
 def test_escaped_quotes_in_quoted_key_segments() -> None:
@@ -3537,12 +3750,13 @@ def test_escaped_quotes_in_quoted_key_segments() -> None:
     triple-quote opener, so the credential was invisible to both."""
     import tomllib
     from tools.security.scan_secrets import _scan_text
+
     value = "correct-horse-battery-staple"
     quote = '"' * 3
     back = chr(92)
     prefix = '"au' + back + '"th".' + "password"
     document = prefix + " = " + quote + value + quote + "\n"
-    assert tomllib.loads(document)['au"th']["password"] == value      # oracle
+    assert tomllib.loads(document)['au"th']["password"] == value  # oracle
     assert [h["line"] for h in _scan_text("c.toml", document)] == [1]
 
 
@@ -3551,12 +3765,12 @@ def test_multilingual_bomless_utf32_is_scanned() -> None:
     ASCII?" — so non-ASCII text ahead of a credential sank the vote and the
     file fell through to the binary heuristic. Validity decides now."""
     from tools.security.scan_secrets import _decode_text, _kind_for, _scan_text
+
     value = "correct-horse-battery-staple"
-    document = ('{"note":"' + ("漢" * 10) + '","' + "password"
-                + '":"' + value + '"}')
+    document = '{"note":"' + ("漢" * 10) + '","' + "password" + '":"' + value + '"}'
     for encoding in ("utf-32-le", "utf-32-be"):
         blob = document.encode(encoding)
-        assert json.loads(blob)["password"] == value                 # oracle
+        assert json.loads(blob)["password"] == value  # oracle
         assert _kind_for("c.json", blob) == "text", encoding
         assert [h["rule"] for h in _scan_text("c.json", _decode_text(blob))] == [
             "assignment-secret"
@@ -3573,10 +3787,11 @@ def test_escaped_quotes_inside_inline_values() -> None:
     backslash escapes the next character, so a JSON value containing an
     escaped quote ended at that raw quote and no branch recovered it."""
     from tools.security.scan_secrets import _scan_text
+
     value = "correct-horse-battery-staple"
     back = chr(92)
     document = '{"' + "password" + '":"x' + back + '"' + value + '"}'
-    assert json.loads(document)["password"] == 'x"' + value          # oracle
+    assert json.loads(document)["password"] == 'x"' + value  # oracle
     assert [h["rule"] for h in _scan_text("c.json", document)] == ["assignment-secret"]
     # Splitting the branches must not weaken either one.
     assert _scan_text("f", "password: '" + value + "'")
@@ -3592,16 +3807,17 @@ def test_yaml_node_properties_precede_the_credential() -> None:
     nothing, so a tracked YAML file holding a real passphrase behind a tag
     scanned clean — inline, wrapped and block-scalar alike."""
     from tools.security.scan_secrets import _scan_text
+
     # Built by concatenation: this file is itself scanned by the tree pass.
     key = "pass" + "word"
     value = "correct-horse-battery-staple"
     tagged = [
-        key + ': !!str "' + value + '"',            # tag, quoted
-        key + ": &dbpass " + value,                 # anchor, bare
-        key + ": !!str " + value,                   # tag, bare
-        key + ': &dbpass !!str "' + value + '"',    # both, in YAML's order
-        key + ": &dbpass\n  " + value,              # property, value wraps
-        key + ": !!str |\n  " + value,              # property, block scalar
+        key + ': !!str "' + value + '"',  # tag, quoted
+        key + ": &dbpass " + value,  # anchor, bare
+        key + ": !!str " + value,  # tag, bare
+        key + ': &dbpass !!str "' + value + '"',  # both, in YAML's order
+        key + ": &dbpass\n  " + value,  # property, value wraps
+        key + ": !!str |\n  " + value,  # property, block scalar
     ]
     for document in tagged:
         findings = _scan_text("conf.yaml", document)
@@ -3621,6 +3837,7 @@ def test_url_username_only_credentials_are_redacted() -> None:
     whole username (`https://<token>@host/x.whl`) survived into `declared`,
     and so did a username beside a password."""
     from tools.security.audit_dependencies import audit
+
     value = "correct-horse-battery-staple"
     shapes = [
         "private @ https://" + value + "@example.com/pkg.whl",
@@ -3631,12 +3848,13 @@ def test_url_username_only_credentials_are_redacted() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "pyproject.toml").write_text(
-                '[project]\nname="x"\nversion="1"\ndependencies = ["'
-                + dependency + '"]\n', encoding="utf-8")
+                '[project]\nname="x"\nversion="1"\ndependencies = ["' + dependency + '"]\n',
+                encoding="utf-8",
+            )
             expected = root / "expected.json"
             expected.write_text(
-                json.dumps({"runtime": [], "build_system": [], "optional": {}}),
-                encoding="utf-8")
+                json.dumps({"runtime": [], "build_system": [], "optional": {}}), encoding="utf-8"
+            )
             report = audit(root, expected)
         assert report["state"] == "FAIL"
         assert value not in json.dumps(report), dependency
@@ -3651,15 +3869,14 @@ def test_url_username_only_credentials_are_redacted() -> None:
         (root / "pyproject.toml").write_text(
             '[project]\nname="x"\nversion="1"\n'
             'dependencies = ["public @ https://example.com/pkg.whl"]\n',
-            encoding="utf-8")
+            encoding="utf-8",
+        )
         expected = root / "expected.json"
         expected.write_text(
-            json.dumps({"runtime": [], "build_system": [], "optional": {}}),
-            encoding="utf-8")
+            json.dumps({"runtime": [], "build_system": [], "optional": {}}), encoding="utf-8"
+        )
         report = audit(root, expected)
-    assert report["declared"]["runtime"] == [
-        "public @ https://example.com/pkg.whl"
-    ]
+    assert report["declared"]["runtime"] == ["public @ https://example.com/pkg.whl"]
 
 
 def test_boundary_audit_paths_are_redacted() -> None:
@@ -3669,19 +3886,31 @@ def test_boundary_audit_paths_are_redacted() -> None:
     inventory, and prints them to the CI log — the same defect, one rail
     late, so both now share the one predicate (L14)."""
     from tools.security.audit_tool_boundaries import audit_boundaries
+
     token = "ghp_" + "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d"
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q", str(root)], check=True)
         tools = root / "tools"
         tools.mkdir()
-        (tools / (token + ".py")).write_text(
-            "import os\nos.system('ls')\n", encoding="utf-8")
+        (tools / (token + ".py")).write_text("import os\nos.system('ls')\n", encoding="utf-8")
         (tools / "plain.py").write_text("x = 1\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
         subprocess.run(
-            ["git", "-C", str(root), "-c", "user.email=a@b", "-c", "user.name=t",
-             "commit", "-qm", "fixture"], check=True)
+            [
+                "git",
+                "-C",
+                str(root),
+                "-c",
+                "user.email=a@b",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+            check=True,
+        )
         report = audit_boundaries(root)
 
     assert report["state"] == "FAIL"
@@ -3699,12 +3928,13 @@ def test_yaml_explicit_mapping_keys_are_scanned() -> None:
     spelling of the same mapping scanned clean while a loader resolves it
     to the identical credential."""
     from tools.security.scan_secrets import _scan_text
+
     key = "pass" + "word"
     value = "correct-horse-battery-staple"
     for document in (
         "? " + key + "\n: " + value + "\n",
         "? " + key + '\n: "' + value + '"\n',
-        "? " + key + "\n: !!str " + value + "\n",     # composes with R40
+        "? " + key + "\n: !!str " + value + "\n",  # composes with R40
     ):
         findings = _scan_text("conf.yaml", document)
         assert len(findings) == 1, (document, findings)
@@ -3721,6 +3951,7 @@ def test_folded_yaml_quoted_scalars_are_scanned() -> None:
     key has no closing quote and the continuation has no key, so neither
     half is credential-shaped and no other collector applies."""
     from tools.security.scan_secrets import _scan_text
+
     key = "pass" + "word"
     escaped = key + ': "correct-horse-battery-\\\n  staple"\n'
     folded = key + ': "correct horse battery\n  staple pass"\n'
@@ -3745,13 +3976,15 @@ def test_concatenated_compressed_streams_are_counted() -> None:
     import gzip
     from tools.security import scan_secrets as secrets
 
-    for blob in (gzip.compress(b"") * (secrets.STREAM_CAP + 1),
-                 bz2.compress(b"") * (secrets.STREAM_CAP + 1)):
+    for blob in (
+        gzip.compress(b"") * (secrets.STREAM_CAP + 1),
+        bz2.compress(b"") * (secrets.STREAM_CAP + 1),
+    ):
         try:
             secrets._decompress_bounded(blob)
         except ValueError as exc:
             assert "archive-logical-cap" in str(exc)
-        else:                                   # pragma: no cover - the defect
+        else:  # pragma: no cover - the defect
             raise AssertionError("unbounded concatenated stream count")
 
     # The bound must not cost correctness: real archives still decode
@@ -3759,10 +3992,13 @@ def test_concatenated_compressed_streams_are_counted() -> None:
     payload = b"api" + b"_key = correct-horse-battery-staple\n" * 64
     for compressed in (gzip.compress(payload), bz2.compress(payload)):
         assert secrets._decompress_bounded(compressed) == payload
-    assert secrets._decompress_bounded(
-        gzip.compress(b"alpha") + gzip.compress(b"beta")) == b"alphabeta"
-    assert secrets._decompress_bounded(
-        bz2.compress(b"alpha") + bz2.compress(b"beta")) == b"alphabeta"
+    assert (
+        secrets._decompress_bounded(gzip.compress(b"alpha") + gzip.compress(b"beta"))
+        == b"alphabeta"
+    )
+    assert (
+        secrets._decompress_bounded(bz2.compress(b"alpha") + bz2.compress(b"beta")) == b"alphabeta"
+    )
 
 
 def test_verifier_watchdog_cannot_be_swallowed() -> None:
@@ -3773,23 +4009,26 @@ def test_verifier_watchdog_cannot_be_swallowed() -> None:
     import signal as signal_module
     import time
     from tools.security import run_malformed_differential as differential
+
     if not hasattr(signal_module, "SIGALRM"):
-        return                                  # POSIX rail, as the tool declares
+        return  # POSIX rail, as the tool declares
     previous = differential.PYTHON_VERIFY_TIMEOUT
     differential.PYTHON_VERIFY_TIMEOUT = 0.3
     try:
+
         def greedy() -> list[str]:
             try:
                 time.sleep(5.0)
-            except Exception:                   # noqa: BLE001 - the defect
+            except Exception:  # noqa: BLE001 - the defect
                 return ["swallowed the bound"]
             return ["never reached"]
+
         try:
             differential._bounded_verify(greedy)
-        except BaseException as exc:            # noqa: BLE001 - must escape
+        except BaseException as exc:  # noqa: BLE001 - must escape
             assert type(exc).__name__ == "_VerifyHang", exc
             assert not isinstance(exc, Exception), "a subject can catch Exception"
-        else:                                   # pragma: no cover - the defect
+        else:  # pragma: no cover - the defect
             raise AssertionError("the probe swallowed its own watchdog")
     finally:
         differential.PYTHON_VERIFY_TIMEOUT = previous
@@ -3802,10 +4041,15 @@ def test_compiled_fixture_io_failure_is_a_verdict() -> None:
     --json-out artifact for the very run that needed one."""
     from unittest import mock
     from tools.security import run_malformed_differential as differential
-    with mock.patch.object(differential.tempfile, "TemporaryDirectory",
-                           side_effect=OSError("No space left on device")), \
-         mock.patch.object(differential, "find_bcir_opt",
-                           return_value="/nonexistent/bcir-opt"):
+
+    with (
+        mock.patch.object(
+            differential.tempfile,
+            "TemporaryDirectory",
+            side_effect=OSError("No space left on device"),
+        ),
+        mock.patch.object(differential, "find_bcir_opt", return_value="/nonexistent/bcir-opt"),
+    ):
         result = differential._compiled_mlir("module {}", differential.ROOT)
     assert result["state"] == "FAIL"
     assert result["rejected"] is False
@@ -3821,8 +4065,20 @@ def _staged_repo(tmp: str, pyproject: str, inventory: bytes) -> tuple[Path, Path
     expected.write_bytes(inventory)
     subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
     subprocess.run(
-        ["git", "-C", str(root), "-c", "user.email=a@b", "-c", "user.name=t",
-         "commit", "-qm", "base"], check=True)
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.email=a@b",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "base",
+        ],
+        check=True,
+    )
     return root, expected
 
 
@@ -3832,9 +4088,9 @@ def test_staged_symlink_inputs_are_refused_not_dereferenced() -> None:
     is valid matching metadata passed here while a clean checkout of the
     same commit takes the non-regular-file branch and fails."""
     from tools.security.audit_dependencies import audit
+
     pyproject = '[project]\nname="x"\nversion="1"\ndependencies = []\n'
-    inventory = json.dumps(
-        {"runtime": [], "build_system": [], "optional": {}}).encode("utf-8")
+    inventory = json.dumps({"runtime": [], "build_system": [], "optional": {}}).encode("utf-8")
 
     for target, staged_name, field in (
         ("decoy.toml", "pyproject.toml", "staged-pyproject"),
@@ -3848,7 +4104,7 @@ def test_staged_symlink_inputs_are_refused_not_dereferenced() -> None:
             staged.unlink()
             staged.symlink_to(target)
             subprocess.run(["git", "-C", str(root), "add", staged_name], check=True)
-            staged.unlink()                     # restore a benign regular file
+            staged.unlink()  # restore a benign regular file
             staged.write_text(body, encoding="utf-8")
             report = audit(root, expected)
         assert report["state"] == "FAIL", field
@@ -3863,18 +4119,19 @@ def test_staged_inventory_decodes_strictly() -> None:
     match a worktree copy carrying the replacement character and pass —
     the gate disagreeing with itself across two paths."""
     from tools.security.audit_dependencies import audit
+
     name = "pkg�"
-    pyproject = ('[project]\nname="x"\nversion="1"\n'
-                 'dependencies = ["' + name + '"]\n')
-    good = json.dumps({"runtime": [name], "build_system": [], "optional": {}},
-                      ensure_ascii=False).encode("utf-8")
+    pyproject = '[project]\nname="x"\nversion="1"\ndependencies = ["' + name + '"]\n'
+    good = json.dumps(
+        {"runtime": [name], "build_system": [], "optional": {}}, ensure_ascii=False
+    ).encode("utf-8")
     bad = good.replace(name.encode("utf-8"), b"pkg\xff")
     assert bad != good
     with tempfile.TemporaryDirectory() as tmp:
         root, expected = _staged_repo(tmp, pyproject, good)
         expected.write_bytes(bad)
         subprocess.run(["git", "-C", str(root), "add", "expected.json"], check=True)
-        expected.write_bytes(good)              # worktree: valid, matches declared
+        expected.write_bytes(good)  # worktree: valid, matches declared
         report = audit(root, expected)
     assert report["state"] == "FAIL"
     declared = {m["field"]: m["declared"] for m in report["mismatches"]}
@@ -3887,15 +4144,15 @@ def test_inventory_depth_bomb_is_a_verdict() -> None:
     a size bound is no defence. The RecursionError escaped before any
     report existed, taking --json-out with it."""
     from tools.security.audit_dependencies import audit
+
     pyproject = '[project]\nname="x"\nversion="1"\ndependencies = []\n'
-    inventory = json.dumps(
-        {"runtime": [], "build_system": [], "optional": {}}).encode("utf-8")
+    inventory = json.dumps({"runtime": [], "build_system": [], "optional": {}}).encode("utf-8")
     with tempfile.TemporaryDirectory() as tmp:
         root, expected = _staged_repo(tmp, pyproject, inventory)
         bomb = ("[" * 20000 + "]" * 20000).encode("utf-8")
         assert len(bomb) < (1 << 20), "the size cap must not be what catches this"
         expected.write_bytes(bomb)
-        report = audit(root, expected)          # a verdict, never a traceback
+        report = audit(root, expected)  # a verdict, never a traceback
     assert report["state"] == "FAIL"
     assert isinstance(json.dumps(report), str)  # the --json-out artifact exists
 
@@ -3908,9 +4165,10 @@ def test_packaged_library_data_is_registered_for_shipping() -> None:
     test_calibrator module repo-only for it, hiding six runnable tests."""
     import tomllib
     from bcir.tests.run_all import _REPO_ONLY_MODULES
+
     root = Path(__file__).resolve().parents[2]
     table = root / "bcir" / "kbcir" / "tables" / "x86_64_reference.json"
-    if not table.exists():                      # installed tree: nothing to check
+    if not table.exists():  # installed tree: nothing to check
         return
     config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     package_data = config["tool"]["setuptools"]["package-data"]
@@ -3924,6 +4182,7 @@ def test_reviewer_findings_are_redacted() -> None:
     report field guaranteed to carry whatever secret it just discovered —
     and this rail copied them verbatim into `--json-out`."""
     from tools.security.independent_review import run_reviewer
+
     value = "correct-horse-battery-staple"
     finding = "hardcoded " + "pass" + "word: " + value
     with tempfile.TemporaryDirectory() as tmp:
@@ -3934,7 +4193,8 @@ def test_reviewer_findings_are_redacted() -> None:
             "                  'security_concerns': [" + repr(finding) + "],\n"
             "                  'logic_errors': [],\n"
             "                  'summary': " + repr(finding) + "}))\n",
-            encoding="utf-8")
+            encoding="utf-8",
+        )
         report = run_reviewer([sys.executable, str(script)], Path(tmp))
     serialized = json.dumps(report)
     assert report["state"] == "FAIL"
@@ -3950,19 +4210,34 @@ def test_expected_inventory_rejects_duplicate_keys() -> None:
     declaring `"runtime": ["hidden-package==1"]` and later `"runtime": []`
     parses clean and audits clean while saying two different things."""
     from tools.security.audit_dependencies import audit
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q", str(root)], check=True)
         (root / "pyproject.toml").write_text(
-            '[project]\nname="x"\nversion="1"\ndependencies = []\n', encoding="utf-8")
+            '[project]\nname="x"\nversion="1"\ndependencies = []\n', encoding="utf-8"
+        )
         expected = root / "expected.json"
         expected.write_text(
-            '{"runtime": ["hidden-package==1"], "build_system": [],'
-            ' "optional": {}, "runtime": []}', encoding="utf-8")
+            '{"runtime": ["hidden-package==1"], "build_system": [], "optional": {}, "runtime": []}',
+            encoding="utf-8",
+        )
         subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
         subprocess.run(
-            ["git", "-C", str(root), "-c", "user.email=a@b", "-c", "user.name=t",
-             "commit", "-qm", "base"], check=True)
+            [
+                "git",
+                "-C",
+                str(root),
+                "-c",
+                "user.email=a@b",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qm",
+                "base",
+            ],
+            check=True,
+        )
         report = audit(root, expected)
     assert report["state"] == "FAIL", report
     # An unambiguous inventory of the same shape still passes: the refusal
@@ -3971,15 +4246,28 @@ def test_expected_inventory_rejects_duplicate_keys() -> None:
         root = Path(tmp)
         subprocess.run(["git", "init", "-q", str(root)], check=True)
         (root / "pyproject.toml").write_text(
-            '[project]\nname="x"\nversion="1"\ndependencies = []\n', encoding="utf-8")
+            '[project]\nname="x"\nversion="1"\ndependencies = []\n', encoding="utf-8"
+        )
         expected = root / "expected.json"
         expected.write_text(
-            json.dumps({"runtime": [], "build_system": [], "optional": {}}),
-            encoding="utf-8")
+            json.dumps({"runtime": [], "build_system": [], "optional": {}}), encoding="utf-8"
+        )
         subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
         subprocess.run(
-            ["git", "-C", str(root), "-c", "user.email=a@b", "-c", "user.name=t",
-             "commit", "-qm", "base"], check=True)
+            [
+                "git",
+                "-C",
+                str(root),
+                "-c",
+                "user.email=a@b",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qm",
+                "base",
+            ],
+            check=True,
+        )
         assert audit(root, expected)["state"] == "PASS"
 
 
@@ -3989,10 +4277,12 @@ def test_require_compiled_demands_the_rail_actually_ran() -> None:
     witness that never executed left the run green while proving nothing."""
     from unittest import mock
     from tools.security import run_malformed_differential as differential
+
     unavailable = {"state": "UNAVAILABLE/SKIPPED", "reason": "bcir-opt not found"}
-    with mock.patch.object(differential, "find_bcir_opt",
-                           return_value="/nonexistent/bcir-opt"), \
-         mock.patch.object(differential, "_compiled_mlir", return_value=unavailable):
+    with (
+        mock.patch.object(differential, "find_bcir_opt", return_value="/nonexistent/bcir-opt"),
+        mock.patch.object(differential, "_compiled_mlir", return_value=unavailable),
+    ):
         strict = differential.run_differential(differential.ROOT, require_compiled=True)
         lax = differential.run_differential(differential.ROOT, require_compiled=False)
     assert strict["state"] == "FAIL", strict
@@ -4033,6 +4323,7 @@ def test_packaged_asn1_modules_are_read_from_the_package() -> None:
     # Checked over the SYNTAX, not the text: a docstring explaining the
     # defect is not the defect, and a textual scan flags its own prose.
     import ast
+
     root = Path(__file__).resolve().parents[2]
     if (root / "bcir").is_dir():
         prefix = "bcir" + "/"
@@ -4054,7 +4345,6 @@ def test_packaged_asn1_modules_are_read_from_the_package() -> None:
     assert "bcir.tests.test_asn1_constraints" not in _REPO_ONLY_MODULES
 
 
-
 # --- the advisory rail -----------------------------------------------------------------
 # Every test here fakes the FULL spawn path (L19): `which` for discovery and the bounded
 # runner for the engine, or a stub engine on PATH where the spawn itself is the subject;
@@ -4068,11 +4358,12 @@ def _advisory_project(root: Path, dependency: str = _DEP + "==1.0") -> Path:
     advisory rail has a non-empty install set to run over."""
     (root / "pyproject.toml").write_text(
         '[project]\nname="x"\nversion="1"\ndependencies = ["' + dependency + '"]\n',
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     expected = root / "expected.json"
     expected.write_text(
-        json.dumps({"runtime": [dependency], "build_system": [], "optional": {}}),
-        encoding="utf-8")
+        json.dumps({"runtime": [dependency], "build_system": [], "optional": {}}), encoding="utf-8"
+    )
     return expected
 
 
@@ -4083,8 +4374,14 @@ def _engine_report(*dependencies: dict) -> bytes:
 
 def _engine_outcome(stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0) -> dict:
     return {
-        "launched": True, "timed_out": False, "overflow": False, "pipes_held": False,
-        "returncode": returncode, "stdout": stdout, "stderr": stderr, "error": "",
+        "launched": True,
+        "timed_out": False,
+        "overflow": False,
+        "pipes_held": False,
+        "returncode": returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+        "error": "",
     }
 
 
@@ -4095,12 +4392,18 @@ def _clean_outcome(name: str = _DEP, version: str = "1.0") -> dict:
     )
 
 
-def _audit_with_engine(resolved: dict, floor: dict | None = None, *, require: bool = False,
-                       dependency: str = _DEP + "==1.0") -> dict:
+def _audit_with_engine(
+    resolved: dict,
+    floor: dict | None = None,
+    *,
+    require: bool = False,
+    dependency: str = _DEP + "==1.0",
+) -> dict:
     """The audit of a one-dependency project against faked engine outcomes,
     one per run (the floor run is told apart by its `--no-deps`)."""
     from unittest.mock import patch
     from tools.security import audit_dependencies as deps
+
     floor = _clean_outcome() if floor is None else floor
 
     def engine(cmd, **kwargs):
@@ -4109,9 +4412,11 @@ def _audit_with_engine(resolved: dict, floor: dict | None = None, *, require: bo
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         expected = _advisory_project(root, dependency)
-        with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
-                patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"), \
-                patch.object(deps, "run_bounded", side_effect=engine):
+        with (
+            patch.dict(os.environ, {"PIP_AUDIT": ""}),
+            patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"),
+            patch.object(deps, "run_bounded", side_effect=engine),
+        ):
             return audit_deps(root, expected, require_advisory=require)
 
 
@@ -4122,14 +4427,17 @@ def test_require_advisory_fails_when_the_engine_is_absent() -> None:
     advisory is recorded as skipped, never silently (L2, L10)."""
     from unittest.mock import patch
     from tools.security import audit_dependencies as deps
-    with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
-            patch.object(deps.shutil, "which", return_value=None):
+
+    with (
+        patch.dict(os.environ, {"PIP_AUDIT": ""}),
+        patch.object(deps.shutil, "which", return_value=None),
+    ):
         opportunistic = audit_deps(_ROOT)
         required = audit_deps(_ROOT, require_advisory=True)
         exit_code = deps.main(["--require-advisory"])
     assert opportunistic["state"] == "PASS"
     assert opportunistic["advisory"]["state"] == "UNAVAILABLE/SKIPPED"
-    assert required["inventory_asserted"] is True       # the inventory half ran first
+    assert required["inventory_asserted"] is True  # the inventory half ran first
     assert required["mismatches"] == []
     assert required["state"] == "FAIL"
     assert required["advisory"]["state"] == "FAIL"
@@ -4150,23 +4458,30 @@ def test_advisory_requirements_are_handed_to_the_engine_as_files() -> None:
     import stat as stat_module
     from unittest.mock import patch
     from tools.security import audit_dependencies as deps
+
     seen: list = []
 
     def engine(cmd, **kwargs):
         path = Path(cmd[cmd.index("--requirement") + 1])
-        seen.append({
-            "cmd": list(cmd), "stdin": kwargs.get("stdin_data"), "path": path,
-            "text": path.read_text(encoding="utf-8"),
-            "dir_mode": stat_module.S_IMODE(path.parent.stat().st_mode),
-        })
+        seen.append(
+            {
+                "cmd": list(cmd),
+                "stdin": kwargs.get("stdin_data"),
+                "path": path,
+                "text": path.read_text(encoding="utf-8"),
+                "dir_mode": stat_module.S_IMODE(path.parent.stat().st_mode),
+            }
+        )
         return _clean_outcome()
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         expected = _advisory_project(root, _DEP + ">=1.0")
-        with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
-                patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"), \
-                patch.object(deps, "run_bounded", side_effect=engine):
+        with (
+            patch.dict(os.environ, {"PIP_AUDIT": ""}),
+            patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"),
+            patch.object(deps, "run_bounded", side_effect=engine),
+        ):
             report = audit_deps(root, expected, require_advisory=True)
     assert report["state"] == "PASS"
     advisory = report["advisory"]
@@ -4175,8 +4490,8 @@ def test_advisory_requirements_are_handed_to_the_engine_as_files() -> None:
     assert advisory["covered"] == [_DEP] and advisory["uncovered"] == []
     assert [run["state"] for run in advisory["runs"].values()] == ["PASS", "PASS"]
     resolved, floor = seen
-    assert resolved["text"] == _DEP + ">=1.0\n"          # the declaration as written
-    assert floor["text"] == _DEP + "==1.0\n"             # pinned at its lower bound
+    assert resolved["text"] == _DEP + ">=1.0\n"  # the declaration as written
+    assert floor["text"] == _DEP + "==1.0\n"  # pinned at its lower bound
     assert "--no-deps" not in resolved["cmd"]
     assert "--no-deps" in floor["cmd"] and "--disable-pip" in floor["cmd"]
     for call in seen:
@@ -4197,17 +4512,22 @@ def test_unwritable_requirements_are_a_verdict() -> None:
     a traceback out of the required audit (L1)."""
     from unittest.mock import patch
     from tools.security import audit_dependencies as deps
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         expected = _advisory_project(root)
-        with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
-                patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"), \
-                patch.object(deps, "run_bounded", side_effect=AssertionError("must not spawn")):
-            with patch.object(deps.tempfile, "NamedTemporaryFile",
-                              side_effect=OSError("No space left on device")):
+        with (
+            patch.dict(os.environ, {"PIP_AUDIT": ""}),
+            patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"),
+            patch.object(deps, "run_bounded", side_effect=AssertionError("must not spawn")),
+        ):
+            with patch.object(
+                deps.tempfile, "NamedTemporaryFile", side_effect=OSError("No space left on device")
+            ):
                 unwritable = audit_deps(root, expected, require_advisory=True)
-            with patch.object(deps.tempfile, "mkdtemp",
-                              side_effect=OSError("Read-only file system")):
+            with patch.object(
+                deps.tempfile, "mkdtemp", side_effect=OSError("Read-only file system")
+            ):
                 uncreatable = audit_deps(root, expected, require_advisory=True)
     for report, needle in ((unwritable, "could not write"), (uncreatable, "could not create")):
         assert report["state"] == "FAIL"
@@ -4224,20 +4544,46 @@ def test_floor_pins_refuse_what_they_cannot_attribute() -> None:
     arbitrary-equality specifier is refused and reported, never approximated
     into a pin the declaration did not make (L4, L18)."""
     from tools.security.audit_dependencies import canonical_name, floor_pins
-    pins, names, refused = floor_pins([
-        "setuptools>=83.0.0", "ruff>=0.6", "pre-commit>=3.5", "torch==2.13.0",
-        "safetensors[numpy]==0.8.0", "numpy==2.2.6", "Typing_Extensions >= 4.16.0",
-    ])
+
+    pins, names, refused = floor_pins(
+        [
+            "setuptools>=83.0.0",
+            "ruff>=0.6",
+            "pre-commit>=3.5",
+            "torch==2.13.0",
+            "safetensors[numpy]==0.8.0",
+            "numpy==2.2.6",
+            "Typing_Extensions >= 4.16.0",
+        ]
+    )
     assert pins == [
-        "setuptools==83.0.0", "ruff==0.6", "pre-commit==3.5", "torch==2.13.0",
-        "safetensors[numpy]==0.8.0", "numpy==2.2.6", "Typing_Extensions==4.16.0",
+        "setuptools==83.0.0",
+        "ruff==0.6",
+        "pre-commit==3.5",
+        "torch==2.13.0",
+        "safetensors[numpy]==0.8.0",
+        "numpy==2.2.6",
+        "Typing_Extensions==4.16.0",
     ]
-    assert names == ["setuptools", "ruff", "pre-commit", "torch", "safetensors", "numpy",
-                     "typing-extensions"]
+    assert names == [
+        "setuptools",
+        "ruff",
+        "pre-commit",
+        "torch",
+        "safetensors",
+        "numpy",
+        "typing-extensions",
+    ]
     assert refused == []
     outside = [
-        "private @ https://example.com/pkg.whl", 'pkg>=1; python_version > "3.8"',
-        "pkg==1.*", "pkg>=1,<2", "pkg===1", "pkg~=1.0", "pkg", "pkg>1",
+        "private @ https://example.com/pkg.whl",
+        'pkg>=1; python_version > "3.8"',
+        "pkg==1.*",
+        "pkg>=1,<2",
+        "pkg===1",
+        "pkg~=1.0",
+        "pkg",
+        "pkg>1",
     ]
     assert floor_pins(outside) == ([], [], outside)
     assert canonical_name("Pre_Commit.Hooks") == "pre-commit-hooks"
@@ -4249,15 +4595,21 @@ def test_advisory_findings_are_structured_and_fail_the_audit() -> None:
     copied from the engine's own report and tagged with the run that made it
     -- never its prose, and never the columns rendering the old rail could
     only tail."""
-    stdout = _engine_report({
-        "name": _DEP, "version": "1.0",
-        "vulns": [{
-            "id": "GHSA-xxxx-xxxx-xxxx", "fix_versions": ["1.1"],
-            "aliases": ["CVE-2026-00001"], "description": "prose the report must not copy",
-        }],
-    })
-    outcome = _engine_outcome(
-        stdout, b"Found 1 known vulnerability in 1 package\n", returncode=1)
+    stdout = _engine_report(
+        {
+            "name": _DEP,
+            "version": "1.0",
+            "vulns": [
+                {
+                    "id": "GHSA-xxxx-xxxx-xxxx",
+                    "fix_versions": ["1.1"],
+                    "aliases": ["CVE-2026-00001"],
+                    "description": "prose the report must not copy",
+                }
+            ],
+        }
+    )
+    outcome = _engine_outcome(stdout, b"Found 1 known vulnerability in 1 package\n", returncode=1)
     for require in (False, True):
         report = _audit_with_engine(outcome, require=require)
         assert report["state"] == "FAIL", require
@@ -4266,13 +4618,20 @@ def test_advisory_findings_are_structured_and_fail_the_audit() -> None:
         assert advisory["audited"] == 2 and advisory["uncovered"] == []
         assert advisory["runs"]["resolved"]["state"] == "FAIL"
         assert advisory["runs"]["floor"]["state"] == "PASS"
-        assert advisory["vulnerable"] == [{
-            "run": "resolved", "name": _DEP, "version": "1.0",
-            "vulns": [{
-                "id": "GHSA-xxxx-xxxx-xxxx", "aliases": ["CVE-2026-00001"],
-                "fix_versions": ["1.1"],
-            }],
-        }]
+        assert advisory["vulnerable"] == [
+            {
+                "run": "resolved",
+                "name": _DEP,
+                "version": "1.0",
+                "vulns": [
+                    {
+                        "id": "GHSA-xxxx-xxxx-xxxx",
+                        "aliases": ["CVE-2026-00001"],
+                        "fix_versions": ["1.1"],
+                    }
+                ],
+            }
+        ]
         assert "prose the report" not in json.dumps(report)
         assert "1 known vulnerability" in advisory["runs"]["resolved"]["stderr_tail"]
         assert "1 known vulnerability" in advisory["error"]
@@ -4356,8 +4715,7 @@ def test_unusable_advisory_output_is_a_verdict() -> None:
         "not the report": b'{"fixes": []}',
         "wrong shape": b'{"dependencies": "' + _DEP.encode() + b'==1.0"}',
         "duplicate key": (
-            b'{"dependencies": [], '
-            b'"dependencies": [{"name": "x", "version": "1", "vulns": []}]}'
+            b'{"dependencies": [], "dependencies": [{"name": "x", "version": "1", "vulns": []}]}'
         ),
         "entry shape": b'{"dependencies": [{"name": 7}]}',
         "vuln shape": (
@@ -4383,6 +4741,7 @@ def test_configured_advisory_engine_is_honored() -> None:
     reported, never silently replaced by whatever PATH holds (L13)."""
     from unittest.mock import patch
     from tools.security import audit_dependencies as deps
+
     calls: list = []
     table = {
         "pip-audit": "/usr/bin/pip-audit",
@@ -4416,6 +4775,7 @@ def test_ci_owns_the_advisory_rail() -> None:
     inventory only, so the engine's absence fails precisely where it is
     unexpected and nowhere else."""
     import re
+
     workflow = (_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     jobs = re.split(r"\n  (?=[a-z][a-z0-9-]*:\n)", workflow)
     owners = [job for job in jobs if "--require-advisory" in job]
@@ -4430,11 +4790,15 @@ def test_ci_owns_the_advisory_rail() -> None:
     # (--installed, where the engine is always required). Any other install is an
     # engine nobody's verdict depends on.
     installers = [job for job in jobs if "pip-audit==" in job]
-    requirers = [job for job in jobs
-                 if "--require-advisory" in job or "audit_dependencies.py --installed" in job]
+    requirers = [
+        job
+        for job in jobs
+        if "--require-advisory" in job or "audit_dependencies.py --installed" in job
+    ]
     assert installers == requirers, "every job that installs the engine requires it, and only those"
-    assert len({re.findall(r"pip-audit==(\d+\.\d+\.\d+)", job)[0] for job in installers}) == 1, \
+    assert len({re.findall(r"pip-audit==(\d+\.\d+\.\d+)", job)[0] for job in installers}) == 1, (
         "one pinned engine version across the jobs that install it"
+    )
     audits = [job for job in jobs if "audit_dependencies.py" in job]
     assert len(audits) >= 3, "the inventory half still runs outside the owner"
 
@@ -4446,6 +4810,7 @@ def test_ci_owns_the_installed_audit() -> None:
     to the rail as PIP_AUDIT, and audit the interpreter with --installed,
     naming the three distributions the audit must find there (L10, L13)."""
     import re
+
     workflow = (_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     jobs = re.split(r"\n  (?=[a-z][a-z0-9-]*:\n)", workflow)
     owners = [job for job in jobs if "audit_dependencies.py --installed" in job]
@@ -4453,22 +4818,27 @@ def test_ci_owns_the_installed_audit() -> None:
     owner = owners[0]
     assert owner.startswith("hosted-model:")
     assert "pip-audit==2.10.1" in owner, "the engine is pinned where it is installed"
-    assert 'venv.EnvBuilder(with_pip=True).create(root)' in owner, "the engine gets its own environment"
+    assert "venv.EnvBuilder(with_pip=True).create(root)" in owner, (
+        "the engine gets its own environment"
+    )
     assert 'env.write("PIP_AUDIT="' in owner, "the engine is handed to the rail through PIP_AUDIT"
     for name in ("torch", "safetensors", "numpy"):
-        assert f"--expect {name}" in owner, f"the audit must find {name} in the environment it claims to audit"
+        assert f"--expect {name}" in owner, (
+            f"the audit must find {name} in the environment it claims to audit"
+        )
     assert "pip==" in owner, "pip is pinned as part of the audited environment"
     # torch's CPU wheel depends on setuptools and the PyTorch index resolves that to a
     # release with open advisories (78.1.0 on the audit's first run): the pin is ours,
     # installed from PyPI before torch so that index never gets to choose it.
     assert "setuptools==" in owner, "setuptools is pinned as part of the audited environment"
-    assert owner.index("setuptools==") < owner.index("torch==2."), "setuptools is pinned before torch is installed"
+    assert owner.index("setuptools==") < owner.index("torch==2."), (
+        "setuptools is pinned before torch is installed"
+    )
     # the audit runs AFTER the environment is installed and BEFORE the gates use it
     install = owner.index("Install pinned hosted-model CPU environment")
     audit = owner.index("audit_dependencies.py --installed")
     gate = owner.index("Hosted model configuration, checkpoint")
     assert install < audit < gate
-
 
 
 # --- the installed-environment audit (--installed) ---------------------------------------
@@ -4479,6 +4849,7 @@ def test_ci_owns_the_installed_audit() -> None:
 def _installed_engine(seen: dict, vulns: dict | None = None):
     """A faked engine for --installed runs: audits exactly the pins it is handed and
     reports the findings `vulns` names (keyed by lower-cased name)."""
+
     def engine(cmd, **kwargs):
         path = Path(cmd[cmd.index("--requirement") + 1])
         text = path.read_text(encoding="utf-8")
@@ -4486,27 +4857,37 @@ def _installed_engine(seen: dict, vulns: dict | None = None):
         entries = []
         for line in text.splitlines():
             name, _, version = line.partition("==")
-            entries.append({"name": name, "version": version,
-                            "vulns": (vulns or {}).get(name.lower(), [])})
+            entries.append(
+                {"name": name, "version": version, "vulns": (vulns or {}).get(name.lower(), [])}
+            )
         found = any(e["vulns"] for e in entries)
         return _engine_outcome(_engine_report(*entries), b"", 1 if found else 0)
+
     return engine
 
 
 def _audit_installed(distributions, expect, *, engine=None, which="/usr/bin/pip-audit"):
     from unittest.mock import patch
     from tools.security import audit_dependencies as deps
+
     seen: dict = {}
     engine = engine or _installed_engine(seen)
-    with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
-            patch.object(deps, "_installed_distributions", return_value=distributions), \
-            patch.object(deps.shutil, "which", return_value=which), \
-            patch.object(deps, "run_bounded", side_effect=engine):
+    with (
+        patch.dict(os.environ, {"PIP_AUDIT": ""}),
+        patch.object(deps, "_installed_distributions", return_value=distributions),
+        patch.object(deps.shutil, "which", return_value=which),
+        patch.object(deps, "run_bounded", side_effect=engine),
+    ):
         return deps.audit_installed(_ROOT, expect), seen
 
 
-_MODEL_LAB = [("torch", "2.13.0+cpu"), ("NumPy", "2.2.6"), ("safetensors", "0.8.0"),
-              ("bcir", "0.2.0"), ("pip", "26.2.1")]
+_MODEL_LAB = [
+    ("torch", "2.13.0+cpu"),
+    ("NumPy", "2.2.6"),
+    ("safetensors", "0.8.0"),
+    ("bcir", "0.2.0"),
+    ("pip", "26.2.1"),
+]
 
 
 def test_installed_mode_audits_the_interpreter_by_exact_public_pin() -> None:
@@ -4522,7 +4903,12 @@ def test_installed_mode_audits_the_interpreter_by_exact_public_pin() -> None:
     assert report["excluded"] == ["bcir==0.2.0"]
     assert report["expected"] == ["numpy", "safetensors", "torch"]
     assert report["missing_expected"] == []
-    assert seen["text"].splitlines() == ["NumPy==2.2.6", "pip==26.2.1", "safetensors==0.8.0", "torch==2.13.0"]
+    assert seen["text"].splitlines() == [
+        "NumPy==2.2.6",
+        "pip==26.2.1",
+        "safetensors==0.8.0",
+        "torch==2.13.0",
+    ]
     assert "--no-deps" in seen["cmd"] and "--disable-pip" in seen["cmd"]
     advisory = report["advisory"]
     assert advisory["state"] == "PASS"
@@ -4574,10 +4960,14 @@ def test_installed_mode_reconciles_coverage_and_findings() -> None:
     finding = {"torch": [{"id": "GHSA-test-torch", "fix_versions": ["2.14.0"], "aliases": []}]}
     report, _ = _audit_installed(_MODEL_LAB, ["torch"], engine=_installed_engine({}, finding))
     assert report["state"] == "FAIL"
-    assert report["advisory"]["vulnerable"] == [{
-        "run": "installed", "name": "torch", "version": "2.13.0",
-        "vulns": [{"id": "GHSA-test-torch", "aliases": [], "fix_versions": ["2.14.0"]}],
-    }]
+    assert report["advisory"]["vulnerable"] == [
+        {
+            "run": "installed",
+            "name": "torch",
+            "version": "2.13.0",
+            "vulns": [{"id": "GHSA-test-torch", "aliases": [], "fix_versions": ["2.14.0"]}],
+        }
+    ]
 
 
 def test_console_line_names_the_vulnerable_distributions() -> None:
@@ -4590,16 +4980,21 @@ def test_console_line_names_the_vulnerable_distributions() -> None:
     import io
     from unittest.mock import patch
     from tools.security import audit_dependencies as deps
-    finding = {"torch": [
-        {"id": "PYSEC-2099-1", "fix_versions": ["2.14.0"], "aliases": ["CVE-2099-1"]},
-        {"id": "PYSEC-2099-1", "fix_versions": ["2.14.0"], "aliases": []},
-        {"id": "GHSA-nofx-xxxx-xxxx", "fix_versions": [], "aliases": []},
-    ]}
-    with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
-            patch.object(deps, "_installed_distributions", return_value=_MODEL_LAB), \
-            patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"), \
-            patch.object(deps, "run_bounded", side_effect=_installed_engine({}, finding)), \
-            contextlib.redirect_stdout(io.StringIO()) as out:
+
+    finding = {
+        "torch": [
+            {"id": "PYSEC-2099-1", "fix_versions": ["2.14.0"], "aliases": ["CVE-2099-1"]},
+            {"id": "PYSEC-2099-1", "fix_versions": ["2.14.0"], "aliases": []},
+            {"id": "GHSA-nofx-xxxx-xxxx", "fix_versions": [], "aliases": []},
+        ]
+    }
+    with (
+        patch.dict(os.environ, {"PIP_AUDIT": ""}),
+        patch.object(deps, "_installed_distributions", return_value=_MODEL_LAB),
+        patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"),
+        patch.object(deps, "run_bounded", side_effect=_installed_engine({}, finding)),
+        contextlib.redirect_stdout(io.StringIO()) as out,
+    ):
         exit_code = deps.main(["--installed", "--expect", "torch"])
     line = out.getvalue().strip()
     assert exit_code == 1
@@ -4607,8 +5002,14 @@ def test_console_line_names_the_vulnerable_distributions() -> None:
     assert "vulnerable=torch==2.13.0[PYSEC-2099-1 fix 2.14.0; GHSA-nofx-xxxx-xxxx no fix]" in line
     assert line.count("PYSEC-2099-1") == 1
     # bounded: many vulnerable distributions collapse to a count
-    many = [{"name": f"pkg{i}", "version": "1.0", "vulns": [{"id": f"PYSEC-{i}", "fix_versions": [], "aliases": []}]}
-            for i in range(11)]
+    many = [
+        {
+            "name": f"pkg{i}",
+            "version": "1.0",
+            "vulns": [{"id": f"PYSEC-{i}", "fix_versions": [], "aliases": []}],
+        }
+        for i in range(11)
+    ]
     summary = deps._findings_summary(many)
     assert summary.count("[") == deps._SUMMARY_LIMIT and summary.endswith(", +3 more")
 
@@ -4618,9 +5019,12 @@ def test_installed_mode_enumeration_failure_is_a_verdict() -> None:
     job that is a structured FAIL with the reason, never a traceback (L1)."""
     from unittest.mock import patch
     from tools.security import audit_dependencies as deps
-    with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
-            patch.object(deps, "_installed_distributions", side_effect=RuntimeError("bad METADATA")), \
-            patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"):
+
+    with (
+        patch.dict(os.environ, {"PIP_AUDIT": ""}),
+        patch.object(deps, "_installed_distributions", side_effect=RuntimeError("bad METADATA")),
+        patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"),
+    ):
         report = deps.audit_installed(_ROOT, ["torch"])
         exit_code = deps.main(["--installed", "--expect", "torch"])
     assert report["state"] == "FAIL"

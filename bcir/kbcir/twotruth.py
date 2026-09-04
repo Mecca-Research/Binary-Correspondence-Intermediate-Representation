@@ -52,6 +52,7 @@ class GradedTruthLeak(Exception):
 
 # --- graded truth: the (value, confidence) proposition ---------------------------
 
+
 @dataclass(frozen=True)
 class Graded:
     """A graded proposition `(v, w)`: a value with a confidence in Q-milli
@@ -60,12 +61,11 @@ class Graded:
 
     value: object
     confidence_milli: int
-    source: str = "?"          # which graded organ produced it (softdp/bayescal/regret/...)
+    source: str = "?"  # which graded organ produced it (softdp/bayescal/regret/...)
 
     def __post_init__(self) -> None:
         if not 0 <= self.confidence_milli <= _MILLI:
-            raise ValueError(
-                f"confidence {self.confidence_milli} out of range [0,{_MILLI}]")
+            raise ValueError(f"confidence {self.confidence_milli} out of range [0,{_MILLI}]")
 
     @property
     def confidence(self) -> float:
@@ -99,11 +99,16 @@ class Decision:
 def decide(g: Graded, threshold_milli: int) -> Decision:
     """Collapse a graded proposition to a classical decision at a frozen
     threshold -- the sanctioned, recorded crossing of the quarantine boundary."""
-    return Decision(value=g.value, confidence_milli=g.confidence_milli,
-                    threshold_milli=_clamp_milli(threshold_milli), source=g.source)
+    return Decision(
+        value=g.value,
+        confidence_milli=g.confidence_milli,
+        threshold_milli=_clamp_milli(threshold_milli),
+        source=g.source,
+    )
 
 
 # --- the quarantine predicate + boundary guard -----------------------------------
+
 
 def is_classical(x) -> bool:
     """True iff `x` is classical truth (not a graded proposition). A `Decision`'s
@@ -123,31 +128,39 @@ def assert_classical(*values) -> None:
         if not is_classical(v):
             raise GradedTruthLeak(
                 f"graded proposition {v!r} reached a classical verdict boundary; "
-                f"collapse it with decide() first")
+                f"collapse it with decide() first"
+            )
 
 
 # --- the graded algebra (dynamic truth tables, quarantined on the graded side) ---
 
+
 def g_not(a: Graded) -> Graded:
     """Graded negation: value negated, confidence complemented (1 - w)."""
-    return Graded(value=not a.value, confidence_milli=_MILLI - a.confidence_milli,
-                  source=a.source)
+    return Graded(value=not a.value, confidence_milli=_MILLI - a.confidence_milli, source=a.source)
 
 
 def g_and(a: Graded, b: Graded) -> Graded:
     """Graded conjunction (product t-norm): w = w_a * w_b. The learned AND of two
     propositions -- a row of a dynamic truth table, living on the graded side."""
     w = (a.confidence_milli * b.confidence_milli) // _MILLI
-    return Graded(value=bool(a.value) and bool(b.value), confidence_milli=w,
-                  source=_join(a.source, b.source))
+    return Graded(
+        value=bool(a.value) and bool(b.value), confidence_milli=w, source=_join(a.source, b.source)
+    )
 
 
 def g_or(a: Graded, b: Graded) -> Graded:
     """Graded disjunction (probabilistic sum t-conorm): w = w_a + w_b - w_a*w_b."""
-    w = a.confidence_milli + b.confidence_milli - (
-        a.confidence_milli * b.confidence_milli) // _MILLI
-    return Graded(value=bool(a.value) or bool(b.value), confidence_milli=_clamp_milli(w),
-                  source=_join(a.source, b.source))
+    w = (
+        a.confidence_milli
+        + b.confidence_milli
+        - (a.confidence_milli * b.confidence_milli) // _MILLI
+    )
+    return Graded(
+        value=bool(a.value) or bool(b.value),
+        confidence_milli=_clamp_milli(w),
+        source=_join(a.source, b.source),
+    )
 
 
 def _join(s: str, t: str) -> str:
@@ -156,13 +169,13 @@ def _join(s: str, t: str) -> str:
 
 # --- duck-typed wrappers for the existing graded organs ---------------------------
 
+
 def from_soft(soft, claim_id: int) -> Graded:
     """Wrap a softdp plan-posterior marginal as a graded proposition: the
     argmax-marginal candidate (value) and its probability (confidence)."""
     name = soft.map_by_claim[claim_id]
     p = soft.marginals.get(claim_id, {}).get(name, 0.0)
-    return Graded(value=name, confidence_milli=_clamp_milli(round(p * _MILLI)),
-                  source="softdp")
+    return Graded(value=name, confidence_milli=_clamp_milli(round(p * _MILLI)), source="softdp")
 
 
 def from_conformal(table) -> Graded:
@@ -181,6 +194,8 @@ def from_regret(verdict) -> Graded:
     comp = float(getattr(verdict, "complexity_nats", 0.0))
     margin = max(0.0, fit - comp)
     denom = max(1e-9, fit + comp)
-    return Graded(value=verdict.verdict,
-                  confidence_milli=_clamp_milli(round(margin / denom * _MILLI)),
-                  source="regret")
+    return Graded(
+        value=verdict.verdict,
+        confidence_milli=_clamp_milli(round(margin / denom * _MILLI)),
+        source="regret",
+    )

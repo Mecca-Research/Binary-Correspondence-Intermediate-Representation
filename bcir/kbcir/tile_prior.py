@@ -27,6 +27,7 @@ resident calibloop froze and the proposals follow the measured cost model; the e
 search underneath (same profile) still verifies every choice. `plan_matmul` itself is
 untouched -- the prior is opt-in (non-disturbance, vacuous by default).
 """
+
 from __future__ import annotations
 
 import math
@@ -55,15 +56,18 @@ def candidates_for(M: int, N: int, K: int) -> list[tuple[int, int, int, str]]:
     """The exact search space of plan_matmul, as (tm, tn, tk, loop_order) tuples, in the
     exhaustive enumeration order."""
     _validate_shape(M, N, K)
-    return [(tm, tn, tk, lo)
-            for lo in _LOOP_ORDERS
-            for tm in _divisor_tiles(M)
-            for tn in _divisor_tiles(N)
-            for tk in _divisor_tiles(K)]
+    return [
+        (tm, tn, tk, lo)
+        for lo in _LOOP_ORDERS
+        for tm in _divisor_tiles(M)
+        for tn in _divisor_tiles(N)
+        for tk in _divisor_tiles(K)
+    ]
 
 
-def tile_features(M: int, N: int, K: int, tm: int, tn: int, tk: int, lo: str,
-                  target: TargetProfile) -> list[float]:
+def tile_features(
+    M: int, N: int, K: int, tm: int, tn: int, tk: int, lo: str, target: TargetProfile
+) -> list[float]:
     """CHEAP candidate features -- pure arithmetic on the shape/tile/budget, NO cost_of
     call (ordering must be cheaper than what it saves)."""
     _validate_shape(M, N, K)
@@ -76,12 +80,16 @@ def tile_features(M: int, N: int, K: int, tm: int, tn: int, tk: int, lo: str,
         raise ValueError("tile-prior target must be a TargetProfile")
     budget = _cache_budget_elems(target)
     ws = tm * tk + tk * tn + tm * tn
-    return [1.0 if ws <= budget else 0.0,
-            min(2.0, ws / max(1, budget)),
-            math.log2(max(1, tm * tn * tk)) / 30.0,
-            tm / M, tn / N, tk / K,
-            _LOOP_ORDERS.index(lo) / 2.0,
-            1.0]
+    return [
+        1.0 if ws <= budget else 0.0,
+        min(2.0, ws / max(1, budget)),
+        math.log2(max(1, tm * tn * tk)) / 30.0,
+        tm / M,
+        tn / N,
+        tk / K,
+        _LOOP_ORDERS.index(lo) / 2.0,
+        1.0,
+    ]
 
 
 @dataclass
@@ -111,8 +119,11 @@ class FrozenTilePrior:
         if not isinstance(self.wq, tuple) or len(self.wq) != 8:
             raise ValueError("FrozenTilePrior requires exactly 8 Q8 weights")
         for index, weight in enumerate(self.wq):
-            if (isinstance(weight, bool) or not isinstance(weight, int) or
-                    not -(1 << 31) <= weight <= (1 << 31) - 1):
+            if (
+                isinstance(weight, bool)
+                or not isinstance(weight, int)
+                or not -(1 << 31) <= weight <= (1 << 31) - 1
+            ):
                 raise ValueError(f"FrozenTilePrior weight[{index}] must be a signed i32")
 
     def order(self, M: int, N: int, K: int, target: TargetProfile) -> list:
@@ -122,7 +133,7 @@ class FrozenTilePrior:
         for i, (tm, tn, tk, lo) in enumerate(cands):
             feats = tile_features(M, N, K, tm, tn, tk, lo, target)
             z = sum(self.wq[k] * round(feats[k] * Q8) for k in range(len(self.wq))) >> 8
-            scored.append((-z, i))                   # higher z = try first; index tie-break
+            scored.append((-z, i))  # higher z = try first; index tie-break
         return [cands[i] for _, i in sorted(scored)]
 
 
@@ -131,12 +142,13 @@ def prior_samples(shapes: list, target: TargetProfile) -> list:
     per shape, the exhaustive optimum's (fits, bottleneck) marks every score-equal
     candidate positive, the rest negative."""
     samples = []
-    for (M, N, K) in shapes:
+    for M, N, K in shapes:
         best = _exhaustive(M, N, K, target)[0]
-        for (tm, tn, tk, lo) in candidates_for(M, N, K):
+        for tm, tn, tk, lo in candidates_for(M, N, K):
             compute, mem, fits = cost_of(M, N, K, tm, tn, tk, target)
-            label = 1.0 if (fits == best.fits_cache and max(compute, mem) == best.bottleneck) \
-                else 0.0
+            label = (
+                1.0 if (fits == best.fits_cache and max(compute, mem) == best.bottleneck) else 0.0
+            )
             samples.append((tile_features(M, N, K, tm, tn, tk, lo, target), label))
     return samples
 
@@ -160,18 +172,23 @@ def _exhaustive(M: int, N: int, K: int, target: TargetProfile) -> tuple[TilePlan
     """plan_matmul's search, instrumented: (the optimum, nodes costed)."""
     best = None
     n = 0
-    for (tm, tn, tk, lo) in candidates_for(M, N, K):
+    for tm, tn, tk, lo in candidates_for(M, N, K):
         cand = _plan_of(M, N, K, tm, tn, tk, lo, target)
         n += 1
         key = (not cand.fits_cache, cand.bottleneck, -(tm * tn * tk), lo)
-        if best is None or key < (not best.fits_cache, best.bottleneck,
-                                  -(best.tile_m * best.tile_n * best.tile_k), best.loop_order):
+        if best is None or key < (
+            not best.fits_cache,
+            best.bottleneck,
+            -(best.tile_m * best.tile_n * best.tile_k),
+            best.loop_order,
+        ):
             best = cand
     return best, n
 
 
-def guided_plan_matmul(M: int, N: int, K: int, target: TargetProfile,
-                       prior: FrozenTilePrior) -> tuple[TilePlan, int]:
+def guided_plan_matmul(
+    M: int, N: int, K: int, target: TargetProfile, prior: FrozenTilePrior
+) -> tuple[TilePlan, int]:
     """The prior-ORDERED search with the admissible early exit. Returns (plan, nodes
     costed). The exit is a PROOF, not a heuristic: compute is tile-independent, so a
     cache-fitting candidate with mem <= compute sits on the bottleneck floor -- no
@@ -184,15 +201,19 @@ def guided_plan_matmul(M: int, N: int, K: int, target: TargetProfile,
         raise ValueError("guided matmul requires a FrozenTilePrior")
     best = None
     n = 0
-    for (tm, tn, tk, lo) in prior.order(M, N, K, target):
+    for tm, tn, tk, lo in prior.order(M, N, K, target):
         cand = _plan_of(M, N, K, tm, tn, tk, lo, target)
         n += 1
         key = (not cand.fits_cache, cand.bottleneck, -(tm * tn * tk), lo)
-        if best is None or key < (not best.fits_cache, best.bottleneck,
-                                  -(best.tile_m * best.tile_n * best.tile_k), best.loop_order):
+        if best is None or key < (
+            not best.fits_cache,
+            best.bottleneck,
+            -(best.tile_m * best.tile_n * best.tile_k),
+            best.loop_order,
+        ):
             best = cand
         if best.fits_cache and best.mem_cost <= best.compute_cost:
-            break                                    # provably unbeatable: bottleneck floor
+            break  # provably unbeatable: bottleneck floor
     return best, n
 
 
@@ -216,10 +237,11 @@ class TilePriorCertificate:
         return 1.0 - self.nodes_guided / max(1, self.nodes_exhaustive)
 
 
-def tile_prior_certificate(shapes: list, prior: FrozenTilePrior,
-                           target: TargetProfile) -> TilePriorCertificate:
+def tile_prior_certificate(
+    shapes: list, prior: FrozenTilePrior, target: TargetProfile
+) -> TilePriorCertificate:
     checked = mism = ne = ng = 0
-    for (M, N, K) in shapes:
+    for M, N, K in shapes:
         exact, n_ex = _exhaustive(M, N, K, target)
         guided, n_gd = guided_plan_matmul(M, N, K, target, prior)
         checked += 1
@@ -227,8 +249,9 @@ def tile_prior_certificate(shapes: list, prior: FrozenTilePrior,
         ng += n_gd
         if (guided.fits_cache, guided.bottleneck) != (exact.fits_cache, exact.bottleneck):
             mism += 1
-    return TilePriorCertificate(checked=checked, mismatches=mism,
-                                nodes_exhaustive=ne, nodes_guided=ng)
+    return TilePriorCertificate(
+        checked=checked, mismatches=mism, nodes_exhaustive=ne, nodes_guided=ng
+    )
 
 
 # --- D3 slice 2: the PERSISTED prior table, generation-tied to the calibloop ------------------
@@ -243,17 +266,33 @@ def save_tile_prior(prior: FrozenTilePrior, *, target_name: str, cal_gen: int) -
     the microbench table's generation (`CalibratedProfile.cal_gen`), so a persisted prior
     names exactly which measured cost model produced its training labels."""
     import json  # noqa: PLC0415
+
     if not isinstance(prior, FrozenTilePrior):
         raise ValueError("tile prior must be a FrozenTilePrior")
-    if (not isinstance(target_name, str) or not target_name or len(target_name) > 4096 or
-            any(ord(ch) < 0x20 for ch in target_name)):
+    if (
+        not isinstance(target_name, str)
+        or not target_name
+        or len(target_name) > 4096
+        or any(ord(ch) < 0x20 for ch in target_name)
+    ):
         raise ValueError("tile-prior target must be a bounded string")
-    if (isinstance(cal_gen, bool) or not isinstance(cal_gen, int) or
-            not 0 <= cal_gen <= (1 << 63) - 1):
+    if (
+        isinstance(cal_gen, bool)
+        or not isinstance(cal_gen, int)
+        or not 0 <= cal_gen <= (1 << 63) - 1
+    ):
         raise ValueError("tile-prior cal_gen must be a non-negative i63")
-    return json.dumps({"kind": PRIOR_KIND, "schema": PRIOR_SCHEMA,
-                       "target": target_name, "cal_gen": cal_gen,
-                       "wq": list(prior.wq)}, indent=2, sort_keys=True)
+    return json.dumps(
+        {
+            "kind": PRIOR_KIND,
+            "schema": PRIOR_SCHEMA,
+            "target": target_name,
+            "cal_gen": cal_gen,
+            "wq": list(prior.wq),
+        },
+        indent=2,
+        sort_keys=True,
+    )
 
 
 def load_tile_prior(text: str, *, expect_target: str, expect_cal_gen: int) -> FrozenTilePrior:
@@ -272,27 +311,42 @@ def load_tile_prior(text: str, *, expect_target: str, expect_cal_gen: int) -> Fr
     if isinstance(schema, bool) or not isinstance(schema, int):
         raise ValueError("tile-prior schema must be an integer")
     if schema > PRIOR_SCHEMA:
-        raise ValueError(f"tile-prior schema v{schema} is newer than this build's "
-                         f"v{PRIOR_SCHEMA}; upgrade BCIR to load this prior")
+        raise ValueError(
+            f"tile-prior schema v{schema} is newer than this build's "
+            f"v{PRIOR_SCHEMA}; upgrade BCIR to load this prior"
+        )
     if schema != PRIOR_SCHEMA:
         raise ValueError(f"unsupported tile-prior schema v{schema}")
     target = d["target"]
-    if (not isinstance(target, str) or not target or len(target) > 4096 or
-            any(ord(ch) < 0x20 for ch in target)):
+    if (
+        not isinstance(target, str)
+        or not target
+        or len(target) > 4096
+        or any(ord(ch) < 0x20 for ch in target)
+    ):
         raise ValueError("tile-prior target must be a bounded string")
     if target != expect_target:
-        raise ValueError(f"tile prior was trained for target {target!r}, "
-                         f"not {expect_target!r} -- retrain")
+        raise ValueError(
+            f"tile prior was trained for target {target!r}, not {expect_target!r} -- retrain"
+        )
     cal_gen = d["cal_gen"]
-    if (isinstance(cal_gen, bool) or not isinstance(cal_gen, int) or
-            not 0 <= cal_gen <= (1 << 63) - 1):
+    if (
+        isinstance(cal_gen, bool)
+        or not isinstance(cal_gen, int)
+        or not 0 <= cal_gen <= (1 << 63) - 1
+    ):
         raise ValueError("tile-prior cal_gen must be a non-negative i63")
-    if (isinstance(expect_cal_gen, bool) or not isinstance(expect_cal_gen, int) or
-            not 0 <= expect_cal_gen <= (1 << 63) - 1):
+    if (
+        isinstance(expect_cal_gen, bool)
+        or not isinstance(expect_cal_gen, int)
+        or not 0 <= expect_cal_gen <= (1 << 63) - 1
+    ):
         raise ValueError("expected tile-prior cal_gen must be a non-negative i63")
     if cal_gen != expect_cal_gen:
-        raise ValueError(f"tile prior is STALE: trained under cal_gen {cal_gen}, "
-                         f"the live table is cal_gen {expect_cal_gen} -- retrain")
+        raise ValueError(
+            f"tile prior is STALE: trained under cal_gen {cal_gen}, "
+            f"the live table is cal_gen {expect_cal_gen} -- retrain"
+        )
     weights = d["wq"]
     if not isinstance(weights, list):
         raise ValueError("tile-prior wq must be an array")

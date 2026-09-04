@@ -44,6 +44,7 @@ from .cost import DIMS, CostVector
 
 # --- objective support ------------------------------------------------------------
 
+
 def support(cv: CostVector) -> frozenset:
     """Supp(J): the set of cost-dimension names where the objective is nonzero --
     where the objective matters."""
@@ -68,8 +69,9 @@ class MappingFunction:
 
     def image(self, dims) -> frozenset:
         """f applied to a set of source dimensions (those it does not discharge)."""
-        return frozenset(self.dim_map[d] for d in dims
-                         if d not in self.discharged and d in self.dim_map)
+        return frozenset(
+            self.dim_map[d] for d in dims if d not in self.discharged and d in self.dim_map
+        )
 
     def preserves_support(self, source: CostVector, target: CostVector) -> bool:
         """f(Supp(J)) ⊆ Supp(J'): every mattering source dim maps to a mattering
@@ -81,12 +83,14 @@ class MappingFunction:
         discharged, and absent from the target's support) -- the R12 offenders."""
         tgt = support(target)
         return frozenset(
-            d for d in support(source)
-            if d not in self.discharged
-            and self.dim_map.get(d) not in tgt)
+            d
+            for d in support(source)
+            if d not in self.discharged and self.dim_map.get(d) not in tgt
+        )
 
 
 # --- commutativity (path independence) -------------------------------------------
+
 
 @dataclass(frozen=True)
 class CommutingSquare:
@@ -95,9 +99,9 @@ class CommutingSquare:
     law for any representation rail (the manifest/PARITY discipline generalized)."""
 
     name: str
-    phi: object               # the direct path  x -> z
-    psi: object               # the first leg    x -> y
-    lam: object               # the second leg   y -> z
+    phi: object  # the direct path  x -> z
+    psi: object  # the first leg    x -> y
+    lam: object  # the second leg   y -> z
 
     def commutes_on(self, x, eq=None) -> bool:
         eq = eq or (lambda a, b: a == b)

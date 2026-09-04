@@ -17,6 +17,7 @@ in-memory file map (the real driver path mounts a header search path); the resul
 both the parser and the Clang behaviour-equivalence harness consume, so the comparison validates the
 lowering of the *preprocessed* program.
 """
+
 from __future__ import annotations
 
 import re
@@ -29,25 +30,72 @@ _PREDEFINED = {"__STDC__": "1", "__STDC_VERSION__": "202311L", "__STDC_HOSTED__"
 _DYNAMIC = ("__FILE__", "__LINE__")
 # feature-test operators usable in #if (and reported as `defined`); evaluated in _eval.
 _HAS_OPS = ("__has_include", "__has_embed", "__has_attribute", "__has_builtin", "__has_c_attribute")
-_SUPPORTED_ATTRS = frozenset({"packed", "aligned"})    # attributes the L8 ABI honours (GCC __x__ ok)
+_SUPPORTED_ATTRS = frozenset({"packed", "aligned"})  # attributes the L8 ABI honours (GCC __x__ ok)
 # preprocessing tokens: identifier, number, string, char, or punctuation (multi-char first).
-_PUNCT = ["<<=", ">>=", "...", "->", "++", "--", "<<", ">>", "<=", ">=", "==", "!=", "&&", "||",
-          "##", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
-          "#", "+", "-", "*", "/", "%", "&", "|", "^", "~", "!", "<", ">", "=",
-          "(", ")", "{", "}", "[", "]", ";", ",", ".", ":", "?"]
+_PUNCT = [
+    "<<=",
+    ">>=",
+    "...",
+    "->",
+    "++",
+    "--",
+    "<<",
+    ">>",
+    "<=",
+    ">=",
+    "==",
+    "!=",
+    "&&",
+    "||",
+    "##",
+    "+=",
+    "-=",
+    "*=",
+    "/=",
+    "%=",
+    "&=",
+    "|=",
+    "^=",
+    "#",
+    "+",
+    "-",
+    "*",
+    "/",
+    "%",
+    "&",
+    "|",
+    "^",
+    "~",
+    "!",
+    "<",
+    ">",
+    "=",
+    "(",
+    ")",
+    "{",
+    "}",
+    "[",
+    "]",
+    ";",
+    ",",
+    ".",
+    ":",
+    "?",
+]
 _TOKEN_RE = re.compile(
-    r'"(?:\\.|[^"\\])*"'                          # string
-    r"|'(?:\\.|[^'\\])*'"                         # char
-    r"|\.?\d(?:[eEpP][-+]|[\w.'])*"               # pp-number (C23 ' seps; ints, hex/bin, floats w/ exp+suffix)
-    r"|[A-Za-z_]\w*"                             # identifier
-    r"|" + "|".join(re.escape(p) for p in _PUNCT) +
-    r"|\\")                                       # a stray backslash is its own token (e.g. a path in a
-    #                                               stringize arg `#x` -> `"C:\\tmp"`); it would otherwise be
-    #                                               dropped, corrupting the `#`-spelling.
+    r'"(?:\\.|[^"\\])*"'  # string
+    r"|'(?:\\.|[^'\\])*'"  # char
+    r"|\.?\d(?:[eEpP][-+]|[\w.'])*"  # pp-number (C23 ' seps; ints, hex/bin, floats w/ exp+suffix)
+    r"|[A-Za-z_]\w*"  # identifier
+    r"|" + "|".join(re.escape(p) for p in _PUNCT) + r"|\\"
+)  # a stray backslash is its own token (e.g. a path in a
+#                                               stringize arg `#x` -> `"C:\\tmp"`); it would otherwise be
+#                                               dropped, corrupting the `#`-spelling.
 
 
 class CPPError(Exception):
     """A preprocessing error. `pos` is a source byte offset when known (else a file-level banner)."""
+
     def __init__(self, message: str, pos: int | None = None):
         super().__init__(message)
         self.pos = pos
@@ -56,8 +104,8 @@ class CPPError(Exception):
 @dataclass
 class Macro:
     name: str
-    body: list                    # replacement tokens
-    params: list | None = None    # None == object-like; [] == nullary function-like
+    body: list  # replacement tokens
+    params: list | None = None  # None == object-like; [] == nullary function-like
     variadic: bool = False
 
 
@@ -70,27 +118,31 @@ def _is_id(t: str) -> bool:
 
 
 class Preprocessor:
-    def __init__(self, includes: dict | None = None, embeds: dict | None = None,
-                 search_paths: list | None = None, defines: dict | None = None):
-        self.includes = includes or {}            # name -> header text (the in-memory mount)
-        self.embeds = embeds or {}                # name -> bytes
-        self.search_paths = list(search_paths or [])   # -I dirs (+ the source dir): on-disk headers
-        self._disk_cache: dict[str, str | None] = {}   # resolved header name -> text (or None)
-        self.macros: dict[str, Macro] = {
-            n: Macro(n, _tokens(v)) for n, v in _PREDEFINED.items()}
-        date, clock = _translation_datetime()    # __DATE__/__TIME__: object macros (string bodies)
+    def __init__(
+        self,
+        includes: dict | None = None,
+        embeds: dict | None = None,
+        search_paths: list | None = None,
+        defines: dict | None = None,
+    ):
+        self.includes = includes or {}  # name -> header text (the in-memory mount)
+        self.embeds = embeds or {}  # name -> bytes
+        self.search_paths = list(search_paths or [])  # -I dirs (+ the source dir): on-disk headers
+        self._disk_cache: dict[str, str | None] = {}  # resolved header name -> text (or None)
+        self.macros: dict[str, Macro] = {n: Macro(n, _tokens(v)) for n, v in _PREDEFINED.items()}
+        date, clock = _translation_datetime()  # __DATE__/__TIME__: object macros (string bodies)
         self.macros["__DATE__"] = Macro("__DATE__", _tokens(f'"{date}"'))
         self.macros["__TIME__"] = Macro("__TIME__", _tokens(f'"{clock}"'))
-        for n, v in (defines or {}).items():      # -D name[=value]  (value "" -> defined as 1)
+        for n, v in (defines or {}).items():  # -D name[=value]  (value "" -> defined as 1)
             self.macros[n] = Macro(n, _tokens(str(v) if v != "" else "1"))
         self._depth = 0
-        self._cur_file = "<source>"               # __FILE__: the file currently being processed
-        self._cur_line = 0                         # __LINE__: its presumed line number
-        self._presumed = 0                         # presumed line of the *next* line (#line sets it)
-        self._incstack: list = []                 # active #include sites: (including_file, line), outer-first
-        self.linemap: list = []                   # per output line: (file, line, include-stack snapshot)
-        self.dep_paths: list = []                 # on-disk headers resolved by _resolve, in first-hit order
-                                                  #   (the -M/-MM dependency-output source, Phase 3)
+        self._cur_file = "<source>"  # __FILE__: the file currently being processed
+        self._cur_line = 0  # __LINE__: its presumed line number
+        self._presumed = 0  # presumed line of the *next* line (#line sets it)
+        self._incstack: list = []  # active #include sites: (including_file, line), outer-first
+        self.linemap: list = []  # per output line: (file, line, include-stack snapshot)
+        self.dep_paths: list = []  # on-disk headers resolved by _resolve, in first-hit order
+        #   (the -M/-MM dependency-output source, Phase 3)
 
     # --- public ---
     def process(self, text: str, name: str = "<source>") -> str:
@@ -114,6 +166,7 @@ class Preprocessor:
         if target in self._disk_cache:
             return self._disk_cache[target]
         import os  # noqa: PLC0415
+
         text = None
         for d in self.search_paths:
             p = os.path.join(d, target)
@@ -122,7 +175,7 @@ class Preprocessor:
                     text = read_bounded_text(p, "C header", max_bytes=16 << 20)
                 except ValueError as exc:
                     raise CPPError(str(exc)) from exc
-                self.dep_paths.append(p)          # first on-disk hit -> a build dependency (-M/-MM)
+                self.dep_paths.append(p)  # first on-disk hit -> a build dependency (-M/-MM)
                 break
         self._disk_cache[target] = text
         return text
@@ -171,7 +224,7 @@ class Preprocessor:
             self._conditional(op, rest, cond, parent)
             return
         if not active():
-            return                                       # skip directives in an inactive branch
+            return  # skip directives in an inactive branch
         if op == "define":
             self._define(rest)
         elif op == "undef":
@@ -185,7 +238,7 @@ class Preprocessor:
         elif op in ("error",):
             raise CPPError(f"#error {self._expand_text(rest)} (in {name})")
         elif op in ("warning", "pragma", ""):
-            pass                                         # accepted, no effect on lowering
+            pass  # accepted, no effect on lowering
         else:
             raise CPPError(f"unknown directive #{op} in {name}")
 
@@ -202,7 +255,7 @@ class Preprocessor:
             if not cond:
                 raise CPPError("#endif without #if")
             cond.pop()
-        else:                                            # elif / elifdef / elifndef / else
+        else:  # elif / elifdef / elifndef / else
             if not cond:
                 raise CPPError(f"#{op} without #if")
             top = cond[-1]
@@ -213,7 +266,7 @@ class Preprocessor:
                 take = (not top[1]) and self._defined(rest.split()[0])
             elif op == "elifndef":
                 take = (not top[1]) and not self._defined(rest.split()[0])
-            else:                                        # elif
+            else:  # elif
                 take = (not top[1]) and (par and self._eval(rest) != 0)
             top[0] = par and take
             top[1] = top[1] or take
@@ -225,7 +278,7 @@ class Preprocessor:
             return
         nameend = m.end()
         nm = m.group(1)
-        if nameend < len(rest) and rest[nameend] == "(":      # function-like
+        if nameend < len(rest) and rest[nameend] == "(":  # function-like
             depth, i = 0, nameend
             while i < len(rest):
                 if rest[i] == "(":
@@ -235,14 +288,14 @@ class Preprocessor:
                     if depth == 0:
                         break
                 i += 1
-            params_src = rest[nameend + 1:i]
-            body = rest[i + 1:].strip()
+            params_src = rest[nameend + 1 : i]
+            body = rest[i + 1 :].strip()
             params = [p.strip() for p in params_src.split(",") if p.strip()]
             variadic = bool(params) and params[-1] == "..."
             if variadic:
                 params[-1] = "__VA_ARGS__"
             self.macros[nm] = Macro(nm, _tokens(body), params, variadic)
-        else:                                                 # object-like
+        else:  # object-like
             self.macros[nm] = Macro(nm, _tokens(rest[nameend:].strip()))
 
     # --- #line ---
@@ -253,11 +306,11 @@ class Preprocessor:
         toks = self._expand(_tokens(rest), set())
         if not toks:
             return
-        m = re.match(r"\d+", toks[0])                         # a decimal digit sequence
+        m = re.match(r"\d+", toks[0])  # a decimal digit sequence
         if not m:
             return
         self._presumed = int(m.group())
-        for t in toks[1:]:                                    # an optional new file name
+        for t in toks[1:]:  # an optional new file name
             if t[:1] == '"':
                 self._cur_file = _unescape_str(t)
                 break
@@ -270,14 +323,16 @@ class Preprocessor:
         text = self._resolve(target)
         if text is None:
             if system:
-                return                                   # an unmapped <system> header: the frontend
+                return  # an unmapped <system> header: the frontend
                 #                                          models the standard types intrinsically.
-            raise CPPError(f"#include {target!r} not found (in {name}); searched the mount + "
-                           f"{len(self.search_paths)} -I path(s)")
+            raise CPPError(
+                f"#include {target!r} not found (in {name}); searched the mount + "
+                f"{len(self.search_paths)} -I path(s)"
+            )
         if self._depth >= 64:
             raise CPPError("#include nesting too deep")
         self._depth += 1
-        self._incstack.append((name, self._cur_line))    # the #include site, for the diagnostic frame
+        self._incstack.append((name, self._cur_line))  # the #include site, for the diagnostic frame
         try:
             self._run(self._logical_lines(text), out, target)
         finally:
@@ -308,7 +363,7 @@ class Preprocessor:
         """The expansion of a dynamic predefined macro at the current source position."""
         if t == "__LINE__":
             return str(self._cur_line)
-        esc = self._cur_file.replace("\\", "\\\\").replace('"', '\\"')   # __FILE__: a string literal
+        esc = self._cur_file.replace("\\", "\\\\").replace('"', '\\"')  # __FILE__: a string literal
         return f'"{esc}"'
 
     def _expand_text(self, text: str) -> str:
@@ -321,7 +376,7 @@ class Preprocessor:
             t = toks[i]
             if _is_id(t) and t in self.macros and t not in hide:
                 mac = self.macros[t]
-                if mac.params is None:                        # object-like
+                if mac.params is None:  # object-like
                     # C 6.10.4.3: `##` pastes ANY two adjacent replacement-list tokens, not only ones
                     # adjacent to a parameter -- so an OBJECT-macro body `a##c` / `1##2` pastes too. Run
                     # the body through the SHARED substitute/paste path (with no args: `#`/`##` then see
@@ -336,13 +391,13 @@ class Preprocessor:
                     out += self._expand(self._substitute(mac, args), hide | {t})
                     i = j
                     continue
-            elif _is_id(t) and t in _DYNAMIC:                 # __FILE__ / __LINE__ (a #define wins)
+            elif _is_id(t) and t in _DYNAMIC:  # __FILE__ / __LINE__ (a #define wins)
                 out.append(self._dynamic_value(t))
                 i += 1
                 continue
             elif t == "_Pragma" and i + 1 < len(toks) and toks[i + 1] == "(":
-                _, i = self._collect_args(toks, i + 1)        # _Pragma("..."): a lowering no-op
-                continue                                      # (like #pragma) — consume, emit nothing
+                _, i = self._collect_args(toks, i + 1)  # _Pragma("..."): a lowering no-op
+                continue  # (like #pragma) — consume, emit nothing
             out.append(t)
             i += 1
         return out
@@ -392,7 +447,9 @@ class Preprocessor:
                 amap[p] = flat
             else:
                 amap[p] = args[k] if k < len(args) else []
-            eamap[p] = self._expand(list(amap[p]), set())     # prescan: full expansion in a fresh context
+            eamap[p] = self._expand(
+                list(amap[p]), set()
+            )  # prescan: full expansion in a fresh context
         return self._subst_tokens(list(mac.body), amap, eamap)
 
     def _subst_tokens(self, body: list, amap: dict, eamap: dict | None = None) -> list:
@@ -404,16 +461,16 @@ class Preprocessor:
         i = 0
         while i < len(body):
             t = body[i]
-            if t == "__VA_OPT__" and i + 1 < len(body) and body[i + 1] == "(":   # C23 __VA_OPT__
+            if t == "__VA_OPT__" and i + 1 < len(body) and body[i + 1] == "(":  # C23 __VA_OPT__
                 content, i = _balanced(body, i + 1)
-                if amap.get("__VA_ARGS__"):                # __VA_ARGS__ non-empty -> the content
+                if amap.get("__VA_ARGS__"):  # __VA_ARGS__ non-empty -> the content
                     out += self._subst_tokens(content, amap, eamap)
                 continue
-            if t == "#" and i + 1 < len(body) and body[i + 1] in amap:     # stringize (RAW arg)
+            if t == "#" and i + 1 < len(body) and body[i + 1] in amap:  # stringize (RAW arg)
                 out.append(_stringize(amap[body[i + 1]]))
                 i += 2
                 continue
-            if t == "##" and i + 1 < len(body):                            # paste (RAW args; placemarkers)
+            if t == "##" and i + 1 < len(body):  # paste (RAW args; placemarkers)
                 right = amap.get(body[i + 1], [body[i + 1]])
                 left = out.pop() if out else ""
                 # An empty operand acts as a placemarker (C 6.10.4.3): `a ## b` with an empty side yields
@@ -421,34 +478,46 @@ class Preprocessor:
                 # exist; otherwise the surviving side passes through untouched. (Pasting against an empty
                 # `out` -- the left arg expanded to nothing -- still elides the `##` instead of emitting it.)
                 if left == "":
-                    out += right                            # empty left -> result is the right operand
+                    out += right  # empty left -> result is the right operand
                 elif right:
-                    out.append(left + right[0])             # glue the inner tokens, keep the right's tail
+                    out.append(left + right[0])  # glue the inner tokens, keep the right's tail
                     out += right[1:]
                 else:
-                    out.append(left)                        # empty right -> result is the left operand
+                    out.append(left)  # empty right -> result is the left operand
                 i += 2
                 continue
-            out += eamap.get(t, [t])                                       # prescanned arg or literal
+            out += eamap.get(t, [t])  # prescanned arg or literal
             i += 1
         return out
 
     # --- constant-expression evaluation (#if / #elif) ---
     def _eval(self, expr: str) -> int:
         # handle defined / the __has_* operators BEFORE macro expansion, then expand.
-        expr = re.sub(r"\bdefined\s*\(\s*(\w+)\s*\)",
-                      lambda m: "1" if self._defined(m.group(1)) else "0", expr)
-        expr = re.sub(r"\bdefined\s+(\w+)",
-                      lambda m: "1" if self._defined(m.group(1)) else "0", expr)
-        expr = re.sub(r"\b__has_include\s*\(([^)]*)\)",
-                      lambda m: "1" if self._resolve(self._header_name(m.group(1))) is not None
-                      else "0", expr)
-        expr = re.sub(r"\b__has_embed\s*\(([^)]*)\)",
-                      lambda m: "1" if self._header_name(m.group(1)) in self.embeds else "0", expr)
+        expr = re.sub(
+            r"\bdefined\s*\(\s*(\w+)\s*\)",
+            lambda m: "1" if self._defined(m.group(1)) else "0",
+            expr,
+        )
+        expr = re.sub(
+            r"\bdefined\s+(\w+)", lambda m: "1" if self._defined(m.group(1)) else "0", expr
+        )
+        expr = re.sub(
+            r"\b__has_include\s*\(([^)]*)\)",
+            lambda m: "1" if self._resolve(self._header_name(m.group(1))) is not None else "0",
+            expr,
+        )
+        expr = re.sub(
+            r"\b__has_embed\s*\(([^)]*)\)",
+            lambda m: "1" if self._header_name(m.group(1)) in self.embeds else "0",
+            expr,
+        )
         # feature-test macros for supported language features: only the L8 ABI attributes are
         # honoured today (no compiler builtins, no C23 [[...]] attributes), reported conservatively.
-        expr = re.sub(r"\b__has_attribute\s*\(\s*(\w+)\s*\)",
-                      lambda m: "1" if m.group(1).strip("_") in _SUPPORTED_ATTRS else "0", expr)
+        expr = re.sub(
+            r"\b__has_attribute\s*\(\s*(\w+)\s*\)",
+            lambda m: "1" if m.group(1).strip("_") in _SUPPORTED_ATTRS else "0",
+            expr,
+        )
         expr = re.sub(r"\b__has_builtin\s*\([^)]*\)", "0", expr)
         expr = re.sub(r"\b__has_c_attribute\s*\([^)]*\)", "0", expr)
         toks = self._expand(_tokens(expr), set())
@@ -461,12 +530,16 @@ def _translation_datetime() -> tuple[str, str]:
     plain integer, else the current UTC time. The C twin shares the exact convention, so the
     dual-rail output is byte-identical whenever the epoch is pinned."""
     import os, time  # noqa: PLC0415,E401
+
     epoch = os.environ.get("SOURCE_DATE_EPOCH", "")
     tm = time.gmtime(int(epoch)) if epoch.isdigit() else time.gmtime()
-    mon = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
-           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")[tm.tm_mon - 1]
-    return (f"{mon} {tm.tm_mday:2d} {tm.tm_year}",
-            f"{tm.tm_hour:02d}:{tm.tm_min:02d}:{tm.tm_sec:02d}")
+    mon = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")[
+        tm.tm_mon - 1
+    ]
+    return (
+        f"{mon} {tm.tm_mday:2d} {tm.tm_year}",
+        f"{tm.tm_hour:02d}:{tm.tm_min:02d}:{tm.tm_sec:02d}",
+    )
 
 
 def _balanced(toks: list, k: int) -> tuple[list, int]:
@@ -498,36 +571,37 @@ def _strip_comments(text: str) -> str:
     i, n = 0, len(text)
     while i < n:
         c = text[i]
-        if c == '"' or (c == "'" and not (i and text[i - 1] in _HEXD
-                                          and i + 1 < n and text[i + 1] in _HEXD)):
-            out.append(c)                                      # a string/char literal: copy verbatim
+        if c == '"' or (
+            c == "'" and not (i and text[i - 1] in _HEXD and i + 1 < n and text[i + 1] in _HEXD)
+        ):
+            out.append(c)  # a string/char literal: copy verbatim
             i += 1
             while i < n:
                 ch = text[i]
-                if ch == "\\" and i + 1 < n:                   # an escape: copy the pair (incl. \" \')
+                if ch == "\\" and i + 1 < n:  # an escape: copy the pair (incl. \" \')
                     out.append(ch)
                     out.append(text[i + 1])
                     i += 2
                     continue
                 out.append(ch)
                 i += 1
-                if ch == c:                                    # the closing quote
+                if ch == c:  # the closing quote
                     break
             continue
-        if c == "/" and i + 1 < n and text[i + 1] == "/":      # line comment -> one space
+        if c == "/" and i + 1 < n and text[i + 1] == "/":  # line comment -> one space
             i += 2
             while i < n and text[i] != "\n":
                 i += 1
             out.append(" ")
             continue
-        if c == "/" and i + 1 < n and text[i + 1] == "*":      # block comment -> space + kept \n's
+        if c == "/" and i + 1 < n and text[i + 1] == "*":  # block comment -> space + kept \n's
             i += 2
             nl = 0
             while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
                 if text[i] == "\n":
                     nl += 1
                 i += 1
-            i += 2                                             # consume the closing */
+            i += 2  # consume the closing */
             out.append(" " + "\n" * nl)
             continue
         out.append(c)
@@ -567,17 +641,28 @@ def _stringize(toks: list[str]) -> str:
     applied per-token to literals, not blanket to the joined text."""
     esc = []
     for t in toks:
-        if t[:1] in ('"', "'") and len(t) >= 2:                # a string/char literal -> escape \ and "
+        if t[:1] in ('"', "'") and len(t) >= 2:  # a string/char literal -> escape \ and "
             esc.append(t.replace("\\", "\\\\").replace('"', '\\"'))
-        else:                                                  # any other token, incl. a bare `\`, verbatim
+        else:  # any other token, incl. a bare `\`, verbatim
             esc.append(t)
     return '"' + _join(esc) + '"'
 
 
 class _ConstEval:
     """A small integer constant-expression evaluator for #if (undefined identifiers -> 0)."""
-    _LEVELS = [("||",), ("&&",), ("|",), ("^",), ("&",), ("==", "!="),
-               ("<", ">", "<=", ">="), ("<<", ">>"), ("+", "-"), ("*", "/", "%")]
+
+    _LEVELS = [
+        ("||",),
+        ("&&",),
+        ("|",),
+        ("^",),
+        ("&",),
+        ("==", "!="),
+        ("<", ">", "<=", ">="),
+        ("<<", ">>"),
+        ("+", "-"),
+        ("*", "/", "%"),
+    ]
 
     def __init__(self, toks: list[str]):
         self.t = toks
@@ -633,7 +718,7 @@ class _ConstEval:
             return 0
         if t[:1].isdigit():
             return _int_lit(t)
-        return 0                                          # undefined identifier -> 0
+        return 0  # undefined identifier -> 0
 
 
 def _int_lit(t: str) -> int:
@@ -655,16 +740,35 @@ def _apply(op: str, a: int, b: int) -> int:
     if op == "%":
         return a % b if b else 0
     return {
-        "||": int(bool(a) or bool(b)), "&&": int(bool(a) and bool(b)), "|": a | b, "^": a ^ b,
-        "&": a & b, "==": int(a == b), "!=": int(a != b), "<": int(a < b), ">": int(a > b),
-        "<=": int(a <= b), ">=": int(a >= b), "<<": a << b, ">>": a >> b, "+": a + b, "-": a - b,
+        "||": int(bool(a) or bool(b)),
+        "&&": int(bool(a) and bool(b)),
+        "|": a | b,
+        "^": a ^ b,
+        "&": a & b,
+        "==": int(a == b),
+        "!=": int(a != b),
+        "<": int(a < b),
+        ">": int(a > b),
+        "<=": int(a <= b),
+        ">=": int(a >= b),
+        "<<": a << b,
+        ">>": a >> b,
+        "+": a + b,
+        "-": a - b,
         "*": a * b,
     }[op]
 
 
-def preprocess(text: str, *, includes: dict | None = None, embeds: dict | None = None,
-               search_paths: list | None = None, defines: dict | None = None,
-               name: str = "<source>", return_map: bool = False):
+def preprocess(
+    text: str,
+    *,
+    includes: dict | None = None,
+    embeds: dict | None = None,
+    search_paths: list | None = None,
+    defines: dict | None = None,
+    name: str = "<source>",
+    return_map: bool = False,
+):
     """Preprocess `text` to the flat translation-unit string. With `return_map=True`, also return the
     per-output-line provenance map (file, line, #include stack) so diagnostics resolve to their
     origin file even across inlined includes."""

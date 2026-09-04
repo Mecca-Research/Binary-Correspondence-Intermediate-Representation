@@ -31,11 +31,33 @@ _UNREPRESENTABLE = object()
 
 #: X.680 Table 1 built-in types that need no extra notation to parse.
 _SIMPLE_BUILTINS = {
-    "BOOLEAN", "NULL", "REAL", "UTF8String", "NumericString", "PrintableString",
-    "TeletexString", "T61String", "VideotexString", "IA5String", "GraphicString",
-    "VisibleString", "ISO646String", "GeneralString", "UniversalString", "BMPString",
-    "ObjectDescriptor", "UTCTime", "GeneralizedTime", "DATE", "TIME-OF-DAY",
-    "DATE-TIME", "DURATION", "EXTERNAL", "TIME", "OID-IRI", "RELATIVE-OID-IRI",
+    "BOOLEAN",
+    "NULL",
+    "REAL",
+    "UTF8String",
+    "NumericString",
+    "PrintableString",
+    "TeletexString",
+    "T61String",
+    "VideotexString",
+    "IA5String",
+    "GraphicString",
+    "VisibleString",
+    "ISO646String",
+    "GeneralString",
+    "UniversalString",
+    "BMPString",
+    "ObjectDescriptor",
+    "UTCTime",
+    "GeneralizedTime",
+    "DATE",
+    "TIME-OF-DAY",
+    "DATE-TIME",
+    "DURATION",
+    "EXTERNAL",
+    "TIME",
+    "OID-IRI",
+    "RELATIVE-OID-IRI",
     "RELATIVE-OID",
 }
 
@@ -130,9 +152,14 @@ class Parser:
         self.expect("reserved", "BEGIN")
 
         exports, imports = self.parse_module_body_header()
-        module = ast.ModuleNode(name=name, oid=oid, tag_default=tag_default,
-                                extensibility_implied=extensibility,
-                                imports=imports, exports=exports)
+        module = ast.ModuleNode(
+            name=name,
+            oid=oid,
+            tag_default=tag_default,
+            extensibility_implied=extensibility,
+            imports=imports,
+            exports=exports,
+        )
         while not self.at_word("END"):
             if self.current.kind == "end":
                 raise self.error("module is missing its END (X.680 13.1)")
@@ -167,7 +194,8 @@ class Parser:
             symbols.append(self.take().text)
             # A symbol may be followed by `{}` marking a parameterized reference (X.683).
             if self.at_punct("{") and self.at_punct("}", 1):
-                self.take(); self.take()
+                self.take()
+                self.take()
             if not self.accept("punct", ","):
                 break
         return symbols
@@ -175,20 +203,23 @@ class Parser:
     def parse_assignment(self):
         tok = self.current
         if self.at_word("ENCODING-CONTROL"):
-            raise self.error(f"{_OUT_OF_SCOPE['ENCODING-CONTROL']} are not supported "
-                             "(roadmap phase G)")
+            raise self.error(
+                f"{_OUT_OF_SCOPE['ENCODING-CONTROL']} are not supported (roadmap phase G)"
+            )
         # X.681 §11.1/§12.1: an information object or object set is `<name> CLASSNAME ::=
         # { ... }` -- TWO references before the assignment, where a type assignment has
         # one. That two-token lookahead is the whole discriminator.
-        if (tok.kind in ("typereference", "identifier")
-                and self.peek(1).kind == "typereference"
-                and self.at_punct("::=", 2)):
+        if (
+            tok.kind in ("typereference", "identifier")
+            and self.peek(1).kind == "typereference"
+            and self.at_punct("::=", 2)
+        ):
             return self.parse_object_or_set()
         # X.683 §8.2: a parameterized assignment is an ordinary one with a ParameterList
         # after the initial reference. It is spotted here, before the X.681 two-token
         # lookahead below, because `Set {P} CLASS ::= {...}` puts the list BETWEEN the two
         # references and would otherwise not look like an object set assignment at all.
-        if (tok.kind in ("typereference", "identifier") and self.at_punct("{", 1)):
+        if tok.kind in ("typereference", "identifier") and self.at_punct("{", 1):
             save = self.index
             name = self.take().text
             params, governors = self._parameter_list()
@@ -270,8 +301,12 @@ class Parser:
         self.take()
         # A ParameterList is followed by the rest of the assignment; if what follows cannot
         # begin one, the braces were something else entirely.
-        if not (self.at_punct("::=") or self.at("typereference")
-                or self.at("reserved") or self.at("identifier")):
+        if not (
+            self.at_punct("::=")
+            or self.at("typereference")
+            or self.at("reserved")
+            or self.at("identifier")
+        ):
             self.index = save
             return None, ()
         _ = mark
@@ -299,17 +334,19 @@ class Parser:
                 raise self.error("a field reference needs a name after '&'", token)
             is_type_field = field_name[1].isupper()
             declared = None
-            if not is_type_field and not (self.at_punct(",") or self.at_punct("}")
-                                          or self.at_word("OPTIONAL")
-                                          or self.at_word("UNIQUE")):
+            if not is_type_field and not (
+                self.at_punct(",")
+                or self.at_punct("}")
+                or self.at_word("OPTIONAL")
+                or self.at_word("UNIQUE")
+            ):
                 declared = self.parse_type()
             unique = bool(self.accept("reserved", "UNIQUE"))
             optional = bool(self.accept("reserved", "OPTIONAL"))
             if self.at_word("DEFAULT"):
                 self.take()
                 self.parse_value() if not self.at_punct("{") else self.parse_value()
-            fields.append(ast.ClassField(field_name, is_type_field, declared, optional,
-                                        unique))
+            fields.append(ast.ClassField(field_name, is_type_field, declared, optional, unique))
             if not self.accept("punct", ","):
                 break
         self.expect_punct("}")
@@ -339,8 +376,7 @@ class Parser:
         start = self.index
         if not self.at_punct("{"):
             self.take()
-            return ast.ObjectAssignment(name, object_class,
-                                        self._raw_span(start, self.index))
+            return ast.ObjectAssignment(name, object_class, self._raw_span(start, self.index))
         # A capitalised name denotes an object SET (§12.1); a lower-case one an object.
         is_set = name[0].isupper()
         cls = self.classes_seen.get(object_class)
@@ -359,18 +395,23 @@ class Parser:
             self._skip_balanced("{", "}")
             raw = self._raw_span(start, self.index)
             members = tuple(
-                self.tokens[i].text for i in range(start, self.index)
-                if self.tokens[i].kind in ("typereference", "identifier"))
+                self.tokens[i].text
+                for i in range(start, self.index)
+                if self.tokens[i].kind in ("typereference", "identifier")
+            )
             if is_set:
                 return ast.ObjectSetAssignment(name, object_class, members, raw)
             return ast.ObjectAssignment(name, object_class, raw)
         raw = self._raw_span(start, self.index)
         members = tuple(
-            self.tokens[i].text for i in range(start, self.index)
-            if self.tokens[i].kind in ("typereference", "identifier"))
+            self.tokens[i].text
+            for i in range(start, self.index)
+            if self.tokens[i].kind in ("typereference", "identifier")
+        )
         if is_set:
-            return ast.ObjectSetAssignment(name, object_class, members, raw,
-                                           tuple(elements), extensible)
+            return ast.ObjectSetAssignment(
+                name, object_class, members, raw, tuple(elements), extensible
+            )
         return ast.ObjectAssignment(name, object_class, raw, tuple(settings))
 
     def _parse_object_body(self, cls) -> list:
@@ -386,27 +427,26 @@ class Parser:
         if cls is not None and cls.with_syntax:
             for token in cls.with_syntax:
                 if self.at_punct("}"):
-                    break                                   # an omitted OPTIONAL group
+                    break  # an omitted OPTIONAL group
                 if token in ("[", "]"):
-                    continue                                # §10.5 optional-group brackets
+                    continue  # §10.5 optional-group brackets
                 if token.startswith("&"):
-                    settings.append(ast.FieldSetting(
-                        token, self._parse_setting(cls, token)))
+                    settings.append(ast.FieldSetting(token, self._parse_setting(cls, token)))
                 elif self.current.text == token:
-                    self.take()                             # a literal word of the syntax
+                    self.take()  # a literal word of the syntax
                 else:
                     # The object does not follow its class's DefinedSyntax. Raising sends
                     # `parse_object_or_set` down the raw-span fallback rather than producing
                     # a half-read object that would contribute a wrong row to the table.
                     raise self.error(
                         f"object does not match the WITH SYNTAX of its class: expected "
-                        f"{token!r} (X.681 11.4/11.6)")
+                        f"{token!r} (X.681 11.4/11.6)"
+                    )
                 self.accept("punct", ",")
         else:
             while not self.at_punct("}"):
                 field_name = self.expect("fieldreference").text
-                settings.append(ast.FieldSetting(
-                    field_name, self._parse_setting(cls, field_name)))
+                settings.append(ast.FieldSetting(field_name, self._parse_setting(cls, field_name)))
                 if not self.accept("punct", ","):
                     break
         self.expect_punct("}")
@@ -442,14 +482,15 @@ class Parser:
         while not self.at_punct("}"):
             if self.at_punct("..."):
                 self.take()
-                extensible = True                           # §12.3
+                extensible = True  # §12.3
             elif self.at_punct("{"):
                 elements.append(tuple(self._parse_object_body(cls)))
             elif self.at("typereference") or self.at("identifier"):
-                elements.append(self.take().text)           # a defined object / object set
+                elements.append(self.take().text)  # a defined object / object set
             else:
-                raise self.error("an object set element must be an object, a reference "
-                                 "or '...' (X.681 12.3)")
+                raise self.error(
+                    "an object set element must be an object, a reference or '...' (X.681 12.3)"
+                )
             if not (self.accept("punct", "|") or self.accept("punct", ",")):
                 break
         self.expect_punct("}")
@@ -464,18 +505,18 @@ class Parser:
         if not (self.at_punct("(") and self.at_punct("{", 1)):
             return None
         save = self.index
-        self.take()                                        # "("
-        self.take()                                        # "{"
+        self.take()  # "("
+        self.take()  # "{"
         if not self.at("typereference"):
-            self.index = save                              # a braced VALUE, not an ObjectSet
+            self.index = save  # a braced VALUE, not an ObjectSet
             return None
         object_set = self.take().text
         if not self.at_punct("}"):
             self.index = save
             return None
-        self.take()                                        # "}"
+        self.take()  # "}"
         ats: list[str] = []
-        if self.at_punct("{"):                             # §10.7 ComponentRelationConstraint
+        if self.at_punct("{"):  # §10.7 ComponentRelationConstraint
             self.take()
             while not self.at_punct("}"):
                 if not self.at_punct("@"):
@@ -499,7 +540,7 @@ class Parser:
         if not self.at_punct(")"):
             self.index = save
             return None
-        self.take()                                        # ")"
+        self.take()  # ")"
         return ast.TableConstraintNode(object_set, tuple(ats))
 
     def _raw_span(self, start: int, stop: int) -> str:
@@ -525,8 +566,12 @@ class Parser:
         # it, so it is attached to the node rather than dropped. A serial application of
         # constraints (§49.9) intersects: each one further restricts the last.
         collected = []
-        while self.at_punct("(") or self.at_word("SIZE") or self.at_word("WITH") \
-                or self.at_word("FROM"):
+        while (
+            self.at_punct("(")
+            or self.at_word("SIZE")
+            or self.at_word("WITH")
+            or self.at_word("FROM")
+        ):
             built = self._constraint()
             if built is not None:
                 collected.append(built)
@@ -616,7 +661,7 @@ class Parser:
                 self.take()
                 return ast.TypeRef(self.take().text, module_name)
             name = self.take().text
-            if self.at_punct("{"):                         # X.683 §9.2 ParameterizedType
+            if self.at_punct("{"):  # X.683 §9.2 ParameterizedType
                 return ast.ParameterizedRef(name, self._actual_parameter_list())
             return ast.TypeRef(name)
 
@@ -633,8 +678,9 @@ class Parser:
         self.expect_punct("{")
         actuals: list[object] = []
         while not self.at_punct("}"):
-            if (self.current.kind in ("typereference", "identifier")
-                    and (self.at_punct(",", 1) or self.at_punct("}", 1))):
+            if self.current.kind in ("typereference", "identifier") and (
+                self.at_punct(",", 1) or self.at_punct("}", 1)
+            ):
                 actuals.append(self.take().text)
             elif self.at_punct("{"):
                 start = self.index
@@ -701,8 +747,11 @@ class Parser:
 
     def parse_maybe_named_type(self):
         """`Type` or `identifier Type` (§25.1) -- the identifier is documentation."""
-        if (self.current.kind == "identifier"
-                and not self.at_punct(",", 1) and not self.at_punct("}", 1)):
+        if (
+            self.current.kind == "identifier"
+            and not self.at_punct(",", 1)
+            and not self.at_punct("}", 1)
+        ):
             return self.take().text, self.parse_type()
         return None, self.parse_type()
 
@@ -718,8 +767,10 @@ class Parser:
             elif self.at_punct("[["):
                 items.append(self.parse_extension_group(choice))
             elif self.at_word("COMPONENTS"):
-                raise self.error("COMPONENTS OF requires component-list inlining, "
-                                 "which this front-end does not implement (X.680 25.1)")
+                raise self.error(
+                    "COMPONENTS OF requires component-list inlining, "
+                    "which this front-end does not implement (X.680 25.1)"
+                )
             else:
                 items.append(self.parse_component(choice))
             if not self.accept("punct", ","):
@@ -736,7 +787,8 @@ class Parser:
         """
         self.expect_punct("[[")
         if self.at("number") and self.at_punct(":", 1):
-            self.take(); self.take()
+            self.take()
+            self.take()
         members: list[object] = []
         while not self.at_punct("]]"):
             members.append(self.parse_component(choice))
@@ -823,8 +875,7 @@ class Parser:
             return ast.StrValue(self.take().text)
         if tok.kind == "bstring":
             self.take()
-            data = int(tok.text, 2).to_bytes((len(tok.text) + 7) // 8, "big") \
-                if tok.text else b""
+            data = int(tok.text, 2).to_bytes((len(tok.text) + 7) // 8, "big") if tok.text else b""
             return ast.BitsValue(data, len(tok.text))
         if tok.kind == "hstring":
             self.take()
@@ -859,8 +910,9 @@ class Parser:
         items = self._try_value_list(start)
         arcs = self._try_arc_list(start)
         if items is None and arcs is None:
-            raise self.error("brace content is neither a value list nor an object "
-                             "identifier", self.tokens[start])
+            raise self.error(
+                "brace content is neither a value list nor an object identifier", self.tokens[start]
+            )
         # Leave the cursor after the closing brace regardless of which reading parsed.
         self.index = start
         self._skip_balanced("{", "}")
@@ -906,8 +958,7 @@ class Parser:
                 else:
                     arcs.append(ast.OidArc(tok.text, None))
             else:
-                raise self.error(
-                    f"expected an object identifier arc, found {tok.text!r}", tok)
+                raise self.error(f"expected an object identifier arc, found {tok.text!r}", tok)
         self.expect_punct("}")
         return ast.OidValue(tuple(arcs))
 
@@ -932,8 +983,7 @@ class Parser:
         CONSTRAINED BY, which is recorded because §9 NOTE 1 calls it a form of comment and
         deleting an author's stated intent is not the same as ignoring it.
         """
-        if self.at_punct("(") and (self.at_word("CONTAINING", 1)
-                                   or self.at_word("ENCODED", 1)):
+        if self.at_punct("(") and (self.at_word("CONTAINING", 1) or self.at_word("ENCODED", 1)):
             return self._contents_constraint()
         if self.at_punct("(") and self.at_word("CONSTRAINED", 1):
             return self._user_defined_constraint()
@@ -976,15 +1026,16 @@ class Parser:
         if self.at_word("ENCODED"):
             self.take()
             self.expect("reserved", "BY")
-            encoded_by = self.parse_value()               # §11.2: an OBJECT IDENTIFIER
+            encoded_by = self.parse_value()  # §11.2: an OBJECT IDENTIFIER
         self.expect_punct(")")
         return ast.ContentsConstraintNode(contained, encoded_by)
 
     def _user_defined_constraint(self):
         """X.682 §9.1: `( CONSTRAINED BY { ... } )`, recorded verbatim."""
         self.expect_punct("(")
-        self.expect("reserved", "CONSTRAINED") if self.at("reserved", "CONSTRAINED") \
-            else self.take()
+        self.expect("reserved", "CONSTRAINED") if self.at(
+            "reserved", "CONSTRAINED"
+        ) else self.take()
         if self.at_word("BY"):
             self.take()
         start = self.index
@@ -1003,7 +1054,8 @@ class Parser:
             if self.at_word("CONTAINING") or self.at_word("ENCODED"):
                 raise self.error(
                     "a CONTAINING / ENCODED BY constraint changes the contents octets "
-                    "(X.680 36), so it cannot be discarded like a value-set constraint")
+                    "(X.680 36), so it cannot be discarded like a value-set constraint"
+                )
             if self.at_punct("("):
                 depth += 1
             elif self.at_punct(")"):
@@ -1019,14 +1071,15 @@ class Parser:
         if self.at_word("CONTAINING") or self.at_word("ENCODED"):
             raise self.error(
                 "a CONTAINING / ENCODED BY constraint changes the contents octets "
-                "(X.680 36), so it cannot be discarded like a value-set constraint")
+                "(X.680 36), so it cannot be discarded like a value-set constraint"
+            )
         root = self._unions()
         extensible = False
         if self.accept("punct", ","):
             self.expect_punct("...")
             extensible = True
             if self.accept("punct", ","):
-                self._unions()          # the additional set: not OER-visible either
+                self._unions()  # the additional set: not OER-visible either
         self.expect_punct(")")
         if root is None:
             return None
@@ -1061,7 +1114,7 @@ class Parser:
 
     def _constraint_element(self):
         """§51 SubtypeElements, restricted to the forms this model represents."""
-        if self.at_punct("("):                     # a parenthesised element set
+        if self.at_punct("("):  # a parenthesised element set
             return self._element_set_specs()
         if self.at_word("SIZE"):
             self.take()
@@ -1071,8 +1124,13 @@ class Parser:
             self.take()
             inner = self._element_set_specs()
             return None if inner is None else constraints.PermittedAlphabet(inner)
-        if self.at_word("ALL") or self.at_word("WITH") or self.at_word("PATTERN") \
-                or self.at_word("SETTINGS") or self.at_word("INCLUDES"):
+        if (
+            self.at_word("ALL")
+            or self.at_word("WITH")
+            or self.at_word("PATTERN")
+            or self.at_word("SETTINGS")
+            or self.at_word("INCLUDES")
+        ):
             self._skip_element()
             return None
         low = self._endpoint_value(lower=True)
@@ -1081,7 +1139,7 @@ class Parser:
             return None
         lower_open = bool(self.accept("punct", "<"))
         if not self.at_punct(".."):
-            if lower_open:                         # `v <` with no range is not a form
+            if lower_open:  # `v <` with no range is not a form
                 return None
             return constraints.SingleValue(low)
         self.take()
@@ -1101,7 +1159,7 @@ class Parser:
             return self.parse_signed_number()
         if tok.kind == "cstring":
             self.take()
-            return tok.text                        # a permitted-alphabet endpoint
+            return tok.text  # a permitted-alphabet endpoint
         if tok.kind == "reserved" and tok.text in ("TRUE", "FALSE"):
             self.take()
             return tok.text == "TRUE"
@@ -1117,8 +1175,7 @@ class Parser:
                 if depth == 0:
                     return
                 depth -= 1
-            elif depth == 0 and (self.at_punct("|") or self.at_punct("^")
-                                 or self.at_punct(",")):
+            elif depth == 0 and (self.at_punct("|") or self.at_punct("^") or self.at_punct(",")):
                 return
             self.take()
 

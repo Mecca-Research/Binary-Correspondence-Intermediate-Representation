@@ -26,8 +26,15 @@ import os
 import subprocess
 
 from bcir.kbcir.cost import TargetProfile
-from bcir.kbcir.layout import (AOS, SOA, FieldAccess, SINGLE_FIELD, WHOLE_RECORD,
-                               certify_layout, plan_layout)
+from bcir.kbcir.layout import (
+    AOS,
+    SOA,
+    FieldAccess,
+    SINGLE_FIELD,
+    WHOLE_RECORD,
+    certify_layout,
+    plan_layout,
+)
 
 # Pin the oracle target so the priced costs are deterministic regardless of the CI host arch
 # (TargetProfile.for_host() would price the roofline differently per arch). avx512 is the reference,
@@ -44,10 +51,10 @@ _STREAMS = 3
 #   * a one-field resource (F=1)          -> no SoA/AoS distinction (a clean no-op).
 #   * a balanced workload (equal records) -> a tie keeps the declared default SoA.
 _CASES = [
-    (4, 64, 8),     # single-field-dominated: SoA wins, no-op
-    (4, 8, 64),     # whole-record-dominated: AoS wins, gain > 0
-    (1, 64, 0),     # one field: no distinction, no-op
-    (4, 32, 32),    # balanced: a tie keeps SoA
+    (4, 64, 8),  # single-field-dominated: SoA wins, no-op
+    (4, 8, 64),  # whole-record-dominated: AoS wins, gain > 0
+    (1, 64, 0),  # one field: no distinction, no-op
+    (4, 32, 32),  # balanced: a tie keeps SoA
 ]
 
 
@@ -63,32 +70,41 @@ def _oracle_plan(fields, sfr, wrr):
     plan = plan_layout(99, fields, tuple(accesses), _T)
     cert = certify_layout(plan)
     return {
-        "rid": 99, "fields": fields,
-        "single_field_records": sfr, "whole_record_records": wrr,
-        "cacheline": _T.cacheline, "elem_bytes": _T.elem_bytes, "base_overhead": _T.base_overhead,
-        "streams": _STREAMS, "vector_width": _T.vector_width, "gather_penalty": _T.gather_penalty,
-        "soa_cost": plan.soa_cost, "aos_cost": plan.aos_cost,
-        "layout": plan.layout, "gain": cert.gain,
+        "rid": 99,
+        "fields": fields,
+        "single_field_records": sfr,
+        "whole_record_records": wrr,
+        "cacheline": _T.cacheline,
+        "elem_bytes": _T.elem_bytes,
+        "base_overhead": _T.base_overhead,
+        "streams": _STREAMS,
+        "vector_width": _T.vector_width,
+        "gather_penalty": _T.gather_penalty,
+        "soa_cost": plan.soa_cost,
+        "aos_cost": plan.aos_cost,
+        "layout": plan.layout,
+        "gain": cert.gain,
     }
 
 
 def _layout_mlir(p) -> str:
     """Emit the gem.layout_pivot carrier-op MLIR for an oracle plan dict (the law-rail op the oracle pins)."""
     return (
-        'bcir.module @m {\n'
-        f'  bcir.gem.layout_pivot @lp {{ rid = {p["rid"]} : i64, fields = {p["fields"]} : i64, '
-        f'single_field_records = {p["single_field_records"]} : i64, '
-        f'whole_record_records = {p["whole_record_records"]} : i64, '
-        f'cacheline = {p["cacheline"]} : i64, elem_bytes = {p["elem_bytes"]} : i64, '
-        f'base_overhead = {p["base_overhead"]} : i64, streams = {p["streams"]} : i64, '
-        f'vector_width = {p["vector_width"]} : i64, gather_penalty = {p["gather_penalty"]} : i64, '
-        f'soa_cost = {p["soa_cost"]} : i64, aos_cost = {p["aos_cost"]} : i64, '
+        "bcir.module @m {\n"
+        f"  bcir.gem.layout_pivot @lp {{ rid = {p['rid']} : i64, fields = {p['fields']} : i64, "
+        f"single_field_records = {p['single_field_records']} : i64, "
+        f"whole_record_records = {p['whole_record_records']} : i64, "
+        f"cacheline = {p['cacheline']} : i64, elem_bytes = {p['elem_bytes']} : i64, "
+        f"base_overhead = {p['base_overhead']} : i64, streams = {p['streams']} : i64, "
+        f"vector_width = {p['vector_width']} : i64, gather_penalty = {p['gather_penalty']} : i64, "
+        f"soa_cost = {p['soa_cost']} : i64, aos_cost = {p['aos_cost']} : i64, "
         f'layout = "{p["layout"]}", gain = {p["gain"]} : i64 }}\n'
-        '}\n'
+        "}\n"
     )
 
 
 # --- the pure-Python parity arm (always runs) -----------------------------------------------------
+
 
 def test_oracle_layout_plan_is_self_consistent_and_priced_through_the_cost_model():
     """The oracle's layout plan is internally consistent: the chosen layout is the MIN-cost one (ties keep
@@ -121,12 +137,15 @@ def test_layout_pivot_never_gates_legality_verify_plan_ignores_it():
     import inspect
 
     import bcir.verify as verify_mod
+
     src = inspect.getsource(verify_mod)
-    assert "soa_cost" not in src and "aos_cost" not in src, \
+    assert "soa_cost" not in src and "aos_cost" not in src, (
         "the legality verifier must NEVER read the layout cost (the informs-only quarantine)"
+    )
 
 
 # --- the ultimate cross-check: the real bcir-opt law rail (self-skips without the built bcir-opt) -
+
 
 def test_law_rail_reproduces_oracle_layout_plan_via_bcir_opt():
     """Drive `bcir-opt -bcir-layout-pivot` over the oracle-pinned gem.layout_pivot IR and assert the law
@@ -138,19 +157,28 @@ def test_law_rail_reproduces_oracle_layout_plan_via_bcir_opt():
         return  # the MLIR toolchain is not built in this environment (the oracle-only CI job)
     for case in _CASES:
         p = _oracle_plan(*case)
-        proc = subprocess.run([bo, "-bcir-layout-pivot"], input=_layout_mlir(p),
-                              capture_output=True, text=True)
+        proc = subprocess.run(
+            [bo, "-bcir-layout-pivot"], input=_layout_mlir(p), capture_output=True, text=True
+        )
         assert proc.returncode == 0, f"{case}: law rail rejected the oracle plan:\n{proc.stderr}"
         out = proc.stdout
         line = next(l for l in out.splitlines() if "@lp " in l)
-        assert f'kbcir.soa_cost = {p["soa_cost"]} : i64' in line, f"{case}: soa_cost != oracle\n{line}"
-        assert f'kbcir.aos_cost = {p["aos_cost"]} : i64' in line, f"{case}: aos_cost != oracle\n{line}"
+        assert f"kbcir.soa_cost = {p['soa_cost']} : i64" in line, (
+            f"{case}: soa_cost != oracle\n{line}"
+        )
+        assert f"kbcir.aos_cost = {p['aos_cost']} : i64" in line, (
+            f"{case}: aos_cost != oracle\n{line}"
+        )
         assert f'kbcir.layout = "{p["layout"]}"' in line, f"{case}: layout != oracle\n{line}"
-        assert f'kbcir.gain = {p["gain"]} : i64' in line, f"{case}: gain != oracle\n{line}"
+        assert f"kbcir.gain = {p['gain']} : i64" in line, f"{case}: gain != oracle\n{line}"
         # the INFORMS-ONLY quarantine record: the priced choice informs the plan, never gates legality.
-        assert "kbcir.informs_only = true" in line, f"{case}: missing the informs-only quarantine flag\n{line}"
+        assert "kbcir.informs_only = true" in line, (
+            f"{case}: missing the informs-only quarantine flag\n{line}"
+        )
         # a cost producer, NOT a lowering: the carrier op is NOT erased.
-        assert "bcir.gem.layout_pivot" in out, f"{case}: the layout_pivot op must NOT be erased (it is a producer)"
+        assert "bcir.gem.layout_pivot" in out, (
+            f"{case}: the layout_pivot op must NOT be erased (it is a producer)"
+        )
 
 
 def test_law_rail_rejects_an_inconsistent_layout_choice():
@@ -165,11 +193,16 @@ def test_law_rail_rejects_an_inconsistent_layout_choice():
     assert p["layout"] == AOS  # sanity: the oracle does pick AoS here
     bad = p.copy()
     bad["layout"] = "soa"
-    bad["gain"] = 0  # a wrong gain to match the wrong layout (the verifier still rejects the layout first)
-    proc = subprocess.run([bo, "-bcir-layout-pivot"], input=_layout_mlir(bad), capture_output=True, text=True)
+    bad["gain"] = (
+        0  # a wrong gain to match the wrong layout (the verifier still rejects the layout first)
+    )
+    proc = subprocess.run(
+        [bo, "-bcir-layout-pivot"], input=_layout_mlir(bad), capture_output=True, text=True
+    )
     assert proc.returncode != 0, "the law rail must reject a non-min-cost layout choice"
-    assert "must be the min-cost choice" in proc.stderr, \
+    assert "must be the min-cost choice" in proc.stderr, (
         f"the rejection must cite the min,+ layout selection, got:\n{proc.stderr}"
+    )
 
 
 def _find_bcir_opt():

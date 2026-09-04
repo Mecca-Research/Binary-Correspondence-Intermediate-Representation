@@ -18,8 +18,9 @@ from bcir.kbcir import TARGETS
 from bcir.kbcir.cost import Theta
 from bcir.kbcir.provenance import _fnv, build_manifest
 
-_RUNTIME_C = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__)))), "runtime", "c")
+_RUNTIME_C = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "runtime", "c"
+)
 
 
 def _cc():
@@ -60,41 +61,62 @@ int main(void) {
 def test_prov_twin_matches_the_oracle_byte_for_byte():
     cc = _cc()
     if cc is None:
-        return                                        # documented toolchain-gated skip
+        return  # documented toolchain-gated skip
 
-    m = build_manifest(vector_add(), TARGETS["x86_avx512"], Theta.cool(),
-                       artifacts=(("cal_gen", 3), ("gate", 71)))
-    chain = _fnv("cal_fp", 12345, -7, 0, -(2 ** 63))
+    m = build_manifest(
+        vector_add(), TARGETS["x86_avx512"], Theta.cool(), artifacts=(("cal_gen", 3), ("gate", 71))
+    )
+    chain = _fnv("cal_fp", 12345, -7, 0, -(2**63))
 
-    src = (_HARNESS.replace("MM", str(m.m_module)).replace("MTH", str(m.m_theta))
-           .replace("MT", str(m.m_target)).replace("MP", str(m.m_policy))
-           .replace("RECORDED", f"{m.digest}ULL")
-           .replace("ART0", str(dict(m.artifacts)["cal_gen"]))
-           .replace("ART1", str(dict(m.artifacts)["gate"])))
+    src = (
+        _HARNESS.replace("MM", str(m.m_module))
+        .replace("MTH", str(m.m_theta))
+        .replace("MT", str(m.m_target))
+        .replace("MP", str(m.m_policy))
+        .replace("RECORDED", f"{m.digest}ULL")
+        .replace("ART0", str(dict(m.artifacts)["cal_gen"]))
+        .replace("ART1", str(dict(m.artifacts)["gate"]))
+    )
     with tempfile.TemporaryDirectory() as d:
         c = os.path.join(d, "prov_main.c")
         with open(c, "w", encoding="utf-8") as f:
             f.write(src)
         exe = os.path.join(d, "prov")
-        r = subprocess.run([cc, "-std=c11", "-O2", "-Wall", "-Wextra", "-I", _RUNTIME_C,
-                            c, os.path.join(_RUNTIME_C, "bcir_provenance.c"), "-o", exe],
-                           capture_output=True, text=True, timeout=120)
+        r = subprocess.run(
+            [
+                cc,
+                "-std=c11",
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-I",
+                _RUNTIME_C,
+                c,
+                os.path.join(_RUNTIME_C, "bcir_provenance.c"),
+                "-o",
+                exe,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
         assert r.returncode == 0, r.stderr
         out = subprocess.run([exe], capture_output=True, text=True, timeout=60).stdout.split()
     got = dict(zip(out[0::2], out[1::2]))
-    assert int(got["chain"]) == chain, (got["chain"], chain)           # the raw FNV chain
-    assert int(got["digest"]) == m.digest, (got["digest"], m.digest)   # the manifest digest
-    assert got["verify_ok"] == "1"                                     # attestation accepts
-    assert got["verify_tampered"] == "0"                               # a rule swap is caught
-    assert got["null_item"] == "1" and got["null_array"] == "1"       # invalid input is safe
-    assert got["verify_null"] == "0"                                   # even recorded zero cannot pass
+    assert int(got["chain"]) == chain, (got["chain"], chain)  # the raw FNV chain
+    assert int(got["digest"]) == m.digest, (got["digest"], m.digest)  # the manifest digest
+    assert got["verify_ok"] == "1"  # attestation accepts
+    assert got["verify_tampered"] == "0"  # a rule swap is caught
+    assert got["null_item"] == "1" and got["null_array"] == "1"  # invalid input is safe
+    assert got["verify_null"] == "0"  # even recorded zero cannot pass
 
 
 def test_prov_twin_artifact_order_is_the_normalized_manifest_order():
     # the oracle records artifacts sorted (name, value); the twin chains them in that order --
     # the same inputs UNSORTED would produce a different digest, so the contract is explicit.
-    m = build_manifest(vector_add(), TARGETS["x86_avx512"], Theta.cool(),
-                       artifacts=(("zeta", 1), ("alpha", 2)))
+    m = build_manifest(
+        vector_add(), TARGETS["x86_avx512"], Theta.cool(), artifacts=(("zeta", 1), ("alpha", 2))
+    )
     assert m.artifacts == (("alpha", 2), ("zeta", 1))
 
 

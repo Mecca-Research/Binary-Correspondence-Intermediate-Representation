@@ -17,7 +17,12 @@ from __future__ import annotations
 
 from bcir.asn1.program import jer_to_module, module_to_jer, verdicts
 from bcir.asn1.staged import (
-    Artifact, NotQuiescent, NotSigned, NothingToRollBack, Proposal, TrustedLoader,
+    Artifact,
+    NotQuiescent,
+    NotSigned,
+    NothingToRollBack,
+    Proposal,
+    TrustedLoader,
 )
 from bcir.asn1.tags import Asn1Error
 from bcir.examples import PROGRAMS
@@ -40,19 +45,43 @@ def _illegal_proposal() -> Proposal:
     fixture is illegal for a reason nobody checked proves that the loader refuses
     *something*, which is not the claim.
     """
-    def timed(claim_id: int, domain: str, reads=(), writes=()) -> Claim:
-        return Claim(id=claim_id, opcode=Opcode.ADD, lane=Lane.U,
-                     stride_class=StrideClass.UNIT, count=1, rd=tuple(reads),
-                     wr=tuple(writes), hazard="unique",
-                     timing=Timing(clock_domain=domain, sync_type="synchronous",
-                                   clock_frequency_mhz=100, latency_cycles=4,
-                                   setup_hold_margin=1))
 
-    module = Module(name="crossing", cacheline=64, align=64, target="x86", resources={},
-                    phases=[Phase(phase_id=0, deps=(), claims=[
-                        timed(1, "fast", writes=(7,)),
-                        timed(2, "slow", reads=(7,)),
-                    ])])
+    def timed(claim_id: int, domain: str, reads=(), writes=()) -> Claim:
+        return Claim(
+            id=claim_id,
+            opcode=Opcode.ADD,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=1,
+            rd=tuple(reads),
+            wr=tuple(writes),
+            hazard="unique",
+            timing=Timing(
+                clock_domain=domain,
+                sync_type="synchronous",
+                clock_frequency_mhz=100,
+                latency_cycles=4,
+                setup_hold_margin=1,
+            ),
+        )
+
+    module = Module(
+        name="crossing",
+        cacheline=64,
+        align=64,
+        target="x86",
+        resources={},
+        phases=[
+            Phase(
+                phase_id=0,
+                deps=(),
+                claims=[
+                    timed(1, "fast", writes=(7,)),
+                    timed(2, "slow", reads=(7,)),
+                ],
+            )
+        ],
+    )
     assert any(law == "R20" for law, _m in verdicts(module)), "the fixture stopped tripping R20"
     return Proposal(jer=module_to_jer(module), origin="synthetic")
 
@@ -91,8 +120,9 @@ def test_a_proposal_carries_no_code_and_has_no_way_to_become_an_artifact():
     proposal = _legal_proposal()
     fields = set(vars(proposal))
     assert fields == {"jer", "origin"}, fields
-    assert not any(name for name in dir(proposal)
-                   if "artifact" in name.lower() or "sign" in name.lower())
+    assert not any(
+        name for name in dir(proposal) if "artifact" in name.lower() or "sign" in name.lower()
+    )
     # The only producer of an Artifact is a loader holding a key.
     assert not hasattr(Proposal, "compile") and not hasattr(Proposal, "admit")
 
@@ -102,8 +132,12 @@ def test_only_a_key_holder_can_produce_an_installable_artifact():
     admission = loader.admit(_legal_proposal(), _verify)
     assert admission.admitted and admission.artifact is not None
     # A forged artifact with perfectly correct content and no valid signature.
-    forged = Artifact(generation=99, proposal_digest=admission.artifact.proposal_digest,
-                      code=admission.artifact.code, signature="0" * 64)
+    forged = Artifact(
+        generation=99,
+        proposal_digest=admission.artifact.proposal_digest,
+        code=admission.artifact.code,
+        signature="0" * 64,
+    )
     try:
         loader.install(forged)
     except NotSigned as error:
@@ -165,9 +199,12 @@ def test_a_correct_digest_is_not_a_signature():
     good = loader.admit(_legal_proposal(), _verify).artifact
     assert good.proposal_digest == _legal_proposal().digest()
     stranger = TrustedLoader(key=b"a different authority's key", compile_fn=_Compiler())
-    impostor = Artifact(generation=1, proposal_digest=good.proposal_digest,
-                        code=good.code,
-                        signature=stranger.sign(good.code, good.proposal_digest, 1))
+    impostor = Artifact(
+        generation=1,
+        proposal_digest=good.proposal_digest,
+        code=good.code,
+        signature=stranger.sign(good.code, good.proposal_digest, 1),
+    )
     assert impostor.code_digest() == good.code_digest()
     try:
         loader.install(impostor)
@@ -182,10 +219,19 @@ def test_the_signature_covers_the_generation_and_the_proposal_not_only_the_code(
     loader, _ = _loader()
     good = loader.admit(_legal_proposal(), _verify).artifact
     for relabelled in (
-            Artifact(generation=good.generation + 5, proposal_digest=good.proposal_digest,
-                     code=good.code, signature=good.signature),
-            Artifact(generation=good.generation, proposal_digest="0" * 64,
-                     code=good.code, signature=good.signature)):
+        Artifact(
+            generation=good.generation + 5,
+            proposal_digest=good.proposal_digest,
+            code=good.code,
+            signature=good.signature,
+        ),
+        Artifact(
+            generation=good.generation,
+            proposal_digest="0" * 64,
+            code=good.code,
+            signature=good.signature,
+        ),
+    ):
         assert not loader.verify_signature(relabelled)
 
 

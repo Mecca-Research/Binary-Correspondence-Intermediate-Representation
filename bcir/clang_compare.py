@@ -100,7 +100,9 @@ def _median_ns(exe: str, args: list[str]) -> int:
     return int(out.stdout.strip())
 
 
-def _ab(bcir_src: str, naive_src: str, *, opt: str, args: list[str], trials: int = 15) -> tuple[int, int]:
+def _ab(
+    bcir_src: str, naive_src: str, *, opt: str, args: list[str], trials: int = 15
+) -> tuple[int, int]:
     """Compile both to separate binaries; run alternated; return (median_bcir, median_naive)."""
     with tempfile.TemporaryDirectory() as d:
         be = _build(bcir_src, opt, d, "bcir")
@@ -116,6 +118,7 @@ def _ab(bcir_src: str, naive_src: str, *, opt: str, args: list[str], trials: int
 
 # --- the kernels: BCIR-planned vs the naive/default realization -------------------
 
+
 def _elementwise_srcs(n: int):
     """Simple C = A + B. BCIR emits the go-fast idiomatic loop; naive is the loop a
     developer writes. Same compiler -> this measures whether BCIR REGRESSES a simple
@@ -123,16 +126,21 @@ def _elementwise_srcs(n: int):
     m = vector_add(n)
     h = TARGETS["x86_avx512"]
     bcir_k = emit_kernel_c(m, optimize(m, h, Theta.cool()), "k", "f32", hw_width=h.vector_width)
-    naive_k = ("#include <stddef.h>\nvoid k(const float*restrict A,const float*restrict B,"
-               "float*restrict C,size_t n){for(size_t i=0;i<n;++i)C[i]=A[i]+B[i];}\n")
-    main = (_HARNESS + f"""
+    naive_k = (
+        "#include <stddef.h>\nvoid k(const float*restrict A,const float*restrict B,"
+        "float*restrict C,size_t n){for(size_t i=0;i<n;++i)C[i]=A[i]+B[i];}\n"
+    )
+    main = (
+        _HARNESS
+        + f"""
 int main(int c,char**v){{ size_t n={n}u; int reps=atoi(v[1]);
   float*A=malloc(n*4),*B=malloc(n*4),*C=malloc(n*4);
   for(size_t i=0;i<n;++i){{A[i]=(float)(i%1000);B[i]=(float)(i%7);C[i]=0;}}
   k(A,B,C,n); long best=LONG_MAX;
   for(int r=0;r<reps;++r){{long t0=now_ns();k(A,B,C,n);long dt=now_ns()-t0;if(dt>0&&dt<best)best=dt;}}
   volatile float s=C[n-1];(void)s; printf("%ld\\n",best); return 0; }}
-""")
+"""
+    )
     return bcir_k + main, naive_k + main
 
 
@@ -143,17 +151,22 @@ def _gather_srcs(n: int):
     m = vector_add(n)
     h = TARGETS["x86_avx512"]
     r = optimize(m, h, Theta.cool())
-    bcir_k = emit_kernel_c(m, r, "kd", "f32", hw_width=h.vector_width)            # contiguous
-    gather_k = emit_gather_kernel_c(m, r, "kg", "f32")                            # A[idx[i]]+B[i]
-    main_b = (_HARNESS + f"""
+    bcir_k = emit_kernel_c(m, r, "kd", "f32", hw_width=h.vector_width)  # contiguous
+    gather_k = emit_gather_kernel_c(m, r, "kg", "f32")  # A[idx[i]]+B[i]
+    main_b = (
+        _HARNESS
+        + f"""
 int main(int c,char**v){{ size_t n={n}u; int reps=atoi(v[1]);
   float*A=malloc(n*4),*B=malloc(n*4),*C=malloc(n*4);
   for(size_t i=0;i<n;++i){{A[i]=(float)(i%1000);B[i]=(float)(i%7);C[i]=0;}}
   kd(A,B,C,n); long best=LONG_MAX;
   for(int r=0;r<reps;++r){{long t0=now_ns();kd(A,B,C,n);long dt=now_ns()-t0;if(dt>0&&dt<best)best=dt;}}
   volatile float s=C[n-1];(void)s; printf("%ld\\n",best); return 0; }}
-""")
-    main_n = (_HARNESS + f"""
+"""
+    )
+    main_n = (
+        _HARNESS
+        + f"""
 int main(int c,char**v){{ size_t n={n}u; int reps=atoi(v[1]);
   float*A=malloc(n*4),*B=malloc(n*4),*C=malloc(n*4); long*idx=malloc(n*sizeof*idx);
   for(size_t i=0;i<n;++i){{A[i]=(float)(i%1000);B[i]=(float)(i%7);C[i]=0;idx[i]=(long)i;}}
@@ -161,7 +174,8 @@ int main(int c,char**v){{ size_t n={n}u; int reps=atoi(v[1]);
   kg(A,B,C,idx,n); long best=LONG_MAX;
   for(int r=0;r<reps;++r){{long t0=now_ns();kg(A,B,C,idx,n);long dt=now_ns()-t0;if(dt>0&&dt<best)best=dt;}}
   volatile float s=C[n-1];(void)s; printf("%ld\\n",best); return 0; }}
-""")
+"""
+    )
     return bcir_k + main_b, gather_k + main_n
 
 
@@ -174,14 +188,19 @@ def _reduce_srcs(n: int):
     r = optimize(m, h, Theta.cool())
     blk = emit_reduce_c(m, r, "kb", "i32", gather=False)
     grd = emit_reduce_c(m, r, "kr", "i32", gather=True)
-    main_b = (_HARNESS + f"""
+    main_b = (
+        _HARNESS
+        + f"""
 int main(int c,char**v){{ size_t n={n}u; int reps=atoi(v[1]);
   int32_t*T=malloc(n*4); for(size_t i=0;i<n;++i)T[i]=(int32_t)(i%1000);
   volatile int32_t s=kb(T,n); long best=LONG_MAX;
   for(int r=0;r<reps;++r){{long t0=now_ns();s=kb(T,n);long dt=now_ns()-t0;if(dt>0&&dt<best)best=dt;}}
   (void)s; printf("%ld\\n",best); return 0; }}
-""")
-    main_n = (_HARNESS + f"""
+"""
+    )
+    main_n = (
+        _HARNESS
+        + f"""
 int main(int c,char**v){{ size_t n={n}u; int reps=atoi(v[1]);
   int32_t*T=malloc(n*4); long*idx=malloc(n*sizeof*idx);
   for(size_t i=0;i<n;++i){{T[i]=(int32_t)(i%1000);idx[i]=(long)i;}}
@@ -189,7 +208,8 @@ int main(int c,char**v){{ size_t n={n}u; int reps=atoi(v[1]);
   volatile int32_t s=kr(T,idx,n); long best=LONG_MAX;
   for(int r=0;r<reps;++r){{long t0=now_ns();s=kr(T,idx,n);long dt=now_ns()-t0;if(dt>0&&dt<best)best=dt;}}
   (void)s; printf("%ld\\n",best); return 0; }}
-""")
+"""
+    )
     return blk + main_b, grd + main_n
 
 
@@ -203,25 +223,32 @@ def _strided_srcs(n: int):
     k = max(1, claim.stride_k)
     direct = emit_strided_c(m, r, "ks", "f32", gather=False)
     gath = emit_strided_c(m, r, "kg", "f32", gather=True)
-    main_b = (_HARNESS + f"""
+    main_b = (
+        _HARNESS
+        + f"""
 int main(int c,char**v){{ size_t n={n}u,k={k}u; int reps=atoi(v[1]);
   float*X=malloc(n*k*4),*Y=malloc(n*4); for(size_t i=0;i<n*k;++i)X[i]=(float)(i%1000);
   ks(X,Y,n,k); long best=LONG_MAX;
   for(int r=0;r<reps;++r){{long t0=now_ns();ks(X,Y,n,k);long dt=now_ns()-t0;if(dt>0&&dt<best)best=dt;}}
   volatile float s=Y[n-1];(void)s; printf("%ld\\n",best); return 0; }}
-""")
-    main_n = (_HARNESS + f"""
+"""
+    )
+    main_n = (
+        _HARNESS
+        + f"""
 int main(int c,char**v){{ size_t n={n}u,k={k}u; int reps=atoi(v[1]);
   float*X=malloc(n*k*4),*Y=malloc(n*4); long*idx=malloc(n*sizeof*idx);
   for(size_t i=0;i<n*k;++i)X[i]=(float)(i%1000); for(size_t i=0;i<n;++i)idx[i]=(long)(i*k);
   kg(X,idx,Y,n); long best=LONG_MAX;
   for(int r=0;r<reps;++r){{long t0=now_ns();kg(X,idx,Y,n);long dt=now_ns()-t0;if(dt>0&&dt<best)best=dt;}}
   volatile float s=Y[n-1];(void)s; printf("%ld\\n",best); return 0; }}
-""")
+"""
+    )
     return direct + main_b, gath + main_n
 
 
 # --- the suite -------------------------------------------------------------------
+
 
 def run_comparison(trials: int = 15) -> list[Verdict]:
     """The full BCIR-planned vs naive comparison, same Clang, separate binaries,
@@ -231,10 +258,10 @@ def run_comparison(trials: int = 15) -> list[Verdict]:
     out: list[Verdict] = []
     cases = [
         ("elementwise stream (N=4M, -O3)", *_elementwise_srcs(1 << 22), "-O3", 1 << 22, "200"),
-        ("elementwise L1 (N=4K, -O3)",     *_elementwise_srcs(1 << 12), "-O3", 1 << 12, "4000"),
+        ("elementwise L1 (N=4K, -O3)", *_elementwise_srcs(1 << 12), "-O3", 1 << 12, "4000"),
         ("gather avoidance (shuffled, -O2)", *_gather_srcs(1 << 20), "-O2", 1 << 20, "60"),
         ("reduction blocked-vs-gather (-O2)", *_reduce_srcs(1 << 20), "-O2", 1 << 20, "60"),
-        ("strided-vs-gather (-O2)",        *_strided_srcs(1 << 22), "-O2", 1 << 22, "60"),
+        ("strided-vs-gather (-O2)", *_strided_srcs(1 << 22), "-O2", 1 << 22, "60"),
     ]
     for name, bsrc, nsrc, opt, n, reps in cases:
         bn, nn = _ab(bsrc, nsrc, opt=opt, args=[reps], trials=trials)

@@ -79,7 +79,8 @@ def test_a_choice_crosses_between_the_rails_in_both_directions() -> None:
 
     assert "alternative" in _refused(
         lambda: encode_per(kind, {"a": 1, "b": "x"}, variant=PerVariant.UNALIGNED),
-        "a two-entry mapping as a CHOICE value")
+        "a two-entry mapping as a CHOICE value",
+    )
 
 
 def test_null_decodes_to_the_singleton_not_to_absence() -> None:
@@ -99,8 +100,9 @@ def test_null_decodes_to_the_singleton_not_to_absence() -> None:
     # Inside a SEQUENCE, a present NULL is now distinguishable from an absent OPTIONAL one.
     seq = Sequence((Component("v", kind, optional=True), Component("n", _BYTE)), name="S")
     for variant in _VARIANTS:
-        present = decode_per(encode_per(seq, {"v": NULL, "n": 1}, variant=variant), seq,
-                             variant=variant)
+        present = decode_per(
+            encode_per(seq, {"v": NULL, "n": 1}, variant=variant), seq, variant=variant
+        )
         absent = decode_per(encode_per(seq, {"n": 1}, variant=variant), seq, variant=variant)
         assert present["v"] is NULL
         assert "v" not in absent
@@ -117,10 +119,12 @@ def test_an_enumerated_value_must_actually_be_an_integer() -> None:
         for bad in ("1", 1.9, True, None):
             assert "expected int" in _refused(
                 lambda b=bad, v=variant: encode_per(kind, b, variant=v),
-                f"{bad!r} as an ENUMERATED value")
+                f"{bad!r} as an ENUMERATED value",
+            )
         for value in (0, 1):
-            assert decode_per(encode_per(kind, value, variant=variant), kind,
-                              variant=variant) == value
+            assert (
+                decode_per(encode_per(kind, value, variant=variant), kind, variant=variant) == value
+            )
 
 
 def test_an_enumeration_extension_item_is_not_a_root_value() -> None:
@@ -141,23 +145,28 @@ def test_an_enumeration_extension_item_is_not_a_root_value() -> None:
     for variant in _VARIANTS:
         assert "extension addition" in _refused(
             lambda v=variant: encode_per(kind, 1, variant=v),
-            "an extension-addition enumerator encoded as a root value")
+            "an extension-addition enumerator encoded as a root value",
+        )
         assert decode_per(encode_per(kind, 0, variant=variant), kind, variant=variant) == 0
 
     # A non-extensible enumeration keeps every item in the root, and still round-trips.
     plain = compile_module(
-        "M DEFINITIONS ::= BEGIN F ::= ENUMERATED { a(0), b(1), c(2) } END").types["F"]
+        "M DEFINITIONS ::= BEGIN F ::= ENUMERATED { a(0), b(1), c(2) } END"
+    ).types["F"]
     assert plain.enumeration == (("a", 0), ("b", 1), ("c", 2))
     assert plain.enum_extension is None
     for variant in _VARIANTS:
         for value in (0, 1, 2):
-            assert decode_per(encode_per(plain, value, variant=variant), plain,
-                              variant=variant) == value
+            assert (
+                decode_per(encode_per(plain, value, variant=variant), plain, variant=variant)
+                == value
+            )
 
     # §20.1 numbers an un-numbered item from the next unused value, counting ACROSS the
     # marker -- the split must not restart it.
     implicit = compile_module(
-        "M DEFINITIONS ::= BEGIN G ::= ENUMERATED { a, b, ..., c } END").types["G"]
+        "M DEFINITIONS ::= BEGIN G ::= ENUMERATED { a, b, ..., c } END"
+    ).types["G"]
     assert implicit.enumeration == (("a", 0), ("b", 1))
     assert implicit.enum_extension == (("c", 2),)
 
@@ -175,10 +184,12 @@ def test_a_natural_code_character_is_checked_against_its_repertoire() -> None:
         for bad in ("\x7f", "\x00", "a\x1fb"):
             assert "repertoire" in _refused(
                 lambda b=bad, v=variant: encode_per(kind, b, variant=v),
-                f"{bad!r} in a VisibleString")
+                f"{bad!r} in a VisibleString",
+            )
         for good in ("", " ", "Hello, world!", "~"):
-            assert decode_per(encode_per(kind, good, variant=variant), kind,
-                              variant=variant) == good
+            assert (
+                decode_per(encode_per(kind, good, variant=variant), kind, variant=variant) == good
+            )
 
     # The decoding half of the same gap. Built with the module's own length helper and the
     # alignment its emit uses, so the octets are what a peer sending code 127 would send --
@@ -187,13 +198,14 @@ def test_a_natural_code_character_is_checked_against_its_repertoire() -> None:
     for code, wanted in ((126, "~"), (127, None)):
         writer = BitWriter(PerVariant.UNALIGNED)
         _encode_length_and_payload(
-            writer, 1, 0, None,
-            lambda start, stop, c=code, w=writer: (w.align(), w.put_bits(c, 7)))
+            writer, 1, 0, None, lambda start, stop, c=code, w=writer: (w.align(), w.put_bits(c, 7))
+        )
         raw = writer.to_bytes()
         if wanted is None:
             assert "repertoire" in _refused(
                 lambda r=raw: decode_per(r, kind, variant=PerVariant.UNALIGNED),
-                f"character code {code} decoded into a VisibleString")
+                f"character code {code} decoded into a VisibleString",
+            )
         else:
             assert decode_per(raw, kind, variant=PerVariant.UNALIGNED) == wanted
 
@@ -207,8 +219,8 @@ def test_a_recursive_type_encodes_at_depth() -> None:
     supplied, so `Node` encoded only while `next` was absent.
     """
     module = compile_module(
-        "M DEFINITIONS ::= BEGIN "
-        "Node ::= SEQUENCE { value INTEGER, next Node OPTIONAL } END")
+        "M DEFINITIONS ::= BEGIN Node ::= SEQUENCE { value INTEGER, next Node OPTIONAL } END"
+    )
     kind = module.types["Node"]
     values = [
         {"value": 1},

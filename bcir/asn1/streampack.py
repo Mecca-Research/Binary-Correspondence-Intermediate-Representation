@@ -65,11 +65,12 @@ _UTF8 = Primitive(Universal.UTF8_STRING, "UTF8String")
 #: The names and numbers are exactly the ones this file's own ASN.1 comment block above
 #: already declares — the code simply had not carried them. DER octets are unchanged,
 #: because DER never looked at the identifiers; `test_asn1_streampack.py` pins that.
-LANE = Primitive(Universal.ENUMERATED, "Lane",
-                 enumeration=(("u", 0), ("ux", 1), ("t", 2), ("ggg", 3), ("a", 4),
-                              ("h", 5)))
-DISPATCH = Primitive(Universal.ENUMERATED, "Dispatch",
-                     enumeration=(("core", 0), ("pim", 1)))
+LANE = Primitive(
+    Universal.ENUMERATED,
+    "Lane",
+    enumeration=(("u", 0), ("ux", 1), ("t", 2), ("ggg", 3), ("a", 4), ("h", 5)),
+)
+DISPATCH = Primitive(Universal.ENUMERATED, "Dispatch", enumeration=(("core", 0), ("pim", 1)))
 
 #: `dispatch` on the wire (native `_DISPATCH_WIRE`), mirrored so the two rails agree
 #: on the integer meaning of each name rather than each inventing one.
@@ -135,65 +136,82 @@ DISPATCH_NAMES = {v: k for k, v in DISPATCH_VALUES.items()}
 _INTEGERS = SequenceOf(_INTEGER, "SEQUENCE OF INTEGER")
 _STRINGS = SequenceOf(_UTF8, "SEQUENCE OF UTF8String")
 
-LANE_SEGMENT = Sequence((
-    Component("name", _UTF8, tag=0),
-    Component("claimId", _INTEGER, tag=1),
-    Component("phaseId", _INTEGER, tag=2),
-    Component("lane", LANE, tag=3),
-    Component("width", _INTEGER, tag=4),
-    Component("opcode", _UTF8, tag=5),
-    Component("reads", _INTEGERS, tag=6),
-    Component("writes", _INTEGERS, tag=7),
-    Component("prefetch", _UTF8, tag=8, optional=True),
-    Component("fenceBefore", _STRINGS, tag=9, default=[]),
-    Component("fenceAfter", _STRINGS, tag=10, default=[]),
-    Component("dispatch", DISPATCH, tag=11, default=0),
-    Component("channel", _UTF8, tag=12, default="host"),
-), name="LaneSegment")
+LANE_SEGMENT = Sequence(
+    (
+        Component("name", _UTF8, tag=0),
+        Component("claimId", _INTEGER, tag=1),
+        Component("phaseId", _INTEGER, tag=2),
+        Component("lane", LANE, tag=3),
+        Component("width", _INTEGER, tag=4),
+        Component("opcode", _UTF8, tag=5),
+        Component("reads", _INTEGERS, tag=6),
+        Component("writes", _INTEGERS, tag=7),
+        Component("prefetch", _UTF8, tag=8, optional=True),
+        Component("fenceBefore", _STRINGS, tag=9, default=[]),
+        Component("fenceAfter", _STRINGS, tag=10, default=[]),
+        Component("dispatch", DISPATCH, tag=11, default=0),
+        Component("channel", _UTF8, tag=12, default="host"),
+    ),
+    name="LaneSegment",
+)
 
-PREFETCH = Sequence((
-    Component("name", _UTF8, tag=0),
-    Component("distance", _INTEGER, tag=1),
-    Component("targets", _INTEGERS, tag=2),
-    Component("hint", _UTF8, tag=3, default="T0"),
-    Component("pattern", _UTF8, tag=4, default="linear"),
-    Component("buffers", _INTEGER, tag=5, default=1),
-), name="Prefetch")
+PREFETCH = Sequence(
+    (
+        Component("name", _UTF8, tag=0),
+        Component("distance", _INTEGER, tag=1),
+        Component("targets", _INTEGERS, tag=2),
+        Component("hint", _UTF8, tag=3, default="T0"),
+        Component("pattern", _UTF8, tag=4, default="linear"),
+        Component("buffers", _INTEGER, tag=5, default=1),
+    ),
+    name="Prefetch",
+)
 
-BLOCK = Sequence((
-    Component("base", _INTEGER, tag=0),
-    Component("count", _INTEGER, tag=1),
-    Component("strides", _INTEGERS, tag=2, default=[1]),
-), name="Block")
+BLOCK = Sequence(
+    (
+        Component("base", _INTEGER, tag=0),
+        Component("count", _INTEGER, tag=1),
+        Component("strides", _INTEGERS, tag=2, default=[1]),
+    ),
+    name="Block",
+)
 
-TRACE_NOTE = Sequence((
-    Component("claimId", _INTEGER, tag=0),
-    Component("srcHash", _INTEGER, tag=1, default=0),
-    Component("traceHash", _INTEGER, tag=2, default=0),
-), name="TraceNote")
+TRACE_NOTE = Sequence(
+    (
+        Component("claimId", _INTEGER, tag=0),
+        Component("srcHash", _INTEGER, tag=1, default=0),
+        Component("traceHash", _INTEGER, tag=2, default=0),
+    ),
+    name="TraceNote",
+)
 
-STREAM_PACK = Sequence((
-    Component("version", _INTEGER, tag=0, default=PROJECTION_VERSION),
-    Component("sourcePlan", _UTF8, tag=1),
-    Component("topoGen", _INTEGER, tag=2, default=1),
-    Component("mapGen", _INTEGER, tag=3, default=0),
-    Component("dataGen", _INTEGER, tag=4, default=0),
-    Component("pipelineDepth", _INTEGER, tag=5, default=1),
-    Component("segments", SequenceOf(LANE_SEGMENT, "SEQUENCE OF LaneSegment"), tag=6),
-    Component("prefetches", SequenceOf(PREFETCH, "SEQUENCE OF Prefetch"), tag=7,
-              default=[]),
-    Component("blocks", SequenceOf(BLOCK, "SEQUENCE OF Block"), tag=8, default=[]),
-    Component("traceNotes", SequenceOf(TRACE_NOTE, "SEQUENCE OF TraceNote"), tag=9,
-              default=[]),
-), name="StreamPack")
+STREAM_PACK = Sequence(
+    (
+        Component("version", _INTEGER, tag=0, default=PROJECTION_VERSION),
+        Component("sourcePlan", _UTF8, tag=1),
+        Component("topoGen", _INTEGER, tag=2, default=1),
+        Component("mapGen", _INTEGER, tag=3, default=0),
+        Component("dataGen", _INTEGER, tag=4, default=0),
+        Component("pipelineDepth", _INTEGER, tag=5, default=1),
+        Component("segments", SequenceOf(LANE_SEGMENT, "SEQUENCE OF LaneSegment"), tag=6),
+        Component("prefetches", SequenceOf(PREFETCH, "SEQUENCE OF Prefetch"), tag=7, default=[]),
+        Component("blocks", SequenceOf(BLOCK, "SEQUENCE OF Block"), tag=8, default=[]),
+        Component("traceNotes", SequenceOf(TRACE_NOTE, "SEQUENCE OF TraceNote"), tag=9, default=[]),
+    ),
+    name="StreamPack",
+)
 
-MODULE = Module("BCIR-StreamPack", STREAMPACK_MODULE_OID, {
-    "StreamPack": STREAM_PACK,
-    "LaneSegment": LANE_SEGMENT,
-    "Prefetch": PREFETCH,
-    "Block": BLOCK,
-    "TraceNote": TRACE_NOTE,
-})
+MODULE = Module(
+    "BCIR-StreamPack",
+    STREAMPACK_MODULE_OID,
+    {
+        "StreamPack": STREAM_PACK,
+        "LaneSegment": LANE_SEGMENT,
+        "Prefetch": PREFETCH,
+        "Block": BLOCK,
+        "TraceNote": TRACE_NOTE,
+    },
+)
 
 
 # --- projection: StreamPack <-> the ASN.1 value ------------------------------------
@@ -208,31 +226,51 @@ def pack_to_value(pack) -> dict:
         "mapGen": pack.map_gen,
         "dataGen": pack.data_gen,
         "pipelineDepth": pack.pipeline_depth,
-        "segments": [{
-            "name": s.name,
-            "claimId": s.claim_id,
-            "phaseId": s.phase_id,
-            "lane": int(s.lane),
-            "width": s.width,
-            "opcode": s.opcode,
-            "reads": list(s.reads),
-            "writes": list(s.writes),
-            **({"prefetch": s.prefetch} if s.prefetch else {}),
-            "fenceBefore": list(s.fence_before),
-            "fenceAfter": list(s.fence_after),
-            "dispatch": _dispatch_code(s.dispatch),
-            "channel": s.channel,
-        } for s in pack.segments],
-        "prefetches": [{
-            "name": p.name, "distance": p.distance, "targets": list(p.targets),
-            "hint": p.hint, "pattern": p.pattern, "buffers": p.buffers,
-        } for p in pack.prefetches],
-        "blocks": [{
-            "base": b.base, "count": b.count, "strides": list(b.strides),
-        } for b in pack.blocks],
-        "traceNotes": [{
-            "claimId": t.claim_id, "srcHash": t.src_hash, "traceHash": t.trace_hash,
-        } for t in pack.trace_notes],
+        "segments": [
+            {
+                "name": s.name,
+                "claimId": s.claim_id,
+                "phaseId": s.phase_id,
+                "lane": int(s.lane),
+                "width": s.width,
+                "opcode": s.opcode,
+                "reads": list(s.reads),
+                "writes": list(s.writes),
+                **({"prefetch": s.prefetch} if s.prefetch else {}),
+                "fenceBefore": list(s.fence_before),
+                "fenceAfter": list(s.fence_after),
+                "dispatch": _dispatch_code(s.dispatch),
+                "channel": s.channel,
+            }
+            for s in pack.segments
+        ],
+        "prefetches": [
+            {
+                "name": p.name,
+                "distance": p.distance,
+                "targets": list(p.targets),
+                "hint": p.hint,
+                "pattern": p.pattern,
+                "buffers": p.buffers,
+            }
+            for p in pack.prefetches
+        ],
+        "blocks": [
+            {
+                "base": b.base,
+                "count": b.count,
+                "strides": list(b.strides),
+            }
+            for b in pack.blocks
+        ],
+        "traceNotes": [
+            {
+                "claimId": t.claim_id,
+                "srcHash": t.src_hash,
+                "traceHash": t.trace_hash,
+            }
+            for t in pack.trace_notes
+        ],
     }
 
 
@@ -246,28 +284,51 @@ def value_to_pack(value: dict):
         map_gen=value.get("mapGen", 0),
         data_gen=value.get("dataGen", 0),
         pipeline_depth=value.get("pipelineDepth", 1),
-        segments=[LaneSegment(
-            name=s["name"], claim_id=s["claimId"], phase_id=s["phaseId"],
-            lane=Lane(s["lane"]), width=s["width"], opcode=s["opcode"],
-            reads=tuple(s["reads"]), writes=tuple(s["writes"]),
-            prefetch=s.get("prefetch") or None,
-            fence_before=tuple(s.get("fenceBefore", [])),
-            fence_after=tuple(s.get("fenceAfter", [])),
-            dispatch=_dispatch_name(s.get("dispatch", 0)),
-            channel=s.get("channel", "host"),
-        ) for s in value["segments"]],
-        prefetches=[Prefetch(
-            name=p["name"], distance=p["distance"], targets=tuple(p["targets"]),
-            hint=p.get("hint", "T0"), pattern=p.get("pattern", "linear"),
-            buffers=p.get("buffers", 1),
-        ) for p in value.get("prefetches", [])],
-        blocks=[Block(
-            base=b["base"], count=b["count"], strides=tuple(b.get("strides", (1,))),
-        ) for b in value.get("blocks", [])],
-        trace_notes=[TraceNote(
-            claim_id=t["claimId"], src_hash=t.get("srcHash", 0),
-            trace_hash=t.get("traceHash", 0),
-        ) for t in value.get("traceNotes", [])],
+        segments=[
+            LaneSegment(
+                name=s["name"],
+                claim_id=s["claimId"],
+                phase_id=s["phaseId"],
+                lane=Lane(s["lane"]),
+                width=s["width"],
+                opcode=s["opcode"],
+                reads=tuple(s["reads"]),
+                writes=tuple(s["writes"]),
+                prefetch=s.get("prefetch") or None,
+                fence_before=tuple(s.get("fenceBefore", [])),
+                fence_after=tuple(s.get("fenceAfter", [])),
+                dispatch=_dispatch_name(s.get("dispatch", 0)),
+                channel=s.get("channel", "host"),
+            )
+            for s in value["segments"]
+        ],
+        prefetches=[
+            Prefetch(
+                name=p["name"],
+                distance=p["distance"],
+                targets=tuple(p["targets"]),
+                hint=p.get("hint", "T0"),
+                pattern=p.get("pattern", "linear"),
+                buffers=p.get("buffers", 1),
+            )
+            for p in value.get("prefetches", [])
+        ],
+        blocks=[
+            Block(
+                base=b["base"],
+                count=b["count"],
+                strides=tuple(b.get("strides", (1,))),
+            )
+            for b in value.get("blocks", [])
+        ],
+        trace_notes=[
+            TraceNote(
+                claim_id=t["claimId"],
+                src_hash=t.get("srcHash", 0),
+                trace_hash=t.get("traceHash", 0),
+            )
+            for t in value.get("traceNotes", [])
+        ],
     )
 
 
@@ -276,8 +337,8 @@ def _dispatch_code(name: str) -> int:
         return DISPATCH_VALUES[name]
     except KeyError:
         raise Asn1Error(
-            f"dispatch {name!r} is outside the Dispatch enumeration "
-            f"{sorted(DISPATCH_VALUES)}") from None
+            f"dispatch {name!r} is outside the Dispatch enumeration {sorted(DISPATCH_VALUES)}"
+        ) from None
 
 
 def _dispatch_name(code: int) -> str:
@@ -286,7 +347,8 @@ def _dispatch_name(code: int) -> str:
     except KeyError:
         raise Asn1Error(
             f"Dispatch value {code} is not enumerated (X.680 20.4: a decoder shall "
-            f"reject an unlisted enumeration value)") from None
+            f"reject an unlisted enumeration value)"
+        ) from None
 
 
 def encode_pack(pack) -> bytes:
@@ -309,12 +371,14 @@ def encode_pack_oer(pack) -> bytes:
     candidates; this is one of them.
     """
     from .oer import OerRules, encode_oer
+
     return encode_oer(STREAM_PACK, pack_to_value(pack), rules=OerRules.CANONICAL)
 
 
 def decode_pack_oer(data: bytes, *, canonical: bool = False):
     """Recover a StreamPack from its OER projection (BASIC-OER admitted by default)."""
     from .oer import OerRules, decode_oer
+
     rules = OerRules.CANONICAL if canonical else OerRules.BASIC
     return value_to_pack(decode_oer(STREAM_PACK, data, rules=rules))
 
@@ -336,6 +400,7 @@ def encode_pack_jer(pack, *, canonical: bool = True) -> bytes:
     can produce without a BER toolkit.
     """
     from .jer import JerRules, encode_jer
+
     rules = JerRules.CANONICAL if canonical else JerRules.BASIC
     return encode_jer(STREAM_PACK, pack_to_value(pack), rules=rules)
 
@@ -350,6 +415,7 @@ def decode_pack_jer(data: bytes, *, canonical: bool = True):
     """
     from .jer import JerRules
     from .jer_bounded import decode_bounded
+
     rules = JerRules.CANONICAL if canonical else JerRules.BASIC
     # Through the BOUNDED reader, never bare `decode_jer`: this is a trust boundary, and
     # §4.3's limits have to apply before a value graph exists. `encode_pack_jer`'s output
@@ -358,9 +424,23 @@ def decode_pack_jer(data: bytes, *, canonical: bool = True):
 
 
 __all__ = [
-    "BCIR_ARC", "BLOCK", "DISPATCH_NAMES", "DISPATCH_VALUES", "LANE_SEGMENT", "MODULE",
-    "decode_pack_jer", "encode_pack_jer",
-    "PREFETCH", "PROJECTION_VERSION", "STREAM_PACK", "STREAMPACK_MODULE_OID",
-    "TRACE_NOTE", "decode_pack", "decode_pack_oer", "encode_pack", "encode_pack_oer",
-    "pack_to_value", "value_to_pack",
+    "BCIR_ARC",
+    "BLOCK",
+    "DISPATCH_NAMES",
+    "DISPATCH_VALUES",
+    "LANE_SEGMENT",
+    "MODULE",
+    "decode_pack_jer",
+    "encode_pack_jer",
+    "PREFETCH",
+    "PROJECTION_VERSION",
+    "STREAM_PACK",
+    "STREAMPACK_MODULE_OID",
+    "TRACE_NOTE",
+    "decode_pack",
+    "decode_pack_oer",
+    "encode_pack",
+    "encode_pack_oer",
+    "pack_to_value",
+    "value_to_pack",
 ]

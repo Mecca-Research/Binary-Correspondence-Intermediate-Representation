@@ -58,7 +58,10 @@ class EmitRules(enum.Enum):
 
 
 _TAG_CLASS_BITS = {
-    "universal": 0x00, "application": 0x40, "context": 0x80, "private": 0xC0,
+    "universal": 0x00,
+    "application": 0x40,
+    "context": 0x80,
+    "private": 0xC0,
 }
 
 
@@ -96,13 +99,13 @@ class _Reader:
         if self.at + 4 > len(self.data):
             raise Asn1Error(f"value stream truncated at {self.at}: wanted 4 octets")
         self.at += 4
-        return int.from_bytes(self.data[self.at - 4:self.at], "big")
+        return int.from_bytes(self.data[self.at - 4 : self.at], "big")
 
     def take(self, count: int) -> bytes:
         if self.at + count > len(self.data):
             raise Asn1Error(f"value stream truncated at {self.at}: wanted {count} octets")
         self.at += count
-        return self.data[self.at - count:self.at]
+        return self.data[self.at - count : self.at]
 
     def blob(self) -> bytes:
         return self.take(self.u32())
@@ -158,8 +161,7 @@ def _flatten_node(node: EncodeNode, value, writer: _Writer, path: str) -> None:
                     continue
             elif not present:
                 raise Asn1Error(f"{path}/{member.name} is required and absent")
-            _flatten_node(member.node, value[member.name], writer,
-                          f"{path}/{member.name}")
+            _flatten_node(member.node, value[member.name], writer, f"{path}/{member.name}")
     elif kind == "sequence-of":
         items = list(value)
         writer.u32(len(items))
@@ -170,7 +172,8 @@ def _flatten_node(node: EncodeNode, value, writer: _Writer, path: str) -> None:
         # ambiguous whenever two arms accept the same Python type.
         if not isinstance(value, tuple) or len(value) != 2:
             raise Asn1Error(
-                f"{path}: a CHOICE value is an (alternative, value) pair, got {value!r}")
+                f"{path}: a CHOICE value is an (alternative, value) pair, got {value!r}"
+            )
         name, inner = value
         chosen = [m for m in node.members if m.name == name]
         if not chosen:
@@ -241,7 +244,7 @@ def _present(member, reader: _Reader, *, omit_default: bool) -> bool:
         return True
     start = reader.at
     _skip_node(member.node, reader)
-    if reader.data[start:reader.at] == member.default_stream:
+    if reader.data[start : reader.at] == member.default_stream:
         return False
     reader.at = start
     return True
@@ -270,8 +273,9 @@ def _definite_length(count: int) -> bytes:
     return bytes((0x80 | len(body), *body))
 
 
-def _tlv(tag_class: int, constructed: bool, number: int, content: bytes, *,
-         indefinite: bool) -> bytes:
+def _tlv(
+    tag_class: int, constructed: bool, number: int, content: bytes, *, indefinite: bool
+) -> bytes:
     head = _identifier(tag_class, constructed, number)
     if indefinite and constructed:
         # X.690 §8.1.3.6: BER may leave the length open and close with an EOC. DER may not
@@ -302,8 +306,9 @@ def _emit_x690(node: EncodeNode, reader: _Reader, *, indefinite: bool) -> bytes:
     kind = node.kind
     if kind == "boolean":
         # §11.1: DER's true is 0xFF exactly, not "any non-zero octet".
-        return _tlv(0, False, int(Universal.BOOLEAN),
-                    b"\xff" if reader.u8() else b"\x00", indefinite=False)
+        return _tlv(
+            0, False, int(Universal.BOOLEAN), b"\xff" if reader.u8() else b"\x00", indefinite=False
+        )
     if kind in ("integer", "enumerated"):
         universal = Universal.INTEGER if kind == "integer" else Universal.ENUMERATED
         return _tlv(0, False, int(universal), reader.take(reader.u8()), indefinite=False)
@@ -314,8 +319,13 @@ def _emit_x690(node: EncodeNode, reader: _Reader, *, indefinite: bool) -> bytes:
     if kind == "string":
         return _tlv(0, False, node.universal, reader.blob(), indefinite=False)
     if kind == "oid":
-        return _tlv(0, False, int(Universal.OBJECT_IDENTIFIER),
-                    _oid_octets(reader.blob().decode("ascii")), indefinite=False)
+        return _tlv(
+            0,
+            False,
+            int(Universal.OBJECT_IDENTIFIER),
+            _oid_octets(reader.blob().decode("ascii")),
+            indefinite=False,
+        )
     if kind in ("sequence", "sequence-of"):
         content = bytearray()
         if kind == "sequence":
@@ -352,7 +362,7 @@ def _member_x690(member, reader: _Reader, *, indefinite: bool) -> bytes:
     # §8.14.4: an implicit tag REPLACES the base tag and keeps its constructed bit — which
     # is why the inner encoding has to be taken apart rather than re-wrapped.
     constructed = bool(inner[0] & 0x20)
-    body = inner[_identifier_length(inner):]
+    body = inner[_identifier_length(inner) :]
     return _tlv(bits, constructed, member.tag, _strip_length(body), indefinite=indefinite)
 
 
@@ -368,12 +378,12 @@ def _identifier_length(data: bytes) -> int:
 def _strip_length(data: bytes) -> bytes:
     first = data[0]
     if first == 0x80:
-        return data[1:-2]           # indefinite: drop the 0x80 and the closing EOC
+        return data[1:-2]  # indefinite: drop the 0x80 and the closing EOC
     if first < 0x80:
-        return data[1:1 + first]
+        return data[1 : 1 + first]
     count = first & 0x7F
-    length = int.from_bytes(data[1:1 + count], "big")
-    return data[1 + count:1 + count + length]
+    length = int.from_bytes(data[1 : 1 + count], "big")
+    return data[1 + count : 1 + count + length]
 
 
 # --- X.697: JER -----------------------------------------------------------------------------
@@ -381,6 +391,7 @@ def _strip_length(data: bytes) -> bytes:
 
 def _json_string(text: str) -> str:
     import json
+
     return json.dumps(text, ensure_ascii=False)
 
 
@@ -402,7 +413,8 @@ def _emit_jer(node: EncodeNode, reader: _Reader) -> str:
                 return _json_string(name)
         raise Asn1Error(
             f"{value} names no item of this enumeration, and X.697 §22.1 gives an "
-            f"enumerated value no numeric spelling")
+            f"enumerated value no numeric spelling"
+        )
     if kind == "null":
         return "null"
     if kind == "octetstring":
@@ -425,15 +437,13 @@ def _emit_jer(node: EncodeNode, reader: _Reader) -> str:
             parts.append(f"{_json_string(member.name)}:{_emit_jer(member.node, reader)}")
         return "{" + ",".join(parts) + "}"
     if kind == "sequence-of":
-        return "[" + ",".join(_emit_jer(node.element, reader)
-                              for _ in range(reader.u32())) + "]"
+        return "[" + ",".join(_emit_jer(node.element, reader) for _ in range(reader.u32())) + "]"
     if kind == "choice":
         index = reader.u32()
         chosen = [m for m in node.members if m.index == index]
         if not chosen:
             raise Asn1Error(f"CHOICE index {index} is outside the plan's alternatives")
-        return ("{" + _json_string(chosen[0].name) + ":"
-                + _emit_jer(chosen[0].node, reader) + "}")
+        return "{" + _json_string(chosen[0].name) + ":" + _emit_jer(chosen[0].node, reader) + "}"
     raise Asn1Error(f"no JER rule for plan kind {kind!r}")
 
 
@@ -451,10 +461,14 @@ def _oer_length(count: int) -> bytes:
 #: X.696 §27.2's known-multiplier character types, restricted to the ones this plan compiles
 #: as `string`. BMPString and UniversalString are known-multiplier too, but `_LEAF_KIND` has
 #: no rule for them, so listing them here would describe a case that cannot arise.
-_OER_KNOWN_MULTIPLIER = frozenset({
-    int(Universal.NUMERIC_STRING), int(Universal.PRINTABLE_STRING),
-    int(Universal.VISIBLE_STRING), int(Universal.IA5_STRING),
-})
+_OER_KNOWN_MULTIPLIER = frozenset(
+    {
+        int(Universal.NUMERIC_STRING),
+        int(Universal.PRINTABLE_STRING),
+        int(Universal.VISIBLE_STRING),
+        int(Universal.IA5_STRING),
+    }
+)
 
 
 def _oer_integer_form(node: EncodeNode) -> tuple[int | None, bool]:
@@ -469,21 +483,20 @@ def _oer_integer_form(node: EncodeNode) -> tuple[int | None, bool]:
     constraint = node.constraint
     low = None if constraint is None else constraint.value_low
     high = None if constraint is None else constraint.value_high
-    if low is not None and low >= 0:                        # §10.2 a) -> §10.3, unsigned
+    if low is not None and low >= 0:  # §10.2 a) -> §10.3, unsigned
         if high is None:
             return None, False
-        for width, limit in ((1, 0xFF), (2, 0xFFFF), (4, 0xFFFFFFFF),
-                             (8, 0xFFFFFFFFFFFFFFFF)):
+        for width, limit in ((1, 0xFF), (2, 0xFFFF), (4, 0xFFFFFFFF), (8, 0xFFFFFFFFFFFFFFFF)):
             if high <= limit:
                 return width, False
-        return None, False                                  # §10.3 e)
-    if low is None or high is None:                         # §10.2 b) -> §10.4, signed
+        return None, False  # §10.3 e)
+    if low is None or high is None:  # §10.2 b) -> §10.4, signed
         return None, True
     for width in (1, 2, 4, 8):
         bits = width * 8
         if -(1 << (bits - 1)) <= low and high <= (1 << (bits - 1)) - 1:
             return width, True
-    return None, True                                       # §10.4 e)
+    return None, True  # §10.4 e)
 
 
 def _oer_fixed_size(node: EncodeNode) -> int | None:
@@ -521,30 +534,31 @@ def _emit_oer(node: EncodeNode, reader: _Reader) -> bytes:
         except OverflowError:
             raise Asn1Error(
                 f"{value} does not fit the {width}-octet {'signed' if signed else 'unsigned'}"
-                f" word its constraint selected (X.696 §10.3/§10.4)") from None
+                f" word its constraint selected (X.696 §10.3/§10.4)"
+            ) from None
     if kind == "enumerated":
         # §11 gives ENUMERATED its own form and reads no constraint: the short form below
         # 128, else a long form whose count octet has the top bit set. It is NOT §10's
         # integer, which is why this no longer shares a branch with it.
         value = int.from_bytes(reader.take(reader.u8()), "big", signed=True)
         if 0 <= value < 0x80:
-            return bytes((value,))                    # §11.3
-        octets = _int_octets(value)                   # §11.4 long form: SIGNED
+            return bytes((value,))  # §11.3
+        octets = _int_octets(value)  # §11.4 long form: SIGNED
         if len(octets) > 0x7F:
             raise Asn1Error("enumerated value needs more than 127 octets (X.696 §11.4)")
         return bytes((0x80 | len(octets),)) + octets
     if kind == "null":
-        return b""                                   # §12: no octets at all
+        return b""  # §12: no octets at all
     if kind == "octetstring":
         data = reader.blob()
         fixed = _oer_fixed_size(node)
-        if fixed is not None:                         # §14.1: no length determinant
+        if fixed is not None:  # §14.1: no length determinant
             if len(data) != fixed:
                 raise Asn1Error(
-                    f"SIZE ({fixed}) requires exactly {fixed} octets, got {len(data)} "
-                    f"(X.696 §14.1)")
+                    f"SIZE ({fixed}) requires exactly {fixed} octets, got {len(data)} (X.696 §14.1)"
+                )
             return data
-        return _oer_length(len(data)) + data          # §14.2
+        return _oer_length(len(data)) + data  # §14.2
     if kind == "string":
         data = reader.blob()
         # §27.2 drops the length determinant only for a KNOWN-MULTIPLIER type whose
@@ -559,12 +573,13 @@ def _emit_oer(node: EncodeNode, reader: _Reader) -> bytes:
             if len(data) != fixed:
                 raise Asn1Error(
                     f"SIZE ({fixed}) requires exactly {fixed} characters, got {len(data)} "
-                    f"(X.696 §27.2)")
+                    f"(X.696 §27.2)"
+                )
             return data
-        return _oer_length(len(data)) + data          # §27.3
+        return _oer_length(len(data)) + data  # §27.3
     if kind == "oid":
         body = _oid_octets(reader.blob().decode("ascii"))
-        return _oer_length(len(body)) + body           # §14
+        return _oer_length(len(body)) + body  # §14
     if kind == "sequence":
         # §16.2: a preamble of one bit per OPTIONAL/DEFAULT component, MSB first, padded
         # with zeroes to an octet boundary. §16.2.2 makes the padding zero in CANONICAL-OER.
@@ -588,7 +603,7 @@ def _emit_oer(node: EncodeNode, reader: _Reader) -> bytes:
             padded = bits + [0] * (-len(bits) % 8)
             for start in range(0, len(padded), 8):
                 octet = 0
-                for bit in padded[start:start + 8]:
+                for bit in padded[start : start + 8]:
                     octet = (octet << 1) | bit
                 preamble.append(octet)
         return bytes(preamble) + bytes(body)
@@ -688,29 +703,33 @@ def _emit_per(node: EncodeNode, reader: _Reader, writer, rules) -> None:
     # ADDITION bitmap, and `_compile_members` refuses an extension addition outright. An
     # imported name with no call site would look like coverage this rail does not have.
     from .per import (
-        _64K, _encode_constrained, _encode_integer_root, _encode_length_and_payload,
+        _64K,
+        _encode_constrained,
+        _encode_integer_root,
+        _encode_length_and_payload,
         _KNOWN_MULTIPLIER,
     )
 
     kind = node.kind
     if kind == "boolean":
-        writer.put_bit(1 if reader.u8() else 0)          # §12: one bit, no alignment
+        writer.put_bit(1 if reader.u8() else 0)  # §12: one bit, no alignment
         return
     if kind == "null":
-        return                                            # §18: no encoding at all
+        return  # §18: no encoding at all
     if kind == "integer":
         value = int.from_bytes(reader.take(reader.u8()), "big", signed=True)
         (low, high), extensible = _per_value_bounds(node)
         if extensible:
             # §13.1: one bit saying whether the value is inside the extension root. Outside,
             # §13.2's constrained forms do not apply and the value goes unconstrained.
-            inside = ((low is None or value >= low) and (high is None or value <= high))
+            inside = (low is None or value >= low) and (high is None or value <= high)
             writer.put_bit(0 if inside else 1)
             if not inside:
                 from .per import _encode_unconstrained
+
                 _encode_unconstrained(writer, value)
                 return
-        _encode_integer_root(writer, value, low, high)    # §13.2
+        _encode_integer_root(writer, value, low, high)  # §13.2
         return
     if kind == "enumerated":
         value = int.from_bytes(reader.take(reader.u8()), "big", signed=True)
@@ -720,8 +739,8 @@ def _emit_per(node: EncodeNode, reader: _Reader, writer, rules) -> None:
         if value not in numbers:
             raise Asn1Error(f"{value} is not an enumeration value of this type (X.691 §14.1)")
         if node.extensible:
-            writer.put_bit(0)                             # §14.3
-        _encode_constrained(writer, numbers.index(value), 0, len(numbers) - 1)   # §14.2
+            writer.put_bit(0)  # §14.3
+        _encode_constrained(writer, numbers.index(value), 0, len(numbers) - 1)  # §14.2
         return
     if kind == "octetstring":
         data = reader.blob()
@@ -730,20 +749,29 @@ def _emit_per(node: EncodeNode, reader: _Reader, writer, rules) -> None:
     if kind == "string":
         text = reader.blob().decode("utf-8")
         if node.universal in _KNOWN_MULTIPLIER:
-            _per_known_multiplier(writer, node, text)     # §30.5
+            _per_known_multiplier(writer, node, text)  # §30.5
             return
         # §30.6: everything else is its X.690 octets behind an unconstrained length.
         from .values import encode_string
+
         octets = encode_string(node.universal, text)
         _encode_length_and_payload(
-            writer, len(octets), 0, None,
-            lambda start, stop: (writer.align(), writer.put_octets(octets[start:stop])))
+            writer,
+            len(octets),
+            0,
+            None,
+            lambda start, stop: (writer.align(), writer.put_octets(octets[start:stop])),
+        )
         return
     if kind == "oid":
         octets = _oid_octets(reader.blob().decode("ascii"))
-        _encode_length_and_payload(                       # §24
-            writer, len(octets), 0, None,
-            lambda start, stop: (writer.align(), writer.put_octets(octets[start:stop])))
+        _encode_length_and_payload(  # §24
+            writer,
+            len(octets),
+            0,
+            None,
+            lambda start, stop: (writer.align(), writer.put_octets(octets[start:stop])),
+        )
         return
     if kind == "sequence":
         # §19.1: the extension bit. This plan refuses extension additions, so the type is
@@ -779,7 +807,7 @@ def _emit_per(node: EncodeNode, reader: _Reader, writer, rules) -> None:
         lower, upper, extensible = _per_size_bounds(node)
         if extensible:
             inside = count >= lower and (upper is None or count <= upper)
-            writer.put_bit(0 if inside else 1)            # §20.4
+            writer.put_bit(0 if inside else 1)  # §20.4
             if not inside:
                 lower, upper = 0, None
         if upper is not None and lower == upper and upper < _64K:
@@ -788,6 +816,7 @@ def _emit_per(node: EncodeNode, reader: _Reader, writer, rules) -> None:
             for _ in range(count):
                 _emit_per(node.element, reader, writer, rules)
             return
+
         # The elements are consumed from the stream in order, so a fragmenting callback
         # cannot revisit them: the stream is read once, and each slice is emitted as it is
         # reached. `_encode_length_and_payload` calls `emit` with strictly advancing,
@@ -796,7 +825,7 @@ def _emit_per(node: EncodeNode, reader: _Reader, writer, rules) -> None:
             for _ in range(stop - start):
                 _emit_per(node.element, reader, writer, rules)
 
-        _encode_length_and_payload(writer, count, lower, upper, emit_range)   # §20.6
+        _encode_length_and_payload(writer, count, lower, upper, emit_range)  # §20.6
         return
     if kind == "choice":
         index = reader.u32()
@@ -806,9 +835,9 @@ def _emit_per(node: EncodeNode, reader: _Reader, writer, rules) -> None:
         order = _per_alternatives(node)
         position = order.index(chosen[0])
         if node.extensible:
-            writer.put_bit(0)                             # §23.5
-        if len(order) > 1:                                # §23.4: one alternative, no index
-            _encode_constrained(writer, position, 0, len(order) - 1)   # §23.6/§23.7
+            writer.put_bit(0)  # §23.5
+        if len(order) > 1:  # §23.4: one alternative, no index
+            _encode_constrained(writer, position, 0, len(order) - 1)  # §23.6/§23.7
         _emit_per(chosen[0].node, reader, writer, rules)
         return
     raise Asn1Error(f"no PER rule for plan kind {kind!r}")
@@ -820,10 +849,14 @@ def _per_canonical(rules) -> bool:
 
 #: The four rules `_emit_per` serves. A frozenset of enum members rather than a lookup into
 #: `per`, so deciding *whether* a rule is PER costs no import at all.
-_PER_RULES = frozenset({
-    EmitRules.CANONICAL_PER_ALIGNED, EmitRules.CANONICAL_PER_UNALIGNED,
-    EmitRules.BASIC_PER_ALIGNED, EmitRules.BASIC_PER_UNALIGNED,
-})
+_PER_RULES = frozenset(
+    {
+        EmitRules.CANONICAL_PER_ALIGNED,
+        EmitRules.CANONICAL_PER_UNALIGNED,
+        EmitRules.BASIC_PER_ALIGNED,
+        EmitRules.BASIC_PER_UNALIGNED,
+    }
+)
 
 
 def _per_variant(rules):
@@ -835,9 +868,11 @@ def _per_variant(rules):
     """
     from .per import PerVariant
 
-    return (PerVariant.ALIGNED
-            if rules in (EmitRules.CANONICAL_PER_ALIGNED, EmitRules.BASIC_PER_ALIGNED)
-            else PerVariant.UNALIGNED)
+    return (
+        PerVariant.ALIGNED
+        if rules in (EmitRules.CANONICAL_PER_ALIGNED, EmitRules.BASIC_PER_ALIGNED)
+        else PerVariant.UNALIGNED
+    )
 
 
 def _per_octets(writer, node: EncodeNode, data: bytes) -> None:
@@ -848,24 +883,28 @@ def _per_octets(writer, node: EncodeNode, data: bytes) -> None:
     count = len(data)
     if extensible:
         inside = count >= lower and (upper is None or count <= upper)
-        writer.put_bit(0 if inside else 1)                # §17.3
+        writer.put_bit(0 if inside else 1)  # §17.3
         if not inside:
             lower, upper = 0, None
     if upper is not None and lower == upper:
         if count != upper:
             raise Asn1Error(f"octet string is {count} octets, fixed size is {upper}")
         if upper == 0:
-            return                                         # §17.5
-        if upper <= 2:                                     # §17.6: NOT octet-aligned
+            return  # §17.5
+        if upper <= 2:  # §17.6: NOT octet-aligned
             writer.put_octets(data)
             return
-        if upper < _64K:                                   # §17.7
+        if upper < _64K:  # §17.7
             writer.align()
             writer.put_octets(data)
             return
-    _encode_length_and_payload(                            # §17.8
-        writer, count, lower, upper,
-        lambda start, stop: (writer.align(), writer.put_octets(data[start:stop])))
+    _encode_length_and_payload(  # §17.8
+        writer,
+        count,
+        lower,
+        upper,
+        lambda start, stop: (writer.align(), writer.put_octets(data[start:stop])),
+    )
 
 
 def _per_known_multiplier(writer, node: EncodeNode, text: str) -> None:
@@ -897,9 +936,9 @@ def _per_known_multiplier(writer, node: EncodeNode, text: str) -> None:
         if count != upper:
             raise Asn1Error(f"string is {count} characters, fixed size is {upper}")
         if count:
-            emit_range(0, count)                           # §30.5.6
+            emit_range(0, count)  # §30.5.6
         return
-    _encode_length_and_payload(writer, count, lower, upper, emit_range)   # §30.5.7
+    _encode_length_and_payload(writer, count, lower, upper, emit_range)  # §30.5.7
 
 
 # --- the one entry point ---------------------------------------------------------------------
@@ -932,7 +971,8 @@ def emit(plan: EncodePlan, stream: bytes, *, rules: EmitRules = EmitRules.DER) -
     if reader.at != len(stream):
         raise Asn1Error(
             f"the value stream has {len(stream) - reader.at} octets left over after "
-            f"{rules.value}; the plan and the stream describe different values")
+            f"{rules.value}; the plan and the stream describe different values"
+        )
     return out
 
 

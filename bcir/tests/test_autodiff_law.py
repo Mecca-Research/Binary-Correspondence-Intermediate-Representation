@@ -29,9 +29,23 @@ from bcir.kbcir.autodiff import CLOSED_SET, Tape, _ARITY
 
 # The fixed opcode int codes the law op + verifier use (mirror autodiff._ARITY's order). The vocabulary is the
 # CLOSED SET; this map is the serialization of it.
-_CODE = {"const": 0, "var": 1, "neg": 2, "add": 3, "sub": 4, "mul": 5,
-         "div": 6, "dot": 7, "select": 8, "exp": 9, "log": 10, "sqrt": 11,
-         "tanh": 12, "sin": 13, "cos": 14}
+_CODE = {
+    "const": 0,
+    "var": 1,
+    "neg": 2,
+    "add": 3,
+    "sub": 4,
+    "mul": 5,
+    "div": 6,
+    "dot": 7,
+    "select": 8,
+    "exp": 9,
+    "log": 10,
+    "sqrt": 11,
+    "tanh": 12,
+    "sin": 13,
+    "cos": 14,
+}
 
 
 def _build_f_xy_plus_x():
@@ -80,32 +94,42 @@ def _serialize(tape: Tape, output: int, input_names: list[str]) -> dict:
         args.extend(n.args)
         base += ar
         if n.op == "const":
-            consts.append(int(n.const))      # the const value as an integer payload (the structural law)
+            consts.append(
+                int(n.const)
+            )  # the const value as an integer payload (the structural law)
         elif n.op == "var":
-            consts.append(slot[n.const])     # the input slot
+            consts.append(slot[n.const])  # the input slot
         else:
-            consts.append(-1)                # a non-leaf op carries no payload -> the sentinel
+            consts.append(-1)  # a non-leaf op carries no payload -> the sentinel
     return {
-        "n_inputs": len(input_names), "opcodes": opcodes, "arities": arities,
-        "arg_base": arg_base, "args": args, "consts": consts, "output": output,
+        "n_inputs": len(input_names),
+        "opcodes": opcodes,
+        "arities": arities,
+        "arg_base": arg_base,
+        "args": args,
+        "consts": consts,
+        "output": output,
     }
 
 
 def _to_mlir(name: str, s: dict) -> str:
     """Emit the bcir.gem.autodiff carrier-op MLIR for a serialized DAG."""
+
     def arr(a):
         return "array<i64: " + ", ".join(str(x) for x in a) + ">"
+
     return (
         "bcir.module @m {\n"
-        f'  bcir.gem.autodiff @{name} {{ n_inputs = {s["n_inputs"]} : i64, '
-        f'opcodes = {arr(s["opcodes"])}, arities = {arr(s["arities"])}, '
-        f'arg_base = {arr(s["arg_base"])}, args = {arr(s["args"])}, '
-        f'consts = {arr(s["consts"])}, output = {s["output"]} : i64 }}\n'
+        f"  bcir.gem.autodiff @{name} {{ n_inputs = {s['n_inputs']} : i64, "
+        f"opcodes = {arr(s['opcodes'])}, arities = {arr(s['arities'])}, "
+        f"arg_base = {arr(s['arg_base'])}, args = {arr(s['args'])}, "
+        f"consts = {arr(s['consts'])}, output = {s['output']} : i64 }}\n"
         "}\n"
     )
 
 
 # --- the pure-Python parity arm (always runs) -----------------------------------------------------
+
 
 def test_serializer_emits_a_well_formed_closed_set_dag():
     """The serializer turns a real Tape into the exact closed-set well-formedness the MLIR verifier enforces:
@@ -113,13 +137,19 @@ def test_serializer_emits_a_well_formed_closed_set_dag():
     reference strictly earlier nodes, a var's slot is a real input, and leaves carry a payload / non-leaves the
     -1 sentinel. Asserted against autodiff.Tape directly so it tracks the oracle vocabulary."""
     code_to_op = {v: k for k, v in _CODE.items()}
-    assert frozenset(_CODE) == CLOSED_SET, "the serialized vocabulary must be exactly autodiff.CLOSED_SET"
+    assert frozenset(_CODE) == CLOSED_SET, (
+        "the serialized vocabulary must be exactly autodiff.CLOSED_SET"
+    )
     for build in (_build_f_xy_plus_x, _build_rich):
         tape, output, names = build()
         s = _serialize(tape, output, names)
         n = len(s["opcodes"])
-        assert len(s["arities"]) == n == len(s["arg_base"]) == len(s["consts"]), "parallel arrays must be equal length"
-        assert sum(s["arities"]) == len(s["args"]), "the flat args must hold exactly sum(arities) operands"
+        assert len(s["arities"]) == n == len(s["arg_base"]) == len(s["consts"]), (
+            "parallel arrays must be equal length"
+        )
+        assert sum(s["arities"]) == len(s["args"]), (
+            "the flat args must hold exactly sum(arities) operands"
+        )
         assert 0 <= s["output"] < n, "output must be a valid node index"
         for i in range(n):
             op = code_to_op[s["opcodes"][i]]
@@ -132,15 +162,22 @@ def test_serializer_emits_a_well_formed_closed_set_dag():
             base = s["arg_base"][i]
             for a in range(ar):
                 operand = s["args"][base + a]
-                assert 0 <= operand < i, f"node {i} operand {operand} must reference a strictly earlier node"
+                assert 0 <= operand < i, (
+                    f"node {i} operand {operand} must reference a strictly earlier node"
+                )
             payload = s["consts"][i]
             if op == "var":
-                assert 0 <= payload < s["n_inputs"], f"node {i} var slot {payload} out of [0, n_inputs)"
+                assert 0 <= payload < s["n_inputs"], (
+                    f"node {i} var slot {payload} out of [0, n_inputs)"
+                )
             elif op != "const":
-                assert payload == -1, f"node {i} ({op}) non-leaf must carry the -1 sentinel, got {payload}"
+                assert payload == -1, (
+                    f"node {i} ({op}) non-leaf must carry the -1 sentinel, got {payload}"
+                )
 
 
 # --- the ultimate cross-check: the real bcir-opt law rail (self-skips without the built bcir-opt) -
+
 
 def test_law_rail_verifies_and_round_trips_a_faithful_autodiff_dag():
     """Drive the real `bcir-opt` over the serialized gem.autodiff IR and assert the closed-set verifier ACCEPTS
@@ -153,11 +190,15 @@ def test_law_rail_verifies_and_round_trips_a_faithful_autodiff_dag():
         tape, output, names = build()
         ir = _to_mlir("ad", _serialize(tape, output, names))
         first = subprocess.run([bo], input=ir, capture_output=True, text=True)
-        assert first.returncode == 0, f"the law rail rejected a faithful autodiff DAG:\n{first.stderr}"
+        assert first.returncode == 0, (
+            f"the law rail rejected a faithful autodiff DAG:\n{first.stderr}"
+        )
         assert "bcir.gem.autodiff @ad" in first.stdout
         # round-trip: re-parse/print the printed form -> identical (the op is stable through the printer).
         second = subprocess.run([bo], input=first.stdout, capture_output=True, text=True)
-        assert second.returncode == 0, f"the law rail rejected its own printed form:\n{second.stderr}"
+        assert second.returncode == 0, (
+            f"the law rail rejected its own printed form:\n{second.stderr}"
+        )
         assert second.stdout == first.stdout, "gem.autodiff must round-trip byte-identically"
 
 
@@ -171,11 +212,12 @@ def test_law_rail_rejects_a_foreign_opcode():
     tape, output, names = _build_f_xy_plus_x()
     s = _serialize(tape, output, names)
     s["opcodes"] = list(s["opcodes"])
-    s["opcodes"][2] = 15                        # foreign: closed vocabulary ends at code 14
+    s["opcodes"][2] = 15  # foreign: closed vocabulary ends at code 14
     proc = subprocess.run([bo], input=_to_mlir("bad", s), capture_output=True, text=True)
     assert proc.returncode != 0, "the law rail must reject a foreign opcode"
-    assert "is not in the closed set" in proc.stderr, \
+    assert "is not in the closed set" in proc.stderr, (
         f"the rejection must cite the closed-set law, got:\n{proc.stderr}"
+    )
 
 
 def _find_bcir_opt():

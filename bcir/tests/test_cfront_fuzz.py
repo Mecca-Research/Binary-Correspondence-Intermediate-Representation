@@ -5,6 +5,7 @@ never crash the front end (the totality contract). Both are seeded and reproduci
 already caught a real bug: a malformed numeric literal (`9au`) raised a bare ValueError that escaped
 `diagnose` -- now a clean CLexError (regression-tested below).
 """
+
 from __future__ import annotations
 
 from bcir.frontends.cfront.cfuzz import fuzz_malformed, fuzz_valid
@@ -41,10 +42,11 @@ def test_malformed_integer_literal_is_a_clean_lex_error():
     # not a bare ValueError, so diagnose reports it instead of crashing.
     from bcir.frontends.cfront import diagnose
     from bcir.frontends.cfront.clex import CLexError, parse_int_literal
+
     try:
         parse_int_literal("9au")
         raise AssertionError("expected CLexError for a malformed integer literal")
     except CLexError:
         pass
     rep = diagnose("unsigned f(unsigned a){ return a + 9au; }\n", filename="t.c")
-    assert not rep.ok                                          # reported, did not crash
+    assert not rep.ok  # reported, did not crash

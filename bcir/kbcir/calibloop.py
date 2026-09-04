@@ -45,8 +45,9 @@ from .realize import (
 from .weights import PERF, Policy, weights
 
 
-def rescore_plan(module: Module, result: RealizationResult, h: HProfile,
-                 theta: Theta, policy: Policy = PERF) -> int | None:
+def rescore_plan(
+    module: Module, result: RealizationResult, h: HProfile, theta: Theta, policy: Policy = PERF
+) -> int | None:
     """Score a *fixed* plan (the realizations `result` already chose) under a new
     target/Theta -- reusing the optimizer's own primitives (weights, candidate
     costs, context coupling), not a reimplementation. Returns None if a chosen
@@ -61,8 +62,9 @@ def rescore_plan(module: Module, result: RealizationResult, h: HProfile,
         w = weights(h, theta, phase_id, policy)
         rid = claim.rd[0] if claim.rd else claim.primary_rid
         resource = module.resource(rid) if rid is not None else None
-        cand = next((c for c in candidates_for(claim, h, resource)
-                     if c.name == chosen.get(claim.id)), None)
+        cand = next(
+            (c for c in candidates_for(claim, h, resource) if c.name == chosen.get(claim.id)), None
+        )
         if cand is None:
             return None
         total += cand.base.couple(_context_factor(prev, cand, theta)).dot(w)
@@ -79,12 +81,12 @@ class CalibrationCertificate:
     target: str
     cal_gen: int
     provenance: str
-    ratios: tuple              # (stream_q8, strided_q8, random_q8, compute_q8)
-    measured_thermal: int      # the telemetry-calibrated Theta thermal pressure
-    seeded_widths: tuple       # ((claim_id, width), ...) -- the stale (default) plan
-    calibrated_widths: tuple   # ((claim_id, width), ...) -- the recalibrated plan
-    stale_cost: int            # the seeded plan rescored on the measured machine
-    calibrated_cost: int       # the recalibrated optimum on the measured machine
+    ratios: tuple  # (stream_q8, strided_q8, random_q8, compute_q8)
+    measured_thermal: int  # the telemetry-calibrated Theta thermal pressure
+    seeded_widths: tuple  # ((claim_id, width), ...) -- the stale (default) plan
+    calibrated_widths: tuple  # ((claim_id, width), ...) -- the recalibrated plan
+    stale_cost: int  # the seeded plan rescored on the measured machine
+    calibrated_cost: int  # the recalibrated optimum on the measured machine
 
     @property
     def replanned(self) -> bool:
@@ -116,8 +118,17 @@ class CalibrationCertificate:
         four finite ints, and the width tuples are well-formed `(claim_id, width)`
         pairs. Any violation raises `ValueError`."""
         d = strict_json_loads(text, "calibration certificate")
-        fields = {"target", "cal_gen", "provenance", "ratios", "measured_thermal",
-                  "seeded_widths", "calibrated_widths", "stale_cost", "calibrated_cost"}
+        fields = {
+            "target",
+            "cal_gen",
+            "provenance",
+            "ratios",
+            "measured_thermal",
+            "seeded_widths",
+            "calibrated_widths",
+            "stale_cost",
+            "calibrated_cost",
+        }
         if not isinstance(d, dict) or set(d) != fields:
             raise ValueError(f"CalibrationCertificate fields must be exactly {sorted(fields)}")
 
@@ -144,10 +155,10 @@ class CalibrationCertificate:
         if not isinstance(ratios, (list, tuple)) or len(ratios) != 4:
             raise ValueError("CalibrationCertificate ratios must be exactly 4 values")
         for i, r in enumerate(ratios):
-            if (isinstance(r, bool) or not isinstance(r, int) or
-                    not 0 <= r <= i63):
+            if isinstance(r, bool) or not isinstance(r, int) or not 0 <= r <= i63:
                 raise ValueError(
-                    f"CalibrationCertificate ratios[{i}] must be a non-negative i63, got {r!r}")
+                    f"CalibrationCertificate ratios[{i}] must be a non-negative i63, got {r!r}"
+                )
         if ratios[0] != 256 or any(r < 256 for r in ratios[1:]):
             raise ValueError("CalibrationCertificate ratios violate the Q8 baseline")
 
@@ -158,7 +169,9 @@ class CalibrationCertificate:
             pairs = []
             for index, x in enumerate(raw):
                 if not isinstance(x, list) or len(x) != 2:
-                    raise ValueError(f"CalibrationCertificate {key} entries must be (claim_id, width)")
+                    raise ValueError(
+                        f"CalibrationCertificate {key} entries must be (claim_id, width)"
+                    )
                 cid, width = x
                 if any(isinstance(v, bool) or not isinstance(v, int) for v in (cid, width)):
                     raise ValueError(f"CalibrationCertificate {key} entries must be ints")
@@ -171,8 +184,12 @@ class CalibrationCertificate:
 
         for key in ("target", "provenance"):
             value = d[key]
-            if (not isinstance(value, str) or not value or len(value) > 4096 or
-                    any(ord(ch) < 0x20 for ch in value)):
+            if (
+                not isinstance(value, str)
+                or not value
+                or len(value) > 4096
+                or any(ord(ch) < 0x20 for ch in value)
+            ):
                 raise ValueError(f"CalibrationCertificate {key} must be a bounded string")
         seeded_widths = _widths("seeded_widths")
         calibrated_widths = _widths("calibrated_widths")
@@ -181,20 +198,32 @@ class CalibrationCertificate:
         if stale_cost < calibrated_cost:
             raise ValueError("CalibrationCertificate records a negative calibration win")
         return CalibrationCertificate(
-            target=d["target"], cal_gen=cal_gen, provenance=d["provenance"],
-            ratios=tuple(ratios), measured_thermal=measured_thermal,
-            seeded_widths=seeded_widths, calibrated_widths=calibrated_widths,
-            stale_cost=stale_cost, calibrated_cost=calibrated_cost)
+            target=d["target"],
+            cal_gen=cal_gen,
+            provenance=d["provenance"],
+            ratios=tuple(ratios),
+            measured_thermal=measured_thermal,
+            seeded_widths=seeded_widths,
+            calibrated_widths=calibrated_widths,
+            stale_cost=stale_cost,
+            calibrated_cost=calibrated_cost,
+        )
 
 
 def _widths(result: RealizationResult) -> tuple:
     return tuple(sorted((cid, c.width) for cid, c in result.by_claim().items()))
 
 
-def close_loop(module: Module, h: HProfile, *, table: CalibratedProfile = None,
-               events=(), default_theta: Theta = None,
-               calibrator: EwmaCalibrator = None,
-               policy: Policy = PERF) -> CalibrationCertificate:
+def close_loop(
+    module: Module,
+    h: HProfile,
+    *,
+    table: CalibratedProfile = None,
+    events=(),
+    default_theta: Theta = None,
+    calibrator: EwmaCalibrator = None,
+    policy: Policy = PERF,
+) -> CalibrationCertificate:
     """Close the loop with a (frozen) table + telemetry: compare the stale plan
     (shipped under `default_theta`) against the recalibrated optimum on the
     machine the telemetry reports, and certify the win. `policy` is held fixed for
@@ -206,17 +235,21 @@ def close_loop(module: Module, h: HProfile, *, table: CalibratedProfile = None,
     measured_theta = calibrator.update(default_theta, list(events))
     hc = table.apply(h)
 
-    seeded = optimize(module, h, default_theta, policy)          # the stale (default) plan
-    calibrated = optimize(module, hc, measured_theta, policy)    # the recalibrated optimum
+    seeded = optimize(module, h, default_theta, policy)  # the stale (default) plan
+    calibrated = optimize(module, hc, measured_theta, policy)  # the recalibrated optimum
     stale = rescore_plan(module, seeded, hc, measured_theta, policy)
 
     return CalibrationCertificate(
-        target=h.name, cal_gen=table.cal_gen, provenance=table.provenance,
+        target=h.name,
+        cal_gen=table.cal_gen,
+        provenance=table.provenance,
         ratios=(table.stream_q8, table.strided_q8, table.random_q8, table.compute_q8),
         measured_thermal=measured_theta.thermal,
-        seeded_widths=_widths(seeded), calibrated_widths=_widths(calibrated),
+        seeded_widths=_widths(seeded),
+        calibrated_widths=_widths(calibrated),
         stale_cost=int(stale if stale is not None else calibrated.score),
-        calibrated_cost=int(calibrated.score))
+        calibrated_cost=int(calibrated.score),
+    )
 
 
 @dataclass(frozen=True)
@@ -228,7 +261,7 @@ class MeasuredReplanCertificate:
     replan win" is never claimed from fabricated telemetry."""
 
     cert: CalibrationCertificate
-    provenance: tuple                  # sorted signal tags, or ("synthetic",)
+    provenance: tuple  # sorted signal tags, or ("synthetic",)
     samples: int
 
     @property
@@ -245,14 +278,29 @@ class MeasuredReplanCertificate:
 
     def to_json(self) -> str:
         import json
-        return json.dumps({"provenance": list(self.provenance), "samples": self.samples,
-                           "measured": self.measured, "certificate": json.loads(self.cert.to_json())},
-                          indent=2, sort_keys=True)
+
+        return json.dumps(
+            {
+                "provenance": list(self.provenance),
+                "samples": self.samples,
+                "measured": self.measured,
+                "certificate": json.loads(self.cert.to_json()),
+            },
+            indent=2,
+            sort_keys=True,
+        )
 
 
-def measured_replan(module: Module, h: HProfile, *, work=None, samples: int = 8,
-                    default_theta: Theta = None, policy: Policy = PERF,
-                    cal_gen: int = 1):
+def measured_replan(
+    module: Module,
+    h: HProfile,
+    *,
+    work=None,
+    samples: int = 8,
+    default_theta: Theta = None,
+    policy: Policy = PERF,
+    cal_gen: int = 1,
+):
     """Close the calibration loop on **real silicon signals**: sample the host's PMU
     / RAPL / thermal counters around `work` `samples` times (a memory-streaming probe
     by default), train + freeze a `LinearCalibrator` on that measured telemetry, then
@@ -267,7 +315,11 @@ def measured_replan(module: Module, h: HProfile, *, work=None, samples: int = 8,
     from .microbench import calibrate_profile
 
     default_theta = default_theta if default_theta is not None else Theta.cool()
-    n = max(1, module.phases[0].claims[0].count) if module.phases and module.phases[0].claims else 1 << 16
+    n = (
+        max(1, module.phases[0].claims[0].count)
+        if module.phases and module.phases[0].claims
+        else 1 << 16
+    )
 
     def _probe():
         # a memory-streaming unit of work sized to the kernel -- the real bandwidth
@@ -286,17 +338,32 @@ def measured_replan(module: Module, h: HProfile, *, work=None, samples: int = 8,
         events.append(dna)
         provenance |= prov
 
-    real = provenance - {"os"}                          # OS counters alone are not "silicon"
+    real = provenance - {"os"}  # OS counters alone are not "silicon"
     tags = tuple(sorted(provenance)) if real else ("synthetic",)
     table = calibrate_profile(h, n=min(n, 1 << 16), repeats=3, cal_gen=cal_gen)
-    cert = close_loop(module, h, table=table, events=events, default_theta=default_theta,
-                      calibrator=(train_calibrator(events, gen=cal_gen) if real else None),
-                      policy=policy)
+    cert = close_loop(
+        module,
+        h,
+        table=table,
+        events=events,
+        default_theta=default_theta,
+        calibrator=(train_calibrator(events, gen=cal_gen) if real else None),
+        policy=policy,
+    )
     return MeasuredReplanCertificate(cert=cert, provenance=tags, samples=len(events))
 
 
-def measure_and_close(module: Module, h: HProfile, *, events=(), n: int = 1 << 16,
-                      repeats: int = 5, cal_gen: int = 1, native: bool = False, **kw):
+def measure_and_close(
+    module: Module,
+    h: HProfile,
+    *,
+    events=(),
+    n: int = 1 << 16,
+    repeats: int = 5,
+    cal_gen: int = 1,
+    native: bool = False,
+    **kw,
+):
     """Run the loop on REAL hardware: microbench this host, freeze the Q8 table,
     then close the loop. Returns (certificate, table). Offline (L2/L3) -- never on
     the hot path. The table is the deterministic artifact the planner consumes.
@@ -305,6 +372,7 @@ def measure_and_close(module: Module, h: HProfile, *, events=(), n: int = 1 << 1
     of the conservative interpreter harness."""
     if native:
         from .microbench import calibrate_native
+
         table = calibrate_native(h, n=max(n, 1 << 22), repeats=repeats, cal_gen=cal_gen)
     else:
         table = calibrate_profile(h, n=n, repeats=repeats, cal_gen=cal_gen)

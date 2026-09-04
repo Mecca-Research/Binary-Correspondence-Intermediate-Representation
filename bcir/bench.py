@@ -57,7 +57,7 @@ class Measurement:
     opt: str
     n: int
     reps: int
-    ns_per_call: int           # best (minimum) wall-time per kernel call
+    ns_per_call: int  # best (minimum) wall-time per kernel call
     ok: bool
     detail: str = ""
 
@@ -67,8 +67,8 @@ class Comparison:
     program: str
     target: str
     opt: str
-    bcir: Measurement          # BCIR's cost-model-selected realization
-    baseline: Measurement      # the naive scalar (width-1) baseline
+    bcir: Measurement  # BCIR's cost-model-selected realization
+    baseline: Measurement  # the naive scalar (width-1) baseline
 
     @property
     def speedup_milli(self) -> int:
@@ -79,23 +79,31 @@ class Comparison:
 
     @property
     def bcir_wins(self) -> bool:
-        return (self.bcir.ok and self.baseline.ok
-                and self.bcir.ns_per_call < self.baseline.ns_per_call)
+        return (
+            self.bcir.ok and self.baseline.ok and self.bcir.ns_per_call < self.baseline.ns_per_call
+        )
 
 
-def _emit_timed_c(module, result, fn_name: str, elem: str, n: int, reps: int,
-                  width_override, hw_width=None) -> str:
-    kernel = emit_kernel_c(module, result, fn_name, elem, width_override=width_override,
-                           hw_width=hw_width)
+def _emit_timed_c(
+    module, result, fn_name: str, elem: str, n: int, reps: int, width_override, hw_width=None
+) -> str:
+    kernel = emit_kernel_c(
+        module, result, fn_name, elem, width_override=width_override, hw_width=hw_width
+    )
     claim, _ = find_elementwise(module, result)
     op = "+" if elem != "i32" else "+"
     ctype = "int32_t" if elem == "i32" else "float"
-    init = ("A[i] = (float)(i % 1000); B[i] = (float)(i % 7);"
-            if elem != "i32" else "A[i] = (int32_t)(i % 1000); B[i] = (int32_t)(i % 7);")
+    init = (
+        "A[i] = (float)(i % 1000); B[i] = (float)(i % 7);"
+        if elem != "i32"
+        else "A[i] = (int32_t)(i % 1000); B[i] = (int32_t)(i % 7);"
+    )
     return (
         "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
-        "#include <time.h>\n#include <limits.h>\n" + ("#include <stdint.h>\n" if elem == "i32" else "")
-        + "\n" + kernel
+        "#include <time.h>\n#include <limits.h>\n"
+        + ("#include <stdint.h>\n" if elem == "i32" else "")
+        + "\n"
+        + kernel
         + f"""
 static long now_ns(void) {{ struct timespec t; timespec_get(&t, TIME_UTC);
   return (long)t.tv_sec * 1000000000L + (long)t.tv_nsec; }}
@@ -124,6 +132,7 @@ int main(void) {{
 
 def _which(*names):
     from shutil import which
+
     for n in names:
         p = which(n)
         if p:
@@ -131,9 +140,18 @@ def _which(*names):
     return None
 
 
-def measure(module, result, *, label: str, elem: str = "f32", opt: str = "-O1",
-            n: int = 1 << 20, reps: int = 200, width_override=None,
-            hw_width=None) -> Measurement:
+def measure(
+    module,
+    result,
+    *,
+    label: str,
+    elem: str = "f32",
+    opt: str = "-O1",
+    n: int = 1 << 20,
+    reps: int = 200,
+    width_override=None,
+    hw_width=None,
+) -> Measurement:
     """Compile + time one realization (the selected width, or `width_override`).
     `hw_width` (the target's widest lane) drives the width-aware lowering so the
     timed kernel is exactly the deployed one (go-fast at the full lane)."""
@@ -146,26 +164,40 @@ def measure(module, result, *, label: str, elem: str = "f32", opt: str = "-O1",
         src = os.path.join(d, "bench.c")
         exe = os.path.join(d, "bench")
         with open(src, "w") as f:
-            f.write(_emit_timed_c(module, result, "bcir_kernel", elem, n, reps, width_override,
-                                  hw_width=hw_width))
+            f.write(
+                _emit_timed_c(
+                    module, result, "bcir_kernel", elem, n, reps, width_override, hw_width=hw_width
+                )
+            )
         build = None
         for std in ("-std=c23", "-std=c2x"):
             build = subprocess.run([cc, std, opt, src, "-o", exe], capture_output=True, text=True)
             if build.returncode == 0:
                 break
         if build is None or build.returncode != 0:
-            return Measurement(label, w, opt, n, reps, 0, False,
-                               "build failed: " + (build.stderr if build else ""))
+            return Measurement(
+                label, w, opt, n, reps, 0, False, "build failed: " + (build.stderr if build else "")
+            )
         run = subprocess.run([exe], capture_output=True, text=True)
         m = _NS_RE.search(run.stdout or "")
         if run.returncode != 0 or not m:
-            return Measurement(label, w, opt, n, reps, 0, False, "run failed: " + run.stdout + run.stderr)
+            return Measurement(
+                label, w, opt, n, reps, 0, False, "run failed: " + run.stdout + run.stderr
+            )
         return Measurement(label, w, opt, n, reps, int(m.group(1)), True)
 
 
-def compare(program, *, target: str = default_target_name(), theta: str = "cool",
-            policy: str = "latency", elem: str = "f32", opt: str = "-O1",
-            n: int = 1 << 20, reps: int = 200) -> Comparison:
+def compare(
+    program,
+    *,
+    target: str = default_target_name(),
+    theta: str = "cool",
+    policy: str = "latency",
+    elem: str = "f32",
+    opt: str = "-O1",
+    n: int = 1 << 20,
+    reps: int = 200,
+) -> Comparison:
     """Time BCIR's selected realization against the naive scalar (width-1) baseline
     at one optimization level -- the measured evidence for the lane-geometry choice."""
     module = PROGRAMS[program]() if isinstance(program, str) else program
@@ -174,10 +206,27 @@ def compare(program, *, target: str = default_target_name(), theta: str = "cool"
     th = _THETAS.get(theta, Theta.cool())
     pol = POLICIES.get(policy, PERF)
     result = optimize(module, h, th, pol)
-    bcir = measure(module, result, label="bcir-selected", elem=elem, opt=opt, n=n, reps=reps,
-                   hw_width=h.vector_width)
-    base = measure(module, result, label="scalar-baseline", elem=elem, opt=opt, n=n,
-                   reps=reps, width_override=1, hw_width=h.vector_width)
+    bcir = measure(
+        module,
+        result,
+        label="bcir-selected",
+        elem=elem,
+        opt=opt,
+        n=n,
+        reps=reps,
+        hw_width=h.vector_width,
+    )
+    base = measure(
+        module,
+        result,
+        label="scalar-baseline",
+        elem=elem,
+        opt=opt,
+        n=n,
+        reps=reps,
+        width_override=1,
+        hw_width=h.vector_width,
+    )
     return Comparison(program=name, target=h.name, opt=opt, bcir=bcir, baseline=base)
 
 
@@ -187,6 +236,7 @@ def bench_available() -> bool:
 
 # --- gather avoidance: BCIR's direct realization vs the gather it avoids ----------
 
+
 @dataclass(frozen=True)
 class GatherComparison:
     program: str
@@ -194,8 +244,8 @@ class GatherComparison:
     n: int
     reps: int
     shuffle: bool
-    direct: Measurement        # BCIR's cost-model choice (contiguous, vectorizable)
-    gather: Measurement        # the avoided realization (indexed loads -> gather_penalty)
+    direct: Measurement  # BCIR's cost-model choice (contiguous, vectorizable)
+    gather: Measurement  # the avoided realization (indexed loads -> gather_penalty)
 
     @property
     def speedup_milli(self) -> int:
@@ -206,29 +256,45 @@ class GatherComparison:
 
     @property
     def avoidance_wins(self) -> bool:
-        return (self.direct.ok and self.gather.ok
-                and self.direct.ns_per_call < self.gather.ns_per_call)
+        return (
+            self.direct.ok and self.gather.ok and self.direct.ns_per_call < self.gather.ns_per_call
+        )
 
 
 _DIRECT_RE = re.compile(r"^DIRECT (\d+)$", re.MULTILINE)
 _GATHER_RE = re.compile(r"^GATHER (\d+)$", re.MULTILINE)
 
 
-def _emit_gather_bench_c(module, result, elem: str, n: int, reps: int, shuffle: bool,
-                         hw_width=None) -> str:
+def _emit_gather_bench_c(
+    module, result, elem: str, n: int, reps: int, shuffle: bool, hw_width=None
+) -> str:
     direct = emit_kernel_c(module, result, "bcir_direct", elem, hw_width=hw_width)  # BCIR's choice
     gather = emit_gather_kernel_c(module, result, "bcir_gather", elem)  # the avoided form
-    op = "+" if find_elementwise(module, result)[0].opcode.name == "ADD" else (
-        "-" if find_elementwise(module, result)[0].opcode.name == "SUB" else "*")
+    op = (
+        "+"
+        if find_elementwise(module, result)[0].opcode.name == "ADD"
+        else ("-" if find_elementwise(module, result)[0].opcode.name == "SUB" else "*")
+    )
     ctype = "int32_t" if elem == "i32" else "float"
-    init = ("A[i] = (float)(i % 1000); B[i] = (float)(i % 7);"
-            if elem != "i32" else "A[i] = (int32_t)(i % 1000); B[i] = (int32_t)(i % 7);")
-    shuf = ("for (size_t i = n - 1; i > 0; --i) { size_t j = (size_t)(lcg() % (i + 1));"
-            " long t = idx[i]; idx[i] = idx[j]; idx[j] = t; }") if shuffle else ""
+    init = (
+        "A[i] = (float)(i % 1000); B[i] = (float)(i % 7);"
+        if elem != "i32"
+        else "A[i] = (int32_t)(i % 1000); B[i] = (int32_t)(i % 7);"
+    )
+    shuf = (
+        (
+            "for (size_t i = n - 1; i > 0; --i) { size_t j = (size_t)(lcg() % (i + 1));"
+            " long t = idx[i]; idx[i] = idx[j]; idx[j] = t; }"
+        )
+        if shuffle
+        else ""
+    )
     return (
         "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
         "#include <time.h>\n#include <limits.h>\n#include <stdint.h>\n\n"
-        + direct + "\n" + gather
+        + direct
+        + "\n"
+        + gather
         + f"""
 static long now_ns(void) {{ struct timespec t; timespec_get(&t, TIME_UTC);
   return (long)t.tv_sec * 1000000000L + (long)t.tv_nsec; }}
@@ -264,9 +330,18 @@ int main(void) {{
     )
 
 
-def compare_gather(program, *, target: str = default_target_name(), theta: str = "cool",
-                   policy: str = "latency", elem: str = "f32", opt: str = "-O2",
-                   n: int = 1 << 20, reps: int = 200, shuffle: bool = True) -> GatherComparison:
+def compare_gather(
+    program,
+    *,
+    target: str = default_target_name(),
+    theta: str = "cool",
+    policy: str = "latency",
+    elem: str = "f32",
+    opt: str = "-O2",
+    n: int = 1 << 20,
+    reps: int = 200,
+    shuffle: bool = True,
+) -> GatherComparison:
     """Time BCIR's direct (gather-avoiding) realization against the gather form of
     the same elementwise computation -- the measured value of avoiding GGG. With
     `shuffle`, the gather indices are a random permutation (real cache-miss
@@ -289,8 +364,11 @@ def compare_gather(program, *, target: str = default_target_name(), theta: str =
         src = os.path.join(d, "gbench.c")
         exe = os.path.join(d, "gbench")
         with open(src, "w") as f:
-            f.write(_emit_gather_bench_c(module, result, elem, n, reps, shuffle,
-                                         hw_width=h.vector_width))
+            f.write(
+                _emit_gather_bench_c(
+                    module, result, elem, n, reps, shuffle, hw_width=h.vector_width
+                )
+            )
         build = None
         for std in ("-std=c23", "-std=c2x"):
             build = subprocess.run([cc, std, opt, src, "-o", exe], capture_output=True, text=True)
@@ -310,14 +388,15 @@ def compare_gather(program, *, target: str = default_target_name(), theta: str =
 
 # --- gather/blocked reduction: a genuine gather program, lowered two ways --------
 
+
 @dataclass(frozen=True)
 class ReduceComparison:
     program: str
     opt: str
     n: int
     reps: int
-    selected: str              # the realization BCIR's cost model selected ("blocked")
-    correct: bool              # blocked and gather computed the identical sum
+    selected: str  # the realization BCIR's cost model selected ("blocked")
+    correct: bool  # blocked and gather computed the identical sum
     blocked: Measurement
     gather: Measurement
 
@@ -329,8 +408,12 @@ class ReduceComparison:
 
     @property
     def avoidance_wins(self) -> bool:
-        return (self.correct and self.blocked.ok and self.gather.ok
-                and self.blocked.ns_per_call < self.gather.ns_per_call)
+        return (
+            self.correct
+            and self.blocked.ok
+            and self.gather.ok
+            and self.blocked.ns_per_call < self.gather.ns_per_call
+        )
 
 
 _BLK_RE = re.compile(r"^BLOCKED (\d+)$", re.MULTILINE)
@@ -343,7 +426,9 @@ def _emit_reduce_bench_c(module, result, n: int, reps: int) -> str:
     return (
         "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
         "#include <time.h>\n#include <limits.h>\n#include <stdint.h>\n\n"
-        + blocked + "\n" + gather
+        + blocked
+        + "\n"
+        + gather
         + f"""
 static long now_ns(void) {{ struct timespec t; timespec_get(&t, TIME_UTC);
   return (long)t.tv_sec * 1000000000L + (long)t.tv_nsec; }}
@@ -374,9 +459,16 @@ int main(void) {{
     )
 
 
-def compare_reduce(program="gather_reduce", *, target: str = default_target_name(), theta: str = "cool",
-                   policy: str = "latency", opt: str = "-O2", n: int = 1 << 20,
-                   reps: int = 40) -> ReduceComparison:
+def compare_reduce(
+    program="gather_reduce",
+    *,
+    target: str = default_target_name(),
+    theta: str = "cool",
+    policy: str = "latency",
+    opt: str = "-O2",
+    n: int = 1 << 20,
+    reps: int = 40,
+) -> ReduceComparison:
     """Lower a genuine `reduce.gather` program two ways and measure: BCIR's
     selected blocked (sequential) realization vs the gather (random) form. The
     harness verifies both compute the identical integer sum (a correct
@@ -417,13 +509,16 @@ def compare_reduce(program="gather_reduce", *, target: str = default_target_name
 
 # --- strided gather avoidance: a non-reduction gather program, lowered two ways --
 
+
 def _emit_strided_bench_c(module, result, n: int, reps: int, k: int) -> str:
     direct = emit_strided_c(module, result, "bcir_strided", "f32", gather=False)
     gather = emit_strided_c(module, result, "bcir_strided_gather", "f32", gather=True)
     return (
         "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
         "#include <time.h>\n#include <limits.h>\n\n"
-        + direct + "\n" + gather
+        + direct
+        + "\n"
+        + gather
         + f"""
 static long now_ns(void) {{ struct timespec t; timespec_get(&t, TIME_UTC);
   return (long)t.tv_sec * 1000000000L + (long)t.tv_nsec; }}
@@ -452,9 +547,16 @@ int main(void) {{
     )
 
 
-def compare_strided(program="saxpy_strided", *, target: str = default_target_name(),
-                    theta: str = "cool", policy: str = "latency", opt: str = "-O2",
-                    n: int = 1 << 22, reps: int = 40) -> ReduceComparison:
+def compare_strided(
+    program="saxpy_strided",
+    *,
+    target: str = default_target_name(),
+    theta: str = "cool",
+    policy: str = "latency",
+    opt: str = "-O2",
+    n: int = 1 << 22,
+    reps: int = 40,
+) -> ReduceComparison:
     """Lower a strided program two ways and measure: BCIR's selected direct strided
     realization vs the gather form of the same access (`X[i*k]` vs `X[idx[i]]`,
     idx[i]=i*k). The harness verifies identical Y, then times them -- a

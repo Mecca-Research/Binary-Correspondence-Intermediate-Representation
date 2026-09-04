@@ -44,11 +44,13 @@ def test_binary_decode_nvme_sqe_header():
 
 def test_transducer_accepts_and_rejects():
     states = [State("s0"), State("s1"), State("s_acc", accepting=True)]
-    tx = [Transition("s0", "s1", on="claim", action="begin"),
-          Transition("s1", "s_acc", on="ident", action="capture_name")]
+    tx = [
+        Transition("s0", "s1", on="claim", action="begin"),
+        Transition("s1", "s_acc", on="ident", action="capture_name"),
+    ]
     t = Transducer(states, tx, start="s0")
     ok = t.run(["claim", "ident"])
     assert ok.accepted and ok.final_state == "s_acc"
     assert ("capture_name", "ident") in ok.captures
-    assert not t.run(["claim"]).accepted          # stops in non-accepting s1
-    assert not t.run(["ident"]).accepted          # no edge from s0 on 'ident'
+    assert not t.run(["claim"]).accepted  # stops in non-accepting s1
+    assert not t.run(["ident"]).accepted  # no edge from s0 on 'ident'

@@ -55,7 +55,7 @@ def q8_tiers_blob() -> bytes:
 def _fallback_array(blob: bytes) -> str:
     rows = []
     for i in range(0, len(blob), _BYTES_PER_TIER):
-        chunk = blob[i:i + _BYTES_PER_TIER]
+        chunk = blob[i : i + _BYTES_PER_TIER]
         rows.append("  " + ", ".join(f"0x{b:02x}" for b in chunk) + ",")
     return "\n".join(rows)
 
@@ -145,10 +145,12 @@ def emit_files() -> tuple[str, str]:
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
-    p = argparse.ArgumentParser(prog="bcir.abi.q8_tables",
-                                description="Freeze the Q8 memory-tier table to the C runtime")
-    p.add_argument("--emit", action="store_true",
-                   help="(re)write runtime/c/q8_tiers.bin + bcir_q8_tables.h")
+    p = argparse.ArgumentParser(
+        prog="bcir.abi.q8_tables", description="Freeze the Q8 memory-tier table to the C runtime"
+    )
+    p.add_argument(
+        "--emit", action="store_true", help="(re)write runtime/c/q8_tiers.bin + bcir_q8_tables.h"
+    )
     args = p.parse_args(argv)
     if args.emit:
         blob_path, hdr_path = emit_files()
@@ -161,4 +163,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(main())

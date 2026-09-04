@@ -79,17 +79,18 @@ def decode_length(data: bytes, pos: int = 0) -> tuple[Length, int]:
     if not initial & 0x80:
         return Length(initial, 1), pos
     if initial == 0xFF:
-        raise Asn1Error(
-            "length initial octet 0xFF is reserved (X.690 8.1.3.5 c)", start)
+        raise Asn1Error("length initial octet 0xFF is reserved (X.690 8.1.3.5 c)", start)
 
     count = initial & 0x7F
     if count > _MAX_LENGTH_OCTETS:
         raise Asn1Error(
             f"long-form length declares {count} octets; the decoder bounds it at "
-            f"{_MAX_LENGTH_OCTETS} to refuse a hostile size before allocating", start)
+            f"{_MAX_LENGTH_OCTETS} to refuse a hostile size before allocating",
+            start,
+        )
     if pos + count > len(data):
         raise Asn1Error("truncated long-form length octets", start)
-    body = data[pos:pos + count]
+    body = data[pos : pos + count]
     pos += count
     value = int.from_bytes(body, "big")
     # Minimality per X.690 §10.1: the short form would have sufficed, or the long form

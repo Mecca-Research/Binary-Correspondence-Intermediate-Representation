@@ -6,6 +6,7 @@ unparseable JSON is FAIL — never a silent skip and never a traceback in
 place of the structured report. `--self-check` proves the contract with
 synthetic reviewer programs, driving each failure mode.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -111,7 +112,10 @@ def run_reviewer(command: list[str], cwd: Path, timeout: int = REVIEW_TIMEOUT) -
         # timeout could ever produce the structured report. Bytes, not text:
         # non-UTF-8 output must become a structured FAIL below.
         proc = subprocess.Popen(
-            command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            command,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             start_new_session=os.name != "nt",
         )
     except OSError as exc:
@@ -244,20 +248,20 @@ def self_check() -> dict[str, Any]:
         sleeper = Path(tmp) / "sleeper.py"
         deep = Path(tmp) / "deep.py"
         good.write_text(
-            "print('{\"passed\": true, \"security_concerns\": [], "
-            "\"logic_errors\": [], \"summary\": \"clean\"}')\n",
+            'print(\'{"passed": true, "security_concerns": [], '
+            '"logic_errors": [], "summary": "clean"}\')\n',
             encoding="utf-8",
         )
         bad.write_text("print('not-json')\n", encoding="utf-8")
         empty.write_text("print('')\n", encoding="utf-8")
         dupkeys.write_text(
-            "print('{\"passed\": false, \"passed\": true, \"security_concerns\": [], "
-            "\"logic_errors\": [], \"summary\": \"clean\"}')\n",
+            'print(\'{"passed": false, "passed": true, "security_concerns": [], '
+            '"logic_errors": [], "summary": "clean"}\')\n',
             encoding="utf-8",
         )
         nullsum.write_text(
-            "print('{\"passed\": true, \"security_concerns\": [], "
-            "\"logic_errors\": [], \"summary\": null}')\n",
+            'print(\'{"passed": true, "security_concerns": [], '
+            '"logic_errors": [], "summary": null}\')\n',
             encoding="utf-8",
         )
         rawbytes.write_text(
@@ -268,8 +272,9 @@ def self_check() -> dict[str, Any]:
         deep.write_text("print('[' * 200000)\n", encoding="utf-8")
         python = sys.executable
         cases.append(("missing-command", run_reviewer([], Path(tmp))))
-        cases.append(("missing-executable",
-                      run_reviewer([str(Path(tmp) / "absent-reviewer")], Path(tmp))))
+        cases.append(
+            ("missing-executable", run_reviewer([str(Path(tmp) / "absent-reviewer")], Path(tmp)))
+        )
         cases.append(("valid-json", run_reviewer([python, str(good)], Path(tmp))))
         cases.append(("unparseable", run_reviewer([python, str(bad)], Path(tmp))))
         cases.append(("empty-output", run_reviewer([python, str(empty)], Path(tmp))))
@@ -279,8 +284,9 @@ def self_check() -> dict[str, Any]:
         cases.append(("timeout", run_reviewer([python, str(sleeper)], Path(tmp), timeout=1)))
         cases.append(("depth-bomb", run_reviewer([python, str(deep)], Path(tmp))))
     env_bad = env_command("python -c 'unterminated")
-    cases.append(("malformed-env-command",
-                  env_bad if isinstance(env_bad, dict) else {"state": "PASS"}))
+    cases.append(
+        ("malformed-env-command", env_bad if isinstance(env_bad, dict) else {"state": "PASS"})
+    )
     expected = {
         "missing-command": "FAIL",
         "missing-executable": "FAIL",
@@ -294,9 +300,7 @@ def self_check() -> dict[str, Any]:
         "depth-bomb": "FAIL",
         "malformed-env-command": "FAIL",
     }
-    mismatches = [
-        name for name, report in cases if report["state"] != expected[name]
-    ]
+    mismatches = [name for name, report in cases if report["state"] != expected[name]]
     return {
         "state": "PASS" if not mismatches else "FAIL",
         "cases": {name: report["state"] for name, report in cases},
@@ -314,9 +318,10 @@ def main(argv: list[str] | None = None) -> int:
     # the reviewer's argv, its own flags included. Argv position decides, not
     # declaration order — put --json-out and friends BEFORE --command.
     parser.add_argument(
-        "--command", nargs=argparse.REMAINDER,
+        "--command",
+        nargs=argparse.REMAINDER,
         help="reviewer argv; must be the final option — everything after it "
-             "belongs to the reviewer",
+        "belongs to the reviewer",
     )
     args = parser.parse_args(argv)
     if args.self_check:

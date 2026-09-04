@@ -25,9 +25,18 @@ COOL = Theta.cool()
 
 
 def _claim(verify: str):
-    return Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                 count=1024, rd=(10, 11), wr=(12,), op="vector.add", domain=Domain.RAM,
-                 verify=verify)
+    return Claim(
+        id=1,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=1024,
+        rd=(10, 11),
+        wr=(12,),
+        op="vector.add",
+        domain=Domain.RAM,
+        verify=verify,
+    )
 
 
 def _module(verify: str):
@@ -40,12 +49,22 @@ def _module(verify: str):
 
 def test_verify_cost_producer_values():
     assert _verify_cost(_claim("none")) == 0
-    assert _verify_cost(_claim("bounds")) == 0          # the cheap, default contract: free
-    assert _verify_cost(_claim("exact")) == 1024        # recompute + compare every element
-    assert _verify_cost(_claim("hash")) == 1024         # digest every output element
+    assert _verify_cost(_claim("bounds")) == 0  # the cheap, default contract: free
+    assert _verify_cost(_claim("exact")) == 1024  # recompute + compare every element
+    assert _verify_cost(_claim("hash")) == 1024  # digest every output element
     # scales with the problem size (O(n)).
-    c = Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=4096, rd=(10, 11), wr=(12,), op="vector.add", domain=Domain.RAM, verify="exact")
+    c = Claim(
+        id=1,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=4096,
+        rd=(10, 11),
+        wr=(12,),
+        op="vector.add",
+        domain=Domain.RAM,
+        verify="exact",
+    )
     assert _verify_cost(c) == 4096
 
 
@@ -61,8 +80,8 @@ def test_every_candidate_carries_the_verification_cost():
 def test_bounds_score_is_unchanged_and_exact_adds_the_cost():
     bounds = optimize(_module("bounds"), AVX, COOL, PERF)
     exact = optimize(_module("exact"), AVX, COOL, PERF)
-    assert bounds.score == 7808                          # the historic pin: unchanged
-    assert exact.score == 7808 + 1024                    # + O(n) verification (weight 1)
+    assert bounds.score == 7808  # the historic pin: unchanged
+    assert exact.score == 7808 + 1024  # + O(n) verification (weight 1)
     # selection (lane width) is identical -- verification is not a realization knob.
     assert bounds.by_claim()[1].width == exact.by_claim()[1].width == 16
 

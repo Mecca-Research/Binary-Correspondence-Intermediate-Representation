@@ -38,7 +38,7 @@ TAIL_STREAM = -1  # the decoupled GGG tail executes on its own stream
 @dataclass(frozen=True)
 class Slot:
     claim_id: int
-    domain: int       # affinity domain, or TAIL_STREAM for the decoupled tail
+    domain: int  # affinity domain, or TAIL_STREAM for the decoupled tail
     start: int
     finish: int
 
@@ -76,8 +76,15 @@ def _rids(c: Claim) -> set[int]:
     return set(c.rd) | set(c.wr)
 
 
-def _pick_domain(c: Claim, ready_t: int, dur: int, domain_free: list[int],
-                 resident: list[set[int]], eligible: range, locality: bool) -> tuple[int, int]:
+def _pick_domain(
+    c: Claim,
+    ready_t: int,
+    dur: int,
+    domain_free: list[int],
+    resident: list[set[int]],
+    eligible: range,
+    locality: bool,
+) -> tuple[int, int]:
     """Earliest finish first; ties prefer the domain holding the claim's operands."""
     best_d, best_key = eligible[0], None
     rids = _rids(c)
@@ -90,10 +97,19 @@ def _pick_domain(c: Claim, ready_t: int, dur: int, domain_free: list[int],
     return best_d, max(domain_free[best_d], ready_t)
 
 
-def _dispatch(claims: list[Claim], preds: dict[int, list[int]], durations: dict[int, int],
-              t0: int, domain_free: list[int], resident: list[set[int]],
-              domains: int, knee: int, locality: bool,
-              finish_of: dict[int, int], sched: GemSchedule) -> None:
+def _dispatch(
+    claims: list[Claim],
+    preds: dict[int, list[int]],
+    durations: dict[int, int],
+    t0: int,
+    domain_free: list[int],
+    resident: list[set[int]],
+    domains: int,
+    knee: int,
+    locality: bool,
+    finish_of: dict[int, int],
+    sched: GemSchedule,
+) -> None:
     """Event-driven LPT list scheduling of `claims` honoring `preds` edges.
 
     A ready heap replaces repeated full scans/sorts of the pending list.  The heap
@@ -115,12 +131,14 @@ def _dispatch(claims: list[Claim], preds: dict[int, list[int]], durations: dict[
                 successors[predecessor].append(claim.id)
             elif predecessor not in finish_of:
                 raise ValueError(
-                    f"GEM dispatch predecessor {predecessor} for claim {claim.id} is unavailable")
+                    f"GEM dispatch predecessor {predecessor} for claim {claim.id} is unavailable"
+                )
     ready: list[tuple[int, int, int]] = []
     for claim in claims:
         if indegree[claim.id] == 0:
-            heapq.heappush(ready, (-max(1, durations.get(claim.id, 1)),
-                                   claim.id, ordinal[claim.id]))
+            heapq.heappush(
+                ready, (-max(1, durations.get(claim.id, 1)), claim.id, ordinal[claim.id])
+            )
     dispatched = 0
     while ready:
         _negative_duration, claim_id, _index = heapq.heappop(ready)
@@ -129,8 +147,7 @@ def _dispatch(claims: list[Claim], preds: dict[int, list[int]], durations: dict[
         ready_t = max([finish_of[p] for p in preds.get(c.id, ())], default=t0)
         # Bandwidth-bound claims contend for the knee; compute-bound for all domains.
         width = knee if c.cost_class == "bandwidth" else domains
-        d, start = _pick_domain(c, ready_t, dur, domain_free, resident,
-                                range(width), locality)
+        d, start = _pick_domain(c, ready_t, dur, domain_free, resident, range(width), locality)
         finish = start + dur
         domain_free[d] = finish
         resident[d] |= _rids(c)
@@ -142,14 +159,16 @@ def _dispatch(claims: list[Claim], preds: dict[int, list[int]], durations: dict[
             indegree[successor] -= 1
             if indegree[successor] == 0:
                 next_claim = claim_by_id[successor]
-                heapq.heappush(ready, (-max(1, durations.get(successor, 1)),
-                                       successor, ordinal[next_claim.id]))
+                heapq.heappush(
+                    ready, (-max(1, durations.get(successor, 1)), successor, ordinal[next_claim.id])
+                )
     if dispatched != len(claims):
         raise ValueError("GEM dispatch dependency graph is cyclic")
 
 
-def schedule_eft(module: Module, durations: dict[int, int], target=None,
-                 locality: bool = True) -> GemSchedule:
+def schedule_eft(
+    module: Module, durations: dict[int, int], target=None, locality: bool = True
+) -> GemSchedule:
     """Duration-aware wave scheduling (HEFT-lite) with phase barriers.
 
     Within each phase: LPT priority + earliest-finish-time placement + locality
@@ -177,8 +196,19 @@ def schedule_eft(module: Module, durations: dict[int, int], target=None,
         preds = _conflict_predecessors(main)
         domain_free = [t0] * domains
         finish_of: dict[int, int] = {}
-        _dispatch(main, preds, durations, t0, domain_free, resident,
-                  domains, knee, locality, finish_of, sched)
+        _dispatch(
+            main,
+            preds,
+            durations,
+            t0,
+            domain_free,
+            resident,
+            domains,
+            knee,
+            locality,
+            finish_of,
+            sched,
+        )
 
         tt = t0
         for c in tail:  # the decoupled tail: a serial chain overlapping the waves
@@ -191,8 +221,9 @@ def schedule_eft(module: Module, durations: dict[int, int], target=None,
     return sched
 
 
-def execute_tokens(module: Module, durations: dict[int, int], target=None,
-                   locality: bool = True) -> GemSchedule:
+def execute_tokens(
+    module: Module, durations: dict[int, int], target=None, locality: bool = True
+) -> GemSchedule:
     """Token-DAG execution: phase barriers replaced by `!bcir.token` awaits.
 
     A claim becomes ready when every claim it awaits has finished -- nothing
@@ -209,26 +240,39 @@ def execute_tokens(module: Module, durations: dict[int, int], target=None,
     plan = async_plan(module)
     pmap = module.phase_map()
     order = {cid: i for i, cid in enumerate(plan.forks)}
-    claims = sorted((c for pid in _topo_phase_ids(module) for c in pmap[pid].claims),
-                    key=lambda c: order[c.id])
+    claims = sorted(
+        (c for pid in _topo_phase_ids(module) for c in pmap[pid].claims), key=lambda c: order[c.id]
+    )
 
     domain_free = [0] * domains
     finish_of: dict[int, int] = {}
-    _dispatch(claims, plan.awaits, durations, 0, domain_free, resident,
-              domains, knee, locality, finish_of, sched)
+    _dispatch(
+        claims,
+        plan.awaits,
+        durations,
+        0,
+        domain_free,
+        resident,
+        domains,
+        knee,
+        locality,
+        finish_of,
+        sched,
+    )
     sched.makespan = max(finish_of.values(), default=0)
     return sched
 
 
 # --- phase-aware DVFS over the schedule timeline (schedule_power_rail) ------------
 
+
 @dataclass(frozen=True)
 class PowerRailDecision:
     claim_id: int
     start: int
     finish: int
-    klass: str            # compute | memory | balanced
-    clock_q8: int         # Q8 clock for this slot's interval (256 = nominal)
+    klass: str  # compute | memory | balanced
+    clock_q8: int  # Q8 clock for this slot's interval (256 = nominal)
     reason: str
 
     @property
@@ -247,8 +291,12 @@ class PowerRail:
         (power ~ clock on a bandwidth-bound slot whose throughput is clock-insensitive)
         -- NOT a measured Joule figure; see docs/kernel/HARDWARE_VALIDATION.md."""
         from .dvfs import NOMINAL
-        return sum(((NOMINAL - d.clock_q8) * d.duration * 1000) // NOMINAL
-                   for d in self.decisions if d.clock_q8 < NOMINAL)
+
+        return sum(
+            ((NOMINAL - d.clock_q8) * d.duration * 1000) // NOMINAL
+            for d in self.decisions
+            if d.clock_q8 < NOMINAL
+        )
 
     @property
     def downclocked(self) -> tuple:
@@ -267,6 +315,7 @@ def schedule_power_rail(sched: GemSchedule, result, theta, h=None) -> PowerRail:
     The energy figure is *modeled* (no RAPL in-sandbox -- docs/kernel/HARDWARE_VALIDATION.md)."""
     from ..kbcir.cost import COMPUTE, MEMORY
     from .dvfs import classify, clock_for
+
     base_of = {s.claim_id: s.candidate.base.v for s in result.steps}
     out: list[PowerRailDecision] = []
     for slot in sorted(sched.slots, key=lambda s: (s.start, s.claim_id)):
@@ -275,7 +324,14 @@ def schedule_power_rail(sched: GemSchedule, result, theta, h=None) -> PowerRail:
             continue
         klass = classify(base[COMPUTE], base[MEMORY])
         clock, reason = clock_for(klass, theta)
-        out.append(PowerRailDecision(claim_id=slot.claim_id, start=slot.start,
-                                     finish=slot.finish, klass=klass, clock_q8=clock,
-                                     reason=reason))
+        out.append(
+            PowerRailDecision(
+                claim_id=slot.claim_id,
+                start=slot.start,
+                finish=slot.finish,
+                klass=klass,
+                clock_q8=clock,
+                reason=reason,
+            )
+        )
     return PowerRail(decisions=tuple(out))

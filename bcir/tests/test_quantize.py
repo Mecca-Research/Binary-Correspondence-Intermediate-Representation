@@ -15,9 +15,19 @@ import subprocess
 import tempfile
 
 from bcir.kbcir.precision import accuracy_bound, quantization_error_bound, reduction_error_bound
-from bcir.kbcir.quantize import (QGroup, accumulator_bits, code_max, dequantize, integer_dot,
-                                 max_abs_error, quantize_group, quantize_per_group, quantized_dot,
-                                 roundtrip, scaled_dot)
+from bcir.kbcir.quantize import (
+    QGroup,
+    accumulator_bits,
+    code_max,
+    dequantize,
+    integer_dot,
+    max_abs_error,
+    quantize_group,
+    quantize_per_group,
+    quantized_dot,
+    roundtrip,
+    scaled_dot,
+)
 from bcir.lower.c_kernel import emit_quantized_dot_c
 from bcir.model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
 from bcir.verify import verify_accuracy
@@ -26,6 +36,7 @@ _EPS = 1e-9
 
 
 # --- correctness: the round-trip stays within each group's static bound ----------
+
 
 def test_roundtrip_is_within_the_group_error_bound():
     vals = [0.0, 0.5, -0.5, 1.0, -1.0, 0.123, -0.987, 0.4999, 12.5, -7.25]
@@ -45,7 +56,7 @@ def test_truncate_bound_is_one_full_step():
 
 
 def test_dequantize_length_matches_and_is_a_shift():
-    vals = [float(i) - 8 for i in range(17)]                 # 17 elements, group_size 8 -> 3 blocks (8,8,1)
+    vals = [float(i) - 8 for i in range(17)]  # 17 elements, group_size 8 -> 3 blocks (8,8,1)
     groups = quantize_per_group(vals, group_size=8, bits=8)
     assert len(groups) == 3 and tuple(len(g.codes) for g in groups) == (8, 8, 1)
     assert len(dequantize(groups)) == len(vals)
@@ -57,33 +68,35 @@ def test_dequantize_length_matches_and_is_a_shift():
 
 # --- the SOTA reason for per-group scaling: it beats per-tensor on heterogeneous data ---
 
+
 def test_per_group_beats_per_tensor_on_a_wide_dynamic_range():
     G = 16
-    big = [1000.0 + (i % 7) for i in range(G)]               # ~1e3 magnitudes
-    tiny = [0.01 * (1 + (i % 5)) for i in range(G)]          # ~1e-2 magnitudes
+    big = [1000.0 + (i % 7) for i in range(G)]  # ~1e3 magnitudes
+    tiny = [0.01 * (1 + (i % 5)) for i in range(G)]  # ~1e-2 magnitudes
     vals = big + tiny
 
     def small_block_err(group_size):
         deq = roundtrip(vals, group_size, bits=4)
-        return max(abs(v - d) for v, d in zip(vals[G:], deq[G:]))   # error on the TINY block
+        return max(abs(v - d) for v, d in zip(vals[G:], deq[G:]))  # error on the TINY block
 
-    per_tensor = small_block_err(len(vals))                 # one global scale (set by the big block)
-    per_group = small_block_err(G)                          # the tiny block gets its own fine scale
+    per_tensor = small_block_err(len(vals))  # one global scale (set by the big block)
+    per_group = small_block_err(G)  # the tiny block gets its own fine scale
     # the tiny block, swamped by the big block's coarse global scale, is far more accurate per-group.
     assert per_group < per_tensor
-    assert per_group * 10 < per_tensor                      # and by a wide margin, not a coin-flip
+    assert per_group * 10 < per_tensor  # and by a wide margin, not a coin-flip
 
 
 def test_finer_groups_never_increase_error():
     rng = random.Random(20260627)
     vals = [rng.uniform(-50, 50) * (10 ** rng.randint(-3, 3)) for _ in range(64)]
-    whole = max_abs_error(vals, group_size=64, bits=6)      # per-tensor
+    whole = max_abs_error(vals, group_size=64, bits=6)  # per-tensor
     g16 = max_abs_error(vals, group_size=16, bits=6)
     g4 = max_abs_error(vals, group_size=4, bits=6)
-    assert g4 <= g16 + _EPS <= whole + _EPS                 # monotone: finer grouping cannot hurt
+    assert g4 <= g16 + _EPS <= whole + _EPS  # monotone: finer grouping cannot hurt
 
 
 # --- edge / adversarial inputs (red-team) ----------------------------------------
+
 
 def test_all_zero_group_is_exact():
     g = quantize_group([0.0, 0.0, 0.0], bits=8)
@@ -91,9 +104,9 @@ def test_all_zero_group_is_exact():
 
 
 def test_single_outlier_sets_the_scale_and_nothing_saturates():
-    vals = [1e6] + [0.0] * 31                               # one huge value dominates the block
+    vals = [1e6] + [0.0] * 31  # one huge value dominates the block
     g = quantize_group(vals, bits=8)
-    assert max(abs(c) for c in g.codes) <= code_max(8)      # the outlier itself does not clip
+    assert max(abs(c) for c in g.codes) <= code_max(8)  # the outlier itself does not clip
     assert abs(vals[0] - g.dequantize()[0]) <= g.error_bound() + _EPS
 
 
@@ -108,7 +121,7 @@ def test_scale_transition_subnormal_and_wide_code_selection_are_exact():
     for bits in (4, 8):
         maximum = code_max(bits)
         for exponent in (-200, -7, 0, 100):
-            boundary = maximum * (2.0 ** exponent)
+            boundary = maximum * (2.0**exponent)
             below = math.nextafter(boundary, 0.0)
             above = math.nextafter(boundary, float("inf"))
             assert quantize_group([below], bits).scale_exp == exponent
@@ -132,7 +145,8 @@ def test_non_finite_inputs_are_rejected_at_the_bridge_boundary():
 def test_degenerate_arguments_raise():
     for bits in (-1, 0, 1, True, 8.0, 1 << 20):
         try:
-            code_max(bits); assert False, f"bits={bits} should raise"
+            code_max(bits)
+            assert False, f"bits={bits} should raise"
         except ValueError:
             pass
     for group_size in (0, -1, True, 1.5):
@@ -142,7 +156,8 @@ def test_degenerate_arguments_raise():
         except ValueError:
             pass
     try:
-        quantize_group([1.0], bits=8, rounding="bogus"); assert False, "bad rounding should raise"
+        quantize_group([1.0], bits=8, rounding="bogus")
+        assert False, "bad rounding should raise"
     except ValueError:
         pass
     for args in (([1.5], [2]), ([True], [2])):
@@ -170,16 +185,18 @@ def test_error_measurement_handles_single_pass_iterables():
 
 # --- determinism ------------------------------------------------------------------
 
+
 def test_quantization_is_deterministic():
     rng = random.Random(7)
     vals = [rng.uniform(-100, 100) for _ in range(50)]
     a = quantize_per_group(vals, group_size=8, bits=8)
     b = quantize_per_group(vals, group_size=8, bits=8)
-    assert a == b                                           # frozen dataclasses compare by value
+    assert a == b  # frozen dataclasses compare by value
     assert all(isinstance(c, int) for g in a for c in g.codes)
 
 
 # --- stress / fuzz: invariants hold over a broad random campaign -----------------
+
 
 def test_fuzz_roundtrip_bound_and_lane_fit_hold_everywhere():
     rng = random.Random(0xA1)
@@ -200,12 +217,13 @@ def test_fuzz_roundtrip_bound_and_lane_fit_hold_everywhere():
         i = 0
         for g in groups:
             b = g.error_bound(rounding=rounding)
-            for v, d in zip(vals[i:i + gs], g.dequantize()):
+            for v, d in zip(vals[i : i + gs], g.dequantize()):
                 assert abs(v - d) <= b + max(_EPS, b * 1e-9)
             i += gs
 
 
 # --- R17: the accuracy contract over quantized claims ----------------------------
+
 
 def _module(claim, count):
     m = Module(name="q")
@@ -216,9 +234,20 @@ def _module(claim, count):
 
 
 def _claim(op, *, count=1000, precision="", tol=0, qbits=0):
-    return Claim(id=6000, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT, count=count,
-                 rd=(50,), wr=(51,), op=op, domain=Domain.RAM, precision=precision, tolerance_ulp=tol,
-                 quantized_bits=qbits)
+    return Claim(
+        id=6000,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=count,
+        rd=(50,),
+        wr=(51,),
+        op=op,
+        domain=Domain.RAM,
+        precision=precision,
+        tolerance_ulp=tol,
+        quantized_bits=qbits,
+    )
 
 
 def test_quantization_error_bound_is_one_ulp():
@@ -244,10 +273,17 @@ def test_r17_on_a_quantized_reduction_forces_compensation_and_budgets_the_quant_
     diags = verify_accuracy(_module(_claim("reduce.add", count=1000, tol=2, qbits=8), 1000))
     assert [d.law for d in diags] == ["R17"]
     # compensated: bound 1 (reduce) + 1 (quant) = 2 <= 2 -> legal.
-    assert verify_accuracy(_module(_claim("reduce.add", count=1000, precision="compensated", tol=2, qbits=8), 1000)) == []
+    assert (
+        verify_accuracy(
+            _module(_claim("reduce.add", count=1000, precision="compensated", tol=2, qbits=8), 1000)
+        )
+        == []
+    )
     # tol=1 is IMPOSSIBLE for a quantized reduction: even compensated, the quant step alone costs 1 ULP
     # on top of the reduction's 1 -> bound 2 > 1 -> R17 fires (an honest "you cannot have this").
-    diags = verify_accuracy(_module(_claim("reduce.add", count=1000, precision="compensated", tol=1, qbits=8), 1000))
+    diags = verify_accuracy(
+        _module(_claim("reduce.add", count=1000, precision="compensated", tol=1, qbits=8), 1000)
+    )
     assert [d.law for d in diags] == ["R17"]
 
 
@@ -259,13 +295,15 @@ def test_r17_is_a_noop_for_dense_claims_unchanged():
 
 # --- the quantized dot product: the inference primitive (a matmul is a grid of these) ---
 
+
 def test_integer_dot_is_exact_and_order_independent():
     a = [3, -2, 7, 0, -5]
     b = [1, 4, -1, 9, 2]
     assert integer_dot(a, b) == sum(x * y for x, y in zip(a, b)) == -22
     assert integer_dot(a, b) == integer_dot(b, a)
     try:
-        integer_dot([1, 2], [1]); assert False, "length mismatch should raise"
+        integer_dot([1, 2], [1])
+        assert False, "length mismatch should raise"
     except ValueError:
         pass
 
@@ -278,7 +316,7 @@ def test_accumulator_width_holds_the_exact_sum():
     # the contract: the worst-case |dot| fits in accumulator_bits (signed) for any in-lane codes.
     for lane_bits, count in [(4, 9), (8, 64), (12, 32)]:
         cmax = code_max(lane_bits)
-        worst = cmax * cmax * count                         # all-max-magnitude products
+        worst = cmax * cmax * count  # all-max-magnitude products
         assert worst < (1 << (accumulator_bits(lane_bits, count) - 1))
 
 
@@ -298,20 +336,27 @@ def test_scaled_dot_matches_the_float_reference_within_quantization_error():
 def test_per_group_quantized_dot_beats_per_tensor_on_a_wide_range():
     G = 16
     a = [500.0 + i for i in range(G)] + [0.02 * (i + 1) for i in range(G)]
-    b = [0.03 * (i + 1) for i in range(G)] + [400.0 + i for i in range(G)]   # the tiny weights pair with big
+    b = [0.03 * (i + 1) for i in range(G)] + [
+        400.0 + i for i in range(G)
+    ]  # the tiny weights pair with big
     exact = sum(x * y for x, y in zip(a, b))
-    per_tensor = abs(exact - scaled_dot(quantize_per_group(a, 2 * G, 6), quantize_per_group(b, 2 * G, 6)))
+    per_tensor = abs(
+        exact - scaled_dot(quantize_per_group(a, 2 * G, 6), quantize_per_group(b, 2 * G, 6))
+    )
     per_group = abs(exact - scaled_dot(quantize_per_group(a, G, 6), quantize_per_group(b, G, 6)))
     assert per_group < per_tensor
 
 
 def test_emit_quantized_dot_uses_exact_width_bitint_lanes():
     c = emit_quantized_dot_c(lane_bits=12, count=32)
-    assert "_BitInt(12) q_lane_t" in c                       # exact 12-bit lane (no padding to 16)
+    assert "_BitInt(12) q_lane_t" in c  # exact 12-bit lane (no padding to 16)
     assert f"_BitInt({accumulator_bits(12, 32)}) q_acc_t" in c
-    assert "__STDC_VERSION__ >= 202311L" in c and "__BITINT_MAXWIDTH__" in c   # C23-gated, C11 fallback
+    assert (
+        "__STDC_VERSION__ >= 202311L" in c and "__BITINT_MAXWIDTH__" in c
+    )  # C23-gated, C11 fallback
     try:
-        emit_quantized_dot_c(lane_bits=32, count=1 << 20); assert False, "acc > 64 should raise"
+        emit_quantized_dot_c(lane_bits=32, count=1 << 20)
+        assert False, "acc > 64 should raise"
     except ValueError:
         pass
 
@@ -319,33 +364,39 @@ def test_emit_quantized_dot_uses_exact_width_bitint_lanes():
 def test_emit_quantized_dot_compiles_and_matches_the_exact_reference():
     cc = shutil.which("clang")
     if not cc:
-        return                                               # quick tier hides the toolchain -> self-skip
+        return  # quick tier hides the toolchain -> self-skip
     rng = random.Random(0x90D)
     lane_bits, n = 12, 24
     a = [rng.uniform(-2, 2) for _ in range(n)]
     b = [rng.uniform(-2, 2) for _ in range(n)]
-    qa = quantize_per_group(a, n, lane_bits)                 # one group -> one scale, codes drive the kernel
+    qa = quantize_per_group(a, n, lane_bits)  # one group -> one scale, codes drive the kernel
     qb = quantize_per_group(b, n, lane_bits)
     codes_a, codes_b = qa[0].codes, qb[0].codes
-    ref = integer_dot(codes_a, codes_b)                      # the exact integer dot the kernel must reproduce
+    ref = integer_dot(codes_a, codes_b)  # the exact integer dot the kernel must reproduce
     kernel = emit_quantized_dot_c(lane_bits, n, "qdot")
-    main = (f"\n#include <stdio.h>\n"
-            f"int main(void){{\n"
-            f"  q_lane_t A[{n}] = {{{', '.join(str(c) for c in codes_a)}}};\n"
-            f"  q_lane_t B[{n}] = {{{', '.join(str(c) for c in codes_b)}}};\n"
-            f'  printf("%lld %d\\n", (long long)qdot(A, B, {n}), BCIR_QDOT_BITINT);\n'
-            f"  return 0;\n}}\n")
+    main = (
+        f"\n#include <stdio.h>\n"
+        f"int main(void){{\n"
+        f"  q_lane_t A[{n}] = {{{', '.join(str(c) for c in codes_a)}}};\n"
+        f"  q_lane_t B[{n}] = {{{', '.join(str(c) for c in codes_b)}}};\n"
+        f'  printf("%lld %d\\n", (long long)qdot(A, B, {n}), BCIR_QDOT_BITINT);\n'
+        f"  return 0;\n}}\n"
+    )
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "qd.c")
         open(src, "w").write(kernel + main)
         seen = {}
         for std in ("c23", "c11"):
             exe = os.path.join(d, f"qd_{std}")
-            b1 = subprocess.run([cc, f"-std={std}", "-O2", src, "-o", exe], capture_output=True, text=True)
+            b1 = subprocess.run(
+                [cc, f"-std={std}", "-O2", src, "-o", exe], capture_output=True, text=True
+            )
             assert b1.returncode == 0, f"{std} build: {b1.stderr}"
             r = subprocess.run([exe], capture_output=True, text=True)
             assert r.returncode == 0, r.stderr
             val, bitint = r.stdout.split()
-            assert int(val) == ref, f"{std}: kernel {val} != exact {ref}"   # exact integer accumulation
+            assert int(val) == ref, (
+                f"{std}: kernel {val} != exact {ref}"
+            )  # exact integer accumulation
             seen[std] = bitint
-        assert seen["c23"] == "1" and seen["c11"] == "0"     # C23 used _BitInt; C11 used the fallback
+        assert seen["c23"] == "1" and seen["c11"] == "0"  # C23 used _BitInt; C11 used the fallback

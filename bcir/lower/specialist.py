@@ -57,8 +57,9 @@ class ShapeLedger:
         return self.frequency(key) >= threshold
 
     def hot_shapes(self, threshold: int = DEFAULT_HOT_THRESHOLD) -> list[ShapeKey]:
-        return sorted((k for k, n in self.counts.items() if n >= threshold),
-                      key=lambda k: (k.op, k.count))
+        return sorted(
+            (k for k, n in self.counts.items() if n >= threshold), key=lambda k: (k.op, k.count)
+        )
 
 
 def specializable(count: int, max_unroll: int = DEFAULT_MAX_UNROLL) -> bool:
@@ -66,8 +67,14 @@ def specializable(count: int, max_unroll: int = DEFAULT_MAX_UNROLL) -> bool:
     return 1 <= count <= max_unroll
 
 
-def emit_specialist_c(op_str: str, c_op: str, count: int, elem: str = "f32",
-                      fn_name: str | None = None, unroll: int = DEFAULT_UNROLL) -> str:
+def emit_specialist_c(
+    op_str: str,
+    c_op: str,
+    count: int,
+    elem: str = "f32",
+    fn_name: str | None = None,
+    unroll: int = DEFAULT_UNROLL,
+) -> str:
     """Emit a shape-baked, unrolled specialist for `C = A op B` over exactly `count`
     elements. The count is a compile-time constant (no `n` parameter), the inner
     block is unrolled by `unroll`, and the `count % unroll` remainder is baked as
@@ -80,18 +87,22 @@ def emit_specialist_c(op_str: str, c_op: str, count: int, elem: str = "f32",
     inc = "#include <stddef.h>\n" + ("#include <stdint.h>\n" if elem == "i32" else "")
     fp = "" if elem == "i32" else "#pragma STDC FP_CONTRACT OFF\n"
     block = "  ".join(f"C[i + {j}u] = A[i + {j}u] {c_op} B[i + {j}u];" for j in range(u))
-    body = [f"void {fn}(const {ctype} *restrict A, const {ctype} *restrict B,",
-            f"             {ctype} *restrict C) {{",
-            f"  /* shape specialist: n = {count} baked constant, unroll {u} */"]
+    body = [
+        f"void {fn}(const {ctype} *restrict A, const {ctype} *restrict B,",
+        f"             {ctype} *restrict C) {{",
+        f"  /* shape specialist: n = {count} baked constant, unroll {u} */",
+    ]
     if full > 0:
         body.append(f"  for (size_t i = 0; i + {u}u <= {full}u; i += {u}u) {{ {block} }}")
-    for r in range(full, count):                       # baked remainder (count % unroll)
+    for r in range(full, count):  # baked remainder (count % unroll)
         body.append(f"  C[{r}u] = A[{r}u] {c_op} B[{r}u];")
     body.append("}")
-    return (f"/* BCIR -> shape specialist (n={count}, op={op_str}, elem={ctype}; "
-            f"hot-shape JIT). */\n{inc}"
-            f'_Static_assert(sizeof({ctype}) == 4, "BCIR {ctype} specialist needs a 4-byte element");\n'
-            f"{fp}\n" + "\n".join(body) + "\n")
+    return (
+        f"/* BCIR -> shape specialist (n={count}, op={op_str}, elem={ctype}; "
+        f"hot-shape JIT). */\n{inc}"
+        f'_Static_assert(sizeof({ctype}) == 4, "BCIR {ctype} specialist needs a 4-byte element");\n'
+        f"{fp}\n" + "\n".join(body) + "\n"
+    )
 
 
 @dataclass(frozen=True)
@@ -103,9 +114,16 @@ class SpecialistResult:
     reason: str
 
 
-def synthesize(module: Module, result: RealizationResult, ledger: ShapeLedger,
-               elem: str = "f32", *, threshold: int = DEFAULT_HOT_THRESHOLD,
-               max_unroll: int = DEFAULT_MAX_UNROLL, hw_width: int | None = None) -> SpecialistResult:
+def synthesize(
+    module: Module,
+    result: RealizationResult,
+    ledger: ShapeLedger,
+    elem: str = "f32",
+    *,
+    threshold: int = DEFAULT_HOT_THRESHOLD,
+    max_unroll: int = DEFAULT_MAX_UNROLL,
+    hw_width: int | None = None,
+) -> SpecialistResult:
     """Pick a kernel for the module's elementwise claim: a shape-baked specialist if
     its shape is hot and small, else the generic kernel (`emit_kernel_c`). Records
     the request in `ledger` first, so frequency reflects this call too."""
@@ -115,14 +133,24 @@ def synthesize(module: Module, result: RealizationResult, ledger: ShapeLedger,
     if ledger.is_hot(key, threshold) and specializable(key.count, max_unroll):
         fn = f"bcir_kernel_{key.op.replace('.', '_')}_{key.count}"
         return SpecialistResult(
-            specialized=True, fn_name=fn, count=key.count,
+            specialized=True,
+            fn_name=fn,
+            count=key.count,
             kernel_c=emit_specialist_c(key.op, c_op, key.count, elem, fn),
-            reason=f"hot shape n={key.count} (x{ledger.frequency(key)}) -> baked specialist")
+            reason=f"hot shape n={key.count} (x{ledger.frequency(key)}) -> baked specialist",
+        )
     # generic fallback (the gains-only no-op: cold or large shapes are not baked).
     from .c_kernel import emit_kernel_c
-    reason = ("large shape: generic runtime-n loop" if not specializable(key.count, max_unroll)
-              else f"shape not yet hot (x{ledger.frequency(key)} < {threshold})")
+
+    reason = (
+        "large shape: generic runtime-n loop"
+        if not specializable(key.count, max_unroll)
+        else f"shape not yet hot (x{ledger.frequency(key)} < {threshold})"
+    )
     return SpecialistResult(
-        specialized=False, fn_name="bcir_kernel", count=key.count,
+        specialized=False,
+        fn_name="bcir_kernel",
+        count=key.count,
         kernel_c=emit_kernel_c(module, result, "bcir_kernel", elem, hw_width=hw_width),
-        reason=reason)
+        reason=reason,
+    )

@@ -55,24 +55,40 @@ def _build(tmp: str) -> str | None:
     proc = None
     for std in ("c23", "c2x", "c11"):
         proc = subprocess.run(
-            [cc, f"-std={std}", "-O1", "-Wall", "-Wextra", "-Werror", "-I", _C,
-             *[os.path.join(_C, name) for name in _SOURCES], "-o", out],
-            capture_output=True, text=True)
+            [
+                cc,
+                f"-std={std}",
+                "-O1",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C,
+                *[os.path.join(_C, name) for name in _SOURCES],
+                "-o",
+                out,
+            ],
+            capture_output=True,
+            text=True,
+        )
         if proc.returncode == 0:
             return out
     raise AssertionError(
-        f"the plan-driven PER twin must build warning-clean:\n{proc.stderr[:3000]}")
+        f"the plan-driven PER twin must build warning-clean:\n{proc.stderr[:3000]}"
+    )
 
 
 def _run(binary: str, lines: list[str]) -> list[str]:
-    proc = subprocess.run([binary], input="\n".join(lines) + "\n",
-                          capture_output=True, text=True, timeout=120)
+    proc = subprocess.run(
+        [binary], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=120
+    )
     assert proc.returncode == 0, f"driver exited {proc.returncode}: {proc.stderr[:2000]}"
     return proc.stdout.strip().splitlines()
 
 
-def _field(kind: int, *, bounds: int = 0, lb: int = 0, ub: int = 0,
-           fixed: int = 0, optional: int = 0) -> str:
+def _field(
+    kind: int, *, bounds: int = 0, lb: int = 0, ub: int = 0, fixed: int = 0, optional: int = 0
+) -> str:
     return f"{kind}:{bounds}:{lb}:{ub}:{fixed}:{optional}"
 
 
@@ -113,8 +129,9 @@ _VOID = Primitive(Universal.NULL, "NULL")
 
 
 def _octets(size: int) -> Primitive:
-    return Primitive(Universal.OCTET_STRING, "OCTET STRING",
-                     constraint=Size(ValueRange(size, size)))
+    return Primitive(
+        Universal.OCTET_STRING, "OCTET STRING", constraint=Size(ValueRange(size, size))
+    )
 
 
 def _cases() -> list[tuple[str, str, dict, list[str], list[tuple[str, object]]]]:
@@ -127,71 +144,116 @@ def _cases() -> list[tuple[str, str, dict, list[str], list[tuple[str, object]]]]
 
     # A one-bit BOOLEAN then a 3-octet string: bit 1 in UNALIGNED, and 16.6 does not align a
     # 3-octet string... but 16.6's <=2 rule does not apply either, so ALIGNED pads to 8.
-    cases.append((
-        "flag+fixed3",
-        Sequence((Component("flag", _FLAG), Component("s", _octets(3))), name="A"),
-        [_field(_BOOLEAN), _field(_FIXED_OCTETS, fixed=3)],
-        {"flag": True, "s": b"abc"}))
+    cases.append(
+        (
+            "flag+fixed3",
+            Sequence((Component("flag", _FLAG), Component("s", _octets(3))), name="A"),
+            [_field(_BOOLEAN), _field(_FIXED_OCTETS, fixed=3)],
+            {"flag": True, "s": b"abc"},
+        )
+    )
 
     # 16.6's own case: two octets or fewer are placed with NO alignment in EITHER variant, so
     # this string starts at bit 1 in both. The twin used to refuse it outright when aligned.
-    cases.append((
-        "flag+fixed2 (16.6)",
-        Sequence((Component("flag", _FLAG), Component("s", _octets(2))), name="B"),
-        [_field(_BOOLEAN), _field(_FIXED_OCTETS, fixed=2)],
-        {"flag": False, "s": b"hi"}))
-    cases.append((
-        "flag+fixed1 (16.6)",
-        Sequence((Component("flag", _FLAG), Component("s", _octets(1))), name="C"),
-        [_field(_BOOLEAN), _field(_FIXED_OCTETS, fixed=1)],
-        {"flag": True, "s": b"!"}))
+    cases.append(
+        (
+            "flag+fixed2 (16.6)",
+            Sequence((Component("flag", _FLAG), Component("s", _octets(2))), name="B"),
+            [_field(_BOOLEAN), _field(_FIXED_OCTETS, fixed=2)],
+            {"flag": False, "s": b"hi"},
+        )
+    )
+    cases.append(
+        (
+            "flag+fixed1 (16.6)",
+            Sequence((Component("flag", _FLAG), Component("s", _octets(1))), name="C"),
+            [_field(_BOOLEAN), _field(_FIXED_OCTETS, fixed=1)],
+            {"flag": True, "s": b"!"},
+        )
+    )
 
     # A constrained integer whose range is not a whole number of octets leaves UNALIGNED PER
     # at bit 4, so the string after it straddles three octets rather than two.
-    cases.append((
-        "nibble+fixed3",
-        Sequence((Component("n", _NIBBLE), Component("s", _octets(3))), name="D"),
-        [_field(_INTEGER, bounds=_CONSTRAINED, lb=0, ub=9), _field(_FIXED_OCTETS, fixed=3)],
-        {"n": 7, "s": b"xyz"}))
+    cases.append(
+        (
+            "nibble+fixed3",
+            Sequence((Component("n", _NIBBLE), Component("s", _octets(3))), name="D"),
+            [_field(_INTEGER, bounds=_CONSTRAINED, lb=0, ub=9), _field(_FIXED_OCTETS, fixed=3)],
+            {"n": 7, "s": b"xyz"},
+        )
+    )
 
     # The original three-field record, which is what the shell gate drives.
-    cases.append((
-        "byte+flag+fixed3",
-        Sequence((Component("id", _BYTE), Component("flag", _FLAG),
-                  Component("s", _octets(3))), name="E"),
-        [_field(_INTEGER, bounds=_CONSTRAINED, lb=0, ub=255), _field(_BOOLEAN),
-         _field(_FIXED_OCTETS, fixed=3)],
-        {"id": 42, "flag": True, "s": b"abc"}))
+    cases.append(
+        (
+            "byte+flag+fixed3",
+            Sequence(
+                (Component("id", _BYTE), Component("flag", _FLAG), Component("s", _octets(3))),
+                name="E",
+            ),
+            [
+                _field(_INTEGER, bounds=_CONSTRAINED, lb=0, ub=255),
+                _field(_BOOLEAN),
+                _field(_FIXED_OCTETS, fixed=3),
+            ],
+            {"id": 42, "flag": True, "s": b"abc"},
+        )
+    )
 
     # NULL contributes no bits at all (clause 19), so it must not move the cursor.
-    cases.append((
-        "flag+null+fixed2",
-        Sequence((Component("flag", _FLAG), Component("v", _VOID),
-                  Component("s", _octets(2))), name="F"),
-        [_field(_BOOLEAN), _field(_NULL), _field(_FIXED_OCTETS, fixed=2)],
-        {"flag": True, "v": None, "s": b"ok"}))
+    cases.append(
+        (
+            "flag+null+fixed2",
+            Sequence(
+                (Component("flag", _FLAG), Component("v", _VOID), Component("s", _octets(2))),
+                name="F",
+            ),
+            [_field(_BOOLEAN), _field(_NULL), _field(_FIXED_OCTETS, fixed=2)],
+            {"flag": True, "v": None, "s": b"ok"},
+        )
+    )
 
     # 18.2's preamble in both of its states, with the string after it either way.
     for present in (True, False):
         value = {"flag": True, "s": b"pq"}
         if present:
             value["w"] = 4097
-        cases.append((
-            f"optional-word({'present' if present else 'absent'})+flag+fixed2",
-            Sequence((Component("w", _WORD, optional=True), Component("flag", _FLAG),
-                      Component("s", _octets(2))), name="G"),
-            [_field(_INTEGER, bounds=_CONSTRAINED, lb=0, ub=65535, optional=1),
-             _field(_BOOLEAN), _field(_FIXED_OCTETS, fixed=2)],
-            value))
+        cases.append(
+            (
+                f"optional-word({'present' if present else 'absent'})+flag+fixed2",
+                Sequence(
+                    (
+                        Component("w", _WORD, optional=True),
+                        Component("flag", _FLAG),
+                        Component("s", _octets(2)),
+                    ),
+                    name="G",
+                ),
+                [
+                    _field(_INTEGER, bounds=_CONSTRAINED, lb=0, ub=65535, optional=1),
+                    _field(_BOOLEAN),
+                    _field(_FIXED_OCTETS, fixed=2),
+                ],
+                value,
+            )
+        )
 
     # 13.2.4's unconstrained integer, which is length-determined and octet-aligned in ALIGNED.
-    cases.append((
-        "flag+unconstrained+fixed2",
-        Sequence((Component("flag", _FLAG), Component("i", _FREE),
-                  Component("s", _octets(2))), name="H"),
-        [_field(_BOOLEAN), _field(_INTEGER, bounds=_UNCONSTRAINED),
-         _field(_FIXED_OCTETS, fixed=2)],
-        {"flag": False, "i": -300, "s": b"zz"}))
+    cases.append(
+        (
+            "flag+unconstrained+fixed2",
+            Sequence(
+                (Component("flag", _FLAG), Component("i", _FREE), Component("s", _octets(2))),
+                name="H",
+            ),
+            [
+                _field(_BOOLEAN),
+                _field(_INTEGER, bounds=_UNCONSTRAINED),
+                _field(_FIXED_OCTETS, fixed=2),
+            ],
+            {"flag": False, "i": -300, "s": b"zz"},
+        )
+    )
 
     return cases
 
@@ -205,7 +267,7 @@ def test_plan_decoder_agrees_with_the_python_encoder() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
-            return                                   # no C compiler on this host
+            return  # no C compiler on this host
 
         cases = _cases()
         # Both variants in one test rather than two parametrized ones: run_all.py calls each
@@ -228,7 +290,9 @@ def test_plan_decoder_agrees_with_the_python_encoder() -> None:
                     present, integer, offset, length, bit_offset = got
                     expected = value.get(component.name, None)
                     if component.name not in value:
-                        assert present == 0, f"{where}: {component.name} absent but reported present"
+                        assert present == 0, (
+                            f"{where}: {component.name} absent but reported present"
+                        )
                         continue
                     assert present == 1, f"{where}: {component.name} present but reported absent"
                     if isinstance(expected, bool):
@@ -239,15 +303,17 @@ def test_plan_decoder_agrees_with_the_python_encoder() -> None:
                         assert length == len(expected), f"{where}: {component.name} length"
                         # The bit offset must LOCATE the string, whatever the octet index says.
                         assert _bits(raw, bit_offset, length) == expected, (
-                            f"{where}: {component.name} does not live at bit {bit_offset}")
+                            f"{where}: {component.name} does not live at bit {bit_offset}"
+                        )
                         # And the octet index must be honest: present only when it is exact.
                         if bit_offset % 8 == 0:
                             assert offset == bit_offset // 8, f"{where}: {component.name} offset"
-                            assert raw[offset:offset + length] == expected, where
+                            assert raw[offset : offset + length] == expected, where
                         else:
                             assert offset == -1, (
                                 f"{where}: {component.name} starts at bit {bit_offset}, which is "
-                                f"no octet slice, yet an octet index {offset} was reported")
+                                f"no octet slice, yet an octet index {offset} was reported"
+                            )
 
 
 def test_a_string_that_starts_mid_octet_reports_no_octet_index() -> None:
@@ -261,7 +327,7 @@ def test_a_string_that_starts_mid_octet_reports_no_octet_index() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
-            return                                   # no C compiler on this host
+            return  # no C compiler on this host
 
         schema = Sequence((Component("flag", _FLAG), Component("s", _octets(3))), name="R")
         plan = f"{_field(_BOOLEAN)},{_field(_FIXED_OCTETS, fixed=3)}"
@@ -294,25 +360,24 @@ def test_the_length_determinant_switches_form_at_64k() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
-            return                                   # no C compiler on this host
+            return  # no C compiler on this host
 
         payload = b"abcd"
         bounds = (255, 65535, 65536, 70000)
         for variant, aligned in ((PerVariant.UNALIGNED, 0), (PerVariant.ALIGNED, 1)):
             lines, raws = [], []
             for ub in bounds:
-                node = Primitive(Universal.OCTET_STRING, "OCTET STRING",
-                                 constraint=Size(ValueRange(0, ub)))
+                node = Primitive(
+                    Universal.OCTET_STRING, "OCTET STRING", constraint=Size(ValueRange(0, ub))
+                )
                 schema = Sequence((Component("s", node),), name="R")
                 raw = encode_per(schema, {"s": payload}, variant=variant)
-                lines.append(f"sequence {raw.hex()} {aligned} 0 "
-                             f"{_field(_VAR_OCTETS, fixed=ub)}")
+                lines.append(f"sequence {raw.hex()} {aligned} 0 {_field(_VAR_OCTETS, fixed=ub)}")
                 raws.append(raw)
 
             for ub, raw, line in zip(bounds, raws, _run(binary, lines)):
                 where = f"SIZE(0..{ub}) {variant.value}"
-                assert line.startswith("OK"), (
-                    f"{where}: a conforming encoding was refused ({line})")
+                assert line.startswith("OK"), f"{where}: a conforming encoding was refused ({line})"
                 _endbit, values = _parse(line)
                 _p, _i, _offset, length, bit_offset = values[0]
                 assert length == len(payload), where
@@ -326,7 +391,7 @@ def test_sixteen_six_short_strings_decode_in_both_variants() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
-            return                                   # no C compiler on this host
+            return  # no C compiler on this host
 
         schema = Sequence((Component("flag", _FLAG), Component("s", _octets(2))), name="R")
         plan = f"{_field(_BOOLEAN)},{_field(_FIXED_OCTETS, fixed=2)}"

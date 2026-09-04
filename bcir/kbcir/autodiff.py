@@ -106,10 +106,23 @@ from dataclasses import dataclass
 
 # Primitive arities. ``const`` / ``var`` are leaves; the rest are first-order ops.
 # ``select`` is the differentiable conditional (arity 3: predicate, then-branch, else-branch).
-_ARITY = {"const": 0, "var": 0, "neg": 1,
-          "add": 2, "sub": 2, "mul": 2, "div": 2, "select": 3,
-          "exp": 1, "log": 1, "sqrt": 1, "tanh": 1, "sin": 1, "cos": 1,
-          "dot": None}  # dot is n-ary (variadic)
+_ARITY = {
+    "const": 0,
+    "var": 0,
+    "neg": 1,
+    "add": 2,
+    "sub": 2,
+    "mul": 2,
+    "div": 2,
+    "select": 3,
+    "exp": 1,
+    "log": 1,
+    "sqrt": 1,
+    "tanh": 1,
+    "sin": 1,
+    "cos": 1,
+    "dot": None,
+}  # dot is n-ary (variadic)
 
 
 @dataclass(frozen=True)
@@ -123,7 +136,7 @@ class Node:
 
     nid: int
     op: str
-    args: tuple          # operand node ids
+    args: tuple  # operand node ids
     const: object = None
     key: tuple = ()
 
@@ -146,7 +159,7 @@ class Tape:
 
     def __init__(self) -> None:
         self._nodes: list[Node] = []
-        self._memo: dict[tuple, int] = {}     # content key -> node id (the hash-cons)
+        self._memo: dict[tuple, int] = {}  # content key -> node id (the hash-cons)
 
     # -- the interning core --
     def _intern(self, op: str, args: tuple, const=None) -> int:
@@ -246,6 +259,7 @@ class Tape:
 
 
 # --- forward evaluation ----------------------------------------------------------
+
 
 def evaluate(tape: Tape, root: int, env: dict) -> float:
     """Evaluate the DAG rooted at ``root`` under ``env`` (var name -> float).
@@ -421,10 +435,19 @@ def _bw_cos(fvals, args, const, gz):
 # the rewrite-rule table: one local backward rule per primitive (leaves have none --
 # const and var are differentiation boundaries, const contributing zero by definition).
 _BACKWARD = {
-    "neg": _bw_neg, "add": _bw_add, "sub": _bw_sub,
-    "mul": _bw_mul, "div": _bw_div, "dot": _bw_dot, "select": _bw_select,
-    "exp": _bw_exp, "log": _bw_log, "sqrt": _bw_sqrt, "tanh": _bw_tanh,
-    "sin": _bw_sin, "cos": _bw_cos,
+    "neg": _bw_neg,
+    "add": _bw_add,
+    "sub": _bw_sub,
+    "mul": _bw_mul,
+    "div": _bw_div,
+    "dot": _bw_dot,
+    "select": _bw_select,
+    "exp": _bw_exp,
+    "log": _bw_log,
+    "sqrt": _bw_sqrt,
+    "tanh": _bw_tanh,
+    "sin": _bw_sin,
+    "cos": _bw_cos,
 }
 
 
@@ -433,10 +456,10 @@ class GradResult:
     """The gradient of an output w.r.t. requested inputs, plus the cheap-gradient
     accounting that demonstrates reverse mode touches O(1)x the forward op count."""
 
-    grads: dict           # var name -> d(output)/d(var)
-    value: float          # the forward value of the output (computed en route)
-    forward_ops: int      # primitive ops in the forward DAG (reachable, deduped)
-    backward_ops: int     # primitive rule firings in the reverse pass
+    grads: dict  # var name -> d(output)/d(var)
+    value: float  # the forward value of the output (computed en route)
+    forward_ops: int  # primitive ops in the forward DAG (reachable, deduped)
+    backward_ops: int  # primitive rule firings in the reverse pass
 
     @property
     def cheap_gradient_ratio(self) -> float:
@@ -455,16 +478,16 @@ def _accumulate_adjoints(tape: Tape, root: int, order, fvals: dict) -> tuple[dic
     once (the global, content-addressed adjoint sharing). ``order`` is a parameter so a
     test can feed a DIFFERENT valid reverse order and confirm the result is identical
     (confluence / the diamond property)."""
-    adj: dict[int, float] = {root: 1.0}    # seed: d(output)/d(output) = 1
+    adj: dict[int, float] = {root: 1.0}  # seed: d(output)/d(output) = 1
     firings = 0
     for nid in order:
         gz = adj.get(nid, 0.0)
         if gz == 0.0:
-            continue                       # no adjoint flows here -> rule is a no-op
+            continue  # no adjoint flows here -> rule is a no-op
         n = tape.node(nid)
         rule = _BACKWARD.get(n.op)
         if rule is None:
-            continue                       # a leaf (const/var): differentiation boundary
+            continue  # a leaf (const/var): differentiation boundary
         firings += 1
         for operand, contribution in rule(fvals, n.args, n.const, gz):
             adj[operand] = adj.get(operand, 0.0) + contribution
@@ -490,7 +513,7 @@ def reverse_orders(tape: Tape, output: int) -> tuple[list[int], list[int]]:
     order_a = _reverse_order(topo)
 
     depth: dict[int, int] = {}
-    for nid in topo:                          # operands precede users in topo, so this fills bottom-up
+    for nid in topo:  # operands precede users in topo, so this fills bottom-up
         args = tape.node(nid).args
         depth[nid] = 0 if not args else 1 + max(depth[a] for a in args)
     # depth descending, node id as a stable tie-break: a node's operands are strictly
@@ -528,8 +551,9 @@ def grad(tape: Tape, output: int, inputs, *, order: list[int] | None = None) -> 
     name_to_nid = {tape.node(nid).const: nid for nid in topo if tape.node(nid).op == "var"}
     grads = {name: adj.get(name_to_nid.get(name, -1), 0.0) for name in env}
     forward_ops = sum(1 for nid in topo if tape.node(nid).op in _BACKWARD)
-    return GradResult(grads=grads, value=fvals[output],
-                      forward_ops=forward_ops, backward_ops=firings)
+    return GradResult(
+        grads=grads, value=fvals[output], forward_ops=forward_ops, backward_ops=firings
+    )
 
 
 def grad_at(tape: Tape, output: int, env: dict, *, order: list[int] | None = None) -> GradResult:
@@ -586,14 +610,17 @@ def _forward_values(tape: Tape, topo: list[int], env: dict) -> dict:
 
 # --- the finite-difference correctness gate --------------------------------------
 
+
 def finite_difference_grad(tape: Tape, output: int, env: dict, *, eps: float = 1e-6) -> dict:
     """Central-difference numerical gradient: for each var, (f(x+eps) - f(x-eps)) / (2 eps).
     This is the HARD correctness gate -- the analytically computed :func:`grad` must match
     this within a tolerance, on every function tested (including the fuzz)."""
     out: dict[str, float] = {}
     for name in env:
-        plus = dict(env); plus[name] = env[name] + eps
-        minus = dict(env); minus[name] = env[name] - eps
+        plus = dict(env)
+        plus[name] = env[name] + eps
+        minus = dict(env)
+        minus[name] = env[name] - eps
         out[name] = (evaluate(tape, output, plus) - evaluate(tape, output, minus)) / (2 * eps)
     return out
 
@@ -616,6 +643,7 @@ def max_grad_error(a: dict, b: dict) -> float:
 
 
 # --- a tiny helper to count a naive (un-shared) tree size, for the dedup assertion ---
+
 
 def naive_tree_node_count(tape: Tape, root: int) -> int:
     """How many nodes a NAIVE tree (no sharing) would materialize for ``root`` -- i.e.
@@ -644,6 +672,7 @@ def naive_tree_node_count(tape: Tape, root: int) -> int:
 # backprop-through-time (BPTT). Because the builder is content-addressed, any step body
 # that is structurally identical across iterations is hash-consed to one shared node,
 # and -- by the global shared-adjoint property -- contributes a single shared adjoint.
+
 
 def unroll_scan(tape: Tape, step, init: int, xs: tuple) -> int:
     """Fold ``carry = step(tape, carry, x)`` over ``xs`` and return the final carry node id.
@@ -769,10 +798,19 @@ def _sbw_cos(tape, args, const, gz):
 # mirroring _BACKWARD. Each builds new Tape nodes in the SAME closed primitive set, so the
 # gradient graph is an ordinary DAG that can be differentiated again.
 _BACKWARD_SYM = {
-    "neg": _sbw_neg, "add": _sbw_add, "sub": _sbw_sub,
-    "mul": _sbw_mul, "div": _sbw_div, "dot": _sbw_dot, "select": _sbw_select,
-    "exp": _sbw_exp, "log": _sbw_log, "sqrt": _sbw_sqrt, "tanh": _sbw_tanh,
-    "sin": _sbw_sin, "cos": _sbw_cos,
+    "neg": _sbw_neg,
+    "add": _sbw_add,
+    "sub": _sbw_sub,
+    "mul": _sbw_mul,
+    "div": _sbw_div,
+    "dot": _sbw_dot,
+    "select": _sbw_select,
+    "exp": _sbw_exp,
+    "log": _sbw_log,
+    "sqrt": _sbw_sqrt,
+    "tanh": _sbw_tanh,
+    "sin": _sbw_sin,
+    "cos": _sbw_cos,
 }
 
 
@@ -798,18 +836,18 @@ def grad_graph(tape: Tape, output: int, inputs) -> dict:
     topo = _topo_order(tape, output)
     order = _reverse_order(topo)
     # adjoint table: node id -> NODE ID of its accumulated adjoint expression.
-    adj: dict[int, int] = {output: tape.const(1.0)}     # seed d(output)/d(output) = 1
+    adj: dict[int, int] = {output: tape.const(1.0)}  # seed d(output)/d(output) = 1
     for nid in order:
         gz = adj.get(nid)
         if gz is None:
-            continue                                    # no adjoint flows here
+            continue  # no adjoint flows here
         n = tape.node(nid)
         rule = _BACKWARD_SYM.get(n.op)
         if rule is None:
-            continue                                    # a leaf (const/var)
+            continue  # a leaf (const/var)
         for operand, contribution in rule(tape, n.args, n.const, gz):
             if operand in adj:
-                adj[operand] = tape.add(adj[operand], contribution)   # combine contributions
+                adj[operand] = tape.add(adj[operand], contribution)  # combine contributions
             else:
                 adj[operand] = contribution
     name_to_nid = {tape.node(nid).const: nid for nid in topo if tape.node(nid).op == "var"}
@@ -839,7 +877,7 @@ def hessian(tape: Tape, output: int, inputs, env: dict) -> dict:
     out: dict[tuple, float] = {}
     for ni in names:
         gi = gnodes[ni]
-        row = grad(tape, gi, env).grads        # d g_i / d x_j for all j, at env
+        row = grad(tape, gi, env).grads  # d g_i / d x_j for all j, at env
         for nj in names:
             out[(ni, nj)] = row.get(nj, 0.0)
     return out
@@ -957,7 +995,7 @@ def _canonical_symbolic_inputs(tape: "Tape", op: str) -> tuple:
     its ``_ARITY`` count."""
     gz = tape.var("__gz__")
     if op == "dot":
-        k = 2                                   # a representative arity; the rule shape is k-independent
+        k = 2  # a representative arity; the rule shape is k-independent
         args = tuple(tape.var(f"__d{i}__") for i in range(2 * k))
         return args, ("dot", k), gz
     arity = _ARITY[op]
@@ -975,7 +1013,7 @@ def emitted_ops_for(op: str) -> frozenset:
     rule = _BACKWARD_SYM[op]
     tape = Tape()
     args, const, gz = _canonical_symbolic_inputs(tape, op)
-    base = tape.node_count()                    # everything from here on is what the RULE emitted
+    base = tape.node_count()  # everything from here on is what the RULE emitted
     contributions = rule(tape, args, const, gz)
     # the op kind of every contribution node and everything it reaches (the gradient subgraph
     # the rule built). Walk reachability so a multi-node contribution (e.g. div's nested
@@ -1020,6 +1058,7 @@ def numeric_matches_symbolic_vjp(op: str, *, seed: int = 0) -> bool:
     operations are exactly the closed-set ones (it has no separate vocabulary to escape into).
     Deterministic (seeded), exact (the closed-form rules are float-exact, no tolerance)."""
     import random
+
     rng = random.Random(seed ^ (hash(op) & 0xFFFF))
     tape = Tape()
     args, const, gz = _canonical_symbolic_inputs(tape, op)
@@ -1082,4 +1121,5 @@ def closed_set_agrees_with_lowerable() -> bool:
     the lowerable set is updated too, so the closure proof and the lowering can never silently
     diverge on what the closed vocabulary is."""
     from ..lower.autodiff_kernel import _LOWERABLE
+
     return CLOSED_SET == frozenset(_LOWERABLE)

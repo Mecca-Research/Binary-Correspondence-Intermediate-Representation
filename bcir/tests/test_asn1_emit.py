@@ -40,8 +40,8 @@ _CHOICE = Choice((Component("num", _I, tag=0), Component("txt", _S, tag=1)), nam
 #: spelling is given only where the oracle's value mapping differs — see the NULL test.
 _CORPUS = (
     ("a negative integer", _seq(Component("v", _I)), {"v": -1}),
-    ("an integer past 64 bits", _seq(Component("v", _I)), {"v": 2 ** 64 + 7}),
-    ("a large negative integer", _seq(Component("v", _I)), {"v": -(2 ** 70)}),
+    ("an integer past 64 bits", _seq(Component("v", _I)), {"v": 2**64 + 7}),
+    ("a large negative integer", _seq(Component("v", _I)), {"v": -(2**70)}),
     ("zero", _seq(Component("v", _I)), {"v": 0}),
     ("the 128 length boundary", _seq(Component("v", _I)), {"v": 128}),
     ("both booleans", _seq(Component("a", _B), Component("b", _B)), {"a": True, "b": False}),
@@ -50,50 +50,86 @@ _CORPUS = (
     ("an empty string", _seq(Component("v", _S)), {"v": ""}),
     ("a non-ASCII string", _seq(Component("v", _S)), {"v": "café \U0001f600"}),
     ("a string past the short length form", _seq(Component("v", _S)), {"v": "x" * 300}),
-    ("an object identifier", _seq(Component("v", _OID)),
-     {"v": Oid((1, 3, 6, 1, 4, 1, 62596, 1))}),
-    ("an optional present", _seq(Component("a", _I), Component("b", _I, optional=True)),
-     {"a": 1, "b": 2}),
-    ("an optional absent", _seq(Component("a", _I), Component("b", _I, optional=True)),
-     {"a": 1}),
-    ("a default absent", _seq(Component("a", _I), Component("b", _B, default=False)),
-     {"a": 1}),
-    ("a default present", _seq(Component("a", _I), Component("b", _B, default=False)),
-     {"a": 1, "b": True}),
+    ("an object identifier", _seq(Component("v", _OID)), {"v": Oid((1, 3, 6, 1, 4, 1, 62596, 1))}),
+    (
+        "an optional present",
+        _seq(Component("a", _I), Component("b", _I, optional=True)),
+        {"a": 1, "b": 2},
+    ),
+    ("an optional absent", _seq(Component("a", _I), Component("b", _I, optional=True)), {"a": 1}),
+    ("a default absent", _seq(Component("a", _I), Component("b", _B, default=False)), {"a": 1}),
+    (
+        "a default present",
+        _seq(Component("a", _I), Component("b", _B, default=False)),
+        {"a": 1, "b": True},
+    ),
     # The row whose absence hid a bug in every emitter for four plan versions: X.690 §11.5,
     # X.696 §31.9 and CJER all require a component EQUAL to its default to be omitted, and
     # the corpus only ever supplied one that differed.
-    ("a default supplied but equal to the default",
-     _seq(Component("a", _I), Component("b", _B, default=False)), {"a": 1, "b": False}),
-    ("an integer default supplied and equal",
-     _seq(Component("a", _I), Component("b", _I, default=7)), {"a": 1, "b": 7}),
-    ("a string default supplied and equal",
-     _seq(Component("a", _I), Component("b", _S, default="hi")), {"a": 1, "b": "hi"}),
-    ("twelve defaults, every other one equal",
-     _seq(*[Component(f"c{i}", _I, default=i) for i in range(12)]),
-     {f"c{i}": (i if i % 2 else 99) for i in range(12)}),
+    (
+        "a default supplied but equal to the default",
+        _seq(Component("a", _I), Component("b", _B, default=False)),
+        {"a": 1, "b": False},
+    ),
+    (
+        "an integer default supplied and equal",
+        _seq(Component("a", _I), Component("b", _I, default=7)),
+        {"a": 1, "b": 7},
+    ),
+    (
+        "a string default supplied and equal",
+        _seq(Component("a", _I), Component("b", _S, default="hi")),
+        {"a": 1, "b": "hi"},
+    ),
+    (
+        "twelve defaults, every other one equal",
+        _seq(*[Component(f"c{i}", _I, default=i) for i in range(12)]),
+        {f"c{i}": (i if i % 2 else 99) for i in range(12)},
+    ),
     # Twelve optionals is more than one OER preamble octet, which is where a bitmap that
     # forgot to carry into a second octet stops agreeing with the oracle.
-    ("twelve optionals, alternate present",
-     _seq(*[Component(f"c{i}", _I, optional=True) for i in range(12)]),
-     {f"c{i}": i for i in range(0, 12, 2)}),
-    ("an empty SEQUENCE OF", _seq(Component("v", SequenceOf(_I, "SEQUENCE OF INTEGER"))),
-     {"v": []}),
-    ("a short SEQUENCE OF", _seq(Component("v", SequenceOf(_I, "SEQUENCE OF INTEGER"))),
-     {"v": [1, 2, 3]}),
-    ("a SEQUENCE OF past 255 elements",
-     _seq(Component("v", SequenceOf(_I, "SEQUENCE OF INTEGER"))), {"v": list(range(300))}),
-    ("a nested SEQUENCE", _seq(Component("in", _seq(Component("a", _I), name="Inner"))),
-     {"in": {"a": 5}}),
-    ("implicit context tags", _seq(Component("a", _I, tag=0), Component("b", _S, tag=1)),
-     {"a": 1, "b": "x"}),
+    (
+        "twelve optionals, alternate present",
+        _seq(*[Component(f"c{i}", _I, optional=True) for i in range(12)]),
+        {f"c{i}": i for i in range(0, 12, 2)},
+    ),
+    (
+        "an empty SEQUENCE OF",
+        _seq(Component("v", SequenceOf(_I, "SEQUENCE OF INTEGER"))),
+        {"v": []},
+    ),
+    (
+        "a short SEQUENCE OF",
+        _seq(Component("v", SequenceOf(_I, "SEQUENCE OF INTEGER"))),
+        {"v": [1, 2, 3]},
+    ),
+    (
+        "a SEQUENCE OF past 255 elements",
+        _seq(Component("v", SequenceOf(_I, "SEQUENCE OF INTEGER"))),
+        {"v": list(range(300))},
+    ),
+    (
+        "a nested SEQUENCE",
+        _seq(Component("in", _seq(Component("a", _I), name="Inner"))),
+        {"in": {"a": 5}},
+    ),
+    (
+        "implicit context tags",
+        _seq(Component("a", _I, tag=0), Component("b", _S, tag=1)),
+        {"a": 1, "b": "x"},
+    ),
     ("an explicit context tag", _seq(Component("a", _I, tag=0, explicit=True)), {"a": 1}),
-    ("a tag past the low-tag form", _seq(Component("a", _I, tag=100, explicit=True)),
-     {"a": 1}),
-    ("a CHOICE on its integer arm", _seq(Component("v", _CHOICE, tag=5, explicit=True)),
-     {"v": ("num", 7)}),
-    ("a CHOICE on its string arm", _seq(Component("v", _CHOICE, tag=5, explicit=True)),
-     {"v": ("txt", "hi")}),
+    ("a tag past the low-tag form", _seq(Component("a", _I, tag=100, explicit=True)), {"a": 1}),
+    (
+        "a CHOICE on its integer arm",
+        _seq(Component("v", _CHOICE, tag=5, explicit=True)),
+        {"v": ("num", 7)},
+    ),
+    (
+        "a CHOICE on its string arm",
+        _seq(Component("v", _CHOICE, tag=5, explicit=True)),
+        {"v": ("txt", "hi")},
+    ),
 )
 
 
@@ -107,23 +143,26 @@ def _plan(kind, label: str) -> EncodePlan:
 def test_the_plan_driven_der_matches_the_oracle_octet_for_octet():
     for label, kind, value in _CORPUS:
         plan = _plan(kind, label)
-        assert emit(plan, flatten(plan, value), rules=EmitRules.DER) == \
-            encode_tlv(kind.encode(value)), label
+        assert emit(plan, flatten(plan, value), rules=EmitRules.DER) == encode_tlv(
+            kind.encode(value)
+        ), label
 
 
 def test_the_plan_driven_jer_matches_the_oracle_octet_for_octet():
     for label, kind, value in _CORPUS:
         plan = _plan(kind, label)
-        assert emit(plan, flatten(plan, value), rules=EmitRules.JER) == \
-            encode_jer(kind, value), label
+        assert emit(plan, flatten(plan, value), rules=EmitRules.JER) == encode_jer(kind, value), (
+            label
+        )
 
 
 def test_the_plan_driven_oer_matches_the_oracle_octet_for_octet():
     """OER is the payoff: a row the *decode* table can never hold, measurable on the write side."""
     for label, kind, value in _CORPUS:
         plan = _plan(kind, label)
-        assert emit(plan, flatten(plan, value), rules=EmitRules.COER) == \
-            encode_oer(kind, value), label
+        assert emit(plan, flatten(plan, value), rules=EmitRules.COER) == encode_oer(kind, value), (
+            label
+        )
 
 
 def test_ber_differs_from_der_exactly_where_the_standard_says_it_may():
@@ -138,8 +177,8 @@ def test_ber_differs_from_der_exactly_where_the_standard_says_it_may():
     der = emit(plan, stream, rules=EmitRules.DER)
     ber = emit(plan, stream, rules=EmitRules.BER)
     assert ber != der
-    assert ber.endswith(b"\x00\x00") and ber[1] == 0x80      # indefinite, closed by an EOC
-    assert der[1] == len(der) - 2                            # definite and minimal
+    assert ber.endswith(b"\x00\x00") and ber[1] == 0x80  # indefinite, closed by an EOC
+    assert der[1] == len(der) - 2  # definite and minimal
     # The primitives inside are untouched: only the CONSTRUCTED length form differs.
     assert der[2:] == ber[2:-2]
 
@@ -162,8 +201,10 @@ def test_the_oracle_encoders_disagree_about_how_python_spells_null():
     assert encode_tlv(kind.encode({"v": NULL}))
     assert encode_oer(kind, {"v": NULL}) is not None
     assert encode_jer(kind, {"v": None})
-    for spelling, encoder in ((NULL, lambda v: encode_jer(kind, v)),
-                              (None, lambda v: encode_tlv(kind.encode(v)))):
+    for spelling, encoder in (
+        (NULL, lambda v: encode_jer(kind, v)),
+        (None, lambda v: encode_tlv(kind.encode(v))),
+    ):
         try:
             encoder({"v": spelling})
         except Asn1Error:
@@ -171,7 +212,8 @@ def test_the_oracle_encoders_disagree_about_how_python_spells_null():
         else:
             raise AssertionError(
                 f"the NULL spelling {spelling!r} is now accepted where it was not; if that "
-                f"was deliberate, the harness below can stop special-casing it")
+                f"was deliberate, the harness below can stop special-casing it"
+            )
 
 
 def test_the_neutral_stream_has_no_null_ambiguity_to_disagree_about():
@@ -193,8 +235,8 @@ def test_the_neutral_stream_has_no_null_ambiguity_to_disagree_about():
 def test_a_construct_without_a_rule_is_refused_at_compile_time_naming_its_clause():
     """A plan that silently skipped a construct would surface as an unexplained byte diff."""
     for kind, fragment in (
-            (Set((Component("a", _I),), name="S"), "SET"),
-            (_seq(Component("v", Primitive(Universal.REAL))), "no leaf rule"),
+        (Set((Component("a", _I),), name="S"), "SET"),
+        (_seq(Component("v", Primitive(Universal.REAL))), "no leaf rule"),
     ):
         try:
             compile_encode_plan(kind, module="Test", type_name="bad")
@@ -205,8 +247,9 @@ def test_a_construct_without_a_rule_is_refused_at_compile_time_naming_its_clause
 
 
 def test_an_extension_addition_is_refused_because_x690_and_x691_disagree_about_it():
-    kind = Sequence((Component("a", _I), Component("b", _I, optional=True, extension=True)),
-                    name="X")
+    kind = Sequence(
+        (Component("a", _I), Component("b", _I, optional=True, extension=True)), name="X"
+    )
     try:
         compile_encode_plan(kind, module="Test", type_name="ext")
     except Asn1Error as error:
@@ -283,8 +326,10 @@ def test_a_required_component_that_is_absent_is_refused_when_flattened():
 def test_a_choice_value_must_name_exactly_one_alternative():
     kind = _seq(Component("v", _CHOICE, tag=5, explicit=True))
     plan = _plan(kind, "x")
-    for value, fragment in ((({"num": 7}), "(alternative, value) pair"),
-                            (("nope", 1), "not an alternative")):
+    for value, fragment in (
+        (({"num": 7}), "(alternative, value) pair"),
+        (("nope", 1), "not an alternative"),
+    ):
         try:
             flatten(plan, {"v": value})
         except Asn1Error as error:
@@ -337,30 +382,62 @@ def test_a_constrained_type_reaches_the_oer_form_its_constraint_selects():
 
     cases = (
         # (label, type, value, the octets X.696 requires)
-        ("§10.3 a) one unsigned octet", Primitive(
-            Universal.INTEGER, "I", constraint=ValueRange(0, 255)), 42, b"\x2a"),
-        ("§10.3 b) two unsigned octets", Primitive(
-            Universal.INTEGER, "I", constraint=ValueRange(0, 65535)), 42, b"\x00\x2a"),
-        ("§10.3 d) eight unsigned octets", Primitive(
-            Universal.INTEGER, "I", constraint=ValueRange(0, 2 ** 64 - 1)), 2 ** 63,
-         b"\x80" + b"\x00" * 7),
-        ("§10.4 a) one signed octet", Primitive(
-            Universal.INTEGER, "I", constraint=ValueRange(-128, 127)), -5, b"\xfb"),
-        ("§10.3 e) a lower bound alone stays length-prefixed", Primitive(
-            Universal.INTEGER, "I", constraint=ValueRange(0, None)), 300, b"\x02\x01\x2c"),
-        ("§14.1 a fixed size drops the determinant", Primitive(
-            Universal.OCTET_STRING, "O", constraint=Size(ValueRange(3, 3))), b"abc",
-         b"abc"),
-        ("§14.2 a size RANGE does not", Primitive(
-            Universal.OCTET_STRING, "O", constraint=Size(ValueRange(1, 3))), b"abc",
-         b"\x03abc"),
-        ("§27.2 a known-multiplier string, fixed", Primitive(
-            Universal.IA5_STRING, "A", constraint=Size(ValueRange(3, 3))), "abc", b"abc"),
+        (
+            "§10.3 a) one unsigned octet",
+            Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, 255)),
+            42,
+            b"\x2a",
+        ),
+        (
+            "§10.3 b) two unsigned octets",
+            Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, 65535)),
+            42,
+            b"\x00\x2a",
+        ),
+        (
+            "§10.3 d) eight unsigned octets",
+            Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, 2**64 - 1)),
+            2**63,
+            b"\x80" + b"\x00" * 7,
+        ),
+        (
+            "§10.4 a) one signed octet",
+            Primitive(Universal.INTEGER, "I", constraint=ValueRange(-128, 127)),
+            -5,
+            b"\xfb",
+        ),
+        (
+            "§10.3 e) a lower bound alone stays length-prefixed",
+            Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, None)),
+            300,
+            b"\x02\x01\x2c",
+        ),
+        (
+            "§14.1 a fixed size drops the determinant",
+            Primitive(Universal.OCTET_STRING, "O", constraint=Size(ValueRange(3, 3))),
+            b"abc",
+            b"abc",
+        ),
+        (
+            "§14.2 a size RANGE does not",
+            Primitive(Universal.OCTET_STRING, "O", constraint=Size(ValueRange(1, 3))),
+            b"abc",
+            b"\x03abc",
+        ),
+        (
+            "§27.2 a known-multiplier string, fixed",
+            Primitive(Universal.IA5_STRING, "A", constraint=Size(ValueRange(3, 3))),
+            "abc",
+            b"abc",
+        ),
         # §27.1 keeps UTF8String out of §27.2: a character costs 1..4 octets there, so a
         # character count never implies an octet count and the determinant must stay.
-        ("§27.1 UTF8String is never known-multiplier", Primitive(
-            Universal.UTF8_STRING, "U", constraint=Size(ValueRange(3, 3))), "abc",
-         b"\x03abc"),
+        (
+            "§27.1 UTF8String is never known-multiplier",
+            Primitive(Universal.UTF8_STRING, "U", constraint=Size(ValueRange(3, 3))),
+            "abc",
+            b"\x03abc",
+        ),
     )
     for label, kind, value, want in cases:
         outer = _seq(Component("v", kind))
@@ -384,11 +461,20 @@ def test_an_enumerated_is_not_an_integer_under_oer():
     A construct absent from the corpus is untested however many tests run over the corpus,
     which is why this one names its own values rather than adding a row and hoping.
     """
-    wanted = ((0, b"\x00"), (5, b"\x05"), (127, b"\x7f"), (128, b"\x82\x00\x80"),
-              (200, b"\x82\x00\xc8"), (-1, b"\x81\xff"), (-129, b"\x82\xff\x7f"))
-    kind = Primitive(Universal.ENUMERATED, "E",
-                     enumeration=tuple((f"i{index}", value)
-                                       for index, (value, _want) in enumerate(wanted)))
+    wanted = (
+        (0, b"\x00"),
+        (5, b"\x05"),
+        (127, b"\x7f"),
+        (128, b"\x82\x00\x80"),
+        (200, b"\x82\x00\xc8"),
+        (-1, b"\x81\xff"),
+        (-129, b"\x82\xff\x7f"),
+    )
+    kind = Primitive(
+        Universal.ENUMERATED,
+        "E",
+        enumeration=tuple((f"i{index}", value) for index, (value, _want) in enumerate(wanted)),
+    )
     outer = _seq(Component("v", kind))
     plan = compile_encode_plan(outer, module="Test", type_name="S")
     for value, want in wanted:
@@ -410,12 +496,12 @@ def test_a_jer_enumerated_is_its_identifier_and_never_its_number():
     dropped it. Version 4 records it, and a bare ENUMERATED is refused at compile time rather
     than three emitters downstream.
     """
-    kind = Primitive(Universal.ENUMERATED, "E",
-                     enumeration=(("red", 4), ("green", 9), ("deep-blue", -3)))
+    kind = Primitive(
+        Universal.ENUMERATED, "E", enumeration=(("red", 4), ("green", 9), ("deep-blue", -3))
+    )
     outer = _seq(Component("v", kind))
     plan = compile_encode_plan(outer, module="Test", type_name="S")
-    for value, want in ((4, b'{"v":"red"}'), (9, b'{"v":"green"}'),
-                        (-3, b'{"v":"deep-blue"}')):
+    for value, want in ((4, b'{"v":"red"}'), (9, b'{"v":"green"}'), (-3, b'{"v":"deep-blue"}')):
         got = emit(plan, flatten(plan, {"v": value}), rules=EmitRules.JER)
         assert got == want, f"{value}: {got!r} != {want!r}"
         assert got == encode_jer(outer, {"v": value}), value
@@ -460,14 +546,16 @@ def test_the_three_candidates_that_ignore_constraints_still_ignore_them():
     from bcir.asn1.constraints import ValueRange
 
     unconstrained = _seq(Component("v", Primitive(Universal.INTEGER, "INTEGER")))
-    bounded = _seq(Component("v", Primitive(Universal.INTEGER, "INTEGER",
-                                            constraint=ValueRange(0, 255))))
+    bounded = _seq(
+        Component("v", Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 255)))
+    )
     value = {"v": 42}
     free_plan = compile_encode_plan(unconstrained, module="Test", type_name="S")
     bound_plan = compile_encode_plan(bounded, module="Test", type_name="S")
     for rules in (EmitRules.DER, EmitRules.BER, EmitRules.JER):
-        assert (emit(free_plan, flatten(free_plan, value), rules=rules)
-                == emit(bound_plan, flatten(bound_plan, value), rules=rules)), rules
+        assert emit(free_plan, flatten(free_plan, value), rules=rules) == emit(
+            bound_plan, flatten(bound_plan, value), rules=rules
+        ), rules
     assert encode_tlv(unconstrained.encode(value)) == encode_tlv(bounded.encode(value))
     assert encode_jer(unconstrained, value) == encode_jer(bounded, value)
     # OER is the one that differs, which is what made the fix necessary.
@@ -488,8 +576,9 @@ def test_a_constraint_the_plan_cannot_write_down_is_refused_not_truncated():
     from bcir.asn1.constraints import PermittedAlphabet, Union, ValueRange
     from bcir.asn1.encode_plan import ALPHABET_MAX, BOUND_MAX
 
-    too_wide = _seq(Component("v", Primitive(
-        Universal.INTEGER, "I", constraint=ValueRange(0, BOUND_MAX + 1))))
+    too_wide = _seq(
+        Component("v", Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, BOUND_MAX + 1)))
+    )
     try:
         compile_encode_plan(too_wide, module="Test", type_name="S")
     except Asn1Error as error:
@@ -500,9 +589,11 @@ def test_a_constraint_the_plan_cannot_write_down_is_refused_not_truncated():
     # A permitted alphabet one character past the buffer. Built as a union of single
     # characters so the count is exact rather than an artefact of a range's endpoints.
     from bcir.asn1.constraints import SingleValue
+
     wide = Union(tuple(SingleValue(chr(0x21 + i)) for i in range(ALPHABET_MAX + 1)))
-    too_many = _seq(Component("v", Primitive(
-        Universal.IA5_STRING, "A", constraint=PermittedAlphabet(wide))))
+    too_many = _seq(
+        Component("v", Primitive(Universal.IA5_STRING, "A", constraint=PermittedAlphabet(wide)))
+    )
     try:
         compile_encode_plan(too_many, module="Test", type_name="S")
     except Asn1Error as error:
@@ -537,31 +628,35 @@ def test_what_still_stands_between_this_plan_and_a_per_emitter():
     plain = Sequence((Component("a", _B),), name="S")
     extensible = Sequence((Component("a", _B),), name="S", extensible=True)
     for variant in (PerVariant.ALIGNED, PerVariant.UNALIGNED):
-        assert (encode_per(plain, {"a": True}, variant=variant, rules=PerRules.CANONICAL)
-                != encode_per(extensible, {"a": True}, variant=variant,
-                              rules=PerRules.CANONICAL)), variant
-    assert (compile_encode_plan(plain, module="T", type_name="S").sha256()
-            != compile_encode_plan(extensible, module="T", type_name="S").sha256())
+        assert encode_per(
+            plain, {"a": True}, variant=variant, rules=PerRules.CANONICAL
+        ) != encode_per(extensible, {"a": True}, variant=variant, rules=PerRules.CANONICAL), variant
+    assert (
+        compile_encode_plan(plain, module="T", type_name="S").sha256()
+        != compile_encode_plan(extensible, module="T", type_name="S").sha256()
+    )
 
     # The enumeration carries NUMBERS, which is what §14.1 indexes — names alone could not
     # produce an index, and the identifier alone could not satisfy X.697.
-    enumerated = _seq(Component("v", Primitive(
-        Universal.ENUMERATED, "E", enumeration=(("red", 4), ("green", 9)))))
+    enumerated = _seq(
+        Component("v", Primitive(Universal.ENUMERATED, "E", enumeration=(("red", 4), ("green", 9))))
+    )
     node = compile_encode_plan(enumerated, module="T", type_name="S").root.members[0].node
     assert node.enumeration == (("red", 4), ("green", 9))
 
     # The constraint half stays complete.
-    bounded = _seq(Component("v", Primitive(
-        Universal.INTEGER, "I", constraint=ValueRange(0, 255))))
+    bounded = _seq(Component("v", Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, 255))))
     recorded = compile_encode_plan(bounded, module="T", type_name="S").root.members[0].node
     assert recorded.constraint is not None
     assert recorded.constraint.root_value_low == 0
     assert recorded.constraint.root_value_high == 255
 
     # And what is left is exactly one thing, which refuses by name.
-    additions = Sequence((Component("a", _B), Component("b", _I, optional=True,
-                                                        extension=True)),
-                         name="S", extensible=True)
+    additions = Sequence(
+        (Component("a", _B), Component("b", _I, optional=True, extension=True)),
+        name="S",
+        extensible=True,
+    )
     try:
         compile_encode_plan(additions, module="T", type_name="S")
     except Asn1Error as error:
@@ -569,7 +664,8 @@ def test_what_still_stands_between_this_plan_and_a_per_emitter():
     else:
         raise AssertionError(
             "the plan now compiles extension additions; that was the last PER prerequisite, "
-            "so build the emitter rather than deleting this test")
+            "so build the emitter rather than deleting this test"
+        )
 
 
 # --- plan version 5: the DEFAULT omission rule --------------------------------------------
@@ -591,13 +687,14 @@ def test_a_component_equal_to_its_default_is_omitted_by_the_rules_that_require_i
     equal, differing, absent = {"a": 1, "b": False}, {"a": 1, "b": True}, {"a": 1}
     # Supplying the default is indistinguishable from omitting it, which is the rule.
     for rules in (EmitRules.DER, EmitRules.JER, EmitRules.COER):
-        assert (emit(plan, flatten(plan, equal), rules=rules)
-                == emit(plan, flatten(plan, absent), rules=rules)), rules
-        assert (emit(plan, flatten(plan, differing), rules=rules)
-                != emit(plan, flatten(plan, absent), rules=rules)), rules
+        assert emit(plan, flatten(plan, equal), rules=rules) == emit(
+            plan, flatten(plan, absent), rules=rules
+        ), rules
+        assert emit(plan, flatten(plan, differing), rules=rules) != emit(
+            plan, flatten(plan, absent), rules=rules
+        ), rules
     # And each against its own oracle, which is what makes the claim more than internal.
-    assert emit(plan, flatten(plan, equal), rules=EmitRules.DER) == \
-        encode_tlv(kind.encode(equal))
+    assert emit(plan, flatten(plan, equal), rules=EmitRules.DER) == encode_tlv(kind.encode(equal))
     assert emit(plan, flatten(plan, equal), rules=EmitRules.JER) == encode_jer(kind, equal)
     assert emit(plan, flatten(plan, equal), rules=EmitRules.COER) == encode_oer(kind, equal)
 
@@ -636,12 +733,12 @@ def test_the_default_is_compared_as_stream_octets_which_is_a_canonical_form():
     from bcir.asn1.emit import flatten_value
 
     for kind, one, two in (
-            (_I, 7, 7),
-            (_I, -(2 ** 70), -(2 ** 70)),
-            (_B, False, False),
-            (_S, "café", "café"),
-            (_O, b"\x00\xff", bytes([0, 255])),
-            (SequenceOf(_I, "S"), [1, 2, 3], (1, 2, 3)),
+        (_I, 7, 7),
+        (_I, -(2**70), -(2**70)),
+        (_B, False, False),
+        (_S, "café", "café"),
+        (_O, b"\x00\xff", bytes([0, 255])),
+        (SequenceOf(_I, "S"), [1, 2, 3], (1, 2, 3)),
     ):
         node = _plan(_seq(Component("v", kind)), "c").root.members[0].node
         assert flatten_value(node, one) == flatten_value(node, two), kind
@@ -651,8 +748,7 @@ def test_a_default_too_large_for_the_format_is_refused_not_truncated():
     """A truncated default compares unequal, which silently re-admits the component."""
     from bcir.asn1.encode_plan import DEFAULT_MAX
 
-    kind = _seq(Component("a", _I),
-                Component("b", _S, default="x" * (DEFAULT_MAX + 1)))
+    kind = _seq(Component("a", _I), Component("b", _S, default="x" * (DEFAULT_MAX + 1)))
     try:
         compile_encode_plan(kind, module="Test", type_name="wide")
     except Asn1Error as error:
@@ -671,14 +767,20 @@ def test_the_skip_walks_exactly_as_far_as_the_flattener_wrote():
     from bcir.asn1.emit import _Reader, _skip_node
 
     shapes = (
-        (_I, 2 ** 70), (_B, True), (_N, NULL), (_O, b"\x01\x02"), (_S, "hi"),
-        (_OID, Oid((1, 3, 6, 1))), (SequenceOf(_I, "S"), [1, 2, 3]),
+        (_I, 2**70),
+        (_B, True),
+        (_N, NULL),
+        (_O, b"\x01\x02"),
+        (_S, "hi"),
+        (_OID, Oid((1, 3, 6, 1))),
+        (SequenceOf(_I, "S"), [1, 2, 3]),
         (_seq(Component("x", _I), Component("y", _B, optional=True), name="In"), {"x": 1}),
         (_CHOICE, ("txt", "z")),
     )
     for kind, value in shapes:
         node = _plan(_seq(Component("v", kind)), "s").root.members[0].node
         from bcir.asn1.emit import flatten_value
+
         stream = flatten_value(node, value)
         reader = _Reader(stream)
         _skip_node(node, reader)
@@ -701,6 +803,7 @@ def _per_value(value):
 
 def _per_pairs():
     from bcir.asn1.per import PerRules, PerVariant
+
     return (
         (EmitRules.CANONICAL_PER_ALIGNED, PerRules.CANONICAL, PerVariant.ALIGNED),
         (EmitRules.CANONICAL_PER_UNALIGNED, PerRules.CANONICAL, PerVariant.UNALIGNED),
@@ -724,8 +827,8 @@ def test_the_plan_driven_per_matches_the_oracle_in_all_four_variants():
         stream = flatten(plan, value)
         for rules, per_rules, variant in _per_pairs():
             assert emit(plan, stream, rules=rules) == encode_per(
-                kind, _per_value(value), rules=per_rules,
-                variant=variant), f"{label} / {rules.value}"
+                kind, _per_value(value), rules=per_rules, variant=variant
+            ), f"{label} / {rules.value}"
 
 
 def test_per_reads_the_constraints_the_plan_now_carries():
@@ -740,25 +843,53 @@ def test_per_reads_the_constraints_the_plan_now_carries():
     from bcir.asn1.per import encode_per
 
     cases = (
-        ("a constrained integer", Primitive(
-            Universal.INTEGER, "I", constraint=ValueRange(0, 255)), 42),
-        ("a semi-constrained integer", Primitive(
-            Universal.INTEGER, "I", constraint=ValueRange(0, None)), 300),
-        ("an extensible integer, inside the root", Primitive(
-            Universal.INTEGER, "I", constraint=Extensible(ValueRange(0, 255))), 42),
-        ("an extensible integer, outside the root", Primitive(
-            Universal.INTEGER, "I", constraint=Extensible(ValueRange(0, 255))), 4000),
-        ("a fixed-size octet string", Primitive(
-            Universal.OCTET_STRING, "O", constraint=Size(ValueRange(3, 3))), b"abc"),
-        ("a two-octet string, §17.6's unaligned case", Primitive(
-            Universal.OCTET_STRING, "O", constraint=Size(ValueRange(2, 2))), b"ab"),
-        ("a size range", Primitive(
-            Universal.OCTET_STRING, "O", constraint=Size(ValueRange(1, 4))), b"abc"),
-        ("a permitted alphabet", Primitive(
-            Universal.IA5_STRING, "A", constraint=PermittedAlphabet(
-                ValueRange("0", "9"))), "019"),
-        ("a NumericString, whose repertoire X.680 §43 fixes", Primitive(
-            Universal.NUMERIC_STRING, "N"), "42"),
+        (
+            "a constrained integer",
+            Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, 255)),
+            42,
+        ),
+        (
+            "a semi-constrained integer",
+            Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, None)),
+            300,
+        ),
+        (
+            "an extensible integer, inside the root",
+            Primitive(Universal.INTEGER, "I", constraint=Extensible(ValueRange(0, 255))),
+            42,
+        ),
+        (
+            "an extensible integer, outside the root",
+            Primitive(Universal.INTEGER, "I", constraint=Extensible(ValueRange(0, 255))),
+            4000,
+        ),
+        (
+            "a fixed-size octet string",
+            Primitive(Universal.OCTET_STRING, "O", constraint=Size(ValueRange(3, 3))),
+            b"abc",
+        ),
+        (
+            "a two-octet string, §17.6's unaligned case",
+            Primitive(Universal.OCTET_STRING, "O", constraint=Size(ValueRange(2, 2))),
+            b"ab",
+        ),
+        (
+            "a size range",
+            Primitive(Universal.OCTET_STRING, "O", constraint=Size(ValueRange(1, 4))),
+            b"abc",
+        ),
+        (
+            "a permitted alphabet",
+            Primitive(
+                Universal.IA5_STRING, "A", constraint=PermittedAlphabet(ValueRange("0", "9"))
+            ),
+            "019",
+        ),
+        (
+            "a NumericString, whose repertoire X.680 §43 fixes",
+            Primitive(Universal.NUMERIC_STRING, "N"),
+            "42",
+        ),
         ("an unconstrained IA5String", Primitive(Universal.IA5_STRING, "A"), "hi"),
     )
     for label, kind, value in cases:
@@ -767,15 +898,15 @@ def test_per_reads_the_constraints_the_plan_now_carries():
         stream = flatten(plan, {"v": value})
         for rules, per_rules, variant in _per_pairs():
             assert emit(plan, stream, rules=rules) == encode_per(
-                outer, {"v": value}, rules=per_rules,
-                variant=variant), f"{label} / {rules.value}"
+                outer, {"v": value}, rules=per_rules, variant=variant
+            ), f"{label} / {rules.value}"
 
     # And the point of it all: the constrained form really is narrower.
-    bounded = _plan(_seq(Component("v", Primitive(
-        Universal.INTEGER, "I", constraint=ValueRange(0, 255)))), "b")
+    bounded = _plan(
+        _seq(Component("v", Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, 255)))), "b"
+    )
     free = _plan(_seq(Component("v", _I)), "f")
-    narrow = emit(bounded, flatten(bounded, {"v": 42}),
-                  rules=EmitRules.CANONICAL_PER_UNALIGNED)
+    narrow = emit(bounded, flatten(bounded, {"v": 42}), rules=EmitRules.CANONICAL_PER_UNALIGNED)
     wide = emit(free, flatten(free, {"v": 42}), rules=EmitRules.CANONICAL_PER_UNALIGNED)
     assert len(narrow) < len(wide), (narrow.hex(), wide.hex())
 
@@ -789,22 +920,25 @@ def test_the_four_per_rows_are_four_encodings_and_not_four_names_for_one():
     from bcir.asn1.constraints import ValueRange
 
     # §11.5.7.2's one-octet case pads under ALIGNED and does not under UNALIGNED.
-    kind = _seq(Component("f", _B), Component("v", Primitive(
-        Universal.INTEGER, "I", constraint=ValueRange(0, 255))))
+    kind = _seq(
+        Component("f", _B),
+        Component("v", Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, 255))),
+    )
     plan = _plan(kind, "a")
     stream = flatten(plan, {"f": True, "v": 42})
-    assert (emit(plan, stream, rules=EmitRules.CANONICAL_PER_ALIGNED)
-            != emit(plan, stream, rules=EmitRules.CANONICAL_PER_UNALIGNED))
+    assert emit(plan, stream, rules=EmitRules.CANONICAL_PER_ALIGNED) != emit(
+        plan, stream, rules=EmitRules.CANONICAL_PER_UNALIGNED
+    )
 
     # §19.5: CANONICAL-PER omits a DEFAULT component equal to its default; BASIC-PER may
     # send it, and this is the whole difference between the two profiles for these schemas.
     defaulted = _seq(Component("a", _I), Component("b", _B, default=False))
     plan = _plan(defaulted, "d")
     equal = flatten(plan, {"a": 1, "b": False})
-    for aligned, unaligned in ((EmitRules.CANONICAL_PER_ALIGNED,
-                                EmitRules.BASIC_PER_ALIGNED),
-                               (EmitRules.CANONICAL_PER_UNALIGNED,
-                                EmitRules.BASIC_PER_UNALIGNED)):
+    for aligned, unaligned in (
+        (EmitRules.CANONICAL_PER_ALIGNED, EmitRules.BASIC_PER_ALIGNED),
+        (EmitRules.CANONICAL_PER_UNALIGNED, EmitRules.BASIC_PER_UNALIGNED),
+    ):
         assert emit(plan, equal, rules=aligned) != emit(plan, equal, rules=unaligned)
 
 
@@ -819,20 +953,20 @@ def test_a_choice_index_follows_the_canonical_tag_order_not_the_source_order():
     from bcir.asn1.per import encode_per
 
     # Declared out of tag order on purpose.
-    backwards = Choice((Component("late", _I, tag=7), Component("early", _S, tag=2)),
-                       name="C")
+    backwards = Choice((Component("late", _I, tag=7), Component("early", _S, tag=2)), name="C")
     kind = _seq(Component("v", backwards, tag=5, explicit=True))
     plan = _plan(kind, "c")
     for name, value in (("late", 7), ("early", "hi")):
         stream = flatten(plan, {"v": (name, value)})
         for rules, per_rules, variant in _per_pairs():
             assert emit(plan, stream, rules=rules) == encode_per(
-                kind, {"v": {name: value}}, rules=per_rules,
-                variant=variant), f"{name} / {rules.value}"
+                kind, {"v": {name: value}}, rules=per_rules, variant=variant
+            ), f"{name} / {rules.value}"
 
     # The claim, made directly: the plan's order and the encoding's order differ here.
     node = plan.root.members[0].node
     from bcir.asn1.emit import _per_alternatives
+
     assert [m.name for m in node.members] == ["late", "early"]
     assert [m.name for m in _per_alternatives(node)] == ["early", "late"]
 

@@ -53,6 +53,7 @@ from .quantize import dequantize, quantize_per_group
 
 # ---- the planned-claim shape metadata (mirrors matmul.TilePlan / activation.ActivationSpec) -----
 
+
 @dataclass(frozen=True)
 class AttentionSpec:
     """A gem.attention as a FIRST-CLASS planned claim: single-head scaled-dot-product attention's shape/
@@ -61,11 +62,11 @@ class AttentionSpec:
     underlying matmul plans (the K_BCIR-selected tile/loop choices for ``Q@K^T`` and ``A@V``) are carried
     as ``scores_tile`` / ``context_tile`` (None until planned)."""
 
-    seq_len: int               # the sequence length (rows of Q/K/V)
-    d_k: int                   # the head / key dimension (cols of Q/K/V); d_model == d_k for one head
+    seq_len: int  # the sequence length (rows of Q/K/V)
+    d_k: int  # the head / key dimension (cols of Q/K/V); d_model == d_k for one head
     dtype: str = "f32"
-    scores_tile: "matmul.TilePlan | None" = None    # the Q@K^T matmul plan
-    context_tile: "matmul.TilePlan | None" = None   # the A@V matmul plan
+    scores_tile: "matmul.TilePlan | None" = None  # the Q@K^T matmul plan
+    context_tile: "matmul.TilePlan | None" = None  # the A@V matmul plan
 
     @property
     def scale(self) -> float:
@@ -113,8 +114,8 @@ def scores_reference(q, k, spec: AttentionSpec) -> list[float]:
     scale. ``q``/``k`` are row-major seq_len x d_k; the result is row-major seq_len x seq_len. The scale is
     a pure multiply (exact, 0 ULP, on the deterministic rail -- NO transcendental here)."""
     n, _, d = spec.scores_dims
-    kt = _transpose(k, spec.seq_len, spec.d_k)            # K^T : d_k x seq_len
-    s = matmul.matmul_reference(q, kt, n, n, d)           # Q @ K^T : seq_len x seq_len
+    kt = _transpose(k, spec.seq_len, spec.d_k)  # K^T : d_k x seq_len
+    s = matmul.matmul_reference(q, kt, n, n, d)  # Q @ K^T : seq_len x seq_len
     sc = spec.scale
     return [v * sc for v in s]
 
@@ -126,10 +127,10 @@ def attention_reference(q, k, v, spec: AttentionSpec) -> list[float]:
     ``q``/``k``/``v`` are row-major seq_len x d_k; the result is row-major seq_len x d_k. The softmax exp is
     the only transcendental (it rides the trusted libm edge per the quarantine), so the C kernel reproduces
     this to float round-off."""
-    s = scores_reference(q, k, spec)                                  # scaled scores: seq x seq
-    a = softmax_reference(s, axis_len=spec.seq_len)                   # the EXISTING softmax over each row
+    s = scores_reference(q, k, spec)  # scaled scores: seq x seq
+    a = softmax_reference(s, axis_len=spec.seq_len)  # the EXISTING softmax over each row
     m, n2, kk = spec.context_dims
-    return matmul.matmul_reference(a, v, m, n2, kk)                   # A @ V : seq x d_k
+    return matmul.matmul_reference(a, v, m, n2, kk)  # A @ V : seq x d_k
 
 
 def attention_realize(q, k, v, spec: AttentionSpec) -> list[float]:
@@ -141,14 +142,20 @@ def attention_realize(q, k, v, spec: AttentionSpec) -> list[float]:
     tile."""
     n, _, d = spec.scores_dims
     kt = _transpose(k, spec.seq_len, spec.d_k)
-    s = (matmul.matmul_tiled(q, kt, n, n, d, spec.scores_tile) if spec.scores_tile is not None
-         else matmul.matmul_reference(q, kt, n, n, d))
+    s = (
+        matmul.matmul_tiled(q, kt, n, n, d, spec.scores_tile)
+        if spec.scores_tile is not None
+        else matmul.matmul_reference(q, kt, n, n, d)
+    )
     sc = spec.scale
     s = [val * sc for val in s]
     a = softmax_reference(s, axis_len=spec.seq_len)
     m, n2, kk = spec.context_dims
-    return (matmul.matmul_tiled(a, v, m, n2, kk, spec.context_tile) if spec.context_tile is not None
-            else matmul.matmul_reference(a, v, m, n2, kk))
+    return (
+        matmul.matmul_tiled(a, v, m, n2, kk, spec.context_tile)
+        if spec.context_tile is not None
+        else matmul.matmul_reference(a, v, m, n2, kk)
+    )
 
 
 def attention_via_bridge(q, k, v, spec: AttentionSpec, group_size: int, bits: int) -> list[float]:
@@ -173,9 +180,15 @@ def attention_via_bridge(q, k, v, spec: AttentionSpec, group_size: int, bits: in
 _DTYPES = ("f32", "i32")
 
 
-def check_attention(spec: AttentionSpec, q_shape: tuple[int, ...], k_shape: tuple[int, ...],
-                    v_shape: tuple[int, ...], in_dtype: str,
-                    out_shape: tuple[int, ...], out_dtype: str) -> list[str]:
+def check_attention(
+    spec: AttentionSpec,
+    q_shape: tuple[int, ...],
+    k_shape: tuple[int, ...],
+    v_shape: tuple[int, ...],
+    in_dtype: str,
+    out_shape: tuple[int, ...],
+    out_dtype: str,
+) -> list[str]:
     """Op-level well-formedness for a gem.attention claim, returned as a list of error strings (empty ==
     well-formed) -- the shape/dtype-law shape gem.matmul/gem.activation/gem.conv use inline, lifted into one
     named checker. NOT a globally-numbered R-law (matches the precedents, which add none). The laws:
@@ -207,16 +220,22 @@ def check_attention(spec: AttentionSpec, q_shape: tuple[int, ...], k_shape: tupl
             errs.append(f"attention: {nm} shape {tuple(sh)} != (seq_len,d_k) {want}")
     # (4) the quarantine dtype rule: the softmax transcendental needs an f32 result.
     if in_dtype != "f32":
-        errs.append(f"attention: contains a softmax (transcendental; the libm edge returns float), so it "
-                    f"needs f32, got {in_dtype!r}")
+        errs.append(
+            f"attention: contains a softmax (transcendental; the libm edge returns float), so it "
+            f"needs f32, got {in_dtype!r}"
+        )
     return errs
 
 
 # ---- the cost / realization plug-in (reuses matmul.cost_of for BOTH matmuls) ---------------------
 
-def cost_of(spec: AttentionSpec, target: TargetProfile,
-            scores_tile: "matmul.TilePlan | None" = None,
-            context_tile: "matmul.TilePlan | None" = None) -> tuple[int, int, bool]:
+
+def cost_of(
+    spec: AttentionSpec,
+    target: TargetProfile,
+    scores_tile: "matmul.TilePlan | None" = None,
+    context_tile: "matmul.TilePlan | None" = None,
+) -> tuple[int, int, bool]:
     """The analytic (compute, mem, fits_cache) cost of an attention realization, PRICED THROUGH THE EXISTING
     matmul roofline (matmul.cost_of) for BOTH matmuls -- attention is a composition of two gem.matmuls, so
     its cost is the SUM of the two priced matmul costs (no new roofline term; the scale and softmax passes
@@ -251,8 +270,9 @@ def bottleneck(cv: CostVector) -> int:
     return max(cv.v[COMPUTE], cv.v[MEMORY])
 
 
-def plan_attention(seq_len: int, d_k: int, dtype: str = "f32",
-                   target: TargetProfile | None = None) -> AttentionSpec:
+def plan_attention(
+    seq_len: int, d_k: int, dtype: str = "f32", target: TargetProfile | None = None
+) -> AttentionSpec:
     """K_BCIR's deterministic attention realization -- the attention analog of matmul.plan_matmul. Attention
     decomposes into two matmuls, so the plan IS the two underlying matmul plans: ``Q@K^T`` (seq,seq,d_k) and
     ``A@V`` (seq,d_k,seq), each planned by the EXISTING matmul.plan_matmul tile/loop dual-semiring search

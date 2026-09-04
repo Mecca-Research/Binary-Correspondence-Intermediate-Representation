@@ -60,11 +60,13 @@ from bcir.lower.c_kernel import (
 )
 
 # The float32 / float64 overflow thresholds the red-team probes straddle (see the module docstring).
-FLT_MAX = 3.4028234663852886e38            # IEEE-754 binary32 max finite magnitude
-LN_FLT_MAX = math.log(FLT_MAX)             # ~ 88.72: float32 exp(t) overflows past here
-LN_DBL_MAX = math.log(1.7976931348623157e308)   # ~ 709.78: float64 exp(t) (math.exp) raises past here
-X_F32_EXP2_OVERFLOW = math.sqrt(LN_FLT_MAX)      # ~ 9.42: |x| past which float32 exp(x*x) overflows
-X_F64_EXP2_OVERFLOW = math.sqrt(LN_DBL_MAX)      # ~ 26.64: |x| past which float64 exp(x*x) raises
+FLT_MAX = 3.4028234663852886e38  # IEEE-754 binary32 max finite magnitude
+LN_FLT_MAX = math.log(FLT_MAX)  # ~ 88.72: float32 exp(t) overflows past here
+LN_DBL_MAX = math.log(
+    1.7976931348623157e308
+)  # ~ 709.78: float64 exp(t) (math.exp) raises past here
+X_F32_EXP2_OVERFLOW = math.sqrt(LN_FLT_MAX)  # ~ 9.42: |x| past which float32 exp(x*x) overflows
+X_F64_EXP2_OVERFLOW = math.sqrt(LN_DBL_MAX)  # ~ 26.64: |x| past which float64 exp(x*x) raises
 
 _CC = None
 
@@ -88,15 +90,18 @@ def _run_elementwise_kernel(cc, kernel, fn, lits):
         "\n#include <stdio.h>\n#include <math.h>\nint main(void){\n"
         f"  float data[{n}] = {{{', '.join(lits)}}};\n"
         f"  float out[{n}];\n  {fn}(data, out);\n"
-        f"  for (int i = 0; i < {n}; ++i) printf(\"%.8g\\n\", (double)out[i]);\n"
+        f'  for (int i = 0; i < {n}; ++i) printf("%.8g\\n", (double)out[i]);\n'
         "  return 0;\n}\n"
     )
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "s.c")
         open(src, "w").write(kernel + main)
         exe = os.path.join(d, "s")
-        bld = subprocess.run(host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
-                             capture_output=True, text=True)
+        bld = subprocess.run(
+            host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
+            capture_output=True,
+            text=True,
+        )
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         assert out.returncode == 0, out.stdout + out.stderr
@@ -116,13 +121,14 @@ def _parse(tok):
 # a wrong finite. The float64 oracle reference shares the fragility, just at the higher |x| > 26.64.
 # =====================================================================================================
 
+
 def test_cerf_fallback_degrades_honestly_at_x_12_float32():
     # The C FALLBACK kernel (NO -DBCIR_USE_CERF) at x = +-12 (|12| > 9.42, so float32 exp(x*x) overflows).
     # +12: erfcf(12) -> 0, expf(144) -> +inf  =>  +inf * 0 -> NaN (honest).
     # -12: erfcf(-12) -> 2, expf(144) -> +inf =>  -> +inf (honest). NEITHER is a wrong finite number.
     cc = _cc()
     if not cc:
-        return                                              # quick tier hides the toolchain -> self-skip
+        return  # quick tier hides the toolchain -> self-skip
     got = _run_elementwise_kernel(cc, emit_cerf_erfcx_c(2, "verfcx"), "verfcx", ["12.0f", "-12.0f"])
     assert len(got) == 2, got
     pos, neg = _parse(got[0]), _parse(got[1])
@@ -146,7 +152,10 @@ def test_cerf_fallback_first_overflow_step_is_inf_not_wrong_finite():
     assert math.isfinite(below), below
     assert abs(below - ref_below) < 1e-3 * (1.0 + abs(ref_below)), (below, ref_below)
     # above the edge: honest overflow to +inf (expf(90.25) overflows float32), never a plausible finite.
-    assert math.isinf(above) and above > 0.0, ("erfcx fallback just past the f32 edge must be +inf", above)
+    assert math.isinf(above) and above > 0.0, (
+        "erfcx fallback just past the f32 edge must be +inf",
+        above,
+    )
 
 
 def test_cerf_oracle_reference_is_not_full_range_robust_float64():
@@ -158,9 +167,13 @@ def test_cerf_oracle_reference_is_not_full_range_robust_float64():
         try:
             v = erfcx_reference([x])
             # If it ever returns instead of raising, it MUST be non-finite (never a wrong finite value).
-            assert not math.isfinite(v[0]), ("erfcx_reference past |x|>26.64 must be non-finite", x, v)
+            assert not math.isfinite(v[0]), (
+                "erfcx_reference past |x|>26.64 must be non-finite",
+                x,
+                v,
+            )
         except OverflowError:
-            pass                                            # the honest float64 degradation (a raise)
+            pass  # the honest float64 degradation (a raise)
 
 
 def test_cerf_oracle_reference_is_finite_and_correct_where_only_float32_fails():
@@ -188,26 +201,35 @@ def test_cerf_linked_path_is_robust_only_if_libcerf_is_present():
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "p.c")
         open(src, "w").write("#include <cerf.h>\nint main(void){return (int)erfcxf(0.0f)*0;}\n")
-        if subprocess.run(host_link_args([cc, src, "-lcerf", "-lm", "-o", os.path.join(d, "p")]),
-                          capture_output=True).returncode == 0:
+        if (
+            subprocess.run(
+                host_link_args([cc, src, "-lcerf", "-lm", "-o", os.path.join(d, "p")]),
+                capture_output=True,
+            ).returncode
+            == 0
+        ):
             libs = ["-lcerf"]
     if not libs:
-        return                                              # no libcerf here -> the robust path self-skips
+        return  # no libcerf here -> the robust path self-skips
     n = 2
     main = (
         "\n#include <stdio.h>\nint main(void){\n"
         f"  float data[{n}] = {{12.0f, -3.0f}};\n"
         f"  float out[{n}];\n  verfcx(data, out);\n"
-        f"  for (int i = 0; i < {n}; ++i) printf(\"%.8g\\n\", (double)out[i]);\n"
+        f'  for (int i = 0; i < {n}; ++i) printf("%.8g\\n", (double)out[i]);\n'
         "  return 0;\n}\n"
     )
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "s.c")
         open(src, "w").write(emit_cerf_erfcx_c(n, "verfcx") + main)
         exe = os.path.join(d, "s")
-        bld = subprocess.run(host_link_args(
-            [cc, "-std=c11", "-O2", "-DBCIR_USE_CERF", src, *libs, "-lm", "-o", exe]),
-                             capture_output=True, text=True)
+        bld = subprocess.run(
+            host_link_args(
+                [cc, "-std=c11", "-O2", "-DBCIR_USE_CERF", src, *libs, "-lm", "-o", exe]
+            ),
+            capture_output=True,
+            text=True,
+        )
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         got = [float(t) for t in out.stdout.split()]
@@ -225,6 +247,7 @@ def test_cerf_linked_path_is_robust_only_if_libcerf_is_present():
 # has a small residual.
 # =====================================================================================================
 
+
 def test_lapack_singular_matrix_degrades_honestly():
     # [[1,2],[2,4]] is rank-deficient (row 2 = 2*row 1) -> no unique solve. The reference must NOT return a
     # wrong finite "solution": it raises, OR (defensively) returns a non-finite x, OR leaves a residual
@@ -234,11 +257,14 @@ def test_lapack_singular_matrix_degrades_honestly():
     try:
         x = solve_reference(a, b, 2, 1)
     except ValueError:
-        return                                              # the honest LAPACK info>0 analog (a raise)
+        return  # the honest LAPACK info>0 analog (a raise)
     # If it did NOT raise, the only honest outcomes are a non-finite x or a not-small residual.
     res = residual(a, x, b, 2, 1)
-    assert (not all(math.isfinite(v) for v in x)) or res > 1e-3, \
-        ("singular solve must degrade honestly, not return a wrong finite solution", x, res)
+    assert (not all(math.isfinite(v) for v in x)) or res > 1e-3, (
+        "singular solve must degrade honestly, not return a wrong finite solution",
+        x,
+        res,
+    )
 
 
 def test_lapack_singular_identical_rows_degrades_honestly():
@@ -266,7 +292,7 @@ def test_lapack_ill_conditioned_but_nonsingular_still_solves():
     # is stable enough to solve it with a SMALL residual -- it does NOT spuriously degrade on a solvable
     # (if poorly conditioned) system. The honest outcome here is a correct solve, not a raise.
     a = [1.0, 1.0, 1.0, 1.0001]
-    b = [2.0, 2.0001]                                       # exact solution x = [1, 1]
+    b = [2.0, 2.0001]  # exact solution x = [1, 1]
     x = solve_reference(a, b, 2, 1)
     assert all(math.isfinite(v) for v in x), x
     assert residual(a, x, b, 2, 1) <= 1e-3, (x, residual(a, x, b, 2, 1))
@@ -296,8 +322,11 @@ def test_lapack_fallback_solves_well_conditioned_but_not_a_singular_system():
         src = os.path.join(d, "s.c")
         open(src, "w").write(emit_lapack_solve_c(n, nrhs, "solve") + main)
         exe = os.path.join(d, "s")
-        bld = subprocess.run(host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
-                             capture_output=True, text=True)
+        bld = subprocess.run(
+            host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
+            capture_output=True,
+            text=True,
+        )
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         assert out.returncode == 0, out.stdout + out.stderr
@@ -312,15 +341,20 @@ def test_lapack_fallback_solves_well_conditioned_but_not_a_singular_system():
 # still exact. A NaN/Inf input element propagates to a non-finite statistic (no silent finite).
 # =====================================================================================================
 
+
 def test_gsl_variance_n1_degrades_honestly():
     # n=1 variance/sd: the unbiased n-1 divisor is 0 -> a domain error. The reference raises ValueError
     # (the honest degradation), never a wrong finite "variance".
     for kind in ("variance", "sd"):
         try:
             v = stats_reference([5.0], kind)
-            assert not math.isfinite(v), (kind, "n=1 variance/sd must degrade honestly, got finite", v)
+            assert not math.isfinite(v), (
+                kind,
+                "n=1 variance/sd must degrade honestly, got finite",
+                v,
+            )
         except ValueError:
-            pass                                            # the honest n-1-divisor domain error (a raise)
+            pass  # the honest n-1-divisor domain error (a raise)
 
 
 def test_gsl_mean_n1_is_exact():
@@ -353,6 +387,7 @@ def test_gsl_inf_input_propagates_to_non_finite():
 # fallback, and that they AGREE on these limits.
 # =====================================================================================================
 
+
 def test_sleef_fallback_exp_extremes_float32():
     # The C FALLBACK (float32 expf): +90 (> 88.72) -> +inf; -100 -> ~0; NaN -> NaN; +10/+88 finite. All
     # HONEST IEEE degradation, never a wrong finite.
@@ -360,7 +395,10 @@ def test_sleef_fallback_exp_extremes_float32():
     if not cc:
         return
     lits = ["90.0f", "-100.0f", "NAN", "88.0f", "10.0f"]
-    got = [_parse(t) for t in _run_elementwise_kernel(cc, emit_sleef_exp_c(len(lits), "vexp"), "vexp", lits)]
+    got = [
+        _parse(t)
+        for t in _run_elementwise_kernel(cc, emit_sleef_exp_c(len(lits), "vexp"), "vexp", lits)
+    ]
     assert math.isinf(got[0]) and got[0] > 0.0, ("expf(90) float32 must overflow to +inf", got[0])
     assert got[1] == 0.0 or abs(got[1]) < 1e-30, ("expf(-100) must decay to ~0", got[1])
     assert math.isnan(got[2]), ("expf(NaN) must propagate NaN", got[2])
@@ -375,12 +413,12 @@ def test_sleef_reference_exp_extremes_float64():
     # float32-vs-float64 divergence: the float32 path degrades EARLIER, both honestly.)
     assert exp_reference([-800.0]) == [0.0]
     assert math.isnan(exp_reference([float("nan")])[0])
-    assert math.isfinite(exp_reference([90.0])[0])          # finite in float64, overflows in float32
+    assert math.isfinite(exp_reference([90.0])[0])  # finite in float64, overflows in float32
     try:
-        v = exp_reference([710.0])                          # 710 > 709.78 -> float64 overflow
+        v = exp_reference([710.0])  # 710 > 709.78 -> float64 overflow
         assert not math.isfinite(v[0]), ("float64 exp past 709.78 must be non-finite", v)
     except OverflowError:
-        pass                                                # the honest float64 degradation (a raise)
+        pass  # the honest float64 degradation (a raise)
 
 
 def test_sleef_fallback_and_reference_agree_on_finite_extremes():
@@ -389,10 +427,13 @@ def test_sleef_fallback_and_reference_agree_on_finite_extremes():
     cc = _cc()
     if not cc:
         return
-    data = [88.0, -50.0, 10.0, -88.0, 0.0]                  # all finite in BOTH float32 and float64
+    data = [88.0, -50.0, 10.0, -88.0, 0.0]  # all finite in BOTH float32 and float64
     ref = exp_reference(data)
     lits = [f"{v:.8f}f" for v in data]
-    got = [_parse(t) for t in _run_elementwise_kernel(cc, emit_sleef_exp_c(len(data), "vexp"), "vexp", lits)]
+    got = [
+        _parse(t)
+        for t in _run_elementwise_kernel(cc, emit_sleef_exp_c(len(data), "vexp"), "vexp", lits)
+    ]
     for g, r in zip(got, ref):
         assert math.isfinite(g) and math.isfinite(r), (g, r)
         assert abs(g - r) <= 1e-3 * (1.0 + abs(r)), (g, r)
@@ -404,15 +445,16 @@ def test_sleef_fallback_and_reference_agree_on_finite_extremes():
 # rejects a zero dimension with ValueError (assert the raise where it exists).
 # =====================================================================================================
 
+
 def test_blas_nan_input_propagates_to_dependent_output_cell():
     # C = A @ B with a NaN in A. Every output cell C[i,j] sums over a NaN-containing row/col -> NaN. The
     # reference must propagate it (never silently drop it to a wrong finite).
     M, N, K = 2, 2, 2
-    a = [1.0, float("nan"), 2.0, 3.0]                       # A[0,1] is NaN
-    b = [1.0, 0.0, 0.0, 1.0]                                # identity -> C = A, so C[0,1] inherits the NaN
+    a = [1.0, float("nan"), 2.0, 3.0]  # A[0,1] is NaN
+    b = [1.0, 0.0, 0.0, 1.0]  # identity -> C = A, so C[0,1] inherits the NaN
     c = matmul_reference(a, b, M, N, K)
     assert math.isnan(c[1]), ("the NaN must reach the dependent output cell", c)
-    assert all(math.isfinite(v) or math.isnan(v) for v in c)   # nothing silently fabricated
+    assert all(math.isfinite(v) or math.isnan(v) for v in c)  # nothing silently fabricated
 
 
 def test_blas_inf_input_propagates_to_non_finite():
@@ -421,7 +463,7 @@ def test_blas_inf_input_propagates_to_non_finite():
     M, N, K = 1, 1, 2
     a = [float("inf"), 1.0]
     b = [2.0, 3.0]
-    c = matmul_reference(a, b, M, N, K)                     # inf*2 + 1*3 = +inf
+    c = matmul_reference(a, b, M, N, K)  # inf*2 + 1*3 = +inf
     assert not math.isfinite(c[0]), ("an Inf input must propagate to a non-finite output", c)
 
 
@@ -453,14 +495,17 @@ def test_blas_fallback_nan_propagation_compiles_and_runs():
     main = (
         "\n#include <stdio.h>\n#include <math.h>\nint main(void){\n"
         "  float A[1] = {NAN};\n  float B[1] = {2.0f};\n  float C[1];\n  g(A, B, C);\n"
-        "  printf(\"%.8g\\n\", (double)C[0]);\n  return 0;\n}\n"
+        '  printf("%.8g\\n", (double)C[0]);\n  return 0;\n}\n'
     )
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "g.c")
         open(src, "w").write(kernel + main)
         exe = os.path.join(d, "g")
-        bld = subprocess.run(host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
-                             capture_output=True, text=True)
+        bld = subprocess.run(
+            host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
+            capture_output=True,
+            text=True,
+        )
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         assert out.returncode == 0, out.stdout + out.stderr
@@ -471,6 +516,7 @@ def test_blas_fallback_nan_propagation_compiles_and_runs():
 # WRAP 6/7 -- FFTW 1-D DFT. A DFT bin sums over EVERY input, so a NaN/Inf in any input bin propagates to
 # ALL output bins. The n=1 DFT is the identity (the single input unchanged).
 # =====================================================================================================
+
 
 def _interleave(signal):
     """A list of complex -> the interleaved [re0, im0, re1, im1, ...] float layout (the FFTW layout)."""
@@ -488,8 +534,11 @@ def test_fftw1d_nan_input_propagates_to_all_output_bins():
     signal = [1.0 + 0j, complex(float("nan"), 0.0), 2.0 + 0j, 3.0 + 0j]
     out = dft_reference(_interleave(signal), n)
     for j in range(n):
-        assert math.isnan(out[2 * j]) or math.isnan(out[2 * j + 1]), \
-            ("the NaN input must reach output bin", j, out)
+        assert math.isnan(out[2 * j]) or math.isnan(out[2 * j + 1]), (
+            "the NaN input must reach output bin",
+            j,
+            out,
+        )
 
 
 def test_fftw1d_inf_input_propagates_to_non_finite():
@@ -499,8 +548,11 @@ def test_fftw1d_inf_input_propagates_to_non_finite():
     signal = [complex(float("inf"), 0.0), 1.0 + 0j, 2.0 + 0j]
     out = dft_reference(_interleave(signal), n)
     for j in range(n):
-        assert not (math.isfinite(out[2 * j]) and math.isfinite(out[2 * j + 1])), \
-            ("the Inf input must make output bin non-finite", j, out)
+        assert not (math.isfinite(out[2 * j]) and math.isfinite(out[2 * j + 1])), (
+            "the Inf input must make output bin non-finite",
+            j,
+            out,
+        )
 
 
 def test_fftw1d_n1_dft_is_the_identity():
@@ -514,6 +566,7 @@ def test_fftw1d_n1_dft_is_the_identity():
 # bins (a 2-D DFT sums over every input). The 1x1 DFT is the identity.
 # =====================================================================================================
 
+
 def _flatten(grid):
     """An n0-by-n1 list-of-lists of complex -> the row-major interleaved float layout."""
     return _interleave([z for row in grid for z in row])
@@ -521,11 +574,14 @@ def _flatten(grid):
 
 def test_fftw2d_nan_input_propagates_to_all_output_bins():
     n0, n1 = 2, 2
-    grid = [[1.0 + 0j, 2.0 + 0j], [complex(float("nan"), 0.0), 3.0 + 0j]]   # one NaN cell
+    grid = [[1.0 + 0j, 2.0 + 0j], [complex(float("nan"), 0.0), 3.0 + 0j]]  # one NaN cell
     out = dft2_reference(_flatten(grid), n0, n1)
     for j in range(n0 * n1):
-        assert math.isnan(out[2 * j]) or math.isnan(out[2 * j + 1]), \
-            ("the NaN input must reach 2-D output bin", j, out)
+        assert math.isnan(out[2 * j]) or math.isnan(out[2 * j + 1]), (
+            "the NaN input must reach 2-D output bin",
+            j,
+            out,
+        )
 
 
 def test_fftw2d_inf_input_propagates_to_non_finite():
@@ -533,8 +589,11 @@ def test_fftw2d_inf_input_propagates_to_non_finite():
     grid = [[complex(float("inf"), 0.0), 1.0 + 0j], [2.0 + 0j, 3.0 + 0j]]
     out = dft2_reference(_flatten(grid), n0, n1)
     for j in range(n0 * n1):
-        assert not (math.isfinite(out[2 * j]) and math.isfinite(out[2 * j + 1])), \
-            ("the Inf input must make 2-D output bin non-finite", j, out)
+        assert not (math.isfinite(out[2 * j]) and math.isfinite(out[2 * j + 1])), (
+            "the Inf input must make 2-D output bin non-finite",
+            j,
+            out,
+        )
 
 
 def test_fftw2d_1x1_dft_is_the_identity():
@@ -561,22 +620,28 @@ def test_fftw2d_fallback_nan_propagation_compiles_and_runs():
         "\n#include <stdio.h>\n#include <math.h>\nint main(void){\n"
         f"  float in[{m}] = {{{', '.join(inits)}}};\n"
         f"  float out[{m}];\n  fft2(in, out);\n"
-        f"  for (int i = 0; i < {m}; ++i) printf(\"%.6g \", (double)out[i]);\n  return 0;\n}}\n"
+        f'  for (int i = 0; i < {m}; ++i) printf("%.6g ", (double)out[i]);\n  return 0;\n}}\n'
     )
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "f.c")
         open(src, "w").write(kernel + main)
         exe = os.path.join(d, "f")
-        bld = subprocess.run(host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
-                             capture_output=True, text=True)
+        bld = subprocess.run(
+            host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
+            capture_output=True,
+            text=True,
+        )
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         assert out.returncode == 0, out.stdout + out.stderr
         got = [_parse(t) for t in out.stdout.split()]
         assert len(got) == m, got
         for j in range(n0 * n1):
-            assert math.isnan(got[2 * j]) or math.isnan(got[2 * j + 1]), \
-                ("the C 2-D DFT must propagate NaN to bin", j, got)
+            assert math.isnan(got[2 * j]) or math.isnan(got[2 * j + 1]), (
+                "the C 2-D DFT must propagate NaN to bin",
+                j,
+                got,
+            )
 
 
 # A run_all-friendly explicit collection list (the existing suites are auto-collected by name; this is a

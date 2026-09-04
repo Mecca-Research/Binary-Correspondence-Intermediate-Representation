@@ -27,8 +27,16 @@ import json
 import os
 
 from bcir.asn1.dialect import (
-    MODULE_TYPE, PROJECTION_VERSION, DialectModule, DialectOperation, emit_mlir,
-    jer_to_module, module_to_jer, module_to_value, parse_mlir, value_to_module,
+    MODULE_TYPE,
+    PROJECTION_VERSION,
+    DialectModule,
+    DialectOperation,
+    emit_mlir,
+    jer_to_module,
+    module_to_jer,
+    module_to_value,
+    parse_mlir,
+    value_to_module,
 )
 from bcir.asn1.jer import JerRules, decode_jer, encode_jer
 from bcir.asn1.jer_bounded import JerBoundedError, decode_bounded
@@ -60,8 +68,9 @@ def test_the_corpus_parses_into_a_nontrivial_set_of_modules():
     # And the type side must carry components, constraints and element references.
     assert any(t.components for m in modules for t in m.types)
     assert any(t.element for m in modules for t in m.types)
-    assert any(t.constraint_low is not None or t.size_low is not None
-               for m in modules for t in m.types)
+    assert any(
+        t.constraint_low is not None or t.size_low is not None for m in modules for t in m.types
+    )
 
 
 def test_mlir_to_jer_to_mlir_is_the_identity_on_the_dialect():
@@ -120,12 +129,24 @@ def test_every_operation_field_survives_the_round_trip():
     for module in _corpus():
         back = jer_to_module(module_to_jer(module))
         for before, after in zip(module.operations, back.operations, strict=True):
-            for slot in ("op", "name", "type", "rules", "strict_der", "strict_canonical",
-                         "source", "from_rules", "to_rules", "preserve_value", "native",
-                         "additive"):
+            for slot in (
+                "op",
+                "name",
+                "type",
+                "rules",
+                "strict_der",
+                "strict_canonical",
+                "source",
+                "from_rules",
+                "to_rules",
+                "preserve_value",
+                "native",
+                "additive",
+            ):
                 assert getattr(before, slot) == getattr(after, slot), (
                     f"{module.name}.{before.name}: {slot} was "
-                    f"{getattr(before, slot)!r}, came back {getattr(after, slot)!r}")
+                    f"{getattr(before, slot)!r}, came back {getattr(after, slot)!r}"
+                )
 
 
 def test_an_operation_cannot_carry_another_arms_fields():
@@ -136,10 +157,22 @@ def test_an_operation_cannot_carry_another_arms_fields():
     contradiction unrepresentable rather than merely refused, which is the same argument
     J4 part 1 used to keep `BCIR_Asn1Rules` one enum instead of a (family, profile) pair.
     """
-    smuggler = DialectOperation(op="encode", name="e", type="T", rules="der",
-                                native="streampack", additive=True, preserve_value=True)
-    module = DialectModule(name="M", oid=(1, 3, 6, 1, 4, 1, 62596, 99), rules="der",
-                           default_tagging="implicit", operations=(smuggler,))
+    smuggler = DialectOperation(
+        op="encode",
+        name="e",
+        type="T",
+        rules="der",
+        native="streampack",
+        additive=True,
+        preserve_value=True,
+    )
+    module = DialectModule(
+        name="M",
+        oid=(1, 3, 6, 1, 4, 1, 62596, 99),
+        rules="der",
+        default_tagging="implicit",
+        operations=(smuggler,),
+    )
     back = jer_to_module(module_to_jer(module))
     carried = back.operations[0]
     assert carried.op == "encode" and carried.rules == "der"
@@ -158,10 +191,10 @@ def test_the_canonical_projection_omits_a_flag_that_is_false():
     canonical forms.
     """
     plain = DialectOperation(op="decode", name="d", type="T", rules="ber")
-    strict = DialectOperation(op="decode", name="d", type="T", rules="ber",
-                              strict_canonical=True)
-    base = dict(name="M", oid=(1, 3, 6, 1, 4, 1, 62596, 98), rules="der",
-                default_tagging="implicit")
+    strict = DialectOperation(op="decode", name="d", type="T", rules="ber", strict_canonical=True)
+    base = dict(
+        name="M", oid=(1, 3, 6, 1, 4, 1, 62596, 98), rules="der", default_tagging="implicit"
+    )
     quiet = json.loads(module_to_jer(DialectModule(**base, operations=(plain,))))
     loud = json.loads(module_to_jer(DialectModule(**base, operations=(strict,))))
     assert "strictCanonical" not in quiet["operations"][0]["decode"]
@@ -258,7 +291,8 @@ def test_a_brace_inside_a_string_does_not_end_the_attribute_dictionary():
     assert len(modules) == 1
     assert modules[0].types[0].components[0].default_value == "}"
     assert [o.name for o in modules[0].operations] == ["e"], (
-        "the operation after the brace-carrying string was lost")
+        "the operation after the brace-carrying string was lost"
+    )
     assert jer_to_module(module_to_jer(modules[0])) == modules[0]
 
 
@@ -280,11 +314,15 @@ def test_the_projection_is_the_same_type_under_another_transfer_syntax():
     # differences in the value it denotes. Asserting equality there would be testing
     # Python container identity, and would have to be "fixed" by making the pivot produce
     # whatever the decoder happens to return, which is the tail wagging the dog.
-    assert encode_jer(MODULE_TYPE, decode_jer(canonical, MODULE_TYPE,
-                                              rules=JerRules.CANONICAL),
-                      rules=JerRules.CANONICAL) == canonical
-    assert value_to_module(decode_jer(canonical, MODULE_TYPE,
-                                      rules=JerRules.CANONICAL)) == module
+    assert (
+        encode_jer(
+            MODULE_TYPE,
+            decode_jer(canonical, MODULE_TYPE, rules=JerRules.CANONICAL),
+            rules=JerRules.CANONICAL,
+        )
+        == canonical
+    )
+    assert value_to_module(decode_jer(canonical, MODULE_TYPE, rules=JerRules.CANONICAL)) == module
     assert value_to_module(decode_jer(basic, MODULE_TYPE, rules=JerRules.BASIC)) == module
 
 
@@ -352,6 +390,9 @@ def test_jer_is_larger_than_the_binary_projections_and_that_is_recorded():
     from bcir.asn1.streampack import encode_pack, encode_pack_jer, encode_pack_oer
 
     for name, pack in _packs():
-        der, oer, jer = (len(encode_pack(pack)), len(encode_pack_oer(pack)),
-                         len(encode_pack_jer(pack)))
+        der, oer, jer = (
+            len(encode_pack(pack)),
+            len(encode_pack_oer(pack)),
+            len(encode_pack_jer(pack)),
+        )
         assert jer > der > oer, f"{name}: der={der} oer={oer} jer={jer}"

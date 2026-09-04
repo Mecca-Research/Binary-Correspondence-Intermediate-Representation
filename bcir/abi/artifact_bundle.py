@@ -39,9 +39,7 @@ NO_INDEX = 0xFFFFFFFF
 # directory offset/size, payload offset, file size, provenance, generation,
 # body CRC, header CRC, embedded SHA-256, reserved.
 _HEADER = struct.Struct("<4sHHIIIIIQQQQQQII32s12s")
-_ENTRY = struct.Struct(
-    "<HHBBHIiQQQQII32s32s48s48s24s24s24s32s64s64s"
-)
+_ENTRY = struct.Struct("<HHBBHIiQQQQII32s32s48s48s24s24s24s32s64s64s")
 assert _HEADER.size == HEADER_SIZE
 assert _ENTRY.size == ENTRY_SIZE
 
@@ -52,9 +50,7 @@ _FLAG_R12_ATTESTED = 1 << 0
 _FLAG_EXECUTABLE = 1 << 1
 _FLAG_PORTABLE = 1 << 2
 _FLAG_DEBUG = 1 << 3
-_ENTRY_FLAG_MASK = (
-    _FLAG_R12_ATTESTED | _FLAG_EXECUTABLE | _FLAG_PORTABLE | _FLAG_DEBUG
-)
+_ENTRY_FLAG_MASK = _FLAG_R12_ATTESTED | _FLAG_EXECUTABLE | _FLAG_PORTABLE | _FLAG_DEBUG
 
 _FIELD_SIZES = {
     "variant_id": 48,
@@ -150,17 +146,21 @@ _KIND_FORMATS = {
     ArtifactKind.MACHO_SHARED: frozenset((ArtifactFormat.MACHO,)),
     ArtifactKind.RAW_BINARY: frozenset((ArtifactFormat.RAW,)),
 }
-_NATIVE_FORMATS = frozenset((
-    ArtifactFormat.ELF,
-    ArtifactFormat.COFF,
-    ArtifactFormat.MACHO,
-    ArtifactFormat.PE,
-))
-_NAMED_EXECUTABLE_KINDS = frozenset((
-    ArtifactKind.ELF_EXECUTABLE,
-    ArtifactKind.PE_EXECUTABLE,
-    ArtifactKind.MACHO_EXECUTABLE,
-))
+_NATIVE_FORMATS = frozenset(
+    (
+        ArtifactFormat.ELF,
+        ArtifactFormat.COFF,
+        ArtifactFormat.MACHO,
+        ArtifactFormat.PE,
+    )
+)
+_NAMED_EXECUTABLE_KINDS = frozenset(
+    (
+        ArtifactKind.ELF_EXECUTABLE,
+        ArtifactKind.PE_EXECUTABLE,
+        ArtifactKind.MACHO_EXECUTABLE,
+    )
+)
 
 
 def _u(value, bits: int, field: str) -> int:
@@ -203,8 +203,12 @@ def _features(value, field: str) -> tuple[str, ...]:
 def _sha(value: str, field: str, *, optional: bool = True) -> str:
     if optional and value == "":
         return value
-    if (not isinstance(value, str) or len(value) != 64 or value != value.lower()
-            or any(ch not in "0123456789abcdef" for ch in value)):
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or value != value.lower()
+        or any(ch not in "0123456789abcdef" for ch in value)
+    ):
         raise BundleError(f"{field} must be a lowercase SHA-256 digest")
     if optional and value == "0" * 64:
         raise BundleError(f"{field} cannot use the all-zero absent-value sentinel")
@@ -279,7 +283,7 @@ def _pe_identity(payload: bytes) -> tuple[int, int, bool]:
     if len(payload) < 0x40 or payload[:2] != b"MZ":
         raise BundleError("PE payload has no DOS header")
     pe_offset = struct.unpack_from("<I", payload, 0x3C)[0]
-    if pe_offset > len(payload) - 24 or payload[pe_offset:pe_offset + 4] != b"PE\x00\x00":
+    if pe_offset > len(payload) - 24 or payload[pe_offset : pe_offset + 4] != b"PE\x00\x00":
         raise BundleError("PE payload has no bounded PE/COFF header")
     machine = struct.unpack_from("<H", payload, pe_offset + 4)[0]
     optional_size = struct.unpack_from("<H", payload, pe_offset + 20)[0]
@@ -299,6 +303,7 @@ def _validate_payload(variant: "ArtifactVariant") -> None:
         raise BundleError(f"variant {variant.variant_id!r} has an empty payload")
     if kind == ArtifactKind.STREAM_PACK:
         from .streampack_abi import decode
+
         try:
             pack = decode(payload)
             segment_ids = [segment.claim_id for segment in pack.segments]
@@ -316,28 +321,27 @@ def _validate_payload(variant: "ArtifactVariant") -> None:
             }
             for segment in pack.segments:
                 if segment.claim_id not in traces:
-                    raise BundleError(
-                        f"segment {segment.name!r} has no matching trace note"
-                    )
+                    raise BundleError(f"segment {segment.name!r} has no matching trace note")
                 if segment.prefetch is None:
                     continue
                 if segment.prefetch not in prefetch_targets:
-                    raise BundleError(
-                        f"segment {segment.name!r} names an unknown prefetch"
-                    )
-                if (segment.reads
-                        and not set(segment.reads) & prefetch_targets[segment.prefetch]):
-                    raise BundleError(
-                        f"segment {segment.name!r} prefetch covers no read resource"
-                    )
+                    raise BundleError(f"segment {segment.name!r} names an unknown prefetch")
+                if segment.reads and not set(segment.reads) & prefetch_targets[segment.prefetch]:
+                    raise BundleError(f"segment {segment.name!r} prefetch covers no read resource")
         except Exception as exc:
-            raise BundleError(f"variant {variant.variant_id!r} is not a valid StreamPack: {exc}") from exc
+            raise BundleError(
+                f"variant {variant.variant_id!r} is not a valid StreamPack: {exc}"
+            ) from exc
     elif variant.format == ArtifactFormat.ELF:
         endian, bits, machine = _elf_identity(payload)
         if variant.endianness != endian or variant.pointer_bits != bits:
-            raise BundleError(f"variant {variant.variant_id!r} ELF class/endianness disagrees with metadata")
+            raise BundleError(
+                f"variant {variant.variant_id!r} ELF class/endianness disagrees with metadata"
+            )
         if variant.e_machine != machine:
-            raise BundleError(f"variant {variant.variant_id!r} ELF e_machine {machine} != metadata {variant.e_machine}")
+            raise BundleError(
+                f"variant {variant.variant_id!r} ELF e_machine {machine} != metadata {variant.e_machine}"
+            )
         elf_type = struct.unpack_from("<H" if endian == Endianness.LITTLE else ">H", payload, 16)[0]
         if kind == ArtifactKind.ELF_OBJECT and elf_type != 1:
             raise BundleError(f"variant {variant.variant_id!r} is not an ELF relocatable object")
@@ -373,15 +377,21 @@ def _validate_payload(variant: "ArtifactVariant") -> None:
         endian, bits, cpu_type, file_type = _macho_identity(payload)
         expected = 2 if kind == ArtifactKind.MACHO_EXECUTABLE else 6
         if variant.endianness != endian or variant.pointer_bits != bits:
-            raise BundleError(f"variant {variant.variant_id!r} Mach-O metadata disagrees with its header")
+            raise BundleError(
+                f"variant {variant.variant_id!r} Mach-O metadata disagrees with its header"
+            )
         if variant.e_machine != cpu_type:
-            raise BundleError(f"variant {variant.variant_id!r} Mach-O CPU type disagrees with metadata")
+            raise BundleError(
+                f"variant {variant.variant_id!r} Mach-O CPU type disagrees with metadata"
+            )
         if file_type != expected:
             raise BundleError(f"variant {variant.variant_id!r} has the wrong Mach-O file type")
     elif kind in (ArtifactKind.PE_EXECUTABLE, ArtifactKind.PE_SHARED):
         machine, bits, is_dll = _pe_identity(payload)
         if variant.endianness != Endianness.LITTLE or variant.pointer_bits != bits:
-            raise BundleError(f"variant {variant.variant_id!r} PE class/endianness disagrees with metadata")
+            raise BundleError(
+                f"variant {variant.variant_id!r} PE class/endianness disagrees with metadata"
+            )
         if variant.e_machine != machine:
             raise BundleError(f"variant {variant.variant_id!r} PE machine disagrees with metadata")
         if is_dll != (kind == ArtifactKind.PE_SHARED):
@@ -400,8 +410,11 @@ def _validate_payload(variant: "ArtifactVariant") -> None:
         if ".version" not in text or ".target" not in text:
             raise BundleError(f"variant {variant.variant_id!r} is not recognizable PTX")
     elif kind == ArtifactKind.SPIRV:
-        if len(payload) < 20 or len(payload) % 4 or payload[:4] not in (
-                b"\x03\x02\x23\x07", b"\x07\x23\x02\x03"):
+        if (
+            len(payload) < 20
+            or len(payload) % 4
+            or payload[:4] not in (b"\x03\x02\x23\x07", b"\x07\x23\x02\x03")
+        ):
             raise BundleError(f"variant {variant.variant_id!r} is not a SPIR-V module")
     elif kind == ArtifactKind.JVM_CLASS:
         if len(payload) < 10 or payload[:4] != b"\xca\xfe\xba\xbe":
@@ -469,8 +482,11 @@ class ArtifactVariant:
             if not isinstance(getattr(self, field), bool):
                 raise BundleError(f"{field} must be boolean")
         if fmt in _NATIVE_FORMATS:
-            if (self.pointer_bits == 0 or self.endianness == Endianness.NEUTRAL
-                    or self.e_machine == 0):
+            if (
+                self.pointer_bits == 0
+                or self.endianness == Endianness.NEUTRAL
+                or self.e_machine == 0
+            ):
                 raise BundleError(
                     "native object variants require pointer_bits, endianness, and machine"
                 )
@@ -488,10 +504,12 @@ class ArtifactVariant:
 
     @property
     def flags(self) -> int:
-        return ((_FLAG_R12_ATTESTED if self.r12_attested else 0)
-                | (_FLAG_EXECUTABLE if self.executable else 0)
-                | (_FLAG_PORTABLE if self.portable else 0)
-                | (_FLAG_DEBUG if self.debug else 0))
+        return (
+            (_FLAG_R12_ATTESTED if self.r12_attested else 0)
+            | (_FLAG_EXECUTABLE if self.executable else 0)
+            | (_FLAG_PORTABLE if self.portable else 0)
+            | (_FLAG_DEBUG if self.debug else 0)
+        )
 
 
 @dataclass(frozen=True)
@@ -610,16 +628,33 @@ class ArtifactBundleInspection:
 
 
 def _pack_entry(variant: ArtifactVariant, payload_offset: int) -> bytes:
-    manifest = (bytes.fromhex(variant.target_manifest_sha256)
-                if variant.target_manifest_sha256 else _ZERO_SHA)
+    manifest = (
+        bytes.fromhex(variant.target_manifest_sha256)
+        if variant.target_manifest_sha256
+        else _ZERO_SHA
+    )
     return _ENTRY.pack(
-        int(variant.kind), int(variant.format), int(variant.endianness),
-        variant.pointer_bits, variant.flags, variant.e_machine, variant.priority,
-        payload_offset, len(variant.payload), variant.provenance_digest, variant.cal_gen,
-        variant.payload_crc32, 0, bytes.fromhex(variant.payload_sha256), manifest,
-        _fixed(variant.variant_id, "variant_id"), _fixed(variant.triple, "triple"),
-        _fixed(variant.architecture, "architecture"), _fixed(variant.os_abi, "os_abi"),
-        _fixed(variant.channel, "channel"), _fixed(variant.entry_symbol, "entry_symbol"),
+        int(variant.kind),
+        int(variant.format),
+        int(variant.endianness),
+        variant.pointer_bits,
+        variant.flags,
+        variant.e_machine,
+        variant.priority,
+        payload_offset,
+        len(variant.payload),
+        variant.provenance_digest,
+        variant.cal_gen,
+        variant.payload_crc32,
+        0,
+        bytes.fromhex(variant.payload_sha256),
+        manifest,
+        _fixed(variant.variant_id, "variant_id"),
+        _fixed(variant.triple, "triple"),
+        _fixed(variant.architecture, "architecture"),
+        _fixed(variant.os_abi, "os_abi"),
+        _fixed(variant.channel, "channel"),
+        _fixed(variant.entry_symbol, "entry_symbol"),
         _fixed(",".join(variant.required_features), "required_features"),
         _fixed(",".join(variant.prohibited_features), "prohibited_features"),
     )
@@ -659,7 +694,9 @@ def encode_bundle(bundle: ArtifactBundle) -> bytes:
         cursor = _align8(absolute + len(variant.payload))
     payload_area += bytes(cursor - (payload_offset + len(payload_area)))
     directory = b"".join(entries)
-    body = directory + bytes(payload_offset - directory_offset - len(directory)) + bytes(payload_area)
+    body = (
+        directory + bytes(payload_offset - directory_offset - len(directory)) + bytes(payload_area)
+    )
     file_size = HEADER_SIZE + len(body)
     if file_size != projected_size:
         raise BundleError("internal bundle size calculation mismatch")
@@ -668,18 +705,48 @@ def encode_bundle(bundle: ArtifactBundle) -> bytes:
     default = ids.index(bundle.default_variant_id) if bundle.default_variant_id else NO_INDEX
     body_crc = zlib.crc32(body) & 0xFFFFFFFF
     base = _HEADER.pack(
-        MAGIC, VERSION, HEADER_SIZE, 0, len(variants), ENTRY_SIZE, root, default,
-        directory_offset, directory_size, payload_offset, file_size,
-        bundle.provenance_digest, bundle.generation, body_crc, 0, _ZERO_SHA, bytes(12),
+        MAGIC,
+        VERSION,
+        HEADER_SIZE,
+        0,
+        len(variants),
+        ENTRY_SIZE,
+        root,
+        default,
+        directory_offset,
+        directory_size,
+        payload_offset,
+        file_size,
+        bundle.provenance_digest,
+        bundle.generation,
+        body_crc,
+        0,
+        _ZERO_SHA,
+        bytes(12),
     )
     digest = hashlib.sha256()
     digest.update(base)
     digest.update(body)
     embedded = digest.digest()
     with_sha = _HEADER.pack(
-        MAGIC, VERSION, HEADER_SIZE, 0, len(variants), ENTRY_SIZE, root, default,
-        directory_offset, directory_size, payload_offset, file_size,
-        bundle.provenance_digest, bundle.generation, body_crc, 0, embedded, bytes(12),
+        MAGIC,
+        VERSION,
+        HEADER_SIZE,
+        0,
+        len(variants),
+        ENTRY_SIZE,
+        root,
+        default,
+        directory_offset,
+        directory_size,
+        payload_offset,
+        file_size,
+        bundle.provenance_digest,
+        bundle.generation,
+        body_crc,
+        0,
+        embedded,
+        bytes(12),
     )
     header_crc = zlib.crc32(with_sha) & 0xFFFFFFFF
     header = bytearray(with_sha)
@@ -699,9 +766,26 @@ def inspect_bundle(data: bytes) -> ArtifactBundleInspection:
     if not HEADER_SIZE <= len(data) <= MAX_BUNDLE_BYTES:
         raise BundleError("bundle size is outside the supported range")
     values = _HEADER.unpack(data[:HEADER_SIZE])
-    (magic, version, header_size, flags, count, entry_size, root, default,
-     directory_offset, directory_size, payload_offset, file_size,
-     provenance, generation, body_crc, header_crc, embedded, reserved) = values
+    (
+        magic,
+        version,
+        header_size,
+        flags,
+        count,
+        entry_size,
+        root,
+        default,
+        directory_offset,
+        directory_size,
+        payload_offset,
+        file_size,
+        provenance,
+        generation,
+        body_crc,
+        header_crc,
+        embedded,
+        reserved,
+    ) = values
     if magic != MAGIC:
         raise BundleError(f"bad bundle magic {magic!r}")
     if version != VERSION:
@@ -742,11 +826,32 @@ def inspect_bundle(data: bytes) -> ArtifactBundleInspection:
     padding_spans: list[WireSpan] = []
     for index in range(count):
         offset = directory_offset + index * ENTRY_SIZE
-        raw = _ENTRY.unpack(data[offset:offset + ENTRY_SIZE])
-        (kind_raw, format_raw, endian_raw, pointer_bits, entry_flags, e_machine,
-         priority, poff, psize, pdigest, cal_gen, pcrc, entry_reserved,
-         psha, msha, vid_raw, triple_raw, arch_raw, os_raw, channel_raw,
-         symbol_raw, req_raw, pro_raw) = raw
+        raw = _ENTRY.unpack(data[offset : offset + ENTRY_SIZE])
+        (
+            kind_raw,
+            format_raw,
+            endian_raw,
+            pointer_bits,
+            entry_flags,
+            e_machine,
+            priority,
+            poff,
+            psize,
+            pdigest,
+            cal_gen,
+            pcrc,
+            entry_reserved,
+            psha,
+            msha,
+            vid_raw,
+            triple_raw,
+            arch_raw,
+            os_raw,
+            channel_raw,
+            symbol_raw,
+            req_raw,
+            pro_raw,
+        ) = raw
         if entry_reserved or entry_flags & ~_ENTRY_FLAG_MASK:
             raise BundleError(f"directory entry {index} has unknown flags or reserved data")
         try:
@@ -774,7 +879,7 @@ def inspect_bundle(data: bytes) -> ArtifactBundleInspection:
             padding_spans.append(
                 WireSpan("padding", None, f"before:{vid}", previous_end, poff - previous_end)
             )
-        payload = data[poff:poff + psize]
+        payload = data[poff : poff + psize]
         previous_end = poff + psize
         if zlib.crc32(payload) & 0xFFFFFFFF != pcrc:
             raise BundleError(f"variant {vid!r} payload CRC mismatch")
@@ -782,9 +887,24 @@ def inspect_bundle(data: bytes) -> ArtifactBundleInspection:
             raise BundleError(f"variant {vid!r} payload SHA-256 mismatch")
         manifest = "" if msha == _ZERO_SHA else msha.hex()
         variant = ArtifactVariant(
-            vid, kind, fmt, payload, triple, arch, os_abi, channel, symbol,
-            req, pro, endian, pointer_bits, e_machine, priority, pdigest,
-            manifest, cal_gen,
+            vid,
+            kind,
+            fmt,
+            payload,
+            triple,
+            arch,
+            os_abi,
+            channel,
+            symbol,
+            req,
+            pro,
+            endian,
+            pointer_bits,
+            e_machine,
+            priority,
+            pdigest,
+            manifest,
+            cal_gen,
             bool(entry_flags & _FLAG_R12_ATTESTED),
             bool(entry_flags & _FLAG_EXECUTABLE),
             bool(entry_flags & _FLAG_PORTABLE),
@@ -804,8 +924,14 @@ def inspect_bundle(data: bytes) -> ArtifactBundleInspection:
     if final_end > previous_end:
         spans.append(WireSpan("padding", None, "final", previous_end, final_end - previous_end))
     return ArtifactBundleInspection(
-        bundle, hashlib.sha256(data).hexdigest(), embedded.hex(), body_crc,
-        header_crc, tuple(spans), len(data))
+        bundle,
+        hashlib.sha256(data).hexdigest(),
+        embedded.hex(),
+        body_crc,
+        header_crc,
+        tuple(spans),
+        len(data),
+    )
 
 
 def decode_bundle(data: bytes) -> ArtifactBundle:
@@ -816,8 +942,9 @@ def write_bundle(path: str | os.PathLike[str], bundle: ArtifactBundle) -> None:
     data = encode_bundle(bundle)
     target = os.fspath(path)
     directory = os.path.dirname(os.path.abspath(target)) or "."
-    fd, temporary = tempfile.mkstemp(prefix=os.path.basename(target) + ".", suffix=".tmp",
-                                     dir=directory)
+    fd, temporary = tempfile.mkstemp(
+        prefix=os.path.basename(target) + ".", suffix=".tmp", dir=directory
+    )
     try:
         with os.fdopen(fd, "wb") as stream:
             stream.write(data)
@@ -832,8 +959,14 @@ def write_bundle(path: str | os.PathLike[str], bundle: ArtifactBundle) -> None:
         raise
 
 
-def read_bundle(path: str | os.PathLike[str], *, max_bytes: int = MAX_BUNDLE_BYTES) -> ArtifactBundle:
-    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or not HEADER_SIZE <= max_bytes <= MAX_BUNDLE_BYTES:
+def read_bundle(
+    path: str | os.PathLike[str], *, max_bytes: int = MAX_BUNDLE_BYTES
+) -> ArtifactBundle:
+    if (
+        isinstance(max_bytes, bool)
+        or not isinstance(max_bytes, int)
+        or not HEADER_SIZE <= max_bytes <= MAX_BUNDLE_BYTES
+    ):
         raise BundleError(f"max_bytes must be in [{HEADER_SIZE}, {MAX_BUNDLE_BYTES}]")
     target = os.fspath(path)
     try:
@@ -882,15 +1015,26 @@ def is_compatible(variant: ArtifactVariant, envelope: CompatibilityEnvelope) -> 
 
 
 def _specificity(variant: ArtifactVariant) -> int:
-    fields = (variant.triple, variant.architecture, variant.os_abi, variant.channel,
-              variant.entry_symbol, variant.target_manifest_sha256)
-    return (sum(bool(v) for v in fields) + bool(variant.pointer_bits)
-            + bool(variant.e_machine) + (variant.endianness != Endianness.NEUTRAL)
-            + bool(variant.cal_gen))
+    fields = (
+        variant.triple,
+        variant.architecture,
+        variant.os_abi,
+        variant.channel,
+        variant.entry_symbol,
+        variant.target_manifest_sha256,
+    )
+    return (
+        sum(bool(v) for v in fields)
+        + bool(variant.pointer_bits)
+        + bool(variant.e_machine)
+        + (variant.endianness != Endianness.NEUTRAL)
+        + bool(variant.cal_gen)
+    )
 
 
-def select_variant(bundle: ArtifactBundle, envelope: CompatibilityEnvelope | None = None,
-                   *, variant_id: str = "") -> ArtifactVariant:
+def select_variant(
+    bundle: ArtifactBundle, envelope: CompatibilityEnvelope | None = None, *, variant_id: str = ""
+) -> ArtifactVariant:
     if not isinstance(bundle, ArtifactBundle):
         raise BundleError("select_variant expects an ArtifactBundle")
     if variant_id:
@@ -909,12 +1053,15 @@ def select_variant(bundle: ArtifactBundle, envelope: CompatibilityEnvelope | Non
     compatible = [v for v in bundle.variants if is_compatible(v, envelope)]
     if not compatible:
         raise BundleError("bundle has no compatible artifact variant")
-    compatible.sort(key=lambda v: (-v.priority, -_specificity(v),
-                                   -len(v.required_features), v.variant_id))
+    compatible.sort(
+        key=lambda v: (-v.priority, -_specificity(v), -len(v.required_features), v.variant_id)
+    )
     return compatible[0]
 
 
-def host_envelope(*, features=(), channel: str = "host", require_r12: bool = True) -> CompatibilityEnvelope:
+def host_envelope(
+    *, features=(), channel: str = "host", require_r12: bool = True
+) -> CompatibilityEnvelope:
     machine = platform.machine().lower()
     system = platform.system().lower()
     bits = struct.calcsize("P") * 8
@@ -936,23 +1083,34 @@ def host_envelope(*, features=(), channel: str = "host", require_r12: bool = Tru
         triple, os_abi = f"{arch}-apple-darwin", "darwin"
         native_formats = (ArtifactFormat.MACHO,)
         native_machine = {
-            "i386": 7, "x86_64": 0x01000007,
+            "i386": 7,
+            "x86_64": 0x01000007,
             "aarch64": 0x0100000C,
         }
     else:
         triple, os_abi = f"{arch}-unknown-linux-gnu", "linux-gnu"
         native_formats = (ArtifactFormat.ELF,)
-        native_machine = {"i386": 3, "arm": 40, "x86_64": 62,
-                          "aarch64": 183, "riscv64": 243}
+        native_machine = {"i386": 3, "arm": 40, "x86_64": 62, "aarch64": 183, "riscv64": 243}
     return CompatibilityEnvelope(
-        triple=triple, architecture=arch, os_abi=os_abi, channel=channel,
+        triple=triple,
+        architecture=arch,
+        os_abi=os_abi,
+        channel=channel,
         features=frozenset(features),
-        accepted_formats=frozenset((*native_formats, ArtifactFormat.WASM,
-                                    ArtifactFormat.TEXT, ArtifactFormat.STREAM_PACK,
-                                    ArtifactFormat.LLVM_BITCODE, ArtifactFormat.JVM_CLASS,
-                                    ArtifactFormat.SPIRV)),
+        accepted_formats=frozenset(
+            (
+                *native_formats,
+                ArtifactFormat.WASM,
+                ArtifactFormat.TEXT,
+                ArtifactFormat.STREAM_PACK,
+                ArtifactFormat.LLVM_BITCODE,
+                ArtifactFormat.JVM_CLASS,
+                ArtifactFormat.SPIRV,
+            )
+        ),
         endianness=(Endianness.LITTLE if struct.pack("=I", 1)[0] == 1 else Endianness.BIG),
-        pointer_bits=bits, e_machine=native_machine.get(arch, 0),
+        pointer_bits=bits,
+        e_machine=native_machine.get(arch, 0),
         require_r12=require_r12,
     )
 
@@ -982,11 +1140,29 @@ def compatibility_sha256(envelope: CompatibilityEnvelope) -> str:
 
 
 __all__ = [
-    "MAGIC", "VERSION", "HEADER_SIZE", "ENTRY_SIZE", "MAX_ENTRIES",
-    "MAX_BUNDLE_BYTES", "NO_INDEX", "BundleError", "ArtifactKind",
-    "ArtifactFormat", "Endianness", "ArtifactVariant", "ArtifactBundle",
-    "CompatibilityEnvelope", "WireSpan", "ArtifactBundleInspection",
-    "encode_bundle", "decode_bundle", "inspect_bundle", "write_bundle",
-    "read_bundle", "is_compatible", "select_variant", "host_envelope",
+    "MAGIC",
+    "VERSION",
+    "HEADER_SIZE",
+    "ENTRY_SIZE",
+    "MAX_ENTRIES",
+    "MAX_BUNDLE_BYTES",
+    "NO_INDEX",
+    "BundleError",
+    "ArtifactKind",
+    "ArtifactFormat",
+    "Endianness",
+    "ArtifactVariant",
+    "ArtifactBundle",
+    "CompatibilityEnvelope",
+    "WireSpan",
+    "ArtifactBundleInspection",
+    "encode_bundle",
+    "decode_bundle",
+    "inspect_bundle",
+    "write_bundle",
+    "read_bundle",
+    "is_compatible",
+    "select_variant",
+    "host_envelope",
     "compatibility_sha256",
 ]

@@ -13,6 +13,7 @@ its siblings did not — the campaign's most-repeated defect shape (L14):
   actually made of, so redaction reaches a string nested in a list in a
   dict rather than only a top-level field (L7).
 """
+
 from __future__ import annotations
 
 import json

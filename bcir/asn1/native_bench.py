@@ -53,8 +53,17 @@ from .tags import Asn1Error
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
-_SOURCES = ["bcir_asn1_bench.c", "bcir_asn1.c", "bcir_jer.c", "bcir_xer.c",
-            "bcir_runtime.c", "bcir_emit.c", "bcir_oer.c", "bcir_per.c", "bcir_per_plan.c"]
+_SOURCES = [
+    "bcir_asn1_bench.c",
+    "bcir_asn1.c",
+    "bcir_jer.c",
+    "bcir_xer.c",
+    "bcir_runtime.c",
+    "bcir_emit.c",
+    "bcir_oer.c",
+    "bcir_per.c",
+    "bcir_per_plan.c",
+]
 
 
 @dataclass(frozen=True)
@@ -81,19 +90,27 @@ NATIVE_OPS: dict[str, NativeOp] = {
     "JER": NativeOp("jer"),
     "JER-BCIR-CANONICAL": NativeOp("jer"),
     "CANONICAL-PER-ALIGNED": NativeOp(
-        None, permanent=True,
+        None,
+        permanent=True,
         reason="X.691 §7.2: a PER encoding is not self-delimiting, so there is no "
-               "schema-free structural pass to time and no comparable native number "
-               "exists — this is a property of the encoding, not a gap"),
+        "schema-free structural pass to time and no comparable native number "
+        "exists — this is a property of the encoding, not a gap",
+    ),
     "CANONICAL-PER-UNALIGNED": NativeOp(
-        None, permanent=True,
-        reason="X.691 §7.2: a PER encoding is not self-delimiting (see the aligned entry)"),
+        None,
+        permanent=True,
+        reason="X.691 §7.2: a PER encoding is not self-delimiting (see the aligned entry)",
+    ),
     "BASIC-PER-ALIGNED": NativeOp(
-        None, permanent=True,
-        reason="X.691 §7.2: a PER encoding is not self-delimiting (see the aligned entry)"),
+        None,
+        permanent=True,
+        reason="X.691 §7.2: a PER encoding is not self-delimiting (see the aligned entry)",
+    ),
     "BASIC-PER-UNALIGNED": NativeOp(
-        None, permanent=True,
-        reason="X.691 §7.2: a PER encoding is not self-delimiting (see the aligned entry)"),
+        None,
+        permanent=True,
+        reason="X.691 §7.2: a PER encoding is not self-delimiting (see the aligned entry)",
+    ),
     # CORRECTED. These previously read "no C OER decoder exists yet; this closes when one
     # is written", which called X.696 §6.2's law an ordinary gap. It is not: §6.2 says
     # "without knowledge of the type of the value encoded, it is not possible to determine
@@ -103,15 +120,19 @@ NATIVE_OPS: dict[str, NativeOp] = {
     # structural pass. Timing the two against each other would compare unlike work and
     # report the difference as an encoding cost.
     "COER": NativeOp(
-        None, permanent=True,
+        None,
+        permanent=True,
         reason="X.696 §6.2: without the type, the structure of an OER encoding cannot be "
-               "determined, so there is no schema-free structural pass to time. "
-               "runtime/c/bcir_oer.c decodes OER natively but is schema-DIRECTED, which is "
-               "not comparable to the structural scans this table measures"),
+        "determined, so there is no schema-free structural pass to time. "
+        "runtime/c/bcir_oer.c decodes OER natively but is schema-DIRECTED, which is "
+        "not comparable to the structural scans this table measures",
+    ),
     "BASIC-OER": NativeOp(
-        None, permanent=True,
+        None,
+        permanent=True,
         reason="X.696 §6.2: without the type, the structure of an OER encoding cannot be "
-               "determined (see the COER entry)"),
+        "determined (see the COER entry)",
+    ),
 }
 
 
@@ -165,37 +186,53 @@ ENCODE_OPS: dict[str, EncodeOp] = {
     "DER": EncodeOp(True, native_op="der"),
     "BER": EncodeOp(True, native_op="ber"),
     "JER": EncodeOp(
-        False, native_op="jer",
+        False,
+        native_op="jer",
         reason="X.697 §22.2: a JER document carries member IDENTIFIERS, which exist only in "
-               "the type — the value has never heard of them"),
+        "the type — the value has never heard of them",
+    ),
     "JER-BCIR-CANONICAL": EncodeOp(
-        False, native_op="jer",
-        reason="X.697 §22.2: member identifiers come from the type (see the JER entry)"),
+        False,
+        native_op="jer",
+        reason="X.697 §22.2: member identifiers come from the type (see the JER entry)",
+    ),
     "COER": EncodeOp(
-        False, native_op="coer",
+        False,
+        native_op="coer",
         reason="X.696: field widths, presence bits and the preamble are fixed by the type, "
-               "so there is nothing to emit without one"),
+        "so there is nothing to emit without one",
+    ),
     "BASIC-OER": EncodeOp(
-        False, reason="X.696: the type fixes the layout; CANONICAL-OER is the row E2 "
-                      "measures, and BASIC-OER's non-canonical spellings are a decoder's "
-                      "problem rather than a distinct encode cost"),
+        False,
+        reason="X.696: the type fixes the layout; CANONICAL-OER is the row E2 "
+        "measures, and BASIC-OER's non-canonical spellings are a decoder's "
+        "problem rather than a distinct encode cost",
+    ),
     # Four rows rather than one. X.691's ALIGNED/UNALIGNED split is a real cost trade —
     # ALIGNED pads so multi-octet fields start on octet boundaries, UNALIGNED never pads —
     # and CANONICAL/BASIC decides §19.5's DEFAULT rule. One row for the pair would report
     # one number for two encodings, which is the error §6.2 warns about one level up.
     "CANONICAL-PER-ALIGNED": EncodeOp(
-        False, native_op="cper-a",
+        False,
+        native_op="cper-a",
         reason="X.691: the type fixes field widths, the extension bit and the presence "
-               "bitmap, so a value alone determines no octets"),
+        "bitmap, so a value alone determines no octets",
+    ),
     "CANONICAL-PER-UNALIGNED": EncodeOp(
-        False, native_op="cper-u",
-        reason="X.691: the type fixes the bit layout (see the aligned entry)"),
+        False,
+        native_op="cper-u",
+        reason="X.691: the type fixes the bit layout (see the aligned entry)",
+    ),
     "BASIC-PER-ALIGNED": EncodeOp(
-        False, native_op="bper-a",
-        reason="X.691: the type fixes the bit layout (see the aligned entry)"),
+        False,
+        native_op="bper-a",
+        reason="X.691: the type fixes the bit layout (see the aligned entry)",
+    ),
     "BASIC-PER-UNALIGNED": EncodeOp(
-        False, native_op="bper-u",
-        reason="X.691: the type fixes the bit layout (see the aligned entry)"),
+        False,
+        native_op="bper-u",
+        reason="X.691: the type fixes the bit layout (see the aligned entry)",
+    ),
 }
 
 
@@ -211,17 +248,24 @@ def observed_encode_partition() -> dict[str, bool]:
     from . import codec, jer, oer, per, xer
 
     by_family = {
-        "DER": codec.encode_der, "BER": codec.encode_der,
-        "JER": jer.encode_jer, "JER-BCIR-CANONICAL": jer.encode_jer,
-        "COER": oer.encode_oer, "BASIC-OER": oer.encode_oer,
-        "CANONICAL-PER-ALIGNED": per.encode_per, "CANONICAL-PER-UNALIGNED": per.encode_per,
-        "BASIC-PER-ALIGNED": per.encode_per, "BASIC-PER-UNALIGNED": per.encode_per,
+        "DER": codec.encode_der,
+        "BER": codec.encode_der,
+        "JER": jer.encode_jer,
+        "JER-BCIR-CANONICAL": jer.encode_jer,
+        "COER": oer.encode_oer,
+        "BASIC-OER": oer.encode_oer,
+        "CANONICAL-PER-ALIGNED": per.encode_per,
+        "CANONICAL-PER-UNALIGNED": per.encode_per,
+        "BASIC-PER-ALIGNED": per.encode_per,
+        "BASIC-PER-UNALIGNED": per.encode_per,
     }
     # `xer` is imported so a future XER candidate is a KeyError here rather than a silent
     # omission from the partition.
     assert hasattr(xer, "encode_xer")
-    return {name: next(iter(inspect.signature(fn).parameters)) != "kind"
-            for name, fn in by_family.items()}
+    return {
+        name: next(iter(inspect.signature(fn).parameters)) != "kind"
+        for name, fn in by_family.items()
+    }
 
 
 def native_available() -> bool:
@@ -237,9 +281,22 @@ def build_harness(tmp: str) -> str | None:
     proc = None
     for std in ("c23", "c2x", "c11"):
         proc = subprocess.run(
-            [cc, f"-std={std}", "-O2", "-Wall", "-Wextra", "-Werror", "-I", _C,
-             *[os.path.join(_C, name) for name in _SOURCES], "-o", out],
-            capture_output=True, text=True)
+            [
+                cc,
+                f"-std={std}",
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C,
+                *[os.path.join(_C, name) for name in _SOURCES],
+                "-o",
+                out,
+            ],
+            capture_output=True,
+            text=True,
+        )
         if proc.returncode == 0:
             return out
     raise Asn1Error(f"the native bench must build warning-clean:\n{proc.stderr[:2000]}")
@@ -258,9 +315,15 @@ class NativeSamples:
     decode_cycles: tuple[int, ...] = ()
 
 
-def run_native_bench(kind, value, *, warmup: int = 2, rounds: int = MIN_SAMPLES + 4,
-                     iterations: int = 64, candidates=ALL_CANDIDATES
-                     ) -> tuple[list[NativeSamples], dict[str, str]]:
+def run_native_bench(
+    kind,
+    value,
+    *,
+    warmup: int = 2,
+    rounds: int = MIN_SAMPLES + 4,
+    iterations: int = 64,
+    candidates=ALL_CANDIDATES,
+) -> tuple[list[NativeSamples], dict[str, str]]:
     """Encode `value` under every candidate, then time the native decode of each.
 
     The corpus is built by the **Python encoders**, and that is correct rather than a
@@ -282,7 +345,7 @@ def run_native_bench(kind, value, *, warmup: int = 2, rounds: int = MIN_SAMPLES 
             continue
         try:
             octets = candidate.encode(kind, value)
-        except Exception as error:                       # noqa: BLE001 - reported, not raised
+        except Exception as error:  # noqa: BLE001 - reported, not raised
             skipped[candidate.name] = f"not representable: {error}"
             continue
         corpus.append((candidate.name, entry.op, octets))
@@ -297,8 +360,9 @@ def run_native_bench(kind, value, *, warmup: int = 2, rounds: int = MIN_SAMPLES 
         lines = [f"rounds {warmup} {rounds} {iterations}"]
         lines += [f"case {name} {op} {octets.hex()}" for name, op, octets in corpus]
         lines.append("run")
-        proc = subprocess.run([binary], input="\n".join(lines) + "\n",
-                              capture_output=True, text=True, timeout=600)
+        proc = subprocess.run(
+            [binary], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=600
+        )
         if proc.returncode != 0:
             raise Asn1Error(f"the native bench refused the corpus: {proc.stdout.strip()}")
 
@@ -310,10 +374,15 @@ def run_native_bench(kind, value, *, warmup: int = 2, rounds: int = MIN_SAMPLES 
 
     sizes = {name: len(octets) for name, _op, octets in corpus}
     ops = {name: op for name, op, _octets in corpus}
-    return ([NativeSamples(candidate=name, op=ops[name], octets=sizes[name],
-                           decode_ns=tuple(samples))
-             for name, samples in sorted(per_case.items())], skipped)
-
+    return (
+        [
+            NativeSamples(
+                candidate=name, op=ops[name], octets=sizes[name], decode_ns=tuple(samples)
+            )
+            for name, samples in sorted(per_case.items())
+        ],
+        skipped,
+    )
 
 
 #: X.696's field kinds, as `bcir_oer.h` numbers them. Duplicated here rather than parsed out
@@ -344,7 +413,8 @@ def oer_fields_for(plan) -> bytes:
     if root.kind != "sequence":
         raise Asn1Error(
             f"X.696 16.1: the schema-directed decode arm decodes a SEQUENCE; this plan's root "
-            f"is {root.kind!r}")
+            f"is {root.kind!r}"
+        )
     out = bytearray()
     for member in root.members:
         node = member.node
@@ -363,7 +433,8 @@ def oer_fields_for(plan) -> bytes:
             raise Asn1Error(
                 f"X.696: the schema-directed decode arm has no field kind for a "
                 f"{node.kind!r} member ({member.name!r}); add one to `oer_fields_for` rather "
-                f"than letting the timing describe different work than the plan does")
+                f"than letting the timing describe different work than the plan does"
+            )
     return bytes(out)
 
 
@@ -393,7 +464,8 @@ def per_fields_for(plan) -> str:
     if root.kind != "sequence":
         raise Asn1Error(
             f"X.691 18: the schema-directed decode arm decodes a SEQUENCE; this plan's root "
-            f"is {root.kind!r}")
+            f"is {root.kind!r}"
+        )
     fields = []
     for member in root.members:
         node = member.node
@@ -422,7 +494,8 @@ def per_fields_for(plan) -> str:
         else:
             raise Asn1Error(
                 f"X.691: the schema-directed decode arm has no field kind for a {node.kind!r} "
-                f"member; the plan-driven PER decoder states its subset rather than guessing")
+                f"member; the plan-driven PER decoder states its subset rather than guessing"
+            )
     return ",".join(fields)
 
 
@@ -441,18 +514,23 @@ DIRECTED_DECODE_OPS: dict[str, str | None] = {
 
 _DIRECTED_REASONS: dict[str, str] = {
     "BASIC-OER": "X.696: BASIC-OER's non-canonical spellings are what the CANONICAL-OER "
-                 "decoder already accepts; a separate row would time the same decoder twice",
+    "decoder already accepts; a separate row would time the same decoder twice",
     "BASIC-PER-ALIGNED": "X.691: BASIC-PER's encodings are what the canonical decoder already "
-                         "accepts, so a separate row would time the same decoder twice",
+    "accepts, so a separate row would time the same decoder twice",
     "DER": "already has a schema-free decode row; the schema-free table is where X.690 "
-           "candidates belong, because they can be walked without a type",
+    "candidates belong, because they can be walked without a type",
 }
 
 
-def run_native_directed_decode_bench(kind, value, *, warmup: int = 2,
-                                     rounds: int = MIN_SAMPLES + 4, iterations: int = 64,
-                                     candidates=ALL_CANDIDATES
-                                     ) -> tuple[dict[str, tuple[int, ...]], dict[str, str]]:
+def run_native_directed_decode_bench(
+    kind,
+    value,
+    *,
+    warmup: int = 2,
+    rounds: int = MIN_SAMPLES + 4,
+    iterations: int = 64,
+    candidates=ALL_CANDIDATES,
+) -> tuple[dict[str, tuple[int, ...]], dict[str, str]]:
     """Time the native **schema-directed** decode of `value` under every candidate that has one.
 
     This is deliberately NOT a column of the schema-free table, and merging the two would be
@@ -479,15 +557,17 @@ def run_native_directed_decode_bench(kind, value, *, warmup: int = 2,
         per_fields = per_fields_for(plan)
         stream = flatten(plan, value)
     except Asn1Error as error:
-        raise Asn1Error(f"no schema-directed decode table exists for this schema: "
-                        f"{error}") from None
+        raise Asn1Error(
+            f"no schema-directed decode table exists for this schema: {error}"
+        ) from None
 
     cases: list[tuple[str, str, bytes]] = []
     for candidate in candidates:
         op = DIRECTED_DECODE_OPS.get(candidate.name, None)
         if op is None:
             skipped[candidate.name] = _DIRECTED_REASONS.get(
-                candidate.name, "no plan-driven decoder in the C rail for this candidate")
+                candidate.name, "no plan-driven decoder in the C rail for this candidate"
+            )
             continue
         try:
             octets = candidate.encode(kind, value)
@@ -506,15 +586,17 @@ def run_native_directed_decode_bench(kind, value, *, warmup: int = 2,
         if binary is None:
             raise Asn1Error("no C compiler; a schema-directed decode table cannot be produced")
         lines = [f"rounds {warmup} {rounds} {iterations}"]
-        lines += [f"dircase {name} {op} "
-                  f"{per_fields if op.startswith('per-d') else fields.hex()} {octets.hex()}"
-                  for name, op, octets in cases]
+        lines += [
+            f"dircase {name} {op} "
+            f"{per_fields if op.startswith('per-d') else fields.hex()} {octets.hex()}"
+            for name, op, octets in cases
+        ]
         lines.append("run")
-        proc = subprocess.run([binary], input="\n".join(lines) + "\n",
-                              capture_output=True, text=True, timeout=600)
+        proc = subprocess.run(
+            [binary], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=600
+        )
         if proc.returncode != 0:
-            raise Asn1Error(f"the native bench refused the directed corpus: "
-                            f"{proc.stdout.strip()}")
+            raise Asn1Error(f"the native bench refused the directed corpus: {proc.stdout.strip()}")
 
     per_case: dict[str, list[int]] = {}
     for line in proc.stdout.splitlines():
@@ -524,9 +606,15 @@ def run_native_directed_decode_bench(kind, value, *, warmup: int = 2,
     return ({name: tuple(values) for name, values in sorted(per_case.items())}, skipped)
 
 
-def run_native_encode_bench(kind, value, *, warmup: int = 2, rounds: int = MIN_SAMPLES + 4,
-                            iterations: int = 64, candidates=ALL_CANDIDATES
-                            ) -> tuple[dict[str, tuple[int, ...]], dict[str, str]]:
+def run_native_encode_bench(
+    kind,
+    value,
+    *,
+    warmup: int = 2,
+    rounds: int = MIN_SAMPLES + 4,
+    iterations: int = 64,
+    candidates=ALL_CANDIDATES,
+) -> tuple[dict[str, tuple[int, ...]], dict[str, str]]:
     """Time the NATIVE encode of `value` under every candidate E2 can emit.
 
     Every candidate goes through one write-side plan and one format-neutral value stream, so
@@ -549,8 +637,9 @@ def run_native_encode_bench(kind, value, *, warmup: int = 2, rounds: int = MIN_S
         plan = compile_encode_plan(kind, module="bench", type_name="Bench")
         stream = flatten(plan, value)
     except Asn1Error as error:
-        raise Asn1Error(f"the write plan refuses this schema, so no encode column exists "
-                        f"for it: {error}") from None
+        raise Asn1Error(
+            f"the write plan refuses this schema, so no encode column exists for it: {error}"
+        ) from None
 
     seen: set[str] = set()
     for candidate in candidates:
@@ -571,14 +660,15 @@ def run_native_encode_bench(kind, value, *, warmup: int = 2, rounds: int = MIN_S
         if binary is None:
             raise Asn1Error("no C compiler; a measured encode table cannot be produced here")
         lines = [f"rounds {warmup} {rounds} {iterations}"]
-        lines += [f"encase {name} {op} {plan.serialize().hex()} {stream.hex()}"
-                  for name, op in cases]
+        lines += [
+            f"encase {name} {op} {plan.serialize().hex()} {stream.hex()}" for name, op in cases
+        ]
         lines.append("run")
-        proc = subprocess.run([binary], input="\n".join(lines) + "\n",
-                              capture_output=True, text=True, timeout=600)
+        proc = subprocess.run(
+            [binary], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=600
+        )
         if proc.returncode != 0:
-            raise Asn1Error(f"the native bench refused the encode corpus: "
-                            f"{proc.stdout.strip()}")
+            raise Asn1Error(f"the native bench refused the encode corpus: {proc.stdout.strip()}")
 
     per_case: dict[str, list[int]] = {}
     for row in proc.stdout.splitlines():
@@ -603,8 +693,9 @@ def native_counters() -> str:
         binary = build_harness(tmp)
         if binary is None:
             return "harness did not build"
-        proc = subprocess.run([binary], input="rounds 0 1 1\nrun\n", capture_output=True,
-                              text=True, timeout=600)
+        proc = subprocess.run(
+            [binary], input="rounds 0 1 1\nrun\n", capture_output=True, text=True, timeout=600
+        )
     for row in proc.stdout.splitlines():
         parts = row.split(maxsplit=1)
         if parts and parts[0] == "counters":
@@ -612,8 +703,9 @@ def native_counters() -> str:
     return "not reported"
 
 
-def directed_decode_table(kind, value, *, target: str, cal_gen: int,
-                          candidates=ALL_CANDIDATES, **bench) -> EncodingCostTable:
+def directed_decode_table(
+    kind, value, *, target: str, cal_gen: int, candidates=ALL_CANDIDATES, **bench
+) -> EncodingCostTable:
     """The **schema-directed** decode table — a second table, never a column of the first.
 
     `measured_table` answers *can these octets be walked with no type in hand, and what does
@@ -630,11 +722,13 @@ def directed_decode_table(kind, value, *, target: str, cal_gen: int,
     other copied is the under-claim `measured_table` used to make before `bcir_emit` landed.
     """
     decode_samples, skipped = run_native_directed_decode_bench(
-        kind, value, candidates=candidates, **bench)
+        kind, value, candidates=candidates, **bench
+    )
     if not decode_samples:
         raise Asn1Error(
             "no candidate has a schema-directed decode on this rail, so the table would be "
-            f"empty; the reasons are: {skipped}")
+            f"empty; the reasons are: {skipped}"
+        )
     encode_samples, _ = run_native_encode_bench(kind, value, candidates=candidates, **bench)
 
     rows: list[CostRow] = []
@@ -645,19 +739,31 @@ def directed_decode_table(kind, value, *, target: str, cal_gen: int,
         if decode_ns is None or encode_ns is None:
             continue
         octets = candidate.encode(kind, value)
-        rows.append(CostRow(candidate=name, octets=len(octets),
-                            encode=interval_of(list(encode_ns)),
-                            decode=interval_of(list(decode_ns))))
+        rows.append(
+            CostRow(
+                candidate=name,
+                octets=len(octets),
+                encode=interval_of(list(encode_ns)),
+                decode=interval_of(list(decode_ns)),
+            )
+        )
     if not rows:
         raise Asn1Error(
             "every schema-directed decode row lacked its encode axis, so no two-axis row "
-            "closes; CostRow needs both and a copied axis is not a measurement")
-    return EncodingCostTable(target=target, cal_gen=cal_gen, provenance="measured",
-                             rows=tuple(rows), decode_kind="schema-directed")
+            "closes; CostRow needs both and a copied axis is not a measurement"
+        )
+    return EncodingCostTable(
+        target=target,
+        cal_gen=cal_gen,
+        provenance="measured",
+        rows=tuple(rows),
+        decode_kind="schema-directed",
+    )
 
 
-def measured_table(kind, value, *, target: str, cal_gen: int,
-                   candidates=ALL_CANDIDATES, **kwargs) -> EncodingCostTable:
+def measured_table(
+    kind, value, *, target: str, cal_gen: int, candidates=ALL_CANDIDATES, **kwargs
+) -> EncodingCostTable:
     """A `provenance="measured"` table — containing only what was natively measured.
 
     **The encode interval is now a real encode measurement** where E2 can produce one. It
@@ -674,8 +780,7 @@ def measured_table(kind, value, *, target: str, cal_gen: int,
     samples, skipped = run_native_bench(kind, value, candidates=candidates, **kwargs)
     encode_samples: dict[str, tuple[int, ...]] = {}
     try:
-        encode_samples, _ = run_native_encode_bench(kind, value, candidates=candidates,
-                                                    **kwargs)
+        encode_samples, _ = run_native_encode_bench(kind, value, candidates=candidates, **kwargs)
     except Asn1Error:
         # A schema the WRITE plan refuses still has a decode column; the encode interval
         # then falls back to the decode figure and the docstring above says what that means.
@@ -685,21 +790,37 @@ def measured_table(kind, value, *, target: str, cal_gen: int,
         if len(sample.decode_ns) < MIN_SAMPLES:
             raise Asn1Error(
                 f"{sample.candidate}: {len(sample.decode_ns)} rounds is below the "
-                f"{MIN_SAMPLES}-sample floor an order-statistic interval needs")
+                f"{MIN_SAMPLES}-sample floor an order-statistic interval needs"
+            )
         interval = interval_of(list(sample.decode_ns))
         measured_encode = encode_samples.get(sample.candidate)
-        encode = (interval_of(list(measured_encode))
-                  if measured_encode and len(measured_encode) >= MIN_SAMPLES else interval)
-        rows.append(CostRow(candidate=sample.candidate, octets=sample.octets,
-                            encode=encode, decode=interval))
-    _ = skipped                                          # reported by run_native_bench
-    return EncodingCostTable(target=target, cal_gen=cal_gen, provenance="measured",
-                             rows=tuple(rows))
+        encode = (
+            interval_of(list(measured_encode))
+            if measured_encode and len(measured_encode) >= MIN_SAMPLES
+            else interval
+        )
+        rows.append(
+            CostRow(
+                candidate=sample.candidate, octets=sample.octets, encode=encode, decode=interval
+            )
+        )
+    _ = skipped  # reported by run_native_bench
+    return EncodingCostTable(
+        target=target, cal_gen=cal_gen, provenance="measured", rows=tuple(rows)
+    )
 
 
 __all__ = [
-    "ENCODE_OPS", "NATIVE_OPS", "EncodeOp", "NativeOp", "NativeSamples", "build_harness",
-    "measured_table", "native_available", "native_counters", "observed_encode_partition",
+    "ENCODE_OPS",
+    "NATIVE_OPS",
+    "EncodeOp",
+    "NativeOp",
+    "NativeSamples",
+    "build_harness",
+    "measured_table",
+    "native_available",
+    "native_counters",
+    "observed_encode_partition",
     "run_native_bench",
     "run_native_encode_bench",
 ]

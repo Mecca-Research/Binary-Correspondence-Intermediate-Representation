@@ -61,22 +61,27 @@ else:
 # per-target lookup asserts every target against its OWN entry (and a future per-ABI mnemonic split has a slot).
 _X86_FENCE = {"full": "mfence", "acquire": "lfence", "release": "sfence"}
 _FENCE_MNEM = {
-    "x86_64-linux":  _X86_FENCE, "i386-linux": _X86_FENCE, "x86_64-windows": _X86_FENCE,
+    "x86_64-linux": _X86_FENCE,
+    "i386-linux": _X86_FENCE,
+    "x86_64-windows": _X86_FENCE,
     "aarch64-linux": {"full": "dmb ish", "acquire": "dmb ishld", "release": "dmb ishst"},
-    "riscv64-linux": {"full": "fence rw,rw", "acquire": "fence r,rw", "release": "fence rw,w"}}
+    "riscv64-linux": {"full": "fence rw,rw", "acquire": "fence r,rw", "release": "fence rw,w"},
+}
 
 # the intrinsic name -> (op string, kind) it lowers to. The full-fence names keep `c.fence` (backward-compat);
 # the x86-conventional _mm_{l,s}fence names carry the lighter kinds.
 _INTRINSIC_KIND = {
     "__sync_synchronize": ("c.fence", "full"),
     "__atomic_thread_fence": ("c.fence", "full"),
-    "atomic_thread_fence": ("c.fence", "full"),               # C11 <stdatomic.h>
+    "atomic_thread_fence": ("c.fence", "full"),  # C11 <stdatomic.h>
     "_mm_mfence": ("c.fence", "full"),
     "_mm_lfence": ("c.fence.acquire", "acquire"),
-    "_mm_sfence": ("c.fence.release", "release")}
+    "_mm_sfence": ("c.fence.release", "release"),
+}
 
 
 # --- helpers ------------------------------------------------------------------------------------
+
 
 def _lf(src: str, fn: str | None = None, target: str | None = None):
     """Compile `src` (no Clang check) and return the (result, lowered-function) for `fn` (default: the
@@ -98,7 +103,9 @@ def _emit_clean(lf) -> str:
 
 def _call_of(intrinsic: str) -> str:
     """A one-line fixture invoking `intrinsic` (the *_thread_fence forms take a memory-order arg)."""
-    arg = "5" if intrinsic.endswith("thread_fence") else ""    # __ATOMIC_SEQ_CST / memory_order_seq_cst == 5
+    arg = (
+        "5" if intrinsic.endswith("thread_fence") else ""
+    )  # __ATOMIC_SEQ_CST / memory_order_seq_cst == 5
     return f"void f(void){{ {intrinsic}({arg}); }}"
 
 
@@ -110,7 +117,7 @@ def _assemble_native(c_text: str) -> str:
     Non-native fence emits are NOT assembled here (the aarch64 lane has no x86 sysroot, and vice-versa) -- their
     validity is proven on their own CI lane, and their emit TEXT is asserted arch-independently below."""
     if _NATIVE_TARGET is None:
-        return "skip"                                          # a host outside the three families: text-only
+        return "skip"  # a host outside the three families: text-only
     ccs = [(n, p) for n, p in (("gcc", _GCC), ("clang", _CLANG)) if p]
     if not ccs:
         if not _CC:
@@ -122,8 +129,11 @@ def _assemble_native(c_text: str) -> str:
             f.write(c_text)
         for name, cc in ccs:
             obj = os.path.join(d, f"barrier_{name}.o")
-            b = subprocess.run([cc, "-std=c11", "-pedantic", "-c", src, "-o", obj],  # -c: assemble only
-                               capture_output=True, text=True)
+            b = subprocess.run(
+                [cc, "-std=c11", "-pedantic", "-c", src, "-o", obj],  # -c: assemble only
+                capture_output=True,
+                text=True,
+            )
             if b.returncode != 0:
                 return f"FAIL:{name}:assemble:{(b.stderr or b.stdout).strip().splitlines()[-1:]}"
             if not os.path.exists(obj):
@@ -132,6 +142,7 @@ def _assemble_native(c_text: str) -> str:
 
 
 # --- (1) recognition + kind --------------------------------------------------------------------
+
 
 def test_all_six_intrinsics_recognized_with_the_right_op_string():
     for intrinsic, (op, _kind) in _INTRINSIC_KIND.items():
@@ -144,7 +155,12 @@ def test_all_six_intrinsics_recognized_with_the_right_op_string():
 def test_full_fence_keeps_the_backward_compatible_c_fence_op_string():
     # the full (seq_cst) fence MUST stay `c.fence` -- the existing __atomic_thread_fence / __sync_synchronize
     # corpus + the C-twin parity digest depend on it being unchanged (no new op string for the full kind).
-    for intrinsic in ("__sync_synchronize", "__atomic_thread_fence", "atomic_thread_fence", "_mm_mfence"):
+    for intrinsic in (
+        "__sync_synchronize",
+        "__atomic_thread_fence",
+        "atomic_thread_fence",
+        "_mm_mfence",
+    ):
         _r, lf = _lf(_call_of(intrinsic))
         assert _fence_claims(lf)[0].op == "c.fence", intrinsic
 
@@ -159,24 +175,33 @@ def test_lighter_kinds_get_the_new_op_strings():
 def test_c11_atomic_thread_fence_is_recognized():
     # the C11 <stdatomic.h> `atomic_thread_fence` was NOT recognized before ASM3 (only the __ builtins were).
     _r, lf = _lf("void f(void){ atomic_thread_fence(5); }")
-    assert _fence_claims(lf)[0].op == "c.fence", "C11 atomic_thread_fence must lower to the full fence"
+    assert _fence_claims(lf)[0].op == "c.fence", (
+        "C11 atomic_thread_fence must lower to the full fence"
+    )
 
 
 # --- (2) the barriered / opcode / lane contract ------------------------------------------------
+
 
 def test_every_fence_kind_is_barriered():
     for intrinsic in _INTRINSIC_KIND:
         _r, lf = _lf(_call_of(intrinsic))
         c = _fence_claims(lf)[0]
-        assert c.hazard == "barriered", f"{intrinsic}: a memory fence must be barriered, got {c.hazard}"
+        assert c.hazard == "barriered", (
+            f"{intrinsic}: a memory fence must be barriered, got {c.hazard}"
+        )
 
 
 def test_every_fence_is_a_barrier_opcode_on_lane_a():
     for intrinsic in _INTRINSIC_KIND:
         _r, lf = _lf(_call_of(intrinsic))
         c = _fence_claims(lf)[0]
-        assert c.opcode == Opcode.BARRIER, f"{intrinsic}: a fence must be the BARRIER opcode, got {c.opcode}"
-        assert c.lane.name == "A", f"{intrinsic}: a scalar fence lowers on lane A, got {c.lane.name}"
+        assert c.opcode == Opcode.BARRIER, (
+            f"{intrinsic}: a fence must be the BARRIER opcode, got {c.opcode}"
+        )
+        assert c.lane.name == "A", (
+            f"{intrinsic}: a scalar fence lowers on lane A, got {c.lane.name}"
+        )
 
 
 def test_fence_is_off_the_legality_value_path():
@@ -195,13 +220,18 @@ def test_unused_fence_is_not_eliminated():
 
 # --- (3) per-target emit text (arch-independent — asserted on every host) -----------------------
 
+
 def test_x86_targets_emit_the_real_fence_instruction():
     for target in ("x86_64-linux", "i386-linux", "x86_64-windows"):
         for intrinsic, (_op, kind) in _INTRINSIC_KIND.items():
             _r, lf = _lf(_call_of(intrinsic), target=target)
             body = _emit_clean(lf)
-            mnem = _FENCE_MNEM[target][kind]               # each x86 ABI asserts against its own entry
-            assert f'__asm__ __volatile__ ("{mnem}" ::: "memory");' in body, (target, intrinsic, body)
+            mnem = _FENCE_MNEM[target][kind]  # each x86 ABI asserts against its own entry
+            assert f'__asm__ __volatile__ ("{mnem}" ::: "memory");' in body, (
+                target,
+                intrinsic,
+                body,
+            )
 
 
 def test_aarch64_target_emits_the_dmb_barrier():
@@ -233,10 +263,10 @@ def test_unknown_target_keeps_the_portable_default():
     # every ISA HAS a fence, so an EXPLICIT target outside the three families is NOT an unsupported diagnostic
     # (unlike port I/O) -- it keeps the portable __atomic_thread_fence(__ATOMIC_SEQ_CST) as an honest default.
     # The shipping ABIs are all in the three families, so this default is reached only by a hand-set target.
-    r, lf = _lf("void f(void){ __sync_synchronize(); }")       # default (host) target
-    lf.target = "mips-linux"                                   # outside x86/aarch64/riscv64 -> portable default
-    lf.target_explicit = True                                  # force the explicit-target path so we test the
-    body = _emit_clean(lf)                                     #   per-ISA dispatch falling through to portable
+    r, lf = _lf("void f(void){ __sync_synchronize(); }")  # default (host) target
+    lf.target = "mips-linux"  # outside x86/aarch64/riscv64 -> portable default
+    lf.target_explicit = True  # force the explicit-target path so we test the
+    body = _emit_clean(lf)  #   per-ISA dispatch falling through to portable
     assert "__atomic_thread_fence(__ATOMIC_SEQ_CST);" in body, body
     assert "__asm__" not in body, "the portable default must not emit inline asm"
 
@@ -245,7 +275,7 @@ def test_default_host_target_emits_the_portable_fence():
     # with NO explicit --target, the fence emits the PORTABLE __atomic_thread_fence -- so the default emit
     # compiles on ANY host (a cross-arch native compile never sees foreign asm). Native per-ISA asm is the
     # opt-in behaviour of an explicit `--target` (asserted by the per-target tests above).
-    r, lf = _lf("void f(void){ __sync_synchronize(); _mm_lfence(); _mm_sfence(); }")   # no target
+    r, lf = _lf("void f(void){ __sync_synchronize(); _mm_lfence(); _mm_sfence(); }")  # no target
     body = _emit_clean(lf)
     assert body.count("__atomic_thread_fence(__ATOMIC_SEQ_CST);") == 3, body
     assert "__asm__" not in body, "the host-default fence emit must be portable, not inline asm"
@@ -253,24 +283,34 @@ def test_default_host_target_emits_the_portable_fence():
 
 # --- (4) source-order ordering (the barriered contract is realized by in-order emit) ------------
 
+
 def test_two_fences_stay_in_source_order_in_the_emit():
     # the cfront emit walks the body in source order and never reorders/drops a claim -- so a release then an
     # acquire fence emit in that order (the `barriered` ordering is realized by source-order emission).
     _r, lf = _lf("void f(void){ _mm_sfence(); _mm_lfence(); }", target="x86_64-linux")
     body = _emit_clean(lf)
-    assert body.index("sfence") < body.index("lfence"), f"the fences were reordered in the emit:\n{body}"
+    assert body.index("sfence") < body.index("lfence"), (
+        f"the fences were reordered in the emit:\n{body}"
+    )
 
 
 # --- (5) a user-defined function named like an intrinsic stays a normal call --------------------
 
+
 def test_user_defined_atomic_thread_fence_is_not_treated_as_the_intrinsic():
     # if the unit DEFINES its own `atomic_thread_fence`, the call resolves to it (a real R18 edge), not the
     # fence intrinsic -- the same shadowing guard the stdlib / port-I/O intrinsics use (callee in func_rets).
-    src = ("unsigned atomic_thread_fence(unsigned o){ return o + 1u; } "
-           "unsigned f(void){ return atomic_thread_fence(5u); }")
+    src = (
+        "unsigned atomic_thread_fence(unsigned o){ return o + 1u; } "
+        "unsigned f(void){ return atomic_thread_fence(5u); }"
+    )
     _r, lf = _lf(src, fn="f")
-    assert not _fence_claims(lf), "a user-defined atomic_thread_fence must not lower to a fence edge"
-    assert any(c.op == "c.call:atomic_thread_fence" for c in lf.claims), "the user fn should be a normal call"
+    assert not _fence_claims(lf), (
+        "a user-defined atomic_thread_fence must not lower to a fence edge"
+    )
+    assert any(c.op == "c.call:atomic_thread_fence" for c in lf.claims), (
+        "the user fn should be a normal call"
+    )
 
 
 # --- (6) the emitted NATIVE-arch fence ASSEMBLES under gcc + clang ------------------------------
@@ -293,7 +333,8 @@ def test_emitted_native_fence_assembles_under_gcc_and_clang():
         return
     r = compile_unit(_PROG, check_clang=False, target=_NATIVE_TARGET)
     emit = "#include <stdint.h>\n" + "\n\n".join(
-        _emit_clean(lf) for lf in r.lowered.functions.values())
+        _emit_clean(lf) for lf in r.lowered.functions.values()
+    )
     verdict = _assemble_native(emit)
     assert verdict in ("ok", "skip"), f"emitted native fence did not assemble: {verdict}"
 
@@ -321,17 +362,31 @@ def test_each_native_fence_kind_assembles_individually():
 
 # (spelling, op string) for each named C11 `memory_order_*` constant.
 _C11_ORDER_KIND = {
-    "memory_order_relaxed": "c.fence", "memory_order_consume": "c.fence.acquire",
-    "memory_order_acquire": "c.fence.acquire", "memory_order_release": "c.fence.release",
-    "memory_order_acq_rel": "c.fence", "memory_order_seq_cst": "c.fence"}
+    "memory_order_relaxed": "c.fence",
+    "memory_order_consume": "c.fence.acquire",
+    "memory_order_acquire": "c.fence.acquire",
+    "memory_order_release": "c.fence.release",
+    "memory_order_acq_rel": "c.fence",
+    "memory_order_seq_cst": "c.fence",
+}
 # (spelling, op string) for each GCC/Clang `__ATOMIC_*` macro constant (same values).
 _GCC_ORDER_KIND = {
-    "__ATOMIC_RELAXED": "c.fence", "__ATOMIC_CONSUME": "c.fence.acquire",
-    "__ATOMIC_ACQUIRE": "c.fence.acquire", "__ATOMIC_RELEASE": "c.fence.release",
-    "__ATOMIC_ACQ_REL": "c.fence", "__ATOMIC_SEQ_CST": "c.fence"}
+    "__ATOMIC_RELAXED": "c.fence",
+    "__ATOMIC_CONSUME": "c.fence.acquire",
+    "__ATOMIC_ACQUIRE": "c.fence.acquire",
+    "__ATOMIC_RELEASE": "c.fence.release",
+    "__ATOMIC_ACQ_REL": "c.fence",
+    "__ATOMIC_SEQ_CST": "c.fence",
+}
 # integer-literal order (0..5) -> op string (the raw GCC/C11 enum values).
-_INT_ORDER_KIND = {0: "c.fence", 1: "c.fence.acquire", 2: "c.fence.acquire",
-                   3: "c.fence.release", 4: "c.fence", 5: "c.fence"}
+_INT_ORDER_KIND = {
+    0: "c.fence",
+    1: "c.fence.acquire",
+    2: "c.fence.acquire",
+    3: "c.fence.release",
+    4: "c.fence",
+    5: "c.fence",
+}
 # the kind the op string carries (for the per-ISA emit assertions).
 _OP_KIND = {"c.fence": "full", "c.fence.acquire": "acquire", "c.fence.release": "release"}
 
@@ -369,8 +424,12 @@ def test_integer_literal_order_args_map_per_the_table():
 
 def test_acquire_release_seqcst_carry_the_three_distinct_kinds():
     # the headline SEG6.1 contract: acquire/release/seq_cst are now three DISTINCT lowerings (not all full).
-    assert _fence_op("void f(void){ atomic_thread_fence(memory_order_acquire); }") == "c.fence.acquire"
-    assert _fence_op("void f(void){ atomic_thread_fence(memory_order_release); }") == "c.fence.release"
+    assert (
+        _fence_op("void f(void){ atomic_thread_fence(memory_order_acquire); }") == "c.fence.acquire"
+    )
+    assert (
+        _fence_op("void f(void){ atomic_thread_fence(memory_order_release); }") == "c.fence.release"
+    )
     assert _fence_op("void f(void){ atomic_thread_fence(memory_order_seq_cst); }") == "c.fence"
 
 
@@ -378,7 +437,9 @@ def test_conservative_folds_for_acq_rel_and_relaxed_and_consume():
     # acq_rel and relaxed fold to the FULL fence (a stronger fence is sound); consume folds UP to acquire.
     assert _fence_op("void f(void){ atomic_thread_fence(memory_order_acq_rel); }") == "c.fence"
     assert _fence_op("void f(void){ atomic_thread_fence(memory_order_relaxed); }") == "c.fence"
-    assert _fence_op("void f(void){ atomic_thread_fence(memory_order_consume); }") == "c.fence.acquire"
+    assert (
+        _fence_op("void f(void){ atomic_thread_fence(memory_order_consume); }") == "c.fence.acquire"
+    )
 
 
 def test_non_constant_order_arg_folds_to_full_fence():
@@ -394,16 +455,30 @@ def test_shadowed_memory_order_name_is_not_resolved_as_the_constant():
     # This keeps `_fence_order_kind` consistent with `_rvalue`, which also resolves the named constant only when
     # the name is not a real declaration (`not in self.env`); a unit redeclaring `memory_order_acquire = 3` must
     # NOT silently get an acquire fence read off the shadowed name (the value rail would say "variable").
-    assert _fence_op("void f(void){ unsigned memory_order_acquire = 3u; "
-                     "atomic_thread_fence(memory_order_acquire); }") == "c.fence"
-    assert _fence_op("void f(void){ int __ATOMIC_RELEASE = 2; "
-                     "__atomic_thread_fence(__ATOMIC_RELEASE); }") == "c.fence"
+    assert (
+        _fence_op(
+            "void f(void){ unsigned memory_order_acquire = 3u; "
+            "atomic_thread_fence(memory_order_acquire); }"
+        )
+        == "c.fence"
+    )
+    assert (
+        _fence_op(
+            "void f(void){ int __ATOMIC_RELEASE = 2; __atomic_thread_fence(__ATOMIC_RELEASE); }"
+        )
+        == "c.fence"
+    )
     # a FUNCTION named like a memory_order constant also shadows it: _rvalue checks func_rets (a function name
     # -> a funcptr value) BEFORE _MEMORDER, so the value rail treats the arg as a runtime value -- the kind
     # rail must agree and fold to the full `c.fence`, NOT read the name as the constant.
     # (_fence_op targets the LAST function, f, whose single fence claim is what we assert.)
-    assert _fence_op("int __ATOMIC_RELEASE(void){ return 3; } "
-                     "void f(void){ __atomic_thread_fence(__ATOMIC_RELEASE); }") == "c.fence"
+    assert (
+        _fence_op(
+            "int __ATOMIC_RELEASE(void){ return 3; } "
+            "void f(void){ __atomic_thread_fence(__ATOMIC_RELEASE); }"
+        )
+        == "c.fence"
+    )
 
 
 def test_backward_compat_order_five_still_lowers_to_full_fence():
@@ -416,14 +491,21 @@ def test_backward_compat_order_five_still_lowers_to_full_fence():
 def test_ordered_fence_emits_the_right_per_isa_instruction_through_the_new_kinds():
     # the order arg routes all the way THROUGH emit: acquire -> lfence/dmb ishld/fence r,rw; release ->
     # sfence/dmb ishst/fence rw,w; seq_cst -> mfence/dmb ish/fence rw,rw, for every target family.
-    spellings = {"memory_order_acquire": "acquire", "memory_order_release": "release",
-                 "memory_order_seq_cst": "full"}
+    spellings = {
+        "memory_order_acquire": "acquire",
+        "memory_order_release": "release",
+        "memory_order_seq_cst": "full",
+    }
     for target in ("x86_64-linux", "aarch64-linux", "riscv64-linux"):
         for spelling, kind in spellings.items():
             _r, lf = _lf(f"void f(void){{ atomic_thread_fence({spelling}); }}", target=target)
             body = _emit_clean(lf)
             mnem = _FENCE_MNEM[target][kind]
-            assert f'__asm__ __volatile__ ("{mnem}" ::: "memory");' in body, (target, spelling, body)
+            assert f'__asm__ __volatile__ ("{mnem}" ::: "memory");' in body, (
+                target,
+                spelling,
+                body,
+            )
 
 
 def test_ordered_fence_kinds_are_barriered_barrier_opcode_lane_a():
@@ -431,17 +513,26 @@ def test_ordered_fence_kinds_are_barriered_barrier_opcode_lane_a():
     for spelling in ("memory_order_acquire", "memory_order_release", "memory_order_seq_cst"):
         _r, lf = _lf(f"void f(void){{ atomic_thread_fence({spelling}); }}")
         c = _fence_claims(lf)[0]
-        assert c.opcode == Opcode.BARRIER and c.lane.name == "A" and c.hazard == "barriered", (spelling, c)
+        assert c.opcode == Opcode.BARRIER and c.lane.name == "A" and c.hazard == "barriered", (
+            spelling,
+            c,
+        )
 
 
 def test_user_defined_ordered_fence_shadow_is_still_a_normal_call():
     # a unit that DEFINES its own atomic_thread_fence shadows the intrinsic even with the new order routing
     # (the shadowing guard `callee in func_rets` is checked before the order-taking fence branch).
-    src = ("unsigned atomic_thread_fence(unsigned o){ return o + 1u; } "
-           "unsigned f(void){ return atomic_thread_fence(2u); }")
+    src = (
+        "unsigned atomic_thread_fence(unsigned o){ return o + 1u; } "
+        "unsigned f(void){ return atomic_thread_fence(2u); }"
+    )
     _r, lf = _lf(src, fn="f")
-    assert not _fence_claims(lf), "a user-defined atomic_thread_fence must not lower to a fence edge"
-    assert any(c.op == "c.call:atomic_thread_fence" for c in lf.claims), "the user fn should be a normal call"
+    assert not _fence_claims(lf), (
+        "a user-defined atomic_thread_fence must not lower to a fence edge"
+    )
+    assert any(c.op == "c.call:atomic_thread_fence" for c in lf.claims), (
+        "the user fn should be a normal call"
+    )
 
 
 if __name__ == "__main__":

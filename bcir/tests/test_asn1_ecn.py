@@ -51,8 +51,8 @@ from bcir.asn1.tags import Universal
 
 def _bounded_sequence() -> Sequence:
     return Sequence(
-        (Component("v", Primitive(Universal.INTEGER, "INTEGER", ValueRange(0, 255))),),
-        "S")
+        (Component("v", Primitive(Universal.INTEGER, "INTEGER", ValueRange(0, 255))),), "S"
+    )
 
 
 # --- clause 9: the class algebra ---------------------------------------------------------
@@ -65,7 +65,7 @@ def test_a_class_reference_begins_with_a_number_sign():
     except Asn1Error as error:
         assert "9.2.1" in str(error)
     else:
-        raise AssertionError("a class name without \"#\" must be refused")
+        raise AssertionError('a class name without "#" must be refused')
 
 
 def test_every_builtin_class_derives_from_a_primitive():
@@ -173,8 +173,9 @@ def test_the_one_object_rule_is_keyed_on_class_identity_not_on_category():
     """
     edm = EncodingDefinitionModule("Test-EDM")
     mine = edm.assign_class("#My-Sequence", BUILTIN_CLASSES["#SEQUENCE"])
-    both = EncodingObjectSet((EncodingObject(BUILTIN_CLASSES["#SEQUENCE"], "builtin"),
-                              EncodingObject(mine, "mine")))
+    both = EncodingObjectSet(
+        (EncodingObject(BUILTIN_CLASSES["#SEQUENCE"], "builtin"), EncodingObject(mine, "mine"))
+    )
     assert both.object_for(mine).name == "mine"
     assert both.object_for(BUILTIN_CLASSES["#SEQUENCE"]).name == "builtin"
 
@@ -229,16 +230,18 @@ def test_table_4_object_identifiers_agree_with_the_defining_clauses():
     fails an interop test, so every value is pinned against the constant its own rail
     already carries.
     """
-    assert BUILTIN_SET_OID[BuiltinEncodingObjectSet.PER_BASIC_ALIGNED] \
-        == BASIC_PER_ALIGNED_OID
-    assert BUILTIN_SET_OID[BuiltinEncodingObjectSet.PER_BASIC_UNALIGNED] \
-        == BASIC_PER_UNALIGNED_OID
-    assert BUILTIN_SET_OID[BuiltinEncodingObjectSet.PER_CANONICAL_ALIGNED] \
-        == CANONICAL_PER_ALIGNED_OID
-    assert BUILTIN_SET_OID[BuiltinEncodingObjectSet.PER_CANONICAL_UNALIGNED] \
+    assert BUILTIN_SET_OID[BuiltinEncodingObjectSet.PER_BASIC_ALIGNED] == BASIC_PER_ALIGNED_OID
+    assert BUILTIN_SET_OID[BuiltinEncodingObjectSet.PER_BASIC_UNALIGNED] == BASIC_PER_UNALIGNED_OID
+    assert (
+        BUILTIN_SET_OID[BuiltinEncodingObjectSet.PER_CANONICAL_ALIGNED] == CANONICAL_PER_ALIGNED_OID
+    )
+    assert (
+        BUILTIN_SET_OID[BuiltinEncodingObjectSet.PER_CANONICAL_UNALIGNED]
         == CANONICAL_PER_UNALIGNED_OID
-    assert BUILTIN_SET_OID[BuiltinEncodingObjectSet.PER_CANONICAL_UNALIGNED] \
-        == (2, 1, 3, 1, 1), "the asn1(1) arc Table 4 drops"
+    )
+    assert BUILTIN_SET_OID[BuiltinEncodingObjectSet.PER_CANONICAL_UNALIGNED] == (2, 1, 3, 1, 1), (
+        "the asn1(1) arc Table 4 drops"
+    )
     assert BUILTIN_SET_OID[BuiltinEncodingObjectSet.BER] == BER_OID
     assert BUILTIN_SET_OID[BuiltinEncodingObjectSet.DER] == DER_OID
     assert BUILTIN_SET_OID[BuiltinEncodingObjectSet.CER] == (2, 1, 2, 0)
@@ -293,9 +296,14 @@ def test_the_shared_object_design_errors_are_refused_at_application():
         raise AssertionError("a multi-size #OCTETS must be refused")
 
     optional = Sequence(
-        (Component("v", Primitive(Universal.INTEGER, "INTEGER", ValueRange(0, 3))),
-         Component("w", Primitive(Universal.INTEGER, "INTEGER", ValueRange(0, 3)),
-                   tag=0, optional=True)), "S")
+        (
+            Component("v", Primitive(Universal.INTEGER, "INTEGER", ValueRange(0, 3))),
+            Component(
+                "w", Primitive(Universal.INTEGER, "INTEGER", ValueRange(0, 3)), tag=0, optional=True
+            ),
+        ),
+        "S",
+    )
     try:
         encode_with(per, BUILTIN_CLASSES["#CONCATENATION"], optional, {"v": 1})
     except Asn1Error as error:
@@ -337,12 +345,12 @@ def test_naming_a_built_in_set_is_the_whole_selection_mechanism():
 
     per_expected = {
         BuiltinEncodingObjectSet.PER_BASIC_ALIGNED: (PerRules.BASIC, PerVariant.ALIGNED),
-        BuiltinEncodingObjectSet.PER_BASIC_UNALIGNED:
-            (PerRules.BASIC, PerVariant.UNALIGNED),
-        BuiltinEncodingObjectSet.PER_CANONICAL_ALIGNED:
-            (PerRules.CANONICAL, PerVariant.ALIGNED),
-        BuiltinEncodingObjectSet.PER_CANONICAL_UNALIGNED:
-            (PerRules.CANONICAL, PerVariant.UNALIGNED),
+        BuiltinEncodingObjectSet.PER_BASIC_UNALIGNED: (PerRules.BASIC, PerVariant.UNALIGNED),
+        BuiltinEncodingObjectSet.PER_CANONICAL_ALIGNED: (PerRules.CANONICAL, PerVariant.ALIGNED),
+        BuiltinEncodingObjectSet.PER_CANONICAL_UNALIGNED: (
+            PerRules.CANONICAL,
+            PerVariant.UNALIGNED,
+        ),
     }
     for which, (rules, variant) in per_expected.items():
         got = encode_with(builtin_object_set(which), sequence, kind, value)
@@ -355,10 +363,10 @@ def test_naming_a_built_in_set_is_the_whole_selection_mechanism():
         assert module.decode("T", got, strictness=Strictness.DER) == value
 
     # And the point of the exercise: the same value, different lengths, chosen by name.
-    packed = encode_with(builtin_object_set(
-        BuiltinEncodingObjectSet.PER_BASIC_UNALIGNED), sequence, kind, value)
-    tagged = encode_with(builtin_object_set(BuiltinEncodingObjectSet.DER), sequence,
-                         kind, value)
+    packed = encode_with(
+        builtin_object_set(BuiltinEncodingObjectSet.PER_BASIC_UNALIGNED), sequence, kind, value
+    )
+    tagged = encode_with(builtin_object_set(BuiltinEncodingObjectSet.DER), sequence, kind, value)
     assert len(packed) == 1 and len(tagged) == 6, (packed.hex(), tagged.hex())
 
 
@@ -406,13 +414,15 @@ def test_an_elm_never_encodes_the_same_type_twice():
     der = builtin_object_set(BuiltinEncodingObjectSet.DER)
     per = builtin_object_set(BuiltinEncodingObjectSet.PER_BASIC_UNALIGNED)
     try:
-        EncodingLinkModule("Link", (EncodingApplication(("#A", "#B"), der),
-                                    EncodingApplication(("#B",), per)))
+        EncodingLinkModule(
+            "Link", (EncodingApplication(("#A", "#B"), der), EncodingApplication(("#B",), per))
+        )
     except Asn1Error as error:
         assert "12.2.5" in str(error)
     else:
         raise AssertionError("applying encodings twice to one type must be refused")
     # Distinct types in separate applications are exactly what §12.2.1 is for.
-    elm = EncodingLinkModule("Link", (EncodingApplication(("#A",), der),
-                                      EncodingApplication(("#B",), per)))
+    elm = EncodingLinkModule(
+        "Link", (EncodingApplication(("#A",), der), EncodingApplication(("#B",), per))
+    )
     assert elm.encodings_for("#A") is der and elm.encodings_for("#B") is per

@@ -12,12 +12,14 @@ import os
 
 def test_every_test_file_on_disk_is_registered_and_vice_versa():
     from bcir.tests.run_all import _MODULES
+
     d = os.path.dirname(os.path.abspath(__file__))
-    on_disk = {f"bcir.tests.{f[:-3]}" for f in os.listdir(d)
-               if f.startswith("test_") and f.endswith(".py")}
+    on_disk = {
+        f"bcir.tests.{f[:-3]}" for f in os.listdir(d) if f.startswith("test_") and f.endswith(".py")
+    }
     registered = set(_MODULES)
-    missing = sorted(on_disk - registered)           # written but never run by run_all/CI
-    ghosts = sorted(registered - on_disk)            # registered but deleted/renamed on disk
+    missing = sorted(on_disk - registered)  # written but never run by run_all/CI
+    ghosts = sorted(registered - on_disk)  # registered but deleted/renamed on disk
     assert not missing, f"test files not in run_all._MODULES (CI never runs them): {missing}"
     assert not ghosts, f"run_all._MODULES entries with no file on disk: {ghosts}"
     assert len(_MODULES) == len(registered), "duplicate entries in run_all._MODULES"

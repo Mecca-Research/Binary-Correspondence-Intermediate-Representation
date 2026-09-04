@@ -169,8 +169,16 @@ class _Parser:
                 t = self._peek()
                 raise ParseError(f"expected ';' or '}}', got {t.kind} {t.text!r} at offset {t.pos}")
         self._expect("RBRACE")
-        return Claim(id=claim_id, opcode=Opcode.ADD, lane=lane, stride_class=stride,
-                     count=count, rd=reads, wr=writes, op=f"rop.{name}")
+        return Claim(
+            id=claim_id,
+            opcode=Opcode.ADD,
+            lane=lane,
+            stride_class=stride,
+            count=count,
+            rd=reads,
+            wr=writes,
+            op=f"rop.{name}",
+        )
 
 
 def parse_rop(text: str, name: str = "rop") -> Module:

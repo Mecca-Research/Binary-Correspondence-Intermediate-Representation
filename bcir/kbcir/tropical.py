@@ -84,7 +84,8 @@ class NegativeCycle(Exception):
         super().__init__(
             f"the cycle {' -> '.join(cycle)} has total weight {weight}, so its closure "
             f"diverges; a loop cannot make a program cheaper without bound, so this is the "
-            f"cost model being wrong rather than the loop being free")
+            f"cost model being wrong rather than the loop being free"
+        )
         self.cycle = cycle
         self.weight = weight
 
@@ -130,8 +131,9 @@ def alternative(semiring: Semiring, *costs) -> int | None:
     return best
 
 
-def shortest_paths(graph: CostGraph, source: str, *,
-                   semiring: Semiring = Semiring.MIN_PLUS) -> dict[str, int]:
+def shortest_paths(
+    graph: CostGraph, source: str, *, semiring: Semiring = Semiring.MIN_PLUS
+) -> dict[str, int]:
     """Bellman–Ford, whose negative-cycle detection IS §5's divergence check.
 
     Dijkstra would be faster and is only correct for non-negative weights; a cost model with
@@ -165,8 +167,9 @@ def shortest_paths(graph: CostGraph, source: str, *,
     return {node: cost for node, cost in best.items() if cost is not INFINITY}
 
 
-def _recover_cycle(predecessor: dict[str, str], a: str, b: str,
-                   graph: CostGraph) -> tuple[tuple[str, ...], int]:
+def _recover_cycle(
+    predecessor: dict[str, str], a: str, b: str, graph: CostGraph
+) -> tuple[tuple[str, ...], int]:
     """Walk predecessors back into the cycle so the exception can name it.
 
     Reporting "there is a negative cycle somewhere" would leave the caller to find it; the
@@ -180,11 +183,12 @@ def _recover_cycle(predecessor: dict[str, str], a: str, b: str,
             break
         node = predecessor[node]
         if node in seen:
-            cycle = seen[seen.index(node):]
+            cycle = seen[seen.index(node) :]
             cycle.reverse()
             cycle.append(cycle[0])
-            weight = sum(graph.edges.get((cycle[i], cycle[i + 1]), 0)
-                         for i in range(len(cycle) - 1))
+            weight = sum(
+                graph.edges.get((cycle[i], cycle[i + 1]), 0) for i in range(len(cycle) - 1)
+            )
             return tuple(cycle), weight
     return (a, b), graph.edges.get((a, b), 0)
 
@@ -275,8 +279,9 @@ def minimum_mean_cycle(graph: CostGraph) -> tuple[Fraction, tuple[str, ...]] | N
     return mean, tuple(nodes[i] for i in cycle)
 
 
-def unroll_factor(graph: CostGraph, *, prologue: int, epilogue: int,
-                  iterations: int, maximum: int = 64) -> int:
+def unroll_factor(
+    graph: CostGraph, *, prologue: int, epilogue: int, iterations: int, maximum: int = 64
+) -> int:
     """The unroll factor that minimizes total cost, derived rather than searched blindly.
 
     The steady-state cost per iteration is the minimum mean cycle weight; unrolling by `u`
@@ -323,6 +328,14 @@ def unroll_factor(graph: CostGraph, *, prologue: int, epilogue: int,
 
 
 __all__ = [
-    "INFINITY", "CostGraph", "NegativeCycle", "Semiring", "alternative", "close",
-    "compose", "minimum_mean_cycle", "shortest_paths", "unroll_factor",
+    "INFINITY",
+    "CostGraph",
+    "NegativeCycle",
+    "Semiring",
+    "alternative",
+    "close",
+    "compose",
+    "minimum_mean_cycle",
+    "shortest_paths",
+    "unroll_factor",
 ]
