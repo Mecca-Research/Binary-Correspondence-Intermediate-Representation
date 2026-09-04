@@ -4419,7 +4419,167 @@ def test_ci_owns_the_advisory_rail() -> None:
     assert "audit_dependencies.py --require-advisory" in owner
     pins = re.findall(r"pip-audit==(\d+\.\d+\.\d+)\b", owner)
     assert len(pins) == 1, "the owner installs the engine pinned to one exact version"
+    # Two jobs may install the engine, and each must be a job that REQUIRES it: the
+    # inventory owner (--require-advisory) and the installed-environment audit
+    # (--installed, where the engine is always required). Any other install is an
+    # engine nobody's verdict depends on.
     installers = [job for job in jobs if "pip-audit==" in job]
-    assert installers == owners, "the job that installs the engine is the job that requires it"
+    requirers = [job for job in jobs
+                 if "--require-advisory" in job or "audit_dependencies.py --installed" in job]
+    assert installers == requirers, "every job that installs the engine requires it, and only those"
+    assert len({re.findall(r"pip-audit==(\d+\.\d+\.\d+)", job)[0] for job in installers}) == 1, \
+        "one pinned engine version across the jobs that install it"
     audits = [job for job in jobs if "audit_dependencies.py" in job]
-    assert len(audits) >= 2, "the inventory half still runs outside the owner"
+    assert len(audits) >= 3, "the inventory half still runs outside the owner"
+
+
+def test_ci_owns_the_installed_audit() -> None:
+    """The hosted model jobs install torch's CPU wheels from an index that is not
+    PyPI, so that closure exists only where it is installed. Those jobs -- and
+    only those -- install the engine into a scratch venv of their own, hand it
+    to the rail as PIP_AUDIT, and audit the interpreter with --installed,
+    naming the three distributions the audit must find there (L10, L13)."""
+    import re
+    workflow = (_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    jobs = re.split(r"\n  (?=[a-z][a-z0-9-]*:\n)", workflow)
+    owners = [job for job in jobs if "audit_dependencies.py --installed" in job]
+    assert len(owners) == 1, "exactly one job runs the installed-environment audit"
+    owner = owners[0]
+    assert owner.startswith("hosted-model:")
+    assert "pip-audit==2.10.1" in owner, "the engine is pinned where it is installed"
+    assert 'venv.EnvBuilder(with_pip=True).create(root)' in owner, "the engine gets its own environment"
+    assert 'env.write("PIP_AUDIT="' in owner, "the engine is handed to the rail through PIP_AUDIT"
+    for name in ("torch", "safetensors", "numpy"):
+        assert f"--expect {name}" in owner, f"the audit must find {name} in the environment it claims to audit"
+    assert "pip==" in owner, "pip is pinned as part of the audited environment"
+    # the audit runs AFTER the environment is installed and BEFORE the gates use it
+    install = owner.index("Install pinned hosted-model CPU environment")
+    audit = owner.index("audit_dependencies.py --installed")
+    gate = owner.index("Hosted model configuration, checkpoint")
+    assert install < audit < gate
+
+
+
+# --- the installed-environment audit (--installed) ---------------------------------------
+# The enumeration of the interpreter is a seam (`_installed_distributions`) the witnesses
+# replace, and the engine is the bounded runner faked as above: nothing here reads the host.
+
+
+def _installed_engine(seen: dict, vulns: dict | None = None):
+    """A faked engine for --installed runs: audits exactly the pins it is handed and
+    reports the findings `vulns` names (keyed by lower-cased name)."""
+    def engine(cmd, **kwargs):
+        path = Path(cmd[cmd.index("--requirement") + 1])
+        text = path.read_text(encoding="utf-8")
+        seen.update({"cmd": list(cmd), "text": text})
+        entries = []
+        for line in text.splitlines():
+            name, _, version = line.partition("==")
+            entries.append({"name": name, "version": version,
+                            "vulns": (vulns or {}).get(name.lower(), [])})
+        found = any(e["vulns"] for e in entries)
+        return _engine_outcome(_engine_report(*entries), b"", 1 if found else 0)
+    return engine
+
+
+def _audit_installed(distributions, expect, *, engine=None, which="/usr/bin/pip-audit"):
+    from unittest.mock import patch
+    from tools.security import audit_dependencies as deps
+    seen: dict = {}
+    engine = engine or _installed_engine(seen)
+    with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
+            patch.object(deps, "_installed_distributions", return_value=distributions), \
+            patch.object(deps.shutil, "which", return_value=which), \
+            patch.object(deps, "run_bounded", side_effect=engine):
+        return deps.audit_installed(_ROOT, expect), seen
+
+
+_MODEL_LAB = [("torch", "2.13.0+cpu"), ("NumPy", "2.2.6"), ("safetensors", "0.8.0"),
+              ("bcir", "0.2.0"), ("pip", "26.2.1")]
+
+
+def test_installed_mode_audits_the_interpreter_by_exact_public_pin() -> None:
+    """What is installed is audited as it is: every distribution the interpreter
+    sees, canonical name, pinned at its PUBLIC version (`2.13.0+cpu` is a build of
+    the 2.13.0 release, and the advisory database is keyed by release), with no
+    resolver and no scratch environment; the repository's own distribution is
+    excluded (an unrelated project may own that name on PyPI) and reported."""
+    report, seen = _audit_installed(_MODEL_LAB, ["torch", "SafeTensors", "numpy"])
+    assert report["state"] == "PASS"
+    assert report["mode"] == "installed"
+    assert report["installed"] == 4
+    assert report["excluded"] == ["bcir==0.2.0"]
+    assert report["expected"] == ["numpy", "safetensors", "torch"]
+    assert report["missing_expected"] == []
+    assert seen["text"].splitlines() == ["NumPy==2.2.6", "pip==26.2.1", "safetensors==0.8.0", "torch==2.13.0"]
+    assert "--no-deps" in seen["cmd"] and "--disable-pip" in seen["cmd"]
+    advisory = report["advisory"]
+    assert advisory["state"] == "PASS"
+    assert advisory["covered"] == ["numpy", "pip", "safetensors", "torch"]
+    assert advisory["uncovered"] == []
+    assert advisory["runs"]["installed"]["audited"] == 4
+
+
+def test_installed_mode_refuses_an_environment_missing_what_it_claims() -> None:
+    """A job that claims to audit the model-lab closure but runs in an interpreter
+    without torch has audited some other environment: the missing expectation is
+    a FAIL that names it, and the engine still ran over what was there (L2)."""
+    without_torch = [item for item in _MODEL_LAB if item[0] != "torch"]
+    report, seen = _audit_installed(without_torch, ["torch", "numpy"])
+    assert report["state"] == "FAIL"
+    assert report["missing_expected"] == ["torch"]
+    assert "not installed: torch" in report["advisory"]["error"]
+    assert report["advisory"]["runs"]["installed"]["audited"] == 3
+    assert "torch==" not in seen["text"]
+
+
+def test_installed_mode_requires_an_engine() -> None:
+    """An environment audit with no engine is nothing: absent engine, FAIL, with
+    no flag to opt out of it (L2, L10)."""
+    report, _ = _audit_installed(_MODEL_LAB, ["torch"], which=None)
+    assert report["state"] == "FAIL"
+    assert report["installed"] == 4
+    assert "pip-audit" in report["advisory"]["error"]
+    assert "PIP_AUDIT" in report["advisory"]["error"]
+
+
+def test_installed_mode_reconciles_coverage_and_findings() -> None:
+    """Every installed distribution must come back audited (L15), and a finding
+    on any of them fails the audit, tagged with the run that made it."""
+    seen: dict = {}
+
+    def dropping_numpy(cmd, **kwargs):
+        outcome = _installed_engine(seen)(cmd, **kwargs)
+        report = json.loads(outcome["stdout"])
+        report["dependencies"] = [d for d in report["dependencies"] if d["name"] != "NumPy"]
+        outcome["stdout"] = json.dumps(report).encode("utf-8")
+        return outcome
+
+    report, _ = _audit_installed(_MODEL_LAB, ["torch"], engine=dropping_numpy)
+    assert report["state"] == "FAIL"
+    assert report["advisory"]["uncovered"] == ["numpy"]
+    assert "never audited: numpy" in report["advisory"]["error"]
+
+    finding = {"torch": [{"id": "GHSA-test-torch", "fix_versions": ["2.14.0"], "aliases": []}]}
+    report, _ = _audit_installed(_MODEL_LAB, ["torch"], engine=_installed_engine({}, finding))
+    assert report["state"] == "FAIL"
+    assert report["advisory"]["vulnerable"] == [{
+        "run": "installed", "name": "torch", "version": "2.13.0",
+        "vulns": [{"id": "GHSA-test-torch", "aliases": [], "fix_versions": ["2.14.0"]}],
+    }]
+
+
+def test_installed_mode_enumeration_failure_is_a_verdict() -> None:
+    """Broken distribution metadata makes importlib.metadata raise; in a required
+    job that is a structured FAIL with the reason, never a traceback (L1)."""
+    from unittest.mock import patch
+    from tools.security import audit_dependencies as deps
+    with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
+            patch.object(deps, "_installed_distributions", side_effect=RuntimeError("bad METADATA")), \
+            patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"):
+        report = deps.audit_installed(_ROOT, ["torch"])
+        exit_code = deps.main(["--installed", "--expect", "torch"])
+    assert report["state"] == "FAIL"
+    assert "could not enumerate" in report["error"]
+    assert report["advisory"]["state"] == "UNAVAILABLE/SKIPPED"
+    assert exit_code == 1
