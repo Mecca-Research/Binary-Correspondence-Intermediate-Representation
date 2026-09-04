@@ -209,13 +209,25 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
   }
 
   void runOnOperation() override {
-    Operation *root = getOperation();
+    // S0-5 (module scope): every walk of the laws below is anchored at ONE scope -- a
+    // `bcir.module`, the symbol table the laws quantify over -- never at whatever root the
+    // pass was handed. A file carrying several modules (the widened corpus) verifies each
+    // in its own registry; operations outside any module form the one outer scope, so a
+    // module-free file verifies exactly as before. See BCIRPassSupport.h.
+    bool ok = true;
+    forEachScope(getOperation(), [&](Operation *scope) { ok &= verifyScope(scope); });
+    if (!ok)
+      signalPassFailure();
+  }
+
+  // R1-R25 over one scope: `root` is the scope, and `walkScope` never leaves it.
+  bool verifyScope(Operation *root) {
     bool ok = true;
 
     // R1: registry uniqueness -- every RID unique.
     llvm::DenseMap<uint32_t, ResourceOp> rids;
     llvm::DenseMap<StringRef, ResourceOp> resourceByName;
-    root->walk([&](ResourceOp r) {
+    walkScope(root, [&](ResourceOp r) {
       resourceByName[r.getSymName()] = r;
       uint32_t rid = r.getRid();
       if (rids.count(rid)) {
@@ -237,14 +249,14 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         }
       }
     };
-    root->walk([&](ClaimOp c) {
+    walkScope(root, [&](ClaimOp c) {
       checkRefs(c, c.getReads(), "reads");
       checkRefs(c, c.getWrites(), "writes");
     });
 
     // R3: domain legality -- claim domain contracts correspond to registry
     // placement; MMIO writes need an ordered hazard; HAM is illegal on MMIO.
-    root->walk([&](ResourceOp r) {
+    walkScope(root, [&](ResourceOp r) {
       if (r.getAccess() && *r.getAccess() == Access::HAM && r.getDomainKind() == Domain::MMIO) {
         r.emitError("R3: resource ")
             << r.getSymName() << " HAM access is illegal in the MMIO domain";
@@ -259,7 +271,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // the data-redirection / MMIO-as-RAM gap: an isolated resource silently treated
     // as the wrong address space. Such a touch must MATCH the claim's declared domain.
     auto isIsolatedDomain = [](Domain d) { return d == Domain::MMIO || d == Domain::NVM; };
-    root->walk([&](ClaimOp c) {
+    walkScope(root, [&](ClaimOp c) {
       bool anyResolved = false, domainBacked = false;
       // Tighten the FIRST-MATCH weakness: the old check set domainBacked on the FIRST
       // same-domain resource and accepted the claim even when OTHER touched resources
@@ -317,7 +329,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         }
       }
     });
-    root->walk([&](LoadOp l) {
+    walkScope(root, [&](LoadOp l) {
       auto it = resourceByName.find(l.getSrc());
       if (it != resourceByName.end() && it->second.getDomainKind() != l.getDomain()) {
         l.emitError("R3: load domain contract does not match the resource domain of @")
@@ -325,7 +337,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         ok = false;
       }
     });
-    root->walk([&](StoreOp s) {
+    walkScope(root, [&](StoreOp s) {
       auto it = resourceByName.find(s.getDst());
       if (it != resourceByName.end() && it->second.getDomainKind() != s.getDomain()) {
         s.emitError("R3: store domain contract does not match the resource domain of @")
@@ -338,7 +350,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     llvm::DenseMap<StringRef, SmallVector<StringRef, 2>> deps;
     llvm::DenseMap<StringRef, PhaseOp> phaseOps;
     SmallVector<StringRef> phases;
-    root->walk([&](PhaseOp p) {
+    walkScope(root, [&](PhaseOp p) {
       phases.push_back(p.getSymName());
       phaseOps[p.getSymName()] = p;
       for (Attribute a : p.getDeps())
@@ -371,7 +383,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // and same-phase conflicts through the decoupled GGG tail are ordered.
     llvm::DenseMap<StringRef, SmallVector<ClaimOp, 4>> claimsByPhase;
     llvm::DenseMap<StringRef, ClaimOp> claimByName;
-    root->walk([&](ClaimOp c) {
+    walkScope(root, [&](ClaimOp c) {
       claimByName[c.getSymName()] = c;
       claimsByPhase[c.getPhase()].push_back(c);
       StringRef op = c.getOp();
@@ -515,7 +527,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     }
 
     // R6: lane legality -- lane matches the declared access pattern.
-    root->walk([&](ClaimOp c) {
+    walkScope(root, [&](ClaimOp c) {
       if (!laneLegalForStride(c.getLane(), c.getStrideClass())) {
         c.emitError("R6: claim ") << c.getSymName() << " lane illegal for its stride class";
         ok = false;
@@ -538,7 +550,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
       return n;
     };
-    root->walk([&](ClaimOp c) {
+    walkScope(root, [&](ClaimOp c) {
       // §5.12 item 4, dual-railed (previously oracle-only) + the §5.14 Phase 2 extent-provenance
       // signal: a masked (runtime-bounds-checked) access must DECLARE the bounds verify contract
       // -- a promotion the backend would emit without a guard is a silent loss of the check. The
@@ -612,7 +624,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     llvm::DenseMap<StringRef, KBCIRPathOp> pathByName;
     llvm::DenseMap<StringRef, KBCIRPlanOp> planByName;
     llvm::DenseMap<StringRef, KBCIRBudgetOp> budgetByName;
-    root->walk([&](KBCIRPathOp p) {
+    walkScope(root, [&](KBCIRPathOp p) {
       pathByName[p.getSymName()] = p;
       int64_t values[12];
       costToArray(p.getCost(), values);
@@ -624,8 +636,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         }
       }
     });
-    root->walk([&](KBCIRPlanOp p) { planByName[p.getSymName()] = p; });
-    root->walk([&](KBCIRPolicyOp p) {
+    walkScope(root, [&](KBCIRPlanOp p) { planByName[p.getSymName()] = p; });
+    walkScope(root, [&](KBCIRPolicyOp p) {
       auto validateWeights = [&](ArrayRef<int64_t> weights, StringRef which) {
         if (weights.size() != 12 ||
             std::any_of(weights.begin(), weights.end(), [](int64_t value) { return value < 0; })) {
@@ -640,7 +652,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     static const llvm::DenseSet<StringRef> kCostDims = {
         "compute", "memory",      "fabric",   "sync",     "compile",    "thermal",
         "power",   "reliability", "security", "accuracy", "contention", "verification"};
-    root->walk([&](KBCIRBudgetOp b) {
+    walkScope(root, [&](KBCIRBudgetOp b) {
       budgetByName[b.getSymName()] = b;
       if (b.getDims().size() != static_cast<size_t>(b.getCaps().size())) {
         b.emitError("R8: budget ") << b.getSymName() << " dims/caps arity mismatch";
@@ -661,7 +673,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         }
       }
     });
-    root->walk([&](KBCIRSelectOp s) {
+    walkScope(root, [&](KBCIRSelectOp s) {
       if (s.getFrom().empty()) {
         s.emitError("R8: empty candidate set for claim @") << s.getClaim();
         ok = false;
@@ -722,7 +734,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
 
     // R9: the (max,+) scheduled price is consistent with its serial bound --
     // makespan + overlap_gain == serial -- and references a declared plan.
-    root->walk([&](KBCIRScheduledPriceOp sp) {
+    walkScope(root, [&](KBCIRScheduledPriceOp sp) {
       if (!planByName.count(sp.getPlan())) {
         sp.emitError("R9: scheduled price references unknown plan @") << sp.getPlan();
         ok = false;
@@ -742,7 +754,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // R9: the finite-temperature soft select is consistent with its tropical
     // twin -- the Gibbs free energy never exceeds the hard minimum (softmin <=
     // min), and at temperature 0 it recovers it exactly.
-    root->walk([&](KBCIRSoftSelectOp ss) {
+    walkScope(root, [&](KBCIRSoftSelectOp ss) {
       int64_t T = static_cast<int64_t>(ss.getTemperatureMilli());
       int64_t F = static_cast<int64_t>(ss.getFreeEnergy());
       int64_t score = static_cast<int64_t>(ss.getScore());
@@ -764,7 +776,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // R9: the equality-saturation building-blocks engine never raises the
     // selected cost -- a rewrite is legal only if optimized_cost <= original_cost
     // (the bound on the "abundance of unliked pairs"; LangRef Sec. 11).
-    root->walk([&](EGraphExtractOp eg) {
+    walkScope(root, [&](EGraphExtractOp eg) {
       int64_t orig = static_cast<int64_t>(eg.getOriginalCost());
       int64_t opt = static_cast<int64_t>(eg.getOptimizedCost());
       if (orig < 0 || opt < 0 || static_cast<int64_t>(eg.getIterations()) < 0) {
@@ -782,8 +794,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // the Q8 unit by definition, ratios floor at it, the table is
     // generation-tagged, and its target resolves.
     llvm::DenseMap<StringRef, TargetCapabilityOp> capabilityByName;
-    root->walk([&](TargetCapabilityOp t) { capabilityByName[t.getSymName()] = t; });
-    root->walk([&](KBCIRCalibrationOp cal) {
+    walkScope(root, [&](TargetCapabilityOp t) { capabilityByName[t.getSymName()] = t; });
+    walkScope(root, [&](KBCIRCalibrationOp cal) {
       if (!capabilityByName.count(cal.getTarget())) {
         cal.emitError("R8: calibration target @") << cal.getTarget() << " does not resolve";
         ok = false;
@@ -817,8 +829,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // certification state over declared policies; a replay certificate admits
     // only on zero regressions over at least one episode.
     llvm::DenseMap<StringRef, KBCIRPolicyOp> policyByName;
-    root->walk([&](KBCIRPolicyOp p) { policyByName[p.getSymName()] = p; });
-    root->walk([&](KBCIRPortfolioOp pf) {
+    walkScope(root, [&](KBCIRPolicyOp p) { policyByName[p.getSymName()] = p; });
+    walkScope(root, [&](KBCIRPortfolioOp pf) {
       size_t n = pf.getPolicies().size();
       if (n != static_cast<size_t>(pf.getGens().size()) ||
           n != static_cast<size_t>(pf.getCertified().size())) {
@@ -845,7 +857,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           break;
         }
     });
-    root->walk([&](KBCIRReplayCertificateOp rc) {
+    walkScope(root, [&](KBCIRReplayCertificateOp rc) {
       if (!policyByName.count(rc.getCandidate()) || !policyByName.count(rc.getIncumbent())) {
         rc.emitError("R9: replay certificate references an unknown policy");
         ok = false;
@@ -868,11 +880,11 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // (cal_gen >= 1) requires its matching frozen-table certificate; a regret
     // ledger's books must balance. Rule swaps are never silent.
     llvm::DenseSet<StringRef> admittedCandidates;
-    root->walk([&](KBCIRReplayCertificateOp rc) {
+    walkScope(root, [&](KBCIRReplayCertificateOp rc) {
       if (rc.getAdmitted())
         admittedCandidates.insert(rc.getCandidate());
     });
-    root->walk([&](KBCIRPortfolioOp pf) {
+    walkScope(root, [&](KBCIRPortfolioOp pf) {
       ArrayAttr policies = pf.getPolicies();
       ArrayRef<int64_t> gens = pf.getGens();
       for (size_t i = 0; i < policies.size() && i < gens.size(); ++i) {
@@ -885,8 +897,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
     llvm::DenseMap<StringRef, KBCIRCalibrationOp> calibrationByTarget;
-    root->walk([&](KBCIRCalibrationOp cal) { calibrationByTarget[cal.getTarget()] = cal; });
-    root->walk([&](TargetCapabilityOp t) {
+    walkScope(root, [&](KBCIRCalibrationOp cal) { calibrationByTarget[cal.getTarget()] = cal; });
+    walkScope(root, [&](TargetCapabilityOp t) {
       int64_t gen = static_cast<int64_t>(t.getCalGen());
       if (gen < 1)
         return; // seeded constants: nothing to certify
@@ -897,7 +909,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         ok = false;
       }
     });
-    root->walk([&](KBCIRRegretLedgerOp rl) {
+    walkScope(root, [&](KBCIRRegretLedgerOp rl) {
       if (!policyByName.count(rl.getRule())) {
         rl.emitError("R13: regret ledger references unknown rule @") << rl.getRule();
         ok = false;
@@ -931,8 +943,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // replay certificate (zero regressions vs the incumbent classify router). The
     // network proposes a route; the verifier disposes.
     llvm::DenseSet<StringRef> portfolioNames;
-    root->walk([&](KBCIRPortfolioOp pf) { portfolioNames.insert(pf.getSymName()); });
-    root->walk([&](KBCIRMoEGateOp gate) {
+    walkScope(root, [&](KBCIRPortfolioOp pf) { portfolioNames.insert(pf.getSymName()); });
+    walkScope(root, [&](KBCIRMoEGateOp gate) {
       if (!portfolioNames.count(gate.getPortfolio())) {
         gate.emitError("R13: MoE gate routes to unknown portfolio @") << gate.getPortfolio();
         ok = false;
@@ -960,7 +972,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // (kbcir.accel) speeds the exact search but must reproduce the exact optimum.
     // A deployed accelerator carries an equivalence certificate with zero
     // mismatches; ordering changes work, never the result.
-    root->walk([&](KBCIRSearchAccelOp acc) {
+    walkScope(root, [&](KBCIRSearchAccelOp acc) {
       int64_t checked = static_cast<int64_t>(acc.getChecked());
       int64_t mism = static_cast<int64_t>(acc.getMismatches());
       if (checked < 1 || mism < 0) {
@@ -981,7 +993,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // R13: amortization provenance (the L1 cost throttle) -- a deployed learned
     // component must belong at its tier: L0 carries no inference, and elsewhere
     // it pays for itself (gain >= inference_cost) within the tier's budget.
-    root->walk([&](KBCIRAmortizationOp am) {
+    walkScope(root, [&](KBCIRAmortizationOp am) {
       int64_t cost = static_cast<int64_t>(am.getInferenceCost());
       int64_t gain = static_cast<int64_t>(am.getGain());
       int64_t budget = static_cast<int64_t>(am.getBudget());
@@ -1000,7 +1012,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // R13: memory-module admissibility -- a frozen a = Lim(Res(U)) is memory only when it
     // is a *saturated* fixpoint AND generation-tagged (gen >= 1); a budget cutoff or an
     // untagged artifact is not admissible. Mirrors bcir/kbcir/memory.py MemoryModule.admissible.
-    root->walk([&](KBCIRMemoryModuleOp mm) {
+    walkScope(root, [&](KBCIRMemoryModuleOp mm) {
       if (!mm.getSaturated() || mm.getGeneration() < 1) {
         mm.emitError("R13: memory module ")
             << mm.getSymName()
@@ -1016,7 +1028,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // reproduced its recorded score/shape on replay. Manifest equality => the
     // identical plan; a plan that cannot be reproduced from its provenance is not
     // a closed branch.
-    root->walk([&](KBCIRProvenanceManifestOp pm) {
+    walkScope(root, [&](KBCIRProvenanceManifestOp pm) {
       if (static_cast<int64_t>(pm.getScore()) < 0 || static_cast<int64_t>(pm.getNArtifacts()) < 0) {
         pm.emitError("R13: manifest score/n_artifacts out of range");
         ok = false;
@@ -1107,7 +1119,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
 
     // R9: a duration-aware schedule certificate is well-formed -- known mode,
     // non-negative makespan, knee/pipeline >= 1, and a declared plan.
-    root->walk([&](GEMScheduleOp sc) {
+    walkScope(root, [&](GEMScheduleOp sc) {
       StringRef mode = sc.getMode();
       if (mode != "waves" && mode != "eft" && mode != "tokens") {
         sc.emitError("R9: unknown schedule mode '") << mode << "'";
@@ -1128,14 +1140,14 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // prefetches/resources; packs hydrate from a declared plan -- and the v2
     // pipeline/double-buffer contracts are well-formed.
     llvm::DenseMap<StringRef, GEMPrefetchOp> prefetchByName;
-    root->walk([&](GEMPrefetchOp p) {
+    walkScope(root, [&](GEMPrefetchOp p) {
       prefetchByName[p.getSymName()] = p;
       if (p.getBuffers() != 1 && p.getBuffers() != 2) {
         p.emitError("R10: prefetch ") << p.getSymName() << " invalid buffer count (1 or 2)";
         ok = false;
       }
     });
-    root->walk([&](GEMLaneSegmentOp seg) {
+    walkScope(root, [&](GEMLaneSegmentOp seg) {
       if (!claimByName.count(seg.getClaim())) {
         seg.emitError("R10: segment ")
             << seg.getSymName() << " references unknown claim @" << seg.getClaim();
@@ -1200,7 +1212,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // matmul's C += A*B over K-tiles writes the same accumulator from successive same-lane
     // segments) ARE wave-serialized and not flagged, so the pretty corpus stays clean.
     llvm::DenseMap<StringRef, SmallVector<GEMLaneSegmentOp, 8>> segsByPhase;
-    root->walk([&](GEMLaneSegmentOp seg) { segsByPhase[seg.getPhase()].push_back(seg); });
+    walkScope(root, [&](GEMLaneSegmentOp seg) { segsByPhase[seg.getPhase()].push_back(seg); });
     for (auto &entry : segsByPhase) {
       auto &group = entry.second;
       for (size_t i = 0; i < group.size(); ++i) {
@@ -1249,7 +1261,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // placed in L1 must be <= 64 KiB, in L2 <= 4 MiB (static caps; size =
     // product(shape) * 4 B); L3/DRAM/HBM have no cap. First-class here in -bcir-verify
     // (dual-rail with verify.verify_allocator); mirrors kbcir.allocator's capacity gate.
-    root->walk([&](ResourceOp r) {
+    walkScope(root, [&](ResourceOp r) {
       auto pl = r.getPlacement();
       if (!pl)
         return;
@@ -1282,7 +1294,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // (compensated, the residual-carry MAC); any other op truncates at most 1 ULP. So a
     // tight tolerance on a long reduction is the law that FORCES the compensated
     // realization. First-class here in -bcir-verify (dual-rail with verify.verify_accuracy).
-    root->walk([&](ClaimOp c) {
+    walkScope(root, [&](ClaimOp c) {
       auto prec = c.getPrecision(); // std::optional<PrecisionAttr>
       if (!prec)
         return;
@@ -1306,11 +1318,11 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // op family.
     {
       llvm::DenseMap<StringRef, Operation *> funcByName;
-      root->walk([&](KBCIRFuncOp f) { funcByName[f.getSymName()] = f.getOperation(); });
+      walkScope(root, [&](KBCIRFuncOp f) { funcByName[f.getSymName()] = f.getOperation(); });
       // call-graph edges: a func -> the callees of the kbcir.call ops in its body (attributed
       // to the nearest enclosing kbcir.func, so calls inside a kbcir.cond branch still count).
       llvm::DenseMap<StringRef, SmallVector<StringRef>> edges;
-      root->walk([&](KBCIRCallOp c) {
+      walkScope(root, [&](KBCIRCallOp c) {
         StringRef callee = c.getCallee();
         if (!funcByName.count(callee)) {
           c.emitError("R18: call to undefined function @") << callee;
@@ -1360,7 +1372,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // so the writer->clock-domain map (R20) and the freed set (R21) accumulate deterministically.
     {
       SmallVector<ClaimOp> ordered;
-      root->walk([&](ClaimOp c) { ordered.push_back(c); });
+      walkScope(root, [&](ClaimOp c) { ordered.push_back(c); });
       std::sort(ordered.begin(), ordered.end(),
                 [](ClaimOp a, ClaimOp b) { return a.getClaimId() < b.getClaimId(); });
       llvm::DenseMap<StringRef, std::string>
@@ -1472,7 +1484,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
                                    {"riscv64-linux", 8, 8},
                                    {"x86_64-windows", 8, 4},
                                    {"i386-linux", 4, 4}};
-      root->walk([&](AbiContractOp a) {
+      walkScope(root, [&](AbiContractOp a) {
         const DM *hit = nullptr;
         for (const DM &d : kMatrix)
           if (a.getTarget() == d.name)
@@ -1504,7 +1516,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // epilogue (R23). Vacuous for IR with no adjacent gem pair (the non-disturbance invariant).
     // Oracle twins: verify.verify_shape (R22, the gem count seam) + verify.verify_ml_spec
     // (R22/R23, the E3-E6 spec rules).
-    root->walk([&](GEMActivationOp act) {
+    walkScope(root, [&](GEMActivationOp act) {
       Operation *prev = act->getPrevNode();
       if (!prev)
         return;
@@ -1556,7 +1568,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // applied per head, so a d_k mismatch means the rotation straddled head boundaries) and the
     // dtype must hand over (R23). Vacuous for IR with no adjacent pair (non-disturbance).
     // Oracle twin: frontends/models/decode.py (decoder_layer_reference composes exactly this chain).
-    root->walk([&](GEMRMSNormOp rn) {
+    walkScope(root, [&](GEMRMSNormOp rn) {
       Operation *prev = rn->getPrevNode();
       if (!prev)
         return;
@@ -1584,7 +1596,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         }
       }
     });
-    root->walk([&](GEMAttentionOp at2) {
+    walkScope(root, [&](GEMAttentionOp at2) {
       Operation *prev = at2->getPrevNode();
       if (!prev)
         return;
@@ -1610,7 +1622,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // SHARED head geometry (n_kv_heads and d_k -- a cache sized for different heads is exactly
     // the paged-serving lie the seam exists to catch) and the dtype must hand over (R23).
     // Vacuous with no adjacent pair. Oracle twin: decode.py (KVCache feeds the head loop).
-    root->walk([&](GEMGqaAttentionOp gq) {
+    walkScope(root, [&](GEMGqaAttentionOp gq) {
       Operation *prev = gq->getPrevNode();
       if (!prev)
         return;
@@ -1659,7 +1671,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // (the max over banks: a tile the widest bank cannot slice fragments somewhere). A 15x15
     // tile against a 16-native device is runtime fragmentation, refused at compile time.
     // Vacuous with no adjacent pair (non-disturbance). Oracle twin: check_strided_view.
-    root->walk([&](GEMMatmulOp mm) {
+    walkScope(root, [&](GEMMatmulOp mm) {
       Operation *prev = mm->getPrevNode();
       if (!prev)
         return;
@@ -1693,7 +1705,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       regMapGen = std::max(regMapGen, it.second.getMapGen());
       regDataGen = std::max(regDataGen, it.second.getDataGen());
     }
-    root->walk([&](GEMStreamPackOp sp) {
+    walkScope(root, [&](GEMStreamPackOp sp) {
       if (!planByName.count(sp.getSourcePlan())) {
         sp.emitError("R10: stream pack source plan @") << sp.getSourcePlan() << " does not resolve";
         ok = false;
@@ -1723,7 +1735,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // R12: lowering legality -- a lowering contract preserves the BCIR
     // semantic (lane is the contract's own field; bounds/hazard/precision must
     // be named) or carries an explicit discharge attribute.
-    root->walk([&](TargetLowerContractOp lc) {
+    walkScope(root, [&](TargetLowerContractOp lc) {
       StringRef p = lc.getPreserves();
       bool preserved = p.contains("bounds") && p.contains("hazard") && p.contains("precision");
       if (!preserved && !lc->hasAttr("discharge")) {
@@ -1766,7 +1778,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     //
     // Vacuous for IR with no bcir.asn1.* operation (the non-disturbance invariant that
     // R14-R23 also hold to).
-    root->walk([&](Asn1ModuleOp m) {
+    walkScope(root, [&](Asn1ModuleOp m) {
       // The law is CANONICALITY, not "DER". BCIR digests and replays what it emits, so
       // the octets must be a function of the abstract value; otherwise the sender picks
       // the digest by picking a spelling. DER is the X.690 member of that set, and
@@ -1815,7 +1827,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
-    root->walk([&](Asn1TypeOp t) {
+    walkScope(root, [&](Asn1TypeOp t) {
       StringRef kind = t.getKind();
       bool isPrimitive = kind == "primitive";
       bool isOf = kind == "sequence_of" || kind == "set_of";
@@ -1966,7 +1978,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
-    root->walk([&](Asn1EncodeOp e) {
+    walkScope(root, [&](Asn1EncodeOp e) {
       if (!isCanonicalAsn1Rules(e.getRules())) {
         e.emitError("R24: ASN.1 encode ")
             << e.getSymName() << " declares encoding rules " << stringifyAsn1Rules(e.getRules())
@@ -1977,7 +1989,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
-    root->walk([&](Asn1DecodeOp d) {
+    walkScope(root, [&](Asn1DecodeOp d) {
       // Decoding is the permissive half BY DESIGN -- `ber`, `jer` and `oer` here are
       // correct rather than defects, and that is the whole interoperability half of the
       // profile. Only a self-contradicting declaration is a fault.
@@ -2004,7 +2016,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
-    root->walk([&](Asn1TranscodeOp t) {
+    walkScope(root, [&](Asn1TranscodeOp t) {
       // A transcode is the operation the selection harness performs: one abstract value,
       // two transfer syntaxes. Its INPUT may be anything a peer can write -- that is the
       // point of transcoding -- but its OUTPUT is emitted by BCIR and so falls under the
@@ -2041,7 +2053,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
-    root->walk([&](Asn1ProjectionOp p) {
+    walkScope(root, [&](Asn1ProjectionOp p) {
       // A projection that replaced a frozen format would invalidate every digest and
       // provenance manifest taken over the native octets, so the IR refuses to
       // express one at all.
@@ -2064,7 +2076,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // SPECIFICATION, decidable with no value in hand.
     //
     // Vacuous for IR with no bcir.ecn.* operation.
-    root->walk([&](EcnModuleOp m) {
+    walkScope(root, [&](EcnModuleOp m) {
       // 9.5.2: "any set can contain only one encoding object of a given encoding class.
       // Thus there is no ambiguity when an encoding object set is applied to a type."
       // The ambiguity is the point -- two objects for one class do not make a stricter
@@ -2195,7 +2207,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       });
     });
 
-    root->walk([&](EcnParameterizedOp p) {
+    walkScope(root, [&](EcnParameterizedOp p) {
       // Annex C.1 pairs every dummy parameter with the governor its kind requires, and the
       // pairing is a closed table: an encoding class takes none, a value / value set /
       // ordered value list takes an EncodingClassFieldType, an identifier takes a REFERENCE,
@@ -2260,7 +2272,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
-    root->walk([&](EcnStructureOp s) {
+    walkScope(root, [&](EcnStructureOp s) {
       // 16.3.1's NamedField identifies a field within its structure, and every clause 22
       // REFERENCE names one. Two fields with one name make every such reference
       // ambiguous, which is the same family of fault as two components sharing a tag.
@@ -2275,7 +2287,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       });
     });
 
-    root->walk([&](EcnObjectOp o) {
+    walkScope(root, [&](EcnObjectOp o) {
       // 22.2.2.2: "If ALIGNED TO ANY is specified, then the encoding object
       // specification shall include the START-POINTER clause." Nothing else can tell a
       // decoder how many bits an encoder chose to insert.
@@ -2568,7 +2580,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
-    root->walk([&](EcnConditionOp c) {
+    walkScope(root, [&](EcnConditionOp c) {
       // 21.11.5, in both directions: the last three RangeConditions "shall be provided"
       // with a Comparison and an integer comparator, and for the others "these shall not
       // be provided". A comparison on a shape condition tests nothing; a shape on
@@ -2600,8 +2612,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
-    if (!ok)
-      signalPassFailure();
+    return ok;
   }
 };
 

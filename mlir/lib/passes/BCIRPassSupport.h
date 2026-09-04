@@ -12,6 +12,8 @@
 #include "BCIR/BCIROps.h"
 
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/MathExtras.h"
 
@@ -253,6 +255,66 @@ inline Lane canonicalLane(StrideClass sc) {
     return Lane::GGG;
   }
   return Lane::U;
+}
+
+// --- module scope (S0-5) --------------------------------------------------------------------
+//
+// A `bcir.module` is a symbol table (IsolatedFromAbove) and the unit the laws quantify
+// over: registries, phases, paths, plans, policies and capabilities are ITS symbols. A
+// pass that builds its maps with `root->walk(...)` from whatever root it was handed lets
+// one module's claim resolve another module's resource, two modules trip R1 against each
+// other's RIDs, and a selection price a namesake path from the wrong module -- the
+// "MLIR module scope violated" finding of the 2026-07/08 assessment. These two helpers are
+// the ONE predicate every scoped pass shares (laws.md L14): the scopes of a root, and a
+// walk that never leaves its scope.
+
+inline bool isModuleScope(Operation *op) {
+  return op->getName().getStringRef() == "bcir.module";
+}
+
+// Every `bcir.module` at or under `root` is a scope; when the root is not itself a module
+// it is the OUTER scope too, holding whatever lies outside any module -- so a module-free
+// file (the atomic, ASN.1 and artifact fixtures) is one scope and verifies exactly as it
+// always did. Modules first, in walk order, then the outer scope.
+template <typename Fn>
+void forEachScope(Operation *root, Fn &&fn) {
+  SmallVector<Operation *> scopes;
+  root->walk([&](Operation *op) {
+    if (isModuleScope(op))
+      scopes.push_back(op);
+  });
+  if (!isModuleScope(root))
+    scopes.push_back(root);
+  for (Operation *scope : scopes)
+    fn(scope);
+}
+
+namespace detail {
+template <typename OpT>
+void collectScope(Operation *op, SmallVectorImpl<OpT> &out) {
+  for (Region &region : op->getRegions())
+    for (Block &block : region)
+      for (Operation &child : block) {
+        if (isModuleScope(&child))
+          continue; // another module is its own scope, never part of this one
+        collectScope<OpT>(&child, out);
+      }
+  if (auto typed = dyn_cast<OpT>(op))
+    out.push_back(typed);
+}
+} // namespace detail
+
+// `walkScope(scope, [&](SomeOp op) { ... })`: Operation::walk restricted to the scope --
+// post-order like the original, the scope itself included, nested modules skipped. The
+// matches are collected before the callback runs, so a callback that annotates or emits
+// diagnostics never perturbs the traversal.
+template <typename Fn>
+void walkScope(Operation *scope, Fn &&fn) {
+  using OpT = std::decay_t<typename llvm::function_traits<std::decay_t<Fn>>::template arg_t<0>>;
+  SmallVector<OpT> found;
+  detail::collectScope<OpT>(scope, found);
+  for (OpT op : found)
+    fn(op);
 }
 
 } // namespace bcir

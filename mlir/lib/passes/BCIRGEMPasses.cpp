@@ -61,9 +61,15 @@ struct BatchPass : public PassWrapper<BatchPass, OperationPass<>> {
 
   void runOnOperation() override {
     Builder b(&getContext());
+    // S0-5 (module scope): a phase is a module symbol, so batches form inside one
+    // `bcir.module` and batch numbers restart per module. See BCIRPassSupport.h.
+    forEachScope(getOperation(), [&](Operation *scope) { batchScope(scope, b); });
+  }
+
+  void batchScope(Operation *root, Builder &b) {
     // Collect claims per phase, ordered by claim id (deterministic).
     llvm::DenseMap<StringRef, SmallVector<ClaimOp>> byPhase;
-    getOperation()->walk([&](ClaimOp c) { byPhase[c.getPhase()].push_back(c); });
+    walkScope(root, [&](ClaimOp c) { byPhase[c.getPhase()].push_back(c); });
     int64_t nextBatch = 0;
     for (auto &kv : byPhase) {
       SmallVector<ClaimOp> &claims = kv.second;
@@ -97,13 +103,18 @@ struct SchedulePass : public PassWrapper<SchedulePass, OperationPass<>> {
   }
 
   void runOnOperation() override {
-    Operation *root = getOperation();
     Builder b(&getContext());
+    // S0-5 (module scope): phase ids and the execution order are a module's own; a file
+    // of several modules schedules each from 0. See BCIRPassSupport.h.
+    forEachScope(getOperation(), [&](Operation *scope) { scheduleScope(scope, b); });
+  }
+
+  void scheduleScope(Operation *root, Builder &b) {
     llvm::DenseMap<StringRef, int32_t> phaseId;
-    root->walk([&](PhaseOp p) { phaseId[p.getSymName()] = p.getId(); });
+    walkScope(root, [&](PhaseOp p) { phaseId[p.getSymName()] = p.getId(); });
 
     SmallVector<ClaimOp> claims;
-    root->walk([&](ClaimOp c) { claims.push_back(c); });
+    walkScope(root, [&](ClaimOp c) { claims.push_back(c); });
     llvm::sort(claims, [&](ClaimOp a, ClaimOp b) {
       int32_t pa = phaseId.lookup(a.getPhase()), pb = phaseId.lookup(b.getPhase());
       if (pa != pb)
@@ -126,13 +137,20 @@ struct LowerToLLVMPass : public PassWrapper<LowerToLLVMPass, OperationPass<>> {
   }
 
   void runOnOperation() override {
-    Operation *root = getOperation();
     Builder b(&getContext());
     bool ok = true;
-    llvm::DenseMap<StringRef, ClaimOp> claimByName;
-    root->walk([&](ClaimOp c) { claimByName[c.getSymName()] = c; });
+    // S0-5 (module scope): a segment names a claim of ITS module. See BCIRPassSupport.h.
+    forEachScope(getOperation(), [&](Operation *scope) { ok &= lowerScope(scope, b); });
+    if (!ok)
+      signalPassFailure();
+  }
 
-    root->walk([&](GEMLaneSegmentOp seg) {
+  bool lowerScope(Operation *root, Builder &b) {
+    bool ok = true;
+    llvm::DenseMap<StringRef, ClaimOp> claimByName;
+    walkScope(root, [&](ClaimOp c) { claimByName[c.getSymName()] = c; });
+
+    walkScope(root, [&](GEMLaneSegmentOp seg) {
       auto c = claimByName.lookup(seg.getClaim());
       if (!c) {
         seg.emitError("bcir-lower-to-llvm: segment references unknown claim @") << seg.getClaim();
@@ -177,7 +195,7 @@ struct LowerToLLVMPass : public PassWrapper<LowerToLLVMPass, OperationPass<>> {
     // placed in L1 must be <= 64 KiB, in L2 <= 4 MiB (static caps; size =
     // product(shape) * 4 B). Mirrors kbcir.allocator's capacity gate -- the planner
     // may not promote a tensor into an SRAM tier it cannot fit. L3/DRAM/HBM: no cap.
-    root->walk([&](ResourceOp r) {
+    walkScope(root, [&](ResourceOp r) {
       auto pl = r.getPlacement();
       if (!pl)
         return;
@@ -197,8 +215,7 @@ struct LowerToLLVMPass : public PassWrapper<LowerToLLVMPass, OperationPass<>> {
         ok = false;
       }
     });
-    if (!ok)
-      signalPassFailure();
+    return ok;
   }
 };
 
