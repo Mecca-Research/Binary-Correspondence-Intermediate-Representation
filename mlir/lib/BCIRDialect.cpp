@@ -62,30 +62,24 @@ static bool checkedMulNonnegative(int64_t a, int64_t b, int64_t &out) {
   return true;
 }
 
-static bool checkedMul3Nonnegative(int64_t a, int64_t b, int64_t c,
-                                   int64_t &out) {
+static bool checkedMul3Nonnegative(int64_t a, int64_t b, int64_t c, int64_t &out) {
   int64_t first;
-  return checkedMulNonnegative(a, b, first) &&
-         checkedMulNonnegative(first, c, out);
+  return checkedMulNonnegative(a, b, first) && checkedMulNonnegative(first, c, out);
 }
 
-static bool checkedMul4Nonnegative(int64_t a, int64_t b, int64_t c,
-                                   int64_t d, int64_t &out) {
+static bool checkedMul4Nonnegative(int64_t a, int64_t b, int64_t c, int64_t d, int64_t &out) {
   int64_t first;
-  return checkedMul3Nonnegative(a, b, c, first) &&
-         checkedMulNonnegative(first, d, out);
+  return checkedMul3Nonnegative(a, b, c, first) && checkedMulNonnegative(first, d, out);
 }
 
 static bool isLowerHex(::llvm::StringRef value, size_t width) {
   if (value.size() != width)
     return false;
-  return ::llvm::all_of(value, [](char c) {
-    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
-  });
+  return ::llvm::all_of(value,
+                        [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
 }
 
-static bool isCanonicalWireText(::llvm::StringRef value, size_t maximum,
-                                bool required = false) {
+static bool isCanonicalWireText(::llvm::StringRef value, size_t maximum, bool required = false) {
   if ((required && value.empty()) || value.size() > maximum)
     return false;
   if (!value.empty() && (value.front() == ' ' || value.back() == ' '))
@@ -95,9 +89,8 @@ static bool isCanonicalWireText(::llvm::StringRef value, size_t maximum,
 
 static bool isFeatureName(::llvm::StringRef value) {
   return !value.empty() && ::llvm::all_of(value, [](char c) {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-           (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '+' ||
-           c == ':' || c == '-';
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' ||
+           c == '.' || c == '+' || c == ':' || c == '-';
   });
 }
 
@@ -214,7 +207,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   // c.call.libm: edge, which returns float -- so it needs an f32 result, never i32. relu (the exact,
   // 0-ULP integer/Q-fixed-clean activation) may be i32 OR f32.
   if (isTrans && dtype != "f32")
-    return emitOpError() << kind << ": transcendental activation needs f32 (the libm edge returns float), "
+    return emitOpError() << kind
+                         << ": transcendental activation needs f32 (the libm edge returns float), "
                          << "got '" << dtype << "'";
 
   // (5) the softmax axis: a valid last-axis length that divides the tensor and equals the last dim; the
@@ -225,9 +219,11 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
     if (axisLen != last)
       return emitOpError() << "softmax: axis_len " << axisLen << " != last shape dim " << last;
     if (axisLen < 1 || (count % axisLen != 0))
-      return emitOpError() << "softmax: axis_len " << axisLen << " must be >=1 and divide count " << count;
+      return emitOpError() << "softmax: axis_len " << axisLen << " must be >=1 and divide count "
+                           << count;
   } else if (axisLen != 0) {
-    return emitOpError() << kind << ": elementwise activation must declare axis_len 0, got " << axisLen;
+    return emitOpError() << kind << ": elementwise activation must declare axis_len 0, got "
+                         << axisLen;
   }
 
   // width in [1, count]: a lane wider than the tensor is pointless (mirrors _divisor_widths' cap).
@@ -254,8 +250,10 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   int64_t quantBits = static_cast<int64_t>(getQuantBits());
   int64_t wantAcc = quantBits > 0 ? 1 : 0;
   if (accBound != wantAcc)
-    return emitOpError() << kind << ": acc_bound must be " << wantAcc << " (the R17 Q8-bridge bound, "
-                         << (quantBits > 0 ? "1 ULP for a quantized realization" : "0 for a dense one")
+    return emitOpError() << kind << ": acc_bound must be " << wantAcc
+                         << " (the R17 Q8-bridge bound, "
+                         << (quantBits > 0 ? "1 ULP for a quantized realization"
+                                           : "0 for a dense one")
                          << "), got " << accBound;
   return ::mlir::success();
 }
@@ -278,12 +276,11 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   // (1) positive extents.
   if (inC < 1 || inH < 1 || inW < 1 || outC < 1 || kh < 1 || kw < 1)
     return emitOpError() << "conv: in_c/in_h/in_w/out_c/kh/kw must all be >= 1 (got " << inC << "x"
-                         << inH << "x" << inW << ", out_c " << outC << ", kernel " << kh << "x" << kw
-                         << ")";
+                         << inH << "x" << inW << ", out_c " << outC << ", kernel " << kh << "x"
+                         << kw << ")";
   // (1b) the kernel fits the padded input frame.
   int64_t twicePad, paddedH, paddedW;
-  if (!checkedMulNonnegative(2, pad, twicePad) ||
-      !checkedAddNonnegative(inH, twicePad, paddedH) ||
+  if (!checkedMulNonnegative(2, pad, twicePad) || !checkedAddNonnegative(inH, twicePad, paddedH) ||
       !checkedAddNonnegative(inW, twicePad, paddedW))
     return emitOpError() << "conv: padded input extent exceeds signed 64-bit range";
   if (kh > paddedH || kw > paddedW)
@@ -300,7 +297,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
                          << ")";
   if (outH != wantH || outW != wantW)
     return emitOpError() << "conv: declared out " << outH << "x" << outW
-                         << " != the derived floor((in+2*pad-k)/stride)+1 = " << wantH << "x" << wantW;
+                         << " != the derived floor((in+2*pad-k)/stride)+1 = " << wantH << "x"
+                         << wantW;
 
   // (3b) the equivalent im2col gemm dims: gemm_m = out_h*out_w (the output pixels), gemm_n = out_c,
   // gemm_k = in_c*kh*kw (the taps / the reduction). This is what makes a conv a STRUCTURED MATMUL.
@@ -308,13 +306,12 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
           gk = static_cast<int64_t>(getGemmK());
   int64_t wantM, wantK;
   const int64_t wantN = outC;
-  if (!checkedMulNonnegative(outH, outW, wantM) ||
-      !checkedMul3Nonnegative(inC, kh, kw, wantK))
+  if (!checkedMulNonnegative(outH, outW, wantM) || !checkedMul3Nonnegative(inC, kh, kw, wantK))
     return emitOpError() << "conv: derived im2col dimensions exceed signed 64-bit range";
   if (gm != wantM || gn != wantN || gk != wantK)
     return emitOpError() << "conv: declared im2col gemm dims (" << gm << "," << gn << "," << gk
-                         << ") != (out_h*out_w, out_c, in_c*kh*kw) = (" << wantM << "," << wantN << ","
-                         << wantK << ")";
+                         << ") != (out_h*out_w, out_c, in_c*kh*kw) = (" << wantM << "," << wantN
+                         << "," << wantK << ")";
 
   // (2) dtype known + preserved (the op carries a single declared dtype: input == output == spec).
   ::llvm::StringRef dtype = getDtype();
@@ -330,14 +327,15 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   int64_t tm = static_cast<int64_t>(getTileM()), tn = static_cast<int64_t>(getTileN()),
           tk = static_cast<int64_t>(getTileK());
   if (tm < 1 || tm > gm || tn < 1 || tn > gn || tk < 1 || tk > gk)
-    return emitOpError() << "conv: each inner gemm tile must be in [1, gemm dim] (tiles " << tm << "x"
-                         << tn << "x" << tk << " vs gemm dims " << gm << "x" << gn << "x" << gk << ")";
+    return emitOpError() << "conv: each inner gemm tile must be in [1, gemm dim] (tiles " << tm
+                         << "x" << tn << "x" << tk << " vs gemm dims " << gm << "x" << gn << "x"
+                         << gk << ")";
   // the direct stream is the UNTILED gemm (the whole M,N,K) -- it can not block the reduction the way the
   // im2col gemm tile does (mirrors conv.cost_of's direct branch == matmul.cost_of at tile = whole dims).
   if (strat == "direct" && (tm != gm || tn != gn || tk != gk))
-    return emitOpError() << "conv: the direct strategy is the UNTILED gemm -- tile must be the whole "
-                         << gm << "x" << gn << "x" << gk << " (got " << tm << "x" << tn << "x" << tk
-                         << ")";
+    return emitOpError()
+           << "conv: the direct strategy is the UNTILED gemm -- tile must be the whole " << gm
+           << "x" << gn << "x" << gk << " (got " << tm << "x" << tn << "x" << tk << ")";
   ::llvm::StringRef lo = getLoopOrder();
   if (lo != "ijk" && lo != "ikj" && lo != "jik")
     return emitOpError() << "conv: loop_order must be one of ijk|ikj|jik (got '" << lo << "')";
@@ -361,7 +359,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   int64_t wantAcc = quantBits > 0 ? 1 : 0;
   if (accBound != wantAcc)
     return emitOpError() << "conv: acc_bound must be " << wantAcc << " (the R17 Q8-bridge bound, "
-                         << (quantBits > 0 ? "1 ULP for a quantized realization" : "0 for a dense one")
+                         << (quantBits > 0 ? "1 ULP for a quantized realization"
+                                           : "0 for a dense one")
                          << "), got " << accBound;
   return ::mlir::success();
 }
@@ -376,8 +375,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   // (1) positive extents (single head: d_model == d_k; Q/K/V/out are each seq_len x d_k).
   int64_t seq = static_cast<int64_t>(getSeqLen()), dk = static_cast<int64_t>(getDK());
   if (seq < 1 || dk < 1)
-    return emitOpError() << "attention: seq_len and d_k must be >= 1 (got seq_len " << seq << ", d_k "
-                         << dk << ")";
+    return emitOpError() << "attention: seq_len and d_k must be >= 1 (got seq_len " << seq
+                         << ", d_k " << dk << ")";
   int64_t attentionWork;
   if (!checkedMul3Nonnegative(seq, seq, dk, attentionWork))
     return emitOpError() << "attention: seq_len*seq_len*d_k exceeds signed 64-bit range";
@@ -388,8 +387,9 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   if (dtype != "f32" && dtype != "i32")
     return emitOpError() << "attention: dtype '" << dtype << "' is not a known dtype (f32|i32)";
   if (dtype != "f32")
-    return emitOpError() << "attention: contains a softmax (a transcendental; the libm edge returns float), "
-                         << "so it needs f32, got '" << dtype << "'";
+    return emitOpError()
+           << "attention: contains a softmax (a transcendental; the libm edge returns float), "
+           << "so it needs f32, got '" << dtype << "'";
 
   // (3) the DERIVED two gemm dims (the decomposition into two matmuls): the scores Q@K^T gemm is
   // (seq_len, seq_len, d_k) -> the seq x seq score matrix; the context A@V gemm is (seq_len, d_k, seq_len)
@@ -400,50 +400,54 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   int64_t cm = static_cast<int64_t>(getContextM()), cn = static_cast<int64_t>(getContextN()),
           ck = static_cast<int64_t>(getContextK());
   if (sm != seq || sn != seq || sk != dk)
-    return emitOpError() << "attention: declared scores Q@K^T gemm dims (" << sm << "," << sn << "," << sk
-                         << ") != (seq_len, seq_len, d_k) = (" << seq << "," << seq << "," << dk << ")";
+    return emitOpError() << "attention: declared scores Q@K^T gemm dims (" << sm << "," << sn << ","
+                         << sk << ") != (seq_len, seq_len, d_k) = (" << seq << "," << seq << ","
+                         << dk << ")";
   if (cm != seq || cn != dk || ck != seq)
-    return emitOpError() << "attention: declared context A@V gemm dims (" << cm << "," << cn << "," << ck
-                         << ") != (seq_len, d_k, seq_len) = (" << seq << "," << dk << "," << seq << ")";
+    return emitOpError() << "attention: declared context A@V gemm dims (" << cm << "," << cn << ","
+                         << ck << ") != (seq_len, d_k, seq_len) = (" << seq << "," << dk << ","
+                         << seq << ")";
 
   // the realization: each underlying matmul's tile in [1, its gemm dim], with a known loop order (identical
   // to gem.matmul's tile checks, applied to each of the two gemms).
   auto checkTile = [&](const char *which, int64_t tm, int64_t tn, int64_t tk, int64_t M, int64_t N,
                        int64_t K, ::llvm::StringRef lo) -> ::mlir::LogicalResult {
     if (tm < 1 || tm > M || tn < 1 || tn > N || tk < 1 || tk > K)
-      return emitOpError() << "attention: the " << which << " gemm tile must be in [1, gemm dim] (tiles "
-                           << tm << "x" << tn << "x" << tk << " vs gemm dims " << M << "x" << N << "x" << K
-                           << ")";
+      return emitOpError() << "attention: the " << which
+                           << " gemm tile must be in [1, gemm dim] (tiles " << tm << "x" << tn
+                           << "x" << tk << " vs gemm dims " << M << "x" << N << "x" << K << ")";
     if (lo != "ijk" && lo != "ikj" && lo != "jik")
-      return emitOpError() << "attention: the " << which << " gemm loop_order must be one of ijk|ikj|jik "
+      return emitOpError() << "attention: the " << which
+                           << " gemm loop_order must be one of ijk|ikj|jik "
                            << "(got '" << lo << "')";
     return ::mlir::success();
   };
   if (failed(checkTile("scores", static_cast<int64_t>(getScoresTileM()),
-                       static_cast<int64_t>(getScoresTileN()), static_cast<int64_t>(getScoresTileK()),
-                       sm, sn, sk, getScoresLoopOrder())))
+                       static_cast<int64_t>(getScoresTileN()),
+                       static_cast<int64_t>(getScoresTileK()), sm, sn, sk, getScoresLoopOrder())))
     return ::mlir::failure();
   if (failed(checkTile("context", static_cast<int64_t>(getContextTileM()),
-                       static_cast<int64_t>(getContextTileN()), static_cast<int64_t>(getContextTileK()),
-                       cm, cn, ck, getContextLoopOrder())))
+                       static_cast<int64_t>(getContextTileN()),
+                       static_cast<int64_t>(getContextTileK()), cm, cn, ck, getContextLoopOrder())))
     return ::mlir::failure();
 
   // the per-gemm + summed roofline invariants. Each per-gemm bottleneck rides matmul.cost_of (compute/mem
   // non-negative); the attention compute/mem are the SUM of the two priced matmul costs (NO bespoke term);
   // bottleneck == max(compute, mem) (the max,+ step). Mirrors attention.cost_of: c1+c2, m1+m2.
   int64_t sc = static_cast<int64_t>(getScoresCompute()), smm = static_cast<int64_t>(getScoresMem());
-  int64_t cc = static_cast<int64_t>(getContextCompute()), cmm = static_cast<int64_t>(getContextMem());
-  int64_t compute = static_cast<int64_t>(getComputeCost()), mem = static_cast<int64_t>(getMemCost()),
-          bn = static_cast<int64_t>(getBottleneck());
+  int64_t cc = static_cast<int64_t>(getContextCompute()),
+          cmm = static_cast<int64_t>(getContextMem());
+  int64_t compute = static_cast<int64_t>(getComputeCost()),
+          mem = static_cast<int64_t>(getMemCost()), bn = static_cast<int64_t>(getBottleneck());
   if (sc < 0 || smm < 0 || cc < 0 || cmm < 0 || compute < 0 || mem < 0)
     return emitOpError() << "attention: all roofline cost terms must be non-negative";
   int64_t wantCompute, wantMem;
-  if (!checkedAddNonnegative(sc, cc, wantCompute) ||
-      !checkedAddNonnegative(smm, cmm, wantMem))
+  if (!checkedAddNonnegative(sc, cc, wantCompute) || !checkedAddNonnegative(smm, cmm, wantMem))
     return emitOpError() << "attention: summed roofline cost exceeds signed 64-bit range";
   if (compute != wantCompute)
     return emitOpError() << "attention: compute_cost must equal scores_compute + context_compute = "
-                         << wantCompute << " (the SUM of the two priced matmuls; got " << compute << ")";
+                         << wantCompute << " (the SUM of the two priced matmuls; got " << compute
+                         << ")";
   if (mem != wantMem)
     return emitOpError() << "attention: mem_cost must equal scores_mem + context_mem = " << wantMem
                          << " (the SUM of the two priced matmuls; got " << mem << ")";
@@ -459,8 +463,10 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   int64_t quantBits = static_cast<int64_t>(getQuantBits());
   int64_t wantAcc = quantBits > 0 ? 1 : 0;
   if (accBound != wantAcc)
-    return emitOpError() << "attention: acc_bound must be " << wantAcc << " (the R17 Q8-bridge bound, "
-                         << (quantBits > 0 ? "1 ULP for a quantized realization" : "0 for a dense one")
+    return emitOpError() << "attention: acc_bound must be " << wantAcc
+                         << " (the R17 Q8-bridge bound, "
+                         << (quantBits > 0 ? "1 ULP for a quantized realization"
+                                           : "0 for a dense one")
                          << "), got " << accBound;
   return ::mlir::success();
 }
@@ -496,8 +502,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   if (!checkedMulNonnegative(rows, dim, elements))
     return emitOpError() << "rmsnorm: rows*dim exceeds signed 64-bit range";
   if (static_cast<int64_t>(getGammaLen()) != static_cast<int64_t>(getDim()))
-    return emitOpError() << "rmsnorm: gamma has " << getGammaLen() << " entries, want dim = "
-                         << getDim();
+    return emitOpError() << "rmsnorm: gamma has " << getGammaLen()
+                         << " entries, want dim = " << getDim();
   if (getDtype() != "f32")
     return emitOpError() << "rmsnorm: dtype must be f32 (the rms sqrt rides the libm edge), got '"
                          << getDtype() << "'";
@@ -540,8 +546,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
     return emitOpError() << "gqa_attention: seq_len, d_k and n_heads must all be >= 1";
   int64_t nh = static_cast<int64_t>(getNHeads()), nkv = static_cast<int64_t>(getNKvHeads());
   if (nkv < 1 || nkv > nh)
-    return emitOpError() << "gqa_attention: n_kv_heads " << nkv << " must be in [1, n_heads "
-                         << nh << "]";
+    return emitOpError() << "gqa_attention: n_kv_heads " << nkv << " must be in [1, n_heads " << nh
+                         << "]";
   if (nh % nkv != 0)
     return emitOpError() << "gqa_attention: n_heads " << nh << " not divisible by n_kv_heads "
                          << nkv << " (GQA shares whole head groups)";
@@ -551,7 +557,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
     return emitOpError() << "gqa_attention: query/KV element count exceeds signed 64-bit range";
   if (getDtype() != "f32")
     return emitOpError() << "gqa_attention: contains a softmax (a transcendental; the libm edge "
-                            "returns float), so it needs f32, got '" << getDtype() << "'";
+                            "returns float), so it needs f32, got '"
+                         << getDtype() << "'";
   return ::mlir::success();
 }
 
@@ -569,8 +576,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
     return emitOpError() << "kv_cache: capacity and pos must be >= 0";
   if (static_cast<int64_t>(getCapacity()) > 0 &&
       static_cast<int64_t>(getPos()) > static_cast<int64_t>(getCapacity()))
-    return emitOpError() << "kv_cache: pos " << getPos() << " exceeds capacity "
-                         << getCapacity() << " (an over-full cache is the paging lie)";
+    return emitOpError() << "kv_cache: pos " << getPos() << " exceeds capacity " << getCapacity()
+                         << " (an over-full cache is the paging lie)";
   int64_t rowElements;
   if (!checkedMulNonnegative(heads, dk, rowElements))
     return emitOpError() << "kv_cache: per-position element count exceeds signed 64-bit range";
@@ -581,7 +588,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   }
   if (getDtype() != "f32")
     return emitOpError() << "kv_cache: dtype must be f32 (the cached rows are post-RoPE floats), "
-                            "got '" << getDtype() << "'";
+                            "got '"
+                         << getDtype() << "'";
   return ::mlir::success();
 }
 
@@ -596,8 +604,9 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
           count = static_cast<int64_t>(getCount());
   int64_t cl = static_cast<int64_t>(getCacheline()), banks = static_cast<int64_t>(getBanks());
   if (stride < 1 || eb < 1 || count < 1)
-    return emitOpError() << "contention: access shape stride/elem_bytes/count must be >= 1 (got stride "
-                         << stride << ", elem_bytes " << eb << ", count " << count << ")";
+    return emitOpError()
+           << "contention: access shape stride/elem_bytes/count must be >= 1 (got stride " << stride
+           << ", elem_bytes " << eb << ", count " << count << ")";
   if (cl < 1 || banks < 1)
     return emitOpError() << "contention: frozen cacheline/banks must be >= 1 (got cacheline " << cl
                          << ", banks " << banks << ")";
@@ -608,7 +617,7 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   //   contention_q8   = waste + conflict                                 (unit Q8 weights, both x1.0)
   //   contention_cost = (contention_q8 * count) >> 8                     (the per-element Q8 scaled by count)
   const int64_t Q8 = 256;
-  int64_t epl = std::max<int64_t>(1, cl / eb);                    // useful elements per cache line (>= 1)
+  int64_t epl = std::max<int64_t>(1, cl / eb); // useful elements per cache line (>= 1)
   int64_t reach = std::min<int64_t>(std::max<int64_t>(1, stride), epl);
   int64_t wantWaste;
   if (!checkedMulNonnegative(reach - 1, Q8, wantWaste))
@@ -623,16 +632,20 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
 
   int64_t waste = static_cast<int64_t>(getLineWasteQ8()),
           conflict = static_cast<int64_t>(getBankConflictQ8()),
-          cont = static_cast<int64_t>(getContentionQ8()), cost = static_cast<int64_t>(getContentionCost());
+          cont = static_cast<int64_t>(getContentionQ8()),
+          cost = static_cast<int64_t>(getContentionCost());
   if (waste != wantWaste)
-    return emitOpError() << "contention: line_waste_q8 must equal (min(stride, cacheline/elem_bytes) - 1)*256 = "
-                         << wantWaste << " (got " << waste << ")";
+    return emitOpError()
+           << "contention: line_waste_q8 must equal (min(stride, cacheline/elem_bytes) - 1)*256 = "
+           << wantWaste << " (got " << waste << ")";
   if (conflict != wantConflict)
-    return emitOpError() << "contention: bank_conflict_q8 must equal (gcd(stride, banks) - 1)*256 = "
-                         << wantConflict << " (got " << conflict << ")";
+    return emitOpError()
+           << "contention: bank_conflict_q8 must equal (gcd(stride, banks) - 1)*256 = "
+           << wantConflict << " (got " << conflict << ")";
   if (cont != wantCont)
-    return emitOpError() << "contention: contention_q8 must equal line_waste_q8 + bank_conflict_q8 = "
-                         << wantCont << " (got " << cont << ")";
+    return emitOpError()
+           << "contention: contention_q8 must equal line_waste_q8 + bank_conflict_q8 = " << wantCont
+           << " (got " << cont << ")";
   if (cost != wantCost)
     return emitOpError() << "contention: contention_cost must equal (contention_q8 * count) >> 8 = "
                          << wantCost << " (got " << cost << ")";
@@ -649,14 +662,17 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   // (1) the frozen memory geometry the stride-penalty terms price over must be well-formed.
   int64_t fields = static_cast<int64_t>(getFields());
   int64_t cl = static_cast<int64_t>(getCacheline()), eb = static_cast<int64_t>(getElemBytes()),
-          bo = static_cast<int64_t>(getBaseOverhead()), streams = static_cast<int64_t>(getStreams()),
-          vw = static_cast<int64_t>(getVectorWidth()), gp = static_cast<int64_t>(getGatherPenalty());
+          bo = static_cast<int64_t>(getBaseOverhead()),
+          streams = static_cast<int64_t>(getStreams()), vw = static_cast<int64_t>(getVectorWidth()),
+          gp = static_cast<int64_t>(getGatherPenalty());
   if (fields < 1)
-    return emitOpError() << "layout_pivot: fields (record width F) must be >= 1 (got " << fields << ")";
+    return emitOpError() << "layout_pivot: fields (record width F) must be >= 1 (got " << fields
+                         << ")";
   if (cl < 1 || eb < 1 || bo < 1 || streams < 1 || vw < 1 || gp < 1)
-    return emitOpError() << "layout_pivot: frozen geometry cacheline/elem_bytes/base_overhead/streams/"
-                            "vector_width/gather_penalty must be >= 1 (got "
-                         << cl << "/" << eb << "/" << bo << "/" << streams << "/" << vw << "/" << gp << ")";
+    return emitOpError()
+           << "layout_pivot: frozen geometry cacheline/elem_bytes/base_overhead/streams/"
+              "vector_width/gather_penalty must be >= 1 (got "
+           << cl << "/" << eb << "/" << bo << "/" << streams << "/" << vw << "/" << gp << ")";
 
   // (2) recompute the SoA-vs-AoS workload cost through the SAME closed-form stride-penalty MEMORY terms
   //     realize.candidates_for prices every claim by (taking the CHEAPEST candidate's memory axis):
@@ -667,9 +683,10 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   int64_t sfr = static_cast<int64_t>(getSingleFieldRecords()),
           wrr = static_cast<int64_t>(getWholeRecordRecords());
   if (sfr < 0 || wrr < 0)
-    return emitOpError() << "layout_pivot: record counts must be non-negative (got single_field " << sfr
-                         << ", whole_record " << wrr << ")";
-  int64_t sp = std::min<int64_t>(std::max<int64_t>(2, fields), std::max<int64_t>(1, cl / eb)); // STRIDED penalty
+    return emitOpError() << "layout_pivot: record counts must be non-negative (got single_field "
+                         << sfr << ", whole_record " << wrr << ")";
+  int64_t sp = std::min<int64_t>(std::max<int64_t>(2, fields),
+                                 std::max<int64_t>(1, cl / eb)); // STRIDED penalty
   auto unitMem = [&](int64_t n, int64_t &out) -> bool {
     if (n <= 0) {
       out = 0;
@@ -700,8 +717,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   };
   // single-field: UNIT under SoA, STRIDED under AoS; whole-record: STRIDED under SoA, UNIT under AoS.
   int64_t wantSoa, wantAos, sfUnit, sfStrided, wrUnit, wrStrided;
-  if (!unitMem(sfr, sfUnit) || !stridedMem(sfr, sfStrided) ||
-      !unitMem(wrr, wrUnit) || !stridedMem(wrr, wrStrided))
+  if (!unitMem(sfr, sfUnit) || !stridedMem(sfr, sfStrided) || !unitMem(wrr, wrUnit) ||
+      !stridedMem(wrr, wrStrided))
     return emitOpError() << "layout_pivot: derived memory cost exceeds signed 64-bit range";
   if (fields <= 1) {
     // No SoA/AoS distinction (a single-field resource): both costs equal (a clean no-op).
@@ -715,11 +732,13 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   }
   int64_t soa = static_cast<int64_t>(getSoaCost()), aos = static_cast<int64_t>(getAosCost());
   if (soa != wantSoa)
-    return emitOpError() << "layout_pivot: soa_cost must equal the priced SoA workload memory cost = "
-                         << wantSoa << " (got " << soa << ")";
+    return emitOpError()
+           << "layout_pivot: soa_cost must equal the priced SoA workload memory cost = " << wantSoa
+           << " (got " << soa << ")";
   if (aos != wantAos)
-    return emitOpError() << "layout_pivot: aos_cost must equal the priced AoS workload memory cost = "
-                         << wantAos << " (got " << aos << ")";
+    return emitOpError()
+           << "layout_pivot: aos_cost must equal the priced AoS workload memory cost = " << wantAos
+           << " (got " << aos << ")";
 
   // (3) the min,+ layout selection: AoS is adopted ONLY on a STRICT win; ties keep the declared default SoA.
   ::llvm::StringRef layout = getLayout();
@@ -728,8 +747,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   ::llvm::StringRef wantLayout = (aos < soa) ? "aos" : "soa";
   if (layout != wantLayout)
     return emitOpError() << "layout_pivot: layout must be the min-cost choice '" << wantLayout
-                         << "' (ties keep the default soa; soa_cost " << soa << " vs aos_cost " << aos
-                         << "), got '" << layout << "'";
+                         << "' (ties keep the default soa; soa_cost " << soa << " vs aos_cost "
+                         << aos << "), got '" << layout << "'";
 
   // (4) the gain = the declared-layout (SoA) cost minus the chosen-layout cost (>= 0; pure addressing).
   int64_t chosen = (layout == "aos") ? aos : soa;
@@ -773,8 +792,9 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   const bool isExact = (kind == "relu");
   const bool isFusibleTrans = (kind == "sigmoid" || kind == "tanh" || kind == "gelu");
   if (kind == "softmax")
-    return emitOpError() << "softmax is non-fusible (a last-axis row reduction needs the whole row "
-                         << "before any output element is final, so it can not be an inline epilogue)";
+    return emitOpError()
+           << "softmax is non-fusible (a last-axis row reduction needs the whole row "
+           << "before any output element is final, so it can not be an inline epilogue)";
   if (!isExact && !isFusibleTrans)
     return emitOpError() << "unknown fusible activation kind '" << kind
                          << "' (expected relu|sigmoid|tanh|gelu)";
@@ -786,7 +806,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   if (dtype != "f32" && dtype != "i32")
     return emitOpError() << kind << ": dtype '" << dtype << "' is not a known dtype (f32|i32)";
   if (isFusibleTrans && dtype != "f32")
-    return emitOpError() << kind << ": transcendental activation needs f32 (the libm edge returns float), "
+    return emitOpError() << kind
+                         << ": transcendental activation needs f32 (the libm edge returns float), "
                          << "got '" << dtype << "'";
 
   // (D) the deforestation-priced fusion DECISION (the FusionCertificate invariant): the fusion was
@@ -832,24 +853,27 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   if (static_cast<int64_t>(arities.size()) != nNodes ||
       static_cast<int64_t>(argBase.size()) != nNodes ||
       static_cast<int64_t>(consts.size()) != nNodes)
-    return emitOpError() << "autodiff: opcodes/arities/arg_base/consts must be parallel per-node arrays "
-                         << "of equal length " << nNodes << " (got arities " << arities.size()
-                         << ", arg_base " << argBase.size() << ", consts " << consts.size() << ")";
+    return emitOpError()
+           << "autodiff: opcodes/arities/arg_base/consts must be parallel per-node arrays "
+           << "of equal length " << nNodes << " (got arities " << arities.size() << ", arg_base "
+           << argBase.size() << ", consts " << consts.size() << ")";
   if (nNodes < 1)
-    return emitOpError() << "autodiff: the DAG must have at least one node (got an empty opcodes array)";
+    return emitOpError()
+           << "autodiff: the DAG must have at least one node (got an empty opcodes array)";
   if (nInputs < 0)
     return emitOpError() << "autodiff: n_inputs must be non-negative (got " << nInputs << ")";
 
   // _ARITY for the fixed-arity ops (index = opcode); dot (7) is variadic and handled separately. -1 marks
   // the variadic / out-of-range slot. Mirrors autodiff._ARITY exactly.
-  static const int64_t kArity[15] = {/*const*/ 0, /*var*/ 0, /*neg*/ 1, /*add*/ 2,
-                                     /*sub*/ 2, /*mul*/ 2, /*div*/ 2, /*dot*/ -1,
+  static const int64_t kArity[15] = {/*const*/ 0,  /*var*/ 0, /*neg*/ 1, /*add*/ 2,
+                                     /*sub*/ 2,    /*mul*/ 2, /*div*/ 2, /*dot*/ -1,
                                      /*select*/ 3, /*exp*/ 1, /*log*/ 1, /*sqrt*/ 1,
-                                     /*tanh*/ 1, /*sin*/ 1, /*cos*/ 1};
-  static const char *kName[15] = {"const", "var", "neg", "add", "sub", "mul", "div",
-                                  "dot", "select", "exp", "log", "sqrt", "tanh", "sin", "cos"};
+                                     /*tanh*/ 1,   /*sin*/ 1, /*cos*/ 1};
+  static const char *kName[15] = {"const",  "var", "neg", "add",  "sub",  "mul", "div", "dot",
+                                  "select", "exp", "log", "sqrt", "tanh", "sin", "cos"};
 
-  int64_t expectedBase = 0;   // the running prefix-sum of arities: arg_base[i] must equal it (see (3a')).
+  int64_t expectedBase =
+      0; // the running prefix-sum of arities: arg_base[i] must equal it (see (3a')).
   for (int64_t i = 0; i < nNodes; ++i) {
     int64_t op = opcodes[i];
     // (1) CLOSED VOCABULARY: a code outside [0, 14] is a FOREIGN opcode.
@@ -859,18 +883,19 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
                               "exp,log,sqrt,tanh,sin,cos} (codes 0..14)";
     int64_t arity = arities[i];
     if (arity < 0)
-      return emitOpError() << "autodiff: node " << i << " (" << kName[op] << ") arity must be non-negative (got "
-                           << arity << ")";
+      return emitOpError() << "autodiff: node " << i << " (" << kName[op]
+                           << ") arity must be non-negative (got " << arity << ")";
 
     // (2) ARITY: each node's operand count matches _ARITY for its op (mirrors autodiff._ARITY). dot is variadic
     // (an even 2k operands -- k u-ids then k v-ids, per Tape.dot), so only its parity/positivity is fixed.
     if (op == 7) { // dot
       if (arity < 2 || (arity % 2) != 0)
-        return emitOpError() << "autodiff: node " << i << " (dot) is variadic and must have an even arity >= 2 "
+        return emitOpError() << "autodiff: node " << i
+                             << " (dot) is variadic and must have an even arity >= 2 "
                              << "(2k operands: k u-ids then k v-ids), got " << arity;
     } else if (arity != kArity[op]) {
-      return emitOpError() << "autodiff: node " << i << " (" << kName[op] << ") arity must be " << kArity[op]
-                           << " (mirrors autodiff._ARITY), got " << arity;
+      return emitOpError() << "autodiff: node " << i << " (" << kName[op] << ") arity must be "
+                           << kArity[op] << " (mirrors autodiff._ARITY), got " << arity;
     }
 
     // (4b) per-node leaf/non-leaf payload consistency: a `const` carries an integer value, a `var` carries an
@@ -881,10 +906,12 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
       if (payload < 0 || payload >= nInputs)
         return emitOpError() << "autodiff: node " << i << " (var) input slot " << payload
                              << " must be in [0, n_inputs " << nInputs << ")";
-    } else if (op != 0) { // a non-leaf op (not const, not var) carries no payload -> the -1 sentinel.
+    } else if (op !=
+               0) { // a non-leaf op (not const, not var) carries no payload -> the -1 sentinel.
       if (payload != -1)
         return emitOpError() << "autodiff: node " << i << " (" << kName[op]
-                             << ") is a non-leaf op and must carry the -1 const sentinel, got " << payload;
+                             << ") is a non-leaf op and must carry the -1 const sentinel, got "
+                             << payload;
     }
 
     // (3a) DAG / INDEX BOUNDS: this node's operands are args[arg_base[i] : arg_base[i]+arity], and EVERY operand
@@ -899,22 +926,24 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
     // redundant-but-harmless, and ensures EVERY args entry lands in exactly one bounds-checked slice.)
     int64_t base = argBase[i];
     if (base != expectedBase)
-      return emitOpError() << "autodiff: node " << i << " arg_base " << base
-                           << " must equal the running prefix-sum of arities " << expectedBase
-                           << " (the per-node operand slices must contiguously partition args -- no "
-                              "overlap, no gap)";
+      return emitOpError()
+             << "autodiff: node " << i << " arg_base " << base
+             << " must equal the running prefix-sum of arities " << expectedBase
+             << " (the per-node operand slices must contiguously partition args -- no "
+                "overlap, no gap)";
     int64_t end;
-    if (!checkedAddNonnegative(base, arity, end) ||
-        end > static_cast<int64_t>(args.size()))
+    if (!checkedAddNonnegative(base, arity, end) || end > static_cast<int64_t>(args.size()))
       return emitOpError() << "autodiff: node " << i << " arg_base " << base << " + arity " << arity
-                           << " is out of range of the flat args array (size " << args.size() << ")";
+                           << " is out of range of the flat args array (size " << args.size()
+                           << ")";
     expectedBase = end;
     for (int64_t a = 0; a < arity; ++a) {
       int64_t operand = args[base + a];
       if (operand < 0 || operand >= i)
-        return emitOpError() << "autodiff: node " << i << " (" << kName[op] << ") operand #" << a << " = "
-                             << operand << " must reference a strictly earlier node (in [0, " << i
-                             << ")) -- forward/out-of-range refs break acyclicity/topological order";
+        return emitOpError()
+               << "autodiff: node " << i << " (" << kName[op] << ") operand #" << a << " = "
+               << operand << " must reference a strictly earlier node (in [0, " << i
+               << ")) -- forward/out-of-range refs break acyclicity/topological order";
     }
   }
 
@@ -924,13 +953,13 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
     if (!checkedAddNonnegative(totalArity, a, totalArity))
       return emitOpError() << "autodiff: sum(arities) exceeds signed 64-bit range";
   if (totalArity != static_cast<int64_t>(args.size()))
-    return emitOpError() << "autodiff: the flat args array must hold exactly sum(arities) = " << totalArity
-                         << " operands (got " << args.size() << ")";
+    return emitOpError() << "autodiff: the flat args array must hold exactly sum(arities) = "
+                         << totalArity << " operands (got " << args.size() << ")";
 
   // (3c) the output node index must be a valid node.
   if (output < 0 || output >= nNodes)
-    return emitOpError() << "autodiff: output node index " << output << " must be in [0, node_count " << nNodes
-                         << ")";
+    return emitOpError() << "autodiff: output node index " << output
+                         << " must be in [0, node_count " << nNodes << ")";
   return ::mlir::success();
 }
 
@@ -939,8 +968,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   // rank-2 f32 memrefs with STATIC shapes, the contraction dims to agree (A.dim1==B.dim0 = K,
   // A.dim0==C.dim0 = M, B.dim1==C.dim1 = N), each tile extent in [1, its dim], and a known
   // loop order. M/N/K are derived from the static shapes, not duplicated as attributes.
-  auto checkMemref = [&](::mlir::Value v, const char *name)
-      -> ::mlir::FailureOr<::mlir::MemRefType> {
+  auto checkMemref = [&](::mlir::Value v,
+                         const char *name) -> ::mlir::FailureOr<::mlir::MemRefType> {
     auto mr = ::mlir::dyn_cast<::mlir::MemRefType>(v.getType());
     if (!mr)
       return emitOpError() << name << " must be a memref (got " << v.getType() << ")";
@@ -990,35 +1019,42 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
 
 ::mlir::LogicalResult ArtifactVariantOp::verify() {
   static const ::llvm::StringMap<::llvm::StringRef> kindFormats = {
-      {"stream_pack", "stream_pack"}, {"elf_object", "elf"},
-      {"elf_shared", "elf"},          {"coff_object", "coff"},
-      {"macho_object", "macho"},      {"archive", "archive"},
-      {"wasm", "wasm"},               {"llvm_bitcode", "llvm_bitcode"},
-      {"llvm_ir", "text"},            {"ptx", "text"},
-      {"cubin", "elf"},               {"spirv", "spirv"},
-      {"jvm_class", "jvm_class"},     {"cil", "text"},
-      {"c_source", "text"},           {"cpp_source", "text"},
-      {"sycl_source", "text"},        {"assembly", "text"},
-      {"elf_executable", "elf"},      {"pe_executable", "pe"},
-      {"pe_shared", "pe"},            {"macho_executable", "macho"},
-      {"macho_shared", "macho"},      {"raw_binary", "raw"},
+      {"stream_pack", "stream_pack"},
+      {"elf_object", "elf"},
+      {"elf_shared", "elf"},
+      {"coff_object", "coff"},
+      {"macho_object", "macho"},
+      {"archive", "archive"},
+      {"wasm", "wasm"},
+      {"llvm_bitcode", "llvm_bitcode"},
+      {"llvm_ir", "text"},
+      {"ptx", "text"},
+      {"cubin", "elf"},
+      {"spirv", "spirv"},
+      {"jvm_class", "jvm_class"},
+      {"cil", "text"},
+      {"c_source", "text"},
+      {"cpp_source", "text"},
+      {"sycl_source", "text"},
+      {"assembly", "text"},
+      {"elf_executable", "elf"},
+      {"pe_executable", "pe"},
+      {"pe_shared", "pe"},
+      {"macho_executable", "macho"},
+      {"macho_shared", "macho"},
+      {"raw_binary", "raw"},
   };
   auto found = kindFormats.find(getKind());
   if (found == kindFormats.end())
     return emitOpError() << "unknown artifact kind '" << getKind() << "'";
   if (found->second != getFormat())
-    return emitOpError() << "artifact kind '" << getKind() << "' requires format '"
-                         << found->second << "' (got '" << getFormat() << "')";
-  if (!isCanonicalWireText(getSymName(), 47, true) ||
-      !isCanonicalWireText(getTriple(), 47) ||
-      !isCanonicalWireText(getArchitecture(), 23) ||
-      !isCanonicalWireText(getOsAbi(), 23) ||
-      !isCanonicalWireText(getChannel(), 23) ||
-      !isCanonicalWireText(getEntrySymbol(), 31))
-    return emitOpError()
-           << "variant ID or target strings exceed BCAB printable-ASCII wire limits";
-  if (getEndianness() != "neutral" && getEndianness() != "little" &&
-      getEndianness() != "big")
+    return emitOpError() << "artifact kind '" << getKind() << "' requires format '" << found->second
+                         << "' (got '" << getFormat() << "')";
+  if (!isCanonicalWireText(getSymName(), 47, true) || !isCanonicalWireText(getTriple(), 47) ||
+      !isCanonicalWireText(getArchitecture(), 23) || !isCanonicalWireText(getOsAbi(), 23) ||
+      !isCanonicalWireText(getChannel(), 23) || !isCanonicalWireText(getEntrySymbol(), 31))
+    return emitOpError() << "variant ID or target strings exceed BCAB printable-ASCII wire limits";
+  if (getEndianness() != "neutral" && getEndianness() != "little" && getEndianness() != "big")
     return emitOpError() << "endianness must be neutral|little|big";
   auto signedAttr = [&](::llvm::StringRef name) {
     return (*this)->getAttrOfType<::mlir::IntegerAttr>(name).getInt();
@@ -1029,28 +1065,25 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
           calGen = signedAttr("cal_gen");
   if (bits != 0 && bits != 32 && bits != 64)
     return emitOpError() << "pointer_bits must be 0, 32, or 64";
-  if (machine < 0 || machine > 0xffffffffLL || offset < 0 || size <= 0 ||
-      crc < 0 || crc > 0xffffffffLL || calGen < 0)
+  if (machine < 0 || machine > 0xffffffffLL || offset < 0 || size <= 0 || crc < 0 ||
+      crc > 0xffffffffLL || calGen < 0)
     return emitOpError() << "machine and payload_crc32 must be u32 values, "
                             "offset/cal_gen non-negative, and payload_size positive";
   if ((offset & 7) != 0)
     return emitOpError() << "payload_offset must be eight-byte aligned";
   if (flags < 0 || (flags & ~0xfLL) != 0)
     return emitOpError() << "artifact flags contain an unknown bit";
-  const bool native = getFormat() == "elf" || getFormat() == "coff" ||
-                      getFormat() == "macho" || getFormat() == "pe";
+  const bool native = getFormat() == "elf" || getFormat() == "coff" || getFormat() == "macho" ||
+                      getFormat() == "pe";
   if (native && (bits == 0 || getEndianness() == "neutral" || machine == 0))
-    return emitOpError()
-           << "native object metadata requires pointer_bits, endianness, and machine";
-  const bool namedExecutable = getKind() == "elf_executable" ||
-                               getKind() == "pe_executable" ||
+    return emitOpError() << "native object metadata requires pointer_bits, endianness, and machine";
+  const bool namedExecutable = getKind() == "elf_executable" || getKind() == "pe_executable" ||
                                getKind() == "macho_executable";
   if (namedExecutable && (flags & 0x2LL) == 0)
     return emitOpError() << "named executable artifact kinds require the executable flag";
   if (!isLowerHex(getPayloadSha256(), 64))
     return emitOpError() << "payload_sha256 must be 64 lowercase hexadecimal digits";
-  auto provenance =
-      (*this)->getAttrOfType<::mlir::StringAttr>("provenance_digest");
+  auto provenance = (*this)->getAttrOfType<::mlir::StringAttr>("provenance_digest");
   if (!provenance || !isLowerHex(provenance.getValue(), 16))
     return emitOpError() << "provenance_digest must be 16 lowercase hexadecimal digits";
   if (!getTargetManifestSha256().empty() && !isLowerHex(getTargetManifestSha256(), 64))
@@ -1074,9 +1107,9 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   if (signedAttr("version") != 1)
     return emitOpError() << "only BCAB version 1 is supported";
   if (signedAttr("generation") < 0 || signedAttr("wire_bytes") < 128 ||
-      signedAttr("wire_bytes") > (1LL << 30) ||
-      signedAttr("body_crc32") < 0 || signedAttr("body_crc32") > 0xffffffffLL ||
-      signedAttr("header_crc32") < 0 || signedAttr("header_crc32") > 0xffffffffLL)
+      signedAttr("wire_bytes") > (1LL << 30) || signedAttr("body_crc32") < 0 ||
+      signedAttr("body_crc32") > 0xffffffffLL || signedAttr("header_crc32") < 0 ||
+      signedAttr("header_crc32") > 0xffffffffLL)
     return emitOpError() << "generation/size/CRC fields are outside BCAB v1 ranges";
   if (!isLowerHex(getProvenanceDigest(), 16))
     return emitOpError() << "provenance_digest must be 16 lowercase hexadecimal digits";
@@ -1107,13 +1140,10 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
       return emitOpError() << "variant symbols must be strictly sorted";
     previous = identifier;
     identifiers.insert(identifier);
-    int64_t offset =
-        variant->getAttrOfType<::mlir::IntegerAttr>("payload_offset").getInt();
-    int64_t size =
-        variant->getAttrOfType<::mlir::IntegerAttr>("payload_size").getInt();
+    int64_t offset = variant->getAttrOfType<::mlir::IntegerAttr>("payload_offset").getInt();
+    int64_t size = variant->getAttrOfType<::mlir::IntegerAttr>("payload_size").getInt();
     int64_t expectedOffset;
-    if (!align8Checked(previousEnd, expectedOffset) ||
-        offset != expectedOffset ||
+    if (!align8Checked(previousEnd, expectedOffset) || offset != expectedOffset ||
         size > std::numeric_limits<int64_t>::max() - offset)
       return emitOpError() << "variant '" << identifier
                            << "' has non-canonical or overflowing payload geometry";
@@ -1137,11 +1167,9 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
       auto variant = ::mlir::cast<ArtifactVariantOp>(operation);
       if (variant.getSymName() != getDefaultVariant())
         continue;
-      int64_t flags =
-          variant->getAttrOfType<::mlir::IntegerAttr>("flags").getInt();
+      int64_t flags = variant->getAttrOfType<::mlir::IntegerAttr>("flags").getInt();
       if ((flags & 0x2LL) != 0 && (flags & 0x1LL) == 0)
-        return emitOpError()
-               << "executable default_variant must carry R12 attestation";
+        return emitOpError() << "executable default_variant must carry R12 attestation";
     }
   }
   int64_t canonicalWireBytes;
@@ -1162,18 +1190,15 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
     return emitOpError() << "envelope_sha256 must be 64 lowercase hexadecimal digits";
   if ((*this)->getAttrOfType<::mlir::IntegerAttr>("generation").getInt() < 0)
     return emitOpError() << "generation must be non-negative";
-  auto bundle = ::mlir::SymbolTable::lookupNearestSymbolFrom<ArtifactBundleOp>(
-      getOperation(), getBundleAttr());
+  auto bundle = ::mlir::SymbolTable::lookupNearestSymbolFrom<ArtifactBundleOp>(getOperation(),
+                                                                               getBundleAttr());
   if (!bundle)
     return emitOpError() << "bundle symbol '" << getBundle()
                          << "' does not resolve to bcir.artifact.bundle";
-  int64_t selectionGeneration =
-      (*this)->getAttrOfType<::mlir::IntegerAttr>("generation").getInt();
-  int64_t bundleGeneration =
-      bundle->getAttrOfType<::mlir::IntegerAttr>("generation").getInt();
+  int64_t selectionGeneration = (*this)->getAttrOfType<::mlir::IntegerAttr>("generation").getInt();
+  int64_t bundleGeneration = bundle->getAttrOfType<::mlir::IntegerAttr>("generation").getInt();
   if (selectionGeneration != bundleGeneration)
-    return emitOpError() << "generation does not match bundle generation "
-                         << bundleGeneration;
+    return emitOpError() << "generation does not match bundle generation " << bundleGeneration;
   bool found = false;
   for (::mlir::Operation &operation : bundle.getBody().front()) {
     auto candidate = ::mlir::cast<ArtifactVariantOp>(operation);
@@ -1183,8 +1208,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
     }
   }
   if (!found)
-    return emitOpError() << "variant '" << getVariant()
-                         << "' is not present in bundle '" << getBundle() << "'";
+    return emitOpError() << "variant '" << getVariant() << "' is not present in bundle '"
+                         << getBundle() << "'";
   return ::mlir::success();
 }
 
@@ -1227,26 +1252,20 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
       signedAttr("gather_penalty", static_cast<int64_t>(getGatherPenalty()));
   const int64_t affinityDomains =
       signedAttr("affinity_domains", static_cast<int64_t>(getAffinityDomains()));
-  const int64_t memChannels =
-      signedAttr("mem_channels", static_cast<int64_t>(getMemChannels()));
+  const int64_t memChannels = signedAttr("mem_channels", static_cast<int64_t>(getMemChannels()));
   const int64_t memUnit = signedAttr("mem_unit", static_cast<int64_t>(getMemUnit()));
-  const int64_t baseOverhead =
-      signedAttr("base_overhead", static_cast<int64_t>(getBaseOverhead()));
+  const int64_t baseOverhead = signedAttr("base_overhead", static_cast<int64_t>(getBaseOverhead()));
   const int64_t thermalDensity =
       signedAttr("thermal_density", static_cast<int64_t>(getThermalDensity()));
-  const int64_t powerDensity =
-      signedAttr("power_density", static_cast<int64_t>(getPowerDensity()));
-  const int64_t perOpHeat =
-      signedAttr("per_op_heat", static_cast<int64_t>(getPerOpHeat()));
-  const int64_t elemBytes =
-      signedAttr("elem_bytes", static_cast<int64_t>(getElemBytes()));
+  const int64_t powerDensity = signedAttr("power_density", static_cast<int64_t>(getPowerDensity()));
+  const int64_t perOpHeat = signedAttr("per_op_heat", static_cast<int64_t>(getPerOpHeat()));
+  const int64_t elemBytes = signedAttr("elem_bytes", static_cast<int64_t>(getElemBytes()));
   const int64_t calGen = signedAttr("cal_gen", static_cast<int64_t>(getCalGen()));
 
-  if (warp < 0 || gatherPenalty < 0 || baseOverhead < 0 ||
-      thermalDensity < 0 || powerDensity < 0 || perOpHeat < 0 || calGen < 0)
-    return emitOpError()
-           << "warp, gather_penalty, base_overhead, thermal_density, power_density, "
-              "per_op_heat, and cal_gen must be non-negative";
+  if (warp < 0 || gatherPenalty < 0 || baseOverhead < 0 || thermalDensity < 0 || powerDensity < 0 ||
+      perOpHeat < 0 || calGen < 0)
+    return emitOpError() << "warp, gather_penalty, base_overhead, thermal_density, power_density, "
+                            "per_op_heat, and cal_gen must be non-negative";
   if (affinityDomains <= 0 || memChannels <= 0 || memUnit <= 0 || elemBytes <= 0)
     return emitOpError()
            << "affinity_domains, mem_channels, mem_unit, and elem_bytes must be positive";
@@ -1266,12 +1285,12 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   int64_t nArgs = static_cast<int64_t>(getArgs().size());
   int64_t nResults = static_cast<int64_t>(getResults().size());
   if (nArgs != nOut + nIn)
-    return emitOpError() << "args count " << nArgs << " must equal out_constraints + in_constraints = "
-                         << nOut << " + " << nIn << " = " << (nOut + nIn)
-                         << " (operands are outputs-then-inputs)";
+    return emitOpError() << "args count " << nArgs
+                         << " must equal out_constraints + in_constraints = " << nOut << " + "
+                         << nIn << " = " << (nOut + nIn) << " (operands are outputs-then-inputs)";
   if (nResults != nOut)
-    return emitOpError() << "results count " << nResults << " must equal out_constraints count " << nOut
-                         << " (one result per output constraint)";
+    return emitOpError() << "results count " << nResults << " must equal out_constraints count "
+                         << nOut << " (one result per output constraint)";
   // Each output constraint must itself be an output constraint -- LLVM write-only '=' or read-write '+'.
   // Without this, a stray non-output spelling (e.g. "r") still satisfies the count checks and lowers to a
   // result-returning llvm.inline_asm whose constraint string carries no '=' output: structurally-invalid
@@ -1281,7 +1300,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
     ::llvm::StringRef c = ::mlir::cast<::mlir::StringAttr>(outs[i]).getValue();
     if (c.empty() || (c.front() != '=' && c.front() != '+'))
       return emitOpError() << "out_constraints[" << i
-                           << "] must be an output constraint beginning with '=' or '+' (got '" << c << "')";
+                           << "] must be an output constraint beginning with '=' or '+' (got '" << c
+                           << "')";
   }
   return ::mlir::success();
 }
@@ -1307,12 +1327,13 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
     // out{b,w,l}(value, port): TWO operands (value, then port -- the Linux out(value,port) order),
     // ZERO results (a void write).
     if (nArgs != 2)
-      return emitOpError() << "an 'out' port write takes exactly 2 operands (value, then port -- the "
-                              "Linux out(value, port) order), got "
-                           << nArgs;
+      return emitOpError()
+             << "an 'out' port write takes exactly 2 operands (value, then port -- the "
+                "Linux out(value, port) order), got "
+             << nArgs;
     if (nResults != 0)
-      return emitOpError() << "an 'out' port write produces no result (a void write), got " << nResults
-                           << " results";
+      return emitOpError() << "an 'out' port write produces no result (a void write), got "
+                           << nResults << " results";
   }
 
   // (optional, kept simple) the read value's / written value's integer width must match the op width
@@ -1325,7 +1346,8 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
       return emitOpError() << "the port value type must be the i" << width
                            << " matching the op width (got " << valueTy << ")";
   } else {
-    return emitOpError() << "the port value must be an integer i" << width << " (got " << valueTy << ")";
+    return emitOpError() << "the port value must be an integer i" << width << " (got " << valueTy
+                         << ")";
   }
   ::mlir::Type portTy =
       (getDirection() == PortDir::In) ? getArgs()[0].getType() : getArgs()[1].getType();
@@ -1336,9 +1358,10 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   // gap the bcir.asm out-constraint check closes.
   auto portIntTy = ::mlir::dyn_cast<::mlir::IntegerType>(portTy);
   if (!portIntTy || portIntTy.getWidth() != 16)
-    return emitOpError() << "the I/O port operand must be an i16 (the 16-bit dx / Nd port; x86 in/out "
-                            "address the port via dx, got "
-                         << portTy << ")";
+    return emitOpError()
+           << "the I/O port operand must be an i16 (the 16-bit dx / Nd port; x86 in/out "
+              "address the port via dx, got "
+           << portTy << ")";
   return ::mlir::success();
 }
 
@@ -1348,11 +1371,11 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
 // ADDRESS must be at least pointer-width (>= 32 bits) so a too-narrow address is not silently zero-extended
 // into the device pointer by the inttoptr lowering. (Mirrors the operand-discipline PortioOp::verify
 // applies to its port; an op-level structural check, NOT a new globally-numbered R-law.)
-static ::mlir::LogicalResult verifyMmioAccess(::mlir::Operation *op,
-                                              ::mlir::Type valueTy, ::mlir::Type addrTy) {
+static ::mlir::LogicalResult verifyMmioAccess(::mlir::Operation *op, ::mlir::Type valueTy,
+                                              ::mlir::Type addrTy) {
   if (!::mlir::isa<::mlir::IntegerType, ::mlir::FloatType>(valueTy))
-    return op->emitOpError()
-           << "the device-register value must be a scalar integer or float (got " << valueTy << ")";
+    return op->emitOpError() << "the device-register value must be a scalar integer or float (got "
+                             << valueTy << ")";
   auto ait = ::mlir::dyn_cast<::mlir::IntegerType>(addrTy);
   if (!ait || ait.getWidth() < 32)
     return op->emitOpError()
@@ -1389,17 +1412,19 @@ static ::mlir::LogicalResult verifyAtomicAddr(::mlir::Operation *op, ::mlir::Typ
                          << "' (one of add|sub|xor|exchange, the cfront atomic families)";
   if (!::mlir::isa<::mlir::IntegerType>(getValue().getType()))
     return emitOpError() << "the RMW value must be an integer (the cfront atomic families are "
-                            "integer-typed; got " << getValue().getType() << ")";
+                            "integer-typed; got "
+                         << getValue().getType() << ")";
   if (getValue().getType() != getResult().getType())
-    return emitOpError() << "the RMW result must have the value type (fetch/old-value semantics; got "
-                         << getResult().getType() << " vs " << getValue().getType() << ")";
+    return emitOpError()
+           << "the RMW result must have the value type (fetch/old-value semantics; got "
+           << getResult().getType() << " vs " << getValue().getType() << ")";
   return verifyAtomicAddr(*this, getAddr().getType());
 }
 
 ::mlir::LogicalResult AtomicCASOp::verify() {
   if (!::mlir::isa<::mlir::IntegerType>(getExpected().getType()))
-    return emitOpError() << "the CAS comparand must be an integer (got "
-                         << getExpected().getType() << ")";
+    return emitOpError() << "the CAS comparand must be an integer (got " << getExpected().getType()
+                         << ")";
   if (getExpected().getType() != getDesired().getType())
     return emitOpError() << "the CAS expected/desired operands must have the same type (got "
                          << getExpected().getType() << " vs " << getDesired().getType() << ")";
@@ -1433,13 +1458,12 @@ static ::mlir::LogicalResult verifyAtomicAddr(::mlir::Operation *op, ::mlir::Typ
   if (n < 1)
     return emitOpError() << "manifest: no banks";
   if (count(getDomains()) != n)
-    return emitOpError() << "manifest: " << n << " banks but " << count(getDomains())
-                         << " domains";
+    return emitOpError() << "manifest: " << n << " banks but " << count(getDomains()) << " domains";
   auto caps = getCapacities();
   auto tiles = getNativeTiles();
   if (caps.size() != n || tiles.size() != n)
-    return emitOpError() << "manifest: " << n << " banks but " << caps.size()
-                         << " capacities / " << tiles.size() << " native_tiles";
+    return emitOpError() << "manifest: " << n << " banks but " << caps.size() << " capacities / "
+                         << tiles.size() << " native_tiles";
   for (size_t i = 0; i < n; ++i) {
     if (caps[i] < 1)
       return emitOpError() << "bank " << i << ": capacity must be >= 1, got " << caps[i];
@@ -1460,12 +1484,10 @@ static ::mlir::LogicalResult verifyAtomicAddr(::mlir::Operation *op, ::mlir::Typ
         return emitOpError() << "distance[" << i << "][" << i
                              << "] must be 0 (staying put is free), got " << v;
       if (i != j && v < 1)
-        return emitOpError() << "distance[" << i << "][" << j << "] must be >= 1 Q8, got "
-                             << v;
+        return emitOpError() << "distance[" << i << "][" << j << "] must be >= 1 Q8, got " << v;
       if (v != d[j * n + i])
-        return emitOpError() << "distance[" << i << "][" << j << "] " << v
-                             << " != distance[" << j << "][" << i << "] " << d[j * n + i]
-                             << " (asymmetric)";
+        return emitOpError() << "distance[" << i << "][" << j << "] " << v << " != distance[" << j
+                             << "][" << i << "] " << d[j * n + i] << " (asymmetric)";
     }
   return ::mlir::success();
 }
@@ -1475,12 +1497,8 @@ static ::mlir::LogicalResult verifyAtomicAddr(::mlir::Operation *op, ::mlir::Typ
 static bool isX86AsmSymbol(::llvm::StringRef name) {
   if (name.empty())
     return false;
-  auto first = [](char c) {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
-  };
-  auto rest = [&](char c) {
-    return first(c) || (c >= '0' && c <= '9') || c == '.' || c == '$';
-  };
+  auto first = [](char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; };
+  auto rest = [&](char c) { return first(c) || (c >= '0' && c <= '9') || c == '.' || c == '$'; };
   if (!first(name.front()))
     return false;
   for (char c : name.drop_front())
@@ -1510,9 +1528,8 @@ static bool isX86AsmSymbol(::llvm::StringRef name) {
   // or require exception-specific IST/nesting rules; turning off GS use does not
   // make an ordinary entry sufficient. Refuse these until a paranoid op exists.
   if (vector == 1 || vector == 2 || vector == 8 || vector == 18 || vector == 29)
-    return emitOpError()
-           << "normal interrupt entry is unsafe for paranoid/IST vector " << vector
-           << "; use a dedicated paranoid/IST trampoline";
+    return emitOpError() << "normal interrupt entry is unsafe for paranoid/IST vector " << vector
+                         << "; use a dedicated paranoid/IST trampoline";
   if (!isX86AsmSymbol(getSymName()))
     return emitOpError() << "trampoline symbol must be an unquoted x86 assembler identifier (got '"
                          << getSymName() << "')";
@@ -1534,50 +1551,50 @@ namespace bcir {
 
 llvm::StringRef asn1FamilyOf(Asn1Rules rules) {
   switch (rules) {
-    case Asn1Rules::Ber:
-    case Asn1Rules::Cer:
-    case Asn1Rules::Der:
-      return "X.690";
-    case Asn1Rules::BasicPerAligned:
-    case Asn1Rules::BasicPerUnaligned:
-    case Asn1Rules::CanonicalPerAligned:
-    case Asn1Rules::CanonicalPerUnaligned:
-      return "X.691";
-    case Asn1Rules::Xer:
-    case Asn1Rules::Cxer:
-      return "X.693";
-    case Asn1Rules::Oer:
-    case Asn1Rules::Coer:
-      return "X.696";
-    case Asn1Rules::Jer:
-    case Asn1Rules::BcirCanonicalJer:
-      return "X.697";
+  case Asn1Rules::Ber:
+  case Asn1Rules::Cer:
+  case Asn1Rules::Der:
+    return "X.690";
+  case Asn1Rules::BasicPerAligned:
+  case Asn1Rules::BasicPerUnaligned:
+  case Asn1Rules::CanonicalPerAligned:
+  case Asn1Rules::CanonicalPerUnaligned:
+    return "X.691";
+  case Asn1Rules::Xer:
+  case Asn1Rules::Cxer:
+    return "X.693";
+  case Asn1Rules::Oer:
+  case Asn1Rules::Coer:
+    return "X.696";
+  case Asn1Rules::Jer:
+  case Asn1Rules::BcirCanonicalJer:
+    return "X.697";
   }
   return "X.690";
 }
 
 bool isCanonicalAsn1Rules(Asn1Rules rules) {
   switch (rules) {
-    case Asn1Rules::Der:
-    case Asn1Rules::CanonicalPerAligned:
-    case Asn1Rules::CanonicalPerUnaligned:
-    case Asn1Rules::Coer:
-    case Asn1Rules::Cxer:
-    case Asn1Rules::BcirCanonicalJer:
-      return true;
-    // `cer` is here, and its name is the trap. X.690 9.1 makes the indefinite length form
-    // MANDATORY for constructed CER encodings, so a CER artifact is not byte-stable and a
-    // digest over it does not identify the value. "Canonical" in CER's name is about
-    // choosing canonically among BER's options, not about the octets being a function of
-    // the value -- which is the only property a digest can rest on.
-    case Asn1Rules::Cer:
-    case Asn1Rules::Ber:
-    case Asn1Rules::BasicPerAligned:
-    case Asn1Rules::BasicPerUnaligned:
-    case Asn1Rules::Xer:
-    case Asn1Rules::Oer:
-    case Asn1Rules::Jer:
-      return false;
+  case Asn1Rules::Der:
+  case Asn1Rules::CanonicalPerAligned:
+  case Asn1Rules::CanonicalPerUnaligned:
+  case Asn1Rules::Coer:
+  case Asn1Rules::Cxer:
+  case Asn1Rules::BcirCanonicalJer:
+    return true;
+  // `cer` is here, and its name is the trap. X.690 9.1 makes the indefinite length form
+  // MANDATORY for constructed CER encodings, so a CER artifact is not byte-stable and a
+  // digest over it does not identify the value. "Canonical" in CER's name is about
+  // choosing canonically among BER's options, not about the octets being a function of
+  // the value -- which is the only property a digest can rest on.
+  case Asn1Rules::Cer:
+  case Asn1Rules::Ber:
+  case Asn1Rules::BasicPerAligned:
+  case Asn1Rules::BasicPerUnaligned:
+  case Asn1Rules::Xer:
+  case Asn1Rules::Oer:
+  case Asn1Rules::Jer:
+    return false;
   }
   return false;
 }
@@ -1586,7 +1603,7 @@ bool asn1RulesAreAligned(Asn1Rules rules) {
   return rules == Asn1Rules::BasicPerAligned || rules == Asn1Rules::CanonicalPerAligned;
 }
 
-}  // namespace bcir
+} // namespace bcir
 
 void BCIRDialect::initialize() {
   addOperations<

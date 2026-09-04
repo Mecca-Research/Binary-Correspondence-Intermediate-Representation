@@ -28,13 +28,17 @@
 namespace {
 
 // Read a whole file into a byte vector (the serialized artifact).
-bool read_file(const char* path, std::vector<std::uint8_t>& out) {
-  std::FILE* f = std::fopen(path, "rb");
-  if (!f) return false;
+bool read_file(const char *path, std::vector<std::uint8_t> &out) {
+  std::FILE *f = std::fopen(path, "rb");
+  if (!f)
+    return false;
   std::fseek(f, 0, SEEK_END);
   long n = std::ftell(f);
   std::fseek(f, 0, SEEK_SET);
-  if (n < 0) { std::fclose(f); return false; }
+  if (n < 0) {
+    std::fclose(f);
+    return false;
+  }
   out.resize(static_cast<std::size_t>(n));
   std::size_t got = n > 0 ? std::fread(out.data(), 1, out.size(), f) : 0;
   std::fclose(f);
@@ -43,30 +47,31 @@ bool read_file(const char* path, std::vector<std::uint8_t>& out) {
 
 // The DIRECT C/IR path (no C++ seam): walk the same bytes through the C decoder and
 // collect claim_ids in dispatch order. This is the reference the seam must match.
-extern "C" int direct_collect(const bcir_segment_view* seg, void* ctx) {
-  static_cast<std::vector<std::uint64_t>*>(ctx)->push_back(seg->claim_id);
+extern "C" int direct_collect(const bcir_segment_view *seg, void *ctx) {
+  static_cast<std::vector<std::uint64_t> *>(ctx)->push_back(seg->claim_id);
   return 0;
 }
 
-std::vector<std::uint64_t> direct_c_order(const std::vector<std::uint8_t>& bytes,
-                                          bcir_status& st) {
+std::vector<std::uint64_t> direct_c_order(const std::vector<std::uint8_t> &bytes, bcir_status &st) {
   std::vector<std::uint64_t> order;
   st = bcir_sp_for_each_segment(bytes.data(), bytes.size(), &direct_collect, &order);
   return order;
 }
 
-int fail(const std::string& msg) {
+int fail(const std::string &msg) {
   std::printf("FAIL: %s\n", msg.c_str());
   return 1;
 }
 
-}  // namespace
+} // namespace
 
-int main(int argc, char** argv) {
-  if (argc < 2) return fail("usage: test_orchestrator <pack.bin>");
+int main(int argc, char **argv) {
+  if (argc < 2)
+    return fail("usage: test_orchestrator <pack.bin>");
 
   std::vector<std::uint8_t> bytes;
-  if (!read_file(argv[1], bytes)) return fail(std::string("cannot read ") + argv[1]);
+  if (!read_file(argv[1], bytes))
+    return fail(std::string("cannot read ") + argv[1]);
 
   using namespace bcir;
 
@@ -83,14 +88,13 @@ int main(int argc, char** argv) {
   // then compute the DIRECT C/IR order, and assert they are byte-for-byte equal.
   DispatchResult seam = single.dispatch(bytes.data(), bytes.size());
   if (!seam.ok())
-    return fail("seam dispatch failed (status=" +
-                std::to_string(static_cast<int>(seam.status)) + ")");
+    return fail("seam dispatch failed (status=" + std::to_string(static_cast<int>(seam.status)) +
+                ")");
 
   bcir_status dst = BCIR_OK;
   std::vector<std::uint64_t> direct = direct_c_order(bytes, dst);
   if (dst != BCIR_OK)
-    return fail("direct C decode failed (status=" +
-                std::to_string(static_cast<int>(dst)) + ")");
+    return fail("direct C decode failed (status=" + std::to_string(static_cast<int>(dst)) + ")");
 
   if (seam.claim_order != direct)
     return fail("ROUND-TRIP MISMATCH: seam dispatch order != direct C/IR order");
@@ -120,12 +124,18 @@ int main(int argc, char** argv) {
   bool dyn_threw = false, dist_threw = false;
   try {
     DynamicGraphOrchestrator().dispatch(bytes.data(), bytes.size());
-  } catch (const HandoffError&) { dyn_threw = true; }
+  } catch (const HandoffError &) {
+    dyn_threw = true;
+  }
   try {
     dist.dispatch(bytes.data(), bytes.size());
-  } catch (const HandoffError&) { dist_threw = true; }
-  if (!dyn_threw) return fail("dynamic-graph stub did not fail loudly");
-  if (!dist_threw) return fail("distributed stub did not fail loudly");
+  } catch (const HandoffError &) {
+    dist_threw = true;
+  }
+  if (!dyn_threw)
+    return fail("dynamic-graph stub did not fail loudly");
+  if (!dist_threw)
+    return fail("distributed stub did not fail loudly");
 
   // (6) idempotence: re-dispatching with retries yields the SAME order (the artifact
   // is immutable; the C walk is deterministic), proving the retry contract is safe.

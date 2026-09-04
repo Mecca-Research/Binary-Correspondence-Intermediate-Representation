@@ -186,6 +186,6 @@ void registerBCIRPasses();
 /// -lower-llvm / -aot) with verifier checkpoints.
 void registerBCIRPipelines();
 
-}  // namespace bcir
+} // namespace bcir
 
-#endif  // BCIR_BCIRPASSES_H
+#endif // BCIR_BCIRPASSES_H

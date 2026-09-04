@@ -22,11 +22,9 @@
 
 int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
-  registry.insert<bcir::BCIRDialect, mlir::LLVM::LLVMDialect,
-                  mlir::func::FuncDialect, mlir::scf::SCFDialect,
-                  mlir::memref::MemRefDialect, mlir::arith::ArithDialect>();
+  registry.insert<bcir::BCIRDialect, mlir::LLVM::LLVMDialect, mlir::func::FuncDialect,
+                  mlir::scf::SCFDialect, mlir::memref::MemRefDialect, mlir::arith::ArithDialect>();
   bcir::registerBCIRPasses();
   bcir::registerBCIRPipelines();
-  return mlir::asMainReturnCode(
-      mlir::MlirOptMain(argc, argv, "BCIR optimizer driver\n", registry));
+  return mlir::asMainReturnCode(mlir::MlirOptMain(argc, argv, "BCIR optimizer driver\n", registry));
 }

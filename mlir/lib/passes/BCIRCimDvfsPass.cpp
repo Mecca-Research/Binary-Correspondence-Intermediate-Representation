@@ -21,9 +21,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRCostModel.h"
 
 #include "mlir/IR/Builders.h"
@@ -78,13 +78,13 @@ struct CimPass : public PassWrapper<CimPass, OperationPass<>> {
       if (!isReduction(c.getOp()))
         return; // non-reductions are never offloaded
       int64_t count = std::max<int64_t>(1, static_cast<int64_t>(c.getCount()));
-      int64_t eb = h.elemBytes;            // operand element width (the capability's)
+      int64_t eb = h.elemBytes; // operand element width (the capability's)
       int64_t traffic = saturatingMulNonnegative(count, eb);
       int64_t compute = saturatingMulNonnegative(count, h.memUnit);
       int64_t coreCost = saturatingAddNonnegative(traffic, compute);
       int64_t pimCompute = saturatingMulNonnegative(compute, kPimComputeQ8) >> 8;
-      int64_t pimCost = saturatingAddNonnegative(
-          saturatingAddNonnegative(pimCompute, kPimDispatchOverhead), eb);
+      int64_t pimCost =
+          saturatingAddNonnegative(saturatingAddNonnegative(pimCompute, kPimDispatchOverhead), eb);
       c->setAttr("kbcir.cim_offload", b.getBoolAttr(pimCost < coreCost));
       c->setAttr("kbcir.cim_core_cost", b.getI64IntegerAttr(coreCost));
       c->setAttr("kbcir.cim_pim_cost", b.getI64IntegerAttr(pimCost));
@@ -139,8 +139,7 @@ struct DvfsPass : public PassWrapper<DvfsPass, OperationPass<>> {
       auto it = phaseCM.find(p.getId());
       int64_t compute = it != phaseCM.end() ? it->second.first : 0;
       int64_t memory = it != phaseCM.end() ? it->second.second : 0;
-      int64_t intensity = saturatingMulNonnegative(compute, 1000) /
-                          std::max<int64_t>(1, memory);
+      int64_t intensity = saturatingMulNonnegative(compute, 1000) / std::max<int64_t>(1, memory);
       StringRef klass;
       int64_t clock;
       if (intensity >= kHiIntensity) {
@@ -161,7 +160,11 @@ struct DvfsPass : public PassWrapper<DvfsPass, OperationPass<>> {
 
 } // namespace
 
-std::unique_ptr<Pass> createCimPass() { return std::make_unique<CimPass>(); }
-std::unique_ptr<Pass> createDvfsPass() { return std::make_unique<DvfsPass>(); }
+std::unique_ptr<Pass> createCimPass() {
+  return std::make_unique<CimPass>();
+}
+std::unique_ptr<Pass> createDvfsPass() {
+  return std::make_unique<DvfsPass>();
+}
 
 } // namespace bcir

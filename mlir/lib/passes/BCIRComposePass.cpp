@@ -24,9 +24,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRCostModel.h"
 
 #include "mlir/IR/Builders.h"
@@ -112,9 +112,9 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
   llvm::DenseMap<StringRef, CC> memo; // func -> its summary (planned once over its formals)
   llvm::DenseSet<StringRef> activeSummaries;
   llvm::DenseMap<StringRef, StringRef> emptySubst;
-  SmallVector<int> budgetDims;    // the first kbcir.budget's tracked cost-dim indices
+  SmallVector<int> budgetDims; // the first kbcir.budget's tracked cost-dim indices
   SmallVector<int64_t> budgetCaps;
-  bool hasBudget = false;         // a budget op present -> price Leaves constrained (RCSP)
+  bool hasBudget = false; // a budget op present -> price Leaves constrained (RCSP)
   bool invalidNesting = false;
 
   void runOnOperation() override {
@@ -131,8 +131,7 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
       return;
     h = cm::readCap(capOp);
     w = cm::firstWeights(root);
-    if (w.size() != 12 ||
-        llvm::any_of(w, [](int64_t value) { return value < 0; }))
+    if (w.size() != 12 || llvm::any_of(w, [](int64_t value) { return value < 0; }))
       return;
     theta = cm::firstThetaThermal(root);
     resByName = cm::resourcesByName(root);
@@ -183,7 +182,8 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
       annotateIndependence(f->getRegion(0).front(), emptySubst, b, 0);
     }
     if (invalidNesting) {
-      root->emitError("bcir-compose: recursive call graph or nesting deeper than 64 is unsupported");
+      root->emitError(
+          "bcir-compose: recursive call graph or nesting deeper than 64 is unsupported");
       signalPassFailure();
     }
   }
@@ -254,19 +254,16 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
         CC e = regionCost(cond.getElseRegion().front(), depth + 1, subst);
         int64_t p = std::max<int64_t>(
             0, std::min<int64_t>(1000, static_cast<int64_t>(cond.getProbThenMilli())));
-        int64_t branchWorst = saturatingAddNonnegative(
-            kPredCost, std::max(t.worst, e.worst));
-        int64_t weighted = saturatingAddNonnegative(
-            saturatingMulNonnegative(p, t.expected),
-            saturatingMulNonnegative(1000 - p, e.expected));
-        int64_t branchExpected = saturatingAddNonnegative(kPredCost,
-                                                          weighted / 1000);
+        int64_t branchWorst = saturatingAddNonnegative(kPredCost, std::max(t.worst, e.worst));
+        int64_t weighted = saturatingAddNonnegative(saturatingMulNonnegative(p, t.expected),
+                                                    saturatingMulNonnegative(1000 - p, e.expected));
+        int64_t branchExpected = saturatingAddNonnegative(kPredCost, weighted / 1000);
         acc.worst = saturatingAddNonnegative(acc.worst, branchWorst);
         acc.expected = saturatingAddNonnegative(acc.expected, branchExpected);
-        acc.leaves = saturatingAddNonnegative(
-            acc.leaves, saturatingAddNonnegative(t.leaves, e.leaves));
-        acc.reused = saturatingAddNonnegative(
-            acc.reused, saturatingAddNonnegative(t.reused, e.reused));
+        acc.leaves =
+            saturatingAddNonnegative(acc.leaves, saturatingAddNonnegative(t.leaves, e.leaves));
+        acc.reused =
+            saturatingAddNonnegative(acc.reused, saturatingAddNonnegative(t.reused, e.reused));
         acc.feasible = acc.feasible && t.feasible && e.feasible;
         acc.dynamic = acc.dynamic || t.dynamic || e.dynamic;
       } else if (auto call = dyn_cast<KBCIRCallOp>(&op)) {
@@ -280,8 +277,8 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
           CC s = funcSummary(callee, depth + 1); // reuse the once-planned cost
           acc.worst = saturatingAddNonnegative(acc.worst, s.worst);
           acc.expected = saturatingAddNonnegative(acc.expected, s.expected);
-          acc.reused = saturatingAddNonnegative(
-              acc.reused, saturatingAddNonnegative(s.reused, s.leaves));
+          acc.reused =
+              saturatingAddNonnegative(acc.reused, saturatingAddNonnegative(s.reused, s.leaves));
           acc.feasible = acc.feasible && s.feasible;
           acc.dynamic = acc.dynamic || s.dynamic;
         } else {
@@ -322,8 +319,7 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
   // compose._summary_applies: the summary's cost is exact for this call iff every formal the
   // callee touches has an actual with the same cost-key (a formal absent from the map maps to
   // itself, trivially matching).
-  bool summaryApplies(Operation *calleeFunc,
-                      const llvm::DenseMap<StringRef, StringRef> &amap) {
+  bool summaryApplies(Operation *calleeFunc, const llvm::DenseMap<StringRef, StringRef> &amap) {
     llvm::DenseSet<StringRef> footprint;
     calleeFunc->walk([&](ClaimOp c) {
       for (ArrayAttr refs : {c.getReads(), c.getWrites()})
@@ -372,8 +368,8 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
     }
   }
 
-  void regionEffect(Block &block, const llvm::DenseMap<StringRef, StringRef> &subst,
-                    Effect &out, int depth) {
+  void regionEffect(Block &block, const llvm::DenseMap<StringRef, StringRef> &subst, Effect &out,
+                    int depth) {
     for (Operation &op : block)
       opEffect(&op, subst, out, depth);
   }
@@ -381,9 +377,8 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
   // Annotate each kbcir.call that has a preceding sibling with kbcir.commutes_with_prev =
   // independent(prev, this) -- their footprints are disjoint, so the two may be reordered or
   // overlapped (the cross-call alias test the pairwise plan cannot see).
-  void annotateIndependence(Block &block,
-                            const llvm::DenseMap<StringRef, StringRef> &subst, Builder &b,
-                            int depth) {
+  void annotateIndependence(Block &block, const llvm::DenseMap<StringRef, StringRef> &subst,
+                            Builder &b, int depth) {
     if (depth > 64)
       return;
     Effect prevEff;
@@ -393,8 +388,7 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
       opEffect(&op, subst, e, depth);
       if (auto call = dyn_cast<KBCIRCallOp>(&op)) {
         if (havePrev)
-          call->setAttr("kbcir.commutes_with_prev",
-                        b.getBoolAttr(!effectsConflict(prevEff, e)));
+          call->setAttr("kbcir.commutes_with_prev", b.getBoolAttr(!effectsConflict(prevEff, e)));
       } else if (auto cond = dyn_cast<KBCIRCondOp>(&op)) {
         annotateIndependence(cond.getThenRegion().front(), subst, b, depth + 1);
         annotateIndependence(cond.getElseRegion().front(), subst, b, depth + 1);
@@ -417,6 +411,8 @@ struct ComposePass : public PassWrapper<ComposePass, OperationPass<>> {
 
 } // namespace
 
-std::unique_ptr<Pass> createComposePass() { return std::make_unique<ComposePass>(); }
+std::unique_ptr<Pass> createComposePass() {
+  return std::make_unique<ComposePass>();
+}
 
 } // namespace bcir

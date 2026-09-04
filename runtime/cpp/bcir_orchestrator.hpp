@@ -51,8 +51,8 @@ namespace bcir {
 // owns or copies the bytes mutably -- it is a (read-only) view + a placement
 // decision. The artifact bytes are immutable across the boundary.
 struct Shard {
-  std::size_t index = 0;      // shard ordinal (0 for the single-node whole-pack)
-  std::size_t node = 0;       // the node the C++ orchestrator placed it on
+  std::size_t index = 0; // shard ordinal (0 for the single-node whole-pack)
+  std::size_t node = 0;  // the node the C++ orchestrator placed it on
   // [begin,end) segment range this shard owns (whole pack: [0, n_segments)).
   std::uint32_t seg_begin = 0;
   std::uint32_t seg_end = 0;
@@ -64,10 +64,10 @@ struct Shard {
 // the artifact through anything OTHER than the existing C kernels, the sequences
 // would diverge. Equality is the proof the seam round-trips losslessly.
 struct DispatchResult {
-  bcir_status status = BCIR_OK;             // the C-rail status (BCIR_OK on success)
-  std::vector<std::uint64_t> claim_order;   // claim_ids in C-kernel dispatch order
-  std::size_t nodes_used = 0;               // how many nodes the orchestrator used
-  std::size_t shards = 0;                   // how many shards it dispatched
+  bcir_status status = BCIR_OK;           // the C-rail status (BCIR_OK on success)
+  std::vector<std::uint64_t> claim_order; // claim_ids in C-kernel dispatch order
+  std::size_t nodes_used = 0;             // how many nodes the orchestrator used
+  std::size_t shards = 0;                 // how many shards it dispatched
 
   bool ok() const { return status == BCIR_OK; }
 };
@@ -79,8 +79,8 @@ struct DispatchResult {
 // legality. C/IR R-law verdicts arrive as a bcir_status inside DispatchResult, not
 // as a C++ exception.
 class HandoffError : public std::runtime_error {
- public:
-  explicit HandoffError(const std::string& what) : std::runtime_error(what) {}
+public:
+  explicit HandoffError(const std::string &what) : std::runtime_error(what) {}
 };
 
 // --- the Orchestrator interface (abstract base) ----------------------------
@@ -90,7 +90,7 @@ class HandoffError : public std::runtime_error {
 // existing single-node C kernels per shard. The artifact is passed as an immutable
 // byte view -- the C++ side gets read access, never write access.
 class Orchestrator {
- public:
+public:
   virtual ~Orchestrator() = default;
 
   // Human-readable backend identity (for logs / the audit trail).
@@ -102,22 +102,21 @@ class Orchestrator {
   // legality; it asks the authority. Returns the C-rail status (BCIR_OK == admit).
   // Generation gates default to "skip" ((uint32_t)-1): a real deployment passes
   // the live registry generation so a STALE pack is rejected at the boundary.
-  virtual bcir_status admit(const std::uint8_t* data, std::size_t len,
+  virtual bcir_status admit(const std::uint8_t *data, std::size_t len,
                             std::uint32_t expected_map_gen = 0xFFFFFFFFu,
                             std::uint32_t expected_data_gen = 0xFFFFFFFFu) const;
 
   // (b) SHARD: decide the placement/topology -- how to split the artifact across
   // nodes. The single-node reference returns one shard (the whole pack); the
   // distributed backend would return many. The artifact is read-only input.
-  virtual std::vector<Shard> shard(const std::uint8_t* data,
-                                   std::size_t len) const = 0;
+  virtual std::vector<Shard> shard(const std::uint8_t *data, std::size_t len) const = 0;
 
   // (c) DISPATCH + RE-ENTER: run the artifact (or each shard) through the existing
   // single-node C kernels and collect the observable dispatch result. With
   // max_retries > 0 a backend MAY re-dispatch a failed shard (idempotent: the
   // artifact bytes are immutable, so a retry recomputes the same deterministic
   // result -- it never accumulates state). The reference is single-attempt.
-  virtual DispatchResult dispatch(const std::uint8_t* data, std::size_t len,
+  virtual DispatchResult dispatch(const std::uint8_t *data, std::size_t len,
                                   unsigned max_retries = 0) const = 0;
 };
 
@@ -130,10 +129,10 @@ class Orchestrator {
 // it -- so its result is identical to calling the C kernels directly (the round-
 // trip identity the smoke test asserts). No dynamic topology, no networking.
 class SingleNodeOrchestrator : public Orchestrator {
- public:
+public:
   std::string name() const override { return "single-node-reference"; }
-  std::vector<Shard> shard(const std::uint8_t* data, std::size_t len) const override;
-  DispatchResult dispatch(const std::uint8_t* data, std::size_t len,
+  std::vector<Shard> shard(const std::uint8_t *data, std::size_t len) const override;
+  DispatchResult dispatch(const std::uint8_t *data, std::size_t len,
                           unsigned max_retries = 0) const override;
 };
 
@@ -148,12 +147,12 @@ class SingleNodeOrchestrator : public Orchestrator {
 // part lives entirely in C++ ABOVE the rail; what crosses down is always a frozen
 // artifact. This stub holds the seam open without pulling that machinery in.
 class DynamicGraphOrchestrator : public Orchestrator {
- public:
+public:
   std::string name() const override { return "dynamic-graph-STUB"; }
-  std::vector<Shard> shard(const std::uint8_t* data, std::size_t len) const override;
+  std::vector<Shard> shard(const std::uint8_t *data, std::size_t len) const override;
   // Throws HandoffError: a real dynamic-graph backend is not built (it needs the
   // runtime graph-builder above). Marked so dead code can never silently "work".
-  DispatchResult dispatch(const std::uint8_t* data, std::size_t len,
+  DispatchResult dispatch(const std::uint8_t *data, std::size_t len,
                           unsigned max_retries = 0) const override;
 };
 
@@ -168,18 +167,17 @@ class DynamicGraphOrchestrator : public Orchestrator {
 // which we deliberately do NOT add (untested debt). This stub records exactly that
 // design and fails loudly if dispatched, so the boundary is explicit and honest.
 class DistributedOrchestrator : public Orchestrator {
- public:
-  explicit DistributedOrchestrator(std::size_t world_size = 1)
-      : world_size_(world_size) {}
+public:
+  explicit DistributedOrchestrator(std::size_t world_size = 1) : world_size_(world_size) {}
   std::string name() const override { return "distributed-MPI/NCCL-STUB"; }
   // The sharding LOGIC is real + testable (it partitions the segment stream into
   // world_size contiguous ranges) -- it is the only piece that needs no cluster.
-  std::vector<Shard> shard(const std::uint8_t* data, std::size_t len) const override;
+  std::vector<Shard> shard(const std::uint8_t *data, std::size_t len) const override;
   // Throws HandoffError: real cross-node dispatch needs MPI/NCCL + a cluster.
-  DispatchResult dispatch(const std::uint8_t* data, std::size_t len,
+  DispatchResult dispatch(const std::uint8_t *data, std::size_t len,
                           unsigned max_retries = 0) const override;
 
- private:
+private:
   std::size_t world_size_;
 };
 
@@ -192,9 +190,8 @@ class DistributedOrchestrator : public Orchestrator {
 // fail loudly on dispatch.
 enum class Backend { SingleNode, DynamicGraph, Distributed };
 
-std::unique_ptr<Orchestrator> make_orchestrator(Backend b,
-                                                std::size_t world_size = 1);
+std::unique_ptr<Orchestrator> make_orchestrator(Backend b, std::size_t world_size = 1);
 
-}  // namespace bcir
+} // namespace bcir
 
-#endif  // BCIR_ORCHESTRATOR_HPP
+#endif // BCIR_ORCHESTRATOR_HPP

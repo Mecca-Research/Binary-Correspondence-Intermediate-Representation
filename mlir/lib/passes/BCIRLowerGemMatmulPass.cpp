@@ -29,9 +29,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/IR/Builders.h"
@@ -55,8 +55,7 @@ static int64_t ceilDiv(int64_t a, int64_t b) {
   return a / b + (a % b != 0);
 }
 
-struct LowerGemMatmulPass
-    : public PassWrapper<LowerGemMatmulPass, OperationPass<>> {
+struct LowerGemMatmulPass : public PassWrapper<LowerGemMatmulPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerGemMatmulPass)
 
   StringRef getArgument() const final { return "bcir-lower-gem-matmul"; }
@@ -104,7 +103,7 @@ struct LowerGemMatmulPass
     const Location loc = mm.getLoc();
     MLIRContext *ctx = mm.getContext();
 
-    const int64_t nI = ceilDiv(M, tm);  // tile loop trip counts
+    const int64_t nI = ceilDiv(M, tm); // tile loop trip counts
     const int64_t nJ = ceilDiv(N, tn);
     const int64_t nK = ceilDiv(K, tk);
 
@@ -119,18 +118,17 @@ struct LowerGemMatmulPass
       const int64_t j0 = j * tn;
       const int64_t rows = std::min(tm, M - i0);
       const int64_t cols = std::min(tn, N - j0);
-      const int64_t base = i0 * N + j0;   // row-major C origin
-      const int64_t count = rows * cols;  // C-tile element count
+      const int64_t base = i0 * N + j0;  // row-major C origin
+      const int64_t count = rows * cols; // C-tile element count
 
       std::string sym = (name + "_t" + Twine(idx)).str();
-      GEMBlockOp::create(builder,
-          loc,
-          /*sym_name=*/StringAttr::get(ctx, sym),
-          /*base=*/builder.getI64IntegerAttr(base),
-          /*count=*/builder.getI64IntegerAttr(count),
-          /*strideA=*/builder.getI64IntegerAttr(K),
-          /*strideB=*/builder.getI64IntegerAttr(N),
-          /*strideD=*/builder.getI64IntegerAttr(N));
+      GEMBlockOp::create(builder, loc,
+                         /*sym_name=*/StringAttr::get(ctx, sym),
+                         /*base=*/builder.getI64IntegerAttr(base),
+                         /*count=*/builder.getI64IntegerAttr(count),
+                         /*strideA=*/builder.getI64IntegerAttr(K),
+                         /*strideB=*/builder.getI64IntegerAttr(N),
+                         /*strideD=*/builder.getI64IntegerAttr(N));
       ++idx;
     };
 
@@ -167,10 +165,10 @@ struct LowerGemMatmulPass
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createLowerGemMatmulPass() {
   return std::make_unique<LowerGemMatmulPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

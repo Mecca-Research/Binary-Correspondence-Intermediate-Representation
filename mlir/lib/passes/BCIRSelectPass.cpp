@@ -6,9 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
@@ -32,8 +32,7 @@ using namespace mlir;
 
 namespace bcir {
 namespace {
-struct SelectRealizationPass
-    : public PassWrapper<SelectRealizationPass, OperationPass<>> {
+struct SelectRealizationPass : public PassWrapper<SelectRealizationPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SelectRealizationPass)
 
   StringRef getArgument() const final { return "bcir-select-realization"; }
@@ -49,12 +48,11 @@ struct SelectRealizationPass
 
     llvm::DenseMap<StringRef, KBCIRPathOp> pathByName;
     llvm::DenseMap<StringRef, KBCIRBudgetOp> budgetByName;
-    llvm::DenseMap<int, KBCIRPolicyOp> policyByMode;  // PolicyMode -> first policy
+    llvm::DenseMap<int, KBCIRPolicyOp> policyByMode; // PolicyMode -> first policy
     root->walk([&](KBCIRPathOp p) { pathByName[p.getSymName()] = p; });
     root->walk([&](KBCIRBudgetOp bud) { budgetByName[bud.getSymName()] = bud; });
-    root->walk([&](KBCIRPolicyOp p) {
-      policyByMode.try_emplace(static_cast<int>(p.getMode()), p);
-    });
+    root->walk(
+        [&](KBCIRPolicyOp p) { policyByMode.try_emplace(static_cast<int>(p.getMode()), p); });
 
     root->walk([&](KBCIRSelectOp s) {
       auto polIt = policyByMode.find(static_cast<int>(s.getPolicy()));
@@ -66,8 +64,7 @@ struct SelectRealizationPass
       }
       ArrayRef<int64_t> w = polIt->second.getWeights();
       if (w.size() != 12 ||
-          std::any_of(w.begin(), w.end(),
-                      [](int64_t value) { return value < 0; })) {
+          std::any_of(w.begin(), w.end(), [](int64_t value) { return value < 0; })) {
         s.emitError("bcir-select-realization: policy must contain exactly 12 non-negative weights");
         ok = false;
         return;
@@ -110,15 +107,13 @@ struct SelectRealizationPass
         }
       }
       if (!have) {
-        s.emitError("bcir-select-realization: no feasible candidate for claim @")
-            << s.getClaim();
+        s.emitError("bcir-select-realization: no feasible candidate for claim @") << s.getClaim();
         ok = false;
         return;
       }
 
       // Annotate the computed plan, then cross-check the declared selection.
-      s->setAttr("kbcir.computed_selected",
-                 FlatSymbolRefAttr::get(&getContext(), bestName));
+      s->setAttr("kbcir.computed_selected", FlatSymbolRefAttr::get(&getContext(), bestName));
       s->setAttr("kbcir.computed_score", b.getI64IntegerAttr(bestScore));
       if (bestName != s.getSelected()) {
         s.emitError("bcir-select-realization: computed argmin @")
@@ -127,8 +122,7 @@ struct SelectRealizationPass
       }
       if (bestScore != static_cast<int64_t>(s.getScore())) {
         s.emitError("bcir-select-realization: computed score ")
-            << bestScore << " != declared score "
-            << static_cast<int64_t>(s.getScore());
+            << bestScore << " != declared score " << static_cast<int64_t>(s.getScore());
         ok = false;
       }
     });
@@ -137,10 +131,10 @@ struct SelectRealizationPass
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createSelectRealizationPass() {
   return std::make_unique<SelectRealizationPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

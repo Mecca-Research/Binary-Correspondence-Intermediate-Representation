@@ -46,10 +46,9 @@ extern "C" {
 /* The same contract as `bcir_jer_scan`, argument for argument and diagnostic for diagnostic.
  * Identical is the requirement, not equivalent: 4.2 promises a stable code AND a byte
  * offset, and an offset off by one still sends a caller to the wrong octet. */
-bcir_jer_status bcir_jer_index_scan(const uint8_t *data, size_t len,
-                                    const bcir_jer_limits *limits,
-                                    bcir_jer_level *stack, size_t stack_entries,
-                                    uint64_t *nodes, bcir_jer_diag *diag);
+bcir_jer_status bcir_jer_index_scan(const uint8_t *data, size_t len, const bcir_jer_limits *limits,
+                                    bcir_jer_level *stack, size_t stack_entries, uint64_t *nodes,
+                                    bcir_jer_diag *diag);
 
 /* The same, pinned to a tier, so a test can walk every tier this build compiled on one
  * machine rather than only the widest one the CPU advertises. Tier resolution is the SIMD
@@ -57,9 +56,8 @@ bcir_jer_status bcir_jer_index_scan(const uint8_t *data, size_t len,
  * detection would be a second thing that can be wrong about the machine. A tier this build
  * did not compile, or this CPU does not advertise, degrades to scalar rather than faulting. */
 bcir_jer_status bcir_jer_index_scan_at(bcir_jer_simd_tier tier, const uint8_t *data, size_t len,
-                                       const bcir_jer_limits *limits,
-                                       bcir_jer_level *stack, size_t stack_entries,
-                                       uint64_t *nodes, bcir_jer_diag *diag);
+                                       const bcir_jer_limits *limits, bcir_jer_level *stack,
+                                       size_t stack_entries, uint64_t *nodes, bcir_jer_diag *diag);
 
 #ifdef __cplusplus
 }

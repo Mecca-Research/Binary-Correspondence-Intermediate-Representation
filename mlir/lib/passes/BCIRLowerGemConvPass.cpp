@@ -49,9 +49,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/IR/Builders.h"
@@ -74,8 +74,7 @@ static int64_t ceilDiv(int64_t a, int64_t b) {
   return a / b + (a % b != 0);
 }
 
-struct LowerGemConvPass
-    : public PassWrapper<LowerGemConvPass, OperationPass<>> {
+struct LowerGemConvPass : public PassWrapper<LowerGemConvPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerGemConvPass)
 
   StringRef getArgument() const final { return "bcir-lower-gem-conv"; }
@@ -149,7 +148,7 @@ struct LowerGemConvPass
 
     // --- the R17 accuracy axis (mirrors conv.cost_vector) -----------------------------
     int64_t quantBits = static_cast<int64_t>(conv.getQuantBits());
-    int64_t accBound = quantBits > 0 ? 1 : 0;  // the Q8-bridge bound iff quantized (1 ULP), else 0
+    int64_t accBound = quantBits > 0 ? 1 : 0; // the Q8-bridge bound iff quantized (1 ULP), else 0
     if (accBound != static_cast<int64_t>(conv.getAccBound())) {
       conv.emitError("bcir-lower-gem-conv: acc_bound ")
           << static_cast<int64_t>(conv.getAccBound()) << " != the R17 Q8-bridge bound " << accBound
@@ -162,7 +161,7 @@ struct LowerGemConvPass
     builder.setInsertionPointAfter(conv);
     const Location loc = conv.getLoc();
 
-    const int64_t nI = ceilDiv(M, tm);  // tile loop trip counts over the im2col gemm
+    const int64_t nI = ceilDiv(M, tm); // tile loop trip counts over the im2col gemm
     const int64_t nJ = ceilDiv(N, tn);
     const int64_t nK = ceilDiv(K, tk);
 
@@ -177,18 +176,17 @@ struct LowerGemConvPass
       const int64_t j0 = j * tn;
       const int64_t rows = std::min(tm, M - i0);
       const int64_t cols = std::min(tn, N - j0);
-      const int64_t base = i0 * N + j0;   // row-major gemm-output origin
-      const int64_t count = rows * cols;  // tile element count
+      const int64_t base = i0 * N + j0;  // row-major gemm-output origin
+      const int64_t count = rows * cols; // tile element count
 
       std::string sym = (name + "_t" + Twine(idx)).str();
-      GEMBlockOp::create(builder,
-          loc,
-          /*sym_name=*/StringAttr::get(ctx, sym),
-          /*base=*/builder.getI64IntegerAttr(base),
-          /*count=*/builder.getI64IntegerAttr(count),
-          /*strideA=*/builder.getI64IntegerAttr(K),
-          /*strideB=*/builder.getI64IntegerAttr(N),
-          /*strideD=*/builder.getI64IntegerAttr(N));
+      GEMBlockOp::create(builder, loc,
+                         /*sym_name=*/StringAttr::get(ctx, sym),
+                         /*base=*/builder.getI64IntegerAttr(base),
+                         /*count=*/builder.getI64IntegerAttr(count),
+                         /*strideA=*/builder.getI64IntegerAttr(K),
+                         /*strideB=*/builder.getI64IntegerAttr(N),
+                         /*strideD=*/builder.getI64IntegerAttr(N));
       ++idx;
     };
 
@@ -236,10 +234,10 @@ struct LowerGemConvPass
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createLowerGemConvPass() {
   return std::make_unique<LowerGemConvPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

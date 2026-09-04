@@ -14,6 +14,6 @@
 #include "BCIR/BCIRTypes.h"
 
 #define GET_OP_CLASSES
-#include "BCIROps.h.inc"  // generated: -gen-op-decls
+#include "BCIROps.h.inc" // generated: -gen-op-decls
 
 #endif // BCIR_BCIROPS_H

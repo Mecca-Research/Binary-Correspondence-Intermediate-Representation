@@ -37,9 +37,12 @@ constexpr size_t kMaxRounds = 256;
 constexpr size_t kMaxIterations = 4096;
 
 int hex_nibble(int c) {
-  if (c >= '0' && c <= '9') return c - '0';
-  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  if (c >= '0' && c <= '9')
+    return c - '0';
+  if (c >= 'a' && c <= 'f')
+    return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F')
+    return c - 'A' + 10;
   return -1;
 }
 
@@ -47,11 +50,13 @@ int hex_nibble(int c) {
  * cannot express. */
 long unhex(const char *text, unsigned char *out, size_t cap) {
   size_t n = 0;
-  if (text[0] == '-' && (text[1] == '\0' || text[1] == '\n' || text[1] == '\r')) return 0;
+  if (text[0] == '-' && (text[1] == '\0' || text[1] == '\n' || text[1] == '\r'))
+    return 0;
   while (*text != '\0' && *text != '\n' && *text != '\r') {
     int hi = hex_nibble(static_cast<unsigned char>(text[0]));
     int lo = text[1] ? hex_nibble(static_cast<unsigned char>(text[1])) : -1;
-    if (hi < 0 || lo < 0 || n >= cap) return -1;
+    if (hi < 0 || lo < 0 || n >= cap)
+      return -1;
     out[n++] = static_cast<unsigned char>((hi << 4) | lo);
     text += 2;
   }
@@ -62,7 +67,8 @@ uint64_t now_ns() {
   /* ISO C11 timespec_get, matching bcir_microbench.c and bcir_asn1_bench.c: the same clock
    * the rest of the repository's measurement uses, so numbers are comparable across it. */
   struct timespec t = {0, 0};
-  if (timespec_get(&t, TIME_UTC) != TIME_UTC || t.tv_sec < 0 || t.tv_nsec < 0) return 0;
+  if (timespec_get(&t, TIME_UTC) != TIME_UTC || t.tv_sec < 0 || t.tv_nsec < 0)
+    return 0;
   return static_cast<uint64_t>(t.tv_sec) * 1000000000u + static_cast<uint64_t>(t.tv_nsec);
 }
 
@@ -91,14 +97,18 @@ int cmp_u64(const void *a, const void *b) {
 }
 
 bcir_jer_simd_tier parse_tier(const char *name) {
-  if (std::strcmp(name, "sse2") == 0) return BCIR_JER_SIMD_SSE2;
-  if (std::strcmp(name, "avx2") == 0) return BCIR_JER_SIMD_AVX2;
-  if (std::strcmp(name, "neon") == 0) return BCIR_JER_SIMD_NEON;
-  if (std::strcmp(name, "auto") == 0) return bcir_jer_simd_tier_available();
+  if (std::strcmp(name, "sse2") == 0)
+    return BCIR_JER_SIMD_SSE2;
+  if (std::strcmp(name, "avx2") == 0)
+    return BCIR_JER_SIMD_AVX2;
+  if (std::strcmp(name, "neon") == 0)
+    return BCIR_JER_SIMD_NEON;
+  if (std::strcmp(name, "auto") == 0)
+    return bcir_jer_simd_tier_available();
   return BCIR_JER_SIMD_SCALAR;
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   static char line[kMaxLine];
@@ -111,13 +121,13 @@ int main() {
 
   while (std::fgets(line, static_cast<int>(sizeof(line)), stdin) != nullptr) {
     char op[32];
-    if (std::sscanf(line, "%31s", op) != 1) continue;
+    if (std::sscanf(line, "%31s", op) != 1)
+      continue;
 
     if (std::strcmp(op, "tiers") == 0) {
       bcir_jer_simd_tier best = bcir_jer_simd_tier_available();
       std::printf("tiers %d %s %d,%d,%d,%d\n", static_cast<int>(best),
-                  bcir_jer_simd_tier_name(best),
-                  bcir_jer_simd_tier_compiled(BCIR_JER_SIMD_SCALAR),
+                  bcir_jer_simd_tier_name(best), bcir_jer_simd_tier_compiled(BCIR_JER_SIMD_SCALAR),
                   bcir_jer_simd_tier_compiled(BCIR_JER_SIMD_SSE2),
                   bcir_jer_simd_tier_compiled(BCIR_JER_SIMD_AVX2),
                   bcir_jer_simd_tier_compiled(BCIR_JER_SIMD_NEON));
@@ -139,10 +149,9 @@ int main() {
         continue;
       }
       std::memset(&diag, 0, sizeof(diag));
-      status = bcir_jer_validate_utf8_at(parse_tier(tier_name), data,
-                                         static_cast<size_t>(len), &diag);
-      std::printf("ok %d %lu\n", static_cast<int>(status),
-                  static_cast<unsigned long>(diag.offset));
+      status =
+          bcir_jer_validate_utf8_at(parse_tier(tier_name), data, static_cast<size_t>(len), &diag);
+      std::printf("ok %d %lu\n", static_cast<int>(status), static_cast<unsigned long>(diag.offset));
       continue;
     }
 
@@ -150,8 +159,8 @@ int main() {
       char tier_name[16];
       long rounds = 0, iterations = 0, len;
       bcir_jer_simd_tier tier;
-      if (std::sscanf(line, "%31s %15s %ld %ld %s", op, tier_name, &rounds, &iterations,
-                      hex) != 5 ||
+      if (std::sscanf(line, "%31s %15s %ld %ld %s", op, tier_name, &rounds, &iterations, hex) !=
+              5 ||
           rounds < 1 || rounds > static_cast<long>(kMaxRounds) || iterations < 1 ||
           iterations > static_cast<long>(kMaxIterations)) {
         std::printf("sample bad 0 0\n");
@@ -190,7 +199,7 @@ int main() {
     }
   }
   /* Consume the sink so no validation above is dead code. */
-  if (sink == 0xFFFFFFFFFFFFFFFFull) std::printf("sink %llu\n",
-                                                 static_cast<unsigned long long>(sink));
+  if (sink == 0xFFFFFFFFFFFFFFFFull)
+    std::printf("sink %llu\n", static_cast<unsigned long long>(sink));
   return 0;
 }

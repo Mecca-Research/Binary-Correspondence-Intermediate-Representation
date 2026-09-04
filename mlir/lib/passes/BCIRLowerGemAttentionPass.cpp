@@ -60,9 +60,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/IR/Builders.h"
@@ -85,8 +85,7 @@ static int64_t ceilDiv(int64_t a, int64_t b) {
   return a / b + (a % b != 0);
 }
 
-struct LowerGemAttentionPass
-    : public PassWrapper<LowerGemAttentionPass, OperationPass<>> {
+struct LowerGemAttentionPass : public PassWrapper<LowerGemAttentionPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerGemAttentionPass)
 
   StringRef getArgument() const final { return "bcir-lower-gem-attention"; }
@@ -121,17 +120,16 @@ struct LowerGemAttentionPass
     auto emitTile = [&](int64_t i, int64_t j) {
       const int64_t i0 = i * tm, j0 = j * tn;
       const int64_t rows = std::min(tm, M - i0), cols = std::min(tn, N - j0);
-      const int64_t base = i0 * N + j0;   // row-major gemm-output origin
-      const int64_t count = rows * cols;  // tile element count
+      const int64_t base = i0 * N + j0;  // row-major gemm-output origin
+      const int64_t count = rows * cols; // tile element count
       std::string sym = (prefix + "_t" + Twine(idx)).str();
-      GEMBlockOp::create(builder,
-          loc,
-          /*sym_name=*/StringAttr::get(ctx, sym),
-          /*base=*/builder.getI64IntegerAttr(base),
-          /*count=*/builder.getI64IntegerAttr(count),
-          /*strideA=*/builder.getI64IntegerAttr(K),
-          /*strideB=*/builder.getI64IntegerAttr(N),
-          /*strideD=*/builder.getI64IntegerAttr(N));
+      GEMBlockOp::create(builder, loc,
+                         /*sym_name=*/StringAttr::get(ctx, sym),
+                         /*base=*/builder.getI64IntegerAttr(base),
+                         /*count=*/builder.getI64IntegerAttr(count),
+                         /*strideA=*/builder.getI64IntegerAttr(K),
+                         /*strideB=*/builder.getI64IntegerAttr(N),
+                         /*strideD=*/builder.getI64IntegerAttr(N));
       ++idx;
     };
     // The tile nest in the plan's loop_order (ijk/ikj/jik), identical to the matmul/conv lowering.
@@ -166,9 +164,11 @@ struct LowerGemAttentionPass
     const int64_t dk = static_cast<int64_t>(attn.getDK());
 
     // The two derived gemm dims (the decomposition into two matmuls) + the chosen tiles.
-    const int64_t sm = static_cast<int64_t>(attn.getScoresM()), sn = static_cast<int64_t>(attn.getScoresN()),
+    const int64_t sm = static_cast<int64_t>(attn.getScoresM()),
+                  sn = static_cast<int64_t>(attn.getScoresN()),
                   sk = static_cast<int64_t>(attn.getScoresK());
-    const int64_t cm = static_cast<int64_t>(attn.getContextM()), cn = static_cast<int64_t>(attn.getContextN()),
+    const int64_t cm = static_cast<int64_t>(attn.getContextM()),
+                  cn = static_cast<int64_t>(attn.getContextN()),
                   ck = static_cast<int64_t>(attn.getContextK());
     const int64_t stm = static_cast<int64_t>(attn.getScoresTileM()),
                   stn = static_cast<int64_t>(attn.getScoresTileN()),
@@ -183,8 +183,7 @@ struct LowerGemAttentionPass
         !checkedTileCount(cm, cn, ck, ctm, ctn, ctk, contextTiles) ||
         !checkedAddNonnegative(scoreTiles, contextTiles, allBlocks) ||
         !checkedAddNonnegative(allBlocks, 1, allBlocks) ||
-        !checkedMulNonnegative(seq, seq, scoreCount) ||
-        allBlocks > kMaxMaterializedBlocksPerOp) {
+        !checkedMulNonnegative(seq, seq, scoreCount) || allBlocks > kMaxMaterializedBlocksPerOp) {
       attn.emitError("bcir-lower-gem-attention: decomposition is invalid or exceeds the ")
           << kMaxMaterializedBlocksPerOp << "-block safety limit";
       return false;
@@ -231,7 +230,7 @@ struct LowerGemAttentionPass
 
     // --- the R17 accuracy axis (mirrors attention.cost_vector) ------------------------
     int64_t quantBits = static_cast<int64_t>(attn.getQuantBits());
-    int64_t accBound = quantBits > 0 ? 1 : 0;  // the Q8-bridge bound iff quantized (1 ULP), else 0
+    int64_t accBound = quantBits > 0 ? 1 : 0; // the Q8-bridge bound iff quantized (1 ULP), else 0
     if (accBound != static_cast<int64_t>(attn.getAccBound())) {
       attn.emitError("bcir-lower-gem-attention: acc_bound ")
           << static_cast<int64_t>(attn.getAccBound()) << " != the R17 Q8-bridge bound " << accBound
@@ -245,7 +244,8 @@ struct LowerGemAttentionPass
     const Location loc = attn.getLoc();
 
     // (1) the scores Q@K^T gemm: the chosen tile, in scores_loop_order -> <attn>_s_t<idx>.
-    int64_t nScores = emitGemm(builder, loc, ctx, (name + "_s").str(), sm, sn, sk, stm, stn, stk, scoresLo);
+    int64_t nScores =
+        emitGemm(builder, loc, ctx, (name + "_s").str(), sm, sn, sk, stm, stn, stk, scoresLo);
 
     // (2) the softmax over the seq x seq score matrix: ceil(count/width) gem.block stripes (the EXISTING
     // activation lowering). The softmax is the SOLE transcendental -- it routes expf through the trusted
@@ -253,14 +253,14 @@ struct LowerGemAttentionPass
     // attention (the oracle plans the two matmuls, not the softmax lane), so we emit ONE stripe over the
     // whole score matrix (count = seq*seq), the natural softmax pass: strideA = 1 (unit read), strideB =
     // seq (the last-axis reduce row length), strideD = 1.
-    GEMBlockOp::create(builder,
-        loc,
+    GEMBlockOp::create(
+        builder, loc,
         /*sym_name=*/StringAttr::get(ctx, (name + "_sm_s0").str()),
         /*base=*/builder.getI64IntegerAttr(0),
         /*count=*/builder.getI64IntegerAttr(scoreCount),
-        /*strideA=*/builder.getI64IntegerAttr(1),     // unit-stride elementwise read
-        /*strideB=*/builder.getI64IntegerAttr(seq),   // the softmax last-axis reduce row length
-        /*strideD=*/builder.getI64IntegerAttr(1));     // unit-stride write
+        /*strideA=*/builder.getI64IntegerAttr(1),   // unit-stride elementwise read
+        /*strideB=*/builder.getI64IntegerAttr(seq), // the softmax last-axis reduce row length
+        /*strideD=*/builder.getI64IntegerAttr(1));  // unit-stride write
 
     // (3) the context A@V gemm: the chosen tile, in context_loop_order -> <attn>_c_t<idx>.
     emitGemm(builder, loc, ctx, (name + "_c").str(), cm, cn, ck, ctm, ctn, ctk, contextLo);
@@ -301,10 +301,10 @@ struct LowerGemAttentionPass
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createLowerGemAttentionPass() {
   return std::make_unique<LowerGemAttentionPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

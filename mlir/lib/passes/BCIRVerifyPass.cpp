@@ -6,9 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
@@ -55,18 +55,19 @@ static uint64_t fnvItem(uint64_t h, llvm::StringRef s) {
 static int64_t fnvMask(uint64_t h) {
   return static_cast<int64_t>(h & 0x7FFFFFFFFFFFFFFFULL);
 }
-static uint64_t fnvInt(uint64_t h, int64_t v) { return fnvItem(h, std::to_string(v)); }
+static uint64_t fnvInt(uint64_t h, int64_t v) {
+  return fnvItem(h, std::to_string(v));
+}
 
 // provenance.hash_theta recomputed from a kbcir.theta op: FNV-1a over the eight 0..100
 // pressures (str(int) each, byte-identical to the oracle).
 static int64_t hashThetaFromIR(KBCIRThetaOp t) {
   uint64_t h = kFnvOffset;
-  for (int64_t v : {static_cast<int64_t>(t.getThermal()), static_cast<int64_t>(t.getPower()),
-                    static_cast<int64_t>(t.getMemPressure()),
-                    static_cast<int64_t>(t.getContention()),
-                    static_cast<int64_t>(t.getNoise()), static_cast<int64_t>(t.getWear()),
-                    static_cast<int64_t>(t.getUtilization()),
-                    static_cast<int64_t>(t.getVoltage())})
+  for (int64_t v :
+       {static_cast<int64_t>(t.getThermal()), static_cast<int64_t>(t.getPower()),
+        static_cast<int64_t>(t.getMemPressure()), static_cast<int64_t>(t.getContention()),
+        static_cast<int64_t>(t.getNoise()), static_cast<int64_t>(t.getWear()),
+        static_cast<int64_t>(t.getUtilization()), static_cast<int64_t>(t.getVoltage())})
     h = fnvInt(h, v);
   return fnvMask(h);
 }
@@ -231,8 +232,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         auto ref = dyn_cast<FlatSymbolRefAttr>(a);
         if (ref && !resourceByName.count(ref.getValue())) {
           c.emitError("R2: claim ")
-              << c.getSymName() << " " << which << " undeclared resource @"
-              << ref.getValue();
+              << c.getSymName() << " " << which << " undeclared resource @" << ref.getValue();
           ok = false;
         }
       }
@@ -245,8 +245,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // R3: domain legality -- claim domain contracts correspond to registry
     // placement; MMIO writes need an ordered hazard; HAM is illegal on MMIO.
     root->walk([&](ResourceOp r) {
-      if (r.getAccess() && *r.getAccess() == Access::HAM &&
-          r.getDomainKind() == Domain::MMIO) {
+      if (r.getAccess() && *r.getAccess() == Access::HAM && r.getDomainKind() == Domain::MMIO) {
         r.emitError("R3: resource ")
             << r.getSymName() << " HAM access is illegal in the MMIO domain";
         ok = false;
@@ -259,9 +258,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // that declares a host domain but TOUCHES an MMIO/NVM resource (or vice versa) is
     // the data-redirection / MMIO-as-RAM gap: an isolated resource silently treated
     // as the wrong address space. Such a touch must MATCH the claim's declared domain.
-    auto isIsolatedDomain = [](Domain d) {
-      return d == Domain::MMIO || d == Domain::NVM;
-    };
+    auto isIsolatedDomain = [](Domain d) { return d == Domain::MMIO || d == Domain::NVM; };
     root->walk([&](ClaimOp c) {
       bool anyResolved = false, domainBacked = false;
       // Tighten the FIRST-MATCH weakness: the old check set domainBacked on the FIRST
@@ -286,13 +283,14 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
             // Name whichever SIDE is the device-isolated one (the resource domain, the claim
             // domain, or both) so the diagnostic is never factually wrong -- a RAM resource
             // touched by an MMIO claim must not be called "device-isolated ram".
-            const char *which_isolated =
-                (isIsolatedDomain(rd) && isIsolatedDomain(c.getDomain())) ? "both domains are device-isolated and differ"
-                : isIsolatedDomain(rd) ? "the resource is in a device-isolated domain"
-                                       : "the claim declares a device-isolated domain";
+            const char *which_isolated = (isIsolatedDomain(rd) && isIsolatedDomain(c.getDomain()))
+                                             ? "both domains are device-isolated and differ"
+                                         : isIsolatedDomain(rd)
+                                             ? "the resource is in a device-isolated domain"
+                                             : "the claim declares a device-isolated domain";
             c.emitError("R3: claim ")
-                << c.getSymName() << " " << which << " @" << ref.getValue()
-                << " (domain " << stringifyDomain(rd) << ") does not match the claim domain "
+                << c.getSymName() << " " << which << " @" << ref.getValue() << " (domain "
+                << stringifyDomain(rd) << ") does not match the claim domain "
                 << stringifyDomain(c.getDomain()) << " -- " << which_isolated
                 << ", so an isolated resource may not be reached as another address space";
             ok = false;
@@ -302,9 +300,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       touch(c.getReads(), "reads");
       touch(c.getWrites(), "writes");
       if (anyResolved && !domainBacked) {
-        c.emitError("R3: claim ")
-            << c.getSymName()
-            << " declares a domain not backed by any touched resource";
+        c.emitError("R3: claim ") << c.getSymName()
+                                  << " declares a domain not backed by any touched resource";
         ok = false;
       }
       for (Attribute a : c.getWrites()) {
@@ -312,32 +309,26 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         if (!ref)
           continue;
         auto it = resourceByName.find(ref.getValue());
-        if (it != resourceByName.end() &&
-            it->second.getDomainKind() == Domain::MMIO &&
+        if (it != resourceByName.end() && it->second.getDomainKind() == Domain::MMIO &&
             !hazardOrdered(c.getHazard())) {
-          c.emitError("R3: claim ")
-              << c.getSymName() << " MMIO write to @" << ref.getValue()
-              << " requires an atomic/barriered hazard";
+          c.emitError("R3: claim ") << c.getSymName() << " MMIO write to @" << ref.getValue()
+                                    << " requires an atomic/barriered hazard";
           ok = false;
         }
       }
     });
     root->walk([&](LoadOp l) {
       auto it = resourceByName.find(l.getSrc());
-      if (it != resourceByName.end() &&
-          it->second.getDomainKind() != l.getDomain()) {
-        l.emitError(
-            "R3: load domain contract does not match the resource domain of @")
+      if (it != resourceByName.end() && it->second.getDomainKind() != l.getDomain()) {
+        l.emitError("R3: load domain contract does not match the resource domain of @")
             << l.getSrc();
         ok = false;
       }
     });
     root->walk([&](StoreOp s) {
       auto it = resourceByName.find(s.getDst());
-      if (it != resourceByName.end() &&
-          it->second.getDomainKind() != s.getDomain()) {
-        s.emitError(
-            "R3: store domain contract does not match the resource domain of @")
+      if (it != resourceByName.end() && it->second.getDomainKind() != s.getDomain()) {
+        s.emitError("R3: store domain contract does not match the resource domain of @")
             << s.getDst();
         ok = false;
       }
@@ -384,12 +375,11 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       claimByName[c.getSymName()] = c;
       claimsByPhase[c.getPhase()].push_back(c);
       StringRef op = c.getOp();
-      bool atomicSemantics = c.getLane() == Lane::A ||
-                             op.starts_with("atomic") || op.contains("cmpxchg");
+      bool atomicSemantics =
+          c.getLane() == Lane::A || op.starts_with("atomic") || op.contains("cmpxchg");
       if (atomicSemantics && !hazardOrdered(c.getHazard())) {
-        c.emitError("R5: claim ")
-            << c.getSymName()
-            << " atomic semantics require an atomic/barriered hazard";
+        c.emitError("R5: claim ") << c.getSymName()
+                                  << " atomic semantics require an atomic/barriered hazard";
         ok = false;
       }
       // §5.14 Phase 2 (indirect-call effect): a dispatch claim's DECLARED callee signature,
@@ -397,9 +387,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       // R18/commutation consumers silently. Vacuous when absent (the opaque-edge default).
       if (auto sig = c.getCalleeSig()) {
         if (!sig->contains("(")) {
-          c.emitError("R18: claim ")
-              << c.getSymName() << " malformed indirect-callee signature '" << *sig
-              << "' (expected 'ret(params)')";
+          c.emitError("R18: claim ") << c.getSymName() << " malformed indirect-callee signature '"
+                                     << *sig << "' (expected 'ret(params)')";
           ok = false;
         }
       }
@@ -407,9 +396,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       // an ordering/legality signal, never cosmetic. Mirrors verify.verify() R5 on the oracle;
       // vacuous unless a claim opts into `is_volatile` (non-disturbance).
       if (c.getIsVolatile() && !hazardOrdered(c.getHazard())) {
-        c.emitError("R5: claim ")
-            << c.getSymName()
-            << " volatile access requires an atomic/barriered hazard";
+        c.emitError("R5: claim ") << c.getSymName()
+                                  << " volatile access requires an atomic/barriered hazard";
         ok = false;
       }
     });
@@ -423,8 +411,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           for (ClaimOp c : {a, b}) {
             if (!hazardOrdered(c.getHazard())) {
               c.emitError("R5: claim ")
-                  << c.getSymName()
-                  << " conflicts across the decoupled GGG tail in phase @"
+                  << c.getSymName() << " conflicts across the decoupled GGG tail in phase @"
                   << entry.first << " without an atomic/barriered hazard";
               ok = false;
             }
@@ -463,8 +450,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
             ok = false;
           }
         }
-        llvm::sort(programPhases,
-                   [](PhaseOp a, PhaseOp b) { return a.getId() < b.getId(); });
+        llvm::sort(programPhases, [](PhaseOp a, PhaseOp b) { return a.getId() < b.getId(); });
         std::set<std::string> armed;
         for (PhaseOp p : programPhases)
           for (ClaimOp c : claimsByPhase.lookup(p.getSymName()))
@@ -475,8 +461,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           std::string src = p.getEvent().str();
           if (seenSources.insert(src).second && !armed.count(src)) {
             p.emitError("R3: EV2: event source '")
-                << src << "' is never armed -- enablement must be an explicit "
-                << kUnmask << src << " claim in the program flow, never implicit";
+                << src << "' is never armed -- enablement must be an explicit " << kUnmask << src
+                << " claim in the program flow, never implicit";
             ok = false;
           }
         }
@@ -511,8 +497,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
                 for (const std::string &src : it->second) {
                   if (!masked.count(src)) {
                     c.emitError("R3: EV3: claim ")
-                        << c.getSymName() << " touches @" << ref.getValue()
-                        << ", which the '" << src
+                        << c.getSymName() << " touches @" << ref.getValue() << ", which the '"
+                        << src
                         << "' handler writes, outside a masked window -- mask the "
                            "source around it or make the touch a Lane.A atomic (the "
                            "interrupted flow must order against the handler)";
@@ -531,8 +517,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // R6: lane legality -- lane matches the declared access pattern.
     root->walk([&](ClaimOp c) {
       if (!laneLegalForStride(c.getLane(), c.getStrideClass())) {
-        c.emitError("R6: claim ")
-            << c.getSymName() << " lane illegal for its stride class";
+        c.emitError("R6: claim ") << c.getSymName() << " lane illegal for its stride class";
         ok = false;
       }
     });
@@ -569,14 +554,12 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       if (c.getBounds() != Bounds::Strict)
         return;
       StrideClass sc = c.getStrideClass();
-      bool dataDependent =
-          sc == StrideClass::Cacheline || sc == StrideClass::Random;
+      bool dataDependent = sc == StrideClass::Cacheline || sc == StrideClass::Random;
       if (dataDependent) {
         if (c.getVerify() == Verify::None) {
-          c.emitError("R7: claim ")
-              << c.getSymName()
-              << " data-dependent access with strict bounds requires a "
-                 "runtime verify contract";
+          c.emitError("R7: claim ") << c.getSymName()
+                                    << " data-dependent access with strict bounds requires a "
+                                       "runtime verify contract";
           ok = false;
         }
         return;
@@ -594,12 +577,10 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       bool isReduction = c.getOp().starts_with("reduce.");
       int64_t lastOffset;
       if (offset < 0 || count < 0 ||
-          (count > 0 &&
-           (!checkedMulNonnegative(count - 1, k, lastOffset) ||
-            !checkedAddNonnegative(offset, lastOffset, readExtent) ||
-            !checkedAddNonnegative(readExtent, 1, readExtent))) ||
-          !checkedAddNonnegative(offset, isReduction ? 1 : count,
-                                 writeExtent)) {
+          (count > 0 && (!checkedMulNonnegative(count - 1, k, lastOffset) ||
+                         !checkedAddNonnegative(offset, lastOffset, readExtent) ||
+                         !checkedAddNonnegative(readExtent, 1, readExtent))) ||
+          !checkedAddNonnegative(offset, isReduction ? 1 : count, writeExtent)) {
         c.emitError("R7: affine access extent exceeds signed 64-bit range");
         ok = false;
         return;
@@ -616,8 +597,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           if (n && *n > 0 && extent > *n) {
             c.emitError("R7: claim ")
                 << c.getSymName() << " " << kind << " of @" << ref.getValue()
-                << " overruns the resource (extent " << extent << " > " << *n
-                << ")";
+                << " overruns the resource (extent " << extent << " > " << *n << ")";
             ok = false;
           }
         }
@@ -648,10 +628,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     root->walk([&](KBCIRPolicyOp p) {
       auto validateWeights = [&](ArrayRef<int64_t> weights, StringRef which) {
         if (weights.size() != 12 ||
-            std::any_of(weights.begin(), weights.end(),
-                        [](int64_t value) { return value < 0; })) {
-          p.emitError("R8: ") << which
-              << " must contain exactly 12 non-negative weights";
+            std::any_of(weights.begin(), weights.end(), [](int64_t value) { return value < 0; })) {
+          p.emitError("R8: ") << which << " must contain exactly 12 non-negative weights";
           ok = false;
         }
       };
@@ -660,14 +638,12 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         validateWeights(*base, "policy base_weights");
     });
     static const llvm::DenseSet<StringRef> kCostDims = {
-        "compute", "memory", "fabric", "sync", "compile", "thermal",
-        "power", "reliability", "security", "accuracy", "contention",
-        "verification"};
+        "compute", "memory",      "fabric",   "sync",     "compile",    "thermal",
+        "power",   "reliability", "security", "accuracy", "contention", "verification"};
     root->walk([&](KBCIRBudgetOp b) {
       budgetByName[b.getSymName()] = b;
       if (b.getDims().size() != static_cast<size_t>(b.getCaps().size())) {
-        b.emitError("R8: budget ")
-            << b.getSymName() << " dims/caps arity mismatch";
+        b.emitError("R8: budget ") << b.getSymName() << " dims/caps arity mismatch";
         ok = false;
       }
       for (int64_t cap : b.getCaps()) {
@@ -680,8 +656,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       for (Attribute a : b.getDims()) {
         auto name = dyn_cast<StringAttr>(a);
         if (!name || !kCostDims.count(name.getValue())) {
-          b.emitError("R8: budget ")
-              << b.getSymName() << " names an unknown cost dimension";
+          b.emitError("R8: budget ") << b.getSymName() << " names an unknown cost dimension";
           ok = false;
         }
       }
@@ -705,15 +680,13 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         }
       }
       if (!selectedInFrom) {
-        s.emitError("R9: selected path @")
-            << s.getSelected() << " is not among the candidate set";
+        s.emitError("R9: selected path @") << s.getSelected() << " is not among the candidate set";
         ok = false;
       }
       if (auto p = pathByName.lookup(s.getSelected())) {
         if (p.getClaim() != s.getClaim()) {
-          s.emitError("R9: selected path @")
-              << s.getSelected() << " realizes claim @" << p.getClaim()
-              << ", not @" << s.getClaim();
+          s.emitError("R9: selected path @") << s.getSelected() << " realizes claim @"
+                                             << p.getClaim() << ", not @" << s.getClaim();
           ok = false;
         }
       }
@@ -726,8 +699,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       if (auto bref = s.getBudgetAttr()) {
         auto b = budgetByName.lookup(bref.getValue());
         if (!b) {
-          s.emitError("R8: budget @")
-              << bref.getValue() << " does not resolve";
+          s.emitError("R8: budget @") << bref.getValue() << " does not resolve";
           ok = false;
         } else if (auto p = pathByName.lookup(s.getSelected())) {
           ArrayAttr dims = b.getDims();
@@ -739,9 +711,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
             auto v = costDim(p.getCost(), name.getValue());
             if (v && *v > caps[i]) {
               s.emitError("R9: selected path @")
-                  << s.getSelected() << " violates budget @" << bref.getValue()
-                  << " (" << name.getValue() << " " << *v << " > " << caps[i]
-                  << ")";
+                  << s.getSelected() << " violates budget @" << bref.getValue() << " ("
+                  << name.getValue() << " " << *v << " > " << caps[i] << ")";
               ok = false;
             }
           }
@@ -753,20 +724,17 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // makespan + overlap_gain == serial -- and references a declared plan.
     root->walk([&](KBCIRScheduledPriceOp sp) {
       if (!planByName.count(sp.getPlan())) {
-        sp.emitError("R9: scheduled price references unknown plan @")
-            << sp.getPlan();
+        sp.emitError("R9: scheduled price references unknown plan @") << sp.getPlan();
         ok = false;
       }
       int64_t makespan = static_cast<int64_t>(sp.getMakespan());
       int64_t serial = static_cast<int64_t>(sp.getSerial());
       int64_t gain = static_cast<int64_t>(sp.getOverlapGain());
       int64_t reconstructed;
-      if (makespan < 0 || gain < 0 ||
-          !checkedAddNonnegative(makespan, gain, reconstructed) ||
+      if (makespan < 0 || gain < 0 || !checkedAddNonnegative(makespan, gain, reconstructed) ||
           reconstructed != serial) {
         sp.emitError("R9: inconsistent scheduled price (makespan ")
-            << makespan << " + overlap_gain " << gain << " != serial " << serial
-            << ")";
+            << makespan << " + overlap_gain " << gain << " != serial " << serial << ")";
         ok = false;
       }
     });
@@ -783,8 +751,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         ok = false;
       }
       if (F > score) {
-        ss.emitError("R9: soft_select free_energy ")
-            << F << " exceeds the hard minimum " << score;
+        ss.emitError("R9: soft_select free_energy ") << F << " exceeds the hard minimum " << score;
         ok = false;
       }
       if (T == 0 && F != score) {
@@ -815,17 +782,14 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // the Q8 unit by definition, ratios floor at it, the table is
     // generation-tagged, and its target resolves.
     llvm::DenseMap<StringRef, TargetCapabilityOp> capabilityByName;
-    root->walk(
-        [&](TargetCapabilityOp t) { capabilityByName[t.getSymName()] = t; });
+    root->walk([&](TargetCapabilityOp t) { capabilityByName[t.getSymName()] = t; });
     root->walk([&](KBCIRCalibrationOp cal) {
       if (!capabilityByName.count(cal.getTarget())) {
-        cal.emitError("R8: calibration target @")
-            << cal.getTarget() << " does not resolve";
+        cal.emitError("R8: calibration target @") << cal.getTarget() << " does not resolve";
         ok = false;
       }
       if (static_cast<int64_t>(cal.getStreamQ8()) != 256) {
-        cal.emitError(
-            "R8: calibration stream_q8 must be 256 (the Q8 baseline)");
+        cal.emitError("R8: calibration stream_q8 must be 256 (the Q8 baseline)");
         ok = false;
       }
       if (static_cast<int64_t>(cal.getCalGen()) < 1 ||
@@ -840,8 +804,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       // plain point table (no guarantee), which is always well-formed.
       int64_t cov = static_cast<int64_t>(cal.getCoverageMilli());
       if (cov != 0 && !(cov > 0 && cov < 1000)) {
-        cal.emitError("R8: conformal coverage ")
-            << cov << "/1000 out of range (0,1000)";
+        cal.emitError("R8: conformal coverage ") << cov << "/1000 out of range (0,1000)";
         ok = false;
       }
       if (static_cast<int64_t>(cal.getRandomDeltaQ8()) < 0) {
@@ -865,8 +828,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       for (Attribute a : pf.getPolicies()) {
         auto ref = dyn_cast<FlatSymbolRefAttr>(a);
         if (ref && !policyByName.count(ref.getValue())) {
-          pf.emitError("R9: portfolio references unknown policy @")
-              << ref.getValue();
+          pf.emitError("R9: portfolio references unknown policy @") << ref.getValue();
           ok = false;
         }
       }
@@ -884,8 +846,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         }
     });
     root->walk([&](KBCIRReplayCertificateOp rc) {
-      if (!policyByName.count(rc.getCandidate()) ||
-          !policyByName.count(rc.getIncumbent())) {
+      if (!policyByName.count(rc.getCandidate()) || !policyByName.count(rc.getIncumbent())) {
         rc.emitError("R9: replay certificate references an unknown policy");
         ok = false;
       }
@@ -896,8 +857,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         ok = false;
       }
       if (rc.getAdmitted() && regressions != 0) {
-        rc.emitError("R9: admitted replay certificate carries ")
-            << regressions << " regression(s)";
+        rc.emitError("R9: admitted replay certificate carries ") << regressions << " regression(s)";
         ok = false;
       }
     });
@@ -919,39 +879,33 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         auto ref = dyn_cast<FlatSymbolRefAttr>(policies[i]);
         if (ref && gens[i] > 1 && !admittedCandidates.count(ref.getValue())) {
           pf.emitError("R13: promoted policy @")
-              << ref.getValue() << " (gen " << gens[i]
-              << ") has no admitting replay certificate";
+              << ref.getValue() << " (gen " << gens[i] << ") has no admitting replay certificate";
           ok = false;
         }
       }
     });
     llvm::DenseMap<StringRef, KBCIRCalibrationOp> calibrationByTarget;
-    root->walk([&](KBCIRCalibrationOp cal) {
-      calibrationByTarget[cal.getTarget()] = cal;
-    });
+    root->walk([&](KBCIRCalibrationOp cal) { calibrationByTarget[cal.getTarget()] = cal; });
     root->walk([&](TargetCapabilityOp t) {
       int64_t gen = static_cast<int64_t>(t.getCalGen());
       if (gen < 1)
         return; // seeded constants: nothing to certify
       auto cal = calibrationByTarget.lookup(t.getSymName());
       if (!cal || static_cast<int64_t>(cal.getCalGen()) != gen) {
-        t.emitError("R13: capability @")
-            << t.getSymName() << " claims cal_gen " << gen
-            << " without a matching calibration certificate";
+        t.emitError("R13: capability @") << t.getSymName() << " claims cal_gen " << gen
+                                         << " without a matching calibration certificate";
         ok = false;
       }
     });
     root->walk([&](KBCIRRegretLedgerOp rl) {
       if (!policyByName.count(rl.getRule())) {
-        rl.emitError("R13: regret ledger references unknown rule @")
-            << rl.getRule();
+        rl.emitError("R13: regret ledger references unknown rule @") << rl.getRule();
         ok = false;
       }
       int64_t episodes = static_cast<int64_t>(rl.getEpisodes());
       int64_t total = static_cast<int64_t>(rl.getTotalRegret());
       int64_t worst = static_cast<int64_t>(rl.getWorstRegret());
-      if (episodes < 0 || worst < 0 || total < worst ||
-          static_cast<int64_t>(rl.getGen()) < 1) {
+      if (episodes < 0 || worst < 0 || total < worst || static_cast<int64_t>(rl.getGen()) < 1) {
         rl.emitError("R13: regret ledger books do not balance");
         ok = false;
       }
@@ -966,8 +920,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         ok = false;
       } else if ((verdict == "retune") != (fit > cx)) {
         rl.emitError("R13: regret verdict '")
-            << verdict << "' inconsistent with the MDL evidence (data_fit "
-            << fit << " vs complexity " << cx << ")";
+            << verdict << "' inconsistent with the MDL evidence (data_fit " << fit
+            << " vs complexity " << cx << ")";
         ok = false;
       }
     });
@@ -980,8 +934,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     root->walk([&](KBCIRPortfolioOp pf) { portfolioNames.insert(pf.getSymName()); });
     root->walk([&](KBCIRMoEGateOp gate) {
       if (!portfolioNames.count(gate.getPortfolio())) {
-        gate.emitError("R13: MoE gate routes to unknown portfolio @")
-            << gate.getPortfolio();
+        gate.emitError("R13: MoE gate routes to unknown portfolio @") << gate.getPortfolio();
         ok = false;
       }
       if (static_cast<int64_t>(gate.getNumExperts()) < 1 ||
@@ -994,8 +947,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
       int64_t regressions = static_cast<int64_t>(gate.getRegressions());
       if (gate.getAdmitted() && regressions != 0) {
-        gate.emitError("R13: admitted MoE gate carries ")
-            << regressions << " regression(s)";
+        gate.emitError("R13: admitted MoE gate carries ") << regressions << " regression(s)";
         ok = false;
       }
       if (!gate.getAdmitted()) {
@@ -1039,9 +991,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
             << "); the hot path carries decisions, not models";
         ok = false;
       } else if (cost < 0 || gain < cost || cost > budget) {
-        am.emitError("R13: component ")
-            << am.getComponent() << " fails amortization (gain " << gain
-            << " vs cost " << cost << ", budget " << budget << ")";
+        am.emitError("R13: component ") << am.getComponent() << " fails amortization (gain " << gain
+                                        << " vs cost " << cost << ", budget " << budget << ")";
         ok = false;
       }
     });
@@ -1052,9 +1003,9 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     root->walk([&](KBCIRMemoryModuleOp mm) {
       if (!mm.getSaturated() || mm.getGeneration() < 1) {
         mm.emitError("R13: memory module ")
-            << mm.getSymName() << " is not admissible (saturated="
-            << (mm.getSaturated() ? "true" : "false") << ", generation="
-            << mm.getGeneration() << "); a = Lim(Res(U)) must be a saturated, "
+            << mm.getSymName()
+            << " is not admissible (saturated=" << (mm.getSaturated() ? "true" : "false")
+            << ", generation=" << mm.getGeneration() << "); a = Lim(Res(U)) must be a saturated, "
             << "generation-tagged fixpoint";
         ok = false;
       }
@@ -1066,8 +1017,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // identical plan; a plan that cannot be reproduced from its provenance is not
     // a closed branch.
     root->walk([&](KBCIRProvenanceManifestOp pm) {
-      if (static_cast<int64_t>(pm.getScore()) < 0 ||
-          static_cast<int64_t>(pm.getNArtifacts()) < 0) {
+      if (static_cast<int64_t>(pm.getScore()) < 0 || static_cast<int64_t>(pm.getNArtifacts()) < 0) {
         pm.emitError("R13: manifest score/n_artifacts out of range");
         ok = false;
       }
@@ -1102,8 +1052,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         if (recomputed != static_cast<int64_t>(pm.getDigest())) {
           pm.emitError("R13: provenance digest ")
               << static_cast<int64_t>(pm.getDigest())
-              << " does not match the digest recomputed from its component hashes "
-              << recomputed << " (tampered or stale manifest)";
+              << " does not match the digest recomputed from its component hashes " << recomputed
+              << " (tampered or stale manifest)";
           ok = false;
         }
       }
@@ -1140,9 +1090,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       auto crossCheck = [&](StringRef field, int64_t declared, int64_t recomputed) {
         if (declared && recomputed != declared) {
           pm.emitError("R13: manifest ")
-              << field << " " << declared
-              << " does not match the value recomputed from the IR " << recomputed
-              << " (manifest attached to different inputs)";
+              << field << " " << declared << " does not match the value recomputed from the IR "
+              << recomputed << " (manifest attached to different inputs)";
           ok = false;
         }
       };
@@ -1182,29 +1131,25 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     root->walk([&](GEMPrefetchOp p) {
       prefetchByName[p.getSymName()] = p;
       if (p.getBuffers() != 1 && p.getBuffers() != 2) {
-        p.emitError("R10: prefetch ")
-            << p.getSymName() << " invalid buffer count (1 or 2)";
+        p.emitError("R10: prefetch ") << p.getSymName() << " invalid buffer count (1 or 2)";
         ok = false;
       }
     });
     root->walk([&](GEMLaneSegmentOp seg) {
       if (!claimByName.count(seg.getClaim())) {
         seg.emitError("R10: segment ")
-            << seg.getSymName() << " references unknown claim @"
-            << seg.getClaim();
+            << seg.getSymName() << " references unknown claim @" << seg.getClaim();
         ok = false;
       }
       if (!phaseOps.count(seg.getPhase())) {
         seg.emitError("R10: segment ")
-            << seg.getSymName() << " references unknown phase @"
-            << seg.getPhase();
+            << seg.getSymName() << " references unknown phase @" << seg.getPhase();
         ok = false;
       }
       if (auto pf = seg.getPrefetchAttr()) {
         if (!prefetchByName.count(pf.getValue())) {
           seg.emitError("R10: segment ")
-              << seg.getSymName() << " references undeclared prefetch @"
-              << pf.getValue();
+              << seg.getSymName() << " references undeclared prefetch @" << pf.getValue();
           ok = false;
         }
       }
@@ -1213,8 +1158,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           auto ref = dyn_cast<FlatSymbolRefAttr>(a);
           if (ref && !resourceByName.count(ref.getValue())) {
             seg.emitError("R10: segment ")
-                << seg.getSymName() << " references undeclared resource @"
-                << ref.getValue();
+                << seg.getSymName() << " references undeclared resource @" << ref.getValue();
             ok = false;
           }
         }
@@ -1256,9 +1200,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // matmul's C += A*B over K-tiles writes the same accumulator from successive same-lane
     // segments) ARE wave-serialized and not flagged, so the pretty corpus stays clean.
     llvm::DenseMap<StringRef, SmallVector<GEMLaneSegmentOp, 8>> segsByPhase;
-    root->walk([&](GEMLaneSegmentOp seg) {
-      segsByPhase[seg.getPhase()].push_back(seg);
-    });
+    root->walk([&](GEMLaneSegmentOp seg) { segsByPhase[seg.getPhase()].push_back(seg); });
     for (auto &entry : segsByPhase) {
       auto &group = entry.second;
       for (size_t i = 0; i < group.size(); ++i) {
@@ -1292,10 +1234,9 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
             if (aPubBAcq || bPubAAcq)
               continue; // a release/acquire fence pair orders the cross-lane access to @r
             a.emitError("R10: segment ")
-                << a.getSymName() << " (lane " << laneSpelling(a.getLane())
-                << ") and segment @" << b.getSymName() << " (lane "
-                << laneSpelling(b.getLane()) << ") have a cross-lane write alias on @"
-                << r << " in phase @" << entry.first
+                << a.getSymName() << " (lane " << laneSpelling(a.getLane()) << ") and segment @"
+                << b.getSymName() << " (lane " << laneSpelling(b.getLane())
+                << ") have a cross-lane write alias on @" << r << " in phase @" << entry.first
                 << " without an ordering fence (a fence_after on one naming @" << r
                 << " paired with a fence_before on the other) -- an isolation violation";
             ok = false;
@@ -1323,11 +1264,13 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           return;
         }
       }
-      int64_t cap = (*pl == MemTier::L1) ? (64 * 1024)
-                  : (*pl == MemTier::L2) ? (4 * 1024 * 1024) : 0;
+      int64_t cap = (*pl == MemTier::L1)   ? (64 * 1024)
+                    : (*pl == MemTier::L2) ? (4 * 1024 * 1024)
+                                           : 0;
       if (cap && bytes > cap) {
-        r.emitError("R16: placement ") << stringifyMemTier(*pl) << " does not fit @"
-            << r.getSymName() << " (" << bytes << " B > " << cap << " B)";
+        r.emitError("R16: placement ")
+            << stringifyMemTier(*pl) << " does not fit @" << r.getSymName() << " (" << bytes
+            << " B > " << cap << " B)";
         ok = false;
       }
     });
@@ -1340,7 +1283,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // tight tolerance on a long reduction is the law that FORCES the compensated
     // realization. First-class here in -bcir-verify (dual-rail with verify.verify_accuracy).
     root->walk([&](ClaimOp c) {
-      auto prec = c.getPrecision();   // std::optional<PrecisionAttr>
+      auto prec = c.getPrecision(); // std::optional<PrecisionAttr>
       if (!prec)
         return;
       int64_t tol = prec->getToleranceQ16();
@@ -1349,8 +1292,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       int64_t count = std::max<int64_t>(1, static_cast<int64_t>(c.getCount()));
       int64_t bound = c.getOp().starts_with("reduce.") ? (prec->getExact() ? 1 : count) : 1;
       if (bound > tol) {
-        c.emitError("R17: accuracy bound ") << bound << " ULP exceeds tolerance " << tol
-            << " ULP @" << c.getSymName()
+        c.emitError("R17: accuracy bound ")
+            << bound << " ULP exceeds tolerance " << tol << " ULP @" << c.getSymName()
             << " (a compensated reduction would bound it at 1)";
         ok = false;
       }
@@ -1420,17 +1363,17 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       root->walk([&](ClaimOp c) { ordered.push_back(c); });
       std::sort(ordered.begin(), ordered.end(),
                 [](ClaimOp a, ClaimOp b) { return a.getClaimId() < b.getClaimId(); });
-      llvm::DenseMap<StringRef, std::string> writerDomain; // resource -> clock_domain of last writer
-      llvm::DenseSet<StringRef> freed;                     // resources freed and not re-allocated
+      llvm::DenseMap<StringRef, std::string>
+          writerDomain;                // resource -> clock_domain of last writer
+      llvm::DenseSet<StringRef> freed; // resources freed and not re-allocated
       for (ClaimOp c : ordered) {
         // --- R19 / R20 (timing) ---
-        auto tm = c.getTiming();   // std::optional<TimingAttr>
+        auto tm = c.getTiming(); // std::optional<TimingAttr>
         if (tm) {
           StringRef sync = tm->getSyncType();
           if (!(sync.empty() || sync == "synchronous" || sync == "asynchronous" ||
                 sync == "mixed")) {
-            c.emitError("R19: claim ")
-                << c.getSymName() << " unknown sync_type '" << sync << "'";
+            c.emitError("R19: claim ") << c.getSymName() << " unknown sync_type '" << sync << "'";
             ok = false;
           }
           if (tm->getLatencyCycles() < 0) {
@@ -1450,8 +1393,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
                 << c.getSymName() << " a synchronous claim needs a positive clock_frequency_mhz";
             ok = false;
           }
-          if (tm->getLatencyCycles() > 0 &&
-              tm->getSetupHoldMargin() > tm->getLatencyCycles()) {
+          if (tm->getLatencyCycles() > 0 && tm->getSetupHoldMargin() > tm->getLatencyCycles()) {
             c.emitError("R19: claim ")
                 << c.getSymName() << " setup_hold_margin " << tm->getSetupHoldMargin()
                 << " exceeds the stage latency_cycles " << tm->getLatencyCycles();
@@ -1459,8 +1401,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           }
           // R20: a RAW dependency that crosses clock domains must be synchronized -- the consumer
           // declares sync_type='mixed' OR a barriered hazard (the synchronizer / handshake).
-          bool synchronized =
-              (sync == "mixed") || (c.getHazard() == HazardMode::Barriered);
+          bool synchronized = (sync == "mixed") || (c.getHazard() == HazardMode::Barriered);
           StringRef dom = tm->getClockDomain();
           if (!dom.empty() && !synchronized) {
             for (Attribute a : c.getReads()) {
@@ -1487,7 +1428,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
             writerDomain[ref.getValue()] = wdom;
 
         // --- R21 (lifetime) ---
-        auto lt = c.getLifetime();   // std::optional<LifetimeAttr>
+        auto lt = c.getLifetime(); // std::optional<LifetimeAttr>
         StringRef event = lt ? lt->getEvent() : StringRef("use");
         if (lt && event != "use" && event != "alloc" && event != "free") {
           c.emitError("R21: claim ")
@@ -1499,7 +1440,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           auto ref = dyn_cast<FlatSymbolRefAttr>(a);
           if (ref && freed.contains(ref.getValue())) {
             c.emitError("R21: claim ")
-                << c.getSymName() << (event == "free" ? " double-free of @" : " use-after-free of @")
+                << c.getSymName()
+                << (event == "free" ? " double-free of @" : " use-after-free of @")
                 << ref.getValue() << " (freed and not re-allocated)";
             ok = false;
           }
@@ -1520,9 +1462,15 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // extended to the call ABI. Mirrors the oracle's verify_abi_contract; vacuous when no
     // contract op is present (the whole existing corpus).
     {
-      struct DM { const char *name; uint32_t ptr; uint32_t lng; };
-      static const DM kMatrix[] = {{"x86_64-linux", 8, 8},   {"aarch64-linux", 8, 8},
-                                   {"riscv64-linux", 8, 8},  {"x86_64-windows", 8, 4},
+      struct DM {
+        const char *name;
+        uint32_t ptr;
+        uint32_t lng;
+      };
+      static const DM kMatrix[] = {{"x86_64-linux", 8, 8},
+                                   {"aarch64-linux", 8, 8},
+                                   {"riscv64-linux", 8, 8},
+                                   {"x86_64-windows", 8, 4},
                                    {"i386-linux", 4, 4}};
       root->walk([&](AbiContractOp a) {
         const DM *hit = nullptr;
@@ -1615,8 +1563,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       if (auto emb = dyn_cast<GEMEmbeddingOp>(prev)) {
         int64_t normExtent, embeddingExtent;
         if (!checkedMulNonnegative(rn.getRows(), rn.getDim(), normExtent) ||
-            !checkedMulNonnegative(emb.getNIds(), emb.getDim(),
-                                   embeddingExtent)) {
+            !checkedMulNonnegative(emb.getNIds(), emb.getDim(), embeddingExtent)) {
           rn.emitError("R22: decoder seam extent exceeds signed 64-bit range");
           ok = false;
           return;
@@ -1686,8 +1633,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         if (static_cast<int64_t>(gq.getNKvHeads()) != static_cast<int64_t>(kc.getNKvHeads())) {
           gq.emitError("R22: gem.gqa_attention ")
               << gq.getSymName() << " reads the adjacent gem.kv_cache @" << kc.getSymName()
-              << " but declares n_kv_heads = " << gq.getNKvHeads()
-              << " != the cache's " << kc.getNKvHeads();
+              << " but declares n_kv_heads = " << gq.getNKvHeads() << " != the cache's "
+              << kc.getNKvHeads();
           ok = false;
         }
         if (static_cast<int64_t>(gq.getDK()) != static_cast<int64_t>(kc.getDK())) {
@@ -1699,8 +1646,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         if (kc.getDtype() != gq.getDtype()) {
           gq.emitError("R23: gem.gqa_attention ")
               << gq.getSymName() << " reads the adjacent gem.kv_cache @" << kc.getSymName()
-              << " but declares dtype '" << gq.getDtype() << "' != the cache's '"
-              << kc.getDtype() << "'";
+              << " but declares dtype '" << gq.getDtype() << "' != the cache's '" << kc.getDtype()
+              << "'";
           ok = false;
         }
       }
@@ -1748,8 +1695,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     }
     root->walk([&](GEMStreamPackOp sp) {
       if (!planByName.count(sp.getSourcePlan())) {
-        sp.emitError("R10: stream pack source plan @")
-            << sp.getSourcePlan() << " does not resolve";
+        sp.emitError("R10: stream pack source plan @") << sp.getSourcePlan() << " does not resolve";
         ok = false;
       }
       if (sp.getPipelineDepth() < 1) {
@@ -1764,14 +1710,12 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         return;
       if (sp.getMapGen() != regMapGen) {
         sp.emitError("R11: stale StreamPack: map_gen ")
-            << sp.getMapGen() << " != registry " << regMapGen
-            << " (rehydrate: repack)";
+            << sp.getMapGen() << " != registry " << regMapGen << " (rehydrate: repack)";
         ok = false;
       }
       if (sp.getDataGen() != regDataGen) {
         sp.emitError("R11: stale StreamPack: data_gen ")
-            << sp.getDataGen() << " != registry " << regDataGen
-            << " (rehydrate: replan)";
+            << sp.getDataGen() << " != registry " << regDataGen << " (rehydrate: replan)";
         ok = false;
       }
     });
@@ -1781,8 +1725,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     // be named) or carries an explicit discharge attribute.
     root->walk([&](TargetLowerContractOp lc) {
       StringRef p = lc.getPreserves();
-      bool preserved = p.contains("bounds") && p.contains("hazard") &&
-                       p.contains("precision");
+      bool preserved = p.contains("bounds") && p.contains("hazard") && p.contains("precision");
       if (!preserved && !lc->hasAttr("discharge")) {
         lc.emitError("R12: lowering contract ")
             << lc.getSymName()
@@ -1836,8 +1779,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       // byte-stable however canonically it chose among BER's options.
       if (!isCanonicalAsn1Rules(m.getRules())) {
         m.emitError("R24: ASN.1 module ")
-            << m.getSymName() << " declares encoding rules "
-            << stringifyAsn1Rules(m.getRules()) << " (" << asn1FamilyOf(m.getRules())
+            << m.getSymName() << " declares encoding rules " << stringifyAsn1Rules(m.getRules())
+            << " (" << asn1FamilyOf(m.getRules())
             << "), which is not canonical; BCIR emits only a transfer syntax whose "
                "octets are a function of the abstract value, because it digests what "
                "it emits";
@@ -1853,9 +1796,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         ok = false;
       } else {
         if (oid[0] < 0 || oid[0] > 2) {
-          m.emitError("R24: ASN.1 module ")
-              << m.getSymName() << " object identifier root arc " << oid[0]
-              << " is not 0, 1 or 2 (X.690 8.19.4)";
+          m.emitError("R24: ASN.1 module ") << m.getSymName() << " object identifier root arc "
+                                            << oid[0] << " is not 0, 1 or 2 (X.690 8.19.4)";
           ok = false;
         } else if (oid[0] < 2 && (oid[1] < 0 || oid[1] >= 40)) {
           m.emitError("R24: ASN.1 module ")
@@ -1866,8 +1808,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         for (int64_t arc : oid)
           if (arc < 0) {
             m.emitError("R24: ASN.1 module ")
-                << m.getSymName() << " object identifier arc " << arc
-                << " is negative";
+                << m.getSymName() << " object identifier arc " << arc << " is negative";
             ok = false;
             break;
           }
@@ -1896,8 +1837,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
       if (!isPrimitive && t.getUniversal()) {
         t.emitError("R24: ASN.1 type ")
-            << t.getSymName() << " has kind '" << kind
-            << "' but names a universal tag number";
+            << t.getSymName() << " has kind '" << kind << "' but names a universal tag number";
         ok = false;
       }
       // An X.680 clause 51 constraint whose lower bound exceeds its upper bound permits
@@ -1911,15 +1851,12 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       // a `< 0` test can never fire, and the emptiness comparison reports nonsense. A
       // value constraint is legitimately negative (`INTEGER (-128..127)`), so this is not
       // a theoretical concern.
-      const auto lowValue = [](std::optional<uint64_t> raw) {
-        return static_cast<int64_t>(*raw);
-      };
+      const auto lowValue = [](std::optional<uint64_t> raw) { return static_cast<int64_t>(*raw); };
       if (t.getConstraintLow() && t.getConstraintHigh() &&
           lowValue(t.getConstraintLow()) > lowValue(t.getConstraintHigh())) {
         t.emitError("R24: ASN.1 type ")
             << t.getSymName() << " has an empty value constraint ("
-            << lowValue(t.getConstraintLow()) << ".."
-            << lowValue(t.getConstraintHigh())
+            << lowValue(t.getConstraintLow()) << ".." << lowValue(t.getConstraintHigh())
             << "); no value of the type can be encoded (X.680 49)";
         ok = false;
       }
@@ -1927,15 +1864,14 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       // fault: a length cannot be negative whatever the upper bound says.
       if (t.getSizeLow() && lowValue(t.getSizeLow()) < 0) {
         t.emitError("R24: ASN.1 type ")
-            << t.getSymName() << " has a negative SIZE lower bound ("
-            << lowValue(t.getSizeLow())
+            << t.getSymName() << " has a negative SIZE lower bound (" << lowValue(t.getSizeLow())
             << "); a length cannot be negative (X.680 51.5)";
         ok = false;
       } else if (t.getSizeLow() && t.getSizeHigh() &&
                  lowValue(t.getSizeLow()) > lowValue(t.getSizeHigh())) {
         t.emitError("R24: ASN.1 type ")
-            << t.getSymName() << " has an empty SIZE constraint ("
-            << lowValue(t.getSizeLow()) << ".." << lowValue(t.getSizeHigh())
+            << t.getSymName() << " has an empty SIZE constraint (" << lowValue(t.getSizeLow())
+            << ".." << lowValue(t.getSizeHigh())
             << "); no value of the type can be encoded (X.680 51.5)";
         ok = false;
       }
@@ -1958,8 +1894,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
       if (!isOf && t.getElement()) {
         t.emitError("R24: ASN.1 type ")
-            << t.getSymName() << " has kind '" << kind
-            << "' but names an element type";
+            << t.getSymName() << " has kind '" << kind << "' but names an element type";
         ok = false;
       }
 
@@ -2010,8 +1945,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           auto [it, inserted] = byTag.try_emplace(tag, c.getName());
           if (!inserted) {
             c.emitError("R24: ASN.1 type ")
-                << t.getSymName() << " components " << it->second << " and "
-                << c.getName() << " share tag [" << tag
+                << t.getSymName() << " components " << it->second << " and " << c.getName()
+                << " share tag [" << tag
                 << "] (X.680 24.4/25.3/29.3: component tags shall be distinct)";
             ok = false;
           }
@@ -2034,8 +1969,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
     root->walk([&](Asn1EncodeOp e) {
       if (!isCanonicalAsn1Rules(e.getRules())) {
         e.emitError("R24: ASN.1 encode ")
-            << e.getSymName() << " declares encoding rules "
-            << stringifyAsn1Rules(e.getRules()) << " (" << asn1FamilyOf(e.getRules())
+            << e.getSymName() << " declares encoding rules " << stringifyAsn1Rules(e.getRules())
+            << " (" << asn1FamilyOf(e.getRules())
             << "), which is not canonical; BCIR emits only a transfer syntax whose "
                "octets are a function of the abstract value";
         ok = false;
@@ -2055,16 +1990,14 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       if (strict && !isCanonicalAsn1Rules(d.getRules())) {
         d.emitError("R24: ASN.1 decode ")
             << d.getSymName() << " is marked "
-            << (d.getStrictDer() ? "strict_der" : "strict_canonical")
-            << " but declares it accepts " << stringifyAsn1Rules(d.getRules())
-            << ", which is not a canonical transfer syntax";
+            << (d.getStrictDer() ? "strict_der" : "strict_canonical") << " but declares it accepts "
+            << stringifyAsn1Rules(d.getRules()) << ", which is not a canonical transfer syntax";
         ok = false;
       }
       if (d.getStrictDer() && asn1FamilyOf(d.getRules()) != "X.690") {
         d.emitError("R24: ASN.1 decode ")
             << d.getSymName() << " is marked strict_der but declares the "
-            << asn1FamilyOf(d.getRules()) << " syntax "
-            << stringifyAsn1Rules(d.getRules())
+            << asn1FamilyOf(d.getRules()) << " syntax " << stringifyAsn1Rules(d.getRules())
             << "; strict_der names X.690's own canonical form, so use strict_canonical "
                "for another family";
         ok = false;
@@ -2078,9 +2011,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       // same canonicality law as an encode.
       if (!isCanonicalAsn1Rules(t.getTo())) {
         t.emitError("R24: ASN.1 transcode ")
-            << t.getSymName() << " targets " << stringifyAsn1Rules(t.getTo())
-            << " (" << asn1FamilyOf(t.getTo())
-            << "), which is not canonical; a transcode EMITS its target";
+            << t.getSymName() << " targets " << stringifyAsn1Rules(t.getTo()) << " ("
+            << asn1FamilyOf(t.getTo()) << "), which is not canonical; a transcode EMITS its target";
         ok = false;
       }
       // Transcoding a syntax to itself is not a transcode. It reads as one in a pass
@@ -2168,7 +2100,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         while (true) {
           auto it = classBase.find(current);
           if (it == classBase.end())
-            break;  // resolved to a built-in, or to a name this module does not assign
+            break; // resolved to a built-in, or to a name this module does not assign
           if (!seen.insert(current).second) {
             cyclic.push_back(entry.getKey());
             break;
@@ -2212,10 +2144,10 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         while (seen.insert(current).second) {
           auto it = classBase.find(current);
           if (it == classBase.end())
-            return current == "#TAG";  // a built-in, or a name this module does not assign
+            return current == "#TAG"; // a built-in, or a name this module does not assign
           current = it->second;
         }
-        return false;  // circular; already reported above
+        return false; // circular; already reported above
       };
       llvm::StringMap<std::pair<llvm::SmallVector<int64_t, 8>, StringRef>> handlePositions;
       llvm::StringMap<std::pair<int64_t, StringRef>> handleAlignment;
@@ -2312,18 +2244,17 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         }
         auto found = required.find(kind);
         if (found == required.end()) {
-          p.emitError("R25: ") << p.getSymName() << "'s dummy " << dummy << " has kind "
-                               << kind << ", which is none of Annex C.1's eight";
+          p.emitError("R25: ") << p.getSymName() << "'s dummy " << dummy << " has kind " << kind
+                               << ", which is none of Annex C.1's eight";
           ok = false;
           continue;
         }
         if (found->second != governor) {
-          p.emitError("R25: ")
-              << p.getSymName() << "'s dummy " << dummy << " is a " << kind
-              << " and Annex C.1 governs that with "
-              << (found->second.empty() ? "nothing" : found->second) << ", not "
-              << (governor.empty() ? "nothing" : governor)
-              << "; no actual parameter could satisfy it";
+          p.emitError("R25: ") << p.getSymName() << "'s dummy " << dummy << " is a " << kind
+                               << " and Annex C.1 governs that with "
+                               << (found->second.empty() ? "nothing" : found->second) << ", not "
+                               << (governor.empty() ? "nothing" : governor)
+                               << "; no actual parameter could satisfy it";
           ok = false;
         }
       }
@@ -2410,8 +2341,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
                     *o.getReversal() == EcnReversal::ReverseBitsInHalfUnits) &&
                    (unit % 2) != 0) {
           o.emitError("R25: ECN object ")
-              << o.getSymName() << " sets "
-              << stringifyEcnReversal(*o.getReversal()) << " over an odd " << unit
+              << o.getSymName() << " sets " << stringifyEcnReversal(*o.getReversal())
+              << " over an odd " << unit
               << "-bit unit; X.692 21.14.5 needs an even Unit, because an odd one has no "
               << "half";
           ok = false;
@@ -2506,10 +2437,9 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       // the specification reads as though it were.
       if (auto determination = o.getOptionalityDetermination()) {
         bool byHandle = *determination == EcnOptionalityDetermination::Handle;
-        bool usesField =
-            *determination == EcnOptionalityDetermination::FieldToBeSet ||
-            *determination == EcnOptionalityDetermination::FieldToBeUsed ||
-            *determination == EcnOptionalityDetermination::Container;
+        bool usesField = *determination == EcnOptionalityDetermination::FieldToBeSet ||
+                         *determination == EcnOptionalityDetermination::FieldToBeUsed ||
+                         *determination == EcnOptionalityDetermination::Container;
         if (o.getOptionalityHandleSet() && !byHandle) {
           o.emitError("R25: ECN object ")
               << o.getSymName() << " sets PRESENCE HANDLE with DETERMINED BY "
@@ -2597,8 +2527,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       // set", and requires the objects applied to ALL components to exhibit it. An encoder
       // free to reorder is decodable only if each component announces which one it is.
       if (o.getConcatenationOrder().has_value() &&
-          *o.getConcatenationOrder() == EcnComponentOrder::Random &&
-          !o.getExhibitedHandle()) {
+          *o.getConcatenationOrder() == EcnComponentOrder::Random && !o.getExhibitedHandle()) {
         o.emitError("R25: ECN object ")
             << o.getSymName() << " orders its components `random` with no identification "
             << "handle; X.692 22.10.2.1 requires the encoding objects applied to all "
@@ -2610,8 +2539,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       // tail without the keyword is a property nothing will ever read -- and `OVERRIDE` is
       // the one that matters, because a reader would take it for a statement about the ASN.1
       // ENCODED BY when 22.11.2.1 gives that constraint outright precedence in this case.
-      if ((o.getContentsCompletedBy() || o.getContentsOverride()) &&
-          !o.getContentsEncoding()) {
+      if ((o.getContentsCompletedBy() || o.getContentsOverride()) && !o.getContentsEncoding()) {
         o.emitError("R25: ECN object ")
             << o.getSymName() << " sets COMPLETED BY or OVERRIDE without CONTENTS-ENCODING; "
             << "X.692 22.11.1.2 brackets both inside it, and 22.11.1.5 makes the group set "
@@ -2677,10 +2605,10 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createVerifyPass() {
   return std::make_unique<VerifyPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

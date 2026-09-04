@@ -6,9 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
@@ -83,9 +83,7 @@ translateGccAsmTemplate(StringRef tmpl,
       continue;
     }
     auto isDigit = [](char x) { return x >= '0' && x <= '9'; };
-    auto isLetter = [](char x) {
-      return (x >= 'a' && x <= 'z') || (x >= 'A' && x <= 'Z');
-    };
+    auto isLetter = [](char x) { return (x >= 'a' && x <= 'z') || (x >= 'A' && x <= 'Z'); };
     if (isDigit(d)) {
       // `%<digits>` -> `$<digits>` (bare operand, multi-digit allowed).
       size_t j = i + 1;
@@ -146,9 +144,8 @@ static LogicalResult appendModuleAsm(Operation *source, StringRef assembly,
       fragments.push_back(fragment);
   }
   fragments.push_back(rewriter.getStringAttr(assembly));
-  rewriter.modifyOpInPlace(module, [&] {
-    module->setAttr(attrName, rewriter.getArrayAttr(fragments));
-  });
+  rewriter.modifyOpInPlace(module,
+                           [&] { module->setAttr(attrName, rewriter.getArrayAttr(fragments)); });
   return success();
 }
 
@@ -177,8 +174,7 @@ static bool x86VectorHasErrorCode(int64_t vector) {
 struct EntryOpLowering : public OpRewritePattern<EntryOp> {
   using OpRewritePattern<EntryOp>::OpRewritePattern;
 
-  LogicalResult
-  matchAndRewrite(EntryOp op, PatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(EntryOp op, PatternRewriter &rewriter) const override {
     std::string assembly;
     llvm::raw_string_ostream out(assembly);
     StringRef entry = op.getSymName();
@@ -186,7 +182,8 @@ struct EntryOpLowering : public OpRewritePattern<EntryOp> {
         << ".p2align 4\n"
         << ".globl " << entry << "\n"
         << ".type " << entry << ",@function\n"
-        << entry << ":\n"
+        << entry
+        << ":\n"
         // Do not permit a maskable interrupt to observe the old/partially switched
         // stack. Reset starts with IF clear, but this long-mode handoff is also usable
         // after firmware or an earlier stage, so establish the invariant explicitly.
@@ -212,37 +209,33 @@ struct EntryOpLowering : public OpRewritePattern<EntryOp> {
 struct DescriptorLoadOpLowering : public OpConversionPattern<DescriptorLoadOp> {
   using OpConversionPattern<DescriptorLoadOp>::OpConversionPattern;
 
-  LogicalResult
-  matchAndRewrite(DescriptorLoadOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    StringRef instruction =
-        op.getTable() == DescriptorTable::GDT ? "lgdt ($0)" : "lidt ($0)";
+  LogicalResult matchAndRewrite(DescriptorLoadOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    StringRef instruction = op.getTable() == DescriptorTable::GDT ? "lgdt ($0)" : "lidt ($0)";
     SmallVector<NamedAttribute, 3> attrs = {
         rewriter.getNamedAttr("asm_string", rewriter.getStringAttr(instruction)),
         rewriter.getNamedAttr("constraints", rewriter.getStringAttr("r,~{memory}")),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    LLVM::InlineAsmOp::create(rewriter, op.getLoc(), TypeRange{},
-                                       ValueRange{adaptor.getAddr()}, attrs);
+    LLVM::InlineAsmOp::create(rewriter, op.getLoc(), TypeRange{}, ValueRange{adaptor.getAddr()},
+                              attrs);
     rewriter.eraseOp(op);
     return success();
   }
 };
 
-struct TaskRegisterLoadOpLowering
-    : public OpConversionPattern<TaskRegisterLoadOp> {
+struct TaskRegisterLoadOpLowering : public OpConversionPattern<TaskRegisterLoadOp> {
   using OpConversionPattern<TaskRegisterLoadOp>::OpConversionPattern;
 
-  LogicalResult
-  matchAndRewrite(TaskRegisterLoadOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(TaskRegisterLoadOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
     SmallVector<NamedAttribute, 3> attrs = {
         rewriter.getNamedAttr("asm_string", rewriter.getStringAttr("ltr ${0:w}")),
         rewriter.getNamedAttr("constraints", rewriter.getStringAttr("r,~{memory}")),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    LLVM::InlineAsmOp::create(rewriter, op.getLoc(), TypeRange{},
-                                       ValueRange{adaptor.getSelector()}, attrs);
+    LLVM::InlineAsmOp::create(rewriter, op.getLoc(), TypeRange{}, ValueRange{adaptor.getSelector()},
+                              attrs);
     rewriter.eraseOp(op);
     return success();
   }
@@ -251,38 +244,32 @@ struct TaskRegisterLoadOpLowering
 struct SegmentReloadOpLowering : public OpConversionPattern<SegmentReloadOp> {
   using OpConversionPattern<SegmentReloadOp>::OpConversionPattern;
 
-  LogicalResult
-  matchAndRewrite(SegmentReloadOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(SegmentReloadOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
     // A far return is the long-mode mechanism for reloading CS. The `${:uid}` local-label suffix is
     // LLVM's inline-asm uniqueness escape, so cloning/inlining this op cannot create duplicate labels.
-    Value code64 = LLVM::ZExtOp::create(rewriter,
-        op.getLoc(), rewriter.getI64Type(), adaptor.getCodeSelector());
-    StringRef assembly =
-        "movw ${0:w}, %ds; movw ${0:w}, %es; movw ${0:w}, %ss; "
-        "pushq ${1:q}; leaq .Lbcir_seg_${:uid}(%rip), %rax; pushq %rax; "
-        "lretq; .Lbcir_seg_${:uid}:";
+    Value code64 = LLVM::ZExtOp::create(rewriter, op.getLoc(), rewriter.getI64Type(),
+                                        adaptor.getCodeSelector());
+    StringRef assembly = "movw ${0:w}, %ds; movw ${0:w}, %es; movw ${0:w}, %ss; "
+                         "pushq ${1:q}; leaq .Lbcir_seg_${:uid}(%rip), %rax; pushq %rax; "
+                         "lretq; .Lbcir_seg_${:uid}:";
     SmallVector<NamedAttribute, 3> attrs = {
         rewriter.getNamedAttr("asm_string", rewriter.getStringAttr(assembly)),
-        rewriter.getNamedAttr("constraints",
-                              rewriter.getStringAttr("r,r,~{rax},~{memory}")),
+        rewriter.getNamedAttr("constraints", rewriter.getStringAttr("r,r,~{rax},~{memory}")),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    LLVM::InlineAsmOp::create(rewriter,
-        op.getLoc(), TypeRange{},
-        ValueRange{adaptor.getDataSelector(), code64}, attrs);
+    LLVM::InlineAsmOp::create(rewriter, op.getLoc(), TypeRange{},
+                              ValueRange{adaptor.getDataSelector(), code64}, attrs);
     rewriter.eraseOp(op);
     return success();
   }
 };
 
-struct InterruptTrampolineOpLowering
-    : public OpRewritePattern<InterruptTrampolineOp> {
+struct InterruptTrampolineOpLowering : public OpRewritePattern<InterruptTrampolineOp> {
   using OpRewritePattern<InterruptTrampolineOp>::OpRewritePattern;
 
-  LogicalResult
-  matchAndRewrite(InterruptTrampolineOp op,
-                  PatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(InterruptTrampolineOp op,
+                                PatternRewriter &rewriter) const override {
     int64_t vector = static_cast<int32_t>(op.getVector());
     StringRef symbol = op.getSymName();
     std::string assembly;
@@ -291,7 +278,8 @@ struct InterruptTrampolineOpLowering
         << ".p2align 4\n"
         << ".globl " << symbol << "\n"
         << ".type " << symbol << ",@function\n"
-        << symbol << ":\n"
+        << symbol
+        << ":\n"
         // The hardware frame retains the interrupted IF value for iretq. Clear
         // the live IF here as well so a trap-gate descriptor cannot admit a
         // maskable interrupt while the normalized/private frame is incomplete.
@@ -389,9 +377,8 @@ struct InterruptTrampolineOpLowering
 struct ComputeOpLowering : public OpConversionPattern<ComputeOp> {
   using OpConversionPattern<ComputeOp>::OpConversionPattern;
 
-  LogicalResult
-  matchAndRewrite(ComputeOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(ComputeOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
     if (adaptor.getOperands().size() != 2)
       return rewriter.notifyMatchFailure(op, "only binary compute is lowered");
     Value lhs = adaptor.getOperands()[0];
@@ -414,19 +401,26 @@ struct ComputeOpLowering : public OpConversionPattern<ComputeOp> {
 struct BarrierOpLowering : public OpConversionPattern<BarrierOp> {
   using OpConversionPattern<BarrierOp>::OpConversionPattern;
 
-  LogicalResult
-  matchAndRewrite(BarrierOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(BarrierOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
     // Phase-8 memory model: the BCIR barrier ordering maps to the LLVM fence
     // ordering (default seq_cst). Fences require >= acquire, so unordered/
     // monotonic fall back to seq_cst.
     LLVM::AtomicOrdering ord = LLVM::AtomicOrdering::seq_cst;
     if (auto o = op.getOrdering()) {
       switch (*o) {
-      case MemOrdering::Acquire: ord = LLVM::AtomicOrdering::acquire; break;
-      case MemOrdering::Release: ord = LLVM::AtomicOrdering::release; break;
-      case MemOrdering::AcqRel:  ord = LLVM::AtomicOrdering::acq_rel; break;
-      default:                   ord = LLVM::AtomicOrdering::seq_cst; break;
+      case MemOrdering::Acquire:
+        ord = LLVM::AtomicOrdering::acquire;
+        break;
+      case MemOrdering::Release:
+        ord = LLVM::AtomicOrdering::release;
+        break;
+      case MemOrdering::AcqRel:
+        ord = LLVM::AtomicOrdering::acq_rel;
+        break;
+      default:
+        ord = LLVM::AtomicOrdering::seq_cst;
+        break;
       }
     }
     rewriter.replaceOpWithNewOp<LLVM::FenceOp>(op, ord, StringRef());
@@ -437,9 +431,8 @@ struct BarrierOpLowering : public OpConversionPattern<BarrierOp> {
 struct AsmOpLowering : public OpConversionPattern<AsmOp> {
   using OpConversionPattern<AsmOp>::OpConversionPattern;
 
-  LogicalResult
-  matchAndRewrite(AsmOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(AsmOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
     // ASM1 -> llvm.inline_asm (LLVM's `call asm`). The single LLVM constraint string is the
     // out constraints (each already "=..."), then the in constraints, then each clobber rendered
     // as a "~{<clobber>}" entry -- ALL comma-joined (LLVM has no separate clobber field; clobbers
@@ -464,8 +457,7 @@ struct AsmOpLowering : public OpConversionPattern<AsmOp> {
     // than shipping a wrong lowering.
     unsigned numOut = op.getOutConstraints().size();
     if (numOut > 1)
-      return op.emitError(
-          "bcir.asm: multi-output inline asm lowering is a follow-on (SEG8.x)");
+      return op.emitError("bcir.asm: multi-output inline asm lowering is a follow-on (SEG8.x)");
 
     // A read-write "+" output is NOT a write-only result: it ties an input via a matching
     // constraint. Lowering it as-is yields `llvm.inline_asm ... "+r,r" %x : (i32) -> i32`, which
@@ -474,8 +466,7 @@ struct AsmOpLowering : public OpConversionPattern<AsmOp> {
     // follow-on as multi-output (SEG8.x); reject it cleanly here rather than ship invalid LLVM.
     for (Attribute a : op.getOutConstraints())
       if (cast<StringAttr>(a).getValue().starts_with("+"))
-        return op.emitError(
-            "bcir.asm: read-write '+' output lowering is a follow-on (SEG8.x)");
+        return op.emitError("bcir.asm: read-write '+' output lowering is a follow-on (SEG8.x)");
 
     Type resTy; // null -> void (no result)
     if (numOut == 1) {
@@ -512,18 +503,16 @@ struct AsmOpLowering : public OpConversionPattern<AsmOp> {
     // bcir.asm tests use plain `=r`/`r`, which allocate fine; no cfront c.asm path emits `=a`-style
     // register-class constraints (portio's qualified constraints are handled in PortioOpLowering).
     std::optional<std::string> translated = translateGccAsmTemplate(
-        op.getAsmTemplate(),
-        [&](const Twine &msg) { return op.emitError(msg); });
+        op.getAsmTemplate(), [&](const Twine &msg) { return op.emitError(msg); });
     if (!translated)
       return failure();
     SmallVector<NamedAttribute, 3> asmAttrs = {
-        rewriter.getNamedAttr("asm_string",
-                              rewriter.getStringAttr(*translated)),
+        rewriter.getNamedAttr("asm_string", rewriter.getStringAttr(*translated)),
         rewriter.getNamedAttr("constraints", rewriter.getStringAttr(constraints)),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    auto newOp = LLVM::InlineAsmOp::create(rewriter,
-        op.getLoc(), TypeRange(resultTypes), inputs, asmAttrs);
+    auto newOp =
+        LLVM::InlineAsmOp::create(rewriter, op.getLoc(), TypeRange(resultTypes), inputs, asmAttrs);
 
     if (numOut == 0)
       rewriter.eraseOp(op);
@@ -536,9 +525,8 @@ struct AsmOpLowering : public OpConversionPattern<AsmOp> {
 struct PortioOpLowering : public OpConversionPattern<PortioOp> {
   using OpConversionPattern<PortioOp>::OpConversionPattern;
 
-  LogicalResult
-  matchAndRewrite(PortioOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(PortioOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
     // ASM2 -> llvm.inline_asm (the x86 `in`/`out` instruction behind a volatile `call asm`). The
     // template + constraint strings are the LLVM-IR-correct forms (VERIFIED to assemble through
     // `llc`): the accumulator is `${0:b}`/`${0:w}`/`${0:k}` (al/ax/eax) and the port is `${1:w}` (the
@@ -599,8 +587,8 @@ struct PortioOpLowering : public OpConversionPattern<PortioOp> {
         rewriter.getNamedAttr("constraints", rewriter.getStringAttr(constraints)),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    auto newOp = LLVM::InlineAsmOp::create(rewriter,
-        op.getLoc(), TypeRange(resultTypes), callOperands, asmAttrs);
+    auto newOp = LLVM::InlineAsmOp::create(rewriter, op.getLoc(), TypeRange(resultTypes),
+                                           callOperands, asmAttrs);
 
     if (isIn)
       rewriter.replaceOp(op, newOp.getRes());
@@ -613,9 +601,8 @@ struct PortioOpLowering : public OpConversionPattern<PortioOp> {
 struct VolatileLoadOpLowering : public OpConversionPattern<VolatileLoadOp> {
   using OpConversionPattern<VolatileLoadOp>::OpConversionPattern;
 
-  LogicalResult
-  matchAndRewrite(VolatileLoadOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(VolatileLoadOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
     // First-class MMIO read -> llvm.inttoptr(addr) + a VOLATILE llvm.load. Mirrors the cfront emit
     // `*(volatile T *)(intaddr)`. `volatile` is set via the generated setter (not a positional builder
     // arg) so it is stable across LLVM versions (the LoadOp builder gained params over 20->22).
@@ -623,8 +610,7 @@ struct VolatileLoadOpLowering : public OpConversionPattern<VolatileLoadOp> {
     if (!resTy)
       return rewriter.notifyMatchFailure(op, "result type not convertible");
     auto ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
-    Value ptr =
-        LLVM::IntToPtrOp::create(rewriter, op.getLoc(), ptrTy, adaptor.getAddr());
+    Value ptr = LLVM::IntToPtrOp::create(rewriter, op.getLoc(), ptrTy, adaptor.getAddr());
     auto load = LLVM::LoadOp::create(rewriter, op.getLoc(), resTy, ptr);
     load.setVolatile_(true);
     rewriter.replaceOp(op, load.getResult());
@@ -635,16 +621,13 @@ struct VolatileLoadOpLowering : public OpConversionPattern<VolatileLoadOp> {
 struct VolatileStoreOpLowering : public OpConversionPattern<VolatileStoreOp> {
   using OpConversionPattern<VolatileStoreOp>::OpConversionPattern;
 
-  LogicalResult
-  matchAndRewrite(VolatileStoreOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(VolatileStoreOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
     // First-class MMIO write -> llvm.inttoptr(addr) + a VOLATILE llvm.store. The void counterpart of
     // VolatileLoadOpLowering (`*(volatile T *)(intaddr) = value`); `volatile` set via the setter.
     auto ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
-    Value ptr =
-        LLVM::IntToPtrOp::create(rewriter, op.getLoc(), ptrTy, adaptor.getAddr());
-    auto store =
-        LLVM::StoreOp::create(rewriter, op.getLoc(), adaptor.getValue(), ptr);
+    Value ptr = LLVM::IntToPtrOp::create(rewriter, op.getLoc(), ptrTy, adaptor.getAddr());
+    auto store = LLVM::StoreOp::create(rewriter, op.getLoc(), adaptor.getValue(), ptr);
     store.setVolatile_(true);
     rewriter.eraseOp(op);
     return success();
@@ -659,11 +642,16 @@ static LLVM::AtomicOrdering atomicOrdering(std::optional<MemOrdering> o) {
     return LLVM::AtomicOrdering::seq_cst;
   switch (*o) {
   case MemOrdering::Unordered:
-  case MemOrdering::Monotonic: return LLVM::AtomicOrdering::monotonic;
-  case MemOrdering::Acquire:   return LLVM::AtomicOrdering::acquire;
-  case MemOrdering::Release:   return LLVM::AtomicOrdering::release;
-  case MemOrdering::AcqRel:    return LLVM::AtomicOrdering::acq_rel;
-  default:                     return LLVM::AtomicOrdering::seq_cst;
+  case MemOrdering::Monotonic:
+    return LLVM::AtomicOrdering::monotonic;
+  case MemOrdering::Acquire:
+    return LLVM::AtomicOrdering::acquire;
+  case MemOrdering::Release:
+    return LLVM::AtomicOrdering::release;
+  case MemOrdering::AcqRel:
+    return LLVM::AtomicOrdering::acq_rel;
+  default:
+    return LLVM::AtomicOrdering::seq_cst;
   }
 }
 
@@ -671,18 +659,20 @@ static LLVM::AtomicOrdering atomicOrdering(std::optional<MemOrdering> o) {
 // and never stronger than success (release -> monotonic, acq_rel -> acquire, else success).
 static LLVM::AtomicOrdering casFailureOrdering(LLVM::AtomicOrdering success) {
   switch (success) {
-  case LLVM::AtomicOrdering::release: return LLVM::AtomicOrdering::monotonic;
-  case LLVM::AtomicOrdering::acq_rel: return LLVM::AtomicOrdering::acquire;
-  default:                            return success;
+  case LLVM::AtomicOrdering::release:
+    return LLVM::AtomicOrdering::monotonic;
+  case LLVM::AtomicOrdering::acq_rel:
+    return LLVM::AtomicOrdering::acquire;
+  default:
+    return success;
   }
 }
 
 struct AtomicRMWOpLowering : public OpConversionPattern<AtomicRMWOp> {
   using OpConversionPattern<AtomicRMWOp>::OpConversionPattern;
 
-  LogicalResult
-  matchAndRewrite(AtomicRMWOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(AtomicRMWOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
     // First-class atomic RMW -> llvm.inttoptr(addr) + llvm.atomicrmw <kind>, the structural twin
     // of the cfront `c.atomic.*` / `c.c11atom.fetch_*` lowering (`__atomic_fetch_*` semantics).
     LLVM::AtomicBinOp bin;
@@ -698,10 +688,9 @@ struct AtomicRMWOpLowering : public OpConversionPattern<AtomicRMWOp> {
     else
       return rewriter.notifyMatchFailure(op, "unknown atomic_rmw kind");
     auto ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
-    Value ptr =
-        LLVM::IntToPtrOp::create(rewriter, op.getLoc(), ptrTy, adaptor.getAddr());
-    rewriter.replaceOpWithNewOp<LLVM::AtomicRMWOp>(
-        op, bin, ptr, adaptor.getValue(), atomicOrdering(op.getOrdering()));
+    Value ptr = LLVM::IntToPtrOp::create(rewriter, op.getLoc(), ptrTy, adaptor.getAddr());
+    rewriter.replaceOpWithNewOp<LLVM::AtomicRMWOp>(op, bin, ptr, adaptor.getValue(),
+                                                   atomicOrdering(op.getOrdering()));
     return success();
   }
 };
@@ -709,23 +698,20 @@ struct AtomicRMWOpLowering : public OpConversionPattern<AtomicRMWOp> {
 struct AtomicCASOpLowering : public OpConversionPattern<AtomicCASOp> {
   using OpConversionPattern<AtomicCASOp>::OpConversionPattern;
 
-  LogicalResult
-  matchAndRewrite(AtomicCASOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(AtomicCASOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
     // First-class CAS -> llvm.inttoptr(addr) + llvm.cmpxchg (+ weak) + extractvalue[0] (the OLD
     // value, `c.cmpxchg.val` semantics). `weak` set via the setter (version-stable, like the
     // volatile setters in the MMIO lowerings).
     auto ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
-    Value ptr =
-        LLVM::IntToPtrOp::create(rewriter, op.getLoc(), ptrTy, adaptor.getAddr());
+    Value ptr = LLVM::IntToPtrOp::create(rewriter, op.getLoc(), ptrTy, adaptor.getAddr());
     LLVM::AtomicOrdering succ = atomicOrdering(op.getOrdering());
-    auto cas = LLVM::AtomicCmpXchgOp::create(rewriter,
-        op.getLoc(), ptr, adaptor.getExpected(), adaptor.getDesired(), succ,
-        casFailureOrdering(succ));
+    auto cas = LLVM::AtomicCmpXchgOp::create(rewriter, op.getLoc(), ptr, adaptor.getExpected(),
+                                             adaptor.getDesired(), succ, casFailureOrdering(succ));
     if (op.getWeak())
       cas.setWeak(true);
-    Value old = LLVM::ExtractValueOp::create(rewriter, op.getLoc(), cas.getRes(),
-                                                      ArrayRef<int64_t>{0});
+    Value old =
+        LLVM::ExtractValueOp::create(rewriter, op.getLoc(), cas.getRes(), ArrayRef<int64_t>{0});
     rewriter.replaceOp(op, old);
     return success();
   }
@@ -734,9 +720,8 @@ struct AtomicCASOpLowering : public OpConversionPattern<AtomicCASOp> {
 struct CRegReadOpLowering : public OpConversionPattern<CRegReadOp> {
   using OpConversionPattern<CRegReadOp>::OpConversionPattern;
 
-  LogicalResult
-  matchAndRewrite(CRegReadOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(CRegReadOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
     // Control-register read -> llvm.inline_asm "mov %<reg>, $0", "=r,~{memory}". LLVM-IR inline-asm syntax
     // ($0 operand, single-% register) -- the exact form clang emits; built via the same generic
     // attribute-list InlineAsmOp builder as AsmOpLowering (version-stable). has_side_effects always.
@@ -748,15 +733,14 @@ struct CRegReadOpLowering : public OpConversionPattern<CRegReadOp> {
     Type resTy = getTypeConverter()->convertType(op.getValue().getType());
     if (!resTy)
       return rewriter.notifyMatchFailure(op, "result type not convertible");
-    std::string tmpl =
-        (Twine("mov %") + stringifyCtrlReg(op.getReg()) + ", $0").str();
+    std::string tmpl = (Twine("mov %") + stringifyCtrlReg(op.getReg()) + ", $0").str();
     SmallVector<NamedAttribute, 3> attrs = {
         rewriter.getNamedAttr("asm_string", rewriter.getStringAttr(tmpl)),
         rewriter.getNamedAttr("constraints", rewriter.getStringAttr("=r,~{memory}")),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    auto newOp = LLVM::InlineAsmOp::create(rewriter,
-        op.getLoc(), TypeRange{resTy}, ValueRange{}, attrs);
+    auto newOp =
+        LLVM::InlineAsmOp::create(rewriter, op.getLoc(), TypeRange{resTy}, ValueRange{}, attrs);
     rewriter.replaceOp(op, newOp.getRes());
     return success();
   }
@@ -765,21 +749,19 @@ struct CRegReadOpLowering : public OpConversionPattern<CRegReadOp> {
 struct CRegWriteOpLowering : public OpConversionPattern<CRegWriteOp> {
   using OpConversionPattern<CRegWriteOp>::OpConversionPattern;
 
-  LogicalResult
-  matchAndRewrite(CRegWriteOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(CRegWriteOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
     // Control-register write -> llvm.inline_asm "mov $0, %<reg>", "r,~{memory}" (a CR write reloads page
     // tables / toggles paging+protection -- a system-wide memory effect, hence the ~{memory} clobber);
     // no result. has_side_effects always.
-    std::string tmpl =
-        (Twine("mov $0, %") + stringifyCtrlReg(op.getReg())).str();
+    std::string tmpl = (Twine("mov $0, %") + stringifyCtrlReg(op.getReg())).str();
     SmallVector<NamedAttribute, 3> attrs = {
         rewriter.getNamedAttr("asm_string", rewriter.getStringAttr(tmpl)),
         rewriter.getNamedAttr("constraints", rewriter.getStringAttr("r,~{memory}")),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    LLVM::InlineAsmOp::create(rewriter, op.getLoc(), TypeRange{},
-                                       ValueRange{adaptor.getValue()}, attrs);
+    LLVM::InlineAsmOp::create(rewriter, op.getLoc(), TypeRange{}, ValueRange{adaptor.getValue()},
+                              attrs);
     rewriter.eraseOp(op);
     return success();
   }
@@ -788,9 +770,8 @@ struct CRegWriteOpLowering : public OpConversionPattern<CRegWriteOp> {
 struct MsrReadOpLowering : public OpConversionPattern<MsrReadOp> {
   using OpConversionPattern<MsrReadOp>::OpConversionPattern;
 
-  LogicalResult
-  matchAndRewrite(MsrReadOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(MsrReadOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
     // MSR read -> `rdmsr` (no operand placeholders -- the registers are fixed by the constraints): the
     // index is bound to ECX (`{cx}`) and the two 32-bit result halves come back in EAX/EDX
     // (`={ax},={dx}`), so the inline_asm yields an `!llvm.struct<(i32, i32)>`. has_side_effects always;
@@ -803,18 +784,16 @@ struct MsrReadOpLowering : public OpConversionPattern<MsrReadOp> {
     Type pairTy = LLVM::LLVMStructType::getLiteral(getContext(), {i32Ty, i32Ty});
     SmallVector<NamedAttribute, 3> attrs = {
         rewriter.getNamedAttr("asm_string", rewriter.getStringAttr("rdmsr")),
-        rewriter.getNamedAttr("constraints",
-                              rewriter.getStringAttr("={ax},={dx},{cx},~{memory}")),
+        rewriter.getNamedAttr("constraints", rewriter.getStringAttr("={ax},={dx},{cx},~{memory}")),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    auto asmOp = LLVM::InlineAsmOp::create(rewriter,
-        loc, TypeRange{pairTy}, ValueRange{adaptor.getIndex()}, attrs);
+    auto asmOp = LLVM::InlineAsmOp::create(rewriter, loc, TypeRange{pairTy},
+                                           ValueRange{adaptor.getIndex()}, attrs);
     Value lo = LLVM::ExtractValueOp::create(rewriter, loc, asmOp.getRes(), 0);
     Value hi = LLVM::ExtractValueOp::create(rewriter, loc, asmOp.getRes(), 1);
     Value lo64 = LLVM::ZExtOp::create(rewriter, loc, i64Ty, lo);
     Value hi64 = LLVM::ZExtOp::create(rewriter, loc, i64Ty, hi);
-    Value c32 = LLVM::ConstantOp::create(rewriter,
-        loc, i64Ty, rewriter.getI64IntegerAttr(32));
+    Value c32 = LLVM::ConstantOp::create(rewriter, loc, i64Ty, rewriter.getI64IntegerAttr(32));
     Value hiShifted = LLVM::ShlOp::create(rewriter, loc, hi64, c32);
     Value full = LLVM::OrOp::create(rewriter, loc, hiShifted, lo64);
     rewriter.replaceOp(op, full);
@@ -825,9 +804,8 @@ struct MsrReadOpLowering : public OpConversionPattern<MsrReadOp> {
 struct MsrWriteOpLowering : public OpConversionPattern<MsrWriteOp> {
   using OpConversionPattern<MsrWriteOp>::OpConversionPattern;
 
-  LogicalResult
-  matchAndRewrite(MsrWriteOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(MsrWriteOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
     // MSR write -> `wrmsr` (index in ECX, the 64-bit value split EDX:EAX): the i64 is split into its low
     // (`trunc`) and high (`trunc (value >> 32)`) 32-bit halves, then `llvm.inline_asm "wrmsr",
     // "{cx},{ax},{dx},~{memory}"` consumes (index, low, high); no result. The `~{memory}` clobber is
@@ -838,25 +816,22 @@ struct MsrWriteOpLowering : public OpConversionPattern<MsrWriteOp> {
     Type i64Ty = rewriter.getI64Type();
     Value val = adaptor.getValue();
     Value lo = LLVM::TruncOp::create(rewriter, loc, i32Ty, val);
-    Value c32 = LLVM::ConstantOp::create(rewriter,
-        loc, i64Ty, rewriter.getI64IntegerAttr(32));
+    Value c32 = LLVM::ConstantOp::create(rewriter, loc, i64Ty, rewriter.getI64IntegerAttr(32));
     Value hiShifted = LLVM::LShrOp::create(rewriter, loc, val, c32);
     Value hi = LLVM::TruncOp::create(rewriter, loc, i32Ty, hiShifted);
     SmallVector<NamedAttribute, 3> attrs = {
         rewriter.getNamedAttr("asm_string", rewriter.getStringAttr("wrmsr")),
-        rewriter.getNamedAttr("constraints",
-                              rewriter.getStringAttr("{cx},{ax},{dx},~{memory}")),
+        rewriter.getNamedAttr("constraints", rewriter.getStringAttr("{cx},{ax},{dx},~{memory}")),
         rewriter.getNamedAttr("has_side_effects", rewriter.getUnitAttr()),
     };
-    LLVM::InlineAsmOp::create(rewriter,
-        loc, TypeRange{}, ValueRange{adaptor.getIndex(), lo, hi}, attrs);
+    LLVM::InlineAsmOp::create(rewriter, loc, TypeRange{}, ValueRange{adaptor.getIndex(), lo, hi},
+                              attrs);
     rewriter.eraseOp(op);
     return success();
   }
 };
 
-struct ConvertToLLVMPass
-    : public PassWrapper<ConvertToLLVMPass, OperationPass<>> {
+struct ConvertToLLVMPass : public PassWrapper<ConvertToLLVMPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ConvertToLLVMPass)
 
   StringRef getArgument() const final { return "convert-bcir-to-llvm"; }
@@ -873,43 +848,36 @@ struct ConvertToLLVMPass
     // Perform that ancestor mutation in the ordinary rewrite driver before dialect conversion; the
     // conversion rewriter intentionally scopes transactional edits to the matched operation tree.
     RewritePatternSet moduleAsmPatterns(&getContext());
-    moduleAsmPatterns.add<EntryOpLowering, InterruptTrampolineOpLowering>(
-        &getContext());
-    if (failed(applyPatternsGreedily(getOperation(),
-                                     std::move(moduleAsmPatterns)))) {
+    moduleAsmPatterns.add<EntryOpLowering, InterruptTrampolineOpLowering>(&getContext());
+    if (failed(applyPatternsGreedily(getOperation(), std::move(moduleAsmPatterns)))) {
       signalPassFailure();
       return;
     }
 
     LLVMConversionTarget target(getContext());
     target.addLegalOp<ModuleOp>();
-    target.addIllegalOp<EntryOp, DescriptorLoadOp, TaskRegisterLoadOp,
-                        SegmentReloadOp, InterruptTrampolineOp, ComputeOp,
-                        BarrierOp, AsmOp, PortioOp, VolatileLoadOp,
-                        VolatileStoreOp, AtomicRMWOp, AtomicCASOp, CRegReadOp,
+    target.addIllegalOp<EntryOp, DescriptorLoadOp, TaskRegisterLoadOp, SegmentReloadOp,
+                        InterruptTrampolineOp, ComputeOp, BarrierOp, AsmOp, PortioOp,
+                        VolatileLoadOp, VolatileStoreOp, AtomicRMWOp, AtomicCASOp, CRegReadOp,
                         CRegWriteOp, MsrReadOp, MsrWriteOp>();
 
     LLVMTypeConverter typeConverter(&getContext());
     RewritePatternSet patterns(&getContext());
-    patterns.add<DescriptorLoadOpLowering, TaskRegisterLoadOpLowering,
-                 SegmentReloadOpLowering, ComputeOpLowering,
-                 BarrierOpLowering, AsmOpLowering,
-                 PortioOpLowering, VolatileLoadOpLowering,
-                 VolatileStoreOpLowering, AtomicRMWOpLowering,
-                 AtomicCASOpLowering, CRegReadOpLowering,
-                 CRegWriteOpLowering, MsrReadOpLowering, MsrWriteOpLowering>(
-        typeConverter, &getContext());
+    patterns.add<DescriptorLoadOpLowering, TaskRegisterLoadOpLowering, SegmentReloadOpLowering,
+                 ComputeOpLowering, BarrierOpLowering, AsmOpLowering, PortioOpLowering,
+                 VolatileLoadOpLowering, VolatileStoreOpLowering, AtomicRMWOpLowering,
+                 AtomicCASOpLowering, CRegReadOpLowering, CRegWriteOpLowering, MsrReadOpLowering,
+                 MsrWriteOpLowering>(typeConverter, &getContext());
 
-    if (failed(applyPartialConversion(getOperation(), target,
-                                      std::move(patterns))))
+    if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createConvertToLLVMPass() {
   return std::make_unique<ConvertToLLVMPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

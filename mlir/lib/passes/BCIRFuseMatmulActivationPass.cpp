@@ -53,9 +53,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/IR/Builders.h"
@@ -86,8 +86,7 @@ static bool isFusibleActivation(StringRef kind) {
   return kind == "relu" || kind == "sigmoid" || kind == "tanh" || kind == "gelu";
 }
 
-struct FuseMatmulActivationPass
-    : public PassWrapper<FuseMatmulActivationPass, OperationPass<>> {
+struct FuseMatmulActivationPass : public PassWrapper<FuseMatmulActivationPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(FuseMatmulActivationPass)
 
   StringRef getArgument() const final { return "bcir-fuse-matmul-activation"; }
@@ -164,8 +163,8 @@ struct FuseMatmulActivationPass
     // epilogue half (kind + dtype) + the proof-carrying fusion decision (the FusionCertificate
     // analog: unfused/fused score + gain). sym_name = <matmul>_<activation>_fused.
     std::string sym = (mm.getSymName() + "_" + act.getSymName() + "_fused").str();
-    GEMFusedMatmulActivationOp::create(builder,
-        mm.getLoc(),
+    GEMFusedMatmulActivationOp::create(
+        builder, mm.getLoc(),
         /*sym_name=*/StringAttr::get(ctx, sym),
         /*m=*/ab.getI64IntegerAttr(static_cast<int64_t>(mm.getM())),
         /*n=*/ab.getI64IntegerAttr(static_cast<int64_t>(mm.getN())),
@@ -187,10 +186,10 @@ struct FuseMatmulActivationPass
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createFuseMatmulActivationPass() {
   return std::make_unique<FuseMatmulActivationPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

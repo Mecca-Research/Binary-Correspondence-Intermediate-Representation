@@ -6,9 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
@@ -32,8 +32,7 @@ using namespace mlir;
 
 namespace bcir {
 namespace {
-struct ClassifyLanesPass
-    : public PassWrapper<ClassifyLanesPass, OperationPass<>> {
+struct ClassifyLanesPass : public PassWrapper<ClassifyLanesPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ClassifyLanesPass)
 
   StringRef getArgument() const final { return "bcir-classify-lanes"; }
@@ -68,10 +67,8 @@ struct BatchPass : public PassWrapper<BatchPass, OperationPass<>> {
     int64_t nextBatch = 0;
     for (auto &kv : byPhase) {
       SmallVector<ClaimOp> &claims = kv.second;
-      llvm::sort(claims, [](ClaimOp a, ClaimOp b) {
-        return a.getClaimId() < b.getClaimId();
-      });
-      SmallVector<ClaimOp> open;  // claims already placed in the current batch
+      llvm::sort(claims, [](ClaimOp a, ClaimOp b) { return a.getClaimId() < b.getClaimId(); });
+      SmallVector<ClaimOp> open; // claims already placed in the current batch
       int64_t batch = -1;
       for (ClaimOp c : claims) {
         bool fits = batch >= 0;
@@ -138,15 +135,13 @@ struct LowerToLLVMPass : public PassWrapper<LowerToLLVMPass, OperationPass<>> {
     root->walk([&](GEMLaneSegmentOp seg) {
       auto c = claimByName.lookup(seg.getClaim());
       if (!c) {
-        seg.emitError("bcir-lower-to-llvm: segment references unknown claim @")
-            << seg.getClaim();
+        seg.emitError("bcir-lower-to-llvm: segment references unknown claim @") << seg.getClaim();
         ok = false;
         return;
       }
       if (seg.getLane() != c.getLane()) {
         seg.emitError("bcir-lower-to-llvm: segment lane not preserved (R12): ")
-            << laneSpelling(seg.getLane()) << " != claim lane "
-            << laneSpelling(c.getLane());
+            << laneSpelling(seg.getLane()) << " != claim lane " << laneSpelling(c.getLane());
         ok = false;
       }
       if (seg.getReads() != c.getReads() || seg.getWrites() != c.getWrites()) {
@@ -188,15 +183,17 @@ struct LowerToLLVMPass : public PassWrapper<LowerToLLVMPass, OperationPass<>> {
         return;
       ArrayRef<int64_t> shape = r.getShape();
       if (shape.empty())
-        return;  // dynamic extent: not statically checkable
+        return; // dynamic extent: not statically checkable
       int64_t bytes = 4;
       for (int64_t d : shape)
         bytes = saturatingMulNonnegative(bytes, d > 0 ? d : 1);
-      int64_t cap = (*pl == MemTier::L1) ? (64 * 1024)
-                  : (*pl == MemTier::L2) ? (4 * 1024 * 1024) : 0;
+      int64_t cap = (*pl == MemTier::L1)   ? (64 * 1024)
+                    : (*pl == MemTier::L2) ? (4 * 1024 * 1024)
+                                           : 0;
       if (cap && bytes > cap) {
-        r.emitError("R16: placement ") << stringifyMemTier(*pl) << " does not fit @"
-            << r.getSymName() << " (" << bytes << " B > " << cap << " B)";
+        r.emitError("R16: placement ")
+            << stringifyMemTier(*pl) << " does not fit @" << r.getSymName() << " (" << bytes
+            << " B > " << cap << " B)";
         ok = false;
       }
     });
@@ -205,12 +202,14 @@ struct LowerToLLVMPass : public PassWrapper<LowerToLLVMPass, OperationPass<>> {
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createClassifyLanesPass() {
   return std::make_unique<ClassifyLanesPass>();
 }
-std::unique_ptr<Pass> createBatchPass() { return std::make_unique<BatchPass>(); }
+std::unique_ptr<Pass> createBatchPass() {
+  return std::make_unique<BatchPass>();
+}
 std::unique_ptr<Pass> createSchedulePass() {
   return std::make_unique<SchedulePass>();
 }
@@ -218,4 +217,4 @@ std::unique_ptr<Pass> createLowerToLLVMPass() {
   return std::make_unique<LowerToLLVMPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

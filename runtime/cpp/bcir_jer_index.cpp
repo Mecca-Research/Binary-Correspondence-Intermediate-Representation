@@ -44,8 +44,8 @@ constexpr uint8_t kReturn = 0x0D;
  * four compares, without introducing a second spelling of the set that could drift. It is
  * worth it because this predicate runs on every octet of every document, on both the main
  * loop's dispatch and the scalar finish of every run. */
-constexpr uint64_t kSpaceBits = (1ull << kSpace) | (1ull << kTab) | (1ull << kLineFeed) |
-                                (1ull << kReturn);
+constexpr uint64_t kSpaceBits =
+    (1ull << kSpace) | (1ull << kTab) | (1ull << kLineFeed) | (1ull << kReturn);
 
 /* The `c <= kSpace` guard is what keeps the shift in range, so it must really be the largest
  * of the four. Checked here rather than assumed: adding a whitespace octet above SPACE would
@@ -57,10 +57,11 @@ inline bool is_space(uint8_t c) {
   return c <= kSpace && ((kSpaceBits >> c) & 1u) != 0;
 }
 
-inline bool is_digit(uint8_t c) { return c >= '0' && c <= '9'; }
+inline bool is_digit(uint8_t c) {
+  return c >= '0' && c <= '9';
+}
 
-bcir_jer_status fail(bcir_jer_diag *diag, bcir_jer_status status, size_t offset,
-                     uint64_t needed) {
+bcir_jer_status fail(bcir_jer_diag *diag, bcir_jer_status status, size_t offset, uint64_t needed) {
   if (diag != nullptr) {
     diag->status = status;
     diag->offset = offset;
@@ -112,12 +113,13 @@ size_t whitespace_run_sse2(const uint8_t *data, size_t len) {
   size_t at = 0;
   for (; at + 16 <= len; at += 16) {
     __m128i block = _mm_loadu_si128(reinterpret_cast<const __m128i *>(data + at));
-    __m128i ws = _mm_or_si128(
-        _mm_or_si128(_mm_cmpeq_epi8(block, space), _mm_cmpeq_epi8(block, tab)),
-        _mm_or_si128(_mm_cmpeq_epi8(block, feed), _mm_cmpeq_epi8(block, ret)));
+    __m128i ws =
+        _mm_or_si128(_mm_or_si128(_mm_cmpeq_epi8(block, space), _mm_cmpeq_epi8(block, tab)),
+                     _mm_or_si128(_mm_cmpeq_epi8(block, feed), _mm_cmpeq_epi8(block, ret)));
     /* Every lane matched means every octet is whitespace, so the mask is all ones. Anything
      * else means the run ends inside this block, and the scalar tail finds where. */
-    if (_mm_movemask_epi8(ws) != 0xFFFF) return at;
+    if (_mm_movemask_epi8(ws) != 0xFFFF)
+      return at;
   }
   return at;
 }
@@ -133,7 +135,8 @@ __attribute__((target("avx2"))) size_t whitespace_run_avx2(const uint8_t *data, 
     __m256i ws = _mm256_or_si256(
         _mm256_or_si256(_mm256_cmpeq_epi8(block, space), _mm256_cmpeq_epi8(block, tab)),
         _mm256_or_si256(_mm256_cmpeq_epi8(block, feed), _mm256_cmpeq_epi8(block, ret)));
-    if (_mm256_movemask_epi8(ws) != -1) return at;
+    if (_mm256_movemask_epi8(ws) != -1)
+      return at;
   }
   /* Finish with the narrower width rather than dropping straight to scalar: a 31-octet tail
    * is the ordinary case at the end of an indented run. */
@@ -154,7 +157,8 @@ size_t whitespace_run_neon(const uint8_t *data, size_t len) {
                              vorrq_u8(vceqq_u8(block, feed), vceqq_u8(block, ret)));
     /* No movemask on NEON. `vceqq_u8` sets a matching lane to 0xFF, so an all-whitespace
      * block has MINIMUM 0xFF -- one horizontal reduce settles all sixteen. */
-    if (vminvq_u8(ws) != 0xFF) return at;
+    if (vminvq_u8(ws) != 0xFF)
+      return at;
   }
   return at;
 }
@@ -202,24 +206,29 @@ inline size_t whitespace_run(const uint8_t *data, size_t len, size_t pos) {
   size_t span = len - pos;
   size_t run = 0;
   if constexpr (Tier != BCIR_JER_SIMD_SCALAR) {
-    while (run < span && run < kNarrowestBlock && is_space(from[run])) run++;
+    while (run < span && run < kNarrowestBlock && is_space(from[run]))
+      run++;
     if (run == kNarrowestBlock) {
       /* Octets [0, kNarrowestBlock) are known whitespace, so the wide scan starts past them. */
 #if defined(BCIR_INDEX_X86)
-      if constexpr (Tier == BCIR_JER_SIMD_AVX2) run += whitespace_run_avx2(from + run, span - run);
-      if constexpr (Tier == BCIR_JER_SIMD_SSE2) run += whitespace_run_sse2(from + run, span - run);
+      if constexpr (Tier == BCIR_JER_SIMD_AVX2)
+        run += whitespace_run_avx2(from + run, span - run);
+      if constexpr (Tier == BCIR_JER_SIMD_SSE2)
+        run += whitespace_run_sse2(from + run, span - run);
 #endif
 #if defined(BCIR_INDEX_ARM)
-      if constexpr (Tier == BCIR_JER_SIMD_NEON) run += whitespace_run_neon(from + run, span - run);
+      if constexpr (Tier == BCIR_JER_SIMD_NEON)
+        run += whitespace_run_neon(from + run, span - run);
 #endif
     }
   }
   /* Makes the block-boundary bound exact. Also the whole of the scalar tier. */
-  while (run < span && is_space(from[run])) run++;
+  while (run < span && is_space(from[run]))
+    run++;
   return run;
 }
 
-}  // namespace
+} // namespace
 
 namespace {
 
@@ -237,14 +246,16 @@ bcir_jer_status index_scan(const uint8_t *data, size_t len, const bcir_jer_limit
   bcir_jer_status st;
 
   clear(diag);
-  if (nodes != nullptr) *nodes = 0;
-  if (limits == nullptr) return fail(diag, BCIR_JER_INVALID, BCIR_JER_NO_OFFSET, 0);
-  if (data == nullptr && len != 0) return fail(diag, BCIR_JER_INVALID, BCIR_JER_NO_OFFSET, 0);
+  if (nodes != nullptr)
+    *nodes = 0;
+  if (limits == nullptr)
+    return fail(diag, BCIR_JER_INVALID, BCIR_JER_NO_OFFSET, 0);
+  if (data == nullptr && len != 0)
+    return fail(diag, BCIR_JER_INVALID, BCIR_JER_NO_OFFSET, 0);
   if (stack == nullptr && limits->depth != 0)
     return fail(diag, BCIR_JER_INVALID, BCIR_JER_NO_OFFSET, 0);
   if (stack_entries < limits->depth)
-    return fail(diag, BCIR_JER_OVERFLOW, BCIR_JER_NO_OFFSET,
-                static_cast<uint64_t>(limits->depth));
+    return fail(diag, BCIR_JER_OVERFLOW, BCIR_JER_NO_OFFSET, static_cast<uint64_t>(limits->depth));
   if (static_cast<uint64_t>(len) > limits->input_bytes)
     return fail(diag, BCIR_JER_INPUT_TOO_LARGE, 0, static_cast<uint64_t>(len));
 
@@ -274,27 +285,32 @@ bcir_jer_status index_scan(const uint8_t *data, size_t len, const bcir_jer_limit
         return bcir_jer_scan_charge(&cursor, (ceiling - cursor.work) + 1, pos + failing);
       }
       st = bcir_jer_scan_charge(&cursor, static_cast<uint64_t>(run), pos);
-      if (st != BCIR_JER_OK) return st;
+      if (st != BCIR_JER_OK)
+        return st;
       pos += run;
       continue;
     }
 
     st = bcir_jer_scan_charge(&cursor, 1, pos);
-    if (st != BCIR_JER_OK) return st;
+    if (st != BCIR_JER_OK)
+      return st;
 
     if (byte == '{' || byte == '[') {
       depth++;
-      if (depth > limits->depth) return fail(diag, BCIR_JER_DEPTH_EXCEEDED, pos, depth);
+      if (depth > limits->depth)
+        return fail(diag, BCIR_JER_DEPTH_EXCEEDED, pos, depth);
       stack[depth - 1].count = 0;
       stack[depth - 1].is_object = static_cast<uint8_t>(byte == '{');
       stack[depth - 1].state = 0;
       counted++;
-      if (counted > limits->nodes) return fail(diag, BCIR_JER_NODES_EXCEEDED, pos, counted);
+      if (counted > limits->nodes)
+        return fail(diag, BCIR_JER_NODES_EXCEEDED, pos, counted);
       pos++;
       continue;
     }
     if (byte == '}' || byte == ']') {
-      if (depth == 0) return fail(diag, BCIR_JER_MALFORMED, pos, 0);
+      if (depth == 0)
+        return fail(diag, BCIR_JER_MALFORMED, pos, 0);
       if (stack[depth - 1].is_object != static_cast<uint8_t>(byte == '}'))
         return fail(diag, BCIR_JER_MALFORMED, pos, 0);
       depth--;
@@ -303,7 +319,8 @@ bcir_jer_status index_scan(const uint8_t *data, size_t len, const bcir_jer_limit
     }
     if (byte == ',') {
       uint64_t cap;
-      if (depth == 0) return fail(diag, BCIR_JER_MALFORMED, pos, 0);
+      if (depth == 0)
+        return fail(diag, BCIR_JER_MALFORMED, pos, 0);
       stack[depth - 1].count++;
       cap = stack[depth - 1].is_object ? limits->members : limits->elements;
       if (stack[depth - 1].count + 1 > cap)
@@ -321,35 +338,44 @@ bcir_jer_status index_scan(const uint8_t *data, size_t len, const bcir_jer_limit
     if (byte == '"') {
       size_t end = pos;
       st = bcir_jer_scan_string_token(data, len, pos, &cursor, &end);
-      if (st != BCIR_JER_OK) return st;
+      if (st != BCIR_JER_OK)
+        return st;
       pos = end;
       counted++;
-      if (counted > limits->nodes) return fail(diag, BCIR_JER_NODES_EXCEEDED, pos, counted);
+      if (counted > limits->nodes)
+        return fail(diag, BCIR_JER_NODES_EXCEEDED, pos, counted);
       continue;
     }
     if (byte == '-' || is_digit(byte)) {
       size_t end = pos;
       st = bcir_jer_scan_number_token(data, len, pos, &cursor, &end);
-      if (st != BCIR_JER_OK) return st;
+      if (st != BCIR_JER_OK)
+        return st;
       pos = end;
       counted++;
-      if (counted > limits->nodes) return fail(diag, BCIR_JER_NODES_EXCEEDED, pos, counted);
+      if (counted > limits->nodes)
+        return fail(diag, BCIR_JER_NODES_EXCEEDED, pos, counted);
       continue;
     }
     {
       /* `true`, `false`, `null` -- and nothing else. Refusing here rather than downstream is
        * what keeps the non-JSON `NaN` and `Infinity` literals out of the bounded path. */
       size_t taken = bcir_jer_scan_literal_token(data, len, pos);
-      if (taken == 0) return fail(diag, BCIR_JER_MALFORMED, pos, 0);
+      if (taken == 0)
+        return fail(diag, BCIR_JER_MALFORMED, pos, 0);
       st = bcir_jer_scan_charge(&cursor, static_cast<uint64_t>(taken), pos);
-      if (st != BCIR_JER_OK) return st;
+      if (st != BCIR_JER_OK)
+        return st;
       pos += taken;
       counted++;
-      if (counted > limits->nodes) return fail(diag, BCIR_JER_NODES_EXCEEDED, pos, counted);
+      if (counted > limits->nodes)
+        return fail(diag, BCIR_JER_NODES_EXCEEDED, pos, counted);
     }
   }
-  if (depth != 0) return fail(diag, BCIR_JER_MALFORMED, len, 0);
-  if (nodes != nullptr) *nodes = counted;
+  if (depth != 0)
+    return fail(diag, BCIR_JER_MALFORMED, len, 0);
+  if (nodes != nullptr)
+    *nodes = counted;
   return BCIR_JER_OK;
 }
 
@@ -357,36 +383,32 @@ bcir_jer_status index_scan(const uint8_t *data, size_t len, const bcir_jer_limit
  * loop above, so nothing inside it re-decides the width. Only tiers this build compiled are
  * instantiated; `dispatch`'s callers have already degraded anything else to scalar. */
 bcir_jer_status dispatch(bcir_jer_simd_tier tier, const uint8_t *data, size_t len,
-                         const bcir_jer_limits *limits, bcir_jer_level *stack,
-                         size_t stack_entries, uint64_t *nodes, bcir_jer_diag *diag) {
+                         const bcir_jer_limits *limits, bcir_jer_level *stack, size_t stack_entries,
+                         uint64_t *nodes, bcir_jer_diag *diag) {
   switch (tier) {
 #if defined(BCIR_INDEX_X86)
-    case BCIR_JER_SIMD_AVX2:
-      return index_scan<BCIR_JER_SIMD_AVX2>(data, len, limits, stack, stack_entries, nodes,
-                                            diag);
-    case BCIR_JER_SIMD_SSE2:
-      return index_scan<BCIR_JER_SIMD_SSE2>(data, len, limits, stack, stack_entries, nodes,
-                                            diag);
+  case BCIR_JER_SIMD_AVX2:
+    return index_scan<BCIR_JER_SIMD_AVX2>(data, len, limits, stack, stack_entries, nodes, diag);
+  case BCIR_JER_SIMD_SSE2:
+    return index_scan<BCIR_JER_SIMD_SSE2>(data, len, limits, stack, stack_entries, nodes, diag);
 #endif
 #if defined(BCIR_INDEX_ARM)
-    case BCIR_JER_SIMD_NEON:
-      return index_scan<BCIR_JER_SIMD_NEON>(data, len, limits, stack, stack_entries, nodes,
-                                            diag);
+  case BCIR_JER_SIMD_NEON:
+    return index_scan<BCIR_JER_SIMD_NEON>(data, len, limits, stack, stack_entries, nodes, diag);
 #endif
-    default:
-      return index_scan<BCIR_JER_SIMD_SCALAR>(data, len, limits, stack, stack_entries, nodes,
-                                              diag);
+  default:
+    return index_scan<BCIR_JER_SIMD_SCALAR>(data, len, limits, stack, stack_entries, nodes, diag);
   }
 }
 
-}  // namespace
+} // namespace
 
 extern "C" bcir_jer_status bcir_jer_index_scan(const uint8_t *data, size_t len,
-                                               const bcir_jer_limits *limits,
-                                               bcir_jer_level *stack, size_t stack_entries,
-                                               uint64_t *nodes, bcir_jer_diag *diag) {
-  return dispatch(bcir_jer_simd_tier_available(), data, len, limits, stack, stack_entries,
-                  nodes, diag);
+                                               const bcir_jer_limits *limits, bcir_jer_level *stack,
+                                               size_t stack_entries, uint64_t *nodes,
+                                               bcir_jer_diag *diag) {
+  return dispatch(bcir_jer_simd_tier_available(), data, len, limits, stack, stack_entries, nodes,
+                  diag);
 }
 
 extern "C" bcir_jer_status bcir_jer_index_scan_at(bcir_jer_simd_tier tier, const uint8_t *data,
