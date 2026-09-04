@@ -103,6 +103,18 @@ names it, and the engine still ran over what was there). Live instance: the
 gate fired on its first CI run, on both runners, over `setuptools` 78.1.0 that
 torch's CPU wheel had pulled from the PyTorch index (2026-09-04 audit F12) —
 a gate that can fire, and did, before anything else was proven about it.
+S0-A instances (the verifier, 2026-09-04): EV1–EV3 lived in
+`kbcir.events.check_event_phases` with their own tests and were wired into no
+entry point, so the canonical `verify(module)` could not fire on an unarmed
+interrupt source — a law nobody calls holds vacuously
+(`test_ev_laws_are_part_of_the_canonical_verifier`). R9's cost re-derivation
+was vacuous for every caller that omitted the target, and the performance
+audit's own K_BCIR→StreamPack case verified its plan with no scope at all, so
+a forged step cost passed 4,096 times out of 4,096
+(`test_r9_refuses_a_forged_step_cost_only_the_scope_can_see`; the harness row
+`verify.plan.r9.vacuous` freezes that 1.0 and now reads 0.0). The C rail's R9
+accepted any `cost` and any `width`
+(`test_c_planner_width_contract_and_r9_rederives_costs`).
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -362,6 +374,14 @@ Witnesses: the shared modules and their tests, e.g.
 `test_boundary_audit_paths_are_redacted` (the scan rail had redacted
 secret-bearing path components for sixteen rounds; the boundary rail
 printed them to the CI log until it imported the same predicate).
+S0-A instances (2026-09-04): the planner's DAG edge weight and R9's re-derived
+step cost are one function (`realize.edge_cost`, wrapped by `step_cost`). The
+first scoped R9 re-derived from `candidates_for` while the planner priced from
+`fused_candidates`, and rejected 3,840 of the planner's own 4,096 steps until
+the two shared the offer as well as the price. On the C rail
+`bcir_plan_base_cost` moved into `bcir_plan.h` as a header inline so
+`bcir_plan.c` and `bcir_verify.c` compute one base cost without every build
+that links the verifier needing a new object.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -450,6 +470,11 @@ Installed-environment audit instance: the enumeration of the interpreter is a
 seam (`_installed_distributions`) the witnesses replace, so the quick tier
 never audits the host it runs on; `test_installed_mode_audits_the_interpreter_by_exact_public_pin`
 fakes both the seam and the bounded runner.
+S0-A instance (2026-09-04): `test_find_bcir_opt_never_returns_stock_mlir_opt`
+resolved the finder against the real repository root, so on a host that had
+built the MLIR rail in-tree (`build/mlir-build/bcir-opt`) the finder rightly
+returned that real binary and the unit verdict flipped; it now searches a
+temporary root, and what the host has built no longer decides it.
 **Port note:** identical; in C the "fake" is a stub binary on PATH.
 
 ### L20 — Reserved implementation values are not valid domain values
