@@ -11,12 +11,15 @@
 
 ## 1. Gate and evidence contract
 
-The dependency-free audit is available through either entry point:
+The dependency-free audit is available through any of these entry points (the installed
+command is `bcir-performance-audit`; `bcir-tmsao-audit` remains as an alias that prints that it
+is a precursor, not a certificate):
 
 ```bash
 python -m bcir.performance_audit --repeats 3 \
   --output build/performance/tmsao-report.json
 python tools/perf/run_tmsao_audit.py --repeats 3
+bcir-performance-audit --repeats 3
 ```
 
 The timestamp-free `bcir.tmsao_audit.v1` report covers these bounded organs:

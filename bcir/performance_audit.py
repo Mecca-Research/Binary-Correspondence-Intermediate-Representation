@@ -174,14 +174,17 @@ def _case_kbcir_streampack(scale: int) -> dict:
     from .gem.streampack import hydrate_pipelined
     from .kbcir.cost import TargetProfile, Theta
     from .kbcir.realize import optimize
+    from .kbcir.weights import PERF
     from .verify import verify, verify_pack, verify_plan
 
     grid = 4 * scale
     module = matmul_tiled(n=grid * 8, tile=8)
     target = TargetProfile.x86_avx2()
-    result = optimize(module, target, Theta.mem_bound())
+    theta = Theta.mem_bound()
+    result = optimize(module, target, theta)
     pack = hydrate_pipelined(module, result, plan="tmsao", depth=2)
-    diagnostics = verify(module) + verify_plan(module, result) + verify_pack(module, pack)
+    diagnostics = (verify(module) + verify_plan(module, result, target, theta=theta, policy=PERF)
+                   + verify_pack(module, pack))
     if diagnostics or not pack.provenance_ok() or len(pack.segments) != len(result.steps):
         raise AssertionError("K_BCIR -> StreamPack chain failed its laws")
     return {"claims": len(result.steps), "score": result.score,
@@ -527,19 +530,35 @@ def write_tmsao_report(path: os.PathLike | str, report: TMSAOAuditReport) -> Non
             pass
 
 
-def main(argv: list[str] | None = None) -> int:
+_NOT_A_CERTIFICATE = (
+    "this is the bounded performance/correctness audit -- a TMSAO precursor, not a TMSAO "
+    "certificate: it carries no lower bound, no optimality gap and no scope identity, and "
+    "every result it covers is TMSAO-4 (docs/research/BCIR_GEMPLUS_ROADMAP.md)")
+
+
+def main(argv: list[str] | None = None, prog: str = "bcir-performance-audit") -> int:
     parser = argparse.ArgumentParser(
-        prog="bcir-tmsao-audit",
-        description="Run the bounded BCIR performance/correctness audit")
+        prog=prog,
+        description="Run the bounded BCIR performance/correctness audit. " + _NOT_A_CERTIFICATE)
     parser.add_argument("--output", default="build/performance/tmsao-report.json")
     parser.add_argument("--scale", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=3)
     arguments = parser.parse_args(argv)
     report = run_tmsao_audit(scale=arguments.scale, repeats=arguments.repeats)
     write_tmsao_report(arguments.output, report)
-    print(f"TMSAO audit: {len(report.samples)} cases; "
-          f"correctness={report.correctness_sha256}; report={arguments.output}")
+    print(f"performance audit: {len(report.samples)} cases; "
+          f"correctness={report.correctness_sha256}; report={arguments.output} "
+          "(TMSAO precursor; not a certificate)")
     return 0
+
+
+def main_compat(argv: list[str] | None = None) -> int:
+    """`bcir-tmsao-audit`, kept as a compatibility alias that says what it is not."""
+    import sys
+
+    print("bcir-tmsao-audit: GEM+/TMSAO certificates are not implemented; " + _NOT_A_CERTIFICATE
+          + ". Use bcir-performance-audit.", file=sys.stderr)
+    return main(argv, prog="bcir-tmsao-audit")
 
 
 if __name__ == "__main__":

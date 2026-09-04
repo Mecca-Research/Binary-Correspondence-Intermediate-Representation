@@ -121,3 +121,8 @@ distribution, and patent use are not permitted** without explicit prior
 written permission from Mecca-Research; contact the maintainers through this
 repository to request a commercial license. No trademark rights are granted,
 and the software is provided without warranty or liability.
+
+In the standard sense of the terms this is a **source-available, non-commercial**
+license, not an OSI-approved open-source license: "open-source use" above is the
+license's own permitted purpose (using the Work in and with open-source projects),
+not a statement that the license itself is open source.
