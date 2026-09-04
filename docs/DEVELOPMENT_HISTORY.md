@@ -397,7 +397,13 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   hot paths lost their dataclass copies (−21% plan time on the 4,096-claim fixture, score
   unchanged); two harness rows freeze the finding and its price (`verify.plan.r9.vacuous`
   1.0 → 0.0, `verify.plan.scope.overhead` ≈ 1.07× the planner, G17's row to move); the audit
-  command says what it is not.
+  command says what it is not. The Python tree was then reformatted once under `ruff format`
+  (537 of 555 tracked files; every change proved AST-identical, docstring whitespace aside), ruff
+  pinned exactly in the `dev` extra, the last lint findings dispositioned (closures bound at
+  definition, two exception chains, `UP042` and lit's injected `config` ignored with their
+  reasons), and a CI "Python style" job now runs the hooks' two commands under the same pin, so
+  a hook can never rewrite a file CI accepts -- the `ruff (format)` hook had rewritten every
+  file the S0-A slice touched, wholesale, because the tree had never been formatted.
 
 ---
 

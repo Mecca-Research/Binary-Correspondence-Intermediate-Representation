@@ -21,7 +21,11 @@ keywords = ["compiler", "mlir", "intermediate-representation", "optimization", "
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["ruff>=0.6", "pre-commit>=3.5"]
+# ruff is pinned EXACTLY: `ruff format` output is version-specific, and the pre-commit hook,
+# the CI style job and a contributor's editor must agree byte-for-byte on what "formatted"
+# means (the policy is stated at [tool.ruff]). Bump it deliberately, reformatting in the
+# same commit if the new version's style moved.
+dev = ["ruff==0.16.6", "pre-commit>=3.5"]
 model-lab = ["torch==2.13.0", "safetensors[numpy]==0.8.0", "numpy==2.2.6"]
 # The Kafka transport of bcir.telemetry.KafkaSink.connect() imports kafka-python lazily; the
 # floor is the first release clear of its four advisories (2026-09-04 dependency audit), so the
@@ -65,6 +69,15 @@ include = ["bcir*"]
 # Calibrated to be GREEN on the existing tree so the gate catches *regressions*, not the
 # codebase's deliberate house style (compact one-liners, long descriptive strings, the
 # PEP 562 lazy-import shims). Tighten incrementally.
+# Python style policy (2026-09-04, the follow-up to the clang-format decision of the F9 audit):
+#   * `ruff format` IS the style. The whole tree was reformatted once under this configuration
+#     (555 tracked files, every change proved AST-identical -- docstring whitespace aside -- by
+#     the reformatting PR), so the pre-commit `ruff (format)` hook restyles nothing it does not
+#     have to, and a formatted file never carries a stranger's reflow into an unrelated change.
+#   * CI holds it: the "Python style" job runs `ruff format --check` and `ruff check` over the
+#     tree with the SAME pinned ruff the hook uses (`.[dev]`), so the hook can never rewrite a
+#     file CI accepts, and a lint finding never waits for a developer's commit to surface.
+#   * `--force-exclude` everywhere, so an explicitly named path still honours the excludes.
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -81,7 +94,12 @@ ignore = [
     "F401", "F841",  # re-export shims + scaffolding locals; not worth churning
     "B007", "B008", "B011", "B027", "B905",  # deliberate defaults / asserts / zip usage
     "UP007", "UP015", "UP031", "UP035", "UP037", "UP045",  # annotation-style noise
+    "UP042",  # `(str, Enum)` mixins are deliberate: StrEnum changes str(member), which reaches reports
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# lit injects `config` into its configuration module; the name is defined by the runner.
+"llvm-training/tests/lit.cfg.py" = ["F821"]
 
 [tool.ruff.format]
 quote-style = "double"

@@ -165,6 +165,17 @@ payload and why it must survive lowering or optimization.
 - Add a prompt when the lesson is a review task, such as checking that a lowering
   carried `!dbg`, diagnostic tags, or profile metadata through to the final IR.
 
+## Python style
+
+`ruff format` is the Python style and `ruff check` the lint, both under the configuration in
+`pyproject.toml` (`[tool.ruff]`) and the exact ruff pin in the `dev` extra. Install the hooks
+once (`pip install -e ".[dev]" && pre-commit install`) and they format and lint what you
+commit; CI's "Python style" job runs the same two commands over the whole tree with the same
+pin, so a hook can never rewrite a file CI accepts. Do not hand-format around the tool: the
+tree was reformatted once (2026-09-04) so that a formatted file never drags a stranger's
+reflow into an unrelated change. The C++ rails have their own policy (`.clang-format`), and
+`runtime/c` is deliberately outside any formatter.
+
 ## Verification scripts to run
 
 Run the smallest set that covers the files you changed while iterating, and prefer

@@ -175,6 +175,33 @@ def test_workflow_dependencies_are_sha_pinned_and_tokens_are_read_only() -> None
             assert sha.fullmatch(revision), f"{workflow.name}: {name}@{revision} is mutable"
 
 
+def test_python_style_gate_and_hooks_run_one_pinned_ruff() -> None:
+    """The formatter's output is version-specific, so the pre-commit hooks, the CI style job
+    and the `dev` extra must name ONE ruff. A drifting trio is how a tree stops being
+    format-clean without anyone changing a policy, and then the hook rewrites whole files
+    into unrelated changes (the 2026-09-04 finding behind the one-time reformat)."""
+    import tomllib
+
+    project = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    pins = [entry for entry in project["optional-dependencies"]["dev"] if entry.startswith("ruff")]
+    assert len(pins) == 1 and re.fullmatch(r"ruff==\d+\.\d+\.\d+", pins[0]), pins
+
+    hooks = (_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    assert "entry: ruff check --force-exclude --fix" in hooks
+    assert "entry: ruff format --force-exclude" in hooks
+
+    ci = (_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    job = re.search(r"(?ms)^  python-style:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", ci)
+    assert job, "ci.yml has no python-style job"
+    body = job.group(1)
+    assert "python -m ruff format --check --force-exclude ." in body
+    assert "python -m ruff check --force-exclude ." in body
+    # The job installs the pin it READS from pyproject.toml; a second spelling of the pin in
+    # the workflow is the drift this test exists to refuse.
+    assert 'startswith("ruff==")' in body
+    assert "ruff==" not in body.replace('startswith("ruff==")', "")
+
+
 def test_build_system_excludes_known_vulnerable_setuptools_releases() -> None:
     """The isolated PEP 517 backend must exclude GHSA-h35f-9h28-mq5c."""
     text = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
