@@ -40,7 +40,7 @@ jobs:
         shard: [1, 2]
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
         # cache-apt-pkgs-action always runs `apt-get update` ("Updating APT package list..."), which
@@ -58,7 +58,7 @@ jobs:
         # to v1.6.1 by commit SHA (supply-chain). Bump `version` to invalidate the cache.
         # mono-devel supplies ilasm + the mono runtime so the stackify CIL emit is ASSEMBLED AND
         # EXECUTED on a real CLR (test_stackify_exec.py), closing the H5 "documented skip".
-        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: clang lld llvm nodejs libclang-rt-18-dev mono-devel
           version: train-${{ runner.arch }}-v2
@@ -79,7 +79,7 @@ jobs:
 
       - name: Upload bounded TMSAO report
         if: matrix.shard == 1
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bcir-tmsao-performance-report
           path: build/performance/tmsao-report.json
@@ -112,7 +112,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
         run: |
@@ -121,7 +121,7 @@ jobs:
             | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
 
       - name: Install lowering toolchain (clang/lld/llvm; node for WASM)
-        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: clang lld llvm nodejs libclang-rt-18-dev
           version: train-${{ runner.arch }}-v1
@@ -135,7 +135,7 @@ jobs:
         run: BCIR_SKIP_CFRONT_SANITIZE=1 bash tools/c/check_runtime.sh
 
       - name: Cache the immutable TinyLlama source checkpoint
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/bcir/models/tinyllama-v0/298338802ab94432b917bcce11382aa151aee50f
           key: bcir-tinyllama-v0-298338802ab94432b917bcce11382aa151aee50f-c302246d91e2854f-ab1b681ec7fc02fe
@@ -145,7 +145,7 @@ jobs:
         run: python3 tools/models/run_real_model_gate.py --output-dir build/model-gate
 
       - name: Upload deterministic real-model parity report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bcir-real-model-parity-report
           path: build/model-gate/parity-report.json
@@ -176,7 +176,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
         run: |
@@ -185,7 +185,7 @@ jobs:
             | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
 
       - name: Install lowering toolchain (clang + compiler-rt for ASan/UBSan/libFuzzer)
-        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: clang lld llvm nodejs libclang-rt-18-dev
           version: train-${{ runner.arch }}-v1
@@ -255,10 +255,10 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -342,10 +342,10 @@ jobs:
       OPENBLAS_NUM_THREADS: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
           cache: pip
@@ -375,7 +375,7 @@ jobs:
         run: python tools/models/run_hardware_rl_gate.py --output-dir build/hardware-rl-gate
 
       - name: Upload deterministic hosted-model parity report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bcir-hosted-model-parity-report-${{ runner.os }}
           path: |
@@ -395,7 +395,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
         run: |
@@ -404,7 +404,7 @@ jobs:
             | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
 
       - name: Install LLVM toolchain (llvm-as/opt/llc/clang for the corpus checks)
-        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: clang lld llvm nodejs libclang-rt-18-dev
           version: train-${{ runner.arch }}-v1
@@ -523,7 +523,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
         run: |
@@ -534,7 +534,7 @@ jobs:
       - name: Install the C lowering toolchain
         # Caches the installed file tree (restores in seconds; skips dpkg unpack on a warm run).
         # Pinned to v1.6.1 by commit SHA; bump `version` to invalidate.
-        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: clang lld llvm
           version: arm-${{ runner.arch }}-v1
@@ -556,7 +556,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
         run: |
@@ -565,7 +565,7 @@ jobs:
             | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
 
       - name: Install the C lowering toolchain
-        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: clang lld llvm
           version: arm-${{ runner.arch }}-v1
@@ -602,7 +602,7 @@ jobs:
         llvm: ["22", "23"]
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Add the apt.llvm.org signed repo + harden apt (LLVM ${{ matrix.llvm }})
         # The latest LLVM/MLIR is not in Ubuntu's default repos; apt.llvm.org carries it (the repo
@@ -629,7 +629,7 @@ jobs:
         # (CMake default; no script uses clang/lld/lldb/clangd), so llvm.sh's heavy clang+lldb+clangd
         # base is skipped. The action caches the installed file tree -> a warm run restores it in
         # seconds and skips dpkg unpack/configure. Pinned to v1.6.1 by commit SHA.
-        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: llvm-${{ matrix.llvm }}-dev llvm-${{ matrix.llvm }}-tools libmlir-${{ matrix.llvm }}-dev mlir-${{ matrix.llvm }}-tools cmake ninja-build ccache
           version: mlir${{ matrix.llvm }}-v1
@@ -637,7 +637,7 @@ jobs:
       - name: Cache ccache (warms the bcir-opt compile against the MLIR headers)
         # The bcir-opt compile dominates this job's wall time; ccache turns a warm run
         # into a near-instant relink. Keyed per-LLVM-major, newest-first restore.
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/ccache
           key: ccache-mlir${{ matrix.llvm }}-${{ github.sha }}
@@ -685,7 +685,7 @@ jobs:
     #      explicit `<!-- allow-retired-paths -->` historical marker.
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: STATUS.md is generated from the tree (no count/law drift)
         run: python3 tools/docs/gen_status.py --check
@@ -720,10 +720,10 @@ jobs:
         python: ["3.11"]
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Set up Python ${{ matrix.python }}
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python }}
 
@@ -760,7 +760,7 @@ jobs:
         # imported on the advertised minimum is the same defect as code that
         # cannot run there.
         run: |
-          python -m pip install --disable-pip-version-check --no-input build==1.2.2.post1
+          python -m pip install --disable-pip-version-check --no-input build==1.6.0
           python -m build --wheel --outdir dist/
           python -m pip install --disable-pip-version-check --no-input dist/*.whl
           cd "$RUNNER_TEMP" && python -c "import bcir; print('imported', bcir.__name__)"
@@ -772,7 +772,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources)
         run: |
@@ -781,7 +781,7 @@ jobs:
             | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
 
       - name: Install clang + compiler-rt for the bounded decoder campaign
-        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: clang lld llvm libclang-rt-18-dev
           version: security-assurance-${{ runner.arch }}-v1
@@ -790,7 +790,7 @@ jobs:
         run: python3 tools/security/scan_secrets.py
 
       - name: Python for the advisory engine
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 

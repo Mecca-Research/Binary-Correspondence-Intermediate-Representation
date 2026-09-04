@@ -1,5 +1,11 @@
 # Dependency audit — 2026-09-03
 
+> **Extended on 2026-09-04** by the full-surface audit
+> [`DEPENDENCY_AUDIT_2026-09-04.md`](DEPENDENCY_AUDIT_2026-09-04.md): a second advisory source
+> (OSV's export, evaluated offline), the GitHub Actions and pre-commit pins against upstream, the
+> workflows' Ubuntu packages, the modules the tree actually imports, and the vendored code. This
+> note remains the record of the declared-inventory audit and of what the rail enforces.
+
 > Dated and non-normative. What the repository depends on, what an advisory database says
 > about it on this date, how current each pin is, and what the advisory rail enforces from
 > this slice on — so that the next audit is a CI run, not a document. The generated

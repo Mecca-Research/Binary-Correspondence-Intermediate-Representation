@@ -1,0 +1,71 @@
+{
+ "scanned_python_files": 552,
+ "declared": {
+  "ruff": "dev: ruff>=0.6",
+  "pre_commit": "dev: pre-commit>=3.5",
+  "torch": "model-lab: torch==2.13.0",
+  "safetensors": "model-lab: safetensors[numpy]==0.8.0",
+  "numpy": "model-lab: numpy==2.2.6"
+ },
+ "modules": [
+  {
+   "module": "torch",
+   "declared_by": "model-lab: torch==2.13.0",
+   "files": [
+    "bcir/hosted/models/checkpoint.py",
+    "bcir/hosted/models/export.py",
+    "bcir/hosted/models/model.py",
+    "bcir/hosted/models/train.py",
+    "bcir/hosted/training/adaptive_transformer.py",
+    "bcir/hosted/training/architectures.py",
+    "bcir/hosted/training/byte_latent.py",
+    "bcir/hosted/training/hardware_policy.py",
+    "bcir/hosted/training/sequence_interfaces.py",
+    "bcir/hosted/training/stages.py",
+    "tools/models/run_hardware_rl_gate.py",
+    "tools/models/run_hosted_model_gate.py",
+    "tools/models/test_adaptive_transformers.py",
+    "tools/models/test_byte_latent_models.py",
+    "tools/models/test_hosted_model_lab.py",
+    "tools/models/test_sequence_interfaces.py",
+    "tools/models/test_training_pipeline.py"
+   ],
+   "guarded_imports": 25,
+   "unguarded_imports": 7
+  },
+  {
+   "module": "safetensors",
+   "declared_by": "model-lab: safetensors[numpy]==0.8.0",
+   "files": [
+    "bcir/hosted/models/checkpoint.py",
+    "bcir/hosted/models/export.py",
+    "bcir/hosted/training/hardware_policy.py",
+    "tools/models/test_hosted_model_lab.py"
+   ],
+   "guarded_imports": 3,
+   "unguarded_imports": 1
+  },
+  {
+   "module": "kafka",
+   "declared_by": null,
+   "files": [
+    "bcir/telemetry.py"
+   ],
+   "guarded_imports": 1,
+   "unguarded_imports": 0
+  },
+  {
+   "module": "lit",
+   "declared_by": null,
+   "files": [
+    "llvm-training/tests/lit.cfg.py"
+   ],
+   "guarded_imports": 0,
+   "unguarded_imports": 1
+  }
+ ],
+ "undeclared": [
+  "kafka",
+  "lit"
+ ]
+}

@@ -23,6 +23,10 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["ruff>=0.6", "pre-commit>=3.5"]
 model-lab = ["torch==2.13.0", "safetensors[numpy]==0.8.0", "numpy==2.2.6"]
+# The Kafka transport of bcir.telemetry.KafkaSink.connect() imports kafka-python lazily; the
+# floor is the first release clear of its four advisories (2026-09-04 dependency audit), so the
+# advisory rail's floor run audits exactly what the declaration admits.
+telemetry-kafka = ["kafka-python>=2.3.2"]
 
 [project.scripts]
 bcir = "bcir.run:main"

@@ -41,8 +41,12 @@ and fail-closed independent review) live under `tools/security/` and are gated b
 `security-assurance` CI job. Those rails are coverage and policy, not a claim that unknown
 vulnerabilities do not exist. The declared install set is resolved and checked against
 PyPI's advisory database on every run of that job (`pip-audit`, pinned; a finding fails
-the job); the dated audit of the dependency surface is
-[`docs/security/DEPENDENCY_AUDIT_2026-09-03.md`](docs/security/DEPENDENCY_AUDIT_2026-09-03.md).
+the job); the dated audits of the dependency surface are
+[`docs/security/DEPENDENCY_AUDIT_2026-09-04.md`](docs/security/DEPENDENCY_AUDIT_2026-09-04.md)
+(the full surface: two advisory sources, action and hook pins, the runners' Ubuntu packages,
+actual imports, vendored code; reproducible with `tools/security/audit/`) and
+[`docs/security/DEPENDENCY_AUDIT_2026-09-03.md`](docs/security/DEPENDENCY_AUDIT_2026-09-03.md)
+(the declared inventory and what the rail enforces).
 
 Out of scope:
 
