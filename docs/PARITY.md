@@ -139,7 +139,8 @@ accuracy, contention, verification`.
 | WASM (Phase 7) | `lower.wasm` (clang→wasm + node) | per-target `bcir.target.lower_contract` |
 | stackify (Phase 7) | `lower.stackify` (→ wasm/jvm/cil) | foundation for `bcir.target.lower_contract` encoders |
 | C runtime (Phase 8) | `runtime/c/bcir_runtime.{h,c}` decodes `abi.streampack_abi` | `runtime/c/bcir_streampack.h` (C23: `restrict`/`[[nodiscard]]`/frozen-ABI `static_assert`; fuzzed under libFuzzer+ASan/UBSan via `runtime/c/fuzz_streampack.c`) |
-| named pass pipelines | `bcir.run` CLI stages | **MLIR** `registerBCIRPipelines`: `bcir-audit` / `bcir-optimize` / `bcir-hydrate` / `bcir-lower-llvm`; `bcir-aot` is verifier-checkpointed **partial AOT preparation** and may leave mixed BCIR/GEM/LLVM IR |
+| named pass pipelines | `bcir.run` CLI stages | **MLIR** `registerBCIRPipelines`: `bcir-audit` / `bcir-optimize` / `bcir-hydrate` / `bcir-lower-llvm` / `bcir-aot`, every one verifier-checkpointed on entry and `bcir-optimize` again on the plan it emits (`pipeline_checkpoints.mlir`); `bcir-aot` is **partial AOT preparation** and may leave mixed BCIR/GEM/LLVM IR |
+| module scope | `verify(module)`, `optimize(module, …)`: one module at a time by construction | `-bcir-verify`, `-bcir-select-realization`, `-bcir-rcsp` and the GEM batch/schedule/lower passes are anchored at `bcir.module` through one predicate (`BCIRPassSupport.h` `forEachScope` / `walkScope`); a multi-module file verifies and prices each module in its own symbol table, and operations outside any module are the one outer scope (`verify_module_scope.mlir`, `select_module_scope.mlir`) |
 | live state Θ (cost coupling) | `kbcir.cost.Theta` + `weights()` fold | `bcir.kbcir.theta` op (thermal/power/...) — `-bcir-plan`/`-bcir-overlap` apply the multiplicative thermal coupling under hot Θ (matmul hot 1159168; `theta_hot.mlir`) |
 | async tokens (Phase 8) | `gem.async_tokens` (fork/await plan) | `bcir.async.fork` / `bcir.async.await` (`!bcir.token`) |
 | memory model (Phase 8) | `lower.memory_model` (hazard→ordering) | `BCIR_MemOrdering` + barrier `ordering` → `llvm.fence` |
@@ -283,6 +284,12 @@ differential campaign above proves the oracle↔law selection agreement on rando
 modules. When the MLIR toolchain is available, the `mlir/examples` + `mlir/test/irdl`
 corpus round-trips through `bcir-opt` / stock `mlir-opt` and must carry the same
 constants, and `mlir/test/passes/gem_corpus.mlir` recomputes the widened corpus.
+Two inventory gates keep that corpus honest without a toolchain (S0-B, quick tier on every
+host): `bcir/tests/test_mlir_fixture_inventory.py` reconciles every `mlir/test/passes/*.mlir`
+against the runner scripts both ways (a fixture nothing runs, a runner reference to no
+fixture), and `tools/irdl/check_inventory.py` reconciles the ODS dialect, the IRDL projection
+and `mlir/irdl/MANIFEST.json` — every operation projected under the one naming rule or
+declared unprojected with its reason, no stale entry, ghost, orphan or naming collision.
 
 The current **R1–R25** MLIR law set is negative-tested per law with
 `-bcir-verify -verify-diagnostics`: `verify_laws.mlir` (R1–R7),

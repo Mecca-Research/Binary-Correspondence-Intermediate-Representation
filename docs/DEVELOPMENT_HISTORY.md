@@ -403,7 +403,14 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   definition, two exception chains, `UP042` and lit's injected `config` ignored with their
   reasons), and a CI "Python style" job now runs the hooks' two commands under the same pin, so
   a hook can never rewrite a file CI accepts -- the `ruff (format)` hook had rewritten every
-  file the S0-A slice touched, wholesale, because the tree had never been formatted.
+  file the S0-A slice touched, wholesale, because the tree had never been formatted. S0-B took
+  the MLIR rail's three correctness-closure items: `bcir-optimize` and `bcir-hydrate` are
+  verifier-checkpointed (the two pipelines that advertised checkpoints and ran none), the two
+  inert fixtures execute and a quick-tier gate reconciles every pass fixture against the
+  runners, the verify/select/GEM passes are anchored at `bcir.module` through one scope
+  predicate (a claim can no longer resolve another module's resource; namesake paths price per
+  module), and the IRDL projection's subset is a manifest reconciled against ODS both ways
+  (38 of 133 operations declared unprojected, the underscore naming rule stated once).
 
 ---
 
