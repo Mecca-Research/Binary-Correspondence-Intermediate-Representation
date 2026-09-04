@@ -101,20 +101,31 @@ void registerBCIRPipelines() {
       });
 
   // claims + capability -> the coupled K_BCIR plan (the optimize pipeline; named
-  // bcir-optimize because -bcir-plan is the single-pass flag).
+  // bcir-optimize because -bcir-plan is the single-pass flag). Verifier-checkpointed on
+  // entry AND on the plan it emits (S0-3): the pipelines advertised as checkpointed were
+  // the only two that ran no verifier at all, so an illegal module planned and hydrated.
   static PassPipelineRegistration<> optimize(
       "bcir-optimize",
-      "classify -> cost-model -> plan: the coupled K_BCIR plan from first principles.",
+      "verify -> classify -> cost-model -> plan -> verify: the coupled K_BCIR plan from "
+      "first principles, checkpointed on entry and on the plan it emits.",
       [](OpPassManager &pm) {
+        pm.addPass(createVerifyPass());
         pm.addPass(createClassifyLanesPass());
         pm.addPass(createCostModelPass());
         pm.addPass(createPlanPass());
+        pm.addPass(createVerifyPass());
       });
 
-  // declared plan -> hydrated, lane-lowered GEM StreamPack (R12/R14-R16 checked).
+  // verify checkpoint -> declared plan -> hydrated, lane-lowered GEM StreamPack
+  // (R12/R14-R16 checked in the lowering).
   static PassPipelineRegistration<> hydratePipe(
-      "bcir-hydrate", "classify -> select -> batch -> schedule -> lower: plan -> GEM StreamPack.",
-      hydrate);
+      "bcir-hydrate",
+      "verify -> classify -> select -> batch -> schedule -> lower: plan -> GEM StreamPack, "
+      "checkpointed on entry.",
+      [hydrate](OpPassManager &pm) {
+        pm.addPass(createVerifyPass());
+        hydrate(pm);
+      });
 
   // verify checkpoint -> BCIR compute/barrier lowered to the LLVM dialect.
   static PassPipelineRegistration<> lowerLLVM(

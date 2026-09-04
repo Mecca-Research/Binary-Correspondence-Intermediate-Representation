@@ -25,6 +25,14 @@ echo "[passes] -bcir-verify negative cases (-verify-diagnostics)"
   && echo "  PASS verify_laws (R1-R7)" || { echo "  FAIL verify_laws"; fail=1; }
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_laws_deep.mlir" \
   && echo "  PASS verify_laws_deep (R8-R16)" || { echo "  FAIL verify_laws_deep"; fail=1; }
+# R19-R21 over the optional timing/lifetime metadata. Inert until S0-3: the fixture carried
+# its RUN line and expected-error markers, and nothing ran it (test_mlir_fixture_inventory).
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_timing_lifetime.mlir" \
+  && echo "  PASS verify_timing_lifetime (R19-R21)" || { echo "  FAIL verify_timing_lifetime"; fail=1; }
+# S0-5: the laws quantify over one bcir.module; a multi-module file verifies each in its own
+# registry, and the outer scope is not vacuous.
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_module_scope.mlir" \
+  && echo "  PASS verify_module_scope (S0-5)" || { echo "  FAIL verify_module_scope"; fail=1; }
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_accuracy.mlir" \
   && echo "  PASS verify_accuracy (R17 accuracy contract)" || { echo "  FAIL verify_accuracy"; fail=1; }
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_provenance.mlir" \
@@ -304,6 +312,8 @@ echo "[passes] cost model (the K_BCIR cost algebra recomputed from claim + capab
 run_fc -bcir-cost-model "${T}/cost_model.mlir"
 echo "[passes] cost-model fusion (intra-phase deforestation + CSE)"
 run_fc -bcir-cost-model "${T}/cost_model_fusion.mlir"
+# ASM3b: no deforestation credit across a barriered consumer. Inert until S0-3 (see above).
+run_fc -bcir-cost-model "${T}/cost_model_barrier.mlir"
 echo "[passes] cost-model verify dimension (exact/hash discharge cost)"
 run_fc -bcir-cost-model "${T}/cost_model_verify.mlir"
 echo "[passes] -bcir-cost-model cross-check on the pretty corpus (reproduces 7808)"
@@ -434,6 +444,15 @@ for pl in bcir-optimize bcir-hydrate bcir-lower-llvm; do
   "${BO}" -${pl} "${EX}" >/dev/null 2>"${ERR}" \
     && echo "  PASS ${pl}" || { echo "  FAIL ${pl}"; cat "${ERR}"; fail=1; }
 done
+# S0-3: bcir-optimize and bcir-hydrate are verifier-checkpointed on entry -- an illegal
+# module is refused at the door by both, with the same law.
+for pl in bcir-optimize bcir-hydrate; do
+  "${BO}" -${pl} -verify-diagnostics "${T}/pipeline_checkpoints.mlir" \
+    && echo "  PASS pipeline_checkpoints.mlir under ${pl}" \
+    || { echo "  FAIL pipeline_checkpoints.mlir under ${pl}"; fail=1; }
+done
+# S0-5 on the selection pass: two modules with a namesake path each price their own.
+run_fc -bcir-select-realization "${T}/select_module_scope.mlir"
 
 echo "[passes] GEM cross-checks against the oracle (-verify-diagnostics)"
 "${BO}" -bcir-select-realization -bcir-lower-to-llvm -verify-diagnostics -split-input-file \
