@@ -1120,7 +1120,8 @@ def lower_growth_stage(spec: ProgressiveGrowthSpec, stage_index: int, *,
     realization = optimize(module, chosen_target, Theta.cool())
     pack = hydrate_pipelined(module, realization,
                              plan=f"growth:{spec.digest[:16]}:{stage_index}", depth=2)
-    diagnostics = verify_all(module, result=realization, pack=pack)
+    diagnostics = verify_all(module, result=realization, pack=pack, h=chosen_target,
+                             theta=Theta.cool())
     diagnostics += verify_smart_lowering(module, pack=pack)
     if diagnostics:
         message = "; ".join(f"{row.law}: {row.message}" for row in diagnostics)

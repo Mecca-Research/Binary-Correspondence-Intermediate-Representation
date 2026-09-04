@@ -162,6 +162,17 @@ int bcir_verify_plan(const bcir_func *f,const bcir_plan *p,char *diag,size_t dn)
   for(size_t i=0;i<p->n;i++){
     if(p->steps[i].claim_id != f->claims[i].id){snprintf(diag,dn,"R9: plan step %zu realizes the wrong claim",i);return 0;}
     if(p->steps[i].width==0){snprintf(diag,dn,"R9: claim %u realized at width 0",p->steps[i].claim_id);return 0;}
+    /* a lane width is a power of two (the hydrator's rule, held here first so a plan that
+     * cannot hydrate is refused as a plan, not as an artifact) */
+    if(p->steps[i].width&(p->steps[i].width-1u)){snprintf(diag,dn,"R9: claim %u realized at width %u, not a power of two",p->steps[i].claim_id,p->steps[i].width);return 0;}
+    /* the cost RE-DERIVES from the claim and the width -- caller-provided costs used to be
+     * trusted, so a forged step (a legitimate width, any cost) verified clean */
+    {
+      uint64_t n=f->claims[i].count?f->claims[i].count:1u;
+      uint64_t issues=(n+p->steps[i].width-1u)/p->steps[i].width;
+      uint64_t expect=(uint64_t)bcir_plan_base_cost(&f->claims[i])*issues;
+      if(expect>UINT32_MAX||p->steps[i].cost!=expect){snprintf(diag,dn,"R9: claim %u cost %u does not re-derive (expected %llu)",p->steps[i].claim_id,p->steps[i].cost,(unsigned long long)expect);return 0;}
+    }
     /* each claim realized exactly once */
     for(size_t j=0;j<i;j++) if(p->steps[j].claim_id==p->steps[i].claim_id){snprintf(diag,dn,"R9: claim %u realized more than once",p->steps[i].claim_id);return 0;}
     if(total>UINT64_MAX-p->steps[i].cost){snprintf(diag,dn,"R9: plan total overflows");return 0;}

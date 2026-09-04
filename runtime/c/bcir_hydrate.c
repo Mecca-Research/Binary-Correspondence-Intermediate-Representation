@@ -53,7 +53,7 @@ static void emit_pack(W *w, const bcir_func *f, const bcir_plan *plan, uint32_t 
   for (size_t i = 0; i < f->n_claims; i++) {
     const bcir_claim *cl = &f->claims[i];
     if (cl->opcode == BCIR_OP_NOP) continue;
-    uint32_t width = plan ? plan->steps[i].width : (cl->count ? cl->count : 1);
+    uint32_t width = plan ? plan->steps[i].width : 1u;   /* no plan: the scalar realization */
     w_str(w, cl->op);                /* name */
     w_u64(w, cl->id);                /* claim_id */
     w_u32(w, 0);                     /* phase_id (the C subset is single-phase) */
@@ -93,7 +93,7 @@ bcir_status bcir_hydrate(const bcir_func *f, const bcir_plan *plan,
     if (cl->opcode == BCIR_OP_NOP) continue;
     n_seg++;
     if (cl->lane > BCIR_LANE_H) return BCIR_ERR_LANE;
-    uint32_t width = plan ? plan->steps[i].width : (cl->count ? cl->count : 1);
+    uint32_t width = plan ? plan->steps[i].width : 1u;   /* no plan: the scalar realization */
     if (plan && plan->steps[i].claim_id != cl->id) return BCIR_ERR_PROVENANCE;
     if (!width || (width & (width - 1u))) return BCIR_ERR_WIDTH;
   }

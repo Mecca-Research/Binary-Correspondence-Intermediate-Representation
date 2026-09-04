@@ -3,8 +3,10 @@
 LLVM verifies IR structure; BCIR verifies execution truth. The laws attach to the
 artifacts of the correspondence chain, one entry point per artifact:
 
-    verify(module)                       R1-R8  module / claim laws
-    verify_plan(module, result)          R8-R9  K_BCIR plan laws
+    verify(module)                       R1-R8  module / claim laws, + EV1-EV3 (event phases)
+    verify_plan(module, result, h, ...)  R8-R9  K_BCIR plan laws (scope-aware with h, theta,
+                                                policy, budget: the offer, every step cost and
+                                                the budget are re-derived, never trusted)
     verify_pack(module, pack)            R10-R11 GEM stream laws
     verify_lowering(module, result, ll)  R12    lowering-contract law
     verify_provenance(portfolio, ...)    R13    policy/table provenance law
@@ -258,6 +260,17 @@ def verify(module: Module) -> list[Diagnostic]:
                 diags.append(Diagnostic(
                     "R8", f"claim {claim.id}: unknown cost class {claim.cost_class!r}"))
 
+    # EV1-EV3 (event phases, driver roadmap A1/B1): module laws too, so the canonical
+    # verifier carries them. Vacuous over every eventless module; the mask/unmask
+    # well-formedness sub-law holds wherever such claims appear. They lived only in
+    # `kbcir.events`, and an unarmed event phase reported EV2 there while `verify_all`
+    # said the module was lawful.
+    from ..kbcir.events import check_event_phases
+
+    for msg in check_event_phases(module):
+        law, _, text = msg.partition(":")
+        diags.append(Diagnostic(law.strip(), text.strip()))
+
     return diags
 
 
@@ -495,24 +508,30 @@ def _admissible_candidates(module: Module, h) -> dict[int, tuple]:
     can be read as an independent statement of the laws, and only this one law needs to
     reconstruct what the planner would have offered.
     """
-    from ..kbcir.realize import candidates_for
+    from ..kbcir.realize import fused_candidates
 
-    out: dict[int, tuple] = {}
-    for phase in module.phases:
-        for claim in phase.claims:
-            resource = (module.resource(claim.primary_rid)
-                        if claim.primary_rid is not None else None)
-            if resource is None and claim.rd:
-                resource = module.resource(claim.rd[0])
-            out[claim.id] = tuple(candidates_for(claim, h, resource))
-    return out
+    # The planner draws from `fused_candidates`, not from the per-claim `candidates_for`:
+    # the deforestation and CSE discounts are baked into a consumer's BASE cost there.
+    # Re-deriving from `candidates_for` rejected the planner's own plan on every fused
+    # consumer -- 3,840 of the 4,096 claims of the audit's matmul fixture -- a false
+    # positive that had kept every real caller from passing `h` at all.
+    return {cid: tuple(cands) for cid, cands in fused_candidates(module, h).items()}
 
 
-def verify_plan(module: Module, result, h=None) -> list[Diagnostic]:
+def verify_plan(module: Module, result, h=None, theta=None, policy=None,
+                budget=None) -> list[Diagnostic]:
     """K_BCIR plan laws R8 (cost completeness) and R9 (plan legality).
 
     `result` is a `kbcir.realize.RealizationResult` (duck-typed to keep the
     verifier dependency-free).
+
+    `theta` (with `h`) makes R9 re-derive every step's realized cost exactly as the planner
+    priced it -- the candidate's base, coupled with the context factor of the step before
+    it, under the phase weights of (h, theta, `policy`; PERF when unnamed). A legitimate
+    candidate carrying a forged cost keeps the score sum consistent and passes every other
+    check; only the re-derivation sees it. `budget` (needs `theta`) makes R(pi, Theta) <= B
+    part of legality, as the LangRef central equation states it: an infeasible plan is
+    refused with the dimensions named.
 
     `h` is the target profile the plan was made for. Supply it wherever it is known --
     without it R9 can only ask whether the chosen lane suits the claim's declared
@@ -589,6 +608,37 @@ def verify_plan(module: Module, result, h=None) -> list[Diagnostic]:
                 f"claim {step.claim_id}: chosen lane {cand.lane.name} illegal for "
                 f"stride_class {claim.stride_class.name}",
             ))
+
+    # R9 (scope): every realized cost re-derives from (h, theta, policy) -- the same
+    # predicate the planner prices its DAG edges with (`realize.edge_cost`).
+    if theta is not None and h is not None:
+        from ..kbcir.realize import step_cost
+        from ..kbcir.weights import PERF
+
+        pol = policy if policy is not None else PERF
+        prev = None
+        for step in result.steps:
+            if step.claim_id not in claims:
+                continue
+            expected = step_cost(prev, step.candidate, h, theta, step.phase_id, pol)
+            if expected != step.cost:
+                diags.append(Diagnostic(
+                    "R9",
+                    f"claim {step.claim_id}: realized cost {step.cost} does not re-derive "
+                    f"from the scope (expected {expected} for {step.candidate.name!r} "
+                    f"under policy {pol.name!r})"))
+            prev = step.candidate
+    if budget is not None:
+        if theta is None:
+            raise ValueError("R9 budget feasibility needs theta: R(pi, Theta) is priced "
+                             "under Theta")
+        from ..kbcir.cost import DIMS
+        from ..kbcir.rcsp import plan_resources
+
+        used = plan_resources(result, theta)
+        over = [f"{DIMS[d]} {used.v[d]} > {cap}" for d, cap in budget.caps if used.v[d] > cap]
+        if over:
+            diags.append(Diagnostic("R9", "plan exceeds its budget: " + ", ".join(over)))
 
     # R9: total coverage -- a plan must realize every claim exactly once.
     for cid in claims:
@@ -1659,14 +1709,16 @@ def verify_provenance(portfolio, certificates=(), h=None, table=None,
 
 def verify_all(module: Module, result=None, pack=None, ll_text: str | None = None,
                elem: str = "f32", width_override: int | None = None,
-               h=None) -> list[Diagnostic]:
-    """Run the R1-R12 chain over every artifact provided (R13 attaches to the
-    decision rules, not the module: see `verify_provenance`).
+               h=None, theta=None, policy=None, budget=None) -> list[Diagnostic]:
+    """Run the R1-R12 chain (and EV1-EV3) over every artifact provided (R13 attaches to
+    the decision rules, not the module: see `verify_provenance`).
 
-    `h` reaches R9's candidate re-derivation; see `verify_plan`."""
+    `h`, `theta`, `policy` and `budget` reach R9's re-derivation; see `verify_plan`. Pass
+    whatever the caller planned with -- a chain verified without its scope has not
+    re-derived the offer, the costs or the budget."""
     diags = verify(module)
     if result is not None:
-        diags += verify_plan(module, result, h)
+        diags += verify_plan(module, result, h, theta=theta, policy=policy, budget=budget)
     if pack is not None:
         diags += verify_pack(module, pack, result)
     if ll_text is not None and result is not None:

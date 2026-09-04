@@ -127,9 +127,15 @@ def test_malformed_differential_runs_required_rails() -> None:
 def test_find_bcir_opt_never_returns_stock_mlir_opt() -> None:
     from unittest.mock import patch
     from tools.security.run_malformed_differential import find_bcir_opt
-    with patch.dict(os.environ, {"BCIR_OPT": str(_ROOT / "mlir-opt")}, clear=False):
-        with patch("tools.security.run_malformed_differential.shutil.which", return_value="mlir-opt"):
-            assert find_bcir_opt(_ROOT) is None
+    # Searched under a root with NO build tree: the finder also walks build/mlir-build, and
+    # on a host that has built the MLIR rail in-tree it rightly returns that real bcir-opt.
+    # The verdict here is about the stock NAME never passing, so it must not depend on
+    # what this host has built (laws.md L19).
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch.dict(os.environ, {"BCIR_OPT": str(Path(tmp) / "mlir-opt")}, clear=False):
+            with patch("tools.security.run_malformed_differential.shutil.which",
+                       return_value="mlir-opt"):
+                assert find_bcir_opt(Path(tmp)) is None
     # Version-suffixed stock binaries are stock too; only a bcir-opt passes.
     with tempfile.TemporaryDirectory() as tmp:
         stock = Path(tmp) / "mlir-opt-22"

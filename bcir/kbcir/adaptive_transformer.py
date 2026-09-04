@@ -823,7 +823,8 @@ def lower_adaptive_language(spec: AdaptiveLanguageSpec, *, sequence_length: int,
     realization = optimize(module, chosen_target, Theta.cool())
     pack = hydrate_pipelined(module, realization,
                              plan=f"adaptive:{spec.digest[:16]}", depth=2)
-    diagnostics = verify_all(module, result=realization, pack=pack)
+    diagnostics = verify_all(module, result=realization, pack=pack, h=chosen_target,
+                             theta=Theta.cool())
     diagnostics += verify_smart_lowering(module, pack=pack)
     if diagnostics:
         message = "; ".join(f"{row.law}: {row.message}" for row in diagnostics)

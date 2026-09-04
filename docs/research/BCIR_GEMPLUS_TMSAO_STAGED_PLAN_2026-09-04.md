@@ -70,7 +70,7 @@ maintainer setting, not repository content).
 | # | Finding (assessment) | Status | Evidence / owner |
 |---|---|---|---|
 | 1 | Atomic opcodes lose atomic semantics in candidate generation (scalar atomic → U vec16; random atomic → GGG gather) | **closed** | `bcir/kbcir/realize.py` — an `ATOMIC_OPCODES` claim has exactly one realization, itself, on the atomic lane; the stride-class dispatch no longer applies to it |
-| 2 | R9 accepts a forged, unavailable, zero-cost candidate | **partly** | `bcir/verify/__init__.py` R9 now requires that the realization is one the planner could actually have generated (admissibility re-derived from module/target). Re-deriving the *cost* and budget feasibility from the scope is Stage 0 item S0-7 |
+| 2 | R9 accepts a forged, unavailable, zero-cost candidate | **closed (S0-A)** | `bcir/verify/__init__.py` R9 re-derives the planner's *actual* offer (`fused_candidates`, not `candidates_for`: the old re-derivation rejected the planner's own plan on every fused consumer — 3,840 of 4,096 claims of the audit fixture), every step's realized cost through the one predicate the planner prices with (`realize.edge_cost`), and budget feasibility; `verify_all` and every caller pass the scope they planned with |
 | 3 | The graph → plan → StreamPack → artifact chain is fail-open (`attested` = R12 only; empty pack passes R10; pack not bound to its result; R11 stores only maximum generations) | **partly** | `bcir/api.py` — `attested` now means the whole chain (`verify` + `verify_plan` + `verify_c_lowering`); the empty-pack R10 vacuity was closed as a Class-B defect in the 2026-08-12 audit. R11 still carries a constant `topo_gen=1` and the maximum `map_gen`/`data_gen` (`bcir/gem/streampack.py`, `runtime/c/bcir_streampack.h`): per-resource generation vectors are S0-2 |
 | 4 | Provenance equality does not imply identical plans (hash omits the memory hierarchy and declared order; `replay` compared only the digest) | **partly** | G0 landed `ExecutionScopeV1` (`bcir/kbcir/scope.py`): the certificate binds to the complete scope, and `replay()` compares the produced plan. The two-rail widening of `hash_target`/`hash_module` (ODS attributes + `hashTargetFromIR`/`hashModuleFromIR`) is S0-1 |
 | 5 | LLVM/C lowering miscompiles accepted claims (offsets and strides ignored; blanket `noalias`; unmasked vector tail for runtime `n`) | **partly** | `bcir/lower/llvm.py` refuses nonzero `offset` and non-unit strides instead of lowering them to `A[i]`; G9 removed the blanket `noalias` on shared RIDs. The runtime-`n` tail contract is not re-verified here: S0-8 |
@@ -87,8 +87,8 @@ maintainer setting, not repository content).
 | 11 | Two compiled fixtures inert (`verify_timing_lifetime.mlir`, `cost_model_barrier.mlir` not invoked) | **open** | Only `tools/docs/gen_status.py` references them; `check_passes.sh` does not. S0-3 adds an execution-inventory gate so a fixture nothing runs is a failure |
 | 12 | MLIR R13 incomplete (skips absent IR objects; no arity/order check; certified constants unchecked) | **not re-verified** | S0-6 |
 | 13 | Verifier-legal convolution can overflow signed arithmetic in the GEM lowerer | **not re-verified** | S0-8 adds checked arithmetic and a one-tile overflow fixture if the defect stands |
-| 14 | C R9 trusts caller-provided costs; scalar planner writes `count` as the lane width, hydration requires a power of two | **not re-verified** | S0-7 (with item 2) |
-| 15 | EV1–EV3 exist but `verify_all` never invokes them | **open** | `bcir/verify/__init__.py::verify_all` does not call `check_event_phases`. S0-4 |
+| 14 | C R9 trusts caller-provided costs; scalar planner writes `count` as the lane width, hydration requires a power of two | **closed (S0-A)** | `bcir_plan_func` emits width 1 and cost = base × n; `bcir_verify_plan` re-derives every cost through the header-inline `bcir_plan_base_cost` and requires a power-of-two width; the planner and the hydrator compose on any count (C witness in `test_c_runtime.py`) |
+| 15 | EV1–EV3 exist but `verify_all` never invokes them | **closed (S0-A)** | `verify(module)` carries EV1–EV3 (module laws; vacuous over the eventless corpus), so `verify_all` and `is_legal` do too |
 | 16 | Telemetry replay evidence is not transport replay evidence (static ids as sequencing; no integrity witness retained) | **partly** | The BTLM v1 frame ABI carries `seq`, per-frame CRC and resync, byte-identical on both rails (`docs/kernel/TELEMETRY_FRAME_ABI.md`); a *live* ring with per-slot sequence and loss accounting is G15 |
 | 17 | Python structural legality weaker than MLIR (widths, alignments, shapes, zero/negative strides) | **open** | S0-6 |
 
@@ -104,8 +104,8 @@ maintainer setting, not repository content).
 | 23 | `main` unprotected | **outside** | repository settings; recommended to the maintainer, not repository content |
 | 24 | Private vulnerability reporting unavailable | **outside** | `SECURITY.md` names the route; enabling it is a repository setting |
 | 25 | No tags, releases, attestation, SBOM | **outside** / open | release governance is a maintainer decision; the dependency audit's inventory and `tools/security/audit/` are the SBOM substrate when it is taken |
-| 26 | License terminology; CER described as non-canonical | **not re-verified** | a documentation sweep item, S0-10 |
-| 27 | `bcir-tmsao-audit` is a performance-audit precursor, not a certificate | **open** | `pyproject.toml` still names it. S0-10 renames it `bcir-performance-audit` and keeps the old name as an alias that prints what it is not |
+| 26 | License terminology; CER described as non-canonical | **closed (S0-A)** | README states the license is source-available and non-commercial, not OSI open source; the LangRef says CER is excluded by profile (its indefinite-length form), not for want of canonicality |
+| 27 | `bcir-tmsao-audit` is a performance-audit precursor, not a certificate | **closed (S0-A)** | `bcir-performance-audit` is the command; `bcir-tmsao-audit` stays as an alias that prints that GEM+/TMSAO certificates are not implemented |
 
 ### 2.4 Documentation
 
@@ -297,7 +297,7 @@ Each is one PR, one gate, one analysis paragraph. Stage 0 first, smallest first.
 
 | Section | Content | Depends on |
 |---|---|---|
-| **S0-A** (Python) | S0-4 EV1–EV3 into `verify_all`; S0-7 R9 re-derives cost and budget feasibility from the scope, and the C R9 width/cost checks; S0-10 `bcir-performance-audit` with the compatibility alias and the CER/license wording sweep | — |
+| **S0-A** (Python + C) — **landed** | S0-4 EV1–EV3 into `verify_all`; S0-7 R9 re-derives the offer, every cost and budget feasibility from the scope, and the C R9 width/cost contract; S0-10 `bcir-performance-audit` with the compatibility alias and the CER/license wording sweep | — |
 | **S0-B** (MLIR) | S0-3 verify checkpoints in `bcir-optimize`/`bcir-hydrate` and the execution-inventory gate that runs the two inert fixtures; S0-5 module-scoped walks; S0-9 the ODS→IRDL supported-subset manifest and parity check | LLVM 23 host or CI's rail |
 | **S0-C** (both rails) | S0-6 the shared structural-law corpus: widths, alignments, shapes, strides, phase identity and ordering, address width, non-RAM domains, M5 descriptors, MLIR R13 arity/order, the convolution overflow fixture — one corpus, two runners, every mismatch a finding | S0-B |
 | **S0-D** (two-rail, one commit) | S0-1 `hash_target`/`hash_module` widening: ODS attributes for the memory tiers and declared order plus the matching C++ walks, with the differential regression | S0-B |

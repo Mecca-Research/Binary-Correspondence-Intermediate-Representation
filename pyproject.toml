@@ -36,7 +36,8 @@ bcir-registry = "bcir.registry_tool:main"
 bcir-model-assess = "bcir.frontends.models.assess_tool:main"
 bcir-asn1c = "bcir.frontends.asn1.__main__:main"
 bcir-ham-plan = "bcir.kbcir.ham_tool:main"
-bcir-tmsao-audit = "bcir.performance_audit:main"
+bcir-performance-audit = "bcir.performance_audit:main"
+bcir-tmsao-audit = "bcir.performance_audit:main_compat"   # alias; prints that it is not a TMSAO certificate
 
 [project.urls]
 Homepage = "https://github.com/Mecca-Research/Binary-Correspondence-Intermediate-Representation"

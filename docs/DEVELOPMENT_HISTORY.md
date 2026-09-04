@@ -389,7 +389,15 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   hand-formatted C outside any configuration) (#757). The GEM+/TMSAO program was then re-staged
   against the 2026-07/08 assessment: its P−1 blockers dispositioned (four closed, three partly),
   the frozen rows re-measured (G1/G2 unchanged), eight missing contracts added as G11–G18, and
-  six stages with PR-sized sections declared.
+  six stages with PR-sized sections declared (#758). Its first section, S0-A: the EV1–EV3 event
+  laws entered the canonical verifier; R9 became scope-aware on both rails — it re-derives the
+  planner's actual offer (the old re-derivation rejected every fused consumer), every step cost
+  through the one predicate the planner prices with, and budget feasibility, while the C planner
+  stopped writing element counts into lane widths and the C R9 re-derives costs; the planner's
+  hot paths lost their dataclass copies (−21% plan time on the 4,096-claim fixture, score
+  unchanged); two harness rows freeze the finding and its price (`verify.plan.r9.vacuous`
+  1.0 → 0.0, `verify.plan.scope.overhead` ≈ 1.07× the planner, G17's row to move); the audit
+  command says what it is not.
 
 ---
 

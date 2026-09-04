@@ -272,6 +272,24 @@ METRICS: tuple[Metric, ...] = (
                                     "and a claimed win above this band needs a structural "
                                     "reason before it is believed",
            slice_owner="G6"),
+
+    # --- S0-A (2026-09-04): rows a slice added. These two are NOT quoted from the report: the
+    # report's K_BCIR->StreamPack case verified its plan with no scope at all
+    # (`verify_plan(module, result)`), so the numbers did not exist to quote. Each carries the
+    # value the same code path measured on the tree BEFORE the slice (#758), frozen the same
+    # way -- a slice may add a row only together with its own pre-slice measurement.
+    Metric("verify.plan.r9.vacuous", "verifier",
+           "fraction of the audit fixture's steps whose FORGED cost R9 accepts",
+           1.0, "fraction", "exact",
+           bound=0.0, bound_source="R9 and the planner price a step through ONE predicate "
+                                   "(`realize.step_cost`), so a forged cost on any step of "
+                                   "the planner's own plan is a diagnostic and no step is "
+                                   "left to accept on trust (laws.md L2, L14)",
+           slice_owner="S0-A"),
+    Metric("verify.plan.scope.overhead", "verifier",
+           "scope-aware verify_plan / optimize, same fixture (4,096 claims)",
+           1.07, "x", "ratio",
+           slice_owner="G17"),
 )
 
 _BY_KEY = {metric.key: metric for metric in METRICS}
@@ -381,8 +399,65 @@ def measure_exact() -> dict[str, float]:
     return out
 
 
+def measure_verifier() -> dict[str, float]:
+    """The S0-A rows: can R9 fire on the planner's own plan, and what does firing cost.
+
+    Both come from ONE fixture -- the audit's K_BCIR->StreamPack module at scale 4 (matmul
+    128x128, tile 8: 4,096 claims), the module `audit.kbcir-streampack.scale4` times -- so
+    the ratio row explains that row's movement instead of restating it.
+
+    The vacuity row does not ask the verifier to agree with the planner: a shared predicate
+    agrees with itself by construction, and a row that can only read 0.0 measures nothing.
+    It forges EVERY step's cost by one unit and counts the steps the verifier still accepts.
+    Before S0-A `verify_plan` took no scope, so that was every step (1.0); anything above
+    0.0 now means R9 has stopped re-deriving some step -- the vacuity L2 forbids, and the
+    one regression this row exists to catch.
+
+    The overhead row is the price of the fix, as a same-process ratio so it carries across
+    hosts: scope-aware verification currently re-derives the planner's whole offer
+    (`fused_candidates`) to price each chosen step. G17's single-candidate re-derivation is
+    the slice that must move it; no floor is recorded because the 3-5x it projects is a
+    projection, not a proved bound.
+    """
+    import statistics
+    import time
+    from dataclasses import replace
+
+    from bcir.examples import matmul_tiled
+    from bcir.kbcir.cost import TargetProfile, Theta
+    from bcir.kbcir.realize import optimize
+    from bcir.kbcir.weights import PERF
+    from bcir.verify import verify_plan
+
+    out: dict[str, float] = {}
+    module = matmul_tiled(n=128, tile=8)
+    host, theta = TargetProfile.x86_avx2(), Theta.mem_bound()
+
+    def median_ms(fn, repeats=3):
+        samples = []
+        for _ in range(repeats):
+            start = time.perf_counter()
+            fn()
+            samples.append((time.perf_counter() - start) * 1e3)
+        return statistics.median(samples)
+
+    result = optimize(module, host, theta, PERF)
+    plan_ms = median_ms(lambda: optimize(module, host, theta, PERF))
+    verify_ms = median_ms(lambda: verify_plan(module, result, host, theta=theta, policy=PERF))
+    if plan_ms:
+        out["verify.plan.scope.overhead"] = verify_ms / plan_ms
+
+    forged = replace(result, score=result.score + len(result.steps),
+                     steps=tuple(replace(s, cost=s.cost + 1) for s in result.steps))
+    flagged = sum(1 for d in verify_plan(module, forged, host, theta=theta, policy=PERF)
+                  if d.law == "R9" and "does not re-derive" in d.message)
+    if result.steps:
+        out["verify.plan.r9.vacuous"] = 1.0 - flagged / len(result.steps)
+    return out
+
+
 _MEASURERS = {"audit": measure_audit, "planner": measure_planner,
-              "exact": measure_exact}
+              "exact": measure_exact, "verifier": measure_verifier}
 
 
 def measure(scale: int, repeats: int, groups: set[str] | None) -> dict[str, float]:
@@ -519,7 +594,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--scale", type=int, default=4)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--group", action="append", default=[],
-                        help="limit measurement to a group (audit, planner)")
+                        help="limit measurement to a group (audit, planner, exact, "
+                             "verifier)")
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)
 

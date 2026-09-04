@@ -129,7 +129,8 @@ def build_artifact(program, *, target: str = "", theta: str = "cool",
     # empty diagnostic tuple. The lowering can be a faithful rendering of an illegal
     # plan; that is precisely the case a deployable-artifact API must not bless.
     diags = (verify(module)
-             + verify_plan(module, result, h)
+             + verify_plan(module, result, h, theta=th, policy=pol,
+                           budget=b if b.caps else None)
              + verify_c_lowering(module, result, kernel_c, elem, hw_width=hw_width))
     manifest = build_manifest(module, h, th, pol)
 

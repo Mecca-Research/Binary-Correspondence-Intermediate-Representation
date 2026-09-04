@@ -189,10 +189,13 @@ replay certificate, a calibrated profile must present its frozen table with
 matching generation and constants, a regret ledger's books must balance. Rule
 swaps are never silent. Encoded as IR via the `bcir.verify.*` op family. The
 runnable full set lives in `bcir/verify`, one entry point per correspondence
-artifact — `verify(module)` R1–R8(static), `verify_plan` R8–R9, `verify_pack`
-R10–R11, `verify_lowering` R12, `verify_provenance` R13 — and the MLIR-native
-`-bcir-verify` pass enforces the structurally checkable form of all of R1–R25
-on the dialect.
+artifact — `verify(module)` R1–R8(static) and EV1–EV3, `verify_plan` R8–R9
+(scope-aware: given the target, Θ and policy it re-derives every step's realized
+cost through the planner's own predicate and checks `R(π,Θ) ⪯ B` against a
+budget; without the scope it checks candidate membership and coverage only),
+`verify_pack` R10–R11, `verify_lowering` R12, `verify_provenance` R13 — and the
+MLIR-native `-bcir-verify` pass enforces the structurally checkable form of all
+of R1–R25 on the dialect.
 
 **Timing + lifetime laws (R19/R20/R21).** Three further laws over the
 register-transfer / naked-pointer-safety tracks. They are driven by *optional*
@@ -1164,8 +1167,10 @@ emission, because a selected encoding becomes a digested artifact.
 | X.693 | XER, CXER | CXER | `bcir_xer.c` |
 | X.697 | JER | BCIR's canonical JER | `bcir_jer.c` |
 
-`cer` fails the canonicality test despite its name: X.690 §9.1's indefinite-length
-constructed form gives one abstract value more than one octet string.
+`cer` is excluded by profile, not for want of canonicality: CER is X.690's other canonical
+subset of BER (§9), but §9.1 mandates the indefinite-length constructed form, which a frozen,
+digested artifact cannot carry — BCIR's canonical form is DER, and CER input is refused as
+unsupported, never mislabelled non-canonical.
 
 **Two decode tables, never merged.** X.691 §7.2 and X.696 §6.2 deny PER and OER a
 schema-*free* decode permanently — that is a property of the rules, not a missing feature —

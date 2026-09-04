@@ -69,3 +69,28 @@ def test_report_write_is_atomic_timestamp_free_and_schema_complete():
             os.replace = real_replace
         assert open(path, "rb").read() == previous
         assert os.listdir(directory) == ["report.json"]
+
+
+def test_audit_commands_say_what_they_are_not():
+    """`bcir-performance-audit` is the command; `bcir-tmsao-audit` stays as an alias that prints
+    that it is a precursor and not a TMSAO certificate (every result is TMSAO-4)."""
+    import contextlib
+    import io
+    import os
+    import tempfile
+
+    from bcir.performance_audit import main, main_compat
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "report.json")
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            assert main(["--repeats", "1", "--output", out]) == 0
+        assert "not a certificate" in stdout.getvalue()
+        assert stderr.getvalue() == ""
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            assert main_compat(["--repeats", "1", "--output", out]) == 0
+        assert "not implemented" in stderr.getvalue()
+        assert "bcir-performance-audit" in stderr.getvalue()
+        assert os.path.exists(out)

@@ -573,11 +573,32 @@ def gen_illegal_plan(rng: random.Random):
     return m, r, "R9"
 
 
-def check_plan_verifier(module: Module, result, expected_law: str) -> list[Mismatch]:
-    """The injected plan-law fault must fire through verify_plan."""
+def gen_illegal_scoped_plan(rng: random.Random):
+    """Return (module, result, expected_law, h, theta): a clean base + its optimal plan with
+    ONE step's realized cost forged. The candidate is the planner's own, the score still sums,
+    every geometry rule holds -- only a verify_plan handed the scope (h, theta) can see it."""
+    from .realize import optimize
+
+    m = _verifier_base(rng)
+    h = TARGETS[rng.choice(sorted(TARGETS))]
+    theta = Theta.cool()
+    r = optimize(m, h, theta)
+    if r.steps:
+        step = r.steps[rng.randrange(len(r.steps))]
+        step.cost += 1
+        r.score += 1
+    else:
+        r.score += 1  # an empty plan: the score law is the only thing left to break
+    return m, r, "R9", h, theta
+
+
+def check_plan_verifier(module: Module, result, expected_law: str, h=None,
+                        theta=None) -> list[Mismatch]:
+    """The injected plan-law fault must fire through verify_plan (scope-aware when the
+    scope is handed over)."""
     from ..verify import verify_plan
 
-    laws = {d.law for d in verify_plan(module, result)}
+    laws = {d.law for d in verify_plan(module, result, h, theta=theta)}
     if expected_law not in laws:
         return [Mismatch("verify_plan", 0,
                          f"verify_plan missed injected {expected_law} (reported {sorted(laws)})")]
@@ -712,11 +733,19 @@ def run_verifier_campaign(n: int = 200, seed: int = 0) -> list[Mismatch]:
         misses.extend(check_verifier(module, law))
         # plan rail (R9): a clean base's optimal plan verifies clean; injected fault fires.
         clean = _verifier_base(rng)
-        clean_plan = optimize(clean, TARGETS[rng.choice(sorted(TARGETS))], Theta.cool())
+        clean_h, clean_theta = TARGETS[rng.choice(sorted(TARGETS))], Theta.cool()
+        clean_plan = optimize(clean, clean_h, clean_theta)
         if verify_plan(clean, clean_plan):
             misses.append(Mismatch("verify_plan", 0, "verify_plan flagged a clean plan"))
+        # scope-aware: the planner's own plan re-derives (offer, every cost) under its scope --
+        # the regression guard for R9 re-deriving from the set the planner actually drew from.
+        if verify_plan(clean, clean_plan, clean_h, theta=clean_theta):
+            misses.append(Mismatch("verify_plan", 0,
+                                   "scope-aware verify_plan flagged the planner's own plan"))
         m2, r2, plaw = gen_illegal_plan(rng)
         misses.extend(check_plan_verifier(m2, r2, plaw))
+        m3, r3, plaw3, h3, th3 = gen_illegal_scoped_plan(rng)
+        misses.extend(check_plan_verifier(m3, r3, plaw3, h3, th3))
     # artifact rails (R10-R18): heavier, run once per campaign.
     misses.extend(_artifact_law_misses(rng))
     return misses

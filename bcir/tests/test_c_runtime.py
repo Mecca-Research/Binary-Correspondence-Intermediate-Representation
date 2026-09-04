@@ -353,3 +353,69 @@ int main(void){
         assert build.returncode == 0, build.stderr
         run = subprocess.run([exe], capture_output=True, text=True)
         assert run.returncode == 0, (run.stdout, run.stderr)
+
+
+def test_c_planner_width_contract_and_r9_rederives_costs():
+    """The scalar planner used to write a claim's ELEMENT COUNT into the step's lane width, so
+    a claim over 3 elements planned at "width 3" -- a width the hydrator rightly refuses -- and
+    the C R9 trusted whatever cost a step carried. Now: the planner emits width 1 and
+    cost = base * n; R9 re-derives every cost from the claim and requires a power-of-two
+    width; the planner and the hydrator compose on any count."""
+    clang = which("clang")
+    if clang is None:
+        return
+    source = r"""
+#include <stdint.h>
+#include <string.h>
+#include "bcir_plan.h"
+#include "bcir_verify.h"
+#include "bcir_hydrate.h"
+int main(void){
+  bcir_claim c; bcir_func f; bcir_plan_step s; bcir_plan p; char d[160]; uint8_t out[512]; size_t n=0;
+  memset(&c,0,sizeof c); memset(&f,0,sizeof f);
+  c.id=7; c.opcode=BCIR_OP_MUL; c.lane=BCIR_LANE_U; c.count=3; strcpy(c.op,"c.bin.mul");
+  f.claims=&c; f.n_claims=1;
+  if(bcir_plan_func(&f,&s,1,&p)!=BCIR_OK)return 1;
+  if(s.width!=1u||s.cost!=bcir_plan_base_cost(&c)*3u||p.total_cost!=s.cost)return 2;   /* the contract */
+  if(!bcir_verify_plan(&f,&p,d,sizeof d))return 3;                                       /* R9 admits it */
+  if(bcir_hydrate(&f,&p,out,sizeof out,&n)!=BCIR_OK||!n)return 4;                      /* and it hydrates */
+  s.cost+=1; p.total_cost+=1;                                                            /* forged cost, sum intact */
+  if(bcir_verify_plan(&f,&p,d,sizeof d)||!strstr(d,"does not re-derive"))return 5;
+  s.cost-=1; p.total_cost-=1; s.width=3;                                                 /* a width no lane issues */
+  if(bcir_verify_plan(&f,&p,d,sizeof d)||!strstr(d,"power of two"))return 6;
+  s.width=4; s.cost=bcir_plan_base_cost(&c); p.total_cost=s.cost;                        /* 3 elements in one 4-lane issue */
+  if(!bcir_verify_plan(&f,&p,d,sizeof d))return 7;
+  n=0; if(bcir_hydrate(&f,&p,out,sizeof out,&n)!=BCIR_OK||!n)return 8;
+  n=0; if(bcir_hydrate(&f,NULL,out,sizeof out,&n)!=BCIR_OK||!n)return 9;                /* no plan: scalar, any count */
+  return 0;
+}
+"""
+    with tempfile.TemporaryDirectory() as d:
+        driver = os.path.join(d, "plan_contract.c")
+        with open(driver, "w", encoding="utf-8") as fh:
+            fh.write(source)
+        exe = os.path.join(d, "plan_contract")
+        build = subprocess.run(
+            [
+                clang,
+                "-std=c11",
+                "-O1",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C_DIR,
+                os.path.join(_C_DIR, "bcir_runtime.c"),
+                os.path.join(_C_DIR, "bcir_plan.c"),
+                os.path.join(_C_DIR, "bcir_verify.c"),
+                os.path.join(_C_DIR, "bcir_hydrate.c"),
+                driver,
+                "-o",
+                exe,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert build.returncode == 0, build.stderr
+        run = subprocess.run([exe], capture_output=True, text=True)
+        assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
