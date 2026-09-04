@@ -1,17 +1,31 @@
-# BCIR C / C++ style — LLVM base (this is an MLIR/LLVM out-of-tree project), widened to a
-# 100-column limit to match the prevailing line width in mlir/lib and runtime/c. Applies to the
-# freestanding C runtime (runtime/c/) and the dialect/passes (mlir/lib, mlir/include).
-# Run via pre-commit (clang-format hook) or: clang-format -i <file>.
+# BCIR C++ style — LLVM base (this is an MLIR/LLVM out-of-tree project), widened to a
+# 100-column limit to match the prevailing line width in mlir/lib and runtime/cpp.
+#
+# Scope (a measured policy, 2026-09-04 dependency audit F9):
+#   * applies to the C++ rails — mlir/lib, mlir/include, mlir/tools and runtime/cpp — where
+#     LLVM style is the intent of the code (2-space indent, `Type *x`, braces on the statement
+#     line). Those trees were reformatted once under this file so the pre-commit hook restyles
+#     nothing it does not have to; ReflowComments is off so hand-wrapped comment blocks stay,
+#     and BreakStringLiterals is off so a formatter pass never changes the token stream (a
+#     literal split in two is two tokens, not whitespace).
+#   * does NOT apply to the freestanding C runtime, runtime/c/: that rail is written in a
+#     deliberately dense hand-formatted C (several statements per line, no space after `if`,
+#     `,` or around operators) that no clang-format configuration describes — every LLVM-based
+#     configuration measured rewrote 58k+ lines of its 31k — so the hook does not match it.
+#     Reformatting runtime/c is a dedicated decision with its own PR, not a side effect of a hook.
+# Run via pre-commit (clang-format hook, pinned to the LLVM 23 line) or: clang-format -i <file>.
 BasedOnStyle: LLVM
 ColumnLimit: 100
 IndentWidth: 2
 TabWidth: 2
 UseTab: Never
-PointerAlignment: Left
+PointerAlignment: Right
 DerivePointerAlignment: false
 Cpp11BracedListStyle: true
-AlwaysBreakTemplateDeclarations: Yes
+BreakTemplateDeclarations: Yes
 AllowShortFunctionsOnASingleLine: Inline
+ReflowComments: false
+BreakStringLiterals: false
 SortIncludes: CaseSensitive
 SpaceBeforeParens: ControlStatements
 ---
