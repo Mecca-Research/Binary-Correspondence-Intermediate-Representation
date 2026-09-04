@@ -10,7 +10,7 @@
 > slice-by-slice build notes formerly embedded in the roadmaps. Roadmap docs now describe
 > *what exists and what is next*; this doc records *how it got here*. For current counts
 > (tests, ops, passes, laws) see the generated [`STATUS.md`](STATUS.md) — nothing here is
-> a live count. This revision is current through merged PR #756 (2026-09-04) and package version
+> a live count. This revision is current through merged PR #757 (2026-09-04) and package version
 > `0.2.0`. Sources are the GitHub PR record, first-parent history, implementation/tests,
 > and pre-consolidation document revisions retained in git.
 
@@ -386,7 +386,10 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   PyTorch index, now pinned — with the two pre-commit hook revisions (#756); and the audit's last
   two rows, the vendored LLVM IR grammar refreshed to upstream HEAD and re-verified against LLVM
   23, and the clang-format policy decided by measurement (C++ rails only; `runtime/c` is dense
-  hand-formatted C outside any configuration).
+  hand-formatted C outside any configuration) (#757). The GEM+/TMSAO program was then re-staged
+  against the 2026-07/08 assessment: its P−1 blockers dispositioned (four closed, three partly),
+  the frozen rows re-measured (G1/G2 unchanged), eight missing contracts added as G11–G18, and
+  six stages with PR-sized sections declared.
 
 ---
 

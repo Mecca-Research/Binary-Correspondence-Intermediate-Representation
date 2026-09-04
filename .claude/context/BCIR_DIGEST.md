@@ -41,7 +41,7 @@ the ASN.1/ECN law sections (§17; a 2026-08-11 direct commit also appended a lar
 "comprehensive system report" after §19). `docs/BCIR_ASN1_X690_ABI.md` owns the
 DER/BER contract and the A1–A5 laws; `docs/BCIR_ASN1_BUILDOUT_ROADMAP.md` +
 `docs/BCIR_ASN1_JSON_ROADMAP.md` own the ASN.1/JER phase ladders;
-`docs/research/BCIR_GEMPLUS_ROADMAP.md` owns GEM+/TMSAO slices G0–G10 and the
+`docs/research/BCIR_GEMPLUS_ROADMAP.md` owns GEM+/TMSAO slices G0–G18 in six stages and the
 exact/ratio/wall + TMSAO-1..4 measurement discipline; `docs/BCIR_TARGET_ACCESS.md`
 records probed host-capability limits. `docs/BCIR_MASTER_ROADMAP.md` owns portfolio
 order, not history. `docs/kernel/` owns driver/kernel/StreamPack/BCAB/telemetry
@@ -61,7 +61,10 @@ format); ECN's refusal list is empty; two calibration targets are admitted (Cort
 Cortex-A520, same phone, deliberately per-core tables). GEM+ G0 (ExecutionScopeV1 scope
 identity + TMSAO-1..4 ladder) landed; G9 half-landed (no more blanket `noalias` lies to
 LLVM); everything BCIR emits is TMSAO-4 until G4's lower-bound stack. Open, deliberately:
-GEM+ G1–G8/G10; the two-rail provenance-hash memory-hierarchy closure; R11 per-resource
+GEM+ G1–G8/G10 plus the 2026-09-04 re-staging's G11–G18 (plan ABI, dispatch law with work-unit
+budgets, workload `W`, control-record ABI, live SPSC ring, data-plane hand-off, compact/native
+planner parity, incremental re-verification) and its Stage 0 closure items S0-1…S0-10
+(`docs/research/BCIR_GEMPLUS_TMSAO_STAGED_PLAN_2026-09-04.md`); the two-rail provenance-hash memory-hierarchy closure; R11 per-resource
 generation vectors; resident UART/virtio drivers, Linux modules/UAPI, BCIR-Linux, native
 IPC/kernel, live telemetry transports, reset/paranoid-exception execution. UART and
 virtio-blk evidence must precede UAPI v1; direct behavior must stabilize before any IPC
@@ -201,7 +204,7 @@ Top-level: ./bcir ./channels ./docs ./llvm-training ./mlir ./runtime ./tools
 - **docs/BCIR_NATIVE_OBJECT_GATE.md** (152L): 1. The decision · 2. The warranted slice (done): real native objects end-to-en · 3. GO criteria — what would warrant BCIR-native isel · 4. STOP criteria — if a native-isel experiment is taken · 5. Current verdict and evidence boundary
 - **docs/BCIR_Repo_Structure.md** (212L): 1. Top-level ownership · 2. Oracle package (`bcir/`) · 3. Law rail (`mlir/`) · 4. C and C++ runtime classes · 5. Contract ownership · 6. Documentation taxonomy · 7. Build and validation entry points · Fast dependency-free oracle tier · Full local oracle/toolchain tier, with bounded concurrency · Production C and C++ boundaries · Optional pinned hosted-model CPU gate (one thread in CI) · MLIR/IRDL rails when the coherent LLVM toolset is installed · Documentation governance
 - **docs/BCIR_TARGET_ACCESS.md** (130L): 1. Privilege is not capability · 2. What the two available hosts actually provide · 3. What each open phase needs · 4. The bare-metal targets that would unblock it · 5. How to record a new host
-- **docs/DEVELOPMENT_HISTORY.md** (444L): 1. The development method · 2. The PR arc (eras) · 3. Condensed dated changelog · 4. Capability closure ledger migrated from the former master · 5. Where the detailed notes live now
+- **docs/DEVELOPMENT_HISTORY.md** (447L): 1. The development method · 2. The PR arc (eras) · 3. Condensed dated changelog · 4. Capability closure ledger migrated from the former master · 5. Where the detailed notes live now
 - **docs/ONBOARDING_DEEP_DIVE.md** (320L): 1. Read this first · 2. The three implementation rails · 3. From source to execution · 4. Core semantic and optimizer packages · 5. Frontends, lowering, and machine boundary · 6. Runtime memory and ownership · 7. Models, training, and BCIRQ8 · 8. Drivers, kernel, telemetry, and IPC · 9. Current evidence boundary · 10. Validation workflow · 11. Reading and change-placement map
 - **docs/PARITY.md** (378L): Enum value parity (normative) · Concept parity · Python ↔ C artifact and runtime parity · Python ↔ C frontend twin (`runtime/c/`) · Worked-example parity · Generated, adversarial parity (the proof, not the hope) · How parity is enforced today
 - **docs/PERFORMANCE_AUDIT.md** (146L): 1. Gate and evidence contract · 2. Defects and bottlenecks found · 3. Local before/after evidence · 4. What remains hardware- and workload-gated
@@ -232,7 +235,8 @@ Top-level: ./bcir ./channels ./docs ./llvm-training ./mlir ./runtime ./tools
 - **docs/machine-learning/THIRD_PARTY_MODELS.md** (129L): Maykeye/TinyLLama-v0 · CUDA-LLM comparison boundary · TinyStories dataset planned for BCIR-TinyStories-32M · Adaptive-architecture research boundary · Byte-native architecture research boundary · Sequence-interface and progressive-growth research boundary
 - **docs/research/BCIR_ADVANCED_TECHNIQUE_TRIAGE.md** (257L): The framing that decides most of the list · A. Already built · B. Already in the GEM+ roadmap · C. LLVM's job — BCIR's job is to supply the fact · D. Genuinely new — the roadmap additions · Summary: what changes in the roadmap
 - **docs/research/BCIR_GAME_OPTIMIZATION_ROADMAP.md** (442L): 1. The exact-vs-approximate split — the load-bearing thesis · 2. The overlap — what BCIR already embodies (map, don't re-b · 3. Per-game principles — the full ledger · 4. Lessons applied to **GEM** (the StreamPack hot path) · 5. Lessons applied to **K_BCIR** (the tropical cost model, e · 6. Lessons applied to the **StreamPack ABI** (frozen artifac · 7. Ranked build slices · 8. Risks & myth-flags · 9. The bottom line
-- **docs/research/BCIR_GEMPLUS_ROADMAP.md** (485L): 0. The measurement discipline, and why it comes first · 1. Scope identity: `S` · 2. Certificate classes · 3. The slices · 4. The sublinearity question, answered precisely · 5. The learned-optimization boundary · 6. Order of work · 7. What this roadmap will not claim
+- **docs/research/BCIR_GEMPLUS_ROADMAP.md** (651L): 0. The measurement discipline, and why it comes first · 1. Scope identity: `S` · 2. Certificate classes · 3. The slices · 4. The sublinearity question, answered precisely · 5. The learned-optimization boundary · 6. Order of work — the six stages · 7. What this roadmap will not claim · 8. Current state, 2026-09-04
+- **docs/research/BCIR_GEMPLUS_TMSAO_STAGED_PLAN_2026-09-04.md** (342L): 0. Inputs · 1. Executive summary · 2. Disposition of the assessment against `main` at #757 · 3. Measurement today · 4. What the assessment lacks · 5. The three emphases · 6. The re-staged program · 7. The sections, in order · 8. Decision rules and what this plan will not claim · 9. Sources
 - **docs/research/BCIR_NATIVE_BACKEND_FEASIBILITY.md** (217L): 1. What "native backend" means here · 2. Current state — the codegen spectrum BCIR already populat · 3. What a *general* native backend requires (and why it is e · 4. The gate, restated and assessed (status: all GO criteria  · 5. The candidate bounded targets, priced and ranked · 6. Development roadmap (executed ONLY if the gate opens for  · 7. What to do *now* (and how it de-risks any future native w · 8. Bottom line
 - **docs/research/BCIR_SECURITY_AUDIT_2026-08-12.md** (173L): 1. The two failure classes · 2. Class A — canonical-byte defects · 3. Class B — vacuous checks · 4. The one finding left half-closed · 5. Not reproduced · 6. Verification · 7. Recommended next
 - **docs/research/BCIR_SECURITY_AUDIT_2026-08-12b.md** (170L): 1. What the previous pass handed this one · 2. Confirmed and fixed · 3. Investigated and cleared · 4. Swept clean · 5. Verification · 6. What remains open
