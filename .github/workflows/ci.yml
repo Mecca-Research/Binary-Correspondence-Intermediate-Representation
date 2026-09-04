@@ -135,7 +135,7 @@ jobs:
         run: BCIR_SKIP_CFRONT_SANITIZE=1 bash tools/c/check_runtime.sh
 
       - name: Cache the immutable TinyLlama source checkpoint
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/bcir/models/tinyllama-v0/298338802ab94432b917bcce11382aa151aee50f
           key: bcir-tinyllama-v0-298338802ab94432b917bcce11382aa151aee50f-c302246d91e2854f-ab1b681ec7fc02fe
@@ -637,7 +637,7 @@ jobs:
       - name: Cache ccache (warms the bcir-opt compile against the MLIR headers)
         # The bcir-opt compile dominates this job's wall time; ccache turns a warm run
         # into a near-instant relink. Keyed per-LLVM-major, newest-first restore.
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ccache
           key: ccache-mlir${{ matrix.llvm }}-${{ github.sha }}
