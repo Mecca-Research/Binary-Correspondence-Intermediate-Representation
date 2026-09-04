@@ -6,9 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
@@ -38,8 +38,7 @@ namespace {
 struct PromoteGGGtoUX : public OpRewritePattern<ClaimOp> {
   using OpRewritePattern<ClaimOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(ClaimOp op,
-                                PatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(ClaimOp op, PatternRewriter &rewriter) const override {
     if (op.getLane() != Lane::GGG || op.getStrideClass() != StrideClass::Random)
       return failure();
     auto proof = op->getAttrOfType<BoolAttr>("bcir.bucketable");
@@ -47,15 +46,13 @@ struct PromoteGGGtoUX : public OpRewritePattern<ClaimOp> {
       return failure();
     rewriter.modifyOpInPlace(op, [&] {
       op.setLaneAttr(LaneAttr::get(op.getContext(), Lane::UX));
-      op.setStrideClassAttr(
-          StrideClassAttr::get(op.getContext(), StrideClass::Cacheline));
+      op.setStrideClassAttr(StrideClassAttr::get(op.getContext(), StrideClass::Cacheline));
     });
     return success();
   }
 };
 
-struct PromoteLanesPass
-    : public PassWrapper<PromoteLanesPass, OperationPass<>> {
+struct PromoteLanesPass : public PassWrapper<PromoteLanesPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PromoteLanesPass)
 
   StringRef getArgument() const final { return "bcir-promote-lanes"; }
@@ -66,16 +63,15 @@ struct PromoteLanesPass
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<PromoteGGGtoUX>(&getContext());
-    if (failed(applyPatternsGreedily(getOperation(),
-                                            std::move(patterns))))
+    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createPromoteLanesPass() {
   return std::make_unique<PromoteLanesPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

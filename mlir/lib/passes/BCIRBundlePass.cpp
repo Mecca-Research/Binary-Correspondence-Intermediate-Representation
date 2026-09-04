@@ -21,9 +21,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRCostModel.h"
 
 #include "mlir/IR/Builders.h"
@@ -54,8 +54,8 @@ static bool fenced(ClaimOp c) {
 }
 
 // RAW/WAR/WAW between two claims' read/write symbol sets (mirrors bundle._conflict).
-static bool conflict(ArrayRef<StringRef> ar, ArrayRef<StringRef> aw,
-                     ArrayRef<StringRef> br, ArrayRef<StringRef> bw) {
+static bool conflict(ArrayRef<StringRef> ar, ArrayRef<StringRef> aw, ArrayRef<StringRef> br,
+                     ArrayRef<StringRef> bw) {
   auto intersects = [](ArrayRef<StringRef> x, ArrayRef<StringRef> y) {
     for (StringRef a : x)
       for (StringRef b : y)
@@ -133,7 +133,7 @@ struct BundlePass : public PassWrapper<BundlePass, OperationPass<>> {
     // A mutable copy of the shared plan's columns (Bundle re-prices permuted copies of them);
     // sourcing cols + the base total from PlanAnalysis avoids re-walking + re-planning here.
     std::vector<cm::Column> cols;
-    llvm::DenseMap<Operation *, unsigned> colOf;  // claim op -> column index
+    llvm::DenseMap<Operation *, unsigned> colOf; // claim op -> column index
     ArrayRef<int64_t> w;
     int64_t theta = 0, baseTotal = 0;
     bool haveCost = false;
@@ -159,7 +159,7 @@ struct BundlePass : public PassWrapper<BundlePass, OperationPass<>> {
     int bundleIdx = 0;
     int64_t totalGain = 0;
     for (int32_t ph : phases) {
-      llvm::MapVector<StringRef, SmallVector<unsigned>> byRead;  // StringRef key (safe)
+      llvm::MapVector<StringRef, SmallVector<unsigned>> byRead; // StringRef key (safe)
       for (unsigned i = 0; i < claims.size(); ++i)
         if (claims[i].phase == ph)
           for (StringRef rd : claims[i].reads)
@@ -175,10 +175,10 @@ struct BundlePass : public PassWrapper<BundlePass, OperationPass<>> {
         });
         SmallVector<unsigned> indep;
         for (unsigned m : members) {
-          bool ok = !fenced(claims[m].claim);   // a fenced claim joins no bundle
+          bool ok = !fenced(claims[m].claim); // a fenced claim joins no bundle
           for (unsigned k : indep)
-            if (!ok || conflict(claims[m].reads, claims[m].writes,
-                                claims[k].reads, claims[k].writes)) {
+            if (!ok ||
+                conflict(claims[m].reads, claims[m].writes, claims[k].reads, claims[k].writes)) {
               ok = false;
               break;
             }
@@ -187,7 +187,7 @@ struct BundlePass : public PassWrapper<BundlePass, OperationPass<>> {
         }
         if (indep.size() < 2)
           continue;
-        std::string sig;  // dedup by the claim-id set
+        std::string sig; // dedup by the claim-id set
         for (unsigned m : indep) {
           sig += std::to_string(claims[m].claim.getClaimId());
           sig += ",";
@@ -226,10 +226,10 @@ struct BundlePass : public PassWrapper<BundlePass, OperationPass<>> {
           for (unsigned m : indep)
             memCol.push_back(colOf.lookup(claims[m].claim.getOperation()));
           SmallVector<unsigned> perm(memCol.begin(), memCol.end());
-          llvm::sort(perm);  // deterministic next_permutation enumeration
+          llvm::sort(perm); // deterministic next_permutation enumeration
           int64_t best = baseTotal;
           for (unsigned c : memCol)
-            bestOrder.push_back(cols[c].claim.getClaimId());  // declared-order default
+            bestOrder.push_back(cols[c].claim.getClaimId()); // declared-order default
           do {
             std::vector<cm::Column> reordered = reorderColumns(cols, memCol, perm);
             int64_t t = 0;
@@ -249,8 +249,7 @@ struct BundlePass : public PassWrapper<BundlePass, OperationPass<>> {
         for (unsigned m : indep) {
           ClaimOp claim = claims[m].claim;
           claim->setAttr("kbcir.bundle", b.getI64IntegerAttr(bundleIdx));
-          claim->setAttr("kbcir.bundle_shared",
-                         FlatSymbolRefAttr::get(&getContext(), kv.first));
+          claim->setAttr("kbcir.bundle_shared", FlatSymbolRefAttr::get(&getContext(), kv.first));
           if (haveCost && indep.size() <= 6 && !fencedInSpan) {
             claim->setAttr("kbcir.bundle_gain", b.getI64IntegerAttr(gain));
             claim->setAttr("kbcir.bundle_order", b.getI64ArrayAttr(bestOrder));
@@ -269,6 +268,8 @@ struct BundlePass : public PassWrapper<BundlePass, OperationPass<>> {
 
 } // namespace
 
-std::unique_ptr<Pass> createBundlePass() { return std::make_unique<BundlePass>(); }
+std::unique_ptr<Pass> createBundlePass() {
+  return std::make_unique<BundlePass>();
+}
 
 } // namespace bcir

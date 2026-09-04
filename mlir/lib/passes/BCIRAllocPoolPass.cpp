@@ -15,9 +15,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRCostModel.h"
 
 #include "mlir/IR/Builders.h"
@@ -96,9 +96,8 @@ struct AllocPoolPass : public PassWrapper<AllocPoolPass, OperationPass<>> {
       int64_t cnt = 1;
       for (int64_t d : r.getShape())
         cnt = saturatingMulNonnegative(cnt, d > 0 ? d : 1);
-      rs.push_back(
-          {kv.first, static_cast<int64_t>(r.getRid()), kv.second.first, kv.second.second,
-           saturatingMulNonnegative(cnt, elemBytes)});
+      rs.push_back({kv.first, static_cast<int64_t>(r.getRid()), kv.second.first, kv.second.second,
+                    saturatingMulNonnegative(cnt, elemBytes)});
     }
     std::sort(rs.begin(), rs.end(), [](const Res &a, const Res &z) {
       return a.lo != z.lo ? a.lo < z.lo : a.rid < z.rid;
@@ -139,13 +138,14 @@ struct AllocPoolPass : public PassWrapper<AllocPoolPass, OperationPass<>> {
     });
     root->setAttr("kbcir.pool_naive_bytes", b.getI64IntegerAttr(naive));
     root->setAttr("kbcir.pool_peak_bytes", b.getI64IntegerAttr(peak));
-    root->setAttr("kbcir.pool_saved",
-                  b.getI64IntegerAttr(peak <= naive ? naive - peak : 0));
+    root->setAttr("kbcir.pool_saved", b.getI64IntegerAttr(peak <= naive ? naive - peak : 0));
   }
 };
 
 } // namespace
 
-std::unique_ptr<Pass> createAllocPoolPass() { return std::make_unique<AllocPoolPass>(); }
+std::unique_ptr<Pass> createAllocPoolPass() {
+  return std::make_unique<AllocPoolPass>();
+}
 
 } // namespace bcir

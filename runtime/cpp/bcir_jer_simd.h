@@ -44,9 +44,9 @@ extern "C" {
  * tier at or below it. */
 typedef enum bcir_jer_simd_tier {
   BCIR_JER_SIMD_SCALAR = 0,
-  BCIR_JER_SIMD_SSE2 = 1,   /* x86-64 baseline, 16 octets */
-  BCIR_JER_SIMD_AVX2 = 2,   /* runtime-detected, 32 octets */
-  BCIR_JER_SIMD_NEON = 3    /* aarch64 baseline, 16 octets */
+  BCIR_JER_SIMD_SSE2 = 1, /* x86-64 baseline, 16 octets */
+  BCIR_JER_SIMD_AVX2 = 2, /* runtime-detected, 32 octets */
+  BCIR_JER_SIMD_NEON = 3  /* aarch64 baseline, 16 octets */
 } bcir_jer_simd_tier;
 
 /* The highest tier this CPU supports AND this build compiled. Resolved once and cached;
@@ -65,14 +65,13 @@ int bcir_jer_simd_tier_compiled(bcir_jer_simd_tier tier);
  * Contract: IDENTICAL status and IDENTICAL `diag` to `bcir_jer_validate_utf8` for every
  * input. Not "equivalent" -- identical, because on anything a vector cannot settle this
  * calls that function. */
-bcir_jer_status bcir_jer_validate_utf8_simd(const uint8_t *data, size_t len,
-                                            bcir_jer_diag *diag);
+bcir_jer_status bcir_jer_validate_utf8_simd(const uint8_t *data, size_t len, bcir_jer_diag *diag);
 
 /* The same, pinned to a tier. A tier this build did not compile falls back to scalar rather
  * than failing: a caller asking for a width that is not there wants the answer, not an
  * error about the machine. */
-bcir_jer_status bcir_jer_validate_utf8_at(bcir_jer_simd_tier tier, const uint8_t *data,
-                                          size_t len, bcir_jer_diag *diag);
+bcir_jer_status bcir_jer_validate_utf8_at(bcir_jer_simd_tier tier, const uint8_t *data, size_t len,
+                                          bcir_jer_diag *diag);
 
 #ifdef __cplusplus
 }

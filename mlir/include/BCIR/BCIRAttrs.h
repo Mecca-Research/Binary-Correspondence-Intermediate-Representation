@@ -9,6 +9,6 @@
 #include "BCIR/BCIREnums.h"
 
 #define GET_ATTRDEF_CLASSES
-#include "BCIRAttrs.h.inc"  // generated: -gen-attrdef-decls
+#include "BCIRAttrs.h.inc" // generated: -gen-attrdef-decls
 
 #endif // BCIR_BCIRATTRS_H

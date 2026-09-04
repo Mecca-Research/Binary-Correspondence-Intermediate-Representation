@@ -3,17 +3,18 @@
 #include <cstdio>
 #include <vector>
 
-int main(int argc, char** argv) {
-  if (argc != 2) return 2;
-  std::FILE* stream = std::fopen(argv[1], "rb");
-  if (!stream) return 2;
+int main(int argc, char **argv) {
+  if (argc != 2)
+    return 2;
+  std::FILE *stream = std::fopen(argv[1], "rb");
+  if (!stream)
+    return 2;
   if (std::fseek(stream, 0, SEEK_END) != 0) {
     std::fclose(stream);
     return 2;
   }
   long length = std::ftell(stream);
-  if (length < 0 || length > 64L * 1024L * 1024L ||
-      std::fseek(stream, 0, SEEK_SET) != 0) {
+  if (length < 0 || length > 64L * 1024L * 1024L || std::fseek(stream, 0, SEEK_SET) != 0) {
     std::fclose(stream);
     return 2;
   }
@@ -25,7 +26,8 @@ int main(int argc, char** argv) {
   std::fclose(stream);
   try {
     bcir::ArtifactBundleView bundle(bytes.data(), bytes.size());
-    if (bundle.count() != 3 || bundle.select_default().id() != "portable-c") return 1;
+    if (bundle.count() != 3 || bundle.select_default().id() != "portable-c")
+      return 1;
     bcir::ArtifactEnvelope envelope;
     envelope.triple = "x86_64-unknown-linux-gnu";
     envelope.architecture = "x86_64";
@@ -38,9 +40,10 @@ int main(int argc, char** argv) {
     envelope.pointer_bits = 64;
     envelope.machine = 62;
     auto selected = bundle.select(envelope);
-    if (selected.id() != "x86-avx2" || selected.size() != 20) return 1;
+    if (selected.id() != "x86-avx2" || selected.size() != 20)
+      return 1;
     std::printf("OK C++ entries=%u selected=%s\n", bundle.count(), selected.id().c_str());
-  } catch (const std::exception& error) {
+  } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());
     return 1;
   }

@@ -15,10 +15,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
+#include "BCIRCostModel.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
-#include "BCIRCostModel.h"
+#include "BCIR/BCIRPasses.h"
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -79,16 +79,16 @@ struct CostModelPass : public PassWrapper<CostModelPass, OperationPass<>> {
       }
       const cm::Cost &bc = col.cands[best].cost;
       c->setAttr("kbcir.cm_min_cost",
-                 CostVectorAttr::get(&getContext(), bc[0], bc[1], bc[2], bc[3], bc[4],
-                                     bc[5], bc[6], bc[7], bc[8], bc[9], bc[10], bc[11]));
+                 CostVectorAttr::get(&getContext(), bc[0], bc[1], bc[2], bc[3], bc[4], bc[5], bc[6],
+                                     bc[7], bc[8], bc[9], bc[10], bc[11]));
     }
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createCostModelPass() {
   return std::make_unique<CostModelPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

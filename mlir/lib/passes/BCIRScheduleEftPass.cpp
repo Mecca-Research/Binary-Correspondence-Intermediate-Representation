@@ -25,9 +25,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRCostModel.h"
 
 #include "mlir/IR/Builders.h"
@@ -59,8 +59,7 @@ static constexpr int64_t kThermalCap = 70, kPowerCap = 70;
 // a compute-bound one unless Theta is thermal/power capped; nominal otherwise.
 static int64_t railClock(int64_t compute, int64_t memory, int64_t thermal, int64_t power,
                          StringRef &klass) {
-  int64_t intensity = saturatingMulNonnegative(compute, 1000) /
-                      std::max<int64_t>(1, memory);
+  int64_t intensity = saturatingMulNonnegative(compute, 1000) / std::max<int64_t>(1, memory);
   if (intensity >= kHiIntensity) {
     klass = "compute";
     return (thermal >= kThermalCap || power >= kPowerCap) ? kNominal : kOverclock;
@@ -96,7 +95,7 @@ struct Info {
   int64_t id;
   int64_t dur;
   int64_t baseCompute, baseMemory; // the chosen candidate's base cost (for the power-rail classify)
-  bool bandwidth; // cost_class == bandwidth (the default) -> knee-clamped
+  bool bandwidth;                  // cost_class == bandwidth (the default) -> knee-clamped
   SmallVector<StringRef> reads, writes;
   llvm::DenseSet<StringRef> rids; // _rids = set(rd) | set(wr) -- deduped, for locality
 };
@@ -107,10 +106,11 @@ static SmallVector<Info> buildInfos(const std::vector<cm::Column> &cols, ArrayRe
   SmallVector<Info> infos;
   for (int i = 0; i < static_cast<int>(cols.size()); ++i) {
     cm::Cost e = cols[i].cands[chosen[i]].cost;
-    cm::Factor f = (i > 0)
-        ? cm::contextFactor(theta, cols[i - 1].reads, cols[i - 1].cands[chosen[i - 1]].width,
-                            cols[i].reads, cols[i].cands[chosen[i]].width)
-        : cm::contextFactor(theta, {}, 0, cols[i].reads, cols[i].cands[chosen[i]].width);
+    cm::Factor f =
+        (i > 0)
+            ? cm::contextFactor(theta, cols[i - 1].reads, cols[i - 1].cands[chosen[i - 1]].width,
+                                cols[i].reads, cols[i].cands[chosen[i]].width)
+            : cm::contextFactor(theta, {}, 0, cols[i].reads, cols[i].cands[chosen[i]].width);
     cm::applyFactor(e, f);
     Info in;
     in.claim = cols[i].claim;
@@ -121,8 +121,7 @@ static SmallVector<Info> buildInfos(const std::vector<cm::Column> &cols, ArrayRe
     // this, not the contextual duration (COMPUTE=0, MEMORY=1).
     in.baseCompute = cols[i].cands[chosen[i]].cost[0];
     in.baseMemory = cols[i].cands[chosen[i]].cost[1];
-    in.bandwidth = !in.claim.getCostClass() ||
-                   *in.claim.getCostClass() == CostClass::Bandwidth;
+    in.bandwidth = !in.claim.getCostClass() || *in.claim.getCostClass() == CostClass::Bandwidth;
     in.reads.assign(cols[i].reads.begin(), cols[i].reads.end());
     in.writes.assign(cols[i].writes.begin(), cols[i].writes.end());
     for (StringRef r : in.reads)
@@ -140,8 +139,7 @@ static void eftDispatch(ArrayRef<Info *> claims,
                         const llvm::DenseMap<int64_t, SmallVector<int64_t>> &preds, int64_t t0,
                         int64_t domains, int64_t knee, SmallVector<int64_t> &domainFree,
                         SmallVector<llvm::DenseSet<StringRef>> &resident,
-                        llvm::DenseMap<int64_t, int64_t> &finishOf, Builder &b,
-                        StringRef prefix) {
+                        llvm::DenseMap<int64_t, int64_t> &finishOf, Builder &b, StringRef prefix) {
   std::string p = prefix.str();
   std::string an = "kbcir." + p + "_domain";
   std::string sn = "kbcir." + p + "_start";
@@ -241,7 +239,7 @@ static bool planInfos(const cm::PlanAnalysis &pa, SmallVector<Info> &infos, int6
     return false;
   theta = pa.thetaThermal;
   domains = pa.affinityDomains;
-  TargetCapabilityOp cap = pa.capOp;   // value-handle copy for the non-const accessor
+  TargetCapabilityOp cap = pa.capOp; // value-handle copy for the non-const accessor
   knee = std::max<int64_t>(1, std::min<int64_t>(domains, cap.getMemChannels()));
   infos = buildInfos(pa.cols, pa.chosen, theta, pa.weights);
   return true;
@@ -458,8 +456,14 @@ struct PowerRailPass : public PassWrapper<PowerRailPass, OperationPass<>> {
 
 } // namespace
 
-std::unique_ptr<Pass> createScheduleEftPass() { return std::make_unique<ScheduleEftPass>(); }
-std::unique_ptr<Pass> createAsyncPass() { return std::make_unique<AsyncPass>(); }
-std::unique_ptr<Pass> createPowerRailPass() { return std::make_unique<PowerRailPass>(); }
+std::unique_ptr<Pass> createScheduleEftPass() {
+  return std::make_unique<ScheduleEftPass>();
+}
+std::unique_ptr<Pass> createAsyncPass() {
+  return std::make_unique<AsyncPass>();
+}
+std::unique_ptr<Pass> createPowerRailPass() {
+  return std::make_unique<PowerRailPass>();
+}
 
 } // namespace bcir

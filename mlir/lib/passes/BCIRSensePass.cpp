@@ -13,9 +13,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/IR/Builders.h"
@@ -75,7 +75,7 @@ struct SensePass : public PassWrapper<SensePass, OperationPass<>> {
       int64_t n = 0, total = 0, totalSq = 0;
       bool overflow = false;
     };
-    llvm::MapVector<StringRef, Stats> bySeg;   // segment -> sufficient stats (first-seen order)
+    llvm::MapVector<StringRef, Stats> bySeg; // segment -> sufficient stats (first-seen order)
     SmallVector<TraceDataDnaOp> records;
     root->walk([&](TraceDataDnaOp d) {
       int64_t c = static_cast<int64_t>(d.getCycles());
@@ -118,8 +118,8 @@ struct SensePass : public PassWrapper<SensePass, OperationPass<>> {
         continue;
       }
       int64_t mean = s.n ? s.total / s.n : 0;
-      long double numerator = static_cast<long double>(s.n) * s.totalSq -
-                              static_cast<long double>(s.total) * s.total;
+      long double numerator =
+          static_cast<long double>(s.n) * s.totalSq - static_cast<long double>(s.total) * s.total;
       long double denominator = static_cast<long double>(s.n) * s.n;
       long double variance = denominator > 0 ? numerator / denominator : 0;
       variance = std::max<long double>(0, variance);
@@ -161,10 +161,10 @@ struct SensePass : public PassWrapper<SensePass, OperationPass<>> {
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createSensePass() {
   return std::make_unique<SensePass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

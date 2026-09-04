@@ -39,9 +39,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/IR/Builders.h"
@@ -63,8 +63,7 @@ static int64_t ceilDiv(int64_t a, int64_t b) {
   return a / b + (a % b != 0);
 }
 
-struct GemMatmulCostPass
-    : public PassWrapper<GemMatmulCostPass, OperationPass<>> {
+struct GemMatmulCostPass : public PassWrapper<GemMatmulCostPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(GemMatmulCostPass)
 
   StringRef getArgument() const final { return "bcir-gem-matmul-cost"; }
@@ -97,7 +96,7 @@ struct GemMatmulCostPass
     // their *_law_parity.py tests pin x86-avx512): vector_width = max(1,8,16) = 16, fma = true,
     // mem_unit = 1, mem_channels = 4, cacheline = 64, elem_bytes = 4.
     const int64_t kVectorWidth = 16;
-    const int64_t kFma = 2;           // (2 if fma else 1); avx512 has fma -> 2
+    const int64_t kFma = 2; // (2 if fma else 1); avx512 has fma -> 2
     const int64_t kMemUnit = 1;
     const int64_t kMemChannels = 4;
     const int64_t kCacheline = 64;
@@ -117,18 +116,18 @@ struct GemMatmulCostPass
     // outside this representable domain anyway (its own declared cost could not fit i64); such a shape would
     // trip the parity gate (a loud spurious error), never annotate a silently-wrapped cost.
     int64_t macs, traffic, workingSet;
-    if (!checkedGemmDerived(M, N, K, tm, tn, tk, macs, traffic,
-                            workingSet)) {
+    if (!checkedGemmDerived(M, N, K, tm, tn, tk, macs, traffic, workingSet)) {
       op.emitError("bcir-gem-matmul-cost: derived roofline cost exceeds signed 64-bit range");
       return false;
     }
-    int64_t thr = std::max<int64_t>(1, kVectorWidth * kFma);     // the FLOP-throughput divisor
-    int64_t compute = ceilDiv(macs, thr);                        // M*N*K MACs / (vector_width * fma)
-    int64_t bw = std::max<int64_t>(1, kMemUnit * kMemChannels);  // the bandwidth divisor
-    int64_t mem = ceilDiv(traffic, bw);                           // bytes streamed / bandwidth
-    int64_t bottleneck = std::max(compute, mem);                 // max,+ : the binding roofline resource
+    int64_t thr = std::max<int64_t>(1, kVectorWidth * kFma);    // the FLOP-throughput divisor
+    int64_t compute = ceilDiv(macs, thr);                       // M*N*K MACs / (vector_width * fma)
+    int64_t bw = std::max<int64_t>(1, kMemUnit * kMemChannels); // the bandwidth divisor
+    int64_t mem = ceilDiv(traffic, bw);                         // bytes streamed / bandwidth
+    int64_t bottleneck = std::max(compute, mem); // max,+ : the binding roofline resource
     int64_t cacheBudget =
-        (512 * kCacheline) / std::max<int64_t>(1, kElemBytes);   // the modeled per-core working-set budget
+        (512 * kCacheline) /
+        std::max<int64_t>(1, kElemBytes); // the modeled per-core working-set budget
     bool fitsCache = workingSet <= cacheBudget;
 
     // --- cross-check the declared roofline (the dual-rail parity gate) ------------------
@@ -157,15 +156,15 @@ struct GemMatmulCostPass
     op->setAttr("kbcir.mem_cost", ab.getI64IntegerAttr(mem));
     op->setAttr("kbcir.bottleneck", ab.getI64IntegerAttr(bottleneck));
     op->setAttr("kbcir.fits_cache", ab.getBoolAttr(fitsCache));
-    op->setAttr("kbcir.informs_only", ab.getBoolAttr(true));         // never a legality verdict
+    op->setAttr("kbcir.informs_only", ab.getBoolAttr(true)); // never a legality verdict
     return true;
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createGemMatmulCostPass() {
   return std::make_unique<GemMatmulCostPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

@@ -14,9 +14,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRCostModel.h"
 
 #include "mlir/IR/Builders.h"
@@ -59,11 +59,11 @@ struct PlanPass : public PassWrapper<PlanPass, OperationPass<>> {
       // The chosen edge cost = this candidate coupled by the context of the chosen
       // predecessor (source = no fusion, thermal coupling still applies), scalarized.
       cm::Cost e = cols[i].cands[chosen[i]].cost;
-      cm::Factor f = (i > 0)
-          ? cm::contextFactor(theta, cols[i - 1].reads,
-                              cols[i - 1].cands[chosen[i - 1]].width, cols[i].reads,
-                              cols[i].cands[chosen[i]].width)
-          : cm::contextFactor(theta, {}, 0, cols[i].reads, cols[i].cands[chosen[i]].width);
+      cm::Factor f =
+          (i > 0)
+              ? cm::contextFactor(theta, cols[i - 1].reads, cols[i - 1].cands[chosen[i - 1]].width,
+                                  cols[i].reads, cols[i].cands[chosen[i]].width)
+              : cm::contextFactor(theta, {}, 0, cols[i].reads, cols[i].cands[chosen[i]].width);
       cm::applyFactor(e, f);
       int64_t edge = cm::scalarize(e, pa.weights);
       cols[i].claim->setAttr("kbcir.plan_width",
@@ -74,8 +74,10 @@ struct PlanPass : public PassWrapper<PlanPass, OperationPass<>> {
   }
 };
 
-}  // namespace
+} // namespace
 
-std::unique_ptr<Pass> createPlanPass() { return std::make_unique<PlanPass>(); }
+std::unique_ptr<Pass> createPlanPass() {
+  return std::make_unique<PlanPass>();
+}
 
-}  // namespace bcir
+} // namespace bcir

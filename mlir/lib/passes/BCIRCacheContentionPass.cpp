@@ -35,9 +35,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/IR/Builders.h"
@@ -54,8 +54,7 @@ using namespace mlir;
 namespace bcir {
 namespace {
 
-struct CacheContentionPass
-    : public PassWrapper<CacheContentionPass, OperationPass<>> {
+struct CacheContentionPass : public PassWrapper<CacheContentionPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CacheContentionPass)
 
   StringRef getArgument() const final { return "bcir-cache-contention"; }
@@ -90,33 +89,33 @@ struct CacheContentionPass
     int64_t banks = std::max<int64_t>(1, static_cast<int64_t>(op.getBanks()));
 
     // --- the frozen analytic model (identical to CachePredictor.contention_q8) ---------
-    int64_t epl = std::max<int64_t>(1, cl / eb);          // useful elements per cache line
-    int64_t reach = std::min<int64_t>(stride, epl);       // distinct lines per useful element
+    int64_t epl = std::max<int64_t>(1, cl / eb);    // useful elements per cache line
+    int64_t reach = std::min<int64_t>(stride, epl); // distinct lines per useful element
     int64_t waste, conflict, cont, scaled;
     if (!checkedMulNonnegative(reach - 1, Q8, waste)) {
       op.emitError("bcir-cache-contention: derived signal exceeds signed 64-bit range");
       return false;
     }
-    int64_t g = std::gcd(stride, banks);                  // the shared factor: serialization degree
+    int64_t g = std::gcd(stride, banks); // the shared factor: serialization degree
     if (!checkedMulNonnegative(g - 1, Q8, conflict) ||
         !checkedAddNonnegative(waste, conflict, cont) ||
         !checkedMulNonnegative(cont, count, scaled)) {
       op.emitError("bcir-cache-contention: derived signal exceeds signed 64-bit range");
       return false;
     }
-    int64_t cost = scaled >> 8;                            // the per-element Q8 scaled by count
+    int64_t cost = scaled >> 8; // the per-element Q8 scaled by count
 
     // --- cross-check the declared signal (the dual-rail parity gate) -------------------
     if (waste != static_cast<int64_t>(op.getLineWasteQ8())) {
       op.emitError("bcir-cache-contention: line_waste_q8 ")
-          << static_cast<int64_t>(op.getLineWasteQ8()) << " != the recomputed "
-          << waste << " (min(stride, cacheline/elem_bytes)-1)*256";
+          << static_cast<int64_t>(op.getLineWasteQ8()) << " != the recomputed " << waste
+          << " (min(stride, cacheline/elem_bytes)-1)*256";
       return false;
     }
     if (conflict != static_cast<int64_t>(op.getBankConflictQ8())) {
       op.emitError("bcir-cache-contention: bank_conflict_q8 ")
-          << static_cast<int64_t>(op.getBankConflictQ8()) << " != the recomputed "
-          << conflict << " (gcd(stride, banks)-1)*256";
+          << static_cast<int64_t>(op.getBankConflictQ8()) << " != the recomputed " << conflict
+          << " (gcd(stride, banks)-1)*256";
       return false;
     }
     if (cont != static_cast<int64_t>(op.getContentionQ8())) {
@@ -139,18 +138,18 @@ struct CacheContentionPass
     op->setAttr("kbcir.bank_conflict_q8", ab.getI64IntegerAttr(conflict));
     op->setAttr("kbcir.contention_q8", ab.getI64IntegerAttr(cont));
     op->setAttr("kbcir.contention_cost", ab.getI64IntegerAttr(cost));
-    op->setAttr("kbcir.contention_axis", ab.getStringAttr("CONTENTION"));  // the cost axis it rides
-    op->setAttr("kbcir.informs_only", ab.getBoolAttr(true));               // never a legality verdict
+    op->setAttr("kbcir.contention_axis", ab.getStringAttr("CONTENTION")); // the cost axis it rides
+    op->setAttr("kbcir.informs_only", ab.getBoolAttr(true)); // never a legality verdict
     op->setAttr("kbcir.conflict_free", ab.getBoolAttr(waste == 0 && conflict == 0));
     op->setAttr("kbcir.noop", ab.getBoolAttr(cost == 0));
     return true;
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createCacheContentionPass() {
   return std::make_unique<CacheContentionPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

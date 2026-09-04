@@ -6,9 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
@@ -58,9 +58,8 @@ struct RcspPass : public PassWrapper<RcspPass, OperationPass<>> {
     llvm::DenseMap<int, KBCIRPolicyOp> policyByMode;
     root->walk([&](KBCIRPathOp p) { pathByName[p.getSymName()] = p; });
     root->walk([&](KBCIRBudgetOp bd) { budgetByName[bd.getSymName()] = bd; });
-    root->walk([&](KBCIRPolicyOp p) {
-      policyByMode.try_emplace(static_cast<int>(p.getMode()), p);
-    });
+    root->walk(
+        [&](KBCIRPolicyOp p) { policyByMode.try_emplace(static_cast<int>(p.getMode()), p); });
 
     root->walk([&](KBCIRSelectOp s) {
       auto polIt = policyByMode.find(static_cast<int>(s.getPolicy()));
@@ -96,8 +95,7 @@ struct RcspPass : public PassWrapper<RcspPass, OperationPass<>> {
             cands.push_back(p);
 
       auto labelOf = [&](KBCIRPathOp p) -> Label {
-        return {scalarize(p.getCost(), w),
-                costDim(p.getCost(), "thermal").value_or(0),
+        return {scalarize(p.getCost(), w), costDim(p.getCost(), "thermal").value_or(0),
                 costDim(p.getCost(), "power").value_or(0)};
       };
 
@@ -125,9 +123,8 @@ struct RcspPass : public PassWrapper<RcspPass, OperationPass<>> {
       // inserted in score order with dominance pruning (mirrors rcsp.pareto_plans /
       // _insert). Unconstrained: the front is a property of the candidate set.
       SmallVector<KBCIRPathOp> order(cands.begin(), cands.end());
-      llvm::stable_sort(order, [&](KBCIRPathOp x, KBCIRPathOp y) {
-        return labelOf(x) < labelOf(y);
-      });
+      llvm::stable_sort(order,
+                        [&](KBCIRPathOp x, KBCIRPathOp y) { return labelOf(x) < labelOf(y); });
       SmallVector<Label> front;
       for (KBCIRPathOp p : order) {
         Label lp = labelOf(p);
@@ -140,18 +137,14 @@ struct RcspPass : public PassWrapper<RcspPass, OperationPass<>> {
         if (dominated)
           continue;
         front.erase(std::remove_if(front.begin(), front.end(),
-                                   [&](const Label &f) {
-                                     return dominates(lp, f) && lp != f;
-                                   }),
+                                   [&](const Label &f) { return dominates(lp, f) && lp != f; }),
                     front.end());
         front.push_back(lp);
       }
 
-      s->setAttr("kbcir.computed_selected",
-                 FlatSymbolRefAttr::get(&getContext(), bestName));
+      s->setAttr("kbcir.computed_selected", FlatSymbolRefAttr::get(&getContext(), bestName));
       s->setAttr("kbcir.computed_score", b.getI64IntegerAttr(bestScore));
-      s->setAttr("kbcir.pareto_size",
-                 b.getI64IntegerAttr(static_cast<int64_t>(front.size())));
+      s->setAttr("kbcir.pareto_size", b.getI64IntegerAttr(static_cast<int64_t>(front.size())));
       if (bestName != s.getSelected()) {
         s.emitError("bcir-rcsp: computed argmin @")
             << bestName << " != declared selected @" << s.getSelected();
@@ -159,8 +152,7 @@ struct RcspPass : public PassWrapper<RcspPass, OperationPass<>> {
       }
       if (bestScore != static_cast<int64_t>(s.getScore())) {
         s.emitError("bcir-rcsp: computed score ")
-            << bestScore << " != declared score "
-            << static_cast<int64_t>(s.getScore());
+            << bestScore << " != declared score " << static_cast<int64_t>(s.getScore());
         ok = false;
       }
     });
@@ -169,8 +161,10 @@ struct RcspPass : public PassWrapper<RcspPass, OperationPass<>> {
   }
 };
 
-}  // namespace
+} // namespace
 
-std::unique_ptr<Pass> createRcspPass() { return std::make_unique<RcspPass>(); }
+std::unique_ptr<Pass> createRcspPass() {
+  return std::make_unique<RcspPass>();
+}
 
-}  // namespace bcir
+} // namespace bcir

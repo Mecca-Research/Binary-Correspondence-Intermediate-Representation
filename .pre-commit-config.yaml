@@ -30,8 +30,12 @@ repos:
     rev: v23.1.0
     hooks:
       - id: clang-format
-        types_or: [c, c++]
-        files: '^(runtime/c|mlir/(lib|include))/.*\.(c|h|cpp|hpp)$'
+        # The C++ rails only (mlir/ and runtime/cpp), which .clang-format describes and which
+        # were reformatted once under it. runtime/c is deliberately dense hand-formatted C that
+        # no clang-format configuration describes (2026-09-04 audit F9) -- out of scope, not
+        # merely excluded: the hook must not restyle a rail into a style it does not use.
+        types_or: [c++]
+        files: '^(runtime/cpp|mlir/(lib|include|tools))/.*\.(cpp|hpp|h)$'
 
   # ruff (lint + format) from the locally-installed tool (`.[dev]`), so the version never
   # drifts from pyproject's config.

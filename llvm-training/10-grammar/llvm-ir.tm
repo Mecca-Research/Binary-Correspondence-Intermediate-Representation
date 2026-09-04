@@ -1,6 +1,6 @@
 # Full LLVM IR Textmapper grammar snapshot from llir/grammar.
-# Source: https://github.com/llir/grammar, commit 5a3820b516f7903e27ad16ebe4add1ec634f1c05.
-# Last verified against LLVM 18.x on 2026-06-05; llvm-as-18 --version: Ubuntu LLVM version 18.1.3.
+# Source: https://github.com/llir/grammar, commit 05deced0a4bcf9699a2e4b04f2f1e36beff33d69 (upstream HEAD, 2022-08-03; LLVM 15 syntax).
+# Last verified against LLVM 23.x on 2026-09-04; llvm-as-23 --version: LLVM version 23.1.0 (examples/ also assemble under LLVM 18.1.3).
 # License: upstream llir/grammar is offered under 0BSD and Unlicense terms; see ../NOTICE.md.
 # This file is intentionally complete enough for local agent lookup and no longer ends with an excerpt note.
 
@@ -182,6 +182,9 @@ int_type_tok : /i[0-9]+/
 'align' : /align/
 'alignstack' : /alignstack/
 'alloca' : /alloca/
+'allocalign' : /allocalign/
+'allockind' : /allockind/
+'allocptr' : /allocptr/
 'allocsize' : /allocsize/
 'alwaysinline' : /alwaysinline/
 'amdgpu_cs' : /amdgpu_cs/
@@ -204,6 +207,7 @@ int_type_tok : /i[0-9]+/
 'arm_apcscc' : /arm_apcscc/
 'ashr' : /ashr/
 'asm' : /asm/
+'async' : /async/
 'atomic' : /atomic/
 'atomicrmw' : /atomicrmw/
 'attributes' : /attributes/
@@ -273,7 +277,10 @@ int_type_tok : /i[0-9]+/
 'fence' : /fence/
 'filter' : /filter/
 'float' : /float/
+'fmax' : /fmax/
+'fmin' : /fmin/
 'fmul' : /fmul/
+'fn_ret_thunk_extern' : /fn_ret_thunk_extern/
 'fneg' : /fneg/
 'fp128' : /fp128/
 'fpext' : /fpext/
@@ -344,6 +351,8 @@ int_type_tok : /i[0-9]+/
 'nnan' : /nnan/
 'noUnwind' : /noUnwind/
 'no_cfi' : /no_cfi/
+'no_sanitize_address' : /no_sanitize_address/
+'no_sanitize_hwaddress' : /no_sanitize_hwaddress/
 'noalias' : /noalias/
 'nobuiltin' : /nobuiltin/
 'nocallback': /nocallback/
@@ -362,6 +371,7 @@ int_type_tok : /i[0-9]+/
 'norecurse' : /norecurse/
 'noredzone' : /noredzone/
 'noreturn' : /noreturn/
+'nosanitize_bounds' : /nosanitize_bounds/
 'nosanitize_coverage' : /nosanitize_coverage/
 'nosync' : /nosync/
 'notail' : /notail/
@@ -394,6 +404,7 @@ int_type_tok : /i[0-9]+/
 'prefix' : /prefix/
 'preserve_allcc' : /preserve_allcc/
 'preserve_mostcc' : /preserve_mostcc/
+'presplitcoroutine' : /presplitcoroutine/
 'private' : /private/
 'prologue' : /prologue/
 'protected' : /protected/
@@ -412,6 +423,7 @@ int_type_tok : /i[0-9]+/
 'safestack' : /safestack/
 'samesize' : /samesize/
 'sanitize_address' : /sanitize_address/
+'sanitize_address_dyninit' : /sanitize_address_dyninit/
 'sanitize_hwaddress' : /sanitize_hwaddress/
 'sanitize_memory' : /sanitize_memory/
 'sanitize_memtag' : /sanitize_memtag/
@@ -451,6 +463,7 @@ int_type_tok : /i[0-9]+/
 'swiftself' : /swiftself/
 'swifttailcc' : /swifttailcc/
 'switch' : /switch/
+'sync' : /sync/
 'syncscope' : /syncscope/
 'tail' : /tail/
 'tailcc' : /tailcc/
@@ -626,6 +639,7 @@ int_type_tok : /i[0-9]+/
 'stringLocationExpression:' : /stringLocationExpression:/
 'sysroot:' : /sysroot:/
 'tag:' : /tag:/
+'targetFuncName:' : /targetFuncName:/
 'templateParams:' : /templateParams:/
 'thisAdjustment:' : /thisAdjustment:/
 'thrownTypes:' : /thrownTypes:/
@@ -974,8 +988,8 @@ SelectionKind -> SelectionKind
 #       Const OptionalAttrs
 
 GlobalDecl -> GlobalDecl
-	#: Name=GlobalIdent '=' Linkage=ExternLinkage Preemptionopt Visibilityopt DLLStorageClassopt ThreadLocalopt UnnamedAddropt AddrSpaceopt ExternallyInitializedopt Immutable ContentType=Type (',' Section)? (',' Partition)? (',' Comdat)? (',' Align)? Metadata=(',' MetadataAttachment)+? FuncAttrs=FuncAttribute+?
-	#| Name=GlobalIdent '=' Linkage=Linkageopt Preemptionopt Visibilityopt DLLStorageClassopt ThreadLocalopt UnnamedAddropt AddrSpaceopt ExternallyInitializedopt Immutable ContentType=Type Init=Constant (',' Section)? (',' Partition)? (',' Comdat)? (',' Align)? Metadata=(',' MetadataAttachment)+? FuncAttrs=FuncAttribute+?
+	#: Name=GlobalIdent '=' Linkage=ExternLinkage Preemptionopt Visibilityopt DLLStorageClassopt ThreadLocalopt UnnamedAddropt AddrSpaceopt ExternallyInitializedopt Immutable ContentType=Type (',' Section)? (',' Partition)? (',' Comdat)? (',' Align)? (',' SanitizerKind)? Metadata=(',' MetadataAttachment)+? FuncAttrs=FuncAttribute+?
+	#| Name=GlobalIdent '=' Linkage=Linkageopt Preemptionopt Visibilityopt DLLStorageClassopt ThreadLocalopt UnnamedAddropt AddrSpaceopt ExternallyInitializedopt Immutable ContentType=Type Init=Constant (',' Section)? (',' Partition)? (',' Comdat)? (',' Align)? (',' SanitizerKind)? Metadata=(',' MetadataAttachment)+? FuncAttrs=FuncAttribute+?
 	: Name=GlobalIdent '=' Linkage=ExternLinkage Preemptionopt Visibilityopt DLLStorageClassopt ThreadLocalopt UnnamedAddropt AddrSpaceopt ExternallyInitializedopt Immutable ContentType=Type GlobalFields=(',' GlobalField)* Metadata=(',' MetadataAttachment)+? FuncAttrs=FuncAttribute+?
 	| Name=GlobalIdent '=' Linkage=Linkageopt Preemptionopt Visibilityopt DLLStorageClassopt ThreadLocalopt UnnamedAddropt AddrSpaceopt ExternallyInitializedopt Immutable ContentType=Type Init=Constant GlobalFields=(',' GlobalField)* Metadata=(',' MetadataAttachment)+? FuncAttrs=FuncAttribute+?
 ;
@@ -990,6 +1004,7 @@ GlobalField -> GlobalField
 	| Partition
 	| Comdat
 	| Align
+	| SanitizerKind
 ;
 
 ExternallyInitialized -> ExternallyInitialized
@@ -1630,17 +1645,8 @@ ConstantExpr -> ConstantExpr
 	: FNegExpr
 	# Binary expressions
 	| AddExpr
-	| FAddExpr
 	| SubExpr
-	| FSubExpr
 	| MulExpr
-	| FMulExpr
-	| UDivExpr
-	| SDivExpr
-	| FDivExpr
-	| URemExpr
-	| SRemExpr
-	| FRemExpr
 	# Bitwise expressions
 	| ShlExpr
 	| LShrExpr
@@ -1652,9 +1658,6 @@ ConstantExpr -> ConstantExpr
 	| ExtractElementExpr
 	| InsertElementExpr
 	| ShuffleVectorExpr
-	# Aggregate expressions
-	| ExtractValueExpr
-	| InsertValueExpr
 	# Memory expressions
 	| GetElementPtrExpr
 	# Conversion expressions
@@ -1701,14 +1704,6 @@ AddExpr -> AddExpr
 	: 'add' OverflowFlags=OverflowFlag* '(' X=TypeConst ',' Y=TypeConst ')'
 ;
 
-# ~~~ [ fadd ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# ref: ParseValID
-
-FAddExpr -> FAddExpr
-	: 'fadd' '(' X=TypeConst ',' Y=TypeConst ')'
-;
-
 # ~~~ [ sub ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # ref: ParseValID
@@ -1717,76 +1712,12 @@ SubExpr -> SubExpr
 	: 'sub' OverflowFlags=OverflowFlag* '(' X=TypeConst ',' Y=TypeConst ')'
 ;
 
-# ~~~ [ fsub ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# ref: ParseValID
-
-FSubExpr -> FSubExpr
-	: 'fsub' '(' X=TypeConst ',' Y=TypeConst ')'
-;
-
 # ~~~ [ mul ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # ref: ParseValID
 
 MulExpr -> MulExpr
 	: 'mul' OverflowFlags=OverflowFlag* '(' X=TypeConst ',' Y=TypeConst ')'
-;
-
-# ~~~ [ fmul ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# ref: ParseValID
-
-FMulExpr -> FMulExpr
-	: 'fmul' '(' X=TypeConst ',' Y=TypeConst ')'
-;
-
-# ~~~ [ udiv ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# ref: ParseValID
-
-UDivExpr -> UDivExpr
-	: 'udiv' Exactopt '(' X=TypeConst ',' Y=TypeConst ')'
-;
-
-# ~~~ [ sdiv ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# ref: ParseValID
-
-SDivExpr -> SDivExpr
-	: 'sdiv' Exactopt '(' X=TypeConst ',' Y=TypeConst ')'
-;
-
-# ~~~ [ fdiv ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# ref: ParseValID
-
-FDivExpr -> FDivExpr
-	: 'fdiv' '(' X=TypeConst ',' Y=TypeConst ')'
-;
-
-# ~~~ [ urem ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# ref: ParseValID
-
-URemExpr -> URemExpr
-	: 'urem' '(' X=TypeConst ',' Y=TypeConst ')'
-;
-
-# ~~~ [ srem ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# ref: ParseValID
-
-SRemExpr -> SRemExpr
-	: 'srem' '(' X=TypeConst ',' Y=TypeConst ')'
-;
-
-# ~~~ [ frem ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# ref: ParseValID
-
-FRemExpr -> FRemExpr
-	: 'frem' '(' X=TypeConst ',' Y=TypeConst ')'
 ;
 
 # --- [ Bitwise expressions ] --------------------------------------------------
@@ -1872,22 +1803,6 @@ ShuffleVectorExpr -> ShuffleVectorExpr
 # --- [ Aggregate expressions ] ------------------------------------------------
 
 # https://llvm.org/docs/LangRef.html#constant-expressions
-
-# ~~~ [ extractvalue ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# ref: ParseValID
-
-ExtractValueExpr -> ExtractValueExpr
-	: 'extractvalue' '(' X=TypeConst Indices=(',' UintLit)* ')'
-;
-
-# ~~~ [ insertvalue ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# ref: ParseValID
-
-InsertValueExpr -> InsertValueExpr
-	: 'insertvalue' '(' X=TypeConst ',' Elem=TypeConst Indices=(',' UintLit)* ')'
-;
 
 # --- [ Memory expressions ] ---------------------------------------------------
 
@@ -2556,6 +2471,8 @@ AtomicOp -> AtomicOp
 	: 'add'
 	| 'and'
 	| 'fadd'
+	| 'fmax'
+	| 'fmin'
 	| 'fsub'
 	| 'max'
 	| 'min'
@@ -3602,7 +3519,7 @@ DIFileField -> DIFileField
 #                         isDefinition: true, templateParams: !3,
 #                         declaration: !4, align: 8)
 #
-#  REQUIRED(name, MDStringField, (AllowEmpty false));
+#  OPTIONAL(name, MDStringField, (/* AllowEmpty */ false));
 #  OPTIONAL(scope, MDField, );
 #  OPTIONAL(linkageName, MDStringField, );
 #  OPTIONAL(file, MDField, );
@@ -4017,6 +3934,7 @@ DIObjCPropertyField -> DIObjCPropertyField
 #  OPTIONAL(retainedNodes, MDField, );
 #  OPTIONAL(thrownTypes, MDField, );
 #  OPTIONAL(annotations, MDField, );
+#  OPTIONAL(targetFuncName, MDStringField, );
 
 DISubprogram -> DISubprogram
 	: '!DISubprogram' '(' Fields=(DISubprogramField separator ',')* ')'
@@ -4047,6 +3965,7 @@ DISubprogramField -> DISubprogramField
 	| RetainedNodesField
 	| ThrownTypesField
 	| AnnotationsField
+	| TargetFuncNameField
 ;
 
 # ~~~ [ DISubrange ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -4503,6 +4422,10 @@ TagField -> TagField
 	: 'tag:' Tag=DwarfTag
 ;
 
+TargetFuncNameField -> TargetFuncNameField
+	: 'targetFuncName:' TargetFuncName=StringLit
+;
+
 TemplateParamsField -> TemplateParamsField
 	: 'templateParams:' TemplateParams=MDField
 ;
@@ -4744,6 +4667,12 @@ AlignStack -> AlignStack
 
 AlignStackPair -> AlignStackPair
 	: 'alignstack' '=' N=UintLit
+;
+
+# ref: parseAllocKind
+
+AllocKind -> AllocKind
+	: 'allockind' '(' AllocKinds=StringLit ')'
 ;
 
 # ref: parseAllocSizeArguments
@@ -5020,7 +4949,7 @@ FPred -> FPred
 # NOTE: FuncAttribute should contain Align. However, using LALR(1) this
 # produces a reduce/reduce conflict as GlobalDecl also contains Align.
 
-# ref: include/llvm/IR/Attributes.td (LLVM 14.0)
+# ref: include/llvm/IR/Attributes.td (LLVM 15.0)
 
 %interface FuncAttribute;
 
@@ -5035,14 +4964,16 @@ FuncAttribute -> FuncAttribute
 	| AlignPair
 	| AlignStack
 	| AlignStackPair
+	| AllocKind
 	| AllocSize
 	| FuncAttr
 	| Preallocated
-	| VScaleRange
-	| VScaleRangetok
+	| UnwindTable
+	| VectorScaleRange
+	| VectorScaleRangetok
 ;
 
-# ref: include/llvm/IR/Attributes.td (LLVM 14.0)
+# ref: include/llvm/IR/Attributes.td (LLVM 15.0)
 
 FuncAttr -> FuncAttr
 	: 'alwaysinline'
@@ -5051,6 +4982,7 @@ FuncAttr -> FuncAttr
 	| 'cold'
 	| 'convergent'
 	| 'disable_sanitizer_instrumentation'
+	| 'fn_ret_thunk_extern'
 	| 'hot'
 	| 'inaccessiblemem_or_argmemonly'
 	| 'inaccessiblememonly'
@@ -5072,6 +5004,7 @@ FuncAttr -> FuncAttr
 	| 'norecurse'
 	| 'noredzone'
 	| 'noreturn'
+	| 'nosanitize_bounds'
 	| 'nosanitize_coverage'
 	| 'nosync'
 	| 'nounwind'
@@ -5079,6 +5012,7 @@ FuncAttr -> FuncAttr
 	| 'optforfuzzing'
 	| 'optnone'
 	| 'optsize'
+	| 'presplitcoroutine'
 	| 'readnone'
 	| 'readonly'
 	| 'returns_twice'
@@ -5095,7 +5029,6 @@ FuncAttr -> FuncAttr
 	| 'sspreq'
 	| 'sspstrong'
 	| 'strictfp'
-	| 'uwtable'
 	| 'willreturn'
 	| 'writeonly'
 ;
@@ -5197,7 +5130,7 @@ Param -> Param
 ;
 
 # ref: ParseOptionalParamAttrs
-# ref: include/llvm/IR/Attributes.td (LLVM 14.0)
+# ref: include/llvm/IR/Attributes.td (LLVM 15.0)
 
 %interface ParamAttribute;
 
@@ -5217,7 +5150,9 @@ ParamAttribute -> ParamAttribute
 ;
 
 ParamAttr -> ParamAttr
-	: 'immarg'
+	: 'allocalign'
+	| 'allocptr'
+	| 'immarg'
 	| 'inreg'
 	| 'nest'
 	| 'noalias'
@@ -5272,7 +5207,7 @@ StructRetAttr -> StructRetAttr
 ;
 
 # ref: ParseOptionalReturnAttrs
-# ref: include/llvm/IR/Attributes.td (LLVM 14.0)
+# ref: include/llvm/IR/Attributes.td (LLVM 15.0)
 
 %interface ReturnAttribute;
 
@@ -5295,6 +5230,15 @@ ReturnAttr -> ReturnAttr
 	| 'noundef'
 	| 'signext'
 	| 'zeroext'
+;
+
+# ref: parseSanitizer
+
+SanitizerKind -> SanitizerKind
+	: 'no_sanitize_address'
+	| 'no_sanitize_hwaddress'
+	| 'sanitize_address_dyninit'
+	| 'sanitize_memtag'
 ;
 
 Section -> Section
@@ -5347,6 +5291,16 @@ UnnamedAddr -> UnnamedAddr
 	| 'unnamed_addr'
 ;
 
+UnwindTable -> UnwindTable
+	: 'uwtable'
+	| 'uwtable' '(' Kind=UnwindTableKind ')'
+;
+
+UnwindTableKind -> UnwindTableKind
+	: 'async'
+	| 'sync'
+;
+
 %interface UnwindTarget;
 
 UnwindTarget -> UnwindTarget
@@ -5356,6 +5310,19 @@ UnwindTarget -> UnwindTarget
 
 UnwindToCaller -> UnwindToCaller
 	: 'to' 'caller'
+;
+
+# ref: parseVScaleRangeArguments
+
+VectorScaleRangetok -> VectorScaleRangetok
+	: 'vscale_range'
+;
+
+VectorScaleRange -> VectorScaleRange
+	# NOTE: Min should be called Max in the first case. Named Min to resolve textmapper error:
+	#    `Min` cannot be nullable, since it precedes Max
+	: 'vscale_range' '(' Min=UintLit ')'
+	| 'vscale_range' '(' Min=UintLit ',' Max=UintLit ')'
 ;
 
 # https://llvm.org/docs/LangRef.html#visibility-styles
@@ -5375,17 +5342,4 @@ Visibility -> Visibility
 
 Volatile -> Volatile
 	: 'volatile'
-;
-
-# ref: parseVScaleRangeArguments
-
-VScaleRangetok -> VScaleRangetok
-	: 'vscale_range'
-;
-
-VScaleRange -> VScaleRange
-	# NOTE: Min should be called Max in the first case. Named Min to resolve textmapper error:
-	#    `Min` cannot be nullable, since it precedes Max
-	: 'vscale_range' '(' Min=UintLit ')'
-	| 'vscale_range' '(' Min=UintLit ',' Max=UintLit ')'
 ;

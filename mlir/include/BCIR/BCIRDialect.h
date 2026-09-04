@@ -4,6 +4,6 @@
 
 #include "mlir/IR/Dialect.h"
 
-#include "BCIRDialect.h.inc"  // generated: -gen-dialect-decls
+#include "BCIRDialect.h.inc" // generated: -gen-dialect-decls
 
 #endif // BCIR_BCIRDIALECT_H

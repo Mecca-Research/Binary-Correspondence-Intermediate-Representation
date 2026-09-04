@@ -16,9 +16,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRCostModel.h"
 
 #include "mlir/IR/Builders.h"
@@ -37,21 +37,30 @@ namespace {
 // Cost-vector dimension index by name (DIMS order; cost.py).
 static int dimIndex(StringRef name) {
   return llvm::StringSwitch<int>(name)
-      .Case("compute", 0).Case("memory", 1).Case("fabric", 2).Case("sync", 3)
-      .Case("compile", 4).Case("thermal", 5).Case("power", 6).Case("reliability", 7)
-      .Case("security", 8).Case("accuracy", 9).Case("contention", 10)
-      .Case("verification", 11).Default(-1);
+      .Case("compute", 0)
+      .Case("memory", 1)
+      .Case("fabric", 2)
+      .Case("sync", 3)
+      .Case("compile", 4)
+      .Case("thermal", 5)
+      .Case("power", 6)
+      .Case("reliability", 7)
+      .Case("security", 8)
+      .Case("accuracy", 9)
+      .Case("contention", 10)
+      .Case("verification", 11)
+      .Default(-1);
 }
 
 // A non-dominated partial plan (rcsp._Label): scalar score + tracked-dim resource
 // totals, plus the trail to reconstruct the chosen widths.
 struct Label {
   int64_t score;
-  SmallVector<int64_t> res;       // accumulated, per tracked dim
-  int64_t lastWidth;              // the candidate realized here (for the next context)
-  ArrayRef<StringRef> lastReads;  // ... and its claim's reads
-  int parent;                     // index into the previous column's labels (-1 = source)
-  int candIdx;                    // candidate chosen at this column
+  SmallVector<int64_t> res;      // accumulated, per tracked dim
+  int64_t lastWidth;             // the candidate realized here (for the next context)
+  ArrayRef<StringRef> lastReads; // ... and its claim's reads
+  int parent;                    // index into the previous column's labels (-1 = source)
+  int candIdx;                   // candidate chosen at this column
 };
 
 static bool dominates(const Label &a, const Label &b) {
@@ -128,8 +137,7 @@ struct RcspPlanPass : public PassWrapper<RcspPlanPass, OperationPass<>> {
     const int nt = static_cast<int>(trackedDim.size());
     // The label DP (rcsp._expand): one non-dominated label set per column.
     std::vector<std::vector<Label>> layer(cols.size());
-    std::vector<Label> source = {
-        Label{0, SmallVector<int64_t>(nt, 0), 0, {}, -1, -1}};
+    std::vector<Label> source = {Label{0, SmallVector<int64_t>(nt, 0), 0, {}, -1, -1}};
 
     for (size_t i = 0; i < cols.size(); ++i) {
       std::vector<Label> &prev = (i == 0) ? source : layer[i - 1];
@@ -138,8 +146,8 @@ struct RcspPlanPass : public PassWrapper<RcspPlanPass, OperationPass<>> {
         for (size_t pi = 0; pi < prev.size(); ++pi) {
           const Label &p = prev[pi];
           cm::Cost e = cand.cost;
-          cm::applyFactor(e, cm::contextFactor(theta, p.lastReads, p.lastWidth,
-                                               cols[i].reads, cand.width));
+          cm::applyFactor(
+              e, cm::contextFactor(theta, p.lastReads, p.lastWidth, cols[i].reads, cand.width));
           SmallVector<int64_t> res(nt);
           bool feasible = true;
           for (int t = 0; t < nt; ++t) {
@@ -151,16 +159,13 @@ struct RcspPlanPass : public PassWrapper<RcspPlanPass, OperationPass<>> {
           }
           if (!feasible)
             continue;
-          insertLabel(layer[i], Label{saturatingAddNonnegative(
-                                          p.score, cm::scalarize(e, w)),
-                                      std::move(res),
-                                      cand.width, cols[i].reads,
-                                      static_cast<int>(pi), static_cast<int>(ci)});
+          insertLabel(layer[i],
+                      Label{saturatingAddNonnegative(p.score, cm::scalarize(e, w)), std::move(res),
+                            cand.width, cols[i].reads, static_cast<int>(pi), static_cast<int>(ci)});
         }
       }
       if (layer[i].empty()) {
-        root->emitError("bcir-rcsp-plan: no plan satisfies the budget @")
-            << budget.getSymName();
+        root->emitError("bcir-rcsp-plan: no plan satisfies the budget @") << budget.getSymName();
         signalPassFailure();
         return;
       }
@@ -197,10 +202,10 @@ struct RcspPlanPass : public PassWrapper<RcspPlanPass, OperationPass<>> {
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createRcspPlanPass() {
   return std::make_unique<RcspPlanPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

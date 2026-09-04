@@ -35,9 +35,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/IR/Builders.h"
@@ -53,8 +53,7 @@ using namespace mlir;
 namespace bcir {
 namespace {
 
-struct LayoutPivotPass
-    : public PassWrapper<LayoutPivotPass, OperationPass<>> {
+struct LayoutPivotPass : public PassWrapper<LayoutPivotPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LayoutPivotPass)
 
   StringRef getArgument() const final { return "bcir-layout-pivot"; }
@@ -121,8 +120,8 @@ struct LayoutPivotPass
     };
     // single-field: UNIT under SoA / STRIDED under AoS; whole-record: STRIDED under SoA / UNIT under AoS.
     int64_t soa, aos, sfUnit, sfStrided, wrUnit, wrStrided;
-    if (!unitMem(sfr, sfUnit) || !stridedMem(sfr, sfStrided) ||
-        !unitMem(wrr, wrUnit) || !stridedMem(wrr, wrStrided)) {
+    if (!unitMem(sfr, sfUnit) || !stridedMem(sfr, sfStrided) || !unitMem(wrr, wrUnit) ||
+        !stridedMem(wrr, wrStrided)) {
       op.emitError("bcir-layout-pivot: derived memory cost exceeds signed 64-bit range");
       return false;
     }
@@ -143,7 +142,7 @@ struct LayoutPivotPass
     // min,+ selection: AoS adopted ONLY on a STRICT win; ties keep the declared default SoA.
     StringRef layout = (aos < soa) ? "aos" : "soa";
     int64_t chosen = (layout == "aos") ? aos : soa;
-    int64_t gain = soa - chosen;                          // declared (SoA) cost minus chosen cost (>= 0)
+    int64_t gain = soa - chosen; // declared (SoA) cost minus chosen cost (>= 0)
 
     // --- cross-check the declared decision (the dual-rail parity gate) -----------------
     if (soa != static_cast<int64_t>(op.getSoaCost())) {
@@ -176,17 +175,17 @@ struct LayoutPivotPass
     op->setAttr("kbcir.aos_cost", ab.getI64IntegerAttr(aos));
     op->setAttr("kbcir.chosen_cost", ab.getI64IntegerAttr(chosen));
     op->setAttr("kbcir.gain", ab.getI64IntegerAttr(gain));
-    op->setAttr("kbcir.declared_layout", ab.getStringAttr("soa"));  // the baseline we pivot from
-    op->setAttr("kbcir.informs_only", ab.getBoolAttr(true));        // never a legality verdict
+    op->setAttr("kbcir.declared_layout", ab.getStringAttr("soa")); // the baseline we pivot from
+    op->setAttr("kbcir.informs_only", ab.getBoolAttr(true));       // never a legality verdict
     op->setAttr("kbcir.noop", ab.getBoolAttr(layout == "soa" && gain == 0));
     return true;
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createLayoutPivotPass() {
   return std::make_unique<LayoutPivotPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

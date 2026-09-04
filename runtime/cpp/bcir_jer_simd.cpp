@@ -67,7 +67,8 @@ size_t ascii_run_sse2(const uint8_t *data, size_t len) {
     __m128i block = _mm_loadu_si128(reinterpret_cast<const __m128i *>(data + at));
     /* The sign bit of each lane IS the "octet >= 0x80" test, so one movemask settles all
      * sixteen without a compare against a constant. */
-    if (_mm_movemask_epi8(block) != 0) return at;
+    if (_mm_movemask_epi8(block) != 0)
+      return at;
   }
   return at;
 }
@@ -76,7 +77,8 @@ __attribute__((target("avx2"))) size_t ascii_run_avx2(const uint8_t *data, size_
   size_t at = 0;
   for (; at + 32 <= len; at += 32) {
     __m256i block = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(data + at));
-    if (_mm256_movemask_epi8(block) != 0) return at;
+    if (_mm256_movemask_epi8(block) != 0)
+      return at;
   }
   /* Finish the remainder with the narrower width rather than dropping to scalar: a 31-octet
    * tail is the common case at the end of a document. */
@@ -91,7 +93,8 @@ size_t ascii_run_neon(const uint8_t *data, size_t len) {
     uint8x16_t block = vld1q_u8(data + at);
     /* No movemask on NEON: reduce to a single maximum and compare once. An all-ASCII block
      * has a maximum below 0x80. */
-    if (vmaxvq_u8(block) >= 0x80) return at;
+    if (vmaxvq_u8(block) >= 0x80)
+      return at;
   }
   return at;
 }
@@ -105,15 +108,24 @@ size_t ascii_run(bcir_jer_simd_tier tier, const uint8_t *data, size_t len) {
   size_t at;
   switch (tier) {
 #if defined(BCIR_SIMD_X86)
-    case BCIR_JER_SIMD_AVX2: at = ascii_run_avx2(data, len); break;
-    case BCIR_JER_SIMD_SSE2: at = ascii_run_sse2(data, len); break;
+  case BCIR_JER_SIMD_AVX2:
+    at = ascii_run_avx2(data, len);
+    break;
+  case BCIR_JER_SIMD_SSE2:
+    at = ascii_run_sse2(data, len);
+    break;
 #endif
 #if defined(BCIR_SIMD_ARM)
-    case BCIR_JER_SIMD_NEON: at = ascii_run_neon(data, len); break;
+  case BCIR_JER_SIMD_NEON:
+    at = ascii_run_neon(data, len);
+    break;
 #endif
-    default: at = 0; break;
+  default:
+    at = 0;
+    break;
   }
-  while (at < len && data[at] < 0x80) at++;
+  while (at < len && data[at] < 0x80)
+    at++;
   return at;
 }
 
@@ -126,7 +138,8 @@ size_t nonascii_run_sse2(const uint8_t *data, size_t len) {
   for (; at + 16 <= len; at += 16) {
     __m128i block = _mm_loadu_si128(reinterpret_cast<const __m128i *>(data + at));
     /* Every lane's sign bit set means every octet is >= 0x80. */
-    if (_mm_movemask_epi8(block) != 0xFFFF) return at;
+    if (_mm_movemask_epi8(block) != 0xFFFF)
+      return at;
   }
   return at;
 }
@@ -135,7 +148,8 @@ __attribute__((target("avx2"))) size_t nonascii_run_avx2(const uint8_t *data, si
   size_t at = 0;
   for (; at + 32 <= len; at += 32) {
     __m256i block = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(data + at));
-    if (_mm256_movemask_epi8(block) != -1) return at;
+    if (_mm256_movemask_epi8(block) != -1)
+      return at;
   }
   return at + nonascii_run_sse2(data + at, len - at);
 }
@@ -147,7 +161,8 @@ size_t nonascii_run_neon(const uint8_t *data, size_t len) {
   for (; at + 16 <= len; at += 16) {
     uint8x16_t block = vld1q_u8(data + at);
     /* An all-non-ASCII block has a MINIMUM at or above 0x80. */
-    if (vminvq_u8(block) < 0x80) return at;
+    if (vminvq_u8(block) < 0x80)
+      return at;
   }
   return at;
 }
@@ -157,15 +172,24 @@ size_t nonascii_run(bcir_jer_simd_tier tier, const uint8_t *data, size_t len) {
   size_t at;
   switch (tier) {
 #if defined(BCIR_SIMD_X86)
-    case BCIR_JER_SIMD_AVX2: at = nonascii_run_avx2(data, len); break;
-    case BCIR_JER_SIMD_SSE2: at = nonascii_run_sse2(data, len); break;
+  case BCIR_JER_SIMD_AVX2:
+    at = nonascii_run_avx2(data, len);
+    break;
+  case BCIR_JER_SIMD_SSE2:
+    at = nonascii_run_sse2(data, len);
+    break;
 #endif
 #if defined(BCIR_SIMD_ARM)
-    case BCIR_JER_SIMD_NEON: at = nonascii_run_neon(data, len); break;
+  case BCIR_JER_SIMD_NEON:
+    at = nonascii_run_neon(data, len);
+    break;
 #endif
-    default: at = 0; break;
+  default:
+    at = 0;
+    break;
   }
-  while (at < len && data[at] >= 0x80) at++;
+  while (at < len && data[at] >= 0x80)
+    at++;
   return at;
 }
 
@@ -175,10 +199,11 @@ bcir_jer_simd_tier detect() {
    * accept the call. A tier the CPU does not advertise is never returned, which is the
    * whole of the "no unsupported-CPU fault" clause. */
   __builtin_cpu_init();
-  if (__builtin_cpu_supports("avx2")) return BCIR_JER_SIMD_AVX2;
+  if (__builtin_cpu_supports("avx2"))
+    return BCIR_JER_SIMD_AVX2;
   return BCIR_JER_SIMD_SSE2;
 #elif defined(BCIR_SIMD_ARM)
-  return BCIR_JER_SIMD_NEON;   /* Advanced SIMD is mandatory in AArch64 */
+  return BCIR_JER_SIMD_NEON; /* Advanced SIMD is mandatory in AArch64 */
 #else
   return BCIR_JER_SIMD_SCALAR;
 #endif
@@ -187,7 +212,8 @@ bcir_jer_simd_tier detect() {
 bcir_jer_status validate(bcir_jer_simd_tier tier, const uint8_t *data, size_t len,
                          bcir_jer_diag *diag) {
   size_t at = 0;
-  if (data == nullptr || len == 0) return bcir_jer_validate_utf8(data, len, diag);
+  if (data == nullptr || len == 0)
+    return bcir_jer_validate_utf8(data, len, diag);
 
   /* ALTERNATE rather than hand off once. The first version sent everything from the first
    * non-ASCII octet to the END of the document to scalar, so one "café" near the front cost
@@ -207,13 +233,15 @@ bcir_jer_status validate(bcir_jer_simd_tier tier, const uint8_t *data, size_t le
     bcir_jer_status status;
 
     at += ascii_run(tier, data + at, len - at);
-    if (at == len) break;
+    if (at == len)
+      break;
 
     run_end = at + nonascii_run(tier, data + at, len - at);
     status = bcir_jer_validate_utf8(data + at, run_end - at, diag);
     if (status != BCIR_JER_OK) {
       /* The scalar rail's offset is relative to the run it was handed. */
-      if (diag != nullptr) diag->offset += at;
+      if (diag != nullptr)
+        diag->offset += at;
       return status;
     }
     at = run_end;
@@ -224,7 +252,7 @@ bcir_jer_status validate(bcir_jer_simd_tier tier, const uint8_t *data, size_t le
   return bcir_jer_validate_utf8(data + len, 0, diag);
 }
 
-}  // namespace
+} // namespace
 
 extern "C" {
 
@@ -237,40 +265,50 @@ bcir_jer_simd_tier bcir_jer_simd_tier_available(void) {
 
 const char *bcir_jer_simd_tier_name(bcir_jer_simd_tier tier) {
   switch (tier) {
-    case BCIR_JER_SIMD_SCALAR: return "scalar";
-    case BCIR_JER_SIMD_SSE2: return "sse2";
-    case BCIR_JER_SIMD_AVX2: return "avx2";
-    case BCIR_JER_SIMD_NEON: return "neon";
+  case BCIR_JER_SIMD_SCALAR:
+    return "scalar";
+  case BCIR_JER_SIMD_SSE2:
+    return "sse2";
+  case BCIR_JER_SIMD_AVX2:
+    return "avx2";
+  case BCIR_JER_SIMD_NEON:
+    return "neon";
   }
   return "scalar";
 }
 
 int bcir_jer_simd_tier_compiled(bcir_jer_simd_tier tier) {
   switch (tier) {
-    case BCIR_JER_SIMD_SCALAR: return 1;
+  case BCIR_JER_SIMD_SCALAR:
+    return 1;
 #if defined(BCIR_SIMD_X86)
-    case BCIR_JER_SIMD_SSE2: return 1;
-    case BCIR_JER_SIMD_AVX2: return 1;
+  case BCIR_JER_SIMD_SSE2:
+    return 1;
+  case BCIR_JER_SIMD_AVX2:
+    return 1;
 #else
-    case BCIR_JER_SIMD_SSE2: return 0;
-    case BCIR_JER_SIMD_AVX2: return 0;
+  case BCIR_JER_SIMD_SSE2:
+    return 0;
+  case BCIR_JER_SIMD_AVX2:
+    return 0;
 #endif
 #if defined(BCIR_SIMD_ARM)
-    case BCIR_JER_SIMD_NEON: return 1;
+  case BCIR_JER_SIMD_NEON:
+    return 1;
 #else
-    case BCIR_JER_SIMD_NEON: return 0;
+  case BCIR_JER_SIMD_NEON:
+    return 0;
 #endif
   }
   return 0;
 }
 
-bcir_jer_status bcir_jer_validate_utf8_simd(const uint8_t *data, size_t len,
-                                            bcir_jer_diag *diag) {
+bcir_jer_status bcir_jer_validate_utf8_simd(const uint8_t *data, size_t len, bcir_jer_diag *diag) {
   return validate(bcir_jer_simd_tier_available(), data, len, diag);
 }
 
-bcir_jer_status bcir_jer_validate_utf8_at(bcir_jer_simd_tier tier, const uint8_t *data,
-                                          size_t len, bcir_jer_diag *diag) {
+bcir_jer_status bcir_jer_validate_utf8_at(bcir_jer_simd_tier tier, const uint8_t *data, size_t len,
+                                          bcir_jer_diag *diag) {
   /* A tier this build did not compile, or this CPU does not advertise, degrades to scalar.
    * Refusing would make a caller handle a machine question it did not ask. */
   if (!bcir_jer_simd_tier_compiled(tier) || tier > bcir_jer_simd_tier_available())
@@ -278,4 +316,4 @@ bcir_jer_status bcir_jer_validate_utf8_at(bcir_jer_simd_tier tier, const uint8_t
   return validate(tier, data, len, diag);
 }
 
-}  // extern "C"
+} // extern "C"

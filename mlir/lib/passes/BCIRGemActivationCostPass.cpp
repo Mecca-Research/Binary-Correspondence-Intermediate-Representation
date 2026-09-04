@@ -42,9 +42,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/IR/Builders.h"
@@ -72,16 +72,20 @@ static int64_t ceilDiv(int64_t a, int64_t b) {
 // tanh) at 12; softmax adds the exp at 8. Returns -1 for an unknown kind (the op verifier rejects
 // such an op before this pass, but the cost port mirrors the oracle's exhaustive table defensively).
 static int64_t opWeight(StringRef kind) {
-  if (kind == "relu") return 1;
-  if (kind == "sigmoid") return 8;
-  if (kind == "tanh") return 8;
-  if (kind == "gelu") return 12;
-  if (kind == "softmax") return 8;
+  if (kind == "relu")
+    return 1;
+  if (kind == "sigmoid")
+    return 8;
+  if (kind == "tanh")
+    return 8;
+  if (kind == "gelu")
+    return 12;
+  if (kind == "softmax")
+    return 8;
   return -1;
 }
 
-struct GemActivationCostPass
-    : public PassWrapper<GemActivationCostPass, OperationPass<>> {
+struct GemActivationCostPass : public PassWrapper<GemActivationCostPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(GemActivationCostPass)
 
   StringRef getArgument() const final { return "bcir-gem-activation-cost"; }
@@ -114,7 +118,7 @@ struct GemActivationCostPass
     // their *_law_parity.py tests pin x86-avx512): vector_width = max(1,8,16) = 16, fma = true,
     // mem_unit = 1, mem_channels = 4. (cost_of uses none of cacheline/elem_bytes.)
     const int64_t kVectorWidth = 16;
-    const int64_t kFma = 2;           // (2 if fma else 1); avx512 has fma -> 2
+    const int64_t kFma = 2; // (2 if fma else 1); avx512 has fma -> 2
     const int64_t kMemUnit = 1;
     const int64_t kMemChannels = 4;
 
@@ -141,21 +145,23 @@ struct GemActivationCostPass
     // that the verifier + every sibling cost pass share. n = max(1, count) (a degenerate empty tensor is
     // floored to one element, exactly as cost_of's `n = max(1, spec.count)`).
     int64_t n = std::max<int64_t>(1, count);
-    int64_t thr = std::max<int64_t>(1, kVectorWidth * kFma);     // the throughput divisor (vector_width * fma)
+    int64_t thr =
+        std::max<int64_t>(1, kVectorWidth * kFma); // the throughput divisor (vector_width * fma)
     int64_t weighted, streamed;
     if (!checkedMulNonnegative(n, weight, weighted)) {
       op.emitError("bcir-gem-activation-cost: compute term exceeds signed 64-bit range");
       return false;
     }
-    int64_t compute = ceilDiv(weighted, thr);                    // count*op_weight / (vector_width * fma)
-    int64_t streams = (kind == "softmax") ? 3 : 2;               // softmax re-reads the row (max + exp/sum + normalize)
-    int64_t bw = std::max<int64_t>(1, kMemUnit * kMemChannels);  // the bandwidth divisor
+    int64_t compute = ceilDiv(weighted, thr); // count*op_weight / (vector_width * fma)
+    int64_t streams =
+        (kind == "softmax") ? 3 : 2; // softmax re-reads the row (max + exp/sum + normalize)
+    int64_t bw = std::max<int64_t>(1, kMemUnit * kMemChannels); // the bandwidth divisor
     if (!checkedMulNonnegative(n, streams, streamed)) {
       op.emitError("bcir-gem-activation-cost: memory term exceeds signed 64-bit range");
       return false;
     }
-    int64_t mem = ceilDiv(streamed, bw);                         // bytes streamed / bandwidth
-    int64_t bottleneck = std::max(compute, mem);                 // max,+ : the binding roofline resource
+    int64_t mem = ceilDiv(streamed, bw);         // bytes streamed / bandwidth
+    int64_t bottleneck = std::max(compute, mem); // max,+ : the binding roofline resource
 
     // --- cross-check the declared roofline (the dual-rail parity gate) ------------------
     if (compute != static_cast<int64_t>(op.getComputeCost())) {
@@ -182,15 +188,15 @@ struct GemActivationCostPass
     op->setAttr("kbcir.compute_cost", ab.getI64IntegerAttr(compute));
     op->setAttr("kbcir.mem_cost", ab.getI64IntegerAttr(mem));
     op->setAttr("kbcir.bottleneck", ab.getI64IntegerAttr(bottleneck));
-    op->setAttr("kbcir.informs_only", ab.getBoolAttr(true));         // never a legality verdict
+    op->setAttr("kbcir.informs_only", ab.getBoolAttr(true)); // never a legality verdict
     return true;
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createGemActivationCostPass() {
   return std::make_unique<GemActivationCostPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

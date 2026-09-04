@@ -43,9 +43,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/IR/Builders.h"
@@ -92,8 +92,7 @@ static StringRef libmEdge(StringRef kind) {
   return "";
 }
 
-struct LowerGemActivationPass
-    : public PassWrapper<LowerGemActivationPass, OperationPass<>> {
+struct LowerGemActivationPass : public PassWrapper<LowerGemActivationPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerGemActivationPass)
 
   StringRef getArgument() const final { return "bcir-lower-gem-activation"; }
@@ -153,11 +152,12 @@ struct LowerGemActivationPass
       return false;
     }
     int64_t weight = opWeight(kind);
-    int64_t streams = (kind == "softmax") ? 3 : 2;  // softmax re-streams its row (max + exp/sum + norm)
+    int64_t streams =
+        (kind == "softmax") ? 3 : 2; // softmax re-streams its row (max + exp/sum + norm)
 
     // --- the quarantine verdict + the R17 accuracy axis (mirrors cost_vector) ---------
-    const bool isExact = (kind == "relu");          // 0 ULP, no transcendental, no accuracy contract
-    StringRef edge = libmEdge(kind);                // the trusted c.call.libm: symbol (empty for relu)
+    const bool isExact = (kind == "relu"); // 0 ULP, no transcendental, no accuracy contract
+    StringRef edge = libmEdge(kind);       // the trusted c.call.libm: symbol (empty for relu)
     int64_t quantBits = static_cast<int64_t>(act.getQuantBits());
     // The accuracy axis is the Q8-bridge bound iff quantized (1 ULP); the activation op itself adds 0
     // (relu is exact; the libm kernel is trusted/exact). Identical to precision.quantization_error_bound.
@@ -192,14 +192,14 @@ struct LowerGemActivationPass
       const int64_t base = s * width;
       const int64_t stripe = std::min(width, count - base);
       std::string sym = (name + "_s" + Twine(s)).str();
-      GEMBlockOp::create(builder,
-          loc,
+      GEMBlockOp::create(
+          builder, loc,
           /*sym_name=*/StringAttr::get(ctx, sym),
           /*base=*/builder.getI64IntegerAttr(base),
           /*count=*/builder.getI64IntegerAttr(stripe),
           /*strideA=*/builder.getI64IntegerAttr(1),       // unit-stride elementwise read
           /*strideB=*/builder.getI64IntegerAttr(strideB), // softmax reduce row length; else 0
-          /*strideD=*/builder.getI64IntegerAttr(1));       // unit-stride write
+          /*strideD=*/builder.getI64IntegerAttr(1));      // unit-stride write
     }
 
     // Annotate the recomputed K_BCIR plan + the quarantine verdict on the lane segment's
@@ -211,8 +211,7 @@ struct LowerGemActivationPass
       // (Cheap: re-find by name; the IR is small and this is a lowering, not a hot path.)
       getOperation()->walk([&](GEMBlockOp b) {
         if (b.getSymName() == (name + "_s0").str()) {
-          b->setAttr("kbcir.lane_kind",
-                     ab.getStringAttr(isExact ? "exact" : "transcendental"));
+          b->setAttr("kbcir.lane_kind", ab.getStringAttr(isExact ? "exact" : "transcendental"));
           b->setAttr("kbcir.libm_edge", ab.getStringAttr(edge));
           b->setAttr("kbcir.op_weight", ab.getI64IntegerAttr(weight));
           b->setAttr("kbcir.streams", ab.getI64IntegerAttr(streams));
@@ -231,10 +230,10 @@ struct LowerGemActivationPass
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createLowerGemActivationPass() {
   return std::make_unique<LowerGemActivationPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

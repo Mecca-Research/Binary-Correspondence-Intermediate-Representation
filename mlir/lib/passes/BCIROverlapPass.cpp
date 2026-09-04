@@ -16,9 +16,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRCostModel.h"
 
 #include "mlir/IR/Builders.h"
@@ -43,11 +43,11 @@ struct Scheduled {
   ClaimOp claim;
   int32_t phase;
   int32_t id;
-  bool sparse;            // GGG / random tail (decoupled from the wave order)
-  cm::Cand cand;          // chosen width + fused cost
+  bool sparse;   // GGG / random tail (decoupled from the wave order)
+  cm::Cand cand; // chosen width + fused cost
   ArrayRef<StringRef> reads;
   ArrayRef<StringRef> writes;
-  uint64_t rmask = 0, wmask = 0;   // resource-symbol bitmasks (valid iff `maskable`)
+  uint64_t rmask = 0, wmask = 0; // resource-symbol bitmasks (valid iff `maskable`)
 };
 
 // RAW / WAR / WAW between two claims' read/write sets (mirrors verify._conflict). When the
@@ -74,15 +74,14 @@ static bool conflict(const Scheduled &a, const Scheduled &b, bool maskable) {
 // Serial (min,+) cost of a real in-bin execution chain, re-coupling each step against
 // its actual in-bin predecessor (overlap.py::_chain_cost). The thermal coupling
 // applies per step (even the first) when hot.
-static int64_t chainCost(ArrayRef<const Scheduled *> chain, ArrayRef<int64_t> w,
-                         int64_t theta) {
+static int64_t chainCost(ArrayRef<const Scheduled *> chain, ArrayRef<int64_t> w, int64_t theta) {
   int64_t total = 0;
   const Scheduled *prev = nullptr;
   for (const Scheduled *s : chain) {
     cm::Cost e = s->cand.cost;
-    cm::applyFactor(e, prev ? cm::contextFactor(theta, prev->reads, prev->cand.width,
-                                                s->reads, s->cand.width)
-                            : cm::contextFactor(theta, {}, 0, s->reads, s->cand.width));
+    cm::applyFactor(
+        e, prev ? cm::contextFactor(theta, prev->reads, prev->cand.width, s->reads, s->cand.width)
+                : cm::contextFactor(theta, {}, 0, s->reads, s->cand.width));
     total = saturatingAddNonnegative(total, cm::scalarize(e, w));
     prev = s;
   }
@@ -116,10 +115,16 @@ static int64_t computeMakespan(const std::vector<cm::Column> &cols, ArrayRef<int
   SmallVector<int32_t> phaseOrder;
   for (int i = 0; i < static_cast<int>(cols.size()); ++i) {
     ClaimOp claim = cols[i].claim;
-    bool sparse =
-        claim.getLane() == Lane::GGG || claim.getStrideClass() == StrideClass::Random;
-    Scheduled s{claim, cols[i].phase, static_cast<int32_t>(claim.getClaimId()), sparse,
-                cols[i].cands[assign[i]], cols[i].reads, cols[i].writes, 0, 0};
+    bool sparse = claim.getLane() == Lane::GGG || claim.getStrideClass() == StrideClass::Random;
+    Scheduled s{claim,
+                cols[i].phase,
+                static_cast<int32_t>(claim.getClaimId()),
+                sparse,
+                cols[i].cands[assign[i]],
+                cols[i].reads,
+                cols[i].writes,
+                0,
+                0};
     if (maskable) {
       s.rmask = maskOf(cols[i].reads);
       s.wmask = maskOf(cols[i].writes);
@@ -136,8 +141,7 @@ static int64_t computeMakespan(const std::vector<cm::Column> &cols, ArrayRef<int
     for (const Scheduled &s : sched)
       if (s.phase == pid)
         phaseClaims.push_back(&s);
-    llvm::sort(phaseClaims,
-               [](const Scheduled *a, const Scheduled *c) { return a->id < c->id; });
+    llvm::sort(phaseClaims, [](const Scheduled *a, const Scheduled *c) { return a->id < c->id; });
 
     SmallVector<const Scheduled *> main, tail;
     for (const Scheduled *s : phaseClaims)
@@ -171,23 +175,23 @@ static int64_t computeMakespan(const std::vector<cm::Column> &cols, ArrayRef<int
     }
 
     int64_t tailTotal = chainCost(tail, w, theta);
-    makespan = saturatingAddNonnegative(makespan,
-                                        std::max(mainTotal, tailTotal));
+    makespan = saturatingAddNonnegative(makespan, std::max(mainTotal, tailTotal));
   }
   return makespan;
 }
 
 // The serial (min,+) plan score of an assignment: the chosen coupled edge per column,
 // scalarized and summed (overlap.py::_serial_result -- R9-consistent: score == Sigma steps).
-static int64_t serialScore(const std::vector<cm::Column> &cols, ArrayRef<int> assign,
-                           int64_t theta, ArrayRef<int64_t> w) {
+static int64_t serialScore(const std::vector<cm::Column> &cols, ArrayRef<int> assign, int64_t theta,
+                           ArrayRef<int64_t> w) {
   int64_t total = 0;
   for (int i = 0; i < static_cast<int>(cols.size()); ++i) {
     cm::Cost e = cols[i].cands[assign[i]].cost;
-    cm::Factor f = (i > 0)
-        ? cm::contextFactor(theta, cols[i - 1].reads, cols[i - 1].cands[assign[i - 1]].width,
-                            cols[i].reads, cols[i].cands[assign[i]].width)
-        : cm::contextFactor(theta, {}, 0, cols[i].reads, cols[i].cands[assign[i]].width);
+    cm::Factor f =
+        (i > 0)
+            ? cm::contextFactor(theta, cols[i - 1].reads, cols[i - 1].cands[assign[i - 1]].width,
+                                cols[i].reads, cols[i].cands[assign[i]].width)
+            : cm::contextFactor(theta, {}, 0, cols[i].reads, cols[i].cands[assign[i]].width);
     cm::applyFactor(e, f);
     total = saturatingAddNonnegative(total, cm::scalarize(e, w));
   }
@@ -222,9 +226,7 @@ struct OverlapPass : public PassWrapper<OverlapPass, OperationPass<>> {
     root->setAttr("kbcir.overlap_serial", b.getI64IntegerAttr(pa.total));
     root->setAttr("kbcir.overlap_makespan", b.getI64IntegerAttr(makespan));
     root->setAttr("kbcir.overlap_gain",
-                  b.getI64IntegerAttr(makespan <= pa.total
-                                          ? pa.total - makespan
-                                          : 0));
+                  b.getI64IntegerAttr(makespan <= pa.total ? pa.total - makespan : 0));
   }
 };
 
@@ -262,7 +264,7 @@ struct OverlapOptimizePass : public PassWrapper<OverlapOptimizePass, OperationPa
     ArrayRef<int64_t> w = pa.weights;
     const int64_t theta = pa.thetaThermal, domains = pa.affinityDomains;
 
-    SmallVector<int> assign(pa.chosen.begin(), pa.chosen.end());   // start: the serial optimum
+    SmallVector<int> assign(pa.chosen.begin(), pa.chosen.end()); // start: the serial optimum
     int64_t bestM = computeMakespan(cols, assign, theta, w, domains);
     for (int i = 0; i < static_cast<int>(cols.size()); ++i) {
       const int cur = assign[i];
@@ -273,17 +275,17 @@ struct OverlapOptimizePass : public PassWrapper<OverlapOptimizePass, OperationPa
           continue;
         assign[i] = ci;
         int64_t m = computeMakespan(cols, assign, theta, w, domains);
-        if (m < bestTrial) {       // strict: first alternative reaching the new minimum wins
+        if (m < bestTrial) { // strict: first alternative reaching the new minimum wins
           bestCand = ci;
           bestTrial = m;
         }
       }
-      assign[i] = bestCand;        // commit (carry the adoption into later claims' sweeps)
+      assign[i] = bestCand; // commit (carry the adoption into later claims' sweeps)
       if (bestCand != cur)
         bestM = bestTrial;
     }
 
-    int64_t serial = serialScore(cols, assign, theta, w);   // R9-consistent re-price
+    int64_t serial = serialScore(cols, assign, theta, w); // R9-consistent re-price
     for (int i = 0; i < static_cast<int>(cols.size()); ++i)
       cols[i].claim->setAttr("kbcir.overlap_opt_width",
                              b.getI64IntegerAttr(cols[i].cands[assign[i]].width));
@@ -293,7 +295,7 @@ struct OverlapOptimizePass : public PassWrapper<OverlapOptimizePass, OperationPa
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createOverlapPass() {
   return std::make_unique<OverlapPass>();
@@ -303,4 +305,4 @@ std::unique_ptr<Pass> createOverlapOptimizePass() {
   return std::make_unique<OverlapOptimizePass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

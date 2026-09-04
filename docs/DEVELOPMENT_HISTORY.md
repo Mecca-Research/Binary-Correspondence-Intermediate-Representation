@@ -10,7 +10,7 @@
 > slice-by-slice build notes formerly embedded in the roadmaps. Roadmap docs now describe
 > *what exists and what is next*; this doc records *how it got here*. For current counts
 > (tests, ops, passes, laws) see the generated [`STATUS.md`](STATUS.md) — nothing here is
-> a live count. This revision is current through merged PR #751 (2026-09-03) and package version
+> a live count. This revision is current through merged PR #756 (2026-09-04) and package version
 > `0.2.0`. Sources are the GitHub PR record, first-parent history, implementation/tests,
 > and pre-consolidation document revisions retained in git.
 
@@ -377,6 +377,16 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   tokenizer evidence, prefix-stable FSQ series coding, frozen binary interfaces, and
   active-budget constructive growth. Tiny hosted training and verified StreamPack lowering landed
   without importing PGT/Embeddings code or claiming useful-scale quality.
+- **2026-09-03 → 09-04:** the whole-repository analysis report (#751); the MLIR rail moved to
+  LLVM/MLIR 23 with 22 kept in the matrix, plus a documentation currency sweep and the law-range
+  gate (#752); the full-surface dependency audit with reproducible tooling and dated evidence
+  (#753), then its dispositions: the four major action bumps (#754), the WASM tests off apt's
+  EOL Node 18 onto SHA-pinned setup-node / Node 24 (#755), the installed-closure advisory audit
+  in the hosted train-to-C jobs — which fired on its first run, on `setuptools` 78.1.0 from the
+  PyTorch index, now pinned — with the two pre-commit hook revisions (#756); and the audit's last
+  two rows, the vendored LLVM IR grammar refreshed to upstream HEAD and re-verified against LLVM
+  23, and the clang-format policy decided by measurement (C++ rails only; `runtime/c` is dense
+  hand-formatted C outside any configuration).
 
 ---
 

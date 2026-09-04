@@ -31,9 +31,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRCostModel.h"
 
 #include "mlir/IR/Builders.h"
@@ -73,11 +73,10 @@ static bool freshRecord(const cm::PlanAnalysis &pa, SmallVector<FreshDecision> &
     // The chosen edge cost: this candidate coupled by the chosen predecessor's context --
     // identical to -bcir-plan's / -bcir-explain's edge price.
     cm::Cost e = col.cands[chosen[i]].cost;
-    cm::Factor f = (i > 0)
-        ? cm::contextFactor(theta, cols[i - 1].reads,
-                            cols[i - 1].cands[chosen[i - 1]].width, col.reads,
-                            col.cands[chosen[i]].width)
-        : cm::contextFactor(theta, {}, 0, col.reads, col.cands[chosen[i]].width);
+    cm::Factor f = (i > 0) ? cm::contextFactor(theta, cols[i - 1].reads,
+                                               cols[i - 1].cands[chosen[i - 1]].width, col.reads,
+                                               col.cands[chosen[i]].width)
+                           : cm::contextFactor(theta, {}, 0, col.reads, col.cands[chosen[i]].width);
     cm::applyFactor(e, f);
     FreshDecision d;
     d.claim = col.claim;
@@ -130,16 +129,15 @@ struct ExplainPass : public PassWrapper<ExplainPass, OperationPass<>> {
       // (source = no fusion predecessor; the thermal coupling still applies) -- identical
       // to -bcir-plan's edge price, so the record matches the plan it explains.
       cm::Cost e = col.cands[chosen[i]].cost;
-      cm::Factor f = (i > 0)
-          ? cm::contextFactor(theta, cols[i - 1].reads,
-                              cols[i - 1].cands[chosen[i - 1]].width, col.reads,
-                              col.cands[chosen[i]].width)
-          : cm::contextFactor(theta, {}, 0, col.reads, col.cands[chosen[i]].width);
+      cm::Factor f =
+          (i > 0)
+              ? cm::contextFactor(theta, cols[i - 1].reads, cols[i - 1].cands[chosen[i - 1]].width,
+                                  col.reads, col.cands[chosen[i]].width)
+              : cm::contextFactor(theta, {}, 0, col.reads, col.cands[chosen[i]].width);
       cm::applyFactor(e, f);
       int64_t edge = cm::scalarize(e, w);
 
-      col.claim->setAttr("kbcir.explain_chosen",
-                         b.getI64IntegerAttr(col.cands[chosen[i]].width));
+      col.claim->setAttr("kbcir.explain_chosen", b.getI64IntegerAttr(col.cands[chosen[i]].width));
       col.claim->setAttr("kbcir.explain_score", b.getI64IntegerAttr(edge));
       col.claim->setAttr("kbcir.explain_widths", b.getDenseI64ArrayAttr(widths));
       col.claim->setAttr("kbcir.explain_candidates", b.getDenseI64ArrayAttr(scores));
@@ -196,10 +194,10 @@ struct ReplayPass : public PassWrapper<ReplayPass, OperationPass<>> {
         continue;
       }
       if (d.width != recWidth.getInt() || d.edge != recScore.getInt())
-        mismatches.push_back(
-            "claim " + std::to_string(id) + ": replay (w" + std::to_string(d.width) + "/" +
-            std::to_string(d.edge) + ") != recorded (w" + std::to_string(recWidth.getInt()) +
-            "/" + std::to_string(recScore.getInt()) + ")");
+        mismatches.push_back("claim " + std::to_string(id) + ": replay (w" +
+                             std::to_string(d.width) + "/" + std::to_string(d.edge) +
+                             ") != recorded (w" + std::to_string(recWidth.getInt()) + "/" +
+                             std::to_string(recScore.getInt()) + ")");
     }
 
     root->setAttr("kbcir.replay_reproduced", b.getBoolAttr(mismatches.empty()));
@@ -214,7 +212,11 @@ struct ReplayPass : public PassWrapper<ReplayPass, OperationPass<>> {
 
 } // namespace
 
-std::unique_ptr<Pass> createExplainPass() { return std::make_unique<ExplainPass>(); }
-std::unique_ptr<Pass> createReplayPass() { return std::make_unique<ReplayPass>(); }
+std::unique_ptr<Pass> createExplainPass() {
+  return std::make_unique<ExplainPass>();
+}
+std::unique_ptr<Pass> createReplayPass() {
+  return std::make_unique<ReplayPass>();
+}
 
 } // namespace bcir

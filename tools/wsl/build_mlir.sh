@@ -8,8 +8,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD="${ROOT}/build/mlir-build"
 
-MLIR_DIR="${MLIR_DIR:-$(ls -d /usr/lib/llvm-*/lib/cmake/mlir 2>/dev/null | sort -V | tail -1)}"
-LLVM_DIR="${LLVM_DIR:-$(ls -d /usr/lib/llvm-*/lib/cmake/llvm 2>/dev/null | sort -V | tail -1)}"
+MLIR_DIR="${MLIR_DIR:-$(ls -d /usr/lib/llvm-*/lib/cmake/mlir 2>/dev/null | sort -V | tail -1 || true)}"
+LLVM_DIR="${LLVM_DIR:-$(ls -d /usr/lib/llvm-*/lib/cmake/llvm 2>/dev/null | sort -V | tail -1 || true)}"
 : "${MLIR_DIR:?MLIRConfig.cmake not found (install libmlir-NN-dev), or set MLIR_DIR}"
 : "${LLVM_DIR:?LLVMConfig.cmake not found (install llvm-NN-dev), or set LLVM_DIR}"
 

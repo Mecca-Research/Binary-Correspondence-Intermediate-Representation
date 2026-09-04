@@ -30,9 +30,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -51,13 +51,10 @@ using namespace mlir;
 namespace bcir {
 namespace {
 
-struct LowerGemMatmulBufferPass
-    : public PassWrapper<LowerGemMatmulBufferPass, OperationPass<>> {
+struct LowerGemMatmulBufferPass : public PassWrapper<LowerGemMatmulBufferPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerGemMatmulBufferPass)
 
-  StringRef getArgument() const final {
-    return "bcir-lower-gem-matmul-buffer";
-  }
+  StringRef getArgument() const final { return "bcir-lower-gem-matmul-buffer"; }
   StringRef getDescription() const final {
     return "Lower each gem.matmul_buffer (SSA memref A/B/C + tile plan) into a "
            "concrete tiled scf.for nest computing C += A*B (load/store + "
@@ -98,9 +95,7 @@ struct LowerGemMatmulBufferPass
     const int64_t tk = static_cast<int64_t>(op.getTileK());
     const StringRef loopOrder = op.getLoopOrder();
 
-    auto cst = [&](int64_t v) -> Value {
-      return arith::ConstantIndexOp::create(builder, loc, v);
-    };
+    auto cst = [&](int64_t v) -> Value { return arith::ConstantIndexOp::create(builder, loc, v); };
     Value c0 = cst(0), c1 = cst(1);
     Value cM = cst(M), cN = cst(N), cK = cst(K);
     Value cTm = cst(tm), cTn = cst(tn), cTk = cst(tk);
@@ -110,9 +105,9 @@ struct LowerGemMatmulBufferPass
     // loop_order; the body (clamps + point loops + fma) is emitted at the innermost
     // outer loop regardless of the permutation.
     struct Axis {
-      char id;        // 'i' | 'j' | 'k'
-      Value extent;   // M / N / K
-      Value step;     // tile_m / tile_n / tile_k
+      char id;      // 'i' | 'j' | 'k'
+      Value extent; // M / N / K
+      Value step;   // tile_m / tile_n / tile_k
     };
     Axis axI{'i', cM, cTm};
     Axis axJ{'j', cN, cTn};
@@ -130,7 +125,7 @@ struct LowerGemMatmulBufferPass
 
     // Build the three nested outer tiled loops. Track the per-axis tile origin
     // (induction var) so the body can index by 'i'/'j'/'k' regardless of nest order.
-    Value tileLB[3] = {nullptr, nullptr, nullptr};  // indexed by 0=i,1=j,2=k
+    Value tileLB[3] = {nullptr, nullptr, nullptr}; // indexed by 0=i,1=j,2=k
     auto axisIndex = [](char id) { return id == 'i' ? 0 : (id == 'j' ? 1 : 2); };
 
     for (const Axis &ax : order) {
@@ -178,10 +173,10 @@ struct LowerGemMatmulBufferPass
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createLowerGemMatmulBufferPass() {
   return std::make_unique<LowerGemMatmulBufferPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

@@ -145,6 +145,7 @@ scripts may still skip them if the local target support is unavailable.
 | `llvm-training/09-vectorization/examples/sum-loop-before.ll` | `llvm-as llvm-training/09-vectorization/examples/sum-loop-before.ll -o /dev/null` |
 | `llvm-training/09-vectorization/examples/sum-loop.ll` | `llvm-as llvm-training/09-vectorization/examples/sum-loop.ll -o /dev/null` |
 | `llvm-training/10-grammar/examples/instruction-forms.ll` | `llvm-as llvm-training/10-grammar/examples/instruction-forms.ll -o /dev/null` |
+| `llvm-training/10-grammar/examples/llvm15-constructs.ll` | `llvm-as llvm-training/10-grammar/examples/llvm15-constructs.ll -o /dev/null` |
 | `llvm-training/10-grammar/examples/metadata-attachments.ll` | `llvm-as llvm-training/10-grammar/examples/metadata-attachments.ll -o /dev/null` |
 | `llvm-training/10-grammar/examples/top-level-entities.ll` | `llvm-as llvm-training/10-grammar/examples/top-level-entities.ll -o /dev/null` |
 | `llvm-training/11-concurrency/examples/atomic-counter.ll` | `llvm-as llvm-training/11-concurrency/examples/atomic-counter.ll -o /dev/null` |

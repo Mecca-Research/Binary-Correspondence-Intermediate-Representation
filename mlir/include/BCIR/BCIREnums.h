@@ -6,7 +6,7 @@
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/StringRef.h"
 
-#include "BCIREnums.h.inc"  // generated: -gen-enum-decls
+#include "BCIREnums.h.inc" // generated: -gen-enum-decls
 
 namespace bcir {
 
@@ -36,6 +36,6 @@ bool isCanonicalAsn1Rules(Asn1Rules rules);
 // separate attribute somebody could set on a JER operation.
 bool asn1RulesAreAligned(Asn1Rules rules);
 
-}  // namespace bcir
+} // namespace bcir
 
 #endif // BCIR_BCIRENUMS_H

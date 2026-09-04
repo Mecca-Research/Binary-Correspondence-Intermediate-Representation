@@ -91,8 +91,7 @@ void registerBCIRPipelines() {
   // Read-only analysis + the R1-R23 verifier checkpoint up front: recompute the cost
   // model, the coupled plan, and the scheduled price (no IR lowering).
   static PassPipelineRegistration<> audit(
-      "bcir-audit",
-      "Verify (R1-R23) then recompute cost/plan/overlap annotations (read-only).",
+      "bcir-audit", "Verify (R1-R23) then recompute cost/plan/overlap annotations (read-only).",
       [](OpPassManager &pm) {
         pm.addPass(createVerifyPass());
         pm.addPass(createClassifyLanesPass());
@@ -114,8 +113,7 @@ void registerBCIRPipelines() {
 
   // declared plan -> hydrated, lane-lowered GEM StreamPack (R12/R14-R16 checked).
   static PassPipelineRegistration<> hydratePipe(
-      "bcir-hydrate",
-      "classify -> select -> batch -> schedule -> lower: plan -> GEM StreamPack.",
+      "bcir-hydrate", "classify -> select -> batch -> schedule -> lower: plan -> GEM StreamPack.",
       hydrate);
 
   // verify checkpoint -> BCIR compute/barrier lowered to the LLVM dialect.
@@ -129,8 +127,7 @@ void registerBCIRPipelines() {
   // Partial AOT preparation: hydration and conversion intentionally leave
   // unsupported BCIR/GEM operations in the mixed-dialect result.
   static PassPipelineRegistration<> aot(
-      "bcir-aot",
-      "Partial AOT preparation producing mixed BCIR/GEM/LLVM dialect IR.",
+      "bcir-aot", "Partial AOT preparation producing mixed BCIR/GEM/LLVM dialect IR.",
       [hydrate](OpPassManager &pm) {
         pm.addPass(createVerifyPass());
         hydrate(pm);
@@ -138,4 +135,4 @@ void registerBCIRPipelines() {
       });
 }
 
-}  // namespace bcir
+} // namespace bcir

@@ -53,9 +53,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BCIR/BCIRPasses.h"
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
+#include "BCIR/BCIRPasses.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/IR/Builders.h"
@@ -77,8 +77,7 @@ static int64_t ceilDiv(int64_t a, int64_t b) {
   return a / b + (a % b != 0);
 }
 
-struct GemAttentionCostPass
-    : public PassWrapper<GemAttentionCostPass, OperationPass<>> {
+struct GemAttentionCostPass : public PassWrapper<GemAttentionCostPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(GemAttentionCostPass)
 
   StringRef getArgument() const final { return "bcir-gem-attention-cost"; }
@@ -109,22 +108,22 @@ struct GemAttentionCostPass
     // sibling cost passes + their *_law_parity.py tests pin x86-avx512): vector_width = max(1,8,16)
     // = 16, fma = true, mem_unit = 1, mem_channels = 4, cacheline = 64, elem_bytes = 4.
     const int64_t kVectorWidth = 16;
-    const int64_t kFma = 2;           // (2 if fma else 1); avx512 has fma -> 2
+    const int64_t kFma = 2; // (2 if fma else 1); avx512 has fma -> 2
     const int64_t kMemUnit = 1;
     const int64_t kMemChannels = 4;
     const int64_t kCacheline = 64;
     const int64_t kElemBytes = 4;
 
     int64_t macs, traffic, workingSet;
-    if (!checkedGemmDerived(M, N, K, tm, tn, tk, macs, traffic,
-                            workingSet))
+    if (!checkedGemmDerived(M, N, K, tm, tn, tk, macs, traffic, workingSet))
       return false;
-    int64_t thr = std::max<int64_t>(1, kVectorWidth * kFma);     // the FLOP-throughput divisor
-    compute = ceilDiv(macs, thr);                                // M*N*K MACs / (vector_width * fma)
-    int64_t bw = std::max<int64_t>(1, kMemUnit * kMemChannels);  // the bandwidth divisor
-    mem = ceilDiv(traffic, bw);                                   // bytes streamed / bandwidth
+    int64_t thr = std::max<int64_t>(1, kVectorWidth * kFma);    // the FLOP-throughput divisor
+    compute = ceilDiv(macs, thr);                               // M*N*K MACs / (vector_width * fma)
+    int64_t bw = std::max<int64_t>(1, kMemUnit * kMemChannels); // the bandwidth divisor
+    mem = ceilDiv(traffic, bw);                                 // bytes streamed / bandwidth
     int64_t cacheBudget =
-        (512 * kCacheline) / std::max<int64_t>(1, kElemBytes);   // the modeled per-core working-set budget
+        (512 * kCacheline) /
+        std::max<int64_t>(1, kElemBytes); // the modeled per-core working-set budget
     fitsCache = workingSet <= cacheBudget;
     return true;
   }
@@ -142,7 +141,8 @@ struct GemAttentionCostPass
     //   scores Q@K^T : (seq_len, seq_len, d_k);  context A@V : (seq_len, d_k, seq_len).
     int64_t sm = static_cast<int64_t>(op.getScoresM()), sn = static_cast<int64_t>(op.getScoresN()),
             sk = static_cast<int64_t>(op.getScoresK());
-    int64_t cm = static_cast<int64_t>(op.getContextM()), cn = static_cast<int64_t>(op.getContextN()),
+    int64_t cm = static_cast<int64_t>(op.getContextM()),
+            cn = static_cast<int64_t>(op.getContextN()),
             ck = static_cast<int64_t>(op.getContextK());
     int64_t stm = std::max<int64_t>(1, static_cast<int64_t>(op.getScoresTileM()));
     int64_t stn = std::max<int64_t>(1, static_cast<int64_t>(op.getScoresTileN()));
@@ -163,7 +163,8 @@ struct GemAttentionCostPass
     bool scoresFits = false, contextFits = false;
     if (!gemmCostOf(sm, sn, sk, stm, stn, stk, scoresCompute, scoresMem, scoresFits) ||
         !gemmCostOf(cm, cn, ck, ctm, ctn, ctk, contextCompute, contextMem, contextFits)) {
-      op.emitError("bcir-gem-attention-cost: derived per-gemm roofline cost exceeds signed 64-bit range");
+      op.emitError(
+          "bcir-gem-attention-cost: derived per-gemm roofline cost exceeds signed 64-bit range");
       return false;
     }
     int64_t compute, mem;
@@ -172,8 +173,8 @@ struct GemAttentionCostPass
       op.emitError("bcir-gem-attention-cost: summed roofline cost exceeds signed 64-bit range");
       return false;
     }
-    int64_t bottleneck = std::max(compute, mem);                 // max,+ : the binding roofline resource
-    bool fitsCache = scoresFits && contextFits;                  // both gemms must fit (f1 and f2)
+    int64_t bottleneck = std::max(compute, mem); // max,+ : the binding roofline resource
+    bool fitsCache = scoresFits && contextFits;  // both gemms must fit (f1 and f2)
 
     // --- cross-check the declared roofline (the dual-rail parity gate) ------------------
     // the PER-GEMM priced matmul costs (each == matmul.cost_of at its chosen tile).
@@ -236,15 +237,15 @@ struct GemAttentionCostPass
     op->setAttr("kbcir.mem_cost", ab.getI64IntegerAttr(mem));
     op->setAttr("kbcir.bottleneck", ab.getI64IntegerAttr(bottleneck));
     op->setAttr("kbcir.fits_cache", ab.getBoolAttr(fitsCache));
-    op->setAttr("kbcir.informs_only", ab.getBoolAttr(true));         // never a legality verdict
+    op->setAttr("kbcir.informs_only", ab.getBoolAttr(true)); // never a legality verdict
     return true;
   }
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<Pass> createGemAttentionCostPass() {
   return std::make_unique<GemAttentionCostPass>();
 }
 
-}  // namespace bcir
+} // namespace bcir

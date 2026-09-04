@@ -18,11 +18,17 @@ practical parser authority for what your toolchain accepts.
 
 LLVM IR syntax and accepted constructs vary by LLVM release. The local
 `llvm-ir.tm` grammar is a full upstream snapshot rather than a hand-trimmed
-excerpt, but it may still lag newer LLVM releases. The verification stamp near
-the top of `llvm-ir.tm` is an anchor for the toolchain/version last used during
-local review; it is not a guarantee that this grammar is canonical for all LLVM
-versions. Verify grammar-sensitive examples against both the target LLVM
-version's `llvm-as` and the corresponding LangRef:
+excerpt, but it may still lag newer LLVM releases: upstream `llir/grammar`
+stopped at LLVM 15 syntax (its HEAD, `05deced`, is what this snapshot carries),
+so constructs LLVM added after 15 -- newer attributes, intrinsic spellings, and
+metadata fields -- are absent from it even though the target `llvm-as` accepts
+them. The verification stamp near the top of `llvm-ir.tm` is an anchor for the
+toolchain/version last used during local review (the `examples/` here assemble
+and pass `opt -passes=verify` under that toolchain, and
+`examples/llvm15-constructs.ll` exercises exactly the syntax the snapshot gained
+over its predecessor); it is not a guarantee that this grammar is canonical for
+all LLVM versions. Verify grammar-sensitive examples against both the target
+LLVM version's `llvm-as` and the corresponding LangRef:
 https://llvm.org/docs/LangRef.html
 
 ## What is Textmapper?
@@ -95,7 +101,7 @@ grammar may lag upstream LLVM.
 `llvm-ir.tm` declares its own package as
 `package = "github.com/llir/ll"`. It is a full local snapshot of the
 Textmapper grammar from `llir/grammar` at commit
-`5a3820b516f7903e27ad16ebe4add1ec634f1c05`, consumed by the `llir/ll` Go
+`05deced0a4bcf9699a2e4b04f2f1e36beff33d69` (upstream HEAD, 2022-08-03), consumed by the `llir/ll` Go
 parser project. The upstream grammar is offered under 0BSD and Unlicense terms;
 see [`../NOTICE.md`](../NOTICE.md) for repository attribution. Keep the local
 snapshot so agents do not have to fetch upstream while reading the training

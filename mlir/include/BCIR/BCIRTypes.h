@@ -7,6 +7,6 @@
 #include "BCIR/BCIRDialect.h"
 
 #define GET_TYPEDEF_CLASSES
-#include "BCIRTypes.h.inc"  // generated: -gen-typedef-decls
+#include "BCIRTypes.h.inc" // generated: -gen-typedef-decls
 
 #endif // BCIR_BCIRTYPES_H

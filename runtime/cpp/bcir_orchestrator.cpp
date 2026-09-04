@@ -14,10 +14,11 @@ namespace bcir {
 // NOT re-derive an R-law verdict (the two-truth quarantine forbids it) -- it asks
 // the authority (bcir_sp_verify_semantic) and carries the verdict through.
 // ---------------------------------------------------------------------------
-bcir_status Orchestrator::admit(const std::uint8_t* data, std::size_t len,
+bcir_status Orchestrator::admit(const std::uint8_t *data, std::size_t len,
                                 std::uint32_t expected_map_gen,
                                 std::uint32_t expected_data_gen) const {
-  if (data == nullptr) return BCIR_ERR_TRUNCATED;
+  if (data == nullptr)
+    return BCIR_ERR_TRUNCATED;
   return bcir_sp_verify_semantic(data, len, expected_map_gen, expected_data_gen);
 }
 
@@ -31,18 +32,17 @@ bcir_status Orchestrator::admit(const std::uint8_t* data, std::size_t len,
 namespace {
 
 // The per-segment callback handed to the C decoder. ctx is the order vector.
-extern "C" int collect_claim(const bcir_segment_view* seg, void* ctx) {
-  auto* order = static_cast<std::vector<std::uint64_t>*>(ctx);
+extern "C" int collect_claim(const bcir_segment_view *seg, void *ctx) {
+  auto *order = static_cast<std::vector<std::uint64_t> *>(ctx);
   order->push_back(seg->claim_id);
-  return 0;  // 0 == keep walking
+  return 0; // 0 == keep walking
 }
 
-}  // namespace
+} // namespace
 
 // --- SingleNodeOrchestrator (REAL) -----------------------------------------
 
-std::vector<Shard> SingleNodeOrchestrator::shard(const std::uint8_t* data,
-                                                 std::size_t len) const {
+std::vector<Shard> SingleNodeOrchestrator::shard(const std::uint8_t *data, std::size_t len) const {
   // Single node: one shard covering the whole pack. We read n_segments from the
   // validated header so the shard range is real, not assumed.
   bcir_streampack_header hdr{};
@@ -54,8 +54,7 @@ std::vector<Shard> SingleNodeOrchestrator::shard(const std::uint8_t* data,
   return {s};
 }
 
-DispatchResult SingleNodeOrchestrator::dispatch(const std::uint8_t* data,
-                                                std::size_t len,
+DispatchResult SingleNodeOrchestrator::dispatch(const std::uint8_t *data, std::size_t len,
                                                 unsigned max_retries) const {
   DispatchResult r;
   r.nodes_used = 1;
@@ -75,17 +74,19 @@ DispatchResult SingleNodeOrchestrator::dispatch(const std::uint8_t* data,
   for (unsigned attempt = 0; attempt <= max_retries; ++attempt) {
     r.claim_order.clear();
     st = bcir_sp_for_each_segment(data, len, &collect_claim, &r.claim_order);
-    if (st == BCIR_OK) break;  // success: stop retrying
+    if (st == BCIR_OK)
+      break; // success: stop retrying
     // A real distributed retry would re-place the shard on a healthy node here.
   }
   r.status = st;
-  if (st != BCIR_OK) r.claim_order.clear();  // a failed run yields no order
+  if (st != BCIR_OK)
+    r.claim_order.clear(); // a failed run yields no order
   return r;
 }
 
 // --- DynamicGraphOrchestrator (STUB) ---------------------------------------
 
-std::vector<Shard> DynamicGraphOrchestrator::shard(const std::uint8_t* data,
+std::vector<Shard> DynamicGraphOrchestrator::shard(const std::uint8_t *data,
                                                    std::size_t len) const {
   // A real dynamic-graph backend re-freezes a fresh claim-graph each step and hands
   // the resulting StreamPack down. With no graph-builder built, sharding is the
@@ -96,7 +97,7 @@ std::vector<Shard> DynamicGraphOrchestrator::shard(const std::uint8_t* data,
   return {s};
 }
 
-DispatchResult DynamicGraphOrchestrator::dispatch(const std::uint8_t* /*data*/,
+DispatchResult DynamicGraphOrchestrator::dispatch(const std::uint8_t * /*data*/,
                                                   std::size_t /*len*/,
                                                   unsigned /*max_retries*/) const {
   // NOT BUILT. A real implementation owns a mutable C++ graph-builder ABOVE the
@@ -113,8 +114,7 @@ DispatchResult DynamicGraphOrchestrator::dispatch(const std::uint8_t* /*data*/,
 
 // --- DistributedOrchestrator (STUB; real sharding, stubbed dispatch) -------
 
-std::vector<Shard> DistributedOrchestrator::shard(const std::uint8_t* data,
-                                                  std::size_t len) const {
+std::vector<Shard> DistributedOrchestrator::shard(const std::uint8_t *data, std::size_t len) const {
   // The sharding LOGIC is real and testable with no cluster: partition the segment
   // stream into `world_size` contiguous, balanced ranges -- exactly the placement a
   // real MPI/NCCL run would hand to each rank. Only the cross-node DISPATCH needs
@@ -134,14 +134,16 @@ std::vector<Shard> DistributedOrchestrator::shard(const std::uint8_t* data,
     shards.push_back(s);
     begin = s.seg_end;
   }
-  if (shards.empty()) {  // an empty/zero-segment pack still yields one (empty) shard
-    Shard s; s.seg_begin = 0; s.seg_end = 0; shards.push_back(s);
+  if (shards.empty()) { // an empty/zero-segment pack still yields one (empty) shard
+    Shard s;
+    s.seg_begin = 0;
+    s.seg_end = 0;
+    shards.push_back(s);
   }
   return shards;
 }
 
-DispatchResult DistributedOrchestrator::dispatch(const std::uint8_t* /*data*/,
-                                                 std::size_t /*len*/,
+DispatchResult DistributedOrchestrator::dispatch(const std::uint8_t * /*data*/, std::size_t /*len*/,
                                                  unsigned /*max_retries*/) const {
   // NOT BUILT. A real implementation places each shard on a node (MPI rank / NCCL
   // communicator), dispatches it into that node's local SingleNodeOrchestrator (the
@@ -159,14 +161,14 @@ DispatchResult DistributedOrchestrator::dispatch(const std::uint8_t* /*data*/,
 
 std::unique_ptr<Orchestrator> make_orchestrator(Backend b, std::size_t world_size) {
   switch (b) {
-    case Backend::SingleNode:
-      return std::make_unique<SingleNodeOrchestrator>();
-    case Backend::DynamicGraph:
-      return std::make_unique<DynamicGraphOrchestrator>();
-    case Backend::Distributed:
-      return std::make_unique<DistributedOrchestrator>(world_size);
+  case Backend::SingleNode:
+    return std::make_unique<SingleNodeOrchestrator>();
+  case Backend::DynamicGraph:
+    return std::make_unique<DynamicGraphOrchestrator>();
+  case Backend::Distributed:
+    return std::make_unique<DistributedOrchestrator>(world_size);
   }
   return std::make_unique<SingleNodeOrchestrator>();
 }
 
-}  // namespace bcir
+} // namespace bcir
