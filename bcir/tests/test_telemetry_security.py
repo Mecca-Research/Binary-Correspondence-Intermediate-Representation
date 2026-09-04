@@ -60,11 +60,23 @@ NAN = float("nan")
 
 def _cool(thermal=10, n=3, claim_id=1000):
     """A batch of legitimate, in-range cool telemetry (the trusted baseline)."""
-    return [DataDNA(segment_id=f"s{i}", claim_id=claim_id, cycles=100, bytes=4096,
-                    misses=10, thermal=thermal, voltage=0, utilization=70) for i in range(n)]
+    return [
+        DataDNA(
+            segment_id=f"s{i}",
+            claim_id=claim_id,
+            cycles=100,
+            bytes=4096,
+            misses=10,
+            thermal=thermal,
+            voltage=0,
+            utilization=70,
+        )
+        for i in range(n)
+    ]
 
 
 # --- A. out-of-range field injection: must NOT move Theta / the policy ------------
+
 
 def test_out_of_range_field_cannot_move_theta_vs_baseline():
     """ATTACK: inject thermal=10000 (and inf, and negative) into a stream of otherwise
@@ -85,7 +97,7 @@ def test_out_of_range_field_cannot_move_theta_vs_baseline():
     ]
     baseline = cal.update(Theta.cool(), legit)
     attacked = cal.update(Theta.cool(), injected)
-    assert attacked == baseline                                   # injected records had ZERO effect
+    assert attacked == baseline  # injected records had ZERO effect
     assert adaptive_policy(attacked).name == adaptive_policy(baseline).name == "latency"
 
 
@@ -112,7 +124,7 @@ def test_linear_and_frozen_calibrators_also_reject_at_ingest():
     poisoned = legit + [DataDNA(segment_id="x", claim_id=1, thermal=10000, utilization=70)]
     lin = LinearCalibrator(lr=0.5)
     assert lin.update(Theta.cool(), poisoned) == lin.update(Theta.cool(), legit)
-    frozen = FrozenCalibrator(w_q8=(0, 0, 256, 0), gen=1)   # predicts from misses
+    frozen = FrozenCalibrator(w_q8=(0, 0, 256, 0), gen=1)  # predicts from misses
     assert frozen.update(Theta.cool(), poisoned) == frozen.update(Theta.cool(), legit)
 
 
@@ -122,16 +134,18 @@ def test_validate_rejects_strict_and_passes_legit_unchanged():
     penalized by the gate."""
     good = DataDNA(segment_id="s", claim_id=1, thermal=50, utilization=70, misses=10)
     assert good.validate() is good and good.is_valid() and good.violations() == []
-    for bad in (DataDNA(segment_id="b", claim_id=1, thermal=10000),
-                DataDNA(segment_id="b", claim_id=1, voltage=-1),
-                DataDNA(segment_id="b", claim_id=1, utilization=NAN),
-                DataDNA(segment_id="b", claim_id=1, cycles=-5),
-                DataDNA(segment_id="b", claim_id=-1),
-                DataDNA(segment_id="b", claim_id=True),
-                DataDNA(segment_id="b", claim_id=1 << 63),
-                DataDNA(segment_id="b", claim_id=1, cycles=1.5),
-                DataDNA(segment_id="b", claim_id=1, bytes=1 << 63),
-                DataDNA(segment_id="b", claim_id=1, misses=True)):
+    for bad in (
+        DataDNA(segment_id="b", claim_id=1, thermal=10000),
+        DataDNA(segment_id="b", claim_id=1, voltage=-1),
+        DataDNA(segment_id="b", claim_id=1, utilization=NAN),
+        DataDNA(segment_id="b", claim_id=1, cycles=-5),
+        DataDNA(segment_id="b", claim_id=-1),
+        DataDNA(segment_id="b", claim_id=True),
+        DataDNA(segment_id="b", claim_id=1 << 63),
+        DataDNA(segment_id="b", claim_id=1, cycles=1.5),
+        DataDNA(segment_id="b", claim_id=1, bytes=1 << 63),
+        DataDNA(segment_id="b", claim_id=1, misses=True),
+    ):
         assert not bad.is_valid()
         try:
             bad.validate()
@@ -147,10 +161,10 @@ def test_validating_sink_drops_poison_at_the_wire():
     sink = ValidatingSink(inner=inner)
     for e in _cool(thermal=30):
         sink.emit(e)
-    sink.emit(DataDNA(segment_id="x", claim_id=1, thermal=10000))   # poison
-    sink.emit(DataDNA(segment_id="x", claim_id=1, voltage=INF))     # poison
+    sink.emit(DataDNA(segment_id="x", claim_id=1, thermal=10000))  # poison
+    sink.emit(DataDNA(segment_id="x", claim_id=1, voltage=INF))  # poison
     assert sink.accepted == 3 and sink.rejected == 2
-    assert len(inner.events) == 3                                    # poison never reached downstream
+    assert len(inner.events) == 3  # poison never reached downstream
     assert all(ev.is_valid() for ev in inner.events)
 
 
@@ -184,13 +198,15 @@ def test_validating_sink_serializes_acceptance_and_downstream_publication():
     second.start()
     assert not second_entered.wait(0.1)
     release.set()
-    first.join(2); second.join(2)
+    first.join(2)
+    second.join(2)
     assert not first.is_alive() and not second.is_alive()
     assert second_entered.is_set()
     assert sink.witness == TelemetryIntegrity(accepted=2, rejected=0)
 
 
 # --- B. shared-ring header injection: must reject with NO out-of-bounds read ------
+
 
 def _ring(head, capacity, record_size, magic, slots=4, fill=True):
     buf = bytearray(32 + slots * 56)
@@ -257,9 +273,9 @@ def test_ring_short_buffer_never_reads_past_end():
     assert parse_shared_ring(bytearray(8)) == []
     assert parse_shared_ring(b"") == []
     # header-present but record region truncated mid-record:
-    buf = bytearray(32 + 56)                               # room for 1 record
+    buf = bytearray(32 + 56)  # room for 1 record
     struct.pack_into("<4Q", buf, 0, 4, 4, 56, RING_STAMP)  # claims 4 live, buffer holds 1
-    assert parse_shared_ring(buf) == []                    # capacity*record_size overruns -> reject
+    assert parse_shared_ring(buf) == []  # capacity*record_size overruns -> reject
 
 
 def test_ring_rejects_schema_poison_and_impractical_capacity():
@@ -281,6 +297,7 @@ def test_ring_rejects_schema_poison_and_impractical_capacity():
 
 # --- C. forged from_json: must reject (never install adversarial state) -----------
 
+
 def test_forged_frozen_calibrator_is_rejected():
     """ATTACK: a forged certificate ships oversized / wrong-length / non-finite Q8
     weights, or a negative generation, to install an adversarial calibrator.
@@ -290,12 +307,12 @@ def test_forged_frozen_calibrator_is_rejected():
     good = FrozenCalibrator(w_q8=(10, 20, 30, 40), gen=2, samples=5)
     assert FrozenCalibrator.from_json(good.to_json()).w_q8 == (10, 20, 30, 40)
     forgeries = [
-        {"w_q8": [1 << 40, 0, 0, 0], "gen": 1},       # oversized weight
-        {"w_q8": [1, 2, 3], "gen": 1},                # wrong length
-        {"w_q8": [1, 2, 3, 4, 5], "gen": 1},          # too many
-        {"w_q8": [1.5, 2, 3, 4], "gen": 1},           # non-int
-        {"w_q8": [1, 2, 3, 4], "gen": -3},            # negative gen
-        {"w_q8": [1, 2, 3, 4], "gen": True},          # bool masquerading as int
+        {"w_q8": [1 << 40, 0, 0, 0], "gen": 1},  # oversized weight
+        {"w_q8": [1, 2, 3], "gen": 1},  # wrong length
+        {"w_q8": [1, 2, 3, 4, 5], "gen": 1},  # too many
+        {"w_q8": [1.5, 2, 3, 4], "gen": 1},  # non-int
+        {"w_q8": [1, 2, 3, 4], "gen": -3},  # negative gen
+        {"w_q8": [1, 2, 3, 4], "gen": True},  # bool masquerading as int
         {"w_q8": "not-an-array", "gen": 1},
     ]
     for f in forgeries:
@@ -322,23 +339,33 @@ def test_forged_calibration_certificate_is_rejected():
     DEFENSE/PROOF: `CalibrationCertificate.from_json` validates the field types/ranges;
     each forgery raises. A genuine certificate still round-trips with the same win."""
     cert = CalibrationCertificate(
-        target="avx", cal_gen=2, provenance="p", ratios=(256, 256, 256, 256),
-        measured_thermal=40, seeded_widths=((1000, 16),), calibrated_widths=((1000, 8),),
-        stale_cost=100, calibrated_cost=80)
+        target="avx",
+        cal_gen=2,
+        provenance="p",
+        ratios=(256, 256, 256, 256),
+        measured_thermal=40,
+        seeded_widths=((1000, 16),),
+        calibrated_widths=((1000, 8),),
+        stale_cost=100,
+        calibrated_cost=80,
+    )
     assert CalibrationCertificate.from_json(cert.to_json()).win == 20
     base = json.loads(cert.to_json())
-    for label, mut in [("neg cal_gen", {"cal_gen": -1}),
-                       ("thermal>100", {"measured_thermal": 9999}),
-                       ("thermal<0", {"measured_thermal": -1}),
-                       ("3 ratios", {"ratios": [1, 2, 3]}),
-                       ("bad baseline", {"ratios": [255, 256, 256, 256]}),
-                       ("malformed width", {"seeded_widths": [[1, 2, 3]]}),
-                       ("duplicate width", {"seeded_widths": [[1000, 8], [1000, 16]]}),
-                       ("different claims", {"seeded_widths": [[2000, 16]]}),
-                       ("negative win", {"stale_cost": 79}),
-                       ("unknown field", {"unknown": 1}),
-                       ("non-int cost", {"stale_cost": 1.5})]:
-        d = dict(base); d.update(mut)
+    for label, mut in [
+        ("neg cal_gen", {"cal_gen": -1}),
+        ("thermal>100", {"measured_thermal": 9999}),
+        ("thermal<0", {"measured_thermal": -1}),
+        ("3 ratios", {"ratios": [1, 2, 3]}),
+        ("bad baseline", {"ratios": [255, 256, 256, 256]}),
+        ("malformed width", {"seeded_widths": [[1, 2, 3]]}),
+        ("duplicate width", {"seeded_widths": [[1000, 8], [1000, 16]]}),
+        ("different claims", {"seeded_widths": [[2000, 16]]}),
+        ("negative win", {"stale_cost": 79}),
+        ("unknown field", {"unknown": 1}),
+        ("non-int cost", {"stale_cost": 1.5}),
+    ]:
+        d = dict(base)
+        d.update(mut)
         try:
             CalibrationCertificate.from_json(json.dumps(d))
             raise AssertionError(f"forged certificate not rejected: {label}")
@@ -354,6 +381,7 @@ def test_forged_calibration_certificate_is_rejected():
 
 # --- D/E. suppression / blindness must be observable (the witness fires) ----------
 
+
 def test_empty_stream_is_a_surfaced_blind_signal():
     """ATTACK: suppress telemetry entirely (drop the stream). Plain `update` swallows
     it (Theta unchanged) -- a silent no-op the audit flagged.
@@ -361,8 +389,8 @@ def test_empty_stream_is_a_surfaced_blind_signal():
     survived) so the no-throttle outcome is a VISIBLE decision; Theta is still
     unchanged (correct), but the absence is now detectable."""
     theta, witness = calibrate_with_witness(Theta.cool(), [], EwmaCalibrator())
-    assert theta == Theta.cool()                      # numerically a no-op (correct)
-    assert witness.blind and witness.accepted == 0    # ...but the blindness is SURFACED
+    assert theta == Theta.cool()  # numerically a no-op (correct)
+    assert witness.blind and witness.accepted == 0  # ...but the blindness is SURFACED
     assert not witness.clean
 
 
@@ -384,7 +412,7 @@ def test_legit_stream_is_clean_and_not_blind():
     legit = _cool(thermal=80)
     cal = EwmaCalibrator(alpha=256)
     theta, witness = calibrate_with_witness(Theta.cool(), legit, cal)
-    assert theta == cal.update(Theta.cool(), legit)   # witness path == plain path
+    assert theta == cal.update(Theta.cool(), legit)  # witness path == plain path
     assert not witness.blind and witness.clean and witness.accepted == 3
 
 
@@ -396,10 +424,10 @@ def test_ring_eviction_is_an_observable_loss_not_a_silent_drop():
     ring = TelemetryRing(capacity=2)
     for i in range(2):
         ring.write(DataDNA(segment_id="s", claim_id=i, thermal=10))
-    assert not ring.lost and ring.witness().dropped == 0       # within capacity: no loss
+    assert not ring.lost and ring.witness().dropped == 0  # within capacity: no loss
     for i in range(2, 5):
         ring.write(DataDNA(segment_id="s", claim_id=i, thermal=10))
-    assert ring.lost and ring.witness().dropped == 3           # eviction is SURFACED
+    assert ring.lost and ring.witness().dropped == 3  # eviction is SURFACED
 
 
 def test_replay_reorder_is_detected_by_the_witness():
@@ -412,10 +440,11 @@ def test_replay_reorder_is_detected_by_the_witness():
     assert w_ok.monotonic and w_ok.seq_span == 3
     replayed = [DataDNA(segment_id="s", claim_id=c, thermal=10) for c in (1, 2, 1, 3)]
     _, w_bad = sanitize_events(replayed)
-    assert not w_bad.monotonic                                 # replay detected
+    assert not w_bad.monotonic  # replay detected
 
 
 # --- the RegretSensor cost-masking attack (partially defensible -- honest) --------
+
 
 def test_regret_sensor_rejects_bogus_costs():
     """ATTACK: feed the regret sensor non-finite / negative costs (a NaN poisons every
@@ -425,10 +454,10 @@ def test_regret_sensor_rejects_bogus_costs():
     s = RegretSensor()
     for bad in (NAN, INF, -1, -999, True, "100"):
         s.observe("p", bad)
-    assert s.rejected == 6 and "p" not in s.paths              # nothing was recorded
+    assert s.rejected == 6 and "p" not in s.paths  # nothing was recorded
     s.observe("good", 100)
     s.observe("good", 110)
-    assert s.paths["good"].n == 2                              # legit cost still works
+    assert s.paths["good"].n == 2  # legit cost still works
 
 
 def test_regret_sensor_masking_is_only_partially_defended_honestly():
@@ -442,12 +471,14 @@ def test_regret_sensor_masking_is_only_partially_defended_honestly():
     MAC), out of scope. This test pins BOTH facts: the flag fires for the under-sampled
     case, and the in-range masking still slips to 'low' (the honest residual)."""
     s = RegretSensor()
-    s.observe("bad_path", 100)                                 # 1 plausible sample
+    s.observe("bad_path", 100)  # 1 plausible sample
     d1 = {x.path: x for x in s.sense(min_samples=2)}
-    assert d1["bad_path"].resolution == "off" and d1["bad_path"].forced_off  # unwitnessed -> flagged
+    assert (
+        d1["bad_path"].resolution == "off" and d1["bad_path"].forced_off
+    )  # unwitnessed -> flagged
 
     for _ in range(5):
-        s.observe("bad_path", 100)                             # plausible, zero-variance
+        s.observe("bad_path", 100)  # plausible, zero-variance
     d2 = {x.path: x for x in s.sense(min_samples=2)}
     # honest residual: in-range zero-variance costs read as 'confident' -> 'low', NOT
     # flagged forced_off (it has enough samples). The witness cannot tell a fabricated
@@ -458,14 +489,19 @@ def test_regret_sensor_masking_is_only_partially_defended_honestly():
 
 # --- the FULL legitimate loop is unchanged (mirror test_telemetry.py) -------------
 
+
 def test_legit_hot_telemetry_still_flips_lane_16_to_8():
     """ANTI-REGRESSION (mirrors test_telemetry.test_hot_telemetry_replans_to_narrower_lane):
     GENUINE hot, in-range telemetry must STILL flip vector_add vec16 -> vec8 on AVX-512
     -- the validation gate is invisible to legitimate telemetry."""
     h = TargetProfile.x86_avx512()
     theta, policy, res = calibrate_and_replan(
-        vector_add(1024), h, _cool(thermal=100), base_theta=Theta.cool(),
-        calibrator=EwmaCalibrator(alpha=256))
+        vector_add(1024),
+        h,
+        _cool(thermal=100),
+        base_theta=Theta.cool(),
+        calibrator=EwmaCalibrator(alpha=256),
+    )
     assert theta.thermal == 100
     assert policy.name == "energy"
     assert res.by_claim()[1000].width == 8
@@ -476,10 +512,11 @@ def test_legit_close_loop_certifies_a_win_unchanged():
     >= 0 replan win and an admissible certificate -- the ingest validation does not
     perturb a genuine measured replan."""
     h = TargetProfile.x86_avx512()
-    cert = close_loop(vector_add(1024), h,
-                      events=_cool(thermal=100), calibrator=EwmaCalibrator(alpha=256))
+    cert = close_loop(
+        vector_add(1024), h, events=_cool(thermal=100), calibrator=EwmaCalibrator(alpha=256)
+    )
     assert cert.admissible and cert.win >= 0
-    assert cert.measured_thermal == 100                       # genuine hot telemetry folded in
+    assert cert.measured_thermal == 100  # genuine hot telemetry folded in
 
 
 def test_legit_telemetry_passes_sanitize_unchanged():

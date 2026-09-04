@@ -55,12 +55,20 @@ from ...kbcir.device_manifest import DeviceManifest, StridedView, check_strided_
 from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF, Policy
 from ...model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
-from .decode import (_MAX_REFERENCE_CONTEXT, DecoderSpec, DecoderWeights, KVCache, _argmax,
-                     _head_logits, _validate_decode_request, check_decoder_weights)
+from .decode import (
+    _MAX_REFERENCE_CONTEXT,
+    DecoderSpec,
+    DecoderWeights,
+    KVCache,
+    _argmax,
+    _head_logits,
+    _validate_decode_request,
+    check_decoder_weights,
+)
 from .serve import _validate_session_shape, decode_session_module
 
-_PAGE_RID = 7000                       # the page band: page p is Resource rid 7000 + p
-_WTS = 2                               # the shared weights RID (decode_session's convention)
+_PAGE_RID = 7000  # the page band: page p is Resource rid 7000 + p
+_WTS = 2  # the shared weights RID (decode_session's convention)
 _MAX_U32 = (1 << 32) - 1
 _MAX_U64 = (1 << 64) - 1
 _MAX_PAGES = 1 << 16
@@ -76,13 +84,22 @@ class PagedKV:
     `gem.kv_cache` capacity law live and bumps the owning page's `data_gen` -- the
     registry generation IS the paging state."""
 
-    def __init__(self, spec: DecoderSpec, capacity: int, page_size: int,
-                 man: DeviceManifest, bank: str, *, base_rid: int = _PAGE_RID) -> None:
+    def __init__(
+        self,
+        spec: DecoderSpec,
+        capacity: int,
+        page_size: int,
+        man: DeviceManifest,
+        bank: str,
+        *,
+        base_rid: int = _PAGE_RID,
+    ) -> None:
         if not isinstance(spec, DecoderSpec):
             raise ValueError("PagedKV spec is not a DecoderSpec")
         if type(capacity) is not int or not 1 <= capacity <= _MAX_REFERENCE_CONTEXT:
             raise ValueError(
-                f"PagedKV capacity must be an integer in [1, {_MAX_REFERENCE_CONTEXT}]")
+                f"PagedKV capacity must be an integer in [1, {_MAX_REFERENCE_CONTEXT}]"
+            )
         if type(page_size) is not int or not 1 <= page_size <= capacity:
             raise ValueError("PagedKV page_size must be an integer in [1, capacity]")
         if not isinstance(man, DeviceManifest):
@@ -91,7 +108,7 @@ class PagedKV:
             raise ValueError("PagedKV bank must be a non-empty string")
         if type(base_rid) is not int or not 5 <= base_rid <= _MAX_U32:
             raise ValueError("PagedKV base_rid must be an integer in [5, 2^32-1]")
-        b = man.bank(bank)                             # KeyError on a ghost bank (a veto)
+        b = man.bank(bank)  # KeyError on a ghost bank (a veto)
         # one position = one K row + one V row per layer per kv head, f32.
         row_elems = 2 * max(1, spec.n_layers * spec.kv_dim)
         n_pages = -(-capacity // page_size)
@@ -103,15 +120,25 @@ class PagedKV:
         views: list = []
         pages: list = []
         for p in range(n_pages):
-            view = StridedView(bank=bank, offset_bytes=p * page_bytes,
-                               shape=(page_size, row_elems),
-                               strides=(row_elems, 1), elem_bytes=4)
+            view = StridedView(
+                bank=bank,
+                offset_bytes=p * page_bytes,
+                shape=(page_size, row_elems),
+                strides=(row_elems, 1),
+                elem_bytes=4,
+            )
             bad = check_strided_view(view, man)
-            if bad:                                    # D-R4, live: no view, no memory
+            if bad:  # D-R4, live: no view, no memory
                 raise ValueError(f"PagedKV page {p} refused: " + "; ".join(bad))
             views.append(view)
-            pages.append(Resource(rid=base_rid + p, domain=b.domain,
-                                  shape=(page_size, row_elems), name=f"KVPAGE{p}"))
+            pages.append(
+                Resource(
+                    rid=base_rid + p,
+                    domain=b.domain,
+                    shape=(page_size, row_elems),
+                    name=f"KVPAGE{p}",
+                )
+            )
         # Commit only after every page has passed the manifest checks.
         self.spec, self.capacity, self.page_size = spec, capacity, page_size
         self.row_elems, self.n_pages = row_elems, n_pages
@@ -150,11 +177,14 @@ class PagedKV:
         if self.cache.pos >= self.capacity:
             raise ValueError(
                 f"kv_cache: pos {self.cache.pos + 1} exceeds capacity {self.capacity} "
-                "(an over-full cache is the paging lie)")
+                "(an over-full cache is the paging lie)"
+            )
         p = self.page_of(self.cache.pos)
         if self.views[p] is None:
-            raise ValueError(f"kv_cache: page {p} was evicted; writing through a freed "
-                             "view is the use-after-free shape")
+            raise ValueError(
+                f"kv_cache: page {p} was evicted; writing through a freed "
+                "view is the use-after-free shape"
+            )
         out = self.cache._step_row(x_row, spec, w)
         self.pages[p] = replace(self.pages[p], data_gen=self.pages[p].data_gen + 1)
         return out
@@ -171,7 +201,8 @@ class PagedKV:
             raise ValueError(
                 f"kv.evict: page {p} refused at pos {self.cache.pos} < capacity "
                 f"{self.capacity} -- full-context attention still reads every page; "
-                "eviction before completion is a numerics lie")
+                "eviction before completion is a numerics lie"
+            )
         if self.views[p] is None:
             raise ValueError(f"kv.evict: page {p} already evicted (the double-free shape)")
         view, self.views[p] = self.views[p], None
@@ -187,14 +218,30 @@ class PagedKV:
         if type(cid) is not int or not 1 <= cid <= _MAX_U64:
             raise ValueError("kv.evict: claim id must be an integer in [1, 2^64-1]")
         rid = self.pages[p].rid
-        return Claim(id=cid, opcode=Opcode.STORE, lane=Lane.U,
-                     stride_class=StrideClass.SCALAR, count=1, rd=(rid,), wr=(rid,),
-                     op=f"kv.evict:{p}", domain=self.pages[p].domain)
+        return Claim(
+            id=cid,
+            opcode=Opcode.STORE,
+            lane=Lane.U,
+            stride_class=StrideClass.SCALAR,
+            count=1,
+            rd=(rid,),
+            wr=(rid,),
+            op=f"kv.evict:{p}",
+            domain=self.pages[p].domain,
+        )
 
 
-def generate_paged(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_new: int,
-                   *, man: DeviceManifest, bank: str, page_size: int,
-                   eos_id: int | None = None) -> tuple:
+def generate_paged(
+    prompt_ids: list,
+    spec: DecoderSpec,
+    w: DecoderWeights,
+    max_new: int,
+    *,
+    man: DeviceManifest,
+    bank: str,
+    page_size: int,
+    eos_id: int | None = None,
+) -> tuple:
     """Greedy decode over the PAGED store, capacity = the exact session budget
     (prompt + max_new). The ids are `decode_with_kv_cache`'s BIT-FOR-BIT -- the same
     `KVCache` runs underneath; the pages only account. Returns (ids, kv) so callers can
@@ -202,20 +249,19 @@ def generate_paged(prompt_ids: list, spec: DecoderSpec, w: DecoderWeights, max_n
     prompt = _validate_decode_request(prompt_ids, spec, w, max_new, eos_id)
     kv = PagedKV(spec, len(prompt) + max_new, page_size, man, bank)
     hrow: list = []
-    for tid in prompt:                                 # the prefill fills pages in order
+    for tid in prompt:  # the prefill fills pages in order
         hrow = kv.step_row(w.embedding.row(tid), spec, w)
     out: list = []
     for _ in range(max_new):
         nxt = _argmax(_head_logits(hrow, w))
         out.append(nxt)
-        if eos_id is not None and nxt == eos_id:       # emitted, never fed back (the
-            break                                      # serve.py eos law)
+        if eos_id is not None and nxt == eos_id:  # emitted, never fed back (the
+            break  # serve.py eos law)
         hrow = kv.step_row(w.embedding.row(nxt), spec, w)
     return out, kv
 
 
-def paged_session_module(spec: DecoderSpec, prompt_len: int, max_new: int,
-                         kv: PagedKV) -> Module:
+def paged_session_module(spec: DecoderSpec, prompt_len: int, max_new: int, kv: PagedKV) -> Module:
     """The decode-session module JOINED with the live page resources at their CURRENT
     generations -- and WIRED (A3): the prefill claim writes the pages it fills; decode
     step t reads every page up to its position (full-context attention touches the
@@ -228,8 +274,7 @@ def paged_session_module(spec: DecoderSpec, prompt_len: int, max_new: int,
         raise ValueError("paged session cache/spec mismatch")
     required = prompt_len + max_new
     if required > kv.capacity:
-        raise ValueError(
-            f"paged session needs {required} rows but cache capacity is {kv.capacity}")
+        raise ValueError(f"paged session needs {required} rows but cache capacity is {kv.capacity}")
     if len(kv.pages) != kv.n_pages or len(kv.views) != kv.n_pages or kv.n_pages < 1:
         raise ValueError("paged session cache has a malformed page table")
     base = kv.pages[0].rid if isinstance(kv.pages[0], Resource) else -1
@@ -249,8 +294,7 @@ def paged_session_module(spec: DecoderSpec, prompt_len: int, max_new: int,
     for ph in m.phases:
         for c in ph.claims:
             if c.op == "gem.prefill":
-                c.wr = tuple(c.wr) + tuple(
-                    base + i for i in range(page_of(prompt_len - 1) + 1))
+                c.wr = tuple(c.wr) + tuple(base + i for i in range(page_of(prompt_len - 1) + 1))
             elif c.op == "gem.decode_step":
                 pos = prompt_len + t
                 t += 1
@@ -286,8 +330,9 @@ def schedule_eviction(m: Module, kv: PagedKV, p: int, *, cid: int = 0) -> Module
     return m
 
 
-def _session_parts(spec: DecoderSpec, s: int, prompt_len: int, max_new: int,
-                   phase_start: int) -> tuple[tuple[Resource, ...], tuple[Phase, ...]]:
+def _session_parts(
+    spec: DecoderSpec, s: int, prompt_len: int, max_new: int, phase_start: int
+) -> tuple[tuple[Resource, ...], tuple[Phase, ...]]:
     """One session's resources + prefill->decode chain, appended to `m` (phase ids
     continue from the module's tail -- which is why building upfront and admitting
     mid-flight produce the IDENTICAL graph)."""
@@ -297,35 +342,54 @@ def _session_parts(spec: DecoderSpec, s: int, prompt_len: int, max_new: int,
     o, base = s * 10, _SESSION_CLAIM_STRIDE * s
     cap = prompt_len + max_new
     tok, kvr, logi = o + 1, o + 3, o + 4
-    resources = (Resource(rid=tok, domain=Domain.RAM, shape=(cap,), name=f"TOK{s}"),
-                 Resource(rid=kvr, domain=Domain.RAM,
-                          shape=(cap, max(1, spec.n_layers * spec.kv_dim)), name=f"KV{s}"),
-                 Resource(rid=logi, domain=Domain.RAM, shape=(spec.vocab_size,),
-                          name=f"LOGITS{s}"))
+    resources = (
+        Resource(rid=tok, domain=Domain.RAM, shape=(cap,), name=f"TOK{s}"),
+        Resource(
+            rid=kvr,
+            domain=Domain.RAM,
+            shape=(cap, max(1, spec.n_layers * spec.kv_dim)),
+            name=f"KV{s}",
+        ),
+        Resource(rid=logi, domain=Domain.RAM, shape=(spec.vocab_size,), name=f"LOGITS{s}"),
+    )
     phases: list[Phase] = []
     pid = phase_start
     prev: tuple = ()
-    prefill = Claim(id=base + 1, opcode=Opcode.T_MACC, lane=Lane.T,
-                    stride_class=StrideClass.TILE,
-                    count=max(1, prompt_len * spec.n_layers), rd=(tok, _WTS),
-                    wr=(kvr,), op="gem.prefill", domain=Domain.RAM,
-                    bounds="assumed_safe")
+    prefill = Claim(
+        id=base + 1,
+        opcode=Opcode.T_MACC,
+        lane=Lane.T,
+        stride_class=StrideClass.TILE,
+        count=max(1, prompt_len * spec.n_layers),
+        rd=(tok, _WTS),
+        wr=(kvr,),
+        op="gem.prefill",
+        domain=Domain.RAM,
+        bounds="assumed_safe",
+    )
     phases.append(Phase(phase_id=pid, deps=prev, claims=[prefill]))
     prev = (pid,)
     pid += 1
     for t in range(max_new):
-        dec = Claim(id=base + 100 + t, opcode=Opcode.T_MACC, lane=Lane.T,
-                    stride_class=StrideClass.TILE, count=max(1, spec.n_layers),
-                    rd=(tok, _WTS, kvr), wr=(kvr, logi, tok),
-                    op="gem.decode_step", domain=Domain.RAM, bounds="assumed_safe")
+        dec = Claim(
+            id=base + 100 + t,
+            opcode=Opcode.T_MACC,
+            lane=Lane.T,
+            stride_class=StrideClass.TILE,
+            count=max(1, spec.n_layers),
+            rd=(tok, _WTS, kvr),
+            wr=(kvr, logi, tok),
+            op="gem.decode_step",
+            domain=Domain.RAM,
+            bounds="assumed_safe",
+        )
         phases.append(Phase(phase_id=pid, deps=prev, claims=[dec]))
         prev = (pid,)
         pid += 1
     return resources, tuple(phases)
 
 
-def _add_session(m: Module, spec: DecoderSpec, s: int, prompt_len: int,
-                 max_new: int) -> None:
+def _add_session(m: Module, spec: DecoderSpec, s: int, prompt_len: int, max_new: int) -> None:
     """Preflight one session completely, then append it atomically to the graph."""
     resources, phases = _session_parts(spec, s, prompt_len, max_new, len(m.phases))
     new_rids = {r.rid for r in resources}
@@ -364,15 +428,23 @@ def _session_count(m: Module, spec: DecoderSpec) -> int:
         raise ValueError("batch session count is outside the supported range")
     expected = {_WTS}
     wts = m.resources.get(_WTS)
-    if (wts is None or wts.name != "WTS" or wts.domain != Domain.RAM or
-            wts.shape != (max(1, spec.n_layers),)):
+    if (
+        wts is None
+        or wts.name != "WTS"
+        or wts.domain != Domain.RAM
+        or wts.shape != (max(1, spec.n_layers),)
+    ):
         raise ValueError("batch WTS resource does not match the decoder spec")
-    expected_wts = Resource(rid=_WTS, domain=Domain.RAM,
-                            shape=(max(1, spec.n_layers),), name="WTS")
-    if (not isinstance(wts.map_gen, int) or isinstance(wts.map_gen, bool) or
-            not isinstance(wts.data_gen, int) or isinstance(wts.data_gen, bool) or
-            not 0 <= wts.map_gen <= _MAX_U64 or not 0 <= wts.data_gen <= _MAX_U64 or
-            replace(wts, map_gen=0, data_gen=0) != expected_wts):
+    expected_wts = Resource(rid=_WTS, domain=Domain.RAM, shape=(max(1, spec.n_layers),), name="WTS")
+    if (
+        not isinstance(wts.map_gen, int)
+        or isinstance(wts.map_gen, bool)
+        or not isinstance(wts.data_gen, int)
+        or isinstance(wts.data_gen, bool)
+        or not 0 <= wts.map_gen <= _MAX_U64
+        or not 0 <= wts.data_gen <= _MAX_U64
+        or replace(wts, map_gen=0, data_gen=0) != expected_wts
+    ):
         raise ValueError("batch WTS resource metadata is malformed")
     resident: list[tuple[Resource, Resource, Resource]] = []
     for s in range(count):
@@ -382,28 +454,35 @@ def _session_count(m: Module, spec: DecoderSpec) -> int:
         tok, kvr, logi = (m.resources.get(rid) for rid in ids)
         if any(r is None for r in (tok, kvr, logi)):
             raise ValueError(f"batch session {s} resource band is incomplete")
-        if (tok.name != f"TOK{s}" or kvr.name != f"KV{s}" or
-                logi.name != f"LOGITS{s}"):
+        if tok.name != f"TOK{s}" or kvr.name != f"KV{s}" or logi.name != f"LOGITS{s}":
             raise ValueError(f"batch session {s} resource names are malformed")
         if tok.domain != Domain.RAM or kvr.domain != Domain.RAM or logi.domain != Domain.RAM:
             raise ValueError(f"batch session {s} resources must be RAM")
-        if (len(tok.shape) != 1 or type(tok.shape[0]) is not int or tok.shape[0] < 1 or
-                kvr.shape != (tok.shape[0], max(1, spec.n_layers * spec.kv_dim)) or
-                logi.shape != (spec.vocab_size,)):
+        if (
+            len(tok.shape) != 1
+            or type(tok.shape[0]) is not int
+            or tok.shape[0] < 1
+            or kvr.shape != (tok.shape[0], max(1, spec.n_layers * spec.kv_dim))
+            or logi.shape != (spec.vocab_size,)
+        ):
             raise ValueError(f"batch session {s} resource shapes are malformed")
         resident.append((tok, kvr, logi))
     if set(m.resources) != expected:
         raise ValueError("batch registry contains an unexpected resource")
-    if any(not isinstance(ph, Phase) or len(ph.claims) != 1 or
-           not isinstance(ph.claims[0], Claim) for ph in m.phases):
+    if any(
+        not isinstance(ph, Phase) or len(ph.claims) != 1 or not isinstance(ph.claims[0], Claim)
+        for ph in m.phases
+    ):
         raise ValueError("batch phases must each contain exactly one claim")
     phase_ids = [ph.phase_id for ph in m.phases]
     if len(set(phase_ids)) != len(phase_ids) or set(phase_ids) != set(range(len(phase_ids))):
         raise ValueError("batch phase ids are not contiguous and unique")
     cids = [ph.claims[0].id for ph in m.phases]
-    if (len(cids) > _MAX_BATCH_CLAIMS or
-            any(type(cid) is not int or not 1 <= cid <= _MAX_U64 for cid in cids) or
-            len(set(cids)) != len(cids)):
+    if (
+        len(cids) > _MAX_BATCH_CLAIMS
+        or any(type(cid) is not int or not 1 <= cid <= _MAX_U64 for cid in cids)
+        or len(set(cids)) != len(cids)
+    ):
         raise ValueError("batch claim inventory is oversized or ambiguous")
     cursor = 0
     for s, actual_resources in enumerate(resident):
@@ -418,23 +497,30 @@ def _session_count(m: Module, spec: DecoderSpec) -> int:
         capacity = actual_resources[0].shape[0]
         prompt_len = capacity - max_new
         _validate_session_shape(prompt_len, max_new)
-        expected_resources, expected_phases = _session_parts(
-            spec, s, prompt_len, max_new, cursor)
+        expected_resources, expected_phases = _session_parts(spec, s, prompt_len, max_new, cursor)
         for actual, expected_resource in zip(actual_resources, expected_resources):
-            if (not isinstance(actual.map_gen, int) or isinstance(actual.map_gen, bool) or
-                    not isinstance(actual.data_gen, int) or isinstance(actual.data_gen, bool) or
-                    not 0 <= actual.map_gen <= _MAX_U64 or
-                    not 0 <= actual.data_gen <= _MAX_U64 or
-                    replace(actual, map_gen=0, data_gen=0) != expected_resource):
+            if (
+                not isinstance(actual.map_gen, int)
+                or isinstance(actual.map_gen, bool)
+                or not isinstance(actual.data_gen, int)
+                or isinstance(actual.data_gen, bool)
+                or not 0 <= actual.map_gen <= _MAX_U64
+                or not 0 <= actual.data_gen <= _MAX_U64
+                or replace(actual, map_gen=0, data_gen=0) != expected_resource
+            ):
                 raise ValueError(f"batch session {s} resource metadata is malformed")
-        actual_phases = tuple(m.phases[cursor:cursor + len(expected_phases)])
+        actual_phases = tuple(m.phases[cursor : cursor + len(expected_phases)])
         if actual_phases != expected_phases:
             raise ValueError(f"batch session {s} phase/claim graph is malformed")
         cursor += len(expected_phases)
     if cursor != len(m.phases):
         raise ValueError("batch contains claims outside every resident session")
-    if (m.name != f"batched_sessions_{count}x" or m.cacheline != 64 or m.align != 64 or
-            m.target != "registry-first"):
+    if (
+        m.name != f"batched_sessions_{count}x"
+        or m.cacheline != 64
+        or m.align != 64
+        or m.target != "registry-first"
+    ):
         raise ValueError("batch module metadata is malformed")
     return count
 
@@ -464,8 +550,9 @@ def batched_sessions_module(spec: DecoderSpec, sessions: tuple) -> Module:
             raise ValueError(f"batch exceeds {_MAX_BATCH_CLAIMS} claims")
         normalized.append((prompt_len, max_new))
     m = Module(name=f"batched_sessions_{len(sessions)}x")
-    m.add_resource(Resource(rid=_WTS, domain=Domain.RAM,
-                            shape=(max(1, spec.n_layers),), name="WTS"))
+    m.add_resource(
+        Resource(rid=_WTS, domain=Domain.RAM, shape=(max(1, spec.n_layers),), name="WTS")
+    )
     for s, (prompt_len, max_new) in enumerate(normalized):
         _add_session(m, spec, s, prompt_len, max_new)
     return m
@@ -504,15 +591,22 @@ class BatchCertificate:
 
     @property
     def overlap_win(self) -> int:
-        return self.barriered - self.pipelined         # >= 0: what batching buys
+        return self.barriered - self.pipelined  # >= 0: what batching buys
 
     @property
     def admitted(self) -> bool:
         return 0 < self.pipelined <= self.barriered <= self.serial
 
 
-def certify_batch(spec: DecoderSpec, sessions: tuple, h: HProfile, theta: Theta,
-                  policy: Policy = PERF, *, module: Module | None = None) -> tuple:
+def certify_batch(
+    spec: DecoderSpec,
+    sessions: tuple,
+    h: HProfile,
+    theta: Theta,
+    policy: Policy = PERF,
+    *,
+    module: Module | None = None,
+) -> tuple:
     """Price + place one batch of sessions: optimize the merged module (per-claim costs
     -> durations), schedule it barriered AND token-pipelined, certify the win. Returns
     (certificate, the pipelined schedule). Pass `module` to certify a LIVE (e.g.
@@ -525,6 +619,10 @@ def certify_batch(spec: DecoderSpec, sessions: tuple, h: HProfile, theta: Theta,
     dur = durations_from(result)
     barriered = schedule_eft(m, dur, target=h)
     pipelined: GemSchedule = execute_tokens(m, dur, target=h)
-    cert = BatchCertificate(sessions=count, serial=sum(dur.values()),
-                            barriered=barriered.makespan, pipelined=pipelined.makespan)
+    cert = BatchCertificate(
+        sessions=count,
+        serial=sum(dur.values()),
+        barriered=barriered.makespan,
+        pipelined=pipelined.makespan,
+    )
     return cert, pipelined

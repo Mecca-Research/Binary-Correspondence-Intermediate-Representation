@@ -19,17 +19,17 @@ def test_build_saturates_once_and_extracts_the_optimum():
     e = _add(_mul(V("x"), V("b")), _mul(V("x"), V("c")))
     r = ResidentEGraph.build(e)
     assert r.stats.saturated
-    assert r.current().optimized.op == "mul"          # the factored form x*(b+c)
+    assert r.current().optimized.op == "mul"  # the factored form x*(b+c)
 
 
 def test_pivot_recosts_over_the_standing_graph_without_rebuild():
     r = ResidentEGraph.build(_mul(V("x"), V("y")))
     base = r.resident_size
-    before = r.current().optimized_cost               # mul = 2
-    after = r.pivot(bump={"mul": 5}).optimized_cost   # telemetry: mul stalls -> recost
-    assert after == before + 5                         # re-extracted under new costs
+    before = r.current().optimized_cost  # mul = 2
+    after = r.pivot(bump={"mul": 5}).optimized_cost  # telemetry: mul stalls -> recost
+    assert after == before + 5  # re-extracted under new costs
     assert r.pivots == 1
-    assert r.resident_size == base and not r.rebuilt_since_build   # no rebuild/re-parse
+    assert r.resident_size == base and not r.rebuilt_since_build  # no rebuild/re-parse
 
 
 def test_pivot_switches_to_an_equivalent_cheaper_subgraph():
@@ -44,12 +44,14 @@ def test_pivot_switches_to_an_equivalent_cheaper_subgraph():
     # telemetry reports the adder as the bottleneck -> pivot; the mul form now wins.
     res = r.pivot(bump={"add": 10})
     assert res.optimized.op == "mul"
-    assert r.resident_size == size                     # the pivot did not rebuild the graph
+    assert r.resident_size == size  # the pivot did not rebuild the graph
 
 
 def test_pivot_is_deterministic():
     e = _add(_mul(V("x"), V("b")), _mul(V("x"), V("c")))
-    a = ResidentEGraph.build(e); a.pivot(bump={"mul": 3})
-    b = ResidentEGraph.build(e); b.pivot(bump={"mul": 3})
+    a = ResidentEGraph.build(e)
+    a.pivot(bump={"mul": 3})
+    b = ResidentEGraph.build(e)
+    b.pivot(bump={"mul": 3})
     assert a.current().optimized == b.current().optimized
     assert a.current().optimized_cost == b.current().optimized_cost

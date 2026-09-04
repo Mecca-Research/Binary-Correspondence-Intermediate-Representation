@@ -12,20 +12,40 @@ import os
 import tempfile
 
 from bcir.channels import CHANNELS
-from bcir.kbcir.channel_prior import (ChannelPriorCertificate, FrozenChannelPrior,
-                                      build_channel_table, channel_prior_certificate,
-                                      guided_plan_channel, load_channel_prior,
-                                      prior_channel_samples, save_channel_prior,
-                                      train_channel_prior)
+from bcir.kbcir.channel_prior import (
+    ChannelPriorCertificate,
+    FrozenChannelPrior,
+    build_channel_table,
+    channel_prior_certificate,
+    guided_plan_channel,
+    load_channel_prior,
+    prior_channel_samples,
+    save_channel_prior,
+    train_channel_prior,
+)
 from bcir.kbcir.cost import Theta
 from bcir.kbcir.tile_prior import shape_class
 
 TOWER = [CHANNELS["x86_avx512"], CHANNELS["arm64_neon"], CHANNELS["nvidia_ptx"]]
 COOL = Theta.cool()
-TRAIN = [(16, 16, 16), (32, 32, 32), (64, 64, 64), (32, 64, 128),
-         (128, 32, 16), (8, 256, 8), (64, 16, 256), (256, 256, 64)]
-HELD_OUT = [(24, 24, 24), (48, 48, 48), (160, 40, 20), (12, 300, 12),
-            (96, 24, 96), (320, 320, 80)]                # same classes, different shapes
+TRAIN = [
+    (16, 16, 16),
+    (32, 32, 32),
+    (64, 64, 64),
+    (32, 64, 128),
+    (128, 32, 16),
+    (8, 256, 8),
+    (64, 16, 256),
+    (256, 256, 64),
+]
+HELD_OUT = [
+    (24, 24, 24),
+    (48, 48, 48),
+    (160, 40, 20),
+    (12, 300, 12),
+    (96, 24, 96),
+    (320, 320, 80),
+]  # same classes, different shapes
 
 
 def _frozen():
@@ -41,7 +61,7 @@ def test_guided_choice_matches_the_exact_optimum_with_real_reduction():
     assert cert.admitted, cert
     assert cert.mismatches == 0
     assert cert.checked == len(HELD_OUT)
-    assert cert.reduction >= 0.50, cert                  # measured 0.83
+    assert cert.reduction >= 0.50, cert  # measured 0.83
     assert cert.priced_guided < cert.priced_exhaustive
 
 
@@ -52,7 +72,7 @@ def test_an_unseen_shape_class_degenerates_honestly():
     assert shape_class(1024, 1024, 1024) not in table
     exact, ne = guided_plan_channel(1024, 1024, 1024, TOWER, COOL)
     ch, n = guided_plan_channel(1024, 1024, 1024, TOWER, COOL, table=table, prior=_frozen())
-    assert n == ne == len(TOWER)                         # degenerated, honestly
+    assert n == ne == len(TOWER)  # degenerated, honestly
     assert ch.name == exact.name
     # and an empty tower refuses rather than guessing.
     try:
@@ -91,6 +111,7 @@ def test_persisted_prior_round_trips_and_refuses_staleness():
     """The envelope law: kind/schema pinned; round-trip equality; a recalibrated channel
     (cal_gen bump) -> STALE; a different tower -> retrain; a newer schema -> upgrade."""
     import json
+
     table = build_channel_table(TRAIN, TOWER, COOL)
     pri = _frozen()
     with tempfile.TemporaryDirectory() as tmp:
@@ -137,11 +158,21 @@ def test_persisted_prior_rejects_ambiguous_or_malformed_installable_state():
             good = json.load(f)
 
         bad_docs = []
-        d = json.loads(json.dumps(good)); d["wq"] = [0]; bad_docs.append(d)
-        d = json.loads(json.dumps(good)); d["wq"][0] = True; bad_docs.append(d)
-        d = json.loads(json.dumps(good)); d["table"] = {"1,2": TOWER[0].name}; bad_docs.append(d)
-        d = json.loads(json.dumps(good)); d["table"] = {"1,2,3": "ghost"}; bad_docs.append(d)
-        d = json.loads(json.dumps(good)); d["tower"].append(d["tower"][0]); bad_docs.append(d)
+        d = json.loads(json.dumps(good))
+        d["wq"] = [0]
+        bad_docs.append(d)
+        d = json.loads(json.dumps(good))
+        d["wq"][0] = True
+        bad_docs.append(d)
+        d = json.loads(json.dumps(good))
+        d["table"] = {"1,2": TOWER[0].name}
+        bad_docs.append(d)
+        d = json.loads(json.dumps(good))
+        d["table"] = {"1,2,3": "ghost"}
+        bad_docs.append(d)
+        d = json.loads(json.dumps(good))
+        d["tower"].append(d["tower"][0])
+        bad_docs.append(d)
         for bad in bad_docs:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(bad, f)
@@ -179,15 +210,22 @@ def test_persisted_prior_rejects_ambiguous_or_malformed_installable_state():
 
 # --- D3.4: the table wired into orchestrate + calibrated towers -------------------------------
 
+
 def _cal_tower():
     """A CALIBRATED tower (cal_gen 1 -- D3.4's second half): the host profile is
     strictly the cheapest gemm channel (mem_unit 1 vs the gpu's 2), so the exhaustive
     winner is unambiguous (no cost ties for the tie-break laws to disagree over)."""
     x86, gpu = CHANNELS["x86_avx512"], CHANNELS["nvidia_ptx"]
-    host = dataclasses.replace(x86, name="host_cal", profile=dataclasses.replace(
-        x86.profile, name="host_cal", mem_unit=1, cal_gen=1))
-    wide = dataclasses.replace(gpu, name="gpu_cal", profile=dataclasses.replace(
-        gpu.profile, name="gpu_cal", mem_unit=2, cal_gen=1))
+    host = dataclasses.replace(
+        x86,
+        name="host_cal",
+        profile=dataclasses.replace(x86.profile, name="host_cal", mem_unit=1, cal_gen=1),
+    )
+    wide = dataclasses.replace(
+        gpu,
+        name="gpu_cal",
+        profile=dataclasses.replace(gpu.profile, name="gpu_cal", mem_unit=2, cal_gen=1),
+    )
     return [host, wide, CHANNELS["arm64_neon"]]
 
 
@@ -196,6 +234,7 @@ def _gemm_fixture(M, N, K):
     module's author declares the gemm dimensions it already knows)."""
     from bcir.kbcir.calling_side import _gemm_claim
     from bcir.model import Domain, Module, Phase, Resource
+
     m = Module(name=f"gemm_{M}x{N}x{K}")
     for rid, nm in ((1, "A"), (2, "B"), (3, "C")):
         m.add_resource(Resource(rid=rid, domain=Domain.RAM, shape=(max(1, M * N),), name=nm))
@@ -209,23 +248,22 @@ def test_d3_4_the_table_wires_into_orchestrate_with_zero_mismatches():
     table hit prices ONE channel instead of the tower; an unseen class falls back to
     the full tower -- exactness is never delegated); a POISONED table changes
     placements and is CAUGHT by the certificate, never trusted."""
-    from bcir.kbcir.channel_prior import (orchestrate_guided,
-                                          orchestrate_prior_certificate)
+    from bcir.kbcir.channel_prior import orchestrate_guided, orchestrate_prior_certificate
     from bcir.kbcir.train_graph import TrainStepSpec, train_step_module
+
     tower = _cal_tower()
     table = build_channel_table(TRAIN, tower, COOL)
     fixtures = [_gemm_fixture(*s) for s in HELD_OUT[:3]]
     fixtures.append((train_step_module(TrainStepSpec()), {1: (8, 1, 4)}))  # unseen class
     cert = orchestrate_prior_certificate(fixtures, tower, COOL, table=table)
     assert cert.admitted, (cert.mismatches, cert.checked)
-    assert cert.checked >= 9                                     # 3 gemms + the step's claims
+    assert cert.checked >= 9  # 3 gemms + the step's claims
     assert cert.reduction >= 0.30, cert.reduction
-    _, priced = orchestrate_guided(fixtures[0][0], tower, COOL,
-                                   table=table, dims=fixtures[0][1])
-    assert priced == 1                                           # a hit prices ONE channel
-    poisoned = {k: "gpu_cal" for k in table}                     # strictly-worse winners
+    _, priced = orchestrate_guided(fixtures[0][0], tower, COOL, table=table, dims=fixtures[0][1])
+    assert priced == 1  # a hit prices ONE channel
+    poisoned = {k: "gpu_cal" for k in table}  # strictly-worse winners
     bad = orchestrate_prior_certificate(fixtures[:3], tower, COOL, table=poisoned)
-    assert not bad.admitted and bad.mismatches > 0               # caught, not trusted
+    assert not bad.admitted and bad.mismatches > 0  # caught, not trusted
 
 
 def test_d3_4_calibrated_towers_hold_the_laws_and_the_uniformity_is_recorded():
@@ -239,7 +277,7 @@ def test_d3_4_calibrated_towers_hold_the_laws_and_the_uniformity_is_recorded():
     term) -- the named follow-on, recorded, not hidden."""
     tower = _cal_tower()
     table = build_channel_table(TRAIN, tower, COOL)
-    assert table and set(table.values()) == {"host_cal"}         # uniform: measured truth
+    assert table and set(table.values()) == {"host_cal"}  # uniform: measured truth
     cert = channel_prior_certificate(HELD_OUT, tower, COOL, table=table)
     assert cert.admitted and cert.mismatches == 0
     with tempfile.TemporaryDirectory() as tmp:
@@ -247,7 +285,7 @@ def test_d3_4_calibrated_towers_hold_the_laws_and_the_uniformity_is_recorded():
         pri = _frozen()
         save_channel_prior(path, pri, build_channel_table(TRAIN, TOWER, COOL), TOWER)
         try:
-            load_channel_prior(path, tower)                      # calibrated != stock
+            load_channel_prior(path, tower)  # calibrated != stock
             raise AssertionError("a calibrated tower must refuse the stock prior")
         except ValueError as e:
             assert "retrain" in str(e) or "STALE" in str(e)

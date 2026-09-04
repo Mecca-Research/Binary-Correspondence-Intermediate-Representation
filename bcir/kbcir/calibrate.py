@@ -120,14 +120,14 @@ class FrozenCalibrator:
     it can stand in for `EwmaCalibrator` in the calibration loop on the certified
     rail (`measure_and_close(..., calibrator=frozen)`)."""
 
-    w_q8: tuple[int, ...]      # 4 weights (utilization, voltage, misses, bias) in Q8
+    w_q8: tuple[int, ...]  # 4 weights (utilization, voltage, misses, bias) in Q8
     gen: int = 1
     samples: int = 0
 
     def predict(self, e: DataDNA) -> int:
         """Predicted thermal pressure (0..100), integer (mirrors the trained
         LinearCalibrator's linear model, quantized)."""
-        feats = (e.utilization, e.voltage, e.misses, 100)   # 0..100; bias feature == 1.0*100
+        feats = (e.utilization, e.voltage, e.misses, 100)  # 0..100; bias feature == 1.0*100
         acc = sum(wi * fi for wi, fi in zip(self.w_q8, feats)) >> 8
         return max(0, min(100, acc))
 
@@ -140,24 +140,29 @@ class FrozenCalibrator:
         pred = sum(self.predict(e) for e in events) // len(events)
         clamp = lambda v: max(0, min(100, int(v)))
         return Theta(
-            thermal=clamp(pred), power=theta.power,
-            mem_pressure=clamp(_avg(events, "misses")), contention=theta.contention,
-            noise=theta.noise, wear=theta.wear,
+            thermal=clamp(pred),
+            power=theta.power,
+            mem_pressure=clamp(_avg(events, "misses")),
+            contention=theta.contention,
+            noise=theta.noise,
+            wear=theta.wear,
             utilization=clamp(_avg(events, "utilization")),
             voltage=clamp(_avg(events, "voltage")),
         )
 
     def to_json(self) -> str:
         import json
-        return json.dumps({"w_q8": list(self.w_q8), "gen": self.gen, "samples": self.samples},
-                          sort_keys=True)
+
+        return json.dumps(
+            {"w_q8": list(self.w_q8), "gen": self.gen, "samples": self.samples}, sort_keys=True
+        )
 
     # The frozen model has exactly NFEAT==4 weights (utilization, voltage, misses, bias).
     # A Q8 weight beyond +/-256*W_ABS_MAX is nonsensical for a model whose features are
     # 0..100 and whose output is clamped to 0..100 -- rejecting it stops a forged
     # certificate from installing adversarial (or non-finite) calibrator weights.
     _NWEIGHTS = 4
-    _W_Q8_ABS_MAX = 1 << 20            # |w| <= ~4096.0 in float; far past any trained weight
+    _W_Q8_ABS_MAX = 1 << 20  # |w| <= ~4096.0 in float; far past any trained weight
 
     @staticmethod
     def from_json(text: str) -> "FrozenCalibrator":
@@ -177,7 +182,8 @@ class FrozenCalibrator:
         if len(w) != FrozenCalibrator._NWEIGHTS:
             raise ValueError(
                 f"FrozenCalibrator w_q8 must have exactly {FrozenCalibrator._NWEIGHTS} "
-                f"weights, got {len(w)}")
+                f"weights, got {len(w)}"
+            )
         wi_out: list[int] = []
         for i, wi in enumerate(w):
             if isinstance(wi, bool) or not isinstance(wi, int):
@@ -185,21 +191,27 @@ class FrozenCalibrator:
             if abs(wi) > FrozenCalibrator._W_Q8_ABS_MAX:
                 raise ValueError(
                     f"FrozenCalibrator w_q8[{i}]={wi} exceeds |{FrozenCalibrator._W_Q8_ABS_MAX}| "
-                    "(out-of-range / adversarial weight)")
+                    "(out-of-range / adversarial weight)"
+                )
             wi_out.append(wi)
         gen = d["gen"]
-        if (isinstance(gen, bool) or not isinstance(gen, int) or
-                not 0 <= gen <= (1 << 63) - 1):
+        if isinstance(gen, bool) or not isinstance(gen, int) or not 0 <= gen <= (1 << 63) - 1:
             raise ValueError(f"FrozenCalibrator gen must be a non-negative i63, got {gen!r}")
         samples = d["samples"]
-        if (isinstance(samples, bool) or not isinstance(samples, int) or
-                not 0 <= samples <= (1 << 63) - 1):
-            raise ValueError(f"FrozenCalibrator samples must be a non-negative int, got {samples!r}")
+        if (
+            isinstance(samples, bool)
+            or not isinstance(samples, int)
+            or not 0 <= samples <= (1 << 63) - 1
+        ):
+            raise ValueError(
+                f"FrozenCalibrator samples must be a non-negative int, got {samples!r}"
+            )
         return FrozenCalibrator(tuple(wi_out), gen, samples)
 
 
-def train_calibrator(dataset: list[DataDNA], epochs: int = 300, lr: float = 0.2,
-                     gen: int = 1) -> FrozenCalibrator:
+def train_calibrator(
+    dataset: list[DataDNA], epochs: int = 300, lr: float = 0.2, gen: int = 1
+) -> FrozenCalibrator:
     """Train a `LinearCalibrator` on a labeled telemetry dataset (each event's
     `thermal` is the target), then **freeze** the learned weights to Q8 integers.
     Offline (L2/L3, floats during training); the returned artifact is deterministic
@@ -214,10 +226,10 @@ def train_calibrator(dataset: list[DataDNA], epochs: int = 300, lr: float = 0.2,
 def adaptive_policy(theta: Theta) -> Policy:
     """Pick a scalarization policy from the live runtime state."""
     if theta.thermal >= 60 or theta.power >= 60 or theta.voltage >= 60:
-        return ENERGY          # hot/constrained -> minimize heat/power
+        return ENERGY  # hot/constrained -> minimize heat/power
     if theta.mem_pressure >= 60 or theta.contention >= 60:
-        return THROUGHPUT      # bandwidth-starved -> weight memory/contention
-    return PERF                # nominal -> latency
+        return THROUGHPUT  # bandwidth-starved -> weight memory/contention
+    return PERF  # nominal -> latency
 
 
 def rehydrate_decide(
@@ -230,14 +242,14 @@ def rehydrate_decide(
 ) -> str:
     """Decide keep / patch / repack / replan for a StreamPack vs runtime state."""
     if pack_data_gen != runtime_data_gen:
-        return "replan"        # data changed -> the plan may be invalid
+        return "replan"  # data changed -> the plan may be invalid
     if pack_map_gen != runtime_map_gen:
-        return "repack"        # mapping changed -> re-hydrate the same plan
+        return "repack"  # mapping changed -> re-hydrate the same plan
     drift = abs(theta.thermal - baseline_thermal)
     if drift >= 40:
-        return "replan"        # large thermal drift -> a cheaper lane may win
+        return "replan"  # large thermal drift -> a cheaper lane may win
     if drift >= 20:
-        return "patch"         # minor drift -> tweak in place
+        return "patch"  # minor drift -> tweak in place
     return "keep"
 
 

@@ -10,10 +10,10 @@ from bcir.model import Claim, Lane, Module, Opcode, Phase, Resource, StrideClass
 from bcir.verify import verify_plan
 
 
-def _claim(cid, rd, wr, n=1024, lane=Lane.U, sc=StrideClass.UNIT, op="vector.add",
-           opcode=Opcode.ADD):
-    return Claim(id=cid, opcode=opcode, lane=lane, stride_class=sc, count=n,
-                 rd=rd, wr=wr, op=op)
+def _claim(
+    cid, rd, wr, n=1024, lane=Lane.U, sc=StrideClass.UNIT, op="vector.add", opcode=Opcode.ADD
+):
+    return Claim(id=cid, opcode=opcode, lane=lane, stride_class=sc, count=n, rd=rd, wr=wr, op=op)
 
 
 def _module(claims, rids):
@@ -37,8 +37,7 @@ def test_single_claim_is_the_degenerate_case():
 def test_independent_claims_overlap_to_the_max():
     # Two independent claims co-execute in one wave on distinct domains:
     # makespan == max(step costs), gain == min(step costs).
-    m = _module([_claim(1, (10, 11), (12,)), _claim(2, (20, 21), (22,))],
-                (10, 11, 12, 20, 21, 22))
+    m = _module([_claim(1, (10, 11), (12,)), _claim(2, (20, 21), (22,))], (10, 11, 12, 20, 21, 22))
     h = TARGETS["x86_avx512"]  # 8 affinity domains
     r = optimize(m, h, Theta.cool())
     p = price_scheduled(m, r, h, Theta.cool())
@@ -50,8 +49,7 @@ def test_independent_claims_overlap_to_the_max():
 
 def test_conflicting_claims_serialize_across_waves():
     # B reads what A writes (RAW): successive waves -- series composition, no gain.
-    m = _module([_claim(1, (10, 11), (12,)), _claim(2, (12, 20), (21,))],
-                (10, 11, 12, 20, 21))
+    m = _module([_claim(1, (10, 11), (12,)), _claim(2, (12, 20), (21,))], (10, 11, 12, 20, 21))
     h = TARGETS["x86_avx512"]
     r = optimize(m, h, Theta.cool())
     p = price_scheduled(m, r, h, Theta.cool())
@@ -61,8 +59,15 @@ def test_conflicting_claims_serialize_across_waves():
 
 def test_ggg_tail_overlaps_the_main_stream():
     # A unit-stride claim plus a decoupled gather: phase cost = max(main, tail).
-    gather = _claim(2, (20,), (21,), lane=Lane.GGG, sc=StrideClass.RANDOM,
-                    op="histogram.scatter", opcode=Opcode.GGG_LOAD)
+    gather = _claim(
+        2,
+        (20,),
+        (21,),
+        lane=Lane.GGG,
+        sc=StrideClass.RANDOM,
+        op="histogram.scatter",
+        opcode=Opcode.GGG_LOAD,
+    )
     m = _module([_claim(1, (10, 11), (12,)), gather], (10, 11, 12, 20, 21))
     h = TARGETS["x86_avx512"]
     r = optimize(m, h, Theta.cool())
@@ -75,8 +80,7 @@ def test_ggg_tail_overlaps_the_main_stream():
 def test_one_domain_serializes_bins_back_to_the_serial_price():
     # With a single affinity domain the wave degenerates to one bin chained in
     # textual order -- the schedule price collapses to the serial price exactly.
-    m = _module([_claim(1, (10, 11), (12,)), _claim(2, (10, 20), (21,))],
-                (10, 11, 12, 20, 21))
+    m = _module([_claim(1, (10, 11), (12,)), _claim(2, (10, 20), (21,))], (10, 11, 12, 20, 21))
     h = replace(TargetProfile.x86_avx512(), affinity_domains=1)
     r = optimize(m, h, Theta.cool())
     p = price_scheduled(m, r, h, Theta.cool())
@@ -88,15 +92,14 @@ def test_parallel_bins_do_not_inherit_textual_fusion():
     # memory (fusion x0.75). On separate domains they run in parallel: the bin
     # re-price must drop the phantom discount, so the makespan exceeds claim 2's
     # serially-discounted step cost.
-    m = _module([_claim(1, (10, 11), (12,)), _claim(2, (10, 20), (21,))],
-                (10, 11, 12, 20, 21))
+    m = _module([_claim(1, (10, 11), (12,)), _claim(2, (10, 20), (21,))], (10, 11, 12, 20, 21))
     h = TARGETS["x86_avx512"]  # 8 domains: claims land in different bins
     r = optimize(m, h, Theta.cool())
     p = price_scheduled(m, r, h, Theta.cool())
     by = {s.claim_id: s.cost for s in r.steps}
-    assert by[2] < by[1]                  # serial pricing gave claim 2 the discount
-    assert p.makespan == by[1]            # in parallel, both cost the undiscounted max
-    assert p.makespan < p.serial          # ...and overlap still beats the serial chain
+    assert by[2] < by[1]  # serial pricing gave claim 2 the discount
+    assert p.makespan == by[1]  # in parallel, both cost the undiscounted max
+    assert p.makespan < p.serial  # ...and overlap still beats the serial chain
 
 
 def test_optimize_scheduled_is_stable_on_the_canonical_corpus():
@@ -107,7 +110,8 @@ def test_optimize_scheduled_is_stable_on_the_canonical_corpus():
         h = TARGETS["x86_avx512"]
         base = optimize(m, h, Theta.cool())
         r, p = optimize_scheduled(m, h, Theta.cool())
-        assert {c: x.width for c, x in r.by_claim().items()} == \
-               {c: x.width for c, x in base.by_claim().items()}, name
+        assert {c: x.width for c, x in r.by_claim().items()} == {
+            c: x.width for c, x in base.by_claim().items()
+        }, name
         assert verify_plan(m, r) == []
         assert p.makespan <= p.serial

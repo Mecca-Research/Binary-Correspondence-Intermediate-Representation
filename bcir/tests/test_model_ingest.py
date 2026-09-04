@@ -16,16 +16,32 @@ import os
 import struct
 import tempfile
 
-from bcir.frontends.models.decode import (check_decoder_weights, decode_with_kv_cache,
-                                          decoder_param_count, reference_decode)
-from bcir.frontends.models.hf_ingest import (ingest_checkpoint, ingest_checkpoint_with_report,
-                                             rope_interleave_order, spec_from_config,
-                                             weights_from_tensors)
+from bcir.frontends.models.decode import (
+    check_decoder_weights,
+    decode_with_kv_cache,
+    decoder_param_count,
+    reference_decode,
+)
+from bcir.frontends.models.hf_ingest import (
+    ingest_checkpoint,
+    ingest_checkpoint_with_report,
+    rope_interleave_order,
+    spec_from_config,
+    weights_from_tensors,
+)
 from bcir.frontends.models.safetensors_io import decode_tensor, load_tensors
 
-_CONFIG = {"vocab_size": 64, "hidden_size": 8, "num_attention_heads": 4,
-           "num_key_value_heads": 2, "num_hidden_layers": 2, "intermediate_size": 16,
-           "rope_theta": 10000.0, "hidden_act": "silu", "tie_word_embeddings": False}
+_CONFIG = {
+    "vocab_size": 64,
+    "hidden_size": 8,
+    "num_attention_heads": 4,
+    "num_key_value_heads": 2,
+    "num_hidden_layers": 2,
+    "intermediate_size": 16,
+    "rope_theta": 10000.0,
+    "hidden_act": "silu",
+    "tie_word_embeddings": False,
+}
 
 
 def _hf_tensors(config: dict, seed: int = 0x4EA1) -> dict:
@@ -33,6 +49,7 @@ def _hf_tensors(config: dict, seed: int = 0x4EA1) -> dict:
     convention, gate/up/down MLP, untied lm_head. Values BF16-REPRESENTABLE (rounded
     through the truncation) so the F32 and BF16 shard encodings carry identical floats."""
     import random
+
     rng = random.Random(seed)
 
     def bf16(v):
@@ -47,10 +64,15 @@ def _hf_tensors(config: dict, seed: int = 0x4EA1) -> dict:
         return (tuple(shape), [bf16(rng.uniform(-0.3, 0.3)) for _ in range(n)])
 
     d, f = config["hidden_size"], config["intermediate_size"]
-    v, kvd = config["vocab_size"], (config["num_key_value_heads"] * d
-                                    // config["num_attention_heads"])
-    out = {"model.embed_tokens.weight": t(v, d), "model.norm.weight": t(d),
-           "lm_head.weight": t(v, d)}
+    v, kvd = (
+        config["vocab_size"],
+        (config["num_key_value_heads"] * d // config["num_attention_heads"]),
+    )
+    out = {
+        "model.embed_tokens.weight": t(v, d),
+        "model.norm.weight": t(d),
+        "lm_head.weight": t(v, d),
+    }
     for li in range(config["num_hidden_layers"]):
         p = f"model.layers.{li}."
         out[p + "input_layernorm.weight"] = t(d)
@@ -72,11 +94,10 @@ def _write_shard(path: str, tensors: dict, dtype: str = "F32") -> None:
         shape, vals = tensors[name]
         if dtype == "F32":
             raw = struct.pack(f"<{len(vals)}f", *vals)
-        else:                                          # BF16: the top 16 bits of the F32
+        else:  # BF16: the top 16 bits of the F32
             bits = struct.unpack(f"<{len(vals)}I", struct.pack(f"<{len(vals)}f", *vals))
             raw = struct.pack(f"<{len(vals)}H", *(b >> 16 for b in bits))
-        header[name] = {"dtype": dtype, "shape": list(shape),
-                        "data_offsets": [off, off + len(raw)]}
+        header[name] = {"dtype": dtype, "shape": list(shape), "data_offsets": [off, off + len(raw)]}
         blobs.append(raw)
         off += len(raw)
     hb = json.dumps(header).encode("utf-8")
@@ -94,10 +115,12 @@ def _hf_decode(config: dict, tensors: dict, prompt: list, max_new: int) -> list:
     dk, group, base = d // nh, nh // nkv, config["rope_theta"]
     norm_eps = float(config.get("rms_norm_eps", 1e-6))
 
-    def lin(x_rows, wname):                            # y = x @ W^T, W is [out, in]
+    def lin(x_rows, wname):  # y = x @ W^T, W is [out, in]
         (out_d, in_d), w = tensors[wname]
-        return [[sum(row[i] * w[o * in_d + i] for i in range(in_d)) for o in range(out_d)]
-                for row in x_rows]
+        return [
+            [sum(row[i] * w[o * in_d + i] for i in range(in_d)) for o in range(out_d)]
+            for row in x_rows
+        ]
 
     def rms(x_rows, gname):
         (_,), g = (tensors[gname][0], tensors[gname][1])
@@ -107,7 +130,7 @@ def _hf_decode(config: dict, tensors: dict, prompt: list, max_new: int) -> list:
             out.append([row[i] / r * g[i] for i in range(len(row))])
         return out
 
-    def rope_half(vec, pos):                           # rotate_half over one head's dk chans
+    def rope_half(vec, pos):  # rotate_half over one head's dk chans
         out = [0.0] * dk
         for c in range(dk // 2):
             th = pos * base ** (-2.0 * c / dk)
@@ -118,7 +141,7 @@ def _hf_decode(config: dict, tensors: dict, prompt: list, max_new: int) -> list:
 
     def forward(ids):
         (v_d, _), emb = tensors["model.embed_tokens.weight"]
-        x = [list(emb[t * d:(t + 1) * d]) for t in ids]
+        x = [list(emb[t * d : (t + 1) * d]) for t in ids]
         n = len(x)
         for li in range(config["num_hidden_layers"]):
             p = f"model.layers.{li}."
@@ -126,32 +149,36 @@ def _hf_decode(config: dict, tensors: dict, prompt: list, max_new: int) -> list:
             q = lin(h, p + "self_attn.q_proj.weight")
             k = lin(h, p + "self_attn.k_proj.weight")
             vv = lin(h, p + "self_attn.v_proj.weight")
-            qh = [[rope_half(q[i][hd * dk:(hd + 1) * dk], i) for hd in range(nh)]
-                  for i in range(n)]
-            kh = [[rope_half(k[i][g * dk:(g + 1) * dk], i) for g in range(nkv)]
-                  for i in range(n)]
+            qh = [
+                [rope_half(q[i][hd * dk : (hd + 1) * dk], i) for hd in range(nh)] for i in range(n)
+            ]
+            kh = [[rope_half(k[i][g * dk : (g + 1) * dk], i) for g in range(nkv)] for i in range(n)]
             ctx = [[None] * nh for _ in range(n)]
             for hd in range(nh):
                 g = hd // group
                 for i in range(n):
                     scores = []
                     for j in range(i + 1):
-                        scores.append(sum(qh[i][hd][c] * kh[j][g][c] for c in range(dk))
-                                      / math.sqrt(dk))
+                        scores.append(
+                            sum(qh[i][hd][c] * kh[j][g][c] for c in range(dk)) / math.sqrt(dk)
+                        )
                     m = max(scores)
                     ex = [math.exp(s - m) for s in scores]
                     tot = sum(ex)
                     a = [e / tot for e in ex]
-                    ctx[i][hd] = [sum(a[j] * vv[j][g * dk + c] for j in range(i + 1))
-                                  for c in range(dk)]
+                    ctx[i][hd] = [
+                        sum(a[j] * vv[j][g * dk + c] for j in range(i + 1)) for c in range(dk)
+                    ]
             cat = [[c for hd in range(nh) for c in ctx[i][hd]] for i in range(n)]
             att = lin(cat, p + "self_attn.o_proj.weight")
             x = [[x[i][c] + att[i][c] for c in range(d)] for i in range(n)]
             h2 = rms(x, p + "post_attention_layernorm.weight")
             gt = lin(h2, p + "mlp.gate_proj.weight")
             up = lin(h2, p + "mlp.up_proj.weight")
-            act = [[gt[i][c] / (1.0 + math.exp(-gt[i][c])) * up[i][c]
-                    for c in range(len(gt[i]))] for i in range(n)]
+            act = [
+                [gt[i][c] / (1.0 + math.exp(-gt[i][c])) * up[i][c] for c in range(len(gt[i]))]
+                for i in range(n)
+            ]
             dn = lin(act, p + "mlp.down_proj.weight")
             x = [[x[i][c] + dn[i][c] for c in range(d)] for i in range(n)]
         return rms(x, "model.norm.weight")
@@ -192,7 +219,7 @@ def test_the_ingested_checkpoint_matches_independent_hf_semantics():
         want = _hf_decode(_CONFIG, tensors, prompt, 5)
         got = reference_decode(prompt, spec, w, max_new=5)
         assert got == want, (prompt, got, want)
-        assert decode_with_kv_cache(prompt, spec, w, max_new=5) == got   # the twin gate
+        assert decode_with_kv_cache(prompt, spec, w, max_new=5) == got  # the twin gate
 
 
 def test_bf16_and_f32_shards_ingest_identically():
@@ -209,8 +236,9 @@ def test_bf16_and_f32_shards_ingest_identically():
         s32, w32 = ingest_checkpoint(os.path.join(tmp, "F32"))
         s16, w16 = ingest_checkpoint(os.path.join(tmp, "BF16"))
     assert w32 == w16
-    assert reference_decode([5, 9], s32, w32, max_new=4) == \
-        reference_decode([5, 9], s16, w16, max_new=4)
+    assert reference_decode([5, 9], s32, w32, max_new=4) == reference_decode(
+        [5, 9], s16, w16, max_new=4
+    )
 
 
 def test_lying_shards_refuse_loudly():
@@ -220,9 +248,10 @@ def test_lying_shards_refuse_loudly():
         path = os.path.join(tmp, "bad.safetensors")
         raw = struct.pack("<4f", 1.0, 2.0, 3.0, 4.0)
         for header, msg in (
-                ({"t": {"dtype": "F32", "shape": [4], "data_offsets": [0, 32]}}, "escapes"),
-                ({"t": {"dtype": "F32", "shape": [3], "data_offsets": [0, 16]}}, "bytes"),
-                ({"t": {"dtype": "I64", "shape": [2], "data_offsets": [0, 16]}}, "dtype")):
+            ({"t": {"dtype": "F32", "shape": [4], "data_offsets": [0, 32]}}, "escapes"),
+            ({"t": {"dtype": "F32", "shape": [3], "data_offsets": [0, 16]}}, "bytes"),
+            ({"t": {"dtype": "I64", "shape": [2], "data_offsets": [0, 16]}}, "dtype"),
+        ):
             hb = json.dumps(header).encode("utf-8")
             with open(path, "wb") as f:
                 f.write(struct.pack("<Q", len(hb)) + hb + raw)
@@ -239,8 +268,9 @@ def test_lying_shards_refuse_loudly():
         _write_shard(os.path.join(tmp, "model.safetensors"), tensors)
         spec, w = ingest_checkpoint(tmp)
     from bcir.frontends.models.quantized import quantize_decoder_weights
+
     qw = quantize_decoder_weights(w, group_size=32, bits=8)
-    assert check_decoder_weights(spec, qw) == []       # shapes survive the Q8 round-trip
+    assert check_decoder_weights(spec, qw) == []  # shapes survive the Q8 round-trip
 
 
 def test_weight_loader_rejects_overlapping_tensor_payloads():
@@ -264,10 +294,15 @@ def test_weight_loader_rejects_overlapping_tensor_payloads():
 
 def test_config_and_weights_reject_coercion_nonfinite_and_ambiguous_json():
     for mutation in (
-            {"hidden_size": "8"}, {"num_attention_heads": True},
-            {"tie_word_embeddings": "false"}, {"rope_theta": float("inf")},
-            {"model_type": "not-llama"}, {"num_hidden_layers": 0x8000}):
-        config = dict(_CONFIG); config.update(mutation)
+        {"hidden_size": "8"},
+        {"num_attention_heads": True},
+        {"tie_word_embeddings": "false"},
+        {"rope_theta": float("inf")},
+        {"model_type": "not-llama"},
+        {"num_hidden_layers": 0x8000},
+    ):
+        config = dict(_CONFIG)
+        config.update(mutation)
         try:
             spec_from_config(config)
             raise AssertionError(f"invalid config accepted: {mutation}")
@@ -278,8 +313,7 @@ def test_config_and_weights_reject_coercion_nonfinite_and_ambiguous_json():
     shape, values = tensors["model.embed_tokens.weight"]
     poisoned = dict(tensors)
     poisoned["model.embed_tokens.weight"] = (shape, [float("nan"), *values[1:]])
-    prepared = {name: ("F32", shape, values)
-                for name, (shape, values) in poisoned.items()}
+    prepared = {name: ("F32", shape, values) for name, (shape, values) in poisoned.items()}
     try:
         weights_from_tensors(spec_from_config(_CONFIG), prepared)
         raise AssertionError("non-finite model weights must be rejected")
@@ -305,19 +339,24 @@ def test_a_real_released_checkpoint_ingests_when_present():
     logits end to end."""
     model_dir = os.environ.get("BCIR_HF_MODEL_DIR", "")
     if not model_dir or not os.path.isfile(os.path.join(model_dir, "model.safetensors")):
-        return                                          # the asset gate (like the rig gates)
+        return  # the asset gate (like the rig gates)
     spec, w, report = ingest_checkpoint_with_report(model_dir)
     assert check_decoder_weights(spec, w) == []
     from bcir.frontends.models.manifest import build_manifest
+
     man = build_manifest([os.path.join(model_dir, "model.safetensors")], {})
     assert report.decoder_element_count == decoder_param_count(spec)
-    assert report.decoder_element_count + report.auxiliary_element_count == \
-        report.shard_element_count == man.param_count            # the census tie, REAL
-    prompt = [1, 306, 4658]                                      # ids only (no tokenizer)
+    assert (
+        report.decoder_element_count + report.auxiliary_element_count
+        == report.shard_element_count
+        == man.param_count
+    )  # the census tie, REAL
+    prompt = [1, 306, 4658]  # ids only (no tokenizer)
     naive = reference_decode(prompt, spec, w, max_new=4)
     assert decode_with_kv_cache(prompt, spec, w, max_new=4) == naive
     assert all(0 <= t < spec.vocab_size for t in naive)
     from bcir.frontends.models.decode import next_token_logits
+
     logits = next_token_logits(prompt, spec, w)
     assert all(math.isfinite(v) for v in logits)
 
@@ -342,9 +381,12 @@ def test_ingest_report_allowlists_and_validates_rotary_auxiliaries():
     assert report.auxiliary_tensors == tuple(aux_names)
     assert report.decoder_element_count == decoder_param_count(spec)
     assert report.auxiliary_element_count == config["num_hidden_layers"] * (dk // 2)
-    assert report.decoder_element_count + report.auxiliary_element_count == report.shard_element_count
-    assert reference_decode([1, 2, 3], spec, w, max_new=3) == \
-        _hf_decode(config, tensors, [1, 2, 3], 3)       # non-default epsilon, independent twin
+    assert (
+        report.decoder_element_count + report.auxiliary_element_count == report.shard_element_count
+    )
+    assert reference_decode([1, 2, 3], spec, w, max_new=3) == _hf_decode(
+        config, tensors, [1, 2, 3], 3
+    )  # non-default epsilon, independent twin
 
 
 def test_ingest_apis_reject_unknown_or_lying_auxiliary_tensors():
@@ -353,8 +395,7 @@ def test_ingest_apis_reject_unknown_or_lying_auxiliary_tensors():
             with open(os.path.join(tmp, "config.json"), "w", encoding="utf-8") as f:
                 json.dump(_CONFIG, f)
             _write_shard(os.path.join(tmp, "model.safetensors"), tensors)
-            return (ingest_checkpoint_with_report(tmp) if with_report
-                    else ingest_checkpoint(tmp))
+            return ingest_checkpoint_with_report(tmp) if with_report else ingest_checkpoint(tmp)
 
     unknown = _hf_tensors(_CONFIG)
     unknown["model.unexpected.weight"] = ((1,), [0.0])

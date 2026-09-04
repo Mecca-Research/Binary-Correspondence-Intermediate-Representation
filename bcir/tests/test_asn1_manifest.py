@@ -22,10 +22,22 @@ import json
 from bcir.asn1.jer import JerRules, decode_jer, encode_jer
 from bcir.asn1.jer_bounded import STRICT_LIMITS, JerBoundedError, decode_bounded
 from bcir.asn1.manifest import (
-    CHANNEL_MANIFEST, DEVICE_MANIFEST, MANIFEST_MODULE_OID, MEASUREMENT_TYPE, MODULE,
-    SELECTION_ENVELOPE, SELECTION_ENVELOPE_VERSION, DirectChannelSink, TypedValueSink,
-    channel_direct, channel_to_jer, channel_via_typed_value, device_manifest_to_value,
-    selection_envelope, value_to_device_manifest, walk,
+    CHANNEL_MANIFEST,
+    DEVICE_MANIFEST,
+    MANIFEST_MODULE_OID,
+    MEASUREMENT_TYPE,
+    MODULE,
+    SELECTION_ENVELOPE,
+    SELECTION_ENVELOPE_VERSION,
+    DirectChannelSink,
+    TypedValueSink,
+    channel_direct,
+    channel_to_jer,
+    channel_via_typed_value,
+    device_manifest_to_value,
+    selection_envelope,
+    value_to_device_manifest,
+    walk,
 )
 from bcir.asn1.tags import Asn1Error
 from bcir.channel_plugin import ChannelManifest, manifest_from_channel
@@ -160,8 +172,7 @@ def test_the_walk_visits_members_in_schema_order_not_document_order():
     assert trace(shuffled) == trace(document)
     # And the two orders are the same channel, since BASIC admits both spellings.
     basic = encode_jer(CHANNEL_MANIFEST, shuffled, rules=JerRules.BASIC)
-    assert channel_direct(basic, rules=JerRules.BASIC) == channel_direct(
-        channel_to_jer(manifest))
+    assert channel_direct(basic, rules=JerRules.BASIC) == channel_direct(channel_to_jer(manifest))
 
 
 def test_the_typed_sink_rebuilds_the_document_it_walked():
@@ -171,8 +182,7 @@ def test_the_typed_sink_rebuilds_the_document_it_walked():
         sink = TypedValueSink()
         walk(CHANNEL_MANIFEST, value, sink)
         rebuilt = sink.finish()
-        assert encode_jer(CHANNEL_MANIFEST, rebuilt) == encode_jer(
-            CHANNEL_MANIFEST, value), name
+        assert encode_jer(CHANNEL_MANIFEST, rebuilt) == encode_jer(CHANNEL_MANIFEST, value), name
 
 
 # --- the schema beside the hand-written loader ------------------------------------------------
@@ -190,9 +200,14 @@ def test_the_schema_names_exactly_the_members_the_writer_emits():
     declared = {c.name for c in CHANNEL_MANIFEST.components}
     assert declared == set(document), (
         f"schema-only: {sorted(declared - set(document))}, "
-        f"writer-only: {sorted(set(document) - declared)}")
-    for section, kind in (("codegen", "codegen"), ("runtime", "runtime"),
-                          ("calibration", "calibration"), ("profile", "profile")):
+        f"writer-only: {sorted(set(document) - declared)}"
+    )
+    for section, kind in (
+        ("codegen", "codegen"),
+        ("runtime", "runtime"),
+        ("calibration", "calibration"),
+        ("profile", "profile"),
+    ):
         sub = next(c for c in CHANNEL_MANIFEST.components if c.name == section)
         assert {c.name for c in sub.type.components} == set(document[kind]), section
 
@@ -250,8 +265,7 @@ def test_no_canonical_omission_produces_a_document_the_loader_refuses():
     document["runtime"]["perf_syscall_nr"] = 0
     canonical = json.loads(encode_jer(CHANNEL_MANIFEST, document, rules=JerRules.CANONICAL))
     # Every key the writer produced is still present after canonical encoding.
-    assert set(canonical["profile"]["mem_tiers"][0]) == set(
-        document["profile"]["mem_tiers"][0])
+    assert set(canonical["profile"]["mem_tiers"][0]) == set(document["profile"]["mem_tiers"][0])
     # And the loader — the one with the strict allowed-field set — accepts it.
     assert ChannelManifest.from_dict(canonical) is not None
 
@@ -290,10 +304,15 @@ def test_the_device_manifest_round_trips_through_its_schema():
     from bcir.model import Domain
 
     man = DeviceManifest(
-        device="acc0", target="x86_avx512", cal_gen=7,
-        banks=(MemoryBank("hbm", Domain.HBM, 1 << 30, 128, 64),
-               MemoryBank("ram", Domain.RAM, 1 << 20, 64, 64)),
-        distance=((0, 256), (256, 0)))
+        device="acc0",
+        target="x86_avx512",
+        cal_gen=7,
+        banks=(
+            MemoryBank("hbm", Domain.HBM, 1 << 30, 128, 64),
+            MemoryBank("ram", Domain.RAM, 1 << 20, 64, 64),
+        ),
+        distance=((0, 256), (256, 0)),
+    )
     octets = encode_jer(DEVICE_MANIFEST, device_manifest_to_value(man))
     assert value_to_device_manifest(decode_jer(octets, DEVICE_MANIFEST)) == man
 
@@ -309,9 +328,12 @@ def test_the_distance_matrix_keeps_its_rows():
     man = DeviceManifest(device="d", target="t", cal_gen=1, banks=banks, distance=distance)
     document = json.loads(encode_jer(DEVICE_MANIFEST, device_manifest_to_value(man)))
     assert document["distance"] == [[0, 1, 2], [1, 0, 3], [2, 3, 0]]
-    assert value_to_device_manifest(
-        decode_jer(encode_jer(DEVICE_MANIFEST, device_manifest_to_value(man)),
-                   DEVICE_MANIFEST)).distance == distance
+    assert (
+        value_to_device_manifest(
+            decode_jer(encode_jer(DEVICE_MANIFEST, device_manifest_to_value(man)), DEVICE_MANIFEST)
+        ).distance
+        == distance
+    )
 
 
 # --- the §6.2 selection envelope ------------------------------------------------------------------
@@ -334,8 +356,9 @@ def test_the_selection_envelope_records_legality_independently_of_cost():
     no timing can promote a refusal into a candidate.
     """
     measurements = _measurements()
-    envelope = selection_envelope(measurements, objective="memory", type_name="INTEGER",
-                                  selected="DER")
+    envelope = selection_envelope(
+        measurements, objective="memory", type_name="INTEGER", selected="DER"
+    )
     octets = encode_jer(SELECTION_ENVELOPE, envelope)
     back = decode_jer(octets, SELECTION_ENVELOPE)
     assert back["version"] == SELECTION_ENVELOPE_VERSION
@@ -349,7 +372,7 @@ def test_the_selection_envelope_records_legality_independently_of_cost():
 
 
 def test_an_illegal_candidate_carries_no_octet_count():
-    """"No encoding exists" and "the encoding is zero octets" are different facts.
+    """ "No encoding exists" and "the encoding is zero octets" are different facts.
 
     `octets` is OPTIONAL rather than DEFAULT 0 so a certificate cannot spell them the same.
     """
@@ -363,8 +386,9 @@ def test_an_illegal_candidate_carries_no_octet_count():
     broken = Candidate("BROKEN", None, False, refuse, lambda d, k: None, "der")
     measurement = measure_one(broken, Primitive(Universal.INTEGER), 1)
     assert not measurement.legal and measurement.octets is None
-    envelope = selection_envelope([measurement], objective="memory", type_name="INTEGER",
-                                  selected=None)
+    envelope = selection_envelope(
+        [measurement], objective="memory", type_name="INTEGER", selected=None
+    )
     document = json.loads(encode_jer(SELECTION_ENVELOPE, envelope))
     assert "octets" not in document["measurements"][0]
     assert "selected" not in document, "a certificate named a winner it did not have"
@@ -377,7 +401,7 @@ def test_the_manifest_module_is_a_well_formed_private_enterprise_oid():
     from bcir.asn1.dialect import DIALECT_MODULE_OID
     from bcir.asn1.streampack import BCIR_ARC, STREAMPACK_MODULE_OID
 
-    assert MANIFEST_MODULE_OID[:len(BCIR_ARC)] == BCIR_ARC
+    assert MANIFEST_MODULE_OID[: len(BCIR_ARC)] == BCIR_ARC
     others = {STREAMPACK_MODULE_OID, ARTIFACT_BUNDLE_MODULE_OID, DIALECT_MODULE_OID}
     assert MANIFEST_MODULE_OID not in others
     assert MODULE.oid == MANIFEST_MODULE_OID
@@ -387,10 +411,19 @@ def test_the_manifest_module_is_a_well_formed_private_enterprise_oid():
 def test_every_manifest_schema_is_canonical_and_idempotent():
     """One value, one canonical spelling — the property a digest over a manifest rests on."""
     _name, manifest = next(iter(_manifests()))
-    for kind, value in ((CHANNEL_MANIFEST, manifest.to_dict()),
-                        (SELECTION_ENVELOPE,
-                         selection_envelope(_measurements(), objective="memory",
-                                            type_name="INTEGER", selected="DER"))):
+    for kind, value in (
+        (CHANNEL_MANIFEST, manifest.to_dict()),
+        (
+            SELECTION_ENVELOPE,
+            selection_envelope(
+                _measurements(), objective="memory", type_name="INTEGER", selected="DER"
+            ),
+        ),
+    ):
         raw = encode_jer(kind, value, rules=JerRules.CANONICAL)
-        assert encode_jer(kind, decode_jer(raw, kind, rules=JerRules.CANONICAL),
-                          rules=JerRules.CANONICAL) == raw, kind.name
+        assert (
+            encode_jer(
+                kind, decode_jer(raw, kind, rules=JerRules.CANONICAL), rules=JerRules.CANONICAL
+            )
+            == raw
+        ), kind.name

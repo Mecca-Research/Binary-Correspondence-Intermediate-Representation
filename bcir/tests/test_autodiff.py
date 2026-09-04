@@ -40,10 +40,11 @@ from bcir.kbcir.autodiff import (
 
 # --- forward evaluation ----------------------------------------------------------
 
+
 def test_forward_eval_matches_the_closed_form():
     t = Tape()
     a, b = t.var("a"), t.var("b")
-    expr = t.add(t.mul(a, b), t.const(7.0))           # a*b + 7
+    expr = t.add(t.mul(a, b), t.const(7.0))  # a*b + 7
     env = {"a": 3.0, "b": 5.0}
     assert evaluate(t, expr, env) == 3.0 * 5.0 + 7.0
 
@@ -68,6 +69,7 @@ def test_unbound_var_is_a_clear_error():
 
 # --- the hard gate: reverse grad == finite difference ----------------------------
 
+
 def _check_fd(t: Tape, out: int, env: dict, *, rtol=1e-4, atol=1e-5):
     """Assert analytic grad matches central-difference at ``env``; report the exact
     case on failure (never weaken the tolerance to force a pass)."""
@@ -75,7 +77,8 @@ def _check_fd(t: Tape, out: int, env: dict, *, rtol=1e-4, atol=1e-5):
     fd = finite_difference_grad(t, out, env)
     assert gradients_match(g.grads, fd, rtol=rtol, atol=atol), (
         f"grad != finite-difference: analytic={g.grads} fd={fd} "
-        f"max_abs_err={max_grad_error(g.grads, fd)} env={env}")
+        f"max_abs_err={max_grad_error(g.grads, fd)} env={env}"
+    )
     return g
 
 
@@ -92,7 +95,7 @@ def test_grad_matches_fd_with_a_shared_subexpression():
     t = Tape()
     a, b, c, d = (t.var(n) for n in "abcd")
     tt = t.mul(a, b)
-    out = t.add(t.mul(tt, c), t.mul(tt, d))            # (a*b)*c + (a*b)*d
+    out = t.add(t.mul(tt, c), t.mul(tt, d))  # (a*b)*c + (a*b)*d
     g = _check_fd(t, out, {"a": 2.0, "b": 3.0, "c": 4.0, "d": 5.0})
     # closed form: out = a*b*(c+d); checks the shared node's adjoint summed correctly.
     assert abs(g.grads["a"] - 3.0 * (4.0 + 5.0)) < 1e-9
@@ -116,7 +119,7 @@ def test_grad_matches_fd_on_the_dot_substrate():
 def test_grad_matches_fd_on_division():
     t = Tape()
     a, b = t.var("a"), t.var("b")
-    q = t.div(a, b)                                   # a / b
+    q = t.div(a, b)  # a / b
     _check_fd(t, q, {"a": 3.0, "b": 4.0})
     # nested: (a-b) / (a*b)
     expr = t.div(t.sub(a, b), t.mul(a, b))
@@ -132,6 +135,7 @@ def test_grad_matches_fd_on_neg_and_chains():
 
 
 # --- reverse grad == exact symbolic gradient -------------------------------------
+
 
 def test_grad_equals_exact_symbolic_product_rule():
     # d/da (a*b) = b, d/db (a*b) = a -- exact, no tolerance needed.
@@ -162,11 +166,12 @@ def test_value_returned_by_grad_equals_forward_eval():
 
 # --- content-addressing dedup is measurable --------------------------------------
 
+
 def test_hashcons_shares_structurally_identical_nodes():
     t = Tape()
     a, b = t.var("a"), t.var("b")
     n1 = t.mul(a, b)
-    n2 = t.mul(a, b)                                  # same structure -> same node id
+    n2 = t.mul(a, b)  # same structure -> same node id
     assert n1 == n2
     # a different structure is a different node.
     assert t.mul(b, a) != n1
@@ -204,6 +209,7 @@ def test_shared_node_yields_a_single_shared_adjoint():
 
 # --- confluence / determinism + replay -------------------------------------------
 
+
 def test_confluence_two_orders_give_identical_gradients():
     t = Tape()
     a, b, c, d = (t.var(n) for n in "abcd")
@@ -211,10 +217,10 @@ def test_confluence_two_orders_give_identical_gradients():
     out = t.add(t.mul(tt, c), t.sub(t.mul(tt, d), t.mul(a, c)))
     env = {"a": 1.3, "b": 2.1, "c": -0.7, "d": 3.3}
     order_a, order_b = reverse_orders(t, out)
-    assert order_a != order_b                         # genuinely different interior order
+    assert order_a != order_b  # genuinely different interior order
     g_a = grad(t, out, env, order=order_a)
     g_b = grad(t, out, env, order=order_b)
-    assert g_a.grads == g_b.grads                     # the diamond property: order-independent
+    assert g_a.grads == g_b.grads  # the diamond property: order-independent
     # and both match finite-difference (the gate still holds under either order).
     fd = finite_difference_grad(t, out, env)
     assert gradients_match(g_a.grads, fd)
@@ -227,7 +233,7 @@ def test_replay_is_byte_identical():
     env = {"a": 3.0, "b": 7.0}
     r1 = grad(t, out, env).grads
     r2 = grad(t, out, env).grads
-    assert repr(r1) == repr(r2)                       # byte-identical replay
+    assert repr(r1) == repr(r2)  # byte-identical replay
     assert r1 == r2
 
 
@@ -241,6 +247,7 @@ def test_grad_at_is_an_alias_for_grad():
 
 # --- the cheap-gradient principle ------------------------------------------------
 
+
 def test_cheap_gradient_ratio_is_a_small_constant():
     # Baur-Strassen: a full gradient costs O(1)x the forward op count. Build a chain and
     # check the backward/forward ratio stays bounded (does not grow with depth).
@@ -250,7 +257,7 @@ def test_cheap_gradient_ratio_is_a_small_constant():
         x = t.var("x")
         node = x
         for _ in range(depth):
-            node = t.mul(node, x)                     # x^(depth+1)
+            node = t.mul(node, x)  # x^(depth+1)
         g = grad(t, node, {"x": 1.1})
         ratios.append(g.cheap_gradient_ratio)
     # every gradient touches at most a small constant multiple of the forward ops.
@@ -259,10 +266,11 @@ def test_cheap_gradient_ratio_is_a_small_constant():
 
 # --- edges -----------------------------------------------------------------------
 
+
 def test_const_has_zero_gradient():
     t = Tape()
     a = t.var("a")
-    out = t.add(a, t.const(5.0))                      # d/d(const) is not a var; var a -> 1
+    out = t.add(a, t.const(5.0))  # d/d(const) is not a var; var a -> 1
     g = grad(t, out, {"a": 2.0})
     assert g.grads["a"] == 1.0
     # a pure constant output: gradient of any var is zero.
@@ -274,13 +282,14 @@ def test_const_has_zero_gradient():
 def test_unused_input_has_zero_gradient():
     t = Tape()
     a, b, unused = t.var("a"), t.var("b"), t.var("unused")
-    out = t.add(a, b)                                 # 'unused' never reaches the output
+    out = t.add(a, b)  # 'unused' never reaches the output
     g = grad(t, out, {"a": 1.0, "b": 2.0, "unused": 99.0})
     assert g.grads["unused"] == 0.0
     assert g.grads["a"] == 1.0 and g.grads["b"] == 1.0
 
 
 # --- the deterministic fuzz: grad == finite difference over random DAGs -----------
+
 
 def _random_dag(rng: random.Random, n_vars: int, n_ops: int):
     """Build a random differentiable DAG. Returns (tape, output, var_names). Operands
@@ -328,7 +337,8 @@ def test_fuzz_grad_matches_finite_difference_over_random_dags():
         # enough to catch a wrong rule; report the exact failing trial if it trips.
         assert gradients_match(g.grads, fd, rtol=2e-3, atol=2e-4), (
             f"FUZZ trial {trial} FAILED: analytic={g.grads} fd={fd} "
-            f"max_abs_err={max_grad_error(g.grads, fd)} env={env} n_ops={n_ops}")
+            f"max_abs_err={max_grad_error(g.grads, fd)} env={env} n_ops={n_ops}"
+        )
 
 
 def test_fuzz_is_deterministic_across_runs():
@@ -340,6 +350,7 @@ def test_fuzz_is_deterministic_across_runs():
             t, root, env = _random_dag(rng, rng.randint(2, 4), rng.randint(2, 8))
             out.append(repr(grad(t, root, env).grads))
         return out
+
     assert run() == run()
 
 
@@ -354,14 +365,15 @@ def test_grad_result_shape():
 
 # --- control flow: the differentiable conditional `select` -----------------------
 
+
 def test_select_forward_picks_the_right_branch():
     # predicate is the SIGN TEST of cond's forward value (JAX lax.select / C ?:).
     t = Tape()
     cond, a, b = t.var("cond"), t.var("a"), t.var("b")
     s = t.select(cond, a, b)
-    assert evaluate(t, s, {"cond": 1.0, "a": 5.0, "b": 9.0}) == 5.0     # cond > 0 -> a
-    assert evaluate(t, s, {"cond": -1.0, "a": 5.0, "b": 9.0}) == 9.0    # cond <= 0 -> b
-    assert evaluate(t, s, {"cond": 0.0, "a": 5.0, "b": 9.0}) == 9.0     # boundary: 0 is not > 0 -> b
+    assert evaluate(t, s, {"cond": 1.0, "a": 5.0, "b": 9.0}) == 5.0  # cond > 0 -> a
+    assert evaluate(t, s, {"cond": -1.0, "a": 5.0, "b": 9.0}) == 9.0  # cond <= 0 -> b
+    assert evaluate(t, s, {"cond": 0.0, "a": 5.0, "b": 9.0}) == 9.0  # boundary: 0 is not > 0 -> b
 
 
 def test_grad_through_select_matches_fd_away_from_boundary():
@@ -369,7 +381,7 @@ def test_grad_through_select_matches_fd_away_from_boundary():
     # so its gradient is finite-difference-checkable like any smooth function.
     t = Tape()
     cond, a, b = t.var("cond"), t.var("a"), t.var("b")
-    s = t.select(cond, t.mul(a, a), t.mul(b, b))     # a*a if cond>0 else b*b
+    s = t.select(cond, t.mul(a, a), t.mul(b, b))  # a*a if cond>0 else b*b
     # cond = +2.0 (well away from 0): selected branch is a*a -> d/da = 2a, d/db = 0, d/dcond = 0.
     _check_fd(t, s, {"cond": 2.0, "a": 1.3, "b": -0.7})
     # cond = -2.0: selected branch is b*b -> d/db = 2b, d/da = 0.
@@ -382,10 +394,10 @@ def test_select_non_selected_branch_gets_zero_gradient():
     t = Tape()
     cond, a, b = t.var("cond"), t.var("a"), t.var("b")
     s = t.select(cond, a, b)
-    g = grad(t, s, {"cond": 3.0, "a": 5.0, "b": 9.0})   # picks a
-    assert g.grads["a"] == 1.0       # selected branch: full adjoint
-    assert g.grads["b"] == 0.0       # other branch: zero
-    assert g.grads["cond"] == 0.0    # predicate: zero (a.e.)
+    g = grad(t, s, {"cond": 3.0, "a": 5.0, "b": 9.0})  # picks a
+    assert g.grads["a"] == 1.0  # selected branch: full adjoint
+    assert g.grads["b"] == 0.0  # other branch: zero
+    assert g.grads["cond"] == 0.0  # predicate: zero (a.e.)
     g2 = grad(t, s, {"cond": -3.0, "a": 5.0, "b": 9.0})  # picks b
     assert g2.grads["b"] == 1.0 and g2.grads["a"] == 0.0 and g2.grads["cond"] == 0.0
 
@@ -399,10 +411,11 @@ def test_grad_when_differentiated_var_is_inside_the_selected_branch():
     cubic = t.mul(t.mul(x, x), x)
     s = t.select(cond, cubic, t.const(0.0))
     g = _check_fd(t, s, {"cond": 1.5, "x": 2.0})
-    assert abs(g.grads["x"] - 3.0 * 2.0 * 2.0) < 1e-6   # d/dx x^3 = 3x^2 = 12
+    assert abs(g.grads["x"] - 3.0 * 2.0 * 2.0) < 1e-6  # d/dx x^3 = 3x^2 = 12
 
 
 # --- bounded control flow: unroll_scan demonstrates BPTT -------------------------
+
 
 def test_unroll_scan_recurrence_grad_matches_fd():
     # A bounded recurrence carry_{k+1} = carry_k * w + x_k over a few steps (a linear RNN
@@ -413,13 +426,13 @@ def test_unroll_scan_recurrence_grad_matches_fd():
     xs = tuple(t.var(f"x{i}") for i in range(4))
 
     def step(tape, carry, x):
-        return tape.add(tape.mul(carry, w), x)       # carry*w + x
+        return tape.add(tape.mul(carry, w), x)  # carry*w + x
 
     final = unroll_scan(t, step, t.const(0.0), xs)
     env = {"w": 0.6, "x0": 1.0, "x1": -2.0, "x2": 0.5, "x3": 3.0}
     g = _check_fd(t, final, env)
     # closed form: final = sum_k x_k * w^(n-1-k); d/dx_k = w^(n-1-k). Spot-check the last input.
-    assert abs(g.grads["x3"] - 1.0) < 1e-6           # x3 has exponent 0 -> w^0 = 1
+    assert abs(g.grads["x3"] - 1.0) < 1e-6  # x3 has exponent 0 -> w^0 = 1
 
 
 def test_unroll_scan_shares_structure_across_steps():
@@ -459,6 +472,7 @@ def test_unroll_scan_nonlinear_cell_grad_matches_fd():
 
 # --- higher-order: symbolic (graph-valued) gradient ------------------------------
 
+
 def _eval_grad_graph(t: Tape, gnodes: dict, env: dict) -> dict:
     """Evaluate each gradient NODE (from grad_graph) at env into a {name: float} dict."""
     return {name: evaluate(t, nid, env) for name, nid in gnodes.items()}
@@ -471,8 +485,9 @@ def test_grad_graph_evaluated_equals_numeric_grad():
 
     t1 = Tape()
     a, b = t1.var("a"), t1.var("b")
-    cases.append((t1, t1.add(t1.mul(t1.mul(a, a), b), t1.mul(t1.const(3.0), a)),
-                  {"a": 1.7, "b": -2.3}))                       # a*a*b + 3a
+    cases.append(
+        (t1, t1.add(t1.mul(t1.mul(a, a), b), t1.mul(t1.const(3.0), a)), {"a": 1.7, "b": -2.3})
+    )  # a*a*b + 3a
 
     t2 = Tape()
     c, d = t2.var("c"), t2.var("d")
@@ -483,13 +498,14 @@ def test_grad_graph_evaluated_equals_numeric_grad():
     v = tuple(t3.var(f"v{i}") for i in range(3))
     env3 = {f"u{i}": float(i + 1) for i in range(3)}
     env3.update({f"v{i}": float(2 * i - 1) for i in range(3)})
-    cases.append((t3, t3.dot(u, v), env3))                     # the dot substrate
+    cases.append((t3, t3.dot(u, v), env3))  # the dot substrate
 
     for t, out, env in cases:
         numeric = grad(t, out, env).grads
         symbolic = _eval_grad_graph(t, grad_graph(t, out, env), env)
         assert gradients_match(symbolic, numeric, rtol=1e-9, atol=1e-9), (
-            f"symbolic != numeric: sym={symbolic} num={numeric}")
+            f"symbolic != numeric: sym={symbolic} num={numeric}"
+        )
 
 
 def test_grad_graph_is_a_valid_dag():
@@ -497,7 +513,7 @@ def test_grad_graph_is_a_valid_dag():
     # it is in the closed primitive set) itself differentiable. Both are exercised here.
     t = Tape()
     a, b = t.var("a"), t.var("b")
-    out = t.mul(t.mul(a, a), b)                                 # a*a*b
+    out = t.mul(t.mul(a, a), b)  # a*a*b
     gnodes = grad_graph(t, out, ["a", "b"])
     env = {"a": 2.0, "b": 3.0}
     # d/da (a*a*b) = 2ab = 12 ; the gradient NODE evaluates to that.
@@ -513,11 +529,12 @@ def test_grad_graph_unused_input_is_zero_node():
     out = t.mul(a, a)
     gnodes = grad_graph(t, out, ["a", "unused"])
     env = {"a": 4.0, "unused": 99.0}
-    assert evaluate(t, gnodes["unused"], env) == 0.0           # never reaches output
-    assert abs(evaluate(t, gnodes["a"], env) - 8.0) < 1e-9     # d/da a*a = 2a
+    assert evaluate(t, gnodes["unused"], env) == 0.0  # never reaches output
+    assert abs(evaluate(t, gnodes["a"], env) - 8.0) < 1e-9  # d/da a*a = 2a
 
 
 # --- higher-order: the Hessian, gated against the second difference --------------
+
 
 def _check_hessian_fd(t: Tape, out: int, env: dict, *, eps=1e-4):
     """Assert the analytic Hessian matches the central SECOND difference at env."""
@@ -525,7 +542,8 @@ def _check_hessian_fd(t: Tape, out: int, env: dict, *, eps=1e-4):
     sd = second_difference_hessian(t, out, env, eps=eps)
     assert hessians_match(H, sd), (
         f"hessian != second-difference: analytic={H} sd={sd} "
-        f"max_abs_err={max_hessian_error(H, sd)} env={env}")
+        f"max_abs_err={max_hessian_error(H, sd)} env={env}"
+    )
     return H
 
 
@@ -566,7 +584,7 @@ def test_hessian_is_symmetric():
     # H[i,j] == H[j,i] exactly (the symbolic rail is deterministic, so equality is exact).
     t = Tape()
     a, b = t.var("a"), t.var("b")
-    f = t.add(t.mul(t.mul(a, a), b), t.div(a, b))              # a*a*b + a/b
+    f = t.add(t.mul(t.mul(a, a), b), t.div(a, b))  # a*a*b + a/b
     env = {"a": 1.4, "b": 2.2}
     H = hessian(t, f, env, env)
     assert H[("a", "b")] == H[("b", "a")]
@@ -593,7 +611,8 @@ def test_hessian_fuzz_matches_second_difference():
         sd = second_difference_hessian(t, out, env, eps=1e-4)
         assert hessians_match(H, sd), (
             f"FUZZ trial {trial} FAILED: analytic={H} sd={sd} "
-            f"max_abs_err={max_hessian_error(H, sd)} env={env} n_ops={n_ops}")
+            f"max_abs_err={max_hessian_error(H, sd)} env={env} n_ops={n_ops}"
+        )
         # symmetry where the second difference is well-conditioned.
         for i in env:
             for j in env:
@@ -601,6 +620,7 @@ def test_hessian_fuzz_matches_second_difference():
 
 
 # --- the honest limitation: closure + the select boundary caveat -----------------
+
 
 def test_higher_order_closure_every_vjp_stays_in_the_primitive_set():
     # The reverse-over-reverse soundness argument: the gradient graph of any expression in
@@ -610,7 +630,7 @@ def test_higher_order_closure_every_vjp_stays_in_the_primitive_set():
     allowed = {"const", "var", "neg", "add", "sub", "mul", "div", "dot", "select"}
     t = Tape()
     a, b = t.var("a"), t.var("b")
-    out = t.div(t.mul(t.mul(a, a), b), t.add(a, b))            # mixes mul/div/add
+    out = t.div(t.mul(t.mul(a, a), b), t.add(a, b))  # mixes mul/div/add
     gnodes = grad_graph(t, out, ["a", "b"])
 
     def ops_reachable(root):
@@ -636,12 +656,12 @@ def test_select_hessian_away_from_boundary_matches_but_boundary_caveat_holds():
     # selected branch and matches the second difference.
     t = Tape()
     cond, x = t.var("cond"), t.var("x")
-    f = t.select(cond, t.mul(t.mul(x, x), x), x)   # x^3 if cond>0 else x ; pick the cubic
-    env_away = {"cond": 1.0, "x": 1.5}             # cond comfortably > 0
+    f = t.select(cond, t.mul(t.mul(x, x), x), x)  # x^3 if cond>0 else x ; pick the cubic
+    env_away = {"cond": 1.0, "x": 1.5}  # cond comfortably > 0
     H = hessian(t, f, ["cond", "x"], env_away)
     sd = second_difference_hessian(t, f, env_away, eps=1e-4)
     assert hessians_match(H, sd), (H, sd)
-    assert abs(H[("x", "x")] - 6.0 * 1.5) < 1e-2   # d^2/dx^2 x^3 = 6x = 9
+    assert abs(H[("x", "x")] - 6.0 * 1.5) < 1e-2  # d^2/dx^2 x^3 = 6x = 9
 
     # AT the boundary, the EXACT second derivative carries a distributional (delta) term at
     # the value jump that this a.e. convention DROPS. We do NOT claim the analytic Hessian is
@@ -656,6 +676,6 @@ def test_select_hessian_away_from_boundary_matches_but_boundary_caveat_holds():
     sd_b = second_difference_hessian(t2, jump, env_boundary, eps=1e-3)
     # the a.e. convention reports a finite (here zero) second derivative; the numeric stencil
     # diverges because of the dropped delta -- they are NOT equal at the boundary.
-    assert H_b[("cb", "cb")] == 0.0                # delta dropped -> finite a.e. value
-    assert abs(sd_b[("cb", "cb")]) > 1e3           # the stencil sees the jump (blows up)
-    assert not hessians_match(H_b, sd_b)           # honest: NOT exact at the boundary
+    assert H_b[("cb", "cb")] == 0.0  # delta dropped -> finite a.e. value
+    assert abs(sd_b[("cb", "cb")]) > 1e3  # the stencil sees the jump (blows up)
+    assert not hessians_match(H_b, sd_b)  # honest: NOT exact at the boundary

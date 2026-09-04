@@ -18,6 +18,7 @@ gate all read this table.
 The C twin (`bcir_cfront.c`: `bcir_lib_for_callee` + `bcir_cfront_link_flags`) mirrors this table and
 the sort byte-for-byte, and `bcir/tests/test_c_cfront.py` + `tools/c/check_runtime.sh` gate the parity.
 """
+
 from __future__ import annotations
 
 from .lower import _EXTERN_VARIADIC, _LIBM, _LIBM_INT, _STDLIB_ALLOC
@@ -88,7 +89,10 @@ _LIBRARY_RULES: tuple[tuple, ...] = (
     # liblapack, so -llapack is the load-bearing flag a unit with a LAPACK edge needs (the LAPACKE_ prefix
     # rule covers the wrapper's actual callee). Matches the C twin's branch in the SAME order (first match
     # wins). The trailing-underscore Fortran forms are matched too so a direct sgesv_ edge resolves.
-    (lambda c: c.startswith("LAPACKE_") or (c.endswith("_") and c[:-1] in _LAPACK_FORTRAN), "-llapack"),
+    (
+        lambda c: c.startswith("LAPACKE_") or (c.endswith("_") and c[:-1] in _LAPACK_FORTRAN),
+        "-llapack",
+    ),
     # Area-B breadth (#62) GSL: any gsl_* (the GNU Scientific Library -- special functions / statistics) ->
     # -lgsl. The statistics wrap (bcir/lower/c_kernel.py emit_gsl_stats_c) calls gsl_stats_mean/variance/sd
     # and links `-lgsl -lgslcblas` (gsl depends on a cblas); -lgsl is the load-bearing dependency a unit
@@ -136,7 +140,7 @@ def _callee_of(op: str) -> str | None:
     """The external callee named by a claim op, or None if the op is not an external-call edge."""
     for prefix in _EXTERN_CALL_PREFIXES:
         if op.startswith(prefix):
-            return op[len(prefix):]
+            return op[len(prefix) :]
     return None
 
 
@@ -147,7 +151,7 @@ def link_flags_for_callees(callees) -> list[str]:
     flags = set()
     for callee in callees:
         flag = library_for_callee(callee)
-        if flag:                                          # skip NO_FLAG ("") and unknown (None)
+        if flag:  # skip NO_FLAG ("") and unknown (None)
             flags.add(flag)
     return sorted(flags)
 

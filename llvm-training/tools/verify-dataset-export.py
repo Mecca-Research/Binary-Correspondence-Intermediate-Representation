@@ -37,7 +37,9 @@ def type_matches(value: Any, expected: str) -> bool:
     }[expected]
 
 
-def validate_schema_instance(value: Any, schema: dict[str, Any], location: str, errors: list[str]) -> None:
+def validate_schema_instance(
+    value: Any, schema: dict[str, Any], location: str, errors: list[str]
+) -> None:
     if "$ref" in schema:
         errors.append(f"{location}: unsupported $ref in repository-local validator")
         return
@@ -151,12 +153,15 @@ def main() -> int:
         if group.get("split") not in splits:
             errors.append(f"leakage group {group_id!r} split disagrees with assignments")
         assigned_ids = {
-            stable_id for stable_id, item in assignments.items()
+            stable_id
+            for stable_id, item in assignments.items()
             if item.get("leakage_group") == group_id
         }
         if set(group.get("exercise_ids", [])) != assigned_ids:
             errors.append(f"leakage group {group_id!r} exercise list disagrees with assignments")
-        assigned_families = {assignments[stable_id].get("concept_family") for stable_id in assigned_ids}
+        assigned_families = {
+            assignments[stable_id].get("concept_family") for stable_id in assigned_ids
+        }
         if assigned_families != {group.get("concept_family")}:
             errors.append(f"leakage group {group_id!r} concept family disagrees with assignments")
     for group_id in sorted(set(declared_groups) - set(group_splits)):
@@ -191,7 +196,9 @@ def main() -> int:
                 run_export(exporter, output, split, False)
                 split_records = read_jsonl(output, errors)
                 actual = {record.get("id") for record in split_records}
-                expected = {stable_id for stable_id, item in assignments.items() if item["split"] == split}
+                expected = {
+                    stable_id for stable_id, item in assignments.items() if item["split"] == split
+                }
                 if actual != expected:
                     errors.append(f"{split} export does not match split manifest")
                 if split_union & actual:
@@ -202,7 +209,10 @@ def main() -> int:
                 stable_id = record.get("id", f"record-{index}")
                 validate_schema_instance(record, schema, stable_id, errors)
                 assignment = assignments.get(stable_id)
-                if assignment and any(record.get(key) != assignment.get(key) for key in ("split", "leakage_group", "concept_family")):
+                if assignment and any(
+                    record.get(key) != assignment.get(key)
+                    for key in ("split", "leakage_group", "concept_family")
+                ):
                     errors.append(f"{stable_id}: split metadata differs from manifest")
                 prompt = record.get("prompt")
                 checksums = record.get("checksums", {})
@@ -222,7 +232,10 @@ def main() -> int:
                     if not (repo_root / path).is_file():
                         errors.append(f"{stable_id}: missing source reference {path}")
                 provenance_manifest = record.get("provenance", {}).get("exercise_manifest")
-                if not isinstance(provenance_manifest, str) or not (repo_root / provenance_manifest).is_file():
+                if (
+                    not isinstance(provenance_manifest, str)
+                    or not (repo_root / provenance_manifest).is_file()
+                ):
                     errors.append(f"{stable_id}: missing provenance manifest reference")
     except (OSError, subprocess.CalledProcessError) as error:
         errors.append(f"could not regenerate exports: {error}")
@@ -232,7 +245,9 @@ def main() -> int:
         for error in errors:
             print(f"  - {error}", file=sys.stderr)
         return 1
-    print(f"Verified {len(assignments)} deterministic dataset records across train, validation, and test splits.")
+    print(
+        f"Verified {len(assignments)} deterministic dataset records across train, validation, and test splits."
+    )
     return 0
 
 

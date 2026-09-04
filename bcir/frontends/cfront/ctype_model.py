@@ -6,6 +6,7 @@ follows the usual C rule (each member aligned to its own alignment; aggregate si
 alignment) so `offsetof`/`sizeof` match what Clang computes — which the behaviour-equivalence check
 relies on.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -13,17 +14,31 @@ from dataclasses import dataclass, field
 # Scalar integer/base types -> (size in bytes, signed). C23 fixed-width names + the core set.
 _SCALAR = {
     "void": (0, False),
-    "_Bool": (1, False), "bool": (1, False),
-    "char": (1, True), "signed char": (1, True), "unsigned char": (1, False),
-    "short": (2, True), "unsigned short": (2, False),
-    "int": (4, True), "unsigned int": (4, False), "unsigned": (4, False),
-    "long": (8, True), "unsigned long": (8, False),
-    "long long": (8, True), "unsigned long long": (8, False),
-    "int8_t": (1, True), "uint8_t": (1, False),
-    "int16_t": (2, True), "uint16_t": (2, False),
-    "int32_t": (4, True), "uint32_t": (4, False),
-    "int64_t": (8, True), "uint64_t": (8, False),
-    "size_t": (8, False), "intptr_t": (8, True), "uintptr_t": (8, False),
+    "_Bool": (1, False),
+    "bool": (1, False),
+    "char": (1, True),
+    "signed char": (1, True),
+    "unsigned char": (1, False),
+    "short": (2, True),
+    "unsigned short": (2, False),
+    "int": (4, True),
+    "unsigned int": (4, False),
+    "unsigned": (4, False),
+    "long": (8, True),
+    "unsigned long": (8, False),
+    "long long": (8, True),
+    "unsigned long long": (8, False),
+    "int8_t": (1, True),
+    "uint8_t": (1, False),
+    "int16_t": (2, True),
+    "uint16_t": (2, False),
+    "int32_t": (4, True),
+    "uint32_t": (4, False),
+    "int64_t": (8, True),
+    "uint64_t": (8, False),
+    "size_t": (8, False),
+    "intptr_t": (8, True),
+    "uintptr_t": (8, False),
 }
 # Floating types -> size in bytes (Linux/Clang ABI: long double is 80-bit, 16-byte-aligned).
 _FLOAT = {"float": 4, "double": 8, "long double": 16}
@@ -39,25 +54,26 @@ PTR_SIZE = 8
 @dataclass(frozen=True)
 class CType:
     """A resolved C type. ``kind`` in {scalar, pointer, array, struct, union}."""
+
     kind: str
-    name: str = ""                       # scalar/aggregate name
+    name: str = ""  # scalar/aggregate name
     size: int = 0
     align: int = 0
     signed: bool = False
-    of: "CType | None" = None            # element type (pointer/array), or return type (funcptr)
-    count: int = 0                       # array length
-    fields: tuple = ()                   # ((name, CType, byte_off, bit_off, bit_width), ...)
-    volatile: bool = False               # a volatile-qualified type -> an MMIO resource
-    atomic: bool = False                 # an _Atomic-qualified type (C11/C23 atomics)
-    packed: bool = False                 # an __attribute__((packed)) struct/union (no padding; a bitfield
-                                         #   packs bit-by-bit and its access unit spans only the bytes it covers)
-    params: tuple = ()                   # parameter CTypes (funcptr only) — for faithful emit
-    shape: tuple = ()                    # array dims of a decayed multi-dim array param (m[i][j])
-    bit_width: int = 0                   # a C23 `_BitInt(N)` type's EXACT width N (0 == a normal type; >0 ==
-                                         #   `_BitInt(N)`). A distinct integer type that does NOT promote and does
-                                         #   not canonicalize to a power-of-two width: `name` carries the verbatim
-                                         #   spelling (`_BitInt(12)` / `unsigned _BitInt(12)`) so the emit prints it
-                                         #   faithfully -- Clang then applies the N-bit semantics in both rails.
+    of: "CType | None" = None  # element type (pointer/array), or return type (funcptr)
+    count: int = 0  # array length
+    fields: tuple = ()  # ((name, CType, byte_off, bit_off, bit_width), ...)
+    volatile: bool = False  # a volatile-qualified type -> an MMIO resource
+    atomic: bool = False  # an _Atomic-qualified type (C11/C23 atomics)
+    packed: bool = False  # an __attribute__((packed)) struct/union (no padding; a bitfield
+    #   packs bit-by-bit and its access unit spans only the bytes it covers)
+    params: tuple = ()  # parameter CTypes (funcptr only) — for faithful emit
+    shape: tuple = ()  # array dims of a decayed multi-dim array param (m[i][j])
+    bit_width: int = 0  # a C23 `_BitInt(N)` type's EXACT width N (0 == a normal type; >0 ==
+    #   `_BitInt(N)`). A distinct integer type that does NOT promote and does
+    #   not canonicalize to a power-of-two width: `name` carries the verbatim
+    #   spelling (`_BitInt(12)` / `unsigned _BitInt(12)`) so the emit prints it
+    #   faithfully -- Clang then applies the N-bit semantics in both rails.
 
     @property
     def is_bitint(self) -> bool:
@@ -65,11 +81,15 @@ class CType:
 
     @property
     def is_integer(self) -> bool:
-        return (self.kind == "scalar" and self.name != "void"
-                and self.name not in _FLOAT and self.name not in _COMPLEX)
+        return (
+            self.kind == "scalar"
+            and self.name != "void"
+            and self.name not in _FLOAT
+            and self.name not in _COMPLEX
+        )
 
     @property
-    def is_float(self) -> bool:                        # complex rides the float paths (so is_float == True)
+    def is_float(self) -> bool:  # complex rides the float paths (so is_float == True)
         return self.kind == "scalar" and (self.name in _FLOAT or self.name in _COMPLEX)
 
     @property
@@ -95,11 +115,13 @@ class CType:
 
 def with_volatile(ct: CType, vol: bool = True) -> CType:
     from dataclasses import replace
+
     return replace(ct, volatile=vol) if vol else ct
 
 
 def with_atomic(ct: CType, at: bool = True) -> CType:
     from dataclasses import replace
+
     return replace(ct, atomic=at) if at else ct
 
 
@@ -110,14 +132,24 @@ def scalar(name: str, abi=None) -> CType:
     12-byte/4-aligned on ILP32)."""
     if name in _FLOAT:
         if name == "long double" and abi is not None:
-            return CType("scalar", name=name, size=abi.long_double_size,
-                         align=abi.long_double_align, signed=True)
+            return CType(
+                "scalar",
+                name=name,
+                size=abi.long_double_size,
+                align=abi.long_double_align,
+                signed=True,
+            )
         size = _FLOAT[name]
         return CType("scalar", name=name, size=size, align=max(1, size), signed=True)
-    if name in _COMPLEX:                                # a _Complex pair: element-aligned (align == size/2)
+    if name in _COMPLEX:  # a _Complex pair: element-aligned (align == size/2)
         if name == "long double _Complex" and abi is not None:
-            return CType("scalar", name=name, size=abi.long_double_size * 2,
-                         align=abi.long_double_align, signed=True)
+            return CType(
+                "scalar",
+                name=name,
+                size=abi.long_double_size * 2,
+                align=abi.long_double_align,
+                signed=True,
+            )
         size = _COMPLEX[name]
         return CType("scalar", name=name, size=size, align=max(1, size // 2), signed=True)
     if name not in _SCALAR:
@@ -161,8 +193,16 @@ def is_scalar_name(name: str) -> bool:
 # The value model needs only (width, signedness): the observable result of integer arithmetic is
 # fixed by those two, so types that share a width (long / long long; int / int32_t) collapse onto one
 # canonical fixed-width type. The actual computation is delegated to the emitted C / resident backend.
-_INT_CANON = {(1, True): "int8_t", (1, False): "uint8_t", (2, True): "int16_t", (2, False): "uint16_t",
-              (4, True): "int32_t", (4, False): "uint32_t", (8, True): "int64_t", (8, False): "uint64_t"}
+_INT_CANON = {
+    (1, True): "int8_t",
+    (1, False): "uint8_t",
+    (2, True): "int16_t",
+    (2, False): "uint16_t",
+    (4, True): "int32_t",
+    (4, False): "uint32_t",
+    (8, True): "int64_t",
+    (8, False): "uint64_t",
+}
 
 
 def int_type(size: int, signed: bool, abi=None) -> CType:
@@ -214,7 +254,7 @@ def bitint_arith_result(a: CType, b: CType) -> CType | None:
     std = b if a.is_bitint else a
     # `std` is already integer-promoted (>= int), so its width is its rank-width; std_width 4/8 bytes here.
     if bi.bit_width > std.size * 8:
-        return bi                                         # the `_BitInt` strictly wider -> it wins, own sign
+        return bi  # the `_BitInt` strictly wider -> it wins, own sign
     raise BitIntMix("`_BitInt` arithmetic whose C23 result is a standard integer type")
 
 
@@ -262,12 +302,12 @@ def int_literal_type(text: str) -> str:
     first type in the suffix-permitted candidate list that can hold the value. Decimal literals only
     pick an unsigned type when `u`-suffixed; hex/octal literals may at any rank. Returns a canonical
     scalar name (`int` / `unsigned int` / `long` / ... )."""
-    s = text.replace("'", "")                                  # strip C23 digit separators
+    s = text.replace("'", "")  # strip C23 digit separators
     i = len(s)
     while i > 0 and s[i - 1] in "uUlL":
         i -= 1
     body, suf = s[:i], s[i:].lower()
-    u, lrank = ("u" in suf), suf.count("l")                    # lrank: 0 none / 1 long / 2 long long
+    u, lrank = ("u" in suf), suf.count("l")  # lrank: 0 none / 1 long / 2 long long
     if body[:2] in ("0x", "0X"):
         val, decimal = int(body, 16), False
     elif body[:2] in ("0b", "0B"):
@@ -283,8 +323,10 @@ def int_literal_type(text: str) -> str:
         cands = {0: [UINT, ULONG, ULL], 1: [ULONG, ULL], 2: [ULL]}[lrank]
     elif decimal:
         cands = {0: [INT, LONG, LL], 1: [LONG, LL], 2: [LL]}[lrank]
-    else:                                                      # hex/octal unsuffixed: unsigned allowed
-        cands = {0: [INT, UINT, LONG, ULONG, LL, ULL], 1: [LONG, ULONG, LL, ULL], 2: [LL, ULL]}[lrank]
+    else:  # hex/octal unsuffixed: unsigned allowed
+        cands = {0: [INT, UINT, LONG, ULONG, LL, ULL], 1: [LONG, ULONG, LL, ULL], 2: [LL, ULL]}[
+            lrank
+        ]
     for name, size, signed in cands:
         if val <= (1 << (size * 8 - (1 if signed else 0))) - 1:
             return name
@@ -307,8 +349,9 @@ def funcptr(name: str, ret: CType, params: tuple = (), abi=None) -> CType:
     """A function-pointer type — pointer-sized (per the target ABI), carrying its return + parameter
     types so the emitter can reconstruct a call (``name`` is the typedef spelling, used verbatim)."""
     size = abi.pointer_size if abi is not None else PTR_SIZE
-    return CType("funcptr", name=name, size=size, align=size, signed=False,
-                 of=ret, params=tuple(params))
+    return CType(
+        "funcptr", name=name, size=size, align=size, signed=False, of=ret, params=tuple(params)
+    )
 
 
 def array(of: CType, count: int) -> CType:
@@ -321,10 +364,13 @@ class AggregateBuilder:
     into storage units of their declared type (the little-endian Clang rule the equivalence check
     relies on). ``packed`` drops inter-member + tail padding (member alignment forced to 1);
     ``force_align`` raises the aggregate alignment (`aligned(N)`/`alignas`)."""
+
     kind: str
     name: str
-    members: list = field(default_factory=list)   # (name, CType, bit_width, req_align)  bit_width 0 == plain;
-    packed: bool = False                           # req_align 0 == natural (else over-aligns the member)
+    members: list = field(
+        default_factory=list
+    )  # (name, CType, bit_width, req_align)  bit_width 0 == plain;
+    packed: bool = False  # req_align 0 == natural (else over-aligns the member)
     force_align: int = 0
 
     def build(self) -> CType:
@@ -336,8 +382,8 @@ class AggregateBuilder:
         dbits = 0
         align = 1
         laid: list = []
-        bf_unit_off = None        # byte offset of the active bitfield storage unit (packed path)
-        bf_bits = 0               # bits already used in it
+        bf_unit_off = None  # byte offset of the active bitfield storage unit (packed path)
+        bf_bits = 0  # bits already used in it
         bf_unit_size = 0
 
         def malign(mtype: CType, req: int) -> int:
@@ -347,10 +393,12 @@ class AggregateBuilder:
 
         for mname, mtype, width, req in self.members:
             ma = malign(mtype, req)
-            if mname == "" and mtype.kind == "scalar":            # an UNNAMED (`int :3`) or ZERO-WIDTH (`int :0`)
-                if self.kind == "struct":                         # bitfield: positions the cursor but is NOT a
-                    unit_bits = mtype.size * 8                     # field and does NOT raise the struct's alignment.
-                    if width == 0:                                # zero-width -> bump to the next unit boundary
+            if (
+                mname == "" and mtype.kind == "scalar"
+            ):  # an UNNAMED (`int :3`) or ZERO-WIDTH (`int :0`)
+                if self.kind == "struct":  # bitfield: positions the cursor but is NOT a
+                    unit_bits = mtype.size * 8  # field and does NOT raise the struct's alignment.
+                    if width == 0:  # zero-width -> bump to the next unit boundary
                         if dbits % unit_bits:
                             dbits += unit_bits - (dbits % unit_bits)
                     elif self.packed:
@@ -361,10 +409,10 @@ class AggregateBuilder:
                         dbits += width
                 continue
             align = max(align, ma)
-            if mname == "":                                       # an ANONYMOUS struct/union member: it occupies
-                if self.kind == "union":                          # space as a unit, but its leaf fields PROMOTE
-                    off = 0                                        # into this aggregate's namespace at shifted
-                else:                                             # offsets (so `p->x` resolves directly).
+            if mname == "":  # an ANONYMOUS struct/union member: it occupies
+                if self.kind == "union":  # space as a unit, but its leaf fields PROMOTE
+                    off = 0  # into this aggregate's namespace at shifted
+                else:  # offsets (so `p->x` resolves directly).
                     a8 = ma * 8
                     if dbits % a8:
                         dbits += a8 - (dbits % a8)
@@ -375,11 +423,15 @@ class AggregateBuilder:
                 continue
             if width and self.kind == "struct":
                 unit_bits = mtype.size * 8
-                if self.packed:                                   # packed: pack bit-by-bit, NO unit reservation
-                    laid.append((mname, mtype, dbits // 8, dbits % 8, width))   # field at the running bit cursor
-                    dbits += width                                # its access unit spans only the bytes it covers
-                else:                                             # natural: pack at the bit cursor
-                    if (dbits % unit_bits) + width > unit_bits:   # would cross a storage-unit boundary
+                if self.packed:  # packed: pack bit-by-bit, NO unit reservation
+                    laid.append(
+                        (mname, mtype, dbits // 8, dbits % 8, width)
+                    )  # field at the running bit cursor
+                    dbits += width  # its access unit spans only the bytes it covers
+                else:  # natural: pack at the bit cursor
+                    if (
+                        dbits % unit_bits
+                    ) + width > unit_bits:  # would cross a storage-unit boundary
                         dbits += unit_bits - (dbits % unit_bits)  # -> bump to the next one
                     unit_off = (dbits // unit_bits) * mtype.size
                     laid.append((mname, mtype, unit_off, dbits - unit_off * 8, width))
@@ -387,16 +439,25 @@ class AggregateBuilder:
             elif self.kind == "union":
                 laid.append((mname, mtype, 0, 0, width))
             else:
-                bf_unit_off, bf_bits, bf_unit_size = None, 0, 0     # a plain member flushes the unit
+                bf_unit_off, bf_bits, bf_unit_size = None, 0, 0  # a plain member flushes the unit
                 a8 = ma * 8
                 if dbits % a8:
                     dbits += a8 - (dbits % a8)
                 laid.append((mname, mtype, dbits // 8, 0, width))
                 dbits += mtype.size * 8
         align = max(align, self.force_align)
-        size = (max((m[1].size for m in self.members), default=0) if self.kind == "union"
-                else (dbits + 7) // 8)
+        size = (
+            max((m[1].size for m in self.members), default=0)
+            if self.kind == "union"
+            else (dbits + 7) // 8
+        )
         if align and size % align:
             size += align - (size % align)
-        return CType(self.kind, name=self.name, size=size, align=max(1, align), fields=tuple(laid),
-                     packed=self.packed)
+        return CType(
+            self.kind,
+            name=self.name,
+            size=size,
+            align=max(1, align),
+            fields=tuple(laid),
+            packed=self.packed,
+        )

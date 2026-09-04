@@ -82,8 +82,9 @@ _BOOKKEEPING = frozenset({"c.copy", "c.const"})
 def _emit_joined(result) -> str:
     """The emitted C for every function in the unit, attestation banners stripped, joined -- the `e1`/`e2`
     of the round trip. The strip makes the text a self-contained C translation unit candidate."""
-    return "\n\n".join(_ATTESTATION.sub("", result.emitted[name])
-                       for name in result.lowered.functions)
+    return "\n\n".join(
+        _ATTESTATION.sub("", result.emitted[name]) for name in result.lowered.functions
+    )
 
 
 def _norm_op(op: str) -> str:
@@ -149,14 +150,14 @@ _MIN_EXERCISED = 50
 
 def _classify(fx: str) -> tuple[str, str]:
     """Round-trip classification of ONE fixture. Returns `(verdict, detail)`:
-      * ("included", "")             -- e1 re-parses, contains no non-idempotent construct, and the
-                                        observable signature is a FIXED POINT (osig(g2) == osig(g3));
-      * ("drift", "<diag>")          -- e1 re-parses cleanly but the observable signature DRIFTS across
-                                        the round trip (osig(g2) != osig(g3)). This is the failure the
-                                        gate exists to catch -- a genuine emit<->parse asymmetry; the
-                                        slice tests fail on it.
-      * ("excluded", "<reason>")     -- the emit legitimately leaves the re-parseable / idempotent subset
-                                        (see the classified reasons in the module docstring)."""
+    * ("included", "")             -- e1 re-parses, contains no non-idempotent construct, and the
+                                      observable signature is a FIXED POINT (osig(g2) == osig(g3));
+    * ("drift", "<diag>")          -- e1 re-parses cleanly but the observable signature DRIFTS across
+                                      the round trip (osig(g2) != osig(g3)). This is the failure the
+                                      gate exists to catch -- a genuine emit<->parse asymmetry; the
+                                      slice tests fail on it.
+    * ("excluded", "<reason>")     -- the emit legitimately leaves the re-parseable / idempotent subset
+                                      (see the classified reasons in the module docstring)."""
     src = open(f"{_C}/{fx}", encoding="utf-8").read()
     try:
         r1 = compile_unit(src, check_clang=False, includes=_includes_for(fx))
@@ -177,8 +178,11 @@ def _classify(fx: str) -> tuple[str, str]:
         return ("excluded", "emit2-not-reparseable")
     s2, s3 = _observable_signature(g2), _observable_signature(g3)
     if s2 != s3:
-        return ("drift", f"observable signature drifted across the round trip\n"
-                         f"     parse(e1): {s2}\n     parse(e2): {s3}")
+        return (
+            "drift",
+            f"observable signature drifted across the round trip\n"
+            f"     parse(e1): {s2}\n     parse(e2): {s3}",
+        )
     return ("included", "")
 
 
@@ -202,13 +206,17 @@ def _check_slice(fxs):
             drifts.append(f"{fx}: {detail}")
         elif verdict == "included":
             exercised += 1
-    assert not drifts, ("cfront emit -> re-parse round-trip NOT a fixed point (the emitted C re-lowers to "
-                        "a DIFFERENT observable claim graph -- an emit<->parse asymmetry):\n"
-                        + "\n".join(f"  {m}" for m in drifts))
+    assert not drifts, (
+        "cfront emit -> re-parse round-trip NOT a fixed point (the emitted C re-lowers to "
+        "a DIFFERENT observable claim graph -- an emit<->parse asymmetry):\n"
+        + "\n".join(f"  {m}" for m in drifts)
+    )
     # Anti-degeneration: a slice that excluded EVERY fixture proves nothing. Each slice must round-trip at
     # least one fixture, so the gate cannot pass by classifying all work away.
-    assert exercised > 0, (f"round-trip exercised NO fixture in this slice -- the gate degenerated to all-"
-                           f"excluded (a vacuous pass): {fxs}")
+    assert exercised > 0, (
+        f"round-trip exercised NO fixture in this slice -- the gate degenerated to all-"
+        f"excluded (a vacuous pass): {fxs}"
+    )
 
 
 def test_emitted_c_reparse_idempotent_g0():
@@ -238,7 +246,7 @@ def test_roundtrip_is_genuinely_a_second_lowering():
     emit onward. Pins, by direct demonstration, that byte-idempotence does NOT hold (the `bcir_` rename +
     SSA-temp -> local materialization) while the observable fixed point DOES -- the exact reason the gate
     uses the projected invariant rather than `e2 == e1`."""
-    fx = "cfront_logic.c"                                        # straight-line, no control flow / masked access
+    fx = "cfront_logic.c"  # straight-line, no control flow / masked access
     src = open(f"{_C}/{fx}", encoding="utf-8").read()
     r1 = compile_unit(src, check_clang=False, includes=_includes_for(fx))
     assert r1.is_clean, fx
@@ -255,7 +263,8 @@ def test_roundtrip_is_genuinely_a_second_lowering():
     # ...and the OBSERVABLE claim-op signature is a fixed point from the emit onward.
     assert _observable_signature(g2) == _observable_signature(g3), (
         f"{fx}: observable signature drifted across the round trip "
-        f"({_observable_signature(g2)} -> {_observable_signature(g3)})")
+        f"({_observable_signature(g2)} -> {_observable_signature(g3)})"
+    )
 
 
 def test_roundtrip_smoke_and_exclusion_set_is_pinned():
@@ -277,24 +286,41 @@ def test_roundtrip_smoke_and_exclusion_set_is_pinned():
             drifted.append(f"{fx}: {detail}")
         else:
             excluded[fx] = detail
-    assert not drifted, ("cfront emit -> re-parse round-trip drift (a real emitter asymmetry):\n"
-                         + "\n".join(f"  {m}" for m in drifted))
+    assert not drifted, (
+        "cfront emit -> re-parse round-trip drift (a real emitter asymmetry):\n"
+        + "\n".join(f"  {m}" for m in drifted)
+    )
     # the anti-degeneration floor: a large, non-trivial slice of the corpus round-trips.
     assert len(included) >= _MIN_EXERCISED, (
         f"round trip exercised only {len(included)} fixtures (floor {_MIN_EXERCISED}) -- the included set "
-        f"collapsed; coverage regression. included={sorted(included)}")
+        f"collapsed; coverage regression. included={sorted(included)}"
+    )
     # every exclusion must carry a KNOWN classified reason -- a new/unrecognized reason fails, so a change
     # to the re-parseable subset (a new fallback path, a renamed reason) is caught rather than absorbed.
-    _KNOWN = ("emit-not-reparseable", "emit2-not-reparseable", "control-flow-not-idempotent",
-              "masked-guard-not-idempotent", "original-not-clean", "original-not-lowerable:")
+    _KNOWN = (
+        "emit-not-reparseable",
+        "emit2-not-reparseable",
+        "control-flow-not-idempotent",
+        "masked-guard-not-idempotent",
+        "original-not-clean",
+        "original-not-lowerable:",
+    )
     bad = {fx: why for fx, why in excluded.items() if not any(why.startswith(k) for k in _KNOWN)}
-    assert not bad, f"excluded fixtures with an UNRECOGNIZED reason (the re-parseable subset changed): {bad}"
+    assert not bad, (
+        f"excluded fixtures with an UNRECOGNIZED reason (the re-parseable subset changed): {bad}"
+    )
     # the whole corpus is accounted for (included + excluded == corpus), and the counts are pinned so a
     # coverage regression (a fixture sliding from included into excluded) is visible in the diff.
-    assert len(included) + len(excluded) == len(_CORPUS), (len(included), len(excluded), len(_CORPUS))
+    assert len(included) + len(excluded) == len(_CORPUS), (
+        len(included),
+        len(excluded),
+        len(_CORPUS),
+    )
     # 63 since SEG6.1: `cfront_atomic.c` now round-trips (was excluded). Its emit contains
     # `__atomic_thread_fence(__ATOMIC_SEQ_CST)`; the `__ATOMIC_*` / `memory_order_*` constants are now
     # recognized on re-parse (lower.py `_rvalue`), so the emitted unit re-parses cleanly -- a coverage gain.
-    assert len(included) == 63, (f"included-set size changed from the pinned 63 to {len(included)} -- a "
-                                 f"fixture moved across the round-trip boundary; re-classify + re-pin. "
-                                 f"included={sorted(included)}")
+    assert len(included) == 63, (
+        f"included-set size changed from the pinned 63 to {len(included)} -- a "
+        f"fixture moved across the round-trip boundary; re-classify + re-pin. "
+        f"included={sorted(included)}"
+    )

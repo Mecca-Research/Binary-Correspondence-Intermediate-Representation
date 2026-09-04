@@ -14,22 +14,25 @@ Two campaigns harden the frontend:
 
 Both are seeded, so a failing campaign reproduces from its seed.
 """
+
 from __future__ import annotations
 
 import random
 
-_OPS = ("+", "-", "*", "&", "|", "^")          # total over unsigned; no UB (no /, %, <<, >>)
-_INJECT = "(){};,+-*/&|^=<> ab1\"'"             # the corruption alphabet for the malformed campaign
+_OPS = ("+", "-", "*", "&", "|", "^")  # total over unsigned; no UB (no /, %, <<, >>)
+_INJECT = "(){};,+-*/&|^=<> ab1\"'"  # the corruption alphabet for the malformed campaign
 
 
 def gen_expr(rng: random.Random, depth: int, names: list[str]) -> str:
     """A random arithmetic expression tree over the parameter names and small unsigned constants."""
     if depth <= 0 or rng.random() < 0.3:
         return rng.choice(names + [f"{rng.randint(0, 255)}u"])
-    return f"({gen_expr(rng, depth - 1, names)} {rng.choice(_OPS)} {gen_expr(rng, depth - 1, names)})"
+    return (
+        f"({gen_expr(rng, depth - 1, names)} {rng.choice(_OPS)} {gen_expr(rng, depth - 1, names)})"
+    )
 
 
-_CMPOUND = ("+=", "-=", "*=", "&=", "|=", "^=")    # total over unsigned (no /=, %=, shift-assign)
+_CMPOUND = ("+=", "-=", "*=", "&=", "|=", "^=")  # total over unsigned (no /=, %=, shift-assign)
 
 
 def gen_stmt(rng: random.Random, depth: int, names: list[str], params: list[str]) -> str:
@@ -44,25 +47,33 @@ def gen_stmt(rng: random.Random, depth: int, names: list[str], params: list[str]
     control flow; loop bounds are small constants, so every loop terminates and there is no UB), so a
     clean compiler is Clang-equivalent on every generated program."""
     r = rng.random()
-    if depth <= 0 or r < 0.34:                                     # s OP= <expr>;
+    if depth <= 0 or r < 0.34:  # s OP= <expr>;
         return f"s {rng.choice(_CMPOUND)} {gen_expr(rng, rng.randint(1, 2), names)};"
-    if r < 0.50:                                                   # a bare block with a local
+    if r < 0.50:  # a bare block with a local
         nm = f"v{rng.randint(0, 3)}"
-        return (f"{{ unsigned {nm} = {gen_expr(rng, 2, names)}; "
-                f"{gen_stmt(rng, depth - 1, names + [nm], params)} }}")
-    if r < 0.66:                                                   # a for-loop, counter reused as i/j/k
+        return (
+            f"{{ unsigned {nm} = {gen_expr(rng, 2, names)}; "
+            f"{gen_stmt(rng, depth - 1, names + [nm], params)} }}"
+        )
+    if r < 0.66:  # a for-loop, counter reused as i/j/k
         cv = rng.choice(("i", "j", "k"))
-        return (f"for(unsigned {cv} = 0u; {cv} < {rng.randint(2, 6)}u; {cv}++) "
-                f"{gen_stmt(rng, depth - 1, names + [cv], params)}")
-    if r < 0.80:                                                   # shadow a param in a block, read the
-        p = rng.choice(params)                                     # OUTER one after it (scope-leak bait)
-        return (f"{{ {{ unsigned {p} = {gen_expr(rng, 2, names)}; s ^= {p}; }} s += {p}; }}")
-    if r < 0.90:                                                   # shadow a param in a loop, read the
-        p = rng.choice(params)                                     # OUTER one after it (scope-leak bait)
-        return (f"{{ for(unsigned {p} = 0u; {p} < {rng.randint(2, 5)}u; {p}++) s += {p}; s -= {p}; }}")
-    c = gen_expr(rng, 2, names)                                    # if/else
-    return (f"if({c}) {gen_stmt(rng, depth - 1, names, params)} "
-            f"else {gen_stmt(rng, depth - 1, names, params)}")
+        return (
+            f"for(unsigned {cv} = 0u; {cv} < {rng.randint(2, 6)}u; {cv}++) "
+            f"{gen_stmt(rng, depth - 1, names + [cv], params)}"
+        )
+    if r < 0.80:  # shadow a param in a block, read the
+        p = rng.choice(params)  # OUTER one after it (scope-leak bait)
+        return f"{{ {{ unsigned {p} = {gen_expr(rng, 2, names)}; s ^= {p}; }} s += {p}; }}"
+    if r < 0.90:  # shadow a param in a loop, read the
+        p = rng.choice(params)  # OUTER one after it (scope-leak bait)
+        return (
+            f"{{ for(unsigned {p} = 0u; {p} < {rng.randint(2, 5)}u; {p}++) s += {p}; s -= {p}; }}"
+        )
+    c = gen_expr(rng, 2, names)  # if/else
+    return (
+        f"if({c}) {gen_stmt(rng, depth - 1, names, params)} "
+        f"else {gen_stmt(rng, depth - 1, names, params)}"
+    )
 
 
 def gen_program(rng: random.Random, *, max_depth: int = 4) -> str:
@@ -72,9 +83,9 @@ def gen_program(rng: random.Random, *, max_depth: int = 4) -> str:
     emit, and (critically) name scoping, not just expression folding."""
     names = [chr(ord("a") + i) for i in range(rng.randint(1, 3))]
     sig = ", ".join(f"unsigned {n}" for n in names)
-    if rng.random() < 0.5:                                         # the original single-expression form
+    if rng.random() < 0.5:  # the original single-expression form
         return f"unsigned f({sig}){{ return {gen_expr(rng, rng.randint(1, max_depth), names)}; }}\n"
-    body = "  unsigned s = 0u;\n"                                  # the richer statement form
+    body = "  unsigned s = 0u;\n"  # the richer statement form
     for _ in range(rng.randint(2, 5)):
         body += "  " + gen_stmt(rng, rng.randint(1, 3), names, names) + "\n"
     return f"unsigned f({sig}){{\n{body}  return s + {gen_expr(rng, 2, names)};\n}}\n"
@@ -87,14 +98,15 @@ def mutate(src: str, rng: random.Random) -> str:
     i = rng.randrange(len(src))
     kind = rng.choice(("del", "ins", "rep"))
     if kind == "del":
-        return src[:i] + src[i + 1:]
+        return src[:i] + src[i + 1 :]
     ch = rng.choice(_INJECT)
-    return src[:i] + ch + (src[i:] if kind == "ins" else src[i + 1:])
+    return src[:i] + ch + (src[i:] if kind == "ins" else src[i + 1 :])
 
 
 def fuzz_valid(seed: int = 0, trials: int = 200, *, check_clang: bool = False) -> dict:
     """Compile random valid programs. `crash` / `fallback` / `mismatch` must all be 0."""
     from .pipeline import compile_with_fallback
+
     rng = random.Random(seed)
     stats = {"trials": trials, "fallback": 0, "mismatch": 0, "crash": 0}
     for _ in range(trials):
@@ -114,6 +126,7 @@ def fuzz_valid(seed: int = 0, trials: int = 200, *, check_clang: bool = False) -
 def fuzz_malformed(seed: int = 0, trials: int = 400) -> dict:
     """Corrupt valid programs and run the front end -- it must always return, never raise (`crash` 0)."""
     from .pipeline import compile_with_fallback, diagnose
+
     rng = random.Random(seed)
     stats = {"trials": trials, "crash": 0}
     for _ in range(trials):

@@ -33,10 +33,10 @@ _MAX_BITS = 4096
 
 def code_max(bits: int) -> int:
     """The largest magnitude a `bits`-wide SIGNED code can hold (symmetric range [-code_max, code_max])."""
-    if (isinstance(bits, bool) or not isinstance(bits, int) or
-            not 2 <= bits <= _MAX_BITS):
+    if isinstance(bits, bool) or not isinstance(bits, int) or not 2 <= bits <= _MAX_BITS:
         raise ValueError(
-            f"bits must be an integer in [2, {_MAX_BITS}] (sign + magnitude); got {bits!r}")
+            f"bits must be an integer in [2, {_MAX_BITS}] (sign + magnitude); got {bits!r}"
+        )
     return (1 << (bits - 1)) - 1
 
 
@@ -47,8 +47,8 @@ def _round_half_away(x: float) -> int:
 
 def _quantize_code(x: float, cmax: int, scale: float, rounding: str) -> int:
     q = x / scale
-    c = int(q) if rounding == "truncate" else _round_half_away(q)   # truncate = toward zero
-    return cmax if c > cmax else -cmax if c < -cmax else c          # saturate into the lane
+    c = int(q) if rounding == "truncate" else _round_half_away(q)  # truncate = toward zero
+    return cmax if c > cmax else -cmax if c < -cmax else c  # saturate into the lane
 
 
 def _scale_exponent(amax: float, cmax: int) -> int:
@@ -88,18 +88,19 @@ class QGroup:
         cmax = code_max(self.bits)
         if not isinstance(self.codes, tuple):
             raise ValueError("QGroup codes must be an immutable tuple")
-        if (isinstance(self.scale_exp, bool) or not isinstance(self.scale_exp, int) or
-                not _EXP_MIN <= self.scale_exp <= _EXP_MAX):
-            raise ValueError(
-                f"QGroup scale_exp must be an integer in [{_EXP_MIN}, {_EXP_MAX}]")
+        if (
+            isinstance(self.scale_exp, bool)
+            or not isinstance(self.scale_exp, int)
+            or not _EXP_MIN <= self.scale_exp <= _EXP_MAX
+        ):
+            raise ValueError(f"QGroup scale_exp must be an integer in [{_EXP_MIN}, {_EXP_MAX}]")
         for index, code in enumerate(self.codes):
-            if (isinstance(code, bool) or not isinstance(code, int) or
-                    not -cmax <= code <= cmax):
+            if isinstance(code, bool) or not isinstance(code, int) or not -cmax <= code <= cmax:
                 raise ValueError(f"QGroup code[{index}] does not fit signed {self.bits}-bit range")
 
     @property
     def scale(self) -> float:
-        return math.ldexp(1.0, self.scale_exp)         # 2**scale_exp, exact for in-range exponents
+        return math.ldexp(1.0, self.scale_exp)  # 2**scale_exp, exact for in-range exponents
 
     def dequantize(self) -> list[float]:
         s = self.scale
@@ -122,7 +123,9 @@ def quantize_group(values, bits: int, *, rounding: str = "nearest") -> QGroup:
     cmax = code_max(bits)
     vals = [float(v) for v in values]
     if any(not math.isfinite(v) for v in vals):
-        raise ValueError("quantize_group: inputs must be finite (no inf/nan at the bridge boundary)")
+        raise ValueError(
+            "quantize_group: inputs must be finite (no inf/nan at the bridge boundary)"
+        )
     amax = max((abs(v) for v in vals), default=0.0)
     if amax == 0.0:
         return QGroup(codes=tuple(0 for _ in vals), scale_exp=0, bits=bits)
@@ -130,20 +133,28 @@ def quantize_group(values, bits: int, *, rounding: str = "nearest") -> QGroup:
     # integer-ratio helper is exact even at transition points and subnormals.
     e = _scale_exponent(amax, cmax)
     scale = math.ldexp(1.0, e)
-    return QGroup(codes=tuple(_quantize_code(v, cmax, scale, rounding) for v in vals),
-                  scale_exp=e, bits=bits)
+    return QGroup(
+        codes=tuple(_quantize_code(v, cmax, scale, rounding) for v in vals), scale_exp=e, bits=bits
+    )
 
 
-def quantize_per_group(values, group_size: int, bits: int, *, rounding: str = "nearest") -> list[QGroup]:
+def quantize_per_group(
+    values, group_size: int, bits: int, *, rounding: str = "nearest"
+) -> list[QGroup]:
     """Quantize `values` in contiguous blocks of `group_size` (the last block may be short). `group_size`
     == len(values) is per-tensor; `group_size` == 1 is per-element. Returns one QGroup per block."""
-    if (isinstance(group_size, bool) or not isinstance(group_size, int) or
-            not 1 <= group_size <= sys.maxsize):
+    if (
+        isinstance(group_size, bool)
+        or not isinstance(group_size, int)
+        or not 1 <= group_size <= sys.maxsize
+    ):
         raise ValueError(f"group_size must be a positive integer; got {group_size!r}")
     code_max(bits)  # validate before materializing/iterating an input sequence
     vals = [float(v) for v in values]
-    return [quantize_group(vals[i:i + group_size], bits, rounding=rounding)
-            for i in range(0, len(vals), group_size)]
+    return [
+        quantize_group(vals[i : i + group_size], bits, rounding=rounding)
+        for i in range(0, len(vals), group_size)
+    ]
 
 
 def dequantize(groups) -> list[float]:
@@ -174,6 +185,7 @@ def max_abs_error(values, group_size: int, bits: int, *, rounding: str = "neares
 # truncation (unlike a fixed-point reduce). So a quantized dot product's only error is the INPUT
 # quantization; the accumulation contributes none. The exact integer sum is what the `_BitInt(N)`-lane
 # C kernel (lower.c_kernel.emit_quantized_dot_c) computes; the per-group scales are applied here.
+
 
 def integer_dot(codes_a, codes_b) -> int:
     """Exact integer dot product of two equal-length code vectors (Python big-ints: no overflow, the
@@ -223,7 +235,6 @@ def accumulator_bits(lane_bits: int, count: int) -> int:
     2*lane_bits bits, and summing `count` of them needs ceil(log2(count)) carry bits more. This is the
     width the `_BitInt`-lane kernel must declare so the integer accumulation never overflows (= is exact)."""
     code_max(lane_bits)
-    if (isinstance(count, bool) or not isinstance(count, int) or
-            not 1 <= count <= sys.maxsize):
+    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= sys.maxsize:
         raise ValueError(f"count must be a positive integer; got {count!r}")
     return 2 * lane_bits + (count - 1).bit_length()

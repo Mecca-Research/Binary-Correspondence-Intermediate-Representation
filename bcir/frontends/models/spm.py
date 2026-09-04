@@ -26,7 +26,7 @@ import os
 import struct
 from dataclasses import dataclass, field
 
-_SPACE = "▁"                     # the SentencePiece whitespace piece
+_SPACE = "▁"  # the SentencePiece whitespace piece
 _TYPE_NORMAL, _TYPE_UNKNOWN, _TYPE_CONTROL, _TYPE_BYTE = 1, 2, 3, 6
 _MAX_MODEL_BYTES = 256 * 1024 * 1024
 
@@ -78,7 +78,7 @@ def _read_pieces(buf: bytes) -> list[tuple[str, float, int]]:
         fieldno, wire = tag >> 3, tag & 7
         if fieldno == 0:
             raise ValueError("tokenizer.model: protobuf field number zero")
-        if fieldno != 1 or wire != 2:                  # not a `pieces` message: skip it
+        if fieldno != 1 or wire != 2:  # not a `pieces` message: skip it
             i = _skip(buf, i, wire, len(buf))
             continue
         n, i = _read_varint(buf, i, len(buf))
@@ -132,10 +132,10 @@ class SpTokenizer:
     """A loaded SentencePiece-BPE model: piece -> (id, score), the byte alphabet, the
     specials (control/unknown pieces -- never produced by merging), and the file digest."""
 
-    pieces: dict                    # piece string -> (id, score)
-    byte_ids: dict                  # byte value 0..255 -> id (the <0xXX> pieces; may be empty)
+    pieces: dict  # piece string -> (id, score)
+    byte_ids: dict  # byte value 0..255 -> id (the <0xXX> pieces; may be empty)
     unk_id: int
-    specials: dict                  # control-piece text -> id (e.g. <s>, </s>)
+    specials: dict  # control-piece text -> id (e.g. <s>, </s>)
     digest: str = ""
     ids_to_pieces: dict = field(default_factory=dict)
 
@@ -151,7 +151,7 @@ class SpTokenizer:
         if add_dummy_prefix and not text.startswith(_SPACE):
             text = _SPACE + text
         syms = list(text)
-        while len(syms) > 1:                           # the llama.cpp spm merge loop
+        while len(syms) > 1:  # the llama.cpp spm merge loop
             best_i, best_score = -1, None
             for i in range(len(syms) - 1):
                 cand = self.pieces.get(syms[i] + syms[i + 1])
@@ -159,16 +159,16 @@ class SpTokenizer:
                     best_i, best_score = i, cand[1]
             if best_i < 0:
                 break
-            syms[best_i:best_i + 2] = [syms[best_i] + syms[best_i + 1]]
+            syms[best_i : best_i + 2] = [syms[best_i] + syms[best_i + 1]]
         out: list[int] = []
         for s in syms:
             hit = self.pieces.get(s)
             if hit is not None:
                 out.append(hit[0])
-            elif self.byte_ids:                        # byte fallback: the UTF-8 bytes
+            elif self.byte_ids:  # byte fallback: the UTF-8 bytes
                 out.extend(self.byte_ids[b] for b in s.encode("utf-8"))
             else:
-                out.append(self.unk_id)                # no byte alphabet: honest <unk>
+                out.append(self.unk_id)  # no byte alphabet: honest <unk>
         return out
 
     def decode(self, ids: list) -> str:
@@ -179,7 +179,7 @@ class SpTokenizer:
         for t in ids:
             piece = self.ids_to_pieces.get(int(t), "")
             if piece in self.specials:
-                continue                               # control pieces render as nothing
+                continue  # control pieces render as nothing
             if len(piece) == 6 and piece.startswith("<0x") and piece.endswith(">"):
                 buf.append(bytes([int(piece[3:5], 16)]))
             else:
@@ -237,5 +237,11 @@ def load_sentencepiece(path: str, *, max_bytes: int = _MAX_MODEL_BYTES) -> SpTok
         raise ValueError(f"{path}: tokenizer.model has no unknown piece")
     if byte_ids and set(byte_ids) != set(range(256)):
         raise ValueError(f"{path}: partial byte fallback alphabet ({len(byte_ids)}/256)")
-    return SpTokenizer(pieces=pieces, byte_ids=byte_ids, unk_id=unk_id, specials=specials,
-                       digest=hashlib.sha256(raw).hexdigest(), ids_to_pieces=ids_to_pieces)
+    return SpTokenizer(
+        pieces=pieces,
+        byte_ids=byte_ids,
+        unk_id=unk_id,
+        specials=specials,
+        digest=hashlib.sha256(raw).hexdigest(),
+        ids_to_pieces=ids_to_pieces,
+    )

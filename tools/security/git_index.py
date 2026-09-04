@@ -11,6 +11,7 @@ defect fixed twice in two places is how there come to be two defects.
 In a clean checkout — every CI run — the divergent set is empty and the
 whole pass costs two `git` invocations.
 """
+
 from __future__ import annotations
 
 import subprocess

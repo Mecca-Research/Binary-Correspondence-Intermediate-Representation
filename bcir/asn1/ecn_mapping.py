@@ -88,7 +88,8 @@ class Ordering:
             raise Asn1Error(
                 f"ECN: §19.5.9 — position {index} is past the end of an ordering with {size} "
                 f"abstract values; §19.5.11 permits the destination to be shorter, so the "
-                f"specification is legal and this particular value simply cannot be encoded")
+                f"specification is legal and this particular value simply cannot be encoded"
+            )
         return index
 
 
@@ -102,7 +103,8 @@ class NullOrdering(Ordering):
     def index_of(self, value) -> int:
         if value is not None:
             raise Asn1Error(
-                f"ECN: a class in the null category has one abstract value; got {value!r}")
+                f"ECN: a class in the null category has one abstract value; got {value!r}"
+            )
         return 0
 
     def value_at(self, index: int):
@@ -147,13 +149,15 @@ class IntegerOrdering(Ordering):
         if self.low is None:
             raise Asn1Error(
                 "ECN: §19.5.4.2 a) gives an integer class an ordering only when it is "
-                "\"constrained to have a finite lower bound\"; without one there is no first "
-                "abstract value, and §19.5.10's \"defined first value\" is what the mapping "
-                "counts from")
+                '"constrained to have a finite lower bound"; without one there is no first '
+                'abstract value, and §19.5.10\'s "defined first value" is what the mapping '
+                "counts from"
+            )
         if self.high is not None and self.high < self.low:
             raise Asn1Error(
                 f"ECN: an integer ordering runs from {self.low} upwards; {self.high} is below "
-                f"its lower bound")
+                f"its lower bound"
+            )
 
     def count(self) -> "int | None":
         return None if self.high is None else self.high - self.low + 1
@@ -163,7 +167,8 @@ class IntegerOrdering(Ordering):
             raise Asn1Error(
                 f"ECN: §19.5.6 — {value} is outside the bounds "
                 f"{self.low}..{'MAX' if self.high is None else self.high} that define this "
-                f"ordering")
+                f"ordering"
+            )
         return value - self.low
 
     def value_at(self, index: int):
@@ -189,13 +194,15 @@ class AlternativesOrdering(Ordering):
         if not self.alternatives:
             raise Asn1Error(
                 "ECN: §19.5.3 admits a construction in the alternatives category; one with no "
-                "alternatives has no abstract values to order")
+                "alternatives has no abstract values to order"
+            )
         for position, (name, ordering) in enumerate(self.alternatives[:-1]):
             if ordering.count() is None:
                 raise Asn1Error(
                     f"ECN: §19.5.4.2 b) — only the LAST alternative may have an infinite "
                     f"ordering; {name!r} is at position {position} and is infinite, which "
-                    f"would put every later alternative past a position no index reaches")
+                    f"would put every later alternative past a position no index reaches"
+                )
 
     def count(self) -> "int | None":
         total = 0
@@ -217,11 +224,13 @@ class AlternativesOrdering(Ordering):
             if size is None:  # pragma: no cover - __post_init__ forbids a non-final infinity
                 raise Asn1Error(
                     f"ECN: the alternative {candidate!r} has an infinite ordering and is not "
-                    f"the last")
+                    f"the last"
+                )
             base += size
         raise Asn1Error(
             f"ECN: {name!r} is not one of this construction's alternatives "
-            f"({', '.join(candidate for candidate, _o in self.alternatives)})")
+            f"({', '.join(candidate for candidate, _o in self.alternatives)})"
+        )
 
     def value_at(self, index: int):
         self._check_index(index)
@@ -232,7 +241,8 @@ class AlternativesOrdering(Ordering):
                 return (name, ordering.value_at(remaining))
             remaining -= size
         raise Asn1Error(  # pragma: no cover - _check_index already bounded this
-            f"ECN: position {index} is past the end of this alternatives ordering")
+            f"ECN: position {index} is past the end of this alternatives ordering"
+        )
 
 
 @dataclass(frozen=True)
@@ -253,7 +263,8 @@ class SingleComponentOrdering(Ordering):
         if self.component is None:
             raise Asn1Error(
                 "ECN: §19.5.8 orders a concatenation by its single non-optional component, "
-                "and none is given")
+                "and none is given"
+            )
 
     def count(self) -> "int | None":
         return self.component.count()
@@ -263,7 +274,8 @@ class SingleComponentOrdering(Ordering):
             if set(value) != {self.name}:
                 raise Asn1Error(
                     f"ECN: §19.5.3 admits a concatenation with a single non-optional "
-                    f"component; this value carries {sorted(value)}")
+                    f"component; this value carries {sorted(value)}"
+                )
             value = value[self.name]
         return self.component.index_of(value)
 
@@ -272,6 +284,7 @@ class SingleComponentOrdering(Ordering):
 
 
 # --- clause 19's six mappings ----------------------------------------------------------------
+
 
 class ValueMapping:
     """§19.1.7's `ValueMapping` CHOICE: six ways to say which value gets encoded.
@@ -308,7 +321,8 @@ class ExplicitValues(ValueMapping):
         if not self.pairs:
             raise Asn1Error(
                 "ECN: §19.2.5 gives `VALUES` a non-empty list; a mapping with no pairs maps "
-                "nothing and would refuse every value")
+                "nothing and would refuse every value"
+            )
         sources = [source for source, _target in self.pairs]
         # Keyed by (type, value), not by value. §19.2.6 governs each side by its own encoding
         # class, and Python makes `True == 1` — so a specification listing a boolean and an
@@ -319,7 +333,8 @@ class ExplicitValues(ValueMapping):
             raise Asn1Error(
                 f"ECN: a source value is mapped twice in {sources}; §19.1.6's NOTE 2 makes two "
                 f"values sharing one encoding a specification error, and one value with two "
-                f"encodings is not a mapping at all")
+                f"encodings is not a mapping at all"
+            )
 
     def map(self, value):
         for source, target in self.pairs:
@@ -328,7 +343,8 @@ class ExplicitValues(ValueMapping):
         raise Asn1Error(
             f"ECN: §19.2 maps {[source for source, _t in self.pairs]}, and {value!r} is not "
             f"among them; §19.1.6's NOTE 1 makes a partial mapping a constraint ECN imposes "
-            f"on the values the application may use, not a pass-through")
+            f"on the values the application may use, not a pass-through"
+        )
 
 
 @dataclass(frozen=True)
@@ -357,9 +373,9 @@ class MatchingFields(ValueMapping):
         if not isinstance(value, dict):
             raise Asn1Error(
                 f"ECN: §19.3.5 makes `FIELDS` a mapping between two concatenations (or two "
-                f"repetitions of them); {type(value).__name__} has no fields to match")
-        return {name: carried for name, carried in value.items()
-                if name not in self.dropped}
+                f"repetitions of them); {type(value).__name__} has no fields to match"
+            )
+        return {name: carried for name, carried in value.items() if name not in self.dropped}
 
     def target_fields(self, source_fields: tuple) -> tuple:
         """The target's top-level field names, given the source's. §19.3.13's shape.
@@ -391,14 +407,16 @@ class TransformMapping(ValueMapping):
         if self.chain is None:
             raise Asn1Error(
                 "ECN: §19.4.3 gives `TRANSFORMS` an OrderedTransformList; an empty mapping "
-                "would be the identity written the long way")
+                "would be the identity written the long way"
+            )
 
     def map(self, value):
         if not self.chain.reversible(value):
             raise Asn1Error(
                 f"ECN: §19.4.6 — this mapping's transforms are not reversible for {value!r}, "
                 f"so a decoder could not recover it. Table 6 permits a lossy transform when it "
-                f"is ENCODING a value; a mapping that cannot be undone loses the value instead")
+                f"is ENCODING a value; a mapping that cannot be undone loses the value instead"
+            )
         return self.chain.apply(value)
 
     def unmap(self, value):
@@ -427,7 +445,8 @@ class AbstractValueOrdering(ValueMapping):
     def __post_init__(self) -> None:
         if self.source is None or self.target is None:
             raise Asn1Error(
-                "ECN: §19.5.9 maps between two orderings by position, and one is missing")
+                "ECN: §19.5.9 maps between two orderings by position, and one is missing"
+            )
 
     def map(self, value):
         return self.target.value_at(self.source.index_of(value))
@@ -464,24 +483,30 @@ class DistributionEntry:
     def __post_init__(self) -> None:
         if not self.field_name:
             raise Asn1Error("ECN: §19.6.6 maps SelectedValues TO an identifier; none is given")
-        forms = [self.value is not None, self.low is not None or self.high is not None,
-                 self.remainder]
+        forms = [
+            self.value is not None,
+            self.low is not None or self.high is not None,
+            self.remainder,
+        ]
         if sum(1 for form in forms if form) != 1:
             raise Asn1Error(
                 "ECN: §19.6.6's `SelectedValues` is one of a SelectedValue, a "
-                "DistributionRange or REMAINDER — exactly one")
+                "DistributionRange or REMAINDER — exactly one"
+            )
         if self.low is not None or self.high is not None:
             if self.low is None or self.high is None:
                 raise Asn1Error(
-                    "ECN: §19.6.6's DistributionRange has both a lower and an upper value")
+                    "ECN: §19.6.6's DistributionRange has both a lower and an upper value"
+                )
             if not self.low < self.high:
                 raise Asn1Error(
                     f"ECN: §19.6.8 — DistributionRangeValue1 shall be less than "
-                    f"DistributionRangeValue2; got {self.low}..{self.high}")
+                    f"DistributionRangeValue2; got {self.low}..{self.high}"
+                )
 
     def holds(self, value: int) -> bool:
         if self.remainder:
-            return True                       # §19.6.10: everything not distributed earlier
+            return True  # §19.6.10: everything not distributed earlier
         if self.value is not None:
             return value == self.value
         return self.low <= value <= self.high
@@ -513,8 +538,9 @@ class ValueDistribution(ValueMapping):
             if entry.remainder and position != len(self.entries) - 1:
                 raise Asn1Error(
                     f"ECN: §19.6.10 — REMAINDER "
-                    f"\"shall only be used once for the last SelectedValues\"; it is at "
-                    f"position {position} of {len(self.entries)}")
+                    f'"shall only be used once for the last SelectedValues"; it is at '
+                    f"position {position} of {len(self.entries)}"
+                )
         if sum(1 for entry in self.entries if entry.remainder) > 1:  # pragma: no cover
             raise Asn1Error("ECN: §19.6.10 — REMAINDER shall only be used once")
         self._check_disjoint()
@@ -538,20 +564,23 @@ class ValueDistribution(ValueMapping):
                     raise Asn1Error(
                         f"ECN: §19.6.11 — {entry.value} is mapped to both {seen!r} and "
                         f"{entry.field_name!r}; a value shall not be mapped to more than one "
-                        f"target field")
+                        f"target field"
+                    )
                 singles[entry.value] = entry.field_name
                 continue
             for low, high, name in ranges:
                 if entry.low <= high and low <= entry.high and name != entry.field_name:
                     raise Asn1Error(
                         f"ECN: §19.6.11 — {max(low, entry.low)}..{min(high, entry.high)} is "
-                        f"mapped to both {name!r} and {entry.field_name!r}")
+                        f"mapped to both {name!r} and {entry.field_name!r}"
+                    )
             ranges.append((entry.low, entry.high, entry.field_name))
         for value, name in singles.items():
             for low, high, other in ranges:
                 if low <= value <= high and other != name:
                     raise Asn1Error(
-                        f"ECN: §19.6.11 — {value} is mapped to both {name!r} and {other!r}")
+                        f"ECN: §19.6.11 — {value} is mapped to both {name!r} and {other!r}"
+                    )
 
     def map(self, value: int) -> dict:
         """§19.6.9, as the single-field dictionary the target structure receives.
@@ -565,7 +594,8 @@ class ValueDistribution(ValueMapping):
                 return {entry.field_name: value}
         raise Asn1Error(
             f"ECN: §19.6 distributes no field to {value}; add a REMAINDER entry if the "
-            f"specification means to accept everything else")
+            f"specification means to accept everything else"
+        )
 
     def fields(self) -> tuple:
         """Every target field this distribution can reach, in the order written."""
@@ -597,28 +627,32 @@ class IntToBitsEntry:
         if (self.high is None) != (not self.high_bits):
             raise Asn1Error(
                 "ECN: §19.7.7's IntValRangeMap takes a range of integers AND a range of "
-                "bitstrings; one of the two upper ends is missing")
+                "bitstrings; one of the two upper ends is missing"
+            )
         if self.high is None:
             return
         if self.high < self.value:
             raise Asn1Error(
-                f"ECN: §19.7.7 maps \"contiguous and increasing integer values\"; "
-                f"{self.value}..{self.high} is not increasing")
+                f'ECN: §19.7.7 maps "contiguous and increasing integer values"; '
+                f"{self.value}..{self.high} is not increasing"
+            )
         # §19.7.8's definition of contiguous, in full: "a) They are all the same length in
         # bits. b) When interpreted as a positive integer value, the corresponding integer
         # values are contiguous and increasing." Both halves are checked, because a range whose
         # ends differ in length denotes no set of bitstrings at all.
         if len(self.high_bits) != len(self.bits):
             raise Asn1Error(
-                f"ECN: §19.7.8 a) — a contiguous range of bitstrings is \"all the same length "
-                f"in bits\"; this one runs from {len(self.bits)} bits to "
-                f"{len(self.high_bits)}")
+                f'ECN: §19.7.8 a) — a contiguous range of bitstrings is "all the same length '
+                f'in bits"; this one runs from {len(self.bits)} bits to '
+                f"{len(self.high_bits)}"
+            )
         span = _int_of(self.high_bits) - _int_of(self.bits)
         if span != self.high - self.value:
             raise Asn1Error(
                 f"ECN: §19.7.8 b) — the bitstring range spans {span + 1} values and the "
                 f"integer range spans {self.high - self.value + 1}; the two have to advance "
-                f"together for the mapping to be one-to-one")
+                f"together for the mapping to be one-to-one"
+            )
 
     def holds(self, value: int) -> bool:
         return value == self.value if self.high is None else self.value <= value <= self.high
@@ -651,22 +685,24 @@ class IntToBits(ValueMapping):
         if not self.entries:
             raise Asn1Error("ECN: §19.7.5 gives `TO BITS` a non-empty list")
         for index, entry in enumerate(self.entries):
-            for other in self.entries[index + 1:]:
+            for other in self.entries[index + 1 :]:
                 low, high = entry.value, entry.value if entry.high is None else entry.high
                 other_low = other.value
                 other_high = other.value if other.high is None else other.high
                 if low <= other_high and other_low <= high:
                     raise Asn1Error(
                         f"ECN: §19.7 maps {max(low, other_low)}..{min(high, other_high)} "
-                        f"twice; an integer with two codes is not a mapping")
+                        f"twice; an integer with two codes is not a mapping"
+                    )
 
     def map(self, value: int) -> tuple:
         for entry in self.entries:
             if entry.holds(value):
                 return entry.bits_for(value)
         raise Asn1Error(
-            f"ECN: §19.7.9 — {value} is not among the values this mapping lists, and \"other "
-            f"abstract values of the source are not mapped and cannot be encoded\"")
+            f'ECN: §19.7.9 — {value} is not among the values this mapping lists, and "other '
+            f'abstract values of the source are not mapped and cannot be encoded"'
+        )
 
     def unmap(self, bits: tuple) -> int:
         """The decoder's direction. A prefix code makes this unambiguous; §19.7 does not
@@ -681,8 +717,8 @@ class IntToBits(ValueMapping):
             if 0 <= offset <= span:
                 return entry.value + offset
         raise Asn1Error(
-            f"ECN: no §19.7 entry produces the bitstring "
-            f"'{''.join(str(bit) for bit in wanted)}'B")
+            f"ECN: no §19.7 entry produces the bitstring '{''.join(str(bit) for bit in wanted)}'B"
+        )
 
 
 def _int_of(bits: tuple) -> int:
@@ -698,8 +734,19 @@ def _bits_of(value: int, width: int) -> tuple:
 
 
 __all__ = [
-    "AbstractValueOrdering", "AlternativesOrdering", "BooleanOrdering", "DistributionEntry",
-    "ExplicitValues", "IntToBits", "IntToBitsEntry", "IntegerOrdering", "MatchingFields",
-    "NullOrdering", "Ordering", "SingleComponentOrdering", "TransformMapping", "ValueDistribution",
+    "AbstractValueOrdering",
+    "AlternativesOrdering",
+    "BooleanOrdering",
+    "DistributionEntry",
+    "ExplicitValues",
+    "IntToBits",
+    "IntToBitsEntry",
+    "IntegerOrdering",
+    "MatchingFields",
+    "NullOrdering",
+    "Ordering",
+    "SingleComponentOrdering",
+    "TransformMapping",
+    "ValueDistribution",
     "ValueMapping",
 ]

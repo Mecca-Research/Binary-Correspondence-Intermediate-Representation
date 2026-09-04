@@ -26,8 +26,19 @@ import json
 
 from bcir.asn1.dialect import parse_mlir
 from bcir.asn1.graph import (
-    DIALECT_NODE_CLASS, GRAPH_VERSION, NODE_GRAPH, Edge, Graph, Node, content_address,
-    dialect_to_graph, graph_to_dialect, graph_to_jer, graph_to_value, jer_to_graph, resolve,
+    DIALECT_NODE_CLASS,
+    GRAPH_VERSION,
+    NODE_GRAPH,
+    Edge,
+    Graph,
+    Node,
+    content_address,
+    dialect_to_graph,
+    graph_to_dialect,
+    graph_to_jer,
+    graph_to_value,
+    jer_to_graph,
+    resolve,
     value_to_graph,
 )
 from bcir.asn1.jer import JerRules, decode_jer, encode_jer
@@ -54,10 +65,13 @@ def test_a_mutually_recursive_pair_round_trips():
     encoder either loops forever or truncates. With index edges the document is two
     ordinary rows and its JSON depth is two, however tangled the graph gets.
     """
-    graph = Graph(nodes=(
-        Node("function", "even", edges=(Edge("calls", 1),)),
-        Node("function", "odd", edges=(Edge("calls", 0),)),
-    ), roots=(0,))
+    graph = Graph(
+        nodes=(
+            Node("function", "even", edges=(Edge("calls", 1),)),
+            Node("function", "odd", edges=(Edge("calls", 0),)),
+        ),
+        roots=(0,),
+    )
     octets = graph_to_jer(graph)
     assert jer_to_graph(octets) == graph
     assert graph_to_jer(jer_to_graph(octets)) == octets, "re-emission was not byte-identical"
@@ -80,8 +94,10 @@ def test_a_deep_chain_stays_shallow_in_json():
     is 64, so a nested representation of this program could not be read at all, while the
     flat one is nowhere near any limit.
     """
-    nodes = tuple(Node("step", f"s{i}", edges=((Edge("next", i + 1),) if i < 999 else ()))
-                  for i in range(1000))
+    nodes = tuple(
+        Node("step", f"s{i}", edges=((Edge("next", i + 1),) if i < 999 else ()))
+        for i in range(1000)
+    )
     graph = Graph(nodes=nodes, roots=(0,))
     octets = graph_to_jer(graph)
     assert jer_to_graph(octets) == graph
@@ -104,8 +120,7 @@ def test_an_unknown_node_kind_is_a_value_and_still_re_emits():
     So the object set types the graph as an ENRICHMENT: the node still decodes, still
     re-emits byte-identically, and `resolve` reports what it could not type.
     """
-    graph = Graph(nodes=(Node("a-kind-from-2030", "future", attributes=(("x", "1"),)),),
-                  roots=(0,))
+    graph = Graph(nodes=(Node("a-kind-from-2030", "future", attributes=(("x", "1"),)),), roots=(0,))
     octets = graph_to_jer(graph)
     assert jer_to_graph(octets) == graph
     assert graph_to_jer(jer_to_graph(octets)) == octets
@@ -125,8 +140,7 @@ def test_a_non_extensible_set_reports_a_violation_rather_than_a_versioned_peer()
     against a closed set is a schema violation. Reporting both as "unknown" would lose the
     distinction a loader needs to decide whether to proceed.
     """
-    closed = ObjectSetTable("CLOSED", rows=({"kind": "known", "Payload": None},),
-                            extensible=False)
+    closed = ObjectSetTable("CLOSED", rows=({"kind": "known", "Payload": None},), extensible=False)
     graph = Graph(nodes=(Node("other", "x"),), roots=(0,))
     reason = resolve(graph, closed).unresolved[0].reason
     assert "NOT extensible" in reason and "schema violation" in reason
@@ -153,12 +167,14 @@ def test_every_edge_is_typed_and_a_mistyped_one_is_named():
     edge a *schema* fault with a resolution law behind it, rather than a convention some
     reader may or may not enforce — which is §4.1's argument against inventing `$ref`.
     """
-    good = Graph(nodes=(Node("component", "c", edges=(Edge("type", 1),)),
-                        Node("type", "T")), roots=(0,))
+    good = Graph(
+        nodes=(Node("component", "c", edges=(Edge("type", 1),)), Node("type", "T")), roots=(0,)
+    )
     assert resolve(good, DIALECT_NODE_CLASS).edge_faults == ()
 
-    bad = Graph(nodes=(Node("component", "c", edges=(Edge("type", 1),)),
-                       Node("operation", "o")), roots=(0,))
+    bad = Graph(
+        nodes=(Node("component", "c", edges=(Edge("type", 1),)), Node("operation", "o")), roots=(0,)
+    )
     faults = resolve(bad, DIALECT_NODE_CLASS).edge_faults
     assert len(faults) == 1 and "points at 'type'" in faults[0].reason
 
@@ -170,8 +186,7 @@ def test_resolution_never_raises_on_any_graph_content():
         Graph(nodes=(Node("", ""),)),
         Graph(nodes=(Node("type", "T", edges=(Edge("", -1),)),)),
         Graph(nodes=(Node("component", "c", edges=(Edge("type", 0),)),), roots=(5,)),
-        Graph(nodes=tuple(Node("x", str(i), edges=(Edge("e", i - 1),))
-                          for i in range(20))),
+        Graph(nodes=tuple(Node("x", str(i), edges=(Edge("e", i - 1),)) for i in range(20))),
     ]
     for graph in graphs:
         report = resolve(graph, DIALECT_NODE_CLASS)
@@ -189,23 +204,32 @@ def test_a_content_address_is_a_function_of_shape_not_of_position():
     cannot deduplicate across files. The walk therefore renumbers edges into traversal
     order before hashing, so no absolute index leaks in.
     """
-    left = Graph(nodes=(Node("f", "a", edges=(Edge("calls", 1),)), Node("f", "b")),
-                 roots=(0,))
+    left = Graph(nodes=(Node("f", "a", edges=(Edge("calls", 1),)), Node("f", "b")), roots=(0,))
     # The same two nodes, preceded by unrelated ones, so their indices differ.
-    right = Graph(nodes=(Node("noise", "n"), Node("noise", "m"),
-                         Node("f", "a", edges=(Edge("calls", 3),)), Node("f", "b")),
-                  roots=(2,))
+    right = Graph(
+        nodes=(
+            Node("noise", "n"),
+            Node("noise", "m"),
+            Node("f", "a", edges=(Edge("calls", 3),)),
+            Node("f", "b"),
+        ),
+        roots=(2,),
+    )
     assert content_address(left, 0) == content_address(right, 2)
     # And a different shape hashes differently.
-    other = Graph(nodes=(Node("f", "a", edges=(Edge("calls", 1),)), Node("f", "c")),
-                  roots=(0,))
+    other = Graph(nodes=(Node("f", "a", edges=(Edge("calls", 1),)), Node("f", "c")), roots=(0,))
     assert content_address(left, 0) != content_address(other, 0)
 
 
 def test_a_content_address_terminates_on_a_cycle():
     """Cycle-safety is not optional here: the node table exists because cycles do."""
-    graph = Graph(nodes=(Node("f", "a", edges=(Edge("calls", 1),)),
-                         Node("f", "b", edges=(Edge("calls", 0),))), roots=(0,))
+    graph = Graph(
+        nodes=(
+            Node("f", "a", edges=(Edge("calls", 1),)),
+            Node("f", "b", edges=(Edge("calls", 0),)),
+        ),
+        roots=(0,),
+    )
     assert len(content_address(graph, 0)) == 64
     assert content_address(graph, 0) != content_address(graph, 1)
 
@@ -331,8 +355,11 @@ def test_a_graph_with_no_module_root_is_refused_by_the_dialect_reader():
     Distinct from an unresolvable node — that is a graph the format can carry and this is a
     caller asking for something the graph does not contain.
     """
-    for graph in (Graph(), Graph(nodes=(Node("type", "T"),), roots=(0,)),
-                  Graph(nodes=(Node("module", "a"), Node("module", "b")), roots=(0, 1))):
+    for graph in (
+        Graph(),
+        Graph(nodes=(Node("type", "T"),), roots=(0,)),
+        Graph(nodes=(Node("module", "a"), Node("module", "b")), roots=(0, 1)),
+    ):
         try:
             graph_to_dialect(graph)
         except Asn1Error as error:

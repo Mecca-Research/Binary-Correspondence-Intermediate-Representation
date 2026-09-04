@@ -4,6 +4,7 @@
 No network, checkpoint, GPU, external repository, or large training run is used.  Two
 identical one-thread runs must produce the same timestamp-free report on each host.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -84,22 +85,23 @@ def _language_case(name: str, architecture: AdaptiveLanguageSpec, seed: int) -> 
     inputs = torch.tensor([[1, 2, 3, 4, 5, 6]], dtype=torch.long)
     targets = torch.tensor([[2, 3, 4, 5, 6, 7]], dtype=torch.long)
     cost = assess_adaptive_language(
-        architecture, prefill_tokens=inputs.shape[1],
-        decode_context=inputs.shape[1])
+        architecture, prefill_tokens=inputs.shape[1], decode_context=inputs.shape[1]
+    )
     if model.unique_parameter_count() != cost.parameter_elements:
         raise AssertionError(f"{name} parameter accounting diverged from the hosted model")
     events = []
     report = train_adaptive_pretrain(
-        model, inputs, targets,
-        StageTrainSpec("pretrain", steps=3, learning_rate=3.0e-3,
-                       weight_decay=0.0, seed=seed),
-        events.append)
+        model,
+        inputs,
+        targets,
+        StageTrainSpec("pretrain", steps=3, learning_rate=3.0e-3, weight_decay=0.0, seed=seed),
+        events.append,
+    )
     if not report.final_loss < report.initial_loss:
         raise AssertionError(f"{name} tiny training did not reduce its repeated-batch loss")
     if len(events) != 3 or [event.step for event in events] != [1, 2, 3]:
         raise AssertionError(f"{name} emitted malformed training telemetry")
-    lowered = lower_adaptive_language(
-        architecture, sequence_length=inputs.shape[1])
+    lowered = lower_adaptive_language(architecture, sequence_length=inputs.shape[1])
     if not lowered.streampack.provenance_ok():
         raise AssertionError(f"{name} produced an untraced StreamPack")
     return {
@@ -120,9 +122,16 @@ def _language_case(name: str, architecture: AdaptiveLanguageSpec, seed: int) -> 
 
 def _multipatch_case(seed: int) -> dict:
     spec = MultiPatchSpec(
-        image_size=8, input_channels=2, hidden_width=16, heads=4,
-        coarse_patch=4, fine_patch=2, coarse_layers=1, fine_layers=1,
-        condition_tokens=2)
+        image_size=8,
+        input_channels=2,
+        hidden_width=16,
+        heads=4,
+        coarse_patch=4,
+        fine_patch=2,
+        coarse_layers=1,
+        fine_layers=1,
+        condition_tokens=2,
+    )
     torch.manual_seed(seed)
     model = HostedMultiPatchTransformer(spec)
     images = torch.linspace(-1.0, 1.0, 128, dtype=torch.float32).view(1, 2, 8, 8)
@@ -130,9 +139,10 @@ def _multipatch_case(seed: int) -> dict:
     if cost.parameter_elements != sum(parameter.numel() for parameter in model.parameters()):
         raise AssertionError("multi-patch parameter accounting diverged from the hosted model")
     report = train_multipatch_reconstruction(
-        model, images,
-        StageTrainSpec("supervised", steps=3, learning_rate=3.0e-3,
-                       weight_decay=0.0, seed=seed))
+        model,
+        images,
+        StageTrainSpec("supervised", steps=3, learning_rate=3.0e-3, weight_decay=0.0, seed=seed),
+    )
     if not report.final_loss < report.initial_loss:
         raise AssertionError("multi-patch tiny reconstruction did not reduce loss")
     return {
@@ -154,8 +164,8 @@ def _run_once() -> dict:
         vocab_size=32,
         context_length=8,
         schedule=WidthScheduleSpec.symmetric_u(
-            layers=3, outer_width=24, inner_width=16,
-            head_dim=8, ff_multiplier=2, quantum=8),
+            layers=3, outer_width=24, inner_width=16, head_dim=8, ff_multiplier=2, quantum=8
+        ),
         repeats=2,
         residual_mode="loop_deepnorm",
     )
@@ -165,49 +175,74 @@ def _run_once() -> dict:
         schedule=WidthScheduleSpec((16, 16), (2, 2), (32, 32)),
         gated_attention=True,
         reference_window=ReferenceWindowSpec(prefix_tokens=2, window_tokens=3),
-        anchor=ExogenousAnchorSpec(
-            mode="dynamic", granularity="elementwise", source_depth=1),
+        anchor=ExogenousAnchorSpec(mode="dynamic", granularity="elementwise", source_depth=1),
     )
     static_exogenous = AdaptiveLanguageSpec(
         vocab_size=32,
         context_length=8,
         schedule=WidthScheduleSpec((16, 16), (2, 2), (32, 32)),
         gated_attention=True,
-        anchor=ExogenousAnchorSpec(
-            mode="static", granularity="headwise", source_depth=0),
+        anchor=ExogenousAnchorSpec(mode="static", granularity="headwise", source_depth=0),
     )
 
     baseline_for_scaling = AdaptiveLanguageSpec(
-        vocab_size=32, context_length=8,
-        schedule=WidthScheduleSpec((16,), (2,), (32,)))
+        vocab_size=32, context_length=8, schedule=WidthScheduleSpec((16,), (2,), (32,))
+    )
     loop_for_scaling = AdaptiveLanguageSpec(
-        vocab_size=32, context_length=8,
-        schedule=WidthScheduleSpec((16,), (2,), (32,)), repeats=2,
-        residual_mode="loop_deepnorm")
+        vocab_size=32,
+        context_length=8,
+        schedule=WidthScheduleSpec((16,), (2,), (32,)),
+        repeats=2,
+        residual_mode="loop_deepnorm",
+    )
 
-    _expect_value_error(lambda: HostedAdaptiveLanguageModel(AdaptiveLanguageSpec(
-        vocab_size=32, context_length=4097,
-        schedule=WidthScheduleSpec((16,), (2,), (32,)))), "context")
-    _expect_value_error(lambda: HostedAdaptiveLanguageModel(AdaptiveLanguageSpec(
-        vocab_size=1_000_000, context_length=8,
-        schedule=WidthScheduleSpec((64,), (4,), (128,)))), "parameter")
-    _expect_value_error(lambda: HostedMultiPatchTransformer(MultiPatchSpec(
-        image_size=64, input_channels=256, hidden_width=64, heads=4,
-        coarse_patch=64, fine_patch=32, coarse_layers=1, fine_layers=1)), "parameter")
+    _expect_value_error(
+        lambda: HostedAdaptiveLanguageModel(
+            AdaptiveLanguageSpec(
+                vocab_size=32, context_length=4097, schedule=WidthScheduleSpec((16,), (2,), (32,))
+            )
+        ),
+        "context",
+    )
+    _expect_value_error(
+        lambda: HostedAdaptiveLanguageModel(
+            AdaptiveLanguageSpec(
+                vocab_size=1_000_000,
+                context_length=8,
+                schedule=WidthScheduleSpec((64,), (4,), (128,)),
+            )
+        ),
+        "parameter",
+    )
+    _expect_value_error(
+        lambda: HostedMultiPatchTransformer(
+            MultiPatchSpec(
+                image_size=64,
+                input_channels=256,
+                hidden_width=64,
+                heads=4,
+                coarse_patch=64,
+                fine_patch=32,
+                coarse_layers=1,
+                fine_layers=1,
+            )
+        ),
+        "parameter",
+    )
     torch.manual_seed(990)
     baseline_model = HostedAdaptiveLanguageModel(baseline_for_scaling)
     torch.manual_seed(990)
     loop_model = HostedAdaptiveLanguageModel(loop_for_scaling)
     baseline_block, loop_block = baseline_model.blocks[0], loop_model.blocks[0]
-    if not torch.equal(loop_block.attention.q_proj.weight,
-                       baseline_block.attention.q_proj.weight):
+    if not torch.equal(loop_block.attention.q_proj.weight, baseline_block.attention.q_proj.weight):
         raise AssertionError("LoopDeepNorm unexpectedly scaled the query projection")
     for baseline_weight, loop_weight in (
-            (baseline_block.attention.v_proj.weight, loop_block.attention.v_proj.weight),
-            (baseline_block.attention.o_proj.weight, loop_block.attention.o_proj.weight),
-            (baseline_block.mlp.gate.weight, loop_block.mlp.gate.weight),
-            (baseline_block.mlp.up.weight, loop_block.mlp.up.weight),
-            (baseline_block.mlp.down.weight, loop_block.mlp.down.weight)):
+        (baseline_block.attention.v_proj.weight, loop_block.attention.v_proj.weight),
+        (baseline_block.attention.o_proj.weight, loop_block.attention.o_proj.weight),
+        (baseline_block.mlp.gate.weight, loop_block.mlp.gate.weight),
+        (baseline_block.mlp.up.weight, loop_block.mlp.up.weight),
+        (baseline_block.mlp.down.weight, loop_block.mlp.down.weight),
+    ):
         if not torch.equal(loop_weight, baseline_weight * loop_for_scaling.loop_beta):
             raise AssertionError("LoopDeepNorm residual-branch beta initialization regressed")
 
@@ -223,8 +258,9 @@ def _run_once() -> dict:
     # the static variant's forward/backward without another optimization trajectory.
     torch.manual_seed(991)
     dynamic_model = HostedAdaptiveLanguageModel(exogenous)
-    gamma = torch.sigmoid(dynamic_model.mixers[0].dynamic_out(
-        torch.zeros(1, 1, exogenous.anchor.dynamic_hidden)))
+    gamma = torch.sigmoid(
+        dynamic_model.mixers[0].dynamic_out(torch.zeros(1, 1, exogenous.anchor.dynamic_hidden))
+    )
     if not torch.equal(gamma, torch.full_like(gamma, 0.5)):
         raise AssertionError("dynamic ExoFormer coefficients lost their identity initialization")
     torch.manual_seed(992)
@@ -232,8 +268,10 @@ def _run_once() -> dict:
     ids = torch.tensor([[1, 2, 3, 4]], dtype=torch.long)
     _logits, static_loss = static_model(ids, torch.tensor([[2, 3, 4, 5]]))
     static_loss.backward()
-    if not all(parameter.grad is None or torch.isfinite(parameter.grad).all()
-               for parameter in static_model.parameters()):
+    if not all(
+        parameter.grad is None or torch.isfinite(parameter.grad).all()
+        for parameter in static_model.parameters()
+    ):
         raise AssertionError("static ExoFormer produced a non-finite gradient")
 
     return {
@@ -273,10 +311,8 @@ def run_gate() -> dict:
 def _atomic_report(output_dir: Path, report: dict) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / "report.json"
-    payload = json.dumps(
-        report, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n"
-    handle, temporary = tempfile.mkstemp(
-        prefix=".adaptive-report-", suffix=".part", dir=output_dir)
+    payload = json.dumps(report, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n"
+    handle, temporary = tempfile.mkstemp(prefix=".adaptive-report-", suffix=".part", dir=output_dir)
     try:
         with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(payload)

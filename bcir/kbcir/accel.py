@@ -57,10 +57,11 @@ class SearchStats:
     """The work an ordered search did (the acceleration signal)."""
 
     expansions: int = 0
-    first_complete_cost: int | None = None   # cost of the FIRST complete plan found
+    first_complete_cost: int | None = None  # cost of the FIRST complete plan found
 
 
 # --- the exact branch-and-bound search (optimum invariant to candidate order) ----
+
 
 def _columns(module: Module, h, theta: Theta, policy: Policy):
     """Per claim: (phase_id, claim, w_phase, candidates, static_scores). Uses the
@@ -71,7 +72,7 @@ def _columns(module: Module, h, theta: Theta, policy: Policy):
     for phase_id, claim in _flatten(module):
         w = weights(h, theta, phase_id, policy)
         cands = cand_map[claim.id]
-        scores = [c.base.dot(w) for c in cands]                 # static (no coupling)
+        scores = [c.base.dot(w) for c in cands]  # static (no coupling)
         cols.append((phase_id, claim, w, cands, scores))
     return cols
 
@@ -81,7 +82,7 @@ def _optimistic(cand: Candidate, w) -> int:
     coupling (max fusion discount on memory, no thermal/power penalty). Always
     <= the true coupled cost (admissible)."""
     factor = [Q8] * N
-    factor[MEMORY] = 192                                        # the only discount
+    factor[MEMORY] = 192  # the only discount
     return cand.base.couple(tuple(factor)).dot(w)
 
 
@@ -98,9 +99,14 @@ def worst_order(cands, scores):
     return sorted(range(len(cands)), key=lambda i: (-scores[i], i))
 
 
-def optimize_ordered(module: Module, h, theta: Theta, policy: Policy = PERF,
-                     budget: Budget = Budget.unbounded(), order=greedy_order
-                     ) -> tuple[RealizationResult, SearchStats]:
+def optimize_ordered(
+    module: Module,
+    h,
+    theta: Theta,
+    policy: Policy = PERF,
+    budget: Budget = Budget.unbounded(),
+    order=greedy_order,
+) -> tuple[RealizationResult, SearchStats]:
     """Exact branch-and-bound; `order(cands, scores)->index order` guides the DFS.
     Returns the optimal plan (== optimize_constrained's score) and the search
     stats. The optimum is invariant to `order`; only the stats change."""
@@ -111,8 +117,7 @@ def optimize_ordered(module: Module, h, theta: Theta, policy: Policy = PERF,
     dims = budget.dims
     caps = dict(budget.caps)
     # Admissible suffix bound: remaining[col] = sum_{c>=col} min optimistic cost.
-    opt_min = [min(_optimistic(c, w) for c in cands)
-               for (_pid, _cl, w, cands, _s) in cols]
+    opt_min = [min(_optimistic(c, w) for c in cands) for (_pid, _cl, w, cands, _s) in cols]
     remaining = [0] * (ncols + 1)
     for col in range(ncols - 1, -1, -1):
         remaining[col] = remaining[col + 1] + opt_min[col]
@@ -122,7 +127,7 @@ def optimize_ordered(module: Module, h, theta: Theta, policy: Policy = PERF,
 
     def dfs(col, prev_cand, acc_cost, acc_res, chain):
         if best["score"] is not None and acc_cost + remaining[col] >= best["score"]:
-            return                                              # admissible-bound prune
+            return  # admissible-bound prune
         if col == ncols:
             if stats.first_complete_cost is None:
                 stats.first_complete_cost = acc_cost
@@ -136,7 +141,7 @@ def optimize_ordered(module: Module, h, theta: Theta, policy: Policy = PERF,
             step = coupled.dot(w)
             res = tuple(acc_res[k] + coupled.v[d] for k, d in enumerate(dims))
             if any(r > caps[d] for r, d in zip(res, dims) if d in caps):
-                continue                                        # budget infeasible
+                continue  # budget infeasible
             stats.expansions += 1
             chain.append((col, cand, step))
             dfs(col + 1, cand, acc_cost + step, res, chain)
@@ -145,7 +150,7 @@ def optimize_ordered(module: Module, h, theta: Theta, policy: Policy = PERF,
     dfs(0, None, 0, (0,) * len(dims), [])
     steps = []
     if best["chain"] is not None:
-        for (col, cand, step) in best["chain"]:
+        for col, cand, step in best["chain"]:
             pid, claim, _w, _c, _s = cols[col]
             steps.append(ChosenStep(claim.id, pid, cand, step))
     return RealizationResult(steps, best["score"] or 0), stats
@@ -153,12 +158,15 @@ def optimize_ordered(module: Module, h, theta: Theta, policy: Policy = PERF,
 
 # --- the learned ranker (orders candidates most-likely-optimal first) ------------
 
+
 def candidate_features(cand: Candidate, static_score: int, score_scale: int) -> list[float]:
-    return [static_score / max(1, score_scale),
-            cand.width / 32.0,
-            1.0 if cand.width > 1 else 0.0,
-            int(cand.lane) / 5.0,
-            1.0]
+    return [
+        static_score / max(1, score_scale),
+        cand.width / 32.0,
+        1.0 if cand.width > 1 else 0.0,
+        int(cand.lane) / 5.0,
+        1.0,
+    ]
 
 
 @dataclass
@@ -174,8 +182,9 @@ class LearnedRanker:
 
     def order(self, cands, scores):
         scale = max(scores) if scores else 1
-        scored = [(self._p(candidate_features(c, scores[i], scale)), i)
-                  for i, c in enumerate(cands)]
+        scored = [
+            (self._p(candidate_features(c, scores[i], scale)), i) for i, c in enumerate(cands)
+        ]
         return [i for _, i in sorted(scored, key=lambda t: (-t[0], t[1]))]
 
     def freeze(self) -> "FrozenRanker":
@@ -194,7 +203,7 @@ class FrozenRanker:
         for i, c in enumerate(cands):
             feats = candidate_features(c, scores[i], scale)
             z = sum(self.wq[k] * round(feats[k] * Q8) for k in range(len(self.wq))) >> 8
-            out.append((z, i))                                  # higher z = try first
+            out.append((z, i))  # higher z = try first
         return out
 
     def order(self, cands, scores):
@@ -241,6 +250,7 @@ def train_ranker(samples, epochs: int = 400, lr: float = 0.3) -> LearnedRanker:
 
 # --- the equivalence certificate (the accelerator must not change the optimum) ---
 
+
 @dataclass(frozen=True)
 class AccelCertificate:
     """The safety witness: an ordered search reproduced the exact optimum."""
@@ -254,8 +264,7 @@ class AccelCertificate:
         return self.checked >= 1 and self.mismatches == 0
 
 
-def accelerator_certificate(cases: list, order, order_name: str = "learned"
-                            ) -> AccelCertificate:
+def accelerator_certificate(cases: list, order, order_name: str = "learned") -> AccelCertificate:
     """Check the ordered B&B optimum == the exact `optimize_constrained` optimum
     over `cases` = [(module, h, theta, policy, budget)]. mismatches MUST be 0."""
     from .rcsp import optimize_constrained

@@ -71,21 +71,21 @@ from dataclasses import dataclass, replace
 from .telemetry import DataDNA, TelemetryIntegrity, TelemetryRing, sanitize_events
 
 # --- the frozen frame ABI (mirror bcir_telemetry_frame.h) ------------------------
-TELEMETRY_FRAME_MAGIC = b"BTLM"          # BCIR TeLeMetry frame; the resync anchor
-TELEMETRY_FRAME_VERSION = 1              # a v1 reader rejects a newer version
+TELEMETRY_FRAME_MAGIC = b"BTLM"  # BCIR TeLeMetry frame; the resync anchor
+TELEMETRY_FRAME_VERSION = 1  # a v1 reader rejects a newer version
 TELEMETRY_FRAME_VERSION_MAX = 1
 
 # Reuse the ring's record schema and wire layout verbatim (claim_id, cycles, bytes,
 # misses, thermal, voltage, utilization == 7 x int64 == 56 bytes). The current helper
 # materializes DataDNA values and serializes them explicitly; it does not direct-copy.
-_RECORD_FMT = TelemetryRing._FMT                 # "<7q"
-RECORD_STRIDE = struct.calcsize(_RECORD_FMT)     # 56
+_RECORD_FMT = TelemetryRing._FMT  # "<7q"
+RECORD_STRIDE = struct.calcsize(_RECORD_FMT)  # 56
 
 # Fixed frame header: magic[4], version:u16, flags:u16, seq:u32, timestamp:u64, n:u16.
 _HEADER = struct.Struct("<4sHHIQH")
-HEADER_SIZE = _HEADER.size                       # 22
+HEADER_SIZE = _HEADER.size  # 22
 CRC_SIZE = 4
-MIN_FRAME_SIZE = HEADER_SIZE + CRC_SIZE          # 26 (an empty, well-formed frame)
+MIN_FRAME_SIZE = HEADER_SIZE + CRC_SIZE  # 26 (an empty, well-formed frame)
 
 
 class TelemetryFrameError(ValueError):
@@ -116,24 +116,44 @@ def _pack_record(rec: DataDNA) -> bytes:
     makes (segment_id/provenance are not ring-resident)."""
     if not isinstance(rec, DataDNA):
         raise TelemetryFrameError(f"record is not DataDNA: {type(rec).__name__}")
-    values = (rec.claim_id, rec.cycles, rec.bytes, rec.misses, rec.thermal,
-              rec.voltage, rec.utilization)
-    for name, value in zip(("claim_id", "cycles", "bytes", "misses", "thermal",
-                            "voltage", "utilization"), values):
-        if (not isinstance(value, int) or isinstance(value, bool)
-                or not -(1 << 63) <= value <= (1 << 63) - 1):
+    values = (
+        rec.claim_id,
+        rec.cycles,
+        rec.bytes,
+        rec.misses,
+        rec.thermal,
+        rec.voltage,
+        rec.utilization,
+    )
+    for name, value in zip(
+        ("claim_id", "cycles", "bytes", "misses", "thermal", "voltage", "utilization"), values
+    ):
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or not -(1 << 63) <= value <= (1 << 63) - 1
+        ):
             raise TelemetryFrameError(f"record {name} is not a signed-64-bit integer")
     return struct.pack(_RECORD_FMT, *values)
 
 
 def _unpack_record(buf: bytes, off: int) -> DataDNA:
     cid, cyc, byt, mis, th, vo, ut = struct.unpack_from(_RECORD_FMT, buf, off)
-    return DataDNA(segment_id="", claim_id=cid, cycles=cyc, bytes=byt, misses=mis,
-                   thermal=th, voltage=vo, utilization=ut)
+    return DataDNA(
+        segment_id="",
+        claim_id=cid,
+        cycles=cyc,
+        bytes=byt,
+        misses=mis,
+        thermal=th,
+        voltage=vo,
+        utilization=ut,
+    )
 
 
-def encode_frame(records, *, seq: int = 0, timestamp: int = 0,
-                 version: int = TELEMETRY_FRAME_VERSION) -> bytes:
+def encode_frame(
+    records, *, seq: int = 0, timestamp: int = 0, version: int = TELEMETRY_FRAME_VERSION
+) -> bytes:
     """Build ONE telemetry frame: magic + version + flags + seq + timestamp + n +
     records + CRC. Little-endian throughout; the CRC is ``zlib.crc32`` over every
     preceding byte (the same poly the C twin's `bcir_crc32` uses).
@@ -142,16 +162,20 @@ def encode_frame(records, *, seq: int = 0, timestamp: int = 0,
     on the wire (the 56-byte ``<7q>`` body). `seq` supports continuity checks;
     interpreting `timestamp` requires external producer/clock metadata that v1 does not
     carry."""
+
     def _uint(name: str, value, bits: int) -> int:
-        if (not isinstance(value, int) or isinstance(value, bool)
-                or not 0 <= value < (1 << bits)):
+        if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value < (1 << bits):
             raise TelemetryFrameError(f"{name} must be an unsigned {bits}-bit integer")
         return value
 
-    if (not isinstance(version, int) or isinstance(version, bool)
-            or version != TELEMETRY_FRAME_VERSION):
+    if (
+        not isinstance(version, int)
+        or isinstance(version, bool)
+        or version != TELEMETRY_FRAME_VERSION
+    ):
         raise TelemetryFrameError(
-            f"version must be exactly {TELEMETRY_FRAME_VERSION} for the frozen v1 writer")
+            f"version must be exactly {TELEMETRY_FRAME_VERSION} for the frozen v1 writer"
+        )
     seq = _uint("seq", seq, 32)
     timestamp = _uint("timestamp", timestamp, 64)
     try:
@@ -183,7 +207,8 @@ def decode_frame(buf: bytes) -> tuple[list[DataDNA], FrameMeta]:
     recs, meta, consumed = _decode_one(buf, 0, strict=True)
     if consumed != len(buf):
         raise TelemetryFrameError(
-            f"strict single-frame buffer has {len(buf) - consumed} trailing bytes")
+            f"strict single-frame buffer has {len(buf) - consumed} trailing bytes"
+        )
     return recs, meta
 
 
@@ -206,20 +231,22 @@ def _decode_one(buf, pos: int, *, strict: bool):
     if magic != TELEMETRY_FRAME_MAGIC:
         return _fail(f"bad magic {magic!r} (expected {TELEMETRY_FRAME_MAGIC!r})")
     if not (TELEMETRY_FRAME_VERSION <= version <= TELEMETRY_FRAME_VERSION_MAX):
-        return _fail(f"unsupported frame version {version} "
-                     f"(this reader handles v{TELEMETRY_FRAME_VERSION})")
+        return _fail(
+            f"unsupported frame version {version} (this reader handles v{TELEMETRY_FRAME_VERSION})"
+        )
     if flags != 0:
         return _fail(f"unsupported reserved flags 0x{flags:04x} (v1 requires zero)")
     frame_len = HEADER_SIZE + n * RECORD_STRIDE + CRC_SIZE
     if pos + frame_len > blen:
-        return _fail(f"frame at {pos} claims {n} records but buffer is too short "
-                     f"({pos + frame_len} > {blen})")
-    body = buf[pos:pos + HEADER_SIZE + n * RECORD_STRIDE]
+        return _fail(
+            f"frame at {pos} claims {n} records but buffer is too short "
+            f"({pos + frame_len} > {blen})"
+        )
+    body = buf[pos : pos + HEADER_SIZE + n * RECORD_STRIDE]
     stored = struct.unpack_from("<I", buf, pos + HEADER_SIZE + n * RECORD_STRIDE)[0]
     if (zlib.crc32(body) & 0xFFFFFFFF) != stored:
         return _fail(f"CRC mismatch at {pos} (corrupt frame)")
-    records = [_unpack_record(buf, pos + HEADER_SIZE + i * RECORD_STRIDE)
-               for i in range(n)]
+    records = [_unpack_record(buf, pos + HEADER_SIZE + i * RECORD_STRIDE) for i in range(n)]
     meta = FrameMeta(seq=seq, timestamp=ts, version=version, flags=flags, n_records=n)
     return records, meta, frame_len
 
@@ -235,10 +262,10 @@ class FrameStream:
     """The result of decoding a byte stream of frames (resync-aware)."""
 
     frames: list[DecodedFrame]
-    rejected: int                # magic-aligned candidates failing validation
-    missing_frames: int = 0      # sequence numbers skipped between recovered frames
-    reordered_frames: int = 0    # recovered frame behind the current sequence watermark
-    duplicate_frames: int = 0    # recovered frame repeats the current sequence number
+    rejected: int  # magic-aligned candidates failing validation
+    missing_frames: int = 0  # sequence numbers skipped between recovered frames
+    reordered_frames: int = 0  # recovered frame behind the current sequence watermark
+    duplicate_frames: int = 0  # recovered frame repeats the current sequence number
 
     @property
     def records(self) -> list[DataDNA]:
@@ -283,8 +310,13 @@ def decode_frames(buf: bytes) -> FrameStream:
         frames.append(DecodedFrame(records=recs, meta=meta))
         pos += consumed
     missing, reordered, duplicated = _sequence_anomalies(frames)
-    return FrameStream(frames=frames, rejected=rejected, missing_frames=missing,
-                       reordered_frames=reordered, duplicate_frames=duplicated)
+    return FrameStream(
+        frames=frames,
+        rejected=rejected,
+        missing_frames=missing,
+        reordered_frames=reordered,
+        duplicate_frames=duplicated,
+    )
 
 
 def _sequence_anomalies(frames: list[DecodedFrame]) -> tuple[int, int, int]:
@@ -331,16 +363,18 @@ def parse_uart_frames(buf: bytes) -> tuple[list[DataDNA], TelemetryIntegrity]:
     stream = decode_frames(buf)
     records = stream.records
     accepted, witness = sanitize_events(records)
-    witness = replace(witness, frames_accepted=len(stream.frames),
-                      frames_rejected=stream.rejected,
-                      frames_missing=stream.missing_frames,
-                      frames_reordered=stream.reordered_frames,
-                      frames_duplicated=stream.duplicate_frames)
+    witness = replace(
+        witness,
+        frames_accepted=len(stream.frames),
+        frames_rejected=stream.rejected,
+        frames_missing=stream.missing_frames,
+        frames_reordered=stream.reordered_frames,
+        frames_duplicated=stream.duplicate_frames,
+    )
     return accepted, witness
 
 
-def drain_ring_to_frame(ring: TelemetryRing, *, seq: int = 0,
-                        timestamp: int = 0) -> bytes:
+def drain_ring_to_frame(ring: TelemetryRing, *, seq: int = 0, timestamp: int = 0) -> bytes:
     """Convenience producer step: drain the ring and frame the drained records into one
     telemetry frame. Models the bare-metal producer (drain `TelemetryRing`, materialize
     its `DataDNA` values, serialize the shared 56-byte layout, then egress)."""
@@ -349,7 +383,10 @@ def drain_ring_to_frame(ring: TelemetryRing, *, seq: int = 0,
 
 def frame_length(n_records: int) -> int:
     """Bytes a frame carrying `n_records` occupies on the wire (header + body + CRC)."""
-    if (not isinstance(n_records, int) or isinstance(n_records, bool)
-            or not 0 <= n_records <= 0xFFFF):
+    if (
+        not isinstance(n_records, int)
+        or isinstance(n_records, bool)
+        or not 0 <= n_records <= 0xFFFF
+    ):
         raise TelemetryFrameError("n_records must be an unsigned 16-bit integer")
     return HEADER_SIZE + n_records * RECORD_STRIDE + CRC_SIZE

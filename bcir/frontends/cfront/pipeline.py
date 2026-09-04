@@ -8,6 +8,7 @@
 real `plan_composite` call-graph machinery), and the Clang behaviour-equivalence verdict (which skips
 cleanly without a C compiler, so the structural artifacts still run in the quick tier).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -23,8 +24,7 @@ from ...kbcir.cost import Theta
 from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF
 from ...toolchain import host_link_args
-from ...verify import (Diagnostic, cfront_unit_claim_ids_unique, verify, verify_lifetime,
-                       verify_plan)
+from ...verify import Diagnostic, cfront_unit_claim_ids_unique, verify, verify_lifetime, verify_plan
 from .abi import abi_contract_for, verify_abi_contract, HOST, target as resolve_target
 from .clex import CLexError
 from .cparse import CParseError, parse_unit, parse_with_recovery
@@ -54,27 +54,35 @@ class CompileResult:
     source: str
     unit: object
     lowered: LoweredUnit
-    plans: dict = field(default_factory=dict)         # fn -> RealizationResult
-    emitted: dict = field(default_factory=dict)       # fn -> C text
-    explain: dict = field(default_factory=dict)       # fn -> bcir-explain text
-    attestation: dict = field(default_factory=dict)   # fn -> R12/R13/R17/R18 attestation dict
-    effects: dict = field(default_factory=dict)        # fn -> Effect (global read/write footprint)
-    ipo: dict = field(default_factory=dict)            # inter-procedural plan: worst/expected/leaves/reused
-    diagnostics: list = field(default_factory=list)   # R1–R18 Diagnostics (empty == clean)
-    lifetime_diagnostics: list = field(default_factory=list)  # R21 use-after-free / double-free (§5.12) --
+    plans: dict = field(default_factory=dict)  # fn -> RealizationResult
+    emitted: dict = field(default_factory=dict)  # fn -> C text
+    explain: dict = field(default_factory=dict)  # fn -> bcir-explain text
+    attestation: dict = field(default_factory=dict)  # fn -> R12/R13/R17/R18 attestation dict
+    effects: dict = field(default_factory=dict)  # fn -> Effect (global read/write footprint)
+    ipo: dict = field(default_factory=dict)  # inter-procedural plan: worst/expected/leaves/reused
+    diagnostics: list = field(default_factory=list)  # R1–R18 Diagnostics (empty == clean)
+    lifetime_diagnostics: list = field(
+        default_factory=list
+    )  # R21 use-after-free / double-free (§5.12) --
     #     ADVISORY: a smart-lowering law over the optional `claim.lifetime` (malloc/free), NOT part of the
     #     frontend pass/fail (`is_clean`), exactly as R19/R20 timing are advisory. Empty == no dangling access.
-    lowering_diagnostics: list = field(default_factory=list)  # §5.12 item 4: cfront-emit lowering faithfulness
+    lowering_diagnostics: list = field(
+        default_factory=list
+    )  # §5.12 item 4: cfront-emit lowering faithfulness
     #     (every masked claim discharged by a runtime guard). ADVISORY, like lifetime_diagnostics. Empty == ok.
-    abi_contracts: dict = field(default_factory=dict)         # fn -> abi.AbiContract (§5.14 Phase 2: the recorded
+    abi_contracts: dict = field(
+        default_factory=dict
+    )  # fn -> abi.AbiContract (§5.14 Phase 2: the recorded
     #     call-ABI layout facts -- the R12 lowering-contract pattern extended to the call ABI)
-    abi_diagnostics: list = field(default_factory=list)       # the R12 call-ABI law over those contracts
+    abi_diagnostics: list = field(default_factory=list)  # the R12 call-ABI law over those contracts
     #     (contract vs laid-out CTypes vs the target data model). ADVISORY, like the laws above. Empty == ok.
     r18_ok: bool = True
-    equivalence: str = "skip"                         # match | MISMATCH | skip:<reason>
-    target: str = HOST.name                           # the target ABI the unit was laid out for
-    fallback: str = ""                                 # non-empty == BCIR can't compile this; route to LLVM
-    link_flags: list = field(default_factory=list)    # B1: the deduped, stably-sorted linker flags this
+    equivalence: str = "skip"  # match | MISMATCH | skip:<reason>
+    target: str = HOST.name  # the target ABI the unit was laid out for
+    fallback: str = ""  # non-empty == BCIR can't compile this; route to LLVM
+    link_flags: list = field(
+        default_factory=list
+    )  # B1: the deduped, stably-sorted linker flags this
     #     unit's external-call edges need (e.g. ["-lm"]); derived from the claim graph (linkflags.py),
     #     mirrored byte-for-byte by the C twin's bcir_cfront_link_flags. Empty for a pure-integer unit.
 
@@ -103,9 +111,15 @@ def _cc():
     return shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
 
 
-def diagnose(source: str, *, includes: dict | None = None, embeds: dict | None = None,
-             search_paths: list | None = None, defines: dict | None = None,
-             filename: str = "<source>") -> DiagnosticReport:
+def diagnose(
+    source: str,
+    *,
+    includes: dict | None = None,
+    embeds: dict | None = None,
+    search_paths: list | None = None,
+    defines: dict | None = None,
+    filename: str = "<source>",
+) -> DiagnosticReport:
     """Run the front end (preprocess -> parse -> lower) for diagnostics only, returning a
     `DiagnosticReport`: the source diagnostics plus the text their caret spans index into. An empty
     report (`ok`) means the unit is well-formed through lowering. A front-end error is caught and
@@ -115,18 +129,27 @@ def diagnose(source: str, *, includes: dict | None = None, embeds: dict | None =
     past (not just the first). Preprocess and lex errors are still one-shot; semantic (lowering)
     diagnostics report the first, and only run once the parse is clean."""
     try:
-        pp, line_map = preprocess(source, includes=includes, embeds=embeds, search_paths=search_paths,
-                                  defines=defines, name=filename, return_map=True)
+        pp, line_map = preprocess(
+            source,
+            includes=includes,
+            embeds=embeds,
+            search_paths=search_paths,
+            defines=defines,
+            name=filename,
+            return_map=True,
+        )
     except CPPError as e:
         return DiagnosticReport([_diag_from(e, "preprocess")], source, filename)
     try:
-        unit, parse_diags = parse_with_recovery(pp)   # panic-mode recovery: collect all syntax errors
-    except CLexError as e:                            # a lexer error is not recovered (separate concern)
+        unit, parse_diags = parse_with_recovery(
+            pp
+        )  # panic-mode recovery: collect all syntax errors
+    except CLexError as e:  # a lexer error is not recovered (separate concern)
         return DiagnosticReport([_diag_from(e, "lex")], pp, filename, line_map)
-    if parse_diags:                                   # syntax errors -> report them all; AST is partial
+    if parse_diags:  # syntax errors -> report them all; AST is partial
         return DiagnosticReport(parse_diags, pp, filename, line_map)
     try:
-        lower_unit(unit)                              # only lower a syntactically clean unit
+        lower_unit(unit)  # only lower a syntactically clean unit
     except CLowerError as e:
         return DiagnosticReport([_diag_from(e, "lower")], pp, filename, line_map)
     return DiagnosticReport([], pp, filename, line_map)
@@ -142,16 +165,27 @@ def verify_cfront_lowering(lf, emit_text: str) -> list:
     masked = sum(1 for c in lf.claims if c.op in ("c.load", "c.store") and c.bounds == "masked")
     guards = emit_text.count("BCIR_CHK")
     if masked != guards:
-        return [Diagnostic(
-            "R12", f"{lf.name}: {masked} masked claim(s) but {guards} runtime guard(s) -- the emit does not "
-                   f"faithfully discharge the bounds contract")]
+        return [
+            Diagnostic(
+                "R12",
+                f"{lf.name}: {masked} masked claim(s) but {guards} runtime guard(s) -- the emit does not "
+                f"faithfully discharge the bounds contract",
+            )
+        ]
     return []
 
 
-def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | None = None,
-                 search_paths: list | None = None, defines: dict | None = None,
-                 check_clang: bool = True, filename: str = "<source>",
-                 target: str | None = None) -> CompileResult:
+def compile_unit(
+    source: str,
+    *,
+    includes: dict | None = None,
+    embeds: dict | None = None,
+    search_paths: list | None = None,
+    defines: dict | None = None,
+    check_clang: bool = True,
+    filename: str = "<source>",
+    target: str | None = None,
+) -> CompileResult:
     # L7: preprocess first — the expanded text is what both the parser and the Clang harness see,
     # so the equivalence check validates the lowering of the *preprocessed* program. `search_paths`
     # (the source dir + -I dirs) resolves `#include "..."` from disk; `defines` seeds -D macros;
@@ -159,13 +193,25 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
     # out for (defaults to the host); a non-host layout is not byte-compatible with the host clang, so
     # its behaviour-equivalence check is skipped (the layout is conformance-checked instead).
     abi = resolve_target(target) if target else HOST
-    source = preprocess(source, includes=includes, embeds=embeds,
-                        search_paths=search_paths, defines=defines, name=filename)
+    source = preprocess(
+        source,
+        includes=includes,
+        embeds=embeds,
+        search_paths=search_paths,
+        defines=defines,
+        name=filename,
+    )
     unit = parse_unit(source)
     lowered = lower_unit(unit, abi)
-    explicit_target = target is not None                 # ASM3: native per-ISA fence asm only on an EXPLICIT --target;
-    for _lf in lowered.functions.values():               #   an unspecified (host-default) target emits the portable
-        _lf.target_explicit = explicit_target            #   __atomic_thread_fence, so the default emit compiles on any host
+    explicit_target = (
+        target is not None
+    )  # ASM3: native per-ISA fence asm only on an EXPLICIT --target;
+    for (
+        _lf
+    ) in lowered.functions.values():  #   an unspecified (host-default) target emits the portable
+        _lf.target_explicit = (
+            explicit_target  #   __atomic_thread_fence, so the default emit compiles on any host
+        )
     h, theta, policy = host_channel().profile, Theta.cool(), PERF
     res = CompileResult(source=source, unit=unit, lowered=lowered, target=abi.name)
 
@@ -181,8 +227,9 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
         # R21 lifetime (§5.12): an ADVISORY pass over the optional malloc/free `claim.lifetime` -- a
         # use-after-free / double-free a C program would have left UB. Kept OUT of `res.diagnostics`
         # (and thus `is_clean`): like the R19/R20 timing laws, it never changes the frontend verdict.
-        res.lifetime_diagnostics += [Diagnostic(d.law, f"{name}: {d.message}")
-                                     for d in verify_lifetime(lf.module)]
+        res.lifetime_diagnostics += [
+            Diagnostic(d.law, f"{name}: {d.message}") for d in verify_lifetime(lf.module)
+        ]
         # §5.12 item 4: lowering faithfulness for the cfront C backend (the analog of verify_c_lowering for
         # the K_BCIR kernel) -- the emit must HONOR the masked bounds metadata. ADVISORY (out of is_clean),
         # so it cannot couple to the cross-rail `ok` parity; it runs on EVERY compile (user + fuzzer code),
@@ -192,10 +239,13 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
         # AND the target data model (pointer-kind == pointer_size, `long` == long_size). ADVISORY.
         contract = abi_contract_for(lf, abi)
         res.abi_contracts[name] = contract
-        res.abi_diagnostics += [Diagnostic("R12", f"{name}: {m}")
-                                for m in verify_abi_contract(contract, lf, abi)]
-        res.lowering_diagnostics += [Diagnostic(d.law, f"{name}: {d.message}")
-                                     for d in verify_cfront_lowering(lf, res.emitted[name])]
+        res.abi_diagnostics += [
+            Diagnostic("R12", f"{name}: {m}") for m in verify_abi_contract(contract, lf, abi)
+        ]
+        res.lowering_diagnostics += [
+            Diagnostic(d.law, f"{name}: {d.message}")
+            for d in verify_cfront_lowering(lf, res.emitted[name])
+        ]
 
     # R1.1 UNIT-WIDE: claim-id uniqueness across ALL functions (the per-function verify() above only
     # sees an intra-function duplicate, since each function is its own single-phase Module). This
@@ -214,13 +264,14 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
     # would wrongly reorder an indirect dispatcher past a global writer. The declared callee TYPE
     # rides the claim (`callee_sig`); the effect set is the conservative half of the same record.
     _all_shared = frozenset(rid for rid in lowered.resources if rid >= _SHARED_RID)
-    _dispatches = {name: any(c.op == "c.call.indirect" or c.op.startswith("c.call.imember")
-                             for c in lf.claims)
-                   for name, lf in lowered.functions.items()}
+    _dispatches = {
+        name: any(c.op == "c.call.indirect" or c.op.startswith("c.call.imember") for c in lf.claims)
+        for name, lf in lowered.functions.items()
+    }
 
     def _folded(name: str, seen: frozenset) -> tuple:
         if name not in _own or name in seen:
-            return frozenset(), frozenset()                # external/opaque callee or a recursion guard
+            return frozenset(), frozenset()  # external/opaque callee or a recursion guard
         seen = seen | {name}
         reads, writes = set(_own[name][0]), set(_own[name][1])
         if _dispatches.get(name):
@@ -244,20 +295,35 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
         for fname, cf in lowered.compose_functions.items():
             formal_rids = {rid for _, rid, _ in lowered.functions[fname].params}
             formals = {rid: lowered.resources.get(rid) for rid in formal_rids}
-            try:                                          # a function we can't summarize (e.g. it is
+            try:  # a function we can't summarize (e.g. it is
                 s = summarize(cf, lowered.compose_functions, formals, h, theta, policy)
                 # a summary is reusable on its *formals* (the actuals that vary per call site); drop the
                 # internal-temp keys summarize folds in from the effect, else no call ever matches.
-                summaries[fname] = replace(s, formal_keys=tuple(
-                    (rid, key) for rid, key in s.formal_keys if rid in formal_rids))
+                summaries[fname] = replace(
+                    s,
+                    formal_keys=tuple(
+                        (rid, key) for rid, key in s.formal_keys if rid in formal_rids
+                    ),
+                )
             except Exception:  # noqa: BLE001 -- recursive) is simply re-planned, never reused
                 pass
         try:
-            comp = plan_composite(region, lowered.compose_functions, lowered.resources, h, theta,
-                                  policy, summaries=summaries)
+            comp = plan_composite(
+                region,
+                lowered.compose_functions,
+                lowered.resources,
+                h,
+                theta,
+                policy,
+                summaries=summaries,
+            )
             res.r18_ok = True
-            res.ipo = {"worst": comp.worst_cost, "expected": comp.expected_cost,
-                       "leaves": comp.leaves, "reused": comp.reused}
+            res.ipo = {
+                "worst": comp.worst_cost,
+                "expected": comp.expected_cost,
+                "leaves": comp.leaves,
+                "reused": comp.reused,
+            }
         except Exception as e:  # noqa: BLE001 -- recursion / undefined callee == an R18 violation
             res.r18_ok = False
             res.diagnostics.append(Diagnostic("R18", f"call-graph integrity: {e}"))
@@ -284,8 +350,13 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
 
 
 # front-end exception type -> the stage that rejected the unit, for the fallback reason.
-_FALLBACK_PHASE = {CPPError: "preprocess", CLexError: "lex", CParseError: "parse",
-                   CLowerError: "lower", ValueError: "emit"}
+_FALLBACK_PHASE = {
+    CPPError: "preprocess",
+    CLexError: "lex",
+    CParseError: "parse",
+    CLowerError: "lower",
+    ValueError: "emit",
+}
 
 
 def compile_with_fallback(source: str, **kwargs) -> CompileResult:
@@ -297,18 +368,20 @@ def compile_with_fallback(source: str, **kwargs) -> CompileResult:
     driver that wants graceful degradation calls this.)"""
     try:
         return compile_unit(source, **kwargs)
-    except tuple(_FALLBACK_PHASE) as e:               # a stage outside BCIR's supported subset
-        res = CompileResult(source=source, unit=None, lowered=None,
-                            target=(kwargs.get("target") or HOST.name))
+    except tuple(_FALLBACK_PHASE) as e:  # a stage outside BCIR's supported subset
+        res = CompileResult(
+            source=source, unit=None, lowered=None, target=(kwargs.get("target") or HOST.name)
+        )
         res.fallback = f"{_FALLBACK_PHASE[type(e)]}: {e}"
         return res
-    except RecursionError as e:                        # belt-and-suspenders: a pathologically deeply-nested
+    except RecursionError as e:  # belt-and-suspenders: a pathologically deeply-nested
         # input the parser's depth guard (cparse._MAX_DEPTH) didn't catch first (e.g. recursion deep inside
         # const-eval / lowering over a large AST). Without this it would propagate UNCAUGHT and crash this
         # supposedly-total entry point. Route it to fallback so the C twin's clean rc-1 "nesting too deep"
         # PARSE-ERR and this rail AGREE: deep input -> needs_fallback=True on both, never a crash.
-        res = CompileResult(source=source, unit=None, lowered=None,
-                            target=(kwargs.get("target") or HOST.name))
+        res = CompileResult(
+            source=source, unit=None, lowered=None, target=(kwargs.get("target") or HOST.name)
+        )
         res.fallback = f"parse: nesting too deep ({e})"
         return res
 
@@ -325,30 +398,36 @@ def _attest(res: CompileResult, fn: str, target: str, link_flags: str = "") -> d
     eff = res.effects.get(fn)
 
     def _names(rids):
-        return ", ".join(sorted(res.lowered.resources[r].name for r in rids
-                                if r in res.lowered.resources)) or "-"
+        return (
+            ", ".join(
+                sorted(res.lowered.resources[r].name for r in rids if r in res.lowered.resources)
+            )
+            or "-"
+        )
 
     return {
         "function": fn,
         "target": target,
         "claims": len(lf.claims),
         "R1_R9_module_plan": "clean" if not fn_diags else "DIRTY",
-        "R12_lowering_contract": ("attested-by-clang-equivalence" if res.behaviour_equivalent
-                                  else res.equivalence),
+        "R12_lowering_contract": (
+            "attested-by-clang-equivalence" if res.behaviour_equivalent else res.equivalence
+        ),
         "R13_provenance_digest": digest,
         "R17_accuracy": "exact (integer / Q-fixed, 0 ULP)",
         "R18_callgraph_integrity": "clean" if res.r18_ok else "VIOLATION",
-        "effect_reads": _names(eff.reads) if eff else "-",      # alias/effect footprint (shared state)
+        "effect_reads": _names(eff.reads) if eff else "-",  # alias/effect footprint (shared state)
         "effect_writes": _names(eff.writes) if eff else "-",
         "plan_score": str(getattr(res.plans[fn], "score", "?")),
-        "link_flags": link_flags or "-",                        # B1: the unit's derived linker flags (-lm/...)
+        "link_flags": link_flags or "-",  # B1: the unit's derived linker flags (-lm/...)
     }
 
 
 def _attestation_comment(att: dict) -> str:
     body = "\n".join(f" *   {k:<24} {v}" for k, v in att.items())
-    return ("/* BCIR verified-C-output attestation (Phase C.2) — generated, do not edit.\n"
-            f"{body}\n */")
+    return (
+        f"/* BCIR verified-C-output attestation (Phase C.2) — generated, do not edit.\n{body}\n */"
+    )
 
 
 def emit_selfcheck(result: CompileResult) -> str:
@@ -364,12 +443,14 @@ def emit_selfcheck(result: CompileResult) -> str:
 def _explain(module, h, theta, policy) -> str:
     try:
         from ...kbcir.proof import explain, explain_text  # noqa: PLC0415
+
         return explain_text(explain(module, h, theta, policy, target_name=h.name))
     except Exception as e:  # noqa: BLE001 -- explain is a best-effort artifact
         return f"(explain unavailable: {e})"
 
 
 # --- the Clang behaviour-equivalence harness ----------------------------------------------------
+
 
 def _equivalence(source: str, lowered: LoweredUnit) -> str:
     cc = _cc()
@@ -385,9 +466,13 @@ def _equivalence(source: str, lowered: LoweredUnit) -> str:
         with open(src, "w", encoding="utf-8") as f:
             f.write(harness)
         for std in ("-std=c23", "-std=c2x", "-std=c17"):
-            b = subprocess.run(host_link_args(
-                [cc, std, "-O1", src, "-o", exe, "-lm"]),   # -lm: logical edge; omitted for the Windows CRT
-                               capture_output=True, text=True)
+            b = subprocess.run(
+                host_link_args(
+                    [cc, std, "-O1", src, "-o", exe, "-lm"]
+                ),  # -lm: logical edge; omitted for the Windows CRT
+                capture_output=True,
+                text=True,
+            )
             if b.returncode == 0:
                 break
         else:
@@ -430,7 +515,7 @@ def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
     has_ptr = any(ct.kind in ("pointer", "array") for _n, _r, ct in entry.params)
     decls, origargs, setup, prelude = [], [], [], []
     for i, (pname, _rid, ct) in enumerate(entry.params):
-        if ct.kind == "funcptr":                           # pass a real (deterministic) target fn
+        if ct.kind == "funcptr":  # pass a real (deterministic) target fn
             rety = _cname(ct.of) if ct.of else "uint32_t"
             plist = ", ".join(f"{_cname(pt)} p{j}" for j, pt in enumerate(ct.params)) or "void"
             comb = " + ".join(f"(p{j} * {2 * j + 1}u)" for j in range(len(ct.params))) or "1u"
@@ -441,8 +526,10 @@ def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
             elem = _cname(ct.of)
             decls.append(f"    static {elem} buf{i}[256];")
             # word-fill the backing store (works for scalar AND aggregate/bitfield element types).
-            setup.append(f"        for (unsigned k = 0; k < sizeof(buf{i}) / 4; k++) "
-                         f"((uint32_t *)buf{i})[k] = rng();")
+            setup.append(
+                f"        for (unsigned k = 0; k < sizeof(buf{i}) / 4; k++) "
+                f"((uint32_t *)buf{i})[k] = rng();"
+            )
             origargs.append(f"buf{i}")
         elif ct.is_aggregate:
             decls.append(f"    {ct.kind} {ct.name} a{i};")
@@ -452,7 +539,7 @@ def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
                 inits.append(f"        a{i}.{fname} = {rhs};")
             setup.append("\n".join(inits))
             origargs.append(f"a{i}")
-        else:                                              # scalar; keep small when indexing memory
+        else:  # scalar; keep small when indexing memory
             decls.append(f"    {_cname(ct)} s{i};")
             # a float param gets an in-range value (so a float->int cast stays defined, not UB); an
             # integer scalar stays below 2**31 so it is non-negative as `int` (the value model is
@@ -464,19 +551,25 @@ def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
     # struct-by-value returns (L8 ABI) can't be `!=`-compared — diff the bytes via memcmp.
     if entry.ret_type.is_aggregate:
         rt = _cname(entry.ret_type)
-        compare = (f"        {rt} ra = {entry.name}({call}), rb = bcir_{entry.name}({call});\n"
-                   f"        if (memcmp(&ra, &rb, sizeof ra) != 0) {{ printf(\"MISMATCH@%d\", "
-                   f"trial); return 0; }}")
+        compare = (
+            f"        {rt} ra = {entry.name}({call}), rb = bcir_{entry.name}({call});\n"
+            f'        if (memcmp(&ra, &rb, sizeof ra) != 0) {{ printf("MISMATCH@%d", '
+            f"trial); return 0; }}"
+        )
     elif entry.ret_type.is_float:
         # value compare, but a NaN result (e.g. asin out of domain) counts as equal to itself -- the
         # `x != x` legs catch NaN, which `==` alone would (correctly, per IEEE) report as unequal.
         rt = _cname(entry.ret_type)
-        compare = (f"        {rt} ra = {entry.name}({call}), rb = bcir_{entry.name}({call});\n"
-                   f"        if (!(ra == rb || (ra != ra && rb != rb))) {{ printf(\"MISMATCH@%d\", "
-                   f"trial); return 0; }}")
+        compare = (
+            f"        {rt} ra = {entry.name}({call}), rb = bcir_{entry.name}({call});\n"
+            f'        if (!(ra == rb || (ra != ra && rb != rb))) {{ printf("MISMATCH@%d", '
+            f"trial); return 0; }}"
+        )
     else:
-        compare = (f"        if ({entry.name}({call}) != bcir_{entry.name}({call})) {{\n"
-                   f"            printf(\"MISMATCH@%d\", trial); return 0; }}")
+        compare = (
+            f"        if ({entry.name}({call}) != bcir_{entry.name}({call})) {{\n"
+            f'            printf("MISMATCH@%d", trial); return 0; }}'
+        )
     return f"""#include <stdint.h>
 #include <stdio.h>
 #include <string.h>

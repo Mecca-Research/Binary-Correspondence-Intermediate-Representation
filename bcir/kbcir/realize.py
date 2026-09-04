@@ -22,8 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from ..model import (ATOMIC_OPCODES, Claim, Lane, Module, Opcode, StrideClass,
-                     topological_phase_ids)
+from ..model import ATOMIC_OPCODES, Claim, Lane, Module, Opcode, StrideClass, topological_phase_ids
 from .cost import (
     COMPUTE,
     MEMORY,
@@ -42,11 +41,11 @@ from .weights import PERF, Policy, weights
 @dataclass(frozen=True)
 class Candidate:
     lane: Lane
-    width: int          # vector element lanes (1 = scalar)
-    name: str           # scalar / vec8 / vec16 / strided / gather / ux_bucket / tile / noop / barrier
+    width: int  # vector element lanes (1 = scalar)
+    name: str  # scalar / vec8 / vec16 / strided / gather / ux_bucket / tile / noop / barrier
     base: CostVector
     reads: tuple[int, ...] = ()
-    writes: tuple[int, ...] = ()    # the claim's write RIDs (for producer->consumer fusion)
+    writes: tuple[int, ...] = ()  # the claim's write RIDs (for producer->consumer fusion)
 
 
 @dataclass
@@ -65,14 +64,14 @@ class RealizationResult:
     # Carried so downstream consumers (plan_view / to_mlir) reuse it instead of
     # recomputing fused_candidates(). Excluded from equality/repr -- it is derived
     # state, not part of the result's identity.
-    cand_map: dict[int, list[Candidate]] | None = field(
-        default=None, compare=False, repr=False)
+    cand_map: dict[int, list[Candidate]] | None = field(default=None, compare=False, repr=False)
 
     def by_claim(self) -> dict[int, Candidate]:
         return {s.claim_id: s.candidate for s in self.steps}
 
 
 # --- cost derivation ------------------------------------------------------------
+
 
 def _opclass(op: Opcode) -> int:
     if op in (Opcode.ADD, Opcode.SUB, Opcode.MUL):
@@ -112,8 +111,9 @@ def _stride_penalty(claim: Claim, h: HProfile) -> int:
     return 1
 
 
-def _cost(claim: Claim, h: HProfile, width: int, stride_penalty: int, extra_compile: int = 0,
-          tier=None) -> CostVector:
+def _cost(
+    claim: Claim, h: HProfile, width: int, stride_penalty: int, extra_compile: int = 0, tier=None
+) -> CostVector:
     n = max(1, claim.count)
     streams = _streams(claim)
     ceil = (n + width - 1) // width
@@ -153,10 +153,22 @@ def candidates_for(claim: Claim, h: HProfile, resource=None) -> list[Candidate]:
     # read-modify-write is not a faster atomic; it is not an atomic at all, and the lost
     # ordering and synchronization cost were not priced either.
     if op in ATOMIC_OPCODES:
-        return [Candidate(Lane.A, 1, "atomic",
-                          _cost(claim, h, 1, 1, tier=(h.mem.tier_for(resource.domain)
-                                                      if resource is not None else None)),
-                          claim.rd, tuple(claim.wr))]
+        return [
+            Candidate(
+                Lane.A,
+                1,
+                "atomic",
+                _cost(
+                    claim,
+                    h,
+                    1,
+                    1,
+                    tier=(h.mem.tier_for(resource.domain) if resource is not None else None),
+                ),
+                claim.rd,
+                tuple(claim.wr),
+            )
+        ]
 
     # Memory tier + addressing model come from the (primary) resource, if known.
     tier = h.mem.tier_for(resource.domain) if resource is not None else None
@@ -178,7 +190,6 @@ def candidates_for(claim: Claim, h: HProfile, resource=None) -> list[Candidate]:
             Candidate(Lane.GGG, 1, "gather", _cost(claim, h, 1, gp, tier=tier), claim.rd, claim.wr),
         ]
 
-
     cands: list[Candidate] = []
     if sc in (StrideClass.UNIT, StrideClass.SCALAR):
         for w in h.widths():
@@ -186,13 +197,27 @@ def candidates_for(claim: Claim, h: HProfile, resource=None) -> list[Candidate]:
             lane = claim.lane if w == 1 else Lane.U
             cands.append(Candidate(lane, w, name, _cost(claim, h, w, 1, tier=tier), claim.rd))
     elif sc == StrideClass.STRIDED:
-        cands.append(Candidate(Lane.U, 1, "strided",
-                               _cost(claim, h, 1, _stride_penalty(claim, h), tier=tier), claim.rd))
+        cands.append(
+            Candidate(
+                Lane.U,
+                1,
+                "strided",
+                _cost(claim, h, 1, _stride_penalty(claim, h), tier=tier),
+                claim.rd,
+            )
+        )
         cands.append(Candidate(Lane.GGG, 1, "gather", _cost(claim, h, 1, gp, tier=tier), claim.rd))
     elif sc == StrideClass.CACHELINE:
         uxw = min(8, max(h.widths()))
-        cands.append(Candidate(Lane.UX, uxw, "ux_bucket",
-                               _cost(claim, h, uxw, 2, extra_compile=claim.count // 4, tier=tier), claim.rd))
+        cands.append(
+            Candidate(
+                Lane.UX,
+                uxw,
+                "ux_bucket",
+                _cost(claim, h, uxw, 2, extra_compile=claim.count // 4, tier=tier),
+                claim.rd,
+            )
+        )
         cands.append(Candidate(Lane.GGG, 1, "gather", _cost(claim, h, 1, gp, tier=tier), claim.rd))
     elif sc == StrideClass.RANDOM:
         # Correctness: do not assume locality. Only the declared GGG realization is legal (HAM-aware).
@@ -204,8 +229,15 @@ def candidates_for(claim: Claim, h: HProfile, resource=None) -> list[Candidate]:
         cands.append(Candidate(Lane.T, tw, "tile", _cost(claim, h, tw, 1, tier=tier), claim.rd))
 
     if not cands:  # defensive fallback
-        cands.append(Candidate(claim.lane, 1, "scalar",
-                               _cost(claim, h, 1, _stride_penalty(claim, h), tier=tier), claim.rd))
+        cands.append(
+            Candidate(
+                claim.lane,
+                1,
+                "scalar",
+                _cost(claim, h, 1, _stride_penalty(claim, h), tier=tier),
+                claim.rd,
+            )
+        )
     wr = tuple(claim.wr)
     # Positional construction, not `dataclasses.replace`: `replace` introspects the fields on
     # every call, and this runs once per candidate per claim on both the planner and R9.
@@ -242,13 +274,20 @@ def edge_cost(prev: "Candidate | None", cand: Candidate, theta: Theta, w_phase) 
     return cand.base.couple(_context_factor(prev, cand, theta)).dot(w_phase)
 
 
-def step_cost(prev: "Candidate | None", cand: Candidate, h: HProfile, theta: Theta,
-              phase_id: int, policy: Policy = PERF) -> int:
+def step_cost(
+    prev: "Candidate | None",
+    cand: Candidate,
+    h: HProfile,
+    theta: Theta,
+    phase_id: int,
+    policy: Policy = PERF,
+) -> int:
     """`edge_cost` with the phase weights derived from the scope (h, theta, policy)."""
     return edge_cost(prev, cand, theta, weights(h, theta, phase_id, policy))
 
 
 # --- phase ordering -------------------------------------------------------------
+
 
 def _topo_phases(module: Module):
     pmap = module.phase_map()
@@ -264,6 +303,7 @@ def _flatten(module: Module) -> list[tuple[int, Claim]]:
 
 
 # --- fusion-aware candidate generation (shared by the tropical + RCSP rails) -----
+
 
 def _cse_factor(claim: Claim) -> tuple[int, ...]:
     """The copy-cost factor for a claim that is a common subexpression of an earlier
@@ -297,10 +337,10 @@ def fused_candidates(module: Module, h: HProfile) -> dict[int, list[Candidate]]:
     intra-phase only; single-claim programs (e.g. vector_add) get neither (a no-op,
     so the pinned scores are preserved)."""
     out: dict[int, list[Candidate]] = {}
-    produced: dict[int, set[int]] = {}            # phase -> rids written so far (deforestation)
-    version: dict[int, dict[int, int]] = {}       # phase -> {rid: write count} (value numbering)
-    seen: dict[int, dict[tuple, int]] = {}        # phase -> {compute signature: first claim}
-    barr_prod: dict[int, set[int]] = {}           # phase -> rids written by a barriered producer (ASM3b)
+    produced: dict[int, set[int]] = {}  # phase -> rids written so far (deforestation)
+    version: dict[int, dict[int, int]] = {}  # phase -> {rid: write count} (value numbering)
+    seen: dict[int, dict[tuple, int]] = {}  # phase -> {compute signature: first claim}
+    barr_prod: dict[int, set[int]] = {}  # phase -> rids written by a barriered producer (ASM3b)
     for phase_id, claim in _flatten(module):
         cost_rid = claim.rd[0] if claim.rd else claim.primary_rid
         resource = module.resource(cost_rid) if cost_rid is not None else None
@@ -313,30 +353,37 @@ def fused_candidates(module: Module, h: HProfile) -> dict[int, list[Candidate]]:
 
         cands = candidates_for(claim, h, resource)
         shared = pset & set(claim.rd)
-        if claim.rd and sig in seenmap:                  # CSE: identical value already computed
+        if claim.rd and sig in seenmap:  # CSE: identical value already computed
             cse = _cse_factor(claim)
-            cands = [Candidate(c.lane, c.width, c.name, c.base.couple(cse), c.reads, c.writes)
-                     for c in cands]
-        elif shared:                                     # producer->consumer deforestation
+            cands = [
+                Candidate(c.lane, c.width, c.name, c.base.couple(cse), c.reads, c.writes)
+                for c in cands
+            ]
+        elif shared:  # producer->consumer deforestation
             # ASM3b: a barriered claim is a first-class ordering edge -- no fusion across it. Skip the
             # deforestation discount when the consumer is barriered OR a shared operand was produced by
             # a barriered producer (the fence forces the intermediate to materialize, no round-trip elision).
             if claim.hazard != "barriered" and not (shared & bset):
-                cands = [Candidate(c.lane, c.width, c.name, c.base.couple(_DEFOREST_FACTOR),
-                                   c.reads, c.writes) for c in cands]
+                cands = [
+                    Candidate(
+                        c.lane, c.width, c.name, c.base.couple(_DEFOREST_FACTOR), c.reads, c.writes
+                    )
+                    for c in cands
+                ]
 
         if claim.rd:
-            seenmap.setdefault(sig, claim.id)            # first occurrence pays full
-        for r in claim.wr:                               # a write creates a new operand version
+            seenmap.setdefault(sig, claim.id)  # first occurrence pays full
+        for r in claim.wr:  # a write creates a new operand version
             ver[r] = ver.get(r, 0) + 1
         pset |= set(claim.wr)
-        if claim.hazard == "barriered":                  # ASM3b: a barriered producer fences its writes
+        if claim.hazard == "barriered":  # ASM3b: a barriered producer fences its writes
             bset |= set(claim.wr)
         out[claim.id] = cands
     return out
 
 
 # --- the optimizer --------------------------------------------------------------
+
 
 def optimize(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF) -> RealizationResult:
     flat = _flatten(module)
@@ -345,11 +392,13 @@ def optimize(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF) -
 
     # Build a layered DAG. Node 0 = SOURCE; one column per claim; final node = SINK.
     adj: list[list[tuple[int, int]]] = [[]]  # adj[0] = SOURCE
-    node_meta: list[tuple[int, Claim, Candidate] | None] = [None]  # (phase_id, claim, candidate) per node
+    node_meta: list[tuple[int, Claim, Candidate] | None] = [
+        None
+    ]  # (phase_id, claim, candidate) per node
     prev_nodes: list[int] = [0]
     prev_cands: list[Candidate | None] = [None]
 
-    cand_map = fused_candidates(module, h)    # candidates with deforestation baked in
+    cand_map = fused_candidates(module, h)  # candidates with deforestation baked in
     for phase_id, claim in flat:
         w_phase = weights(h, theta, phase_id, policy)
         col_nodes: list[int] = []

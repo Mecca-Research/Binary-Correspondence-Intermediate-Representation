@@ -43,6 +43,7 @@ Options (a cc-compatible subset):
                     TUs link to each other (and to any host object). Opt-in; the default --emit
                     stays static/bcir_-prefixed (self-contained beside the source).
 """
+
 from __future__ import annotations
 
 import os
@@ -52,13 +53,21 @@ from ..._artifact_json import read_bounded_text, strict_json_loads
 from .abi import TARGETS
 from .pipeline import compile_unit, compile_with_fallback, diagnose, emit_selfcheck
 
-_STD_VERSION = {"c23": "202311L", "c2x": "202311L", "c17": "201710L", "c18": "201710L",
-                "c11": "201112L", "gnu23": "202311L", "gnu17": "201710L", "gnu11": "201112L"}
+_STD_VERSION = {
+    "c23": "202311L",
+    "c2x": "202311L",
+    "c17": "201710L",
+    "c18": "201710L",
+    "c11": "201112L",
+    "gnu23": "202311L",
+    "gnu17": "201710L",
+    "gnu11": "201112L",
+}
 
 
 def _add_define(defines: dict, spec: str) -> None:
     name, _eq, val = spec.partition("=")
-    defines[name] = val if _eq else ""               # "" -> defined as 1 by the preprocessor
+    defines[name] = val if _eq else ""  # "" -> defined as 1 by the preprocessor
 
 
 def _parse_entry_flags(arguments: list) -> tuple[list, dict, list, str | None, str | None]:
@@ -73,8 +82,10 @@ def _parse_entry_flags(arguments: list) -> tuple[list, dict, list, str | None, s
     target: str | None = None
     if not isinstance(arguments, list) or len(arguments) > 65536:
         raise ValueError("compile-database arguments must be a bounded array")
-    if any(not isinstance(argument, str) or len(argument) > 32768 or "\0" in argument
-           for argument in arguments):
+    if any(
+        not isinstance(argument, str) or len(argument) > 32768 or "\0" in argument
+        for argument in arguments
+    ):
         raise ValueError("compile-database arguments must be bounded strings")
     i = 0
     while i < len(arguments):
@@ -82,23 +93,27 @@ def _parse_entry_flags(arguments: list) -> tuple[list, dict, list, str | None, s
         if a in ("-I", "-D", "-U", "--target") and i + 1 >= len(arguments):
             raise ValueError(f"compile-database option {a} requires an argument")
         if a == "-I":
-            i += 1; inc.append(arguments[i])
+            i += 1
+            inc.append(arguments[i])
         elif a.startswith("-I"):
             inc.append(a[2:])
         elif a == "-D":
-            i += 1; _add_define(defs, arguments[i])
+            i += 1
+            _add_define(defs, arguments[i])
         elif a.startswith("-D"):
             _add_define(defs, a[2:])
         elif a == "-U":
-            i += 1; undefs.append(arguments[i])
+            i += 1
+            undefs.append(arguments[i])
         elif a.startswith("-U"):
             undefs.append(a[2:])
         elif a.startswith("-std="):
             std = a[5:]
         elif a == "--target":
-            i += 1; target = arguments[i]
+            i += 1
+            target = arguments[i]
         elif a.startswith("--target="):
-            target = a[len("--target="):]
+            target = a[len("--target=") :]
         i += 1
     return inc, defs, undefs, std, target
 
@@ -107,6 +122,7 @@ def _load_compile_db(path: str) -> list[dict]:
     """`compile_commands.json` entries as job dicts: {path, inc_dirs, defines, undefs, std, target}.
     `path` may be the JSON file or a directory containing it (the clang -p convention)."""
     import shlex  # noqa: PLC0415
+
     db = os.path.join(path, "compile_commands.json") if os.path.isdir(path) else path
     text = read_bounded_text(db, "compile database", max_bytes=64 << 20)
     entries = strict_json_loads(text, "compile database", max_bytes=64 << 20)
@@ -119,28 +135,42 @@ def _load_compile_db(path: str) -> list[dict]:
         args = e.get("arguments")
         if args is None:
             command = e.get("command")
-            if (not isinstance(command, str) or not command or len(command) > (1 << 20) or
-                    "\0" in command):
+            if (
+                not isinstance(command, str)
+                or not command
+                or len(command) > (1 << 20)
+                or "\0" in command
+            ):
                 raise ValueError(
-                    f"compile-database entry {index} needs a bounded command or arguments")
+                    f"compile-database entry {index} needs a bounded command or arguments"
+                )
             args = shlex.split(command)
         elif "command" in e:
             raise ValueError(
-                f"compile-database entry {index} must not contain both command and arguments")
+                f"compile-database entry {index} must not contain both command and arguments"
+            )
         inc, defs, undefs, std, target = _parse_entry_flags(args)
         directory = e.get("directory", ".")
         fpath = e.get("file")
         for key, value in (("directory", directory), ("file", fpath)):
-            if (not isinstance(value, str) or not value or len(value) > 32768 or
-                    "\0" in value):
+            if not isinstance(value, str) or not value or len(value) > 32768 or "\0" in value:
                 raise ValueError(
-                    f"compile-database entry {index} {key} must be a bounded path string")
+                    f"compile-database entry {index} {key} must be a bounded path string"
+                )
         if not os.path.isabs(fpath):
             fpath = os.path.join(directory, fpath)
         # entry -I dirs resolve relative to the entry's directory, per the compile-database spec.
         inc = [d if os.path.isabs(d) else os.path.join(directory, d) for d in inc]
-        jobs.append({"path": fpath, "inc_dirs": inc, "defines": defs, "undefs": undefs,
-                     "std": std, "target": target})
+        jobs.append(
+            {
+                "path": fpath,
+                "inc_dirs": inc,
+                "defines": defs,
+                "undefs": undefs,
+                "std": std,
+                "target": target,
+            }
+        )
     return jobs
 
 
@@ -168,8 +198,9 @@ def main(argv: list[str] | None = None) -> int:
     i = 0
     while i < len(args):
         a = args[i]
-        if a in ("-MF", "-MT", "-p", "--r21", "--target", "-o", "-I", "-D", "-U") \
-                and i + 1 >= len(args):
+        if a in ("-MF", "-MT", "-p", "--r21", "--target", "-o", "-I", "-D", "-U") and i + 1 >= len(
+            args
+        ):
             sys.stderr.write(f"bcir-cfront: option {a} requires an argument\n")
             return 2
         if a == "--explain":
@@ -191,35 +222,45 @@ def main(argv: list[str] | None = None) -> int:
         elif a in ("-M", "-MM"):
             dep_only = True
         elif a == "-MF":
-            i += 1; dep_file = args[i]; dep_only = True
+            i += 1
+            dep_file = args[i]
+            dep_only = True
         elif a == "-MT":
-            i += 1; dep_target = args[i]
+            i += 1
+            dep_target = args[i]
         elif a == "-p":
-            i += 1; compdb = args[i]
+            i += 1
+            compdb = args[i]
         elif a == "--r21":
-            i += 1; r21_policy = args[i]
+            i += 1
+            r21_policy = args[i]
         elif a.startswith("--r21="):
-            r21_policy = a[len("--r21="):]
+            r21_policy = a[len("--r21=") :]
         elif a == "--target":
-            i += 1; target = args[i]
+            i += 1
+            target = args[i]
         elif a.startswith("--target="):
-            target = a[len("--target="):]
+            target = a[len("--target=") :]
         elif a == "-E":
             pp_only = True
         elif a == "-o":
-            i += 1; out_path = args[i]
+            i += 1
+            out_path = args[i]
         elif a.startswith("-o"):
             out_path = a[2:]
         elif a == "-I":
-            i += 1; inc_dirs.append(args[i])
+            i += 1
+            inc_dirs.append(args[i])
         elif a.startswith("-I"):
             inc_dirs.append(a[2:])
         elif a == "-D":
-            i += 1; _add_define(defines, args[i])
+            i += 1
+            _add_define(defines, args[i])
         elif a.startswith("-D"):
             _add_define(defines, a[2:])
         elif a == "-U":
-            i += 1; undefs.append(args[i])
+            i += 1
+            undefs.append(args[i])
         elif a.startswith("-U"):
             undefs.append(a[2:])
         elif a.startswith("-std="):
@@ -236,8 +277,10 @@ def main(argv: list[str] | None = None) -> int:
 
     # The job list (Phase 3 project orchestration): plain CLI files carry the global flags;
     # compile-database entries carry their own. Both may be combined in one invocation.
-    jobs: list[dict] = [{"path": p, "inc_dirs": [], "defines": {}, "undefs": [],
-                         "std": None, "target": None} for p in files]
+    jobs: list[dict] = [
+        {"path": p, "inc_dirs": [], "defines": {}, "undefs": [], "std": None, "target": None}
+        for p in files
+    ]
     if compdb is not None:
         try:
             jobs += _load_compile_db(compdb)
@@ -252,19 +295,21 @@ def main(argv: list[str] | None = None) -> int:
     if len(jobs) > 1:
         project_verdict = True
     if target is not None and target not in TARGETS:
-        sys.stderr.write(f"bcir-cfront: unknown --target {target!r}; choose from "
-                         f"{', '.join(sorted(TARGETS))}\n")
+        sys.stderr.write(
+            f"bcir-cfront: unknown --target {target!r}; choose from {', '.join(sorted(TARGETS))}\n"
+        )
         return 2
     if r21_policy not in ("advisory", "fallback", "reject"):
-        sys.stderr.write(f"bcir-cfront: unknown --r21 policy {r21_policy!r} "
-                         f"(advisory|fallback|reject)\n")
+        sys.stderr.write(
+            f"bcir-cfront: unknown --r21 policy {r21_policy!r} (advisory|fallback|reject)\n"
+        )
         return 2
     for u in undefs:
         defines.pop(u, None)
 
     out: list[str] = []
     dep_rules: list[str] = []
-    outcomes: list[str] = []                         # per job: clean | fallback | dirty
+    outcomes: list[str] = []  # per job: clean | fallback | dirty
     rc = 0
     for job in jobs:
         path = job["path"]
@@ -291,8 +336,9 @@ def main(argv: list[str] | None = None) -> int:
             rc = 2 if rc != 1 else rc
             continue
 
-        if dep_only:                                 # -M/-MM/-MF: the make dependency rule per unit
+        if dep_only:  # -M/-MM/-MF: the make dependency rule per unit
             from .cpp import CPPError, Preprocessor  # noqa: PLC0415
+
             try:
                 pp = Preprocessor(None, None, search, job_defines)
                 pp.process(text, path)
@@ -304,8 +350,9 @@ def main(argv: list[str] | None = None) -> int:
                 rc = 1
             continue
 
-        if pp_only:                                  # -E: just the preprocessed translation unit
+        if pp_only:  # -E: just the preprocessed translation unit
             from .cpp import CPPError, preprocess  # noqa: PLC0415
+
             try:
                 out.append(preprocess(text, search_paths=search, defines=job_defines, name=path))
                 outcomes.append("clean")
@@ -315,7 +362,7 @@ def main(argv: list[str] | None = None) -> int:
                 rc = 1
             continue
 
-        if syntax_only or emit_json:                 # check only: Clang-style or JSON diagnostics
+        if syntax_only or emit_json:  # check only: Clang-style or JSON diagnostics
             rep = diagnose(text, search_paths=search, defines=job_defines, filename=path)
             if emit_json:
                 out.append(rep.to_json())
@@ -329,17 +376,29 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         try:
-            if fallback:                             # the LLVM-backend fallback contract (never raises)
-                r = compile_with_fallback(text, search_paths=search, defines=job_defines,
-                                          check_clang=False, filename=path, target=job_target)
+            if fallback:  # the LLVM-backend fallback contract (never raises)
+                r = compile_with_fallback(
+                    text,
+                    search_paths=search,
+                    defines=job_defines,
+                    check_clang=False,
+                    filename=path,
+                    target=job_target,
+                )
                 if r.needs_fallback:
                     sys.stderr.write(f"{path}: fallback to LLVM backend: {r.fallback}\n")
                     outcomes.append("fallback")
                     rc = 2 if rc != 1 else rc
                     continue
             else:
-                r = compile_unit(text, search_paths=search, defines=job_defines, check_clang=False,
-                                 filename=path, target=job_target)
+                r = compile_unit(
+                    text,
+                    search_paths=search,
+                    defines=job_defines,
+                    check_clang=False,
+                    filename=path,
+                    target=job_target,
+                )
         except Exception as e:  # noqa: BLE001 -- render the front-end error with a Clang-style caret
             rep = diagnose(text, search_paths=search, defines=job_defines, filename=path)
             sys.stderr.write((rep.render() + "\n") if rep.diagnostics else f"{path}: error: {e}\n")
@@ -354,17 +413,20 @@ def main(argv: list[str] | None = None) -> int:
         if r21_policy != "advisory" and r.lifetime_diagnostics:
             d0 = r.lifetime_diagnostics[0]
             if r21_policy == "fallback":
-                sys.stderr.write(f"{path}: fallback to LLVM backend: lifetime: {d0.law} {d0.message}\n")
+                sys.stderr.write(
+                    f"{path}: fallback to LLVM backend: lifetime: {d0.law} {d0.message}\n"
+                )
                 outcomes.append("fallback")
                 rc = 2 if rc != 1 else rc
-            else:                                        # reject
+            else:  # reject
                 sys.stderr.write(f"{path}: lifetime error: {d0.law} {d0.message}\n")
                 outcomes.append("dirty")
                 rc = 1
             continue
 
-        if emit_link_flags:                          # B1: just the derived linker flags, one line
+        if emit_link_flags:  # B1: just the derived linker flags, one line
             from .linkflags import format_link_flags  # noqa: PLC0415
+
             out.append(format_link_flags(r.link_flags))
             outcomes.append("clean" if r.is_clean else "dirty")
             continue
@@ -372,8 +434,9 @@ def main(argv: list[str] | None = None) -> int:
             out.append(emit_selfcheck(r))
             outcomes.append("clean" if r.is_clean else "dirty")
             continue
-        if linkable:                                 # Phase 3: the externally-linkable artifact
+        if linkable:  # Phase 3: the externally-linkable artifact
             from .emit import emit_linkable  # noqa: PLC0415
+
             try:
                 out.append(emit_linkable(r.lowered, r.emitted))
             except ValueError as e:
@@ -393,8 +456,10 @@ def main(argv: list[str] | None = None) -> int:
             if show_explain:
                 out.append(r.explain[name])
         status = "CLEAN" if r.is_clean else "DIRTY"
-        out.append(f"\nR1-R18: {status} (r18_ok={r.r18_ok})  |  target: {r.target}  |  "
-                   f"Clang behaviour: {r.equivalence}")
+        out.append(
+            f"\nR1-R18: {status} (r18_ok={r.r18_ok})  |  target: {r.target}  |  "
+            f"Clang behaviour: {r.equivalence}"
+        )
         if not r.is_clean:
             for d in r.diagnostics:
                 out.append(f"  {d.law}: {d.message}")
@@ -403,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             outcomes.append("clean")
 
-    if dep_rules:                                    # -M/-MM output (its own artifact stream)
+    if dep_rules:  # -M/-MM output (its own artifact stream)
         if dep_file:
             with open(dep_file, "w", encoding="utf-8") as f:
                 f.write("\n".join(dep_rules) + "\n")

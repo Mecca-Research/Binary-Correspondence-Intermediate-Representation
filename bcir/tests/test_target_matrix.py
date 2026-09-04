@@ -44,7 +44,8 @@ def test_matrix_file_matches_a_fresh_emission():
         committed = f.read()
     assert committed == diff.emit_target_matrix(), (
         "mlir/test/passes/target_matrix.mlir is stale -- regenerate with "
-        "`python -m bcir.kbcir.differential --emit-matrix`")
+        "`python -m bcir.kbcir.differential --emit-matrix`"
+    )
 
 
 def test_emission_is_deterministic():
@@ -61,14 +62,19 @@ def test_capability_op_carries_every_target_seed():
         assert f'triple = "{h.triple}"' in cap, name
         widths = ", ".join(str(w) for w in h.lane_widths)
         assert f"lane_widths = array<i64: {widths}>" in cap, name
-        for field, value in (("warp", h.warp), ("cacheline", h.cacheline),
-                             ("gather_penalty", h.gather_penalty),
-                             ("affinity_domains", h.affinity_domains),
-                             ("mem_channels", h.mem_channels),
-                             ("thermal_density", h.thermal_density),
-                             ("power_density", h.power_density),
-                             ("mem_unit", h.mem_unit), ("base_overhead", h.base_overhead),
-                             ("per_op_heat", h.per_op_heat), ("elem_bytes", h.elem_bytes)):
+        for field, value in (
+            ("warp", h.warp),
+            ("cacheline", h.cacheline),
+            ("gather_penalty", h.gather_penalty),
+            ("affinity_domains", h.affinity_domains),
+            ("mem_channels", h.mem_channels),
+            ("thermal_density", h.thermal_density),
+            ("power_density", h.power_density),
+            ("mem_unit", h.mem_unit),
+            ("base_overhead", h.base_overhead),
+            ("per_op_heat", h.per_op_heat),
+            ("elem_bytes", h.elem_bytes),
+        ):
             assert f"{field} = {value} : i32" in cap, f"{name}: {field}"
 
 
@@ -77,8 +83,14 @@ def test_capability_op_carries_every_target_seed():
 # vector_add: the same C = A + B graph realizes at the target's max lane width, so the
 # plan score is the per-target signal (the cost model recomputes these from the
 # capability seeds alone -- the claim of the matrix).
-_VEC_ADD = {"x86_avx2": (8, 9472), "x86_avx512": (16, 7808), "arm64_neon": (4, 12800),
-            "arm64_sve": (16, 7808), "nvidia_ptx": (32, 6976), "riscv_rvv": (16, 7808)}
+_VEC_ADD = {
+    "x86_avx2": (8, 9472),
+    "x86_avx512": (16, 7808),
+    "arm64_neon": (4, 12800),
+    "arm64_sve": (16, 7808),
+    "nvidia_ptx": (32, 6976),
+    "riscv_rvv": (16, 7808),
+}
 
 
 def test_vector_add_plan_is_per_target():
@@ -92,20 +104,39 @@ def test_vector_add_plan_is_per_target():
 # -- the committed gem_corpus.mlir pins only x86_avx512; this pins the rest (the
 # "six-target parity proven on the Python rail" made an explicit regression).
 _CORPUS_PLAN = {
-    "matmul_tiled": {"x86_avx2": 1245184, "x86_avx512": 1015808, "arm64_neon": 1703936,
-                     "arm64_sve": 1015808, "nvidia_ptx": 1015808, "riscv_rvv": 1015808},
-    "scan": {"x86_avx2": 123904, "x86_avx512": 101888, "arm64_neon": 167936,
-             "arm64_sve": 101888, "nvidia_ptx": 90880, "riscv_rvv": 101888},
-    "multi_histogram": {"x86_avx2": 1597696, "x86_avx512": 1595520, "arm64_neon": 1602048,
-                        "arm64_sve": 1595520, "nvidia_ptx": 808000, "riscv_rvv": 1595520},
+    "matmul_tiled": {
+        "x86_avx2": 1245184,
+        "x86_avx512": 1015808,
+        "arm64_neon": 1703936,
+        "arm64_sve": 1015808,
+        "nvidia_ptx": 1015808,
+        "riscv_rvv": 1015808,
+    },
+    "scan": {
+        "x86_avx2": 123904,
+        "x86_avx512": 101888,
+        "arm64_neon": 167936,
+        "arm64_sve": 101888,
+        "nvidia_ptx": 90880,
+        "riscv_rvv": 101888,
+    },
+    "multi_histogram": {
+        "x86_avx2": 1597696,
+        "x86_avx512": 1595520,
+        "arm64_neon": 1602048,
+        "arm64_sve": 1595520,
+        "nvidia_ptx": 808000,
+        "riscv_rvv": 1595520,
+    },
 }
 
 
 def test_corpus_plan_is_per_target():
     for name in CORPUS:
         for t, score in _CORPUS_PLAN[name].items():
-            assert optimize(PROGRAMS[name](), TARGETS[t], COOL, PERF).score == score, \
+            assert optimize(PROGRAMS[name](), TARGETS[t], COOL, PERF).score == score, (
                 f"{name} on {t}"
+            )
 
 
 def test_nvidia_gather_is_cheaper_than_the_cpus():
@@ -120,8 +151,14 @@ def test_nvidia_gather_is_cheaper_than_the_cpus():
 
 # fused_chain: two independent shared-input claims overlap (makespan < serial); the
 # gain is per-target (it scales with the per-target plan), and every target overlaps.
-_FUSED_GAIN = {"x86_avx2": 7168, "x86_avx512": 5888, "arm64_neon": 9728,
-               "arm64_sve": 5888, "nvidia_ptx": 5248, "riscv_rvv": 5888}
+_FUSED_GAIN = {
+    "x86_avx2": 7168,
+    "x86_avx512": 5888,
+    "arm64_neon": 9728,
+    "arm64_sve": 5888,
+    "nvidia_ptx": 5248,
+    "riscv_rvv": 5888,
+}
 
 
 def test_fused_chain_overlap_gain_is_per_target():
@@ -143,6 +180,7 @@ def test_scan_chain_serializes_on_every_target():
 
 
 # --- plan-level RCSP per target --------------------------------------------------
+
 
 def test_rcsp_matrix_binds_where_an_intermediate_lane_lowers_heat():
     """The matrix RCSP section caps the plan's thermal at (accumulated - 1). On targets

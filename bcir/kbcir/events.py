@@ -51,9 +51,18 @@ def unmask_claim(source: str, ctrl_rid: int, cid: int) -> Claim:
 
 
 def _ctl(op: str, ctrl_rid: int, cid: int) -> Claim:
-    return Claim(id=cid, opcode=Opcode.STORE, lane=Lane.U, stride_class=StrideClass.SCALAR,
-                 count=1, wr=(ctrl_rid,), op=op, domain=Domain.MMIO, hazard="atomic",
-                 volatile=True)
+    return Claim(
+        id=cid,
+        opcode=Opcode.STORE,
+        lane=Lane.U,
+        stride_class=StrideClass.SCALAR,
+        count=1,
+        wr=(ctrl_rid,),
+        op=op,
+        domain=Domain.MMIO,
+        hazard="atomic",
+        volatile=True,
+    )
 
 
 def _source_of(op: str) -> str:
@@ -71,23 +80,28 @@ def check_event_phases(module: Module) -> list:
     for p in module.phases:
         for c in p.claims:
             if c.op.startswith((_MASK, _UNMASK)) and (len(c.wr) != 1 or c.rd):
-                msgs.append(f"EV: claim {c.id} ({c.op}) must write exactly ONE "
-                            f"controller resource and read none; got rd={tuple(c.rd)} "
-                            f"wr={tuple(c.wr)}")
+                msgs.append(
+                    f"EV: claim {c.id} ({c.op}) must write exactly ONE "
+                    f"controller resource and read none; got rd={tuple(c.rd)} "
+                    f"wr={tuple(c.wr)}"
+                )
     if not event_phases:
         return msgs
     # EV1: asynchronous entry has no program-order predecessor.
     for p in event_phases:
         if p.deps:
-            msgs.append(f"EV1: event phase {p.phase_id} (source {p.event!r}) declares "
-                        f"phase deps {tuple(p.deps)} -- asynchronous entry has no "
-                        "program-order predecessor (hazards + masking order it)")
+            msgs.append(
+                f"EV1: event phase {p.phase_id} (source {p.event!r}) declares "
+                f"phase deps {tuple(p.deps)} -- asynchronous entry has no "
+                "program-order predecessor (hazards + masking order it)"
+            )
     # EV2: every named source is explicitly armed in the program flow.
-    armed = {_source_of(c.op) for p in program for c in p.claims
-             if c.op.startswith(_UNMASK)}
+    armed = {_source_of(c.op) for p in program for c in p.claims if c.op.startswith(_UNMASK)}
     for s in sorted({p.event for p in event_phases} - armed):
-        msgs.append(f"EV2: event source {s!r} is never armed -- enablement must be an "
-                    f"explicit irq.unmask:{s} claim in the program flow, never implicit")
+        msgs.append(
+            f"EV2: event source {s!r} is never armed -- enablement must be an "
+            f"explicit irq.unmask:{s} claim in the program flow, never implicit"
+        )
     # EV3 (B1): the handler-shared resources are touched only under mask or atomically.
     handler_writes: dict = {}
     for p in event_phases:
@@ -95,7 +109,7 @@ def check_event_phases(module: Module) -> list:
             for rid in c.wr:
                 handler_writes.setdefault(rid, set()).add(p.event)
     masked: set = set()
-    for p in program:                # list order IS program order (first slice, recorded)
+    for p in program:  # list order IS program order (first slice, recorded)
         for c in p.claims:
             if c.op.startswith(_MASK):
                 masked.add(_source_of(c.op))
@@ -103,13 +117,15 @@ def check_event_phases(module: Module) -> list:
             if c.op.startswith(_UNMASK):
                 masked.discard(_source_of(c.op))
                 continue
-            if c.lane == Lane.A:     # single-claim atomicity is the other legal shape
+            if c.lane == Lane.A:  # single-claim atomicity is the other legal shape
                 continue
             for rid in c.io_rids():
                 for src in sorted(handler_writes.get(rid, frozenset()) - masked):
-                    msgs.append(f"EV3: claim {c.id} ({c.op or c.opcode.name}) touches "
-                                f"resource {rid}, which the {src!r} handler writes, "
-                                "outside a masked window -- mask the source around it "
-                                "or make the touch a Lane.A atomic (the interrupted "
-                                "flow must order against the handler)")
+                    msgs.append(
+                        f"EV3: claim {c.id} ({c.op or c.opcode.name}) touches "
+                        f"resource {rid}, which the {src!r} handler writes, "
+                        "outside a masked window -- mask the source around it "
+                        "or make the touch a Lane.A atomic (the interrupted "
+                        "flow must order against the handler)"
+                    )
     return msgs

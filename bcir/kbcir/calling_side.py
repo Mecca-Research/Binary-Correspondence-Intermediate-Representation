@@ -72,11 +72,11 @@ class CallingSidePlan:
     M: int
     N: int
     K: int
-    major: str               # "row" | "col" -- the cblas major-order (matching leading dim emitted)
-    block: TilePlan          # the caller-side cache block (matmul.plan_matmul's TilePlan, reused)
-    prefetch_distance: int   # blocks ahead to prefetch (0 == nothing to hide -> no hint emitted)
-    channel: str             # the execution channel name ("host" or an accelerator channel)
-    channel_kind: str        # "cpu" | "gpu" | "fpga" | ... (the routed hardware class)
+    major: str  # "row" | "col" -- the cblas major-order (matching leading dim emitted)
+    block: TilePlan  # the caller-side cache block (matmul.plan_matmul's TilePlan, reused)
+    prefetch_distance: int  # blocks ahead to prefetch (0 == nothing to hide -> no hint emitted)
+    channel: str  # the execution channel name ("host" or an accelerator channel)
+    channel_kind: str  # "cpu" | "gpu" | "fpga" | ... (the routed hardware class)
 
     @property
     def lead_dim_a(self) -> int:
@@ -108,10 +108,10 @@ class CallingSideCertificate:
     == untuned reference, bit-exact."""
 
     plan: CallingSidePlan
-    untuned_cost: int        # the roofline bottleneck of the untuned (row-major, no prefetch, host) call
-    tuned_cost: int          # ... and of the tuned call (the priced calling-side win)
-    untuned_major: str       # the baseline major-order ("row" -- what B5 hard-codes)
-    untuned_channel: str     # the baseline channel ("host")
+    untuned_cost: int  # the roofline bottleneck of the untuned (row-major, no prefetch, host) call
+    tuned_cost: int  # ... and of the tuned call (the priced calling-side win)
+    untuned_major: str  # the baseline major-order ("row" -- what B5 hard-codes)
+    untuned_channel: str  # the baseline channel ("host")
 
     @property
     def gain(self) -> int:
@@ -124,20 +124,32 @@ class CallingSideCertificate:
         channel, and no cost reduction) -- the clean no-op the design requires when tuning is unprofitable.
         A CPU-kind channel counts as the host baseline (it is the host), so a host-only / tied tower stays a
         no-op even though the routed channel carries a specific CPU name."""
-        return (self.gain == 0 and self.plan.major == self.untuned_major
-                and not self.plan.off_host and not self.plan.prefetches)
+        return (
+            self.gain == 0
+            and self.plan.major == self.untuned_major
+            and not self.plan.off_host
+            and not self.plan.prefetches
+        )
 
 
 def _gemm_claim(M: int, N: int, K: int, claim_id: int = 9_300) -> Claim:
     """The wrapped-gemm claim the channel router/cost model scores (a single dense T_MACC tile claim --
     the op string ``gem.matmul`` is what ``channels.claim_required_caps`` keys the matmul capability on).
     Its count is the output element budget M*N (what the cost model streams)."""
-    return Claim(id=claim_id, opcode=Opcode.T_MACC, lane=Lane.T, stride_class=StrideClass.TILE,
-                 count=max(1, M * N), rd=(1, 2), wr=(3,), op="gem.matmul", domain=Domain.RAM)
+    return Claim(
+        id=claim_id,
+        opcode=Opcode.T_MACC,
+        lane=Lane.T,
+        stride_class=StrideClass.TILE,
+        count=max(1, M * N),
+        rd=(1, 2),
+        wr=(3,),
+        op="gem.matmul",
+        domain=Domain.RAM,
+    )
 
 
-def _order_cost(M: int, N: int, K: int, block: TilePlan, major: str,
-                target: TargetProfile) -> int:
+def _order_cost(M: int, N: int, K: int, block: TilePlan, major: str, target: TargetProfile) -> int:
     """The roofline BOTTLENECK (max,+ over compute/memory) of a wrapped gemm under one major-order, priced
     by the EXISTING ``matmul.cost_of``. Row-major reuses A across the N-tile and B across the M-tile;
     column-major (the C^T=B^T A^T identity) swaps those roles, so we cost it by swapping the (M,N) /
@@ -166,9 +178,15 @@ def _channel_cost(M: int, N: int, K: int, channel, theta: Theta, policy: Policy)
     return step.cost if step is not None else (1 << 62)
 
 
-def plan_calling_side(M: int, N: int, K: int, target: TargetProfile | None = None,
-                      channels=None, theta: Theta | None = None,
-                      policy: Policy = PERF) -> CallingSidePlan:
+def plan_calling_side(
+    M: int,
+    N: int,
+    K: int,
+    target: TargetProfile | None = None,
+    channels=None,
+    theta: Theta | None = None,
+    policy: Policy = PERF,
+) -> CallingSidePlan:
     """K_BCIR's deterministic calling-side choice for a wrapped gemm C[MxN] = A[MxK] @ B[KxN]. EVERY param
     is priced through the existing cost model:
 
@@ -202,17 +220,29 @@ def plan_calling_side(M: int, N: int, K: int, target: TargetProfile | None = Non
         from ..channels import channel_suits
 
         claim = _gemm_claim(M, N, K)
-        priced = [(c, _channel_cost(M, N, K, c, theta, policy)) for c in channels
-                  if channel_suits(claim, c)]
+        priced = [
+            (c, _channel_cost(M, N, K, c, theta, policy))
+            for c in channels
+            if channel_suits(claim, c)
+        ]
         if priced:
             # Cheapest suitable channel; ties prefer a host CPU channel (so a genuine tie stays on host --
             # off-host is adopted only on a STRICT cost win), then by name (deterministic).
-            best_ch, _ = min(priced, key=lambda cc: (cc[1], 0 if cc[0].kind == "cpu" else 1, cc[0].name))
+            best_ch, _ = min(
+                priced, key=lambda cc: (cc[1], 0 if cc[0].kind == "cpu" else 1, cc[0].name)
+            )
             channel_name, channel_kind = best_ch.name, best_ch.kind
 
-    return CallingSidePlan(M=M, N=N, K=K, major=major, block=block,
-                           prefetch_distance=prefetch_distance,
-                           channel=channel_name, channel_kind=channel_kind)
+    return CallingSidePlan(
+        M=M,
+        N=N,
+        K=K,
+        major=major,
+        block=block,
+        prefetch_distance=prefetch_distance,
+        channel=channel_name,
+        channel_kind=channel_kind,
+    )
 
 
 def _tuned_cost(plan: CallingSidePlan, target: TargetProfile) -> int:
@@ -227,19 +257,37 @@ def _tuned_cost(plan: CallingSidePlan, target: TargetProfile) -> int:
         # factor (the same single-axis Q8 coupling realize.py uses for deforestation). We re-price the
         # chosen order's (compute, mem) and couple the memory axis, then take the bottleneck again.
         if plan.major == COL_MAJOR:
-            c, m_, _ = cost_of(plan.N, plan.M, plan.K, plan.block.tile_n, plan.block.tile_m,
-                               plan.block.tile_k, target)
+            c, m_, _ = cost_of(
+                plan.N,
+                plan.M,
+                plan.K,
+                plan.block.tile_n,
+                plan.block.tile_m,
+                plan.block.tile_k,
+                target,
+            )
         else:
-            c, m_, _ = cost_of(plan.M, plan.N, plan.K, plan.block.tile_m, plan.block.tile_n,
-                               plan.block.tile_k, target)
+            c, m_, _ = cost_of(
+                plan.M,
+                plan.N,
+                plan.K,
+                plan.block.tile_m,
+                plan.block.tile_n,
+                plan.block.tile_k,
+                target,
+            )
         coupled = CostVector.of(compute=c, memory=m_).couple(_PREFETCH_FACTOR)
         return bottleneck(coupled)
     return base
 
 
-def certify_calling_side(plan: CallingSidePlan, target: TargetProfile | None = None,
-                         channels=None, theta: Theta | None = None,
-                         policy: Policy = PERF) -> CallingSideCertificate:
+def certify_calling_side(
+    plan: CallingSidePlan,
+    target: TargetProfile | None = None,
+    channels=None,
+    theta: Theta | None = None,
+    policy: Policy = PERF,
+) -> CallingSideCertificate:
     """Emit the proof-carrying ``CallingSideCertificate`` for a chosen plan: the untuned baseline cost (the
     row-major, no-prefetch, host call B5 hard-codes) and the tuned cost (the priced calling-side win),
     both through the existing cost model. The certificate records the decision + the modeled gain; the
@@ -270,13 +318,24 @@ def certify_calling_side(plan: CallingSidePlan, target: TargetProfile | None = N
 
     untuned_cost = untuned_layout
     tuned_cost = tuned_layout - chan_delta
-    return CallingSideCertificate(plan=plan, untuned_cost=untuned_cost, tuned_cost=tuned_cost,
-                                  untuned_major=ROW_MAJOR, untuned_channel="host")
+    return CallingSideCertificate(
+        plan=plan,
+        untuned_cost=untuned_cost,
+        tuned_cost=tuned_cost,
+        untuned_major=ROW_MAJOR,
+        untuned_channel="host",
+    )
 
 
-def tune_wrapped_gemm(M: int, N: int, K: int, target: TargetProfile | None = None,
-                      channels=None, theta: Theta | None = None,
-                      policy: Policy = PERF) -> tuple[CallingSidePlan, CallingSideCertificate]:
+def tune_wrapped_gemm(
+    M: int,
+    N: int,
+    K: int,
+    target: TargetProfile | None = None,
+    channels=None,
+    theta: Theta | None = None,
+    policy: Policy = PERF,
+) -> tuple[CallingSidePlan, CallingSideCertificate]:
     """The one-call B3 entry point: plan the calling side of a wrapped gemm and certify it. Returns the
     (plan, certificate). The plan's params are emitted by ``lower.c_kernel.emit_tuned_gemm_c``; the
     certificate is the proof-carrying record. A balanced shape on a host-only tower yields a clean no-op

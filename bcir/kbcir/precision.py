@@ -36,8 +36,8 @@ from dataclasses import dataclass
 
 from .twotruth import Graded
 
-Q8 = 256          # 1.0 in Q8 fixed point
-ULP = 1           # one Q8 tick = 2^-8 in real units -- the integer error unit
+Q8 = 256  # 1.0 in Q8 fixed point
+ULP = 1  # one Q8 tick = 2^-8 in real units -- the integer error unit
 
 
 def ulp_distance(a: int, b: int) -> int:
@@ -46,6 +46,7 @@ def ulp_distance(a: int, b: int) -> int:
 
 
 # --- integer interval arithmetic (exact; no rounding) ----------------------------
+
 
 @dataclass(frozen=True)
 class Interval:
@@ -88,6 +89,7 @@ def imul_q8(a: Interval, b: Interval) -> Interval:
 
 # --- static error bounds (the accuracy-dim producer; opt-in) ---------------------
 
+
 def reduction_error_bound(count: int, *, compensated: bool = False) -> int:
     """Worst-case accumulated error (ULPs) of a Q8 multiply-accumulate over `count`
     terms. Each naive truncating MAC drops < 1 ULP, so over `count` terms the bound
@@ -121,7 +123,7 @@ def accuracy_bound(claim, *, compensated: bool = False) -> int:
     if op.startswith("quantize"):
         return quantization_error_bound()
     base = reduction_error_bound(n, compensated=compensated) if op.startswith("reduce.") else ULP
-    if getattr(claim, "quantized_bits", 0) > 0:        # consumes `_BitInt(N)` quantized lanes
+    if getattr(claim, "quantized_bits", 0) > 0:  # consumes `_BitInt(N)` quantized lanes
         base += quantization_error_bound()
     return base
 
@@ -134,6 +136,7 @@ def meets_tolerance(claim, tolerance_ulp: int, *, compensated: bool = False) -> 
 
 
 # --- compensated Q8 reduction (the measured numerical win) -----------------------
+
 
 def naive_reduce_q8(values, weight: int) -> int:
     """Sum of `(x*weight) >> 8` with per-term truncation -- drifts below the exact
@@ -153,7 +156,7 @@ def compensated_reduce_q8(values, weight: int) -> int:
     for x in values:
         full = x * weight + resid
         acc += full >> 8
-        resid = full & (Q8 - 1)            # the dropped low 8 bits, carried forward
+        resid = full & (Q8 - 1)  # the dropped low 8 bits, carried forward
     return acc
 
 
@@ -163,6 +166,7 @@ def exact_reduce_q8(values, weight: int) -> int:
 
 
 # --- stability diagnostics (two-truth Graded: inform, never legislate) -----------
+
 
 def cancellation(a: int, b: int) -> Graded:
     """Catastrophic-cancellation diagnostic for a Q8 subtraction `a - b`, as a

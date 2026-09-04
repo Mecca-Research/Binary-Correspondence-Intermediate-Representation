@@ -70,8 +70,8 @@ def test_rms_closed_form_anchor_3_4():
     batch = [_rec(utilization=3), _rec(utilization=4)]
     m = derive_field_metrics(batch, "utilization")
     true_rms = math.sqrt((3 * 3 + 4 * 4) / 2)
-    assert abs(true_rms - 3.53553) < 1e-4               # the documented ~3.535 anchor
-    assert m.rms == round(true_rms) == 4                # round-to-nearest
+    assert abs(true_rms - 3.53553) < 1e-4  # the documented ~3.535 anchor
+    assert m.rms == round(true_rms) == 4  # round-to-nearest
 
 
 def test_rms_all_zero_is_zero():
@@ -121,7 +121,7 @@ def test_derive_is_side_effect_free():
     snapshot = [r.thermal for r in batch]
     derive_field_metrics(batch, "thermal")
     derive_all(batch)
-    assert [r.thermal for r in batch] == snapshot       # records untouched
+    assert [r.thermal for r in batch] == snapshot  # records untouched
 
 
 # === measure_trig_targ (the SPICE TRIG…TARG figure-of-merit) =========================
@@ -140,7 +140,7 @@ def test_trig_targ_same_index_span_zero():
 
 
 def test_trig_targ_none_when_targ_never_reached():
-    series = [10, 70, 75, 80]                            # crosses trig=60, never targ=90
+    series = [10, 70, 75, 80]  # crosses trig=60, never targ=90
     assert measure_trig_targ(series, trig=60, targ=90) is None
 
 
@@ -163,7 +163,7 @@ def test_trig_targ_targ_only_searched_at_or_after_trig():
     # (92>=70) -> so choose a value that satisfies targ-but-not-trig is impossible when
     # targ>trig; instead show TARG is searched only AT/AFTER the trig index: the second
     # targ crossing (idx 4) is the one paired with the trig at idx 2, not the later targ.
-    series = [10, 40, 75, 80, 95]    # trig=70 first at idx 2 (75); targ=90 first at idx 4 (95)
+    series = [10, 40, 75, 80, 95]  # trig=70 first at idx 2 (75); targ=90 first at idx 4 (95)
     assert measure_trig_targ(series, trig=70, targ=90) == 4 - 2 == 2
 
 
@@ -195,7 +195,8 @@ def test_thermal_ranks_above_a_dim_the_workload_does_not_exercise():
     # (no memory-pressure-sensitive candidate in this single-phase tile plan), so the
     # memory-mapped signals rank below thermal.
     assert by_dim_max.get("thermal", 0) > by_dim_max.get("memory", 0), (
-        f"thermal should outrank memory on a tile-heavy workload: {by_dim_max}")
+        f"thermal should outrank memory on a tile-heavy workload: {by_dim_max}"
+    )
     # The top-ranked row is thermal.
     assert ranked[0].cost_dim == "thermal"
 
@@ -213,8 +214,9 @@ def test_sensitivity_is_a_finite_difference_over_optimize():
     # Independently reproduce one row: re-run optimize with thermal bumped by delta.
     ranked = signal_sensitivity(matmul_tiled(), _H, _THETA, delta=10)
     baseline = optimize(matmul_tiled(), _H, _THETA, PERF).score
-    bumped = optimize(matmul_tiled(), _H, Theta(thermal=65, power=50,
-                                                mem_pressure=40, contention=30), PERF).score
+    bumped = optimize(
+        matmul_tiled(), _H, Theta(thermal=65, power=50, mem_pressure=40, contention=30), PERF
+    ).score
     thermal_row = next(r for r in ranked if r.cost_dim == "thermal")
     assert thermal_row.baseline_score == baseline
     assert thermal_row.perturbed_score == bumped
@@ -223,8 +225,9 @@ def test_sensitivity_is_a_finite_difference_over_optimize():
 
 def test_unmapped_cost_dim_signal_is_zero_delta():
     # An explicit signal whose cost_dim has no Theta channel (fabric) gets Δscore 0.
-    ranked = signal_sensitivity(matmul_tiled(), _H, _THETA,
-                                signals=["fabric.interconnect_bytes", "thermal.pressure"])
+    ranked = signal_sensitivity(
+        matmul_tiled(), _H, _THETA, signals=["fabric.interconnect_bytes", "thermal.pressure"]
+    )
     fabric = next(r for r in ranked if r.signal == "fabric.interconnect_bytes")
     assert fabric.cost_dim == "fabric"
     assert fabric.theta_field is None
@@ -238,7 +241,8 @@ def test_default_signals_are_only_perturbable_ones():
     reg = default_registry()
     for r in ranked:
         assert r.theta_field is not None, (
-            "default signal set should only include Theta-perturbable signals")
+            "default signal set should only include Theta-perturbable signals"
+        )
         assert reg.get(r.signal) is not None
 
 
@@ -261,7 +265,7 @@ def test_sampling_budget_sums_to_total_and_respects_floor():
     assert sum(budget.values()) == total
     assert set(budget) == {r.signal for r in ranked}
     for v in budget.values():
-        assert v >= 1                                   # the default floor
+        assert v >= 1  # the default floor
     # the highest-|Δscore| signal gets at least as much as the lowest.
     top = ranked[0].signal
     bottom = ranked[-1].signal
@@ -274,7 +278,7 @@ def test_sampling_budget_floor_keeps_zero_sensitivity_signal_alive():
     assert zero_rows, "expected at least one zero-sensitivity signal (e.g. memory/contention)"
     budget = sampling_budget(ranked, 100, floor=2)
     for r in zero_rows:
-        assert budget[r.signal] >= 2                    # the floor protects it from going dark
+        assert budget[r.signal] >= 2  # the floor protects it from going dark
     assert sum(budget.values()) == 100
 
 
@@ -284,13 +288,15 @@ def test_sampling_budget_proportional_to_abs_delta():
     class _Row:
         def __init__(self, signal, ad):
             self.signal, self._ad = signal, ad
+
         @property
         def abs_delta(self):
             return self._ad
+
     rows = [_Row("hi", 70), _Row("mid", 30), _Row("lo", 0)]
     budget = sampling_budget(rows, 101, floor=1)
     assert sum(budget.values()) == 101
-    assert budget["lo"] == 1                             # floor only (zero sensitivity)
+    assert budget["lo"] == 1  # floor only (zero sensitivity)
     assert budget["hi"] > budget["mid"] > budget["lo"]
     assert budget["hi"] == 1 + 69 and budget["mid"] == 1 + 29
 
@@ -299,17 +305,18 @@ def test_sampling_budget_all_zero_spreads_evenly():
     class _Row:
         def __init__(self, signal):
             self.signal, self.abs_delta = signal, 0
+
     rows = [_Row("a"), _Row("b"), _Row("c")]
-    budget = sampling_budget(rows, 11, floor=1)          # remaining 8 over 3 -> 3,3,2 + floors
+    budget = sampling_budget(rows, 11, floor=1)  # remaining 8 over 3 -> 3,3,2 + floors
     assert sum(budget.values()) == 11
-    assert budget["a"] >= budget["c"]                    # leftover to the earliest
+    assert budget["a"] >= budget["c"]  # leftover to the earliest
 
 
 def test_sampling_budget_rejects_total_below_floors():
     ranked = signal_sensitivity(matmul_tiled(), _H, _THETA)
     raised = False
     try:
-        sampling_budget(ranked, 1)                       # 1 < floor(1) * len(ranked)
+        sampling_budget(ranked, 1)  # 1 < floor(1) * len(ranked)
     except ValueError:
         raised = True
     assert raised
@@ -341,8 +348,7 @@ def test_sensitivity_does_not_mutate_theta():
 
 
 def _run_all() -> int:
-    fns = [v for k, v in sorted(globals().items())
-           if k.startswith("test_") and callable(v)]
+    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0
     for fn in fns:
         try:

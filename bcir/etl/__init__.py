@@ -20,8 +20,20 @@ from .fsm import State, TransduceResult, Transducer, Transition
 from .parse import Grammar, Lexer, Token, TokenRule, parse_rop
 
 __all__ = [
-    "BinaryField", "BinaryFormat", "BinaryRecord", "decode",
-    "Event", "EventKind", "EventStream",
-    "State", "TransduceResult", "Transducer", "Transition",
-    "Grammar", "Lexer", "Token", "TokenRule", "parse_rop",
+    "BinaryField",
+    "BinaryFormat",
+    "BinaryRecord",
+    "decode",
+    "Event",
+    "EventKind",
+    "EventStream",
+    "State",
+    "TransduceResult",
+    "Transducer",
+    "Transition",
+    "Grammar",
+    "Lexer",
+    "Token",
+    "TokenRule",
+    "parse_rop",
 ]

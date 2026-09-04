@@ -6,6 +6,7 @@ both pipes drain under a per-stream byte budget, and a timeout or overflow
 puts the whole process group down and comes back as a structured outcome —
 never an unbounded ``communicate()``, never an escaping exception.
 """
+
 from __future__ import annotations
 
 import os
@@ -96,8 +97,13 @@ def run_bounded(
     exception: the caller turns the outcome into its own structured verdict.
     """
     outcome: dict[str, Any] = {
-        "launched": False, "timed_out": False, "overflow": False,
-        "pipes_held": False, "returncode": None, "stdout": b"", "stderr": b"",
+        "launched": False,
+        "timed_out": False,
+        "overflow": False,
+        "pipes_held": False,
+        "returncode": None,
+        "stdout": b"",
+        "stderr": b"",
         "error": "",
     }
     try:
@@ -119,16 +125,18 @@ def run_bounded(
     state: dict[str, Any] = {"overflow": False, "proc": proc}
     workers = [
         threading.Thread(
-            target=_drain, args=(proc.stdout, out_chunks, cap, state), daemon=True,
+            target=_drain,
+            args=(proc.stdout, out_chunks, cap, state),
+            daemon=True,
         ),
         threading.Thread(
-            target=_drain, args=(proc.stderr, err_chunks, cap, state), daemon=True,
+            target=_drain,
+            args=(proc.stderr, err_chunks, cap, state),
+            daemon=True,
         ),
     ]
     if stdin_data is not None:
-        workers.append(
-            threading.Thread(target=_feed, args=(proc, stdin_data), daemon=True)
-        )
+        workers.append(threading.Thread(target=_feed, args=(proc, stdin_data), daemon=True))
     for worker in workers:
         worker.start()
     try:

@@ -40,8 +40,7 @@ _CPP = os.path.join(_ROOT, "runtime", "cpp")
 #: Handing a `.c` file to clang++ is an error under `-Werror` — and it would also be the
 #: wrong thing to test, since the rail ships as a C++ translation unit linked against the C
 #: core, not as C recompiled in C++ mode.
-_CXX_SOURCES = [os.path.join(_CPP, "bcir_jer_simd.cpp"),
-                os.path.join(_CPP, "test_jer_simd.cpp")]
+_CXX_SOURCES = [os.path.join(_CPP, "bcir_jer_simd.cpp"), os.path.join(_CPP, "test_jer_simd.cpp")]
 _C_SOURCES = [os.path.join(_C, "bcir_jer.c"), os.path.join(_C, "bcir_runtime.c")]
 
 #: Every tier the driver accepts. `auto` is whatever this CPU resolved to, and it is in the
@@ -59,14 +58,33 @@ def _build(tmp: str, optimization: str = "-O2") -> str:
     cxx = shutil.which("clang++") or shutil.which("g++") or shutil.which("c++")
     cc = shutil.which("clang") or shutil.which("gcc") or shutil.which("cc")
     objects = []
-    for source, compiler, std in ([(s, cxx, "-std=c++17") for s in _CXX_SOURCES]
-                                  + [(s, cc, "-std=c11") for s in _C_SOURCES]):
+    for source, compiler, std in [(s, cxx, "-std=c++17") for s in _CXX_SOURCES] + [
+        (s, cc, "-std=c11") for s in _C_SOURCES
+    ]:
         obj = os.path.join(tmp, os.path.basename(source) + ".o")
         proc = subprocess.run(
-            [compiler, std, optimization, "-Wall", "-Wextra", "-Werror", "-I", _C, "-I",
-             _CPP, "-c", source, "-o", obj], capture_output=True, text=True)
+            [
+                compiler,
+                std,
+                optimization,
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C,
+                "-I",
+                _CPP,
+                "-c",
+                source,
+                "-o",
+                obj,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert proc.returncode == 0, (
-            f"{os.path.basename(source)} must build warning-clean:\n{proc.stderr[:2000]}")
+            f"{os.path.basename(source)} must build warning-clean:\n{proc.stderr[:2000]}"
+        )
         objects.append(obj)
     out = os.path.join(tmp, "test_jer_simd")
     proc = subprocess.run([cxx, *objects, "-o", out], capture_output=True, text=True)
@@ -75,8 +93,9 @@ def _build(tmp: str, optimization: str = "-O2") -> str:
 
 
 def _drive(binary: str, lines: list[str]) -> list[str]:
-    proc = subprocess.run([binary], input="\n".join(lines) + "\n", capture_output=True,
-                          text=True, timeout=600)
+    proc = subprocess.run(
+        [binary], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=600
+    )
     assert proc.returncode == 0, proc.stderr[:2000]
     return proc.stdout.splitlines()
 
@@ -111,9 +130,12 @@ def _corpus() -> list[tuple[str, bytes]]:
         cases.append((f"above-u10ffff-{pad}", b"a" * pad + b"\xf5\x80\x80\x80" + b"b" * 10))
     generator = random.Random(7)
     for index in range(200):
-        cases.append((f"random-{index}",
-                      bytes(generator.randrange(256)
-                            for _ in range(generator.randrange(0, 200)))))
+        cases.append(
+            (
+                f"random-{index}",
+                bytes(generator.randrange(256) for _ in range(generator.randrange(0, 200))),
+            )
+        )
     return cases
 
 
@@ -132,12 +154,13 @@ def test_every_tier_agrees_with_the_scalar_rail_on_status_and_offset():
     cases = _corpus()
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
-        lines = [f"utf8 {tier} {octets.hex() or '-'}"
-                 for _label, octets in cases for tier in _TIERS]
+        lines = [
+            f"utf8 {tier} {octets.hex() or '-'}" for _label, octets in cases for tier in _TIERS
+        ]
         replies = _drive(binary, lines)
     assert len(replies) == len(cases) * len(_TIERS)
     for index, (label, _octets) in enumerate(cases):
-        window = replies[index * len(_TIERS):(index + 1) * len(_TIERS)]
+        window = replies[index * len(_TIERS) : (index + 1) * len(_TIERS)]
         scalar = window[0]
         for tier, reply in zip(_TIERS, window):
             assert reply == scalar, f"{label}: {tier} gave {reply}, scalar gave {scalar}"
@@ -150,8 +173,9 @@ def test_the_corpus_actually_contains_both_verdicts():
         return
     cases = _corpus()
     with tempfile.TemporaryDirectory() as tmp:
-        replies = _drive(_build(tmp),
-                         [f"utf8 auto {octets.hex() or '-'}" for _label, octets in cases])
+        replies = _drive(
+            _build(tmp), [f"utf8 auto {octets.hex() or '-'}" for _label, octets in cases]
+        )
     verdicts = {reply.split()[1] for reply in replies}
     assert len(verdicts) > 1, f"every document got the same verdict: {verdicts}"
     rejected = sum(1 for reply in replies if reply.split()[1] != "0")
@@ -197,15 +221,18 @@ def test_the_resolved_tier_is_reported_by_name_so_a_measurement_can_say_which():
 # --- what the rail actually buys, including where it buys nothing ------------------------------
 
 
-def _median_ns(binary: str, tier: str, document: bytes, rounds: int = 15,
-               iterations: int = 32) -> float:
+def _median_ns(
+    binary: str, tier: str, document: bytes, rounds: int = 15, iterations: int = 32
+) -> float:
     replies = _drive(binary, [f"bench {tier} {rounds} {iterations} {document.hex()}"])
     return statistics.median(int(reply.split()[3]) for reply in replies)
 
 
 def _ascii_document(nodes: int = 400) -> bytes:
-    body = b",".join(b'{"kind":"claim","label":"%d","attributes":['
-                     b'{"name":"op","value":"add"}]}' % index for index in range(nodes))
+    body = b",".join(
+        b'{"kind":"claim","label":"%d","attributes":[{"name":"op","value":"add"}]}' % index
+        for index in range(nodes)
+    )
     return b'{"version":1,"nodes":[' + body + b'],"roots":[0]}'
 
 
@@ -261,7 +288,8 @@ def test_one_multi_byte_octet_no_longer_costs_the_whole_document():
         f"an early accent cost {clean_gain:.1f}x -> {early_gain:.1f}x; the two should be "
         f"close, because only the short multi-byte run goes scalar. The pre-fix behaviour "
         f"handed everything from the first non-ASCII octet to the end of the document to "
-        f"the scalar rail, which put this ratio at roughly 1/{clean_gain:.0f}")
+        f"the scalar rail, which put this ratio at roughly 1/{clean_gain:.0f}"
+    )
 
 
 def test_multi_byte_text_does_not_regress_against_the_scalar_rail():
@@ -284,14 +312,17 @@ def test_multi_byte_text_does_not_regress_against_the_scalar_rail():
         return
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
-        for label, replacement in (("cjk", "日本語のテキスト"), ("accents", "café"),
-                                   ("emoji", "\U0001f600\U0001f601")):
+        for label, replacement in (
+            ("cjk", "日本語のテキスト"),
+            ("accents", "café"),
+            ("emoji", "\U0001f600\U0001f601"),
+        ):
             document = _ascii_document().replace(b'"add"', replacement.encode())
-            gain = (_median_ns(binary, "scalar", document)
-                    / _median_ns(binary, "auto", document))
+            gain = _median_ns(binary, "scalar", document) / _median_ns(binary, "auto", document)
             assert gain > 0.75, (
                 f"{label}: {gain:.2f}x — the vector rail is materially SLOWER than scalar on "
-                f"multi-byte text, so run detection is costing more than it saves")
+                f"multi-byte text, so run detection is costing more than it saves"
+            )
 
 
 def test_the_adapter_contains_no_utf8_decision_of_its_own():
@@ -303,14 +334,18 @@ def test_the_adapter_contains_no_utf8_decision_of_its_own():
     validator trips this rather than passing the differential by luck.
     """
     source = open(os.path.join(_CPP, "bcir_jer_simd.cpp"), encoding="utf-8").read()
-    body = "\n".join(line for line in source.splitlines()
-                     if not line.strip().startswith("*") and "/*" not in line)
+    body = "\n".join(
+        line
+        for line in source.splitlines()
+        if not line.strip().startswith("*") and "/*" not in line
+    )
     # Every producer of a bcir_jer_status in the adapter is the scalar rail or a dispatcher.
     assert "bcir_jer_validate_utf8(" in body
     for invented in ("0x80 && data[", "continuation", "overlong", "0xC2", "0xF4"):
         assert invented not in body, (
             f"the adapter references {invented!r}, which suggests it decides UTF-8 validity "
-            f"itself; that is the second semantics rail §4.1 forbids")
+            f"itself; that is the second semantics rail §4.1 forbids"
+        )
 
 
 def test_the_two_host_clause_is_decided_by_the_store_and_not_by_this_file():
@@ -336,13 +371,15 @@ def test_the_two_host_clause_is_decided_by_the_store_and_not_by_this_file():
     verdict = two_host_verdict(load_records(os.path.join(_ROOT, STORE)))
     if verdict.met:
         assert "two-host clause is MET" in text, (
-            f"the store closes the clause ({verdict.reason}) and the roadmap does not say so")
+            f"the store closes the clause ({verdict.reason}) and the roadmap does not say so"
+        )
         assert "single-host" not in text, (
-            "the roadmap still calls the measurement single-host after a second host was "
-            "admitted")
+            "the roadmap still calls the measurement single-host after a second host was admitted"
+        )
     else:
         assert "two-host clause is not met" in text.lower(), (
-            "the store does not close the clause, but the roadmap no longer records that")
+            "the store does not close the clause, but the roadmap no longer records that"
+        )
 
 
 def test_the_scan_s_work_budget_is_a_semantic_limit_not_an_incidental_cost():
@@ -373,7 +410,8 @@ def test_the_scan_s_work_budget_is_a_semantic_limit_not_an_incidental_cost():
     else:
         raise AssertionError(
             "a 410-octet document passed a work ceiling of 100; the budget stopped being a "
-            "semantic limit, and §7.4's argument about the structural index no longer holds")
+            "semantic limit, and §7.4's argument about the structural index no longer holds"
+        )
 
 
 def test_a_bulk_work_charge_reproduces_the_scalar_failure_point_in_closed_form():
@@ -422,8 +460,7 @@ _CROSS_TIER = {
 def _other_target() -> str:
     import platform
 
-    return ("x86_64-linux-gnu" if platform.machine() in ("aarch64", "arm64")
-            else "aarch64-linux-gnu")
+    return "x86_64-linux-gnu" if platform.machine() in ("aarch64", "arm64") else "aarch64-linux-gnu"
 
 
 def test_the_tier_this_host_cannot_run_still_compiles_and_is_not_secretly_scalar():
@@ -449,10 +486,27 @@ def test_the_tier_this_host_cannot_run_still_compiles_and_is_not_secretly_scalar
     with tempfile.TemporaryDirectory() as tmp:
         obj = os.path.join(tmp, "cross.o")
         built = subprocess.run(
-            [compiler, f"--target={target}", "-std=c++17", "-O2", "-Wall", "-Wextra",
-             "-Werror", "-ffreestanding", "-I", _C, "-I", _CPP,
-             "-c", os.path.join(_CPP, "bcir_jer_simd.cpp"), "-o", obj],
-            capture_output=True, text=True)
+            [
+                compiler,
+                f"--target={target}",
+                "-std=c++17",
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-ffreestanding",
+                "-I",
+                _C,
+                "-I",
+                _CPP,
+                "-c",
+                os.path.join(_CPP, "bcir_jer_simd.cpp"),
+                "-o",
+                obj,
+            ],
+            capture_output=True,
+            text=True,
+        )
         if built.returncode != 0:
             # A clang without the other backend. Skipped rather than failed: the cross build
             # is extra reach, and CI runs the tier natively either way.
@@ -460,4 +514,5 @@ def test_the_tier_this_host_cannot_run_still_compiles_and_is_not_secretly_scalar
         disasm = subprocess.run([objdump, "-d", obj], capture_output=True, text=True).stdout
     assert any(needle in disasm for needle in _CROSS_TIER[target]), (
         f"{target} compiled without any of {_CROSS_TIER[target]}: the tier fell back to "
-        f"scalar rather than building, and no run on this host would have shown it")
+        f"scalar rather than building, and no run on this host would have shown it"
+    )

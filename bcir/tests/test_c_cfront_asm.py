@@ -35,6 +35,7 @@ _CC = _CLANG or shutil.which("cc") or _GCC
 
 # --- helpers ------------------------------------------------------------------------------------
 
+
 def _lf(src: str, fn: str | None = None):
     """Compile `src` (no Clang check) and return the (result, lowered-function) for `fn` (default: the
     last function)."""
@@ -71,8 +72,11 @@ def _both_compile(c_text: str) -> str:
             f.write(c_text)
         for name, cc in ccs:
             exe = os.path.join(d, f"asm_{name}")
-            b = subprocess.run([cc, "-std=c11", "-pedantic", "-Wall", "-O2", src, "-o", exe],
-                               capture_output=True, text=True)
+            b = subprocess.run(
+                [cc, "-std=c11", "-pedantic", "-Wall", "-O2", src, "-o", exe],
+                capture_output=True,
+                text=True,
+            )
             if b.returncode != 0:
                 return f"FAIL:{name}:build:{(b.stderr or b.stdout).strip().splitlines()[-1:]}"
             run = subprocess.run([exe], capture_output=True, text=True)
@@ -83,18 +87,19 @@ def _both_compile(c_text: str) -> str:
 
 # --- (1) lexing ---------------------------------------------------------------------------------
 
+
 def test_asm_keywords_are_registered():
     # only the DOUBLE-UNDERSCORE spellings are reserved keywords (implementation-reserved, benign). Plain
     # `asm` is NOT a keyword -- it stays a usable ISO-C identifier under -std=c11 (see
     # test_plain_asm_is_a_usable_identifier); the asm STATEMENT is recognized contextually.
     assert {"__asm__", "__volatile__"} <= KEYWORDS
     assert "asm" not in KEYWORDS
-    assert "volatile" in KEYWORDS              # already a keyword (it lexes the volatile spelling)
+    assert "volatile" in KEYWORDS  # already a keyword (it lexes the volatile spelling)
 
 
 def test_asm_lexes_as_an_identifier_token():
     # keywords + `asm` all lex as IDENT tokens (the parser decides their role).
-    toks = [t.text for t in tokenize('asm __asm__ __volatile__ x') if t.kind == "IDENT"]
+    toks = [t.text for t in tokenize("asm __asm__ __volatile__ x") if t.kind == "IDENT"]
     assert toks == ["asm", "__asm__", "__volatile__", "x"]
 
 
@@ -105,12 +110,13 @@ def test_asm_string_template_lexes_with_escapes_intact():
 
 # --- (2) parsing --------------------------------------------------------------------------------
 
+
 def test_parse_basic_asm():
     u = parse_unit('void f(void){ asm("nop"); }')
     s = u.funcs[0].body[0]
     assert type(s).__name__ == "AsmStmt"
     assert s.template == '"nop"' and s.outputs == () and s.inputs == () and s.clobbers == ()
-    assert s.is_volatile is True               # a BASIC asm is implicitly volatile (§6.47.1)
+    assert s.is_volatile is True  # a BASIC asm is implicitly volatile (§6.47.1)
 
 
 def test_parse_both_keyword_spellings():
@@ -126,13 +132,19 @@ def test_parse_volatile_qualifiers():
 
 
 def test_parse_extended_outputs_inputs_clobbers():
-    s = parse_unit('unsigned f(unsigned x){ unsigned y=0; '
-                   'asm("mov %1,%0" : "=r"(y) : "r"(x) : "cc"); return y; }').funcs[0].body[1]
+    s = (
+        parse_unit(
+            "unsigned f(unsigned x){ unsigned y=0; "
+            'asm("mov %1,%0" : "=r"(y) : "r"(x) : "cc"); return y; }'
+        )
+        .funcs[0]
+        .body[1]
+    )
     assert s.template == '"mov %1,%0"'
     assert len(s.outputs) == 1 and s.outputs[0][1] == '"=r"'
     assert len(s.inputs) == 1 and s.inputs[0][1] == '"r"'
     assert s.clobbers == ('"cc"',)
-    assert s.is_volatile is False              # an extended asm without `volatile` is NOT volatile
+    assert s.is_volatile is False  # an extended asm without `volatile` is NOT volatile
 
 
 def test_parse_empty_operand_sections_are_valid():
@@ -141,18 +153,27 @@ def test_parse_empty_operand_sections_are_valid():
 
 
 def test_parse_symbolic_operand_names():
-    s = parse_unit('unsigned f(unsigned x){ unsigned y=0; '
-                   'asm("" : [out]"=r"(y) : [in]"r"(x)); return y; }').funcs[0].body[1]
+    s = (
+        parse_unit(
+            'unsigned f(unsigned x){ unsigned y=0; asm("" : [out]"=r"(y) : [in]"r"(x)); return y; }'
+        )
+        .funcs[0]
+        .body[1]
+    )
     assert s.outputs[0][0] == "out" and s.inputs[0][0] == "in"
 
 
 def test_parse_adjacent_template_concatenation():
     s = parse_unit('void f(void){ asm("nop\\n\\t" "nop"); }').funcs[0].body[0]
-    assert "nop" in s.template and s.template.count('"') >= 2     # both literals kept (adjacency)
+    assert "nop" in s.template and s.template.count('"') >= 2  # both literals kept (adjacency)
 
 
 def test_parse_asm_goto_is_recorded():
-    s = parse_unit('void f(int x){ asm goto("" : : "r"(x) : : L1, L2); L1: ; L2: ; }').funcs[0].body[0]
+    s = (
+        parse_unit('void f(int x){ asm goto("" : : "r"(x) : : L1, L2); L1: ; L2: ; }')
+        .funcs[0]
+        .body[0]
+    )
     assert s.is_goto is True and s.goto_labels == ("L1", "L2")
 
 
@@ -161,13 +182,13 @@ def test_plain_asm_is_a_usable_identifier():
     # identifier under -std=c11, recognized as a STATEMENT only when followed by `(` or a qualifier. (Regression
     # for the Clang-equivalence break where a plain-`asm` keyword rejected `int asm = 3;` etc.)
     # a local named `asm`:
-    s = parse_unit('int f(void){ int asm = 3; return asm; }').funcs[0].body
+    s = parse_unit("int f(void){ int asm = 3; return asm; }").funcs[0].body
     assert type(s[0]).__name__ == "Decl" and s[0].name == "asm"
     # a parameter named `asm`:
-    g = parse_unit('int g(int asm){ return asm + 1; }').funcs[0]
+    g = parse_unit("int g(int asm){ return asm + 1; }").funcs[0]
     assert g.params[0].name == "asm"
     # `asm` assigned as a statement (not an asm-statement -- no following `(`/qualifier):
-    h = parse_unit('int h(void){ int asm = 1; asm = 4; return asm; }').funcs[0].body
+    h = parse_unit("int h(void){ int asm = 1; asm = 4; return asm; }").funcs[0].body
     assert type(h[1]).__name__ == "ExprStmt"
     # and an asm STATEMENT still parses when followed by `(` or a qualifier:
     a = parse_unit('void k(void){ asm("nop"); asm volatile("" ::: "memory"); }').funcs[0].body
@@ -177,7 +198,7 @@ def test_plain_asm_is_a_usable_identifier():
 def test_asm_as_identifier_is_clang_equivalent():
     # the original regression: `int g(int asm)` must compile clean AND stay Clang-equivalent (asm is an
     # ordinary identifier, not a keyword). Self-skips cleanly without a compiler.
-    r = compile_unit('int g(int asm){ return asm + 1; }', check_clang=True)
+    r = compile_unit("int g(int asm){ return asm + 1; }", check_clang=True)
     assert r.is_clean
     assert r.equivalence == "match" or r.equivalence.startswith("skip"), r.equivalence
 
@@ -191,7 +212,9 @@ def test_missing_comma_clobber_is_a_clean_diagnostic():
 
 def test_missing_comma_constraint_is_a_clean_diagnostic():
     # FIX 3: same for a constraint (one string token) -- `"=r" "x"(y)` is not a merged constraint.
-    rep = diagnose('unsigned f(unsigned x){ unsigned y=0; asm("" : "=r" "x"(y) : "r"(x)); return y; }')
+    rep = diagnose(
+        'unsigned f(unsigned x){ unsigned y=0; asm("" : "=r" "x"(y) : "r"(x)); return y; }'
+    )
     assert not rep.ok and rep.diagnostics
 
 
@@ -200,12 +223,12 @@ def test_non_goto_trailing_labels_section_is_a_clean_parse_error():
     # is a clean syntax error at the parse layer (not a misleading downstream "asm goto" message).
     rep = diagnose('void f(int x){ asm("" : : "r"(x) : "cc" : L1); L1: ; }')
     assert not rep.ok and rep.diagnostics
-    assert "asm goto" not in rep.diagnostics[0].message       # a syntax error, not the goto rejection
+    assert "asm goto" not in rep.diagnostics[0].message  # a syntax error, not the goto rejection
 
 
 def test_malformed_asm_is_a_clean_diagnostic():
-    rep = diagnose('void f(void){ asm("nop" ; }')               # missing `)`
-    assert not rep.ok and rep.diagnostics                       # a diagnostic, not a crash
+    rep = diagnose('void f(void){ asm("nop" ; }')  # missing `)`
+    assert not rep.ok and rep.diagnostics  # a diagnostic, not a crash
 
 
 def test_asm_goto_is_rejected_with_an_honest_diagnostic():
@@ -220,21 +243,23 @@ def test_non_scalar_output_is_rejected_with_an_honest_diagnostic():
 
 # --- (3) lowering -------------------------------------------------------------------------------
 
+
 def test_basic_asm_lowers_to_c_asm_volatile():
     _r, lf = _lf('void f(void){ asm("nop"); }')
     cs = _asm_claims(lf)
-    assert len(cs) == 1 and cs[0].op == "c.asm.volatile:"       # basic == implicitly volatile
+    assert len(cs) == 1 and cs[0].op == "c.asm.volatile:"  # basic == implicitly volatile
 
 
 def test_nonvolatile_extended_asm_lowers_to_c_asm():
     _r, lf = _lf('unsigned f(unsigned x){ unsigned y=0; asm("" : "=r"(y) : "r"(x)); return y; }')
     cs = _asm_claims(lf)
-    assert len(cs) == 1 and cs[0].op == "c.asm:"               # not volatile -> plain c.asm:
+    assert len(cs) == 1 and cs[0].op == "c.asm:"  # not volatile -> plain c.asm:
 
 
 def test_volatile_extended_asm_lowers_to_c_asm_volatile():
-    _r, lf = _lf('unsigned f(unsigned x){ unsigned y=0; '
-                 'asm volatile("" : "=r"(y) : "r"(x)); return y; }')
+    _r, lf = _lf(
+        'unsigned f(unsigned x){ unsigned y=0; asm volatile("" : "=r"(y) : "r"(x)); return y; }'
+    )
     assert _asm_claims(lf)[0].op == "c.asm.volatile:"
 
 
@@ -263,13 +288,16 @@ def test_asm_edge_is_off_the_legality_value_path():
 
 # --- (4) barrier / not-eliminated semantics -----------------------------------------------------
 
+
 def test_memory_clobber_is_a_barrier_hazard():
     _r, lf = _lf('void f(void){ asm("" ::: "memory"); }')
     assert _asm_claims(lf)[0].hazard == "barriered"
 
 
 def test_volatile_asm_is_a_barrier_hazard():
-    _r, lf = _lf('unsigned f(unsigned x){ unsigned y=0; asm volatile("" : "=r"(y) : "r"(x)); return y; }')
+    _r, lf = _lf(
+        'unsigned f(unsigned x){ unsigned y=0; asm volatile("" : "=r"(y) : "r"(x)); return y; }'
+    )
     assert _asm_claims(lf)[0].hazard == "barriered"
 
 
@@ -284,13 +312,12 @@ def test_volatile_asm_with_unused_output_is_not_eliminated():
     r, lf = _lf('void f(void){ unsigned y=0; asm volatile("" : "=r"(y) : : "memory"); }')
     assert _asm_claims(lf), "the volatile asm claim was dropped from the lowered graph"
     assert "__asm__" in r.emitted["f"], "the volatile asm was eliminated from the emit"
-    assert r.plans["f"].steps                                  # the plan still realizes the claim
+    assert r.plans["f"].steps  # the plan still realizes the claim
 
 
 def test_barrier_is_emitted_in_source_position_between_memory_ops():
     # the barrier must sit BETWEEN the store and the load in the emit (not hoisted/sunk across them).
-    src = ('unsigned f(unsigned *p, unsigned x){ *p = x; '
-           'asm volatile("" ::: "memory"); return *p; }')
+    src = 'unsigned f(unsigned *p, unsigned x){ *p = x; asm volatile("" ::: "memory"); return *p; }'
     _r, lf = _lf(src)
     body = _emit_clean(lf)
     store_i = body.index("memcpy") if "memcpy" in body else body.index("*")
@@ -301,11 +328,12 @@ def test_barrier_is_emitted_in_source_position_between_memory_ops():
 
 # --- (5) verbatim re-emit -----------------------------------------------------------------------
 
+
 def test_basic_asm_emits_verbatim_reserved_spelling():
     r, _lfn = _lf('void f(void){ asm("nop"); }')
     body = r.emitted["f"]
-    assert '__asm__ __volatile__ ("nop");' in body              # reserved spelling, valid under -pedantic
-    assert "asm(" not in body.replace("__asm__", "")            # not the bare `asm` spelling
+    assert '__asm__ __volatile__ ("nop");' in body  # reserved spelling, valid under -pedantic
+    assert "asm(" not in body.replace("__asm__", "")  # not the bare `asm` spelling
 
 
 def test_memory_barrier_emits_verbatim():
@@ -314,20 +342,24 @@ def test_memory_barrier_emits_verbatim():
 
 
 def test_extended_asm_emits_operands_and_clobbers_verbatim():
-    r, lf = _lf('unsigned f(unsigned x){ unsigned y=0; '
-                'asm("mov %1,%0" : "=r"(y) : "r"(x) : "cc"); return y; }')
+    r, lf = _lf(
+        "unsigned f(unsigned x){ unsigned y=0; "
+        'asm("mov %1,%0" : "=r"(y) : "r"(x) : "cc"); return y; }'
+    )
     body = r.emitted["f"]
     assert '__asm__ ("mov %1,%0" : "=r" (y) : "r" (x) : "cc");' in body
 
 
 def test_symbolic_names_emit_verbatim():
-    r, _lfn = _lf('unsigned f(unsigned x){ unsigned y=0; '
-                 'asm("" : [out]"=r"(y) : [in]"r"(x)); return y; }')
+    r, _lfn = _lf(
+        'unsigned f(unsigned x){ unsigned y=0; asm("" : [out]"=r"(y) : [in]"r"(x)); return y; }'
+    )
     body = r.emitted["f"]
     assert '[out] "=r" (y)' in body and '[in] "r" (x)' in body
 
 
 # --- (6) emit -> re-parse idempotence (the A3 round-trip analog) ---------------------------------
+
 
 def _asm_signature(lf):
     return [(c.op, len(c.rd), len(c.wr), c.hazard) for c in lf.claims if c.op.startswith("c.asm")]
@@ -352,7 +384,8 @@ def test_emit_reparse_idempotence():
         # the observable asm signature is a fixed point from the first emit onward.
         assert _asm_signature(lf2) == _asm_signature(lf3) == _asm_signature(lf1), (
             f"asm round-trip drift for {src!r}: {_asm_signature(lf1)} -> "
-            f"{_asm_signature(lf2)} -> {_asm_signature(lf3)}")
+            f"{_asm_signature(lf2)} -> {_asm_signature(lf3)}"
+        )
 
 
 def test_all_empty_extended_asm_stays_nonvolatile():
@@ -362,7 +395,7 @@ def test_all_empty_extended_asm_stays_nonvolatile():
     c = _asm_claims(lf)[0]
     assert c.op == "c.asm:" and c.hazard == "unique"
     body = _emit_clean(lf)
-    assert '__asm__ ("nop" :  :  : );' in body                  # the extended (3-colon) form, not the basic form
+    assert '__asm__ ("nop" :  :  : );' in body  # the extended (3-colon) form, not the basic form
     assert '__asm__ __volatile__ ("nop");' not in body
 
 
@@ -412,8 +445,11 @@ def test_emitted_asm_compiles_under_gcc_and_clang_and_preserves_value():
 def test_original_and_emit_are_behaviour_equivalent_under_clang():
     # the in-process Clang differential (the pipeline's own equivalence harness): the ORIGINAL asm program
     # and the emitted bcir_* agree on seeded inputs. Self-skips cleanly without a compiler.
-    r = compile_unit('unsigned f(unsigned x){ unsigned y = x; '
-                     '__asm__ __volatile__("" ::: "memory"); return y; }', check_clang=True)
+    r = compile_unit(
+        "unsigned f(unsigned x){ unsigned y = x; "
+        '__asm__ __volatile__("" ::: "memory"); return y; }',
+        check_clang=True,
+    )
     assert r.is_clean
     assert r.equivalence == "match" or r.equivalence.startswith("skip"), r.equivalence
 

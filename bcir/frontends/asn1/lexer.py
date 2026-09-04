@@ -26,7 +26,8 @@ from dataclasses import dataclass
 #: X.680 §12.38 Table 3 — the reserved words. A word in this set is never a
 #: typereference, which is the only thing that distinguishes `SET` from a type named
 #: `SET` (the latter being illegal precisely because of this table).
-RESERVED = frozenset("""
+RESERVED = frozenset(
+    """
 ABSENT ABSTRACT-SYNTAX ALL APPLICATION AUTOMATIC BEGIN BIT BMPString BOOLEAN BY
 CHARACTER CHOICE CLASS COMPONENT COMPONENTS CONSTRAINED CONTAINING DATE
 DATE-TIME DEFAULT DEFINITIONS DURATION EMBEDDED ENCODED ENCODING-CONTROL END
@@ -39,11 +40,36 @@ PRIVATE REAL RELATIVE-OID RELATIVE-OID-IRI SEQUENCE SET SETTINGS SIZE STRING
 SYNTAX T61String TAGS TeletexString TIME TIME-OF-DAY TRUE TYPE-IDENTIFIER UNION
 UNIQUE UNIVERSAL UniversalString UTCTime UTF8String VideotexString VisibleString
 WITH
-""".split())
+""".split()
+)
 
 #: §12.16–§12.37, longest first so `::=` is never read as `:` and `...` never as `..`.
-_PUNCTUATION = ("::=", "...", "[[", "]]", "..", "{", "}", "<", ">", ",", ".", "/",
-                "(", ")", "[", "]", "-", ":", "=", ";", "@", "|", "!", "^")
+_PUNCTUATION = (
+    "::=",
+    "...",
+    "[[",
+    "]]",
+    "..",
+    "{",
+    "}",
+    "<",
+    ">",
+    ",",
+    ".",
+    "/",
+    "(",
+    ")",
+    "[",
+    "]",
+    "-",
+    ":",
+    "=",
+    ";",
+    "@",
+    "|",
+    "!",
+    "^",
+)
 
 
 class Asn1SyntaxError(Exception):
@@ -56,13 +82,13 @@ class Asn1SyntaxError(Exception):
 
 @dataclass(frozen=True)
 class Token:
-    kind: str          # typereference | identifier | number | bstring | hstring
-                       # | cstring | reserved | punct | end
+    kind: str  # typereference | identifier | number | bstring | hstring
+    # | cstring | reserved | punct | end
     text: str
     line: int
     column: int
 
-    def __repr__(self) -> str:                            # pragma: no cover - debug aid
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
         return f"{self.kind}({self.text!r})@{self.line}:{self.column}"
 
 
@@ -79,7 +105,7 @@ class Lexer:
         return Asn1SyntaxError(message, self.line, self.col, self.source)
 
     def _advance(self, count: int = 1) -> str:
-        chunk = self.text[self.pos:self.pos + count]
+        chunk = self.text[self.pos : self.pos + count]
         for ch in chunk:
             if ch == "\n":
                 self.line += 1
@@ -107,9 +133,9 @@ class Lexer:
         self._advance(2)
         while self.pos < len(self.text):
             if self.text[self.pos] == "\n":
-                return                                     # newline terminates, unconsumed
+                return  # newline terminates, unconsumed
             if self.text.startswith("--", self.pos):
-                self._advance(2)                           # explicit terminator
+                self._advance(2)  # explicit terminator
                 return
             self._advance()
 
@@ -128,8 +154,7 @@ class Lexer:
                     return
             else:
                 self._advance()
-        raise Asn1SyntaxError("unterminated /* comment", start_line, start_col,
-                              self.source)
+        raise Asn1SyntaxError("unterminated /* comment", start_line, start_col, self.source)
 
     def _word(self) -> Token:
         """§12.2/§12.3/§12.38: typereference, identifier, or reserved word.
@@ -144,12 +169,11 @@ class Lexer:
             ch = self.text[self.pos]
             if _is_alnum(ch) or ch == "_":
                 self._advance()
-            elif (ch == "-" and self.pos + 1 < len(self.text)
-                    and _is_alnum(self.text[self.pos + 1])):
+            elif ch == "-" and self.pos + 1 < len(self.text) and _is_alnum(self.text[self.pos + 1]):
                 self._advance(2)
             else:
                 break
-        text = self.text[start:self.pos]
+        text = self.text[start : self.pos]
         if text in RESERVED:
             return Token("reserved", text, line, col)
         kind = "typereference" if text[0].isupper() else "identifier"
@@ -160,11 +184,11 @@ class Lexer:
         line, col, start = self.line, self.col, self.pos
         while self.pos < len(self.text) and self.text[self.pos].isdigit():
             self._advance()
-        text = self.text[start:self.pos]
+        text = self.text[start : self.pos]
         if len(text) > 1 and text[0] == "0":
             raise Asn1SyntaxError(
-                f"number {text!r} has a leading zero (X.680 12.8)", line, col,
-                self.source)
+                f"number {text!r} has a leading zero (X.680 12.8)", line, col, self.source
+            )
         return Token("number", text, line, col)
 
     def _quoted(self) -> Token:
@@ -191,22 +215,25 @@ class Lexer:
         if quote == '"':
             return Token("cstring", body, line, col)
         # A `'...'` literal is bstring or hstring depending on the letter that follows.
-        suffix = self.text[self.pos:self.pos + 1].upper()
+        suffix = self.text[self.pos : self.pos + 1].upper()
         stripped = "".join(body.split())
         if suffix == "B":
             self._advance()
             if any(c not in "01" for c in stripped):
-                raise Asn1SyntaxError("bstring must contain only 0 and 1 (X.680 12.10)",
-                                      line, col, self.source)
+                raise Asn1SyntaxError(
+                    "bstring must contain only 0 and 1 (X.680 12.10)", line, col, self.source
+                )
             return Token("bstring", stripped, line, col)
         if suffix == "H":
             self._advance()
             if any(c not in "0123456789ABCDEFabcdef" for c in stripped):
-                raise Asn1SyntaxError("hstring must be hexadecimal (X.680 12.12)",
-                                      line, col, self.source)
+                raise Asn1SyntaxError(
+                    "hstring must be hexadecimal (X.680 12.12)", line, col, self.source
+                )
             return Token("hstring", stripped.upper(), line, col)
-        raise Asn1SyntaxError("a '...' literal must be followed by B or H "
-                              "(X.680 12.10/12.12)", line, col, self.source)
+        raise Asn1SyntaxError(
+            "a '...' literal must be followed by B or H (X.680 12.10/12.12)", line, col, self.source
+        )
 
     def tokens(self) -> list[Token]:
         out: list[Token] = []
@@ -230,10 +257,12 @@ class Lexer:
                 # X.681 if the file tokenizes far enough to reach the CLASS keyword.
                 line, col = self.line, self.col
                 self._advance()
-                word = self._word() if (self.pos < len(self.text)
-                                        and self.text[self.pos].isalpha()) else None
-                out.append(Token("fieldreference",
-                                 "&" + (word.text if word else ""), line, col))
+                word = (
+                    self._word()
+                    if (self.pos < len(self.text) and self.text[self.pos].isalpha())
+                    else None
+                )
+                out.append(Token("fieldreference", "&" + (word.text if word else ""), line, col))
             else:
                 for punct in _PUNCTUATION:
                     if self.text.startswith(punct, self.pos):

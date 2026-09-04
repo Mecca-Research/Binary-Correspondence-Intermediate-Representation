@@ -46,9 +46,11 @@ from .printer import print_module
 def _describe(lowered) -> list[str]:
     from bcir.asn1.schema import Choice, Primitive, Sequence, SequenceOf, Set, SetOf
 
-    lines = [f"module {lowered.module.name} "
-             f"{{ {' '.join(map(str, lowered.module.oid))} }} "
-             f"{lowered.tag_default} TAGS"]
+    lines = [
+        f"module {lowered.module.name} "
+        f"{{ {' '.join(map(str, lowered.module.oid))} }} "
+        f"{lowered.tag_default} TAGS"
+    ]
     for name, built in lowered.module.types.items():
         kind = type(built).__name__
         lines.append(f"  {name} : {kind}")
@@ -62,10 +64,16 @@ def _describe(lowered) -> list[str]:
         elif isinstance(built, Primitive):
             lines[-1] += f" (UNIVERSAL {built.universal})"
         for comp in members:
-            tag = "" if comp.tag is None else \
-                f"[{comp.tag}] {'EXPLICIT' if comp.explicit else 'IMPLICIT'} "
-            suffix = " OPTIONAL" if comp.optional else (
-                f" DEFAULT {comp.default!r}" if comp.has_default else "")
+            tag = (
+                ""
+                if comp.tag is None
+                else f"[{comp.tag}] {'EXPLICIT' if comp.explicit else 'IMPLICIT'} "
+            )
+            suffix = (
+                " OPTIONAL"
+                if comp.optional
+                else (f" DEFAULT {comp.default!r}" if comp.has_default else "")
+            )
             lines.append(f"      {tag}{comp.name} : {comp.type.name}{suffix}")
     return lines
 
@@ -133,16 +141,27 @@ def main(argv: list[str] | None = None) -> int:
             if mode == "check":
                 node = parse_module(text, path)
                 if parse_module(print_module(node), f"{path}<printed>") != node:
-                    sys.stderr.write(f"{path}: round-trip law failed: printing the "
-                                     f"parsed module yields a different module\n")
+                    sys.stderr.write(
+                        f"{path}: round-trip law failed: printing the "
+                        f"parsed module yields a different module\n"
+                    )
                     status = 1
                 continue
             if mode == "list":
                 print("\n".join(_describe(lowered)))
                 continue
-            status |= _transcode(lowered, mode, encode_type, decode_type,
-                                 use_hex, ber, jer, basic, framed,
-                                 transcode_type)
+            status |= _transcode(
+                lowered,
+                mode,
+                encode_type,
+                decode_type,
+                use_hex,
+                ber,
+                jer,
+                basic,
+                framed,
+                transcode_type,
+            )
         except JerBoundedError as exc:
             # The J1 diagnostic is structured; print it as such so a caller can branch on
             # the code rather than on the prose.
@@ -158,8 +177,18 @@ def main(argv: list[str] | None = None) -> int:
     return status
 
 
-def _transcode(lowered, mode, encode_type, decode_type, use_hex, ber, jer=False,
-               basic=False, framed=False, transcode_type=None) -> int:
+def _transcode(
+    lowered,
+    mode,
+    encode_type,
+    decode_type,
+    use_hex,
+    ber,
+    jer=False,
+    basic=False,
+    framed=False,
+    transcode_type=None,
+) -> int:
     from bcir.asn1.codec import Strictness
 
     if mode == "transcode":
@@ -168,15 +197,14 @@ def _transcode(lowered, mode, encode_type, decode_type, use_hex, ber, jer=False,
         kind = lowered.module.types[transcode_type]
         raw = sys.stdin.read().strip() if use_hex else sys.stdin.buffer.read()
         if jer:
-            value = _jer_decode(bytes.fromhex(raw) if use_hex else raw, kind, basic,
-                                framed)
+            value = _jer_decode(bytes.fromhex(raw) if use_hex else raw, kind, basic, framed)
             octets = lowered.module.encode(transcode_type, value)
             print(octets.hex()) if use_hex else sys.stdout.buffer.write(octets)
             return 0
         octets = bytes.fromhex(raw) if use_hex else raw
         value = lowered.module.decode(
-            transcode_type, octets,
-            strictness=Strictness.BER if ber else Strictness.DER)
+            transcode_type, octets, strictness=Strictness.BER if ber else Strictness.DER
+        )
         sys.stdout.buffer.write(_jer_encode(kind, value, basic, framed))
         return 0
 
@@ -184,7 +212,8 @@ def _transcode(lowered, mode, encode_type, decode_type, use_hex, ber, jer=False,
         value = json.loads(sys.stdin.read())
         if jer:
             sys.stdout.buffer.write(
-                _jer_encode(lowered.module.types[encode_type], value, basic, framed))
+                _jer_encode(lowered.module.types[encode_type], value, basic, framed)
+            )
             return 0
         octets = lowered.module.encode(encode_type, value)
         if use_hex:
@@ -199,8 +228,8 @@ def _transcode(lowered, mode, encode_type, decode_type, use_hex, ber, jer=False,
         decoded = _jer_decode(octets, lowered.module.types[decode_type], basic, framed)
     else:
         decoded = lowered.module.decode(
-            decode_type, octets,
-            strictness=Strictness.BER if ber else Strictness.DER)
+            decode_type, octets, strictness=Strictness.BER if ber else Strictness.DER
+        )
     print(json.dumps(decoded, indent=2, default=str))
     return 0
 

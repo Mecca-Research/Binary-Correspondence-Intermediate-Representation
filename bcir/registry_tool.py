@@ -62,11 +62,13 @@ class RegistryInspector:
         explicit_index = match.group("index")
         if explicit_index is None and resource.count != 1:
             raise ValueError(
-                f"resource {resource.name or rid} has {resource.count} elements; specify [index]")
+                f"resource {resource.name or rid} has {resource.count} elements; specify [index]"
+            )
         index = int(explicit_index or 0)
         if index >= resource.count:
             raise IndexError(
-                f"resource {resource.name or rid}[{index}] is outside [0, {resource.count})")
+                f"resource {resource.name or rid}[{index}] is outside [0, {resource.count})"
+            )
         return RegistryAddress(rid, index)
 
     def getp(self, reference: str) -> int | None:
@@ -81,7 +83,8 @@ class RegistryInspector:
         new_value = int(value)
         if resource.data_gen >= 0xFFFFFFFF:
             raise OverflowError(
-                f"resource {resource.name or address.rid} data_gen cannot advance past u32")
+                f"resource {resource.name or address.rid} data_gen cannot advance past u32"
+            )
         successor = replace(resource, data_gen=resource.data_gen + 1)
         # Complete every operation that can invoke user conversion or allocation before
         # publishing either half of the state transition. Both dictionary keys already
@@ -108,7 +111,8 @@ class RegistryInspector:
             lines.append(
                 f"rid={resource.rid} name={resource.name or '-'} domain={resource.domain.name.lower()} "
                 f"shape={list(resource.shape)!r} access={resource.access} priority={resource.priority} "
-                f"map_gen={resource.map_gen} data_gen={resource.data_gen} values={populated}")
+                f"map_gen={resource.map_gen} data_gen={resource.data_gen} values={populated}"
+            )
         return "\n".join(lines) + ("\n" if lines else "")
 
     def claims_text(self) -> str:
@@ -118,7 +122,8 @@ class RegistryInspector:
                 lines.append(
                     f"claim={claim.id} phase={phase.phase_id} op={claim.op or claim.opcode.name.lower()} "
                     f"rd={list(claim.rd)!r} wr={list(claim.wr)!r} count={claim.count} "
-                    f"hazard={claim.hazard} bounds={claim.bounds}")
+                    f"hazard={claim.hazard} bounds={claim.bounds}"
+                )
         return "\n".join(lines) + ("\n" if lines else "")
 
     def phases_text(self) -> str:
@@ -151,18 +156,26 @@ def execute_command(inspector: RegistryInspector, command: str) -> tuple[bool, s
         result = inspector.setp(words[1], int(words[2], 0))
         return True, (
             f"rid={result.address.rid} index={result.address.index} value={result.value} "
-            f"data_gen={result.previous_data_gen}->{result.data_gen}\n")
+            f"data_gen={result.previous_data_gen}->{result.data_gen}\n"
+        )
     raise ValueError(
         "command must be: show resources|claims|phases, getp RID|NAME[index], "
-        "setp RID|NAME[index] VALUE, or quit")
+        "setp RID|NAME[index] VALUE, or quit"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="bcir-registry", description="governed in-process BCIR registry inspector")
+        prog="bcir-registry", description="governed in-process BCIR registry inspector"
+    )
     parser.add_argument("program", choices=sorted(PROGRAMS))
-    parser.add_argument("-c", "--command", action="append", default=[],
-                        help="execute a command; repeat to preserve state across commands")
+    parser.add_argument(
+        "-c",
+        "--command",
+        action="append",
+        default=[],
+        help="execute a command; repeat to preserve state across commands",
+    )
     args = parser.parse_args(argv)
     inspector = RegistryInspector(PROGRAMS[args.program]())
 

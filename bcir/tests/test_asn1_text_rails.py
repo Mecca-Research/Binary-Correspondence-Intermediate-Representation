@@ -61,6 +61,7 @@ def _xer(body: str, universal: int, name: str, rules: XerRules = XerRules.BASIC)
 
 # --- the shared predicate ------------------------------------------------------------------
 
+
 def test_the_digit_predicate_means_what_x680_says() -> None:
     """One predicate, so a sixth site cannot quietly disagree with the other five."""
     for good in ("0", "9", "42", "1234567890"):
@@ -77,6 +78,7 @@ def test_the_digit_predicate_means_what_x680_says() -> None:
 
 # --- X.693 XER ------------------------------------------------------------------------------
 
+
 def test_xer_numbers_are_spelled_with_ascii_digits() -> None:
     """§19.9's XMLSignedNumber and §12.9's realnumber, in both foreign digit families."""
     assert _xer("42", Universal.INTEGER, "INTEGER") == 42
@@ -86,18 +88,21 @@ def test_xer_numbers_are_spelled_with_ascii_digits() -> None:
     for table, family in ((_ARABIC, "ARABIC-INDIC"), (_FULLWIDTH, "FULLWIDTH")):
         assert "XMLSignedNumber" in _refused(
             lambda t=table: _xer(_foreign("42", t), Universal.INTEGER, "INTEGER"),
-            f"{family} digits as an XER INTEGER")
+            f"{family} digits as an XER INTEGER",
+        )
         assert "XMLSignedNumber" in _refused(
             lambda t=table: _xer("-" + _foreign("42", t), Universal.INTEGER, "INTEGER"),
-            f"a negative {family} XER INTEGER")
+            f"a negative {family} XER INTEGER",
+        )
         assert "realnumber" in _refused(
-            lambda t=table: _xer(_foreign("1", t) + "." + _foreign("5", t),
-                                 Universal.REAL, "REAL"),
-            f"{family} digits as an XER REAL")
+            lambda t=table: _xer(_foreign("1", t) + "." + _foreign("5", t), Universal.REAL, "REAL"),
+            f"{family} digits as an XER REAL",
+        )
 
     # The leading-zero rule `_parse_integer` already had must not have regressed.
     assert "leading zero" in _refused(
-        lambda: _xer("0042", Universal.INTEGER, "INTEGER"), "an XER INTEGER with a leading zero")
+        lambda: _xer("0042", Universal.INTEGER, "INTEGER"), "an XER INTEGER with a leading zero"
+    )
 
 
 def test_an_xer_object_identifier_arc_is_a_number_form() -> None:
@@ -109,12 +114,15 @@ def test_an_xer_object_identifier_arc_is_a_number_form() -> None:
     assert _xer("1.2.840", oid, "OID") == (1, 2, 840)
     assert _xer("2.0.1", oid, "OID") == (2, 0, 1), "a single-digit zero arc is legal"
 
-    for body, why in ((f"1.2.{_foreign('840')}", "ARABIC-INDIC digits"),
-                      (f"1.2.{_foreign('840', _FULLWIDTH)}", "FULLWIDTH digits"),
-                      ("1.2.0840", "a leading zero"),
-                      ("1.2.00", "a two-digit zero")):
+    for body, why in (
+        (f"1.2.{_foreign('840')}", "ARABIC-INDIC digits"),
+        (f"1.2.{_foreign('840', _FULLWIDTH)}", "FULLWIDTH digits"),
+        ("1.2.0840", "a leading zero"),
+        ("1.2.00", "a two-digit zero"),
+    ):
         assert "XMLObjectIdentifierValue" in _refused(
-            lambda b=body: _xer(b, oid, "OID"), f"{why} in an XER arc")
+            lambda b=body: _xer(b, oid, "OID"), f"{why} in an XER arc"
+        )
 
 
 def test_the_xer_numeric_escape_is_x680s_escape_and_not_pythons_int() -> None:
@@ -130,16 +138,19 @@ def test_the_xer_numeric_escape_is_x680s_escape_and_not_pythons_int() -> None:
     # stays legal. Pinned so a future tightening is a deliberate decision, not a slip.
     assert _xer("&#0065;", text, "UTF8String") == "A"
 
-    for escape, why in (("&#6_5;", "a PEP 515 underscore"),
-                        ("&#x4_1;", "a PEP 515 underscore in the hex form"),
-                        ("&#+65;", "a PLUS SIGN"),
-                        ("&# 65 ;", "surrounding whitespace"),
-                        (f"&#{_foreign('65')};", "ARABIC-INDIC digits"),
-                        (f"&#{_foreign('65', _FULLWIDTH)};", "FULLWIDTH digits"),
-                        ("&#x0x41;", "a second 0x prefix, which int(s, 16) strips"),
-                        ("&#-65;", "a MINUS SIGN")):
+    for escape, why in (
+        ("&#6_5;", "a PEP 515 underscore"),
+        ("&#x4_1;", "a PEP 515 underscore in the hex form"),
+        ("&#+65;", "a PLUS SIGN"),
+        ("&# 65 ;", "surrounding whitespace"),
+        (f"&#{_foreign('65')};", "ARABIC-INDIC digits"),
+        (f"&#{_foreign('65', _FULLWIDTH)};", "FULLWIDTH digits"),
+        ("&#x0x41;", "a second 0x prefix, which int(s, 16) strips"),
+        ("&#-65;", "a MINUS SIGN"),
+    ):
         assert "numeric escape" in _refused(
-            lambda e=escape: _xer(e, text, "UTF8String"), f"{why} in a numeric escape")
+            lambda e=escape: _xer(e, text, "UTF8String"), f"{why} in a numeric escape"
+        )
 
     # The three named escapes are untouched, and so is a document that uses none.
     assert _xer("&amp;&lt;&gt;", text, "UTF8String") == "&<>"
@@ -148,6 +159,7 @@ def test_the_xer_numeric_escape_is_x680s_escape_and_not_pythons_int() -> None:
 
 # --- X.697 JER -------------------------------------------------------------------------------
 
+
 def test_a_jer_object_identifier_arc_is_a_number_form() -> None:
     """§32 borrows the same arc production, and had the same two defects.
 
@@ -155,25 +167,30 @@ def test_a_jer_object_identifier_arc_is_a_number_form() -> None:
     before converting, which is the pattern the rest of this now follows. An object
     identifier arrives as a JSON *string*, so no number grammar ever guarded it.
     """
-    for universal, name in ((Universal.OBJECT_IDENTIFIER, "OBJECT IDENTIFIER"),
-                            (Universal.RELATIVE_OID, "RELATIVE-OID")):
+    for universal, name in (
+        (Universal.OBJECT_IDENTIFIER, "OBJECT IDENTIFIER"),
+        (Universal.RELATIVE_OID, "RELATIVE-OID"),
+    ):
         kind = Primitive(universal, name)
         assert decode_jer('"1.2.840"', kind) == (1, 2, 840)
         assert decode_jer('"2.0.1"', kind) == (2, 0, 1)
 
-        for text, why in ((f'"1.2.{_foreign("840")}"', "ARABIC-INDIC digits"),
-                          (f'"1.2.{_foreign("840", _FULLWIDTH)}"', "FULLWIDTH digits"),
-                          ('"1.2.0840"', "a leading zero"),
-                          ('"1.2.8_40"', "a PEP 515 underscore"),
-                          ('"1.2.+840"', "a PLUS SIGN")):
+        for text, why in (
+            (f'"1.2.{_foreign("840")}"', "ARABIC-INDIC digits"),
+            (f'"1.2.{_foreign("840", _FULLWIDTH)}"', "FULLWIDTH digits"),
+            ('"1.2.0840"', "a leading zero"),
+            ('"1.2.8_40"', "a PEP 515 underscore"),
+            ('"1.2.+840"', "a PLUS SIGN"),
+        ):
             assert "XMLObjectIdentifierValue" in _refused(
-                lambda t=text, k=kind: decode_jer(t, k), f"{why} in a JER arc")
+                lambda t=text, k=kind: decode_jer(t, k), f"{why} in a JER arc"
+            )
 
 
 def test_the_text_rails_still_round_trip_everything_they_encode() -> None:
     """The other half: a guard that rejects the encoder's own output is the worse bug."""
     cases = [
-        (Universal.INTEGER, "INTEGER", [0, 1, -1, 42, -42, 10 ** 30, -(10 ** 30)]),
+        (Universal.INTEGER, "INTEGER", [0, 1, -1, 42, -42, 10**30, -(10**30)]),
         (Universal.REAL, "REAL", [0.0, 1.5, -1.5, 1e10, 1e-10]),
         (Universal.OBJECT_IDENTIFIER, "OID", [(1, 2, 840, 113549), (2, 0, 1), (0, 0)]),
         (Universal.UTF8_STRING, "UTF8String", ["", "plain", "&<>", "héllo ✓", "٤٢"]),

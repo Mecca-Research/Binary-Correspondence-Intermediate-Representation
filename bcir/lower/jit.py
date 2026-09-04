@@ -59,4 +59,5 @@ def jit_run(
     finally:
         if created:
             import shutil
+
             shutil.rmtree(workdir, ignore_errors=True)

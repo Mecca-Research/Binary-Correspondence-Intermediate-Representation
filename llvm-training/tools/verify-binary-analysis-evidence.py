@@ -15,11 +15,13 @@ CHAPTER = REPO_ROOT / "llvm-training/15-binary-analysis"
 MANIFEST_PATH = CHAPTER / "evidence-manifest.json"
 CLASSIFICATIONS = {"deterministic", "host-sensitive", "schematic"}
 REQUIRED_STATIC_KINDS = {
-    "symbol", "instruction-class-count", "basic-block-count", "call-edge", "object-section"
+    "symbol",
+    "instruction-class-count",
+    "basic-block-count",
+    "call-edge",
+    "object-section",
 }
-GENERATED_HEADER = [
-    "fixture", "evidence_kind", "scope", "name", "value", "unit", "classification"
-]
+GENERATED_HEADER = ["fixture", "evidence_kind", "scope", "name", "value", "unit", "classification"]
 
 
 def relative(path: Path) -> str:
@@ -44,7 +46,11 @@ def repo_file(value: Any, label: str, errors: list[str], nullable: bool = False)
 
 
 def nonempty_string_list(value: Any, label: str, errors: list[str]) -> None:
-    if not isinstance(value, list) or not value or not all(isinstance(item, str) and item for item in value):
+    if (
+        not isinstance(value, list)
+        or not value
+        or not all(isinstance(item, str) and item for item in value)
+    ):
         errors.append(f"{label}: expected a non-empty string array")
 
 
@@ -96,8 +102,12 @@ def validate_provenance(path: Path, entry: dict[str, Any], errors: list[str]) ->
     if not isinstance(target, dict) or target.get("triple") != entry["target_triple"]:
         errors.append(f"{relative(path)}: target metadata does not match manifest")
     toolchain = data.get("toolchain")
-    if not isinstance(toolchain, dict) or not all(isinstance(toolchain.get(key), str) and toolchain[key] for key in ("clang", "python")):
-        errors.append(f"{relative(path)}: toolchain must record non-empty clang and python versions")
+    if not isinstance(toolchain, dict) or not all(
+        isinstance(toolchain.get(key), str) and toolchain[key] for key in ("clang", "python")
+    ):
+        errors.append(
+            f"{relative(path)}: toolchain must record non-empty clang and python versions"
+        )
 
 
 def main() -> int:
@@ -108,7 +118,10 @@ def main() -> int:
         print(f"error: cannot load {relative(MANIFEST_PATH)}: {exc}", file=sys.stderr)
         return 1
     if manifest.get("schema_version") != 1 or not isinstance(manifest.get("evidence"), list):
-        print("error: evidence manifest must have schema_version 1 and an evidence array", file=sys.stderr)
+        print(
+            "error: evidence manifest must have schema_version 1 and an evidence array",
+            file=sys.stderr,
+        )
         return 1
 
     entries_by_csv: dict[str, dict[str, Any]] = {}
@@ -140,13 +153,19 @@ def main() -> int:
             source = repo_file(entry.get("source_fixture"), f"{label}.source_fixture", errors)
             provenance = repo_file(entry.get("provenance_path"), f"{label}.provenance_path", errors)
             nonempty_string_list(entry.get("build_command"), f"{label}.build_command", errors)
-            nonempty_string_list(entry.get("optimization_flags"), f"{label}.optimization_flags", errors)
-            nonempty_string_list(entry.get("collection_command"), f"{label}.collection_command", errors)
+            nonempty_string_list(
+                entry.get("optimization_flags"), f"{label}.optimization_flags", errors
+            )
+            nonempty_string_list(
+                entry.get("collection_command"), f"{label}.collection_command", errors
+            )
             for field in ("target_triple", "expected_artifact_type"):
                 if not isinstance(entry.get(field), str) or not entry[field]:
                     errors.append(f"{label}.{field}: expected a non-empty string")
             if source is not None and source.suffix != ".s":
-                errors.append(f"{label}.source_fixture: deterministic fixture must be assembly source")
+                errors.append(
+                    f"{label}.source_fixture: deterministic fixture must be assembly source"
+                )
             if csv_path is not None and csv_path.is_file():
                 generated_kinds.update(validate_generated_csv(csv_path, entry, errors))
             if provenance is not None and provenance.is_file():
@@ -162,10 +181,7 @@ def main() -> int:
             + ", ".join(sorted(missing_kinds))
         )
 
-    discovered = {
-        relative(path) for path in CHAPTER.rglob("*.csv")
-        if path.is_file()
-    }
+    discovered = {relative(path) for path in CHAPTER.rglob("*.csv") if path.is_file()}
     covered = set(entries_by_csv)
     for path in sorted(discovered - covered):
         errors.append(f"{path}: checked-in CSV has no evidence-manifest entry")
@@ -175,9 +191,14 @@ def main() -> int:
     if errors:
         for error in errors:
             print(f"error: {error}", file=sys.stderr)
-        print(f"Binary-analysis evidence validation failed with {len(errors)} error(s).", file=sys.stderr)
+        print(
+            f"Binary-analysis evidence validation failed with {len(errors)} error(s).",
+            file=sys.stderr,
+        )
         return 1
-    print(f"Validated {len(discovered)} Chapter 15 CSV(s) across {len(ids)} provenance classifications.")
+    print(
+        f"Validated {len(discovered)} Chapter 15 CSV(s) across {len(ids)} provenance classifications."
+    )
     return 0
 
 

@@ -46,6 +46,7 @@ def _certificate(kind, value):
 
 # --- schema identity -------------------------------------------------------------------
 
+
 def test_no_schema_carries_a_heap_address_into_its_repr() -> None:
     """The property, over the shapes a real schema is built from.
 
@@ -62,11 +63,16 @@ def test_no_schema_carries_a_heap_address_into_its_repr() -> None:
         "CHOICE": Choice((Component("a", _INT), Component("b", text, tag=1)), name="C"),
         "SEQUENCE OF": SequenceOf(_INT),
         "SET OF": SetOf(_INT),
-        "nested": Sequence((Component("inner", Sequence((Component("a", _INT),), name="I")),
-                            Component("b", text, tag=1, optional=True)), name="N"),
+        "nested": Sequence(
+            (
+                Component("inner", Sequence((Component("a", _INT),), name="I")),
+                Component("b", text, tag=1, optional=True),
+            ),
+            name="N",
+        ),
         "recursive": compile_module(
-            "M DEFINITIONS ::= BEGIN "
-            "Node ::= SEQUENCE { value INTEGER, next Node OPTIONAL } END").types["Node"],
+            "M DEFINITIONS ::= BEGIN Node ::= SEQUENCE { value INTEGER, next Node OPTIONAL } END"
+        ).types["Node"],
     }
     for label, kind in shapes.items():
         found = _ADDRESS.findall(repr(kind))
@@ -89,8 +95,9 @@ def test_the_schema_digest_is_reproducible_across_processes() -> None:
     )
     digests = set()
     for _ in range(3):
-        done = subprocess.run([sys.executable, "-c", script], capture_output=True,
-                              text=True, timeout=120)
+        done = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, timeout=120
+        )
         assert done.returncode == 0, done.stderr
         digests.add(done.stdout.strip())
     assert len(digests) == 1, f"three runs produced {len(digests)} distinct digests: {digests}"
@@ -106,6 +113,7 @@ def test_two_certificates_for_the_same_schema_agree() -> None:
 
 
 # --- value identity --------------------------------------------------------------------
+
 
 def test_the_value_digest_follows_the_octets_not_the_dict_order() -> None:
     """Equal values, byte-identical encodings, one digest.

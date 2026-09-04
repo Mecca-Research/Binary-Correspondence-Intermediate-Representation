@@ -24,8 +24,8 @@ class Resource:
     shape: tuple[int, ...] = ()
     layout: str = "soa"
     align: int = 64
-    access: str = "flat"      # "flat" (O(1)) or "ham" (O(log n) hierarchical access)
-    priority: int = 0         # CXL semantic hotness (promotion/eviction)
+    access: str = "flat"  # "flat" (O(1)) or "ham" (O(log n) hierarchical access)
+    priority: int = 0  # CXL semantic hotness (promotion/eviction)
     map_gen: int = 0
     data_gen: int = 0
     name: str = ""
@@ -48,8 +48,8 @@ class Lifetime:
     constraint: the use-after-free / double-free law is a complete no-op until a frontend opts in by
     annotating its malloc/free calls."""
 
-    event: str = "use"                   # "use" | "alloc" | "free"
-    epoch: int = 0                       # the allocation generation (a re-alloc after free is a new epoch)
+    event: str = "use"  # "use" | "alloc" | "free"
+    epoch: int = 0  # the allocation generation (a re-alloc after free is a new epoch)
 
 
 @dataclass(frozen=True)
@@ -60,14 +60,14 @@ class Timing:
     non-disturbance invariant). The fields are architecture-AGNOSTIC; the channel / lowering layer
     interprets them per target (CPU microarchitectural cost vs FPGA/ASIC register-transfer)."""
 
-    clock_domain: str = ""               # the clock net / frequency domain ("" = the implicit default)
-    latency_cycles: int = 0              # expected stage latency in cycles (0 = unspecified)
-    min_throughput_q16: int = 0          # items per cycle, Q16 fixed point (0 = unspecified)
-    critical_path: bool = False          # is this claim on the longest timing path?
-    power_domain: str = ""               # the power / voltage domain ("" = the implicit default)
-    sync_type: str = ""                  # "" | "synchronous" | "asynchronous" | "mixed"
-    clock_frequency_mhz: int = 0         # target clock (0 = unspecified)
-    setup_hold_margin: int = 0           # extra setup/hold safety margin in cycles
+    clock_domain: str = ""  # the clock net / frequency domain ("" = the implicit default)
+    latency_cycles: int = 0  # expected stage latency in cycles (0 = unspecified)
+    min_throughput_q16: int = 0  # items per cycle, Q16 fixed point (0 = unspecified)
+    critical_path: bool = False  # is this claim on the longest timing path?
+    power_domain: str = ""  # the power / voltage domain ("" = the implicit default)
+    sync_type: str = ""  # "" | "synchronous" | "asynchronous" | "mixed"
+    clock_frequency_mhz: int = 0  # target clock (0 = unspecified)
+    setup_hold_margin: int = 0  # extra setup/hold safety margin in cycles
 
 
 @dataclass
@@ -80,44 +80,48 @@ class Claim:
     stride_class: StrideClass = StrideClass.UNIT
     count: int = 1
     stride_k: int = 1
-    rd: tuple[int, ...] = ()         # read RIDs
-    wr: tuple[int, ...] = ()         # write RIDs
+    rd: tuple[int, ...] = ()  # read RIDs
+    wr: tuple[int, ...] = ()  # write RIDs
     imm: tuple[int, ...] = ()
-    hazard: str = "unique"           # unique | atomic | barriered
+    hazard: str = "unique"  # unique | atomic | barriered
     domain: Domain = Domain.RAM
-    verify: str = "bounds"           # none | bounds | exact | hash
-    bounds: str = "strict"           # strict | masked | assumed_safe
-    op: str = ""                     # semantic op string, e.g. "vector.add"
+    verify: str = "bounds"  # none | bounds | exact | hash
+    bounds: str = "strict"  # strict | masked | assumed_safe
+    op: str = ""  # semantic op string, e.g. "vector.add"
     offset: int = 0
     cost_class: str = "bandwidth"
     primary_rid: Optional[int] = None
-    precision: str = ""              # "" (naive) | "compensated" (residual-carry MAC)
-    tolerance_ulp: int = 0           # accuracy contract: 0 = none; >0 = max Q8-ULP error (R17)
-    quantized_bits: int = 0          # 0 = dense (no-op); >0 = inputs are `_BitInt(N)` per-group quantized
-                                     # lanes (A1), so R17 adds the Q8<->f32<->Q8 bridge step to the bound
-    dynamic: bool = False            # True: `count` is a static UPPER BOUND (dynamic shape);
-                                     # the plan is valid + worst-case-priced for any actual <= count
-    timing: Optional["Timing"] = None  # OPTIONAL RTL/synchronous-timing metadata (§5.11); None = the
-                                     # vacuous default (no R19/R20 constraint -- the whole scalar subset)
-    lifetime: Optional["Lifetime"] = None  # OPTIONAL pointer-lifetime annotation (§5.12); None = the vacuous
-                                     # default (no R21 use-after-free / double-free constraint)
-    callee_sig: str = ""             # OPTIONAL declared indirect-callee signature (§5.14 Phase 2):
-                                     # "ret(param, ...)" on a c.call.indirect / c.call.imember dispatch
-                                     # claim, so R18 + the effect/commutation analysis see the callee
-                                     # TYPE instead of a fully opaque edge. "" = unset (vacuous;
-                                     # digest-excluded from R13).
-    bounds_provenance: str = ""      # OPTIONAL extent-provenance signal (§5.14 Phase 2): WHY the bounds
-                                     # contract is what it is -- "declared_extent" (local/static array of
-                                     # known shape) | "recovered_count" (malloc/calloc stable count) |
-                                     # "snapshot_extent" (pure count expression snapshotted at the alloc) |
-                                     # "mmio_register" | "string_literal" | "unknown_extent". "" = unset
-                                     # (the vacuous default; digest-excluded from R13).
-    volatile: bool = False           # OPTIONAL volatile qualifier (§5.14 Phase 2): a volatile-qualified
-                                     # access (MMIO) the ordering law sees STRUCTURALLY -- R5 requires an
-                                     # ordered hazard, and the optimizer fences it like `barriered` (never
-                                     # reordered / fused / bundled / elided). Digest-excluded (R13's
-                                     # hash_module folds a fixed field list), so the False default is
-                                     # non-disturbing over the whole existing corpus.
+    precision: str = ""  # "" (naive) | "compensated" (residual-carry MAC)
+    tolerance_ulp: int = 0  # accuracy contract: 0 = none; >0 = max Q8-ULP error (R17)
+    quantized_bits: int = 0  # 0 = dense (no-op); >0 = inputs are `_BitInt(N)` per-group quantized
+    # lanes (A1), so R17 adds the Q8<->f32<->Q8 bridge step to the bound
+    dynamic: bool = False  # True: `count` is a static UPPER BOUND (dynamic shape);
+    # the plan is valid + worst-case-priced for any actual <= count
+    timing: Optional["Timing"] = (
+        None  # OPTIONAL RTL/synchronous-timing metadata (§5.11); None = the
+    )
+    # vacuous default (no R19/R20 constraint -- the whole scalar subset)
+    lifetime: Optional["Lifetime"] = (
+        None  # OPTIONAL pointer-lifetime annotation (§5.12); None = the vacuous
+    )
+    # default (no R21 use-after-free / double-free constraint)
+    callee_sig: str = ""  # OPTIONAL declared indirect-callee signature (§5.14 Phase 2):
+    # "ret(param, ...)" on a c.call.indirect / c.call.imember dispatch
+    # claim, so R18 + the effect/commutation analysis see the callee
+    # TYPE instead of a fully opaque edge. "" = unset (vacuous;
+    # digest-excluded from R13).
+    bounds_provenance: str = ""  # OPTIONAL extent-provenance signal (§5.14 Phase 2): WHY the bounds
+    # contract is what it is -- "declared_extent" (local/static array of
+    # known shape) | "recovered_count" (malloc/calloc stable count) |
+    # "snapshot_extent" (pure count expression snapshotted at the alloc) |
+    # "mmio_register" | "string_literal" | "unknown_extent". "" = unset
+    # (the vacuous default; digest-excluded from R13).
+    volatile: bool = False  # OPTIONAL volatile qualifier (§5.14 Phase 2): a volatile-qualified
+    # access (MMIO) the ordering law sees STRUCTURALLY -- R5 requires an
+    # ordered hazard, and the optimizer fences it like `barriered` (never
+    # reordered / fused / bundled / elided). Digest-excluded (R13's
+    # hash_module folds a fixed field list), so the False default is
+    # non-disturbing over the whole existing corpus.
 
     def io_rids(self) -> tuple[int, ...]:
         return tuple(self.rd) + tuple(self.wr)
@@ -130,13 +134,13 @@ class Phase:
     phase_id: int
     deps: tuple[int, ...] = ()
     claims: list[Claim] = field(default_factory=list)
-    event: str = ""                  # OPTIONAL event source (driver roadmap Part VII A1): "" = an
-                                     # ordinary program-ordered phase (the entire existing corpus);
-                                     # non-"" names the interrupt/event source that TRIGGERS this
-                                     # phase -- asynchronous entry, checked by
-                                     # `kbcir.events.check_event_phases` (EV1-EV3). Digest-excluded
-                                     # (R13's hash_module folds a fixed field list), so the default
-                                     # is non-disturbing over every existing module.
+    event: str = ""  # OPTIONAL event source (driver roadmap Part VII A1): "" = an
+    # ordinary program-ordered phase (the entire existing corpus);
+    # non-"" names the interrupt/event source that TRIGGERS this
+    # phase -- asynchronous entry, checked by
+    # `kbcir.events.check_event_phases` (EV1-EV3). Digest-excluded
+    # (R13's hash_module folds a fixed field list), so the default
+    # is non-disturbing over every existing module.
 
 
 @dataclass

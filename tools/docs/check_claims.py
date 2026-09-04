@@ -32,6 +32,7 @@ WHAT BELONGS HERE. Only claims a machine can settle: a file exists, a table is e
 is defined. A predicate that needs judgement does not belong -- an approximate check that fails
 on correct prose would train everyone to ignore it, which is worse than no check at all.
 """
+
 from __future__ import annotations
 
 import os
@@ -44,6 +45,7 @@ _MARKER = re.compile(r"<!--\s*claim:\s*([a-z0-9][a-z0-9-]*)\s*-->")
 
 
 # --- the things a predicate needs to ask ---------------------------------------------------
+
 
 def _read(*parts: str) -> str:
     with open(os.path.join(ROOT, *parts), encoding="utf-8") as handle:
@@ -60,15 +62,18 @@ def _exists(*parts: str) -> bool:
 # ACTUALLY looks like now, not merely that the claim failed -- the point is to make the
 # correction obvious without a second investigation.
 
+
 def _claim_ecn_refusal_list_empty() -> tuple[bool, str]:
     """X.692's unbuilt-group refusal list is empty: every notation group is implemented."""
     sys.path.insert(0, ROOT)
     from bcir.asn1.ecn_syntax import SYNTAX_VERSION, _UNSUPPORTED_KEYWORDS
 
     rows = sorted(_UNSUPPORTED_KEYWORDS)
-    return (not rows,
-            f"_UNSUPPORTED_KEYWORDS holds {len(rows)} row(s) at SYNTAX_VERSION "
-            f"{SYNTAX_VERSION}: {rows}")
+    return (
+        not rows,
+        f"_UNSUPPORTED_KEYWORDS holds {len(rows)} row(s) at SYNTAX_VERSION "
+        f"{SYNTAX_VERSION}: {rows}",
+    )
 
 
 def _claim_ecn_three_parts_built() -> tuple[bool, str]:
@@ -101,8 +106,11 @@ def _claim_r25_covers_parameterization() -> tuple[bool, str]:
     """R25's ECN dialect carries an operation for Annex C's dummy parameters."""
     td = _read("mlir", "include", "BCIR", "BCIREcnOps.td")
     ok = "BCIR_EcnParameterizedOp" in td and '"ecn.parameterized"' in td
-    return ok, ("BCIREcnOps.td defines BCIR_EcnParameterizedOp" if ok
-                else "BCIREcnOps.td has no BCIR_EcnParameterizedOp / ecn.parameterized op")
+    return ok, (
+        "BCIREcnOps.td defines BCIR_EcnParameterizedOp"
+        if ok
+        else "BCIREcnOps.td has no BCIR_EcnParameterizedOp / ecn.parameterized op"
+    )
 
 
 def _claim_asn1_c_twins_exist() -> tuple[bool, str]:
@@ -123,8 +131,11 @@ def _claim_asn1_c_twins_exist() -> tuple[bool, str]:
     if not named:
         return False, "LangRef §17.2 names no `bcir_*.c` twin; the table shape changed"
     missing = [name for name in named if not _exists("runtime", "c", name)]
-    return not missing, (f"named but absent: {missing}" if missing
-                         else f"all {len(named)} named twins exist: {named}")
+    return not missing, (
+        f"named but absent: {missing}"
+        if missing
+        else f"all {len(named)} named twins exist: {named}"
+    )
 
 
 _CLAIMS = {
@@ -137,6 +148,7 @@ _CLAIMS = {
 
 
 # --- the scan ------------------------------------------------------------------------------
+
 
 def _md_files() -> list[str]:
     out: list[str] = []
@@ -169,19 +181,22 @@ def main(argv: list[str]) -> int:
     for name in sorted(set(asserted) - set(_CLAIMS)):
         failures.append(
             f"{', '.join(asserted[name])}: claim {name!r} has no predicate in "
-            f"tools/docs/check_claims.py -- add one, or fix the marker's spelling")
+            f"tools/docs/check_claims.py -- add one, or fix the marker's spelling"
+        )
 
     for name in sorted(set(_CLAIMS) - set(asserted)):
         failures.append(
             f"claim {name!r} is registered but NO document asserts it; a doc that dropped its "
             f"marker stops being checked, which is how these go stale -- restore the marker or "
-            f"retire the predicate")
+            f"retire the predicate"
+        )
 
     for name in sorted(set(_CLAIMS) & set(asserted)):
         ok, detail = _CLAIMS[name]()
         if not ok:
             failures.append(
-                f"{', '.join(asserted[name])}: claim {name!r} is NO LONGER TRUE -- {detail}")
+                f"{', '.join(asserted[name])}: claim {name!r} is NO LONGER TRUE -- {detail}"
+            )
 
     if failures:
         sys.stderr.write("[check_claims] summary claims that no longer match the code:\n")

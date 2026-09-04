@@ -33,21 +33,35 @@ def _restore(before):
 
 def _example_profile() -> TargetProfile:
     return TargetProfile(
-        name="tpu", triple="tpu", lane_widths=(1, 128), gather_penalty=512, mem_unit=1,
-        base_overhead=24, isa_features=frozenset({"systolic"}), affinity_domains=128,
-        mem_channels=24, mem=MemoryHierarchy(tiers=(Tier("sram", 3, 128, 24, 0),)))
+        name="tpu",
+        triple="tpu",
+        lane_widths=(1, 128),
+        gather_penalty=512,
+        mem_unit=1,
+        base_overhead=24,
+        isa_features=frozenset({"systolic"}),
+        affinity_domains=128,
+        mem_channels=24,
+        mem=MemoryHierarchy(tiers=(Tier("sram", 3, 128, 24, 0),)),
+    )
 
 
 def _example_manifest() -> P.ChannelManifest:
     return P.ChannelManifest(
-        name="tpu_test", kind="accelerator", profile=_example_profile(),
+        name="tpu_test",
+        kind="accelerator",
+        profile=_example_profile(),
         capabilities=frozenset({"matmul", "tile", "data_parallel"}),
-        calibration=P.CalibrationArtifact(ref="calib/tpu.json", digest="sha256:x",
-                                          provenance="modeled"),
-        provenance="simulated", modeled=True)
+        calibration=P.CalibrationArtifact(
+            ref="calib/tpu.json", digest="sha256:x", provenance="modeled"
+        ),
+        provenance="simulated",
+        modeled=True,
+    )
 
 
 # --- the schema is complete: built-ins round-trip ------------------------------------------------
+
 
 def test_every_builtin_round_trips_through_the_manifest():
     for name, ch in CHANNELS.items():
@@ -55,22 +69,32 @@ def test_every_builtin_round_trips_through_the_manifest():
         assert not m.validate(), f"{name}: {m.validate()}"
         ch2 = P.ChannelManifest.from_dict(json.loads(json.dumps(m.to_dict()))).to_channel()
         assert ch2.profile == ch.profile, f"{name}: profile not preserved"
-        assert (ch2.kind, ch2.llvm_triple, ch2.e_machine, ch2.runtime) == \
-               (ch.kind, ch.llvm_triple, ch.e_machine, ch.runtime), f"{name}: identity not preserved"
+        assert (ch2.kind, ch2.llvm_triple, ch2.e_machine, ch2.runtime) == (
+            ch.kind,
+            ch.llvm_triple,
+            ch.e_machine,
+            ch.runtime,
+        ), f"{name}: identity not preserved"
 
 
 # --- validation rejects malformed plugins --------------------------------------------------------
+
 
 def test_validation_catches_each_kind_of_malformed_manifest():
     good = _example_manifest()
     assert good.validate() == []
 
     from dataclasses import replace
+
     assert any("kind" in e for e in replace(good, kind="quantum").validate())
-    assert any("capab" in e for e in replace(good, capabilities=frozenset({"telepathy"})).validate())
+    assert any(
+        "capab" in e for e in replace(good, capabilities=frozenset({"telepathy"})).validate()
+    )
     assert any("format_version" in e for e in replace(good, format_version=999).validate())
-    assert any("lane_widths" in e for e in
-               replace(good, profile=replace(good.profile, lane_widths=(2, 4))).validate())
+    assert any(
+        "lane_widths" in e
+        for e in replace(good, profile=replace(good.profile, lane_widths=(2, 4))).validate()
+    )
     assert any("provenance" in e for e in replace(good, provenance="vibes").validate())
     # e_machine only makes sense on a cpu (host ELF)
     assert any("e_machine" in e for e in replace(good, e_machine=183).validate())
@@ -81,6 +105,7 @@ def test_validation_catches_each_kind_of_malformed_manifest():
 def test_register_from_manifest_rejects_invalid_and_leaves_registry_clean():
     before = _snapshot()
     from dataclasses import replace
+
     bad = replace(_example_manifest(), kind="quantum")
     try:
         try:
@@ -106,8 +131,9 @@ def test_channel_manifest_loader_rejects_ambiguous_oversized_and_malformed_docum
         path = os.path.join(d, "hostile.channel.json")
 
         encoded = json.dumps(good)
-        duplicate = encoded.replace('"format_version": 1',
-                                    '"format_version": 1, "format_version": 1', 1)
+        duplicate = encoded.replace(
+            '"format_version": 1', '"format_version": 1, "format_version": 1', 1
+        )
         with open(path, "w", encoding="utf-8") as f:
             f.write(duplicate)
         try:
@@ -157,6 +183,7 @@ def test_calibration_generation_must_match_the_profile_generation():
 
 # --- an external plugin loads + registers + plans + routes ---------------------------------------
 
+
 def test_register_from_manifest_adds_a_working_channel():
     before = _snapshot()
     try:
@@ -168,6 +195,7 @@ def test_register_from_manifest_adds_a_working_channel():
         from bcir.kbcir.weights import PERF
         from bcir.model import Module, Phase
         from bcir.kbcir.cost import Theta
+
         # a trivial module just needs to plan without error on the plugin's profile.
         prog = __import__("bcir.bench", fromlist=["PROGRAMS"]).PROGRAMS["vector_add"]()
         plan = optimize(prog, ch.profile, Theta.cool(), PERF)
@@ -200,15 +228,26 @@ def test_the_shipped_example_plugin_is_valid():
 
 # --- routing: declared capabilities for plugins, legacy rule for built-ins -----------------------
 
+
 def test_capability_routing_is_identical_to_legacy_for_builtins():
     # built-ins declare no capabilities -> channel_suits must equal the legacy per-kind rule.
     from bcir.bench import PROGRAMS
     from bcir.kbcir.realize import _flatten
-    claims = [c for prog in ("vector_add", "gather_reduce", "histogram_gather", "matmul_tiled",
-                             "saxpy_strided", "scan")
-              for _ph, c in _flatten(PROGRAMS[prog]())]
+
+    claims = [
+        c
+        for prog in (
+            "vector_add",
+            "gather_reduce",
+            "histogram_gather",
+            "matmul_tiled",
+            "saxpy_strided",
+            "scan",
+        )
+        for _ph, c in _flatten(PROGRAMS[prog]())
+    ]
     for ch in CHANNELS.values():
-        assert not ch.capabilities                       # built-ins are kind-routed
+        assert not ch.capabilities  # built-ins are kind-routed
         for claim in claims:
             assert channel_suits(claim, ch) == _claim_suits_channel(claim, ch)
 
@@ -222,11 +261,13 @@ def test_declared_capabilities_route_by_tag():
         class _Claim:
             def __init__(self, op, sc=None):
                 self.op, self.stride_class = op, sc
+
         from bcir.model import StrideClass
+
         matmul = _Claim("matmul.acc", StrideClass.TILE)
         gather = _Claim("gather.load", StrideClass.RANDOM)
-        assert channel_suits(matmul, ch)                 # declares matmul + tile
-        assert not channel_suits(gather, ch)             # does not declare gather
+        assert channel_suits(matmul, ch)  # declares matmul + tile
+        assert not channel_suits(gather, ch)  # does not declare gather
         assert "matmul" in claim_required_caps(matmul)
     finally:
         _restore(before)

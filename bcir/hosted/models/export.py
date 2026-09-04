@@ -1,4 +1,5 @@
 """Deterministic hosted-model export through BCIR's strict Llama ingest boundary."""
+
 from __future__ import annotations
 
 import hashlib
@@ -14,7 +15,8 @@ try:
     from safetensors.torch import save_file
 except ModuleNotFoundError as exc:  # pragma: no cover - dependency gate
     raise ModuleNotFoundError(
-        "hosted model export requires torch and safetensors; install bcir[model-lab]") from exc
+        "hosted model export requires torch and safetensors; install bcir[model-lab]"
+    ) from exc
 
 from ...frontends.models.hf_ingest import ingest_checkpoint_with_report
 from ...frontends.models.manifest import ModelManifest, build_manifest
@@ -31,8 +33,10 @@ def sha256_file(path: os.PathLike | str) -> str:
 
 
 def _write_json(path: Path, value) -> None:
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"),
-                         allow_nan=False).encode("utf-8") + b"\n"
+    encoded = (
+        json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        + b"\n"
+    )
     with path.open("xb") as stream:
         stream.write(encoded)
         stream.flush()
@@ -74,9 +78,13 @@ class ExportedCheckpoint:
     artifact_manifest_sha256: str
 
 
-def export_hf_checkpoint(model: HostedLlama, output_dir: os.PathLike | str, *,
-                         tokenizer_path: os.PathLike | str,
-                         corpus_manifest: CorpusManifest) -> ExportedCheckpoint:
+def export_hf_checkpoint(
+    model: HostedLlama,
+    output_dir: os.PathLike | str,
+    *,
+    tokenizer_path: os.PathLike | str,
+    corpus_manifest: CorpusManifest,
+) -> ExportedCheckpoint:
     """Atomically export a strict one-shard Llama checkpoint.
 
     Shared tied-head storage is represented once (the LM-head key is omitted), tensor
@@ -117,18 +125,26 @@ def export_hf_checkpoint(model: HostedLlama, output_dir: os.PathLike | str, *,
         save_file(tensors, str(temporary / "model.safetensors"))
         config = _config(model, context_length, corpus_manifest)
         _write_json(temporary / "config.json", config)
-        tokenizer_name = "tokenizer.json" if tokenizer.suffix.lower() == ".json" \
-            else "tokenizer.model"
+        tokenizer_name = (
+            "tokenizer.json" if tokenizer.suffix.lower() == ".json" else "tokenizer.model"
+        )
         shutil.copyfile(tokenizer, temporary / tokenizer_name)
 
         model_manifest = build_manifest(
-            [str(temporary / "model.safetensors")], config,
-            name="bcir-hosted-llama", tokenizer_ref=tokenizer_name,
-            tokenizer_path=str(temporary / tokenizer_name), license="LicenseRef-BCIR-NC-1.0",
-            source=f"bcir-hosted:{corpus_manifest.digest}")
+            [str(temporary / "model.safetensors")],
+            config,
+            name="bcir-hosted-llama",
+            tokenizer_ref=tokenizer_name,
+            tokenizer_path=str(temporary / tokenizer_name),
+            license="LicenseRef-BCIR-NC-1.0",
+            source=f"bcir-hosted:{corpus_manifest.digest}",
+        )
         spec, _weights, report = ingest_checkpoint_with_report(str(temporary))
-        if spec != model.spec or report.auxiliary_element_count != 0 \
-                or report.decoder_element_count != model_manifest.param_count:
+        if (
+            spec != model.spec
+            or report.auxiliary_element_count != 0
+            or report.decoder_element_count != model_manifest.param_count
+        ):
             raise RuntimeError("strict BCIR ingest did not reproduce the hosted model census")
 
         files = {}
@@ -145,11 +161,13 @@ def export_hf_checkpoint(model: HostedLlama, output_dir: os.PathLike | str, *,
         manifest_sha = sha256_file(temporary / "manifest.json")
         os.replace(temporary, target)
         return ExportedCheckpoint(
-            directory=target, model_manifest=model_manifest,
+            directory=target,
+            model_manifest=model_manifest,
             model_sha256=files["model.safetensors"]["sha256"],
             config_sha256=files["config.json"]["sha256"],
             tokenizer_sha256=files[tokenizer_name]["sha256"],
-            artifact_manifest_sha256=manifest_sha)
+            artifact_manifest_sha256=manifest_sha,
+        )
     except BaseException:
         shutil.rmtree(temporary, ignore_errors=True)
         raise

@@ -25,8 +25,9 @@ _CHECKER = os.path.join("tools", "docs", "check_claims.py")
 
 
 def _run(cwd: str) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, _CHECKER], cwd=cwd, capture_output=True,
-                          text=True, timeout=180)
+    return subprocess.run(
+        [sys.executable, _CHECKER], cwd=cwd, capture_output=True, text=True, timeout=180
+    )
 
 
 def _worktree(tmp: str) -> str:
@@ -36,8 +37,7 @@ def _worktree(tmp: str) -> str:
         src = os.path.join(_ROOT, part)
         dst = os.path.join(root, part)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        shutil.copytree(src, dst,
-                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "build"))
+        shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "build"))
     # `bcir.asn1` is imported by a predicate, so the package roots have to exist.
     for pkg in ("bcir", os.path.join("bcir", "asn1")):
         init = os.path.join(root, pkg, "__init__.py")
@@ -59,7 +59,8 @@ def test_every_claim_the_docs_assert_is_true_today() -> None:
     """The live tree passes. This is the assertion the other tests give meaning to."""
     done = _run(_ROOT)
     assert done.returncode == 0, (
-        f"a documentation summary no longer matches the code:\n{done.stderr}\n{done.stdout}")
+        f"a documentation summary no longer matches the code:\n{done.stderr}\n{done.stdout}"
+    )
     assert "still match the code" in done.stdout
 
 
@@ -73,8 +74,9 @@ def test_a_claim_that_stops_being_true_is_caught() -> None:
     """
     with tempfile.TemporaryDirectory() as tmp:
         root = _worktree(tmp)
-        with open(os.path.join(root, "bcir", "asn1", "ecn_syntax.py"), "a",
-                  encoding="utf-8") as handle:
+        with open(
+            os.path.join(root, "bcir", "asn1", "ecn_syntax.py"), "a", encoding="utf-8"
+        ) as handle:
             handle.write('\n_UNSUPPORTED_KEYWORDS["CONTENTS-ENCODING"] = "simulated"\n')
         done = _run(root)
         assert done.returncode == 1, "a returning refusal must fail the check"
@@ -88,8 +90,12 @@ def test_a_document_that_drops_its_marker_is_caught() -> None:
     """A claim nobody asserts stops being checked, which is how one goes stale unnoticed."""
     with tempfile.TemporaryDirectory() as tmp:
         root = _worktree(tmp)
-        _edit(root, os.path.join("docs", "BCIR_LANGREF.md"),
-              "<!-- claim: jer-has-all-three-rails -->", "")
+        _edit(
+            root,
+            os.path.join("docs", "BCIR_LANGREF.md"),
+            "<!-- claim: jer-has-all-three-rails -->",
+            "",
+        )
         done = _run(root)
         assert done.returncode == 1, "an unasserted claim must fail the check"
         assert "jer-has-all-three-rails" in done.stderr
@@ -100,8 +106,12 @@ def test_a_marker_naming_no_predicate_is_caught() -> None:
     """A typo in a marker would otherwise disable the claim silently."""
     with tempfile.TemporaryDirectory() as tmp:
         root = _worktree(tmp)
-        _edit(root, os.path.join("docs", "BCIR_LANGREF.md"),
-              "<!-- claim: ecn-three-parts-built -->", "<!-- claim: ecn-three-parts-buit -->")
+        _edit(
+            root,
+            os.path.join("docs", "BCIR_LANGREF.md"),
+            "<!-- claim: ecn-three-parts-built -->",
+            "<!-- claim: ecn-three-parts-buit -->",
+        )
         done = _run(root)
         assert done.returncode == 1, "an unknown claim name must fail the check"
         assert "has no predicate" in done.stderr
@@ -116,10 +126,13 @@ def test_the_twin_table_claim_reads_the_document_rather_than_a_hardcoded_list() 
     """
     with tempfile.TemporaryDirectory() as tmp:
         root = _worktree(tmp)
-        _edit(root, os.path.join("docs", "BCIR_LANGREF.md"),
-              "| X.690 | BER, CER, DER | DER | `bcir_asn1.c` |",
-              "| X.690 | BER, CER, DER | DER | `bcir_asn1.c` |\n"
-              "| X.999 | INVENTED | none | `bcir_invented.c` |")
+        _edit(
+            root,
+            os.path.join("docs", "BCIR_LANGREF.md"),
+            "| X.690 | BER, CER, DER | DER | `bcir_asn1.c` |",
+            "| X.690 | BER, CER, DER | DER | `bcir_asn1.c` |\n"
+            "| X.999 | INVENTED | none | `bcir_invented.c` |",
+        )
         done = _run(root)
         assert done.returncode == 1, "a table row with no file behind it must fail the check"
         assert "asn1-c-twins-exist" in done.stderr
@@ -128,12 +141,17 @@ def test_the_twin_table_claim_reads_the_document_rather_than_a_hardcoded_list() 
 
 def test_the_registry_is_listable_without_running_the_predicates() -> None:
     """`--list` documents what is guarded, so adding a claim is discoverable."""
-    done = subprocess.run([sys.executable, _CHECKER, "--list"], cwd=_ROOT,
-                          capture_output=True, text=True, timeout=120)
+    done = subprocess.run(
+        [sys.executable, _CHECKER, "--list"], cwd=_ROOT, capture_output=True, text=True, timeout=120
+    )
     assert done.returncode == 0
-    for name in ("ecn-refusal-list-empty", "jer-has-all-three-rails",
-                 "r25-covers-parameterization", "asn1-c-twins-exist",
-                 "ecn-three-parts-built"):
+    for name in (
+        "ecn-refusal-list-empty",
+        "jer-has-all-three-rails",
+        "r25-covers-parameterization",
+        "asn1-c-twins-exist",
+        "ecn-three-parts-built",
+    ):
         assert name in done.stdout, name
 
 
@@ -143,8 +161,13 @@ _LAW_RANGE_CHECKER = os.path.join(_ROOT, "tools", "docs", "check_law_range.py")
 
 
 def _run_law_range(root: str, *extra: str) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, _LAW_RANGE_CHECKER, "--root", root, *extra],
-                          cwd=_ROOT, capture_output=True, text=True, timeout=180)
+    return subprocess.run(
+        [sys.executable, _LAW_RANGE_CHECKER, "--root", root, *extra],
+        cwd=_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
 
 
 def test_no_active_doc_states_a_stale_verifier_law_range() -> None:

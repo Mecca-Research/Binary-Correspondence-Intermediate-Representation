@@ -4,6 +4,7 @@ This module intentionally imports no tensor framework.  It is safe to validate m
 configuration, corpus identity, and reports on every BCIR host; actual PyTorch execution
 lives in sibling modules and is reached only by an explicit import.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -29,8 +30,12 @@ def _canonical(value) -> str:
 
 
 def _sha256(value: str, field: str) -> str:
-    if not isinstance(value, str) or len(value) != 64 or value != value.lower() \
-            or any(ch not in "0123456789abcdef" for ch in value):
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or value != value.lower()
+        or any(ch not in "0123456789abcdef" for ch in value)
+    ):
         raise ValueError(f"{field} must be a lowercase SHA-256 digest")
     return value
 
@@ -41,13 +46,15 @@ def _positive_int(value, field: str, *, maximum: int = 0x7FFFFFFF) -> int:
     return value
 
 
-def _finite(value, field: str, *, minimum: float | None = None,
-            positive: bool = False) -> float:
+def _finite(value, field: str, *, minimum: float | None = None, positive: bool = False) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{field} must be a finite number")
     out = float(value)
-    if not math.isfinite(out) or (positive and out <= 0.0) \
-            or (minimum is not None and out < minimum):
+    if (
+        not math.isfinite(out)
+        or (positive and out <= 0.0)
+        or (minimum is not None and out < minimum)
+    ):
         raise ValueError(f"{field} has an invalid value {value!r}")
     return out
 
@@ -102,8 +109,7 @@ class HostedTokenSource(Protocol):
 
     manifest: CorpusManifest
 
-    def batch(self, batch_index: int, batch_size: int,
-              context_length: int) -> list[list[int]]: ...
+    def batch(self, batch_index: int, batch_size: int, context_length: int) -> list[list[int]]: ...
 
 
 class SequenceTokenSource:
@@ -124,8 +130,7 @@ class SequenceTokenSource:
         self._ids = tuple(ids)
         self.manifest = manifest
 
-    def batch(self, batch_index: int, batch_size: int,
-              context_length: int) -> list[list[int]]:
+    def batch(self, batch_index: int, batch_size: int, context_length: int) -> list[list[int]]:
         if type(batch_index) is not int or batch_index < 0:
             raise ValueError("batch_index must be an integer >= 0")
         _positive_int(batch_size, "batch_size")
@@ -141,14 +146,37 @@ class SequenceTokenSource:
 
 
 _DECODER_FIELDS = {
-    "vocab_size", "d_model", "n_heads", "n_layers", "d_ff", "rope_base",
-    "activation", "n_kv_heads", "tied_embeddings", "rms_norm_eps",
+    "vocab_size",
+    "d_model",
+    "n_heads",
+    "n_layers",
+    "d_ff",
+    "rope_base",
+    "activation",
+    "n_kv_heads",
+    "tied_embeddings",
+    "rms_norm_eps",
 }
 _TRAIN_FIELDS = {
-    "schema", "decoder", "context_length", "batch_size", "gradient_accumulation",
-    "steps", "checkpoint_every", "optimizer", "learning_rate", "min_learning_rate",
-    "warmup_steps", "beta1", "beta2", "epsilon", "weight_decay", "grad_clip",
-    "seed", "dtype", "activation_checkpointing",
+    "schema",
+    "decoder",
+    "context_length",
+    "batch_size",
+    "gradient_accumulation",
+    "steps",
+    "checkpoint_every",
+    "optimizer",
+    "learning_rate",
+    "min_learning_rate",
+    "warmup_steps",
+    "beta1",
+    "beta2",
+    "epsilon",
+    "weight_decay",
+    "grad_clip",
+    "seed",
+    "dtype",
+    "activation_checkpointing",
 }
 
 
@@ -178,8 +206,13 @@ class HostedTrainSpec:
     def __post_init__(self) -> None:
         if not isinstance(self.decoder, DecoderSpec):
             raise ValueError("decoder must be a DecoderSpec")
-        for field in ("context_length", "batch_size", "gradient_accumulation", "steps",
-                      "checkpoint_every"):
+        for field in (
+            "context_length",
+            "batch_size",
+            "gradient_accumulation",
+            "steps",
+            "checkpoint_every",
+        ):
             _positive_int(getattr(self, field), field)
         if type(self.warmup_steps) is not int or not 0 <= self.warmup_steps <= self.steps:
             raise ValueError("warmup_steps must be an integer in [0, steps]")
@@ -281,8 +314,14 @@ class HostedRunReport:
     def __post_init__(self) -> None:
         if self.schema != "bcir.hosted_run.v1":
             raise ValueError("unsupported hosted run report schema")
-        for field in ("spec_sha256", "corpus_sha256", "tokenizer_sha256",
-                      "model_sha256", "optimizer_sha256", "checkpoint_sha256"):
+        for field in (
+            "spec_sha256",
+            "corpus_sha256",
+            "tokenizer_sha256",
+            "model_sha256",
+            "optimizer_sha256",
+            "checkpoint_sha256",
+        ):
             _sha256(getattr(self, field), field)
         for field in ("steps", "batch_index", "tokens_processed"):
             if type(getattr(self, field)) is not int or getattr(self, field) < 0:

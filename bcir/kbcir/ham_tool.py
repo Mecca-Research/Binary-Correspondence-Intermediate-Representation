@@ -15,12 +15,16 @@ from .ham import HAMWorkload, lower_ham_workload
 
 
 def _atomic_write(path: str, data: bytes) -> None:
-    target = Path(path); target.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=target.name + ".", suffix=".tmp",
-                                     dir=str(target.parent))
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        prefix=target.name + ".", suffix=".tmp", dir=str(target.parent)
+    )
     try:
         with os.fdopen(fd, "wb") as stream:
-            stream.write(data); stream.flush(); os.fsync(stream.fileno())
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
         os.replace(temporary, target)
     except BaseException:
         try:
@@ -33,8 +37,11 @@ def _atomic_write(path: str, data: bytes) -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bcir-ham-plan",
-        description=("Plan semantic resource movement from metadata only; direct routes "
-                     "exist only when declared by the hardware envelope."))
+        description=(
+            "Plan semantic resource movement from metadata only; direct routes "
+            "exist only when declared by the hardware envelope."
+        ),
+    )
     parser.add_argument("--hardware", required=True, help="HardwareEnvelope JSON")
     parser.add_argument("--workload", required=True, help="HAMWorkload JSON")
     parser.add_argument("--plan-out", required=True, help="canonical HAMExecutionPlan JSON")
@@ -43,10 +50,12 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _run(args) -> int:
-    hardware = HardwareEnvelope.from_json(read_bounded_text(
-        args.hardware, "hardware envelope", max_bytes=64 << 20))
-    workload = HAMWorkload.from_json(read_bounded_text(
-        args.workload, "HAM workload", max_bytes=32 << 20))
+    hardware = HardwareEnvelope.from_json(
+        read_bounded_text(args.hardware, "hardware envelope", max_bytes=64 << 20)
+    )
+    workload = HAMWorkload.from_json(
+        read_bounded_text(args.workload, "HAM workload", max_bytes=32 << 20)
+    )
     lowered = lower_ham_workload(workload, hardware)
     _atomic_write(args.plan_out, lowered.artifact.to_json().encode("utf-8") + b"\n")
     if args.pack_out:

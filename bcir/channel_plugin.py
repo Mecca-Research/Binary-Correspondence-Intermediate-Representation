@@ -24,6 +24,7 @@ The built-in channels round-trip through this format byte-for-byte (a test), so 
 complete. Loading is dependency-free: ``channel.json`` files on a search path (or ``$BCIR_CHANNEL_PATH``)
 and, when the package is installed, Python entry points in the ``bcir.channels`` group.
 """
+
 from __future__ import annotations
 
 import glob
@@ -81,8 +82,12 @@ def _object(value, where: str, *, fields: set[str]) -> dict:
 
 
 def _string(value, where: str, *, allow_empty: bool = True) -> str:
-    if (not isinstance(value, str) or len(value) > _MAX_STRING or
-            any(ord(ch) < 0x20 for ch in value) or (not allow_empty and not value)):
+    if (
+        not isinstance(value, str)
+        or len(value) > _MAX_STRING
+        or any(ord(ch) < 0x20 for ch in value)
+        or (not allow_empty and not value)
+    ):
         qualifier = "a non-empty" if not allow_empty else "a"
         raise ValueError(f"{where} must be {qualifier} bounded string")
     return value
@@ -116,12 +121,24 @@ def _parse_manifest_document(d: object) -> dict:
     fields, oversized collections, and invalid arithmetic constants here prevents a
     malformed plugin from reaching cost calculations or the global channel registry.
     """
-    top = _object(d, "channel manifest", fields={
-        "format_version", "name", "kind", "provenance", "modeled", "arch_match",
-        "capabilities", "codegen", "runtime", "calibration", "profile",
-    })
-    _integer(top["format_version"], "format_version", minimum=1,
-             maximum=PLUGIN_FORMAT_VERSION)
+    top = _object(
+        d,
+        "channel manifest",
+        fields={
+            "format_version",
+            "name",
+            "kind",
+            "provenance",
+            "modeled",
+            "arch_match",
+            "capabilities",
+            "codegen",
+            "runtime",
+            "calibration",
+            "profile",
+        },
+    )
+    _integer(top["format_version"], "format_version", minimum=1, maximum=PLUGIN_FORMAT_VERSION)
     _string(top["name"], "name", allow_empty=False)
     _string(top["kind"], "kind", allow_empty=False)
     _string(top["provenance"], "provenance", allow_empty=False)
@@ -133,18 +150,31 @@ def _parse_manifest_document(d: object) -> dict:
     _string(codegen["llvm_triple"], "codegen.llvm_triple")
     _integer(codegen["e_machine"], "codegen.e_machine", maximum=0xFFFF)
 
-    runtime = _object(top["runtime"], "runtime", fields={
-        "perf_syscall_nr", "energy_source", "thermal_zone_types",
-    })
+    runtime = _object(
+        top["runtime"],
+        "runtime",
+        fields={
+            "perf_syscall_nr",
+            "energy_source",
+            "thermal_zone_types",
+        },
+    )
     _integer(runtime["perf_syscall_nr"], "runtime.perf_syscall_nr", maximum=1 << 20)
     energy = _string(runtime["energy_source"], "runtime.energy_source", allow_empty=False)
     if energy not in _ENERGY_SOURCES:
         raise ValueError(f"runtime.energy_source {energy!r} is not supported")
     _string_list(runtime["thermal_zone_types"], "runtime.thermal_zone_types", max_items=64)
 
-    calibration = _object(top["calibration"], "calibration", fields={
-        "ref", "digest", "cal_gen", "provenance",
-    })
+    calibration = _object(
+        top["calibration"],
+        "calibration",
+        fields={
+            "ref",
+            "digest",
+            "cal_gen",
+            "provenance",
+        },
+    )
     _string(calibration["ref"], "calibration.ref")
     _string(calibration["digest"], "calibration.digest")
     _integer(calibration["cal_gen"], "calibration.cal_gen")
@@ -152,16 +182,42 @@ def _parse_manifest_document(d: object) -> dict:
     if cal_prov not in _CALIBRATION_PROVENANCE:
         raise ValueError(f"calibration.provenance {cal_prov!r} is not supported")
 
-    profile = _object(top["profile"], "profile", fields={
-        "name", "triple", "cacheline", "elem_bytes", "lane_widths", "warp",
-        "scalable", "gather_penalty", "mem_unit", "base_overhead", "thermal_density",
-        "power_density", "per_op_heat", "fma", "isa_features", "affinity_domains",
-        "mem_channels", "cal_gen", "mem_tiers",
-    })
+    profile = _object(
+        top["profile"],
+        "profile",
+        fields={
+            "name",
+            "triple",
+            "cacheline",
+            "elem_bytes",
+            "lane_widths",
+            "warp",
+            "scalable",
+            "gather_penalty",
+            "mem_unit",
+            "base_overhead",
+            "thermal_density",
+            "power_density",
+            "per_op_heat",
+            "fma",
+            "isa_features",
+            "affinity_domains",
+            "mem_channels",
+            "cal_gen",
+            "mem_tiers",
+        },
+    )
     _string(profile["name"], "profile.name", allow_empty=False)
     _string(profile["triple"], "profile.triple", allow_empty=False)
-    for key in ("cacheline", "elem_bytes", "gather_penalty", "mem_unit", "base_overhead",
-                "affinity_domains", "mem_channels"):
+    for key in (
+        "cacheline",
+        "elem_bytes",
+        "gather_penalty",
+        "mem_unit",
+        "base_overhead",
+        "affinity_domains",
+        "mem_channels",
+    ):
         _integer(profile[key], f"profile.{key}", minimum=1)
     for key in ("warp", "thermal_density", "power_density", "per_op_heat", "cal_gen"):
         _integer(profile[key], f"profile.{key}")
@@ -170,8 +226,9 @@ def _parse_manifest_document(d: object) -> dict:
     widths = profile["lane_widths"]
     if not isinstance(widths, list) or not widths or len(widths) > 64:
         raise ValueError("profile.lane_widths must be a non-empty array of at most 64 integers")
-    parsed_widths = tuple(_integer(v, f"profile.lane_widths[{i}]", minimum=1)
-                          for i, v in enumerate(widths))
+    parsed_widths = tuple(
+        _integer(v, f"profile.lane_widths[{i}]", minimum=1) for i, v in enumerate(widths)
+    )
     if parsed_widths[0] != 1 or tuple(sorted(set(parsed_widths))) != parsed_widths:
         raise ValueError("profile.lane_widths must start at 1 and be strictly increasing")
     _string_list(profile["isa_features"], "profile.isa_features")
@@ -180,11 +237,18 @@ def _parse_manifest_document(d: object) -> dict:
         raise ValueError("profile.mem_tiers must be an array of at most 64 tiers")
     tier_names = []
     for i, raw in enumerate(tiers):
-        tier = _object(raw, f"profile.mem_tiers[{i}]", fields={
-            "name", "latency_cyc", "bw_factor", "lat_factor", "capacity",
-        })
-        tier_names.append(_string(tier["name"], f"profile.mem_tiers[{i}].name",
-                                  allow_empty=False))
+        tier = _object(
+            raw,
+            f"profile.mem_tiers[{i}]",
+            fields={
+                "name",
+                "latency_cyc",
+                "bw_factor",
+                "lat_factor",
+                "capacity",
+            },
+        )
+        tier_names.append(_string(tier["name"], f"profile.mem_tiers[{i}].name", allow_empty=False))
         for key in ("latency_cyc", "bw_factor", "lat_factor"):
             _integer(tier[key], f"profile.mem_tiers[{i}].{key}", minimum=1)
         _integer(tier["capacity"], f"profile.mem_tiers[{i}].capacity")
@@ -195,40 +259,70 @@ def _parse_manifest_document(d: object) -> dict:
 
 # --- (2) target profile schema: a faithful, declarative serialization of TargetProfile ----------
 def _tier_to_schema(t: Tier) -> dict:
-    return {"name": t.name, "latency_cyc": t.latency_cyc, "bw_factor": t.bw_factor,
-            "lat_factor": t.lat_factor, "capacity": t.capacity}
+    return {
+        "name": t.name,
+        "latency_cyc": t.latency_cyc,
+        "bw_factor": t.bw_factor,
+        "lat_factor": t.lat_factor,
+        "capacity": t.capacity,
+    }
 
 
 def _tier_from_schema(d: dict) -> Tier:
-    return Tier(name=d["name"], latency_cyc=d["latency_cyc"], bw_factor=d["bw_factor"],
-                lat_factor=d["lat_factor"], capacity=d.get("capacity", 0))
+    return Tier(
+        name=d["name"],
+        latency_cyc=d["latency_cyc"],
+        bw_factor=d["bw_factor"],
+        lat_factor=d["lat_factor"],
+        capacity=d.get("capacity", 0),
+    )
 
 
 def profile_to_schema(p: TargetProfile) -> dict:
     """The cost model H as JSON — every field the optimizer prices, so a plugin fully declares its
     cost identity (no hidden reference into the built-in registry)."""
     return {
-        "name": p.name, "triple": p.triple, "cacheline": p.cacheline, "elem_bytes": p.elem_bytes,
-        "lane_widths": list(p.lane_widths), "warp": p.warp, "scalable": p.scalable,
-        "gather_penalty": p.gather_penalty, "mem_unit": p.mem_unit,
-        "base_overhead": p.base_overhead, "thermal_density": p.thermal_density,
-        "power_density": p.power_density, "per_op_heat": p.per_op_heat, "fma": p.fma,
-        "isa_features": sorted(p.isa_features), "affinity_domains": p.affinity_domains,
-        "mem_channels": p.mem_channels, "cal_gen": p.cal_gen,
+        "name": p.name,
+        "triple": p.triple,
+        "cacheline": p.cacheline,
+        "elem_bytes": p.elem_bytes,
+        "lane_widths": list(p.lane_widths),
+        "warp": p.warp,
+        "scalable": p.scalable,
+        "gather_penalty": p.gather_penalty,
+        "mem_unit": p.mem_unit,
+        "base_overhead": p.base_overhead,
+        "thermal_density": p.thermal_density,
+        "power_density": p.power_density,
+        "per_op_heat": p.per_op_heat,
+        "fma": p.fma,
+        "isa_features": sorted(p.isa_features),
+        "affinity_domains": p.affinity_domains,
+        "mem_channels": p.mem_channels,
+        "cal_gen": p.cal_gen,
         "mem_tiers": [_tier_to_schema(t) for t in p.mem.tiers],
     }
 
 
 def schema_to_profile(d: dict) -> TargetProfile:
     return TargetProfile(
-        name=d["name"], triple=d["triple"], cacheline=d.get("cacheline", 64),
-        elem_bytes=d.get("elem_bytes", 4), lane_widths=tuple(d["lane_widths"]),
-        warp=d.get("warp", 0), scalable=d.get("scalable", False),
-        gather_penalty=d["gather_penalty"], mem_unit=d["mem_unit"],
-        base_overhead=d["base_overhead"], thermal_density=d.get("thermal_density", 0),
-        power_density=d.get("power_density", 0), per_op_heat=d.get("per_op_heat", 0),
-        fma=d.get("fma", True), isa_features=frozenset(d.get("isa_features", ())),
-        affinity_domains=d.get("affinity_domains", 1), mem_channels=d.get("mem_channels", 1),
+        name=d["name"],
+        triple=d["triple"],
+        cacheline=d.get("cacheline", 64),
+        elem_bytes=d.get("elem_bytes", 4),
+        lane_widths=tuple(d["lane_widths"]),
+        warp=d.get("warp", 0),
+        scalable=d.get("scalable", False),
+        gather_penalty=d["gather_penalty"],
+        mem_unit=d["mem_unit"],
+        base_overhead=d["base_overhead"],
+        thermal_density=d.get("thermal_density", 0),
+        power_density=d.get("power_density", 0),
+        per_op_heat=d.get("per_op_heat", 0),
+        fma=d.get("fma", True),
+        isa_features=frozenset(d.get("isa_features", ())),
+        affinity_domains=d.get("affinity_domains", 1),
+        mem_channels=d.get("mem_channels", 1),
         cal_gen=d.get("cal_gen", 0),
         mem=MemoryHierarchy(tiers=tuple(_tier_from_schema(t) for t in d.get("mem_tiers", ()))),
     )
@@ -239,20 +333,29 @@ def schema_to_profile(d: dict) -> TargetProfile:
 class CalibrationArtifact:
     """A reference to the calibration data behind a channel's cost profile. ``provenance`` says
     whether the numbers were *measured* on the part, *modeled*, or absent."""
-    ref: str = ""                                    # path / URI to the calibration record
-    digest: str = ""                                 # content digest (tamper / drift check)
-    cal_gen: int = 0                                 # the calibration generation baked into profile
-    provenance: str = "none"                         # measured | modeled | none
+
+    ref: str = ""  # path / URI to the calibration record
+    digest: str = ""  # content digest (tamper / drift check)
+    cal_gen: int = 0  # the calibration generation baked into profile
+    provenance: str = "none"  # measured | modeled | none
 
     def to_dict(self) -> dict:
-        return {"ref": self.ref, "digest": self.digest, "cal_gen": self.cal_gen,
-                "provenance": self.provenance}
+        return {
+            "ref": self.ref,
+            "digest": self.digest,
+            "cal_gen": self.cal_gen,
+            "provenance": self.provenance,
+        }
 
     @classmethod
     def from_dict(cls, d: dict) -> "CalibrationArtifact":
         d = d or {}
-        return cls(ref=d.get("ref", ""), digest=d.get("digest", ""),
-                   cal_gen=d.get("cal_gen", 0), provenance=d.get("provenance", "none"))
+        return cls(
+            ref=d.get("ref", ""),
+            digest=d.get("digest", ""),
+            cal_gen=d.get("cal_gen", 0),
+            provenance=d.get("provenance", "none"),
+        )
 
 
 # --- the manifest: the stable plugin format ------------------------------------------------------
@@ -282,9 +385,11 @@ class ChannelManifest:
             "arch_match": list(self.arch_match),
             "capabilities": sorted(self.capabilities),
             "codegen": {"llvm_triple": self.llvm_triple, "e_machine": self.e_machine},
-            "runtime": {"perf_syscall_nr": self.runtime.perf_syscall_nr,
-                        "energy_source": self.runtime.energy_source,
-                        "thermal_zone_types": list(self.runtime.thermal_zone_types)},
+            "runtime": {
+                "perf_syscall_nr": self.runtime.perf_syscall_nr,
+                "energy_source": self.runtime.energy_source,
+                "thermal_zone_types": list(self.runtime.thermal_zone_types),
+            },
             "calibration": self.calibration.to_dict(),
             "profile": profile_to_schema(self.profile),
         }
@@ -295,17 +400,23 @@ class ChannelManifest:
         cg = d["codegen"]
         rt = d["runtime"]
         return cls(
-            name=d["name"], kind=d["kind"],
+            name=d["name"],
+            kind=d["kind"],
             profile=schema_to_profile(d["profile"]),
-            llvm_triple=cg["llvm_triple"], e_machine=cg["e_machine"],
+            llvm_triple=cg["llvm_triple"],
+            e_machine=cg["e_machine"],
             runtime=RuntimeChannel(
                 perf_syscall_nr=rt["perf_syscall_nr"],
                 energy_source=rt["energy_source"],
-                thermal_zone_types=tuple(rt["thermal_zone_types"])),
+                thermal_zone_types=tuple(rt["thermal_zone_types"]),
+            ),
             capabilities=frozenset(d["capabilities"]),
             calibration=CalibrationArtifact.from_dict(d["calibration"]),
-            provenance=d["provenance"], modeled=d["modeled"],
-            arch_match=tuple(d["arch_match"]), format_version=d["format_version"])
+            provenance=d["provenance"],
+            modeled=d["modeled"],
+            arch_match=tuple(d["arch_match"]),
+            format_version=d["format_version"],
+        )
 
     # --- schema validation ---
     def validate(self) -> list[str]:
@@ -326,11 +437,15 @@ class ChannelManifest:
             errs.append(f"provenance {self.provenance!r} not in {sorted(PROVENANCE)}")
         bad_caps = self.capabilities - CAPABILITY_VOCAB
         if bad_caps:
-            errs.append(f"unknown capabilities {sorted(bad_caps)} (vocab: {sorted(CAPABILITY_VOCAB)})")
+            errs.append(
+                f"unknown capabilities {sorted(bad_caps)} (vocab: {sorted(CAPABILITY_VOCAB)})"
+            )
         if not self.profile.lane_widths or self.profile.lane_widths[0] != 1:
             errs.append("profile.lane_widths must be non-empty and start at the scalar width 1")
         if self.e_machine != EM_NONE and self.kind != "cpu":
-            errs.append(f"e_machine set on a non-cpu kind {self.kind!r} (only cpu makes a host ELF)")
+            errs.append(
+                f"e_machine set on a non-cpu kind {self.kind!r} (only cpu makes a host ELF)"
+            )
         if self.provenance == "real" and self.modeled:
             errs.append("provenance 'real' contradicts modeled=True")
         if self.calibration.cal_gen != self.profile.cal_gen:
@@ -340,22 +455,43 @@ class ChannelManifest:
     # --- (build) a live channel ---
     def to_channel(self) -> HardwareChannel:
         return HardwareChannel(
-            name=self.name, kind=self.kind, profile=self.profile, llvm_triple=self.llvm_triple,
-            e_machine=self.e_machine, runtime=self.runtime, arch_match=self.arch_match,
-            modeled=self.modeled, capabilities=self.capabilities)
+            name=self.name,
+            kind=self.kind,
+            profile=self.profile,
+            llvm_triple=self.llvm_triple,
+            e_machine=self.e_machine,
+            runtime=self.runtime,
+            arch_match=self.arch_match,
+            modeled=self.modeled,
+            capabilities=self.capabilities,
+        )
 
 
-def manifest_from_channel(ch: HardwareChannel, *, calibration: CalibrationArtifact | None = None,
-                          provenance: str | None = None) -> ChannelManifest:
+def manifest_from_channel(
+    ch: HardwareChannel,
+    *,
+    calibration: CalibrationArtifact | None = None,
+    provenance: str | None = None,
+) -> ChannelManifest:
     """Express a live channel as a manifest (the built-ins round-trip through this, proving the
     schema is complete). ``provenance`` defaults from the channel's ``modeled`` flag."""
     prov = provenance or ("modeled" if ch.modeled else "real")
-    cal = calibration or CalibrationArtifact(cal_gen=ch.profile.cal_gen,
-                                             provenance="modeled" if ch.modeled else "measured")
+    cal = calibration or CalibrationArtifact(
+        cal_gen=ch.profile.cal_gen, provenance="modeled" if ch.modeled else "measured"
+    )
     return ChannelManifest(
-        name=ch.name, kind=ch.kind, profile=ch.profile, llvm_triple=ch.llvm_triple,
-        e_machine=ch.e_machine, runtime=ch.runtime, capabilities=ch.capabilities,
-        calibration=cal, provenance=prov, modeled=ch.modeled, arch_match=ch.arch_match)
+        name=ch.name,
+        kind=ch.kind,
+        profile=ch.profile,
+        llvm_triple=ch.llvm_triple,
+        e_machine=ch.e_machine,
+        runtime=ch.runtime,
+        capabilities=ch.capabilities,
+        calibration=cal,
+        provenance=prov,
+        modeled=ch.modeled,
+        arch_match=ch.arch_match,
+    )
 
 
 # --- loading + registration ----------------------------------------------------------------------
@@ -365,11 +501,20 @@ def load_manifest(path: str) -> ChannelManifest:
             raw = f.read(_MAX_MANIFEST_BYTES + 1)
         if len(raw) > _MAX_MANIFEST_BYTES:
             raise ValueError(f"channel manifest exceeds {_MAX_MANIFEST_BYTES} bytes")
-        doc = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_keys,
-                         parse_constant=_reject_json_constant)
+        doc = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_json_constant,
+        )
         return ChannelManifest.from_dict(doc)
-    except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError,
-            RecursionError) as exc:
+    except (
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        RecursionError,
+    ) as exc:
         raise ValueError(f"invalid channel manifest {path!r}: {exc}") from exc
 
 
@@ -412,9 +557,13 @@ def discover_plugins(dirs=None, *, entry_points: bool = True) -> list[HardwareCh
     if entry_points:
         try:
             from importlib.metadata import entry_points as _eps  # noqa: PLC0415
+
             eps = _eps()
-            group = eps.select(group="bcir.channels") if hasattr(eps, "select") \
+            group = (
+                eps.select(group="bcir.channels")
+                if hasattr(eps, "select")
                 else eps.get("bcir.channels", [])
+            )
             for ep in group:
                 obj = ep.load()
                 manifest = obj() if callable(obj) else obj

@@ -32,18 +32,17 @@ def _ledger_with(rule, regret, best, episodes):
     """A synthetic ledger: `episodes` measurements, each `regret` over `best`."""
     L = RegretLedger()
     for _ in range(episodes):
-        L.record(RegretMeasurement(rule=rule, deployed=best + regret, best=best,
-                                   best_rule="x"))
+        L.record(RegretMeasurement(rule=rule, deployed=best + regret, best=best, best_rule="x"))
     return L
 
 
 # --- the regret ledger ------------------------------------------------------------
 
+
 def test_default_portfolio_has_zero_regret():
     # The seeded portfolio's class-table selection is hindsight-optimal among
     # its own certified entries on the standard episodes: the dashboard is calm.
-    ledger = ledger_from_episodes(vector_add(1024), AVX, EPISODES,
-                                  PolicyPortfolio.default())
+    ledger = ledger_from_episodes(vector_add(1024), AVX, EPISODES, PolicyPortfolio.default())
     assert all(e.total_regret == 0 for e in ledger.entries.values())
     assert all(v.verdict == "keep" for v in boundary_report(ledger))
 
@@ -52,8 +51,9 @@ def test_regret_is_pinned_for_a_bad_rule():
     # hotbias deployed on a cool machine picks vec8; judged under the neutral
     # latency yardstick that plan prices 9472 vs the hindsight-best 7808:
     # regret 1664, attributed to the deployed rule.
-    m = measure_regret(vector_add(1024), AVX, Theta.cool(), HOTBIAS,
-                       [PERF, THROUGHPUT, ENERGY, SAFE])
+    m = measure_regret(
+        vector_add(1024), AVX, Theta.cool(), HOTBIAS, [PERF, THROUGHPUT, ENERGY, SAFE]
+    )
     assert (m.deployed, m.best, m.regret) == (9472, 7808, 1664)
     assert m.best_rule == "latency"
 
@@ -71,8 +71,7 @@ def test_ledger_books_accumulate_and_render():
     # regret and the boundary report flags exactly that rule for retuning.
     p = PolicyPortfolio.default()
     p.entries["latency"] = PortfolioEntry(policy=HOTBIAS, gen=1, certified=True)
-    ledger = ledger_from_episodes(vector_add(1024), AVX,
-                                  [Theta.cool(), Theta.cool()], p)
+    ledger = ledger_from_episodes(vector_add(1024), AVX, [Theta.cool(), Theta.cool()], p)
     e = ledger.entries["hotbias"]
     assert (e.episodes, e.total_regret, e.worst_regret, e.regret_rate) == (2, 3328, 1664, 1664)
     assert "hotbias" in ledger.dashboard()
@@ -81,6 +80,7 @@ def test_ledger_books_accumulate_and_render():
 
 
 # --- the MDL / Bayesian-evidence retune criterion --------------------------------
+
 
 def test_mdl_keeps_negligible_sustained_regret():
     # ~0.1% regret per episode over a handful of episodes: the BIC penalty
@@ -117,13 +117,13 @@ def test_evidence_margin_components_are_pinned():
 
 def test_default_dashboard_uses_the_mdl_criterion():
     # The zero-regret default portfolio reads all-keep with zero data-fit bits.
-    ledger = ledger_from_episodes(vector_add(1024), AVX, EPISODES,
-                                  PolicyPortfolio.default())
+    ledger = ledger_from_episodes(vector_add(1024), AVX, EPISODES, PolicyPortfolio.default())
     for v in boundary_report(ledger):
         assert v.verdict == "keep" and v.data_fit_nats == 0.0
 
 
 # --- R13: boundary-verdict provenance --------------------------------------------
+
 
 def test_consistent_verdicts_satisfy_R13():
     verdicts = boundary_report(_ledger_with("r", 1664, 7808, 10))
@@ -131,14 +131,26 @@ def test_consistent_verdicts_satisfy_R13():
 
 
 def test_forged_retune_without_evidence_is_R13():
-    bad = BoundaryVerdict(rule="r", verdict="retune", regret_rate=0, episodes=3,
-                          data_fit_nats=0.1, complexity_nats=0.8)
+    bad = BoundaryVerdict(
+        rule="r",
+        verdict="retune",
+        regret_rate=0,
+        episodes=3,
+        data_fit_nats=0.1,
+        complexity_nats=0.8,
+    )
     assert "R13" in _laws(verify_provenance(None, verdicts=[bad]))
 
 
 def test_keep_ignoring_justified_regret_is_R13():
-    bad = BoundaryVerdict(rule="r", verdict="keep", regret_rate=999, episodes=10,
-                          data_fit_nats=1.5, complexity_nats=1.0)
+    bad = BoundaryVerdict(
+        rule="r",
+        verdict="keep",
+        regret_rate=999,
+        episodes=10,
+        data_fit_nats=1.5,
+        complexity_nats=1.0,
+    )
     assert "R13" in _laws(verify_provenance(None, verdicts=[bad]))
 
 
@@ -150,6 +162,7 @@ def test_ledger_is_deterministic():
 
 
 # --- law R13: policy/table provenance ----------------------------------------------
+
 
 def test_promoted_policy_without_certificate_is_R13():
     p = PolicyPortfolio.default()
@@ -173,8 +186,7 @@ def test_certified_promotion_satisfies_R13():
 def test_forged_certificate_does_not_cover_the_swap():
     p = PolicyPortfolio.default()
     p.entries["latency"] = PortfolioEntry(policy=PERF, gen=2, certified=True)
-    forged = ReplayCertificate(candidate="other", incumbent="latency",
-                               episodes=3, regressions=0)
+    forged = ReplayCertificate(candidate="other", incumbent="latency", episodes=3, regressions=0)
     assert "R13" in _laws(verify_provenance(p, certificates=[forged]))
 
 

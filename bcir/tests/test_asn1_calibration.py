@@ -18,8 +18,16 @@ import os
 import tempfile
 
 from bcir.asn1.calibration import (
-    DEDICATED, STORE, TIMING_METHOD, CalibrationRecord, CandidateRow, as_json, calibration_corpus,
-    corpus_digest, load_records, render,
+    DEDICATED,
+    STORE,
+    TIMING_METHOD,
+    CalibrationRecord,
+    CandidateRow,
+    as_json,
+    calibration_corpus,
+    corpus_digest,
+    load_records,
+    render,
 )
 from bcir.asn1.certified import MIN_SAMPLES
 from bcir.asn1.tags import Asn1Error
@@ -41,9 +49,17 @@ def _rows() -> tuple[CandidateRow, ...]:
 
 
 def _record(**overrides) -> CalibrationRecord:
-    fields = dict(target="Test Target", arch="aarch64", tenancy=DEDICATED, cal_gen=1,
-                  rows=_rows(), cpus=(7,), steal_ticks=0, throttled_usec=0,
-                  corpus=corpus_digest())
+    fields = dict(
+        target="Test Target",
+        arch="aarch64",
+        tenancy=DEDICATED,
+        cal_gen=1,
+        rows=_rows(),
+        cpus=(7,),
+        steal_ticks=0,
+        throttled_usec=0,
+        corpus=corpus_digest(),
+    )
     fields.update(overrides)
     return CalibrationRecord(**fields)
 
@@ -199,10 +215,12 @@ def test_the_repository_store_loads_and_admits_only_what_it_should():
         for problem in record.refusals():
             assert problem.startswith(superseded), (
                 f"{record.target} is in the store and is refused for a reason other than "
-                f"being superseded: {problem}")
+                f"being superseded: {problem}"
+            )
         assert record.corpus in ("", corpus_digest()) or record.method != TIMING_METHOD, (
             f"{record.target} measured corpus {record.corpus} but this revision compiles "
-            f"{corpus_digest()}")
+            f"{corpus_digest()}"
+        )
 
 
 def _ticked(ticks: int, quantum: int = 52, n: int = MIN_SAMPLES) -> tuple[int, ...]:
@@ -218,15 +236,20 @@ def test_a_coarse_clock_is_detected_from_the_samples_themselves():
     are 2, 3, 4, 5 and 8 *ticks*. No field records the clock; it is inferred from the numbers,
     which is what makes the check work on a record taken before anyone thought to measure it.
     """
-    rows = (CandidateRow("BER", 24, _ticked(2), _ticked(2)),
-            CandidateRow("DER", 24, _ticked(3), _ticked(2)),
-            CandidateRow("JER", 71, _ticked(4), _ticked(8)))
+    rows = (
+        CandidateRow("BER", 24, _ticked(2), _ticked(2)),
+        CandidateRow("DER", 24, _ticked(3), _ticked(2)),
+        CandidateRow("JER", 71, _ticked(4), _ticked(8)),
+    )
     assert 50 <= _record(rows=rows).observed_quantum() <= 54
 
     # A host with a fine clock must not be penalised: dense, non-multiple samples estimate
     # ~1 ns and nothing downstream is widened.
-    fine = (CandidateRow("BER", 24, (204, 207, 211, 206, 209, 203, 212),
-                         (201, 205, 208, 202, 210, 206, 213)),)
+    fine = (
+        CandidateRow(
+            "BER", 24, (204, 207, 211, 206, 209, 203, 212), (201, 205, 208, 202, 210, 206, 213)
+        ),
+    )
     assert _record(rows=fine).observed_quantum() == 1.0
 
 
@@ -238,30 +261,36 @@ def test_a_table_interval_is_never_narrower_than_the_clock_that_produced_it():
     resolution — so the table widens, and the one-tick pair becomes correctly indistinguishable
     while a genuine four-tick gap stays disjoint.
     """
-    rows = (CandidateRow("BER", 24, _ticked(2), _ticked(2)),
-            CandidateRow("DER", 24, _ticked(3), _ticked(2)),
-            CandidateRow("JER", 71, _ticked(4), _ticked(8)))
+    rows = (
+        CandidateRow("BER", 24, _ticked(2), _ticked(2)),
+        CandidateRow("DER", 24, _ticked(3), _ticked(2)),
+        CandidateRow("JER", 71, _ticked(4), _ticked(8)),
+    )
     table = {row.candidate: row for row in _record(rows=rows).table().rows}
 
     ber, der, jer = table["BER"].encode, table["DER"].encode, table["JER"].decode
     assert ber.high - ber.low >= 50, f"a degenerate interval survived: {ber}"
     assert ber.overlaps(der), (
-        "one tick apart must read as indistinguishable, not as a significant difference")
-    assert not ber.overlaps(jer), (
-        f"a six-tick gap must survive widening: {ber} against {jer}")
+        "one tick apart must read as indistinguishable, not as a significant difference"
+    )
+    assert not ber.overlaps(jer), f"a six-tick gap must survive widening: {ber} against {jer}"
     # The median is the measurement and must not move.
     assert table["BER"].encode.median == 104
 
 
 def test_widening_leaves_an_already_honest_interval_alone():
     """This corrects a false precision; it does not inflate a real measurement."""
-    spread = (CandidateRow("BER", 24, (100, 180, 260, 140, 220, 160, 240),
-                           (100, 180, 260, 140, 220, 160, 240)),)
+    spread = (
+        CandidateRow(
+            "BER", 24, (100, 180, 260, 140, 220, 160, 240), (100, 180, 260, 140, 220, 160, 240)
+        ),
+    )
     record = _record(rows=spread)
     original = spread[0].encode_interval()
     widened = record.table().rows[0].encode
     assert (widened.low, widened.high) == (original.low, original.high), (
-        f"an interval already wider than the clock was altered: {original} -> {widened}")
+        f"an interval already wider than the clock was altered: {original} -> {widened}"
+    )
 
 
 def test_the_counter_state_is_recorded_rather_than_acted_on():
@@ -288,7 +317,8 @@ def test_the_native_harness_reports_its_counter_state_honestly():
     state = native_counters()
     assert state and state != "not reported", (
         f"the harness did not report a counter state ({state!r}); a silent absence is how a "
-        f"wall-clock figure ends up under a cycles heading")
+        f"wall-clock figure ends up under a cycles heading"
+    )
     # Either a real PMU, or a reason. Never an empty claim.
     assert state == "cycles" or len(state) > 3, state
 
@@ -322,8 +352,16 @@ def test_the_capability_probe_runs_and_reports_what_blocks_measurement():
 
     # Policy and surface are separate fields on purpose; collapsing them would hide the
     # distinction this whole document exists to draw.
-    for field in ("perf_event_paranoid", "hardware_pmu", "cpufreq_exposed", "kernel_headers",
-                  "can_pin_cpu", "observed_clock_tick_ns", "arch", "virtualization"):
+    for field in (
+        "perf_event_paranoid",
+        "hardware_pmu",
+        "cpufreq_exposed",
+        "kernel_headers",
+        "can_pin_cpu",
+        "observed_clock_tick_ns",
+        "arch",
+        "virtualization",
+    ):
         assert field in record, f"the probe does not report {field}"
     assert isinstance(record["hardware_pmu"], bool), record["hardware_pmu"]
     # Pinning is the one capability every admitted calibration record depends on, so a host

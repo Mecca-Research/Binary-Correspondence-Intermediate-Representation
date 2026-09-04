@@ -15,14 +15,25 @@ there too (the prior follows the measured cost model, never overrides the exact 
 import dataclasses
 
 from bcir.kbcir.cost import TargetProfile
-from bcir.kbcir.tile_prior import (FrozenTilePrior, guided_plan_matmul, prior_samples,
-                                   tile_prior_certificate, train_tile_prior)
+from bcir.kbcir.tile_prior import (
+    FrozenTilePrior,
+    guided_plan_matmul,
+    prior_samples,
+    tile_prior_certificate,
+    train_tile_prior,
+)
 
 AVX = TargetProfile.x86_avx512()
-TRAIN = [(16, 16, 16), (32, 32, 32), (64, 64, 64), (32, 64, 128),
-         (128, 32, 16), (8, 256, 8), (64, 16, 256)]
-HELD_OUT = [(48, 48, 48), (16, 128, 64), (256, 64, 32), (96, 24, 96),
-            (8, 8, 512), (160, 160, 16)]
+TRAIN = [
+    (16, 16, 16),
+    (32, 32, 32),
+    (64, 64, 64),
+    (32, 64, 128),
+    (128, 32, 16),
+    (8, 256, 8),
+    (64, 16, 256),
+]
+HELD_OUT = [(48, 48, 48), (16, 128, 64), (256, 64, 32), (96, 24, 96), (8, 8, 512), (160, 160, 16)]
 
 
 def _frozen(target=AVX):
@@ -44,7 +55,7 @@ def test_the_early_exit_is_a_proof_not_a_heuristic():
     starved = dataclasses.replace(AVX, mem_channels=1, name="starved")
     cert = tile_prior_certificate(HELD_OUT, _frozen(starved), starved)
     assert cert.admitted and cert.mismatches == 0, cert
-    assert cert.nodes_guided == cert.nodes_exhaustive       # degenerated, honestly
+    assert cert.nodes_guided == cert.nodes_exhaustive  # degenerated, honestly
 
 
 def test_retrained_under_the_calibrated_profile_the_certificate_still_holds():
@@ -76,6 +87,7 @@ def test_persisted_prior_round_trips_and_refuses_staleness():
     the certificate admitted."""
     import json
     from bcir.kbcir.tile_prior import load_tile_prior, save_tile_prior
+
     pri = _frozen()
     text = save_tile_prior(pri, target_name=AVX.name, cal_gen=3)
     d = json.loads(text)
@@ -84,8 +96,10 @@ def test_persisted_prior_round_trips_and_refuses_staleness():
     assert back == pri
     cert = tile_prior_certificate(HELD_OUT[:3], back, AVX)
     assert cert.admitted and cert.mismatches == 0
-    for kwargs, msg in ((dict(expect_target=AVX.name, expect_cal_gen=4), "STALE"),
-                        (dict(expect_target="other-host", expect_cal_gen=3), "retrain")):
+    for kwargs, msg in (
+        (dict(expect_target=AVX.name, expect_cal_gen=4), "STALE"),
+        (dict(expect_target="other-host", expect_cal_gen=3), "retrain"),
+    ):
         try:
             load_tile_prior(text, **kwargs)
             raise AssertionError(f"must refuse: {msg}")

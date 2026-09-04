@@ -10,6 +10,7 @@ under ``--require-compiled``, which CI passes in the job that builds it.
 This campaign does not add compiled laws. Oracle-only laws such as R1.1
 (claim-id uniqueness per Module) stay on the Python rail.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -140,7 +141,7 @@ def parse_mlir_text(text: str) -> dict[str, Any]:
     module_starts = [m.start() for m in re.finditer(r"bcir\.module\b", stripped)]
     module_starts.append(len(stripped))
     for index in range(len(module_starts) - 1):
-        body = stripped[module_starts[index]:module_starts[index + 1]]
+        body = stripped[module_starts[index] : module_starts[index + 1]]
         claim_ids = re.findall(r"claim_id\s*=\s*(-?\d+)", body)
         if len(claim_ids) != len(set(claim_ids)):
             return {"state": "PASS", "rejected": True, "reason": "duplicate-claim-id"}
@@ -150,7 +151,7 @@ def parse_mlir_text(text: str) -> dict[str, Any]:
         starts = [match.start() for match in re.finditer(r"bcir\.claim\b", body)]
         starts.append(len(body))
         for claim_index in range(len(starts) - 1):
-            block = body[starts[claim_index]:starts[claim_index + 1]]
+            block = body[starts[claim_index] : starts[claim_index + 1]]
             if re.search(r"lane\s*=\s*#bcir\.lane<a>", block) and re.search(
                 r"hazard\s*=\s*#bcir\.hazard<unique>", block
             ):
@@ -180,7 +181,7 @@ def _official_r5_mlir() -> str:
         "  }\n"
         "  bcir.phase @p0 { id = 0 : i32, deps = [] }\n"
         "  bcir.claim @c attributes {\n"
-        "    claim_id = 1 : i32, phase = @p0, op = \"atomic.add\", reads = [@T], writes = [@T], "
+        '    claim_id = 1 : i32, phase = @p0, op = "atomic.add", reads = [@T], writes = [@T], '
         "count = 64 : i64, lane = #bcir.lane<a>, stride_class = #bcir.stride_class<random>, "
         "stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, "
         "verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>\n"
@@ -196,6 +197,7 @@ def _r1_duplicate_rid_python():
     # the attempt here turns that regression into a rail disagreement.
     from types import SimpleNamespace
     from bcir.model import Domain, Module, Resource
+
     module = Module(name="r1")
     module.add_resource(Resource(rid=10, domain=Domain.RAM, shape=(4,)))
     try:
@@ -207,19 +209,35 @@ def _r1_duplicate_rid_python():
 
 def _r5_module():
     from bcir.model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
+
     module = Module(name="r5")
     module.add_resource(Resource(rid=10, domain=Domain.RAM, shape=(64,)))
-    module.add_phase(Phase(phase_id=0, deps=(), claims=[
-        Claim(
-            id=1, opcode=Opcode.ATOMIC_ADD, lane=Lane.A, stride_class=StrideClass.RANDOM,
-            count=64, rd=(10,), wr=(10,), op="atomic.add", domain=Domain.RAM, hazard="unique",
-        ),
-    ]))
+    module.add_phase(
+        Phase(
+            phase_id=0,
+            deps=(),
+            claims=[
+                Claim(
+                    id=1,
+                    opcode=Opcode.ATOMIC_ADD,
+                    lane=Lane.A,
+                    stride_class=StrideClass.RANDOM,
+                    count=64,
+                    rd=(10,),
+                    wr=(10,),
+                    op="atomic.add",
+                    domain=Domain.RAM,
+                    hazard="unique",
+                ),
+            ],
+        )
+    )
     return module
 
 
 def _duplicate_claim_module(clean):
     from copy import deepcopy
+
     module = deepcopy(clean)
     first = module.phases[0].claims[0]
     clone = deepcopy(first)
@@ -245,11 +263,11 @@ def _compiled_mlir(text: str, root: Path, opt: str | None = None) -> dict[str, A
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "case.mlir"
             path.write_text(text, encoding="utf-8")
-        # The shared bounded runner, not a local Popen: BCIR_OPT may name a
-        # wrapper, and a helper that inherits the pipes must not outlive the
-        # bound. It gives this rail its own session, per-stream byte
-        # budgets, a process-TREE put-down, and a held-pipes signal — all
-        # of which a direct kill plus fixed reader joins could not provide.
+            # The shared bounded runner, not a local Popen: BCIR_OPT may name a
+            # wrapper, and a helper that inherits the pipes must not outlive the
+            # bound. It gives this rail its own session, per-stream byte
+            # budgets, a process-TREE put-down, and a held-pipes signal — all
+            # of which a direct kill plus fixed reader joins could not provide.
             outcome = run_bounded(
                 [opt, "-bcir-verify", str(path)],
                 timeout=COMPILED_VERIFY_TIMEOUT,
@@ -414,7 +432,8 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
     for case in cases:
         if case["python"] is None:
             python: dict[str, Any] = {
-                "state": "UNAVAILABLE/SKIPPED", "reason": "no python module",
+                "state": "UNAVAILABLE/SKIPPED",
+                "reason": "no python module",
             }
         else:
             try:
@@ -447,8 +466,7 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
                         "state": "FAIL",
                         "rejected": False,
                         "reason": (
-                            "python verifier returned malformed diagnostics: "
-                            f"{type(exc).__name__}"
+                            f"python verifier returned malformed diagnostics: {type(exc).__name__}"
                         ),
                     }
                     disagreements.append(f"{case['name']}/python: {python['reason']}")
@@ -539,13 +557,15 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
             )
         if case["expect_reject"] and any(rejected for _, rejected in executed):
             malformed_rejected += 1
-        rows.append({
-            "name": case["name"],
-            "expect_reject": case["expect_reject"],
-            "python": python,
-            "mlir_text": text,
-            "mlir_compiled": compiled,
-        })
+        rows.append(
+            {
+                "name": case["name"],
+                "expect_reject": case["expect_reject"],
+                "python": python,
+                "mlir_text": text,
+                "mlir_compiled": compiled,
+            }
+        )
 
     report = {
         "state": "FAIL" if disagreements else "PASS",
@@ -571,9 +591,11 @@ def run_differential(root: Path, require_compiled: bool = False) -> dict[str, An
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="run_malformed_differential")
     parser.add_argument("--root", type=Path, default=ROOT)
-    parser.add_argument("--require-compiled", action="store_true",
-                        help="fail when the compiled bcir-opt rail is unavailable "
-                             "(for the CI job that builds it)")
+    parser.add_argument(
+        "--require-compiled",
+        action="store_true",
+        help="fail when the compiled bcir-opt rail is unavailable (for the CI job that builds it)",
+    )
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args(argv)
     if str(args.root) not in sys.path:

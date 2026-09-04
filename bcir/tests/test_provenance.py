@@ -28,18 +28,19 @@ def _laws(diags):
 
 # --- the manifest is the commit hash of a plan ----------------------------------
 
+
 def test_manifest_is_deterministic_and_pins_the_plan():
     m = vector_add(1024)
     a = build_manifest(m, AVX, COOL)
     b = build_manifest(m, AVX, COOL)
-    assert a == b                                   # same inputs -> same commit
+    assert a == b  # same inputs -> same commit
     assert a.score == 7808 and a.widths == ((1000, 16),)
 
 
 def test_manifest_equality_implies_identical_plan():
     m = vector_add(1024)
     man = build_manifest(m, AVX, COOL)
-    assert reproduces(man, m, AVX, COOL)            # same digest -> same plan
+    assert reproduces(man, m, AVX, COOL)  # same digest -> same plan
     plan = replay_plan(man, m, AVX, COOL)
     assert plan.score == man.score == optimize(m, AVX, COOL).score
 
@@ -47,7 +48,7 @@ def test_manifest_equality_implies_identical_plan():
 def test_changed_input_changes_the_digest_and_fails_replay():
     m = vector_add(1024)
     cool = build_manifest(m, AVX, COOL)
-    assert not reproduces(cool, m, AVX, Theta.hot())     # different commit
+    assert not reproduces(cool, m, AVX, Theta.hot())  # different commit
     try:
         replay_plan(cool, m, AVX, Theta.hot())
         assert False, "expected ProvenanceMismatch"
@@ -59,7 +60,7 @@ def test_diff_pinpoints_the_changed_component():
     m = vector_add(1024)
     cool = build_manifest(m, AVX, COOL)
     hot = build_manifest(m, AVX, Theta.hot())
-    assert cool.diff(hot) == ["theta"]              # only Theta moved
+    assert cool.diff(hot) == ["theta"]  # only Theta moved
 
 
 def test_artifacts_are_part_of_the_commit():
@@ -68,7 +69,7 @@ def test_artifacts_are_part_of_the_commit():
     tagged = build_manifest(m, AVX, COOL, artifacts=[("gate", 99), ("cal_gen", 3)])
     assert plain.digest != tagged.digest
     assert plain.diff(tagged) == ["artifacts"]
-    assert plain.score == tagged.score              # same plan, different provenance
+    assert plain.score == tagged.score  # same plan, different provenance
 
 
 def test_json_round_trips():
@@ -77,8 +78,7 @@ def test_json_round_trips():
 
 
 def test_json_rejects_ambiguous_or_forged_manifests():
-    manifest = build_manifest(vector_add(1024), AVX, COOL,
-                              artifacts=[("cal_gen", 1), ("gate", 7)])
+    manifest = build_manifest(vector_add(1024), AVX, COOL, artifacts=[("cal_gen", 1), ("gate", 7)])
     document = json.loads(manifest.to_json())
     bad_documents = []
 
@@ -94,8 +94,7 @@ def test_json_rejects_ambiguous_or_forged_manifests():
     bad = dict(document)
     bad["artifacts"] = [["gate", 7], ["gate", 8]]
     bad_documents.append(json.dumps(bad))
-    bad_documents.append(manifest.to_json().replace('"score": 7808',
-                                                     '"score": 7808, "score": 0'))
+    bad_documents.append(manifest.to_json().replace('"score": 7808', '"score": 7808, "score": 0'))
 
     for text in bad_documents:
         try:
@@ -106,6 +105,7 @@ def test_json_rejects_ambiguous_or_forged_manifests():
 
 
 # --- the version DAG (immutable within a generation; branches across them) -------
+
 
 def test_calibrated_vs_seeded_is_a_distinct_branch_same_value():
     # Same module/theta/policy under the seeded constants vs a calibrated table:
@@ -119,12 +119,12 @@ def test_calibrated_vs_seeded_is_a_distinct_branch_same_value():
     assert "target" in seeded.diff(calibrated) and "artifacts" in seeded.diff(calibrated)
     assert seeded.score == calibrated.score == 7808
     assert reproduces(seeded, m, AVX, COOL)
-    assert reproduces(calibrated, m, table.apply(AVX), COOL,
-                      artifacts=calibrated.artifacts)
+    assert reproduces(calibrated, m, table.apply(AVX), COOL, artifacts=calibrated.artifacts)
 
 
 def test_manifest_for_assembles_artifact_tags():
     from bcir.gem import hydrate
+
     m = vector_add(1024)
     res = optimize(m, AVX, COOL)
     pack = hydrate(m, res)
@@ -134,6 +134,7 @@ def test_manifest_for_assembles_artifact_tags():
 
 
 # --- R13: the manifest law -------------------------------------------------------
+
 
 def test_faithful_manifest_satisfies_R13():
     m = vector_add(1024)
@@ -165,6 +166,7 @@ def test_every_target_manifest_reproduces_and_verifies():
 
 # --- the law rail recomputes the digest (R13 digest recompute, -bcir-verify) ----
 
+
 def _fnv_outer(components, artifacts):
     """An independent re-implementation of the FNV-1a chain that the C++ -bcir-verify
     R13 digest recompute mirrors (provenance._digest over the component hashes + the
@@ -187,7 +189,7 @@ def test_digest_is_the_fnv_chain_of_the_component_hashes():
     comps = (man.m_module, man.m_target, man.m_theta, man.m_policy)
     assert _fnv_outer(comps, man.artifacts) == man.digest
     forged = replace(man, digest=man.digest ^ 0xABCD)
-    assert _fnv_outer(comps, forged.artifacts) != forged.digest   # a tampered digest is caught
+    assert _fnv_outer(comps, forged.artifacts) != forged.digest  # a tampered digest is caught
 
 
 def test_mlir_verify_provenance_constants_are_in_sync():
@@ -195,12 +197,18 @@ def test_mlir_verify_provenance_constants_are_in_sync():
     vector_add manifest's hashes; this pins them so the FileCheck cannot silently rot."""
     man = build_manifest(vector_add(1024), AVX, COOL)
     assert (man.m_module, man.m_target, man.m_theta, man.m_policy) == (
-        7127522701151166272, 5864064355688965777, 1870846051561339781, 4048695575545564183)
-    assert man.digest == 9201837206445197944          # the no-artifact case
+        7127522701151166272,
+        5864064355688965777,
+        1870846051561339781,
+        4048695575545564183,
+    )
+    assert man.digest == 9201837206445197944  # the no-artifact case
     # the with-artifacts case folds (cal_gen, 4) and (map_gen, 2) in, sorted by name.
     arts = (("cal_gen", 4), ("map_gen", 2))
-    assert _fnv_outer((man.m_module, man.m_target, man.m_theta, man.m_policy), arts) \
+    assert (
+        _fnv_outer((man.m_module, man.m_target, man.m_theta, man.m_policy), arts)
         == 3780911091132933688
+    )
 
 
 def test_component_hashes_recompute_from_ir_primitives():
@@ -222,18 +230,55 @@ def test_component_hashes_recompute_from_ir_primitives():
     m, H = vector_add(1024), AVX
     mod = [m.name, m.cacheline, m.align]
     for r in sorted(m.resources.values(), key=lambda r: r.rid):
-        mod += [r.rid, int(r.domain), *r.shape, r.layout, r.align, r.access,
-                r.priority, r.map_gen, r.data_gen]
+        mod += [
+            r.rid,
+            int(r.domain),
+            *r.shape,
+            r.layout,
+            r.align,
+            r.access,
+            r.priority,
+            r.map_gen,
+            r.data_gen,
+        ]
     for ph in m.phases:
         mod += [ph.phase_id, *sorted(ph.deps)]
         for c in sorted(ph.claims, key=lambda c: c.id):
-            mod += [c.id, int(c.opcode), int(c.lane), int(c.stride_class), c.count, c.stride_k,
-                    *c.rd, *c.wr, c.hazard, int(c.domain), c.verify, c.bounds, c.op,
-                    c.offset, c.cost_class]
+            mod += [
+                c.id,
+                int(c.opcode),
+                int(c.lane),
+                int(c.stride_class),
+                c.count,
+                c.stride_k,
+                *c.rd,
+                *c.wr,
+                c.hazard,
+                int(c.domain),
+                c.verify,
+                c.bounds,
+                c.op,
+                c.offset,
+                c.cost_class,
+            ]
     assert fnv(mod) == hash_module(m) == 7127522701151166272
-    tgt = [H.name, H.triple, H.cacheline, H.elem_bytes, *sorted(H.lane_widths), H.warp,
-           H.scalable, H.gather_penalty, H.mem_unit, H.base_overhead, H.thermal_density,
-           H.power_density, H.per_op_heat, H.affinity_domains,
-           getattr(H, "mem_channels", 4), getattr(H, "cal_gen", 0)]
+    tgt = [
+        H.name,
+        H.triple,
+        H.cacheline,
+        H.elem_bytes,
+        *sorted(H.lane_widths),
+        H.warp,
+        H.scalable,
+        H.gather_penalty,
+        H.mem_unit,
+        H.base_overhead,
+        H.thermal_density,
+        H.power_density,
+        H.per_op_heat,
+        H.affinity_domains,
+        getattr(H, "mem_channels", 4),
+        getattr(H, "cal_gen", 0),
+    ]
     assert fnv(tgt) == hash_target(H) == 5864064355688965777
     assert fnv([PERF.name, *PERF.base]) == hash_policy(PERF) == 4048695575545564183

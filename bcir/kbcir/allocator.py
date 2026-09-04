@@ -50,8 +50,8 @@ class ResourceProfile:
 
     rid: int
     size_bytes: int
-    lifespan: int        # phase span (1 = ephemeral, used within a single phase)
-    frequency: int       # number of claims touching the resource
+    lifespan: int  # phase span (1 = ephemeral, used within a single phase)
+    frequency: int  # number of claims touching the resource
     declared_tier: MemTier
 
     @property
@@ -85,18 +85,23 @@ def profile_resources(module: Module) -> dict[int, ResourceProfile]:
         if rid not in freq:
             continue  # untouched resource: nothing to place
         profiles[rid] = ResourceProfile(
-            rid=rid, size_bytes=res.count * res.elem_bytes,
-            lifespan=last[rid] - first[rid] + 1, frequency=freq[rid],
-            declared_tier=MemTier[_tier_name(res)])
+            rid=rid,
+            size_bytes=res.count * res.elem_bytes,
+            lifespan=last[rid] - first[rid] + 1,
+            frequency=freq[rid],
+            declared_tier=MemTier[_tier_name(res)],
+        )
     return profiles
 
 
 def _tier_name(res) -> str:
     from .cost import _DOMAIN_TIER
+
     return _DOMAIN_TIER.get(res.domain, MemTier.DRAM).name
 
 
 # --- the learned heat scorer (frozen Q8, moegate discipline) ---------------------
+
 
 @dataclass(frozen=True)
 class FrozenPlacer:
@@ -104,7 +109,7 @@ class FrozenPlacer:
     A *higher* heat => hotter => prefer the fast tier. Deterministic integer forward
     (no floats), so placement is identical across hosts. `gen` is R13 provenance."""
 
-    wq: tuple[int, ...]      # Q8 weights: (bias, w_size, w_invlife, w_freq)
+    wq: tuple[int, ...]  # Q8 weights: (bias, w_size, w_invlife, w_freq)
     gen: int = 1
 
     def heat(self, p: ResourceProfile) -> int:
@@ -126,12 +131,14 @@ class FrozenPlacer:
 DEFAULT_PLACER = FrozenPlacer(wq=(0, -1 * Q8, 4 * Q8, 3 * Q8), gen=1)
 
 
-def train_placer(dataset: list[tuple[ResourceProfile, int]], *, epochs: int = 400,
-                 lr: float = 0.02, gen: int = 1) -> FrozenPlacer:
+def train_placer(
+    dataset: list[tuple[ResourceProfile, int]], *, epochs: int = 400, lr: float = 0.02, gen: int = 1
+) -> FrozenPlacer:
     """Fit the heat scorer to labelled (profile, hot?) examples via logistic SGD
     (offline, float), then freeze to Q8. `hot? in {0,1}`. Deterministic: fixed
     init/order/lr/epochs (the moegate/calibrate freeze recipe)."""
     import math
+
     w = [0.0, 0.0, 0.0, 0.0]
     for _ in range(epochs):
         for p, label in dataset:
@@ -146,13 +153,14 @@ def train_placer(dataset: list[tuple[ResourceProfile, int]], *, epochs: int = 40
 
 # --- the placement plan ----------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Placement:
     """An allocation plan: the chosen tier per resource, with the relocations the
     gains-only gate actually admitted."""
 
     tiers: dict[int, MemTier]
-    moved: tuple[int, ...]                  # rids relocated off their declared tier
+    moved: tuple[int, ...]  # rids relocated off their declared tier
     rationale: dict[int, str] = field(default_factory=dict)
 
     def tier_of(self, rid: int) -> MemTier:
@@ -177,14 +185,14 @@ def _mem_cost(p: ResourceProfile, tier: MemTier, h: TargetProfile) -> int:
 @dataclass(frozen=True)
 class Pool:
     pool_id: int
-    members: tuple[int, ...]   # rids sharing this arena (pairwise-disjoint live ranges)
-    size_bytes: int            # arena size = the largest member
+    members: tuple[int, ...]  # rids sharing this arena (pairwise-disjoint live ranges)
+    size_bytes: int  # arena size = the largest member
 
 
 @dataclass(frozen=True)
 class PoolPlan:
     pools: tuple
-    naive_bytes: int           # sum of every resource's bytes (no reuse)
+    naive_bytes: int  # sum of every resource's bytes (no reuse)
 
     @property
     def peak_bytes(self) -> int:
@@ -232,13 +240,12 @@ def pool_plan(module: Module) -> PoolPlan:
     everything is simultaneously live is a clean no-op). A modeled *footprint* gain,
     not a runtime speedup."""
     intervals = live_intervals(module)
-    sizes = {rid: module.resource(rid).count * module.resource(rid).elem_bytes
-             for rid in intervals}
+    sizes = {rid: module.resource(rid).count * module.resource(rid).elem_bytes for rid in intervals}
     import heapq
 
-    arenas: list[dict] = []     # each: {members:[rid], last:int, size:int}
-    active: list[tuple[int, int]] = []       # (last phase, pool id)
-    available: list[int] = []                # reusable pool ids, lowest id first
+    arenas: list[dict] = []  # each: {members:[rid], last:int, size:int}
+    active: list[tuple[int, int]] = []  # (last phase, pool id)
+    available: list[int] = []  # reusable pool ids, lowest id first
     for rid in sorted(intervals, key=lambda r: (intervals[r][0], r)):
         lo, hi = intervals[rid]
         while active and active[0][0] < lo:
@@ -265,14 +272,19 @@ def silicon_tier_capacity() -> dict[MemTier, int]:
     not expose them. Pass the result to `place(tier_capacity=...)` to size SRAM
     promotion to the actual cache, not an assumption."""
     from ..silicon import tier_capacities
+
     real = tier_capacities()
     if not real:
         return dict(_FAST_CAPACITY)
     return {t: real.get(t, _FAST_CAPACITY[t]) for t in _FAST_TIERS}
 
 
-def place(module: Module, h: TargetProfile, placer: FrozenPlacer = DEFAULT_PLACER,
-          tier_capacity: dict | None = None) -> Placement:
+def place(
+    module: Module,
+    h: TargetProfile,
+    placer: FrozenPlacer = DEFAULT_PLACER,
+    tier_capacity: dict | None = None,
+) -> Placement:
     """Plan resource placement: rank by predicted heat, fill the fast tiers by
     capacity, and admit a relocation only when it fits and strictly lowers modeled
     memory cost (gains-only). Cold/large resources stay in DRAM, or go to HBM when
@@ -311,8 +323,7 @@ def place(module: Module, h: TargetProfile, placer: FrozenPlacer = DEFAULT_PLACE
             tiers[p.rid] = best_tier
             moved.append(p.rid)
             kind = "hot/ephemeral" if p.ephemeral else ("hot/reused" if hot else "cold/bandwidth")
-            rationale[p.rid] = (f"{kind} -> {best_tier.name} "
-                                f"(cost {default_cost}->{best_cost})")
+            rationale[p.rid] = f"{kind} -> {best_tier.name} (cost {default_cost}->{best_cost})"
             if best_tier in remaining:
                 remaining[best_tier] -= p.size_bytes
     return Placement(tiers=tiers, moved=tuple(moved), rationale=rationale)

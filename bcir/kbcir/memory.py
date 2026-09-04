@@ -79,6 +79,7 @@ class UnsaturatedMemory(Exception):
 
 # --- the canonical content fingerprint -------------------------------------------
 
+
 def _canon(expr: Expr) -> tuple:
     """A canonical nested tuple for an Expr tree (op, val, children...)."""
     return (expr.op, expr.val, tuple(_canon(a) for a in expr.args))
@@ -92,19 +93,20 @@ def fingerprint(expr: Expr, cost: int) -> int:
 
 # --- the memory module -----------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class MemoryModule:
     """A frozen, generation-tagged extraction of a resolution fixpoint:
     `a = Lim(Res(U))`. `saturated` is the fixpoint witness; `admissible` is the
     law (saturated AND generation-tagged)."""
 
-    expr: Expr            # Extract(Lim(Res(U))) -- the canonical min-cost representative
-    cost: int             # its K_BCIR cost (extraction returns the minimum)
-    fingerprint: int      # content hash of (expr, cost)
-    generation: int       # the generation tag; immutable within this generation (>= 1)
-    iterations: int       # rounds of Res(.) applied to reach the fixpoint
-    enodes: int           # |Lim(Res(U))| -- the saturated e-graph size
-    saturated: bool       # the fixpoint witness: Res(state) == state within budget
+    expr: Expr  # Extract(Lim(Res(U))) -- the canonical min-cost representative
+    cost: int  # its K_BCIR cost (extraction returns the minimum)
+    fingerprint: int  # content hash of (expr, cost)
+    generation: int  # the generation tag; immutable within this generation (>= 1)
+    iterations: int  # rounds of Res(.) applied to reach the fixpoint
+    enodes: int  # |Lim(Res(U))| -- the saturated e-graph size
+    saturated: bool  # the fixpoint witness: Res(state) == state within budget
 
     @property
     def admissible(self) -> bool:
@@ -121,15 +123,17 @@ class MemoryModule:
     @staticmethod
     def from_json(text: str) -> "MemoryModule":
         d = strict_json_loads(text, "memory module")
-        fields = {"expr", "cost", "fingerprint", "generation", "iterations",
-                  "enodes", "saturated"}
+        fields = {"expr", "cost", "fingerprint", "generation", "iterations", "enodes", "saturated"}
         if not isinstance(d, dict) or set(d) != fields:
             raise ValueError(f"memory-module fields must be exactly {sorted(fields)}")
 
         def nonnegative_i63(key: str) -> int:
             value = d[key]
-            if (isinstance(value, bool) or not isinstance(value, int) or
-                    not 0 <= value <= (1 << 63) - 1):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 0 <= value <= (1 << 63) - 1
+            ):
                 raise ValueError(f"memory-module {key} must be a non-negative i63")
             return value
 
@@ -143,16 +147,24 @@ class MemoryModule:
         computed_cost = _validate_canonical_expr(d["expr"])
         if computed_cost != cost:
             raise ValueError(
-                f"memory-module cost {cost} does not match expression cost {computed_cost}")
+                f"memory-module cost {cost} does not match expression cost {computed_cost}"
+            )
         expr = _uncanon(d["expr"])
         computed_fingerprint = fingerprint(expr, cost)
         if stored_fingerprint != computed_fingerprint:
             raise ValueError(
                 f"memory-module fingerprint {stored_fingerprint} does not match content "
-                f"fingerprint {computed_fingerprint}")
-        return MemoryModule(expr=expr, cost=cost, fingerprint=stored_fingerprint,
-                            generation=generation, iterations=iterations, enodes=enodes,
-                            saturated=d["saturated"])
+                f"fingerprint {computed_fingerprint}"
+            )
+        return MemoryModule(
+            expr=expr,
+            cost=cost,
+            fingerprint=stored_fingerprint,
+            generation=generation,
+            iterations=iterations,
+            enodes=enodes,
+            saturated=d["saturated"],
+        )
 
 
 def _validate_canonical_expr(root) -> int:
@@ -164,8 +176,7 @@ def _validate_canonical_expr(root) -> int:
     stack = [(root, 1)]
     nodes = 0
     cost = 0
-    op_cost = {"const": 0, "var": 0, "add": 1, "sub": 1, "mul": 2,
-               _MODULE_OP: 0}
+    op_cost = {"const": 0, "var": 0, "add": 1, "sub": 1, "mul": 2, _MODULE_OP: 0}
     while stack:
         node, depth = stack.pop()
         nodes += 1
@@ -181,19 +192,35 @@ def _validate_canonical_expr(root) -> int:
         if not isinstance(children, list):
             raise ValueError("memory-module expression children must be an array")
         if op == "const":
-            if (isinstance(value, bool) or not isinstance(value, int) or
-                    not -(1 << 63) <= value <= (1 << 63) - 1 or children):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not -(1 << 63) <= value <= (1 << 63) - 1
+                or children
+            ):
                 raise ValueError("memory-module const must be a signed i64 leaf")
         elif op == "var":
-            valid_string = (isinstance(value, str) and value and len(value) <= 4096 and
-                            not any(ord(ch) < 0x20 for ch in value))
-            valid_int = (not isinstance(value, bool) and isinstance(value, int) and
-                         -(1 << 63) <= value <= (1 << 63) - 1)
+            valid_string = (
+                isinstance(value, str)
+                and value
+                and len(value) <= 4096
+                and not any(ord(ch) < 0x20 for ch in value)
+            )
+            valid_int = (
+                not isinstance(value, bool)
+                and isinstance(value, int)
+                and -(1 << 63) <= value <= (1 << 63) - 1
+            )
             if not (valid_string or valid_int) or children:
                 raise ValueError("memory-module var must be a bounded scalar leaf")
         elif op == _MODULE_OP:
-            if (depth != 1 or not isinstance(value, str) or not value or len(value) > 4096 or
-                    any(ord(ch) < 0x20 for ch in value)):
+            if (
+                depth != 1
+                or not isinstance(value, str)
+                or not value
+                or len(value) > 4096
+                or any(ord(ch) < 0x20 for ch in value)
+            ):
                 raise ValueError("memory-module module op must be a bounded root")
         elif value is not None or len(children) != 2:
             raise ValueError(f"memory-module {op} must have null value and two children")
@@ -211,18 +238,24 @@ def _uncanon(t) -> Expr:
 
 # --- producers (resolve -> freeze) -----------------------------------------------
 
+
 def from_result(result: EGraphResult, generation: int = 1) -> MemoryModule:
     """Build a memory module from an already-computed e-graph result, carrying its
     saturation witness through faithfully (admissible iff it saturated + tagged)."""
     return MemoryModule(
-        expr=result.optimized, cost=int(result.optimized_cost),
+        expr=result.optimized,
+        cost=int(result.optimized_cost),
         fingerprint=fingerprint(result.optimized, result.optimized_cost),
-        generation=int(generation), iterations=int(result.iterations),
-        enodes=int(result.enodes), saturated=bool(result.saturated))
+        generation=int(generation),
+        iterations=int(result.iterations),
+        enodes=int(result.enodes),
+        saturated=bool(result.saturated),
+    )
 
 
-def try_freeze(expr: Expr, *, generation: int = 1, rules=None, costs: dict = None,
-               budget: int = DEFAULT_BUDGET) -> MemoryModule:
+def try_freeze(
+    expr: Expr, *, generation: int = 1, rules=None, costs: dict = None, budget: int = DEFAULT_BUDGET
+) -> MemoryModule:
     """Resolve `expr` to (attempted) saturation and freeze the extraction --
     *without* enforcing the fixpoint law. The returned module reports `saturated`
     honestly; `admissible` tells you whether it earns a generation. Use this to
@@ -232,8 +265,9 @@ def try_freeze(expr: Expr, *, generation: int = 1, rules=None, costs: dict = Non
     return from_result(result, generation)
 
 
-def freeze(expr: Expr, *, generation: int = 1, rules=None, costs: dict = None,
-           budget: int = DEFAULT_BUDGET) -> MemoryModule:
+def freeze(
+    expr: Expr, *, generation: int = 1, rules=None, costs: dict = None, budget: int = DEFAULT_BUDGET
+) -> MemoryModule:
     """Resolve and freeze `expr` into a memory module, *enforcing* the fixpoint
     law: raises `UnsaturatedMemory` if resolution hit the budget without reaching
     its fixpoint (you tried to freeze a partial Res^k(U), not Lim(Res(U)))."""
@@ -242,7 +276,8 @@ def freeze(expr: Expr, *, generation: int = 1, rules=None, costs: dict = None,
         raise UnsaturatedMemory(
             f"resolution did not reach a fixpoint in {mm.iterations} round(s) "
             f"(budget {budget}); the extraction is a cutoff Res^k(U), not "
-            f"Lim(Res(U)) -- not admissible as memory")
+            f"Lim(Res(U)) -- not admissible as memory"
+        )
     return mm
 
 
@@ -255,29 +290,37 @@ def _module_universe(module) -> Expr:
     return Expr(_MODULE_OP, module.name, args)
 
 
-def freeze_module(module, *, generation: int = 1, rules=None,
-                  budget: int = DEFAULT_BUDGET) -> MemoryModule:
+def freeze_module(
+    module, *, generation: int = 1, rules=None, budget: int = DEFAULT_BUDGET
+) -> MemoryModule:
     """Freeze a whole BCIR module's resolved claim forest as one memory module:
     `Extract(Lim(Res(U)))` over the module's universe of claim expressions.
     Enforces the fixpoint law (raises `UnsaturatedMemory` on a budget cutoff)."""
-    return freeze(_module_universe(module), generation=generation, rules=rules,
-                  costs=_MODULE_COSTS, budget=budget)
+    return freeze(
+        _module_universe(module),
+        generation=generation,
+        rules=rules,
+        costs=_MODULE_COSTS,
+        budget=budget,
+    )
 
 
 # --- idempotence (the memory module is its own attractor) ------------------------
 
-def reresolve(mm: MemoryModule, *, rules=None, costs: dict = None,
-              budget: int = DEFAULT_BUDGET) -> MemoryModule:
+
+def reresolve(
+    mm: MemoryModule, *, rules=None, costs: dict = None, budget: int = DEFAULT_BUDGET
+) -> MemoryModule:
     """Re-resolve a memory module's stored representative: `Res(Lim(Res(U)))`. The
     axiom predicts this returns the module itself (same structure, immediately
     saturated) -- the idempotence/attractor property."""
     costs = costs if costs is not None else _costs_for(mm.expr)
-    return try_freeze(mm.expr, generation=mm.generation, rules=rules, costs=costs,
-                      budget=budget)
+    return try_freeze(mm.expr, generation=mm.generation, rules=rules, costs=costs, budget=budget)
 
 
-def is_idempotent(mm: MemoryModule, *, rules=None, costs: dict = None,
-                  budget: int = DEFAULT_BUDGET) -> bool:
+def is_idempotent(
+    mm: MemoryModule, *, rules=None, costs: dict = None, budget: int = DEFAULT_BUDGET
+) -> bool:
     """True iff re-resolving the module yields itself, saturated -- a runnable
     witness that the stored artifact is a genuine fixpoint `Res(Lim) = Lim`."""
     re = reresolve(mm, rules=rules, costs=costs, budget=budget)
@@ -291,6 +334,7 @@ def _costs_for(expr: Expr) -> dict:
 
 
 # --- the provenance bridge (Phase 21 -> Phase 20) --------------------------------
+
 
 def memory_artifacts(mm: MemoryModule) -> tuple:
     """The artifact tags a memory module contributes to a provenance manifest: its

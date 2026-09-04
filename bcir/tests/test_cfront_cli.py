@@ -1,6 +1,7 @@
 """Phase 4 — segment 5 (toolchain integration): the bcir-cfront driver exposes the phase's
 capabilities -- the cross-platform ABI target, Clang-style diagnostics + machine-readable JSON, and
 the LLVM-backend fallback contract -- through real command-line flags."""
+
 from __future__ import annotations
 
 import json
@@ -13,8 +14,12 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 
 
 def _cli(args):
-    p = subprocess.run([sys.executable, "-m", "bcir.frontends.cfront", *args],
-                       capture_output=True, text=True, cwd=_ROOT)
+    p = subprocess.run(
+        [sys.executable, "-m", "bcir.frontends.cfront", *args],
+        capture_output=True,
+        text=True,
+        cwd=_ROOT,
+    )
     return p.returncode, p.stdout, p.stderr
 
 
@@ -35,10 +40,14 @@ def test_cli_default_compile_reports_target_and_clean():
 
 def test_cli_target_selects_the_abi():
     with tempfile.TemporaryDirectory() as d:
-        src = _write(d, "s.c", "struct S { long a; char b; }; unsigned f(void){ return sizeof(struct S); }\n")
+        src = _write(
+            d, "s.c", "struct S { long a; char b; }; unsigned f(void){ return sizeof(struct S); }\n"
+        )
         rc, out, err = _cli(["--target", "x86_64-windows", src])
         assert rc == 0, err
-        assert "target: x86_64-windows" in out and "cross-target" in out   # LLP64, equivalence skipped
+        assert (
+            "target: x86_64-windows" in out and "cross-target" in out
+        )  # LLP64, equivalence skipped
 
 
 def test_cli_syntax_only_prints_a_clang_style_caret():
@@ -46,12 +55,12 @@ def test_cli_syntax_only_prints_a_clang_style_caret():
         src = _write(d, "bad.c", "int f(void){ return zzz + 1; }\n")
         rc, out, err = _cli(["-fsyntax-only", src])
         assert rc == 1
-        assert "use of undeclared identifier 'zzz'" in err and "^" in err   # diagnostics on stderr
+        assert "use of undeclared identifier 'zzz'" in err and "^" in err  # diagnostics on stderr
 
 
 def test_cli_emit_json_is_machine_readable():
     with tempfile.TemporaryDirectory() as d:
-        src = _write(d, "bad.c", "int f(void){ return 1 }\n")            # missing ';'
+        src = _write(d, "bad.c", "int f(void){ return 1 }\n")  # missing ';'
         rc, out, _ = _cli(["--emit-json", src])
         obj = json.loads(out)
         assert rc == 1 and obj[0]["severity"] == "error" and obj[0]["phase"] == "parse"
@@ -74,6 +83,7 @@ def test_cli_unknown_target_is_rejected():
 
 # --- Phase 3 project orchestration: multi-file verdict, compile database, dependency output ---
 
+
 def test_cli_project_verdict_clean_over_multiple_files():
     with tempfile.TemporaryDirectory() as d:
         a = _write(d, "a.c", "unsigned f(unsigned x){ return x + 1u; }\n")
@@ -88,7 +98,9 @@ def test_cli_project_verdict_partial_fallback():
     # and the exit code keeps the per-unit fallback contract (2).
     with tempfile.TemporaryDirectory() as d:
         a = _write(d, "a.c", "unsigned f(unsigned x){ return x + 1u; }\n")
-        b = _write(d, "b.c", "unsigned k(void);\nunsigned g = k();\nunsigned h(void){ return g; }\n")
+        b = _write(
+            d, "b.c", "unsigned k(void);\nunsigned g = k();\nunsigned h(void){ return g; }\n"
+        )
         rc, out, err = _cli(["--fallback", a, b])
         assert rc == 2, (rc, err)
         assert "PARTIAL-FALLBACK (1/2" in out, out
@@ -115,8 +127,12 @@ def test_cli_compile_database_drives_per_entry_flags():
     # -p compile_commands.json: every entry compiles with ITS OWN flags -- one entry uses the
     # "arguments" form (with a -D the source requires), the other the "command" string form.
     with tempfile.TemporaryDirectory() as d:
-        a = _write(d, "a.c", "#if NEED != 2\n#error need NEED=2\n#endif\n"
-                             "unsigned f(unsigned x){ return x + NEED; }\n")
+        a = _write(
+            d,
+            "a.c",
+            "#if NEED != 2\n#error need NEED=2\n#endif\n"
+            "unsigned f(unsigned x){ return x + NEED; }\n",
+        )
         b = _write(d, "b.c", "unsigned g(unsigned x){ return x * 3u; }\n")
         db = [
             {"directory": d, "file": "a.c", "arguments": ["cc", "-c", "-DNEED=2", "a.c"]},
@@ -135,23 +151,37 @@ def test_cli_rejects_missing_option_arguments_and_ambiguous_compile_databases():
 
     with tempfile.TemporaryDirectory() as d:
         _write(d, "ok.c", "int f(void){ return 0; }\n")
-        valid = json.dumps([{"directory": d, "file": "ok.c",
-                             "arguments": ["cc", "-c", "ok.c"]}])
-        duplicate = valid.replace('"directory":',
-                                  '"directory": "forged", "directory":', 1)
+        valid = json.dumps([{"directory": d, "file": "ok.c", "arguments": ["cc", "-c", "ok.c"]}])
+        duplicate = valid.replace('"directory":', '"directory": "forged", "directory":', 1)
         db = _write(d, "compile_commands.json", duplicate)
         rc, _out, err = _cli(["-p", db])
         assert rc == 2 and "duplicate JSON key" in err
 
-        _write(d, "compile_commands.json", json.dumps([
-            {"directory": d, "file": "ok.c", "arguments": ["cc", "-I"]},
-        ]))
+        _write(
+            d,
+            "compile_commands.json",
+            json.dumps(
+                [
+                    {"directory": d, "file": "ok.c", "arguments": ["cc", "-I"]},
+                ]
+            ),
+        )
         rc, _out, err = _cli(["-p", d])
         assert rc == 2 and "requires an argument" in err
 
-        _write(d, "compile_commands.json", json.dumps([
-            {"directory": d, "file": "ok.c", "arguments": ["cc", "ok.c"],
-             "command": "cc ok.c"},
-        ]))
+        _write(
+            d,
+            "compile_commands.json",
+            json.dumps(
+                [
+                    {
+                        "directory": d,
+                        "file": "ok.c",
+                        "arguments": ["cc", "ok.c"],
+                        "command": "cc ok.c",
+                    },
+                ]
+            ),
+        )
         rc, _out, err = _cli(["-p", d])
         assert rc == 2 and "both command and arguments" in err

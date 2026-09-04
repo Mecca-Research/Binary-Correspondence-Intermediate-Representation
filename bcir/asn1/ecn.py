@@ -108,14 +108,29 @@ class CategoryGroup(Enum):
 
 #: §9.6.7 — the bit-field group is every category that "correspond[s] to actual fields in an
 #: encoding", plus every class in the encoding structure category.
-_BIT_FIELD_CATEGORIES = frozenset({
-    Category.BOOLEAN, Category.BITSTRING, Category.CHARACTERSTRING, Category.INTEGER,
-    Category.NULL, Category.OBJECTIDENTIFIER, Category.OCTETSTRING, Category.OPENTYPE,
-    Category.PAD, Category.REAL, Category.TIME, Category.ENCODING_STRUCTURE,
-})
-_CONSTRUCTOR_CATEGORIES = frozenset({
-    Category.ALTERNATIVES, Category.CONCATENATION, Category.REPETITION,
-})
+_BIT_FIELD_CATEGORIES = frozenset(
+    {
+        Category.BOOLEAN,
+        Category.BITSTRING,
+        Category.CHARACTERSTRING,
+        Category.INTEGER,
+        Category.NULL,
+        Category.OBJECTIDENTIFIER,
+        Category.OCTETSTRING,
+        Category.OPENTYPE,
+        Category.PAD,
+        Category.REAL,
+        Category.TIME,
+        Category.ENCODING_STRUCTURE,
+    }
+)
+_CONSTRUCTOR_CATEGORIES = frozenset(
+    {
+        Category.ALTERNATIVES,
+        Category.CONCATENATION,
+        Category.REPETITION,
+    }
+)
 
 
 def category_group(category: Category) -> CategoryGroup | None:
@@ -146,8 +161,8 @@ class EncodingClass:
         # §9.2.1 and §9.3.1: a class reference name begins with "#".
         if not self.name.startswith("#"):
             raise Asn1Error(
-                f"ECN: an encoding class reference begins with \"#\" (9.2.1); got "
-                f"{self.name!r}")
+                f'ECN: an encoding class reference begins with "#" (9.2.1); got {self.name!r}'
+            )
 
     @property
     def group(self) -> CategoryGroup | None:
@@ -178,7 +193,8 @@ class EncodingClass:
         if self.category is Category.ENCODING_PROCEDURE:
             raise Asn1Error(
                 f"ECN: {self.name} is in the encoding procedure group of categories and "
-                f"cannot be assigned a new name (9.6.7)")
+                f"cannot be assigned a new name (9.6.7)"
+            )
         return EncodingClass(name, self.category, self)
 
 
@@ -212,8 +228,7 @@ TAG = _primitive("#TAG", Category.TAG)
 OUTER = _primitive("#OUTER", Category.ENCODING_PROCEDURE)
 TRANSFORM = _primitive("#TRANSFORM", Category.ENCODING_PROCEDURE)
 CONDITIONAL_INT = _primitive("#CONDITIONAL-INT", Category.ENCODING_PROCEDURE)
-CONDITIONAL_REPETITION = _primitive("#CONDITIONAL-REPETITION",
-                                    Category.ENCODING_PROCEDURE)
+CONDITIONAL_REPETITION = _primitive("#CONDITIONAL-REPETITION", Category.ENCODING_PROCEDURE)
 
 #: §11.2 Table 2 — the class each piece of ASN.1 notation becomes in an implicitly
 #: generated encoding structure, and the primitive it derives from. The three entries
@@ -264,10 +279,31 @@ _TABLE_2: tuple[tuple[str, str, EncodingClass], ...] = (
 
 
 def _build_builtins() -> dict[str, EncodingClass]:
-    classes = {cls.name: cls for cls in (
-        INT, BOOL, NUL, CHARS, OCTETS, BITS, REAL, OBJECT_IDENTIFIER, OPEN_TYPE, TIME,
-        PAD, CONCATENATION, ALTERNATIVES, REPETITION, OPTIONAL, TAG,
-        OUTER, TRANSFORM, CONDITIONAL_INT, CONDITIONAL_REPETITION)}
+    classes = {
+        cls.name: cls
+        for cls in (
+            INT,
+            BOOL,
+            NUL,
+            CHARS,
+            OCTETS,
+            BITS,
+            REAL,
+            OBJECT_IDENTIFIER,
+            OPEN_TYPE,
+            TIME,
+            PAD,
+            CONCATENATION,
+            ALTERNATIVES,
+            REPETITION,
+            OPTIONAL,
+            TAG,
+            OUTER,
+            TRANSFORM,
+            CONDITIONAL_INT,
+            CONDITIONAL_REPETITION,
+        )
+    }
     for _notation, name, primitive in _TABLE_2:
         # A Table 2 row whose class IS its primitive (#TIME, #OPEN-TYPE, #TAG,
         # #OBJECT-IDENTIFIER, #OPTIONAL) adds no new class -- the table is naming the
@@ -289,6 +325,7 @@ CLASS_FOR_NOTATION: dict[str, EncodingClass] = {
 
 
 # --- §9.4 encoding objects, §9.5 encoding object sets ------------------------------------
+
 
 @dataclass(frozen=True)
 class EncodingObject:
@@ -324,12 +361,14 @@ class EncodingObjectSet:
                 # `#SEQUENCE` and one for `#My-Sequence ::= #SEQUENCE` legal in one set.
                 raise Asn1Error(
                     f"ECN: an encoding object set holds at most one object per encoding "
-                    f"class (9.5.2, 18.1.7); {cls.name} appears twice")
-            if (cls.category is Category.ENCODING_PROCEDURE and cls != OUTER):
+                    f"class (9.5.2, 18.1.7); {cls.name} appears twice"
+                )
+            if cls.category is Category.ENCODING_PROCEDURE and cls != OUTER:
                 raise Asn1Error(
                     f"ECN: an encoding object set may not hold {cls.name}, which is in "
                     f"the encoding procedure group of categories; 18.1.7 admits only "
-                    f"#OUTER")
+                    f"#OUTER"
+                )
             seen[cls] = obj
 
     def object_for(self, cls: EncodingClass) -> EncodingObject | None:
@@ -358,6 +397,7 @@ class EncodingObjectSet:
 
 
 # --- §18.2 the built-in encoding object sets ---------------------------------------------
+
 
 class BuiltinEncodingObjectSet(Enum):
     """§18.2.1's `BuiltinEncodingObjectSetReference` — the seven names ECN reserves."""
@@ -393,8 +433,7 @@ BUILTIN_SET_OID: dict[BuiltinEncodingObjectSet, tuple[int, ...]] = {
 #: §18.2.4 — the classes every built-in set carries an *identical* object for. These are
 #: the "basic building blocks of encodings" of §18.2.5, and §18.2.5.1-§18.2.5.4 define them
 #: all in terms of PER-BASIC-UNALIGNED regardless of which set they appear in.
-SHARED_CLASSES: tuple[EncodingClass, ...] = (
-    INT, BOOL, NUL, CHARS, OCTETS, BITS, CONCATENATION)
+SHARED_CLASSES: tuple[EncodingClass, ...] = (INT, BOOL, NUL, CHARS, OCTETS, BITS, CONCATENATION)
 
 #: §18.2.4, stated as a prohibition rather than an omission: the built-in sets "do not
 #: contain encoding objects for #ALTERNATIVES, #REPETITION, and #PAD". A set that did would
@@ -409,12 +448,12 @@ def _realization(which: BuiltinEncodingObjectSet):
 
     per = {
         BuiltinEncodingObjectSet.PER_BASIC_ALIGNED: (PerRules.BASIC, PerVariant.ALIGNED),
-        BuiltinEncodingObjectSet.PER_BASIC_UNALIGNED:
-            (PerRules.BASIC, PerVariant.UNALIGNED),
-        BuiltinEncodingObjectSet.PER_CANONICAL_ALIGNED:
-            (PerRules.CANONICAL, PerVariant.ALIGNED),
-        BuiltinEncodingObjectSet.PER_CANONICAL_UNALIGNED:
-            (PerRules.CANONICAL, PerVariant.UNALIGNED),
+        BuiltinEncodingObjectSet.PER_BASIC_UNALIGNED: (PerRules.BASIC, PerVariant.UNALIGNED),
+        BuiltinEncodingObjectSet.PER_CANONICAL_ALIGNED: (PerRules.CANONICAL, PerVariant.ALIGNED),
+        BuiltinEncodingObjectSet.PER_CANONICAL_UNALIGNED: (
+            PerRules.CANONICAL,
+            PerVariant.UNALIGNED,
+        ),
     }
     if which in per:
         return per[which]
@@ -441,8 +480,7 @@ def builtin_object_set(which: BuiltinEncodingObjectSet) -> EncodingObjectSet:
     objects = [
         EncodingObject(cls, f"{which.value}.{cls.name}", realization)
         for cls in BUILTIN_CLASSES.values()
-        if cls not in ABSENT_FROM_BUILTIN_SETS
-        and cls.category is not Category.ENCODING_PROCEDURE
+        if cls not in ABSENT_FROM_BUILTIN_SETS and cls.category is not Category.ENCODING_PROCEDURE
     ]
     return EncodingObjectSet(tuple(objects), which.value)
 
@@ -466,26 +504,30 @@ def shared_object_constraints(cls: EncodingClass, kind) -> None:
         if low is None or high is None:
             raise Asn1Error(
                 f"ECN: the shared #INT encoding object is a PER-BASIC-UNALIGNED "
-                f"#INTEGER encoding \"provided it is bounded\"; {cls.name} has no "
-                f"{'lower' if low is None else 'upper'} bound (18.2.5.1)")
+                f'#INTEGER encoding "provided it is bounded"; {cls.name} has no '
+                f"{'lower' if low is None else 'upper'} bound (18.2.5.1)"
+            )
     elif primitive in (CHARS, OCTETS, BITS):
         low, high = effective_size_constraint(constraint)
         if low is None or high is None or low != high:
             raise Asn1Error(
-                f"ECN: the shared {primitive.name} encoding object applies \"provided "
-                f"they are a single size\"; {cls.name} has no effective size constraint "
-                f"restricting it to one size (18.2.5.3)")
+                f'ECN: the shared {primitive.name} encoding object applies "provided '
+                f'they are a single size"; {cls.name} has no effective size constraint '
+                f"restricting it to one size (18.2.5.3)"
+            )
     elif primitive == CONCATENATION:
         components = getattr(kind, "components", ())
         loose = [c.name for c in components if c.optional or c.has_default]
         if loose:
             raise Asn1Error(
                 f"ECN: the shared #CONCATENATION encoding object is a "
-                f"PER-BASIC-UNALIGNED #SEQUENCE \"with no optional components\"; "
-                f"{cls.name} has {sorted(loose)} (18.2.5.4)")
+                f'PER-BASIC-UNALIGNED #SEQUENCE "with no optional components"; '
+                f"{cls.name} has {sorted(loose)} (18.2.5.4)"
+            )
 
 
 # --- §9.1.1, §12, §14: the modules -------------------------------------------------------
+
 
 @dataclass
 class EncodingDefinitionModule:
@@ -500,8 +542,8 @@ class EncodingDefinitionModule:
         """§16.1.1's `EncodingClassAssignment`, with §9.3.3's name collision rule."""
         if name in self.classes or name in BUILTIN_CLASSES:
             raise Asn1Error(
-                f"ECN: {name} is already an encoding class in this module or a built-in "
-                f"(9.3.3)")
+                f"ECN: {name} is already an encoding class in this module or a built-in (9.3.3)"
+            )
         self.classes[name] = base.derive(name)
         return self.classes[name]
 
@@ -541,15 +583,17 @@ class EncodingLinkModule:
     def __post_init__(self) -> None:
         if not self.applications:
             raise Asn1Error(
-                f"ECN: the ELM {self.name} has no EncodingApplication, and \"the sole "
-                f"function of an ELM is to apply encodings\" (12.1.9)")
+                f'ECN: the ELM {self.name} has no EncodingApplication, and "the sole '
+                f'function of an ELM is to apply encodings" (12.1.9)'
+            )
         seen: set[str] = set()
         for application in self.applications:
             for name in application.classes:
                 if name in seen:
                     raise Asn1Error(
                         f"ECN: the ELM {self.name} applies encodings to {name} more than "
-                        f"once (12.2.5)")
+                        f"once (12.2.5)"
+                    )
                 seen.add(name)
 
     def encodings_for(self, class_name: str) -> EncodingObjectSet | None:
@@ -576,11 +620,13 @@ def encode_with(encodings: EncodingObjectSet, cls: EncodingClass, kind, value) -
     if obj is None:
         raise Asn1Error(
             f"ECN: {encodings.name or 'the encoding object set'} holds no encoding object "
-            f"for {cls.name} (9.5.1)")
+            f"for {cls.name} (9.5.1)"
+        )
     if obj.realization is None:
         raise Asn1Error(
             f"ECN: {encodings.name} names an encoding this rail does not implement; the "
-            f"set exists because 18.2.1 reserves the name, not because the octets do")
+            f"set exists because 18.2.1 reserves the name, not because the octets do"
+        )
     if cls in SHARED_CLASSES or cls.primitive() in SHARED_CLASSES:
         shared_object_constraints(cls, kind)
     if isinstance(obj.realization, tuple):
@@ -593,9 +639,22 @@ def encode_with(encodings: EncodingObjectSet, cls: EncodingClass, kind, value) -
 
 
 __all__ = [
-    "ABSENT_FROM_BUILTIN_SETS", "BUILTIN_CLASSES", "BUILTIN_SET_OID",
-    "BuiltinEncodingObjectSet", "CLASS_FOR_NOTATION", "Category", "CategoryGroup",
-    "EncodingApplication", "EncodingClass", "EncodingDefinitionModule",
-    "EncodingLinkModule", "EncodingObject", "EncodingObjectSet", "SHARED_CLASSES",
-    "builtin_object_set", "category_group", "encode_with", "shared_object_constraints",
+    "ABSENT_FROM_BUILTIN_SETS",
+    "BUILTIN_CLASSES",
+    "BUILTIN_SET_OID",
+    "BuiltinEncodingObjectSet",
+    "CLASS_FOR_NOTATION",
+    "Category",
+    "CategoryGroup",
+    "EncodingApplication",
+    "EncodingClass",
+    "EncodingDefinitionModule",
+    "EncodingLinkModule",
+    "EncodingObject",
+    "EncodingObjectSet",
+    "SHARED_CLASSES",
+    "builtin_object_set",
+    "category_group",
+    "encode_with",
+    "shared_object_constraints",
 ]

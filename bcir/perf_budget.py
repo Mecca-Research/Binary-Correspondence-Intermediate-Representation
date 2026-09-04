@@ -19,6 +19,7 @@ realized, never faked"). This module makes the *gate* honest:
 Pure-Python and dependency-free; it operates on any `bcir.bench.Comparison`-shaped
 object (duck-typed), so the budget logic is testable without the toolchain.
 """
+
 from __future__ import annotations
 
 import json
@@ -32,6 +33,7 @@ from ._artifact_json import strict_json_loads
 _MAX_TREND_BYTES = 64 << 20
 _MAX_TREND_LINE_BYTES = 1 << 20
 _MAX_TREND_RECORDS = 1_000_000
+
 
 def is_baremetal() -> bool:
     """True on a controlled box where perf floors are meaningful (set BCIR_BAREMETAL=1)."""
@@ -50,12 +52,13 @@ class Budget:
     suspicious "win" that usually means a broken/elided kernel. `reference_milli` is the documented
     Clang-comparison number (e.g. 6000 == the 6.0x gather result); it is *tracked in the trend log,
     never asserted* — the gate is deliberately not strict on the exact speedup in CI."""
+
     name: str
-    min_speedup_milli: int | None = None      # e.g. 1500 == require >=1.5x (bare-metal only)
-    max_ns_per_call: int | None = None        # absolute latency ceiling (bare-metal only)
-    match_band: tuple | None = None           # (lo, hi) milli parity window (bare-metal only)
-    expect_width: int | None = None           # the cost model must select this lane width
-    reference_milli: int | None = None        # documented speedup (trend context; never asserted)
+    min_speedup_milli: int | None = None  # e.g. 1500 == require >=1.5x (bare-metal only)
+    max_ns_per_call: int | None = None  # absolute latency ceiling (bare-metal only)
+    match_band: tuple | None = None  # (lo, hi) milli parity window (bare-metal only)
+    expect_width: int | None = None  # the cost model must select this lane width
+    reference_milli: int | None = None  # documented speedup (trend context; never asserted)
 
 
 @dataclass(frozen=True)
@@ -65,10 +68,10 @@ class BudgetResult:
     baremetal: bool
     speedup_milli: int
     ns_per_call: int
-    reasons: tuple[str, ...] = ()             # why it failed (empty when ok)
-    enforced: tuple[str, ...] = ()            # the strict checks that actually ran
-    waived: tuple[str, ...] = ()              # perf floors skipped because not bare-metal
-    reference_milli: int | None = None        # documented Clang-comparison number (trend context)
+    reasons: tuple[str, ...] = ()  # why it failed (empty when ok)
+    enforced: tuple[str, ...] = ()  # the strict checks that actually ran
+    waived: tuple[str, ...] = ()  # perf floors skipped because not bare-metal
+    reference_milli: int | None = None  # documented Clang-comparison number (trend context)
 
     def __bool__(self) -> bool:
         return self.ok
@@ -98,32 +101,37 @@ def evaluate(comp, budget: Budget, *, baremetal: bool | None = None) -> BudgetRe
     # --- always strict: measurement validity ---
     enforced.append("measurement-validity")
     if bcir.ns_per_call <= 0 or base.ns_per_call <= 0:
-        reasons.append(f"invalid measurement: non-positive ns/call "
-                       f"(bcir={bcir.ns_per_call}, baseline={base.ns_per_call})")
+        reasons.append(
+            f"invalid measurement: non-positive ns/call "
+            f"(bcir={bcir.ns_per_call}, baseline={base.ns_per_call})"
+        )
     if speedup <= 0:
         reasons.append("speedup not finite/measurable (got 0)")
 
     if budget.expect_width is not None:
         enforced.append(f"selected-width=={budget.expect_width}")
         if bcir.width != budget.expect_width:
-            reasons.append(f"cost model selected width {bcir.width}, expected "
-                           f"{budget.expect_width}")
+            reasons.append(
+                f"cost model selected width {bcir.width}, expected {budget.expect_width}"
+            )
 
     # --- perf floors: bare-metal only ---
     if budget.min_speedup_milli is not None:
         if bare:
             enforced.append(f"min_speedup_milli>={budget.min_speedup_milli}")
             if speedup < budget.min_speedup_milli:
-                reasons.append(f"speedup {speedup} below floor {budget.min_speedup_milli} "
-                               f"(bare-metal)")
+                reasons.append(
+                    f"speedup {speedup} below floor {budget.min_speedup_milli} (bare-metal)"
+                )
         else:
             waived.append(f"min_speedup_milli>={budget.min_speedup_milli}")
     if budget.max_ns_per_call is not None:
         if bare:
             enforced.append(f"max_ns_per_call<={budget.max_ns_per_call}")
             if bcir.ns_per_call > budget.max_ns_per_call:
-                reasons.append(f"ns/call {bcir.ns_per_call} over ceiling "
-                               f"{budget.max_ns_per_call} (bare-metal)")
+                reasons.append(
+                    f"ns/call {bcir.ns_per_call} over ceiling {budget.max_ns_per_call} (bare-metal)"
+                )
         else:
             waived.append(f"max_ns_per_call<={budget.max_ns_per_call}")
     if budget.match_band is not None:
@@ -131,37 +139,55 @@ def evaluate(comp, budget: Budget, *, baremetal: bool | None = None) -> BudgetRe
         if bare:
             enforced.append(f"match_band[{lo},{hi}]")
             if not (lo <= speedup <= hi):
-                reasons.append(f"speedup {speedup} outside parity band [{lo},{hi}] (bare-metal) — a "
-                               f"dense kernel should match Clang, not diverge")
+                reasons.append(
+                    f"speedup {speedup} outside parity band [{lo},{hi}] (bare-metal) — a "
+                    f"dense kernel should match Clang, not diverge"
+                )
         else:
             waived.append(f"match_band[{lo},{hi}]")
 
-    return BudgetResult(name=budget.name, ok=not reasons, baremetal=bare, speedup_milli=speedup,
-                        ns_per_call=bcir.ns_per_call, reasons=tuple(reasons),
-                        enforced=tuple(enforced), waived=tuple(waived),
-                        reference_milli=budget.reference_milli)
+    return BudgetResult(
+        name=budget.name,
+        ok=not reasons,
+        baremetal=bare,
+        speedup_milli=speedup,
+        ns_per_call=bcir.ns_per_call,
+        reasons=tuple(reasons),
+        enforced=tuple(enforced),
+        waived=tuple(waived),
+        reference_milli=budget.reference_milli,
+    )
 
 
 # --- trend tracking --------------------------------------------------------------
 
+
 def _provenance() -> dict:
-    return {"ts": int(time.time()), "host": platform.node(), "machine": platform.machine(),
-            "baremetal": is_baremetal()}
+    return {
+        "ts": int(time.time()),
+        "host": platform.node(),
+        "machine": platform.machine(),
+        "baremetal": is_baremetal(),
+    }
 
 
 def record_trend(result: BudgetResult, path: str) -> dict:
     """Append a provenance-tagged JSON line for `result` to the trend log at `path`."""
-    row = {**_provenance(), "name": result.name, "ok": result.ok,
-           "speedup_milli": result.speedup_milli, "ns_per_call": result.ns_per_call,
-           "reference_milli": result.reference_milli}
+    row = {
+        **_provenance(),
+        "name": result.name,
+        "ok": result.ok,
+        "speedup_milli": result.speedup_milli,
+        "ns_per_call": result.ns_per_call,
+        "reference_milli": result.reference_milli,
+    }
     encoded = (json.dumps(row, sort_keys=True) + "\n").encode("utf-8")
     try:
         current_size = os.path.getsize(path)
     except FileNotFoundError:
         current_size = 0
     if current_size + len(encoded) > _MAX_TREND_BYTES:
-        raise ValueError(
-            f"trend log would exceed {_MAX_TREND_BYTES} bytes; rotate {path!r}")
+        raise ValueError(f"trend log would exceed {_MAX_TREND_BYTES} bytes; rotate {path!r}")
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
     with open(path, "ab") as f:
         f.write(encoded)
@@ -187,39 +213,58 @@ def read_trend(path: str) -> list[dict]:
                     text = raw.decode("utf-8")
                 except UnicodeError as exc:
                     raise ValueError(f"trend log line {line_number} is not UTF-8") from exc
-                row = strict_json_loads(text, f"trend log line {line_number}",
-                                        max_bytes=_MAX_TREND_LINE_BYTES)
-                fields = {"ts", "host", "machine", "baremetal", "name", "ok",
-                          "speedup_milli", "ns_per_call", "reference_milli"}
+                row = strict_json_loads(
+                    text, f"trend log line {line_number}", max_bytes=_MAX_TREND_LINE_BYTES
+                )
+                fields = {
+                    "ts",
+                    "host",
+                    "machine",
+                    "baremetal",
+                    "name",
+                    "ok",
+                    "speedup_milli",
+                    "ns_per_call",
+                    "reference_milli",
+                }
                 if not isinstance(row, dict) or set(row) != fields:
                     raise ValueError(f"trend log line {line_number} has an invalid schema")
                 for key in ("host", "machine", "name"):
                     value = row[key]
-                    if (not isinstance(value, str) or (key == "name" and not value) or
-                            len(value) > 4096 or
-                            any(ord(ch) < 0x20 for ch in value)):
+                    if (
+                        not isinstance(value, str)
+                        or (key == "name" and not value)
+                        or len(value) > 4096
+                        or any(ord(ch) < 0x20 for ch in value)
+                    ):
                         raise ValueError(
-                            f"trend log line {line_number} {key} is not a bounded string")
+                            f"trend log line {line_number} {key} is not a bounded string"
+                        )
                 for key in ("baremetal", "ok"):
                     if not isinstance(row[key], bool):
                         raise ValueError(f"trend log line {line_number} {key} is not boolean")
                 timestamp = row["ts"]
-                if (isinstance(timestamp, bool) or not isinstance(timestamp, int) or
-                        not 0 <= timestamp <= (1 << 63) - 1):
-                    raise ValueError(
-                        f"trend log line {line_number} ts is not a non-negative i63")
+                if (
+                    isinstance(timestamp, bool)
+                    or not isinstance(timestamp, int)
+                    or not 0 <= timestamp <= (1 << 63) - 1
+                ):
+                    raise ValueError(f"trend log line {line_number} ts is not a non-negative i63")
                 for key in ("speedup_milli", "ns_per_call"):
                     value = row[key]
-                    if (isinstance(value, bool) or not isinstance(value, int) or
-                            not -(1 << 63) <= value <= (1 << 63) - 1):
-                        raise ValueError(
-                            f"trend log line {line_number} {key} is not a signed i64")
+                    if (
+                        isinstance(value, bool)
+                        or not isinstance(value, int)
+                        or not -(1 << 63) <= value <= (1 << 63) - 1
+                    ):
+                        raise ValueError(f"trend log line {line_number} {key} is not a signed i64")
                 reference = row["reference_milli"]
-                if (reference is not None and
-                        (isinstance(reference, bool) or not isinstance(reference, int) or
-                         not 0 <= reference <= (1 << 63) - 1)):
-                    raise ValueError(
-                        f"trend log line {line_number} reference_milli is invalid")
+                if reference is not None and (
+                    isinstance(reference, bool)
+                    or not isinstance(reference, int)
+                    or not 0 <= reference <= (1 << 63) - 1
+                ):
+                    raise ValueError(f"trend log line {line_number} reference_milli is invalid")
                 rows.append(row)
             return rows
     except OSError:
@@ -229,14 +274,23 @@ def read_trend(path: str) -> list[dict]:
 def trend_summary(path: str, name: str) -> dict:
     """Simple moving-series stats for one budget — count, last, min/median speedup, and (if the
     budget carries one) the documented reference so drift against it can be watched over time."""
-    rows = [r for r in read_trend(path)
-            if r.get("name") == name and isinstance(r.get("speedup_milli"), int)]
+    rows = [
+        r
+        for r in read_trend(path)
+        if r.get("name") == name and isinstance(r.get("speedup_milli"), int)
+    ]
     if not rows:
         return {"name": name, "count": 0}
     series = [r["speedup_milli"] for r in rows]
     ordered = sorted(series)
-    out = {"name": name, "count": len(series), "last": series[-1],
-           "min": ordered[0], "median": ordered[len(ordered) // 2], "max": ordered[-1]}
+    out = {
+        "name": name,
+        "count": len(series),
+        "last": series[-1],
+        "min": ordered[0],
+        "median": ordered[len(ordered) // 2],
+        "max": ordered[-1],
+    }
     refs = [r["reference_milli"] for r in rows if isinstance(r.get("reference_milli"), int)]
     if refs:
         out["reference"] = refs[-1]

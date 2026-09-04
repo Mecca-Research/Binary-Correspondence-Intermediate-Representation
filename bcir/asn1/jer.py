@@ -77,8 +77,18 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .codec import Strictness
-from .schema import (Asn1Type, Choice, Component, OpenType, Primitive, Sequence,
-                     SequenceOf, Set, SetOf, _resolve_open_type)
+from .schema import (
+    Asn1Type,
+    Choice,
+    Component,
+    OpenType,
+    Primitive,
+    Sequence,
+    SequenceOf,
+    Set,
+    SetOf,
+    _resolve_open_type,
+)
 from .tags import Asn1Error, Universal
 from .tlv import decode_one, encode_tlv
 from .values import BitString, is_number_form
@@ -114,6 +124,7 @@ class JerRules(Enum):
 
 # --- clauses 14-19: the JER encoding instructions ----------------------------------------
 
+
 class NameKeyword(Enum):
     """§16.1.1's `Keyword` — a case change applied to an identifier instead of a new name."""
 
@@ -132,17 +143,17 @@ def apply_name_keyword(identifier: str, keyword: NameKeyword) -> str:
     Other characters are unchanged", so it leaves hyphens and digits alone, while
     `UPPERCAMELCASED` removes hyphens. `CAPITALIZED` changes exactly one character.
     """
-    if keyword is NameKeyword.CAPITALIZED:                   # §16.1.5.1
+    if keyword is NameKeyword.CAPITALIZED:  # §16.1.5.1
         return identifier[:1].upper() + identifier[1:]
-    if keyword is NameKeyword.UPPERCASED:                    # §16.1.5.2
+    if keyword is NameKeyword.UPPERCASED:  # §16.1.5.2
         return "".join(c.upper() if c.islower() else c for c in identifier)
-    if keyword is NameKeyword.LOWERCASED:                    # §16.1.5.4
+    if keyword is NameKeyword.LOWERCASED:  # §16.1.5.4
         return "".join(c.lower() if c.isupper() else c for c in identifier)
     # §16.1.5.3 and §16.1.5.5 differ only in whether the first character is raised.
     out: list[str] = []
     raise_next = keyword is NameKeyword.UPPERCAMELCASED
     for character in identifier:
-        if character == "-":                                 # c) / b): hyphens removed
+        if character == "-":  # c) / b): hyphens removed
             raise_next = True
             continue
         out.append(character.upper() if raise_next and character.islower() else character)
@@ -189,8 +200,11 @@ class Text:
     def applied(self, identifier: str) -> str:
         for name, replacement in self.changes:
             if name == identifier:
-                return (apply_name_keyword(identifier, replacement)
-                        if isinstance(replacement, NameKeyword) else replacement)
+                return (
+                    apply_name_keyword(identifier, replacement)
+                    if isinstance(replacement, NameKeyword)
+                    else replacement
+                )
         for name, replacement in self.changes:
             # §18.1.5: ALL "applies to all the enumeration items whose identifiers do not
             # appear in this TEXT encoding instruction", so it is consulted second.
@@ -257,15 +271,15 @@ class JerInstructions:
             self._keep.append(target)
         for instruction in instructions:
             if isinstance(instruction, Not):
-                current.pop(instruction.category, None)      # §13.2
+                current.pop(instruction.category, None)  # §13.2
                 continue
             category = type(instruction)
             if category not in _CATEGORIES:
                 raise Asn1Error(
-                    f"JER: {category.__name__} is not one of the Table 1 encoding "
-                    f"instructions")
+                    f"JER: {category.__name__} is not one of the Table 1 encoding instructions"
+                )
             _check_restrictions(target, instruction)
-            current[category] = instruction                  # §13.3.1/§13.3.2
+            current[category] = instruction  # §13.3.1/§13.3.2
         return self
 
     def get(self, target, category: type):
@@ -290,63 +304,69 @@ def _check_restrictions(target, instruction) -> None:
     the encoding instructions) it would conform to all of the requirements of Rec. ITU-T
     X.680", so a violation is a defect in the schema rather than in any value.
     """
-    if isinstance(instruction, Array):                       # §14.2
+    if isinstance(instruction, Array):  # §14.2
         if not isinstance(target, Sequence):
             raise Asn1Error(
-                f"JER: 14.2 restricts ARRAY to a sequence type; got "
-                f"{type(target).__name__}")
+                f"JER: 14.2 restricts ARRAY to a sequence type; got {type(target).__name__}"
+            )
         for comp in _flatten(target.components):
             loose = comp.optional or comp.has_default or comp.extension
             if loose and isinstance(comp.type, OpenType):
                 raise Asn1Error(
                     f"JER: 14.2 forbids an open type as an optional or extension "
-                    f"component of an ARRAY sequence; {comp.name!r} is one")
-            if loose and isinstance(comp.type, Primitive) \
-                    and comp.type.universal == Universal.NULL:
+                    f"component of an ARRAY sequence; {comp.name!r} is one"
+                )
+            if loose and isinstance(comp.type, Primitive) and comp.type.universal == Universal.NULL:
                 raise Asn1Error(
                     f"JER: 14.2 forbids a component that produces the JSON token null as "
                     f"an optional or extension component of an ARRAY sequence; "
-                    f"{comp.name!r} is a NULL")
-    elif isinstance(instruction, Base64):                    # §15.2
-        if not (isinstance(target, Primitive)
-                and target.universal == Universal.OCTET_STRING):
+                    f"{comp.name!r} is a NULL"
+                )
+    elif isinstance(instruction, Base64):  # §15.2
+        if not (isinstance(target, Primitive) and target.universal == Universal.OCTET_STRING):
             raise Asn1Error("JER: 15.2 restricts BASE64 to an octetstring type")
-    elif isinstance(instruction, ObjectAs):                  # §17.2
+    elif isinstance(instruction, ObjectAs):  # §17.2
         _check_object_restriction(target)
-    elif isinstance(instruction, Text):                      # §18.2
+    elif isinstance(instruction, Text):  # §18.2
         _check_text_restriction(target, instruction)
-    elif isinstance(instruction, Unwrapped):                 # §19.2
+    elif isinstance(instruction, Unwrapped):  # §19.2
         if not isinstance(target, Choice):
             raise Asn1Error(
-                f"JER: 19.2.1 restricts UNWRAPPED to a choice type; got "
-                f"{type(target).__name__}")
+                f"JER: 19.2.1 restricts UNWRAPPED to a choice type; got {type(target).__name__}"
+            )
 
 
 #: §17.2 — the types the "key" component of an OBJECT map may be.
-_OBJECT_KEY_STRINGS = frozenset({
-    Universal.IA5_STRING, Universal.VISIBLE_STRING, Universal.NUMERIC_STRING,
-    Universal.PRINTABLE_STRING, Universal.BMP_STRING, Universal.UNIVERSAL_STRING,
-    Universal.UTF8_STRING, Universal.ENUMERATED,
-})
+_OBJECT_KEY_STRINGS = frozenset(
+    {
+        Universal.IA5_STRING,
+        Universal.VISIBLE_STRING,
+        Universal.NUMERIC_STRING,
+        Universal.PRINTABLE_STRING,
+        Universal.BMP_STRING,
+        Universal.UNIVERSAL_STRING,
+        Universal.UTF8_STRING,
+        Universal.ENUMERATED,
+    }
+)
 
 
 def _check_object_restriction(target) -> None:
     """§17.2 — every clause of it, because an OBJECT map is only unambiguous if all hold."""
     if not isinstance(target, SetOf):
-        raise Asn1Error(
-            f"JER: 17.2 restricts OBJECT to a set-of type; got {type(target).__name__}")
+        raise Asn1Error(f"JER: 17.2 restricts OBJECT to a set-of type; got {type(target).__name__}")
     element = target.element
     if not isinstance(element, Sequence):
-        raise Asn1Error("JER: 17.2 requires the component of an OBJECT set-of to be a "
-                        "sequence type")
+        raise Asn1Error(
+            "JER: 17.2 requires the component of an OBJECT set-of to be a sequence type"
+        )
     if element.extensible:
-        raise Asn1Error("JER: 17.2 requires that sequence type to be "
-                        "\"without an extension marker\"")
+        raise Asn1Error('JER: 17.2 requires that sequence type to be "without an extension marker"')
     components = _flatten(element.components)
     if len(components) != 2:
         raise Asn1Error(
-            f"JER: 17.2 requires exactly two components (a key and a value); got "
-            f"{len(components)}")
+            f"JER: 17.2 requires exactly two components (a key and a value); got {len(components)}"
+        )
     if any(c.optional or c.has_default for c in components):
         raise Asn1Error("JER: 17.2 forbids either component being OPTIONAL or DEFAULT")
     key = components[0].type
@@ -354,38 +374,42 @@ def _check_object_restriction(target) -> None:
         raise Asn1Error(
             "JER: 17.2 restricts the first component of an OBJECT map to one of the "
             "eight string types or an enumerated type -- it becomes a JSON member name, "
-            "which ECMA-404 6 requires to be a JSON string")
+            "which ECMA-404 6 requires to be a JSON string"
+        )
 
 
 def _check_text_restriction(target, instruction: Text) -> None:
     """§18.2.1-§18.2.3."""
-    if not (isinstance(target, Primitive)
-            and target.universal == Universal.ENUMERATED):
+    if not (isinstance(target, Primitive) and target.universal == Universal.ENUMERATED):
         raise Asn1Error("JER: 18.2.1 restricts TEXT to an enumerated type")
     names = [name for name, _new in instruction.changes]
     duplicate = {name for name in names if names.count(name) > 1}
-    if duplicate:                                            # §18.2.2
+    if duplicate:  # §18.2.2
         raise Asn1Error(
             f"JER: 18.2.2 admits each enumeration identifier at most once in a TEXT "
-            f"instruction, and ALL at most once; {sorted(duplicate)} repeats")
+            f"instruction, and ALL at most once; {sorted(duplicate)} repeats"
+        )
     for name, new in instruction.changes:
         if name == "ALL" and not isinstance(new, NameKeyword):
             raise Asn1Error(
                 "JER: 18.2.2 requires the NewTextOrKeyword to be a Keyword when the "
-                "IdentifierOrAll is ALL")
+                "IdentifierOrAll is ALL"
+            )
     known = {name for name, _n in (target.enumeration or ())}
     unknown = {name for name in names if name != "ALL" and name not in known}
     if unknown:
         raise Asn1Error(
             f"JER: a TEXT instruction names {sorted(unknown)}, which is not an "
-            f"enumeration identifier of {target.name}")
-    if target.enumeration:                                   # §18.2.3
+            f"enumeration identifier of {target.name}"
+        )
+    if target.enumeration:  # §18.2.3
         produced = [instruction.applied(name) for name, _n in target.enumeration]
         clash = {name for name in produced if produced.count(name) > 1}
         if clash:
             raise Asn1Error(
                 f"JER: 18.2.3 forbids two identical strings in the final set; "
-                f"{sorted(clash)} appears twice")
+                f"{sorted(clash)} appears twice"
+            )
 
 
 @dataclass(frozen=True)
@@ -398,29 +422,52 @@ class _Opts:
 
 #: §23.2 Table 2 — the four real values that are JSON strings rather than numbers.
 _SPECIAL_REALS: dict[str, float] = {
-    "-0": -0.0, "-INF": float("-inf"), "INF": float("inf"), "NaN": float("nan")}
+    "-0": -0.0,
+    "-INF": float("-inf"),
+    "INF": float("inf"),
+    "NaN": float("nan"),
+}
 
 #: §38.1 — the restricted character string types whose value IS a JSON string.
-_TEXT_STRINGS = frozenset({
-    Universal.IA5_STRING, Universal.VISIBLE_STRING, Universal.NUMERIC_STRING,
-    Universal.PRINTABLE_STRING, Universal.BMP_STRING, Universal.UNIVERSAL_STRING,
-    Universal.UTF8_STRING,
-})
+_TEXT_STRINGS = frozenset(
+    {
+        Universal.IA5_STRING,
+        Universal.VISIBLE_STRING,
+        Universal.NUMERIC_STRING,
+        Universal.PRINTABLE_STRING,
+        Universal.BMP_STRING,
+        Universal.UNIVERSAL_STRING,
+        Universal.UTF8_STRING,
+    }
+)
 
 #: §38.2 — the remaining restricted string types, "encoded as if it were an octetstring
 #: value consisting of the octets specified in Rec. ITU-T X.690, 8.23.5", i.e. as hex.
-_OCTET_STRINGS = frozenset({
-    Universal.TELETEX_STRING, Universal.VIDEOTEX_STRING, Universal.GRAPHIC_STRING,
-    Universal.GENERAL_STRING,
-})
+_OCTET_STRINGS = frozenset(
+    {
+        Universal.TELETEX_STRING,
+        Universal.VIDEOTEX_STRING,
+        Universal.GRAPHIC_STRING,
+        Universal.GENERAL_STRING,
+    }
+)
 
 #: §40 with §7.4.5 — the time types, and the useful types that X.680 clause 45 defines in
 #: terms of VisibleString. All are JSON strings holding the value notation.
-_TIME_STRINGS = frozenset({
-    Universal.UTC_TIME, Universal.GENERALIZED_TIME, Universal.OBJECT_DESCRIPTOR,
-    Universal.TIME, Universal.DATE, Universal.TIME_OF_DAY, Universal.DATE_TIME,
-    Universal.DURATION, Universal.OID_IRI, Universal.RELATIVE_OID_IRI,
-})
+_TIME_STRINGS = frozenset(
+    {
+        Universal.UTC_TIME,
+        Universal.GENERALIZED_TIME,
+        Universal.OBJECT_DESCRIPTOR,
+        Universal.TIME,
+        Universal.DATE,
+        Universal.TIME_OF_DAY,
+        Universal.DATE_TIME,
+        Universal.DURATION,
+        Universal.OID_IRI,
+        Universal.RELATIVE_OID_IRI,
+    }
+)
 
 
 # --- the serializer ----------------------------------------------------------------------
@@ -430,6 +477,7 @@ _TIME_STRINGS = frozenset({
 # a general serializer makes those decisions somewhere this module cannot see them. Number
 # formatting is the sharp case -- §21 forbids a fractional part, an exponent and a
 # superfluous leading zero, and `repr` of a Python float supplies all three.
+
 
 def _string(value: str) -> str:
     """A JSON string (ECMA-404 clause 9), with only the escapes it requires.
@@ -462,8 +510,8 @@ def _string(value: str) -> str:
             # §7.6.2 requires. Refusing beats emitting an escape that no decoder can turn
             # back into a character.
             raise Asn1Error(
-                f"JER: U+{code:04X} is an unpaired surrogate and has no UTF-8 encoding "
-                f"(7.6.2)")
+                f"JER: U+{code:04X} is an unpaired surrogate and has no UTF-8 encoding (7.6.2)"
+            )
         else:
             out.append(character)
     out.append('"')
@@ -486,6 +534,7 @@ def _hex(octets: bytes) -> str:
 
 # --- encoding ----------------------------------------------------------------------------
 
+
 def _encode(kind: Asn1Type, value, opts: "_Opts", context: dict | None = None) -> str:
     if isinstance(kind, Primitive):
         return _encode_primitive(kind, value, opts)
@@ -506,49 +555,49 @@ def _encode(kind: Asn1Type, value, opts: "_Opts", context: dict | None = None) -
 def _encode_primitive(kind: Primitive, value, opts: "_Opts") -> str:
     universal = kind.universal
 
-    if universal == Universal.BOOLEAN:                       # §20
+    if universal == Universal.BOOLEAN:  # §20
         if not isinstance(value, bool):
             raise Asn1Error(f"{kind.name}: expected bool, got {type(value).__name__}")
         return "true" if value else "false"
 
-    if universal == Universal.INTEGER:                       # §21
+    if universal == Universal.INTEGER:  # §21
         return _integer(value, kind.name)
 
-    if universal == Universal.ENUMERATED:                    # §22.1: a JSON *string*
+    if universal == Universal.ENUMERATED:  # §22.1: a JSON *string*
         identifier = _enumeration_identifier(kind, value)
-        text = _instruction(opts, kind, Text)                # §22.2 with clause 18
+        text = _instruction(opts, kind, Text)  # §22.2 with clause 18
         return _string(text.applied(identifier) if text else identifier)
 
-    if universal == Universal.REAL:                          # §23
+    if universal == Universal.REAL:  # §23
         return _encode_real(kind, value)
 
-    if universal == Universal.NULL:                          # §26
+    if universal == Universal.NULL:  # §26
         if value is not None:
             raise Asn1Error(f"{kind.name}: a NULL value is None, got {value!r}")
         return "null"
 
-    if universal == Universal.BIT_STRING:                    # §24
+    if universal == Universal.BIT_STRING:  # §24
         return _encode_bitstring(kind, value, opts)
 
-    if universal == Universal.OCTET_STRING:                  # §25
+    if universal == Universal.OCTET_STRING:  # §25
         return _encode_octetstring(kind, value, opts)
 
     if universal in (Universal.OBJECT_IDENTIFIER, Universal.RELATIVE_OID):
-        return _string(_oid_text(kind, value))               # §32, §33
+        return _string(_oid_text(kind, value))  # §32, §33
 
-    if universal in _TEXT_STRINGS:                           # §38.1
+    if universal in _TEXT_STRINGS:  # §38.1
         if not isinstance(value, str):
             raise Asn1Error(f"{kind.name}: expected str, got {type(value).__name__}")
         return _string(value)
 
-    if universal in _OCTET_STRINGS:                          # §38.2
+    if universal in _OCTET_STRINGS:  # §38.2
         if isinstance(value, str):
             value = value.encode("utf-8")
         if not isinstance(value, (bytes, bytearray)):
             raise Asn1Error(f"{kind.name}: expected bytes, got {type(value).__name__}")
         return _string(_hex(bytes(value)))
 
-    if universal in _TIME_STRINGS:                           # §40 with §7.4.5
+    if universal in _TIME_STRINGS:  # §40 with §7.4.5
         if not isinstance(value, str):
             raise Asn1Error(f"{kind.name}: expected str, got {type(value).__name__}")
         return _string(value)
@@ -562,7 +611,8 @@ def _enumeration_identifier(kind: Primitive, value) -> str:
         raise Asn1Error(
             f"{kind.name}: ENUMERATED has no enumeration; JER encodes the identifier "
             f"(22.2), which -- unlike BER's value (X.690 8.4) -- cannot be derived from "
-            f"the number alone")
+            f"the number alone"
+        )
     if isinstance(value, str):
         if value not in {name for name, _n in kind.enumeration}:
             raise Asn1Error(f"{kind.name}: {value!r} is not an enumeration identifier")
@@ -572,7 +622,8 @@ def _enumeration_identifier(kind: Primitive, value) -> str:
             return name
     raise Asn1Error(
         f"{kind.name}: {value} names no enumeration item, and 22.1 gives an enumerated "
-        f"value no numeric spelling")
+        f"value no numeric spelling"
+    )
 
 
 def _encode_real(kind: Primitive, value) -> str:
@@ -586,7 +637,7 @@ def _encode_real(kind: Primitive, value) -> str:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise Asn1Error(f"{kind.name}: expected a number, got {type(value).__name__}")
     number = float(value)
-    if number != number:                                     # §23.1.1 with Table 2
+    if number != number:  # §23.1.1 with Table 2
         return _string("NaN")
     if number == float("inf"):
         return _string("INF")
@@ -596,6 +647,7 @@ def _encode_real(kind: Primitive, value) -> str:
         # Table 2 spells minus zero as a string; plus zero is §23.1.2's "the real value
         # is 0", which is a JSON number.
         import math
+
         return _string("-0") if math.copysign(1.0, number) < 0 else "0"
     # §23.3: "a JSON number denoting the value". `repr` gives the shortest round-tripping
     # decimal; JSON has no `inf`/`nan` literals, both already handled above.
@@ -606,27 +658,36 @@ def _encode_bitstring(kind: Primitive, value, opts: "_Opts") -> str:
     """§24. The one place a SIZE constraint reaches a JER encoder (§7.2.1 a))."""
     if kind.contains is not None and kind.encoded_by is None:  # §24.4 with §7.2.1 e)
         if not isinstance(value, BitString):
-            raise Asn1Error(f"{kind.name}: expected BitString, got "
-                            f"{type(value).__name__}")
+            raise Asn1Error(f"{kind.name}: expected BitString, got {type(value).__name__}")
         if value.unused:
             raise Asn1Error(
                 f"{kind.name}: a CONTAINING bitstring's bits are a complete encoding "
-                f"(X.682 11.4), so it cannot end {value.unused} bits into an octet")
-        inner = kind.contains.decode(decode_one(bytes(value.octets)),
-                                     strictness=Strictness.BER)
+                f"(X.682 11.4), so it cannot end {value.unused} bits into an octet"
+            )
+        inner = kind.contains.decode(decode_one(bytes(value.octets)), strictness=Strictness.BER)
         return "{" + _string("containing") + ":" + _encode(kind.contains, inner, opts) + "}"
     if not isinstance(value, BitString):
         raise Asn1Error(f"{kind.name}: expected BitString, got {type(value).__name__}")
     low, high = _bitstring_size(kind)
-    if low is not None and low == high:                      # §24.1 a) -> §24.2
+    if low is not None and low == high:  # §24.1 a) -> §24.2
         if value.bit_length != low:
             raise Asn1Error(
                 f"{kind.name}: the effective size constraint fixes the length at {low} "
-                f"bits, got {value.bit_length} (24.2)")
+                f"bits, got {value.bit_length} (24.2)"
+            )
         return _string(_hex(bytes(value.octets)))
     # §24.3: a JSON object carrying the octets and the true bit length.
-    return ("{" + _string("value") + ":" + _string(_hex(bytes(value.octets))) + ","
-            + _string("length") + ":" + _integer(value.bit_length, kind.name) + "}")
+    return (
+        "{"
+        + _string("value")
+        + ":"
+        + _string(_hex(bytes(value.octets)))
+        + ","
+        + _string("length")
+        + ":"
+        + _integer(value.bit_length, kind.name)
+        + "}"
+    )
 
 
 def _bitstring_size(kind: Primitive) -> tuple[int | None, int | None]:
@@ -651,11 +712,11 @@ def _encode_octetstring(kind: Primitive, value, opts: "_Opts") -> str:
     if kind.contains is not None and kind.encoded_by is None:  # §25.4 with §7.2.1 e)
         inner = kind.contains.decode(decode_one(bytes(value)), strictness=Strictness.BER)
         return "{" + _string("containing") + ":" + _encode(kind.contains, inner, opts) + "}"
-    if _instruction(opts, kind, Base64) is not None:         # §25.1 a) -> §25.2
+    if _instruction(opts, kind, Base64) is not None:  # §25.1 a) -> §25.2
         # RFC 2045 §6.8, "except that the 76-character limit does not apply", which is why
         # `b64encode` is right and `encodebytes` (which folds at 76) is not.
         return _string(_base64.b64encode(bytes(value)).decode("ascii"))
-    return _string(_hex(bytes(value)))                       # §25.3
+    return _string(_hex(bytes(value)))  # §25.3
 
 
 def _oid_text(kind: Primitive, value) -> str:
@@ -665,8 +726,7 @@ def _oid_text(kind: Primitive, value) -> str:
     elif isinstance(value, (tuple, list)):
         arcs = tuple(value)
     else:
-        raise Asn1Error(f"{kind.name}: expected a tuple of arcs, got "
-                        f"{type(value).__name__}")
+        raise Asn1Error(f"{kind.name}: expected a tuple of arcs, got {type(value).__name__}")
     if not arcs:
         raise Asn1Error(f"{kind.name}: an object identifier has at least one arc")
     for arc in arcs:
@@ -698,7 +758,7 @@ def _encode_components(kind, value, opts: "_Opts") -> str:
     if not isinstance(value, dict):
         raise Asn1Error(f"{kind.name}: expected a dict, got {type(value).__name__}")
     if _instruction(opts, kind, Array) is not None:
-        return _encode_array(kind, value, opts)              # §27.1 -> §27.2
+        return _encode_array(kind, value, opts)  # §27.1 -> §27.2
     components = _flatten(kind.components)
     known = {comp.name for comp in components}
     unknown = {n for n in value if n not in known and not n.endswith(".resolved")}
@@ -710,15 +770,15 @@ def _encode_components(kind, value, opts: "_Opts") -> str:
             item = value[comp.name]
             # X.697 states no rule for a DEFAULT-valued component. The canonical profile
             # omits it -- see `JerRules` -- which is the X.690 §11.5 answer, not CXER's.
-            if comp.has_default and item == comp.default \
-                    and opts.rules is JerRules.CANONICAL:
+            if comp.has_default and item == comp.default and opts.rules is JerRules.CANONICAL:
                 continue
         elif comp.has_default or comp.optional:
             continue
         else:
             raise Asn1Error(f"{kind.name}: component {comp.name!r} is mandatory")
-        members.append(_string(_member_name(opts, comp)) + ":"
-                       + _encode(comp.type, item, opts, value))
+        members.append(
+            _string(_member_name(opts, comp)) + ":" + _encode(comp.type, item, opts, value)
+        )
     return "{" + ",".join(members) + "}"
 
 
@@ -764,10 +824,9 @@ def _encode_array(kind, value, opts: "_Opts") -> str:
 def _encode_list(kind, value, opts: "_Opts", *, sort: bool) -> str:
     """§28 for a sequence-of (order preserved) and §30.2 for a set-of (order free)."""
     if isinstance(value, (str, bytes, bytearray)) or not hasattr(value, "__iter__"):
-        raise Asn1Error(
-            f"{kind.name}: expected a sequence of elements, got {type(value).__name__}")
+        raise Asn1Error(f"{kind.name}: expected a sequence of elements, got {type(value).__name__}")
     if isinstance(kind, SetOf) and _instruction(opts, kind, ObjectAs) is not None:
-        return _encode_object_map(kind, value, opts)         # §30.1 -> §30.3
+        return _encode_object_map(kind, value, opts)  # §30.1 -> §30.3
     items = [_encode(kind.element, item, opts) for item in value]
     if sort:
         items.sort()
@@ -787,17 +846,20 @@ def _encode_object_map(kind: SetOf, value, opts: "_Opts") -> str:
     members: list[str] = []
     for item in value:
         if not isinstance(item, dict):
-            raise Asn1Error(
-                f"{kind.name}: expected a dict per item, got {type(item).__name__}")
+            raise Asn1Error(f"{kind.name}: expected a dict per item, got {type(item).__name__}")
         for comp in (key_comp, value_comp):
             if comp.name not in item:
                 raise Asn1Error(
                     f"{kind.name}: 17.2 forbids either component being OPTIONAL, so "
-                    f"{comp.name!r} must be present in every item")
-        members.append(_encode(key_comp.type, item[key_comp.name], opts) + ":"
-                       + _encode(value_comp.type, item[value_comp.name], opts))
+                    f"{comp.name!r} must be present in every item"
+                )
+        members.append(
+            _encode(key_comp.type, item[key_comp.name], opts)
+            + ":"
+            + _encode(value_comp.type, item[value_comp.name], opts)
+        )
     if opts.rules is JerRules.CANONICAL:
-        members.sort()                                       # §30.3.3 leaves order free
+        members.sort()  # §30.3.3 leaves order free
     return "{" + ",".join(members) + "}"
 
 
@@ -805,8 +867,8 @@ def _encode_choice(kind: Choice, value, opts: "_Opts") -> str:
     """§31.3 — a JSON object with exactly one member, named for the chosen alternative."""
     if not (isinstance(value, tuple) and len(value) == 2):
         raise Asn1Error(
-            f"{kind.name}: value must be an (alternative, value) pair, got "
-            f"{type(value).__name__}")
+            f"{kind.name}: value must be an (alternative, value) pair, got {type(value).__name__}"
+        )
     chosen, payload = value
     for alt in _flatten(kind.alternatives):
         if alt.name == chosen:
@@ -826,8 +888,7 @@ def _governing_context(kind: OpenType, siblings: dict | None) -> dict:
     return {path: siblings[path[-1]] for path in kind.governing if path[-1] in siblings}
 
 
-def _encode_open_type(kind: OpenType, value, opts: "_Opts",
-                      context: dict | None) -> str:
+def _encode_open_type(kind: OpenType, value, opts: "_Opts", context: dict | None) -> str:
     """§41 — "The encoding of an open type value shall be the encoding of the value of the
     contained type."
 
@@ -838,19 +899,26 @@ def _encode_open_type(kind: OpenType, value, opts: "_Opts",
     if not isinstance(value, (bytes, bytearray)):
         raise Asn1Error(
             f"{kind.name}: an open type value is the contained value's complete encoding, "
-            f"so it must be bytes, not {type(value).__name__}")
+            f"so it must be bytes, not {type(value).__name__}"
+        )
     contained = kind.resolve(_governing_context(kind, context))
     if contained is None:
         raise Asn1Error(
             f"JER: 41 encodes an open type AS its contained type, and {kind.name} could "
             f"not be resolved by its table (X.682 10.19); JER has no hexadecimal "
-            f"alternative to fall back to")
+            f"alternative to fall back to"
+        )
     inner = contained.decode(decode_one(bytes(value)), strictness=Strictness.BER)
     return _encode(contained, inner, opts)
 
 
-def encode_jer(kind: Asn1Type, value, *, rules: JerRules = JerRules.CANONICAL,
-               instructions: "JerInstructions | None" = None) -> bytes:
+def encode_jer(
+    kind: Asn1Type,
+    value,
+    *,
+    rules: JerRules = JerRules.CANONICAL,
+    instructions: "JerInstructions | None" = None,
+) -> bytes:
     """Encode `value` as a complete JER encoding of `kind` (§7.6.2).
 
     The result is UTF-8 octets: §7.6.2 says the JSON tokens "shall be encoded in UTF-8 into
@@ -861,6 +929,7 @@ def encode_jer(kind: Asn1Type, value, *, rules: JerRules = JerRules.CANONICAL,
 
 
 # --- decoding ----------------------------------------------------------------------------
+
 
 class _Raw:
     """A JSON number kept as its source lexeme.
@@ -908,13 +977,19 @@ def _constant(name: str):
     """
     raise Asn1Error(
         f"JER: {name!r} is not a JSON token (ECMA-404 8); 23.2 spells the special real "
-        f"values as JSON strings")
+        f"values as JSON strings"
+    )
 
 
 def _parse(text: str):
     try:
-        return json.loads(text, parse_int=_Raw, parse_float=_Raw,
-                          parse_constant=_constant, object_pairs_hook=_pairs)
+        return json.loads(
+            text,
+            parse_int=_Raw,
+            parse_float=_Raw,
+            parse_constant=_constant,
+            object_pairs_hook=_pairs,
+        )
     except json.JSONDecodeError as error:
         raise Asn1Error(f"JER: not a JSON text (ECMA-404): {error}") from None
 
@@ -936,8 +1011,8 @@ def _decode(node, kind: Asn1Type, opts: "_Opts", context: dict | None = None):
 def _want(node, want: type, kind, what: str, clause: str):
     if not isinstance(node, want) or (want is not bool and isinstance(node, bool)):
         raise Asn1Error(
-            f"{getattr(kind, 'name', kind)}: expected {what} ({clause}), got "
-            f"{_describe(node)}")
+            f"{getattr(kind, 'name', kind)}: expected {what} ({clause}), got {_describe(node)}"
+        )
     return node
 
 
@@ -960,67 +1035,71 @@ def _decode_integer(node, kind) -> int:
     text = _want(node, _Raw, kind, "a JSON number", "21").text
     if "." in text or "e" in text or "E" in text:
         raise Asn1Error(
-            f"{kind.name}: 21 requires an integer to be a JSON number \"with no "
-            f"fractional part and no exponent\"; got {text}")
+            f'{kind.name}: 21 requires an integer to be a JSON number "with no '
+            f'fractional part and no exponent"; got {text}'
+        )
     return int(text)
 
 
 def _decode_primitive(node, kind: Primitive, opts: "_Opts"):
     universal = kind.universal
 
-    if universal == Universal.BOOLEAN:                       # §20
+    if universal == Universal.BOOLEAN:  # §20
         return _want(node, bool, kind, "the JSON token true or false", "20")
 
-    if universal == Universal.INTEGER:                       # §21
+    if universal == Universal.INTEGER:  # §21
         return _decode_integer(node, kind)
 
-    if universal == Universal.ENUMERATED:                    # §22
+    if universal == Universal.ENUMERATED:  # §22
         name = _want(node, str, kind, "a JSON string", "22.1")
         if not kind.enumeration:
             raise Asn1Error(
                 f"{kind.name}: ENUMERATED has no enumeration, so {name!r} cannot be "
-                f"mapped to a value (22.2)")
-        text = _instruction(opts, kind, Text)                # §22.2
+                f"mapped to a value (22.2)"
+            )
+        text = _instruction(opts, kind, Text)  # §22.2
         for item, number in kind.enumeration:
             if (text.applied(item) if text else item) == name:
                 return number
         raise Asn1Error(f"{kind.name}: {name!r} is not an enumeration identifier")
 
-    if universal == Universal.REAL:                          # §23
+    if universal == Universal.REAL:  # §23
         if isinstance(node, str):
             if node not in _SPECIAL_REALS:
                 raise Asn1Error(
-                    f"{kind.name}: {node!r} is not one of Table 2's special real values")
+                    f"{kind.name}: {node!r} is not one of Table 2's special real values"
+                )
             return _SPECIAL_REALS[node]
-        if isinstance(node, dict):                           # §23.4
+        if isinstance(node, dict):  # §23.4
             if list(node) != ["base10Value"]:
                 raise Asn1Error(
                     f"{kind.name}: 23.4 gives a real object exactly one member named "
-                    f"\"base10Value\"; got {sorted(node)}")
-            return float(_want(node["base10Value"], _Raw, kind,
-                               "a JSON number", "23.4").text)
+                    f'"base10Value"; got {sorted(node)}'
+                )
+            return float(_want(node["base10Value"], _Raw, kind, "a JSON number", "23.4").text)
         return float(_want(node, _Raw, kind, "a JSON number", "23.3").text)
 
-    if universal == Universal.NULL:                          # §26
+    if universal == Universal.NULL:  # §26
         if node is not None:
-            raise Asn1Error(f"{kind.name}: expected the JSON token null (26), got "
-                            f"{_describe(node)}")
+            raise Asn1Error(
+                f"{kind.name}: expected the JSON token null (26), got {_describe(node)}"
+            )
         return None
 
-    if universal == Universal.BIT_STRING:                    # §24
+    if universal == Universal.BIT_STRING:  # §24
         return _decode_bitstring(node, kind, opts)
 
-    if universal == Universal.OCTET_STRING:                  # §25
+    if universal == Universal.OCTET_STRING:  # §25
         if isinstance(node, dict) and kind.contains is not None:
-            return _decode_containing(node, kind, opts)     # §25.4
+            return _decode_containing(node, kind, opts)  # §25.4
         text = _want(node, str, kind, "a JSON string", "25.3")
-        if _instruction(opts, kind, Base64) is not None:      # §25.2
+        if _instruction(opts, kind, Base64) is not None:  # §25.2
             try:
                 return _base64.b64decode(text.encode("ascii"), validate=True)
             except Exception:
                 raise Asn1Error(
-                    f"{kind.name}: {text!r} is not a Base64 encoding (25.2, "
-                    f"RFC 2045 6.8)") from None
+                    f"{kind.name}: {text!r} is not a Base64 encoding (25.2, RFC 2045 6.8)"
+                ) from None
         return _unhex(text, kind)
 
     if universal in (Universal.OBJECT_IDENTIFIER, Universal.RELATIVE_OID):
@@ -1034,16 +1113,17 @@ def _decode_primitive(node, kind: Primitive, opts: "_Opts"):
         if not text or any(not is_number_form(part) for part in parts):
             raise Asn1Error(
                 f"{kind.name}: {text!r} is not an XMLObjectIdentifierValue; every arc is "
-                f"DIGIT ZERO..DIGIT NINE with no leading zero (32, X.680 12.26)")
+                f"DIGIT ZERO..DIGIT NINE with no leading zero (32, X.680 12.26)"
+            )
         return tuple(int(part) for part in parts)
 
-    if universal in _TEXT_STRINGS:                           # §38.1
+    if universal in _TEXT_STRINGS:  # §38.1
         return _want(node, str, kind, "a JSON string", "38.1")
 
-    if universal in _OCTET_STRINGS:                          # §38.2
+    if universal in _OCTET_STRINGS:  # §38.2
         return _unhex(_want(node, str, kind, "a JSON string", "38.2"), kind)
 
-    if universal in _TIME_STRINGS:                           # §40
+    if universal in _TIME_STRINGS:  # §40
         return _want(node, str, kind, "a JSON string", "40")
 
     raise Asn1Error(f"JER: no decoding for UNIVERSAL {int(universal)} in this rail")
@@ -1053,7 +1133,8 @@ def _unhex(text: str, kind) -> bytes:
     if len(text) % 2:
         raise Asn1Error(
             f"{kind.name}: a hexadecimal JSON string has an even number of digits "
-            f"(25.3); got {len(text)}")
+            f"(25.3); got {len(text)}"
+        )
     try:
         return bytes.fromhex(text)
     except ValueError:
@@ -1070,7 +1151,8 @@ def _decode_containing(node: dict, kind: Primitive, opts: "_Opts") -> bytes:
     if list(node) != ["containing"]:
         raise Asn1Error(
             f"{kind.name}: 25.4 gives a contents-constrained value exactly one member "
-            f"named \"containing\"; got {sorted(node)}")
+            f'named "containing"; got {sorted(node)}'
+        )
     inner = _decode(node["containing"], kind.contains, opts)
     return encode_tlv(kind.contains.encode(inner))
 
@@ -1079,28 +1161,32 @@ def _decode_bitstring(node, kind: Primitive, opts: "_Opts") -> BitString:
     if isinstance(node, dict) and kind.contains is not None and "containing" in node:
         return BitString(_decode_containing(node, kind, opts), 0)  # §24.4
     low, high = _bitstring_size(kind)
-    if isinstance(node, dict):                               # §24.3
+    if isinstance(node, dict):  # §24.3
         if sorted(node) != ["length", "value"]:
             raise Asn1Error(
                 f"{kind.name}: 24.3 gives a variable-size bitstring the members "
-                f"\"value\" and \"length\"; got {sorted(node)}")
+                f'"value" and "length"; got {sorted(node)}'
+            )
         octets = _unhex(_want(node["value"], str, kind, "a JSON string", "24.3"), kind)
         bits = _decode_integer(node["length"], kind)
         if not 0 <= bits <= len(octets) * 8 or (len(octets) * 8 - bits) >= 8:
             raise Asn1Error(
-                f"{kind.name}: \"length\" of {bits} bits does not match "
-                f"{len(octets)} octet(s) of \"value\" (24.3)")
+                f'{kind.name}: "length" of {bits} bits does not match '
+                f'{len(octets)} octet(s) of "value" (24.3)'
+            )
         return BitString(octets, len(octets) * 8 - bits)
-    text = _want(node, str, kind, "a JSON string", "24.2")   # §24.2
+    text = _want(node, str, kind, "a JSON string", "24.2")  # §24.2
     if low is None or low != high:
         raise Asn1Error(
             f"{kind.name}: 24.1 c) gives a variable-size bitstring the 24.3 object form, "
-            f"not a bare JSON string")
+            f"not a bare JSON string"
+        )
     octets = _unhex(text, kind)
     if not low <= len(octets) * 8 < low + 8:
         raise Asn1Error(
             f"{kind.name}: the effective size constraint fixes the length at {low} bits, "
-            f"which {len(octets)} octet(s) cannot carry (24.2)")
+            f"which {len(octets)} octet(s) cannot carry (24.2)"
+        )
     return BitString(octets, len(octets) * 8 - low)
 
 
@@ -1108,7 +1194,7 @@ def _decode_components(node, kind, opts: "_Opts") -> dict:
     """§27.3 — "The components of the sequence value may be added to the encoding in any
     order", so the decoder matches by name and never by position."""
     if _instruction(opts, kind, Array) is not None:
-        return _decode_array(node, kind, opts)                # §27.2
+        return _decode_array(node, kind, opts)  # §27.2
     members = _want(node, dict, kind, "a JSON object", "27.3.1")
     components = _flatten(kind.components)
     by_name = {_member_name(opts, comp): comp for comp in components}
@@ -1122,7 +1208,8 @@ def _decode_components(node, kind, opts: "_Opts") -> dict:
                 continue
             raise Asn1Error(
                 f"{kind.name}: member {name!r} matches no component, and the type carries "
-                f"no extension marker")
+                f"no extension marker"
+            )
         out[comp.name] = _decode(item, comp.type, opts, out)
         _resolve_open_type(comp, out, Strictness.BER)
     if opts.rules is JerRules.CANONICAL:
@@ -1132,15 +1219,15 @@ def _decode_components(node, kind, opts: "_Opts") -> dict:
             raise Asn1Error(
                 f"{kind.name}: the BCIR canonical profile fixes member order at the "
                 f"component order of the type; 27.3.3 leaves it free, so this is a "
-                f"legal JER encoding that is not a canonical one")
+                f"legal JER encoding that is not a canonical one"
+            )
     for comp in components:
         if comp.name in out:
             continue
         if comp.has_default:
-            out[comp.name] = comp.default                    # X.680 §25.12
+            out[comp.name] = comp.default  # X.680 §25.12
         elif not comp.optional:
-            raise Asn1Error(
-                f"{kind.name}: mandatory component {comp.name!r} is missing")
+            raise Asn1Error(f"{kind.name}: mandatory component {comp.name!r} is missing")
     return out
 
 
@@ -1152,16 +1239,16 @@ def _decode_array(node, kind, opts: "_Opts") -> dict:
     """
     elements = _want(node, list, kind, "a JSON array", "27.2.1")
     components = _flatten(kind.components)
-    ordered = ([c for c in components if not c.extension]
-               + [c for c in components if c.extension])
+    ordered = [c for c in components if not c.extension] + [c for c in components if c.extension]
     if len(elements) > len(ordered):
         raise Asn1Error(
             f"{kind.name}: the ARRAY encoding has {len(elements)} elements for "
-            f"{len(ordered)} component(s) (27.2.1)")
+            f"{len(ordered)} component(s) (27.2.1)"
+        )
     out: dict = {}
     for comp, element in zip(ordered, elements):
         if element is None and (comp.optional or comp.has_default):
-            continue                                         # §27.2.1: absent
+            continue  # §27.2.1: absent
         out[comp.name] = _decode(element, comp.type, opts, out)
         _resolve_open_type(comp, out, Strictness.BER)
     for comp in ordered:
@@ -1170,14 +1257,13 @@ def _decode_array(node, kind, opts: "_Opts") -> dict:
         if comp.has_default:
             out[comp.name] = comp.default
         elif not comp.optional:
-            raise Asn1Error(
-                f"{kind.name}: mandatory component {comp.name!r} is missing (27.2.1)")
+            raise Asn1Error(f"{kind.name}: mandatory component {comp.name!r} is missing (27.2.1)")
     return out
 
 
 def _decode_list(node, kind, opts: "_Opts") -> list:
     if isinstance(kind, SetOf) and _instruction(opts, kind, ObjectAs) is not None:
-        return _decode_object_map(node, kind, opts)          # §30.3
+        return _decode_object_map(node, kind, opts)  # §30.3
     items = _want(node, list, kind, "a JSON array", "28")
     return [_decode(item, kind.element, opts) for item in items]
 
@@ -1188,8 +1274,12 @@ def _decode_object_map(node, kind: SetOf, opts: "_Opts") -> list:
     key_comp, value_comp = _flatten(kind.element.components)
     out: list = []
     for name, item in members.items():
-        out.append({key_comp.name: _decode(name, key_comp.type, opts),
-                    value_comp.name: _decode(item, value_comp.type, opts)})
+        out.append(
+            {
+                key_comp.name: _decode(name, key_comp.type, opts),
+                value_comp.name: _decode(item, value_comp.type, opts),
+            }
+        )
     return out
 
 
@@ -1233,38 +1323,47 @@ def _json_kinds(kind: Asn1Type, opts: "_Opts") -> frozenset:
             return frozenset({"null"})
         if universal == Universal.BIT_STRING:
             if kind.contains is not None and kind.encoded_by is None:
-                return frozenset({"object"})                 # §24.4
+                return frozenset({"object"})  # §24.4
             low, high = _bitstring_size(kind)
-            return frozenset({"string"}) if low is not None and low == high \
-                else frozenset({"object"})                   # §24.2 / §24.3
+            return (
+                frozenset({"string"}) if low is not None and low == high else frozenset({"object"})
+            )  # §24.2 / §24.3
         if universal == Universal.OCTET_STRING:
             if kind.contains is not None and kind.encoded_by is None:
-                return frozenset({"object"})                 # §25.4
+                return frozenset({"object"})  # §25.4
             return frozenset({"string"})
-        return frozenset({"string"})                         # every remaining type
+        return frozenset({"string"})  # every remaining type
     if isinstance(kind, (Sequence, Set)):
-        return frozenset({"array"}) if _instruction(opts, kind, Array) is not None \
+        return (
+            frozenset({"array"})
+            if _instruction(opts, kind, Array) is not None
             else frozenset({"object"})
+        )
     if isinstance(kind, SequenceOf):
         return frozenset({"array"})
     if isinstance(kind, SetOf):
-        return frozenset({"object"}) if _instruction(opts, kind, ObjectAs) is not None \
+        return (
+            frozenset({"object"})
+            if _instruction(opts, kind, ObjectAs) is not None
             else frozenset({"array"})
+        )
     if isinstance(kind, Choice):
         if _instruction(opts, kind, Unwrapped) is None:
-            return frozenset({"object"})                     # §31.3
+            return frozenset({"object"})  # §31.3
         kinds: set = set()
         for alt in _flatten(kind.alternatives):
             kinds |= _json_kinds(alt.type, opts)
         return frozenset(kinds)
-    raise Asn1Error(
-        "JER: 19.2.4 forbids an open type as an alternative of an unwrapped choice")
+    raise Asn1Error("JER: 19.2.4 forbids an open type as an alternative of an unwrapped choice")
 
 
 def _mandatory_names(kind, opts: "_Opts") -> frozenset:
     """The member names §19.2.3 discriminates two object-producing alternatives by."""
-    return frozenset(_member_name(opts, comp) for comp in _flatten(kind.components)
-                     if not (comp.optional or comp.has_default))
+    return frozenset(
+        _member_name(opts, comp)
+        for comp in _flatten(kind.components)
+        if not (comp.optional or comp.has_default)
+    )
 
 
 def _decode_choice(node, kind: Choice, opts: "_Opts") -> tuple:
@@ -1274,9 +1373,9 @@ def _decode_choice(node, kind: Choice, opts: "_Opts") -> tuple:
     members = _want(node, dict, kind, "a JSON object", "31.3.1")
     if len(members) != 1:
         raise Asn1Error(
-            f"{kind.name}: 31.3.1 gives a choice value exactly one member; got "
-            f"{len(members)}")
-    (name, item), = members.items()
+            f"{kind.name}: 31.3.1 gives a choice value exactly one member; got {len(members)}"
+        )
+    ((name, item),) = members.items()
     for alt in _flatten(kind.alternatives):
         if _member_name(opts, alt) == name:
             return (alt.name, _decode(item, alt.type, opts))
@@ -1296,47 +1395,57 @@ def _decode_unwrapped(node, kind: Choice, opts: "_Opts") -> tuple:
     once a later assignment lands.
     """
     shape = _node_kind(node)
-    candidates = [alt for alt in _flatten(kind.alternatives)
-                  if shape in _json_kinds(alt.type, opts)]
+    candidates = [
+        alt for alt in _flatten(kind.alternatives) if shape in _json_kinds(alt.type, opts)
+    ]
     if not candidates:
         raise Asn1Error(
             f"{kind.name}: no alternative of this unwrapped choice produces "
-            f"{_describe(node)} (31.2)")
+            f"{_describe(node)} (31.2)"
+        )
     if len(candidates) > 1:
         if shape != "object":
             raise Asn1Error(
                 f"{kind.name}: 19.2.2 admits at most one alternative producing "
                 f"{_describe(node)}, but {[a.name for a in candidates]} all do; this "
-                f"choice cannot carry a final UNWRAPPED encoding instruction")
+                f"choice cannot carry a final UNWRAPPED encoding instruction"
+            )
         # §19.2.3: the object-producing alternatives are separated by a mandatory member
         # name that the others do not have.
         present = set(node)
-        matched = [alt for alt in candidates
-                   if isinstance(alt.type, (Sequence, Set))
-                   and _mandatory_names(alt.type, opts) <= present]
+        matched = [
+            alt
+            for alt in candidates
+            if isinstance(alt.type, (Sequence, Set)) and _mandatory_names(alt.type, opts) <= present
+        ]
         if len(matched) != 1:
             raise Asn1Error(
                 f"{kind.name}: 19.2.3 requires two object-producing alternatives to be "
                 f"separated by a mandatory member name; {sorted(present)} matches "
-                f"{[a.name for a in matched] or 'none'}")
+                f"{[a.name for a in matched] or 'none'}"
+            )
         candidates = matched
     alt = candidates[0]
     return (alt.name, _decode(node, alt.type, opts))
 
 
-def _decode_open_type(node, kind: OpenType, opts: "_Opts",
-                      context: dict | None) -> bytes:
+def _decode_open_type(node, kind: OpenType, opts: "_Opts", context: dict | None) -> bytes:
     contained = kind.resolve(_governing_context(kind, context))
     if contained is None:
         raise Asn1Error(
             f"JER: 41 encodes an open type AS its contained type, and {kind.name} could "
-            f"not be resolved by its table (X.682 10.19)")
+            f"not be resolved by its table (X.682 10.19)"
+        )
     return encode_tlv(contained.encode(_decode(node, contained, opts)))
 
 
-def decode_jer(data: bytes | str, kind: Asn1Type, *,
-               rules: JerRules = JerRules.CANONICAL,
-               instructions: "JerInstructions | None" = None) -> object:
+def decode_jer(
+    data: bytes | str,
+    kind: Asn1Type,
+    *,
+    rules: JerRules = JerRules.CANONICAL,
+    instructions: "JerInstructions | None" = None,
+) -> object:
     """Decode a complete JER encoding of `kind`.
 
     `opts` selects what the decoder *accepts*. `CANONICAL` is the stricter of the two: it
@@ -1348,7 +1457,7 @@ def decode_jer(data: bytes | str, kind: Asn1Type, *,
         text = data
     elif isinstance(data, (bytes, bytearray)):
         try:
-            text = bytes(data).decode("utf-8")               # §7.6.2
+            text = bytes(data).decode("utf-8")  # §7.6.2
         except UnicodeDecodeError as error:
             raise Asn1Error(f"JER: the encoding is UTF-8 (7.6.2): {error}") from None
     else:
@@ -1357,7 +1466,19 @@ def decode_jer(data: bytes | str, kind: Asn1Type, *,
 
 
 __all__ = [
-    "JER_OID", "JER_OID_DESCRIPTOR", "Array", "Base64", "JerInstructions", "JerRules",
-    "Name", "NameKeyword", "Not", "ObjectAs", "Text", "Unwrapped", "apply_name_keyword",
-    "decode_jer", "encode_jer",
+    "JER_OID",
+    "JER_OID_DESCRIPTOR",
+    "Array",
+    "Base64",
+    "JerInstructions",
+    "JerRules",
+    "Name",
+    "NameKeyword",
+    "Not",
+    "ObjectAs",
+    "Text",
+    "Unwrapped",
+    "apply_name_keyword",
+    "decode_jer",
+    "encode_jer",
 ]

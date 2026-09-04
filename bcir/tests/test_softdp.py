@@ -98,6 +98,7 @@ def test_analytic_gradient_is_the_expected_cost():
 
 def _policy_with(base):
     from bcir.kbcir.weights import Policy
+
     return Policy("perf_bumped", tuple(base))
 
 
@@ -106,14 +107,17 @@ def test_gradient_matches_finite_difference():
     # difference in weight d (memory, dim 1). At cool Theta weights == policy.base,
     # so bumping the base bumps the effective weight by the same amount.
     from bcir.kbcir import cost as costmod
+
     m = vector_add(1024)
     T = 2000.0
     grad = grad_free_energy_wrt_weights(softselect(m, AVX, Theta.cool(), PERF, T))
     base = list(weights(AVX, Theta.cool(), 0, PERF))
     d = costmod.MEMORY
     eps = 1.0
-    plus = list(base); plus[d] += eps
-    minus = list(base); minus[d] -= eps
+    plus = list(base)
+    plus[d] += eps
+    minus = list(base)
+    minus[d] -= eps
     f_plus = free_energy(m, AVX, Theta.cool(), _policy_with(plus), T)
     f_minus = free_energy(m, AVX, Theta.cool(), _policy_with(minus), T)
     fd = (f_plus - f_minus) / (2 * eps)
@@ -123,6 +127,6 @@ def test_gradient_matches_finite_difference():
 def test_temperature_sweep_is_monotone_and_bounded():
     sweep = temperature_sweep(vector_add(1024), AVX, Theta.cool())
     fs = [f for _, f in sweep]
-    assert sweep[0][0] == 0.0 and fs[0] == 7808.0          # T=0 anchor
-    assert all(f <= 7808.0 for f in fs)                    # F <= hard min
-    assert all(a >= b for a, b in zip(fs, fs[1:]))         # rises as T falls
+    assert sweep[0][0] == 0.0 and fs[0] == 7808.0  # T=0 anchor
+    assert all(f <= 7808.0 for f in fs)  # F <= hard min
+    assert all(a >= b for a, b in zip(fs, fs[1:]))  # rises as T falls

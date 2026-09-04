@@ -26,9 +26,9 @@ def _decode_f16(lo: int) -> float:
     sign = -1.0 if lo & 0x8000 else 1.0
     exp = (lo >> 10) & 0x1F
     frac = lo & 0x3FF
-    if exp == 0:                                       # subnormal (or zero)
-        return sign * frac * 2.0 ** -24
-    if exp == 0x1F:                                    # inf / nan
+    if exp == 0:  # subnormal (or zero)
+        return sign * frac * 2.0**-24
+    if exp == 0x1F:  # inf / nan
         return sign * float("inf") if frac == 0 else float("nan")
     return sign * (1.0 + frac / 1024.0) * 2.0 ** (exp - 15)
 
@@ -38,13 +38,14 @@ def decode_tensor(dtype: str, raw: bytes) -> list[float]:
     if dtype not in _DTYPE_BYTES:
         raise ValueError(f"unsupported tensor dtype {dtype!r} (F64/F32/F16/BF16)")
     if len(raw) % _DTYPE_BYTES[dtype]:
-        raise ValueError(f"{dtype} tensor byte length {len(raw)} is not a multiple of "
-                         f"{_DTYPE_BYTES[dtype]}")
+        raise ValueError(
+            f"{dtype} tensor byte length {len(raw)} is not a multiple of {_DTYPE_BYTES[dtype]}"
+        )
     if dtype == "F64":
         return list(struct.unpack(f"<{len(raw) // 8}d", raw))
     if dtype == "F32":
         return list(struct.unpack(f"<{len(raw) // 4}f", raw))
-    if dtype == "BF16":                                # the top half of an F32
+    if dtype == "BF16":  # the top half of an F32
         n = len(raw) // 2
         halves = struct.unpack(f"<{n}H", raw)
         packed = struct.pack(f"<{n}I", *(h << 16 for h in halves))
@@ -84,8 +85,10 @@ def load_tensors(path: str, names: list | None = None) -> dict:
             for x in info["shape"]:
                 n *= x
             if hi - lo != n * _DTYPE_BYTES[dtype]:
-                raise ValueError(f"{name}: {hi - lo} bytes != shape {tuple(info['shape'])} "
-                                 f"x {_DTYPE_BYTES[dtype]}-byte {dtype}")
+                raise ValueError(
+                    f"{name}: {hi - lo} bytes != shape {tuple(info['shape'])} "
+                    f"x {_DTYPE_BYTES[dtype]}-byte {dtype}"
+                )
             f.seek(data_off + lo)
             raw = f.read(hi - lo)
             if len(raw) != hi - lo:

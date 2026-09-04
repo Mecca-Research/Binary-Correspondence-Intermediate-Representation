@@ -43,8 +43,7 @@ def test_pinned_download_uses_private_staging_files() -> None:
             legacy_part.write_bytes(b"not ours")
             with ThreadPoolExecutor(max_workers=2) as pool:
                 futures = [
-                    pool.submit(fetcher._download, "https://invalid.example/model", target,
-                                info, 1)
+                    pool.submit(fetcher._download, "https://invalid.example/model", target, info, 1)
                     for _ in range(2)
                 ]
                 for future in futures:

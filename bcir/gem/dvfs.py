@@ -23,13 +23,13 @@ from dataclasses import dataclass
 from ..kbcir.cost import COMPUTE, MEMORY, TargetProfile, Theta
 from ..kbcir.realize import RealizationResult
 
-NOMINAL = 256          # Q8 clock == x1.0
-OVERCLOCK = 320        # x1.25 (compute-bound, thermal budget permitting)
-DOWNCLOCK = 192        # x0.75 (memory-bound: saves power, throughput unaffected)
+NOMINAL = 256  # Q8 clock == x1.0
+OVERCLOCK = 320  # x1.25 (compute-bound, thermal budget permitting)
+DOWNCLOCK = 192  # x0.75 (memory-bound: saves power, throughput unaffected)
 
 # Arithmetic-intensity thresholds (compute*1000 / memory, in milli).
-HI_INTENSITY = 1000    # compute >= memory  -> compute-bound
-LO_INTENSITY = 250     # compute <= 25% of memory -> memory-bound
+HI_INTENSITY = 1000  # compute >= memory  -> compute-bound
+LO_INTENSITY = 250  # compute <= 25% of memory -> memory-bound
 # Theta pressures above which an overclock is unsafe (hold nominal instead).
 THERMAL_CAP = 70
 POWER_CAP = 70
@@ -68,7 +68,7 @@ class DVFSDecision:
     @property
     def power_milli(self) -> int:
         """Modeled dynamic power ~ f * V^2 with V ~ f (so ~ f^3), relative to nominal."""
-        return (self.clock_q8 ** 3) // (NOMINAL * NOMINAL)
+        return (self.clock_q8**3) // (NOMINAL * NOMINAL)
 
     @property
     def throughput_milli(self) -> int:
@@ -112,8 +112,9 @@ def phase_totals(module, result: RealizationResult) -> dict[int, tuple[int, int]
     return {pid: (c, m) for pid, (c, m) in totals.items()}
 
 
-def plan_dvfs(module, result: RealizationResult, theta: Theta,
-              h: TargetProfile | None = None) -> DVFSPlan:
+def plan_dvfs(
+    module, result: RealizationResult, theta: Theta, h: TargetProfile | None = None
+) -> DVFSPlan:
     """A per-phase clock plan: classify each phase by intensity and set its clock,
     honoring the thermal/power budget. Deterministic; phases sorted by id."""
     totals = phase_totals(module, result)
@@ -122,19 +123,28 @@ def plan_dvfs(module, result: RealizationResult, theta: Theta,
         compute, memory = totals[pid]
         klass = classify(compute, memory)
         clock, reason = clock_for(klass, theta)
-        decisions.append(DVFSDecision(phase_id=pid, compute=compute, memory=memory,
-                                      klass=klass, clock_q8=clock, reason=reason))
+        decisions.append(
+            DVFSDecision(
+                phase_id=pid,
+                compute=compute,
+                memory=memory,
+                klass=klass,
+                clock_q8=clock,
+                reason=reason,
+            )
+        )
     return DVFSPlan(decisions=tuple(decisions))
 
 
 # --- real cpufreq wiring (read the table; actuation honestly gated) ---------------
 
+
 @dataclass(frozen=True)
 class FreqTarget:
     phase_id: int
     clock_q8: int
-    target_khz: int          # nominal_khz * clock_q8 / 256, snapped to a real step
-    settable: bool           # can this host actuate the frequency (userspace gov + root)?
+    target_khz: int  # nominal_khz * clock_q8 / 256, snapped to a real step
+    settable: bool  # can this host actuate the frequency (userspace gov + root)?
 
 
 def quantize_to_silicon(plan: DVFSPlan, cpufreq=None) -> list[FreqTarget]:
@@ -145,6 +155,7 @@ def quantize_to_silicon(plan: DVFSPlan, cpufreq=None) -> list[FreqTarget]:
     set a clock we could not. Returns [] if no nominal frequency is readable."""
     if cpufreq is None:
         from ..silicon import cpufreq_info
+
         cpufreq = cpufreq_info()
     if not cpufreq.available:
         return []
@@ -153,8 +164,14 @@ def quantize_to_silicon(plan: DVFSPlan, cpufreq=None) -> list[FreqTarget]:
     for d in plan.decisions:
         want = (nominal * d.clock_q8) // NOMINAL
         target = min(cpufreq.steps_khz, key=lambda s: abs(s - want)) if cpufreq.steps_khz else want
-        out.append(FreqTarget(phase_id=d.phase_id, clock_q8=d.clock_q8,
-                              target_khz=target, settable=cpufreq.actuatable))
+        out.append(
+            FreqTarget(
+                phase_id=d.phase_id,
+                clock_q8=d.clock_q8,
+                target_khz=target,
+                settable=cpufreq.actuatable,
+            )
+        )
     return out
 
 
@@ -168,9 +185,9 @@ _CURFREQ = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"
 class ActuationResult:
     phase_id: int
     requested_khz: int
-    observed_khz: int | None     # scaling_cur_freq read back after the write (None if not read)
-    applied: bool                # the frequency was actually set on this host
-    reason: str                  # why not, when applied is False (the honest boundary)
+    observed_khz: int | None  # scaling_cur_freq read back after the write (None if not read)
+    applied: bool  # the frequency was actually set on this host
+    reason: str  # why not, when applied is False (the honest boundary)
 
 
 def actuate(targets, cpufreq=None) -> list[ActuationResult]:
@@ -185,16 +202,27 @@ def actuate(targets, cpufreq=None) -> list[ActuationResult]:
     on a bare-metal host with the governor configured. Never raises."""
     if cpufreq is None:
         from ..silicon import cpufreq_info
+
         cpufreq = cpufreq_info()
     out: list[ActuationResult] = []
     for t in targets:
         if not cpufreq.actuatable:
-            reason = ("no cpufreq governor exposed" if cpufreq.governor is None
-                      else f"governor is '{cpufreq.governor}', need 'userspace'"
-                      if cpufreq.governor != "userspace"
-                      else "scaling_setspeed not writable (need root/CAP_SYS_ADMIN)")
-            out.append(ActuationResult(phase_id=t.phase_id, requested_khz=t.target_khz,
-                                       observed_khz=None, applied=False, reason=reason))
+            reason = (
+                "no cpufreq governor exposed"
+                if cpufreq.governor is None
+                else f"governor is '{cpufreq.governor}', need 'userspace'"
+                if cpufreq.governor != "userspace"
+                else "scaling_setspeed not writable (need root/CAP_SYS_ADMIN)"
+            )
+            out.append(
+                ActuationResult(
+                    phase_id=t.phase_id,
+                    requested_khz=t.target_khz,
+                    observed_khz=None,
+                    applied=False,
+                    reason=reason,
+                )
+            )
             continue
         try:
             with open(_SETSPEED, "w") as f:
@@ -205,10 +233,23 @@ def actuate(targets, cpufreq=None) -> list[ActuationResult]:
                     observed = int(f.read().strip())
             except OSError:
                 pass
-            out.append(ActuationResult(phase_id=t.phase_id, requested_khz=t.target_khz,
-                                       observed_khz=observed, applied=True, reason=""))
-        except OSError as e:                      # lost the race / permission revoked
-            out.append(ActuationResult(phase_id=t.phase_id, requested_khz=t.target_khz,
-                                       observed_khz=None, applied=False,
-                                       reason=f"write failed: {e.strerror}"))
+            out.append(
+                ActuationResult(
+                    phase_id=t.phase_id,
+                    requested_khz=t.target_khz,
+                    observed_khz=observed,
+                    applied=True,
+                    reason="",
+                )
+            )
+        except OSError as e:  # lost the race / permission revoked
+            out.append(
+                ActuationResult(
+                    phase_id=t.phase_id,
+                    requested_khz=t.target_khz,
+                    observed_khz=None,
+                    applied=False,
+                    reason=f"write failed: {e.strerror}",
+                )
+            )
     return out

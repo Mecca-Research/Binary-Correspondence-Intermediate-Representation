@@ -44,8 +44,8 @@ def _value(node) -> str:
         # Print as hstring when the bit count is a whole number of hex digits, so a
         # value written that way survives the round trip in the same form.
         if node.bits % 4 == 0:
-            return "'" + node.data.hex().upper()[:node.bits // 4] + "'H"
-        bits = "".join(f"{byte:08b}" for byte in node.data)[:node.bits]
+            return "'" + node.data.hex().upper()[: node.bits // 4] + "'H"
+        bits = "".join(f"{byte:08b}" for byte in node.data)[: node.bits]
         return "'" + bits + "'B"
     if isinstance(node, ast.OidValue):
         return _oid(node)
@@ -79,8 +79,7 @@ def _type(node, depth: int) -> str:
         return node.name
 
     if isinstance(node, ast.Tagged):
-        head = f"[{node.tag_class} {node.number}]" if node.tag_class \
-            else f"[{node.number}]"
+        head = f"[{node.tag_class} {node.number}]" if node.tag_class else f"[{node.number}]"
         mode = f" {node.mode}" if node.mode else ""
         return f"{head}{mode} {_type(node.inner, depth)}"
 
@@ -179,13 +178,13 @@ def print_module(node: ast.ModuleNode) -> str:
         if isinstance(assignment, ast.TypeAssignment):
             lines.append(f"{assignment.name} ::= {_type(assignment.type, 0)}")
         elif isinstance(assignment, ast.ValueAssignment):
-            lines.append(f"{assignment.name} {_type(assignment.type, 0)} ::= "
-                         f"{_value(assignment.value)}")
+            lines.append(
+                f"{assignment.name} {_type(assignment.type, 0)} ::= {_value(assignment.value)}"
+            )
         elif isinstance(assignment, ast.ClassAssignment):
             lines.append(f"{assignment.name} ::= CLASS {_class_fields(assignment)}")
         elif isinstance(assignment, (ast.ObjectAssignment, ast.ObjectSetAssignment)):
-            lines.append(f"{assignment.name} {assignment.object_class} ::= "
-                         f"{assignment.raw}")
+            lines.append(f"{assignment.name} {assignment.object_class} ::= {assignment.raw}")
         lines.append("")
 
     lines.append("END")

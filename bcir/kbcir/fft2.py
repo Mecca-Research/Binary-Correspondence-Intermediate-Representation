@@ -42,7 +42,9 @@ def dft2_reference(x: list[float], n0: int, n1: int) -> list[float]:
     if n1 < 1:
         raise ValueError(f"fft2 cols (n1) must be >= 1; got {n1}")
     if len(x) != 2 * n0 * n1:
-        raise ValueError(f"interleaved input must have 2*n0*n1 = {2 * n0 * n1} floats; got {len(x)}")
+        raise ValueError(
+            f"interleaved input must have 2*n0*n1 = {2 * n0 * n1} floats; got {len(x)}"
+        )
     out = [0.0] * (2 * n0 * n1)
     for j0 in range(n0):
         for j1 in range(n1):

@@ -9,6 +9,7 @@ training, and shape-checked global-weight transplantation.
 The dependency-free contracts, exact size accounting, and verified StreamPack lowering
 live in :mod:`bcir.kbcir.byte_latent`.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -23,11 +24,19 @@ try:
     import torch.nn.functional as F
 except ModuleNotFoundError as exc:  # pragma: no cover - dependency gate
     raise ModuleNotFoundError(
-        "byte-native model probes require PyTorch; install bcir[model-lab]") from exc
+        "byte-native model probes require PyTorch; install bcir[model-lab]"
+    ) from exc
 
 from ...kbcir.byte_latent import (
-    ByteLatentSpec, ByteifiedTransplantPlan, MambaByteSpec, PatchLayout, TensorShape,
-    assess_byte_latent, assess_mambabyte, discounted_batch_advantages, verify_byte_draft,
+    ByteLatentSpec,
+    ByteifiedTransplantPlan,
+    MambaByteSpec,
+    PatchLayout,
+    TensorShape,
+    assess_byte_latent,
+    assess_mambabyte,
+    discounted_batch_advantages,
+    verify_byte_draft,
 )
 from ..models.checkpoint import tensor_mapping_digest
 from .contracts import StageRunReport, StageTrainSpec, canonical_json, sha256_text
@@ -75,30 +84,28 @@ class _SelfAttention(nn.Module):
 
     def _rope(self, values: torch.Tensor) -> torch.Tensor:
         half = values.shape[-1] // 2
-        positions = torch.arange(
-            values.shape[-2], dtype=torch.float32, device=values.device)
+        positions = torch.arange(values.shape[-2], dtype=torch.float32, device=values.device)
         frequency = torch.arange(half, dtype=torch.float32, device=values.device)
         frequency = torch.pow(float(self.rope_base), -frequency / half)
         angle = positions[:, None] * frequency[None, :]
         cosine = torch.cos(angle)[None, None].to(values.dtype)
         sine = torch.sin(angle)[None, None].to(values.dtype)
         first, second = values[..., :half], values[..., half:]
-        return torch.cat((first * cosine - second * sine,
-                          second * cosine + first * sine), dim=-1)
+        return torch.cat((first * cosine - second * sine, second * cosine + first * sine), dim=-1)
 
-    def forward(self, values: torch.Tensor, *, causal: bool,
-                mask: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self, values: torch.Tensor, *, causal: bool, mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
         q = self._rope(_split_heads(self.q_proj(values), self.heads))
         k = self._rope(_split_heads(self.k_proj(values), self.heads))
         v = _split_heads(self.v_proj(values), self.heads)
         if mask is not None:
-            if mask.ndim != 2 or tuple(mask.shape) != (
-                    values.shape[1], values.shape[1]):
+            if mask.ndim != 2 or tuple(mask.shape) != (values.shape[1], values.shape[1]):
                 raise ValueError("attention mask has the wrong shape")
             mask = mask[None, None]
         result = F.scaled_dot_product_attention(
-            q, k, v, attn_mask=mask, dropout_p=0.0,
-            is_causal=causal and mask is None)
+            q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=causal and mask is None
+        )
         return self.o_proj(_merge_heads(result))
 
 
@@ -114,26 +121,26 @@ class _SwiGLU(nn.Module):
 
 
 class _TransformerBlock(nn.Module):
-    def __init__(self, width: int, heads: int, ff_width: int, *,
-                 rope_base: int, epsilon: float):
+    def __init__(self, width: int, heads: int, ff_width: int, *, rope_base: int, epsilon: float):
         super().__init__()
         self.attention_norm = _RMSNorm(width, epsilon)
         self.attention = _SelfAttention(width, heads, rope_base)
         self.mlp_norm = _RMSNorm(width, epsilon)
         self.mlp = _SwiGLU(width, ff_width)
 
-    def forward(self, values: torch.Tensor, *, causal: bool,
-                mask: torch.Tensor | None = None) -> torch.Tensor:
-        values = values + self.attention(
-            self.attention_norm(values), causal=causal, mask=mask)
+    def forward(
+        self, values: torch.Tensor, *, causal: bool, mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        values = values + self.attention(self.attention_norm(values), causal=causal, mask=mask)
         return values + self.mlp(self.mlp_norm(values))
 
 
 class _SelectiveSSMBlock(nn.Module):
     """Readable diagonal selective recurrence; production needs a fused scan kernel."""
 
-    def __init__(self, width: int, state_size: int, expansion: int,
-                 conv_width: int, *, epsilon: float):
+    def __init__(
+        self, width: int, state_size: int, expansion: int, conv_width: int, *, epsilon: float
+    ):
         super().__init__()
         inner = width * expansion
         self.inner = inner
@@ -141,8 +148,9 @@ class _SelectiveSSMBlock(nn.Module):
         self.conv_width = conv_width
         self.norm = _RMSNorm(width, epsilon)
         self.in_proj = nn.Linear(width, 2 * inner, bias=False)
-        self.conv = nn.Conv1d(inner, inner, conv_width, groups=inner,
-                              bias=False, padding=conv_width - 1)
+        self.conv = nn.Conv1d(
+            inner, inner, conv_width, groups=inner, bias=False, padding=conv_width - 1
+        )
         self.dt_proj = nn.Linear(inner, inner, bias=True)
         self.b_proj = nn.Linear(inner, state_size, bias=False)
         self.c_proj = nn.Linear(inner, state_size, bias=False)
@@ -152,19 +160,22 @@ class _SelectiveSSMBlock(nn.Module):
 
     def forward(self, values: torch.Tensor) -> torch.Tensor:
         projected, gate = self.in_proj(self.norm(values)).chunk(2, dim=-1)
-        convolved = self.conv(projected.transpose(1, 2))[..., :values.shape[1]]
+        convolved = self.conv(projected.transpose(1, 2))[..., : values.shape[1]]
         convolved = F.silu(convolved.transpose(1, 2))
         dt = F.softplus(self.dt_proj(convolved))
         b_values = torch.tanh(self.b_proj(convolved))
         c_values = torch.tanh(self.c_proj(convolved))
         a = -torch.exp(self.a_log.float()).to(values.dtype)
-        state = torch.zeros(values.shape[0], self.inner, self.state_size,
-                            dtype=values.dtype, device=values.device)
+        state = torch.zeros(
+            values.shape[0], self.inner, self.state_size, dtype=values.dtype, device=values.device
+        )
         outputs = []
         for index in range(values.shape[1]):
             step = dt[:, index, :, None]
-            state = torch.exp(a[None] * step) * state \
+            state = (
+                torch.exp(a[None] * step) * state
                 + step * convolved[:, index, :, None] * b_values[:, index, None, :]
+            )
             output = (state * c_values[:, index, None, :]).sum(dim=-1)
             output = output + self.direct * convolved[:, index]
             outputs.append(output * F.silu(gate[:, index]))
@@ -205,28 +216,44 @@ class HostedByteLatentModel(nn.Module):
         local, global_ = spec.local_width, spec.global_width
         self.embed_bytes = nn.Embedding(spec.vocabulary.size, local)
         self.ngram_embeddings = nn.ModuleList(
-            nn.Embedding(spec.hash_buckets, local) for _ in spec.hash_ngram_sizes)
+            nn.Embedding(spec.hash_buckets, local) for _ in spec.hash_ngram_sizes
+        )
         if spec.local_backbone == "transformer":
             self.local_encoder = nn.ModuleList(
                 _TransformerBlock(
-                    local, spec.local_heads, spec.local_ff_width,
-                    rope_base=spec.rope_base, epsilon=spec.rms_norm_epsilon)
-                for _ in range(spec.local_encoder_layers))
+                    local,
+                    spec.local_heads,
+                    spec.local_ff_width,
+                    rope_base=spec.rope_base,
+                    epsilon=spec.rms_norm_epsilon,
+                )
+                for _ in range(spec.local_encoder_layers)
+            )
         else:
             self.local_encoder = nn.ModuleList(
-                _SelectiveSSMBlock(local, spec.ssm_state_size, spec.ssm_expansion,
-                                   spec.ssm_conv_width,
-                                   epsilon=spec.rms_norm_epsilon)
-                for _ in range(spec.local_encoder_layers))
+                _SelectiveSSMBlock(
+                    local,
+                    spec.ssm_state_size,
+                    spec.ssm_expansion,
+                    spec.ssm_conv_width,
+                    epsilon=spec.rms_norm_epsilon,
+                )
+                for _ in range(spec.local_encoder_layers)
+            )
         self.pool_q = nn.Linear(local, global_, bias=False)
         self.pool_k = nn.Linear(local, global_, bias=False)
         self.pool_v = nn.Linear(local, global_, bias=False)
         self.pool_o = nn.Linear(global_, global_, bias=False)
         self.global_blocks = nn.ModuleList(
             _TransformerBlock(
-                global_, spec.global_heads, spec.global_ff_width,
-                rope_base=spec.rope_base, epsilon=spec.rms_norm_epsilon)
-            for _ in range(spec.global_layers))
+                global_,
+                spec.global_heads,
+                spec.global_ff_width,
+                rope_base=spec.rope_base,
+                epsilon=spec.rms_norm_epsilon,
+            )
+            for _ in range(spec.global_layers)
+        )
         self.bos_patch = nn.Parameter(torch.zeros(global_))
         self.decoder_q = nn.Linear(local, local, bias=False)
         self.decoder_k = nn.Linear(global_, local, bias=False)
@@ -234,9 +261,14 @@ class HostedByteLatentModel(nn.Module):
         self.decoder_o = nn.Linear(local, local, bias=False)
         self.local_decoder = nn.ModuleList(
             _TransformerBlock(
-                local, spec.local_heads, spec.local_ff_width,
-                rope_base=spec.rope_base, epsilon=spec.rms_norm_epsilon)
-            for _ in range(spec.local_decoder_layers))
+                local,
+                spec.local_heads,
+                spec.local_ff_width,
+                rope_base=spec.rope_base,
+                epsilon=spec.rms_norm_epsilon,
+            )
+            for _ in range(spec.local_decoder_layers)
+        )
         self.final_norm = _RMSNorm(local, spec.rms_norm_epsilon)
         self.lm_head = nn.Linear(local, spec.vocabulary.size, bias=False)
         if spec.patcher.method in ("entropy_global", "entropy_monotonic", "learned"):
@@ -244,8 +276,7 @@ class HostedByteLatentModel(nn.Module):
         else:
             self.early_head = None
         if spec.patcher.method == "learned":
-            self.boundary_weight = nn.Parameter(torch.empty(
-                spec.patcher.learned_window + 1, local))
+            self.boundary_weight = nn.Parameter(torch.empty(spec.patcher.learned_window + 1, local))
         else:
             self.boundary_weight = None
         self.apply(_initialize)
@@ -261,14 +292,20 @@ class HostedByteLatentModel(nn.Module):
         return sum(parameter.numel() for parameter in self.parameters())
 
     def _validate_ids(self, input_ids: torch.Tensor) -> None:
-        if not isinstance(input_ids, torch.Tensor) or input_ids.ndim != 2 \
-                or input_ids.dtype != torch.long or input_ids.shape[0] < 1 \
-                or input_ids.shape[0] > _MAX_HOSTED_BATCH \
-                or input_ids.shape[1] < 1 \
-                or input_ids.shape[1] > self.spec.context_bytes:
+        if (
+            not isinstance(input_ids, torch.Tensor)
+            or input_ids.ndim != 2
+            or input_ids.dtype != torch.long
+            or input_ids.shape[0] < 1
+            or input_ids.shape[0] > _MAX_HOSTED_BATCH
+            or input_ids.shape[1] < 1
+            or input_ids.shape[1] > self.spec.context_bytes
+        ):
             raise ValueError("byte ids must be nonempty rank-2 torch.long within context")
-        if input_ids.numel() * max(self.spec.local_width, self.spec.global_width) \
-                > _MAX_HOSTED_ACTIVATION_ELEMENTS:
+        if (
+            input_ids.numel() * max(self.spec.local_width, self.spec.global_width)
+            > _MAX_HOSTED_ACTIVATION_ELEMENTS
+        ):
             raise ValueError("hosted byte activation exceeds the bounded reference limit")
         if torch.any(input_ids < 0) or torch.any(input_ids >= self.spec.vocabulary.size):
             raise ValueError("byte/control id is outside the vocabulary")
@@ -302,15 +339,21 @@ class HostedByteLatentModel(nn.Module):
                 row_active = []
                 for index in range(length):
                     if index + 1 < size:
-                        row_indices.append(0); row_active.append(0)
+                        row_indices.append(0)
+                        row_active.append(0)
                     else:
-                        row_indices.append(self._hash_ngram(
-                            row[index + 1 - size:index + 1], self.spec.hash_buckets))
+                        row_indices.append(
+                            self._hash_ngram(
+                                row[index + 1 - size : index + 1], self.spec.hash_buckets
+                            )
+                        )
                         row_active.append(1)
-                indices.append(row_indices); active.append(row_active)
+                indices.append(row_indices)
+                active.append(row_active)
             index_tensor = torch.tensor(indices, dtype=torch.long, device=values.device)
-            active_tensor = torch.tensor(active, dtype=values.dtype,
-                                         device=values.device)[..., None]
+            active_tensor = torch.tensor(active, dtype=values.dtype, device=values.device)[
+                ..., None
+            ]
             values = values + embedding(index_tensor) * active_tensor
             count = count + active_tensor
         return values / count
@@ -335,19 +378,22 @@ class HostedByteLatentModel(nn.Module):
             entropies = -(probabilities * torch.log2(probabilities.clamp_min(1e-30))).sum(-1)
             # A start at byte i must depend only on bytes <i.  The early head at row
             # i-1 predicts the distribution for byte i; byte zero is already a forced start.
-            entropies = torch.cat((torch.zeros_like(entropies[:, :1]), entropies[:, :-1]),
-                                  dim=1)
-        return tuple(self.spec.patcher.layout(
-            hidden.shape[1], entropy_millibits=tuple(
-                int(value * 1000.0 + 0.5) for value in row.tolist()))
-                     for row in entropies.cpu())
+            entropies = torch.cat((torch.zeros_like(entropies[:, :1]), entropies[:, :-1]), dim=1)
+        return tuple(
+            self.spec.patcher.layout(
+                hidden.shape[1],
+                entropy_millibits=tuple(int(value * 1000.0 + 0.5) for value in row.tolist()),
+            )
+            for row in entropies.cpu()
+        )
 
-    def _learned_layouts(self, hidden: torch.Tensor, *, sample: bool,
-                         seed: int) -> tuple[tuple[PatchLayout, ...], torch.Tensor,
-                                             torch.Tensor, torch.Tensor]:
+    def _learned_layouts(
+        self, hidden: torch.Tensor, *, sample: bool, seed: int
+    ) -> tuple[tuple[PatchLayout, ...], torch.Tensor, torch.Tensor, torch.Tensor]:
         if self.boundary_weight is None or self.spec.learned_policy is None:
             raise ValueError("learned layouts require a boundary policy")
-        generator = torch.Generator(device="cpu"); generator.manual_seed(seed)
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(seed)
         target = self.spec.learned_policy.target_boundary_q20 / _Q20
         bias = math.log(target / (1.0 - target))
         layouts = []
@@ -367,8 +413,7 @@ class HostedByteLatentModel(nn.Module):
                 raw = torch.dot(boundary_hidden, self.boundary_weight[0])
                 for distance in range(1, self.spec.patcher.learned_window + 1):
                     if index >= distance and decisions[index - distance]:
-                        raw = raw + torch.dot(
-                            boundary_hidden, self.boundary_weight[distance])
+                        raw = raw + torch.dot(boundary_hidden, self.boundary_weight[distance])
                 scaled = raw / self.spec.learned_policy.logit_scale + bias
                 if sample:
                     scaled = 10.0 * torch.tanh(scaled / 10.0)
@@ -377,16 +422,20 @@ class HostedByteLatentModel(nn.Module):
                 forced = distance >= self.spec.patcher.max_patch_bytes
                 eligible = distance >= self.spec.patcher.min_patch_bytes
                 if forced:
-                    decision = 1; decision_mask = 0.0
+                    decision = 1
+                    decision_mask = 0.0
                 elif not eligible:
-                    decision = 0; decision_mask = 0.0
+                    decision = 0
+                    decision_mask = 0.0
                 elif sample:
                     draw = float(torch.rand((), generator=generator).item())
                     decision = int(draw < float(probability.detach().cpu().item()))
                     decision_mask = 1.0
                 else:
-                    decision = int(float(probability.detach().cpu().item())
-                                   >= self.spec.patcher.learned_threshold_q20 / _Q20)
+                    decision = int(
+                        float(probability.detach().cpu().item())
+                        >= self.spec.patcher.learned_threshold_q20 / _Q20
+                    )
                     decision_mask = 1.0
                 decisions.append(decision)
                 scores.append(_Q20 if decision else 0)
@@ -394,25 +443,28 @@ class HostedByteLatentModel(nn.Module):
                 masks.append(decision_mask)
                 if decision:
                     last = index
-            layouts.append(self.spec.patcher.layout(
-                hidden.shape[1], learned_scores_q20=tuple(scores)))
+            layouts.append(
+                self.spec.patcher.layout(hidden.shape[1], learned_scores_q20=tuple(scores))
+            )
             all_logits.append(torch.stack(logits))
-            all_samples.append(torch.tensor(decisions, dtype=hidden.dtype,
-                                            device=hidden.device))
-            all_masks.append(torch.tensor(masks, dtype=hidden.dtype,
-                                          device=hidden.device))
-        return (tuple(layouts), torch.stack(all_logits), torch.stack(all_samples),
-                torch.stack(all_masks))
+            all_samples.append(torch.tensor(decisions, dtype=hidden.dtype, device=hidden.device))
+            all_masks.append(torch.tensor(masks, dtype=hidden.dtype, device=hidden.device))
+        return (
+            tuple(layouts),
+            torch.stack(all_logits),
+            torch.stack(all_samples),
+            torch.stack(all_masks),
+        )
 
-    def _resolve_layouts(self, hidden: torch.Tensor,
-                         layouts: Sequence[PatchLayout] | None) -> tuple[PatchLayout, ...]:
+    def _resolve_layouts(
+        self, hidden: torch.Tensor, layouts: Sequence[PatchLayout] | None
+    ) -> tuple[PatchLayout, ...]:
         if layouts is not None:
             result = tuple(layouts)
             if len(result) != hidden.shape[0]:
                 raise ValueError("explicit patch layouts are incompatible with the batch")
             for item in result:
-                self.spec.patcher.validate_layout(
-                    item, byte_length=hidden.shape[1])
+                self.spec.patcher.validate_layout(item, byte_length=hidden.shape[1])
             return result
         if self.spec.patcher.method == "stride":
             layout = self.spec.patcher.layout(hidden.shape[1])
@@ -424,7 +476,7 @@ class HostedByteLatentModel(nn.Module):
     def _pool_one(self, hidden: torch.Tensor, layout: PatchLayout) -> torch.Tensor:
         patches = []
         for start, length in zip(layout.starts, layout.lengths):
-            byte_values = hidden[start:start + length]
+            byte_values = hidden[start : start + length]
             query = self.pool_q(byte_values.mean(dim=0, keepdim=True))
             keys = self.pool_k(byte_values)
             values = self.pool_v(byte_values)
@@ -435,13 +487,14 @@ class HostedByteLatentModel(nn.Module):
             result = block(result, causal=True)
         return result.squeeze(0)
 
-    def global_hidden(self, hidden: torch.Tensor,
-                      layouts: Sequence[PatchLayout]) -> tuple[torch.Tensor, ...]:
-        return tuple(self._pool_one(hidden[index], layout)
-                     for index, layout in enumerate(layouts))
+    def global_hidden(
+        self, hidden: torch.Tensor, layouts: Sequence[PatchLayout]
+    ) -> tuple[torch.Tensor, ...]:
+        return tuple(self._pool_one(hidden[index], layout) for index, layout in enumerate(layouts))
 
-    def _decode_one(self, hidden: torch.Tensor, global_values: torch.Tensor,
-                    layout: PatchLayout) -> torch.Tensor:
+    def _decode_one(
+        self, hidden: torch.Tensor, global_values: torch.Tensor, layout: PatchLayout
+    ) -> torch.Tensor:
         latent = torch.cat((self.bos_patch[None], global_values), dim=0)
         keys = self.decoder_k(latent)
         values = self.decoder_v(latent)
@@ -452,7 +505,7 @@ class HostedByteLatentModel(nn.Module):
         for index, patch in enumerate(patch_for_byte):
             # BOS plus strictly previous completed patches; never read the current patch.
             count = patch + 1
-            scores = (queries[index:index + 1] @ keys[:count].transpose(0, 1)) / scale
+            scores = (queries[index : index + 1] @ keys[:count].transpose(0, 1)) / scale
             conditioned.append(torch.softmax(scores, dim=-1) @ values[:count])
         decoded = hidden + self.decoder_o(torch.cat(conditioned, dim=0))
         decoded = decoded[None]
@@ -460,46 +513,73 @@ class HostedByteLatentModel(nn.Module):
             decoded = block(decoded, causal=True)
         return self.final_norm(decoded).squeeze(0)
 
-    def _decode_batch(self, hidden: torch.Tensor, global_values: Sequence[torch.Tensor],
-                      layouts: Sequence[PatchLayout]) -> torch.Tensor:
-        decoded = torch.stack([
-            self._decode_one(hidden[index], global_values[index], layouts[index])
-            for index in range(hidden.shape[0])])
+    def _decode_batch(
+        self,
+        hidden: torch.Tensor,
+        global_values: Sequence[torch.Tensor],
+        layouts: Sequence[PatchLayout],
+    ) -> torch.Tensor:
+        decoded = torch.stack(
+            [
+                self._decode_one(hidden[index], global_values[index], layouts[index])
+                for index in range(hidden.shape[0])
+            ]
+        )
         return F.linear(decoded, self.lm_head.weight)
 
-    def forward(self, input_ids: torch.Tensor, targets: torch.Tensor | None = None,
-                *, layouts: Sequence[PatchLayout] | None = None):
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        targets: torch.Tensor | None = None,
+        *,
+        layouts: Sequence[PatchLayout] | None = None,
+    ):
         self._validate_ids(input_ids)
-        if targets is not None and (not isinstance(targets, torch.Tensor)
-                                    or targets.shape != input_ids.shape
-                                    or targets.dtype != torch.long
-                                    or targets.device != input_ids.device):
+        if targets is not None and (
+            not isinstance(targets, torch.Tensor)
+            or targets.shape != input_ids.shape
+            or targets.dtype != torch.long
+            or targets.device != input_ids.device
+        ):
             raise ValueError("byte targets must match input shape, type, and device")
-        if targets is not None and (torch.any(targets < 0)
-                                    or torch.any(targets >= self.spec.vocabulary.size)):
+        if targets is not None and (
+            torch.any(targets < 0) or torch.any(targets >= self.spec.vocabulary.size)
+        ):
             raise ValueError("byte target is outside the vocabulary")
         hidden = self.local_hidden(input_ids)
         resolved = self._resolve_layouts(hidden, layouts)
         global_values = self.global_hidden(hidden, resolved)
         logits = self._decode_batch(hidden, global_values, resolved)
-        loss = None if targets is None else F.cross_entropy(
-            logits.float().reshape(-1, self.spec.vocabulary.size), targets.reshape(-1))
+        loss = (
+            None
+            if targets is None
+            else F.cross_entropy(
+                logits.float().reshape(-1, self.spec.vocabulary.size), targets.reshape(-1)
+            )
+        )
         return logits, loss
 
-    def _diffusion_logits_from_latent(self, corrupted: torch.Tensor,
-                                      latent: torch.Tensor) -> torch.Tensor:
+    def _diffusion_logits_from_latent(
+        self, corrupted: torch.Tensor, latent: torch.Tensor
+    ) -> torch.Tensor:
         if self.spec.diffusion is None:
             raise ValueError("model has no diffusion decoder contract")
-        if not isinstance(corrupted, torch.Tensor) \
-                or not isinstance(latent, torch.Tensor) \
-                or corrupted.ndim != 1 or corrupted.dtype != torch.long \
-                or corrupted.numel() < 1 \
-                or corrupted.numel() > self.spec.diffusion.block_size \
-                or torch.any(corrupted < 0) \
-                or torch.any(corrupted >= self.spec.vocabulary.size):
+        if (
+            not isinstance(corrupted, torch.Tensor)
+            or not isinstance(latent, torch.Tensor)
+            or corrupted.ndim != 1
+            or corrupted.dtype != torch.long
+            or corrupted.numel() < 1
+            or corrupted.numel() > self.spec.diffusion.block_size
+            or torch.any(corrupted < 0)
+            or torch.any(corrupted >= self.spec.vocabulary.size)
+        ):
             raise ValueError("corrupted diffusion block is malformed")
-        if latent.ndim != 1 or latent.shape[0] != self.spec.global_width \
-                or latent.device != corrupted.device:
+        if (
+            latent.ndim != 1
+            or latent.shape[0] != self.spec.global_width
+            or latent.device != corrupted.device
+        ):
             raise ValueError("diffusion latent is malformed")
         values = self.embed_bytes(corrupted)[None]
         condition = self.decoder_o(self.decoder_v(latent[None]))[None]
@@ -508,17 +588,23 @@ class HostedByteLatentModel(nn.Module):
             values = block(values, causal=False)
         return F.linear(self.final_norm(values), self.lm_head.weight).squeeze(0)
 
-    def diffusion_logits(self, prefix_ids: torch.Tensor,
-                         corrupted_block: torch.Tensor) -> torch.Tensor:
+    def diffusion_logits(
+        self, prefix_ids: torch.Tensor, corrupted_block: torch.Tensor
+    ) -> torch.Tensor:
         if self.spec.diffusion is None:
             raise ValueError("model has no diffusion decoder contract")
-        if not isinstance(prefix_ids, torch.Tensor) \
-                or not isinstance(corrupted_block, torch.Tensor) \
-                or prefix_ids.ndim != 1 or prefix_ids.dtype != torch.long \
-                or prefix_ids.numel() < 1:
+        if (
+            not isinstance(prefix_ids, torch.Tensor)
+            or not isinstance(corrupted_block, torch.Tensor)
+            or prefix_ids.ndim != 1
+            or prefix_ids.dtype != torch.long
+            or prefix_ids.numel() < 1
+        ):
             raise ValueError("diffusion prefix must be a nonempty byte-id vector")
-        if prefix_ids.device != corrupted_block.device \
-                or prefix_ids.device != next(self.parameters()).device:
+        if (
+            prefix_ids.device != corrupted_block.device
+            or prefix_ids.device != next(self.parameters()).device
+        ):
             raise ValueError("diffusion tensors must share the model device")
         if prefix_ids.numel() + corrupted_block.numel() > self.spec.context_bytes:
             raise ValueError("diffusion prefix and block exceed model context")
@@ -531,8 +617,7 @@ class HostedByteLatentModel(nn.Module):
     def local_draft(self, prefix: Sequence[int], count: int) -> tuple[int, ...]:
         if type(count) is not int or count < 1:
             raise ValueError("local draft requires a prompt and positive count")
-        prefix = _validate_prompt(
-            prefix, self.spec.vocabulary, self.spec.context_bytes)
+        prefix = _validate_prompt(prefix, self.spec.vocabulary, self.spec.context_bytes)
         if len(prefix) + count > self.spec.context_bytes:
             raise ValueError("local draft exceeds model context")
         device = next(self.parameters()).device
@@ -545,41 +630,48 @@ class HostedByteLatentModel(nn.Module):
             for _ in range(count):
                 ids = torch.tensor([generated], dtype=torch.long, device=device)
                 local = self.local_hidden(ids)
-                conditioned = local + self.decoder_o(
-                    self.decoder_v(fixed_latent))[None, None]
+                conditioned = local + self.decoder_o(self.decoder_v(fixed_latent))[None, None]
                 for block in self.local_decoder:
                     conditioned = block(conditioned, causal=True)
                 logits = F.linear(self.final_norm(conditioned), self.lm_head.weight)
-                generated.append(_generation_argmax(
-                    logits[0, -1], self.spec.vocabulary))
-        return tuple(generated[len(prefix):])
+                generated.append(_generation_argmax(logits[0, -1], self.spec.vocabulary))
+        return tuple(generated[len(prefix) :])
 
-    def loss_components(self, input_ids: torch.Tensor, targets: torch.Tensor, *,
-                        seed: int, mask_probability_q20: int | None = None) \
-            -> ByteLatentLossReport:
+    def loss_components(
+        self,
+        input_ids: torch.Tensor,
+        targets: torch.Tensor,
+        *,
+        seed: int,
+        mask_probability_q20: int | None = None,
+    ) -> ByteLatentLossReport:
         self._validate_ids(input_ids)
         if type(seed) is not int or not 0 <= seed < 1 << 63:
             raise ValueError("byte training seed must be a non-negative bounded integer")
         if mask_probability_q20 is not None and (
-                type(mask_probability_q20) is not int
-                or not 1 <= mask_probability_q20 <= _Q20):
+            type(mask_probability_q20) is not int or not 1 <= mask_probability_q20 <= _Q20
+        ):
             raise ValueError("mask_probability_q20 must be in [1, 2^20] or None")
-        if not isinstance(targets, torch.Tensor) \
-                or targets.shape != input_ids.shape or targets.dtype != torch.long \
-                or targets.device != input_ids.device \
-                or torch.any(targets < 0) or torch.any(targets >= self.spec.vocabulary.size):
+        if (
+            not isinstance(targets, torch.Tensor)
+            or targets.shape != input_ids.shape
+            or targets.dtype != torch.long
+            or targets.device != input_ids.device
+            or torch.any(targets < 0)
+            or torch.any(targets >= self.spec.vocabulary.size)
+        ):
             raise ValueError("byte training targets are malformed")
         hidden = self.local_hidden(input_ids)
         boundary_logits = boundary_samples = boundary_mask = None
         if self.spec.patcher.method == "learned":
-            layouts, boundary_logits, boundary_samples, boundary_mask = \
-                self._learned_layouts(hidden, sample=True, seed=seed)
+            layouts, boundary_logits, boundary_samples, boundary_mask = self._learned_layouts(
+                hidden, sample=True, seed=seed
+            )
         else:
             layouts = self._resolve_layouts(hidden, None)
         globals_ = self.global_hidden(hidden, layouts)
         logits = self._decode_batch(hidden, globals_, layouts)
-        token_nll = F.cross_entropy(
-            logits.float().transpose(1, 2), targets, reduction="none")
+        token_nll = F.cross_entropy(logits.float().transpose(1, 2), targets, reduction="none")
         autoregressive = token_nll.mean()
         zero = autoregressive * 0.0
         early_loss = zero
@@ -589,28 +681,32 @@ class HostedByteLatentModel(nn.Module):
         if self.early_head is not None:
             early_logits = self.early_head(hidden)
             early_nll = F.cross_entropy(
-                early_logits.float().transpose(1, 2), targets, reduction="none")
+                early_logits.float().transpose(1, 2), targets, reduction="none"
+            )
             early_loss = early_nll.mean()
             if self.spec.patcher.method == "learned":
                 rewards = (-token_nll + early_nll).detach()
                 advantages = discounted_batch_advantages(
-                    rewards.cpu().tolist(), self.spec.learned_policy.discount)
-                advantage = torch.tensor(advantages, dtype=hidden.dtype,
-                                         device=hidden.device)
+                    rewards.cpu().tolist(), self.spec.learned_policy.discount
+                )
+                advantage = torch.tensor(advantages, dtype=hidden.dtype, device=hidden.device)
                 log_probability = -F.binary_cross_entropy_with_logits(
-                    boundary_logits, boundary_samples, reduction="none")
+                    boundary_logits, boundary_samples, reduction="none"
+                )
                 denominator = boundary_mask.sum().clamp_min(1.0)
-                policy_loss = -(log_probability * advantage * boundary_mask).sum() \
-                    / denominator
+                policy_loss = -(log_probability * advantage * boundary_mask).sum() / denominator
                 probabilities = torch.sigmoid(boundary_logits)
                 target = self.spec.learned_policy.target_boundary_q20 / _Q20
                 mean_logit = (boundary_logits * boundary_mask).sum() / denominator
                 mean_probability = (probabilities * boundary_mask).sum() / denominator
                 target_loss = mean_logit * (mean_probability - target).detach()
                 policy = self.spec.learned_policy
-                total = total + policy.policy_weight_q20 / _Q20 * policy_loss \
-                    + policy.target_weight_q20 / _Q20 * target_loss \
+                total = (
+                    total
+                    + policy.policy_weight_q20 / _Q20 * policy_loss
+                    + policy.target_weight_q20 / _Q20 * target_loss
                     + policy.early_weight_q20 / _Q20 * early_loss
+                )
             else:
                 # The entropy head is the tiny causal byte LM used by the patcher.
                 total = total + 0.1 * early_loss
@@ -621,36 +717,43 @@ class HostedByteLatentModel(nn.Module):
             for batch, layout in enumerate(layouts):
                 byte_to_patch = layout.byte_to_patch()
                 for ordinal, start in enumerate(layout.starts):
-                    clean = input_ids[batch, start:start + self.spec.diffusion.block_size]
+                    clean = input_ids[batch, start : start + self.spec.diffusion.block_size]
                     if not clean.numel():
                         continue
                     probability = mask_probability_q20
                     if probability is None:
                         raw = hashlib.sha256(
-                            f"bcir-bltd-time-v1:{seed}:{batch}:{ordinal}".encode(
-                                "ascii")).digest()
+                            f"bcir-bltd-time-v1:{seed}:{batch}:{ordinal}".encode("ascii")
+                        ).digest()
                         probability = 1 + int.from_bytes(raw[:8], "little") % _Q20
                     corrupted_tuple = self.spec.diffusion.corrupt(
                         tuple(int(value) for value in clean.detach().cpu().tolist()),
-                        self.spec.vocabulary, mask_probability_q20=probability,
-                        seed=seed + batch * 65537 + ordinal)
-                    corrupted = torch.tensor(corrupted_tuple, dtype=torch.long,
-                                             device=input_ids.device)
+                        self.spec.vocabulary,
+                        mask_probability_q20=probability,
+                        seed=seed + batch * 65537 + ordinal,
+                    )
+                    corrupted = torch.tensor(
+                        corrupted_tuple, dtype=torch.long, device=input_ids.device
+                    )
                     patch_index = byte_to_patch[start]
-                    conditioning = self.bos_patch if patch_index == 0 \
-                        else globals_[batch][patch_index - 1]
-                    block_logits = self._diffusion_logits_from_latent(
-                        corrupted, conditioning)
+                    conditioning = (
+                        self.bos_patch if patch_index == 0 else globals_[batch][patch_index - 1]
+                    )
+                    block_logits = self._diffusion_logits_from_latent(corrupted, conditioning)
                     masked = corrupted == self.spec.vocabulary.mask_id
-                    losses.append(F.cross_entropy(
-                        block_logits[masked].float(), clean[masked], reduction="mean")
-                        * (_Q20 / probability))
+                    losses.append(
+                        F.cross_entropy(
+                            block_logits[masked].float(), clean[masked], reduction="mean"
+                        )
+                        * (_Q20 / probability)
+                    )
             if not losses:
                 raise RuntimeError("diffusion objective produced no masked training bytes")
             diffusion_loss = torch.stack(losses).mean()
             total = total + self.spec.diffusion.loss_weight_q20 / _Q20 * diffusion_loss
-        return ByteLatentLossReport(total, autoregressive, diffusion_loss, policy_loss,
-                                    target_loss, early_loss, layouts)
+        return ByteLatentLossReport(
+            total, autoregressive, diffusion_loss, policy_loss, target_loss, early_loss, layouts
+        )
 
 
 class HostedMambaByteModel(nn.Module):
@@ -660,16 +763,24 @@ class HostedMambaByteModel(nn.Module):
         super().__init__()
         if not isinstance(spec, MambaByteSpec):
             raise ValueError("spec must be MambaByteSpec")
-        if spec.context_bytes > _MAX_HOSTED_CONTEXT \
-                or assess_mambabyte(spec, sequence_bytes=1).parameter_elements \
-                > _MAX_HOSTED_PARAMETER_ELEMENTS:
+        if (
+            spec.context_bytes > _MAX_HOSTED_CONTEXT
+            or assess_mambabyte(spec, sequence_bytes=1).parameter_elements
+            > _MAX_HOSTED_PARAMETER_ELEMENTS
+        ):
             raise ValueError("hosted MambaByte request exceeds bounded limits")
         self.spec = spec
         self.embed_bytes = nn.Embedding(spec.vocabulary.size, spec.width)
         self.blocks = nn.ModuleList(
-            _SelectiveSSMBlock(spec.width, spec.state_size, spec.expansion,
-                               spec.conv_width, epsilon=spec.rms_norm_epsilon)
-            for _ in range(spec.layers))
+            _SelectiveSSMBlock(
+                spec.width,
+                spec.state_size,
+                spec.expansion,
+                spec.conv_width,
+                epsilon=spec.rms_norm_epsilon,
+            )
+            for _ in range(spec.layers)
+        )
         self.final_norm = _RMSNorm(spec.width, spec.rms_norm_epsilon)
         self.lm_head = nn.Linear(spec.width, spec.vocabulary.size, bias=False)
         self.apply(_initialize)
@@ -677,10 +788,15 @@ class HostedMambaByteModel(nn.Module):
             self.lm_head.weight = self.embed_bytes.weight
 
     def _validate_ids(self, input_ids: torch.Tensor) -> None:
-        if not isinstance(input_ids, torch.Tensor) or input_ids.ndim != 2 \
-                or input_ids.dtype != torch.long or input_ids.shape[0] < 1 \
-                or input_ids.shape[0] > _MAX_HOSTED_BATCH \
-                or input_ids.shape[1] < 1 or input_ids.shape[1] > self.spec.context_bytes:
+        if (
+            not isinstance(input_ids, torch.Tensor)
+            or input_ids.ndim != 2
+            or input_ids.dtype != torch.long
+            or input_ids.shape[0] < 1
+            or input_ids.shape[0] > _MAX_HOSTED_BATCH
+            or input_ids.shape[1] < 1
+            or input_ids.shape[1] > self.spec.context_bytes
+        ):
             raise ValueError("MambaByte ids are malformed")
         if input_ids.numel() * self.spec.width > _MAX_HOSTED_ACTIVATION_ELEMENTS:
             raise ValueError("MambaByte activation exceeds the bounded reference limit")
@@ -689,19 +805,26 @@ class HostedMambaByteModel(nn.Module):
 
     def forward(self, input_ids: torch.Tensor, targets: torch.Tensor | None = None):
         self._validate_ids(input_ids)
-        if targets is not None and (not isinstance(targets, torch.Tensor)
-                                    or targets.shape != input_ids.shape
-                                    or targets.dtype != torch.long
-                                    or targets.device != input_ids.device
-                                    or torch.any(targets < 0)
-                                    or torch.any(targets >= self.spec.vocabulary.size)):
+        if targets is not None and (
+            not isinstance(targets, torch.Tensor)
+            or targets.shape != input_ids.shape
+            or targets.dtype != torch.long
+            or targets.device != input_ids.device
+            or torch.any(targets < 0)
+            or torch.any(targets >= self.spec.vocabulary.size)
+        ):
             raise ValueError("MambaByte targets are malformed")
         values = self.embed_bytes(input_ids)
         for block in self.blocks:
             values = block(values)
         logits = F.linear(self.final_norm(values), self.lm_head.weight)
-        loss = None if targets is None else F.cross_entropy(
-            logits.float().reshape(-1, self.spec.vocabulary.size), targets.reshape(-1))
+        loss = (
+            None
+            if targets is None
+            else F.cross_entropy(
+                logits.float().reshape(-1, self.spec.vocabulary.size), targets.reshape(-1)
+            )
+        )
         return logits, loss
 
     def unique_parameter_count(self) -> int:
@@ -719,15 +842,16 @@ def _generation_argmax(logits: torch.Tensor, vocabulary) -> int:
     return int(torch.argmax(scores).item())
 
 
-def _validate_prompt(prompt: Sequence[int], vocabulary,
-                     context: int) -> tuple[int, ...]:
+def _validate_prompt(prompt: Sequence[int], vocabulary, context: int) -> tuple[int, ...]:
     try:
         result = tuple(itertools.islice(prompt, context + 1))
     except TypeError as exc:
         raise ValueError("prompt must be an iterable of byte/control ids") from exc
-    if not result or len(result) > context \
-            or any(type(value) is not int or not 0 <= value < vocabulary.size
-                   for value in result):
+    if (
+        not result
+        or len(result) > context
+        or any(type(value) is not int or not 0 <= value < vocabulary.size for value in result)
+    ):
         raise ValueError("prompt is empty, over context, or outside the vocabulary")
     if vocabulary.pad_id in result or vocabulary.mask_id in result:
         raise ValueError("prompt cannot contain padding or diffusion-mask sentinels")
@@ -735,122 +859,144 @@ def _validate_prompt(prompt: Sequence[int], vocabulary,
 
 
 @torch.no_grad()
-def greedy_generate_byte_latent(model: HostedByteLatentModel,
-                                prompt: Sequence[int], max_new_bytes: int) -> tuple[int, ...]:
-    if not isinstance(model, HostedByteLatentModel) or type(max_new_bytes) is not int \
-            or max_new_bytes < 0:
+def greedy_generate_byte_latent(
+    model: HostedByteLatentModel, prompt: Sequence[int], max_new_bytes: int
+) -> tuple[int, ...]:
+    if (
+        not isinstance(model, HostedByteLatentModel)
+        or type(max_new_bytes) is not int
+        or max_new_bytes < 0
+    ):
         raise ValueError("byte generation arguments are malformed")
-    generated = list(_validate_prompt(
-        prompt, model.spec.vocabulary, model.spec.context_bytes))
+    generated = list(_validate_prompt(prompt, model.spec.vocabulary, model.spec.context_bytes))
     if len(generated) + max_new_bytes > model.spec.context_bytes:
         raise ValueError("byte generation exceeds model context")
     device = next(model.parameters()).device
-    was_training = model.training; model.eval()
+    was_training = model.training
+    model.eval()
     try:
         for _ in range(max_new_bytes):
             ids = torch.tensor([generated], dtype=torch.long, device=device)
             logits, _ = model(ids)
-            generated.append(_generation_argmax(
-                logits[0, -1], model.spec.vocabulary))
+            generated.append(_generation_argmax(logits[0, -1], model.spec.vocabulary))
     finally:
         model.train(was_training)
     return tuple(generated)
 
 
 @torch.no_grad()
-def greedy_generate_mambabyte(model: HostedMambaByteModel,
-                              prompt: Sequence[int], max_new_bytes: int) -> tuple[int, ...]:
-    if not isinstance(model, HostedMambaByteModel) or type(max_new_bytes) is not int \
-            or max_new_bytes < 0:
+def greedy_generate_mambabyte(
+    model: HostedMambaByteModel, prompt: Sequence[int], max_new_bytes: int
+) -> tuple[int, ...]:
+    if (
+        not isinstance(model, HostedMambaByteModel)
+        or type(max_new_bytes) is not int
+        or max_new_bytes < 0
+    ):
         raise ValueError("MambaByte generation arguments are malformed")
-    generated = list(_validate_prompt(
-        prompt, model.spec.vocabulary, model.spec.context_bytes))
+    generated = list(_validate_prompt(prompt, model.spec.vocabulary, model.spec.context_bytes))
     if len(generated) + max_new_bytes > model.spec.context_bytes:
         raise ValueError("MambaByte generation exceeds context")
     device = next(model.parameters()).device
-    was_training = model.training; model.eval()
+    was_training = model.training
+    model.eval()
     try:
         for _ in range(max_new_bytes):
             ids = torch.tensor([generated], dtype=torch.long, device=device)
             logits, _ = model(ids)
-            generated.append(_generation_argmax(
-                logits[0, -1], model.spec.vocabulary))
+            generated.append(_generation_argmax(logits[0, -1], model.spec.vocabulary))
     finally:
         model.train(was_training)
     return tuple(generated)
 
 
-def _verify_model_draft(model: HostedByteLatentModel, prefix: Sequence[int],
-                        draft: Sequence[int]):
+def _verify_model_draft(model: HostedByteLatentModel, prefix: Sequence[int], draft: Sequence[int]):
     device = next(model.parameters()).device
     candidate = tuple(prefix) + tuple(draft)
     ids = torch.tensor([candidate], dtype=torch.long, device=device)
     logits, _ = model(ids)
     start = len(prefix) - 1
-    predictions = tuple(_generation_argmax(
-                            logits[0, start + index], model.spec.vocabulary)
-                        for index in range(len(draft)))
+    predictions = tuple(
+        _generation_argmax(logits[0, start + index], model.spec.vocabulary)
+        for index in range(len(draft))
+    )
     free = _generation_argmax(logits[0, -1], model.spec.vocabulary)
     return verify_byte_draft(
-        draft, predictions, free_prediction=free,
-        vocabulary_size=model.spec.vocabulary.size)
+        draft, predictions, free_prediction=free, vocabulary_size=model.spec.vocabulary.size
+    )
 
 
 @torch.no_grad()
-def self_speculative_generate(model: HostedByteLatentModel,
-                              prompt: Sequence[int], max_new_bytes: int) -> tuple[int, ...]:
-    if not isinstance(model, HostedByteLatentModel) \
-            or model.spec.generation_mode != "self_speculative" \
-            or model.spec.speculation is None:
+def self_speculative_generate(
+    model: HostedByteLatentModel, prompt: Sequence[int], max_new_bytes: int
+) -> tuple[int, ...]:
+    if (
+        not isinstance(model, HostedByteLatentModel)
+        or model.spec.generation_mode != "self_speculative"
+        or model.spec.speculation is None
+    ):
         raise ValueError("self-speculation requires generation_mode='self_speculative'")
-    generated = list(_validate_prompt(
-        prompt, model.spec.vocabulary, model.spec.context_bytes))
-    if type(max_new_bytes) is not int or max_new_bytes < 0 \
-            or len(generated) + max_new_bytes > model.spec.context_bytes:
+    generated = list(_validate_prompt(prompt, model.spec.vocabulary, model.spec.context_bytes))
+    if (
+        type(max_new_bytes) is not int
+        or max_new_bytes < 0
+        or len(generated) + max_new_bytes > model.spec.context_bytes
+    ):
         raise ValueError("self-speculation length is invalid")
     target = len(generated) + max_new_bytes
-    was_training = model.training; model.eval()
+    was_training = model.training
+    model.eval()
     try:
         while len(generated) < target:
-            draft_count = min(model.spec.speculation.draft_bytes,
-                              target - len(generated))
+            draft_count = min(model.spec.speculation.draft_bytes, target - len(generated))
             draft = model.local_draft(generated, draft_count)
             verified = _verify_model_draft(model, generated, draft)
-            generated.extend(verified.emitted[:target - len(generated)])
+            generated.extend(verified.emitted[: target - len(generated)])
     finally:
         model.train(was_training)
     return tuple(generated)
 
 
 @torch.no_grad()
-def diffusion_draft(model: HostedByteLatentModel, prefix: Sequence[int],
-                    block_size: int | None = None) -> tuple[int, ...]:
+def diffusion_draft(
+    model: HostedByteLatentModel, prefix: Sequence[int], block_size: int | None = None
+) -> tuple[int, ...]:
     if not isinstance(model, HostedByteLatentModel) or model.spec.diffusion is None:
         raise ValueError("diffusion drafting requires a configured byte model")
     prefix = _validate_prompt(prefix, model.spec.vocabulary, model.spec.context_bytes)
     diffusion = model.spec.diffusion
     size = diffusion.block_size if block_size is None else block_size
-    if type(size) is not int or not 1 <= size <= diffusion.block_size \
-            or len(prefix) + size > model.spec.context_bytes:
+    if (
+        type(size) is not int
+        or not 1 <= size <= diffusion.block_size
+        or len(prefix) + size > model.spec.context_bytes
+    ):
         raise ValueError("diffusion block size is invalid")
     device = next(model.parameters()).device
     block = [model.spec.vocabulary.mask_id] * size
     prefix_tensor = torch.tensor(prefix, dtype=torch.long, device=device)
-    was_training = model.training; model.eval()
+    was_training = model.training
+    model.eval()
     try:
         for step in range(diffusion.max_steps):
             block_tensor = torch.tensor(block, dtype=torch.long, device=device)
             logits = model.diffusion_logits(prefix_tensor, block_tensor)
             # BOS/PAD/MASK are sentinels, never denoised byte predictions.
             logits = logits.clone()
-            logits[:, [model.spec.vocabulary.bos_id, model.spec.vocabulary.pad_id,
-                       model.spec.vocabulary.mask_id]] = float("-inf")
+            logits[
+                :,
+                [
+                    model.spec.vocabulary.bos_id,
+                    model.spec.vocabulary.pad_id,
+                    model.spec.vocabulary.mask_id,
+                ],
+            ] = float("-inf")
             probabilities = F.softmax(logits.float(), dim=-1)
             confidence, prediction = probabilities.max(dim=-1)
-            entropy = -(probabilities * torch.log2(
-                probabilities.clamp_min(1e-30))).sum(-1)
-            masked = tuple(index for index, value in enumerate(block)
-                           if value == model.spec.vocabulary.mask_id)
+            entropy = -(probabilities * torch.log2(probabilities.clamp_min(1e-30))).sum(-1)
+            masked = tuple(
+                index for index, value in enumerate(block) if value == model.spec.vocabulary.mask_id
+            )
             if not masked:
                 break
             if step + 1 == diffusion.max_steps:
@@ -858,10 +1004,13 @@ def diffusion_draft(model: HostedByteLatentModel, prefix: Sequence[int],
             else:
                 chosen = diffusion.select_positions(
                     masked,
-                    confidences_q20=tuple(int(value * _Q20 + 0.5)
-                                          for value in confidence.cpu().tolist()),
-                    entropies_millibits=tuple(int(value * 1000.0 + 0.5)
-                                              for value in entropy.cpu().tolist()))
+                    confidences_q20=tuple(
+                        int(value * _Q20 + 0.5) for value in confidence.cpu().tolist()
+                    ),
+                    entropies_millibits=tuple(
+                        int(value * 1000.0 + 0.5) for value in entropy.cpu().tolist()
+                    ),
+                )
             for index in chosen:
                 block[index] = int(prediction[index].item())
     finally:
@@ -872,18 +1021,21 @@ def diffusion_draft(model: HostedByteLatentModel, prefix: Sequence[int],
 
 
 @torch.no_grad()
-def diffusion_generate(model: HostedByteLatentModel,
-                       prompt: Sequence[int], max_new_bytes: int) -> tuple[int, ...]:
-    if not isinstance(model, HostedByteLatentModel) \
-            or model.spec.generation_mode != "diffusion":
+def diffusion_generate(
+    model: HostedByteLatentModel, prompt: Sequence[int], max_new_bytes: int
+) -> tuple[int, ...]:
+    if not isinstance(model, HostedByteLatentModel) or model.spec.generation_mode != "diffusion":
         raise ValueError("pure diffusion generation requires generation_mode='diffusion'")
-    generated = list(_validate_prompt(
-        prompt, model.spec.vocabulary, model.spec.context_bytes))
-    if type(max_new_bytes) is not int or max_new_bytes < 0 \
-            or len(generated) + max_new_bytes > model.spec.context_bytes:
+    generated = list(_validate_prompt(prompt, model.spec.vocabulary, model.spec.context_bytes))
+    if (
+        type(max_new_bytes) is not int
+        or max_new_bytes < 0
+        or len(generated) + max_new_bytes > model.spec.context_bytes
+    ):
         raise ValueError("diffusion generation length is invalid")
     target = len(generated) + max_new_bytes
-    was_training = model.training; model.eval()
+    was_training = model.training
+    model.eval()
     try:
         while len(generated) < target:
             size = min(model.spec.diffusion.block_size, target - len(generated))
@@ -894,27 +1046,35 @@ def diffusion_generate(model: HostedByteLatentModel,
 
 
 @torch.no_grad()
-def diffusion_verify_generate(model: HostedByteLatentModel,
-                              prompt: Sequence[int], max_new_bytes: int) -> tuple[int, ...]:
-    if not isinstance(model, HostedByteLatentModel) \
-            or model.spec.generation_mode != "diffusion_verify" \
-            or model.spec.speculation is None:
+def diffusion_verify_generate(
+    model: HostedByteLatentModel, prompt: Sequence[int], max_new_bytes: int
+) -> tuple[int, ...]:
+    if (
+        not isinstance(model, HostedByteLatentModel)
+        or model.spec.generation_mode != "diffusion_verify"
+        or model.spec.speculation is None
+    ):
         raise ValueError("BLT-DV requires diffusion_verify mode")
-    generated = list(_validate_prompt(
-        prompt, model.spec.vocabulary, model.spec.context_bytes))
-    if type(max_new_bytes) is not int or max_new_bytes < 0 \
-            or len(generated) + max_new_bytes > model.spec.context_bytes:
+    generated = list(_validate_prompt(prompt, model.spec.vocabulary, model.spec.context_bytes))
+    if (
+        type(max_new_bytes) is not int
+        or max_new_bytes < 0
+        or len(generated) + max_new_bytes > model.spec.context_bytes
+    ):
         raise ValueError("BLT-DV generation length is invalid")
     target = len(generated) + max_new_bytes
-    was_training = model.training; model.eval()
+    was_training = model.training
+    model.eval()
     try:
         while len(generated) < target:
-            size = min(model.spec.diffusion.block_size,
-                       model.spec.speculation.draft_bytes,
-                       target - len(generated))
+            size = min(
+                model.spec.diffusion.block_size,
+                model.spec.speculation.draft_bytes,
+                target - len(generated),
+            )
             draft = diffusion_draft(model, generated, size)
             verified = _verify_model_draft(model, generated, draft)
-            generated.extend(verified.emitted[:target - len(generated)])
+            generated.extend(verified.emitted[: target - len(generated)])
     finally:
         model.train(was_training)
     return tuple(generated)
@@ -924,12 +1084,16 @@ def diffusion_verify_generate(model: HostedByteLatentModel,
 def byte_latent_tensor_shapes(model: HostedByteLatentModel) -> tuple[TensorShape, ...]:
     if not isinstance(model, HostedByteLatentModel):
         raise ValueError("model must be HostedByteLatentModel")
-    return tuple(TensorShape(name, tuple(value.shape))
-                 for name, value in sorted(model.named_parameters()) if value.ndim)
+    return tuple(
+        TensorShape(name, tuple(value.shape))
+        for name, value in sorted(model.named_parameters())
+        if value.ndim
+    )
 
 
-def _require_complete_global_plan(model: HostedByteLatentModel,
-                                  plan: ByteifiedTransplantPlan) -> None:
+def _require_complete_global_plan(
+    model: HostedByteLatentModel, plan: ByteifiedTransplantPlan
+) -> None:
     parameters = dict(model.named_parameters())
     expected = {name for name in parameters if name.startswith("global_blocks.")}
     mapped = {target for target, _source in plan.mappings}
@@ -942,12 +1106,17 @@ def _require_complete_global_plan(model: HostedByteLatentModel,
 
 
 @torch.no_grad()
-def apply_byteified_transplant(source_state: Mapping[str, torch.Tensor],
-                               model: HostedByteLatentModel,
-                               plan: ByteifiedTransplantPlan) -> ByteifiedTransplantPlan:
+def apply_byteified_transplant(
+    source_state: Mapping[str, torch.Tensor],
+    model: HostedByteLatentModel,
+    plan: ByteifiedTransplantPlan,
+) -> ByteifiedTransplantPlan:
     """Validate the entire copy before mutating a target parameter."""
-    if not isinstance(source_state, Mapping) or not isinstance(model, HostedByteLatentModel) \
-            or not isinstance(plan, ByteifiedTransplantPlan):
+    if (
+        not isinstance(source_state, Mapping)
+        or not isinstance(model, HostedByteLatentModel)
+        or not isinstance(plan, ByteifiedTransplantPlan)
+    ):
         raise ValueError("byteified transplant arguments are malformed")
     if len(source_state) > _MAX_HOSTED_TENSOR_INVENTORY:
         raise ValueError("byteified source tensor inventory exceeds the hosted bound")
@@ -955,17 +1124,19 @@ def apply_byteified_transplant(source_state: Mapping[str, torch.Tensor],
         source_snapshot = dict(source_state)
     except (TypeError, ValueError) as exc:
         raise ValueError("byteified source tensor mapping cannot be snapshotted") from exc
-    if any(not isinstance(name, str) or not name
-           or len(name.encode("utf-8")) > 4096
-           or not isinstance(value, torch.Tensor)
-           for name, value in source_snapshot.items()):
+    if any(
+        not isinstance(name, str)
+        or not name
+        or len(name.encode("utf-8")) > 4096
+        or not isinstance(value, torch.Tensor)
+        for name, value in source_snapshot.items()
+    ):
         raise ValueError("byteified source tensor inventory is malformed")
     try:
         source_digest = tensor_mapping_digest(source_snapshot)
     except (OverflowError, RuntimeError, TypeError, ValueError) as exc:
         raise ValueError("byteified source tensor inventory cannot be hashed") from exc
-    if plan.target_spec_sha256 != model.spec.digest \
-            or source_digest != plan.source_sha256:
+    if plan.target_spec_sha256 != model.spec.digest or source_digest != plan.source_sha256:
         raise ValueError("byteified transplant provenance does not match")
     _require_complete_global_plan(model, plan)
     target_state = model.state_dict()
@@ -975,8 +1146,12 @@ def apply_byteified_transplant(source_state: Mapping[str, torch.Tensor],
             raise ValueError("byteified transplant tensor is missing")
         source = source_snapshot[source_name]
         target = target_state[target_name]
-        if not isinstance(source, torch.Tensor) or source.shape != target.shape \
-                or source.dtype != target.dtype or not torch.isfinite(source).all():
+        if (
+            not isinstance(source, torch.Tensor)
+            or source.shape != target.shape
+            or source.dtype != target.dtype
+            or not torch.isfinite(source).all()
+        ):
             raise ValueError("byteified transplant tensor is incompatible or non-finite")
         staged.append((target, source.detach().clone()))
     for target, source in staged:
@@ -988,13 +1163,17 @@ def apply_byteified_transplant(source_state: Mapping[str, torch.Tensor],
     return plan
 
 
-def byteified_parameter_groups(model: HostedByteLatentModel,
-                               plan: ByteifiedTransplantPlan, *, base_learning_rate: float):
-    if not isinstance(model, HostedByteLatentModel) \
-            or not isinstance(plan, ByteifiedTransplantPlan) \
-            or isinstance(base_learning_rate, bool) \
-            or not isinstance(base_learning_rate, (int, float)) \
-            or not math.isfinite(float(base_learning_rate)) or base_learning_rate <= 0:
+def byteified_parameter_groups(
+    model: HostedByteLatentModel, plan: ByteifiedTransplantPlan, *, base_learning_rate: float
+):
+    if (
+        not isinstance(model, HostedByteLatentModel)
+        or not isinstance(plan, ByteifiedTransplantPlan)
+        or isinstance(base_learning_rate, bool)
+        or not isinstance(base_learning_rate, (int, float))
+        or not math.isfinite(float(base_learning_rate))
+        or base_learning_rate <= 0
+    ):
         raise ValueError("byteified optimizer group arguments are malformed")
     if plan.target_spec_sha256 != model.spec.digest:
         raise ValueError("byteified optimizer plan does not describe this model")
@@ -1011,19 +1190,24 @@ def byteified_parameter_groups(model: HostedByteLatentModel,
             local_parameters.append(parameter)
     groups = []
     if local_parameters:
-        groups.append({"params": local_parameters, "lr": float(base_learning_rate),
-                       "name": "byte-organs"})
+        groups.append(
+            {"params": local_parameters, "lr": float(base_learning_rate), "name": "byte-organs"}
+        )
     if global_parameters:
-        groups.append({"params": global_parameters,
-                       "lr": float(base_learning_rate)
-                       * plan.global_learning_rate_q20 / _Q20,
-                       "name": "transplanted-global"})
+        groups.append(
+            {
+                "params": global_parameters,
+                "lr": float(base_learning_rate) * plan.global_learning_rate_q20 / _Q20,
+                "name": "transplanted-global",
+            }
+        )
     return groups
 
 
 @torch.no_grad()
 def _byte_ar_loss(model, input_ids, targets) -> float:
-    was_training = model.training; model.eval()
+    was_training = model.training
+    model.eval()
     try:
         _logits, loss = model(input_ids, targets)
         value = float(loss.item())
@@ -1034,25 +1218,43 @@ def _byte_ar_loss(model, input_ids, targets) -> float:
     return value
 
 
-def _train_byte_model(model, input_ids: torch.Tensor, targets: torch.Tensor,
-                      spec: StageTrainSpec, telemetry_sink, *, latent: bool) -> StageRunReport:
+def _train_byte_model(
+    model,
+    input_ids: torch.Tensor,
+    targets: torch.Tensor,
+    spec: StageTrainSpec,
+    telemetry_sink,
+    *,
+    latent: bool,
+) -> StageRunReport:
     if not isinstance(spec, StageTrainSpec) or spec.stage != "pretrain":
         raise ValueError("byte pretraining requires stage='pretrain'")
-    if not isinstance(input_ids, torch.Tensor) \
-            or not isinstance(targets, torch.Tensor) \
-            or input_ids.shape != targets.shape or input_ids.ndim != 2 \
-            or input_ids.device != targets.device \
-            or input_ids.device != next(model.parameters()).device:
+    if (
+        not isinstance(input_ids, torch.Tensor)
+        or not isinstance(targets, torch.Tensor)
+        or input_ids.shape != targets.shape
+        or input_ids.ndim != 2
+        or input_ids.device != targets.device
+        or input_ids.device != next(model.parameters()).device
+    ):
         raise ValueError("byte pretraining tensors are malformed or on the wrong device")
     model._validate_ids(input_ids)
-    if targets.dtype != torch.long or torch.any(targets < 0) \
-            or torch.any(targets >= model.spec.vocabulary.size):
+    if (
+        targets.dtype != torch.long
+        or torch.any(targets < 0)
+        or torch.any(targets >= model.spec.vocabulary.size)
+    ):
         raise ValueError("byte targets must be in-vocabulary torch.long")
     if telemetry_sink is not None and not callable(telemetry_sink):
         raise ValueError("telemetry_sink must be callable or None")
-    input_sha = sha256_text(canonical_json({
-        "inputs": input_ids.detach().cpu().tolist(),
-        "targets": targets.detach().cpu().tolist()}))
+    input_sha = sha256_text(
+        canonical_json(
+            {
+                "inputs": input_ids.detach().cpu().tolist(),
+                "targets": targets.detach().cpu().tolist(),
+            }
+        )
+    )
     architecture_sha = model.spec.digest
     with _deterministic_stage(spec.seed):
         initial = _byte_ar_loss(model, input_ids, targets)
@@ -1061,8 +1263,7 @@ def _train_byte_model(model, input_ids: torch.Tensor, targets: torch.Tensor,
         for step in range(spec.steps):
             optimizer.zero_grad(set_to_none=True)
             if latent:
-                loss = model.loss_components(
-                    input_ids, targets, seed=spec.seed + step).total
+                loss = model.loss_components(input_ids, targets, seed=spec.seed + step).total
             else:
                 _logits, loss = model(input_ids, targets)
             loss.backward()
@@ -1070,37 +1271,65 @@ def _train_byte_model(model, input_ids: torch.Tensor, targets: torch.Tensor,
             if not torch.isfinite(norm) or not torch.isfinite(loss):
                 raise RuntimeError("byte model produced non-finite training values")
             optimizer.step()
-            _emit(telemetry_sink, "pretrain", step + 1, float(loss.detach().item()),
-                  float(norm.item()), (step + 1) * input_ids.shape[0])
+            _emit(
+                telemetry_sink,
+                "pretrain",
+                step + 1,
+                float(loss.detach().item()),
+                float(norm.item()),
+                (step + 1) * input_ids.shape[0],
+            )
         final = _byte_ar_loss(model, input_ids, targets)
-        return StageRunReport("pretrain", spec.digest, input_sha, initial, final,
-                              spec.steps, input_ids.shape[0], _module_digest(model),
-                              architecture_sha)
+        return StageRunReport(
+            "pretrain",
+            spec.digest,
+            input_sha,
+            initial,
+            final,
+            spec.steps,
+            input_ids.shape[0],
+            _module_digest(model),
+            architecture_sha,
+        )
 
 
-def train_byte_latent_pretrain(model: HostedByteLatentModel,
-                               input_ids: torch.Tensor, targets: torch.Tensor,
-                               spec: StageTrainSpec,
-                               telemetry_sink=None) -> StageRunReport:
+def train_byte_latent_pretrain(
+    model: HostedByteLatentModel,
+    input_ids: torch.Tensor,
+    targets: torch.Tensor,
+    spec: StageTrainSpec,
+    telemetry_sink=None,
+) -> StageRunReport:
     if not isinstance(model, HostedByteLatentModel):
         raise ValueError("model must be HostedByteLatentModel")
     return _train_byte_model(model, input_ids, targets, spec, telemetry_sink, latent=True)
 
 
-def train_mambabyte_pretrain(model: HostedMambaByteModel,
-                             input_ids: torch.Tensor, targets: torch.Tensor,
-                             spec: StageTrainSpec,
-                             telemetry_sink=None) -> StageRunReport:
+def train_mambabyte_pretrain(
+    model: HostedMambaByteModel,
+    input_ids: torch.Tensor,
+    targets: torch.Tensor,
+    spec: StageTrainSpec,
+    telemetry_sink=None,
+) -> StageRunReport:
     if not isinstance(model, HostedMambaByteModel):
         raise ValueError("model must be HostedMambaByteModel")
     return _train_byte_model(model, input_ids, targets, spec, telemetry_sink, latent=False)
 
 
 __all__ = [
-    "ByteLatentLossReport", "HostedByteLatentModel", "HostedMambaByteModel",
-    "apply_byteified_transplant", "byte_latent_tensor_shapes",
-    "byteified_parameter_groups", "diffusion_draft", "diffusion_generate",
-    "diffusion_verify_generate", "greedy_generate_byte_latent",
-    "greedy_generate_mambabyte", "self_speculative_generate",
-    "train_byte_latent_pretrain", "train_mambabyte_pretrain",
+    "ByteLatentLossReport",
+    "HostedByteLatentModel",
+    "HostedMambaByteModel",
+    "apply_byteified_transplant",
+    "byte_latent_tensor_shapes",
+    "byteified_parameter_groups",
+    "diffusion_draft",
+    "diffusion_generate",
+    "diffusion_verify_generate",
+    "greedy_generate_byte_latent",
+    "greedy_generate_mambabyte",
+    "self_speculative_generate",
+    "train_byte_latent_pretrain",
+    "train_mambabyte_pretrain",
 ]

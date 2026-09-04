@@ -65,28 +65,89 @@ from dataclasses import dataclass, field, replace
 from .ecn import BuiltinEncodingObjectSet
 from .ecn_encode import USE_SET, ComponentEncoding, EncodeStructure, GovernorCategory
 from .ecn_param import (
-    ActualKind, ActualParameter, ActualParameterList, AssignmentKind, GovernorKind, Parameter,
-    ParameterizedAssignment, ParameterizedReference, ParameterKind, ParameterList,
-    ReplacementParameterization, bare_use,
+    ActualKind,
+    ActualParameter,
+    ActualParameterList,
+    AssignmentKind,
+    GovernorKind,
+    Parameter,
+    ParameterizedAssignment,
+    ParameterizedReference,
+    ParameterKind,
+    ParameterList,
+    ReplacementParameterization,
+    bare_use,
 )
 from .ecn_user import (
-    AlternativeDetermination, AlternativeSelection, AlternativesSpec, ComponentOrder,
-    Optionality, OptionalityDetermination, OptionalSpec,
-    UNIT_BIT, UNIT_NAMES, UNIT_REPETITIONS, AuxIntSpec, BoolSpec, Comparison, ConcatenationSpec,
-    ConditionalIntSpec, ConditionalRepetitionSpec, ContainedType,
+    AlternativeDetermination,
+    AlternativeSelection,
+    AlternativesSpec,
+    ComponentOrder,
+    Optionality,
+    OptionalityDetermination,
+    OptionalSpec,
+    UNIT_BIT,
+    UNIT_NAMES,
+    UNIT_REPETITIONS,
+    AuxIntSpec,
+    BoolSpec,
+    Comparison,
+    ConcatenationSpec,
+    ConditionalIntSpec,
+    ConditionalRepetitionSpec,
+    ContainedType,
     EncodingSpaceDetermination,
-    HeadEndStructure, IntForm, IntOp,
-    RESULT_SIZE_FIXED_TO_MAX, RESULT_SIZE_VARIABLE, BitsToBits, BitsToChar,
-    BitsToCompositeBits, BitsToInt, BitToBits, BoolToBool, BoolToInt, CharsToCompositeChar,
-    CharToBits, CompositeBitsToBits, CompositeBitsToOctets, CompositeCharToChars,
-    HandleValueSet, IdentificationHandle,
-    IntSelector, IntSpec, IntToBits, IntToBool, IntToChars, IntToInt, IntegerBounds,
-    Justification, OctetsToCompositeBits, OuterSpec,
-    PadSpec, Padding, Pattern, PreAlignment, RangeCondition, ReplaceAction, Replacement,
-    ReplacementStructure, RepetitionSpace, RepetitionSpaceDetermination, RepetitionSpec,
-    ReversalSpecification, SizeBounds, SizeRangeCondition, SpaceDeterminant,
-    StartPointer, StringSpec,
-    TransformChain, UnusedBits, UnusedBitsDetermination, UserEncodingObject, ValuePadding,
+    HeadEndStructure,
+    IntForm,
+    IntOp,
+    RESULT_SIZE_FIXED_TO_MAX,
+    RESULT_SIZE_VARIABLE,
+    BitsToBits,
+    BitsToChar,
+    BitsToCompositeBits,
+    BitsToInt,
+    BitToBits,
+    BoolToBool,
+    BoolToInt,
+    CharsToCompositeChar,
+    CharToBits,
+    CompositeBitsToBits,
+    CompositeBitsToOctets,
+    CompositeCharToChars,
+    HandleValueSet,
+    IdentificationHandle,
+    IntSelector,
+    IntSpec,
+    IntToBits,
+    IntToBool,
+    IntToChars,
+    IntToInt,
+    IntegerBounds,
+    Justification,
+    OctetsToCompositeBits,
+    OuterSpec,
+    PadSpec,
+    Padding,
+    Pattern,
+    PreAlignment,
+    RangeCondition,
+    ReplaceAction,
+    Replacement,
+    ReplacementStructure,
+    RepetitionSpace,
+    RepetitionSpaceDetermination,
+    RepetitionSpec,
+    ReversalSpecification,
+    SizeBounds,
+    SizeRangeCondition,
+    SpaceDeterminant,
+    StartPointer,
+    StringSpec,
+    TransformChain,
+    UnusedBits,
+    UnusedBitsDetermination,
+    UserEncodingObject,
+    ValuePadding,
     check_unit,
 )
 from .tags import Asn1Error
@@ -183,7 +244,6 @@ _UNSUPPORTED_KEYWORDS = {
     # a field whose EncodingStructure is itself a structure, and this rail walks one flat
     # constructor. The refusal for that is written where the field is read, not here, because
     # it is about a field's shape rather than about a property group.
-
     # §22.1's REPLACE left this table when its defined syntax became readable. What remains
     # of that clause is §22.1.2.7's INSERT AT HEAD structure, refused where it is resolved
     # rather than here, and §22.1.1.7 e)'s second replacement group.
@@ -349,9 +409,9 @@ class _Cursor:
 
     def accept_words(self, *texts: str) -> bool:
         """Accept a multi-word keyword atomically, or leave the cursor untouched."""
-        if self._tokens[self._at:self._at + len(texts)] and all(
-                self._tokens[self._at + offset].text == text
-                for offset, text in enumerate(texts)):
+        if self._tokens[self._at : self._at + len(texts)] and all(
+            self._tokens[self._at + offset].text == text for offset, text in enumerate(texts)
+        ):
             self._at += len(texts)
             return True
         return False
@@ -369,6 +429,7 @@ class _Cursor:
 
 # --- clause 21's value notations -----------------------------------------------------------
 
+
 def _parse_unit(cursor: _Cursor, *, allow_repetitions: bool = False) -> int:
     """§21.1.1's `Unit`: one of the six named values, or any integer the constraint admits."""
     token = cursor.next()
@@ -379,7 +440,8 @@ def _parse_unit(cursor: _Cursor, *, allow_repetitions: bool = False) -> int:
     except ValueError:
         raise Asn1Error(
             f"ECN: {token} is not a Unit; §21.1.1 names "
-            f"{', '.join(sorted(UNIT_NAMES))} and admits any integer in (0..256)") from None
+            f"{', '.join(sorted(UNIT_NAMES))} and admits any integer in (0..256)"
+        ) from None
     return check_unit(bits, allow_repetitions=allow_repetitions)
 
 
@@ -404,7 +466,8 @@ def _parse_padding(cursor: _Cursor) -> Padding:
     except KeyError:
         raise Asn1Error(
             f"ECN: {token} is not a Padding value; §21.9.1 gives "
-            f"{', '.join(sorted(_PADDING_NAMES))}") from None
+            f"{', '.join(sorted(_PADDING_NAMES))}"
+        ) from None
 
 
 def _parse_pattern(cursor: _Cursor) -> Pattern:
@@ -420,7 +483,8 @@ def _parse_pattern(cursor: _Cursor) -> Pattern:
     if ":" not in text:
         raise Asn1Error(
             f"ECN: {token} is not a Pattern; §21.10.1 is a CHOICE, so a value is written "
-            f"`alternative:value` — for example bits:'0'B")
+            f"`alternative:value` — for example bits:'0'B"
+        )
     alternative, _, body = text.partition(":")
     if alternative == "bits":
         if not (body.startswith("'") and body.endswith("'B")):
@@ -431,8 +495,7 @@ def _parse_pattern(cursor: _Cursor) -> Pattern:
             raise Asn1Error(f"ECN: {token} — an octets: pattern is a hex string like 'FF'H")
         digits = body[1:-2]
         if len(digits) % 2:
-            raise Asn1Error(
-                f"ECN: {token} — an OCTET STRING takes an even number of hex digits")
+            raise Asn1Error(f"ECN: {token} — an OCTET STRING takes an even number of hex digits")
         try:
             return Pattern.from_octets(bytes.fromhex(digits))
         except ValueError:
@@ -440,8 +503,7 @@ def _parse_pattern(cursor: _Cursor) -> Pattern:
     if alternative in ("char8", "char16", "char32"):
         if not (body.startswith('"') and body.endswith('"')):
             raise Asn1Error(f"ECN: {token} — a {alternative}: pattern is a quoted string")
-        return Pattern.from_chars(body[1:-1], {"char8": 8, "char16": 16, "char32": 32}[
-            alternative])
+        return Pattern.from_chars(body[1:-1], {"char8": 8, "char16": 16, "char32": 32}[alternative])
     if alternative == "any-of-length":
         try:
             return Pattern.any_of_length(int(body))
@@ -449,8 +511,7 @@ def _parse_pattern(cursor: _Cursor) -> Pattern:
             raise Asn1Error(f"ECN: {token} — any-of-length takes INTEGER (1..MAX)") from None
     if alternative == "different" and body == "any":
         return Pattern.different_any()
-    raise Asn1Error(
-        f"ECN: {token} names no alternative of §21.10.1's Pattern CHOICE")
+    raise Asn1Error(f"ECN: {token} names no alternative of §21.10.1's Pattern CHOICE")
 
 
 def _parse_justification(cursor: _Cursor) -> Justification:
@@ -460,22 +521,25 @@ def _parse_justification(cursor: _Cursor) -> Justification:
     if alternative not in ("left", "right"):
         raise Asn1Error(
             f"ECN: {token} is not a Justification; §21.8.1's alternatives are left and right, "
-            f"each taking an offset — `right:0` is §21.8.2's default")
+            f"each taking an offset — `right:0` is §21.8.2's default"
+        )
     try:
         offset = int(body)
     except ValueError:
         raise Asn1Error(
             f"ECN: {token} — §21.8.1 gives both alternatives INTEGER (0..MAX), so the offset "
-            f"is written explicitly: `{alternative}:0` for none") from None
+            f"is written explicitly: `{alternative}:0` for none"
+        ) from None
     return (Justification.left if alternative == "left" else Justification.right)(offset)
 
 
 # --- clause 22's property groups, as the bracket structure the WITH SYNTAX gives them -------
 
+
 def _parse_pre_alignment(cursor: _Cursor) -> PreAlignment:
     """§22.2.1.2's group, entered on `ALIGNED TO` having been accepted.
 
-        [ALIGNED TO [NEXT] [ANY] &unit [PADDING &padding [PATTERN &pattern]]]
+    [ALIGNED TO [NEXT] [ANY] &unit [PADDING &padding [PATTERN &pattern]]]
     """
     # §22.2.2.1: at most one of NEXT and ANY, and NEXT is assumed when neither is written.
     # §22.2.2.2 then ties ANY to the start-pointer group, which the caller checks once it has
@@ -490,15 +554,16 @@ def _parse_pre_alignment(cursor: _Cursor) -> PreAlignment:
         padding = _parse_padding(cursor)
         if cursor.accept("PATTERN"):
             pattern = _parse_pattern(cursor)
-    return PreAlignment(unit=unit, padding=padding, pattern=pattern,
-                        encoder_chosen_offset=any_offset)
+    return PreAlignment(
+        unit=unit, padding=padding, pattern=pattern, encoder_chosen_offset=any_offset
+    )
 
 
 def _parse_value_padding(cursor: _Cursor, module: "EcnModule") -> ValuePadding:
     """§22.8.1.2's group, entered on `VALUE-PADDING` having been accepted.
 
-        [VALUE-PADDING [JUSTIFIED &j] [PRE-PADDING &p [PATTERN &pp]]
-                       [POST-PADDING &q [PATTERN &qp]] [UNUSED BITS ...]]
+    [VALUE-PADDING [JUSTIFIED &j] [PRE-PADDING &p [PATTERN &pp]]
+                   [POST-PADDING &q [PATTERN &qp]] [UNUSED BITS ...]]
     """
     justification = Justification()
     pre_padding = post_padding = Padding.ZERO
@@ -517,9 +582,14 @@ def _parse_value_padding(cursor: _Cursor, module: "EcnModule") -> ValuePadding:
     unused: UnusedBits | None = None
     if cursor.accept_words("UNUSED", "BITS"):
         unused = _parse_unused_bits(cursor, module)
-    return ValuePadding(justification=justification, pre_padding=pre_padding,
-                        pre_pattern=pre_pattern, post_padding=post_padding,
-                        post_pattern=post_pattern, unused_bits=unused)
+    return ValuePadding(
+        justification=justification,
+        pre_padding=pre_padding,
+        pre_pattern=pre_pattern,
+        post_padding=post_padding,
+        post_pattern=post_pattern,
+        unused_bits=unused,
+    )
 
 
 _UNUSED_DETERMINATIONS = {value.value: value for value in UnusedBitsDetermination}
@@ -528,8 +598,8 @@ _UNUSED_DETERMINATIONS = {value.value: value for value in UnusedBitsDeterminatio
 def _parse_unused_bits(cursor: _Cursor, module: "EcnModule") -> UnusedBits:
     """§22.8.1.2's `UNUSED BITS` sub-group, entered on the two keywords having been accepted.
 
-        [UNUSED BITS [DETERMINED BY &d]
-                     [USING &ref [ENCODER-TRANSFORMS &e] [DECODER-TRANSFORMS &d]]]
+    [UNUSED BITS [DETERMINED BY &d]
+                 [USING &ref [ENCODER-TRANSFORMS &e] [DECODER-TRANSFORMS &d]]]
     """
     determination = UnusedBitsDetermination.FIELD_TO_BE_SET  # §22.8.1.1's DEFAULT.
     if cursor.accept_words("DETERMINED", "BY"):
@@ -539,7 +609,8 @@ def _parse_unused_bits(cursor: _Cursor, module: "EcnModule") -> UnusedBits:
         except KeyError:
             raise Asn1Error(
                 f"ECN: {token} names no value of §21.4's UnusedBitsDetermination "
-                f"({', '.join(sorted(_UNUSED_DETERMINATIONS))})") from None
+                f"({', '.join(sorted(_UNUSED_DETERMINATIONS))})"
+            ) from None
     reference = ""
     encoder = decoder = None
     if cursor.accept("USING"):
@@ -550,8 +621,12 @@ def _parse_unused_bits(cursor: _Cursor, module: "EcnModule") -> UnusedBits:
             decoder = TransformChain(module.transform_list(_parse_reference_list(cursor)))
     # UnusedBits itself enforces §22.8.2.2/§22.8.2.3/§22.8.2.5, which is where those rules
     # belong: they constrain the combination and hold however the object was built.
-    return UnusedBits(determination=determination, reference=reference,
-                      encoder_transforms=encoder, decoder_transforms=decoder)
+    return UnusedBits(
+        determination=determination,
+        reference=reference,
+        encoder_transforms=encoder,
+        decoder_transforms=decoder,
+    )
 
 
 @dataclass(frozen=True)
@@ -575,7 +650,8 @@ class _EncodingSpace:
             raise Asn1Error(
                 "ECN: §21.2.2 defaults the encoding space to `self-delimiting-values`, which "
                 "§21.2.7 defines by matching candidate encodings rather than by a width; this "
-                "rail writes fixed spaces, so ENCODING-SPACE SIZE has to be stated")
+                "rail writes fixed spaces, so ENCODING-SPACE SIZE has to be stated"
+            )
         return self.size * self.unit
 
 
@@ -585,20 +661,25 @@ def _parse_encoding_space(cursor: _Cursor, module: "EcnModule") -> _EncodingSpac
     unit = 1
     if cursor.accept("SIZE"):
         token = cursor.next()
-        named = ("encoder-option-with-determinant", "variable-with-determinant",
-                 "self-delimiting-values", "fixed-to-max")
+        named = (
+            "encoder-option-with-determinant",
+            "variable-with-determinant",
+            "self-delimiting-values",
+            "fixed-to-max",
+        )
         if token.text in named:
             raise Asn1Error(
                 f"ECN: §21.2 gives `{token.text}` a size this rail cannot write — the "
                 f"negative values need a determinant field (§21.2.5/§21.2.6) and "
                 f"`fixed-to-max` needs the widest encoding of the whole value set "
-                f"(§21.2.8). State a positive SIZE")
+                f"(§21.2.8). State a positive SIZE"
+            )
         try:
             size = int(token.text)
         except ValueError:
             raise Asn1Error(
-                f"ECN: {token} is not an EncodingSpaceSize; §21.2.1 gives INTEGER "
-                f"(-3..MAX)") from None
+                f"ECN: {token} is not an EncodingSpaceSize; §21.2.1 gives INTEGER (-3..MAX)"
+            ) from None
         if size < 0:
             raise Asn1Error("ECN: §21.2.1 constrains EncodingSpaceSize to (-3..MAX)")
         if cursor.accept_words("MULTIPLE", "OF"):
@@ -611,7 +692,8 @@ def _parse_encoding_space(cursor: _Cursor, module: "EcnModule") -> _EncodingSpac
         except KeyError:
             raise Asn1Error(
                 f"ECN: {token} names no value of §21.3.1's EncodingSpaceDetermination "
-                f"({', '.join(sorted(_SPACE_DETERMINATIONS))})") from None
+                f"({', '.join(sorted(_SPACE_DETERMINATIONS))})"
+            ) from None
     determinant = None
     if cursor.accept("USING"):
         reference = cursor.next().text
@@ -622,15 +704,19 @@ def _parse_encoding_space(cursor: _Cursor, module: "EcnModule") -> _EncodingSpac
             decoder = TransformChain(module.transform_list(_parse_reference_list(cursor)))
         determinant = SpaceDeterminant(
             determination=determination or EncodingSpaceDetermination.FIELD_TO_BE_SET,
-            reference=reference, unit=unit, encoder_transforms=encoder,
-            decoder_transforms=decoder)
+            reference=reference,
+            unit=unit,
+            encoder_transforms=encoder,
+            decoder_transforms=decoder,
+        )
     elif determination is not None:
         # §21.3.4 and §21.3.5 both "require the specification of a REFERENCE"; §21.3.6's
         # `container` requires one too, or #OUTER. So a determination with no USING names no
         # field, and there is nothing for the encoder to set or the decoder to read.
         raise Asn1Error(
             f"ECN: §21.3.4/§21.3.5 — `DETERMINED BY {determination.value}` requires a USING "
-            f"reference to the field carrying the length")
+            f"reference to the field carrying the length"
+        )
     return _EncodingSpace(size=size, unit=unit, determinant=determinant)
 
 
@@ -639,8 +725,7 @@ def _parse_encoding_space(cursor: _Cursor, module: "EcnModule") -> _EncodingSpac
 _INT_OP_NAMES = {op.value: op for op in IntOp}
 
 
-_INT_FORMS = {"positive-int": IntForm.POSITIVE_INT,
-              "twos-complement": IntForm.TWOS_COMPLEMENT}
+_INT_FORMS = {"positive-int": IntForm.POSITIVE_INT, "twos-complement": IntForm.TWOS_COMPLEMENT}
 
 
 def _parse_int_form(cursor: _Cursor) -> IntForm:
@@ -649,12 +734,12 @@ def _parse_int_form(cursor: _Cursor) -> IntForm:
     if token.text in ("reverse-positive-int", "reverse-twos-complement"):
         raise Asn1Error(
             f"ECN: §23.7.1 admits `{token.text}`, whose bits run from the least significant "
-            f"end; this rail writes the forward forms only")
+            f"end; this rail writes the forward forms only"
+        )
     try:
         return _INT_FORMS[token.text]
     except KeyError:
-        raise Asn1Error(
-            f"ECN: {token} is neither positive-int nor twos-complement") from None
+        raise Asn1Error(f"ECN: {token} is neither positive-int nor twos-complement") from None
 
 
 def _parse_result_size(cursor: _Cursor) -> int:
@@ -669,7 +754,8 @@ def _parse_result_size(cursor: _Cursor) -> int:
     except ValueError:
         raise Asn1Error(
             f"ECN: {token} is not a ResultSize; §21.15.1 names `variable` and `fixed-to-max` "
-            f"and admits any positive count") from None
+            f"and admits any positive count"
+        ) from None
     if size < RESULT_SIZE_VARIABLE:
         raise Asn1Error(f"ECN: §21.15.1 constrains ResultSize to (-1..MAX); got {size}")
     return size
@@ -699,7 +785,8 @@ def _parse_char_list(cursor: _Cursor) -> tuple[str, ...]:
         if not (text.startswith('"') and text.endswith('"') and len(text) == 3):
             raise Asn1Error(
                 f"ECN: §24.10.1 declares CHAR-LIST as UniversalString (SIZE(1)), so each "
-                f"entry is one quoted character; got {text!r}")
+                f"entry is one quoted character; got {text!r}"
+            )
         out.append(text[1])
     return tuple(out)
 
@@ -710,14 +797,15 @@ def _parse_bits_list(cursor: _Cursor) -> tuple[tuple[int, ...], ...]:
     for text in _parse_reference_list(cursor):
         if not (text.startswith("'") and text.endswith("'B")):
             raise Asn1Error(
-                f"ECN: each entry of a BITS-LIST is a BIT STRING like '1010'B; got {text!r}")
+                f"ECN: each entry of a BITS-LIST is a BIT STRING like '1010'B; got {text!r}"
+            )
         out.append(Pattern.from_bits(text[1:-2]).bit_sequence())
     return tuple(out)
 
 
 def _parse_int_to_bits(cursor: _Cursor) -> dict:
     """§24.8.2's `[INT-TO-BITS [AS &as] [SIZE &size] [MULTIPLE OF &unit]]`."""
-    encoded_as = IntForm.TWOS_COMPLEMENT        # §24.8.1's DEFAULT
+    encoded_as = IntForm.TWOS_COMPLEMENT  # §24.8.1's DEFAULT
     size, unit = RESULT_SIZE_VARIABLE, UNIT_BIT
     if cursor.accept("AS"):
         encoded_as = _parse_int_form(cursor)
@@ -737,19 +825,22 @@ def _parse_transform_body(cursor: _Cursor, name: str):
         if alternative not in _INT_OP_NAMES:
             raise Asn1Error(
                 f"ECN: {token} names no alternative of §24.3.1's &int-to-int CHOICE "
-                f"({', '.join(sorted(_INT_OP_NAMES))})")
+                f"({', '.join(sorted(_INT_OP_NAMES))})"
+            )
         op = _INT_OP_NAMES[alternative]
         if op is IntOp.NEGATE:
             if body != "value":
                 raise Asn1Error(
                     f"ECN: §24.3.1 spells negate as `negate:value` (ENUMERATED{{value}}); "
-                    f"got {token}")
+                    f"got {token}"
+                )
             operand = 0
         elif op is IntOp.SUBTRACT_LOWER_BOUND:
             if body != "lower-bound":
                 raise Asn1Error(
                     f"ECN: §24.3.1 spells subtract as `subtract:lower-bound` "
-                    f"(ENUMERATED{{lower-bound}}); got {token}")
+                    f"(ENUMERATED{{lower-bound}}); got {token}"
+                )
             # §24.3.9's operand is the source class's lower bound, which is a property of the
             # ASN.1 type rather than of the object. Recorded as zero and supplied by whoever
             # applies the object; stating it in the notation would be inventing syntax.
@@ -771,14 +862,15 @@ def _parse_transform_body(cursor: _Cursor, name: str):
             if token.text != "logical:not":
                 raise Asn1Error(
                     f"ECN: §24.4.1's &bool-to-bool CHOICE has the single alternative "
-                    f"`logical:not`; got {token}")
+                    f"`logical:not`; got {token}"
+                )
         transform = BoolToBool(name=name)
     elif cursor.accept_words("BOOL-TO-INT", "AS"):
         token = cursor.next()
         if token.text not in ("true-zero", "true-one"):
             raise Asn1Error(
-                f"ECN: §24.5.1's &bool-to-int is ENUMERATED {{true-zero, true-one}}; "
-                f"got {token}")
+                f"ECN: §24.5.1's &bool-to-int is ENUMERATED {{true-zero, true-one}}; got {token}"
+            )
         transform = BoolToInt(name=name, true_zero=token.text == "true-zero")
     elif cursor.accept("INT-TO-BOOL"):
         zero_true = False
@@ -788,7 +880,8 @@ def _parse_transform_body(cursor: _Cursor, name: str):
             if token.text not in ("zero-true", "zero-false"):
                 raise Asn1Error(
                     f"ECN: §24.6.1's &int-to-bool is ENUMERATED {{zero-true, zero-false}}; "
-                    f"got {token}")
+                    f"got {token}"
+                )
             zero_true = token.text == "zero-true"
         if cursor.accept("TRUE-IS"):
             true_is = _parse_int_list(cursor)
@@ -797,10 +890,8 @@ def _parse_transform_body(cursor: _Cursor, name: str):
         # §24.6.4: "Either one of AS, TRUE-IS and FALSE-IS is set, or both TRUE-IS and
         # FALSE-IS are set (and AS is not set), or none are set."
         if zero_true and (true_is is not None or false_is is not None):
-            raise Asn1Error(
-                "ECN: §24.6.4 — AS shall not be set alongside TRUE-IS or FALSE-IS")
-        transform = IntToBool(name=name, zero_true=zero_true, true_is=true_is,
-                              false_is=false_is)
+            raise Asn1Error("ECN: §24.6.4 — AS shall not be set alongside TRUE-IS or FALSE-IS")
+        transform = IntToBool(name=name, zero_true=zero_true, true_is=true_is, false_is=false_is)
     elif cursor.accept("INT-TO-CHARS"):
         size = RESULT_SIZE_VARIABLE
         plus_sign = False
@@ -813,18 +904,19 @@ def _parse_transform_body(cursor: _Cursor, name: str):
             token = cursor.next()
             if token.text not in ("spaces", "zeros"):
                 raise Asn1Error(
-                    f"ECN: §24.7.1's &int-to-chars-pad is ENUMERATED {{spaces, zeros}}; "
-                    f"got {token}")
+                    f"ECN: §24.7.1's &int-to-chars-pad is ENUMERATED {{spaces, zeros}}; got {token}"
+                )
             pad_with_spaces = token.text == "spaces"
-        transform = IntToChars(name=name, size=size, plus_sign=plus_sign,
-                               pad_with_spaces=pad_with_spaces)
+        transform = IntToChars(
+            name=name, size=size, plus_sign=plus_sign, pad_with_spaces=pad_with_spaces
+        )
     elif cursor.accept("BITS-TO-INT"):
         decoded = IntForm.TWOS_COMPLEMENT
         if cursor.accept("AS"):
             decoded = _parse_int_form(cursor)
         transform = BitsToInt(name=name, decoded_assuming=decoded)
     elif cursor.accept("CHAR-TO-BITS"):
-        encoded_as = "compact"                     # §24.10.1's DEFAULT
+        encoded_as = "compact"  # §24.10.1's DEFAULT
         chars = ()
         bit_values = ()
         size, unit = RESULT_SIZE_VARIABLE, UNIT_BIT
@@ -838,10 +930,16 @@ def _parse_transform_body(cursor: _Cursor, name: str):
             size = _parse_result_size(cursor)
         if cursor.accept_words("MULTIPLE", "OF"):
             unit = _parse_unit(cursor)
-        transform = CharToBits(name=name, encoded_as=encoded_as, chars=chars,
-                               bit_values=bit_values, size=size, unit=unit)
+        transform = CharToBits(
+            name=name,
+            encoded_as=encoded_as,
+            chars=chars,
+            bit_values=bit_values,
+            size=size,
+            unit=unit,
+        )
     elif cursor.accept("BITS-TO-CHAR"):
-        decoded_assuming = "iso10646"              # §24.11.1's DEFAULT
+        decoded_assuming = "iso10646"  # §24.11.1's DEFAULT
         chars = ()
         bit_values = ()
         if cursor.accept("AS"):
@@ -850,10 +948,11 @@ def _parse_transform_body(cursor: _Cursor, name: str):
             bit_values = _parse_bits_list(cursor)
         if cursor.accept("CHAR-LIST"):
             chars = _parse_char_list(cursor)
-        transform = BitsToChar(name=name, decoded_assuming=decoded_assuming, chars=chars,
-                               bit_values=bit_values)
+        transform = BitsToChar(
+            name=name, decoded_assuming=decoded_assuming, chars=chars, bit_values=bit_values
+        )
     elif cursor.accept("BIT-TO-BITS"):
-        zero = Pattern.from_bits("0")              # §24.12.1's DEFAULTs
+        zero = Pattern.from_bits("0")  # §24.12.1's DEFAULTs
         one = Pattern.from_bits("1")
         if cursor.accept("ZERO-PATTERN"):
             zero = _parse_pattern(cursor)
@@ -869,7 +968,7 @@ def _parse_transform_body(cursor: _Cursor, name: str):
     elif cursor.accept("CHARS-TO-COMPOSITE-CHAR"):
         transform = CharsToCompositeChar(name=name)
     elif cursor.accept("BITS-TO-COMPOSITE-BITS"):
-        unit = UNIT_BIT                            # §24.15.2's DEFAULT
+        unit = UNIT_BIT  # §24.15.2's DEFAULT
         if cursor.accept("UNIT"):
             unit = _parse_unit(cursor)
         transform = BitsToCompositeBits(name=name, unit=unit)
@@ -885,20 +984,23 @@ def _parse_transform_body(cursor: _Cursor, name: str):
         token = cursor.peek()
         raise Asn1Error(
             f"ECN: {token!r} starts no #TRANSFORM clause; §24.1.1's WITH SYNTAX defines "
-            f"nineteen and all of them are read here")
+            f"nineteen and all of them are read here"
+        )
     if not cursor.eof():
         raise Asn1Error(
             f"ECN: §24.1.1's WITH SYNTAX says only one transform clause can be used, and "
-            f"{cursor.peek()!r} follows one that was already read")
+            f"{cursor.peek()!r} follows one that was already read"
+        )
     return transform
 
 
 # --- clause 23's bit-field classes ---------------------------------------------------------
 
+
 def _parse_start_pointer(cursor: _Cursor, module: "EcnModule") -> StartPointer:
     """§22.3.1.2's group, entered on `START-POINTER` having been accepted.
 
-        [START-POINTER &ref [MULTIPLE OF &unit] [ENCODER-TRANSFORMS &transforms]]
+    [START-POINTER &ref [MULTIPLE OF &unit] [ENCODER-TRANSFORMS &transforms]]
     """
     reference = cursor.next().text
     unit = UNIT_BIT  # §22.3.1.1's DEFAULT.
@@ -918,7 +1020,8 @@ def _parse_bit_reversal(cursor: _Cursor) -> ReversalSpecification:
     except KeyError:
         raise Asn1Error(
             f"ECN: {token} names no value of §21.14.1's ReversalSpecification "
-            f"({', '.join(sorted(_REVERSALS))})") from None
+            f"({', '.join(sorted(_REVERSALS))})"
+        ) from None
 
 
 def _parse_conditions(cursor: _Cursor, all_of: bool, *, table=None, clause: str = "§21.11.1"):
@@ -946,35 +1049,38 @@ def _parse_conditions(cursor: _Cursor, all_of: bool, *, table=None, clause: str 
                 return ((condition, comparison, int(token.text)),)
             except ValueError:
                 raise Asn1Error(
-                    f"ECN: §21.11.5 gives {condition.value} an integer comparator; "
-                    f"got {token}") from None
+                    f"ECN: §21.11.5 gives {condition.value} an integer comparator; got {token}"
+                ) from None
         return ((condition, None, None),)
-    conditions = [_named(Token(name, 0), table, what)
-                  for name in _parse_reference_list(cursor)]
+    conditions = [_named(Token(name, 0), table, what) for name in _parse_reference_list(cursor)]
     if cursor.peek() != "{":
         if any(condition.needs_comparison() for condition in conditions):
             raise Asn1Error(
                 "ECN: §23.7.2.2 — IF-ALL shall be used with three lists if one or more of "
-                "the conditions requires a comparison")
+                "the conditions requires a comparison"
+            )
         return tuple((condition, None, None) for condition in conditions)
-    comparisons = [_named(Token(name, 0), _COMPARISONS, "§21.12.1's Comparison")
-                   for name in _parse_reference_list(cursor)]
+    comparisons = [
+        _named(Token(name, 0), _COMPARISONS, "§21.12.1's Comparison")
+        for name in _parse_reference_list(cursor)
+    ]
     comparators = []
     for text in _parse_reference_list(cursor):
         try:
             comparators.append(int(text))
         except ValueError:
-            raise Asn1Error(
-                f"ECN: §21.11.5's comparator is an integer; got {text!r}") from None
+            raise Asn1Error(f"ECN: §21.11.5's comparator is an integer; got {text!r}") from None
     if not len(comparisons) == len(comparators):
         raise Asn1Error(
             f"ECN: §23.7.2.2's three lists are read by position, so the comparison list "
             f"({len(comparisons)}) and the comparator list ({len(comparators)}) have to "
-            f"match")
+            f"match"
+        )
     if len(comparisons) > len(conditions):
         raise Asn1Error(
             f"ECN: §23.7.2.2 gives {len(conditions)} conditions but {len(comparisons)} "
-            f"comparisons; a comparison with no condition in the same position tests nothing")
+            f"comparisons; a comparison with no condition in the same position tests nothing"
+        )
     # §23.7.2.2: "size-range-conditions that do not require a comparison or comparator (if
     # any) shall follow all those that require a comparison, and shall have no corresponding
     # entry in the second and third lists." So the short lists are a prefix, not a sparse map.
@@ -985,9 +1091,11 @@ def _parse_conditions(cursor: _Cursor, all_of: bool, *, table=None, clause: str 
             raise Asn1Error(
                 f"ECN: §23.7.2.2 — {condition.value} at position {index} "
                 f"{'needs' if condition.needs_comparison() else 'admits'} no comparison in "
-                f"that position; conditions taking one come first")
-        out.append((condition, comparisons[index] if has else None,
-                    comparators[index] if has else None))
+                f"that position; conditions taking one come first"
+            )
+        out.append(
+            (condition, comparisons[index] if has else None, comparators[index] if has else None)
+        )
     return tuple(out)
 
 
@@ -996,8 +1104,8 @@ def _named(token, table: dict, what: str):
         return table[token.text]
     except KeyError:
         raise Asn1Error(
-            f"ECN: {token} names no value of {what} "
-            f"({', '.join(sorted(table))})") from None
+            f"ECN: {token} names no value of {what} ({', '.join(sorted(table))})"
+        ) from None
 
 
 @dataclass(frozen=True)
@@ -1020,11 +1128,13 @@ def _refuse_unsupported(cursor: _Cursor) -> None:
             f"ECN: `{keyword}` is a property group this rail does not build — "
             f"{_UNSUPPORTED_KEYWORDS[keyword]}. It is recognized rather than skipped, because "
             f"an encoder that ignored it would write octets the specification does not "
-            f"describe")
+            f"describe"
+        )
 
 
-def _parse_common(cursor: _Cursor, module: "EcnModule", *,
-                  space_required: bool, owner: str = "this object") -> _CommonGroups:
+def _parse_common(
+    cursor: _Cursor, module: "EcnModule", *, space_required: bool, owner: str = "this object"
+) -> _CommonGroups:
     """§23.x's shared prefix and suffix, in the order the WITH SYNTAX gives them.
 
     The order is not this parser's convenience. §23.3.3.1 lists the encoder actions —
@@ -1046,12 +1156,12 @@ def _parse_common(cursor: _Cursor, module: "EcnModule", *,
     start_pointer = None
     if cursor.accept("START-POINTER"):
         start_pointer = _parse_start_pointer(cursor, module)
-    if (pre_alignment is not None and pre_alignment.encoder_chosen_offset
-            and start_pointer is None):
+    if pre_alignment is not None and pre_alignment.encoder_chosen_offset and start_pointer is None:
         raise Asn1Error(
             "ECN: §22.2.2.2 — if `ALIGNED TO ANY` is specified, then the encoding object "
             "specification shall include the START-POINTER clause; nothing else could tell a "
-            "decoder how many bits the encoder chose to insert")
+            "decoder how many bits the encoder chose to insert"
+        )
     _refuse_unsupported(cursor)
     space = _EncodingSpace()
     if cursor.accept("ENCODING-SPACE"):
@@ -1059,9 +1169,14 @@ def _parse_common(cursor: _Cursor, module: "EcnModule", *,
     elif space_required:
         raise Asn1Error(
             "ECN: clause 23's WITH SYNTAX gives `ENCODING-SPACE` without brackets for this "
-            "class, so it is mandatory rather than optional")
-    return _CommonGroups(pre_alignment=pre_alignment, space=space,
-                         start_pointer=start_pointer, replacement=replacement)
+            "class, so it is mandatory rather than optional"
+        )
+    return _CommonGroups(
+        pre_alignment=pre_alignment,
+        space=space,
+        start_pointer=start_pointer,
+        replacement=replacement,
+    )
 
 
 def _parse_value_padding_tail(cursor: _Cursor, module: "EcnModule") -> ValuePadding | None:
@@ -1123,12 +1238,14 @@ def _parse_handle_value_set(cursor: _Cursor) -> HandleValueSet:
     if alternative == "bits":
         if not (body.startswith("'") and body.endswith("'B")):
             raise Asn1Error(
-                f"ECN: {token} — §21.16.1's `bits` alternative is a BIT STRING like '1010'B")
+                f"ECN: {token} — §21.16.1's `bits` alternative is a BIT STRING like '1010'B"
+            )
         return HandleValueSet.from_bits(body[1:-2])
     if alternative == "octets":
         if not (body.startswith("'") and body.endswith("'H")):
             raise Asn1Error(
-                f"ECN: {token} — §21.16.1's `octets` alternative is a hex string like 'FF'H")
+                f"ECN: {token} — §21.16.1's `octets` alternative is a hex string like 'FF'H"
+            )
         try:
             return HandleValueSet.from_octets(bytes.fromhex(body[1:-2]))
         except ValueError:
@@ -1138,11 +1255,12 @@ def _parse_handle_value_set(cursor: _Cursor) -> HandleValueSet:
             return HandleValueSet.of_number(int(body))
         except ValueError:
             raise Asn1Error(
-                f"ECN: §21.16.1's `number` alternative is an INTEGER (0..MAX); got "
-                f"{token}") from None
+                f"ECN: §21.16.1's `number` alternative is an INTEGER (0..MAX); got {token}"
+            ) from None
     raise Asn1Error(
         f"ECN: {token} names no alternative of §21.16.1's HandleValueSet "
-        f"(bits, octets, number, tag, range, ranges)")
+        f"(bits, octets, number, tag, range, ranges)"
+    )
 
 
 def _parse_int_pair(cursor: _Cursor) -> tuple[int, int]:
@@ -1150,8 +1268,8 @@ def _parse_int_pair(cursor: _Cursor) -> tuple[int, int]:
     values = _parse_int_list(cursor)
     if len(values) != 2:
         raise Asn1Error(
-            f"ECN: §21.16.1 gives a range a `low` and a `high`; {list(values)} has "
-            f"{len(values)}")
+            f"ECN: §21.16.1 gives a range a `low` and a `high`; {list(values)} has {len(values)}"
+        )
     return values[0], values[1]
 
 
@@ -1168,22 +1286,24 @@ def _finish(cursor: _Cursor, what: str) -> None:
     if not cursor.eof():
         raise Asn1Error(
             f"ECN: {cursor.peek()!r} is not part of {what}'s defined syntax, or appears out "
-            f"of the order clause 23 gives its property groups")
+            f"of the order clause 23 gives its property groups"
+        )
 
 
 def _parse_bool_body(cursor: _Cursor, name: str, module: "EcnModule") -> BoolSpec:
     """§23.3.1's `#BOOL`, restricted to the groups this rail writes."""
     common = _parse_common(cursor, module, space_required=True)
-    true_pattern = Pattern.from_bits("1")   # §23.3.1's DEFAULT bits:'1'B
+    true_pattern = Pattern.from_bits("1")  # §23.3.1's DEFAULT bits:'1'B
     false_pattern = Pattern.from_bits("0")  # §23.3.1's DEFAULT bits:'0'B
     if cursor.accept("TRUE-PATTERN"):
         true_pattern = _parse_pattern(cursor)
     if cursor.accept("FALSE-PATTERN"):
         false_pattern = _parse_pattern(cursor)
-    if (true_pattern.kind.value == "different" and false_pattern.kind.value == "different"):
+    if true_pattern.kind.value == "different" and false_pattern.kind.value == "different":
         raise Asn1Error(
             "ECN: §23.3.2.3 — at most one of TRUE-PATTERN and FALSE-PATTERN may be "
-            "`different:any`; §21.10.9 needs the other one to differ from")
+            "`different:any`; §21.10.9 needs the other one to differ from"
+        )
     padding = _parse_value_padding_tail(cursor, module)
     exhibits = _parse_handle_tail(cursor)
     reversal = _parse_reversal_tail(cursor)
@@ -1194,18 +1314,24 @@ def _parse_bool_body(cursor: _Cursor, name: str, module: "EcnModule") -> BoolSpe
     if len(true_bits) > width or len(false_bits) > width:
         raise Asn1Error(
             f"ECN: {name}'s patterns are {len(true_bits)} and {len(false_bits)} bits, which "
-            f"do not fit a {width}-bit encoding space")
+            f"do not fit a {width}-bit encoding space"
+        )
     if padding is None and (len(true_bits) != width or len(false_bits) != width):
         raise Asn1Error(
             f"ECN: §23.3.2.7 — {name} leaves unused bits in its encoding space, so "
-            f"VALUE-PADDING shall be set")
+            f"VALUE-PADDING shall be set"
+        )
     return BoolSpec(
         width=width,
         true_value=_bits_to_int(_place(true_bits, width, padding)),
         false_value=_bits_to_int(_place(false_bits, width, padding)),
-        pre_alignment=common.pre_alignment, start_pointer=common.start_pointer,
-        space_determinant=common.space.determinant, exhibits=exhibits,
-        bit_reversal=reversal, reversal_unit=common.space.unit)
+        pre_alignment=common.pre_alignment,
+        start_pointer=common.start_pointer,
+        space_determinant=common.space.determinant,
+        exhibits=exhibits,
+        bit_reversal=reversal,
+        reversal_unit=common.space.unit,
+    )
 
 
 def _place(bits: tuple[int, ...], width: int, padding: ValuePadding | None) -> tuple[int, ...]:
@@ -1241,7 +1367,7 @@ def _parse_repetition_space(cursor: _Cursor, module: "EcnModule") -> tuple[str, 
     `REPETITION-SPACE` carries no brackets in §23.14.1's `WITH SYNTAX`, so it is mandatory —
     the same reading that makes `ENCODING-SPACE` mandatory for `#CONDITIONAL-INT`.
     """
-    size = "self-delimiting-values"          # §23.14.1's DEFAULT.
+    size = "self-delimiting-values"  # §23.14.1's DEFAULT.
     unit = UNIT_REPETITIONS
     if cursor.accept("SIZE"):
         token = cursor.next()
@@ -1249,7 +1375,8 @@ def _parse_repetition_space(cursor: _Cursor, module: "EcnModule") -> tuple[str, 
             raise Asn1Error(
                 f"ECN: §23.14.2.5 — the REPETITION-SPACE SIZE shall not be `fixed-to-max`; "
                 f"{token} is one of the few property values a clause forbids outright rather "
-                f"than conditions")
+                f"than conditions"
+            )
         size = token.text
         if cursor.accept_words("MULTIPLE", "OF"):
             unit = _parse_unit(cursor)
@@ -1258,7 +1385,7 @@ def _parse_repetition_space(cursor: _Cursor, module: "EcnModule") -> tuple[str, 
         # to a single value". The bounds come from the type through clause 12, which this
         # object cannot see, so the rule is recorded here and checked where the bounds are.
         pass
-    determination = RepetitionSpaceDetermination.FIELD_TO_BE_SET   # §23.14.1's DEFAULT.
+    determination = RepetitionSpaceDetermination.FIELD_TO_BE_SET  # §23.14.1's DEFAULT.
     handle_id = "default-handle"
     if cursor.accept_words("DETERMINED", "BY"):
         token = cursor.next()
@@ -1267,7 +1394,8 @@ def _parse_repetition_space(cursor: _Cursor, module: "EcnModule") -> tuple[str, 
         except KeyError:
             raise Asn1Error(
                 f"ECN: {token} names no value of §21.7.1's RepetitionSpaceDetermination "
-                f"({', '.join(sorted(_REPETITION_DETERMINATIONS))})") from None
+                f"({', '.join(sorted(_REPETITION_DETERMINATIONS))})"
+            ) from None
         if cursor.accept("HANDLE"):
             handle_id = cursor.next().text
     reference = ""
@@ -1282,9 +1410,14 @@ def _parse_repetition_space(cursor: _Cursor, module: "EcnModule") -> tuple[str, 
     if cursor.accept("PATTERN"):
         pattern = _parse_pattern(cursor)
     return size, RepetitionSpace(
-        determination=determination, reference=reference, unit=unit,
-        termination_pattern=pattern, encoder_transforms=encoder,
-        decoder_transforms=decoder, handle_id=handle_id)
+        determination=determination,
+        reference=reference,
+        unit=unit,
+        termination_pattern=pattern,
+        encoder_transforms=encoder,
+        decoder_transforms=decoder,
+        handle_id=handle_id,
+    )
 
 
 @dataclass(frozen=True)
@@ -1321,12 +1454,16 @@ class PendingConditionalRepetition:
     def bind(self, element) -> ConditionalRepetitionSpec:
         """The spec this becomes once the referencing class supplies the repeated element."""
         return ConditionalRepetitionSpec(
-            element=element, space=self.space, pre_alignment=self.pre_alignment,
-            conditions=self.conditions)
+            element=element,
+            space=self.space,
+            pre_alignment=self.pre_alignment,
+            conditions=self.conditions,
+        )
 
 
-def _parse_conditional_repetition_body(cursor: _Cursor, name: str,
-                                       module: "EcnModule") -> PendingConditionalRepetition:
+def _parse_conditional_repetition_body(
+    cursor: _Cursor, name: str, module: "EcnModule"
+) -> PendingConditionalRepetition:
     """§23.14.1's `#CONDITIONAL-REPETITION`, which is where a repetition's encoding lives.
 
     The same shape as §23.7's `#CONDITIONAL-INT` one clause over, and deliberately read by the
@@ -1338,17 +1475,20 @@ def _parse_conditional_repetition_body(cursor: _Cursor, name: str,
     """
     conditions = ()
     if cursor.accept("IF"):
-        conditions = _parse_conditions(cursor, all_of=False,
-                                       table=_SIZE_RANGE_CONDITIONS, clause="§21.13.1")
+        conditions = _parse_conditions(
+            cursor, all_of=False, table=_SIZE_RANGE_CONDITIONS, clause="§21.13.1"
+        )
     elif cursor.accept("IF-ALL"):
-        conditions = _parse_conditions(cursor, all_of=True,
-                                       table=_SIZE_RANGE_CONDITIONS, clause="§21.13.1")
+        conditions = _parse_conditions(
+            cursor, all_of=True, table=_SIZE_RANGE_CONDITIONS, clause="§21.13.1"
+        )
     elif not cursor.accept("ELSE"):
         pass
     if cursor.peek() in ("IF", "IF-ALL", "ELSE"):
         raise Asn1Error(
             f"ECN: §23.14.2.2 — at most one of IF, IF-ALL and ELSE shall be present; {name} "
-            f"has a second")
+            f"has a second"
+        )
     # §23.14.1 gives REPLACE, ALIGNED TO and START-POINTER in that order before the space,
     # which is `_parse_common`'s order because §23.3.3.1's encoder actions are what both
     # follow. `space_required=False`: this class has a REPETITION-SPACE instead, and demanding
@@ -1356,41 +1496,54 @@ def _parse_conditional_repetition_body(cursor: _Cursor, name: str,
     common = _parse_common(cursor, module, space_required=False, owner=name)
     if common.space.size is not None or common.space.determinant is not None:
         raise Asn1Error(
-            f"ECN: §21.7.3 — the repetition space \"replaces use of an encoding property of "
-            f"type EncodingSpaceDetermination in the encoding of repetitions\"; {name} writes "
-            f"an ENCODING-SPACE, and §23.14.1's WITH SYNTAX gives this class REPETITION-SPACE")
+            f'ECN: §21.7.3 — the repetition space "replaces use of an encoding property of '
+            f'type EncodingSpaceDetermination in the encoding of repetitions"; {name} writes '
+            f"an ENCODING-SPACE, and §23.14.1's WITH SYNTAX gives this class REPETITION-SPACE"
+        )
     if not cursor.accept("REPETITION-SPACE"):
         raise Asn1Error(
             f"ECN: §23.14.1's WITH SYNTAX gives `REPETITION-SPACE` without brackets, so it is "
-            f"mandatory rather than optional; {name} has none")
+            f"mandatory rather than optional; {name} has none"
+        )
     size, space = _parse_repetition_space(cursor, module)
     aligned = False
     if cursor.accept("ALIGNMENT"):
-        aligned = _named(cursor.next(), _REPETITION_ALIGNMENTS,
-                         "§23.14.1's &repetition-alignment ENUMERATED {none, aligned}")
+        aligned = _named(
+            cursor.next(),
+            _REPETITION_ALIGNMENTS,
+            "§23.14.1's &repetition-alignment ENUMERATED {none, aligned}",
+        )
     # §23.14.1 puts VALUE-PADDING, EXHIBITS HANDLE and BIT-REVERSAL after the alignment, in
     # §23.3.3.1's order again. They are read so the grammar is complete and refused where the
     # spec has no slot for them, rather than left to be a syntax error about a stray word.
     padding = _parse_value_padding_tail(cursor, module)
     exhibits = _parse_handle_tail(cursor)
     reversal = _parse_reversal_tail(cursor)
-    for written, what in ((padding, "VALUE-PADDING"), (exhibits, "EXHIBITS HANDLE"),
-                          (reversal if reversal is not ReversalSpecification.NO_REVERSAL
-                           else None, "BIT-REVERSAL")):
+    for written, what in (
+        (padding, "VALUE-PADDING"),
+        (exhibits, "EXHIBITS HANDLE"),
+        (reversal if reversal is not ReversalSpecification.NO_REVERSAL else None, "BIT-REVERSAL"),
+    ):
         if written is not None:
             raise Asn1Error(
                 f"ECN: §23.14.1 gives {name} a `{what}` group and "
                 f"`ecn_user.ConditionalRepetitionSpec` has no slot for it; the group is read "
                 f"and refused rather than dropped, because an encoder that ignored it would "
-                f"write octets the specification does not describe")
+                f"write octets the specification does not describe"
+            )
     _finish(cursor, name)
     return PendingConditionalRepetition(
-        conditions=conditions, space=space, pre_alignment=common.pre_alignment,
-        aligned=aligned, size=size)
+        conditions=conditions,
+        space=space,
+        pre_alignment=common.pre_alignment,
+        aligned=aligned,
+        size=size,
+    )
 
 
-def _parse_conditional_int_body(cursor: _Cursor, name: str,
-                                module: "EcnModule") -> ConditionalIntSpec:
+def _parse_conditional_int_body(
+    cursor: _Cursor, name: str, module: "EcnModule"
+) -> ConditionalIntSpec:
     """§23.7.1's `#CONDITIONAL-INT`, which is where an integer's encoding actually lives.
 
     §23.7.2.4: "At most one of `IF`, `IF-ALL` and `ELSE` shall be present", and §23.7.2.2
@@ -1406,7 +1559,8 @@ def _parse_conditional_int_body(cursor: _Cursor, name: str,
     if cursor.peek() in ("IF", "IF-ALL", "ELSE"):
         raise Asn1Error(
             f"ECN: §23.7.2.4 — at most one of IF, IF-ALL and ELSE shall be present; {name} "
-            f"has a second")
+            f"has a second"
+        )
     common = _parse_common(cursor, module, space_required=True)
     chain: TransformChain | None = None
     if cursor.accept("TRANSFORMS"):
@@ -1417,12 +1571,14 @@ def _parse_conditional_int_body(cursor: _Cursor, name: str,
         if token.text in ("reverse-positive-int", "reverse-twos-complement"):
             raise Asn1Error(
                 f"ECN: §23.7.1 admits `{token.text}`, whose bits run from the least "
-                f"significant end; this rail writes the forward forms only")
+                f"significant end; this rail writes the forward forms only"
+            )
         try:
             form = _INT_ENCODINGS[token.text]
         except KeyError:
             raise Asn1Error(
-                f"ECN: {token} names no alternative of §23.7.1's &encoding ENUMERATED") from None
+                f"ECN: {token} names no alternative of §23.7.1's &encoding ENUMERATED"
+            ) from None
     padding = _parse_value_padding_tail(cursor, module)
     exhibits = _parse_handle_tail(cursor)
     reversal = _parse_reversal_tail(cursor)
@@ -1430,12 +1586,20 @@ def _parse_conditional_int_body(cursor: _Cursor, name: str,
     # §23.7.2.7's `subtract:lower-bound` rule relates the transforms to the CONDITION, so it
     # is checked by ConditionalIntSpec where both are in hand rather than here.
     return ConditionalIntSpec(
-        spec=IntSpec(width=common.space.width, form=form, transform=chain,
-                     pre_alignment=common.pre_alignment, value_padding=padding,
-                     start_pointer=common.start_pointer,
-                     space_determinant=common.space.determinant, exhibits=exhibits,
-                     bit_reversal=reversal, reversal_unit=common.space.unit),
-        conditions=conditions)
+        spec=IntSpec(
+            width=common.space.width,
+            form=form,
+            transform=chain,
+            pre_alignment=common.pre_alignment,
+            value_padding=padding,
+            start_pointer=common.start_pointer,
+            space_determinant=common.space.determinant,
+            exhibits=exhibits,
+            bit_reversal=reversal,
+            reversal_unit=common.space.unit,
+        ),
+        conditions=conditions,
+    )
 
 
 #: §23.2.2.1 b) and §23.9.2.1 b): what one repetition of each string class is made of.
@@ -1474,15 +1638,20 @@ def _parse_object_set_assignment(cursor: _Cursor, module: "EcnModule", name: str
             raise Asn1Error(
                 f"ECN: §18.1.1's EncodingObjectSet is a DefinedOrBuiltinEncodingObjectSet or "
                 f"an §18.1.5 EncodingObjectSetSpec; {token} is neither a `{{` nor one of "
-                f"§18.2.1's {', '.join(sorted(_BUILTIN_OBJECT_SETS))}")
+                f"§18.2.1's {', '.join(sorted(_BUILTIN_OBJECT_SETS))}"
+            )
         from .ecn import builtin_object_set
 
-        primary = {obj.encoding_class.name: obj
-                   for obj in builtin_object_set(
-                       BuiltinEncodingObjectSet(token.text)).objects}
+        primary = {
+            obj.encoding_class.name: obj
+            for obj in builtin_object_set(BuiltinEncodingObjectSet(token.text)).objects
+        }
     if cursor.accept_words("COMPLETED", "BY"):
-        secondary = _parse_object_set_spec(cursor, module, name) if cursor.peek() == "{" \
+        secondary = (
+            _parse_object_set_spec(cursor, module, name)
+            if cursor.peek() == "{"
             else module.object_set_named(cursor.next().text, name)
+        )
         combined = dict(primary)
         for class_name, obj in secondary.items():
             # §18.1.8 -> §13.2 -> §9.23.2: the completion fills gaps and never overrides.
@@ -1510,22 +1679,26 @@ def _parse_object_set_spec(cursor: _Cursor, module: "EcnModule", owner: str) -> 
             raise Asn1Error(
                 f"ECN: §18.1.6 — an EncodingObjectSetSpec is built from encoding objects or "
                 f"encoding object sets; {owner} names {token.text!r}, which this module "
-                f"defines as neither")
+                f"defines as neither"
+            )
         for class_name, obj in members:
             if class_name in out:
                 raise Asn1Error(
                     f"ECN: §18.1.7 — the encoding objects forming a set shall all be of "
-                    f"distinct encoding classes, and {owner} has two for {class_name}")
+                    f"distinct encoding classes, and {owner} has two for {class_name}"
+                )
             out[class_name] = obj
     if not out:
         raise Asn1Error(
             f"ECN: §18.1.5 gives an EncodingObjectSetSpec one or more members; {owner} has "
-            f"none, and §9.5.1 makes an empty set unable to encode anything")
+            f"none, and §9.5.1 makes an empty set unable to encode anything"
+        )
     return out
 
 
-def _parse_string_body(cursor: _Cursor, name: str, module: "EcnModule",
-                       category: str) -> StringSpec:
+def _parse_string_body(
+    cursor: _Cursor, name: str, module: "EcnModule", category: str
+) -> StringSpec:
     """§23.2.1's `#BITS` and §23.9.1's `#OCTETS`, which share one `WITH SYNTAX`.
 
     **Neither has an `ENCODING-SPACE` group, and that is the structural fact.** §23.2.1 and
@@ -1546,7 +1719,8 @@ def _parse_string_body(cursor: _Cursor, name: str, module: "EcnModule",
         raise Asn1Error(
             f"ECN: §23.2.1 and §23.9.1 give a string class no ENCODING-SPACE group — its size "
             f"comes from the §22.7 repetition space of the #CONDITIONAL-REPETITION objects it "
-            f"names — and {name} writes one")
+            f"names — and {name} writes one"
+        )
     value_reversal = False
     if cursor.accept("VALUE-REVERSAL"):
         value_reversal = _parse_boolean(cursor)
@@ -1559,12 +1733,14 @@ def _parse_string_body(cursor: _Cursor, name: str, module: "EcnModule",
         raise Asn1Error(
             f"ECN: §23.2.2.1 d) — either REPETITION-ENCODING or REPETITION-ENCODINGS specifies "
             f"how the repetition is encoded, and {name} sets neither; without one the class "
-            f"has no size at all")
+            f"has no size at all"
+        )
     references = (cursor.next().text,) if single else _parse_reference_list(cursor)
     if cursor.accept("REPETITION-ENCODING") or cursor.accept("REPETITION-ENCODINGS"):
         raise Asn1Error(
             f"ECN: §23.13.2.2 permits exactly one of REPETITION-ENCODING and "
-            f"REPETITION-ENCODINGS; {name} sets both")
+            f"REPETITION-ENCODINGS; {name} sets both"
+        )
     if plural and len(references) == 1:
         # §23.2.2.1's NOTE: the singular exists only to avoid "a double curly-bracket (`{{`)
         # in the common case of a single conditional encoding", and the plural with one object
@@ -1595,21 +1771,28 @@ def _parse_string_body(cursor: _Cursor, name: str, module: "EcnModule",
         if not cursor.accept("CONTAINING"):
             raise Asn1Error(
                 f"ECN: §22.11.1.3 makes this group's purpose \"to determine the encoding of a "
-                f"contained type\", and {name} names none. X.680 spells the contained type in "
+                f'contained type", and {name} names none. X.680 spells the contained type in '
                 f"the ASN.1 `CONTAINING` constraint and clause 12's link carries it here; with "
-                f"no ELM section readable, write `CONTAINING <class>` after the group")
+                f"no ELM section readable, write `CONTAINING <class>` after the group"
+            )
         contained_class = cursor.next().text
         module.builtin_of(contained_class)
     _finish(cursor, name)
     element = IntSpec(width=_STRING_ELEMENT_BITS[category])
-    encodings = tuple(module.pending_repetition(reference, name).bind(element)
-                      for reference in references)
-    return StringSpec(element=element,
-                      repetition=RepetitionSpec(encodings=encodings, bounds=bounds),
-                      transform=chain, value_reversal=value_reversal,
-                      pre_alignment=common.pre_alignment,
-                      start_pointer=common.start_pointer, exhibits=exhibits,
-                      contents=contents, contained_class=contained_class)
+    encodings = tuple(
+        module.pending_repetition(reference, name).bind(element) for reference in references
+    )
+    return StringSpec(
+        element=element,
+        repetition=RepetitionSpec(encodings=encodings, bounds=bounds),
+        transform=chain,
+        value_reversal=value_reversal,
+        pre_alignment=common.pre_alignment,
+        start_pointer=common.start_pointer,
+        exhibits=exhibits,
+        contents=contents,
+        contained_class=contained_class,
+    )
 
 
 def _parse_int_body(cursor: _Cursor, name: str, module: "EcnModule"):
@@ -1645,21 +1828,21 @@ def _parse_int_body(cursor: _Cursor, name: str, module: "EcnModule"):
         # which would make a typo in a field name silently produce a determinant field.
         common = _parse_common(cursor, module, space_required=True)
         _finish(cursor, name)
-        return AuxIntSpec(width=common.space.width, form=IntForm.POSITIVE_INT,
-                          pre_alignment=common.pre_alignment)
+        return AuxIntSpec(
+            width=common.space.width, form=IntForm.POSITIVE_INT, pre_alignment=common.pre_alignment
+        )
     single = cursor.accept("ENCODING")
     plural = not single and cursor.accept("ENCODINGS")
     if not (single or plural):
-        raise Asn1Error(
-            f"ECN: §23.6.2.2 — {name} must set exactly one of ENCODING and ENCODINGS")
+        raise Asn1Error(f"ECN: §23.6.2.2 — {name} must set exactly one of ENCODING and ENCODINGS")
     if single:
         names = (cursor.next().text,)
     else:
         names = _parse_reference_list(cursor)
     if cursor.accept("ENCODING") or cursor.accept("ENCODINGS"):
         raise Asn1Error(
-            f"ECN: §23.6.2.2 — {name} sets both ENCODING and ENCODINGS; exactly one is "
-            f"permitted")
+            f"ECN: §23.6.2.2 — {name} sets both ENCODING and ENCODINGS; exactly one is permitted"
+        )
     bounds = IntegerBounds()
     if cursor.accept("BOUNDS"):
         bounds = IntegerBounds(_parse_bound(cursor), _parse_bound(cursor))
@@ -1668,7 +1851,8 @@ def _parse_int_body(cursor: _Cursor, name: str, module: "EcnModule"):
     if plural and len(encodings) == 1:
         raise Asn1Error(
             f"ECN: §23.6.2.2 gives ENCODINGS a list; {name} lists one object, which is what "
-            f"ENCODING spells")
+            f"ENCODING spells"
+        )
     return IntSelector(encodings=encodings, bounds=bounds)
 
 
@@ -1680,8 +1864,7 @@ def _parse_bound(cursor: _Cursor) -> int | None:
     try:
         return int(token.text)
     except ValueError:
-        raise Asn1Error(
-            f"ECN: a bound is an integer, or `-` for none; got {token}") from None
+        raise Asn1Error(f"ECN: a bound is an integer, or `-` for none; got {token}") from None
 
 
 def _parse_pad_body(cursor: _Cursor, name: str, module: "EcnModule") -> PadSpec:
@@ -1697,8 +1880,7 @@ def _parse_pad_body(cursor: _Cursor, name: str, module: "EcnModule") -> PadSpec:
         pattern.require_non_null(f"{name}'s PAD-PATTERN")
     exhibits = _parse_handle_tail(cursor)
     _finish(cursor, name)
-    return PadSpec(width=common.space.width, padding=padding, pattern=pattern,
-                   exhibits=exhibits)
+    return PadSpec(width=common.space.width, padding=padding, pattern=pattern, exhibits=exhibits)
 
 
 def _parse_outer_body(cursor: _Cursor, name: str) -> OuterSpec:
@@ -1732,7 +1914,8 @@ def _structure_fields(assignment, owner: str) -> tuple:
     if len(body) < 2 or body[1] != "{":
         raise Asn1Error(
             f"ECN: §16.2.12 — {assignment.name} is named as a replacement structure by "
-            f"{owner}, and its body is not a constructor with a field list")
+            f"{owner}, and its body is not a constructor with a field list"
+        )
     fields = []
     inner = _Cursor([Token(text, 0) for text in body[2:-1]], f"the structure {assignment.name}")
     while not inner.eof():
@@ -1742,7 +1925,8 @@ def _structure_fields(assignment, owner: str) -> tuple:
         if inner.eof() or inner.peek() == ",":
             raise Asn1Error(
                 f"ECN: §16.3.1's NamedField is an identifier followed by an EncodingStructure; "
-                f"{member!r} in {assignment.name} has no class")
+                f"{member!r} in {assignment.name} has no class"
+            )
         fields.append((member, inner.next().text))
     if not fields:
         raise Asn1Error(f"ECN: the replacement structure {assignment.name} has no fields")
@@ -1756,7 +1940,8 @@ def _read_encode_structure(assignment, *, component_names: tuple, owner: str) ->
         raise Asn1Error(
             f"ECN: §22.1.3.5 sets a replacement structure's other fields \"according to the "
             f"specification in the replacement structure encoding object\", and §17.5.1's "
-            f"ENCODE STRUCTURE is that specification; {owner} states none")
+            f"ENCODE STRUCTURE is that specification; {owner} states none"
+        )
     written = []
     body = _Cursor(_collect_braced(inner), f"the ENCODE STRUCTURE body of {owner}")
     while not body.eof():
@@ -1766,18 +1951,25 @@ def _read_encode_structure(assignment, *, component_names: tuple, owner: str) ->
         if body.eof() or body.peek() == ",":
             raise Asn1Error(
                 f"ECN: §17.5.10's ComponentEncoding is an identifier followed by a "
-                f"TagAndElementEncoding; {member!r} in {owner} has no encoding")
+                f"TagAndElementEncoding; {member!r} in {owner} has no encoding"
+            )
         element = body.next().text
         if body.peek() == "{<":
             _parse_actual_parameter_list(body)
-        written.append(ComponentEncoding(
-            identifier=member, element=USE_SET if element == "USE-SET" else element))
+        written.append(
+            ComponentEncoding(
+                identifier=member, element=USE_SET if element == "USE-SET" else element
+            )
+        )
     combined = ""
     if inner.accept("WITH"):
         combined = inner.next().text
-    return EncodeStructure(governor=GovernorCategory.CONCATENATION,
-                           component_names=component_names, components=tuple(written),
-                           combined=combined)
+    return EncodeStructure(
+        governor=GovernorCategory.CONCATENATION,
+        component_names=component_names,
+        components=tuple(written),
+        combined=combined,
+    )
 
 
 #: §22.1.1.7's five actions, keyed by the words that appear between `REPLACE` and `WITH`.
@@ -1823,10 +2015,12 @@ def _parse_replace(cursor: _Cursor, module: "EcnModule", owner: str) -> Replacem
             f"ECN: §22.1.2.1 — exactly one of the permitted syntaxes shall be used between "
             f"REPLACE and WITH; {owner} writes {written}. §22.1.1.7 lists them: STRUCTURE, "
             f"COMPONENT (a synonym for ALL COMPONENTS per §22.1.1.8), ALL COMPONENTS, "
-            f"OPTIONALS, NON-OPTIONALS")
+            f"OPTIONALS, NON-OPTIONALS"
+        )
     cursor.expect("WITH")
     structure = module.replacement_structure(
-        bare_use(_parse_bare_reference(cursor), clause="§22.1.2.2"), owner)
+        bare_use(_parse_bare_reference(cursor), clause="§22.1.2.2"), owner
+    )
 
     encoded_by = None
     head_end = None
@@ -1835,7 +2029,8 @@ def _parse_replace(cursor: _Cursor, module: "EcnModule", owner: str) -> Replacem
         if cursor.accept_words("INSERT", "AT"):
             cursor.expect("HEAD")
             head_end = module.head_end_structure(
-                bare_use(_parse_bare_reference(cursor), clause="§22.1.2.7"), owner)
+                bare_use(_parse_bare_reference(cursor), clause="§22.1.2.7"), owner
+            )
     paired = None
     if cursor.accept_words("AND", "OPTIONALS"):
         # §22.1.1.7 e): "all its components ... are to be replaced, with different replacement
@@ -1847,10 +2042,12 @@ def _parse_replace(cursor: _Cursor, module: "EcnModule", owner: str) -> Replacem
             raise Asn1Error(
                 f"ECN: §22.1.1.2 hangs `AND OPTIONALS` off a first group that replaced the "
                 f"non-optionals; {owner} writes REPLACE {action.value}, which leaves the "
-                f"optionals already covered or already excluded")
+                f"optionals already covered or already excluded"
+            )
         cursor.expect("WITH")
         second = module.replacement_structure(
-            bare_use(_parse_bare_reference(cursor), clause="§22.1.2.2"), owner)
+            bare_use(_parse_bare_reference(cursor), clause="§22.1.2.2"), owner
+        )
         second_object = None
         second_head = None
         if cursor.accept_words("ENCODED", "BY"):
@@ -1858,14 +2055,19 @@ def _parse_replace(cursor: _Cursor, module: "EcnModule", owner: str) -> Replacem
             if cursor.accept_words("INSERT", "AT"):
                 cursor.expect("HEAD")
                 second_head = module.head_end_structure(
-                    bare_use(_parse_bare_reference(cursor), clause="§22.1.2.7"), owner)
+                    bare_use(_parse_bare_reference(cursor), clause="§22.1.2.7"), owner
+                )
         paired = Replacement(
             action=ReplaceAction.OPTIONALS,
             structure=module.replacement_with_encodings(second, second_object, owner),
-            head_end=second_head)
-    return Replacement(action=action,
-                       structure=module.replacement_with_encodings(structure, encoded_by, owner),
-                       head_end=head_end, paired=paired)
+            head_end=second_head,
+        )
+    return Replacement(
+        action=action,
+        structure=module.replacement_with_encodings(structure, encoded_by, owner),
+        head_end=head_end,
+        paired=paired,
+    )
 
 
 def _parse_bare_reference(cursor: _Cursor) -> ParameterizedReference:
@@ -1881,9 +2083,9 @@ def _parse_bare_reference(cursor: _Cursor) -> ParameterizedReference:
     return ParameterizedReference(name)
 
 
-def _parse_alternatives_body(cursor: _Cursor, name: str, module: "EcnModule",
-                             governor: str = ""
-                             ) -> AlternativesSpec:
+def _parse_alternatives_body(
+    cursor: _Cursor, name: str, module: "EcnModule", governor: str = ""
+) -> AlternativesSpec:
     """§23.1's `#ALTERNATIVES`, whose alternatives come from the §16.3 structure.
 
     The parallel with `_parse_concatenation_body` is exact and so is the difference: both take
@@ -1901,8 +2103,9 @@ def _parse_alternatives_body(cursor: _Cursor, name: str, module: "EcnModule",
     selection = None
     if cursor.accept("ALTERNATIVE"):
         cursor.expect_words("DETERMINED", "BY")
-        determination = _named(cursor.next(), _ALTERNATIVE_DETERMINATIONS,
-                               "AlternativeDetermination")
+        determination = _named(
+            cursor.next(), _ALTERNATIVE_DETERMINATIONS, "AlternativeDetermination"
+        )
         reference = ""
         if cursor.accept("USING"):
             reference = cursor.next().text
@@ -1916,20 +2119,30 @@ def _parse_alternatives_body(cursor: _Cursor, name: str, module: "EcnModule",
                 raise Asn1Error(
                     "ECN: §22.6.1.1's &alternative-ordering is ENUMERATED {textual, tag} — "
                     "two values, not the concatenation group's three. A CHOICE encodes exactly "
-                    "one alternative, so there is no order to randomize")
+                    "one alternative, so there is no order to randomize"
+                )
             ordering = _named(Token(written, 0), _COMPONENT_ORDERS, "the alternative ordering")
         selection = AlternativeSelection(
-            determination=determination, reference=reference, handle_id=handle_id,
-            handle_set=handle_set, ordering=ordering)
+            determination=determination,
+            reference=reference,
+            handle_id=handle_id,
+            handle_set=handle_set,
+            ordering=ordering,
+        )
     _finish(cursor, name)
     own = module.structure_for_class(governor, "alternatives")
     structure = own.fields
-    alternatives = {field_name: module.field_spec(own, field_name, class_name)
-                    for field_name, class_name in structure}
-    return AlternativesSpec(alternatives=alternatives,
-                            order=tuple(n for n, _ in structure), selection=selection,
-                            pre_alignment=common.pre_alignment,
-                            start_pointer=common.start_pointer)
+    alternatives = {
+        field_name: module.field_spec(own, field_name, class_name)
+        for field_name, class_name in structure
+    }
+    return AlternativesSpec(
+        alternatives=alternatives,
+        order=tuple(n for n, _ in structure),
+        selection=selection,
+        pre_alignment=common.pre_alignment,
+        start_pointer=common.start_pointer,
+    )
 
 
 def _parse_optional_body(cursor: _Cursor, name: str, module: "EcnModule") -> OptionalSpec:
@@ -1949,31 +2162,39 @@ def _parse_optional_body(cursor: _Cursor, name: str, module: "EcnModule") -> Opt
     presence = None
     if cursor.accept("PRESENCE"):
         cursor.expect_words("DETERMINED", "BY")
-        determination = _named(cursor.next(), _OPTIONALITY_DETERMINATIONS,
-                               "OptionalityDetermination")
+        determination = _named(
+            cursor.next(), _OPTIONALITY_DETERMINATIONS, "OptionalityDetermination"
+        )
         reference = ""
         if cursor.accept("USING"):
             reference = cursor.next().text
         handle_id, handle_set = "default-handle", False
         if cursor.accept("HANDLE"):
             handle_id, handle_set = cursor.next().text, True
-        presence = Optionality(determination=determination, reference=reference,
-                               handle_id=handle_id, handle_set=handle_set)
+        presence = Optionality(
+            determination=determination,
+            reference=reference,
+            handle_id=handle_id,
+            handle_set=handle_set,
+        )
     _finish(cursor, name)
     if presence is None:
         raise Asn1Error(
-            f"ECN: §22.5.1.6 — the PRESENCE specification \"is mandatory for it to be set in "
-            f"all places in the defined syntax where it is allowed\"; the #OPTIONAL object "
-            f"{name} states none, so nothing says how a decoder detects absence")
+            f'ECN: §22.5.1.6 — the PRESENCE specification "is mandatory for it to be set in '
+            f'all places in the defined syntax where it is allowed"; the #OPTIONAL object '
+            f"{name} states none, so nothing says how a decoder detects absence"
+        )
     # `component` is a placeholder until §16.5's structure pairs this object with a field;
     # `OptionalSpec` refuses a `None` one, so the pairing cannot be skipped by accident.
-    return OptionalSpec(component=_PENDING_COMPONENT, presence=presence,
-                        pre_alignment=common.pre_alignment,
-                        start_pointer=common.start_pointer)
+    return OptionalSpec(
+        component=_PENDING_COMPONENT,
+        presence=presence,
+        pre_alignment=common.pre_alignment,
+        start_pointer=common.start_pointer,
+    )
 
 
-def _parse_encode_structure(cursor: _Cursor, name: str, module: "EcnModule"
-                            ) -> ConcatenationSpec:
+def _parse_encode_structure(cursor: _Cursor, name: str, module: "EcnModule") -> ConcatenationSpec:
     """§17.5.1's `EncodeStructure`, as the body of a `#CONCATENATION` object.
 
     This is the form that says **which object encodes which field**, and it is strictly more
@@ -2006,20 +2227,26 @@ def _parse_encode_structure(cursor: _Cursor, name: str, module: "EcnModule"
         if inner.eof() or inner.peek() == ",":
             raise Asn1Error(
                 f"ECN: §17.5.10's ComponentEncoding is an identifier followed by a "
-                f"TagAndElementEncoding; {field_name!r} has no encoding")
+                f"TagAndElementEncoding; {field_name!r} has no encoding"
+            )
         element = inner.next().text
         actuals = ()
         if inner.peek() == "{<":
             actuals = tuple(
                 actual.text or actual.kind.value
-                for actual in _parse_actual_parameter_list(inner).actuals)
+                for actual in _parse_actual_parameter_list(inner).actuals
+            )
         optional_encoding = None
         if inner.accept("OPTIONAL-ENCODING"):
             optional_encoding = inner.next().text
-        written.append(ComponentEncoding(
-            identifier=field_name,
-            element=USE_SET if element == "USE-SET" else element,
-            optional_encoding=optional_encoding, actuals=actuals))
+        written.append(
+            ComponentEncoding(
+                identifier=field_name,
+                element=USE_SET if element == "USE-SET" else element,
+                optional_encoding=optional_encoding,
+                actuals=actuals,
+            )
+        )
     combined = ""
     if cursor.accept("WITH"):
         combined = cursor.next().text
@@ -2029,36 +2256,42 @@ def _parse_encode_structure(cursor: _Cursor, name: str, module: "EcnModule"
     encode = EncodeStructure(
         governor=GovernorCategory.CONCATENATION,
         component_names=tuple(field_name for field_name, _ in structure),
-        components=tuple(written), structure_encoding=structure_encoding, combined=combined)
+        components=tuple(written),
+        structure_encoding=structure_encoding,
+        combined=combined,
+    )
 
     fields = {}
     for field_name, class_name in structure:
         chosen = encode.encoding_for(field_name)
         if chosen == combined or chosen == USE_SET:
             fields[field_name] = module.optional_wrapped(
-                field_name, module.spec_for_class(class_name, field_name))
+                field_name, module.spec_for_class(class_name, field_name)
+            )
             continue
         if chosen not in module.objects:
             raise Asn1Error(
                 f"ECN: §17.5.13 — the EncodingObject for {field_name!r} shall be governed by "
                 f"the corresponding encoding class; {chosen!r} is not an encoding object in "
-                f"this module")
+                f"this module"
+            )
         governor, spec = module.objects[chosen]
         if governor != class_name:
             raise Asn1Error(
-                f"ECN: §17.5.13 — the EncodingObject for a component \"shall be governed by "
-                f"the corresponding encoding class\"; {field_name!r} has class {class_name} "
-                f"and {chosen!r} is governed by {governor}")
+                f'ECN: §17.5.13 — the EncodingObject for a component "shall be governed by '
+                f'the corresponding encoding class"; {field_name!r} has class {class_name} '
+                f"and {chosen!r} is governed by {governor}"
+            )
         fields[field_name] = module.optional_wrapped(field_name, spec)
-    padding = tuple(field_name for field_name, _ in structure
-                    if isinstance(fields[field_name], PadSpec))
-    return ConcatenationSpec(fields=fields, order=tuple(n for n, _ in structure),
-                             padding=padding)
+    padding = tuple(
+        field_name for field_name, _ in structure if isinstance(fields[field_name], PadSpec)
+    )
+    return ConcatenationSpec(fields=fields, order=tuple(n for n, _ in structure), padding=padding)
 
 
-def _parse_concatenation_body(cursor: _Cursor, name: str, module: "EcnModule",
-                              governor: str = ""
-                              ) -> ConcatenationSpec:
+def _parse_concatenation_body(
+    cursor: _Cursor, name: str, module: "EcnModule", governor: str = ""
+) -> ConcatenationSpec:
     """§23.5.1's `#CONCATENATION`, whose components come from the §16.5 structure.
 
     §22.10.1.1 gives this class no property naming its components: the fields, and their
@@ -2072,7 +2305,8 @@ def _parse_concatenation_body(cursor: _Cursor, name: str, module: "EcnModule",
     if common.space.size is not None:
         raise Asn1Error(
             f"ECN: §21.2.8 forbids `fixed-to-max` for a concatenation, and a stated SIZE on "
-            f"{name} would fix the whole structure's width; the components determine it")
+            f"{name} would fix the whole structure's width; the components determine it"
+        )
     order = "textual"
     if cursor.accept("CONCATENATION"):
         if cursor.accept("ORDER"):
@@ -2082,13 +2316,15 @@ def _parse_concatenation_body(cursor: _Cursor, name: str, module: "EcnModule",
             if alignment not in ("none", "aligned"):
                 raise Asn1Error(
                     f"ECN: §22.10.1.1's &concatenation-alignment is ENUMERATED "
-                    f"{{none, aligned}}; got {alignment!r}")
+                    f"{{none, aligned}}; got {alignment!r}"
+                )
             if alignment == "aligned":
                 raise Asn1Error(
                     "ECN: §22.10.2.2 makes ALIGNMENT aligned pre-align every component with "
                     "the concatenation's own pre-alignment defaults; this rail applies "
                     "pre-alignment per component, so state `ALIGNMENT none` and put "
-                    "`ALIGNED TO` on the components that need it")
+                    "`ALIGNED TO` on the components that need it"
+                )
         if cursor.accept("HANDLE"):
             cursor.next()
     if order != "textual":
@@ -2096,17 +2332,26 @@ def _parse_concatenation_body(cursor: _Cursor, name: str, module: "EcnModule",
             "ECN: §22.10.1.1's &concatenation-order is ENUMERATED {textual, tag, random}; "
             "`tag` needs every component to start with a class in the tag category "
             "(§22.10.2.4) and `random` needs disjoint identification handles (§22.10.2.1). "
-            "`textual` is built, and §22.10.3.1 takes it from the ECN structure definition")
+            "`textual` is built, and §22.10.3.1 takes it from the ECN structure definition"
+        )
     _finish(cursor, name)
     own = module.structure_for_class(governor, "concatenation")
     structure = own.fields
-    fields = {field_name: module.field_spec(own, field_name, class_name)
-              for field_name, class_name in structure}
+    fields = {
+        field_name: module.field_spec(own, field_name, class_name)
+        for field_name, class_name in structure
+    }
     padding = tuple(
-        field_name for field_name, class_name in structure
-        if isinstance(fields[field_name], PadSpec))
-    return ConcatenationSpec(fields=fields, order=tuple(name for name, _ in structure),
-                             padding=padding, replacement=common.replacement)
+        field_name
+        for field_name, class_name in structure
+        if isinstance(fields[field_name], PadSpec)
+    )
+    return ConcatenationSpec(
+        fields=fields,
+        order=tuple(name for name, _ in structure),
+        padding=padding,
+        replacement=common.replacement,
+    )
 
 
 def _parse_parameter(text: str) -> Parameter:
@@ -2136,14 +2381,14 @@ def _parse_parameter(text: str) -> Parameter:
             f"ECN: C.1's Governor is `EncodingClassFieldType | REFERENCE | "
             f"DefinedOrBuiltinEncodingClass | #ENCODINGS | Type`; {governor_text!r} is none of "
             f"them. (`Type` is in that production and in none of C.1's a)-d) rules, so a "
-            f"dummy governed by an ASN.1 type stands for nothing and is refused here.)")
+            f"dummy governed by an ASN.1 type stands for nothing and is refused here.)"
+        )
     if ".&" in governor_text:
         # C.1 b): a type extracted from an encoding class governs a value, a value set or a
         # fixed-type ordered value list — three kinds, one governor, so the kind stays open.
         return Parameter(dummy, None, GovernorKind.ENCODING_CLASS_FIELD_TYPE, governor_text)
     # C.1 c): an encoding class governs an encoding object or an ordered encoding object list.
-    return Parameter(dummy, None, GovernorKind.DEFINED_OR_BUILTIN_ENCODING_CLASS,
-                     governor_text)
+    return Parameter(dummy, None, GovernorKind.DEFINED_OR_BUILTIN_ENCODING_CLASS, governor_text)
 
 
 def _parse_parameter_list(cursor: _Cursor) -> ParameterList:
@@ -2189,12 +2434,13 @@ def _parse_actual(text: str, parameter: Parameter | None) -> ActualParameter:
     raise Asn1Error(
         f"ECN: C.4 — {text!r} is a bare name, which is the spelling shared by an identifier, "
         f"an encoding object and an encoding object set; the dummy it is supplied to does not "
-        f"narrow it to one, so nothing here can say which alternative was meant")
+        f"narrow it to one, so nothing here can say which alternative was meant"
+    )
 
 
-def _parse_actual_parameter_list(cursor: _Cursor,
-                                 parameters: ParameterList | None = None
-                                 ) -> ActualParameterList:
+def _parse_actual_parameter_list(
+    cursor: _Cursor, parameters: ParameterList | None = None
+) -> ActualParameterList:
     """C.4's `ActualParameterList ::= "{<" ActualParameter "," + ">}"`, and C.3's empty form.
 
     Empty is accepted here and refused by `ParameterList`, which is C.3's doing: it makes
@@ -2230,6 +2476,7 @@ def _parse_reference_list(cursor: _Cursor) -> tuple[str, ...]:
 
 
 # --- the module -----------------------------------------------------------------------------
+
 
 @dataclass
 class Structure:
@@ -2333,7 +2580,8 @@ class EcnModule:
             raise Asn1Error(
                 "ECN: this module declares no encoding structure, and §16.2.12's "
                 "EncodingStructureDefn is what an encoding object in a constructor category "
-                "takes its components from")
+                "takes its components from"
+            )
         return next(iter(self.structures.values()))
 
     @property
@@ -2367,14 +2615,16 @@ class EcnModule:
         the first moment every claim has been seen.
         """
         application = next(iter(self.structures), None)
-        orphans = [name for name in self.structures
-                   if name != application and name not in self.claimed]
+        orphans = [
+            name for name in self.structures if name != application and name not in self.claimed
+        ]
         if orphans:
             raise Asn1Error(
                 f"ECN: {orphans} are declared and never reached. This module applies "
                 f"{application} at its §13.2 application point, and a further structure is "
                 f"reachable only by being named — §22.1.2.7's INSERT AT HEAD is the one "
-                f"construct that names one today")
+                f"construct that names one today"
+            )
 
     def builtin_of(self, class_name: str) -> str:
         """The built-in class a name resolves to, following clause 11's assignments."""
@@ -2391,12 +2641,13 @@ class EcnModule:
                     raise Asn1Error(
                         f"ECN: {clause} defines {current} and {spec} builds it; what this "
                         f"grammar cannot yet read is its notation. It is named here rather "
-                        f"than left to the general message, because \"not a built-in encoding "
-                        f"class\" would be false — the class exists in X.692 and on this rail, "
-                        f"and only its spelling is missing")
+                        f'than left to the general message, because "not a built-in encoding '
+                        f'class" would be false — the class exists in X.692 and on this rail, '
+                        f"and only its spelling is missing"
+                    )
                 raise Asn1Error(
-                    f"ECN: {current} is not a built-in encoding class and no assignment "
-                    f"defines it")
+                    f"ECN: {current} is not a built-in encoding class and no assignment defines it"
+                )
             current = self.classes[current]
         return _BUILTIN_CLASSES[current]
 
@@ -2406,7 +2657,8 @@ class EcnModule:
             if name not in self.transforms:
                 raise Asn1Error(
                     f"ECN: TRANSFORMS names {name!r}, which no #TRANSFORM object in this "
-                    f"module defines; §24.2.4.1 orders a list of objects that must exist")
+                    f"module defines; §24.2.4.1 orders a list of objects that must exist"
+                )
             out.append(self.transforms[name])
         return tuple(out)
 
@@ -2415,7 +2667,8 @@ class EcnModule:
         if entry is None or self.builtin_of(entry[0]) != "conditional-int":
             raise Asn1Error(
                 f"ECN: §23.6.1 gives #INT's ENCODING a #CONDITIONAL-INT object; {name!r} is "
-                f"{'undefined' if entry is None else 'a ' + entry[0] + ' object'}")
+                f"{'undefined' if entry is None else 'a ' + entry[0] + ' object'}"
+            )
         return entry[1]
 
     def object_set_named(self, name: str, owner: str) -> dict:
@@ -2431,7 +2684,8 @@ class EcnModule:
         raise Asn1Error(
             f"ECN: §18.1.1 — {owner} names the encoding object set {name!r}, and this module "
             f"assigns no such set; §18.2.1's built-in names are "
-            f"{', '.join(sorted(_BUILTIN_OBJECT_SETS))}")
+            f"{', '.join(sorted(_BUILTIN_OBJECT_SETS))}"
+        )
 
     def structure_for_class(self, class_name: str, category: str) -> "Structure":
         """The structure an object of `class_name` is applied to (§16.5.6, §16.3.3).
@@ -2446,8 +2700,10 @@ class EcnModule:
         Searched depth-first from the application point, because §16.5.6 sends the application
         point *into* the named fields, so the outer structure is reached before its children.
         """
-        shapes = {"concatenation": "a §16.5 ConcatenationStructure",
-                  "alternatives": "a §16.3 AlternativesStructure"}
+        shapes = {
+            "concatenation": "a §16.5 ConcatenationStructure",
+            "alternatives": "a §16.3 AlternativesStructure",
+        }
 
         def walk(structure: "Structure"):
             yield structure
@@ -2459,19 +2715,22 @@ class EcnModule:
         if not self.structures:
             raise Asn1Error(
                 f"ECN: an object in the {category} category takes its components from "
-                f"{shapes[category]}, and this module declares none")
+                f"{shapes[category]}, and this module declares none"
+            )
         for structure in walk(self.application_structure()):
             if structure.base == class_name:
                 if structure.category != category:
                     raise Asn1Error(
                         f"ECN: §16.2.12 — an object in the {category} category needs "
                         f"{shapes[category]}; {structure.name} is "
-                        f"{shapes[structure.category]}")
+                        f"{shapes[structure.category]}"
+                    )
                 return structure
         raise Asn1Error(
             f"ECN: §16.5.6 applies an encoding object to the structure its class governs, and "
             f"no structure reachable from this module's §13.2 application point is governed "
-            f"by {class_name}")
+            f"by {class_name}"
+        )
 
     def field_spec(self, structure: "Structure", field_name: str, class_name: str):
         """One field's encoding, descending into a §16.2.1 nested structure when there is one.
@@ -2484,7 +2743,8 @@ class EcnModule:
         object when its own body was read. Here the field simply takes it.
         """
         return self.optional_wrapped(
-            field_name, self.spec_for_class(class_name, field_name), structure=structure)
+            field_name, self.spec_for_class(class_name, field_name), structure=structure
+        )
 
     def pending_repetition(self, name: str, owner: str) -> "PendingConditionalRepetition":
         """The §23.14 object a string class names in its `REPETITION-ENCODING(S)`.
@@ -2498,11 +2758,11 @@ class EcnModule:
             raise Asn1Error(
                 f"ECN: §23.2.2.1 d) — REPETITION-ENCODING(S) names #CONDITIONAL-REPETITION "
                 f"objects; {owner} names {name!r}, which is "
-                f"{'undefined' if entry is None else 'a ' + entry[0] + ' object'}")
+                f"{'undefined' if entry is None else 'a ' + entry[0] + ' object'}"
+            )
         return entry[1]
 
-    def require_structure(self, category: str = "concatenation"
-                          ) -> tuple[tuple[str, str], ...]:
+    def require_structure(self, category: str = "concatenation") -> tuple[tuple[str, str], ...]:
         """The module's structure, checked to be the shape the asking object needs.
 
         §16.3.3 and §16.5.6 both call their structure "an encoding constructor: when an
@@ -2512,17 +2772,21 @@ class EcnModule:
         a concatenation would encode one field where all of them belong, which is a valid
         encoding of a different type.
         """
-        shapes = {"concatenation": "a §16.5 ConcatenationStructure",
-                  "alternatives": "a §16.3 AlternativesStructure"}
+        shapes = {
+            "concatenation": "a §16.5 ConcatenationStructure",
+            "alternatives": "a §16.3 AlternativesStructure",
+        }
         if not self.structures:
             raise Asn1Error(
                 f"ECN: an object in the {category} category takes its components from "
-                f"{shapes[category]}, and this module declares none")
+                f"{shapes[category]}, and this module declares none"
+            )
         applied = self.application_structure()
         if applied.category != category:
             raise Asn1Error(
                 f"ECN: §16.2.12 — an object in the {category} category needs "
-                f"{shapes[category]}; {applied.name} is {shapes[applied.category]}")
+                f"{shapes[category]}; {applied.name} is {shapes[applied.category]}"
+            )
         return applied.fields
 
     def replacement_structure(self, name: str, owner: str) -> ParameterizedAssignment:
@@ -2538,15 +2802,18 @@ class EcnModule:
             raise Asn1Error(
                 f"ECN: §22.1.2.2 — the WITH replacement structure shall be a parameterized "
                 f"encoding structure; {owner} names {name}, which this module does not declare "
-                f"as one")
+                f"as one"
+            )
         if assignment.kind is not AssignmentKind.ENCODING_CLASS:
             raise Asn1Error(
                 f"ECN: §22.1.2.2 — {name} is a {assignment.kind.value}, not a parameterized "
-                f"encoding structure")
+                f"encoding structure"
+            )
         if assignment.parameters.kinds() != (ParameterKind.ENCODING_CLASS,):
             raise Asn1Error(
                 f"ECN: §22.1.2.2 — the WITH replacement structures shall have a single "
-                f"encoding class parameter; {name} has {len(assignment.parameters)}")
+                f"encoding class parameter; {name} has {len(assignment.parameters)}"
+            )
         return assignment
 
     def head_end_structure(self, name: str, owner: str) -> HeadEndStructure:
@@ -2573,26 +2840,31 @@ class EcnModule:
                 f"ECN: §22.1.2.7 — the INSERT AT HEAD encoding structures shall not have "
                 f"dummy parameters, and {name} is a parameterized assignment. That is the one "
                 f"property separating it from the WITH replacement structure, which §22.1.2.2 "
-                f"requires to be parameterized")
+                f"requires to be parameterized"
+            )
         declared = self.structures.get(name)
         if declared is None:
             raise Asn1Error(
                 f"ECN: §22.1.2.7 — {owner} inserts {name} at the head, and this module "
-                f"declares no such encoding structure")
+                f"declares no such encoding structure"
+            )
         if name == next(iter(self.structures)):
             raise Asn1Error(
                 f"ECN: §22.1.2.7 — {name} is this module's §13.2 application point, and "
-                f"{owner} would insert it before the components of the structure it *is*")
+                f"{owner} would insert it before the components of the structure it *is*"
+            )
         self.claimed.add(name)
         auxiliary = {
             field_name: self.optional_wrapped(
-                field_name, self.spec_for_class(class_name, field_name), structure=declared)
+                field_name, self.spec_for_class(class_name, field_name), structure=declared
+            )
             for field_name, class_name in declared.fields
         }
         return HeadEndStructure(name=name, order=declared.names(), auxiliary=auxiliary)
 
-    def replacement_with_encodings(self, assignment: ParameterizedAssignment,
-                                   encoded_by: str | None, owner: str) -> ReplacementStructure:
+    def replacement_with_encodings(
+        self, assignment: ParameterizedAssignment, encoded_by: str | None, owner: str
+    ) -> ReplacementStructure:
         """Turn a parameterized structure and its `ENCODED BY` object into a
         `ReplacementStructure` — the step §22.1 has never been able to take from text.
 
@@ -2614,38 +2886,52 @@ class EcnModule:
         if len(holes) != 1:
             raise Asn1Error(
                 f"ECN: §22.1.2.2 — {assignment.name} has a single encoding class parameter "
-                f"{dummy}, so exactly one of its fields is the hole; {len(holes)} use it")
+                f"{dummy}, so exactly one of its fields is the hole; {len(holes)} use it"
+            )
         auxiliary_names = [member for member, class_name in fields if class_name != dummy]
 
         if encoded_by is None:
             if auxiliary_names:
                 raise Asn1Error(
-                    f"ECN: §22.1.2.6 — the auxiliary fields {auxiliary_names} \"shall be set "
-                    f"by the encoding of the replacement structure\", and {owner} states no "
-                    f"ENCODED BY object to set them")
+                    f'ECN: §22.1.2.6 — the auxiliary fields {auxiliary_names} "shall be set '
+                    f'by the encoding of the replacement structure", and {owner} states no '
+                    f"ENCODED BY object to set them"
+                )
             auxiliary = {}
         else:
             auxiliary = self._encoded_by_specs(encoded_by, assignment, fields, dummy, owner)
         return ReplacementStructure(
-            name=assignment.name, order=tuple(member for member, _ in fields),
-            dummy=holes[0], auxiliary=auxiliary)
+            name=assignment.name,
+            order=tuple(member for member, _ in fields),
+            dummy=holes[0],
+            auxiliary=auxiliary,
+        )
 
-    def _encoded_by_specs(self, encoded_by: str, assignment: ParameterizedAssignment,
-                          fields: tuple, dummy: str, owner: str) -> dict:
+    def _encoded_by_specs(
+        self,
+        encoded_by: str,
+        assignment: ParameterizedAssignment,
+        fields: tuple,
+        dummy: str,
+        owner: str,
+    ) -> dict:
         """§22.1.1.9's object, read as §17.5.1's `EncodeStructure` over the same fields."""
         obj = self.parameterized.get(encoded_by)
         if obj is None or obj.kind is not AssignmentKind.ENCODING_OBJECT:
             raise Asn1Error(
                 f"ECN: §22.1.2.4 — the ENCODED BY encoding objects shall be parameterized "
                 f"encoding objects for the WITH encoding structures; {owner} names "
-                f"{encoded_by}, which this module does not declare as one")
+                f"{encoded_by}, which this module does not declare as one"
+            )
         if obj.governor != assignment.name:
             raise Asn1Error(
                 f"ECN: §22.1.2.4 — the ENCODED BY object's governor is the corresponding WITH "
                 f"structure; {encoded_by} is governed by {obj.governor} and {owner} pairs it "
-                f"with {assignment.name}")
+                f"with {assignment.name}"
+            )
         encode = _read_encode_structure(
-            obj, component_names=tuple(member for member, _ in fields), owner=encoded_by)
+            obj, component_names=tuple(member for member, _ in fields), owner=encoded_by
+        )
         specs = {}
         for member, class_name in fields:
             if class_name == dummy:
@@ -2659,12 +2945,14 @@ class EcnModule:
                 raise Asn1Error(
                     f"ECN: §17.5.13 — the EncodingObject for {member!r} shall be governed by "
                     f"the corresponding encoding class; {chosen!r} is not an encoding object "
-                    f"in this module")
+                    f"in this module"
+                )
             governor, spec = self.objects[chosen]
             if governor != class_name:
                 raise Asn1Error(
                     f"ECN: §17.5.13 — {member!r} has class {class_name} and {chosen!r} is "
-                    f"governed by {governor}")
+                    f"governed by {governor}"
+                )
             specs[member] = spec
         return specs
 
@@ -2694,7 +2982,8 @@ class EcnModule:
             raise Asn1Error(
                 f"ECN: §16.5.4 — the presence of {field_name!r} is determined by the object "
                 f"encoding {optional_class}, and that object is a "
-                f"{type(wrapper).__name__} rather than an #OPTIONAL one")
+                f"{type(wrapper).__name__} rather than an #OPTIONAL one"
+            )
         return replace(wrapper, component=spec)
 
     def spec_for_class(self, class_name: str, field_name: str):
@@ -2710,7 +2999,8 @@ class EcnModule:
             raise Asn1Error(
                 f"ECN: §9.5.1 requires an encoding object for every class in the structure, "
                 f"and §9.5.2 permits at most one per class; the field {field_name!r} has "
-                f"class {class_name} with {len(matches)} objects in this module")
+                f"class {class_name} with {len(matches)} objects in this module"
+            )
         return matches[0]
 
     def object_set(self) -> dict:
@@ -2730,7 +3020,8 @@ class EcnModule:
                 if applied.get(class_name) not in (None, spec):
                     raise Asn1Error(
                         f"ECN: §9.5.2 permits a set at most one object per class, and "
-                        f"{class_name} already has one; {name} would be a second")
+                        f"{class_name} already has one; {name} would be a second"
+                    )
                 # `is not spec` rather than `in applied`: since §16.2.1's nesting, a field of
                 # the application structure may itself carry a constructor class, so the loop
                 # above legitimately adds the very object this loop is about to. §9.5.2 forbids
@@ -2799,7 +3090,8 @@ class EcnModule:
             out.append(
                 f"parameterized {defined} {assignment.kind.value} "
                 f"{assignment.parameters.render_declaration()} governor {governor} "
-                f"body {' '.join(assignment.body)}")
+                f"body {' '.join(assignment.body)}"
+            )
         # Every declared structure, in declaration order, and the application point first
         # because that is the order they were read in. Two modules that differ only in a
         # head-end structure describe different octets, so a digest covering the application
@@ -2812,7 +3104,8 @@ class EcnModule:
             # the same set. §18.1.7's distinct-classes rule is what makes the class a key.
             members = " ".join(
                 f"{cls}={getattr(obj, 'name', '') or '-'}"
-                for cls, obj in sorted(self.object_sets[name].items()))
+                for cls, obj in sorted(self.object_sets[name].items())
+            )
             out.append(f"object-set {name} {members}")
         for name in sorted(self.transforms):
             out.append(f"transform {name} {_describe(self.transforms[name])}")
@@ -2833,10 +3126,15 @@ def _structure_lines(structure: "Structure") -> list[str]:
     two would let a module with a nested `#Header` and one with a sibling `#Header` hash the
     same.
     """
-    size = "-" if structure.size is None else (
-        f"{_bound(structure.size.low)}..{_bound(structure.size.high)}")
-    out = [f"structure {structure.name} {structure.category} "
-           f"fields {len(structure.fields)} size {size}"]
+    size = (
+        "-"
+        if structure.size is None
+        else (f"{_bound(structure.size.low)}..{_bound(structure.size.high)}")
+    )
+    out = [
+        f"structure {structure.name} {structure.category} "
+        f"fields {len(structure.fields)} size {size}"
+    ]
     for index, (field_name, class_name) in enumerate(structure.fields):
         line = f"field {index} name {field_name} class {class_name}"
         marker = structure.optional.get(field_name)
@@ -2863,57 +3161,76 @@ def _describe(spec) -> str:
     if isinstance(spec, IntToInt):
         return f"int-to-int {spec.op.value} {spec.operand}"
     if isinstance(spec, IntToBits):
-        return (f"int-to-bits {spec.encoded_as.value} size {spec.size} unit {spec.unit} "
-                f"bounds {_bound(None if spec.bounds is None else spec.bounds[0])}.."
-                f"{_bound(None if spec.bounds is None else spec.bounds[1])}")
+        return (
+            f"int-to-bits {spec.encoded_as.value} size {spec.size} unit {spec.unit} "
+            f"bounds {_bound(None if spec.bounds is None else spec.bounds[0])}.."
+            f"{_bound(None if spec.bounds is None else spec.bounds[1])}"
+        )
     if isinstance(spec, BoolToBool):
         return "bool-to-bool logical:not"
     if isinstance(spec, BoolToInt):
         return f"bool-to-int {'true-zero' if spec.true_zero else 'true-one'}"
     if isinstance(spec, IntToBool):
-        return (f"int-to-bool {'zero-true' if spec.zero_true else 'zero-false'} "
-                f"true {_ints(spec.true_is)} false {_ints(spec.false_is)}")
+        return (
+            f"int-to-bool {'zero-true' if spec.zero_true else 'zero-false'} "
+            f"true {_ints(spec.true_is)} false {_ints(spec.false_is)}"
+        )
     if isinstance(spec, IntToChars):
-        return (f"int-to-chars size {spec.size} plus {int(spec.plus_sign)} "
-                f"pad {'spaces' if spec.pad_with_spaces else 'zeros'}")
+        return (
+            f"int-to-chars size {spec.size} plus {int(spec.plus_sign)} "
+            f"pad {'spaces' if spec.pad_with_spaces else 'zeros'}"
+        )
     if isinstance(spec, BitsToInt):
         return f"bits-to-int {spec.decoded_assuming.value}"
     if isinstance(spec, CharToBits):
-        return (f"char-to-bits {spec.encoded_as} alphabet {spec.alphabet or '-'} "
-                f"chars {'/'.join(spec.chars) or '-'} bits {_bits_list(spec.bit_values)} "
-                f"size {spec.size} unit {spec.unit}")
+        return (
+            f"char-to-bits {spec.encoded_as} alphabet {spec.alphabet or '-'} "
+            f"chars {'/'.join(spec.chars) or '-'} bits {_bits_list(spec.bit_values)} "
+            f"size {spec.size} unit {spec.unit}"
+        )
     if isinstance(spec, BitsToChar):
-        return (f"bits-to-char {spec.decoded_assuming} bits {_bits_list(spec.bit_values)} "
-                f"chars {'/'.join(spec.chars) or '-'}")
+        return (
+            f"bits-to-char {spec.decoded_assuming} bits {_bits_list(spec.bit_values)} "
+            f"chars {'/'.join(spec.chars) or '-'}"
+        )
     if isinstance(spec, BitToBits):
-        return (f"bit-to-bits zero {_pattern(spec.zero_pattern)} "
-                f"one {_pattern(spec.one_pattern)}")
+        return f"bit-to-bits zero {_pattern(spec.zero_pattern)} one {_pattern(spec.one_pattern)}"
     if isinstance(spec, BitsToBits):
-        return (f"bits-to-bits source {_bits_list(spec.source_values)} "
-                f"result {_bits_list(spec.result_values)}")
+        return (
+            f"bits-to-bits source {_bits_list(spec.source_values)} "
+            f"result {_bits_list(spec.result_values)}"
+        )
     if isinstance(spec, BitsToCompositeBits):
         return f"bits-to-composite-bits unit {spec.unit}"
     # The four property-free composite transforms (24.14, 24.16, 24.17, 24.18, 24.19) carry
     # nothing but their identity, which the name already is.
-    for kind, mnemonic in ((CharsToCompositeChar, "chars-to-composite-char"),
-                           (OctetsToCompositeBits, "octets-to-composite-bits"),
-                           (CompositeCharToChars, "composite-char-to-chars"),
-                           (CompositeBitsToBits, "composite-bits-to-bits"),
-                           (CompositeBitsToOctets, "composite-bits-to-octets")):
+    for kind, mnemonic in (
+        (CharsToCompositeChar, "chars-to-composite-char"),
+        (OctetsToCompositeBits, "octets-to-composite-bits"),
+        (CompositeCharToChars, "composite-char-to-chars"),
+        (CompositeBitsToBits, "composite-bits-to-bits"),
+        (CompositeBitsToOctets, "composite-bits-to-octets"),
+    ):
         if isinstance(spec, kind):
             return mnemonic
     if isinstance(spec, IntSpec):
-        return (f"int width {spec.width} form {spec.form.value} "
-                f"transform {_chain(spec.transform)} "
-                f"pre {_pre(spec.pre_alignment)} pad {_pad(spec.value_padding)} "
-                f"ptr {_ref(spec.start_pointer)} det {_det(spec.space_determinant)} "
-                f"handle {_handle(spec.exhibits)} "
-                f"rev {spec.bit_reversal.value}:{spec.reversal_unit}")
+        return (
+            f"int width {spec.width} form {spec.form.value} "
+            f"transform {_chain(spec.transform)} "
+            f"pre {_pre(spec.pre_alignment)} pad {_pad(spec.value_padding)} "
+            f"ptr {_ref(spec.start_pointer)} det {_det(spec.space_determinant)} "
+            f"handle {_handle(spec.exhibits)} "
+            f"rev {spec.bit_reversal.value}:{spec.reversal_unit}"
+        )
     if isinstance(spec, ConditionalIntSpec):
-        conditions = "/".join(
-            f"{condition.value}"
-            + (f":{comparison.value}:{comparator}" if comparison is not None else "")
-            for condition, comparison, comparator in spec.conditions) or "-"
+        conditions = (
+            "/".join(
+                f"{condition.value}"
+                + (f":{comparison.value}:{comparator}" if comparison is not None else "")
+                for condition, comparison, comparator in spec.conditions
+            )
+            or "-"
+        )
         return f"conditional-int if {conditions} then {_describe(spec.spec)}"
     if isinstance(spec, StringSpec):
         # The repetition objects are named by their VALUE, not by the reference the module
@@ -2926,86 +3243,114 @@ def _describe(spec) -> str:
         else:
             # §22.11.1.5 makes "the keyword is used" the thing that sets the specification, so
             # a group naming an empty set is not the same as no group and must not hash alike.
-            contents = (f"primary:{','.join(sorted(spec.contents.primary)) or '-'}"
-                        f"/secondary:"
-                        f"{','.join(sorted(spec.contents.secondary or {})) or '-'}"
-                        f"/override:{int(spec.contents.override)}")
-        return (f"string element {spec.element.width} "
-                f"value-reversal {int(spec.value_reversal)} "
-                f"transform {'-' if spec.transform is None else _describe(spec.transform)} "
-                f"bounds {_bound(spec.repetition.bounds.low)}.."
-                f"{_bound(spec.repetition.bounds.high)} repetition {encodings} "
-                f"contents {contents} containing {spec.contained_class or '-'}")
+            contents = (
+                f"primary:{','.join(sorted(spec.contents.primary)) or '-'}"
+                f"/secondary:"
+                f"{','.join(sorted(spec.contents.secondary or {})) or '-'}"
+                f"/override:{int(spec.contents.override)}"
+            )
+        return (
+            f"string element {spec.element.width} "
+            f"value-reversal {int(spec.value_reversal)} "
+            f"transform {'-' if spec.transform is None else _describe(spec.transform)} "
+            f"bounds {_bound(spec.repetition.bounds.low)}.."
+            f"{_bound(spec.repetition.bounds.high)} repetition {encodings} "
+            f"contents {contents} containing {spec.contained_class or '-'}"
+        )
     if isinstance(spec, ConditionalRepetitionSpec):
         # A bound repetition, which is what a string class holds after `bind`. The element is
         # the class's own and already on the line above, so this describes the space alone.
-        conditions = "/".join(
-            f"{condition.value}"
-            + (f":{comparison.value}:{comparator}" if comparison is not None else "")
-            for condition, comparison, comparator in spec.conditions) or "-"
+        conditions = (
+            "/".join(
+                f"{condition.value}"
+                + (f":{comparison.value}:{comparator}" if comparison is not None else "")
+                for condition, comparison, comparator in spec.conditions
+            )
+            or "-"
+        )
         space = spec.space
-        return (f"bound-repetition if {conditions} space {space.determination.value} "
-                f"unit {space.unit} reference {space.reference or '-'} "
-                f"handle {space.handle_id}")
+        return (
+            f"bound-repetition if {conditions} space {space.determination.value} "
+            f"unit {space.unit} reference {space.reference or '-'} "
+            f"handle {space.handle_id}"
+        )
     if isinstance(spec, PendingConditionalRepetition):
         # Every property that reaches the octets, including the ones whose values are §23.14.1
         # DEFAULTs: a module that states `DETERMINED BY field-to-be-set` and one that lets it
         # default describe the same encoding and must hash the same, which they do because the
         # parser resolves the default before this sees it.
-        conditions = "/".join(
-            f"{condition.value}"
-            + (f":{comparison.value}:{comparator}" if comparison is not None else "")
-            for condition, comparison, comparator in spec.conditions) or "-"
+        conditions = (
+            "/".join(
+                f"{condition.value}"
+                + (f":{comparison.value}:{comparator}" if comparison is not None else "")
+                for condition, comparison, comparator in spec.conditions
+            )
+            or "-"
+        )
         space = spec.space
-        pattern = "-" if space.termination_pattern is None else _describe(
-            space.termination_pattern)
-        return (f"conditional-repetition if {conditions} size {spec.size} space "
-                f"{space.determination.value} unit {space.unit} "
-                f"reference {space.reference or '-'} handle {space.handle_id} "
-                f"pattern {pattern} aligned {int(spec.aligned)} "
-                f"pre-alignment {'-' if spec.pre_alignment is None else _describe(spec.pre_alignment)}")
+        pattern = "-" if space.termination_pattern is None else _describe(space.termination_pattern)
+        return (
+            f"conditional-repetition if {conditions} size {spec.size} space "
+            f"{space.determination.value} unit {space.unit} "
+            f"reference {space.reference or '-'} handle {space.handle_id} "
+            f"pattern {pattern} aligned {int(spec.aligned)} "
+            f"pre-alignment {'-' if spec.pre_alignment is None else _describe(spec.pre_alignment)}"
+        )
     if isinstance(spec, IntSelector):
         chosen = "/".join(_name_of_condition(entry) for entry in spec.encodings) or "-"
-        return (f"int-selector bounds {_bound(spec.bounds.low)}..{_bound(spec.bounds.high)} "
-                f"encodings {chosen}")
+        return (
+            f"int-selector bounds {_bound(spec.bounds.low)}..{_bound(spec.bounds.high)} "
+            f"encodings {chosen}"
+        )
     if isinstance(spec, AuxIntSpec):
-        return (f"aux width {spec.width} form {spec.form.value} "
-                f"pre {_pre(spec.pre_alignment)}")
+        return f"aux width {spec.width} form {spec.form.value} pre {_pre(spec.pre_alignment)}"
     if isinstance(spec, BoolSpec):
-        return (f"bool width {spec.width} true {spec.true_value} false {spec.false_value} "
-                f"pre {_pre(spec.pre_alignment)} handle {_handle(spec.exhibits)}")
+        return (
+            f"bool width {spec.width} true {spec.true_value} false {spec.false_value} "
+            f"pre {_pre(spec.pre_alignment)} handle {_handle(spec.exhibits)}"
+        )
     if isinstance(spec, PadSpec):
-        return (f"pad width {spec.width} padding {spec.padding.value} "
-                f"pattern {_pattern(spec.pattern)} handle {_handle(spec.exhibits)}")
+        return (
+            f"pad width {spec.width} padding {spec.padding.value} "
+            f"pattern {_pattern(spec.pattern)} handle {_handle(spec.exhibits)}"
+        )
     if isinstance(spec, OuterSpec):
-        return (f"outer boundary {spec.boundary_bits} padding {spec.padding.value} "
-                f"pattern {_pattern(spec.pattern)}")
+        return (
+            f"outer boundary {spec.boundary_bits} padding {spec.padding.value} "
+            f"pattern {_pattern(spec.pattern)}"
+        )
     if isinstance(spec, AlternativesSpec):
         selection = spec.selection
-        return (f"alternatives order {'/'.join(spec.order)} "
-                f"select {selection.determination.value} "
-                f"ref {selection.reference or '-'} "
-                f"handle {selection.handle_id if selection.handle_set else '-'} "
-                f"ordering {selection.ordering.value} "
-                f"pre {_pre(spec.pre_alignment)} exhibits {_handle(spec.exhibits)}")
+        return (
+            f"alternatives order {'/'.join(spec.order)} "
+            f"select {selection.determination.value} "
+            f"ref {selection.reference or '-'} "
+            f"handle {selection.handle_id if selection.handle_set else '-'} "
+            f"ordering {selection.ordering.value} "
+            f"pre {_pre(spec.pre_alignment)} exhibits {_handle(spec.exhibits)}"
+        )
     if isinstance(spec, OptionalSpec):
         presence = spec.presence
         # The COMPONENT is deliberately not described. An `#OPTIONAL` object in the module's
         # object table has not been paired with one yet (§16.5.4 pairs them), and the component
         # it will wrap is already in the digest as its own structure field — describing it here
         # would put the same encoding in twice and make the hash depend on where it was read.
-        return (f"optional presence {presence.determination.value} "
-                f"ref {presence.reference or '-'} "
-                f"handle {presence.handle_id if presence.handle_set else '-'} "
-                f"pre {_pre(spec.pre_alignment)} ptr {_ref(spec.start_pointer)}")
+        return (
+            f"optional presence {presence.determination.value} "
+            f"ref {presence.reference or '-'} "
+            f"handle {presence.handle_id if presence.handle_set else '-'} "
+            f"pre {_pre(spec.pre_alignment)} ptr {_ref(spec.start_pointer)}"
+        )
     if isinstance(spec, ConcatenationSpec):
         group = spec.concatenation
-        return (f"concatenation order {'/'.join(spec.transmission_order())} "
-                f"replace {_replacement(spec.replacement)} "
-                f"group {'-' if group is None else group.order.value}:"
-                f"{'-' if group is None else group.alignment.value}:"
-                f"{'-' if group is None else group.handle_id} "
-                f"handle {_handle(spec.exhibits)}")
+        return (
+            f"concatenation order {'/'.join(spec.transmission_order())} "
+            f"replace {_replacement(spec.replacement)} "
+            f"group {'-' if group is None else group.order.value}:"
+            f"{'-' if group is None else group.alignment.value}:"
+            f"{'-' if group is None else group.handle_id} "
+            f"handle {_handle(spec.exhibits)}"
+        )
     raise Asn1Error(f"ECN: {type(spec).__name__} has no canonical serialization")
 
 
@@ -3028,16 +3373,17 @@ def _bits_list(values) -> str:
 def _ref(pointer) -> str:
     if pointer is None:
         return "-"
-    return (f"{pointer.reference}:{pointer.unit}:"
-            f"{_chain(pointer.encoder_transforms)}")
+    return f"{pointer.reference}:{pointer.unit}:{_chain(pointer.encoder_transforms)}"
 
 
 def _det(determinant) -> str:
     if determinant is None:
         return "-"
-    return (f"{determinant.determination.value}:{determinant.reference}:{determinant.unit}:"
-            f"{_chain(determinant.encoder_transforms)}:"
-            f"{_chain(determinant.decoder_transforms)}")
+    return (
+        f"{determinant.determination.value}:{determinant.reference}:{determinant.unit}:"
+        f"{_chain(determinant.encoder_transforms)}:"
+        f"{_chain(determinant.decoder_transforms)}"
+    )
 
 
 def _replacement(replacement) -> str:
@@ -3052,9 +3398,11 @@ def _replacement(replacement) -> str:
         return "-"
     structure = replacement.structure
     head = replacement.head_end
-    own = (f"{replacement.action.value}:{structure.name}:"
-           f"{'/'.join(structure.order)}:{structure.dummy}:{_det(structure.determinant)}:"
-           f"{'-' if head is None else head.name + '/' + '/'.join(head.order)}")
+    own = (
+        f"{replacement.action.value}:{structure.name}:"
+        f"{'/'.join(structure.order)}:{structure.dummy}:{_det(structure.determinant)}:"
+        f"{'-' if head is None else head.name + '/' + '/'.join(head.order)}"
+    )
     if replacement.paired is None:
         return own
     return f"{own}+and-optionals+{_replacement(replacement.paired)}"
@@ -3071,21 +3419,30 @@ def _chain(chain) -> str:
 def _pre(pre_alignment: PreAlignment | None) -> str:
     if pre_alignment is None:
         return "-"
-    return (f"{pre_alignment.unit}:{pre_alignment.padding.value}:"
-            f"{_pattern(pre_alignment.pattern)}:"
-            f"{'any' if pre_alignment.encoder_chosen_offset else 'next'}")
+    return (
+        f"{pre_alignment.unit}:{pre_alignment.padding.value}:"
+        f"{_pattern(pre_alignment.pattern)}:"
+        f"{'any' if pre_alignment.encoder_chosen_offset else 'next'}"
+    )
 
 
 def _pad(padding: ValuePadding | None) -> str:
     if padding is None:
         return "-"
     unused = padding.unused_bits
-    tail = "-" if unused is None else (
-        f"{unused.determination.value}:{unused.reference}:"
-        f"{_chain(unused.encoder_transforms)}:{_chain(unused.decoder_transforms)}")
-    return (f"{padding.justification.side.value}:{padding.justification.offset}:"
-            f"{padding.pre_padding.value}:{_pattern(padding.pre_pattern)}:"
-            f"{padding.post_padding.value}:{_pattern(padding.post_pattern)}:{tail}")
+    tail = (
+        "-"
+        if unused is None
+        else (
+            f"{unused.determination.value}:{unused.reference}:"
+            f"{_chain(unused.encoder_transforms)}:{_chain(unused.decoder_transforms)}"
+        )
+    )
+    return (
+        f"{padding.justification.side.value}:{padding.justification.offset}:"
+        f"{padding.pre_padding.value}:{_pattern(padding.pre_pattern)}:"
+        f"{padding.post_padding.value}:{_pattern(padding.post_pattern)}:{tail}"
+    )
 
 
 def _handle(handle: "IdentificationHandle | None") -> str:
@@ -3106,6 +3463,7 @@ def _pattern(pattern: Pattern | None) -> str:
 
 
 # --- parsing a module -----------------------------------------------------------------------
+
 
 def parse_module(source: str) -> EcnModule:
     """Read an `ENCODING-DEFINITIONS` module.
@@ -3176,8 +3534,11 @@ def _parse_parameterized(cursor: _Cursor, module: EcnModule, name: str) -> None:
     if cursor.accept("::="):
         # No governor: a class assignment (`#Length-prefixed{<#D>} ::= #CONCATENATION {...}`)
         # or an object-set one, told apart by whether the name is a class reference.
-        kind = (AssignmentKind.ENCODING_CLASS if name.startswith("#")
-                else AssignmentKind.ENCODING_OBJECT_SET)
+        kind = (
+            AssignmentKind.ENCODING_CLASS
+            if name.startswith("#")
+            else AssignmentKind.ENCODING_OBJECT_SET
+        )
         # §16.2.12's `EncodingStructureDefn` is a class followed by a braced field list, so a
         # class assignment's body is *two* things and taking only the first would leave the
         # braces to be read as the next assignment. An object set's body is the braces alone.
@@ -3191,8 +3552,8 @@ def _parse_parameterized(cursor: _Cursor, module: EcnModule, name: str) -> None:
         if not body:
             raise Asn1Error(f"ECN: the parameterized assignment {name} has no body")
         module.parameterized[name] = ParameterizedAssignment(
-            name=name, kind=kind, parameters=parameters,
-            body=tuple(token.text for token in body))
+            name=name, kind=kind, parameters=parameters, body=tuple(token.text for token in body)
+        )
         return
 
     governor = cursor.next().text
@@ -3202,9 +3563,13 @@ def _parse_parameterized(cursor: _Cursor, module: EcnModule, name: str) -> None:
     cursor.expect("::=")
     body = _collect_braced(cursor)
     module.parameterized[name] = ParameterizedAssignment(
-        name=name, kind=AssignmentKind.ENCODING_OBJECT, parameters=parameters,
-        governor=governor, governor_actuals=governor_actuals,
-        body=tuple(token.text for token in body))
+        name=name,
+        kind=AssignmentKind.ENCODING_OBJECT,
+        parameters=parameters,
+        governor=governor,
+        governor_actuals=governor_actuals,
+        body=tuple(token.text for token in body),
+    )
     _check_replacement_pair(module, name)
 
 
@@ -3232,7 +3597,8 @@ def _check_replacement_pair(module: EcnModule, object_name: str) -> None:
         # §22.1.2.5's biconditional is read off the object's own dummies: a REFERENCE
         # parameter is present exactly when the group has an INSERT AT HEAD, so the presence
         # of the dummy is what says the pair expects one.
-        insert_at_head=ParameterKind.IDENTIFIER in assignment.parameters.kinds())
+        insert_at_head=ParameterKind.IDENTIFIER in assignment.parameters.kinds(),
+    )
 
 
 def _parse_assignment(cursor: _Cursor, module: EcnModule) -> None:
@@ -3345,8 +3711,9 @@ def _parse_structure(cursor: _Cursor, module: EcnModule, name: str, base: str) -
 _MAX_STRUCTURE_DEPTH = 16
 
 
-def _read_repetition_structure(cursor: _Cursor, module: EcnModule, structure: "Structure",
-                               *, depth: int) -> "Structure":
+def _read_repetition_structure(
+    cursor: _Cursor, module: EcnModule, structure: "Structure", *, depth: int
+) -> "Structure":
     """§16.4.1's `RepetitionClass "{" identifier? EncodingStructure "}" Size?`.
 
     The third `EncodingStructureDefn`, and the one shaped unlike the other two. §16.3 and
@@ -3375,12 +3742,17 @@ def _read_repetition_structure(cursor: _Cursor, module: EcnModule, structure: "S
     module.builtin_of(class_name)
     if inner.peek() == "{":
         structure.nested[field_name] = _read_structure(
-            inner, module, f"{structure.name}.{field_name or '<element>'}", class_name,
-            depth=depth + 1)
+            inner,
+            module,
+            f"{structure.name}.{field_name or '<element>'}",
+            class_name,
+            depth=depth + 1,
+        )
     if not inner.eof():
         raise Asn1Error(
             f"ECN: §16.4.1 gives a RepetitionStructure one EncodingStructure between its "
-            f"braces, optionally named; {structure.name} has more")
+            f"braces, optionally named; {structure.name} has more"
+        )
     structure.fields = ((field_name, class_name),)
     if cursor.peek() == "(":
         structure.size = _parse_structure_size(cursor, structure.name)
@@ -3407,7 +3779,8 @@ def _parse_structure_size(cursor: _Cursor, owner: str) -> SizeBounds:
         if token.text == "MIN":
             raise Asn1Error(
                 f"ECN: §16.2.11 — MIN shall not be used in a Size, and {owner} uses one; a "
-                f"count of repetitions is bounded below by zero already")
+                f"count of repetitions is bounded below by zero already"
+            )
         try:
             value = int(token.text)
         except ValueError:
@@ -3415,7 +3788,8 @@ def _parse_structure_size(cursor: _Cursor, owner: str) -> SizeBounds:
         if value < 0:
             raise Asn1Error(
                 f"ECN: §16.2.11 — a SignedNumber shall be non-negative when used in a Size; "
-                f"{owner} writes {value}")
+                f"{owner} writes {value}"
+            )
         return value
 
     # `..` is not punctuation in this lexer, so `0..MAX` arrives as ONE word. Split here
@@ -3433,20 +3807,23 @@ def _parse_structure_size(cursor: _Cursor, owner: str) -> SizeBounds:
     return SizeBounds(low, high)
 
 
-def _read_structure(cursor: _Cursor, module: EcnModule, name: str, base: str,
-                    *, depth: int) -> Structure:
+def _read_structure(
+    cursor: _Cursor, module: EcnModule, name: str, base: str, *, depth: int
+) -> Structure:
     """One `EncodingStructureDefn` body, and any nested inside it."""
     category = module.builtin_of(base)
     if category not in ("concatenation", "alternatives", "repetition"):
         raise Asn1Error(
             f"ECN: §16.2.12's EncodingStructureDefn is an AlternativesStructure (§16.3), a "
             f"RepetitionStructure (§16.4) or a ConcatenationStructure (§16.5); {base} is in "
-            f"the {category} category, which is none of them")
+            f"the {category} category, which is none of them"
+        )
     if depth > _MAX_STRUCTURE_DEPTH:
         raise Asn1Error(
             f"ECN: the structure {name} nests deeper than {_MAX_STRUCTURE_DEPTH} levels; "
             f"§16.2.1 sets no limit and this one is the reader's, so that a runaway module "
-            f"fails with this sentence rather than a stack overflow")
+            f"fails with this sentence rather than a stack overflow"
+        )
     structure = Structure(name=name, category=category, base=base)
     if category == "repetition":
         return _read_repetition_structure(cursor, module, structure, depth=depth)
@@ -3460,7 +3837,8 @@ def _read_structure(cursor: _Cursor, module: EcnModule, name: str, base: str,
         if inner.eof() or inner.peek() == ",":
             raise Asn1Error(
                 f"ECN: §16.3.1's NamedField is an identifier followed by an EncodingStructure; "
-                f"{field_name!r} has no class")
+                f"{field_name!r} has no class"
+            )
         class_name = inner.next().text
         module.builtin_of(class_name)
         if inner.peek() == "{":
@@ -3469,7 +3847,8 @@ def _read_structure(cursor: _Cursor, module: EcnModule, name: str, base: str,
             # one, so it is read by the same function -- and its governor is the class already
             # taken, which is what gives the nested body its own category.
             structure.nested[field_name] = _read_structure(
-                inner, module, f"{name}.{field_name}", class_name, depth=depth + 1)
+                inner, module, f"{name}.{field_name}", class_name, depth=depth + 1
+            )
         if inner.accept("OPTIONAL-ENCODING"):
             # §16.5.1's `ConcatComponentPresence ::= OPTIONAL-ENCODING OptionalClass`, which
             # is a tail on a `ConcatComponent` and on nothing else. §16.3.1's `NamedField` has
@@ -3479,7 +3858,8 @@ def _read_structure(cursor: _Cursor, module: EcnModule, name: str, base: str,
                 raise Asn1Error(
                     f"ECN: §16.5.1's ConcatComponentPresence is a tail on a ConcatComponent; "
                     f"{field_name!r} is a NamedField of the §16.3 AlternativesStructure "
-                    f"{name}, of which §16.3.2 encodes precisely one")
+                    f"{name}, of which §16.3.2 encodes precisely one"
+                )
             optional_class = inner.next().text
             # `marker_category`, NOT `category`: that name holds the STRUCTURE's own category
             # for the whole function. Reusing it here made one marked field turn its
@@ -3490,7 +3870,8 @@ def _read_structure(cursor: _Cursor, module: EcnModule, name: str, base: str,
                 raise Asn1Error(
                     f"ECN: §16.5.2 — the DefinedEncodingClass in the OptionalClass shall be a "
                     f"class in the optionality category; {optional_class} is in the "
-                    f"{marker_category} category")
+                    f"{marker_category} category"
+                )
             structure.optional[field_name] = optional_class
         fields.append((field_name, class_name))
     if not fields:
@@ -3529,6 +3910,14 @@ def frame_header_module() -> EcnModule:
 
 
 __all__ = [
-    "FRAME_HEADER_MODULE", "SYNTAX_COMPILER", "SYNTAX_VERSION", "EcnModule", "Structure",
-    "Token", "frame_header_module", "frame_header_source", "parse_module", "tokenize",
+    "FRAME_HEADER_MODULE",
+    "SYNTAX_COMPILER",
+    "SYNTAX_VERSION",
+    "EcnModule",
+    "Structure",
+    "Token",
+    "frame_header_module",
+    "frame_header_source",
+    "parse_module",
+    "tokenize",
 ]

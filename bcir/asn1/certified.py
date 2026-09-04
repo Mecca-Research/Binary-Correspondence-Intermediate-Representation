@@ -113,7 +113,8 @@ def interval_of(samples: list[int], *, rank: int | None = None) -> Interval:
     if len(samples) < MIN_SAMPLES:
         raise Asn1Error(
             f"an order-statistic interval needs at least {MIN_SAMPLES} samples, got "
-            f"{len(samples)}; a narrower table is not a more precise one")
+            f"{len(samples)}; a narrower table is not a more precise one"
+        )
     ordered = sorted(samples)
     n = len(ordered)
     if rank is None:
@@ -127,8 +128,13 @@ def interval_of(samples: list[int], *, rank: int | None = None) -> Interval:
                 break
     numerator, denominator = _binomial_tail(n, rank)
     coverage_ppm = ((denominator - 2 * numerator) * 1_000_000) // denominator
-    return Interval(low=ordered[rank - 1], high=ordered[n - rank], median=ordered[n // 2],
-                    samples=n, coverage_ppm=coverage_ppm)
+    return Interval(
+        low=ordered[rank - 1],
+        high=ordered[n - rank],
+        median=ordered[n // 2],
+        samples=n,
+        coverage_ppm=coverage_ppm,
+    )
 
 
 @dataclass(frozen=True)
@@ -177,12 +183,14 @@ class EncodingCostTable:
         if self.decode_kind not in ("schema-free", "schema-directed"):
             raise Asn1Error(
                 f"decode_kind {self.decode_kind!r} must be schema-free or schema-directed; "
-                f"the two answer different questions and a table is exactly one of them")
+                f"the two answer different questions and a table is exactly one of them"
+            )
         if self.provenance not in ("measured", "modeled", "oracle"):
             raise Asn1Error(
                 f"cost table provenance {self.provenance!r} must be measured, modeled or "
                 f"oracle; 'oracle' names a Python-harness table, which §6.2 forbids "
-                f"production selection from reading")
+                f"production selection from reading"
+            )
         names = [row.candidate for row in self.rows]
         if len(set(names)) != len(names):
             raise Asn1Error("a cost table names a candidate twice")
@@ -256,8 +264,9 @@ class Certificate:
         return hashlib.sha256(self.serialize()).hexdigest()
 
 
-def measure_repeatedly(candidate: Candidate, kind, value, *, repeats: int = MIN_SAMPLES
-                       ) -> tuple[Measurement, list[int], list[int]]:
+def measure_repeatedly(
+    candidate: Candidate, kind, value, *, repeats: int = MIN_SAMPLES
+) -> tuple[Measurement, list[int], list[int]]:
     """Run one candidate `repeats` times, returning the verdict and the two sample sets.
 
     The verdict is taken from the FIRST run and is not re-derived per repeat: legality is a
@@ -274,15 +283,23 @@ def measure_repeatedly(candidate: Candidate, kind, value, *, repeats: int = MIN_
             raise Asn1Error(
                 f"{candidate.name}: legality or exact size changed between runs "
                 f"({first.legal}/{first.octets} then {again.legal}/{again.octets}); that "
-                f"is a codec defect, not measurement noise")
+                f"is a codec defect, not measurement noise"
+            )
         encode_ns.append(again.encode_ns)
         decode_ns.append(again.decode_ns)
     return first, encode_ns, decode_ns
 
 
-def build_table(kind, value, *, target: str, cal_gen: int, provenance: str = "oracle",
-                candidates=ALL_CANDIDATES, repeats: int = MIN_SAMPLES
-                ) -> EncodingCostTable:
+def build_table(
+    kind,
+    value,
+    *,
+    target: str,
+    cal_gen: int,
+    provenance: str = "oracle",
+    candidates=ALL_CANDIDATES,
+    repeats: int = MIN_SAMPLES,
+) -> EncodingCostTable:
     """Measure every candidate `repeats` times and freeze the result.
 
     Defaults to `provenance="oracle"` on purpose. This function runs on whatever host
@@ -293,20 +310,28 @@ def build_table(kind, value, *, target: str, cal_gen: int, provenance: str = "or
     """
     rows = []
     for candidate in candidates:
-        verdict, encode_ns, decode_ns = measure_repeatedly(candidate, kind, value,
-                                                           repeats=repeats)
+        verdict, encode_ns, decode_ns = measure_repeatedly(candidate, kind, value, repeats=repeats)
         if not verdict.legal:
             continue
-        rows.append(CostRow(candidate=candidate.name, octets=verdict.octets or 0,
-                            encode=interval_of(encode_ns), decode=interval_of(decode_ns)))
-    return EncodingCostTable(target=target, cal_gen=cal_gen, provenance=provenance,
-                             rows=tuple(rows))
+        rows.append(
+            CostRow(
+                candidate=candidate.name,
+                octets=verdict.octets or 0,
+                encode=interval_of(encode_ns),
+                decode=interval_of(decode_ns),
+            )
+        )
+    return EncodingCostTable(
+        target=target, cal_gen=cal_gen, provenance=provenance, rows=tuple(rows)
+    )
 
 
 #: The tie-break, named so a certificate can state it and a third party can reproduce it.
-TIE_BREAK = ("exact-octets-then-declared-order: candidates whose intervals overlap the "
-             "winner's are statistically indistinguishable and are resolved by exact "
-             "encoded size, then by the order the candidate table declares")
+TIE_BREAK = (
+    "exact-octets-then-declared-order: candidates whose intervals overlap the "
+    "winner's are statistically indistinguishable and are resolved by exact "
+    "encoded size, then by the order the candidate table declares"
+)
 
 
 #: Domain separator for the digest of a value that has no encoding at all. A certificate is
@@ -329,14 +354,18 @@ def _value_digest(kind, value) -> str:
     try:
         return hashlib.sha256(encode_tlv(kind.encode(value))).hexdigest()
     except Asn1Error:
-        return hashlib.sha256(
-            _UNENCODABLE + type(value).__name__.encode("utf-8")).hexdigest()
+        return hashlib.sha256(_UNENCODABLE + type(value).__name__.encode("utf-8")).hexdigest()
 
 
-def select_certified(kind, value, table: EncodingCostTable, *,
-                     objective: Objective = Objective.WIRE_SIZE,
-                     candidates=ALL_CANDIDATES,
-                     allow_oracle_table: bool = False) -> Certificate:
+def select_certified(
+    kind,
+    value,
+    table: EncodingCostTable,
+    *,
+    objective: Objective = Objective.WIRE_SIZE,
+    candidates=ALL_CANDIDATES,
+    allow_oracle_table: bool = False,
+) -> Certificate:
     """The production selection: legality first, then the frozen table, then a certificate.
 
     Refuses rather than substitutes. A candidate that is legal but absent from the table is
@@ -376,13 +405,20 @@ def select_certified(kind, value, table: EncodingCostTable, *,
     # digests and unequal values do not collide.
     schema_digest = hashlib.sha256(repr(kind).encode()).hexdigest()
     value_digest = _value_digest(kind, value)
-    common = dict(version=COST_TABLE_VERSION, schema_digest=schema_digest,
-                  value_digest=value_digest, objective=objective.value,
-                  target=table.target, cal_gen=table.cal_gen,
-                  provenance=table.provenance, decode_kind=table.decode_kind,
-                  table_digest=table.digest(),
-                  admitted=tuple(c.name for c, _ in emittable),
-                  refused=tuple(sorted(refused)), tie_break=TIE_BREAK)
+    common = dict(
+        version=COST_TABLE_VERSION,
+        schema_digest=schema_digest,
+        value_digest=value_digest,
+        objective=objective.value,
+        target=table.target,
+        cal_gen=table.cal_gen,
+        provenance=table.provenance,
+        decode_kind=table.decode_kind,
+        table_digest=table.digest(),
+        admitted=tuple(c.name for c, _ in emittable),
+        refused=tuple(sorted(refused)),
+        tie_break=TIE_BREAK,
+    )
 
     if not emittable:
         return Certificate(**common, selected=None, interval_rank_coverage_ppm=0)
@@ -399,8 +435,12 @@ def select_certified(kind, value, table: EncodingCostTable, *,
             same = [c.name for c, m in emittable if m.octets == best]
             winner = next(m for c, m in emittable if c.name == same[0])
             tied = tuple(same[1:])
-        return Certificate(**common, selected=winner.candidate,
-                           interval_rank_coverage_ppm=0, indistinguishable=tied)
+        return Certificate(
+            **common,
+            selected=winner.candidate,
+            interval_rank_coverage_ppm=0,
+            indistinguishable=tied,
+        )
 
     # A timing objective: from here on an interval decides, so the table's provenance is
     # load-bearing and §6.2's refusal applies.
@@ -411,7 +451,8 @@ def select_certified(kind, value, table: EncodingCostTable, *,
             f"read a MEASURED table and refuse rather than substitute Python timings. On "
             f"this rail `json.loads` is native C while COER decode is Python, so an oracle "
             f"timing orders the candidates by which implementation happens to be compiled "
-            f"(pass allow_oracle_table=True only in an experiment recorded as one)")
+            f"(pass allow_oracle_table=True only in an experiment recorded as one)"
+        )
 
     # Every admitted candidate must also have a row, or the decision is not available at
     # this target -- the same refusal for a different missing thing.
@@ -421,7 +462,8 @@ def select_certified(kind, value, table: EncodingCostTable, *,
             f"target {table.target!r} (cal_gen {table.cal_gen}) has no measured row for "
             f"{', '.join(sorted(missing))}; a {objective.value} objective cannot be "
             f"decided here, and an oracle timing must not stand in for the missing "
-            f"measurement")
+            f"measurement"
+        )
 
     # `table.decode_kind` is recorded on the certificate and NOT gated here, which is a
     # deliberate asymmetry with the provenance refusal above. Provenance needs a guard
@@ -441,11 +483,12 @@ def select_certified(kind, value, table: EncodingCostTable, *,
     # is the same on every host.
     tie = [row for row, _ in scored if getattr(row, field_name).overlaps(best)]
     tie.sort(key=lambda row: (row.octets, [c.name for c in candidates].index(row.candidate)))
-    return Certificate(**common, selected=tie[0].candidate,
-                       interval_rank_coverage_ppm=best.coverage_ppm,
-                       indistinguishable=tuple(sorted(r.candidate for r in tie[1:])))
-
-
+    return Certificate(
+        **common,
+        selected=tie[0].candidate,
+        interval_rank_coverage_ppm=best.coverage_ppm,
+        indistinguishable=tuple(sorted(r.candidate for r in tie[1:])),
+    )
 
 
 # --- RCSP: a budgeted plan across several stages -------------------------------------------
@@ -526,10 +569,15 @@ def _sum_coverage(parts: list[int]) -> int:
     return max(0, 1_000_000 - deficit)
 
 
-def select_budgeted(table: EncodingCostTable, stages, *, budget: int,
-                    objective: Objective = Objective.DECODE_LATENCY,
-                    min_coverage_ppm: int = 500_000,
-                    allow_oracle_table: bool = False) -> BudgetedPlan:
+def select_budgeted(
+    table: EncodingCostTable,
+    stages,
+    *,
+    budget: int,
+    objective: Objective = Objective.DECODE_LATENCY,
+    min_coverage_ppm: int = 500_000,
+    allow_oracle_table: bool = False,
+) -> BudgetedPlan:
     """Minimize the objective across `stages` subject to total octets <= `budget`.
 
     Exact, by dynamic programming over (stage, octets spent). The state space is bounded by
@@ -548,20 +596,24 @@ def select_budgeted(table: EncodingCostTable, stages, *, budget: int,
         raise Asn1Error(
             f"{objective.value} is the RESOURCE here, not the objective; a budgeted plan "
             f"minimizes a timing subject to the octet budget, and minimizing octets subject "
-            f"to an octet budget is a single selection with extra steps")
+            f"to an octet budget is a single selection with extra steps"
+        )
     if table.provenance == "oracle" and not allow_oracle_table:
         raise UnmeasuredTarget(
             f"a budgeted {objective.value} plan would be decided from the {table.target!r} "
             f"table, whose provenance is 'oracle'; §6.2 requires a MEASURED table (pass "
-            f"allow_oracle_table=True only in an experiment recorded as one)")
+            f"allow_oracle_table=True only in an experiment recorded as one)"
+        )
 
     field_name = "encode" if objective is Objective.ENCODE_LATENCY else "decode"
-    missing = sorted({name for stage in stages for name in stage.candidates
-                      if table.row(name) is None})
+    missing = sorted(
+        {name for stage in stages for name in stage.candidates if table.row(name) is None}
+    )
     if missing:
         raise UnmeasuredTarget(
             f"target {table.target!r} (cal_gen {table.cal_gen}) has no measured row for "
-            f"{', '.join(missing)}; a budgeted plan cannot be decided here")
+            f"{', '.join(missing)}; a budgeted plan cannot be decided here"
+        )
     for stage in stages:
         if not stage.candidates:
             raise Asn1Error(f"stage {stage.name!r} admits no candidate at all")
@@ -578,9 +630,13 @@ def select_budgeted(table: EncodingCostTable, stages, *, budget: int,
                 total = spent + row.octets
                 if total > budget:
                     continue
-                state: State = (median + cost.median, low + cost.low, high + cost.high,
-                                coverages + (cost.coverage_ppm,),
-                                chosen + ((stage.name, name),))
+                state: State = (
+                    median + cost.median,
+                    low + cost.low,
+                    high + cost.high,
+                    coverages + (cost.coverage_ppm,),
+                    chosen + ((stage.name, name),),
+                )
                 # Keep one optimum per resource level: the classic RCSP label rule, and it
                 # is what makes the table's width the budget rather than the candidate count
                 # raised to the number of stages.
@@ -595,7 +651,8 @@ def select_budgeted(table: EncodingCostTable, stages, *, budget: int,
         cheapest = sum(min(table.row(n).octets for n in stage.candidates) for stage in stages)
         raise Infeasible(
             f"no assignment fits {budget} octets across {len(stages)} stages; the cheapest "
-            f"legal plan costs {cheapest}")
+            f"legal plan costs {cheapest}"
+        )
 
     best_spent = min(frontier, key=lambda spent: (frontier[spent][0], spent))
     median, low, high, coverages, chosen = frontier[best_spent]
@@ -609,18 +666,41 @@ def select_budgeted(table: EncodingCostTable, stages, *, budget: int,
     # Reporting it as complete would overstate what the frontier retains, and widening the
     # rule to keep every plan would trade an exact pseudo-polynomial search for an
     # exponential one to enumerate answers the caller cannot act on differently.
-    tied = tuple(sorted(
-        state[4] for spent, state in frontier.items()
-        if spent != best_spent and state[1] <= high and low <= state[2]))
+    tied = tuple(
+        sorted(
+            state[4]
+            for spent, state in frontier.items()
+            if spent != best_spent and state[1] <= high and low <= state[2]
+        )
+    )
     return BudgetedPlan(
-        chosen=chosen, total_octets=best_spent, latency_low=low, latency_median=median,
-        latency_high=high, coverage_ppm=coverage, budget=budget,
-        certified=coverage >= min_coverage_ppm, indistinguishable=tied)
+        chosen=chosen,
+        total_octets=best_spent,
+        latency_low=low,
+        latency_median=median,
+        latency_high=high,
+        coverage_ppm=coverage,
+        budget=budget,
+        certified=coverage >= min_coverage_ppm,
+        indistinguishable=tied,
+    )
 
 
 __all__ = [
-    "COST_TABLE_VERSION", "MIN_SAMPLES", "TIE_BREAK", "BudgetedPlan", "Certificate",
-    "CostRow", "EncodingCostTable", "Infeasible", "Interval", "Stage", "UnmeasuredTarget",
-    "build_table", "interval_of", "measure_repeatedly", "select_budgeted",
+    "COST_TABLE_VERSION",
+    "MIN_SAMPLES",
+    "TIE_BREAK",
+    "BudgetedPlan",
+    "Certificate",
+    "CostRow",
+    "EncodingCostTable",
+    "Infeasible",
+    "Interval",
+    "Stage",
+    "UnmeasuredTarget",
+    "build_table",
+    "interval_of",
+    "measure_repeatedly",
+    "select_budgeted",
     "select_certified",
 ]

@@ -15,21 +15,33 @@ from bcir.perf_budget import Budget, evaluate, read_trend, record_trend, trend_s
 
 
 def _meas(ns: int, *, width: int, ok: bool = True, detail: str = "") -> Measurement:
-    return Measurement(label="x", width=width, opt="-O2", n=1 << 16, reps=20,
-                       ns_per_call=ns, ok=ok, detail=detail)
+    return Measurement(
+        label="x", width=width, opt="-O2", n=1 << 16, reps=20, ns_per_call=ns, ok=ok, detail=detail
+    )
 
 
-def _cmp(bcir_ns: int, base_ns: int, *, width: int = 16, bcir_ok: bool = True,
-         base_ok: bool = True, detail: str = "") -> Comparison:
-    return Comparison(program="p", target="t", opt="-O2",
-                      bcir=_meas(bcir_ns, width=width, ok=bcir_ok, detail=detail),
-                      baseline=_meas(base_ns, width=1, ok=base_ok))
+def _cmp(
+    bcir_ns: int,
+    base_ns: int,
+    *,
+    width: int = 16,
+    bcir_ok: bool = True,
+    base_ok: bool = True,
+    detail: str = "",
+) -> Comparison:
+    return Comparison(
+        program="p",
+        target="t",
+        opt="-O2",
+        bcir=_meas(bcir_ns, width=width, ok=bcir_ok, detail=detail),
+        baseline=_meas(base_ns, width=1, ok=base_ok),
+    )
 
 
 def test_valid_winning_measurement_passes_a_validity_budget():
     r = evaluate(_cmp(100, 250), Budget("gather", expect_width=16), baremetal=False)
     assert r.ok, r.reasons
-    assert r.speedup_milli == 2500                          # 250/100 == 2.5x
+    assert r.speedup_milli == 2500  # 250/100 == 2.5x
     assert "correctness" in r.enforced and "measurement-validity" in r.enforced
 
 
@@ -43,7 +55,7 @@ def test_correctness_violation_fails_regardless_of_baremetal():
 
 def test_invalid_measurement_fails_regardless_of_baremetal():
     for bare in (False, True):
-        r = evaluate(_cmp(0, 250), Budget("gather"), baremetal=bare)   # non-positive ns/call
+        r = evaluate(_cmp(0, 250), Budget("gather"), baremetal=bare)  # non-positive ns/call
         assert not r.ok
         assert any("invalid measurement" in why or "not finite" in why for why in r.reasons)
 
@@ -70,15 +82,15 @@ def test_speedup_floor_is_waived_off_baremetal_but_enforced_on_it():
 
 
 def test_latency_ceiling_is_baremetal_only():
-    over = _cmp(900, 1000)                                  # correct + valid, but slow
+    over = _cmp(900, 1000)  # correct + valid, but slow
     budget = Budget("latency", max_ns_per_call=500)
-    assert evaluate(over, budget, baremetal=False).ok       # waived on shared CI
-    assert not evaluate(over, budget, baremetal=True).ok     # enforced bare-metal
+    assert evaluate(over, budget, baremetal=False).ok  # waived on shared CI
+    assert not evaluate(over, budget, baremetal=True).ok  # enforced bare-metal
 
 
 def test_trend_log_records_and_summarizes():
     with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, "sub", "trend.jsonl")        # nested dir is created
+        path = os.path.join(d, "sub", "trend.jsonl")  # nested dir is created
         for ns in (120, 110, 100):
             record_trend(evaluate(_cmp(ns, 250), Budget("gather"), baremetal=False), path)
         rows = read_trend(path)
@@ -92,18 +104,18 @@ def test_trend_log_records_and_summarizes():
 def test_trend_summary_is_empty_for_unknown_budget():
     with tempfile.TemporaryDirectory() as d:
         assert trend_summary(os.path.join(d, "none.jsonl"), "missing") == {
-            "name": "missing", "count": 0}
+            "name": "missing",
+            "count": 0,
+        }
 
 
 def test_trend_reader_rejects_ambiguous_or_unbounded_records():
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "trend.jsonl")
-        row = record_trend(
-            evaluate(_cmp(100, 250), Budget("gather"), baremetal=False), path)
+        row = record_trend(evaluate(_cmp(100, 250), Budget("gather"), baremetal=False), path)
         valid = json.dumps(row, sort_keys=True)
         for text in (
-            valid.replace('"name": "gather"',
-                          '"name": "gather", "name": "forged"'),
+            valid.replace('"name": "gather"', '"name": "gather", "name": "forged"'),
             json.dumps({**row, "unknown": 1}),
             json.dumps({**row, "ok": 1}),
             json.dumps({**row, "name": "x" * ((1 << 20) + 1)}),
@@ -120,12 +132,12 @@ def test_trend_reader_rejects_ambiguous_or_unbounded_records():
 def test_dense_match_band_is_baremetal_only():
     # a dense kernel that's ~parity vs Clang (matches) must pass; a wide divergence must fail on
     # bare-metal but be waived on shared CI (non-flaky).
-    near = _cmp(1000, 1020)                              # ~1.02x, inside the band
-    far = _cmp(500, 1500)                               # 3.0x — a suspicious "win" on a dense kernel
+    near = _cmp(1000, 1020)  # ~1.02x, inside the band
+    far = _cmp(500, 1500)  # 3.0x — a suspicious "win" on a dense kernel
     budget = Budget("dense", match_band=(700, 1300))
     assert evaluate(near, budget, baremetal=True).ok
     off = evaluate(far, budget, baremetal=False)
-    assert off.ok and any("match_band" in w for w in off.waived)   # waived on shared CI
+    assert off.ok and any("match_band" in w for w in off.waived)  # waived on shared CI
     on = evaluate(far, budget, baremetal=True)
     assert not on.ok and any("parity band" in why for why in on.reasons)
 
@@ -134,7 +146,7 @@ def test_reference_milli_is_tracked_not_asserted():
     # a measured speedup far below the documented reference must still PASS (CI isn't strict on the
     # exact number) — the reference only rides along into the result + trend for drift watching.
     budget = Budget("gather", min_speedup_milli=1500, reference_milli=6000)
-    res = evaluate(_cmp(100, 250), budget, baremetal=True)   # 2.5x: above floor, below doc 6.0x
+    res = evaluate(_cmp(100, 250), budget, baremetal=True)  # 2.5x: above floor, below doc 6.0x
     assert res.ok and res.reference_milli == 6000
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "t.jsonl")

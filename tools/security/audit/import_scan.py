@@ -8,6 +8,7 @@ PROMISES to need; this says what the code actually reaches for. A module importe
 somewhere but declared nowhere is an optional dependency no advisory scan can audit,
 because it has no declared version (kafka-python was the 2026-09-04 instance).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -95,20 +96,39 @@ def scan(root: str) -> dict:
                         cur = parents[cur]
                         chain.append(cur)
                     guarded = any(
-                        isinstance(p, (ast.Try, ast.If, ast.FunctionDef, ast.AsyncFunctionDef,
-                                       ast.ClassDef, ast.With)) for p in chain
+                        isinstance(
+                            p,
+                            (
+                                ast.Try,
+                                ast.If,
+                                ast.FunctionDef,
+                                ast.AsyncFunctionDef,
+                                ast.ClassDef,
+                                ast.With,
+                            ),
+                        )
+                        for p in chain
                     )
                     rec = uses[name]
                     rec["files"].add(os.path.relpath(path, root))
                     rec["guarded" if guarded else "unguarded"] += 1
     modules = []
     for name, rec in sorted(uses.items(), key=lambda kv: (-len(kv[1]["files"]), kv[0])):
-        modules.append({
-            "module": name, "declared_by": declared.get(name), "files": sorted(rec["files"]),
-            "guarded_imports": rec["guarded"], "unguarded_imports": rec["unguarded"],
-        })
-    return {"scanned_python_files": scanned, "declared": declared, "modules": modules,
-            "undeclared": [m["module"] for m in modules if not m["declared_by"]]}
+        modules.append(
+            {
+                "module": name,
+                "declared_by": declared.get(name),
+                "files": sorted(rec["files"]),
+                "guarded_imports": rec["guarded"],
+                "unguarded_imports": rec["unguarded"],
+            }
+        )
+    return {
+        "scanned_python_files": scanned,
+        "declared": declared,
+        "modules": modules,
+        "undeclared": [m["module"] for m in modules if not m["declared_by"]],
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -117,11 +137,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", help="write the JSON report here")
     args = ap.parse_args(argv)
     report = scan(os.path.abspath(args.root))
-    print(f"import_scan: {report['scanned_python_files']} files, "
-          f"{len(report['modules'])} third-party modules, {len(report['undeclared'])} undeclared")
+    print(
+        f"import_scan: {report['scanned_python_files']} files, "
+        f"{len(report['modules'])} third-party modules, {len(report['undeclared'])} undeclared"
+    )
     for m in report["modules"]:
-        print(f"  {m['module']:20s} files={len(m['files']):3d} unguarded={m['unguarded_imports']:3d} "
-              f"guarded={m['guarded_imports']:3d}  {m['declared_by'] or 'UNDECLARED'}")
+        print(
+            f"  {m['module']:20s} files={len(m['files']):3d} unguarded={m['unguarded_imports']:3d} "
+            f"guarded={m['guarded_imports']:3d}  {m['declared_by'] or 'UNDECLARED'}"
+        )
     if args.out:
         with open(args.out, "w", encoding="utf-8") as handle:
             json.dump(report, handle, indent=1)

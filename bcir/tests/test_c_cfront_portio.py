@@ -53,6 +53,7 @@ _HOST_X86 = platform.machine().lower() in ("x86_64", "amd64", "x86", "i386", "i4
 
 # --- helpers ------------------------------------------------------------------------------------
 
+
 def _lf(src: str, fn: str | None = None, target: str | None = None):
     """Compile `src` (no Clang check) and return the (result, lowered-function) for `fn` (default: the
     last function)."""
@@ -83,7 +84,7 @@ def _assemble_only(c_text: str) -> str:
     "ok" iff every available compiler builds the object, "skip" if none is available or the host is non-x86,
     else "FAIL:<cc>:<detail>". The honest seam: the emitted x86 `in`/`out` is VALID assembly the toolchain accepts."""
     if not _HOST_X86:
-        return "skip"                                                   # non-x86 host cannot assemble x86 in/out
+        return "skip"  # non-x86 host cannot assemble x86 in/out
     ccs = [(n, p) for n, p in (("gcc", _GCC), ("clang", _CLANG)) if p]
     if not ccs:
         if not _CC:
@@ -95,8 +96,11 @@ def _assemble_only(c_text: str) -> str:
             f.write(c_text)
         for name, cc in ccs:
             obj = os.path.join(d, f"portio_{name}.o")
-            b = subprocess.run([cc, "-std=c11", "-pedantic", "-c", src, "-o", obj],  # -c: assemble only (x86 host)
-                               capture_output=True, text=True)
+            b = subprocess.run(
+                [cc, "-std=c11", "-pedantic", "-c", src, "-o", obj],  # -c: assemble only (x86 host)
+                capture_output=True,
+                text=True,
+            )
             if b.returncode != 0:
                 return f"FAIL:{name}:assemble:{(b.stderr or b.stdout).strip().splitlines()[-1:]}"
             if not os.path.exists(obj):
@@ -106,17 +110,26 @@ def _assemble_only(c_text: str) -> str:
 
 # --- (1) recognition + result types -------------------------------------------------------------
 
+
 def test_all_six_intrinsics_are_recognized_as_portio_edges():
-    src = ("unsigned a(void){ return inb(0x60); } unsigned b(void){ return inw(0x64); }"
-           "unsigned c(void){ return inl(0x1f0); } void d(unsigned v){ outb(v, 0x60); }"
-           "void e(unsigned v){ outw(v, 0x64); } void f(unsigned v){ outl(v, 0x1f0); }")
+    src = (
+        "unsigned a(void){ return inb(0x60); } unsigned b(void){ return inw(0x64); }"
+        "unsigned c(void){ return inl(0x1f0); } void d(unsigned v){ outb(v, 0x60); }"
+        "void e(unsigned v){ outw(v, 0x64); } void f(unsigned v){ outl(v, 0x1f0); }"
+    )
     r = compile_unit(src, check_clang=False)
     ops = set()
     for lf in r.lowered.functions.values():
         for c in _portio_claims(lf):
             ops.add(c.op.split(":")[0])
-    assert ops == {"c.portio.in.b", "c.portio.in.w", "c.portio.in.l",
-                   "c.portio.out.b", "c.portio.out.w", "c.portio.out.l"}, ops
+    assert ops == {
+        "c.portio.in.b",
+        "c.portio.in.w",
+        "c.portio.in.l",
+        "c.portio.out.b",
+        "c.portio.out.w",
+        "c.portio.out.l",
+    }, ops
 
 
 def test_read_result_types_are_u8_u16_u32():
@@ -125,7 +138,7 @@ def test_read_result_types_are_u8_u16_u32():
         c = _portio_claims(lf)[0]
         rt = lf.rid_types[c.wr[0]]
         assert rt.name == name and rt.size == width, (fn, rt.name, rt.size)
-        assert c.imm == (width,)                    # the access width rides in imm
+        assert c.imm == (width,)  # the access width rides in imm
 
 
 def test_writes_are_void_and_produce_no_result_temp():
@@ -133,11 +146,12 @@ def test_writes_are_void_and_produce_no_result_temp():
         _r, lf = _lf(f"void f(unsigned v){{ {fn}(v, 0x60); }}")
         c = _portio_claims(lf)[0]
         # a void write: the I/O-port space is the only write (no result temp), value+port+space are reads.
-        assert c.op.startswith(f"c.portio.out.{ {'outb':'b','outw':'w','outl':'l'}[fn] }:")
-        assert len(c.wr) == 1 and len(c.rd) == 3    # wr = (io space); rd = (value, port, io space)
+        assert c.op.startswith(f"c.portio.out.{ {'outb': 'b', 'outw': 'w', 'outl': 'l'}[fn] }:")
+        assert len(c.wr) == 1 and len(c.rd) == 3  # wr = (io space); rd = (value, port, io space)
 
 
 # --- (2) the Linux out*(value, port) argument order ---------------------------------------------
+
 
 def test_out_argument_order_is_value_then_port():
     # the Linux <asm/io.h> convention: out*(value, port). value is the FIRST arg, port is the SECOND. A
@@ -156,36 +170,38 @@ def test_out_order_is_visible_in_the_x86_emit():
     # send the port to the accumulator and the value to the port (a miscompile a real driver would hit).
     _r, lf = _lf("void f(unsigned val, unsigned prt){ outw(val, prt); }")
     body = _emit_clean(lf)
-    assert '"a" (val), "Nd" (prt)' in body, body          # value->accumulator, port->Nd, in source order
+    assert '"a" (val), "Nd" (prt)' in body, body  # value->accumulator, port->Nd, in source order
 
 
 # --- (3) arity / type diagnostics ---------------------------------------------------------------
 
+
 def test_wrong_arity_read_is_an_honest_diagnostic():
-    rep = diagnose("unsigned f(void){ return inb(0x60, 0x61); }")   # inb takes exactly 1 arg
+    rep = diagnose("unsigned f(void){ return inb(0x60, 0x61); }")  # inb takes exactly 1 arg
     assert not rep.ok and rep.diagnostics
     assert "inb" in rep.diagnostics[0].message and "1 argument" in rep.diagnostics[0].message
 
 
 def test_wrong_arity_write_is_an_honest_diagnostic():
-    rep = diagnose("void f(unsigned v){ outb(v); }")                # outb takes exactly 2 args
+    rep = diagnose("void f(unsigned v){ outb(v); }")  # outb takes exactly 2 args
     assert not rep.ok and rep.diagnostics
     assert "outb" in rep.diagnostics[0].message and "2 argument" in rep.diagnostics[0].message
 
 
 def test_float_port_is_an_honest_diagnostic():
-    rep = diagnose("unsigned f(double p){ return inb(p); }")        # a float port is invalid
+    rep = diagnose("unsigned f(double p){ return inb(p); }")  # a float port is invalid
     assert not rep.ok and rep.diagnostics
     assert "port" in rep.diagnostics[0].message
 
 
 def test_float_value_is_an_honest_diagnostic():
-    rep = diagnose("void f(double v){ outl(v, 0x1f0); }")           # a float value is invalid
+    rep = diagnose("void f(double v){ outl(v, 0x1f0); }")  # a float value is invalid
     assert not rep.ok and rep.diagnostics
     assert "value" in rep.diagnostics[0].message
 
 
 # --- (4) barriered + isolated semantics ---------------------------------------------------------
+
 
 def test_portio_edge_is_barriered():
     for fn, arg in (("inb", "0x60"), ("outb", "v, 0x60")):
@@ -201,7 +217,7 @@ def test_portio_edge_is_in_the_mmio_io_domain():
     _r, lf = _lf("unsigned f(void){ return inw(0x64); }")
     c = _portio_claims(lf)[0]
     assert c.domain == Domain.MMIO
-    assert c.lane.name == "H"                              # the hazard/barrier lane
+    assert c.lane.name == "H"  # the hazard/barrier lane
 
 
 def test_port_access_does_not_alias_a_normal_pointer():
@@ -214,7 +230,7 @@ def test_port_access_does_not_alias_a_normal_pointer():
     assert prid not in io_rids, "the port access must not reference the normal pointer rid"
     io_res = lf.resources[_IO_PORT_RID]
     assert io_res.domain == Domain.MMIO and io_res.name == "__ioport"
-    assert lf.resources[prid].domain == Domain.RAM        # the pointer is normal memory, disjoint
+    assert lf.resources[prid].domain == Domain.RAM  # the pointer is normal memory, disjoint
 
 
 def test_two_port_ops_share_the_io_space_so_they_do_not_commute():
@@ -240,6 +256,7 @@ def test_two_port_ops_stay_in_source_order_in_the_emit():
 
 # --- (5) off the legality value-path ------------------------------------------------------------
 
+
 def test_portio_is_off_the_legality_value_path():
     # a trusted opaque effect: no R-law verdict, the unit is clean (like c.asm / c.call.libm).
     r, _lfn = _lf("unsigned f(void){ outb(0xffu, 0x80); return inb(0x60); }")
@@ -255,11 +272,16 @@ def test_unused_read_result_is_not_eliminated():
 
 # --- (6) per-target emit ------------------------------------------------------------------------
 
+
 def test_x86_targets_emit_the_real_in_out_instruction():
     expect = {
-        "inb": '"inb %w1, %b0" : "=a"', "inw": '"inw %w1, %w0" : "=a"', "inl": '"inl %w1, %k0" : "=a"',
-        "outb": '"outb %b0, %w1" :  : "a"', "outw": '"outw %w0, %w1" :  : "a"',
-        "outl": '"outl %k0, %w1" :  : "a"'}
+        "inb": '"inb %w1, %b0" : "=a"',
+        "inw": '"inw %w1, %w0" : "=a"',
+        "inl": '"inl %w1, %k0" : "=a"',
+        "outb": '"outb %b0, %w1" :  : "a"',
+        "outw": '"outw %w0, %w1" :  : "a"',
+        "outl": '"outl %k0, %w1" :  : "a"',
+    }
     for target in ("x86_64-linux", "i386-linux", "x86_64-windows"):
         for fn, snippet in expect.items():
             if fn.startswith("in"):
@@ -276,15 +298,18 @@ def test_non_x86_target_raises_the_honest_unsupported_diagnostic():
     # the honest diagnostic is raised at the per-ISA EMIT (reached when the target lays out non-x86), so the
     # unit routes to the LLVM fallback — port-mapped I/O genuinely does not exist on ARM / RISC-V (only MMIO).
     for target in ("aarch64-linux", "riscv64-linux"):
-        r = compile_with_fallback("unsigned f(void){ return inb(0x60); }", check_clang=False, target=target)
+        r = compile_with_fallback(
+            "unsigned f(void){ return inb(0x60); }", check_clang=False, target=target
+        )
         assert r.needs_fallback, f"{target}: port I/O should fall back (no port I/O on this ISA)"
         assert "requires an x86 target" in r.fallback and target in r.fallback
         assert "use MMIO" in r.fallback
 
 
 def test_non_x86_write_also_falls_back():
-    r = compile_with_fallback("void f(unsigned v){ outl(v, 0x1f0); }", check_clang=False,
-                              target="aarch64-linux")
+    r = compile_with_fallback(
+        "void f(unsigned v){ outl(v, 0x1f0); }", check_clang=False, target="aarch64-linux"
+    )
     assert r.needs_fallback and "requires an x86 target" in r.fallback
 
 
@@ -303,9 +328,10 @@ void p_outl(unsigned v, unsigned port){ outl(v, port); }
 def test_emitted_x86_portio_assembles_under_gcc_and_clang():
     # the honest seam: the emitted x86 `in`/`out` is REAL assembly the toolchain accepts (assemble-only,
     # `-c`). It is NOT linked or run — `in`/`out` are privileged (ring-0 / iopl). Self-skips if no compiler.
-    r = compile_unit(_PROG, check_clang=False)             # default target x86_64-linux
+    r = compile_unit(_PROG, check_clang=False)  # default target x86_64-linux
     emit = "#include <stdint.h>\n" + "\n\n".join(
-        _emit_clean(lf) for lf in r.lowered.functions.values())
+        _emit_clean(lf) for lf in r.lowered.functions.values()
+    )
     verdict = _assemble_only(emit)
     assert verdict in ("ok", "skip"), f"emitted port-I/O did not assemble: {verdict}"
 
@@ -315,15 +341,19 @@ def test_emitted_x86_portio_assembles_with_a_literal_immediate_port():
     # leg the toolchain picks is its choice -- at -O0 it materializes the literal into `dx` (the `d` leg)
     # rather than emitting an immediate, while a variable port (above) is likewise via dx. Either way the
     # emitted `in`/`out` must assemble; the case proves a constant-argument port is accepted by the toolchain.
-    r = compile_unit("unsigned f(void){ return inb(0x60); } void g(unsigned v){ outb(v, 0x80); }",
-                     check_clang=False)
+    r = compile_unit(
+        "unsigned f(void){ return inb(0x60); } void g(unsigned v){ outb(v, 0x80); }",
+        check_clang=False,
+    )
     emit = "#include <stdint.h>\n" + "\n\n".join(
-        _emit_clean(lf) for lf in r.lowered.functions.values())
+        _emit_clean(lf) for lf in r.lowered.functions.values()
+    )
     verdict = _assemble_only(emit)
     assert verdict in ("ok", "skip"), f"immediate-port port-I/O did not assemble: {verdict}"
 
 
 # --- (8) a user-defined function named like an intrinsic stays a normal call --------------------
+
 
 def test_user_defined_inb_is_not_treated_as_the_intrinsic():
     # if the unit DEFINES its own `inb`, the call resolves to it (a real R18 edge), not the port intrinsic —
@@ -336,6 +366,7 @@ def test_user_defined_inb_is_not_treated_as_the_intrinsic():
 
 # --- (9) the I/O-port rid is a PROVABLY-reserved sentinel (isolation invariant 3) ----------------
 
+
 def test_io_port_rid_is_not_producible_by_the_count_indexed_bands():
     # the isolation invariant rests on _IO_PORT_RID being DISJOINT from every count-indexed band. The bands
     # are base+count: the global band (900000 + gi) and the string/func-value band (970000 + idx), both
@@ -345,7 +376,9 @@ def test_io_port_rid_is_not_producible_by_the_count_indexed_bands():
     # same non-negative footing every other rid uses.)
     assert _IO_PORT_RID > 970000, "the io rid must be above the string-literal band base"
     assert _IO_PORT_RID > 900000, "the io rid must be above the global band base"
-    assert _IO_PORT_RID >= 0, "a non-negative sentinel keeps the rid-as-dict-key / sort / digest paths sound"
+    assert _IO_PORT_RID >= 0, (
+        "a non-negative sentinel keeps the rid-as-dict-key / sort / digest paths sound"
+    )
     # the gap from the highest reachable band base to the sentinel is astronomically large (~10^9), so a real
     # unit cannot count up to it -- and the allocators are GUARDED against it regardless (below).
     assert _IO_PORT_RID - 970000 > 100_000_000
@@ -367,11 +400,16 @@ def test_band_allocator_guards_the_reserved_io_rid_and_merge_preserves_it():
         # (1) three string literals -> the allocator reaches 970002 and must reject honestly (not collide).
         raised = False
         try:
-            compile_unit('void f(void){ const char *a="x"; const char *b="y"; const char *c="z";'
-                         ' (void)a; (void)b; (void)c; }', check_clang=False)
+            compile_unit(
+                'void f(void){ const char *a="x"; const char *b="y"; const char *c="z";'
+                " (void)a; (void)b; (void)c; }",
+                check_clang=False,
+            )
         except CLowerError as e:
             raised = "reserved I/O-port rid" in str(e)
-        assert raised, "the string allocator did not honestly reject reaching the reserved I/O-port rid"
+        assert raised, (
+            "the string allocator did not honestly reject reaching the reserved I/O-port rid"
+        )
         # (1b) the GLOBAL band (900000 + gi) is likewise guarded: park the sentinel at 900001 -> the 2nd
         # file-scope global reaches it and must reject honestly (not silently collide + overwrite __ioport).
         L._IO_PORT_RID = 900001
@@ -380,15 +418,18 @@ def test_band_allocator_guards_the_reserved_io_rid_and_merge_preserves_it():
             compile_unit("int g0; int g1; unsigned f(void){ return 0u; }", check_clang=False)
         except CLowerError as e:
             graised = "reserved I/O-port rid" in str(e)
-        assert graised, "the global allocator did not honestly reject reaching the reserved I/O-port rid"
-        L._IO_PORT_RID = 970002                            # restore the string-band sentinel for part (2)
+        assert graised, (
+            "the global allocator did not honestly reject reaching the reserved I/O-port rid"
+        )
+        L._IO_PORT_RID = 970002  # restore the string-band sentinel for part (2)
         # (2) below the boundary (no literals), a unit with a port op + a normal pointer keeps __ioport MMIO
         # -- the merge never replaces it. (The io resource lives at the moved sentinel here.)
         r = compile_unit("unsigned f(unsigned *p){ *p = 1u; return inb(0x60); }", check_clang=False)
         lf = r.lowered.functions["f"]
         io_res = lf.resources[L._IO_PORT_RID]
         assert io_res.domain == Domain.MMIO and io_res.name == "__ioport", (
-            "the merge overwrote the reserved __ioport MMIO resource -- a port access could alias RAM")
+            "the merge overwrote the reserved __ioport MMIO resource -- a port access could alias RAM"
+        )
         assert r.is_clean
     finally:
         L._IO_PORT_RID = saved

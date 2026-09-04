@@ -18,15 +18,26 @@ properties of an encoding structure and neither is a property of a type.
 from dataclasses import replace
 
 from bcir.asn1.ecn_syntax import (
-    EcnModule, frame_header_module, frame_header_source, parse_module, tokenize,
+    EcnModule,
+    frame_header_module,
+    frame_header_source,
+    parse_module,
+    tokenize,
 )
 from bcir.asn1.ecn_user import (
-    HandleValueKind, IntSpec, PadSpec, encode_with_user, legacy_frame_objects,
+    HandleValueKind,
+    IntSpec,
+    PadSpec,
+    encode_with_user,
+    legacy_frame_objects,
     legacy_frame_workload,
 )
 from bcir.asn1.ecn_param import ParameterKind
 from bcir.asn1.ecn_user import (
-    AlternativesSpec, OptionalityDetermination, OptionalSpec, ReplaceAction,
+    AlternativesSpec,
+    OptionalityDetermination,
+    OptionalSpec,
+    ReplaceAction,
 )
 from bcir.asn1.encode_plan import compile_encode_plan
 from bcir.asn1.tags import Asn1Error
@@ -37,6 +48,7 @@ def _encode_from_text(module: EcnModule, value: dict) -> bytes:
 
 
 # --- the round trip -------------------------------------------------------------------------
+
 
 def test_the_written_specification_produces_the_octets_the_assembled_objects_do():
     """The gate's workload, from text, byte for byte.
@@ -49,8 +61,12 @@ def test_the_written_specification_produces_the_octets_the_assembled_objects_do(
 
     _kind, value, expected = legacy_frame_workload()
     assert _encode_from_text(frame_header_module(), value) == expected
-    assert encode_with_user(legacy_frame_objects(), CONCATENATION, value,
-                            outer=frame_header_module().outer()) == expected
+    assert (
+        encode_with_user(
+            legacy_frame_objects(), CONCATENATION, value, outer=frame_header_module().outer()
+        )
+        == expected
+    )
 
 
 def test_the_transform_survives_the_round_trip_and_is_not_a_constant():
@@ -62,7 +78,8 @@ def test_the_transform_survives_the_round_trip_and_is_not_a_constant():
     module = frame_header_module()
     for payload, nibble in ((0, 0b0000), (40, 0b1010), (60, 0b1111)):
         octets = _encode_from_text(
-            module, {"version": 0, "urgent": False, "payloadOctets": payload})
+            module, {"version": 0, "urgent": False, "payloadOctets": payload}
+        )
         assert octets[0] >> 4 == nibble, (payload, octets.hex())
 
 
@@ -78,14 +95,19 @@ def test_the_module_hashes_and_the_hash_moves_only_when_the_encoding_does():
     assert len(digest) == 64
     assert frame_header_module().sha256() == digest
 
-    widened = parse_module(frame_header_source().replace(
-        "ENCODING-SPACE SIZE 3 MULTIPLE OF bit", "ENCODING-SPACE SIZE 4 MULTIPLE OF bit"))
+    widened = parse_module(
+        frame_header_source().replace(
+            "ENCODING-SPACE SIZE 3 MULTIPLE OF bit", "ENCODING-SPACE SIZE 4 MULTIPLE OF bit"
+        )
+    )
     assert widened.sha256() != digest
 
     # Whitespace and comments are not the specification.
     respaced = parse_module(
-        "\n".join(line for line in frame_header_source().split("\n")
-                  if not line.strip().startswith("--")))
+        "\n".join(
+            line for line in frame_header_source().split("\n") if not line.strip().startswith("--")
+        )
+    )
     assert respaced.sha256() == digest
 
 
@@ -99,19 +121,22 @@ def test_the_handle_notation_parses_and_reaches_the_digest():
     to prevent. `SYNTAX_VERSION` moved to 4 for exactly this reason, and to 5 when Annex C's
     parameterized assignments joined it for the same one.
     """
+
     # §23.7.1's WITH SYNTAX puts EXHIBITS HANDLE after the value encoding and before
     # BIT-REVERSAL, following §23.3.3.1's encoder-action order. `plainVersion` is the only
     # object whose body ends with `ENCODING positive-int`, so this substitution is unique.
     def with_handle(clause: str):
-        return parse_module(frame_header_source().replace(
-            "ENCODING positive-int\n  }", f"ENCODING positive-int\n      {clause}\n  }}"))
+        return parse_module(
+            frame_header_source().replace(
+                "ENCODING positive-int\n  }", f"ENCODING positive-int\n      {clause}\n  }}"
+            )
+        )
 
     for clause, kind in (
         ("EXHIBITS HANDLE kind AT { 0, 1 } AS bits:'01'B", HandleValueKind.BITS),
         ("EXHIBITS HANDLE kind AT { 0, 1 } AS number:2", HandleValueKind.NUMBER),
         ("EXHIBITS HANDLE kind AT { 0, 1 } AS range:{0, 1}", HandleValueKind.RANGE),
-        ("EXHIBITS HANDLE kind AT { 0, 1 } AS ranges:{{0, 0}, {3, 3}}",
-         HandleValueKind.RANGES),
+        ("EXHIBITS HANDLE kind AT { 0, 1 } AS ranges:{{0, 0}, {3, 3}}", HandleValueKind.RANGES),
         ("EXHIBITS HANDLE kind AT { 0, 1 }", HandleValueKind.TAG_ANY),
     ):
         module = with_handle(clause)
@@ -122,21 +147,27 @@ def test_the_handle_notation_parses_and_reaches_the_digest():
         assert module.sha256() != frame_header_module().sha256(), clause
 
     # Two different value sets are two different specifications.
-    assert (with_handle("EXHIBITS HANDLE kind AT { 0, 1 } AS range:{0, 1}").sha256()
-            != with_handle("EXHIBITS HANDLE kind AT { 0, 1 } AS range:{2, 3}").sha256())
+    assert (
+        with_handle("EXHIBITS HANDLE kind AT { 0, 1 } AS range:{0, 1}").sha256()
+        != with_handle("EXHIBITS HANDLE kind AT { 0, 1 } AS range:{2, 3}").sha256()
+    )
     # §22.9.1.6 makes the positions a SET, so writing them backwards is the same handle.
-    assert (with_handle("EXHIBITS HANDLE kind AT { 1, 0 } AS number:2").sha256()
-            == with_handle("EXHIBITS HANDLE kind AT { 0, 1 } AS number:2").sha256())
+    assert (
+        with_handle("EXHIBITS HANDLE kind AT { 1, 0 } AS number:2").sha256()
+        == with_handle("EXHIBITS HANDLE kind AT { 0, 1 } AS number:2").sha256()
+    )
 
 
 def test_a_handle_value_set_the_choice_does_not_define_is_refused():
     """§21.16.1 has six alternatives, and a seventh spelling would otherwise become
     `tag:any` by default — a set that matches nothing and says so only at write time."""
     try:
-        parse_module(frame_header_source().replace(
-            "ENCODING positive-int\n  }",
-            "ENCODING positive-int\n      "
-            "EXHIBITS HANDLE kind AT { 0, 1 } AS integer:3\n  }"))
+        parse_module(
+            frame_header_source().replace(
+                "ENCODING positive-int\n  }",
+                "ENCODING positive-int\n      EXHIBITS HANDLE kind AT { 0, 1 } AS integer:3\n  }",
+            )
+        )
     except Asn1Error as error:
         assert "21.16.1" in str(error), error
     else:
@@ -144,6 +175,7 @@ def test_a_handle_value_set_the_choice_does_not_define_is_refused():
 
 
 # --- the grammar itself ---------------------------------------------------------------------
+
 
 def test_a_comment_ends_at_the_next_pair_of_hyphens_as_x680_says():
     """X.680 §12.6: a comment terminates "with a pair of hyphens or at the end of the line".
@@ -159,7 +191,9 @@ def test_a_comment_ends_at_the_next_pair_of_hyphens_as_x680_says():
 def test_a_value_notation_and_its_alternative_are_one_token():
     """`bits:'0'B` is one `Pattern` value, not a name and a string."""
     assert [token.text for token in tokenize("TRUE-PATTERN bits:'0'B")] == [
-        "TRUE-PATTERN", "bits:'0'B"]
+        "TRUE-PATTERN",
+        "bits:'0'B",
+    ]
     assert [token.text for token in tokenize("{ a, b }")] == ["{", "a", ",", "b", "}"]
 
 
@@ -172,8 +206,8 @@ def test_the_defined_syntax_is_read_in_the_order_the_with_syntax_gives_it():
     the two are swapped, and the refusal names the keyword that was expected first.
     """
     source = frame_header_source().replace(
-        "ENCODING-SPACE SIZE 3 MULTIPLE OF bit",
-        "MULTIPLE OF bit ENCODING-SPACE SIZE 3")
+        "ENCODING-SPACE SIZE 3 MULTIPLE OF bit", "MULTIPLE OF bit ENCODING-SPACE SIZE 3"
+    )
     try:
         parse_module(source)
     except Asn1Error as error:
@@ -220,9 +254,10 @@ def test_a_set_may_not_hold_two_objects_of_one_class():
     The rule has teeth precisely where §22.11.2 hands the set to a contained type: two objects
     for one class make §9.5.2's lookup ambiguous at the point nothing could recover from it.
     """
-    source = _CONTENTS.replace("innerSet #ENCODINGS ::= { innerEnc }",
-                               "twin #Inner ::= { ENCODING cond }\n"
-                               "  innerSet #ENCODINGS ::= { innerEnc | twin }")
+    source = _CONTENTS.replace(
+        "innerSet #ENCODINGS ::= { innerEnc }",
+        "twin #Inner ::= { ENCODING cond }\n  innerSet #ENCODINGS ::= { innerEnc | twin }",
+    )
     try:
         parse_module(source % "CONTENTS-ENCODING innerSet CONTAINING #Inner")
     except Asn1Error as error:
@@ -240,8 +275,8 @@ def test_completed_by_fills_gaps_and_never_overrides():
         "innerSet #ENCODINGS ::= { innerEnc }",
         "other #Other ::= { ENCODING cond }\n"
         "  fallbackSet #ENCODINGS ::= { other }\n"
-        "  innerSet #ENCODINGS ::= { innerEnc } COMPLETED BY fallbackSet").replace(
-        "#Inner   ::= #INT", "#Inner   ::= #INT\n  #Other   ::= #INT")
+        "  innerSet #ENCODINGS ::= { innerEnc } COMPLETED BY fallbackSet",
+    ).replace("#Inner   ::= #INT", "#Inner   ::= #INT\n  #Other   ::= #INT")
     module = parse_module(source % "CONTENTS-ENCODING innerSet CONTAINING #Inner")
     assert sorted(module.object_sets["innerSet"]) == ["#Inner", "#Other"]
     # The primary's own object survives the merge -- it is not replaced by the completion.
@@ -272,7 +307,8 @@ def test_the_contained_type_group_reads_on_the_keyword_the_clause_actually_uses(
         parse_module(_CONTENTS % "CONTAINED BY innerSet")
     except Asn1Error as error:
         assert "22.11" not in str(error), (
-            "`CONTAINED` is prose in X.692, not notation; it must not claim §22.11's citation")
+            "`CONTAINED` is prose in X.692, not notation; it must not claim §22.11's citation"
+        )
     else:
         raise AssertionError("`CONTAINED BY x` parsed as though it meant something")
 
@@ -292,9 +328,9 @@ def test_the_contained_type_group_makes_22_11_2s_choice():
     override = parse_module(
         _CONTENTS % "CONTENTS-ENCODING innerSet OVERRIDE TRUE CONTAINING #Inner"
     ).objects["payObj"][1]
-    declines = parse_module(
-        _CONTENTS % "CONTENTS-ENCODING innerSet CONTAINING #Inner"
-    ).objects["payObj"][1]
+    declines = parse_module(_CONTENTS % "CONTENTS-ENCODING innerSet CONTAINING #Inner").objects[
+        "payObj"
+    ][1]
 
     # OVERRIDE TRUE: this group's set wins (§22.11.2.2, §13.2.10.6 b).
     assert sorted(override.contained_objects(containing)) == ["#Inner"]
@@ -361,8 +397,9 @@ def test_a_repetition_structure_reads_with_and_without_its_identifier():
     assert bare.structures["Bare"].fields == (("", "#Item"),)
 
     # §16.4.1's `Size?` really is optional.
-    assert parse_module(_REPSTRUCT % "Plain ::= #Rep { item #Item }").structures[
-        "Plain"].size is None
+    assert (
+        parse_module(_REPSTRUCT % "Plain ::= #Rep { item #Item }").structures["Plain"].size is None
+    )
 
 
 def test_the_repetition_size_bounds_the_number_of_repetitions():
@@ -377,12 +414,16 @@ def test_the_repetition_size_bounds_the_number_of_repetitions():
     from bcir.asn1.ecn_user import SizeBounds
 
     assert parse_module(_REPSTRUCT % "A ::= #Rep { i #Item } (SIZE (0..MAX))").structures[
-        "A"].size == SizeBounds(0, None)
+        "A"
+    ].size == SizeBounds(0, None)
     assert parse_module(_REPSTRUCT % "B ::= #Rep { i #Item } (SIZE (4))").structures[
-        "B"].size == SizeBounds(4, 4)
+        "B"
+    ].size == SizeBounds(4, 4)
 
-    for text, cite in (("C ::= #Rep { i #Item } (SIZE (MIN..4))", "16.2.11"),
-                       ("D ::= #Rep { i #Item } (SIZE (-1..4))", "16.2.11")):
+    for text, cite in (
+        ("C ::= #Rep { i #Item } (SIZE (MIN..4))", "16.2.11"),
+        ("D ::= #Rep { i #Item } (SIZE (-1..4))", "16.2.11"),
+    ):
         try:
             parse_module(_REPSTRUCT % text)
         except Asn1Error as error:
@@ -492,10 +533,12 @@ def test_an_unimplemented_property_group_is_refused_by_name_and_never_skipped():
         # container is a write-time refusal instead — see test_asn1_ecn_containers.py.
         (space, f"{space} DETERMINED BY field-to-be-set", "21.3.4"),
         (space, f"ALIGNED TO ANY octet {space}", "22.2.2.2"),
-        ("ENCODING positive-int",
-         "ENCODING positive-int BIT-REVERSAL reverse-half-units", "22.12.2.3"),
-        ("ENCODING positive-int",
-         "ENCODING positive-int BIT-REVERSAL sideways", "21.14.1"),
+        (
+            "ENCODING positive-int",
+            "ENCODING positive-int BIT-REVERSAL reverse-half-units",
+            "22.12.2.3",
+        ),
+        ("ENCODING positive-int", "ENCODING positive-int BIT-REVERSAL sideways", "21.14.1"),
     ]
     for target, clause_text, citation in cases:
         source = frame_header_source().replace(target, clause_text)
@@ -517,7 +560,8 @@ def test_an_integer_object_goes_through_conditional_int_because_the_clause_says_
     """
     source = frame_header_source().replace(
         "versionField #Version ::= { ENCODING plainVersion }",
-        "versionField #Version ::= { ENCODING-SPACE SIZE 3 MULTIPLE OF bit }")
+        "versionField #Version ::= { ENCODING-SPACE SIZE 3 MULTIPLE OF bit }",
+    )
     try:
         parse_module(source)
     except Asn1Error as error:
@@ -534,14 +578,16 @@ def test_one_object_per_class_is_enforced_where_the_set_is_formed_not_where_text
     for a class the *structure* names is the violation, and that is what is refused.
     """
     module = frame_header_module()
-    conditionals = [name for name, (cls, _spec) in module.objects.items()
-                    if cls == "#CONDITIONAL-INT"]
+    conditionals = [
+        name for name, (cls, _spec) in module.objects.items() if cls == "#CONDITIONAL-INT"
+    ]
     assert len(conditionals) == 2, conditionals
     assert "#CONDITIONAL-INT" not in module.object_set()
 
     source = frame_header_source().replace(
         "  pduOuter #OUTER ::= {",
-        "  secondVersion #Version ::= { ENCODING plainVersion }\n  pduOuter #OUTER ::= {")
+        "  secondVersion #Version ::= { ENCODING plainVersion }\n  pduOuter #OUTER ::= {",
+    )
     try:
         parse_module(source).object_set()
     except Asn1Error as error:
@@ -559,13 +605,24 @@ def test_a_transmission_order_that_differs_from_the_type_comes_from_the_structur
     """
     module = frame_header_module()
     assert module.concatenation().transmission_order() == (
-        "payloadOctets", "version", "urgent", "reserved")
+        "payloadOctets",
+        "version",
+        "urgent",
+        "reserved",
+    )
 
-    reordered = parse_module(frame_header_source().replace(
-        "      payloadOctets  #Scaled-length,\n      version        #Version,",
-        "      version        #Version,\n      payloadOctets  #Scaled-length,"))
+    reordered = parse_module(
+        frame_header_source().replace(
+            "      payloadOctets  #Scaled-length,\n      version        #Version,",
+            "      version        #Version,\n      payloadOctets  #Scaled-length,",
+        )
+    )
     assert reordered.concatenation().transmission_order() == (
-        "version", "payloadOctets", "urgent", "reserved")
+        "version",
+        "payloadOctets",
+        "urgent",
+        "reserved",
+    )
     _kind, value, expected = legacy_frame_workload()
     assert _encode_from_text(reordered, value) != expected
 
@@ -573,7 +630,8 @@ def test_a_transmission_order_that_differs_from_the_type_comes_from_the_structur
 def test_order_tag_and_order_random_are_refused_with_what_they_would_require():
     for order, citation in (("tag", "22.10.2.4"), ("random", "22.10.2.1")):
         source = frame_header_source().replace(
-            "CONCATENATION ORDER textual", f"CONCATENATION ORDER {order}")
+            "CONCATENATION ORDER textual", f"CONCATENATION ORDER {order}"
+        )
         try:
             parse_module(source)
         except Asn1Error as error:
@@ -607,8 +665,10 @@ def test_the_application_point_is_the_first_structure_declared():
     declaring the head-end structure first makes *it* the application point, and the structure
     the object needs becomes the one nothing reaches.
     """
-    clause = ("REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
-              "INSERT AT HEAD Head-structure")
+    clause = (
+        "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
+        "INSERT AT HEAD Head-structure"
+    )
     module = parse_module(_replace_module_with_head(clause))
     assert list(module.structures) == ["Payload-structure", "Head-structure"]
     assert module.structure_name == "Payload-structure"
@@ -616,8 +676,8 @@ def test_the_application_point_is_the_first_structure_declared():
 
     swapped = _replace_module(clause).replace(
         "  Payload-structure ::= #Join { body #Val }",
-        "  Head-structure ::= #Join { offset #Len }\n"
-        "  Payload-structure ::= #Join { body #Val }")
+        "  Head-structure ::= #Join { offset #Len }\n  Payload-structure ::= #Join { body #Val }",
+    )
     try:
         parse_module(swapped)
     except Asn1Error as error:
@@ -653,7 +713,7 @@ def test_the_nesting_depth_guard_is_the_readers_own_and_says_so():
     from bcir.asn1.ecn_syntax import _MAX_STRUCTURE_DEPTH
 
     levels = _MAX_STRUCTURE_DEPTH + 2
-    nest = ("Deep ::= #Join " + "{ f #Join " * levels + "{ x #Len }" + " }" * levels)
+    nest = "Deep ::= #Join " + "{ f #Join " * levels + "{ x #Len }" + " }" * levels
     try:
         parse_module(_NEST % nest)
     except Asn1Error as error:
@@ -720,8 +780,9 @@ def test_a_nested_structure_is_encoded_at_its_own_level():
   joinObj #Join ::= { CONCATENATION ORDER textual ALIGNMENT none }
 END
 """)
-    assert encode_with_user(module.object_set(), "#Join",
-                            {"head": {"a": 1, "b": 2}, "tail": 3}) == bytes((1, 2, 3))
+    assert encode_with_user(
+        module.object_set(), "#Join", {"head": {"a": 1, "b": 2}, "tail": 3}
+    ) == bytes((1, 2, 3))
     # The nested structure keeps its own two fields; they are not flattened into the parent's
     # transmission order, which is the other half of what §16.5.6 says.
     assert module.structures["Outer"].fields == (("head", "#Inner"), ("tail", "#B"))
@@ -729,6 +790,7 @@ END
 
 
 # --- the plan-v6 question --------------------------------------------------------------------
+
 
 def test_the_write_plan_holds_the_type_and_therefore_cannot_hold_this_encoding():
     """**The plan-v6 answer, as evidence.**
@@ -765,8 +827,10 @@ def test_the_write_plan_holds_the_type_and_therefore_cannot_hold_this_encoding()
     # And the plan is the same plan whichever candidate reads it, which is the property that
     # leaves the ECN facts with nowhere in it to live.
     assert b"reserved" not in plan.serialize()
-    assert plan.sha256() == compile_encode_plan(
-        kind, module="FrameEncodings", type_name="FrameHeader").sha256()
+    assert (
+        plan.sha256()
+        == compile_encode_plan(kind, module="FrameEncodings", type_name="FrameHeader").sha256()
+    )
 
 
 def test_the_two_descriptors_version_independently():
@@ -798,6 +862,7 @@ def test_the_transform_is_still_what_no_fixed_candidate_reproduces():
 
 
 # --- refusals that keep the parser honest -----------------------------------------------------
+
 
 def test_a_module_without_an_end_is_refused():
     try:
@@ -832,8 +897,7 @@ def test_an_octetstring_class_encodes_from_module_text_end_to_end():
     from bcir.asn1.ecn_user import encode_with_user
 
     module = parse_module(_STRING % "")
-    assert encode_with_user(module.object_set(), "#Frame", {"s": [1, 2, 3]}) == bytes(
-        (3, 1, 2, 3))
+    assert encode_with_user(module.object_set(), "#Frame", {"s": [1, 2, 3]}) == bytes((3, 1, 2, 3))
     # The count is the number of REPETITIONS, so an empty string is one zero octet.
     assert encode_with_user(module.object_set(), "#Frame", {"s": []}) == bytes((0,))
 
@@ -885,9 +949,13 @@ def test_both_repetition_spellings_may_not_be_set_at_once():
     all: to avoid "a double curly-bracket" for one object. A convenience, not a second
     meaning."""
     try:
-        parse_module(_STRING.replace(
-            "REPETITION-ENCODING rep }",
-            "REPETITION-ENCODING rep REPETITION-ENCODINGS { rep } }") % "")
+        parse_module(
+            _STRING.replace(
+                "REPETITION-ENCODING rep }",
+                "REPETITION-ENCODING rep REPETITION-ENCODINGS { rep } }",
+            )
+            % ""
+        )
     except Asn1Error as error:
         assert "23.13.2.2" in str(error), str(error)
     else:
@@ -898,8 +966,7 @@ def test_a_repetition_reference_must_name_a_conditional_repetition_object():
     """A `#BITS` object that took its size from something which never described a repetition
     would produce octets nothing in the module specifies."""
     try:
-        parse_module(_STRING.replace("REPETITION-ENCODING rep", "REPETITION-ENCODING cntObj")
-                     % "")
+        parse_module(_STRING.replace("REPETITION-ENCODING rep", "REPETITION-ENCODING cntObj") % "")
     except Asn1Error as error:
         assert "23.2.2.1" in str(error) and "cntObj" in str(error), str(error)
     else:
@@ -925,8 +992,7 @@ def test_a_class_this_rail_cannot_execute_is_named_rather_than_ignored():
     from the ASN.1 type's character set through clause 12's link; §23.2's bit and §23.9's octet
     are intrinsic to the class, which is why those two became readable and this one did not.
     """
-    source = frame_header_source().replace("#Reserved      ::= #PAD",
-                                           "#Reserved      ::= #CHARS")
+    source = frame_header_source().replace("#Reserved      ::= #PAD", "#Reserved      ::= #CHARS")
     try:
         parse_module(source)
     except Asn1Error as error:
@@ -946,8 +1012,7 @@ def test_a_string_class_has_no_encoding_space_and_says_so():
     This is what the `#BITS` half of the test above became once §23.2 was readable: the class
     is no longer unspellable, and the fault moved to the group.
     """
-    source = frame_header_source().replace("#Reserved      ::= #PAD",
-                                           "#Reserved      ::= #BITS")
+    source = frame_header_source().replace("#Reserved      ::= #PAD", "#Reserved      ::= #BITS")
     try:
         parse_module(source)
     except Asn1Error as error:
@@ -957,8 +1022,9 @@ def test_a_string_class_has_no_encoding_space_and_says_so():
 
 
 def test_a_transform_reference_that_names_nothing_is_refused():
-    source = frame_header_source().replace("TRANSFORMS { octetsToUnits }",
-                                           "TRANSFORMS { noSuchTransform }")
+    source = frame_header_source().replace(
+        "TRANSFORMS { octetsToUnits }", "TRANSFORMS { noSuchTransform }"
+    )
     try:
         parse_module(source)
     except Asn1Error as error:
@@ -971,7 +1037,8 @@ def test_only_one_transform_clause_may_be_used_per_object():
     """§24.1.1's WITH SYNTAX carries the comment "Only one of the following clauses can be
     used", and a second one silently winning would make the first dead text."""
     source = frame_header_source().replace(
-        "{ INT-TO-INT divide:4 }", "{ INT-TO-INT divide:4 INT-TO-BITS SIZE 4 }")
+        "{ INT-TO-INT divide:4 }", "{ INT-TO-INT divide:4 INT-TO-BITS SIZE 4 }"
+    )
     try:
         parse_module(source)
     except Asn1Error as error:
@@ -982,8 +1049,10 @@ def test_only_one_transform_clause_may_be_used_per_object():
 
 def test_the_operand_spellings_are_the_clauses_own():
     """§24.3.1 gives `negate` and `subtract` ENUMERATED operands, not integers."""
-    for body, wanted in (("INT-TO-INT negate:0", "negate:value"),
-                         ("INT-TO-INT subtract:4", "subtract:lower-bound")):
+    for body, wanted in (
+        ("INT-TO-INT negate:0", "negate:value"),
+        ("INT-TO-INT subtract:4", "subtract:lower-bound"),
+    ):
         source = frame_header_source().replace("INT-TO-INT divide:4", body)
         try:
             parse_module(source)
@@ -991,16 +1060,18 @@ def test_the_operand_spellings_are_the_clauses_own():
             assert wanted in str(error), (body, str(error))
         else:
             raise AssertionError(f"{body!r} parsed with the wrong operand form")
-    assert parse_module(frame_header_source().replace(
-        "INT-TO-INT divide:4", "INT-TO-INT negate:value")).sha256()
+    assert parse_module(
+        frame_header_source().replace("INT-TO-INT divide:4", "INT-TO-INT negate:value")
+    ).sha256()
 
 
 def test_a_self_delimiting_encoding_space_is_refused_with_what_it_would_need():
     """§21.2.2's DEFAULT is `self-delimiting-values`, which §21.2.7 defines by matching every
     candidate encoding rather than by a width. Defaulting to it silently would make an object
     that states no SIZE encode nothing at all."""
-    source = frame_header_source().replace("ENCODING-SPACE SIZE 3 MULTIPLE OF bit",
-                                           "ENCODING-SPACE")
+    source = frame_header_source().replace(
+        "ENCODING-SPACE SIZE 3 MULTIPLE OF bit", "ENCODING-SPACE"
+    )
     try:
         parse_module(source)
     except Asn1Error as error:
@@ -1042,9 +1113,9 @@ def test_every_transform_clause_24_defines_is_reachable_from_the_notation():
     """
     module = parse_module(_ALL_TRANSFORMS)
     assert len(module.transforms) == 17
-    assert module.transforms["t03"].apply(True) == 0        # BOOL-TO-INT AS true-zero
-    assert module.transforms["t05"].apply(7) == "  +7"      # INT-TO-CHARS
-    assert module.transforms["t10"].apply(1) == (1, 1)      # BIT-TO-BITS
+    assert module.transforms["t03"].apply(True) == 0  # BOOL-TO-INT AS true-zero
+    assert module.transforms["t05"].apply(7) == "  +7"  # INT-TO-CHARS
+    assert module.transforms["t10"].apply(1) == (1, 1)  # BIT-TO-BITS
 
 
 def test_every_transform_has_a_canonical_serialization():
@@ -1074,6 +1145,7 @@ def test_a_transform_clause_the_notation_does_not_define_is_refused_by_name():
 
 # --- Annex C's parameterized assignments, read from module text ---------------------------
 
+
 def _with_assignments(*lines: str) -> str:
     """The gate's module with extra assignments before `END`."""
     return frame_header_source().replace("END", "\n".join(lines) + "\nEND")
@@ -1091,8 +1163,7 @@ def test_ecn_writes_a_parameter_list_with_two_character_brackets():
     tokens, and the token stream is asserted directly: `{<` must not decompose into `{`, and
     `>}` must not glue itself to the dummy before it.
     """
-    assert [t.text for t in tokenize("#L{<#D>} ::= X")] == [
-        "#L", "{<", "#D", ">}", "::=", "X"]
+    assert [t.text for t in tokenize("#L{<#D>} ::= X")] == ["#L", "{<", "#D", ">}", "::=", "X"]
     # X.683's own brackets are still just braces, so the wrong spelling parses as something
     # else entirely rather than as a parameter list — which is exactly why it goes unnoticed.
     assert "{<" not in [t.text for t in tokenize("#L{#D} ::= X")]
@@ -1115,9 +1186,11 @@ def test_a_governor_may_use_a_dummy_declared_to_its_left_but_only_for_an_object(
     So the two clauses are a matched pair — §22.1.2.4 is unwritable without C.2's extension —
     and this is the test that reads one written out in full.
     """
-    module = parse_module(_with_assignments(
-        _LP_STRUCTURE,
-        "lp-object{<#D>} #Length-prefixed{<#D>} ::= { PLACEHOLDER }"))
+    module = parse_module(
+        _with_assignments(
+            _LP_STRUCTURE, "lp-object{<#D>} #Length-prefixed{<#D>} ::= { PLACEHOLDER }"
+        )
+    )
     encoded_by = module.parameterized["lp-object"]
     assert encoded_by.governor == "#Length-prefixed"
     assert encoded_by.governor_actuals.render() == "{<#D>}"
@@ -1128,6 +1201,7 @@ def test_a_replacement_pair_is_checked_as_it_is_declared_not_when_it_is_used():
     both halves are present. Checking early matters because a module may define a pair and
     apply it from an ELM this rail never reads: a pair that could never be instantiated is
     invalid on its own terms whether or not anything here instantiates it."""
+
     def refused(citation, *lines):
         try:
             parse_module(_with_assignments(*lines))
@@ -1137,38 +1211,54 @@ def test_a_replacement_pair_is_checked_as_it_is_declared_not_when_it_is_used():
         raise AssertionError(f"expected a refusal citing {citation}")
 
     # §22.1.2.4: the governor is the structure instantiated with the object's OWN dummy.
-    refused("22.1.2.4", _LP_STRUCTURE,
-            "lp{<#D>} #Length-prefixed{<#Other>} ::= { PLACEHOLDER }")
+    refused("22.1.2.4", _LP_STRUCTURE, "lp{<#D>} #Length-prefixed{<#Other>} ::= { PLACEHOLDER }")
     # C.3's `{<>}` is a legal ParameterizedReference and still instantiates with nothing.
     refused("22.1.2.4", _LP_STRUCTURE, "lp{<#D>} #Length-prefixed{<>} ::= { PLACEHOLDER }")
     # §22.1.2.2: a single ENCODING CLASS parameter — an object set governor is not one.
-    refused("22.1.2.2", "#Bad{<#ENCODINGS:s>} ::= #CONCATENATION { value #INT }",
-            "o{<#D>} #Bad{<#D>} ::= { PLACEHOLDER }")
+    refused(
+        "22.1.2.2",
+        "#Bad{<#ENCODINGS:s>} ::= #CONCATENATION { value #INT }",
+        "o{<#D>} #Bad{<#D>} ::= { PLACEHOLDER }",
+    )
     # §22.1.2.5's biconditional, read off the object's own dummies: a REFERENCE parameter is
     # present exactly when the group has an INSERT AT HEAD, and this pair declares no head-end.
-    refused("22.1.2.5", _LP_STRUCTURE,
-            "lp{<#D, REFERENCE:at, REFERENCE:also>} #Length-prefixed{<#D>} ::= { P }")
+    refused(
+        "22.1.2.5",
+        _LP_STRUCTURE,
+        "lp{<#D, REFERENCE:at, REFERENCE:also>} #Length-prefixed{<#D>} ::= { P }",
+    )
 
 
 def test_the_governor_forms_c1_admits_and_the_one_it_names_nowhere():
     """C.1's `Governor` is `EncodingClassFieldType | REFERENCE | DefinedOrBuiltinEncodingClass
     | #ENCODINGS | Type`, and its a)-d) rules assign a dummy kind to every one of those but
     `Type` — which is therefore writable and stands for nothing."""
-    module = parse_module(_with_assignments(
-        "#Any{<#D, REFERENCE:at, #ENCODINGS:objects, #INT:obj, #INT.&size:v>} ::= "
-        "#CONCATENATION { value #INT }"))
+    module = parse_module(
+        _with_assignments(
+            "#Any{<#D, REFERENCE:at, #ENCODINGS:objects, #INT:obj, #INT.&size:v>} ::= "
+            "#CONCATENATION { value #INT }"
+        )
+    )
     params = module.parameterized["#Any"].parameters
     assert params.names() == ("#D", "at", "objects", "obj", "v")
     # Only three of the five governors determine a kind; C.1 shares the other two.
-    assert params.kinds() == (ParameterKind.ENCODING_CLASS, ParameterKind.IDENTIFIER,
-                              ParameterKind.ENCODING_OBJECT_SET, None, None)
+    assert params.kinds() == (
+        ParameterKind.ENCODING_CLASS,
+        ParameterKind.IDENTIFIER,
+        ParameterKind.ENCODING_OBJECT_SET,
+        None,
+        None,
+    )
 
     for source, citation in (
-            ("#Bad{<INTEGER:v>} ::= #CONCATENATION { value #INT }", "C.1's Governor"),
-            ("#Bad{<#D>} ::= #CONCATENATION { value #INT }\n"
-             "#Bad{<#E>} ::= #CONCATENATION { value #INT }", "assigned twice"),
-            ("#Bad{<#D>} ::= #CONCATENATION { value #INT }\n"
-             "#Worse{<#D", "has no `>}`")):
+        ("#Bad{<INTEGER:v>} ::= #CONCATENATION { value #INT }", "C.1's Governor"),
+        (
+            "#Bad{<#D>} ::= #CONCATENATION { value #INT }\n"
+            "#Bad{<#E>} ::= #CONCATENATION { value #INT }",
+            "assigned twice",
+        ),
+        ("#Bad{<#D>} ::= #CONCATENATION { value #INT }\n#Worse{<#D", "has no `>}`"),
+    ):
         try:
             parse_module(_with_assignments(source))
         except Asn1Error as error:
@@ -1200,17 +1290,18 @@ def test_a_parameterized_assignment_reaches_the_digest_governors_and_all():
     base = parse_module(_with_assignments(_LP_STRUCTURE))
     assert b"parameterized #Length-prefixed" in base.serialize()
 
-    wider = parse_module(_with_assignments(
-        "#Length-prefixed{<#D>} ::= #CONCATENATION { len16 #INT, value #D }"))
+    wider = parse_module(
+        _with_assignments("#Length-prefixed{<#D>} ::= #CONCATENATION { len16 #INT, value #D }")
+    )
     assert base.sha256() != wider.sha256()
 
-    governed = parse_module(_with_assignments(
-        "#Length-prefixed{<#ENCODINGS:D>} ::= #CONCATENATION { length #INT, value #D }"))
+    governed = parse_module(
+        _with_assignments(
+            "#Length-prefixed{<#ENCODINGS:D>} ::= #CONCATENATION { length #INT, value #D }"
+        )
+    )
     assert governed.sha256() != base.sha256()
     assert b"{<#ENCODINGS:D>}" in governed.serialize()
-
-
-
 
 
 # --- §17.5.1's EncodeStructure, as a #CONCATENATION object body ---------------------------
@@ -1234,9 +1325,12 @@ def test_an_encode_structure_of_all_use_sets_describes_the_same_encoding_and_has
     cases, where the spelling changes what a decoder reads and the hash has to move.
     """
     plain = parse_module(frame_header_source())
-    spelled = parse_module(_with_object(
-        "frameHeader #Frame-header ::= { ENCODE STRUCTURE { "
-        "payloadOctets USE-SET, version USE-SET, reserved USE-SET } WITH frame-set }"))
+    spelled = parse_module(
+        _with_object(
+            "frameHeader #Frame-header ::= { ENCODE STRUCTURE { "
+            "payloadOctets USE-SET, version USE-SET, reserved USE-SET } WITH frame-set }"
+        )
+    )
     assert spelled.concatenation().fields == plain.concatenation().fields
     assert spelled.concatenation().order == plain.concatenation().order
     assert spelled.sha256() == plain.sha256()
@@ -1259,10 +1353,13 @@ def test_naming_an_object_per_component_is_what_this_body_form_buys():
     else:
         raise AssertionError("two objects for one class should not form a set")
 
-    named = parse_module(_with_object(
-        "frameHeader #Frame-header ::= { ENCODE STRUCTURE { "
-        "payloadOctets USE-SET, version USE-SET, reserved wideReserved } WITH frame-set }",
-        extra=second))
+    named = parse_module(
+        _with_object(
+            "frameHeader #Frame-header ::= { ENCODE STRUCTURE { "
+            "payloadOctets USE-SET, version USE-SET, reserved wideReserved } WITH frame-set }",
+            extra=second,
+        )
+    )
     assert named.concatenation().fields["reserved"].width == 2
 
 
@@ -1272,19 +1369,35 @@ def test_an_object_named_for_a_component_must_be_governed_by_that_components_cla
     encode a boolean as an integer — well-formed octets of the wrong shape, which no later
     stage would question."""
     for body, citation in (
-            ("frameHeader #Frame-header ::= { ENCODE STRUCTURE { payloadOctets USE-SET, "
-             "version USE-SET, reserved versionField } WITH frame-set }", "17.5.13"),
-            ("frameHeader #Frame-header ::= { ENCODE STRUCTURE { payloadOctets USE-SET, "
-             "version USE-SET, reserved nosuchobject } WITH frame-set }", "17.5.13"),
-            # §17.5.3: no STRUCTURED WITH and no trailing WITH.
-            ("frameHeader #Frame-header ::= { ENCODE STRUCTURE { payloadOctets USE-SET, "
-             "version USE-SET, reserved USE-SET } }", "17.5.3"),
-            # §17.5.8: the components' own textual order, not the writer's preference.
-            ("frameHeader #Frame-header ::= { ENCODE STRUCTURE { version USE-SET, "
-             "payloadOctets USE-SET, reserved USE-SET } WITH frame-set }", "17.5.8"),
-            # §17.5.10's ComponentEncoding is an identifier AND an encoding.
-            ("frameHeader #Frame-header ::= { ENCODE STRUCTURE { payloadOctets, "
-             "version USE-SET, reserved USE-SET } WITH frame-set }", "17.5.10")):
+        (
+            "frameHeader #Frame-header ::= { ENCODE STRUCTURE { payloadOctets USE-SET, "
+            "version USE-SET, reserved versionField } WITH frame-set }",
+            "17.5.13",
+        ),
+        (
+            "frameHeader #Frame-header ::= { ENCODE STRUCTURE { payloadOctets USE-SET, "
+            "version USE-SET, reserved nosuchobject } WITH frame-set }",
+            "17.5.13",
+        ),
+        # §17.5.3: no STRUCTURED WITH and no trailing WITH.
+        (
+            "frameHeader #Frame-header ::= { ENCODE STRUCTURE { payloadOctets USE-SET, "
+            "version USE-SET, reserved USE-SET } }",
+            "17.5.3",
+        ),
+        # §17.5.8: the components' own textual order, not the writer's preference.
+        (
+            "frameHeader #Frame-header ::= { ENCODE STRUCTURE { version USE-SET, "
+            "payloadOctets USE-SET, reserved USE-SET } WITH frame-set }",
+            "17.5.8",
+        ),
+        # §17.5.10's ComponentEncoding is an identifier AND an encoding.
+        (
+            "frameHeader #Frame-header ::= { ENCODE STRUCTURE { payloadOctets, "
+            "version USE-SET, reserved USE-SET } WITH frame-set }",
+            "17.5.10",
+        ),
+    ):
         try:
             parse_module(_with_object(body))
         except Asn1Error as error:
@@ -1301,9 +1414,11 @@ def test_a_component_left_out_is_encoded_by_the_object_set_rather_than_being_an_
     So an incomplete list is a legal specification, not a partial one — which is why
     §17.5.8's order rule had to be a subsequence test rather than an equality one.
     """
-    partial = parse_module(_with_object(
-        "frameHeader #Frame-header ::= { ENCODE STRUCTURE { reserved USE-SET } "
-        "WITH frame-set }"))
+    partial = parse_module(
+        _with_object(
+            "frameHeader #Frame-header ::= { ENCODE STRUCTURE { reserved USE-SET } WITH frame-set }"
+        )
+    )
     plain = parse_module(frame_header_source())
     assert partial.concatenation().fields == plain.concatenation().fields
 
@@ -1312,7 +1427,8 @@ def test_a_component_left_out_is_encoded_by_the_object_set_rather_than_being_an_
 
 _STRUCTURE_CLASS = "  #Frame-header  ::= #CONCATENATION"
 _PRESENCE_OBJECT = (
-    "  presenceBit #Present ::= { PRESENCE DETERMINED BY field-to-be-set USING flag }\n")
+    "  presenceBit #Present ::= { PRESENCE DETERMINED BY field-to-be-set USING flag }\n"
+)
 
 
 def _with_optional(marker: str = "#Present", presence: str = _PRESENCE_OBJECT) -> str:
@@ -1322,11 +1438,12 @@ def _with_optional(marker: str = "#Present", presence: str = _PRESENCE_OBJECT) -
     that references it, and the object has to precede the `#CONCATENATION` object that forms
     the set — which is where §9.5.1 is checked.
     """
-    return (frame_header_source()
-            .replace(_STRUCTURE_CLASS, "  #Present ::= #OPTIONAL\n" + _STRUCTURE_CLASS)
-            .replace("reserved       #Reserved",
-                     f"reserved       #Reserved OPTIONAL-ENCODING {marker}")
-            .replace(_CONCAT_OBJECT, presence + _CONCAT_OBJECT))
+    return (
+        frame_header_source()
+        .replace(_STRUCTURE_CLASS, "  #Present ::= #OPTIONAL\n" + _STRUCTURE_CLASS)
+        .replace("reserved       #Reserved", f"reserved       #Reserved OPTIONAL-ENCODING {marker}")
+        .replace(_CONCAT_OBJECT, presence + _CONCAT_OBJECT)
+    )
 
 
 def test_an_optional_encoding_marker_pairs_a_component_with_its_optionality_object():
@@ -1396,9 +1513,12 @@ def test_the_marker_reaches_the_digest_because_it_changes_what_a_decoder_reads()
 
 # --- §16.3's AlternativesStructure, the second constructor shape --------------------------
 
-def _alternatives_module(body: str = "num #Small, flag #Flag",
-                         obj: str = "ALTERNATIVE DETERMINED BY field-to-be-set USING sel",
-                         governor: str = "#Pick") -> str:
+
+def _alternatives_module(
+    body: str = "num #Small, flag #Flag",
+    obj: str = "ALTERNATIVE DETERMINED BY field-to-be-set USING sel",
+    governor: str = "#Pick",
+) -> str:
     """A module whose one structure is a §16.3 `AlternativesStructure`.
 
     Written out rather than patched from the gate's module because the *governor* is what this
@@ -1478,15 +1598,16 @@ def test_alternative_ordering_has_two_values_where_concatenation_has_three():
     because a reader who reached for `random` was thinking of the concatenation group.
     """
     for clause, citation in (
-            # `random` is refused for not being a value of this type at all...
-            ("ALTERNATIVE DETERMINED BY field-to-be-set USING sel ORDER random", "22.6.1.1"),
-            # ...while `tag` IS one, parses, and is then refused by §22.6.2.10 for a reason
-            # about this module rather than about the enum: "every alternative shall start with
-            # an encoding class in the tag category". Two different failures for two different
-            # words is the evidence that both values are read rather than both rejected.
-            ("ALTERNATIVE DETERMINED BY field-to-be-set USING sel ORDER tag", "22.6.2.10"),
-            # §22.6.2.9 makes the group mandatory, exactly as §22.5.1.6 does for PRESENCE.
-            ("", "22.6.2.9")):
+        # `random` is refused for not being a value of this type at all...
+        ("ALTERNATIVE DETERMINED BY field-to-be-set USING sel ORDER random", "22.6.1.1"),
+        # ...while `tag` IS one, parses, and is then refused by §22.6.2.10 for a reason
+        # about this module rather than about the enum: "every alternative shall start with
+        # an encoding class in the tag category". Two different failures for two different
+        # words is the evidence that both values are read rather than both rejected.
+        ("ALTERNATIVE DETERMINED BY field-to-be-set USING sel ORDER tag", "22.6.2.10"),
+        # §22.6.2.9 makes the group mandatory, exactly as §22.5.1.6 does for PRESENCE.
+        ("", "22.6.2.9"),
+    ):
         try:
             parse_module(_alternatives_module(obj=clause))
         except Asn1Error as error:
@@ -1512,6 +1633,7 @@ def test_a_marked_component_does_not_change_its_structures_own_category():
 
 
 # --- §22.1's REPLACE defined syntax, read from module text --------------------------------
+
 
 def _replace_module(clause: str) -> str:
     """A module whose concatenation object performs a replacement.
@@ -1562,15 +1684,20 @@ def test_the_second_replacement_group_gives_optionals_a_different_action():
     Every component is then covered by exactly one of the two: `selects` partitions on
     optionality, so `rules()` never has to say which it tried first.
     """
-    module = parse_module(_replace_module(
-        "REPLACE NON-OPTIONALS WITH #Length-prefixed ENCODED BY lp-object "
-        "AND OPTIONALS WITH #Length-prefixed ENCODED BY lp-object"))
+    module = parse_module(
+        _replace_module(
+            "REPLACE NON-OPTIONALS WITH #Length-prefixed ENCODED BY lp-object "
+            "AND OPTIONALS WITH #Length-prefixed ENCODED BY lp-object"
+        )
+    )
     replacement = module.objects["joinObj"][1].replacement
     assert replacement.action is ReplaceAction.NON_OPTIONALS
     assert replacement.paired is not None
     assert replacement.paired.action is ReplaceAction.OPTIONALS
     assert [rule.action for rule in replacement.rules()] == [
-        ReplaceAction.NON_OPTIONALS, ReplaceAction.OPTIONALS]
+        ReplaceAction.NON_OPTIONALS,
+        ReplaceAction.OPTIONALS,
+    ]
 
 
 def test_the_second_replacement_group_reaches_the_digest():
@@ -1582,11 +1709,15 @@ def test_the_second_replacement_group_reaches_the_digest():
     neither kept nor acted on is a property dropped, and here it was one the parser had read
     correctly all along.
     """
-    without = parse_module(_replace_module(
-        "REPLACE NON-OPTIONALS WITH #Length-prefixed ENCODED BY lp-object"))
-    with_pair = parse_module(_replace_module(
-        "REPLACE NON-OPTIONALS WITH #Length-prefixed ENCODED BY lp-object "
-        "AND OPTIONALS WITH #Length-prefixed ENCODED BY lp-object"))
+    without = parse_module(
+        _replace_module("REPLACE NON-OPTIONALS WITH #Length-prefixed ENCODED BY lp-object")
+    )
+    with_pair = parse_module(
+        _replace_module(
+            "REPLACE NON-OPTIONALS WITH #Length-prefixed ENCODED BY lp-object "
+            "AND OPTIONALS WITH #Length-prefixed ENCODED BY lp-object"
+        )
+    )
     assert without.sha256() != with_pair.sha256()
     assert b"and-optionals" in with_pair.serialize()
 
@@ -1600,9 +1731,11 @@ def test_the_second_group_hangs_off_non_optionals_and_only_off_that():
     the notation is not the only way to build one: `ecn_user` assembles them from Python too.
     """
     for action in ("OPTIONALS", "ALL COMPONENTS", "STRUCTURE"):
-        _replace_refuses("22.1.1.2",
-                         f"REPLACE {action} WITH #Length-prefixed ENCODED BY lp-object "
-                         f"AND OPTIONALS WITH #Length-prefixed ENCODED BY lp-object")
+        _replace_refuses(
+            "22.1.1.2",
+            f"REPLACE {action} WITH #Length-prefixed ENCODED BY lp-object "
+            f"AND OPTIONALS WITH #Length-prefixed ENCODED BY lp-object",
+        )
 
 
 def test_a_paired_replacement_is_refused_from_python_too():
@@ -1614,14 +1747,17 @@ def test_a_paired_replacement_is_refused_from_python_too():
     """
     from bcir.asn1.ecn_user import Replacement
 
-    module = parse_module(_replace_module(
-        "REPLACE NON-OPTIONALS WITH #Length-prefixed ENCODED BY lp-object "
-        "AND OPTIONALS WITH #Length-prefixed ENCODED BY lp-object"))
+    module = parse_module(
+        _replace_module(
+            "REPLACE NON-OPTIONALS WITH #Length-prefixed ENCODED BY lp-object "
+            "AND OPTIONALS WITH #Length-prefixed ENCODED BY lp-object"
+        )
+    )
     good = module.objects["joinObj"][1].replacement
 
     for kwargs, cite in (
-            ({"action": ReplaceAction.OPTIONALS, "paired": good.paired}, "22.1.1.7"),
-            ({"action": ReplaceAction.NON_OPTIONALS, "paired": good}, "22.1.1.2"),
+        ({"action": ReplaceAction.OPTIONALS, "paired": good.paired}, "22.1.1.7"),
+        ({"action": ReplaceAction.NON_OPTIONALS, "paired": good}, "22.1.1.2"),
     ):
         try:
             Replacement(structure=good.structure, **kwargs)
@@ -1643,14 +1779,15 @@ def test_a_replacement_is_built_from_module_text_end_to_end():
     order is the observable proof: the length field is instantiated around the component and
     written before it.
     """
-    module = parse_module(_replace_module(
-        "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object"))
+    module = parse_module(
+        _replace_module("REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object")
+    )
     spec = module.concatenation()
     replacement = spec.replacement
     assert replacement.action is ReplaceAction.ALL_COMPONENTS
     assert replacement.structure.name == "#Length-prefixed"
     assert replacement.structure.order == ("length", "value")
-    assert replacement.structure.dummy == "value"          # §22.1.2.6, computed not declared
+    assert replacement.structure.dummy == "value"  # §22.1.2.6, computed not declared
     assert set(replacement.structure.auxiliary) == {"length"}
     assert spec.transmission_order() == ("body$length", "body")
 
@@ -1662,16 +1799,18 @@ def test_exactly_one_of_the_permitted_syntaxes_goes_between_replace_and_with():
 
     Both failure directions are faults: none of the words, and two of them.
     """
-    for clause in ("REPLACE COMPONENT WITH #Length-prefixed ENCODED BY lp-object",
-                   "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object"):
+    for clause in (
+        "REPLACE COMPONENT WITH #Length-prefixed ENCODED BY lp-object",
+        "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object",
+    ):
         module = parse_module(_replace_module(clause))
         # §22.1.1.8's synonym really is one action, not two that behave alike.
         assert module.concatenation().replacement.action is ReplaceAction.ALL_COMPONENTS
 
     _replace_refuses("22.1.2.1", "REPLACE WITH #Length-prefixed ENCODED BY lp-object")
-    _replace_refuses("22.1.2.1",
-                     "REPLACE STRUCTURE ALL COMPONENTS WITH #Length-prefixed "
-                     "ENCODED BY lp-object")
+    _replace_refuses(
+        "22.1.2.1", "REPLACE STRUCTURE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object"
+    )
 
 
 def test_inside_replace_both_names_are_bare():
@@ -1683,10 +1822,12 @@ def test_inside_replace_both_names_are_bare():
     `{<>}` is refused too: a legal `ParameterizedReference` elsewhere, still a parameter list
     in this use of the name.
     """
-    _replace_refuses("22.1.2.2",
-                     "REPLACE ALL COMPONENTS WITH #Length-prefixed{<#D>} ENCODED BY lp-object")
-    _replace_refuses("22.1.2.4",
-                     "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object{<>}")
+    _replace_refuses(
+        "22.1.2.2", "REPLACE ALL COMPONENTS WITH #Length-prefixed{<#D>} ENCODED BY lp-object"
+    )
+    _replace_refuses(
+        "22.1.2.4", "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object{<>}"
+    )
 
 
 def test_the_with_structure_and_the_encoded_by_object_are_both_checked_against_the_clause():
@@ -1695,8 +1836,7 @@ def test_the_with_structure_and_the_encoded_by_object_are_both_checked_against_t
     neither, and naming one is the natural mistake — it is the class the replacement will be
     applied *to*."""
     _replace_refuses("22.1.2.2", "REPLACE ALL COMPONENTS WITH #Join ENCODED BY lp-object")
-    _replace_refuses("22.1.2.4",
-                     "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY valEnc")
+    _replace_refuses("22.1.2.4", "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY valEnc")
 
 
 def test_auxiliary_fields_with_nothing_to_set_them_are_refused_by_name():
@@ -1707,10 +1847,10 @@ def test_auxiliary_fields_with_nothing_to_set_them_are_refused_by_name():
 
 
 def _replace_module_with_head(
-        clause: str, *, head: str = "Head-structure ::= #Join { offset #Len }") -> str:
+    clause: str, *, head: str = "Head-structure ::= #Join { offset #Len }"
+) -> str:
     """`_replace_module`, plus a second ordinary structure for `INSERT AT HEAD` to name."""
-    return _replace_module(clause).replace(
-        "  #Length-prefixed", f"  {head}\n  #Length-prefixed")
+    return _replace_module(clause).replace("  #Length-prefixed", f"  {head}\n  #Length-prefixed")
 
 
 def test_insert_at_head_reads_a_second_structure_from_module_text():
@@ -1725,9 +1865,12 @@ def test_insert_at_head_reads_a_second_structure_from_module_text():
     parameters (it is an ordinary `EncodingStructureDefn`), and "all their fields are auxiliary
     fields", each with an encoding object taken from the module under §9.5.2.
     """
-    module = parse_module(_replace_module_with_head(
-        "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
-        "INSERT AT HEAD Head-structure"))
+    module = parse_module(
+        _replace_module_with_head(
+            "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
+            "INSERT AT HEAD Head-structure"
+        )
+    )
 
     assert list(module.structures) == ["Payload-structure", "Head-structure"]
     # The first declaration is the application point; the second is reached by being named.
@@ -1749,11 +1892,16 @@ def test_a_head_end_structure_reaches_the_digest():
     quietly: before this change the digest covered *the* structure, and a module with two of
     them would have hashed as though the second were not there.
     """
-    clause = ("REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
-              "INSERT AT HEAD Head-structure")
+    clause = (
+        "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
+        "INSERT AT HEAD Head-structure"
+    )
     narrow = parse_module(_replace_module_with_head(clause))
-    wide = parse_module(_replace_module_with_head(
-        clause, head="Head-structure ::= #Join { offset #Len, extra #Len }"))
+    wide = parse_module(
+        _replace_module_with_head(
+            clause, head="Head-structure ::= #Join { offset #Len, extra #Len }"
+        )
+    )
     assert narrow.sha256() != wide.sha256()
     assert b"structure Head-structure concatenation fields 1" in narrow.serialize()
 
@@ -1765,9 +1913,11 @@ def test_the_head_end_structure_may_not_be_the_application_point_itself():
     Reachable only because both names now resolve: with one structure per module the reference
     could not even be written down.
     """
-    _replace_refuses("22.1.2.7",
-                     "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
-                     "INSERT AT HEAD Payload-structure")
+    _replace_refuses(
+        "22.1.2.7",
+        "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
+        "INSERT AT HEAD Payload-structure",
+    )
 
 
 def test_a_parameterized_structure_is_not_a_head_end_structure():
@@ -1778,9 +1928,11 @@ def test_a_parameterized_structure_is_not_a_head_end_structure():
     So `#Length-prefixed` is a legal `WITH` and an illegal `INSERT AT HEAD`, and the same name
     in the two positions is the sharpest test of it.
     """
-    _replace_refuses("22.1.2.7",
-                     "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
-                     "INSERT AT HEAD #Length-prefixed")
+    _replace_refuses(
+        "22.1.2.7",
+        "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
+        "INSERT AT HEAD #Length-prefixed",
+    )
 
 
 def test_insert_at_head_still_may_not_ride_on_replace_structure():
@@ -1792,9 +1944,12 @@ def test_insert_at_head_still_may_not_ride_on_replace_structure():
     another one is a rule nobody has checked.
     """
     try:
-        parse_module(_replace_module_with_head(
-            "REPLACE STRUCTURE WITH #Length-prefixed ENCODED BY lp-object "
-            "INSERT AT HEAD Head-structure"))
+        parse_module(
+            _replace_module_with_head(
+                "REPLACE STRUCTURE WITH #Length-prefixed ENCODED BY lp-object "
+                "INSERT AT HEAD Head-structure"
+            )
+        )
     except Asn1Error as error:
         assert "22.1.2.8" in str(error), str(error)
     else:
@@ -1805,6 +1960,8 @@ def test_a_head_end_structure_no_module_declares_is_named_in_the_refusal():
     """The reference resolves against `structures`, so a typo is a missing name rather than an
     unsupported clause — which is what it looked like before.
     """
-    _replace_refuses("22.1.2.7",
-                     "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
-                     "INSERT AT HEAD Hed-structure")
+    _replace_refuses(
+        "22.1.2.7",
+        "REPLACE ALL COMPONENTS WITH #Length-prefixed ENCODED BY lp-object "
+        "INSERT AT HEAD Hed-structure",
+    )

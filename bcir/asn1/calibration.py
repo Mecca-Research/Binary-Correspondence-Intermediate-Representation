@@ -84,16 +84,28 @@ def calibration_corpus():
     from .schema import Component, Primitive, Sequence
     from .tags import Universal
 
-    kind = Sequence((
-        Component("small", Primitive(Universal.INTEGER, "INTEGER",
-                                     constraint=ValueRange(0, 255))),
-        Component("wide", Primitive(Universal.INTEGER, "INTEGER")),
-        Component("flag", Primitive(Universal.BOOLEAN, "BOOLEAN")),
-        Component("mode", Primitive(Universal.ENUMERATED, "ENUMERATED",
-                                    enumeration=(("idle", 0), ("busy", 1), ("fault", 7)))),
-        Component("label", Primitive(Universal.UTF8_STRING, "UTF8String",
-                                     constraint=Size(ValueRange(4, 4)))),
-    ), name="Calibration")
+    kind = Sequence(
+        (
+            Component(
+                "small", Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 255))
+            ),
+            Component("wide", Primitive(Universal.INTEGER, "INTEGER")),
+            Component("flag", Primitive(Universal.BOOLEAN, "BOOLEAN")),
+            Component(
+                "mode",
+                Primitive(
+                    Universal.ENUMERATED,
+                    "ENUMERATED",
+                    enumeration=(("idle", 0), ("busy", 1), ("fault", 7)),
+                ),
+            ),
+            Component(
+                "label",
+                Primitive(Universal.UTF8_STRING, "UTF8String", constraint=Size(ValueRange(4, 4))),
+            ),
+        ),
+        name="Calibration",
+    )
     # `mode` is the enumeration's NUMBER rather than its identifier: the format-neutral value
     # stream carries numbers, and each candidate's emitter decides what to write from them —
     # X.690 §8.4 the value, X.691 §14.1 the index, X.697 §22 the identifier. Handing it an
@@ -119,7 +131,7 @@ def corpus_digest() -> str:
     plan = compile_encode_plan(kind, module="calibration", type_name="Calibration")
     stream = flatten(plan, value)
     serialized = plan.serialize()
-    if isinstance(serialized, str):                     # the plan text, on rails that emit it
+    if isinstance(serialized, str):  # the plan text, on rails that emit it
         serialized = serialized.encode("utf-8")
     payload = bytes(serialized) + b"\x00" + bytes(stream)
     return hashlib.sha256(payload).hexdigest()[:16]
@@ -146,7 +158,7 @@ class CandidateRow:
     decode_ns: tuple[int, ...] = ()
 
     def complete(self) -> bool:
-        return (len(self.encode_ns) >= MIN_SAMPLES and len(self.decode_ns) >= MIN_SAMPLES)
+        return len(self.encode_ns) >= MIN_SAMPLES and len(self.decode_ns) >= MIN_SAMPLES
 
     def encode_interval(self) -> Interval:
         return interval_of(list(self.encode_ns))
@@ -198,59 +210,70 @@ class CalibrationRecord:
             out.append(
                 f"declared dedicated, but the CPU accumulated {self.steal_ticks} steal "
                 f"tick(s) during the measured rounds: a hypervisor gave that time to another "
-                f"tenant, which is what `dedicated` denies")
+                f"tenant, which is what `dedicated` denies"
+            )
         if self.tenancy == DEDICATED and self.throttled_usec:
             out.append(
                 f"declared dedicated, but the cgroup throttled the run for "
                 f"{self.throttled_usec} us: a quota took CPU away mid-measurement, so these "
-                f"samples describe the quota as much as the encoders")
+                f"samples describe the quota as much as the encoders"
+            )
         if self.tenancy != DEDICATED:
             out.append(
                 f"tenancy is {self.tenancy!r}: a frozen table steers production selection, "
                 f"and §8 admits a shared runner for validity and trend evidence but never "
-                f"for timing thresholds")
+                f"for timing thresholds"
+            )
         if len(self.cpus) > 1:
             out.append(
                 f"the rounds ran on CPUs {sorted(self.cpus)}: on a big.LITTLE target that is "
                 f"two machines averaged, and a table that describes no existing core would "
-                f"then be frozen and trusted. Pin the run and measure again")
+                f"then be frozen and trusted. Pin the run and measure again"
+            )
         if self.cpus == (-1,):
             out.append(
                 "the host could not report which CPU each round ran on, so core migration is "
-                "unobserved rather than absent — which is not the same thing")
+                "unobserved rather than absent — which is not the same thing"
+            )
         if self.cal_gen < 1:
             out.append(
                 f"cal_gen is {self.cal_gen}: a frozen table is generation-tagged so a "
-                f"certificate can name the calibration it read, and generation 0 names none")
+                f"certificate can name the calibration it read, and generation 0 names none"
+            )
         if not self.rows:
             out.append("the record carries no candidate rows, so there is nothing to freeze")
         for row in self.rows:
             if row.encode_ns and len(row.encode_ns) < MIN_SAMPLES:
                 out.append(
                     f"{row.candidate}: {len(row.encode_ns)} encode rounds is below the "
-                    f"{MIN_SAMPLES} an order-statistic interval needs to cover a median")
+                    f"{MIN_SAMPLES} an order-statistic interval needs to cover a median"
+                )
             if row.decode_ns and len(row.decode_ns) < MIN_SAMPLES:
                 out.append(
                     f"{row.candidate}: {len(row.decode_ns)} decode rounds is below the "
-                    f"{MIN_SAMPLES} an order-statistic interval needs to cover a median")
+                    f"{MIN_SAMPLES} an order-statistic interval needs to cover a median"
+                )
             if not row.encode_ns and not row.decode_ns:
                 out.append(f"{row.candidate}: carries neither axis, so it measures nothing")
         if self.rows and not any(row.complete() for row in self.rows):
             out.append(
                 "no candidate has BOTH axes, so no CostRow can be built and the table would "
-                "be empty")
+                "be empty"
+            )
         if self.method and self.method != TIMING_METHOD:
             out.append(
                 f"timed by harness method {self.method}, but this revision measures with "
                 f"method {TIMING_METHOD}: the rounds were produced a different way, so the "
                 f"figures are not comparable to a current table however similar they look. "
-                f"Re-measure the target")
+                f"Re-measure the target"
+            )
         if self.corpus and self.corpus != corpus_digest():
             out.append(
                 f"measured against corpus {self.corpus} but this revision compiles "
                 f"{corpus_digest()}: the numbers describe a different schema or a different "
                 f"plan format, and comparing them to a current table would be comparing two "
-                f"unlike measurements that happen to have the same shape")
+                f"unlike measurements that happen to have the same shape"
+            )
         return tuple(out)
 
     def admissible(self) -> bool:
@@ -267,18 +290,25 @@ class CalibrationRecord:
         if problems:
             raise Asn1Error(
                 f"calibration for {self.target!r} cannot be frozen into a cost table:\n  - "
-                + "\n  - ".join(problems))
+                + "\n  - ".join(problems)
+            )
         # Never narrower than the clock. See `observed_quantum` for the aarch64 record that
         # forced this: forty-one identical samples are not a precise measurement when the
         # timer only ticks every 52 ns.
         quantum = self.observed_quantum()
         rows = tuple(
-            CostRow(candidate=row.candidate, octets=row.octets,
-                    encode=_at_least_resolution(row.encode_interval(), quantum),
-                    decode=_at_least_resolution(row.decode_interval(), quantum))
-            for row in self.rows if row.complete())
-        return EncodingCostTable(target=self.target, cal_gen=self.cal_gen,
-                                 provenance="measured", rows=rows)
+            CostRow(
+                candidate=row.candidate,
+                octets=row.octets,
+                encode=_at_least_resolution(row.encode_interval(), quantum),
+                decode=_at_least_resolution(row.decode_interval(), quantum),
+            )
+            for row in self.rows
+            if row.complete()
+        )
+        return EncodingCostTable(
+            target=self.target, cal_gen=self.cal_gen, provenance="measured", rows=rows
+        )
 
     def observed_quantum(self) -> float:
         """The granularity this host's clock actually delivered, estimated from the samples.
@@ -302,8 +332,9 @@ class CalibrationRecord:
         A host with a fine clock returns ~1 ns and nothing is widened, which is what the x86
         container does.
         """
-        values = sorted({v for row in self.rows
-                         for axis in (row.encode_ns, row.decode_ns) for v in axis})
+        values = sorted(
+            {v for row in self.rows for axis in (row.encode_ns, row.decode_ns) for v in axis}
+        )
         if len(values) < 2:
             return 1.0
         best = 1.0
@@ -349,10 +380,13 @@ def _at_least_resolution(interval: Interval, quantum: float) -> Interval:
     if quantum <= 1.0 or (interval.high - interval.low) >= quantum:
         return interval
     half = quantum / 2.0
-    return Interval(low=max(0, int(interval.median - half)),
-                    high=int(interval.median + half + 0.5),
-                    median=interval.median, samples=interval.samples,
-                    coverage_ppm=interval.coverage_ppm)
+    return Interval(
+        low=max(0, int(interval.median - half)),
+        high=int(interval.median + half + 0.5),
+        median=interval.median,
+        samples=interval.samples,
+        coverage_ppm=interval.coverage_ppm,
+    )
 
 
 _REQUIRED = ("target", "arch", "tenancy", "cal_gen", "rows")
@@ -368,29 +402,40 @@ def load_records(path: str) -> list[CalibrationRecord]:
         payload = json.load(handle)
     raw = payload.get("targets")
     if not isinstance(raw, list):
-        raise Asn1Error(f"{path}: expected a top-level \"targets\" list")
+        raise Asn1Error(f'{path}: expected a top-level "targets" list')
     records: list[CalibrationRecord] = []
     for entry in raw:
         missing = [name for name in _REQUIRED if name not in entry]
         if missing:
             raise Asn1Error(
                 f"{path}: a calibration record is missing {missing}; every one is a claim "
-                f"about the measurement that cannot be defaulted")
+                f"about the measurement that cannot be defaulted"
+            )
         rows = tuple(
-            CandidateRow(candidate=row["candidate"], octets=int(row["octets"]),
-                         encode_ns=tuple(int(v) for v in row.get("encode_ns", ())),
-                         decode_ns=tuple(int(v) for v in row.get("decode_ns", ())))
-            for row in entry["rows"])
-        records.append(CalibrationRecord(
-            target=entry["target"], arch=entry["arch"], tenancy=entry["tenancy"],
-            cal_gen=int(entry["cal_gen"]), rows=rows,
-            cpus=tuple(int(c) for c in entry.get("cpus", (-1,))),
-            steal_ticks=entry.get("steal_ticks"),
-            throttled_usec=entry.get("throttled_usec"),
-            corpus=entry.get("corpus", ""),
-            counters=entry.get("counters", ""),
-            method=int(entry.get("method", 0)),
-            notes=entry.get("notes", "")))
+            CandidateRow(
+                candidate=row["candidate"],
+                octets=int(row["octets"]),
+                encode_ns=tuple(int(v) for v in row.get("encode_ns", ())),
+                decode_ns=tuple(int(v) for v in row.get("decode_ns", ())),
+            )
+            for row in entry["rows"]
+        )
+        records.append(
+            CalibrationRecord(
+                target=entry["target"],
+                arch=entry["arch"],
+                tenancy=entry["tenancy"],
+                cal_gen=int(entry["cal_gen"]),
+                rows=rows,
+                cpus=tuple(int(c) for c in entry.get("cpus", (-1,))),
+                steal_ticks=entry.get("steal_ticks"),
+                throttled_usec=entry.get("throttled_usec"),
+                corpus=entry.get("corpus", ""),
+                counters=entry.get("counters", ""),
+                method=int(entry.get("method", 0)),
+                notes=entry.get("notes", ""),
+            )
+        )
     return records
 
 
@@ -408,11 +453,14 @@ def render(records: list[CalibrationRecord]) -> str:
         if quantum > 1.0:
             # Say it here, because the intervals below are the raw evidence and several of
             # them will be a single repeated value. That is the clock talking, not certainty.
-            clock = (f"  clock ~{quantum:.1f}ns ({1e3 / quantum:.1f} MHz); intervals below "
-                     f"are RAW and table() widens to this")
+            clock = (
+                f"  clock ~{quantum:.1f}ns ({1e3 / quantum:.1f} MHz); intervals below "
+                f"are RAW and table() widens to this"
+            )
         counters = f"  counters: {record.counters}" if record.counters else ""
-        lines.append(f"{record.target} [{record.arch}] cal_gen={record.cal_gen} {verdict}"
-                     + clock + counters)
+        lines.append(
+            f"{record.target} [{record.arch}] cal_gen={record.cal_gen} {verdict}" + clock + counters
+        )
         for problem in record.refusals():
             lines.append(f"    refused: {problem}")
         for row in record.rows:
@@ -422,13 +470,22 @@ def render(records: list[CalibrationRecord]) -> str:
             if row.decode_ns:
                 axes.append(f"decode {row.decode_interval()}")
             note = "" if row.complete() else "   (one axis only; excluded from the table)"
-            lines.append(f"    {row.candidate:26} {row.octets:5}B  "
-                         + "  ".join(axes) + note)
+            lines.append(f"    {row.candidate:26} {row.octets:5}B  " + "  ".join(axes) + note)
     return "\n".join(lines)
 
 
-def measure(*, target: str, arch: str, tenancy: str, cal_gen: int, cpus, steal_ticks,
-            throttled_usec, notes: str = "", **kwargs) -> CalibrationRecord:
+def measure(
+    *,
+    target: str,
+    arch: str,
+    tenancy: str,
+    cal_gen: int,
+    cpus,
+    steal_ticks,
+    throttled_usec,
+    notes: str = "",
+    **kwargs,
+) -> CalibrationRecord:
     """Run both native benches over `calibration_corpus()` and return the record.
 
     The harness is `native_bench`'s, not a second one. A calibration measured by different
@@ -460,32 +517,61 @@ def measure(*, target: str, arch: str, tenancy: str, cal_gen: int, cpus, steal_t
         try:
             octets[candidate.name] = len(candidate.encode(kind, value))
         except Asn1Error:
-            continue                      # a rule that refuses this schema has no size here
+            continue  # a rule that refuses this schema has no size here
     decode = {sample.candidate: tuple(sample.decode_ns) for sample in decode_samples}
     rows = tuple(
-        CandidateRow(candidate=name, octets=octets.get(name, 0),
-                     encode_ns=tuple(encode_samples.get(name, ())),
-                     decode_ns=decode.get(name, ()))
-        for name in sorted(set(decode) | set(encode_samples)))
+        CandidateRow(
+            candidate=name,
+            octets=octets.get(name, 0),
+            encode_ns=tuple(encode_samples.get(name, ())),
+            decode_ns=decode.get(name, ()),
+        )
+        for name in sorted(set(decode) | set(encode_samples))
+    )
     return CalibrationRecord(
-        target=target, arch=arch, tenancy=tenancy, cal_gen=cal_gen, rows=rows,
-        cpus=tuple(cpus), steal_ticks=steal_ticks, throttled_usec=throttled_usec,
-        corpus=corpus_digest(), counters=native_counters(), method=TIMING_METHOD,
-        notes=notes)
+        target=target,
+        arch=arch,
+        tenancy=tenancy,
+        cal_gen=cal_gen,
+        rows=rows,
+        cpus=tuple(cpus),
+        steal_ticks=steal_ticks,
+        throttled_usec=throttled_usec,
+        corpus=corpus_digest(),
+        counters=native_counters(),
+        method=TIMING_METHOD,
+        notes=notes,
+    )
 
 
 def as_json(record: CalibrationRecord) -> str:
     """A record as the store spells it, ready to paste into `STORE`."""
-    return json.dumps({
-        "target": record.target, "arch": record.arch, "tenancy": record.tenancy,
-        "cal_gen": record.cal_gen, "cpus": list(record.cpus),
-        "steal_ticks": record.steal_ticks, "throttled_usec": record.throttled_usec,
-        "corpus": record.corpus, "counters": record.counters, "method": record.method,
-        "notes": record.notes,
-        "rows": [{"candidate": r.candidate, "octets": r.octets,
-                  "encode_ns": list(r.encode_ns), "decode_ns": list(r.decode_ns)}
-                 for r in record.rows],
-    }, indent=2, sort_keys=True)
+    return json.dumps(
+        {
+            "target": record.target,
+            "arch": record.arch,
+            "tenancy": record.tenancy,
+            "cal_gen": record.cal_gen,
+            "cpus": list(record.cpus),
+            "steal_ticks": record.steal_ticks,
+            "throttled_usec": record.throttled_usec,
+            "corpus": record.corpus,
+            "counters": record.counters,
+            "method": record.method,
+            "notes": record.notes,
+            "rows": [
+                {
+                    "candidate": r.candidate,
+                    "octets": r.octets,
+                    "encode_ns": list(r.encode_ns),
+                    "decode_ns": list(r.decode_ns),
+                }
+                for r in record.rows
+            ],
+        },
+        indent=2,
+        sort_keys=True,
+    )
 
 
 def _main(argv: list[str] | None = None) -> int:
@@ -494,8 +580,11 @@ def _main(argv: list[str] | None = None) -> int:
     import os
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--measure", action="store_true",
-                        help="run the benches here and print a record for the store")
+    parser.add_argument(
+        "--measure",
+        action="store_true",
+        help="run the benches here and print a record for the store",
+    )
     parser.add_argument("--target", default="")
     parser.add_argument("--arch", default="")
     parser.add_argument("--tenancy", default=DEDICATED)
@@ -520,25 +609,43 @@ def _main(argv: list[str] | None = None) -> int:
         return 0 if all(r.admissible() for r in records) else 1
 
     if not args.target:
-        parser.error("--measure needs --target: \"linux\" is not a target, and the record "
-                     "is a claim about a specific machine")
+        parser.error(
+            '--measure needs --target: "linux" is not a target, and the record '
+            "is a claim about a specific machine"
+        )
     import platform
-    record = measure(target=args.target, arch=args.arch or platform.machine(),
-                     tenancy=args.tenancy, cal_gen=args.cal_gen,
-                     cpus=[int(c) for c in args.cpus.split(",") if c != ""],
-                     steal_ticks=args.steal_ticks, throttled_usec=args.throttled_usec,
-                     notes=args.notes, rounds=args.rounds, iterations=args.iterations)
+
+    record = measure(
+        target=args.target,
+        arch=args.arch or platform.machine(),
+        tenancy=args.tenancy,
+        cal_gen=args.cal_gen,
+        cpus=[int(c) for c in args.cpus.split(",") if c != ""],
+        steal_ticks=args.steal_ticks,
+        throttled_usec=args.throttled_usec,
+        notes=args.notes,
+        rounds=args.rounds,
+        iterations=args.iterations,
+    )
     print(as_json(record))
     for problem in record.refusals():
         print(f"# refused: {problem}", flush=True)
     return 0
 
 
-if __name__ == "__main__":                                    # pragma: no cover - CLI
+if __name__ == "__main__":  # pragma: no cover - CLI
     raise SystemExit(_main())
 
 
 __all__ = [
-    "DEDICATED", "STORE", "CalibrationRecord", "CandidateRow", "as_json",
-    "calibration_corpus", "corpus_digest", "load_records", "measure", "render",
+    "DEDICATED",
+    "STORE",
+    "CalibrationRecord",
+    "CandidateRow",
+    "as_json",
+    "calibration_corpus",
+    "corpus_digest",
+    "load_records",
+    "measure",
+    "render",
 ]

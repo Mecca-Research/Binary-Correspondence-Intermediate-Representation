@@ -16,8 +16,18 @@ def _dna(cid, cycles=0, misses=0):
 
 def test_write_then_read_roundtrips_the_atomic_stats():
     ring = TelemetryRing(capacity=8)
-    ring.write(DataDNA(segment_id="s", claim_id=7, cycles=123, bytes=456, misses=5,
-                       thermal=60, voltage=40, utilization=90))
+    ring.write(
+        DataDNA(
+            segment_id="s",
+            claim_id=7,
+            cycles=123,
+            bytes=456,
+            misses=5,
+            thermal=60,
+            voltage=40,
+            utilization=90,
+        )
+    )
     out = ring.read_one()
     assert out.claim_id == 7 and out.cycles == 123 and out.bytes == 456
     assert out.misses == 5 and out.thermal == 60 and out.voltage == 40 and out.utilization == 90
@@ -40,7 +50,7 @@ def test_buffer_is_preallocated_and_shared_zero_copy():
 
 def test_wraparound_drops_oldest_when_full():
     ring = TelemetryRing(capacity=4)
-    for i in range(6):                                   # 2 more than capacity
+    for i in range(6):  # 2 more than capacity
         ring.write(_dna(i))
     drained = ring.drain()
     assert [d.claim_id for d in drained] == [2, 3, 4, 5]  # oldest two overwritten
@@ -59,7 +69,8 @@ def test_ring_plugs_into_the_broker_as_a_sink():
 
 def test_interleaved_read_write_tracks_head_and_tail():
     ring = TelemetryRing(capacity=4)
-    ring.write(_dna(1)); ring.write(_dna(2))
+    ring.write(_dna(1))
+    ring.write(_dna(2))
     assert ring.read_one().claim_id == 1 and ring.pending == 1
     ring.write(_dna(3))
     assert [d.claim_id for d in ring.drain()] == [2, 3] and ring.pending == 0
@@ -71,6 +82,7 @@ def test_ring_is_deterministic():
         for i in range(7):
             r.write(_dna(i, cycles=i))
         return [(d.claim_id, d.cycles) for d in r.drain()], r.stats.dropped
+
     assert run() == run()
 
 

@@ -75,6 +75,7 @@ _FUSIBLE = ("relu", "sigmoid", "tanh", "gelu")
 
 # --- the model / layer representation (a simple, frozen Python carrier) ---------------------------
 
+
 @dataclass(frozen=True)
 class Layer:
     """One DENSE layer of a trained model: a row-major ``out x in`` weight matrix ``W`` (flat,
@@ -86,20 +87,23 @@ class Layer:
 
     n_in: int
     n_out: int
-    W: tuple[float, ...]            # row-major out x in, W[o*n_in + i]
-    b: tuple[float, ...] = ()       # length n_out, or empty for no bias
+    W: tuple[float, ...]  # row-major out x in, W[o*n_in + i]
+    b: tuple[float, ...] = ()  # length n_out, or empty for no bias
     activation: str = "relu"
 
     def __post_init__(self) -> None:
         if self.n_in < 1 or self.n_out < 1:
             raise ValueError(f"layer dims must be >= 1; got n_in={self.n_in} n_out={self.n_out}")
         if len(self.W) != self.n_out * self.n_in:
-            raise ValueError(f"W has {len(self.W)} elements, expected n_out*n_in = "
-                             f"{self.n_out * self.n_in}")
+            raise ValueError(
+                f"W has {len(self.W)} elements, expected n_out*n_in = {self.n_out * self.n_in}"
+            )
         if self.b and len(self.b) != self.n_out:
             raise ValueError(f"bias has {len(self.b)} elements, expected n_out = {self.n_out}")
         if self.activation not in ACTIVATIONS:
-            raise ValueError(f"unknown activation {self.activation!r}; expected one of {ACTIVATIONS}")
+            raise ValueError(
+                f"unknown activation {self.activation!r}; expected one of {ACTIVATIONS}"
+            )
 
     @property
     def has_bias(self) -> bool:
@@ -146,14 +150,18 @@ class InferenceModel:
             raise ValueError("an inference model needs at least one layer")
         for a, c in zip(self.layers, self.layers[1:]):
             if a.n_out != c.n_in:
-                raise ValueError(f"layer chain dim mismatch: a layer outputs {a.n_out} but the next "
-                                 f"expects {c.n_in}")
+                raise ValueError(
+                    f"layer chain dim mismatch: a layer outputs {a.n_out} but the next "
+                    f"expects {c.n_in}"
+                )
         # softmax is the last-axis row reduction -- legal ONLY as the final layer (never an inline
         # epilogue, never mid-chain where its output feeds another matmul as if elementwise).
         for li, layer in enumerate(self.layers):
             if layer.activation == "softmax" and li != len(self.layers) - 1:
-                raise ValueError(f"softmax may only be the FINAL layer (it is a row reduction, not a "
-                                 f"fusible elementwise epilogue); found it at layer {li}")
+                raise ValueError(
+                    f"softmax may only be the FINAL layer (it is a row reduction, not a "
+                    f"fusible elementwise epilogue); found it at layer {li}"
+                )
 
     @property
     def n_in(self) -> int:
@@ -195,6 +203,7 @@ class InferenceModel:
 
 # --- the Q8-quantized path (reuse quantize.py; bake the bridged weights) --------------------------
 
+
 def quantize_model(model: InferenceModel, group_size: int = 0, bits: int = 8) -> InferenceModel:
     """Return a model whose every layer's W and b are the Q8<->f32<->Q8 BRIDGED (round-tripped) weights --
     i.e. quantized to per-group ``bits``-wide codes and dequantized back to float32. Baking the bridged
@@ -214,11 +223,13 @@ def quantize_model(model: InferenceModel, group_size: int = 0, bits: int = 8) ->
         else:
             bq = ()
         new_layers.append(Layer(layer.n_in, layer.n_out, wq, bq, layer.activation))
-    return InferenceModel(tuple(new_layers), quantized_bits=bits, name=model.name,
-                          quant_group_size=group_size)
+    return InferenceModel(
+        tuple(new_layers), quantized_bits=bits, name=model.name, quant_group_size=group_size
+    )
 
 
 # --- baking helpers: a static const float table, literal (small) or #embed (large) ----------------
+
 
 def _float_blob(values) -> bytes:
     """The values as a little-endian float32 blob (the bytes a ``#embed`` bakes -- the table IS the bytes,
@@ -231,7 +242,7 @@ def _fc(v) -> str:
     print like ``1`` would make ``1f`` an invalid constant (a float suffix needs a ``.``/``e``), so force a
     ``.0`` when the formatted text has no decimal point or exponent. The value is unchanged."""
     s = f"{float(v):.9g}"
-    if not any(ch in s for ch in ".eEnN"):     # no '.', no exponent, not inf/nan -> a bare integer
+    if not any(ch in s for ch in ".eEnN"):  # no '.', no exponent, not inf/nan -> a bare integer
         s += ".0"
     return s + "f"
 
@@ -251,25 +262,26 @@ def _embed_array(name: str, values, blob_files: dict[str, bytes]) -> str:
     blob = _float_blob(values)
     blob_files[f"{name}.bin"] = blob
     fallback_bytes = ",\n  ".join(
-        ", ".join(f"0x{byte:02x}" for byte in blob[i:i + 12]) for i in range(0, len(blob), 12))
+        ", ".join(f"0x{byte:02x}" for byte in blob[i : i + 12]) for i in range(0, len(blob), 12)
+    )
     n = len(values)
     macro = f"BCIR_INFER_EMBED_{name.upper()}"
     return (
         f"/* {name}: {n} baked weights via C23 #embed (q8_tables.py pattern); "
         f"__has_embed selects the byte-identical fallback on a pre-#embed toolchain. */\n"
         f"#if defined(__has_embed)\n"
-        f"#  if __has_embed(\"{name}.bin\")\n"
+        f'#  if __has_embed("{name}.bin")\n'
         f"#    define {macro} 1\n"
         f"#  endif\n"
         f"#endif\n"
         f"#if defined({macro}) && {macro}\n"
-        f"static const unsigned char {name}_bytes[] = {{\n#embed \"{name}.bin\"\n}};\n"
+        f'static const unsigned char {name}_bytes[] = {{\n#embed "{name}.bin"\n}};\n'
         f"#else\n"
         f"#define {macro} 0\n"
         f"static const unsigned char {name}_bytes[] = {{\n  {fallback_bytes}\n}};\n"
         f"#endif\n"
-        f"_Static_assert(sizeof({name}_bytes) == {n} * 4, \"baked {name} must be {n} little-endian "
-        f"float32\");\n"
+        f'_Static_assert(sizeof({name}_bytes) == {n} * 4, "baked {name} must be {n} little-endian '
+        f'float32");\n'
         f"static inline float {name}(unsigned i) {{\n"
         f"  union {{ unsigned char b[4]; float f; }} u;\n"
         f"  u.b[0] = {name}_bytes[i*4+0]; u.b[1] = {name}_bytes[i*4+1];\n"
@@ -283,13 +295,16 @@ def _embed_array(name: str, values, blob_files: dict[str, bytes]) -> str:
 class _EmitContext:
     """Carries the blob files an emit needs written beside the .c (for the ``#embed`` tables). Empty for an
     all-literal (small-model) emit."""
+
     blob_files: dict[str, bytes] = field(default_factory=dict)
 
 
 # --- the kernel emitter ---------------------------------------------------------------------------
 
-def emit_inference_kernel_c(model: InferenceModel, fn_name: str = "bcir_infer",
-                            _ctx: _EmitContext | None = None) -> str:
+
+def emit_inference_kernel_c(
+    model: InferenceModel, fn_name: str = "bcir_infer", _ctx: _EmitContext | None = None
+) -> str:
     """Emit ONE self-contained C function ``void fn_name(const float *x, float *y)`` that BAKES every
     layer's weights as ``static const`` arrays and computes the forward pass end-to-end, reusing the G2
     fused inline-activation epilogue per layer. ``x`` is the length-``model.n_in`` input; ``y`` is the
@@ -307,15 +322,21 @@ def emit_inference_kernel_c(model: InferenceModel, fn_name: str = "bcir_infer",
 
     # --- the attestation header (proof-carrying / honest scope) ---
     shape_chain = " -> ".join([str(model.n_in)] + [str(l.n_out) for l in model.layers])
-    acts = ", ".join(f"L{li}:{l.activation}{'+bias' if l.has_bias else ''}"
-                     for li, l in enumerate(model.layers))
-    quant_note = (f"Q8-quantized (bits={model.quantized_bits}, per-{'tensor' if not model.quant_group_size else f'group{model.quant_group_size}'}); "
-                  f"R17 accuracy bound = {model.r17_bound} ULP at the realized per-group grid "
-                  f"(quantization_error_bound -- the SOLE certified error; the kernel math is exact-or-"
-                  f"trusted-libm)" if not model.is_exact
-                  else "f32-baked: EXACT (no Q8 bridge -- bit-exact to the reference for all-relu, float "
-                       "round-off with a transcendental)")
-    libm_note = (f" libm edges: {', '.join(edges)} (link -lm)." if edges else " no libm (clean rail).")
+    acts = ", ".join(
+        f"L{li}:{l.activation}{'+bias' if l.has_bias else ''}" for li, l in enumerate(model.layers)
+    )
+    quant_note = (
+        f"Q8-quantized (bits={model.quantized_bits}, per-{'tensor' if not model.quant_group_size else f'group{model.quant_group_size}'}); "
+        f"R17 accuracy bound = {model.r17_bound} ULP at the realized per-group grid "
+        f"(quantization_error_bound -- the SOLE certified error; the kernel math is exact-or-"
+        f"trusted-libm)"
+        if not model.is_exact
+        else "f32-baked: EXACT (no Q8 bridge -- bit-exact to the reference for all-relu, float "
+        "round-off with a transcendental)"
+    )
+    libm_note = (
+        f" libm edges: {', '.join(edges)} (link -lm)." if edges else " no libm (clean rail)."
+    )
     head = (
         f"/* BCIR -> G5 baked-weights inference kernel '{model.name}' (Pillar 5a; once trained the weights\n"
         f" * are CONSTANT -> baked as static const, compiled in, no runtime load). Forward pass:\n"
@@ -330,7 +351,7 @@ def emit_inference_kernel_c(model: InferenceModel, fn_name: str = "bcir_infer",
 
     # --- bake every layer's W and b (literal for small; #embed for large) ---
     baked = []
-    embedded_flags = []      # per layer: (W_is_embedded, b_is_embedded)
+    embedded_flags = []  # per layer: (W_is_embedded, b_is_embedded)
     for li, layer in enumerate(model.layers):
         w_embed = len(layer.W) > _EMBED_THRESHOLD
         if w_embed:
@@ -351,7 +372,8 @@ def emit_inference_kernel_c(model: InferenceModel, fn_name: str = "bcir_infer",
     # The final layer writes `y` directly, so its output needs no buffer -> declare h0 .. h{N-2} only (a
     # net with a single layer declares none). This keeps the emit -Wall/-Wextra clean (no unused buffer).
     scratch = "".join(
-        f"  static float h{li}[{model.layers[li].n_out}];\n" for li in range(len(model.layers) - 1))
+        f"  static float h{li}[{model.layers[li].n_out}];\n" for li in range(len(model.layers) - 1)
+    )
 
     body_lines = [f"void {fn_name}(const float *x, float *y) {{"]
     body_lines.append(scratch)
@@ -360,8 +382,8 @@ def emit_inference_kernel_c(model: InferenceModel, fn_name: str = "bcir_infer",
         src = "x" if li == 0 else f"h{li - 1}"
         dst = "y" if li == len(model.layers) - 1 else f"h{li}"
         w_embed, b_embed = embedded_flags[li]
-        w_acc = (f"W{li}(o * {layer.n_in} + i)" if w_embed else f"W{li}[o * {layer.n_in} + i]")
-        b_acc = (f"b{li}(o)" if b_embed else f"b{li}[o]")
+        w_acc = f"W{li}(o * {layer.n_in} + i)" if w_embed else f"W{li}[o * {layer.n_in} + i]"
+        b_acc = f"b{li}(o)" if b_embed else f"b{li}[o]"
         bias_add = f"      s += {b_acc};\n" if layer.has_bias else ""
         if layer.activation == "softmax":
             # the final softmax: a separate (non-fused) pass. First the affine pre-activation into dst, then
@@ -380,7 +402,8 @@ def emit_inference_kernel_c(model: InferenceModel, fn_name: str = "bcir_infer",
                 f"    for (size_t o = 0; o < {layer.n_out}; ++o) {{ {dst}[o] = expf({dst}[o] - m); "
                 f"sum += {dst}[o]; }}  /* c.call.libm:expf */\n"
                 f"    if (sum == 0.0f) sum = 1.0f;\n"
-                f"    for (size_t o = 0; o < {layer.n_out}; ++o) {dst}[o] /= sum; }}\n")
+                f"    for (size_t o = 0; o < {layer.n_out}; ++o) {dst}[o] /= sum; }}\n"
+            )
         else:
             # the fused inline-activation epilogue (the G2 building block): act applied to s in-register.
             expr, _ = _inline_activation_expr(layer.activation, "s")
@@ -392,20 +415,24 @@ def emit_inference_kernel_c(model: InferenceModel, fn_name: str = "bcir_infer",
                 f"    for (size_t i = 0; i < {layer.n_in}; ++i) s += {w_acc} * {src}[i];\n"
                 f"{bias_add}"
                 f"    {dst}[o] = {expr};   /* inline activation epilogue -- no separate pass */\n"
-                f"  }}\n")
+                f"  }}\n"
+            )
     body_lines.append("}\n")
     return head + "\n" + "".join(baked) + "\n" + "".join(body_lines)
 
 
 # --- compile + run the emitted kernel against the Python reference (the gate that matters) ---------
 
+
 def _which(name: str) -> str | None:
     from shutil import which
+
     return which(name)
 
 
-def compile_and_run_inference_c(model: InferenceModel, x: list[float], fn_name: str = "bcir_infer",
-                                workdir: str | None = None) -> tuple[bool, list[float], str]:
+def compile_and_run_inference_c(
+    model: InferenceModel, x: list[float], fn_name: str = "bcir_infer", workdir: str | None = None
+) -> tuple[bool, list[float], str]:
     """Emit the baked-weights kernel + a tiny ``main`` that runs it on ``x`` and prints ``y``, compile
     (writing any ``#embed`` blobs beside the .c), run, and return ``(ok, y_values, combined_output)``.
     The caller compares ``y_values`` to ``model.forward(x)`` (bit-exact for all-relu f32, float round-off
@@ -430,7 +457,8 @@ def compile_and_run_inference_c(model: InferenceModel, x: list[float], fn_name: 
         f"  float y[{model.n_out}];\n"
         f"  {fn_name}(x, y);\n"
         f'  for (int i = 0; i < {model.n_out}; ++i) printf("%.9g ", y[i]);\n'
-        f"  return 0;\n}}\n")
+        f"  return 0;\n}}\n"
+    )
 
     created = workdir is None
     workdir = workdir or tempfile.mkdtemp(prefix="bcir-infer-")
@@ -439,18 +467,24 @@ def compile_and_run_inference_c(model: InferenceModel, x: list[float], fn_name: 
         exe = os.path.join(workdir, "infer")
         with open(src, "w") as f:
             f.write(kernel + main)
-        for fname, blob in ctx.blob_files.items():       # the #embed blobs, beside the .c
+        for fname, blob in ctx.blob_files.items():  # the #embed blobs, beside the .c
             with open(os.path.join(workdir, fname), "wb") as f:
                 f.write(blob)
         build = None
         for std in ("-std=c23", "-std=c2x", "-std=c11"):
-            build = subprocess.run(host_link_args(
-                [cc, std, "-O2", "-Wall", "-Wextra", src, "-lm", "-o", exe]),
-                                   capture_output=True, text=True)
+            build = subprocess.run(
+                host_link_args([cc, std, "-O2", "-Wall", "-Wextra", src, "-lm", "-o", exe]),
+                capture_output=True,
+                text=True,
+            )
             if build.returncode == 0:
                 break
         if build is None or build.returncode != 0:
-            return False, [], "inference build failed:\n" + (build.stdout + build.stderr if build else "")
+            return (
+                False,
+                [],
+                "inference build failed:\n" + (build.stdout + build.stderr if build else ""),
+            )
         run = subprocess.run([exe], capture_output=True, text=True)
         if run.returncode != 0:
             return False, [], "inference run failed:\n" + run.stdout + run.stderr
@@ -459,4 +493,5 @@ def compile_and_run_inference_c(model: InferenceModel, x: list[float], fn_name: 
     finally:
         if created:
             import shutil
+
             shutil.rmtree(workdir, ignore_errors=True)

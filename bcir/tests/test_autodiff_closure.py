@@ -57,8 +57,24 @@ from bcir.kbcir.autodiff import (
 # the module's DERIVED CLOSED_SET equals this literal AND equals _LOWERABLE -- three independent
 # spellings forced to agree, so none can silently drift).
 _CLOSED_SET_LITERAL = frozenset(
-    {"const", "var", "neg", "add", "sub", "mul", "div", "dot", "select",
-     "exp", "log", "sqrt", "tanh", "sin", "cos"})
+    {
+        "const",
+        "var",
+        "neg",
+        "add",
+        "sub",
+        "mul",
+        "div",
+        "dot",
+        "select",
+        "exp",
+        "log",
+        "sqrt",
+        "tanh",
+        "sin",
+        "cos",
+    }
+)
 
 # The per-primitive closure statement: for each differentiable op, the closed-set op kinds its
 # adjoint (VJP) rule is allowed to emit. This is the human-readable CLAIM; the test PROVES it by
@@ -66,23 +82,24 @@ _CLOSED_SET_LITERAL = frozenset(
 # table cannot drift from the rules without a test failure. ('var' appears wherever a rule passes
 # the incoming-adjoint node through unchanged; it is a closed-set leaf.)
 _EXPECTED_EMITTED = {
-    "neg":    {"neg", "var"},                  # grad_a = -gz
-    "add":    {"var"},                         # grad_a = grad_b = gz (pass-through)
-    "sub":    {"neg", "var"},                  # grad_a = gz ; grad_b = -gz
-    "mul":    {"mul", "var"},                  # grad_a = gz*b ; grad_b = gz*a
-    "div":    {"div", "mul", "neg", "var"},    # grad_a = gz/b ; grad_b = -(gz*a)/(b*b)
-    "dot":    {"mul", "var"},                  # grad_u_i = gz*v_i ; grad_v_i = gz*u_i
-    "select": {"select", "const", "var"},      # grad_a = select(cond,gz,0) ; grad_b = select(cond,0,gz)
-    "exp":    {"mul", "exp", "var"},
-    "log":    {"div", "var"},
-    "sqrt":   {"div", "mul", "sqrt", "const", "var"},
-    "tanh":   {"mul", "sub", "tanh", "const", "var"},
-    "sin":    {"mul", "cos", "var"},
-    "cos":    {"neg", "mul", "sin", "var"},
+    "neg": {"neg", "var"},  # grad_a = -gz
+    "add": {"var"},  # grad_a = grad_b = gz (pass-through)
+    "sub": {"neg", "var"},  # grad_a = gz ; grad_b = -gz
+    "mul": {"mul", "var"},  # grad_a = gz*b ; grad_b = gz*a
+    "div": {"div", "mul", "neg", "var"},  # grad_a = gz/b ; grad_b = -(gz*a)/(b*b)
+    "dot": {"mul", "var"},  # grad_u_i = gz*v_i ; grad_v_i = gz*u_i
+    "select": {"select", "const", "var"},  # grad_a = select(cond,gz,0) ; grad_b = select(cond,0,gz)
+    "exp": {"mul", "exp", "var"},
+    "log": {"div", "var"},
+    "sqrt": {"div", "mul", "sqrt", "const", "var"},
+    "tanh": {"mul", "sub", "tanh", "const", "var"},
+    "sin": {"mul", "cos", "var"},
+    "cos": {"neg", "mul", "sin", "var"},
 }
 
 
 # --- (1) closure of the SYMBOLIC adjoint: d/dx : ClosedSet -> DAG(ClosedSet) ----------
+
 
 def test_symbolic_closure_every_vjp_stays_in_the_closed_set():
     """THE closure proof: for every differentiable primitive, the symbolic VJP rule emits only
@@ -93,7 +110,8 @@ def test_symbolic_closure_every_vjp_stays_in_the_closed_set():
     for op, emitted in report.items():
         assert emitted <= CLOSED_SET, (
             f"CLOSURE VIOLATED: adjoint of {op!r} emits {sorted(emitted - CLOSED_SET)} "
-            f"OUTSIDE the closed set {sorted(CLOSED_SET)}")
+            f"OUTSIDE the closed set {sorted(CLOSED_SET)}"
+        )
 
 
 def test_symbolic_closure_per_primitive_emitted_ops_match_the_claimed_table():
@@ -103,7 +121,8 @@ def test_symbolic_closure_per_primitive_emitted_ops_match_the_claimed_table():
     for op in sorted(differentiable_ops()):
         observed = set(emitted_ops_for(op))
         assert observed == _EXPECTED_EMITTED[op], (
-            f"{op!r} adjoint emits {sorted(observed)}, expected {sorted(_EXPECTED_EMITTED[op])}")
+            f"{op!r} adjoint emits {sorted(observed)}, expected {sorted(_EXPECTED_EMITTED[op])}"
+        )
 
 
 def test_symbolic_closure_holds_under_repeated_differentiation_hessian():
@@ -115,8 +134,8 @@ def test_symbolic_closure_holds_under_repeated_differentiation_hessian():
     t = Tape()
     a, b = t.var("a"), t.var("b")
     # mixes mul/div/add/sub/neg via the rules; a real multi-op expression.
-    out = t.div(t.sub(t.mul(t.mul(a, a), b), b), t.add(a, b))    # (a*a*b - b)/(a+b)
-    first = grad_graph(t, out, ["a", "b"])                       # gradient as closed-set nodes
+    out = t.div(t.sub(t.mul(t.mul(a, a), b), b), t.add(a, b))  # (a*a*b - b)/(a+b)
+    first = grad_graph(t, out, ["a", "b"])  # gradient as closed-set nodes
     # differentiate the gradient nodes AGAIN -> the second-order gradient nodes.
     second = []
     for gnid in first.values():
@@ -141,6 +160,7 @@ def test_symbolic_closure_holds_under_repeated_differentiation_hessian():
 
 # --- (2) closure of the NUMERIC adjoint, tied to the proven symbolic DAG --------------
 
+
 def test_numeric_adjoint_matches_the_proven_closed_symbolic_dag():
     """The numeric ``_BACKWARD`` rule computes exactly the VALUE of the (proven-closed) symbolic
     DAG, at a random point -- so the numeric adjoint's arithmetic is exactly the closed-set
@@ -148,10 +168,12 @@ def test_numeric_adjoint_matches_the_proven_closed_symbolic_dag():
     tolerance."""
     for op in sorted(differentiable_ops()):
         assert numeric_matches_symbolic_vjp(op, seed=0xB3), (
-            f"numeric adjoint of {op!r} disagrees with its proven-closed symbolic twin")
+            f"numeric adjoint of {op!r} disagrees with its proven-closed symbolic twin"
+        )
 
 
 # --- (3) registry completeness: a bijection ops <-> rules, no orphans, no missing -----
+
 
 def test_registry_is_a_bijection_with_the_differentiable_ops():
     """Every differentiable primitive has EXACTLY one backward rule and every rule corresponds to
@@ -160,10 +182,12 @@ def test_registry_is_a_bijection_with_the_differentiable_ops():
     rc = registry_completeness()
     assert rc["backward_complete"], (
         f"_BACKWARD not a bijection: missing={sorted(rc['missing_backward'])} "
-        f"orphan={sorted(rc['orphan_backward'])}")
+        f"orphan={sorted(rc['orphan_backward'])}"
+    )
     assert rc["backward_sym_complete"], (
         f"_BACKWARD_SYM not a bijection: missing={sorted(rc['missing_backward_sym'])} "
-        f"orphan={sorted(rc['orphan_backward_sym'])}")
+        f"orphan={sorted(rc['orphan_backward_sym'])}"
+    )
 
 
 def test_leaves_carry_no_backward_rule():
@@ -180,10 +204,12 @@ def test_numeric_and_symbolic_registries_cover_the_same_ops():
     symbolically differentiated for higher order, and vice versa)."""
     rc = registry_completeness()
     assert rc["backward_keys"] == rc["backward_sym_keys"], (
-        rc["backward_keys"] ^ rc["backward_sym_keys"])
+        rc["backward_keys"] ^ rc["backward_sym_keys"]
+    )
 
 
 # --- (4) single source of truth: the closed set agrees everywhere ---------------------
+
 
 def test_closed_set_is_a_single_source_of_truth():
     """Three independent spellings of 'the closed set' must AGREE: the module's CLOSED_SET
@@ -202,13 +228,14 @@ def test_differentiable_ops_are_the_closed_set_minus_leaves():
 
 # --- a tiny end-to-end sanity: a concrete gradient is a fixed-vocabulary DAG ----------
 
+
 def test_concrete_gradient_dag_is_in_the_closed_vocabulary_and_correct():
     """End-to-end: a concrete gradient graph is BOTH numerically correct AND entirely within the
     closed vocabulary -- the canonical-form property (closed + hash-consed) made concrete on one
     expression."""
     t = Tape()
     a, b = t.var("a"), t.var("b")
-    out = t.div(t.mul(t.mul(a, a), b), t.add(a, b))            # (a*a*b)/(a+b)
+    out = t.div(t.mul(t.mul(a, a), b), t.add(a, b))  # (a*a*b)/(a+b)
     env = {"a": 1.7, "b": -2.3}
     gnodes = grad_graph(t, out, ["a", "b"])
 
@@ -226,11 +253,12 @@ def test_concrete_gradient_dag_is_in_the_closed_vocabulary_and_correct():
 
     numeric = grad(t, out, env).grads
     for name, gnid in gnodes.items():
-        assert ops_reachable(gnid) <= CLOSED_SET                # fixed vocabulary
-        assert abs(evaluate(t, gnid, env) - numeric[name]) < 1e-9   # and correct
+        assert ops_reachable(gnid) <= CLOSED_SET  # fixed vocabulary
+        assert abs(evaluate(t, gnid, env) - numeric[name]) < 1e-9  # and correct
 
 
 # --- a human-readable report (printed when run as a script) --------------------------
+
 
 def _print_closure_report() -> None:
     """Print the per-primitive closure result + registry/source-of-truth status. Called by the
@@ -246,8 +274,10 @@ def _print_closure_report() -> None:
         ok = report[op] <= CLOSED_SET
         print(f"    {op:7s} -> {str(emitted):45s} in-closed-set={ok}")
     rc = registry_completeness()
-    print(f"  registry completeness: _BACKWARD bijection={rc['backward_complete']}  "
-          f"_BACKWARD_SYM bijection={rc['backward_sym_complete']}")
+    print(
+        f"  registry completeness: _BACKWARD bijection={rc['backward_complete']}  "
+        f"_BACKWARD_SYM bijection={rc['backward_sym_complete']}"
+    )
     print(f"  _LOWERABLE agrees with CLOSED_SET: {closed_set_agrees_with_lowerable()}")
 
 

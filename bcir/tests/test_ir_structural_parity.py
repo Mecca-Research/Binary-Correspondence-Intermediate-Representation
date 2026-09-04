@@ -54,8 +54,12 @@ import tempfile
 
 from bcir.frontends.cfront import compile_unit
 from bcir.model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
-from bcir.verify import (cfront_structural_canon, cfront_structural_digest,
-                         cfront_unit_claim_ids_unique, verify)
+from bcir.verify import (
+    cfront_structural_canon,
+    cfront_structural_digest,
+    cfront_unit_claim_ids_unique,
+    verify,
+)
 
 _C = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "runtime", "c")
 
@@ -84,7 +88,8 @@ def _counts(lowered) -> tuple:
     lf = fns[next(reversed(fns))]
     cl = lf.claims
     return (
-        len(fns), len(cl),
+        len(fns),
+        len(cl),
         sum(1 for c in cl if c.op == "c.load" and c.domain == Domain.MMIO),
         sum(1 for c in cl if c.op == "c.bf.get"),
         sum(1 for c in cl if c.op == "c.const"),
@@ -103,6 +108,7 @@ def _adds(lf):
 
 # --- the count-preserving-corruption proof (pure Python; always runs) -----------------------------
 
+
 def test_swap_operands_between_same_op_claims_changes_digest_not_counts():
     """Swap the read operands between the two `c.bin.add` claims (rd permuted). The counts are
     untouched; the structural digest changes (the two adds now bind different value-number trees)."""
@@ -112,8 +118,12 @@ def test_swap_operands_between_same_op_claims_changes_digest_not_counts():
     a = _adds(mut.functions["f"])
     assert len(a) >= 2, "fixture must have >=2 c.bin.add claims"
     a[0].rd, a[1].rd = a[1].rd, a[0].rd
-    assert _counts(mut) == base_counts, "operand swap must preserve the 9 counts (old gate misses it)"
-    assert cfront_structural_digest(mut) != base_digest, "operand swap must change the structural digest"
+    assert _counts(mut) == base_counts, (
+        "operand swap must preserve the 9 counts (old gate misses it)"
+    )
+    assert cfront_structural_digest(mut) != base_digest, (
+        "operand swap must change the structural digest"
+    )
 
 
 def test_substitute_binop_changes_digest_not_counts():
@@ -124,8 +134,12 @@ def test_substitute_binop_changes_digest_not_counts():
     mut = copy.deepcopy(base)
     a = _adds(mut.functions["f"])
     a[0].op, a[0].opcode = "c.bin.sub", Opcode.SUB
-    assert _counts(mut) == base_counts, "op substitution must preserve the 9 counts (old gate misses it)"
-    assert cfront_structural_digest(mut) != base_digest, "op substitution must change the structural digest"
+    assert _counts(mut) == base_counts, (
+        "op substitution must preserve the 9 counts (old gate misses it)"
+    )
+    assert cfront_structural_digest(mut) != base_digest, (
+        "op substitution must change the structural digest"
+    )
 
 
 def test_reverse_noncommutative_operands_changes_digest():
@@ -134,25 +148,32 @@ def test_reverse_noncommutative_operands_changes_digest():
     params value-number distinctly (in:p0 vs in:p1) -- the false-negative the adversary found, closed.
     A commutative op's reversal is intentionally a no-op (it cannot change the computed value), which is
     also asserted (and is what preserves cross-rail byte-identity)."""
-    for src, op in (("unsigned f(unsigned a,unsigned b){ return a-b; }", "c.bin.sub"),
-                    ("unsigned f(unsigned a,unsigned b){ return a/b; }", "c.bin.div"),
-                    ("unsigned f(unsigned a,unsigned b){ return a<b; }", "c.bin.lt")):
+    for src, op in (
+        ("unsigned f(unsigned a,unsigned b){ return a-b; }", "c.bin.sub"),
+        ("unsigned f(unsigned a,unsigned b){ return a/b; }", "c.bin.div"),
+        ("unsigned f(unsigned a,unsigned b){ return a<b; }", "c.bin.lt"),
+    ):
         base = compile_unit(src, check_clang=False).lowered
         base_counts, base_digest = _counts(base), cfront_structural_digest(base)
         mut = copy.deepcopy(base)
         cl = next(c for c in mut.functions["f"].claims if c.op == op)
         cl.rd = (cl.rd[1], cl.rd[0])
         assert _counts(mut) == base_counts, f"{op} reversal must preserve the 9 counts"
-        assert cfront_structural_digest(mut) != base_digest, \
+        assert cfront_structural_digest(mut) != base_digest, (
             f"reversing a non-commutative {op}'s operands must change the digest"
+        )
 
     # commutative add: reversal is a value-preserving no-op (order-insensitive -> cross-rail safe).
-    add = compile_unit("unsigned f(unsigned a,unsigned b){ return a+b; }", check_clang=False).lowered
+    add = compile_unit(
+        "unsigned f(unsigned a,unsigned b){ return a+b; }", check_clang=False
+    ).lowered
     add_digest = cfront_structural_digest(add)
     radd = copy.deepcopy(add)
     c = next(c for c in radd.functions["f"].claims if c.op == "c.bin.add")
     c.rd = (c.rd[1], c.rd[0])
-    assert cfront_structural_digest(radd) == add_digest, "a commutative add reversal is a value no-op"
+    assert cfront_structural_digest(radd) == add_digest, (
+        "a commutative add reversal is a value no-op"
+    )
 
 
 def test_constant_value_tamper_changes_digest_not_counts():
@@ -164,21 +185,31 @@ def test_constant_value_tamper_changes_digest_not_counts():
     mut = copy.deepcopy(base)
     cst = next(c for c in mut.functions["f"].claims if c.op == "c.const")
     cst.imm = tuple(999 if int(v) == 5 else int(v) for v in cst.imm)
-    assert _counts(mut) == base_counts, "a constant-value tamper preserves the 9 counts (old gate misses it)"
-    assert cfront_structural_digest(mut) != base_digest, "a c.const imm tamper must change the digest"
+    assert _counts(mut) == base_counts, (
+        "a constant-value tamper preserves the 9 counts (old gate misses it)"
+    )
+    assert cfront_structural_digest(mut) != base_digest, (
+        "a c.const imm tamper must change the digest"
+    )
 
 
 def test_cast_width_change_changes_digest_not_counts():
     """Change a c.cast target width (uint8_t -> uint64_t). The counts are unchanged, but the digest
     changes because the c.cast `:WIDTH` suffix is kept in the record -- the cast-stripping false-negative
     the adversary found, closed (only `c.call.vaarg`'s rail-divergent suffix is stripped)."""
-    base = compile_unit("unsigned f(unsigned a){ return (unsigned char)a; }", check_clang=False).lowered
+    base = compile_unit(
+        "unsigned f(unsigned a){ return (unsigned char)a; }", check_clang=False
+    ).lowered
     base_counts, base_digest = _counts(base), cfront_structural_digest(base)
     mut = copy.deepcopy(base)
     cast = next(c for c in mut.functions["f"].claims if c.op.startswith("c.cast:"))
     cast.op = "c.cast:uint64_t"
-    assert _counts(mut) == base_counts, "a cast-width change preserves the 9 counts (old gate misses it)"
-    assert cfront_structural_digest(mut) != base_digest, "a c.cast width change must change the digest"
+    assert _counts(mut) == base_counts, (
+        "a cast-width change preserves the 9 counts (old gate misses it)"
+    )
+    assert cfront_structural_digest(mut) != base_digest, (
+        "a c.cast width change must change the digest"
+    )
 
 
 def test_member_access_redirection_changes_digest():
@@ -186,16 +217,28 @@ def test_member_access_redirection_changes_digest():
     rides in the c.load (and c.addrof) imm, now folded into the record. The 9-count summary and R1.1 are
     blind to this (same op counts, same ids); the emitted C differs (`+0` vs `+4`) and runs differently.
     The imm-omission false-negative the adversary found, closed."""
-    sx = cfront_structural_digest(compile_unit(
-        "struct S{int x;int y;}; int f(struct S*s){return s->x;}", check_clang=False).lowered)
-    sy = cfront_structural_digest(compile_unit(
-        "struct S{int x;int y;}; int f(struct S*s){return s->y;}", check_clang=False).lowered)
+    sx = cfront_structural_digest(
+        compile_unit(
+            "struct S{int x;int y;}; int f(struct S*s){return s->x;}", check_clang=False
+        ).lowered
+    )
+    sy = cfront_structural_digest(
+        compile_unit(
+            "struct S{int x;int y;}; int f(struct S*s){return s->y;}", check_clang=False
+        ).lowered
+    )
     assert sx != sy, "reading s->x vs s->y must change the digest (member offset folded)"
     # &s->x vs &s->y (the c.addrof offset imm) likewise.
-    ax = cfront_structural_digest(compile_unit(
-        "struct S{int x;int y;}; int* f(struct S*s){return &s->x;}", check_clang=False).lowered)
-    ay = cfront_structural_digest(compile_unit(
-        "struct S{int x;int y;}; int* f(struct S*s){return &s->y;}", check_clang=False).lowered)
+    ax = cfront_structural_digest(
+        compile_unit(
+            "struct S{int x;int y;}; int* f(struct S*s){return &s->x;}", check_clang=False
+        ).lowered
+    )
+    ay = cfront_structural_digest(
+        compile_unit(
+            "struct S{int x;int y;}; int* f(struct S*s){return &s->y;}", check_clang=False
+        ).lowered
+    )
     assert ax != ay, "&s->x vs &s->y must change the digest (addrof offset folded)"
 
 
@@ -203,15 +246,29 @@ def test_bitfield_layout_and_signedness_change_digest():
     """A bitfield member redirection (`p->a` vs `p->b`: different bit-offset/width) and a
     signed-vs-unsigned bitfield (different sign-extension) change the digest -- the bit offset, width and
     signedness ride in the c.bf.get/c.bf.set imm, now folded. The 9-count summary is blind to all of it."""
-    pa = cfront_structural_digest(compile_unit(
-        "struct P{unsigned a:3; unsigned b:5;}; unsigned f(struct P*p){return p->a;}", check_clang=False).lowered)
-    pb = cfront_structural_digest(compile_unit(
-        "struct P{unsigned a:3; unsigned b:5;}; unsigned f(struct P*p){return p->b;}", check_clang=False).lowered)
+    pa = cfront_structural_digest(
+        compile_unit(
+            "struct P{unsigned a:3; unsigned b:5;}; unsigned f(struct P*p){return p->a;}",
+            check_clang=False,
+        ).lowered
+    )
+    pb = cfront_structural_digest(
+        compile_unit(
+            "struct P{unsigned a:3; unsigned b:5;}; unsigned f(struct P*p){return p->b;}",
+            check_clang=False,
+        ).lowered
+    )
     assert pa != pb, "bitfield p->a vs p->b must change the digest (bit-offset/width folded)"
-    sgn = cfront_structural_digest(compile_unit(
-        "struct P{signed a:4;}; int f(struct P*p){return p->a;}", check_clang=False).lowered)
-    uns = cfront_structural_digest(compile_unit(
-        "struct P{unsigned a:4;}; unsigned f(struct P*p){return p->a;}", check_clang=False).lowered)
+    sgn = cfront_structural_digest(
+        compile_unit(
+            "struct P{signed a:4;}; int f(struct P*p){return p->a;}", check_clang=False
+        ).lowered
+    )
+    uns = cfront_structural_digest(
+        compile_unit(
+            "struct P{unsigned a:4;}; unsigned f(struct P*p){return p->a;}", check_clang=False
+        ).lowered
+    )
     assert sgn != uns, "a signed-vs-unsigned bitfield must change the digest (sign bit folded)"
 
 
@@ -221,7 +278,9 @@ def test_sink_wr_redirect_changes_digest():
     record changes (wr is rail-private and excluded), but the OBSERVABLE-OUTPUT anchor (the return
     value's LAST-writer value-number) changes -- the wr-absent-from-record false-negative the adversary
     found, closed."""
-    base = compile_unit("int f(int a,int b){ int t=a*b; int u=a+b; return t; }", check_clang=False).lowered
+    base = compile_unit(
+        "int f(int a,int b){ int t=a*b; int u=a+b; return t; }", check_clang=False
+    ).lowered
     base_counts, base_digest = _counts(base), cfront_structural_digest(base)
     mut = copy.deepcopy(base)
     lf = mut.functions["f"]
@@ -235,9 +294,12 @@ def test_sink_wr_redirect_changes_digest():
                 redirected = True
                 break
     assert redirected, "fixture must have a sink copy to redirect"
-    assert _counts(mut) == base_counts, "a sink-wr redirect preserves the 9 counts (old gate misses it)"
-    assert cfront_structural_digest(mut) != base_digest, \
+    assert _counts(mut) == base_counts, (
+        "a sink-wr redirect preserves the 9 counts (old gate misses it)"
+    )
+    assert cfront_structural_digest(mut) != base_digest, (
         "a sink-wr redirect (return t -> return u) must change the digest via the observable-output anchor"
+    )
 
 
 def test_store_target_redirect_changes_digest():
@@ -249,9 +311,11 @@ def test_store_target_redirect_changes_digest():
     mut = copy.deepcopy(base)
     lf = mut.functions["g"]
     store = next(c for c in lf.claims if c.op == "c.store")
-    q_rid = lf.params[1][1]                              # redirect the store dest from p to q
+    q_rid = lf.params[1][1]  # redirect the store dest from p to q
     store.rd = (q_rid,) + tuple(store.rd[1:])
-    assert cfront_structural_digest(mut) != base_digest, "a store-target redirect must change the digest"
+    assert cfront_structural_digest(mut) != base_digest, (
+        "a store-target redirect must change the digest"
+    )
 
 
 def test_redirect_call_to_other_defined_function_changes_digest_not_counts():
@@ -267,8 +331,12 @@ def test_redirect_call_to_other_defined_function_changes_digest_not_counts():
             redirected = True
             break
     assert redirected, "fixture must contain a direct call to foo"
-    assert _counts(mut) == base_counts, "call redirect must preserve the 9 counts (old gate misses it)"
-    assert cfront_structural_digest(mut) != base_digest, "call redirect must change the structural digest"
+    assert _counts(mut) == base_counts, (
+        "call redirect must preserve the 9 counts (old gate misses it)"
+    )
+    assert cfront_structural_digest(mut) != base_digest, (
+        "call redirect must change the structural digest"
+    )
 
 
 def test_reorder_independent_claims_is_a_structural_no_op_but_dependency_rewire_is_caught():
@@ -288,15 +356,19 @@ def test_reorder_independent_claims_is_a_structural_no_op_but_dependency_rewire_
     isb = next(i for i, c in enumerate(cl) if c.op == "c.bin.sub")
     cl[im], cl[isb] = cl[isb], cl[im]
     assert _counts(noop) == base_counts
-    assert cfront_structural_digest(noop) == base_digest, "a benign independent reorder is a structural no-op"
+    assert cfront_structural_digest(noop) == base_digest, (
+        "a benign independent reorder is a structural no-op"
+    )
 
     # (b) a dependency-rewiring corruption: point one add's operand at a different producer (a "reorder"
     # that changes which value flows where). The counts are unchanged; the digest changes.
     rewired = copy.deepcopy(base)
     a = _adds(rewired.functions["f"])
-    a[0].rd = (a[1].rd[0],) + tuple(a[0].rd[1:])   # add #1 now reads add #2's first producer
+    a[0].rd = (a[1].rd[0],) + tuple(a[0].rd[1:])  # add #1 now reads add #2's first producer
     assert _counts(rewired) == base_counts
-    assert cfront_structural_digest(rewired) != base_digest, "a dependency-rewiring reorder must be caught"
+    assert cfront_structural_digest(rewired) != base_digest, (
+        "a dependency-rewiring reorder must be caught"
+    )
 
 
 def test_duplicate_claim_id_is_caught_by_R1_1_uniqueness_law():
@@ -305,16 +377,60 @@ def test_duplicate_claim_id_is_caught_by_R1_1_uniqueness_law():
     clean unit with unique ids does not trip it."""
     dup = Module(name="dup")
     dup.add_resource(Resource(rid=1, shape=(4,)))
-    dup.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=5, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT, count=4, rd=(1,), wr=(1,)),
-        Claim(id=5, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT, count=4, rd=(1,), wr=(1,))]))
+    dup.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=5,
+                    opcode=Opcode.ADD,
+                    lane=Lane.U,
+                    stride_class=StrideClass.UNIT,
+                    count=4,
+                    rd=(1,),
+                    wr=(1,),
+                ),
+                Claim(
+                    id=5,
+                    opcode=Opcode.ADD,
+                    lane=Lane.U,
+                    stride_class=StrideClass.UNIT,
+                    count=4,
+                    rd=(1,),
+                    wr=(1,),
+                ),
+            ],
+        )
+    )
     assert "R1.1" in {d.law for d in verify(dup)}, "a duplicate claim id must raise R1.1"
 
     ok = Module(name="ok")
     ok.add_resource(Resource(rid=1, shape=(4,)))
-    ok.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT, count=4, rd=(1,), wr=(1,)),
-        Claim(id=2, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT, count=4, rd=(1,), wr=(1,))]))
+    ok.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=1,
+                    opcode=Opcode.ADD,
+                    lane=Lane.U,
+                    stride_class=StrideClass.UNIT,
+                    count=4,
+                    rd=(1,),
+                    wr=(1,),
+                ),
+                Claim(
+                    id=2,
+                    opcode=Opcode.ADD,
+                    lane=Lane.U,
+                    stride_class=StrideClass.UNIT,
+                    count=4,
+                    rd=(1,),
+                    wr=(1,),
+                ),
+            ],
+        )
+    )
     assert "R1.1" not in {d.law for d in verify(ok)}, "unique claim ids must NOT raise R1.1"
 
 
@@ -324,17 +440,21 @@ def test_cross_function_duplicate_claim_id_is_caught_unit_wide():
     unit-wide, the Python rail only per-function). A clean two-function unit does not trip it; injecting
     bar.claims[0].id := foo.claims[0].id makes R1.1 fire. The C twin's unit-wide R1.1 is the matching
     rail (test_c_cfront's R1.1 dual-rail check)."""
-    res = compile_unit("unsigned foo(unsigned x){return x+1u;}\n"
-                       "unsigned bar(unsigned x){return x+2u;}", check_clang=False)
+    res = compile_unit(
+        "unsigned foo(unsigned x){return x+1u;}\nunsigned bar(unsigned x){return x+2u;}",
+        check_clang=False,
+    )
     assert cfront_unit_claim_ids_unique(res.lowered) == [], "a clean unit must not raise R1.1"
     foo, bar = res.lowered.functions["foo"], res.lowered.functions["bar"]
-    bar.claims[0].id = foo.claims[0].id                  # a cross-function duplicate id
+    bar.claims[0].id = foo.claims[0].id  # a cross-function duplicate id
     diags = cfront_unit_claim_ids_unique(res.lowered)
-    assert any(d.law == "R1.1" for d in diags), \
+    assert any(d.law == "R1.1" for d in diags), (
         f"a cross-function duplicate claim id must raise unit-wide R1.1, got {diags}"
+    )
 
 
 # --- the byte-identity proof (cross-rail; self-skips without a C compiler) -------------------------
+
 
 def _cc():
     return shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
@@ -366,9 +486,20 @@ def test_python_canon_equals_c_twin_canon_byte_for_byte_on_the_corpus():
         exe = os.path.join(d, "tcf")
         built = False
         for std in ("c23", "c2x", "c11"):
-            b = subprocess.run([cc, f"-std={std}", "-O2", "-I", _C,
-                                *[os.path.join(_C, s) for s in srcs], "-o", exe],
-                               capture_output=True, text=True)
+            b = subprocess.run(
+                [
+                    cc,
+                    f"-std={std}",
+                    "-O2",
+                    "-I",
+                    _C,
+                    *[os.path.join(_C, s) for s in srcs],
+                    "-o",
+                    exe,
+                ],
+                capture_output=True,
+                text=True,
+            )
             if b.returncode == 0:
                 built = True
                 break
@@ -383,8 +514,11 @@ def test_python_canon_equals_c_twin_canon_byte_for_byte_on_the_corpus():
             if c_out.returncode != 0:
                 continue  # a fixture the twin rejects (parse-err) has no claim graph to compare
             try:
-                res = compile_unit(open(path, encoding="utf-8").read(), check_clang=False,
-                                   includes=_fixture_includes(path) or None)
+                res = compile_unit(
+                    open(path, encoding="utf-8").read(),
+                    check_clang=False,
+                    includes=_fixture_includes(path) or None,
+                )
             except Exception:
                 continue  # an oracle-unsupported fixture: not part of the dual-rail corpus
             py_canon = cfront_structural_canon(res.lowered)
@@ -403,9 +537,20 @@ def test_digest_value_matches_c_twin_on_representative_fixtures():
     with tempfile.TemporaryDirectory() as d:
         exe = os.path.join(d, "tcf")
         for std in ("c23", "c2x", "c11"):
-            b = subprocess.run([cc, f"-std={std}", "-O2", "-I", _C,
-                                *[os.path.join(_C, s) for s in srcs], "-o", exe],
-                               capture_output=True, text=True)
+            b = subprocess.run(
+                [
+                    cc,
+                    f"-std={std}",
+                    "-O2",
+                    "-I",
+                    _C,
+                    *[os.path.join(_C, s) for s in srcs],
+                    "-o",
+                    exe,
+                ],
+                capture_output=True,
+                text=True,
+            )
             if b.returncode == 0:
                 break
         else:
@@ -415,7 +560,11 @@ def test_digest_value_matches_c_twin_on_representative_fixtures():
             out = subprocess.run([exe, path], capture_output=True, text=True).stdout
             m = re.search(r"digest=([0-9a-f]+)", out.splitlines()[0])
             assert m, f"C summary for {fx} carries no digest= field: {out.splitlines()[0]!r}"
-            res = compile_unit(open(path, encoding="utf-8").read(), check_clang=False,
-                               includes=_fixture_includes(path) or None)
-            assert m.group(1) == f"{cfront_structural_digest(res.lowered):016x}", \
+            res = compile_unit(
+                open(path, encoding="utf-8").read(),
+                check_clang=False,
+                includes=_fixture_includes(path) or None,
+            )
+            assert m.group(1) == f"{cfront_structural_digest(res.lowered):016x}", (
                 f"{fx}: C digest {m.group(1)} != Python digest"
+            )

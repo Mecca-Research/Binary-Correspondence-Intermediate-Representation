@@ -29,18 +29,18 @@ from bcir.kbcir.quantize import max_abs_error
 from bcir.kbcir.sycl_reduce import reduce_reference, reduce_reorder_bound, reduce_via_bridge
 from bcir.lower.c_kernel import emit_sycl_matmul_c, emit_sycl_reduce_c
 from bcir.lower.sycl_dispatch import (
-    ChannelDispatcher, DispatchUnavailable, SyclDispatcher, sycl_cxx,
+    ChannelDispatcher,
+    DispatchUnavailable,
+    SyclDispatcher,
+    sycl_cxx,
 )
 
 # fixed data, reused across the kernel + dispatcher checks.
 _X = [1.0, 2.0, 3.0, 0.5, -1.0, 4.0, -2.5, 0.0]
 # a small matmul: A is 2x3, B is 3x4 -> C is 2x4 (m=2, k=3, n=4).
 _M, _K, _N = 2, 3, 4
-_A = [1.0, 2.0, 3.0,
-      4.0, 5.0, 6.0]                                       # 2x3
-_B = [1.0, 0.0, 2.0, 1.0,
-      0.0, 1.0, 1.0, 2.0,
-      3.0, 1.0, 0.0, 1.0]                                  # 3x4
+_A = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]  # 2x3
+_B = [1.0, 0.0, 2.0, 1.0, 0.0, 1.0, 1.0, 2.0, 3.0, 1.0, 0.0, 1.0]  # 3x4
 
 
 def _independent_sum(x):
@@ -67,12 +67,14 @@ def _independent_matmul(a, b, m, k, n):
 
 # --- (1) the reduce oracle reference: matches an independent recompute + a known closed-form -----------
 
+
 def test_reduce_reference_matches_an_independent_recompute():
     import random
+
     rng = random.Random(0x5EED)
     x = [rng.uniform(-5, 5) for _ in range(19)]
     got = reduce_reference(x)
-    want = _independent_sum(x)                              # independent of BCIR's code
+    want = _independent_sum(x)  # independent of BCIR's code
     assert abs(got - want) <= 1e-12 * (1.0 + abs(want)), (got, want)
 
 
@@ -108,16 +110,18 @@ def test_reduce_reference_is_side_effect_free():
 
 # --- (2) the reduce bridge: tracks the reference within the R17 + reorder bound ------------------------
 
+
 def test_bridged_reduce_tracks_the_reference_within_quant_plus_reorder():
     # A reduction is a SUM, so the R17 input round-trip (per-input error e_i) accumulates at unit gain over
     # n terms (bound n*max_i e_i). reduce_via_bridge + reduce_reference share the SEQUENTIAL add order, so
     # NO reorder term applies between them -- only the input round-trip does. (The reorder term is the
     # ADDITIONAL slack a device TREE reduction would need; tested against reduce_reorder_bound below.)
     import random
+
     rng = random.Random(0x5E2D)
     x = [rng.uniform(-4, 4) for _ in range(16)]
-    e = max_abs_error(x, group_size=8, bits=8)              # R17 per-input round-trip bound (real units)
-    bound = len(x) * e + 1e-6                               # n terms summed at unit gain
+    e = max_abs_error(x, group_size=8, bits=8)  # R17 per-input round-trip bound (real units)
+    bound = len(x) * e + 1e-6  # n terms summed at unit gain
     ref = reduce_reference(x)
     got = reduce_via_bridge(x, group_size=8, bits=8)
     assert abs(ref - got) <= bound, (ref, got, e)
@@ -128,6 +132,7 @@ def test_bridge_is_a_clean_roundtrip_then_exact_sum():
     # exactly the bridged values, so the bridge is the only error source (the add order is the reference's).
     import random
     from bcir.kbcir.quantize import dequantize, quantize_per_group
+
     rng = random.Random(0x5E3)
     x = [rng.uniform(-2, 2) for _ in range(12)]
     xd = dequantize(quantize_per_group(x, 8, 8))
@@ -145,15 +150,16 @@ def test_reduce_reorder_bound_is_a_nonneg_n_eps_term():
 
 # --- (3) the emitted reduce kernel: a SYCL reduction + a portable fallback, NOT a c.call.libm: edge ----
 
+
 def test_emit_reduce_wraps_a_sycl_reduction_with_a_scalar_fallback():
     c = emit_sycl_reduce_c(8, "bcir_reduce")
-    assert "sycl::reduction" in c                                         # the SYCL device reduction
-    assert "sycl::plus<float>()" in c                                     # the canonical reduce op
-    assert "parallel_for" in c                                           # the device reduction kernel
-    assert "#if defined(BCIR_USE_SYCL)" in c                             # toolchain-selected device path
-    assert "#include <sycl/sycl.hpp>" in c                              # the SYCL header on the device path
-    assert "s += x[i];" in c                                             # the portable sequential-sum fallback
-    assert "out[0] = s;" in c                                            # the scalar result
+    assert "sycl::reduction" in c  # the SYCL device reduction
+    assert "sycl::plus<float>()" in c  # the canonical reduce op
+    assert "parallel_for" in c  # the device reduction kernel
+    assert "#if defined(BCIR_USE_SYCL)" in c  # toolchain-selected device path
+    assert "#include <sycl/sycl.hpp>" in c  # the SYCL header on the device path
+    assert "s += x[i];" in c  # the portable sequential-sum fallback
+    assert "out[0] = s;" in c  # the scalar result
     # the signature bakes n in: (x, out), C++ (no extern "C").
     assert "void bcir_reduce(const float *x, float *out)" in c
     # CRITICAL: SYCL is a compiler MODE, not a c.call.libm: edge.
@@ -169,16 +175,18 @@ def test_emit_reduce_wraps_a_sycl_reduction_with_a_scalar_fallback():
 
 # --- (4) the matmul oracle: REUSE the existing matmul_reference (independent recompute + closed form) --
 
+
 def test_matmul_reference_matches_an_independent_recompute():
     # we REUSE kbcir.matmul.matmul_reference (B1/B5) as the source of truth -- no second matmul math.
     # matmul_reference's arg order is (a, b, M, N, K); our (m, k, n) maps to M=m, N=n, K=k.
     import random
+
     rng = random.Random(0xB1B1)
     m, k, n = 3, 5, 4
     a = [rng.uniform(-3, 3) for _ in range(m * k)]
     b = [rng.uniform(-3, 3) for _ in range(k * n)]
     got = matmul_reference(a, b, m, n, k)
-    want = _independent_matmul(a, b, m, k, n)              # independent of BCIR's code
+    want = _independent_matmul(a, b, m, k, n)  # independent of BCIR's code
     assert len(got) == len(want)
     for g, w in zip(got, want):
         assert abs(g - w) <= 1e-9 * (1.0 + abs(w)), (g, w)
@@ -211,6 +219,7 @@ def test_gemm_via_bridge_tracks_the_reference_within_quant_error():
     # round-tripped inputs, so the error vs the reference is the input quantization alone (matmul is exact
     # MAC, no transcendental). gemm_via_bridge's arg order is (a, b, M, N, K, gs, bits).
     import random
+
     rng = random.Random(0xB52D)
     m, k, n = 4, 6, 3
     a = [rng.uniform(-3, 3) for _ in range(m * k)]
@@ -229,23 +238,25 @@ def test_gemm_via_bridge_tracks_the_reference_within_quant_error():
 
 # --- (5) the emitted matmul kernel: a 2-D parallel_for + a portable fallback, NOT a c.call.libm: edge --
 
+
 def test_emit_matmul_wraps_a_2d_parallel_for_with_a_triple_loop_fallback():
     c = emit_sycl_matmul_c(_M, _K, _N, "bcir_matmul")
-    assert "parallel_for" in c                                            # the SYCL device kernel
-    assert "sycl::range<2>" in c                                          # the 2-D output grid
-    assert "sycl::id<2>" in c                                             # the (i, j) work-item index
-    assert "#if defined(BCIR_USE_SYCL)" in c                             # toolchain-selected device path
-    assert "#include <sycl/sycl.hpp>" in c                              # the SYCL header on the device path
+    assert "parallel_for" in c  # the SYCL device kernel
+    assert "sycl::range<2>" in c  # the 2-D output grid
+    assert "sycl::id<2>" in c  # the (i, j) work-item index
+    assert "#if defined(BCIR_USE_SYCL)" in c  # toolchain-selected device path
+    assert "#include <sycl/sycl.hpp>" in c  # the SYCL header on the device path
     # the portable triple-loop fallback (the IDENTICAL row-major product as matmul_reference).
     assert f"for (std::size_t kk = 0; kk < {_K}; ++kk)" in c
     # the signature: (A, B, C), C++ (no extern "C").
     assert "void bcir_matmul(const float *A, const float *B, float *C)" in c
     # CRITICAL: SYCL is a compiler MODE, not a c.call.libm: edge (distinct from the B5 CBLAS gemm wrap).
     assert "c.call.libm:" not in c
-    assert "cblas_sgemm" not in c                                        # not the FFI gemm
+    assert "cblas_sgemm" not in c  # not the FFI gemm
 
 
 # ============================ the fallback compiles + runs + matches ============================
+
 
 def _cxx():
     """A host C++ compiler (g++/clang++/c++), or None (the fallback compile/run self-skips)."""
@@ -275,28 +286,34 @@ def _run_kernel(cxx, kernel, fn_call_main, define=None, extra=None):
 
 def _reduce_main(x):
     xb = ", ".join(f"{v:.8f}f" for v in x)
-    return (f"\n#include <cstdio>\nint main(void){{\n"
-            f"  float x[{len(x)}] = {{{xb}}};\n  float out;\n  bcir_reduce(x, &out);\n"
-            f"  printf(\"%.8f\\n\", (double)out);\n  return 0;\n}}\n")
+    return (
+        f"\n#include <cstdio>\nint main(void){{\n"
+        f"  float x[{len(x)}] = {{{xb}}};\n  float out;\n  bcir_reduce(x, &out);\n"
+        f'  printf("%.8f\\n", (double)out);\n  return 0;\n}}\n'
+    )
 
 
 def _matmul_main(a, b, m, k, n):
     ab = ", ".join(f"{v:.8f}f" for v in a)
     bb = ", ".join(f"{v:.8f}f" for v in b)
-    return (f"\n#include <cstdio>\nint main(void){{\n"
-            f"  float A[{m * k}] = {{{ab}}};\n  float B[{k * n}] = {{{bb}}};\n  float C[{m * n}];\n"
-            f"  bcir_matmul(A, B, C);\n"
-            f"  for (int i = 0; i < {m * n}; ++i) printf(\"%.8f\\n\", (double)C[i]);\n"
-            f"  return 0;\n}}\n")
+    return (
+        f"\n#include <cstdio>\nint main(void){{\n"
+        f"  float A[{m * k}] = {{{ab}}};\n  float B[{k * n}] = {{{bb}}};\n  float C[{m * n}];\n"
+        f"  bcir_matmul(A, B, C);\n"
+        f'  for (int i = 0; i < {m * n}; ++i) printf("%.8f\\n", (double)C[i]);\n'
+        f"  return 0;\n}}\n"
+    )
 
 
 def test_reduce_fallback_path_compiles_runs_and_is_correct():
     cxx = _cxx()
     if not cxx:
-        return                                              # quick tier hides the toolchain -> self-skip
+        return  # quick tier hides the toolchain -> self-skip
     ref = reduce_reference(_X)
     want = _independent_sum(_X)
-    got = _run_kernel(cxx, emit_sycl_reduce_c(len(_X), "bcir_reduce"), _reduce_main(_X))   # NO -fsycl
+    got = _run_kernel(
+        cxx, emit_sycl_reduce_c(len(_X), "bcir_reduce"), _reduce_main(_X)
+    )  # NO -fsycl
     assert len(got) == 1
     # the C++ fallback is the SAME sequential sum (float32 vs the oracle's float64) -> float round-off.
     assert abs(got[0] - ref) < 1e-4 * (1.0 + abs(ref)), (got[0], ref)
@@ -306,11 +323,12 @@ def test_reduce_fallback_path_compiles_runs_and_is_correct():
 def test_matmul_fallback_path_compiles_runs_and_is_correct():
     cxx = _cxx()
     if not cxx:
-        return                                              # self-skip
+        return  # self-skip
     ref = matmul_reference(_A, _B, _M, _N, _K)
     want = _independent_matmul(_A, _B, _M, _K, _N)
-    got = _run_kernel(cxx, emit_sycl_matmul_c(_M, _K, _N, "bcir_matmul"),
-                      _matmul_main(_A, _B, _M, _K, _N))     # NO -fsycl
+    got = _run_kernel(
+        cxx, emit_sycl_matmul_c(_M, _K, _N, "bcir_matmul"), _matmul_main(_A, _B, _M, _K, _N)
+    )  # NO -fsycl
     assert len(got) == _M * _N
     for g, r, w in zip(got, ref, want):
         assert abs(g - r) < 1e-4 * (1.0 + abs(r)), (g, r)
@@ -319,14 +337,20 @@ def test_matmul_fallback_path_compiles_runs_and_is_correct():
 
 # --- the -fsycl device path runs + agrees IF a real SYCL compiler probes OK, else self-skips ----------
 
+
 def test_reduce_device_path_agrees_when_a_sycl_compiler_is_present():
     sy = sycl_cxx()
     if not sy:
-        return                                              # no SYCL toolchain -> the device path self-skips
+        return  # no SYCL toolchain -> the device path self-skips
     cxx, extra = sy
     ref = reduce_reference(_X)
-    got = _run_kernel(cxx, emit_sycl_reduce_c(len(_X), "bcir_reduce"), _reduce_main(_X),
-                      define="-DBCIR_USE_SYCL", extra=extra)
+    got = _run_kernel(
+        cxx,
+        emit_sycl_reduce_c(len(_X), "bcir_reduce"),
+        _reduce_main(_X),
+        define="-DBCIR_USE_SYCL",
+        extra=extra,
+    )
     # the SYCL TREE reduction reorders the float adds -> agrees within the R17-free reorder tolerance plus a
     # loose float slack (NOT bit-identical to the sequential reference, by design).
     tol = reduce_reorder_bound(_X) + 1e-2 * (1.0 + abs(ref))
@@ -336,11 +360,16 @@ def test_reduce_device_path_agrees_when_a_sycl_compiler_is_present():
 def test_matmul_device_path_agrees_when_a_sycl_compiler_is_present():
     sy = sycl_cxx()
     if not sy:
-        return                                              # no SYCL toolchain -> the device path self-skips
+        return  # no SYCL toolchain -> the device path self-skips
     cxx, extra = sy
     ref = matmul_reference(_A, _B, _M, _N, _K)
-    got = _run_kernel(cxx, emit_sycl_matmul_c(_M, _K, _N, "bcir_matmul"),
-                      _matmul_main(_A, _B, _M, _K, _N), define="-DBCIR_USE_SYCL", extra=extra)
+    got = _run_kernel(
+        cxx,
+        emit_sycl_matmul_c(_M, _K, _N, "bcir_matmul"),
+        _matmul_main(_A, _B, _M, _K, _N),
+        define="-DBCIR_USE_SYCL",
+        extra=extra,
+    )
     for g, r in zip(got, ref):
         # each output's k-dot has the same accumulation order on both paths -> agree to float round-off.
         assert abs(g - r) < 1e-2 * (1.0 + abs(r)), (g, r)
@@ -348,24 +377,28 @@ def test_matmul_device_path_agrees_when_a_sycl_compiler_is_present():
 
 # ============================ the resident dispatcher round-trip ============================
 
+
 def test_dispatcher_run_reduce_matches_reference_and_reports_mode():
     disp = SyclDispatcher()
     assert isinstance(disp, ChannelDispatcher)
     try:
         got = disp.run_reduce(_X)
     except DispatchUnavailable:
-        return                                              # no C++ compiler -> self-skip
+        return  # no C++ compiler -> self-skip
     finally:
         disp.close()
     ref = reduce_reference(_X)
     # the dispatcher uses the portable fallback on CI (sequential sum == reference); a device tree reduction
     # would agree within the reorder tolerance. Cover both honestly.
-    tol = 1e-4 * (1.0 + abs(ref)) if disp.mode == "fallback" \
+    tol = (
+        1e-4 * (1.0 + abs(ref))
+        if disp.mode == "fallback"
         else reduce_reorder_bound(_X) + 1e-2 * (1.0 + abs(ref))
+    )
     assert abs(got - ref) <= tol, (got, ref, disp.mode)
     assert disp.mode in ("fallback", "sycl-device")
     if sycl_cxx() is None:
-        assert disp.mode == "fallback"                      # the expected CI mode
+        assert disp.mode == "fallback"  # the expected CI mode
 
 
 def test_dispatcher_run_matmul_matches_reference_and_reports_mode():
@@ -373,7 +406,7 @@ def test_dispatcher_run_matmul_matches_reference_and_reports_mode():
     try:
         got = disp.run_matmul(_A, _B, _M, _K, _N)
     except DispatchUnavailable:
-        return                                              # no C++ compiler -> self-skip
+        return  # no C++ compiler -> self-skip
     finally:
         disp.close()
     ref = matmul_reference(_A, _B, _M, _N, _K)
@@ -410,6 +443,7 @@ def test_dispatcher_validates_reduce_and_matmul_inputs():
 
 # ============================ the architectural boundary: SYCL is NOT a link edge ============================
 
+
 def test_sycl_reduce_matmul_is_not_a_link_flag_edge():
     # CRITICAL re-assert (mirrors test_sycl_channel / test_sycl_dispatch): the emitted reduce + matmul kernel
     # names resolve to None (SYCL is a compiler MODE -fsycl, NOT a c.call.libm: -l<lib> edge); no link rule.
@@ -427,6 +461,7 @@ def test_sycl_reduce_matmul_is_not_a_link_flag_edge():
 
 if __name__ == "__main__":
     import sys
+
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
         fn()

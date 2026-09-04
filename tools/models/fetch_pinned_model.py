@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Dependency-free, checksum-first fetcher for BCIR's pinned model gates."""
+
 from __future__ import annotations
 
 import argparse
@@ -32,8 +33,11 @@ def _digest(path: Path) -> str:
 
 
 def verify_file(path: Path, info: dict) -> bool:
-    return (path.is_file() and path.stat().st_size == int(info["bytes"])
-            and _digest(path) == str(info["sha256"]).lower())
+    return (
+        path.is_file()
+        and path.stat().st_size == int(info["bytes"])
+        and _digest(path) == str(info["sha256"]).lower()
+    )
 
 
 def _publish(part: Path, target: Path, tries: int = 8) -> None:
@@ -102,8 +106,12 @@ def _download(url: str, target: Path, info: dict, attempts: int = 3) -> None:
     raise RuntimeError(f"failed to fetch {target.name} after {attempts} attempts: {last_error}")
 
 
-def fetch_model(pin_name: str = "tinyllama-v0", *, cache_dir: str | os.PathLike | None = None,
-                offline: bool = False) -> tuple[Path, dict]:
+def fetch_model(
+    pin_name: str = "tinyllama-v0",
+    *,
+    cache_dir: str | os.PathLike | None = None,
+    offline: bool = False,
+) -> tuple[Path, dict]:
     pins = load_pins()
     try:
         pin = pins["models"][pin_name]
@@ -112,8 +120,7 @@ def fetch_model(pin_name: str = "tinyllama-v0", *, cache_dir: str | os.PathLike 
     root = Path(cache_dir or os.environ.get("BCIR_MODEL_CACHE", "~/.cache/bcir/models"))
     model_dir = root.expanduser() / pin_name / str(pin["revision"])
     model_dir.mkdir(parents=True, exist_ok=True)
-    base = (f"https://huggingface.co/{pin['repository']}/resolve/"
-            f"{pin['revision']}/")
+    base = f"https://huggingface.co/{pin['repository']}/resolve/{pin['revision']}/"
     for name, info in pin["files"].items():
         target = model_dir / name
         if verify_file(target, info):

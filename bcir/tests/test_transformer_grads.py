@@ -14,9 +14,16 @@ import math
 import random
 
 from bcir.kbcir.activation import softmax_reference
-from bcir.kbcir.transformer_grads import (ff_ln_tail_grads, ff_ln_tail_reference,
-                                          layernorm_grad, rmsnorm_grad, rmsnorm_reference,
-                                          rope_grad, rope_reference, softmax_grad)
+from bcir.kbcir.transformer_grads import (
+    ff_ln_tail_grads,
+    ff_ln_tail_reference,
+    layernorm_grad,
+    rmsnorm_grad,
+    rmsnorm_reference,
+    rope_grad,
+    rope_reference,
+    softmax_grad,
+)
 from bcir.tests._convergence import assert_converged
 
 
@@ -64,17 +71,21 @@ def test_layernorm_grad_matches_finite_differences():
     for i in range(rows * d):
         assert abs(dx[i] - _fd_grad(Jx, x, i)) < 1e-5, ("dx", i)
     for k in range(d):
+
         def Jg(g, k=k):
             gg = list(gamma)
             gg[k] = g[0]
             y = layernorm_reference(x, rows, d, gg, beta)
             return sum(c[i] * y[i] for i in range(rows * d))
+
         assert abs(dgamma[k] - _fd_grad(Jg, [gamma[k]], 0)) < 1e-5, ("dgamma", k)
+
         def Jb(b, k=k):
             bb = list(beta)
             bb[k] = b[0]
             y = layernorm_reference(x, rows, d, gamma, bb)
             return sum(c[i] * y[i] for i in range(rows * d))
+
         assert abs(dbeta[k] - _fd_grad(Jb, [beta[k]], 0)) < 1e-5, ("dbeta", k)
 
 
@@ -85,7 +96,7 @@ def test_rmsnorm_forward_matches_a_naive_direct_computation():
     gamma = _vec(rng, d, 0.5, 1.5)
     got = rmsnorm_reference(x, rows, d, gamma, eps=1e-6)
     for r in range(rows):
-        rms = math.sqrt(sum(v * v for v in x[r * d:(r + 1) * d]) / d + 1e-6)
+        rms = math.sqrt(sum(v * v for v in x[r * d : (r + 1) * d]) / d + 1e-6)
         for c in range(d):
             assert abs(got[r * d + c] - x[r * d + c] / rms * gamma[c]) < 1e-12
 
@@ -105,11 +116,13 @@ def test_rmsnorm_grad_matches_finite_differences():
     for i in range(rows * d):
         assert abs(dx[i] - _fd_grad(Jx, x, i)) < 1e-5, ("dx", i)
     for k in range(d):
+
         def Jg(g, k=k):
             gg = list(gamma)
             gg[k] = g[0]
             y = rmsnorm_reference(x, rows, d, gg)
             return sum(c[i] * y[i] for i in range(rows * d))
+
         assert abs(dgamma[k] - _fd_grad(Jg, [gamma[k]], 0)) < 1e-5, ("dgamma", k)
 
 
@@ -118,8 +131,8 @@ def test_rope_rotates_pairs_norm_preserving_and_position0_is_identity():
     rows, d = 4, 8
     x = _vec(rng, rows * d, -2, 2)
     y = rope_reference(x, rows, d)
-    assert all(abs(a - b) < 1e-12 for a, b in zip(y[:d], x[:d]))       # position 0: identity
-    for r in range(rows):                                              # pair norms preserved
+    assert all(abs(a - b) < 1e-12 for a, b in zip(y[:d], x[:d]))  # position 0: identity
+    for r in range(rows):  # pair norms preserved
         for k in range(d // 2):
             nx = x[r * d + 2 * k] ** 2 + x[r * d + 2 * k + 1] ** 2
             ny = y[r * d + 2 * k] ** 2 + y[r * d + 2 * k + 1] ** 2
@@ -147,12 +160,15 @@ def test_tail_weight_grads_match_finite_differences():
     params = {"W1": W1, "b1": b1, "W2": W2, "b2": b2, "gamma": gamma, "beta": beta}
     for name, p in params.items():
         for k in range(len(p)):
+
             def J(v, name=name, k=k):
                 q = {n: list(x) for n, x in params.items()}
                 q[name][k] = v[0]
-                y = ff_ln_tail_reference(h, rows, dm, dff, q["W1"], q["b1"], q["W2"],
-                                         q["b2"], q["gamma"], q["beta"])
+                y = ff_ln_tail_reference(
+                    h, rows, dm, dff, q["W1"], q["b1"], q["W2"], q["b2"], q["gamma"], q["beta"]
+                )
                 return sum(c[i] * y[i] for i in range(rows * dm))
+
             assert abs(g[name][k] - _fd_grad(J, [p[k]], 0)) < 1e-5, (name, k)
 
 
@@ -163,12 +179,30 @@ def test_block_weights_train_end_to_end_through_the_transcendental_tail():
     # features, by plain SGD on the closed-form gradients. Shared convergence gate.
     rng = random.Random(0xE3A8)
     rows, dm, dff, n = 4, 3, 5, 12
-    teacher = {"W1": _vec(rng, dm * dff), "b1": _vec(rng, dff), "W2": _vec(rng, dff * dm),
-               "b2": _vec(rng, dm), "gamma": _vec(rng, dm, 0.8, 1.2), "beta": _vec(rng, dm, -0.1, 0.1)}
-    feats = [_vec(rng, rows * dm) for _ in range(n)]                 # the frozen attention outputs
-    targets = [ff_ln_tail_reference(f, rows, dm, dff, teacher["W1"], teacher["b1"],
-                                    teacher["W2"], teacher["b2"], teacher["gamma"],
-                                    teacher["beta"]) for f in feats]
+    teacher = {
+        "W1": _vec(rng, dm * dff),
+        "b1": _vec(rng, dff),
+        "W2": _vec(rng, dff * dm),
+        "b2": _vec(rng, dm),
+        "gamma": _vec(rng, dm, 0.8, 1.2),
+        "beta": _vec(rng, dm, -0.1, 0.1),
+    }
+    feats = [_vec(rng, rows * dm) for _ in range(n)]  # the frozen attention outputs
+    targets = [
+        ff_ln_tail_reference(
+            f,
+            rows,
+            dm,
+            dff,
+            teacher["W1"],
+            teacher["b1"],
+            teacher["W2"],
+            teacher["b2"],
+            teacher["gamma"],
+            teacher["beta"],
+        )
+        for f in feats
+    ]
     student = {k: [v + rng.uniform(-0.3, 0.3) for v in p] for k, p in teacher.items()}
     p0 = {k: list(v) for k, v in student.items()}
     losses = []
@@ -176,19 +210,38 @@ def test_block_weights_train_end_to_end_through_the_transcendental_tail():
     for _epoch in range(400):
         total = 0.0
         for f, t in zip(feats, targets):
-            y = ff_ln_tail_reference(f, rows, dm, dff, student["W1"], student["b1"],
-                                     student["W2"], student["b2"], student["gamma"],
-                                     student["beta"])
+            y = ff_ln_tail_reference(
+                f,
+                rows,
+                dm,
+                dff,
+                student["W1"],
+                student["b1"],
+                student["W2"],
+                student["b2"],
+                student["gamma"],
+                student["beta"],
+            )
             m = rows * dm
             total += sum((y[i] - t[i]) ** 2 for i in range(m)) / m
             gout = [2.0 * (y[i] - t[i]) / m for i in range(m)]
-            g = ff_ln_tail_grads(f, rows, dm, dff, student["W1"], student["b1"],
-                                 student["W2"], student["b2"], student["gamma"],
-                                 student["beta"], gout)
+            g = ff_ln_tail_grads(
+                f,
+                rows,
+                dm,
+                dff,
+                student["W1"],
+                student["b1"],
+                student["W2"],
+                student["b2"],
+                student["gamma"],
+                student["beta"],
+                gout,
+            )
             for k in student:
                 student[k] = [w - lr * gv for w, gv in zip(student[k], g[k])]
         losses.append(total / n)
-    assert any(student[k] != p0[k] for k in student)                 # the block weights moved
+    assert any(student[k] != p0[k] for k in student)  # the block weights moved
     assert_converged(losses, final_below=3e-4, max_ratio=0.01, name="E3 block-weight tail")
 
 
@@ -198,9 +251,14 @@ def test_attention_projection_grads_match_finite_differences():
     central finite differences through J = <c, mha(x)> where the forward is the INDEPENDENT
     transformer.multihead_attention_reference (cross-implementation check; measured worst
     FD gap ~4e-10, gate 1e-5)."""
-    from bcir.kbcir.transformer import (TransformerBlockSpec, _MHAParams, causal_mask,
-                                        multihead_attention_reference)
+    from bcir.kbcir.transformer import (
+        TransformerBlockSpec,
+        _MHAParams,
+        causal_mask,
+        multihead_attention_reference,
+    )
     from bcir.kbcir.transformer_grads import mha_projection_grads
+
     rng = random.Random(0xA77)
     seq, dm, nh = 3, 4, 2
     spec = TransformerBlockSpec(d_model=dm, n_heads=nh, d_ff=4, seq_len=seq, batch=1)
@@ -211,24 +269,30 @@ def test_attention_projection_grads_match_finite_differences():
 
     def fwd(p, xv):
         return multihead_attention_reference(
-            xv, spec, _MHAParams(p["w_q"], p["w_k"], p["w_v"], p["w_o"]), mask)
+            xv, spec, _MHAParams(p["w_q"], p["w_k"], p["w_v"], p["w_o"]), mask
+        )
 
-    g = mha_projection_grads(x, seq, dm, nh, params["w_q"], params["w_k"], params["w_v"],
-                             params["w_o"], c, mask)
+    g = mha_projection_grads(
+        x, seq, dm, nh, params["w_q"], params["w_k"], params["w_v"], params["w_o"], c, mask
+    )
     for name, p in params.items():
         for k in range(len(p)):
+
             def J(v, name=name, k=k):
                 q = {n2: list(w) for n2, w in params.items()}
                 q[name][k] = v[0]
                 y = fwd(q, x)
                 return sum(c[i] * y[i] for i in range(seq * dm))
+
             assert abs(g[name][k] - _fd_grad(J, [p[k]], 0)) < 1e-5, (name, k)
-    for k in range(seq * dm):                                # the block-input gradient too
+    for k in range(seq * dm):  # the block-input gradient too
+
         def Jx(v, k=k):
             x2 = list(x)
             x2[k] = v[0]
             y = fwd(params, x2)
             return sum(c[i] * y[i] for i in range(seq * dm))
+
         assert abs(g["x"][k] - _fd_grad(Jx, [x[k]], 0)) < 1e-5, k
 
 
@@ -236,9 +300,14 @@ def test_attention_projections_train_end_to_end():
     """THE HEADLINE: block-weight fine-tuning through the FULL attention block -- a student's
     four projections recover a teacher's masked-MHA function via the closed-form gradients,
     gated by the shared convergence gate (measured 0.31 -> 9.2e-7 over 400 epochs, lr 2.0)."""
-    from bcir.kbcir.transformer import (TransformerBlockSpec, _MHAParams, causal_mask,
-                                        multihead_attention_reference)
+    from bcir.kbcir.transformer import (
+        TransformerBlockSpec,
+        _MHAParams,
+        causal_mask,
+        multihead_attention_reference,
+    )
     from bcir.kbcir.transformer_grads import mha_projection_grads
+
     rng = random.Random(0xA77)
     seq, dm, nh = 3, 4, 2
     n = seq * dm
@@ -249,7 +318,8 @@ def test_attention_projections_train_end_to_end():
 
     def fwd(p):
         return multihead_attention_reference(
-            x, spec, _MHAParams(p["w_q"], p["w_k"], p["w_v"], p["w_o"]), mask)
+            x, spec, _MHAParams(p["w_q"], p["w_k"], p["w_v"], p["w_o"]), mask
+        )
 
     y = fwd(teacher)
     student = {k: _vec(rng, dm * dm, -0.3, 0.3) for k in ("w_q", "w_k", "w_v", "w_o")}
@@ -258,16 +328,28 @@ def test_attention_projections_train_end_to_end():
         out = fwd(student)
         losses.append(sum((out[i] - y[i]) ** 2 for i in range(n)) / n)
         gout = [2.0 * (out[i] - y[i]) / n for i in range(n)]
-        g = mha_projection_grads(x, seq, dm, nh, student["w_q"], student["w_k"],
-                                 student["w_v"], student["w_o"], gout, mask)
+        g = mha_projection_grads(
+            x,
+            seq,
+            dm,
+            nh,
+            student["w_q"],
+            student["w_k"],
+            student["w_v"],
+            student["w_o"],
+            gout,
+            mask,
+        )
         for k in student:
             student[k] = [w - 2.0 * gg for w, gg in zip(student[k], g[k])]
-    assert_converged(losses, final_below=1e-5, max_ratio=1e-4,
-                     name="attention-projection fine-tuning")
+    assert_converged(
+        losses, final_below=1e-5, max_ratio=1e-4, name="attention-projection fine-tuning"
+    )
 
 
 def test_transformer_grads_touches_no_verifier():
     import bcir.kbcir.transformer_grads as tg
+
     tree = ast.parse(open(tg.__file__, encoding="utf-8").read())
     imported = set()
     for node in ast.walk(tree):

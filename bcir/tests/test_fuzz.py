@@ -45,4 +45,4 @@ def test_streampack_roundtrip_holds_on_valid_encodings():
         m = gen_module(rng)
         pack = hydrate(m, optimize(m, TARGETS["x86_avx512"], Theta.cool()))
         back = abi.decode(abi.encode(pack))
-        assert back.segments == pack.segments        # full per-field round-trip, not just ids
+        assert back.segments == pack.segments  # full per-field round-trip, not just ids

@@ -50,8 +50,9 @@ def saxpy_reference(a: float, x: list[float], y: list[float]) -> list[float]:
     return [af * float(xi) + float(yi) for xi, yi in zip(x, y)]
 
 
-def saxpy_via_bridge(a: float, x: list[float], y: list[float],
-                     group_size: int = 8, bits: int = 8) -> list[float]:
+def saxpy_via_bridge(
+    a: float, x: list[float], y: list[float], group_size: int = 8, bits: int = 8
+) -> list[float]:
     """The Q8<->float32<->Q8 bridge wrapped around the SYCL SAXPY differential oracle -- the SYCL analog of
     ``vecmath.exp_via_bridge`` / ``matmul.gemm_via_bridge`` (integrate the device, don't reinvent the
     arithmetic). The input vectors arrive as per-group quantized storage; the bridge dequantizes them to

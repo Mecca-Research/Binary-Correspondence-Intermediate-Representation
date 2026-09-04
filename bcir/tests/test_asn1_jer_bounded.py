@@ -39,9 +39,12 @@ from bcir.asn1.tags import Universal
 
 
 def _rec() -> Sequence:
-    return Sequence((Component("a", Primitive(Universal.INTEGER, "INTEGER")),
-                     Component("b", Primitive(Universal.UTF8_STRING, "UTF8String"),
-                               tag=0)))
+    return Sequence(
+        (
+            Component("a", Primitive(Universal.INTEGER, "INTEGER")),
+            Component("b", Primitive(Universal.UTF8_STRING, "UTF8String"), tag=0),
+        )
+    )
 
 
 _VALUE = {"a": 1, "b": "hi"}
@@ -52,8 +55,7 @@ def _refuses(action, code: JerErrorCode) -> JerBoundedError:
     try:
         action()
     except JerBoundedError as error:
-        assert error.diagnostic.code is code, (
-            f"expected {code.value}, got {error.diagnostic}")
+        assert error.diagnostic.code is code, f"expected {code.value}, got {error.diagnostic}"
         return error
     raise AssertionError(f"expected a refusal with code {code.value}")
 
@@ -64,9 +66,8 @@ def _refuses(action, code: JerErrorCode) -> JerBoundedError:
 def test_the_input_byte_ceiling_is_checked_before_anything_is_parsed():
     """§4.3's first entry, and the one that makes the rest affordable to check."""
     limits = JerLimits(input_bytes=16)
-    assert scan(b'{"a":1,"b":"hi"}', limits) > 0            # exactly 16 octets
-    error = _refuses(lambda: scan(b'{"a":1,"b":"hix"}', limits),
-                     JerErrorCode.INPUT_TOO_LARGE)
+    assert scan(b'{"a":1,"b":"hi"}', limits) > 0  # exactly 16 octets
+    error = _refuses(lambda: scan(b'{"a":1,"b":"hix"}', limits), JerErrorCode.INPUT_TOO_LARGE)
     assert error.diagnostic.needed == 17, "the diagnostic says how much was needed (4.2)"
 
 
@@ -85,8 +86,7 @@ def test_the_member_and_element_ceilings_are_per_container():
     a document of a thousand two-member objects is not a thousand-member object."""
     limits = JerLimits(members=3, elements=3, nodes=10_000, work=1 << 20)
     assert scan(b'{"a":1,"b":2,"c":3}', limits) > 0
-    _refuses(lambda: scan(b'{"a":1,"b":2,"c":3,"d":4}', limits),
-             JerErrorCode.MEMBERS_EXCEEDED)
+    _refuses(lambda: scan(b'{"a":1,"b":2,"c":3,"d":4}', limits), JerErrorCode.MEMBERS_EXCEEDED)
     assert scan(b"[1,2,3]", limits) > 0
     _refuses(lambda: scan(b"[1,2,3,4]", limits), JerErrorCode.ELEMENTS_EXCEEDED)
     # Sibling containers each get their own budget.
@@ -115,16 +115,17 @@ def test_the_number_ceilings_are_three_separate_questions():
 
 def test_the_work_ceiling_bounds_what_a_small_input_can_cost():
     """§4.3's last entry — "so an input cannot hide quadratic duplicate/member lookup"."""
-    _refuses(lambda: scan(b"[" * 40 + b"]" * 40, JerLimits(work=8, depth=100)),
-             JerErrorCode.WORK_EXCEEDED)
+    _refuses(
+        lambda: scan(b"[" * 40 + b"]" * 40, JerLimits(work=8, depth=100)),
+        JerErrorCode.WORK_EXCEEDED,
+    )
 
 
 def test_limits_may_be_tightened_and_never_silently_expanded():
     """§4.3: "Limits are part of the compiled plan and may be tightened by a caller, never
     silently expanded"."""
     assert STRICT_LIMITS.tightened(depth=4).depth == 4
-    _refuses(lambda: STRICT_LIMITS.tightened(depth=STRICT_LIMITS.depth + 1),
-             JerErrorCode.MALFORMED)
+    _refuses(lambda: STRICT_LIMITS.tightened(depth=STRICT_LIMITS.depth + 1), JerErrorCode.MALFORMED)
 
 
 # --- §3.1: what a conforming fast path still has to reject -------------------------------
@@ -132,15 +133,17 @@ def test_limits_may_be_tightened_and_never_silently_expanded():
 
 def test_the_scanner_refuses_what_is_not_json_at_all():
     """§3.1's list, checked at the scan stage so nothing is built before the refusal."""
-    for data, detail in ((b"NaN", "begins no JSON value"),
-                         (b"Infinity", "begins no JSON value"),
-                         (b'"abc', "unterminated"),
-                         (b"[}", "mismatched"),
-                         (b"{", "unclosed"),
-                         (b"}", "nothing open"),
-                         (b"-", "no digits"),
-                         (b"1.", "no digits after it"),
-                         (b"1e", "exponent with no digits")):
+    for data, detail in (
+        (b"NaN", "begins no JSON value"),
+        (b"Infinity", "begins no JSON value"),
+        (b'"abc', "unterminated"),
+        (b"[}", "mismatched"),
+        (b"{", "unclosed"),
+        (b"}", "nothing open"),
+        (b"-", "no digits"),
+        (b"1.", "no digits after it"),
+        (b"1e", "exponent with no digits"),
+    ):
         error = _refuses(lambda d=data: scan(d), JerErrorCode.MALFORMED)
         assert detail in error.diagnostic.detail, (data, error.diagnostic)
 
@@ -158,15 +161,13 @@ def test_invalid_utf8_is_refused_after_the_structure_passes():
     on octets: every structural character is ASCII and every non-ASCII UTF-8 octet has its
     high bit set, so no multi-byte sequence can be mistaken for markup.
     """
-    _refuses(lambda: decode_bounded(b'{"a":1,"b":"\xff"}', _rec()),
-             JerErrorCode.NOT_UTF8)
+    _refuses(lambda: decode_bounded(b'{"a":1,"b":"\xff"}', _rec()), JerErrorCode.NOT_UTF8)
 
 
 def test_a_duplicate_member_is_still_refused_through_the_bounded_path():
     """Carried over from the core rail: `json` resolves duplicates to the last silently,
     which would let one value hide behind another in an encoding that digests differently."""
-    _refuses(lambda: decode_bounded(b'{"a":1,"a":2,"b":"hi"}', _rec()),
-             JerErrorCode.SCHEMA)
+    _refuses(lambda: decode_bounded(b'{"a":1,"a":2,"b":"hi"}', _rec()), JerErrorCode.SCHEMA)
 
 
 # --- §3.2: canonicality is a property of the octets ---------------------------------------
@@ -181,13 +182,12 @@ def test_every_encoders_option_that_decodes_correctly_is_still_refused():
     """
     assert decode_bounded(_CANONICAL, _rec()) == _VALUE
     for label, data in (
-            ("member order (27.3.3)", b'{"b":"hi","a":1}'),
-            ("insignificant white-space", b'{"a": 1,"b":"hi"}'),
-            ("a gratuitous escape (7.6.3)", b'{"a":1,"b":"\\u0068i"}'),
-            ("a trailing newline", b'{"a":1,"b":"hi"}\n'),
+        ("member order (27.3.3)", b'{"b":"hi","a":1}'),
+        ("insignificant white-space", b'{"a": 1,"b":"hi"}'),
+        ("a gratuitous escape (7.6.3)", b'{"a":1,"b":"\\u0068i"}'),
+        ("a trailing newline", b'{"a":1,"b":"hi"}\n'),
     ):
-        error = _refuses(lambda d=data: decode_bounded(d, _rec()),
-                         JerErrorCode.NOT_CANONICAL)
+        error = _refuses(lambda d=data: decode_bounded(d, _rec()), JerErrorCode.NOT_CANONICAL)
         assert error.diagnostic.offset >= 0, label
         # ... and each is a perfectly good BASIC encoding of the same value.
         assert decode_bounded(data, _rec(), rules=JerRules.BASIC) == _VALUE, label
@@ -195,14 +195,15 @@ def test_every_encoders_option_that_decodes_correctly_is_still_refused():
 
 def test_a_default_valued_component_omitted_or_present_is_one_canonical_form():
     """The profile omits it; the other spelling decodes to the same value and is refused."""
-    kind = Sequence((Component("x", Primitive(Universal.INTEGER, "INTEGER")),
-                     Component("y", Primitive(Universal.BOOLEAN, "BOOLEAN"), tag=0,
-                               default=False)))
+    kind = Sequence(
+        (
+            Component("x", Primitive(Universal.INTEGER, "INTEGER")),
+            Component("y", Primitive(Universal.BOOLEAN, "BOOLEAN"), tag=0, default=False),
+        )
+    )
     assert decode_bounded(b'{"x":1}', kind) == {"x": 1, "y": False}
-    _refuses(lambda: decode_bounded(b'{"x":1,"y":false}', kind),
-             JerErrorCode.NOT_CANONICAL)
-    assert decode_bounded(b'{"x":1,"y":false}', kind,
-                          rules=JerRules.BASIC) == {"x": 1, "y": False}
+    _refuses(lambda: decode_bounded(b'{"x":1,"y":false}', kind), JerErrorCode.NOT_CANONICAL)
+    assert decode_bounded(b'{"x":1,"y":false}', kind, rules=JerRules.BASIC) == {"x": 1, "y": False}
 
 
 def test_set_of_order_is_part_of_the_canonical_octets():
@@ -226,7 +227,7 @@ def test_what_the_canonical_encoder_produces_is_what_the_canonical_decoder_accep
 
 
 def test_a_frame_carries_every_field_clause_3_3_names():
-    """"an explicit version, length, integrity field, sequence, and generation"."""
+    """ "an explicit version, length, integrity field, sequence, and generation"."""
     framed = encode_framed(_rec(), _VALUE, sequence=7, generation=3)
     assert framed.startswith(FRAME_MAGIC)
     assert len(framed) == FRAME_HEADER_SIZE + len(_CANONICAL)
@@ -245,8 +246,7 @@ def test_integrity_is_verified_before_any_payload_is_returned():
     """
     framed = bytearray(encode_framed(_rec(), _VALUE))
     framed[-1] ^= 0xFF
-    error = _refuses(lambda: decode_framed(bytes(framed), _rec()),
-                     JerErrorCode.FRAME_INTEGRITY)
+    error = _refuses(lambda: decode_framed(bytes(framed), _rec()), JerErrorCode.FRAME_INTEGRITY)
     assert "not a signature" in error.diagnostic.detail
 
 
@@ -257,8 +257,10 @@ def test_every_truncated_prefix_of_a_framed_document_is_refused():
         try:
             decode_framed(framed[:cut], _rec())
         except JerBoundedError as error:
-            assert error.diagnostic.code in (JerErrorCode.FRAME_MALFORMED,
-                                             JerErrorCode.FRAME_INTEGRITY), cut
+            assert error.diagnostic.code in (
+                JerErrorCode.FRAME_MALFORMED,
+                JerErrorCode.FRAME_INTEGRITY,
+            ), cut
         else:
             raise AssertionError(f"a {cut}-octet prefix decoded")
     assert decode_framed(framed, _rec()) == _VALUE
@@ -284,8 +286,7 @@ def test_a_refusal_leaves_the_caller_holding_exactly_what_it_had():
     kind = _rec()
     good = decode_bounded(_CANONICAL, kind)
     for _ in range(3):
-        _refuses(lambda: decode_bounded(b'{"b":"hi","a":1}', kind),
-                 JerErrorCode.NOT_CANONICAL)
+        _refuses(lambda: decode_bounded(b'{"b":"hi","a":1}', kind), JerErrorCode.NOT_CANONICAL)
         _refuses(lambda: decode_bounded(b"[" * 500, kind), JerErrorCode.DEPTH_EXCEEDED)
         assert decode_bounded(_CANONICAL, kind) == good
 
@@ -299,9 +300,10 @@ def test_a_diagnostic_carries_a_stable_code_an_offset_and_a_capacity():
     The code is an enum rather than a string match on the message, because a caller may
     branch on it; the offset is a *byte* offset, which is why the scan reads octets.
     """
-    error = _refuses(lambda: scan(b'"' + b"x" * 100 + b'"',
-                                  JerLimits(string_bytes=8)),
-                     JerErrorCode.STRING_TOO_LONG)
+    error = _refuses(
+        lambda: scan(b'"' + b"x" * 100 + b'"', JerLimits(string_bytes=8)),
+        JerErrorCode.STRING_TOO_LONG,
+    )
     diagnostic = error.diagnostic
     assert diagnostic.code is JerErrorCode.STRING_TOO_LONG
     assert diagnostic.offset == 0

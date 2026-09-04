@@ -18,6 +18,7 @@ config.substitutions.append(("%repo_root", repo_root))
 
 config.environment["PATH"] = os.environ.get("PATH", "")
 
+
 def find_versioned_tool(base):
     direct = shutil.which(base)
     if direct:

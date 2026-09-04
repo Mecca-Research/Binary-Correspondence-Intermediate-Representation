@@ -34,7 +34,7 @@ def test_annotate_marks_the_reduction_segment_pim():
     r = optimize(m, AVX, Theta.cool())
     pack, decisions = annotate_cim(m, r, AVX)
     red = [s for s in pack.segments if s.opcode.startswith("reduce.")]
-    assert red and all(s.dispatch == "pim" for s in red)             # offloaded
+    assert red and all(s.dispatch == "pim" for s in red)  # offloaded
     assert any(d.offload and d.saved > 0 for d in decisions)
 
 
@@ -42,15 +42,15 @@ def test_annotation_leaves_elementwise_on_the_core():
     m = vector_add(1 << 20)
     r = optimize(m, AVX, Theta.cool())
     pack, decisions = annotate_cim(m, r, AVX)
-    assert all(s.dispatch == "core" for s in pack.segments)          # nothing offloaded
-    assert decisions == []                                           # no reduction to consider
+    assert all(s.dispatch == "core" for s in pack.segments)  # nothing offloaded
+    assert decisions == []  # no reduction to consider
 
 
 def test_offload_threshold_tracks_the_surcharge_and_is_deterministic():
-    assert _PIM_COMPUTE_Q8 > 256                                     # PIM compute is dearer
+    assert _PIM_COMPUTE_Q8 > 256  # PIM compute is dearer
     a = cim_decision("reduce.gather", count=4096, elem_bytes=4, h=AVX)
     b = cim_decision("reduce.gather", count=4096, elem_bytes=4, h=AVX)
-    assert a == b                                                    # deterministic
+    assert a == b  # deterministic
 
 
 def test_mlir_cim_dvfs_constants_are_in_sync():
@@ -63,8 +63,9 @@ def test_mlir_cim_dvfs_constants_are_in_sync():
     assert not small.offload
     # DVFS: the vector_add phase is bandwidth-bound -> downclock 192.
     from bcir.gem.dvfs import classify, clock_for, phase_totals
+
     res = optimize(vector_add(1024), AVX, Theta.cool())
-    (compute, memory), = phase_totals(vector_add(1024), res).values()
+    ((compute, memory),) = phase_totals(vector_add(1024), res).values()
     assert (compute, memory) == (64, 3840)
     klass = classify(compute, memory)
     assert klass == "memory" and clock_for(klass, Theta.cool())[0] == 192

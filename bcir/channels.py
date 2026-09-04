@@ -41,8 +41,16 @@ from .kbcir.cost import TARGETS, TargetProfile, _host_cpu_features
 EM_X86_64, EM_AARCH64, EM_RISCV, EM_NONE = 62, 183, 243, 0
 
 # perf_event_open syscall numbers per ABI (NOT portable -- the source of the x86/ARM collision).
-_PERF_SYSCALL = {"x86_64": 298, "amd64": 298, "aarch64": 241, "arm64": 241,
-                 "riscv64": 241, "armv7l": 364, "ppc64le": 319, "s390x": 331}
+_PERF_SYSCALL = {
+    "x86_64": 298,
+    "amd64": 298,
+    "aarch64": 241,
+    "arm64": 241,
+    "riscv64": 241,
+    "armv7l": 364,
+    "ppc64le": 319,
+    "s390x": 331,
+}
 
 
 @dataclass(frozen=True)
@@ -52,8 +60,9 @@ class RuntimeChannel:
     ``energy_source`` is how real Joules are read (``rapl`` is Intel-only; ``hwmon`` is a shunt
     monitor; ``none`` is honest -- many parts expose no Joules); ``thermal_zone_types`` are the
     ``/sys/class/thermal`` zone types that name this backend's temperature."""
+
     perf_syscall_nr: int = 298
-    energy_source: str = "none"                      # "rapl" | "hwmon" | "none"
+    energy_source: str = "none"  # "rapl" | "hwmon" | "none"
     thermal_zone_types: tuple[str, ...] = ("cpu", "soc")
 
 
@@ -65,15 +74,16 @@ class HardwareChannel:
     the hardware so the heterogeneous orchestrator can place suitable work on it; ``llvm_triple``
     + ``e_machine`` are the real codegen identity; ``runtime`` carries the host-side hooks. Every
     channel plans + executes through the same K_BCIR/GEM core."""
+
     name: str
-    kind: str                                        # cpu | gpu | fpga | accelerator | storage | memory
+    kind: str  # cpu | gpu | fpga | accelerator | storage | memory
     profile: TargetProfile
     llvm_triple: str
     e_machine: int = EM_NONE
     runtime: RuntimeChannel = field(default_factory=RuntimeChannel)
-    arch_match: tuple[str, ...] = ()                 # platform.machine() values this channel serves
-    modeled: bool = False                            # True == cost profile is modeled (no resident driver yet)
-    capabilities: frozenset[str] = frozenset()       # declared StreamPack-execution capability (plugin
+    arch_match: tuple[str, ...] = ()  # platform.machine() values this channel serves
+    modeled: bool = False  # True == cost profile is modeled (no resident driver yet)
+    capabilities: frozenset[str] = frozenset()  # declared StreamPack-execution capability (plugin
     #                                                  routing contract); empty == use kind-default routing
 
     @property
@@ -90,16 +100,18 @@ class HardwareChannel:
 # A channel plugin declares *what GEM work it executes well* as a set of these tags (in its
 # channel.json), instead of the core hard-coding a per-kind rule. A claim is mapped to the tags it
 # could use; a channel suits the claim if it declares an overlapping tag (or "universal").
-CAPABILITY_VOCAB = frozenset({
-    "universal",        # runs anything (the CPU fallback; a fully programmable backend)
-    "data_parallel",    # elementwise / SIMD lanes
-    "reduce",           # reductions / accumulation trees
-    "gather",           # random / indexed access (scatter/gather)
-    "tile",             # blocked tiles (systolic)
-    "matmul",           # dense matmul
-    "stream_unit",      # unit-stride sequential streaming
-    "scalar_stream",    # scalar sequential streaming
-})
+CAPABILITY_VOCAB = frozenset(
+    {
+        "universal",  # runs anything (the CPU fallback; a fully programmable backend)
+        "data_parallel",  # elementwise / SIMD lanes
+        "reduce",  # reductions / accumulation trees
+        "gather",  # random / indexed access (scatter/gather)
+        "tile",  # blocked tiles (systolic)
+        "matmul",  # dense matmul
+        "stream_unit",  # unit-stride sequential streaming
+        "scalar_stream",  # scalar sequential streaming
+    }
+)
 
 
 def claim_required_caps(claim) -> frozenset:
@@ -107,7 +119,7 @@ def claim_required_caps(claim) -> frozenset:
     A channel suits the claim if its declared capabilities overlap this set."""
     from .model import StrideClass
 
-    op = (claim.op or "")
+    op = claim.op or ""
     sc = getattr(claim, "stride_class", None)
     req: set = set()
     if op.startswith("reduce."):
@@ -123,7 +135,7 @@ def claim_required_caps(claim) -> frozenset:
     if sc == StrideClass.SCALAR:
         req.add("scalar_stream")
     if not req:
-        req.add("data_parallel")                     # default elementwise work
+        req.add("data_parallel")  # default elementwise work
     return frozenset(req)
 
 
@@ -157,8 +169,11 @@ def route_claim(claim, channels):
 
 
 def _rt(machine: str, energy: str, zones: tuple[str, ...]) -> RuntimeChannel:
-    return RuntimeChannel(perf_syscall_nr=_PERF_SYSCALL.get(machine, 298),
-                          energy_source=energy, thermal_zone_types=zones)
+    return RuntimeChannel(
+        perf_syscall_nr=_PERF_SYSCALL.get(machine, 298),
+        energy_source=energy,
+        thermal_zone_types=zones,
+    )
 
 
 # --- the channel registry: the real arch backends + the modeled future ones ----------------------
@@ -167,24 +182,60 @@ def _rt(machine: str, energy: str, zones: tuple[str, ...]) -> RuntimeChannel:
 # GPU/FPGA/NVMe/HBM channels are modeled extension points (kind != cpu) the orchestrator can target.
 CHANNELS: dict[str, HardwareChannel] = {
     "x86_avx512": HardwareChannel(
-        "x86_avx512", "cpu", TARGETS["x86_avx512"], "x86_64-unknown-linux-gnu", EM_X86_64,
-        _rt("x86_64", "rapl", ("x86_pkg_temp", "coretemp")), arch_match=("x86_64", "amd64")),
+        "x86_avx512",
+        "cpu",
+        TARGETS["x86_avx512"],
+        "x86_64-unknown-linux-gnu",
+        EM_X86_64,
+        _rt("x86_64", "rapl", ("x86_pkg_temp", "coretemp")),
+        arch_match=("x86_64", "amd64"),
+    ),
     "x86_avx2": HardwareChannel(
-        "x86_avx2", "cpu", TARGETS["x86_avx2"], "x86_64-unknown-linux-gnu", EM_X86_64,
-        _rt("x86_64", "rapl", ("x86_pkg_temp", "coretemp")), arch_match=("x86_64", "amd64")),
+        "x86_avx2",
+        "cpu",
+        TARGETS["x86_avx2"],
+        "x86_64-unknown-linux-gnu",
+        EM_X86_64,
+        _rt("x86_64", "rapl", ("x86_pkg_temp", "coretemp")),
+        arch_match=("x86_64", "amd64"),
+    ),
     "arm64_neon": HardwareChannel(
-        "arm64_neon", "cpu", TARGETS["arm64_neon"], "aarch64-unknown-linux-gnu", EM_AARCH64,
-        _rt("aarch64", "hwmon", ("cpu-thermal", "cpu", "soc")), arch_match=("aarch64", "arm64")),
+        "arm64_neon",
+        "cpu",
+        TARGETS["arm64_neon"],
+        "aarch64-unknown-linux-gnu",
+        EM_AARCH64,
+        _rt("aarch64", "hwmon", ("cpu-thermal", "cpu", "soc")),
+        arch_match=("aarch64", "arm64"),
+    ),
     "arm64_sve": HardwareChannel(
-        "arm64_sve", "cpu", TARGETS["arm64_sve"], "aarch64-unknown-linux-gnu", EM_AARCH64,
-        _rt("aarch64", "hwmon", ("cpu-thermal", "cpu", "soc")), arch_match=("aarch64", "arm64")),
+        "arm64_sve",
+        "cpu",
+        TARGETS["arm64_sve"],
+        "aarch64-unknown-linux-gnu",
+        EM_AARCH64,
+        _rt("aarch64", "hwmon", ("cpu-thermal", "cpu", "soc")),
+        arch_match=("aarch64", "arm64"),
+    ),
     "riscv_rvv": HardwareChannel(
-        "riscv_rvv", "cpu", TARGETS["riscv_rvv"], "riscv64-unknown-linux-gnu", EM_RISCV,
-        _rt("riscv64", "hwmon", ("cpu-thermal", "cpu", "soc")), arch_match=("riscv64",)),
+        "riscv_rvv",
+        "cpu",
+        TARGETS["riscv_rvv"],
+        "riscv64-unknown-linux-gnu",
+        EM_RISCV,
+        _rt("riscv64", "hwmon", ("cpu-thermal", "cpu", "soc")),
+        arch_match=("riscv64",),
+    ),
     # GPU: a warp machine, off-host (PTX/cubin, no host ELF). Already a first-class K_BCIR target.
     "nvidia_ptx": HardwareChannel(
-        "nvidia_ptx", "gpu", TARGETS["nvidia_ptx"], "nvptx64-nvidia-cuda", EM_NONE,
-        RuntimeChannel(energy_source="nvml"), modeled=False),
+        "nvidia_ptx",
+        "gpu",
+        TARGETS["nvidia_ptx"],
+        "nvptx64-nvidia-cuda",
+        EM_NONE,
+        RuntimeChannel(energy_source="nvml"),
+        modeled=False,
+    ),
 }
 _CHANNELS_LOCK = threading.RLock()
 
@@ -195,30 +246,85 @@ _CHANNELS_LOCK = threading.RLock()
 # orchestration is sensible: a systolic FPGA streams wide tiles cheaply; near-storage NVMe runs
 # huge sequential scans where the data already lives; an HBM/PIM module runs large reductions and
 # gathers in-memory (no transfer). Calibrating these is each channel's own future task.
-def _modeled(name, *, lane_widths, gather_penalty, mem_unit, base_overhead, affinity_domains,
-             mem_channels, features) -> TargetProfile:
-    return TargetProfile(name=name, triple=name, lane_widths=lane_widths,
-                         gather_penalty=gather_penalty, mem_unit=mem_unit,
-                         base_overhead=base_overhead, isa_features=frozenset(features),
-                         affinity_domains=affinity_domains, mem_channels=mem_channels)
+def _modeled(
+    name,
+    *,
+    lane_widths,
+    gather_penalty,
+    mem_unit,
+    base_overhead,
+    affinity_domains,
+    mem_channels,
+    features,
+) -> TargetProfile:
+    return TargetProfile(
+        name=name,
+        triple=name,
+        lane_widths=lane_widths,
+        gather_penalty=gather_penalty,
+        mem_unit=mem_unit,
+        base_overhead=base_overhead,
+        isa_features=frozenset(features),
+        affinity_domains=affinity_domains,
+        mem_channels=mem_channels,
+    )
 
 
 def _install_modeled_channels() -> None:
     CHANNELS["fpga_systolic"] = HardwareChannel(
-        "fpga_systolic", "fpga",
-        _modeled("fpga-systolic", lane_widths=(1, 64), gather_penalty=256, mem_unit=1,
-                 base_overhead=32, affinity_domains=64, mem_channels=16, features=("systolic",)),
-        "", EM_NONE, RuntimeChannel(energy_source="hwmon"), modeled=True)
+        "fpga_systolic",
+        "fpga",
+        _modeled(
+            "fpga-systolic",
+            lane_widths=(1, 64),
+            gather_penalty=256,
+            mem_unit=1,
+            base_overhead=32,
+            affinity_domains=64,
+            mem_channels=16,
+            features=("systolic",),
+        ),
+        "",
+        EM_NONE,
+        RuntimeChannel(energy_source="hwmon"),
+        modeled=True,
+    )
     CHANNELS["nvme_stream"] = HardwareChannel(
-        "nvme_stream", "storage",
-        _modeled("nvme-stream", lane_widths=(1, 8), gather_penalty=1024, mem_unit=1,
-                 base_overhead=2, affinity_domains=8, mem_channels=4, features=("near_storage",)),
-        "", EM_NONE, RuntimeChannel(energy_source="none"), modeled=True)
+        "nvme_stream",
+        "storage",
+        _modeled(
+            "nvme-stream",
+            lane_widths=(1, 8),
+            gather_penalty=1024,
+            mem_unit=1,
+            base_overhead=2,
+            affinity_domains=8,
+            mem_channels=4,
+            features=("near_storage",),
+        ),
+        "",
+        EM_NONE,
+        RuntimeChannel(energy_source="none"),
+        modeled=True,
+    )
     CHANNELS["hbm_pim"] = HardwareChannel(
-        "hbm_pim", "memory",
-        _modeled("hbm-pim", lane_widths=(1, 16), gather_penalty=8, mem_unit=1,
-                 base_overhead=4, affinity_domains=128, mem_channels=32, features=("pim",)),
-        "", EM_NONE, RuntimeChannel(energy_source="none"), modeled=True)
+        "hbm_pim",
+        "memory",
+        _modeled(
+            "hbm-pim",
+            lane_widths=(1, 16),
+            gather_penalty=8,
+            mem_unit=1,
+            base_overhead=4,
+            affinity_domains=128,
+            mem_channels=32,
+            features=("pim",),
+        ),
+        "",
+        EM_NONE,
+        RuntimeChannel(energy_source="none"),
+        modeled=True,
+    )
 
 
 def register_channel(channel: HardwareChannel) -> None:
@@ -283,6 +389,7 @@ class ChannelPlacement:
     barrier per cross-device edge, scalarized under the same policy weights). It is 0 for a same-channel
     edge or a live-in (see `_transfer_cost` / orchestrate). The placement's full burdened cost is
     ``cost + transfer_cost``."""
+
     claim_id: int
     op: str
     channel: str
@@ -302,6 +409,7 @@ class HeterogeneousPlan:
     transfer the placement pays to move inputs between backends (``transfer_total``). A single-channel
     tower has no cross-channel edges, so ``transfer_total == 0`` and the burdened total equals the
     oracle's single-channel score (the invariant the cpu-only test pins)."""
+
     placements: tuple
 
     @property
@@ -340,17 +448,17 @@ def _claim_suits_channel(claim, ch: HardwareChannel) -> bool:
     streams. Cost then picks among the suitable channels."""
     from .model import StrideClass
 
-    op = (claim.op or "")
+    op = claim.op or ""
     sc = getattr(claim, "stride_class", None)
     if ch.kind == "cpu":
         return True
     if ch.kind == "gpu":
-        return True                                  # warp machine: most data-parallel work
-    if ch.kind == "memory":                          # PIM: reductions + gathers over resident data
+        return True  # warp machine: most data-parallel work
+    if ch.kind == "memory":  # PIM: reductions + gathers over resident data
         return op.startswith("reduce.") or "gather" in op or sc == StrideClass.RANDOM
-    if ch.kind == "fpga":                            # systolic: tiles / unit-stride streaming / matmul
+    if ch.kind == "fpga":  # systolic: tiles / unit-stride streaming / matmul
         return sc in (StrideClass.TILE, StrideClass.UNIT) or "matmul" in op
-    if ch.kind == "storage":                         # near-storage: big sequential streams (ETL/scan)
+    if ch.kind == "storage":  # near-storage: big sequential streams (ETL/scan)
         return sc in (StrideClass.UNIT, StrideClass.SCALAR)
     return False
 
@@ -372,8 +480,8 @@ def _claim_suits_channel(claim, ch: HardwareChannel) -> bool:
 # module writes) cost ZERO: a same-channel edge needs no move, and a live-in is assumed pre-resident
 # on whatever channel first consumes it (a v1 scope limit -- placement does not yet model staging a
 # live-in to a device). This keeps a single-channel tower at exactly the oracle's single-channel score.
-XFER_BW_Q8 = 64        # Q8 fabric-bandwidth factor: bytes -> fabric units (x0.25 == 1 mem-stream/elem)
-XFER_SYNC = 16         # cross-device barrier constant (matches the realize.py BARRIER sync=16)
+XFER_BW_Q8 = 64  # Q8 fabric-bandwidth factor: bytes -> fabric units (x0.25 == 1 mem-stream/elem)
+XFER_SYNC = 16  # cross-device barrier constant (matches the realize.py BARRIER sync=16)
 
 
 def _transfer_cost(module, claim, consumer_channel, producer_of, weights_vec) -> int:
@@ -389,7 +497,7 @@ def _transfer_cost(module, claim, consumer_channel, producer_of, weights_vec) ->
     for rid in claim.rd:
         src = producer_of.get(rid)
         if src is None or src == consumer_channel.name:
-            continue                                 # live-in (assume resident) or same-channel: free
+            continue  # live-in (assume resident) or same-channel: free
         res = module.resource(rid)
         count = res.count if res is not None else 1
         nbytes = count * consumer_elem_bytes
@@ -423,22 +531,39 @@ def orchestrate(module, channels, theta, policy=None) -> HeterogeneousPlan:
     step_of = {c.name: {s.claim_id: s for s in plans[c.name].steps} for c in channels}
 
     placements = []
-    producer_of: dict[int, str] = {}     # rid -> name of the channel the claim that WROTE it landed on
+    producer_of: dict[int, str] = {}  # rid -> name of the channel the claim that WROTE it landed on
     for phase_id, claim in _flatten(module):
-        wv = _weights(None, theta, phase_id, policy)   # policy weights for this phase (target-neutral)
-        cands = [(c, step_of[c.name][claim.id]) for c in channels
-                 if channel_suits(claim, c) and claim.id in step_of[c.name]]
-        if not cands:                                # nothing suits -> the host CPU channel
+        wv = _weights(
+            None, theta, phase_id, policy
+        )  # policy weights for this phase (target-neutral)
+        cands = [
+            (c, step_of[c.name][claim.id])
+            for c in channels
+            if channel_suits(claim, c) and claim.id in step_of[c.name]
+        ]
+        if not cands:  # nothing suits -> the host CPU channel
             hc = host_channel()
             if hc.name not in step_of:
-                step_of[hc.name] = {s.claim_id: s for s in optimize(module, hc.profile, theta, policy).steps}
+                step_of[hc.name] = {
+                    s.claim_id: s for s in optimize(module, hc.profile, theta, policy).steps
+                }
             cands = [(hc, step_of[hc.name][claim.id])]
         # burdened cost = the channel's compute score + the cross-device transfer to land inputs there.
         scored = [(c, step, _transfer_cost(module, claim, c, producer_of, wv)) for c, step in cands]
         ch, step, xfer = min(scored, key=lambda x: (x[1].cost + x[2], x[0].name))  # det. tie-break
-        placements.append(ChannelPlacement(claim.id, claim.op, ch.name, ch.kind,
-                                           step.candidate.name, step.candidate.width, step.cost, xfer))
-        for rid in claim.wr:                         # record where this claim's outputs now live
+        placements.append(
+            ChannelPlacement(
+                claim.id,
+                claim.op,
+                ch.name,
+                ch.kind,
+                step.candidate.name,
+                step.candidate.width,
+                step.cost,
+                xfer,
+            )
+        )
+        for rid in claim.wr:  # record where this claim's outputs now live
             producer_of[rid] = ch.name
     return HeterogeneousPlan(tuple(placements))
 
@@ -449,6 +574,7 @@ def apply_channels(pack, plan: HeterogeneousPlan):
     segment by `LaneSegment.channel`). Returns a new StreamPack (segments are frozen). This is the
     bridge from a heterogeneous plan to GEM execution."""
     from dataclasses import replace
+
     where = {p.claim_id: p.channel for p in plan.placements}
     segs = tuple(replace(s, channel=where.get(s.claim_id, s.channel)) for s in pack.segments)
     return replace(pack, segments=segs)

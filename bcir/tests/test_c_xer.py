@@ -35,11 +35,25 @@ _SOURCES = ["bcir_xer.c", "test_xer.c"]
 _SEED = 20260727
 
 #: `bcir_xer_status`, mirrored so a failure names the status rather than a number.
-_STATUS = {0: "OK", 1: "TRUNCATED", 2: "MALFORMED", 3: "EXCLUDED",
-           4: "UNREPRESENTABLE", 5: "OVERFLOW", 6: "INVALID"}
+_STATUS = {
+    0: "OK",
+    1: "TRUNCATED",
+    2: "MALFORMED",
+    3: "EXCLUDED",
+    4: "UNREPRESENTABLE",
+    5: "OVERFLOW",
+    6: "INVALID",
+}
 #: `bcir_xer_excluded`.
-_EXCLUDED = {1: "COMMENT", 2: "PI", 3: "CDATA", 4: "DOCTYPE", 5: "ATTRIBUTE",
-             6: "NAMESPACE", 7: "NUMERIC"}
+_EXCLUDED = {
+    1: "COMMENT",
+    2: "PI",
+    3: "CDATA",
+    4: "DOCTYPE",
+    5: "ATTRIBUTE",
+    6: "NAMESPACE",
+    7: "NUMERIC",
+}
 #: `bcir_xer_tag_kind`, in the spelling the Python `_Reader` uses.
 _KIND = {0: "start", 1: "end", 2: "empty"}
 
@@ -52,17 +66,31 @@ def _build(tmp: str) -> str | None:
     proc = None
     for std in ("c23", "c2x", "c11"):
         proc = subprocess.run(
-            [cc, f"-std={std}", "-O1", "-Wall", "-Wextra", "-Werror", "-I", _C,
-             *[os.path.join(_C, name) for name in _SOURCES], "-o", out],
-            capture_output=True, text=True)
+            [
+                cc,
+                f"-std={std}",
+                "-O1",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C,
+                *[os.path.join(_C, name) for name in _SOURCES],
+                "-o",
+                out,
+            ],
+            capture_output=True,
+            text=True,
+        )
         if proc.returncode == 0:
             return out
     raise AssertionError(f"the XER twin must build warning-clean:\n{proc.stderr[:3000]}")
 
 
 def _run(binary: str, lines: list[str]) -> list[str]:
-    proc = subprocess.run([binary], input="\n".join(lines) + "\n",
-                          capture_output=True, text=True, timeout=120)
+    proc = subprocess.run(
+        [binary], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=120
+    )
     assert proc.returncode == 0, f"driver exited {proc.returncode}: {proc.stderr[:2000]}"
     return proc.stdout.strip().splitlines()
 
@@ -77,11 +105,40 @@ def _hex(data: bytes) -> str:
 #: white-space before `>` and before `/>`, each excluded construct, and the truncations that
 #: sit one octet short of each of them.
 _TAG_CASES = [
-    "<a>", "</a>", "<a/>", "<PersonnelRecord>", "</ChildInformation>", "<_XMLThing/>",
-    "<a >", "<a\t/>", "<a\n>", "<nul/>", "<BIT_STRING>", "<x-y.z/>",
-    "<!-- c -->", "<![CDATA[x]]>", "<!DOCTYPE a>", "<?xml?>", '<a b="1">', "<a:b>",
-    "<", "</", "<a", "<a/", "<!", "<!-", "<![CDATA", "<?",
-    "<1a>", "<>", "< a>", "a", "", "<a b>", "<aé>", "<aé/>",
+    "<a>",
+    "</a>",
+    "<a/>",
+    "<PersonnelRecord>",
+    "</ChildInformation>",
+    "<_XMLThing/>",
+    "<a >",
+    "<a\t/>",
+    "<a\n>",
+    "<nul/>",
+    "<BIT_STRING>",
+    "<x-y.z/>",
+    "<!-- c -->",
+    "<![CDATA[x]]>",
+    "<!DOCTYPE a>",
+    "<?xml?>",
+    '<a b="1">',
+    "<a:b>",
+    "<",
+    "</",
+    "<a",
+    "<a/",
+    "<!",
+    "<!-",
+    "<![CDATA",
+    "<?",
+    "<1a>",
+    "<>",
+    "< a>",
+    "a",
+    "",
+    "<a b>",
+    "<aé>",
+    "<aé/>",
 ]
 
 
@@ -115,8 +172,11 @@ def test_the_tag_scanner_tokenizes_identically_on_both_rails():
         if binary is None:
             return
         cases = [(text, 0) for text in _TAG_CASES]
-        cases += [(text, pos) for text in ("<a><b/></a>", "  <a>x</a>")
-                  for pos in range(len(text.encode()) + 2)]
+        cases += [
+            (text, pos)
+            for text in ("<a><b/></a>", "  <a>x</a>")
+            for pos in range(len(text.encode()) + 2)
+        ]
         lines = [f"tag {_hex(text.encode())} {pos}" for text, pos in cases]
         answers = _run(binary, lines)
         assert len(answers) == len(cases)
@@ -125,11 +185,11 @@ def test_the_tag_scanner_tokenizes_identically_on_both_rails():
             if got.startswith("OK"):
                 _kind_word = _KIND[int(got.split()[1])]
                 rebuilt = "OK " + " ".join([_kind_word, *got.split()[2:]])
-                assert want == rebuilt, (
-                    f"{text!r} at {pos}: C said {rebuilt}, Python said {want}")
+                assert want == rebuilt, f"{text!r} at {pos}: C said {rebuilt}, Python said {want}"
             else:
                 assert want.startswith("ERR"), (
-                    f"{text!r} at {pos}: C refused ({got}), Python accepted ({want})")
+                    f"{text!r} at {pos}: C refused ({got}), Python accepted ({want})"
+                )
 
 
 def test_the_excluded_constructs_are_refused_for_the_same_reason_on_both_rails():
@@ -170,9 +230,21 @@ def test_the_excluded_constructs_are_refused_for_the_same_reason_on_both_rails()
 # --- the xmlcstring escaper --------------------------------------------------------------
 
 _ESCAPE_CASES = [
-    "", "a", "a<b>&c", "\x00\x1f", "\t\n\r", "John", "&&&", "<<<", ">>>",
+    "",
+    "a",
+    "a<b>&c",
+    "\x00\x1f",
+    "\t\n\r",
+    "John",
+    "&&&",
+    "<<<",
+    ">>>",
     "".join(chr(code) for code in range(32)),
-    "\x0b\x0c\x0e\x1a", "é中\U0001f600", "퟿", "", "�",
+    "\x0b\x0c\x0e\x1a",
+    "é中\U0001f600",
+    "퟿",
+    "",
+    "�",
 ]
 
 
@@ -185,10 +257,21 @@ def test_the_escaper_agrees_character_for_character():
         rng = random.Random(_SEED)
         cases = list(_ESCAPE_CASES)
         for _ in range(120):
-            cases.append("".join(
-                chr(rng.choice([rng.randint(0, 0x7F), rng.randint(0xA0, 0x2FF),
-                                rng.randint(0x4E00, 0x4EFF), rng.randint(0x10000, 0x100FF)]))
-                for _ in range(rng.randint(0, 24))))
+            cases.append(
+                "".join(
+                    chr(
+                        rng.choice(
+                            [
+                                rng.randint(0, 0x7F),
+                                rng.randint(0xA0, 0x2FF),
+                                rng.randint(0x4E00, 0x4EFF),
+                                rng.randint(0x10000, 0x100FF),
+                            ]
+                        )
+                    )
+                    for _ in range(rng.randint(0, 24))
+                )
+            )
         lines = [f"escape {_hex(text.encode())}" for text in cases]
         answers = _run(binary, lines)
         assert len(answers) == len(cases)
@@ -198,7 +281,8 @@ def test_the_escaper_agrees_character_for_character():
             payload = got.split(maxsplit=1)[1]
             octets = b"" if payload == "-" else bytes.fromhex(payload)
             assert octets == want.encode(), (
-                f"{text!r}: C produced {octets!r}, Python produced {want.encode()!r}")
+                f"{text!r}: C produced {octets!r}, Python produced {want.encode()!r}"
+            )
 
 
 def test_a_character_with_no_xmlcstring_spelling_is_refused_on_both_rails():
@@ -211,7 +295,7 @@ def test_a_character_with_no_xmlcstring_spelling_is_refused_on_both_rails():
         cases = ["￾", "￿", "a￾"]
         answers = _run(binary, [f"escape {_hex(t.encode())}" for t in cases])
         for text, got in zip(cases, answers):
-            assert got == "ERR 4", f"{text!r}: {got}"      # UNREPRESENTABLE
+            assert got == "ERR 4", f"{text!r}: {got}"  # UNREPRESENTABLE
             try:
                 escape_xmlcstring(text)
             except Asn1Error as error:
@@ -243,10 +327,11 @@ def test_the_numeric_escape_is_gated_by_the_rule_set_on_both_rails():
         if binary is None:
             return
         text = "a&#233;b&#xEE;c"
-        allowed, refused = _run(binary, [f"unescape 1 {_hex(text.encode())}",
-                                         f"unescape 0 {_hex(text.encode())}"])
+        allowed, refused = _run(
+            binary, [f"unescape 1 {_hex(text.encode())}", f"unescape 0 {_hex(text.encode())}"]
+        )
         assert allowed == "OK " + "aébîc".encode().hex(), allowed
-        assert refused == "ERR 3", refused                 # EXCLUDED, per §9.1.3
+        assert refused == "ERR 3", refused  # EXCLUDED, per §9.1.3
         reader = _Reader(text, XerRules.BASIC)
         assert reader._unescape(text) == "aébîc"
         strict = _Reader(text, XerRules.CANONICAL)
@@ -270,14 +355,14 @@ def test_the_utf8_decoder_refuses_what_is_not_a_character():
         if binary is None:
             return
         cases = [
-            b"\xc0\x80",          # overlong NUL
-            b"\xe0\x80\x80",      # overlong, three octets
+            b"\xc0\x80",  # overlong NUL
+            b"\xe0\x80\x80",  # overlong, three octets
             b"\xf0\x80\x80\x80",  # overlong, four octets
-            b"\xed\xa0\x80",      # U+D800, a surrogate
+            b"\xed\xa0\x80",  # U+D800, a surrogate
             b"\xf5\x80\x80\x80",  # above U+10FFFF
-            b"\x80",              # a bare continuation
-            b"\xc3",              # truncated
-            b"\xc3\xa9",          # the one valid case, as a control
+            b"\x80",  # a bare continuation
+            b"\xc3",  # truncated
+            b"\xc3\xa9",  # the one valid case, as a control
         ]
         answers = _run(binary, [f"utf8 {_hex(data)} 0" for data in cases])
         for data, got in zip(cases, answers):

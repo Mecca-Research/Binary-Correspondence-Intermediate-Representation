@@ -48,7 +48,8 @@ def _validate_inputs(a, b, M: int, N: int, K: int) -> None:
     if a_len != a_count or b_len != b_count:
         raise ValueError(
             f"matmul input length mismatch: A has {a_len}, expected {a_count}; "
-            f"B has {b_len}, expected {b_count}")
+            f"B has {b_len}, expected {b_count}"
+        )
 
 
 def matmul_reference(a, b, M: int, N: int, K: int) -> list[float]:
@@ -71,8 +72,7 @@ def matmul_tiled(a, b, M: int, N: int, K: int, plan: "TilePlan") -> list[float]:
     _validate_inputs(a, b, M, N, K)
     if not isinstance(plan, TilePlan):
         raise ValueError("matmul plan must be a TilePlan")
-    for name, value in (("tile_m", plan.tile_m), ("tile_n", plan.tile_n),
-                        ("tile_k", plan.tile_k)):
+    for name, value in (("tile_m", plan.tile_m), ("tile_n", plan.tile_n), ("tile_k", plan.tile_k)):
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"{name} must be a positive integer; got {value!r}")
     if plan.loop_order not in _LOOP_ORDERS:
@@ -109,7 +109,7 @@ def quantized_matmul(a, b, M: int, N: int, K: int, group_size: int, bits: int) -
     _validate_inputs(a, b, M, N, K)
     c = [0.0] * (M * N)
     for i in range(M):
-        row = a[i * K:(i + 1) * K]
+        row = a[i * K : (i + 1) * K]
         for j in range(N):
             col = [b[k * N + j] for k in range(K)]
             qa = quantize_per_group(row, group_size, bits)
@@ -120,19 +120,24 @@ def quantized_matmul(a, b, M: int, N: int, K: int, group_size: int, bits: int) -
 
 # ---- the dual-semiring tile/loop-order plan -----------------------------------------------------
 
+
 @dataclass(frozen=True)
 class TilePlan:
     tile_m: int
     tile_n: int
     tile_k: int
     loop_order: str
-    compute_cost: int      # MAC throughput term (min,+ stage cost, summed along the realization)
-    mem_cost: int          # traffic / bandwidth term
-    bottleneck: int        # max(compute, mem) -- the max,+ roofline binding resource
+    compute_cost: int  # MAC throughput term (min,+ stage cost, summed along the realization)
+    mem_cost: int  # traffic / bandwidth term
+    bottleneck: int  # max(compute, mem) -- the max,+ roofline binding resource
     fits_cache: bool
 
 
-_LOOP_ORDERS = ("ijk", "ikj", "jik")     # the outer tile-loop permutations we cost (k always innermost-accum)
+_LOOP_ORDERS = (
+    "ijk",
+    "ikj",
+    "jik",
+)  # the outer tile-loop permutations we cost (k always innermost-accum)
 
 
 def tile_origins(M: int, N: int, K: int, plan: TilePlan):
@@ -171,7 +176,9 @@ def _cache_budget_elems(target: TargetProfile) -> int:
     return (512 * target.cacheline) // max(1, target.elem_bytes)
 
 
-def cost_of(M: int, N: int, K: int, tm: int, tn: int, tk: int, target: TargetProfile) -> tuple[int, int, bool]:
+def cost_of(
+    M: int, N: int, K: int, tm: int, tn: int, tk: int, target: TargetProfile
+) -> tuple[int, int, bool]:
     """The analytic (compute, mem, fits_cache) cost of one tiling, in target units.
 
     compute: M*N*K MACs / (vector_width * fma) -- the FLOP-throughput term.
@@ -188,8 +195,8 @@ def cost_of(M: int, N: int, K: int, tm: int, tn: int, tk: int, target: TargetPro
     macs = M * N * K
     thr = max(1, target.vector_width * (2 if target.fma else 1))
     compute = (macs + thr - 1) // thr
-    a_reads = M * K * math.ceil(N / max(1, tn))      # A reused across the columns in a tile
-    b_reads = K * N * math.ceil(M / max(1, tm))      # B reused across the rows in a tile
+    a_reads = M * K * math.ceil(N / max(1, tn))  # A reused across the columns in a tile
+    b_reads = K * N * math.ceil(M / max(1, tm))  # B reused across the rows in a tile
     c_traffic = M * N * (math.ceil(K / max(1, tk)) + 1)
     bw = max(1, target.mem_unit * target.mem_channels)
     mem = (a_reads + b_reads + c_traffic + bw - 1) // bw
@@ -230,13 +237,17 @@ def plan_matmul(M: int, N: int, K: int, target: TargetProfile | None = None) -> 
             for tn in _divisor_tiles(N):
                 for tk in _divisor_tiles(K):
                     compute, mem, fits = cost_of(M, N, K, tm, tn, tk, target)
-                    bottleneck = max(compute, mem)       # max,+ : the binding roofline resource
+                    bottleneck = max(compute, mem)  # max,+ : the binding roofline resource
                     cand = TilePlan(tm, tn, tk, lo, compute, mem, bottleneck, fits)
                     # min,+ selection: cache-fitting first, then min bottleneck, then a stable tie-break
                     # (bigger tiles, then loop order) so the choice is fully deterministic.
                     key = (not cand.fits_cache, cand.bottleneck, -(tm * tn * tk), lo)
-                    if best is None or key < (not best.fits_cache, best.bottleneck,
-                                              -(best.tile_m * best.tile_n * best.tile_k), best.loop_order):
+                    if best is None or key < (
+                        not best.fits_cache,
+                        best.bottleneck,
+                        -(best.tile_m * best.tile_n * best.tile_k),
+                        best.loop_order,
+                    ):
                         best = cand
     assert best is not None
     return best

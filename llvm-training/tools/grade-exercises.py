@@ -41,7 +41,10 @@ def validate_attempt_tree(root: Path) -> None:
     for path in root.rglob("*"):
         if path.is_symlink():
             confined_answer(root, path)
-        if path.is_file() and (path.name in FORBIDDEN_GENERATED_NAMES or path.suffix.lower() in FORBIDDEN_GENERATED_SUFFIXES):
+        if path.is_file() and (
+            path.name in FORBIDDEN_GENERATED_NAMES
+            or path.suffix.lower() in FORBIDDEN_GENERATED_SUFFIXES
+        ):
             raise ValueError(f"unsupported generated executable or build artifact: {path}")
 
 
@@ -86,7 +89,10 @@ def version_for(tool: str | None) -> dict[str, str] | None:
         return None
     result = run_command([tool, "--version"], 5)
     text = (result.stdout or result.stderr).splitlines()
-    return {"path": str(Path(tool).resolve()), "version": text[0].strip() if text else "version unavailable"}
+    return {
+        "path": str(Path(tool).resolve()),
+        "version": text[0].strip() if text else "version unavailable",
+    }
 
 
 def allocate_points(entry: dict[str, Any], specs: list[dict[str, Any]]) -> dict[str, float]:
@@ -104,13 +110,22 @@ def assertion_specs(entry: dict[str, Any]) -> list[dict[str, Any]]:
     ]
     kind = entry["answer_kind"]
     if kind == "llvm-ir":
-        specs.extend([
-            {"id": "llvm.assemble", "dimension": "validity", "type": "tool", "tool": "llvm-as"},
-            {"id": "llvm.verify", "dimension": "validity", "type": "tool", "tool": "opt"},
-            {"id": "llvm.normalize", "dimension": "normalization", "type": "normalize", "tool": "opt"},
-        ])
+        specs.extend(
+            [
+                {"id": "llvm.assemble", "dimension": "validity", "type": "tool", "tool": "llvm-as"},
+                {"id": "llvm.verify", "dimension": "validity", "type": "tool", "tool": "opt"},
+                {
+                    "id": "llvm.normalize",
+                    "dimension": "normalization",
+                    "type": "normalize",
+                    "tool": "opt",
+                },
+            ]
+        )
     elif kind == "mlir":
-        specs.append({"id": "mlir.parse", "dimension": "validity", "type": "tool", "tool": "mlir-opt"})
+        specs.append(
+            {"id": "mlir.parse", "dimension": "validity", "type": "tool", "tool": "mlir-opt"}
+        )
     for index, assertion in enumerate(entry.get("structural_assertions", []), 1):
         item = dict(assertion)
         item.setdefault("id", f"structure.{index:02d}")
@@ -123,7 +138,14 @@ def assertion_specs(entry: dict[str, Any]) -> list[dict[str, Any]]:
         item["type"] = "rubric"
         specs.append(item)
     for index, vector in enumerate(entry.get("semantic_tests", []), 1):
-        specs.append({"id": f"semantic.vector.{index:02d}", "dimension": "semantics", "type": "semantic", "vector": vector})
+        specs.append(
+            {
+                "id": f"semantic.vector.{index:02d}",
+                "dimension": "semantics",
+                "type": "semantic",
+                "vector": vector,
+            }
+        )
     return specs
 
 
@@ -135,11 +157,25 @@ def structural_check(spec: dict[str, Any], text: str) -> tuple[bool, str]:
     kind = spec["type"]
     patterns = spec.get("patterns", [spec.get("pattern", "")])
     if kind in {"contains", "function", "declaration", "instruction", "metadata", "attribute"}:
-        missing = [pattern for pattern in patterns if not re.search(pattern, text, re.MULTILINE | re.IGNORECASE)]
-        return (not missing, "all required patterns found" if not missing else "missing: " + ", ".join(missing))
+        missing = [
+            pattern
+            for pattern in patterns
+            if not re.search(pattern, text, re.MULTILINE | re.IGNORECASE)
+        ]
+        return (
+            not missing,
+            "all required patterns found" if not missing else "missing: " + ", ".join(missing),
+        )
     if kind == "absent":
-        found = [pattern for pattern in patterns if re.search(pattern, text, re.MULTILINE | re.IGNORECASE)]
-        return (not found, "prohibited patterns absent" if not found else "prohibited match: " + ", ".join(found))
+        found = [
+            pattern
+            for pattern in patterns
+            if re.search(pattern, text, re.MULTILINE | re.IGNORECASE)
+        ]
+        return (
+            not found,
+            "prohibited patterns absent" if not found else "prohibited match: " + ", ".join(found),
+        )
     if kind == "count":
         count = pattern_count(spec["pattern"], text)
         minimum = int(spec.get("min", 0))
@@ -154,13 +190,28 @@ def rubric_check(spec: dict[str, Any], text: str) -> tuple[bool, str]:
     terms = [str(term).casefold() for term in spec.get("terms", [])]
     if mode == "all":
         missing = [term for term in terms if term not in lower]
-        return (not missing, "required rubric terms covered" if not missing else "missing rubric terms: " + ", ".join(missing))
+        return (
+            not missing,
+            "required rubric terms covered"
+            if not missing
+            else "missing rubric terms: " + ", ".join(missing),
+        )
     if mode == "any":
         found = [term for term in terms if term in lower]
-        return (bool(found), "covered by: " + ", ".join(found) if found else "none of the accepted rubric terms found")
+        return (
+            bool(found),
+            "covered by: " + ", ".join(found)
+            if found
+            else "none of the accepted rubric terms found",
+        )
     if mode == "absent":
         found = [term for term in terms if term in lower]
-        return (not found, "prohibited claims absent" if not found else "prohibited claims found: " + ", ".join(found))
+        return (
+            not found,
+            "prohibited claims absent"
+            if not found
+            else "prohibited claims found: " + ", ".join(found),
+        )
     if mode == "min-words":
         words = re.findall(r"\b[\w'`.-]+\b", text)
         minimum = int(spec["minimum"])
@@ -179,20 +230,41 @@ def semantic_wrapper(vector: dict[str, Any], index: int) -> str:
     return f"  {call_name} = call {return_type} @{vector['function']}({typed})\n  {cmp_name} = icmp {predicate} {return_type} {call_name}, {expected}\n"
 
 
-def run_semantic(answer: Path, entry: dict[str, Any], vector: dict[str, Any], index: int, lli: str, timeout: float, temp: Path) -> tuple[bool, str, list[str], str, str]:
+def run_semantic(
+    answer: Path,
+    entry: dict[str, Any],
+    vector: dict[str, Any],
+    index: int,
+    lli: str,
+    timeout: float,
+    temp: Path,
+) -> tuple[bool, str, list[str], str, str]:
     source = answer.read_text(encoding="utf-8")
     if re.search(r"\bdefine\s+i32\s+@main\s*\(", source):
         return False, "submission defines @main; semantic harness requires that name", [], "", ""
     wrapper = semantic_wrapper(vector, index)
-    module = source + "\n\ndefine i32 @main() {\nentry:\n" + wrapper + f"  %exit = select i1 %ok{index}, i32 0, i32 1\n  ret i32 %exit\n}}\n"
+    module = (
+        source
+        + "\n\ndefine i32 @main() {\nentry:\n"
+        + wrapper
+        + f"  %exit = select i1 %ok{index}, i32 0, i32 1\n  ret i32 %exit\n}}\n"
+    )
     harness = temp / f"semantic-{index}.ll"
     harness.write_text(module, encoding="utf-8")
     command = [lli, str(harness)]
     result = run_command(command, timeout)
-    return result.returncode == 0, ("test vector matched" if result.returncode == 0 else f"lli exited {result.returncode}"), command, result.stdout, result.stderr
+    return (
+        result.returncode == 0,
+        ("test vector matched" if result.returncode == 0 else f"lli exited {result.returncode}"),
+        command,
+        result.stdout,
+        result.stderr,
+    )
 
 
-def grade_entry(entry: dict[str, Any], answer: Path, tools: dict[str, str | None]) -> dict[str, Any]:
+def grade_entry(
+    entry: dict[str, Any], answer: Path, tools: dict[str, str | None]
+) -> dict[str, Any]:
     specs = assertion_specs(entry)
     point_values = allocate_points(entry, specs)
     checks: list[Check] = []
@@ -208,20 +280,41 @@ def grade_entry(entry: dict[str, Any], answer: Path, tools: dict[str, str | None
         temp = Path(temp_name)
         for spec in specs:
             points = point_values.get(spec["dimension"], 0.0)
-            status, message, command, stdout, stderr, outcome = "fail", "", None, "", "", "incorrect_answer"
+            status, message, command, stdout, stderr, outcome = (
+                "fail",
+                "",
+                None,
+                "",
+                "",
+                "incorrect_answer",
+            )
             typ = spec["type"]
             if typ == "exists":
-                status, message = ("pass", "answer file exists") if exists else ("fail", "answer file is missing")
+                status, message = (
+                    ("pass", "answer file exists") if exists else ("fail", "answer file is missing")
+                )
                 outcome = "pass" if exists else "invalid_answer"
             elif typ == "non-empty":
-                status, message = ("pass", "answer file is non-empty") if non_empty else ("fail", "answer file is empty or missing")
+                status, message = (
+                    ("pass", "answer file is non-empty")
+                    if non_empty
+                    else ("fail", "answer file is empty or missing")
+                )
                 outcome = "pass" if non_empty else "invalid_answer"
             elif not non_empty:
-                status, message, outcome = "skip", "answer is unavailable; prerequisite check did not pass", "invalid_answer"
+                status, message, outcome = (
+                    "skip",
+                    "answer is unavailable; prerequisite check did not pass",
+                    "invalid_answer",
+                )
             elif typ == "tool":
                 tool = tools.get(spec["tool"])
                 if not tool:
-                    status, message, outcome = "skip", f"required tool not found: {spec['tool']}", "missing_tool"
+                    status, message, outcome = (
+                        "skip",
+                        f"required tool not found: {spec['tool']}",
+                        "missing_tool",
+                    )
                 else:
                     if spec["tool"] == "llvm-as":
                         command = [tool, str(answer), "-o", os.devnull]
@@ -232,42 +325,109 @@ def grade_entry(entry: dict[str, Any], answer: Path, tools: dict[str, str | None
                     result = run_command(command, timeout)
                     stdout, stderr = result.stdout, result.stderr
                     status = "pass" if result.returncode == 0 else "fail"
-                    outcome = "pass" if status == "pass" else ("timeout" if result.timed_out else "invalid_answer")
-                    message = "tool accepted answer" if status == "pass" else ("tool timed out" if result.timed_out else f"tool exited {result.returncode}")
+                    outcome = (
+                        "pass"
+                        if status == "pass"
+                        else ("timeout" if result.timed_out else "invalid_answer")
+                    )
+                    message = (
+                        "tool accepted answer"
+                        if status == "pass"
+                        else (
+                            "tool timed out"
+                            if result.timed_out
+                            else f"tool exited {result.returncode}"
+                        )
+                    )
             elif typ == "normalize":
                 tool = tools.get("opt")
                 if not tool:
-                    status, message, outcome = "skip", "opt unavailable; structural checks use original text", "missing_tool"
+                    status, message, outcome = (
+                        "skip",
+                        "opt unavailable; structural checks use original text",
+                        "missing_tool",
+                    )
                 else:
                     command = [tool, "-S", str(answer), "-o", "-"]
                     result = run_command(command, timeout)
                     stdout, stderr = result.stdout, result.stderr
                     if result.returncode == 0:
                         normalized = result.stdout
-                        status, message, outcome = "pass", "opt -S produced normalized textual IR", "pass"
+                        status, message, outcome = (
+                            "pass",
+                            "opt -S produced normalized textual IR",
+                            "pass",
+                        )
                     else:
-                        status, message, outcome = "fail", ("opt -S timed out" if result.timed_out else f"opt -S exited {result.returncode}"), ("timeout" if result.timed_out else "invalid_answer")
+                        status, message, outcome = (
+                            "fail",
+                            (
+                                "opt -S timed out"
+                                if result.timed_out
+                                else f"opt -S exited {result.returncode}"
+                            ),
+                            ("timeout" if result.timed_out else "invalid_answer"),
+                        )
             elif typ == "rubric":
                 passed, message = rubric_check(spec, text)
                 status = "pass" if passed else "fail"
                 outcome = "pass" if passed else "incorrect_answer"
             elif typ == "semantic":
                 if not entry.get("safe_deterministic_lli", False):
-                    status, message, outcome = "fail", "lli execution is not allowlisted for this exercise", "grader_failure"
-                    checks.append(Check(spec["id"], spec["dimension"], status, 0.0, points, message, outcome=outcome))
+                    status, message, outcome = (
+                        "fail",
+                        "lli execution is not allowlisted for this exercise",
+                        "grader_failure",
+                    )
+                    checks.append(
+                        Check(
+                            spec["id"],
+                            spec["dimension"],
+                            status,
+                            0.0,
+                            points,
+                            message,
+                            outcome=outcome,
+                        )
+                    )
                     continue
                 lli = tools.get("lli")
                 if not lli:
                     status, message, outcome = "skip", "lli unavailable", "missing_tool"
                 else:
-                    passed, message, command, stdout, stderr = run_semantic(answer, entry, spec["vector"], int(spec["id"].rsplit(".", 1)[1]), lli, timeout, temp)
+                    passed, message, command, stdout, stderr = run_semantic(
+                        answer,
+                        entry,
+                        spec["vector"],
+                        int(spec["id"].rsplit(".", 1)[1]),
+                        lli,
+                        timeout,
+                        temp,
+                    )
                     status = "pass" if passed else "fail"
-                    outcome = "pass" if passed else ("timeout" if "timed out" in stderr else "incorrect_answer")
+                    outcome = (
+                        "pass"
+                        if passed
+                        else ("timeout" if "timed out" in stderr else "incorrect_answer")
+                    )
             else:
                 passed, message = structural_check(spec, normalized)
                 status = "pass" if passed else "fail"
                 outcome = "pass" if passed else "incorrect_answer"
-            checks.append(Check(spec["id"], spec["dimension"], status, points if status == "pass" else 0.0, points, message, command, stdout, stderr, outcome))
+            checks.append(
+                Check(
+                    spec["id"],
+                    spec["dimension"],
+                    status,
+                    points if status == "pass" else 0.0,
+                    points,
+                    message,
+                    command,
+                    stdout,
+                    stderr,
+                    outcome,
+                )
+            )
 
     earned = sum(item.points_earned for item in checks)
     available = sum(item.points_available for item in checks)
@@ -285,7 +445,9 @@ def grade_entry(entry: dict[str, Any], answer: Path, tools: dict[str, str | None
         "points_earned": round(earned, 3),
         "points_available": round(available, 3),
         "score_percent": round(100 * earned / available, 2) if available else 0.0,
-        "executed_score_percent": round(100 * executed_earned / executed_available, 2) if executed_available else 0.0,
+        "executed_score_percent": round(100 * executed_earned / executed_available, 2)
+        if executed_available
+        else 0.0,
         "skipped_checks": sum(item.status == "skip" for item in checks),
         "score_confidence": "reduced" if any(item.status == "skip" for item in checks) else "full",
     }
@@ -295,7 +457,16 @@ def validate_registry(data: dict[str, Any], root: Path) -> None:
     if data.get("schema_version") != SCHEMA_VERSION:
         raise ValueError(f"unsupported registry schema_version {data.get('schema_version')!r}")
     ids: set[str] = set()
-    required = {"id", "prompt_path", "reference_solution_path", "answer_kind", "required_tools", "timeout_seconds", "scoring_dimensions", "structural_assertions"}
+    required = {
+        "id",
+        "prompt_path",
+        "reference_solution_path",
+        "answer_kind",
+        "required_tools",
+        "timeout_seconds",
+        "scoring_dimensions",
+        "structural_assertions",
+    }
     for entry in data.get("exercises", []):
         missing = required - entry.keys()
         if missing:
@@ -310,22 +481,34 @@ def validate_registry(data: dict[str, Any], root: Path) -> None:
                 raise ValueError(f"registered {key} does not exist: {entry[key]}")
         points = sum(float(item["points"]) for item in entry["scoring_dimensions"])
         if abs(points - float(entry.get("expected_points", 100))) > 0.001:
-            raise ValueError(f"exercise {entry['id']} scoring dimensions total {points}, expected {entry.get('expected_points', 100)}")
+            raise ValueError(
+                f"exercise {entry['id']} scoring dimensions total {points}, expected {entry.get('expected_points', 100)}"
+            )
 
 
 def report_text(report: dict[str, Any]) -> str:
     lines = [f"Autograder schema {report['schema_version']}"]
     for result in report["results"]:
-        lines.append(f"\nExercise {result['exercise_id']} ({result['answer_kind']}): {result['points_earned']}/{result['points_available']} ({result['score_percent']:.2f}%)")
+        lines.append(
+            f"\nExercise {result['exercise_id']} ({result['answer_kind']}): {result['points_earned']}/{result['points_available']} ({result['score_percent']:.2f}%)"
+        )
         if result["rubric_coverage_only"]:
-            lines.append("  NOTE: markdown/diagnostic scoring measures deterministic rubric coverage, not semantic proof.")
+            lines.append(
+                "  NOTE: markdown/diagnostic scoring measures deterministic rubric coverage, not semantic proof."
+            )
         if result["score_confidence"] == "reduced":
-            lines.append("  NOTE: one or more checks were skipped; skipped points remain unearned and confidence is reduced.")
+            lines.append(
+                "  NOTE: one or more checks were skipped; skipped points remain unearned and confidence is reduced."
+            )
         for check in result["checks"]:
             marker = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP"}[check["status"]]
-            lines.append(f"  [{marker}] {check['id']}: {check['points_earned']}/{check['points_available']} - {check['message']}")
+            lines.append(
+                f"  [{marker}] {check['id']}: {check['points_earned']}/{check['points_available']} - {check['message']}"
+            )
     aggregate = report["aggregate"]
-    lines.append(f"\nAggregate: {aggregate['points_earned']}/{aggregate['points_available']} ({aggregate['score_percent']:.2f}%)")
+    lines.append(
+        f"\nAggregate: {aggregate['points_earned']}/{aggregate['points_available']} ({aggregate['score_percent']:.2f}%)"
+    )
     if report["toolchain"]:
         lines.append("Toolchain:")
         for name, info in report["toolchain"].items():
@@ -335,14 +518,26 @@ def report_text(report: dict[str, Any]) -> str:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--attempts", type=Path, help="directory containing NNN/answer.<ext> attempt directories")
-    parser.add_argument("--exercise", action="append", help="grade only this stable three-digit exercise ID (repeatable)")
+    parser.add_argument(
+        "--attempts", type=Path, help="directory containing NNN/answer.<ext> attempt directories"
+    )
+    parser.add_argument(
+        "--exercise",
+        action="append",
+        help="grade only this stable three-digit exercise ID (repeatable)",
+    )
     parser.add_argument("--answer", type=Path, help="answer file for a single --exercise")
-    parser.add_argument("--attempt-root", type=Path, help="configured root that must contain every untrusted answer")
+    parser.add_argument(
+        "--attempt-root", type=Path, help="configured root that must contain every untrusted answer"
+    )
     parser.add_argument("--registry", type=Path, help="override exercises.json")
     parser.add_argument("--format", choices=("text", "json"), default="text")
     parser.add_argument("--output", type=Path, help="write report to this path instead of stdout")
-    parser.add_argument("--self-test", action="store_true", help="grade registered checked-in references and fail unless all executed checks pass")
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="grade registered checked-in references and fail unless all executed checks pass",
+    )
     return parser.parse_args(argv)
 
 
@@ -366,7 +561,10 @@ def main(argv: list[str] | None = None) -> int:
     if not args.self_test and not args.attempts and not args.answer:
         raise SystemExit("provide --attempts, --exercise with --answer, or --self-test")
 
-    tool_names = sorted({tool for exercise_id in selected for tool in by_id[exercise_id]["required_tools"]} | {"opt"})
+    tool_names = sorted(
+        {tool for exercise_id in selected for tool in by_id[exercise_id]["required_tools"]}
+        | {"opt"}
+    )
     tools = {name: find_tool(name) for name in tool_names}
     results = []
     for exercise_id in selected:
@@ -380,20 +578,34 @@ def main(argv: list[str] | None = None) -> int:
         else:
             attempt_root = args.attempts.resolve(strict=True)
             validate_attempt_tree(attempt_root)
-            extension = {"llvm-ir": ".ll", "mlir": ".mlir", "markdown-review": ".md", "pass-output": ".ll", "diagnostic": ".md"}[entry["answer_kind"]]
-            answer = confined_answer(attempt_root, attempt_root / exercise_id / ("answer" + extension))
+            extension = {
+                "llvm-ir": ".ll",
+                "mlir": ".mlir",
+                "markdown-review": ".md",
+                "pass-output": ".ll",
+                "diagnostic": ".md",
+            }[entry["answer_kind"]]
+            answer = confined_answer(
+                attempt_root, attempt_root / exercise_id / ("answer" + extension)
+            )
         results.append(grade_entry(entry, answer, tools))
 
     earned = sum(item["points_earned"] for item in results)
     available = sum(item["points_available"] for item in results)
     report = {
         "schema_version": SCHEMA_VERSION,
-        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "generated_at": dt.datetime.now(dt.UTC).isoformat(),
         "registry": str(registry_path),
         "registry_sha256": hashlib.sha256(registry_path.read_bytes()).hexdigest(),
         "toolchain": {
-            "python": {"path": str(Path(sys.executable).resolve()), "version": sys.version.splitlines()[0]},
-            **{name: (version_for(path) or {"path": None, "version": "missing"}) for name, path in tools.items()},
+            "python": {
+                "path": str(Path(sys.executable).resolve()),
+                "version": sys.version.splitlines()[0],
+            },
+            **{
+                name: (version_for(path) or {"path": None, "version": "missing"})
+                for name, path in tools.items()
+            },
         },
         "results": results,
         "aggregate": {
@@ -401,10 +613,16 @@ def main(argv: list[str] | None = None) -> int:
             "points_available": round(available, 3),
             "score_percent": round(100 * earned / available, 2) if available else 0.0,
             "skipped_checks": sum(item["skipped_checks"] for item in results),
-            "score_confidence": "reduced" if any(item["skipped_checks"] for item in results) else "full",
+            "score_confidence": "reduced"
+            if any(item["skipped_checks"] for item in results)
+            else "full",
         },
     }
-    output = json.dumps(report, indent=2, sort_keys=True) + "\n" if args.format == "json" else report_text(report)
+    output = (
+        json.dumps(report, indent=2, sort_keys=True) + "\n"
+        if args.format == "json"
+        else report_text(report)
+    )
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(output, encoding="utf-8")
@@ -412,12 +630,21 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(output)
 
     if args.self_test:
-        failed = [item["exercise_id"] for item in results if item["executed_score_percent"] < float(by_id[item["exercise_id"]].get("reference_expected_percent", 100))]
+        failed = [
+            item["exercise_id"]
+            for item in results
+            if item["executed_score_percent"]
+            < float(by_id[item["exercise_id"]].get("reference_expected_percent", 100))
+        ]
         if failed:
             print("reference self-test failed: " + ", ".join(failed), file=sys.stderr)
             return 1
         return 0
-    return 1 if any(any(check["status"] == "fail" for check in item["checks"]) for item in results) else 0
+    return (
+        1
+        if any(any(check["status"] == "fail" for check in item["checks"]) for item in results)
+        else 0
+    )
 
 
 if __name__ == "__main__":
@@ -426,10 +653,17 @@ if __name__ == "__main__":
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         message = str(exc)
         invalid_markers = ("answer path", "attempt root", "unsupported generated", "answer file")
-        outcome = "invalid_answer" if any(marker in message for marker in invalid_markers) else "grader_failure"
-        payload = {"schema_version": SCHEMA_VERSION, "error": {"outcome": outcome, "message": message}}
+        outcome = (
+            "invalid_answer"
+            if any(marker in message for marker in invalid_markers)
+            else "grader_failure"
+        )
+        payload = {
+            "schema_version": SCHEMA_VERSION,
+            "error": {"outcome": outcome, "message": message},
+        }
         if "--format" in sys.argv and "json" in sys.argv:
             print(json.dumps(payload, sort_keys=True))
         else:
             print(f"grader failure: {exc}", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None

@@ -26,6 +26,7 @@ the advisory database is keyed by release), audited with no resolver, and reconc
 back against the installed set; ``--expect`` names must be present, or the audit is of
 some other environment than the one claimed. The engine is always required there.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,13 +43,19 @@ from typing import Any
 
 try:
     from tools.security.git_index import (
-        STAGED_OVERSIZED, staged_blob, staged_divergent, staged_mode,
+        STAGED_OVERSIZED,
+        staged_blob,
+        staged_divergent,
+        staged_mode,
     )
     from tools.security.report_hygiene import DuplicateKeys, mapped, strict_loads
     from tools.security.proc_bounds import run_bounded
 except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
     from git_index import (
-        STAGED_OVERSIZED, staged_blob, staged_divergent, staged_mode,
+        STAGED_OVERSIZED,
+        staged_blob,
+        staged_divergent,
+        staged_mode,
     )
     from report_hygiene import DuplicateKeys, mapped, strict_loads
     from proc_bounds import run_bounded
@@ -127,7 +134,10 @@ def _string_list(value: Any) -> list[str] | None:
 
 
 _UNASSERTED: dict[str, Any] = {
-    "runtime": [], "build_system": [], "optional": {}, "dynamic": [],
+    "runtime": [],
+    "build_system": [],
+    "optional": {},
+    "dynamic": [],
     "_unasserted": True,
 }
 
@@ -186,7 +196,10 @@ def parse_metadata(text: str) -> dict[str, Any]:
         # in place of a table raises on .get, and an empty list would be
         # coerced to an empty table and pass as "no dependencies".
         return {
-            "runtime": [], "build_system": [], "optional": {}, "dynamic": [],
+            "runtime": [],
+            "build_system": [],
+            "optional": {},
+            "dynamic": [],
             "_unasserted": True,
         }
     optional = _table(project.get("optional-dependencies"))
@@ -208,7 +221,10 @@ def parse_metadata(text: str) -> dict[str, Any]:
         # shred into characters). The 3.10 fallback already refuses these;
         # the tomllib path must fail closed the same way, never traceback.
         return {
-            "runtime": [], "build_system": [], "optional": {}, "dynamic": [],
+            "runtime": [],
+            "build_system": [],
+            "optional": {},
+            "dynamic": [],
             "_unasserted": True,
         }
     return {
@@ -293,10 +309,7 @@ def _inventory_shape(data: Any) -> dict[str, Any] | None:
     # inventory that never mentions `runtime` has not asserted an empty
     # runtime, it has failed to say anything, and `audit()` then raised
     # KeyError reaching for it.
-    missing = [
-        field for field in ("runtime", "build_system", "optional")
-        if field not in data
-    ]
+    missing = [field for field in ("runtime", "build_system", "optional") if field not in data]
     if missing:
         return None
     if _string_list(data.get("runtime")) is None:
@@ -304,9 +317,7 @@ def _inventory_shape(data: Any) -> dict[str, Any] | None:
     if _string_list(data.get("build_system")) is None:
         return None
     optional = _table(data.get("optional"))
-    if optional is None or any(
-        _string_list(items) is None for items in optional.values()
-    ):
+    if optional is None or any(_string_list(items) is None for items in optional.values()):
         return None
     return data
 
@@ -330,11 +341,13 @@ def _staged_inventory_mismatches(
         return []
     divergent = staged_divergent(root)
     if divergent is None:
-        return [{
-            "field": "staged-discovery",
-            "declared": "unavailable",
-            "expected": "an answerable index/worktree comparison",
-        }]
+        return [
+            {
+                "field": "staged-discovery",
+                "declared": "unavailable",
+                "expected": "an answerable index/worktree comparison",
+            }
+        ]
     key = str(rel).replace("\\", "/")
     if key not in divergent:
         return []
@@ -345,18 +358,22 @@ def _staged_inventory_mismatches(
         # would pass here while a clean checkout of the same commit takes
         # the non-regular-file branch and fails. Never dereference an
         # index symlink (L12); the scan and boundary rails already refuse.
-        return [{
-            "field": "staged-inventory",
-            "declared": "symlink",
-            "expected": "a regular-file staged inventory",
-        }]
+        return [
+            {
+                "field": "staged-inventory",
+                "declared": "symlink",
+                "expected": "a regular-file staged inventory",
+            }
+        ]
     blob = staged_blob(root, key, cap=INVENTORY_SIZE_CAP)
     if blob is None or blob is STAGED_OVERSIZED:
-        return [{
-            "field": "staged-inventory",
-            "declared": "unreadable" if blob is None else "oversized",
-            "expected": "readable staged inventory within the ingress cap",
-        }]
+        return [
+            {
+                "field": "staged-inventory",
+                "declared": "unreadable" if blob is None else "oversized",
+                "expected": "readable staged inventory within the ingress cap",
+            }
+        ]
     try:
         # STRICT, exactly as the worktree read and the staged pyproject
         # read already are. A replacement decode turns an invalid byte into
@@ -365,26 +382,32 @@ def _staged_inventory_mismatches(
         # locally -- the gate disagreeing with itself across two paths (L12).
         text = blob.decode("utf-8")
     except UnicodeDecodeError:
-        return [{
-            "field": "staged-inventory",
-            "declared": "not-utf-8",
-            "expected": "decodable staged inventory",
-        }]
+        return [
+            {
+                "field": "staged-inventory",
+                "declared": "not-utf-8",
+                "expected": "decodable staged inventory",
+            }
+        ]
     staged = _inventory_from_text(text)
     if staged is None:
-        return [{
-            "field": "staged-inventory",
-            "declared": "unusable",
-            "expected": "a well-shaped staged inventory",
-        }]
+        return [
+            {
+                "field": "staged-inventory",
+                "declared": "unusable",
+                "expected": "a well-shaped staged inventory",
+            }
+        ]
     found: list[dict[str, Any]] = []
     for field in ("runtime", "build_system", "optional"):
         if declared.get(field) != staged[field]:
-            found.append({
-                "field": f"staged-inventory:{field}",
-                "declared": _redacted(declared.get(field)),
-                "expected": _redacted(staged[field]),
-            })
+            found.append(
+                {
+                    "field": f"staged-inventory:{field}",
+                    "declared": _redacted(declared.get(field)),
+                    "expected": _redacted(staged[field]),
+                }
+            )
     return found
 
 
@@ -400,11 +423,13 @@ def _staged_mismatches(root: Path, expected: dict[str, Any]) -> list[dict[str, A
         return []
     divergent = staged_divergent(root)
     if divergent is None:
-        return [{
-            "field": "staged-discovery",
-            "declared": "unavailable",
-            "expected": "an answerable index/worktree comparison",
-        }]
+        return [
+            {
+                "field": "staged-discovery",
+                "declared": "unavailable",
+                "expected": "an answerable index/worktree comparison",
+            }
+        ]
     if "pyproject.toml" not in divergent:
         return []
     if staged_mode(root, "pyproject.toml") == "120000":
@@ -412,49 +437,62 @@ def _staged_mismatches(root: Path, expected: dict[str, Any]) -> list[dict[str, A
         # its target path, and parse_pyproject() rejects a non-regular file
         # in the worktree, so parsing the target here made the local audit
         # PASS on a commit whose clean checkout FAILS (L12).
-        return [{
-            "field": "staged-pyproject",
-            "declared": "symlink",
-            "expected": "regular-file staged metadata",
-        }]
+        return [
+            {
+                "field": "staged-pyproject",
+                "declared": "symlink",
+                "expected": "regular-file staged metadata",
+            }
+        ]
     blob = staged_blob(root, "pyproject.toml", cap=PYPROJECT_SIZE_CAP)
     if blob is None or blob is STAGED_OVERSIZED:
-        return [{
-            "field": "staged-pyproject",
-            "declared": "unreadable" if blob is None else "oversized",
-            "expected": "readable staged metadata within the ingress cap",
-        }]
+        return [
+            {
+                "field": "staged-pyproject",
+                "declared": "unreadable" if blob is None else "oversized",
+                "expected": "readable staged metadata within the ingress cap",
+            }
+        ]
     try:
         text = blob.decode("utf-8")
     except UnicodeDecodeError:
-        return [{
-            "field": "staged-pyproject",
-            "declared": "not-utf-8",
-            "expected": "decodable staged metadata",
-        }]
+        return [
+            {
+                "field": "staged-pyproject",
+                "declared": "not-utf-8",
+                "expected": "decodable staged metadata",
+            }
+        ]
     staged = parse_metadata(text)
     if staged.pop("_unasserted", False):
-        return [{
-            "field": "staged-pyproject",
-            "declared": "unasserted",
-            "expected": "fully attributable staged metadata",
-        }]
+        return [
+            {
+                "field": "staged-pyproject",
+                "declared": "unasserted",
+                "expected": "fully attributable staged metadata",
+            }
+        ]
     found: list[dict[str, Any]] = []
     if staged.pop("dependency_groups", []):
-        found.append({
-            "field": "staged:dependency-groups",
-            "declared": staged.get("dependency_groups", []),
-            "expected": [],
-        })
+        found.append(
+            {
+                "field": "staged:dependency-groups",
+                "declared": staged.get("dependency_groups", []),
+                "expected": [],
+            }
+        )
     for field in ("runtime", "build_system", "optional"):
         if staged.get(field) != expected[field]:
-            found.append({
-                "field": f"staged:{field}",
-                "declared": _redacted(staged.get(field)),
-                "expected": _redacted(expected[field]),
-            })
+            found.append(
+                {
+                    "field": f"staged:{field}",
+                    "declared": _redacted(staged.get(field)),
+                    "expected": _redacted(expected[field]),
+                }
+            )
     dynamic = [
-        item for item in staged.get("dynamic", [])
+        item
+        for item in staged.get("dynamic", [])
         if item in ("dependencies", "optional-dependencies")
     ]
     if dynamic:
@@ -501,7 +539,8 @@ def audit(
             ),
         }
     dynamic = [
-        item for item in declared.get("dynamic", [])
+        item
+        for item in declared.get("dynamic", [])
         if item in ("dependencies", "optional-dependencies")
     ]
     if dynamic:
@@ -519,11 +558,13 @@ def audit(
     mismatches = []
     for field in ("runtime", "build_system", "optional"):
         if declared[field] != expected[field]:
-            mismatches.append({
-                "field": field,
-                "declared": _redacted(declared[field]),
-                "expected": _redacted(expected[field]),
-            })
+            mismatches.append(
+                {
+                    "field": field,
+                    "declared": _redacted(declared[field]),
+                    "expected": _redacted(expected[field]),
+                }
+            )
     # The worktree file is not what the next commit records. A dependency
     # staged and then restored to benign worktree content shipped under a
     # PASS on this rail while the secret scan and the boundary audit had
@@ -531,9 +572,7 @@ def audit(
     # one shared predicate.
     mismatches.extend(_staged_mismatches(root, expected))
     if (root / ".git").exists():
-        mismatches.extend(
-            _staged_inventory_mismatches(root, expected_path, declared)
-        )
+        mismatches.extend(_staged_inventory_mismatches(root, expected_path, declared))
     expected_count = (
         len(expected["runtime"])
         + len(expected["build_system"])
@@ -649,17 +688,21 @@ def floor_pins(listed: list[str]) -> tuple[list[str], list[str], list[str]]:
 def _advisory_command(engine: str, requirements: Path, *, floor: bool) -> list[str]:
     cmd = [
         engine,
-        "--requirement", str(requirements),
+        "--requirement",
+        str(requirements),
         # The engine's own report, parsed strictly below; the columns
         # rendering was a tail of prose the gate could only grep.
-        "--format", "json",
+        "--format",
+        "json",
         # A dependency the engine cannot collect fails the audit outright
         # rather than becoming a skip inside a green run (L15).
         "--strict",
         # IDs, aliases and fix versions are the finding; the advisory prose
         # is not copied into a report that is itself an egress surface (L7).
-        "--desc", "off",
-        "--progress-spinner", "off",
+        "--desc",
+        "off",
+        "--progress-spinner",
+        "off",
     ]
     if floor:
         # Exact pins: no resolver, no scratch venv, only the advisory
@@ -684,7 +727,8 @@ def _run_advisory(engine: str, listed: list[str]) -> dict[str, Any]:
         runs["floor"] = _engine_run(engine, pins, floor=True)
     else:
         runs["floor"] = {
-            "state": "SKIPPED", "audited": 0,
+            "state": "SKIPPED",
+            "audited": 0,
             "note": "no declaration inside the floor grammar",
         }
     return _combined_verdict(listed, names, refused, runs)
@@ -705,7 +749,8 @@ def _engine_run(engine: str, requirements: list[str], *, floor: bool) -> dict[st
         # A full or unwritable temporary directory is a verdict of this run,
         # never a traceback out of the required audit (L1).
         return {
-            "state": "FAIL", "audited": 0,
+            "state": "FAIL",
+            "audited": 0,
             "error": _redacted_requirement(f"could not create the requirements directory: {exc}"),
         }
     try:
@@ -717,7 +762,8 @@ def _engine_run(engine: str, requirements: list[str], *, floor: bool) -> dict[st
                 path = Path(handle.name)
         except OSError as exc:
             return {
-                "state": "FAIL", "audited": 0,
+                "state": "FAIL",
+                "audited": 0,
                 "error": _redacted_requirement(f"could not write the requirements file: {exc}"),
             }
         # The shared bounded runner: its own session, a wall bound, per-stream
@@ -791,7 +837,10 @@ def _combined_verdict(
     runs: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     advisory: dict[str, Any] = {
-        "state": "FAIL", "engine": ADVISORY_ENGINE, "declared": len(listed), "runs": runs,
+        "state": "FAIL",
+        "engine": ADVISORY_ENGINE,
+        "declared": len(listed),
+        "runs": runs,
     }
     reasons: list[str] = []
     if refused:
@@ -826,8 +875,7 @@ def _combined_verdict(
             )
         else:
             reasons.append(
-                f"{len(uncovered)} declared dependency(ies) never audited: "
-                + ", ".join(uncovered)
+                f"{len(uncovered)} declared dependency(ies) never audited: " + ", ".join(uncovered)
             )
     if vulnerable:
         advisory["vulnerable"] = _redacted(vulnerable)
@@ -870,10 +918,12 @@ def _parse_advisory_report(
         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
             return None
         if "skip_reason" in entry or not isinstance(entry.get("version"), str):
-            skipped.append({
-                "name": entry["name"],
-                "reason": str(entry.get("skip_reason", "no version collected")),
-            })
+            skipped.append(
+                {
+                    "name": entry["name"],
+                    "reason": str(entry.get("skip_reason", "no version collected")),
+                }
+            )
             continue
         vulns = entry.get("vulns")
         if not isinstance(vulns, list):
@@ -882,17 +932,24 @@ def _parse_advisory_report(
         for vuln in vulns:
             if not isinstance(vuln, dict) or not isinstance(vuln.get("id"), str):
                 return None
-            findings.append({
-                "id": vuln["id"],
-                "aliases": _string_items(vuln.get("aliases")),
-                "fix_versions": _string_items(vuln.get("fix_versions")),
-            })
+            findings.append(
+                {
+                    "id": vuln["id"],
+                    "aliases": _string_items(vuln.get("aliases")),
+                    "fix_versions": _string_items(vuln.get("fix_versions")),
+                }
+            )
         names.append(canonical_name(entry["name"]))
         if findings:
-            vulnerable.append({
-                "name": entry["name"], "version": entry["version"], "vulns": findings,
-            })
+            vulnerable.append(
+                {
+                    "name": entry["name"],
+                    "version": entry["version"],
+                    "vulns": findings,
+                }
+            )
     return names, skipped, vulnerable
+
 
 _LOCAL_LABEL = re.compile(r"\+.*$")
 
@@ -932,7 +989,9 @@ def audit_installed(root: Path, expect: list[str]) -> dict[str, Any]:
     """
     expected = sorted({canonical_name(name) for name in expect})
     report: dict[str, Any] = {
-        "state": "FAIL", "mode": "installed", "interpreter": sys.executable,
+        "state": "FAIL",
+        "mode": "installed",
+        "interpreter": sys.executable,
         "expected": expected,
     }
     try:
@@ -966,12 +1025,15 @@ def audit_installed(root: Path, expect: list[str]) -> dict[str, Any]:
     engine = advisory_engine()
     if not engine:
         report["advisory"] = {
-            "state": "FAIL", "engine": ADVISORY_ENGINE, "error": _absent_engine_error(),
+            "state": "FAIL",
+            "engine": ADVISORY_ENGINE,
+            "error": _absent_engine_error(),
         }
         return report
     if not pins:
         report["advisory"] = {
-            "state": "FAIL", "engine": ADVISORY_ENGINE,
+            "state": "FAIL",
+            "engine": ADVISORY_ENGINE,
             "error": "INVALID/VACUOUS: no distribution to audit in this interpreter",
         }
         return report
@@ -1018,20 +1080,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected", type=Path, default=EXPECTED)
     parser.add_argument("--json-out", type=Path)
     parser.add_argument(
-        "--require-advisory", action="store_true",
+        "--require-advisory",
+        action="store_true",
         help="the advisory rail must RUN: no engine is a FAIL. The CI job that installs "
-             "pip-audit passes this and owns the rail's absence (L10); every other caller "
-             "asserts the inventory and records a missing engine as skipped.",
+        "pip-audit passes this and owns the rail's absence (L10); every other caller "
+        "asserts the inventory and records a missing engine as skipped.",
     )
     parser.add_argument(
-        "--installed", action="store_true",
+        "--installed",
+        action="store_true",
         help="audit what is INSTALLED in this interpreter (exact public pins, no resolver) "
-             "instead of the declared inventory; the engine is required",
+        "instead of the declared inventory; the engine is required",
     )
     parser.add_argument(
-        "--expect", action="append", default=[], metavar="NAME",
+        "--expect",
+        action="append",
+        default=[],
+        metavar="NAME",
         help="with --installed: a distribution that must be installed, or the audit is of "
-             "some other environment than the one claimed (repeatable)",
+        "some other environment than the one claimed (repeatable)",
     )
     args = parser.parse_args(argv)
     if args.installed:

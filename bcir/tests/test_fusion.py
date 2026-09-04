@@ -28,7 +28,7 @@ def test_multi_claim_overlap_beats_the_serial_sum():
 def test_single_claim_has_no_overlap():
     m = vector_add(1024)
     sp = price_scheduled(m, optimize(m, AVX, COOL), AVX, COOL)
-    assert sp.overlap_gain == 0          # one claim: makespan == serial (the degenerate case)
+    assert sp.overlap_gain == 0  # one claim: makespan == serial (the degenerate case)
 
 
 def test_fused_chain_hydrates_two_segments():
@@ -48,23 +48,41 @@ def test_optimize_scheduled_is_r9_consistent():
 
 # --- scan: a dependency chain serializes (the counterpart to overlap) ------------
 
+
 def test_dependent_chain_does_not_overlap():
     m = scan_chain(1024)
     sp = price_scheduled(m, optimize(m, AVX, COOL), AVX, COOL)
     assert len(m.phases[0].claims) == 2
-    assert sp.overlap_gain == 0          # RAW dependency: no overlap, no fusion
+    assert sp.overlap_gain == 0  # RAW dependency: no overlap, no fusion
 
 
 # --- the fusion discount (distinct from overlap): shared operand, one bin --------
+
 
 def _no_share(n=1024):
     m = Module(name="no_share")
     for rid, nm in ((60, "A"), (61, "B"), (62, "C"), (63, "E"), (64, "D"), (65, "F")):
         m.add_resource(Resource(rid=rid, shape=(n,), name=nm))
-    c1 = Claim(id=6001, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-               count=n, rd=(60, 61), wr=(62,), op="vector.add")
-    c2 = Claim(id=6002, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-               count=n, rd=(63, 65), wr=(64,), op="vector.add")
+    c1 = Claim(
+        id=6001,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=n,
+        rd=(60, 61),
+        wr=(62,),
+        op="vector.add",
+    )
+    c2 = Claim(
+        id=6002,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=n,
+        rd=(63, 65),
+        wr=(64,),
+        op="vector.add",
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=[c1, c2]))
     return m
 
@@ -76,33 +94,59 @@ def test_fusion_discount_rewards_a_shared_operand_in_one_bin():
     h1 = replace(AVX, affinity_domains=1)
     shared = price_scheduled(fused_chain(1024), optimize(fused_chain(1024), h1, COOL), h1, COOL)
     noshare = price_scheduled(_no_share(1024), optimize(_no_share(1024), h1, COOL), h1, COOL)
-    assert shared.makespan < noshare.makespan      # the fusion discount is real
+    assert shared.makespan < noshare.makespan  # the fusion discount is real
 
 
 # --- per-target parity beyond vector_add -----------------------------------------
 
+
 def test_per_target_parity_saxpy_and_histogram():
     # pin the selected scores across targets (the worked-example matrix widened).
-    saxpy = {t: optimize(saxpy_strided(1024), TARGETS[t], COOL).score
-             for t in ("x86_avx512", "x86_avx2", "arm64_neon", "nvidia_ptx")}
-    assert saxpy == {"x86_avx512": 71680, "x86_avx2": 71680,
-                     "arm64_neon": 71680, "nvidia_ptx": 71680}
-    histo = {t: optimize(histogram_gather(1024), TARGETS[t], COOL).score
-             for t in ("x86_avx512", "nvidia_ptx")}
+    saxpy = {
+        t: optimize(saxpy_strided(1024), TARGETS[t], COOL).score
+        for t in ("x86_avx512", "x86_avx2", "arm64_neon", "nvidia_ptx")
+    }
+    assert saxpy == {
+        "x86_avx512": 71680,
+        "x86_avx2": 71680,
+        "arm64_neon": 71680,
+        "nvidia_ptx": 71680,
+    }
+    histo = {
+        t: optimize(histogram_gather(1024), TARGETS[t], COOL).score
+        for t in ("x86_avx512", "nvidia_ptx")
+    }
     assert histo == {"x86_avx512": 528384, "nvidia_ptx": 266240}
 
 
 # --- producer->consumer deforestation (the second fusion kind) --------------------
+
 
 def _pc(c2_reads, n=1 << 16):
     """A two-claim phase; c1 writes 62; c2 reads `c2_reads` (use 62 to consume it)."""
     m = Module(name="pc")
     for rid in (60, 61, 62, 63, 64, 65):
         m.add_resource(Resource(rid=rid, shape=(n,)))
-    c1 = Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-               count=n, rd=(60, 61), wr=(62,), op="vector.add")
-    c2 = Claim(id=2, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-               count=n, rd=c2_reads, wr=(64,), op="vector.add")
+    c1 = Claim(
+        id=1,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=n,
+        rd=(60, 61),
+        wr=(62,),
+        op="vector.add",
+    )
+    c2 = Claim(
+        id=2,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=n,
+        rd=c2_reads,
+        wr=(64,),
+        op="vector.add",
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=[c1, c2]))
     return m
 
@@ -111,11 +155,12 @@ def test_producer_consumer_deforestation_lowers_the_plan_score():
     # c2 consuming c1's output (62) fuses: the intermediate never round-trips to
     # memory (deforestation), so the plan is strictly cheaper than an identical chain
     # whose 2nd claim reads an UNRELATED operand -- with the widths unchanged.
-    fused = optimize(_pc((62, 63)), AVX, COOL)        # producer -> consumer
-    indep = optimize(_pc((65, 63)), AVX, COOL)        # no dependency
-    assert fused.score < indep.score                  # the deforestation gain (~12%)
-    assert {c: x.width for c, x in fused.by_claim().items()} == \
-           {c: x.width for c, x in indep.by_claim().items()}     # no width churn
+    fused = optimize(_pc((62, 63)), AVX, COOL)  # producer -> consumer
+    indep = optimize(_pc((65, 63)), AVX, COOL)  # no dependency
+    assert fused.score < indep.score  # the deforestation gain (~12%)
+    assert {c: x.width for c, x in fused.by_claim().items()} == {
+        c: x.width for c, x in indep.by_claim().items()
+    }  # no width churn
 
 
 def test_deforestation_preserves_makespan_le_serial():
@@ -127,10 +172,11 @@ def test_deforestation_preserves_makespan_le_serial():
 
 
 def test_single_claim_is_unaffected_by_deforestation():
-    assert optimize(vector_add(1024), AVX, COOL).score == 7808   # pinned: no producer
+    assert optimize(vector_add(1024), AVX, COOL).score == 7808  # pinned: no producer
 
 
 # --- CSE / duplicate-claim elimination (the egraph's liked-pair, finally priced) ---
+
 
 def _cse(c2_reads, rewrite_a=False, n=1 << 16):
     """c1 = A(10)+B(11)->D(12); optionally a claim rewriting A(10); then c2 over
@@ -138,13 +184,43 @@ def _cse(c2_reads, rewrite_a=False, n=1 << 16):
     m = Module(name="cse")
     for rid in (10, 11, 12, 13, 14, 15):
         m.add_resource(Resource(rid=rid, shape=(n,)))
-    claims = [Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                    count=n, rd=(10, 11), wr=(12,), op="vector.add")]
-    if rewrite_a:                                  # bumps A(10)'s value-number
-        claims.append(Claim(id=9, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                            count=n, rd=(14, 15), wr=(10,), op="vector.add"))
-    claims.append(Claim(id=2, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                        count=n, rd=c2_reads, wr=(13,), op="vector.add"))
+    claims = [
+        Claim(
+            id=1,
+            opcode=Opcode.ADD,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=n,
+            rd=(10, 11),
+            wr=(12,),
+            op="vector.add",
+        )
+    ]
+    if rewrite_a:  # bumps A(10)'s value-number
+        claims.append(
+            Claim(
+                id=9,
+                opcode=Opcode.ADD,
+                lane=Lane.U,
+                stride_class=StrideClass.UNIT,
+                count=n,
+                rd=(14, 15),
+                wr=(10,),
+                op="vector.add",
+            )
+        )
+    claims.append(
+        Claim(
+            id=2,
+            opcode=Opcode.ADD,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=n,
+            rd=c2_reads,
+            wr=(13,),
+            op="vector.add",
+        )
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=claims))
     return m
 
@@ -156,26 +232,28 @@ def _c2(result):
 def test_cse_prices_a_duplicate_claim_as_a_copy():
     # c2 = A+B recomputes c1's value -> CSE: priced as a copy (no recompute, no
     # operand reload), strictly cheaper than an identical-shape distinct claim.
-    dup = optimize(_cse((10, 11)), AVX, COOL)             # duplicate of c1 -> CSE
-    distinct = optimize(_cse((14, 11)), AVX, COOL)        # different operand -> full
-    assert _c2(dup) < _c2(distinct)                       # the CSE copy is cheaper (~15%)
-    assert {c: x.width for c, x in dup.by_claim().items()} == \
-           {c: x.width for c, x in distinct.by_claim().items()}    # no width churn
+    dup = optimize(_cse((10, 11)), AVX, COOL)  # duplicate of c1 -> CSE
+    distinct = optimize(_cse((14, 11)), AVX, COOL)  # different operand -> full
+    assert _c2(dup) < _c2(distinct)  # the CSE copy is cheaper (~15%)
+    assert {c: x.width for c, x in dup.by_claim().items()} == {
+        c: x.width for c, x in distinct.by_claim().items()
+    }  # no width churn
 
 
 def test_cse_value_numbering_invalidates_when_an_operand_is_rewritten():
     # rewriting A(10) between the two A+B claims bumps its version, so c2 is NOT a CSE
     # of c1 (the values differ) -- it is no longer priced as the cheap copy.
-    valid = optimize(_cse((10, 11)), AVX, COOL)                  # CSE holds
+    valid = optimize(_cse((10, 11)), AVX, COOL)  # CSE holds
     invalidated = optimize(_cse((10, 11), rewrite_a=True), AVX, COOL)  # A rewritten between
-    assert _c2(invalidated) > _c2(valid)                          # CSE correctly withdrawn
+    assert _c2(invalidated) > _c2(valid)  # CSE correctly withdrawn
 
 
 def test_cse_is_consistent_across_the_tropical_and_rcsp_rails():
     from bcir.kbcir.rcsp import optimize_constrained
+
     m = _cse((10, 11))
     assert optimize_constrained(m, AVX, COOL).score == optimize(m, AVX, COOL).score
 
 
 def test_cse_leaves_the_single_claim_pin_intact():
-    assert optimize(vector_add(1024), AVX, COOL).score == 7808   # no duplicate -> no-op
+    assert optimize(vector_add(1024), AVX, COOL).score == 7808  # no duplicate -> no-op

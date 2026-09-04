@@ -93,7 +93,8 @@ def _canonical(value) -> object:
     if isinstance(value, float):
         raise TypeError(
             "a scope component may not hold a float: identity must not depend on binary "
-            "rounding. Declare a rational, a fixed-point integer, or a string.")
+            "rounding. Declare a rational, a fixed-point integer, or a string."
+        )
     if isinstance(value, (bytes, bytearray)):
         return {"__bytes__": bytes(value).hex()}
     if isinstance(value, dict):
@@ -104,7 +105,8 @@ def _canonical(value) -> object:
         return [_canonical(item) for item in value]
     raise TypeError(
         f"a scope component may not hold {type(value).__name__}; a scope is serialized, so "
-        f"every part of it has to have a written form")
+        f"every part of it has to have a written form"
+    )
 
 
 @dataclass(frozen=True)
@@ -141,8 +143,10 @@ class ExecutionScope:
         return tuple(name for name in _NAMES if self.component(name) == UNDECLARED)
 
     def to_canonical_json(self) -> str:
-        body = {"version": self.version,
-                "components": {name: _canonical(self.component(name)) for name in _NAMES}}
+        body = {
+            "version": self.version,
+            "components": {name: _canonical(self.component(name)) for name in _NAMES},
+        }
         return json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
     def digest(self) -> str:
@@ -155,23 +159,38 @@ class ExecutionScope:
         Domain-separated by the component's name, so two components that happen to hold the
         same value do not produce the same digest and a diff cannot confuse them.
         """
-        body = json.dumps({"version": self.version, "component": name,
-                           "value": _canonical(self.component(name))},
-                          sort_keys=True, separators=(",", ":"), allow_nan=False)
+        body = json.dumps(
+            {"version": self.version, "component": name, "value": _canonical(self.component(name))},
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
         return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
     def diff(self, other: "ExecutionScope") -> tuple[str, ...]:
         """Which components differ. The debugging view the manifest's `diff` gives today."""
         if self.version != other.version:
             return ("version",)
-        return tuple(name for name in _NAMES
-                     if self.component_digest(name) != other.component_digest(name))
+        return tuple(
+            name for name in _NAMES if self.component_digest(name) != other.component_digest(name)
+        )
 
 
-def scope_for(module=None, target=None, theta=None, policy=None, *,
-              workload=None, admitted=None, budget=None, objective=None,
-              measurement=None, uncertainty=None, generations=None,
-              note: str = "") -> ExecutionScope:
+def scope_for(
+    module=None,
+    target=None,
+    theta=None,
+    policy=None,
+    *,
+    workload=None,
+    admitted=None,
+    budget=None,
+    objective=None,
+    measurement=None,
+    uncertainty=None,
+    generations=None,
+    note: str = "",
+) -> ExecutionScope:
     """Build a scope from the objects BCIR already has, declaring only what is supplied.
 
     `H` carries the MEMORY HIERARCHY, which is the component `hash_target` omits and the
@@ -191,16 +210,18 @@ def scope_for(module=None, target=None, theta=None, policy=None, *,
             # declared `a, b` and `b, a` plan to scores 3,840 and 4,352 and share a module
             # hash; recording the order here separates them without touching the cross-rail
             # hash the MLIR verifier recomputes.
-            "claim_order": [[phase.phase_id, [claim.id for claim in phase.claims]]
-                            for phase in module.phases],
+            "claim_order": [
+                [phase.phase_id, [claim.id for claim in phase.claims]] for phase in module.phases
+            ],
             "laws": "R1-R25",
         }
 
     hardware = UNDECLARED
     if target is not None:
-        tiers = [[tier.name, tier.latency_cyc, tier.bw_factor, tier.lat_factor,
-                  tier.capacity]
-                 for tier in getattr(getattr(target, "mem", None), "tiers", ())]
+        tiers = [
+            [tier.name, tier.latency_cyc, tier.bw_factor, tier.lat_factor, tier.capacity]
+            for tier in getattr(getattr(target, "mem", None), "tiers", ())
+        ]
         hardware = {
             "target_hash": hash_target(target),
             "name": target.name,
@@ -217,18 +238,24 @@ def scope_for(module=None, target=None, theta=None, policy=None, *,
     runtime = UNDECLARED if theta is None else {"theta_hash": hash_theta(theta)}
     admitted_set = UNDECLARED
     if policy is not None or admitted is not None:
-        admitted_set = {"policy_hash": hash_policy(policy) if policy is not None else None,
-                        "admitted": admitted if admitted is not None else UNDECLARED}
+        admitted_set = {
+            "policy_hash": hash_policy(policy) if policy is not None else None,
+            "admitted": admitted if admitted is not None else UNDECLARED,
+        }
 
     return ExecutionScope(
-        P=program, H=hardware, W=workload if workload is not None else UNDECLARED,
-        Theta=runtime, A=admitted_set,
+        P=program,
+        H=hardware,
+        W=workload if workload is not None else UNDECLARED,
+        Theta=runtime,
+        A=admitted_set,
         B=budget if budget is not None else UNDECLARED,
         O=objective if objective is not None else UNDECLARED,
         M=measurement if measurement is not None else UNDECLARED,
         U=uncertainty if uncertainty is not None else UNDECLARED,
         G=generations if generations is not None else UNDECLARED,
-        note=note)
+        note=note,
+    )
 
 
 # --- the certificate classes ---------------------------------------------------------------
@@ -236,14 +263,22 @@ def scope_for(module=None, target=None, theta=None, policy=None, *,
 #: What each class is permitted to say, and what has to exist before it may say it. Ordered
 #: strongest first; `certificate_class_allowed` walks it in this order.
 CLASS_REQUIREMENTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
-    ("TMSAO-1", "exact optimum over the declared finite model",
-     ("candidate_census", "proof", "lower_bound", "incumbent")),
-    ("TMSAO-2", "best bounded result, with an explicit gap",
-     ("lower_bound", "incumbent")),
-    ("TMSAO-3", "best measured admitted realization",
-     ("prediction_interval", "search_coverage", "incumbent")),
-    ("TMSAO-4", "heuristic incumbent; legality and reproducibility only, no optimality",
-     ("incumbent",)),
+    (
+        "TMSAO-1",
+        "exact optimum over the declared finite model",
+        ("candidate_census", "proof", "lower_bound", "incumbent"),
+    ),
+    ("TMSAO-2", "best bounded result, with an explicit gap", ("lower_bound", "incumbent")),
+    (
+        "TMSAO-3",
+        "best measured admitted realization",
+        ("prediction_interval", "search_coverage", "incumbent"),
+    ),
+    (
+        "TMSAO-4",
+        "heuristic incumbent; legality and reproducibility only, no optimality",
+        ("incumbent",),
+    ),
 )
 
 #: Components whose absence makes an OPTIMALITY claim meaningless, whatever evidence exists.
@@ -261,12 +296,11 @@ def certificate_class_allowed(scope: ExecutionScope, evidence: dict) -> tuple[st
     class, because "why is this only TMSAO-4" is the question a reader actually has and
     answering it is what turns the ladder into a work list.
     """
-    missing_scope = [name for name in OPTIMALITY_COMPONENTS
-                     if scope.component(name) == UNDECLARED]
+    missing_scope = [name for name in OPTIMALITY_COMPONENTS if scope.component(name) == UNDECLARED]
 
     for name, statement, required in CLASS_REQUIREMENTS:
         if name == "TMSAO-4":
-            break                    # the floor: its reason is always the diagnosis below
+            break  # the floor: its reason is always the diagnosis below
         if any(not evidence.get(key) for key in required):
             continue
         if name in ("TMSAO-1", "TMSAO-2") and missing_scope:
@@ -284,18 +318,20 @@ def certificate_class_allowed(scope: ExecutionScope, evidence: dict) -> tuple[st
     if missing_scope:
         return "TMSAO-4", (
             f"an optimality claim needs a declared {', '.join(missing_scope)}; without it "
-            f"the claim ranges over a model nobody wrote down")
+            f"the claim ranges over a model nobody wrote down"
+        )
     if not evidence.get("lower_bound"):
         return "TMSAO-4", (
             "no lower bound was computed, so the distance to optimal is unknown -- a gap is "
-            "only a gap when its size is known")
+            "only a gap when its size is known"
+        )
     return "TMSAO-4", (
         "the evidence present supports no stronger statement; see CLASS_REQUIREMENTS for "
-        "what each rung needs")
+        "what each rung needs"
+    )
 
 
-def gap(incumbent: int | float, lower_bound: int | float, *, epsilon: float = 1e-9
-        ) -> dict:
+def gap(incumbent: int | float, lower_bound: int | float, *, epsilon: float = 1e-9) -> dict:
     """The absolute and relative gap a TMSAO-2 statement reports.
 
     `(U - L) / max(|U|, epsilon)`, as the proposal specifies. A lower bound above the
@@ -306,11 +342,25 @@ def gap(incumbent: int | float, lower_bound: int | float, *, epsilon: float = 1e
         raise ValueError(
             f"lower bound {lower_bound} exceeds incumbent {incumbent}: a bound above the "
             f"best known result means the bound or the incumbent is wrong, not that the gap "
-            f"is negative")
+            f"is negative"
+        )
     absolute = incumbent - lower_bound
-    return {"incumbent": incumbent, "lower_bound": lower_bound, "absolute": absolute,
-            "relative": absolute / max(abs(incumbent), epsilon)}
+    return {
+        "incumbent": incumbent,
+        "lower_bound": lower_bound,
+        "absolute": absolute,
+        "relative": absolute / max(abs(incumbent), epsilon),
+    }
 
 
-__all__ = ["CLASS_REQUIREMENTS", "COMPONENTS", "ExecutionScope", "OPTIMALITY_COMPONENTS",
-           "SCOPE_VERSION", "UNDECLARED", "certificate_class_allowed", "gap", "scope_for"]
+__all__ = [
+    "CLASS_REQUIREMENTS",
+    "COMPONENTS",
+    "ExecutionScope",
+    "OPTIMALITY_COMPONENTS",
+    "SCOPE_VERSION",
+    "UNDECLARED",
+    "certificate_class_allowed",
+    "gap",
+    "scope_for",
+]

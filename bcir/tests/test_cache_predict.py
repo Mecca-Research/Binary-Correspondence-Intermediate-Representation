@@ -39,13 +39,21 @@ from bcir.kbcir.cache_predict import (
 )
 from bcir.verify import verify_plan
 
-AVX = TargetProfile.x86_avx512()   # cacheline 64, elem_bytes 4, mem_channels(banks) 4
+AVX = TargetProfile.x86_avx512()  # cacheline 64, elem_bytes 4, mem_channels(banks) 4
 N = 1024
 
 
 def _claim(sc, sk=1, n=N, cid=1):
-    return Claim(id=cid, opcode=Opcode.ADD, lane=Lane.U, stride_class=sc, stride_k=sk,
-                 count=n, rd=(1,), wr=(2,))
+    return Claim(
+        id=cid,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=sc,
+        stride_k=sk,
+        count=n,
+        rd=(1,),
+        wr=(2,),
+    )
 
 
 def _module(sc, sk=1):
@@ -58,12 +66,15 @@ def _module(sc, sk=1):
 
 # --- the FROZEN Q8 params + the access-shape mapping ----------------------------------------------
 
+
 def test_predictor_geometry_matches_the_target_cache_and_banks():
     pred = CachePredictor.for_target(AVX)
-    assert pred.cacheline == AVX.cacheline            # frozen cache-line size
-    assert pred.banks == AVX.mem_channels             # banks == the concurrent-stream / channel count
-    assert pred._elems_per_line(AVX.elem_bytes) == AVX.cacheline // AVX.elem_bytes  # 16 f32 per 64B line
-    assert pred.gen == 0                              # seeded analytic constants (a calibrated table bumps it)
+    assert pred.cacheline == AVX.cacheline  # frozen cache-line size
+    assert pred.banks == AVX.mem_channels  # banks == the concurrent-stream / channel count
+    assert (
+        pred._elems_per_line(AVX.elem_bytes) == AVX.cacheline // AVX.elem_bytes
+    )  # 16 f32 per 64B line
+    assert pred.gen == 0  # seeded analytic constants (a calibrated table bumps it)
 
 
 def test_access_shape_reads_the_declared_stride():
@@ -73,10 +84,11 @@ def test_access_shape_reads_the_declared_stride():
     assert AccessShape.from_claim(_claim(StrideClass.TILE), AVX).stride == 1
     assert AccessShape.from_claim(_claim(StrideClass.STRIDED, sk=7), AVX).stride == 7
     gather = AccessShape.from_claim(_claim(StrideClass.RANDOM), AVX)
-    assert gather.stride == AVX.cacheline // AVX.elem_bytes      # a fresh line per element (16)
+    assert gather.stride == AVX.cacheline // AVX.elem_bytes  # a fresh line per element (16)
 
 
 # --- the unit sweep is a clean no-op signal -------------------------------------------------------
+
 
 def test_unit_sweep_has_zero_waste_zero_conflict_zero_cost():
     p = predict(_claim(StrideClass.UNIT), AVX)
@@ -92,13 +104,14 @@ def test_scalar_and_tile_are_also_conflict_free():
 
 # --- bank conflicts: a power-of-2 bank-colliding stride prices higher than a conflict-free one ----
 
+
 def test_pow2_bank_colliding_stride_prices_higher_contention_than_conflict_free():
     # stride == #banks (4) collides on ONE bank -> maximal serialization; a coprime stride (3) reaches all
     # banks -> conflict-free. The colliding stride MUST price strictly higher bank-conflict contention.
-    colliding = predict(_claim(StrideClass.STRIDED, sk=AVX.mem_channels), AVX)   # stride 4 == #banks
-    coprime = predict(_claim(StrideClass.STRIDED, sk=3), AVX)                    # 3 coprime to 4
-    assert coprime.bank_conflict_q8 == 0                       # gcd(3,4)=1 -> reaches all banks -> no conflict
-    assert colliding.bank_conflict_q8 > 0                      # gcd(4,4)=4 -> 1 bank -> serialized
+    colliding = predict(_claim(StrideClass.STRIDED, sk=AVX.mem_channels), AVX)  # stride 4 == #banks
+    coprime = predict(_claim(StrideClass.STRIDED, sk=3), AVX)  # 3 coprime to 4
+    assert coprime.bank_conflict_q8 == 0  # gcd(3,4)=1 -> reaches all banks -> no conflict
+    assert colliding.bank_conflict_q8 > 0  # gcd(4,4)=4 -> 1 bank -> serialized
     assert colliding.contention_cost > coprime.contention_cost
 
 
@@ -106,25 +119,28 @@ def test_bank_conflict_grows_with_the_shared_factor():
     # gcd(stride, banks) is the serialization degree: a stride sharing a larger factor with #banks conflicts
     # harder. With 4 banks: stride 1/3 (coprime) -> 0; stride 2 (gcd 2) -> mid; stride 4/8 (gcd 4) -> max.
     pred = CachePredictor(cacheline=64, banks=4)
+
     def conflict(s):
         return pred.bank_conflict_q8(AccessShape(stride=s, elem_bytes=4, count=N))
-    assert conflict(1) == 0 and conflict(3) == 0              # coprime -> conflict-free
-    assert 0 < conflict(2) < conflict(4)                     # gcd 2 < gcd 4
-    assert conflict(8) == conflict(4)                        # a multiple of #banks also hits one bank
+
+    assert conflict(1) == 0 and conflict(3) == 0  # coprime -> conflict-free
+    assert 0 < conflict(2) < conflict(4)  # gcd 2 < gcd 4
+    assert conflict(8) == conflict(4)  # a multiple of #banks also hits one bank
 
 
 def test_multiple_of_bank_count_serializes():
     # the classic conflict: a stride that is a MULTIPLE of the bank count keeps hitting the same bank.
-    for s in (4, 8, 12, 16):                                  # all multiples of 4 banks
+    for s in (4, 8, 12, 16):  # all multiples of 4 banks
         p = predict(_claim(StrideClass.STRIDED, sk=s), AVX)
         assert p.bank_conflict_q8 > 0, s
 
 
 # --- cache-line waste: a strided gather wastes more lines than a unit sweep -----------------------
 
+
 def test_strided_gather_prices_higher_cacheline_waste_than_unit_sweep():
     unit = predict(_claim(StrideClass.UNIT), AVX)
-    gather = predict(_claim(StrideClass.RANDOM), AVX)         # a fresh line per element
+    gather = predict(_claim(StrideClass.RANDOM), AVX)  # a fresh line per element
     assert gather.line_waste_q8 > unit.line_waste_q8 == 0
     assert gather.contention_cost > unit.contention_cost
     # the gather is the worst case: one line per element -> waste == (elems_per_line - 1) in Q8.
@@ -133,12 +149,14 @@ def test_strided_gather_prices_higher_cacheline_waste_than_unit_sweep():
 
 
 def test_cacheline_waste_grows_with_stride_then_saturates():
-    pred = CachePredictor(cacheline=64, banks=4)              # 16 f32 per line
+    pred = CachePredictor(cacheline=64, banks=4)  # 16 f32 per line
+
     def waste(s):
         return pred.line_waste_q8(AccessShape(stride=s, elem_bytes=4, count=N))
-    assert waste(1) == 0                                      # unit sweep: full utilization
-    assert waste(2) < waste(4) < waste(16)                   # more lines dragged per useful element
-    assert waste(32) == waste(16)                            # saturates at one line per element (epl=16)
+
+    assert waste(1) == 0  # unit sweep: full utilization
+    assert waste(2) < waste(4) < waste(16)  # more lines dragged per useful element
+    assert waste(32) == waste(16)  # saturates at one line per element (epl=16)
 
 
 def test_strided_access_prices_higher_than_unit_on_the_combined_signal():
@@ -152,24 +170,30 @@ def test_strided_access_prices_higher_than_unit_on_the_combined_signal():
 def test_contention_scales_with_count():
     small = predict(_claim(StrideClass.STRIDED, sk=4, n=64), AVX).contention_cost
     big = predict(_claim(StrideClass.STRIDED, sk=4, n=4096), AVX).contention_cost
-    assert big > small                                       # more elements -> more wasted lines / conflicts
+    assert big > small  # more elements -> more wasted lines / conflicts
 
 
 # --- reproducibility: same claim + params => same Q8 cost, every time -----------------------------
+
 
 def test_predictor_is_deterministic():
     c = _claim(StrideClass.STRIDED, sk=6)
     a = predict(c, AVX)
     b = predict(c, AVX)
-    assert (a.line_waste_q8, a.bank_conflict_q8, a.contention_cost) == \
-           (b.line_waste_q8, b.bank_conflict_q8, b.contention_cost)
+    assert (a.line_waste_q8, a.bank_conflict_q8, a.contention_cost) == (
+        b.line_waste_q8,
+        b.bank_conflict_q8,
+        b.contention_cost,
+    )
     assert a == b
 
 
 def test_frozen_params_fingerprint_is_stable():
     assert CachePredictor.for_target(AVX).fingerprint == CachePredictor.for_target(AVX).fingerprint
-    assert CachePredictor(cacheline=64, banks=4).fingerprint != \
-           CachePredictor(cacheline=128, banks=4).fingerprint
+    assert (
+        CachePredictor(cacheline=64, banks=4).fingerprint
+        != CachePredictor(cacheline=128, banks=4).fingerprint
+    )
 
 
 def test_integer_only_no_floats_in_the_signal():
@@ -179,6 +203,7 @@ def test_integer_only_no_floats_in_the_signal():
 
 
 # --- THE QUARANTINE PROOF: the signal NEVER changes a legality verdict ----------------------------
+
 
 def _augment_with_contention(module, result, pred):
     """Add the predicted CONTENTION cost to each plan step's cost vector (the opt-in consultation) and return
@@ -205,7 +230,11 @@ def test_quarantine_legality_is_identical_with_and_without_the_signal():
         base_diags = [str(d) for d in verify_plan(m, res)]
         aug = _augment_with_contention(m, res, pred)
         aug_diags = [str(d) for d in verify_plan(m, aug)]
-        assert base_diags == aug_diags, (sc, base_diags, aug_diags)   # legality UNCHANGED by the signal
+        assert base_diags == aug_diags, (
+            sc,
+            base_diags,
+            aug_diags,
+        )  # legality UNCHANGED by the signal
 
 
 def test_quarantine_signal_only_moves_the_contention_axis():
@@ -218,9 +247,11 @@ def test_quarantine_signal_only_moves_the_contention_axis():
     for s_base, s_aug in zip(res.steps, aug.steps):
         for d in range(len(s_base.candidate.base.v)):
             if d == CONTENTION:
-                assert s_aug.candidate.base.v[d] >= s_base.candidate.base.v[d]   # contention rose
+                assert s_aug.candidate.base.v[d] >= s_base.candidate.base.v[d]  # contention rose
             else:
-                assert s_aug.candidate.base.v[d] == s_base.candidate.base.v[d]   # everything else identical
+                assert (
+                    s_aug.candidate.base.v[d] == s_base.candidate.base.v[d]
+                )  # everything else identical
 
 
 def test_conflict_prone_and_conflict_free_plans_are_equally_legal():
@@ -230,11 +261,12 @@ def test_conflict_prone_and_conflict_free_plans_are_equally_legal():
     m_free, m_prone = _module(StrideClass.UNIT), _module(StrideClass.STRIDED, sk=4)
     for m in (m_free, m_prone):
         res = optimize(m, AVX, Theta.cool())
-        assert verify_plan(m, res) == []                            # legal without the signal
-        assert verify_plan(m, _augment_with_contention(m, res, pred)) == []   # ... and with it
+        assert verify_plan(m, res) == []  # legal without the signal
+        assert verify_plan(m, _augment_with_contention(m, res, pred)) == []  # ... and with it
 
 
 # --- OPT-IN / GAINS-ONLY: the default path never sets CONTENTION (pinned scores unperturbed) -------
+
 
 def test_default_optimize_never_sets_the_contention_axis():
     # the signal is opt-in: nothing in the default planner consults the predictor, so every candidate's
@@ -262,10 +294,11 @@ def test_predicting_a_claim_does_not_mutate_it_or_the_candidates():
     predict(c, AVX)
     rank_realizations(before, c, AVX)
     after_costs = [tuple(cand.base.v) for cand in before]
-    assert before_costs == after_costs                          # candidates untouched (no mutation)
+    assert before_costs == after_costs  # candidates untouched (no mutation)
 
 
 # --- the proof-carrying record + the opt-in ranking helper ----------------------------------------
+
 
 def test_prediction_record_is_proof_carrying():
     p = predict(_claim(StrideClass.STRIDED, sk=4), AVX)
@@ -286,8 +319,8 @@ def test_rank_realizations_prefers_the_conflict_free_realization():
     gather = next(r for r in ranked if r[0].lane == Lane.GGG)
     others = [r for r in ranked if r[0].lane != Lane.GGG]
     if others:
-        assert gather[2] >= max(o[2] for o in others)           # gather's contention is the largest
-        assert ranked[0][0].lane != Lane.GGG                    # the cheapest realization is not the gather
+        assert gather[2] >= max(o[2] for o in others)  # gather's contention is the largest
+        assert ranked[0][0].lane != Lane.GGG  # the cheapest realization is not the gather
     # the ranking is by (total, name): non-decreasing total.
     assert all(ranked[i][3] <= ranked[i + 1][3] for i in range(len(ranked) - 1))
 
@@ -297,7 +330,7 @@ def test_rank_realizations_is_a_noop_ranking_for_a_unit_sweep():
     # adds nothing) -- the gains-only shape: the predictor never makes the simple, contiguous case costlier.
     c = _claim(StrideClass.UNIT)
     ranked = rank_realizations(candidates_for(c, AVX), c, AVX)
-    assert all(r[2] == 0 for r in ranked)                       # every candidate has 0 contention
+    assert all(r[2] == 0 for r in ranked)  # every candidate has 0 contention
     # ranked cheapest-first by base cost (contention is a flat 0).
     assert all(ranked[i][1] <= ranked[i + 1][1] for i in range(len(ranked) - 1))
 
@@ -309,21 +342,22 @@ def test_ranking_does_not_change_legality_or_the_base_costs():
     cands = candidates_for(c, AVX)
     snapshot = [tuple(cand.base.v) for cand in cands]
     ranked = rank_realizations(cands, c, AVX)
-    assert [tuple(cand.base.v) for cand in cands] == snapshot   # base costs untouched
+    assert [tuple(cand.base.v) for cand in cands] == snapshot  # base costs untouched
     for cand, base, cont, total in ranked:
-        assert total == base + cont                             # the augmented total is base + signal
+        assert total == base + cont  # the augmented total is base + signal
 
 
 # --- target portability: the frozen geometry tracks the target -----------------------------------
+
 
 def test_predictor_tracks_target_bank_count():
     # the conflict degree is the SERIALIZATION FACTOR g = gcd(stride, banks) -- the throughput lost vs the
     # machine's own ideal. A stride == the SMALLER bank count fully serializes the 4-bank CPU (gcd 4 -> 1
     # bank) but the 32-bank GPU still spreads it across more banks at a larger stride. We pin the geometry
     # dependence with a stride that is a full multiple of the GPU's bank count.
-    gpu = TargetProfile.nvidia_ptx()                            # mem_channels 32, cacheline 128
-    cpu_pred = CachePredictor.for_target(AVX)                   # banks 4
-    gpu_pred = CachePredictor.for_target(gpu)                   # banks 32
+    gpu = TargetProfile.nvidia_ptx()  # mem_channels 32, cacheline 128
+    cpu_pred = CachePredictor.for_target(AVX)  # banks 4
+    gpu_pred = CachePredictor.for_target(gpu)  # banks 32
     # a stride == the GPU bank count (32) FULLY serializes the GPU (gcd 32,32 -> 1 bank) but the CPU saturates
     # at its own 4-bank ceiling (gcd 32,4 = 4 -> already 1 bank) -- the GPU's worst case is MORE serialized.
     shape32 = AccessShape(stride=32, elem_bytes=4, count=N)

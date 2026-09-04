@@ -20,10 +20,28 @@ patterns recur:
 
 from bcir.asn1.ecn_props import IntForm, Pattern
 from bcir.asn1.ecn_transform import (
-    RESULT_SIZE_FIXED_TO_MAX, RESULT_SIZE_VARIABLE, BitsToBits, BitsToChar, BitsToCompositeBits,
-    BitsToInt, BitToBits, BoolToBool, BoolToInt, CharsToCompositeChar, CharToBits,
-    Composite, CompositeBitsToBits, CompositeBitsToOctets, CompositeCharToChars, IntOp,
-    IntToBits, IntToBool, IntToChars, IntToInt, OctetsToCompositeBits, TransformChain,
+    RESULT_SIZE_FIXED_TO_MAX,
+    RESULT_SIZE_VARIABLE,
+    BitsToBits,
+    BitsToChar,
+    BitsToCompositeBits,
+    BitsToInt,
+    BitToBits,
+    BoolToBool,
+    BoolToInt,
+    CharsToCompositeChar,
+    CharToBits,
+    Composite,
+    CompositeBitsToBits,
+    CompositeBitsToOctets,
+    CompositeCharToChars,
+    IntOp,
+    IntToBits,
+    IntToBool,
+    IntToChars,
+    IntToInt,
+    OctetsToCompositeBits,
+    TransformChain,
 )
 from bcir.asn1.tags import Asn1Error
 
@@ -40,6 +58,7 @@ def _refuses(citation: str, build):
 
 # --- §24.8 int-to-bits: the four size arms and the sign-aware pad -------------------------
 
+
 def test_int_to_bits_defaults_to_twos_complement_which_costs_a_sign_bit():
     """§24.8.1: `&int-to-bits-encoded-as ... DEFAULT twos-complement`.
 
@@ -53,14 +72,26 @@ def test_int_to_bits_defaults_to_twos_complement_which_costs_a_sign_bit():
 
 def test_the_three_size_arms_are_not_interchangeable():
     """§24.8.13, §24.8.14 and §24.8.15 give three different widths for one value."""
-    assert IntToBits(encoded_as=IntForm.POSITIVE_INT,
-                     size=RESULT_SIZE_VARIABLE).apply(5) == (1, 0, 1)
+    assert IntToBits(encoded_as=IntForm.POSITIVE_INT, size=RESULT_SIZE_VARIABLE).apply(5) == (
+        1,
+        0,
+        1,
+    )
     assert IntToBits(encoded_as=IntForm.POSITIVE_INT, size=1, unit=8).apply(5) == (
-        0, 0, 0, 0, 0, 1, 0, 1)
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        1,
+    )
     # §24.8.15: the smallest MULTIPLE OF that holds any value of the class. 300 needs nine
     # bits, so two octets — not one, and not the nine bits the value alone would take.
-    wide = IntToBits(encoded_as=IntForm.POSITIVE_INT, size=RESULT_SIZE_FIXED_TO_MAX, unit=8,
-                     bounds=(0, 300))
+    wide = IntToBits(
+        encoded_as=IntForm.POSITIVE_INT, size=RESULT_SIZE_FIXED_TO_MAX, unit=8, bounds=(0, 300)
+    )
     assert len(wide.apply(5)) == 16
 
 
@@ -96,11 +127,12 @@ def test_fixed_to_max_without_bounds_is_refused_at_construction():
 
 # --- §24.4-§24.7 the boolean and character transforms --------------------------------------
 
+
 def test_bool_to_bool_has_exactly_one_setting_and_is_its_own_inverse():
     """§24.4.5: "There is only one value for BOOL-TO-BOOL, AS logical:not"."""
     assert BoolToBool().apply(True) is False
     assert BoolToBool().apply(BoolToBool().apply(True)) is True
-    assert BoolToBool().reversible(True)          # §24.4.6
+    assert BoolToBool().reversible(True)  # §24.4.6
 
 
 def test_bool_to_int_maps_the_way_the_setting_says_and_not_the_way_c_does():
@@ -126,8 +158,12 @@ def test_int_to_bool_is_reversible_only_with_two_single_valued_lists():
     assert exact.apply(7) is True and exact.apply(0) is False
     assert exact.reversible(True) and exact.inverse(True) == 7
 
-    for lossy in (IntToBool(), IntToBool(zero_true=True), IntToBool(true_is=(1, 2, 3)),
-                  IntToBool(true_is=(1, 2), false_is=(0,))):
+    for lossy in (
+        IntToBool(),
+        IntToBool(zero_true=True),
+        IntToBool(true_is=(1, 2, 3)),
+        IntToBool(true_is=(1, 2), false_is=(0,)),
+    ):
         assert not lossy.reversible(True), lossy
         _refuses("24.6.9", lambda spec=lossy: spec.inverse(True))
 
@@ -168,6 +204,7 @@ def test_a_number_too_long_for_its_character_field_is_refused():
 
 # --- §24.9-§24.13 the bit transforms -------------------------------------------------------
 
+
 def test_bits_to_int_is_never_usable_where_reversibility_is_required():
     """§24.9.6 says it flatly — not "under conditions", never.
 
@@ -175,7 +212,7 @@ def test_bits_to_int_is_never_usable_where_reversibility_is_required():
     recoverable, so `0011` and `11` both decode to 3 with nothing to tell them apart.
     """
     assert BitsToInt().apply((0, 0, 1, 1)) == 3
-    assert BitsToInt().apply((1, 1)) == -1          # the default is twos-complement
+    assert BitsToInt().apply((1, 1)) == -1  # the default is twos-complement
     assert BitsToInt(decoded_assuming=IntForm.POSITIVE_INT).apply((1, 1)) == 3
     assert not BitsToInt().reversible((1, 1))
     _refuses("24.9.6", lambda: BitsToInt().inverse(3))
@@ -190,7 +227,7 @@ def test_char_to_bits_compact_indexes_the_alphabet_and_refuses_without_one():
     silently produce `iso10646` under a `compact` label.
     """
     compact = CharToBits(alphabet="dcba", size=1, unit=2)
-    assert compact.apply("a") == (0, 0)             # canonical order, not source order
+    assert compact.apply("a") == (0, 0)  # canonical order, not source order
     assert compact.apply("d") == (1, 1)
     assert compact.inverse((1, 1)) == "d"
     _refuses("24.10.12", lambda: CharToBits(encoded_as="compact"))
@@ -211,13 +248,17 @@ def test_the_mapped_lists_are_checked_in_the_directions_each_clause_names():
     bitstring is lossy but well defined; bits-to-char with two identical source bitstrings is
     not a function at all.
     """
-    _refuses("24.10.10.2", lambda: CharToBits(
-        encoded_as="mapped", chars=("a", "a"), bit_values=((0,), (1,))))
+    _refuses(
+        "24.10.10.2",
+        lambda: CharToBits(encoded_as="mapped", chars=("a", "a"), bit_values=((0,), (1,))),
+    )
     # Duplicate BITS is legal for char-to-bits, and reports itself irreversible.
     lossy = CharToBits(encoded_as="mapped", chars=("a", "b"), bit_values=((0,), (0,)))
     assert not lossy.reversible("a")
-    _refuses("24.11.6.2", lambda: BitsToChar(
-        decoded_assuming="mapped", chars=("a", "b"), bit_values=((0,), (0,))))
+    _refuses(
+        "24.11.6.2",
+        lambda: BitsToChar(decoded_assuming="mapped", chars=("a", "b"), bit_values=((0,), (0,))),
+    )
 
 
 def test_a_character_outside_the_mapping_is_an_error_and_not_a_fallback():
@@ -245,10 +286,16 @@ def test_bit_to_bits_refuses_patterns_one_of_which_prefixes_the_other():
     ok = BitToBits(zero_pattern=Pattern.from_bits("00"), one_pattern=Pattern.from_bits("11"))
     assert ok.apply(1) == (1, 1) and ok.apply(0) == (0, 0)
     assert ok.inverse((1, 1)) == 1
-    _refuses("24.12.9", lambda: BitToBits(zero_pattern=Pattern.from_bits("01"),
-                                          one_pattern=Pattern.from_bits("011")))
-    _refuses("24.12.9", lambda: BitToBits(zero_pattern=Pattern.from_bits("1"),
-                                          one_pattern=Pattern.from_bits("1")))
+    _refuses(
+        "24.12.9",
+        lambda: BitToBits(
+            zero_pattern=Pattern.from_bits("01"), one_pattern=Pattern.from_bits("011")
+        ),
+    )
+    _refuses(
+        "24.12.9",
+        lambda: BitToBits(zero_pattern=Pattern.from_bits("1"), one_pattern=Pattern.from_bits("1")),
+    )
     _refuses("24.12.7", lambda: BitToBits(zero_pattern=Pattern.any_of_length(3)))
 
 
@@ -261,14 +308,14 @@ def test_bits_to_bits_needs_distinct_sources_to_be_a_function_and_distinct_resul
     table = BitsToBits(source_values=((0, 0), (1, 1)), result_values=((1, 0), (0, 1)))
     assert table.apply((1, 1)) == (0, 1) and table.inverse((0, 1)) == (1, 1)
     assert table.reversible((0, 0))
-    _refuses("24.13.7", lambda: BitsToBits(source_values=((0,), (0,)),
-                                           result_values=((1,), (0,))))
+    _refuses("24.13.7", lambda: BitsToBits(source_values=((0,), (0,)), result_values=((1,), (0,))))
     lossy = BitsToBits(source_values=((0,), (1,)), result_values=((1,), (1,)))
     assert not lossy.reversible((0,))
     _refuses("24.13.10", lambda: table.apply((0, 1)))
 
 
 # --- §24.14-§24.19 the composites -----------------------------------------------------------
+
 
 def test_the_composite_constructors_and_collapsers_round_trip():
     """§24.14/§24.17, §24.15/§24.18 and §24.16/§24.19 are three matched pairs."""
@@ -280,9 +327,9 @@ def test_the_composite_constructors_and_collapsers_round_trip():
     assert bits.elements == ((1, 0, 1, 0), (1, 1, 1, 1)) and bits.unit == 4
     assert CompositeBitsToBits().apply(bits) == (1, 0, 1, 0, 1, 1, 1, 1)
 
-    octets = OctetsToCompositeBits().apply(b"\xAB\xCD")
+    octets = OctetsToCompositeBits().apply(b"\xab\xcd")
     assert octets.unit == 8 and len(octets.elements) == 2
-    assert CompositeBitsToOctets().apply(octets) == b"\xAB\xCD"
+    assert CompositeBitsToOctets().apply(octets) == b"\xab\xcd"
 
 
 def test_a_composite_carries_its_own_unit_which_is_why_the_round_trip_works():
@@ -311,7 +358,7 @@ def test_a_value_transform_maps_over_a_composite_elementwise():
     composite = BitsToCompositeBits(unit=4).apply((0, 0, 1, 1, 0, 1, 0, 1))
     ints = BitsToInt(decoded_assuming=IntForm.POSITIVE_INT).apply(composite)
     assert ints.elements == (3, 5)
-    assert ints.kind == "int" and ints.unit == 4      # the unit survives the mapping
+    assert ints.kind == "int" and ints.unit == 4  # the unit survives the mapping
 
     flags = IntToBool(zero_true=True).apply(ints)
     assert flags.elements == (False, False) and flags.kind == "bool"
@@ -328,9 +375,11 @@ def test_a_chain_composes_a_constructor_a_value_transform_and_a_collapser():
     invert = BitsToBits(
         source_values=tuple(tuple((n >> s) & 1 for s in range(7, -1, -1)) for n in range(256)),
         result_values=tuple(
-            tuple(((~n) & 0xFF) >> s & 1 for s in range(7, -1, -1)) for n in range(256)))
+            tuple(((~n) & 0xFF) >> s & 1 for s in range(7, -1, -1)) for n in range(256)
+        ),
+    )
     chain = TransformChain((OctetsToCompositeBits(), invert, CompositeBitsToOctets()))
-    assert chain.apply(b"\x00\xFF\xA5") == b"\xFF\x00\x5A"
+    assert chain.apply(b"\x00\xff\xa5") == b"\xff\x00\x5a"
 
 
 def test_reversibility_of_a_composite_is_the_conjunction_over_its_elements():

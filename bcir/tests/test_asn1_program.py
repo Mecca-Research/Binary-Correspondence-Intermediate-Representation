@@ -20,15 +20,28 @@ from __future__ import annotations
 from fractions import Fraction
 
 from bcir.asn1.program import (
-    CLAIM, PHASE, PROGRAM, graph_to_module, jer_to_module, module_to_graph, module_to_jer,
+    CLAIM,
+    PHASE,
+    PROGRAM,
+    graph_to_module,
+    jer_to_module,
+    module_to_graph,
+    module_to_jer,
     verdicts,
 )
 from bcir.asn1.graph import graph_to_jer, jer_to_graph, resolve
 from bcir.asn1.tags import Asn1Error
 from bcir.examples import PROGRAMS
 from bcir.kbcir.tropical import (
-    CostGraph, NegativeCycle, Semiring, alternative, close, compose, minimum_mean_cycle,
-    shortest_paths, unroll_factor,
+    CostGraph,
+    NegativeCycle,
+    Semiring,
+    alternative,
+    close,
+    compose,
+    minimum_mean_cycle,
+    shortest_paths,
+    unroll_factor,
 )
 from bcir.model.graph import Claim, Lifetime, Module, Phase, Timing
 from bcir.model import Lane, Opcode, StrideClass
@@ -59,12 +72,23 @@ def test_the_verdicts_are_identical_whichever_rail_the_module_arrived_on():
 
 
 def _timed(claim_id: int, domain: str, sync: str, reads=(), writes=(), hazard="unique"):
-    return Claim(id=claim_id, opcode=Opcode.ADD, lane=Lane.U,
-                 stride_class=StrideClass.UNIT, count=1, rd=tuple(reads),
-                 wr=tuple(writes), hazard=hazard,
-                 timing=Timing(clock_domain=domain, sync_type=sync,
-                               clock_frequency_mhz=100 if sync == "synchronous" else 0,
-                               latency_cycles=4, setup_hold_margin=1))
+    return Claim(
+        id=claim_id,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=1,
+        rd=tuple(reads),
+        wr=tuple(writes),
+        hazard=hazard,
+        timing=Timing(
+            clock_domain=domain,
+            sync_type=sync,
+            clock_frequency_mhz=100 if sync == "synchronous" else 0,
+            latency_cycles=4,
+            setup_hold_margin=1,
+        ),
+    )
 
 
 def test_an_r20_clock_domain_crossing_survives_as_a_crossing():
@@ -75,11 +99,23 @@ def test_an_r20_clock_domain_crossing_survives_as_a_crossing():
     excuses the crossing, the rebuilt module would verify differently — and would often
     verify *clean*, which is the dangerous direction.
     """
-    module = Module(name="crossing", cacheline=64, align=64, target="x86", resources={},
-                    phases=[Phase(phase_id=0, deps=(), claims=[
-                        _timed(1, "fast", "synchronous", writes=(7,)),
-                        _timed(2, "slow", "synchronous", reads=(7,)),
-                    ])])
+    module = Module(
+        name="crossing",
+        cacheline=64,
+        align=64,
+        target="x86",
+        resources={},
+        phases=[
+            Phase(
+                phase_id=0,
+                deps=(),
+                claims=[
+                    _timed(1, "fast", "synchronous", writes=(7,)),
+                    _timed(2, "slow", "synchronous", reads=(7,)),
+                ],
+            )
+        ],
+    )
     original = verdicts(module)
     assert any(law == "R20" for law, _m in original), "the fixture does not trip R20"
     assert verdicts(jer_to_module(module_to_jer(module))) == original
@@ -91,27 +127,60 @@ def test_a_barriered_crossing_stays_excused():
     Testing only that violations survive would miss a projection that made every module
     *more* illegal, which is just as wrong and much easier to ship.
     """
-    module = Module(name="excused", cacheline=64, align=64, target="x86", resources={},
-                    phases=[Phase(phase_id=0, deps=(), claims=[
-                        _timed(1, "fast", "synchronous", writes=(7,)),
-                        _timed(2, "slow", "synchronous", reads=(7,), hazard="barriered"),
-                    ])])
+    module = Module(
+        name="excused",
+        cacheline=64,
+        align=64,
+        target="x86",
+        resources={},
+        phases=[
+            Phase(
+                phase_id=0,
+                deps=(),
+                claims=[
+                    _timed(1, "fast", "synchronous", writes=(7,)),
+                    _timed(2, "slow", "synchronous", reads=(7,), hazard="barriered"),
+                ],
+            )
+        ],
+    )
     assert not any(law == "R20" for law, _m in verdicts(module))
     assert verdicts(jer_to_module(module_to_jer(module))) == verdicts(module)
 
 
 def test_an_r21_use_after_free_survives_with_its_order():
     """R21 walks a freed set in claim order, so order is part of the verdict."""
-    def claim(cid, event, rid):
-        return Claim(id=cid, opcode=Opcode.ADD, lane=Lane.U,
-                     stride_class=StrideClass.UNIT, count=1,
-                     rd=(rid,) if event != "alloc" else (), wr=(rid,) if event == "alloc"
-                     else (), lifetime=Lifetime(event=event, epoch=0))
 
-    module = Module(name="uaf", cacheline=64, align=64, target="x86", resources={},
-                    phases=[Phase(phase_id=0, deps=(), claims=[
-                        claim(1, "alloc", 3), claim(2, "free", 3), claim(3, "use", 3),
-                    ])])
+    def claim(cid, event, rid):
+        return Claim(
+            id=cid,
+            opcode=Opcode.ADD,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=1,
+            rd=(rid,) if event != "alloc" else (),
+            wr=(rid,) if event == "alloc" else (),
+            lifetime=Lifetime(event=event, epoch=0),
+        )
+
+    module = Module(
+        name="uaf",
+        cacheline=64,
+        align=64,
+        target="x86",
+        resources={},
+        phases=[
+            Phase(
+                phase_id=0,
+                deps=(),
+                claims=[
+                    claim(1, "alloc", 3),
+                    claim(2, "free", 3),
+                    claim(3, "use", 3),
+                ],
+            )
+        ],
+    )
     original = verdicts(module)
     assert any(law == "R21" for law, _m in original), "the fixture does not trip R21"
     assert verdicts(jer_to_module(module_to_jer(module))) == original
@@ -123,21 +192,37 @@ def test_absent_timing_and_all_default_timing_stay_distinguishable():
     Collapsing the two — the obvious mistake for a projection that omits empty values —
     would silently subject every untimed claim in the repository to the timing laws.
     """
-    base = dict(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                count=1)
-    without = Module(name="m", cacheline=64, align=64, target="x86", resources={},
-                     phases=[Phase(phase_id=0, deps=(), claims=[Claim(**base)])])
-    with_empty = Module(name="m", cacheline=64, align=64, target="x86", resources={},
-                        phases=[Phase(phase_id=0, deps=(), claims=[
-                            Claim(**base, timing=Timing(sync_type="synchronous"))])])
+    base = dict(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT, count=1)
+    without = Module(
+        name="m",
+        cacheline=64,
+        align=64,
+        target="x86",
+        resources={},
+        phases=[Phase(phase_id=0, deps=(), claims=[Claim(**base)])],
+    )
+    with_empty = Module(
+        name="m",
+        cacheline=64,
+        align=64,
+        target="x86",
+        resources={},
+        phases=[
+            Phase(
+                phase_id=0, deps=(), claims=[Claim(**base, timing=Timing(sync_type="synchronous"))]
+            )
+        ],
+    )
     assert verdicts(without) == ()
     assert any(law == "R19" for law, _m in verdicts(with_empty)), (
-        "a synchronous claim with no clock must trip R19")
+        "a synchronous claim with no clock must trip R19"
+    )
     for module in (without, with_empty):
         rebuilt = jer_to_module(module_to_jer(module))
         assert verdicts(rebuilt) == verdicts(module)
         assert (rebuilt.phases[0].claims[0].timing is None) == (
-            module.phases[0].claims[0].timing is None)
+            module.phases[0].claims[0].timing is None
+        )
 
 
 def test_the_projection_carries_phase_and_claim_order_structurally():
@@ -165,9 +250,11 @@ def test_a_program_graph_is_an_ordinary_node_graph():
     assert kinds <= {PROGRAM, PHASE, CLAIM, "resource"}
     # And it resolves with the ordinary machinery, reporting the kinds no table knows.
     from bcir.asn1.graph import DIALECT_NODE_CLASS
+
     report = resolve(graph, DIALECT_NODE_CLASS)
     assert len(report.unresolved) == len(graph.nodes), (
-        "the dialect table should not claim to type program nodes")
+        "the dialect table should not claim to type program nodes"
+    )
 
 
 def test_a_graph_with_no_program_root_is_refused():
@@ -195,7 +282,7 @@ def test_a_conditional_is_semiring_addition():
 
 def test_the_shortest_path_takes_the_cheaper_arm_of_a_diamond():
     graph = CostGraph({("a", "b"): 3, ("a", "c"): 5, ("b", "d"): 4, ("c", "d"): 1})
-    assert shortest_paths(graph, "a")["d"] == 6           # a -> c -> d
+    assert shortest_paths(graph, "a")["d"] == 6  # a -> c -> d
     assert shortest_paths(graph, "a", semiring=Semiring.MAX_PLUS)["d"] == 7
 
 
@@ -247,9 +334,9 @@ def test_karp_reproduces_a_hand_derived_mean():
     three = CostGraph({("p", "q"): 1, ("q", "r"): 1, ("r", "p"): 1})
     assert minimum_mean_cycle(three)[0] == Fraction(3, 3) == 1
 
-    both = CostGraph({("h", "b"): 2, ("b", "h"): 4,
-                      ("p", "q"): 1, ("q", "r"): 1, ("r", "p"): 1,
-                      ("h", "p"): 0})
+    both = CostGraph(
+        {("h", "b"): 2, ("b", "h"): 4, ("p", "q"): 1, ("q", "r"): 1, ("r", "p"): 1, ("h", "p"): 0}
+    )
     assert minimum_mean_cycle(both)[0] == 1, "the smaller mean must win"
 
 
@@ -320,4 +407,5 @@ def test_the_pass_never_consults_a_verifier():
     source = open(module.__file__, encoding="utf-8").read()
     for forbidden in ("verify_", "from ..verify", "import verify"):
         assert forbidden not in source, (
-            f"the cost pass references {forbidden!r}; legality is decided elsewhere")
+            f"the cost pass references {forbidden!r}; legality is decided elsewhere"
+        )

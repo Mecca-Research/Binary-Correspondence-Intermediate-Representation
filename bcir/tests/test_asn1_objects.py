@@ -74,8 +74,11 @@ def test_the_associated_table_has_one_row_per_object_and_one_column_per_field():
     # resolvable at all.
     types = table.column("&Type")
     assert [t.universal for t in types] == [
-        Universal.INTEGER, Universal.BOOLEAN,
-        Universal.PRINTABLE_STRING, Universal.OCTET_STRING]
+        Universal.INTEGER,
+        Universal.BOOLEAN,
+        Universal.PRINTABLE_STRING,
+        Universal.OCTET_STRING,
+    ]
 
 
 def test_with_syntax_lets_an_object_be_written_positionally():
@@ -113,20 +116,28 @@ def test_a_table_constraint_never_moves_a_bit_of_any_encoding():
     with_table = compile_module(
         f"M DEFINITIONS ::= BEGIN {shared}\n"
         "  T ::= SEQUENCE {{ code C.&code ({{S}}) }}\n".replace("{{", "{").replace("}}", "}")
-        + "END\n", "<with>").module.types["T"]
+        + "END\n",
+        "<with>",
+    ).module.types["T"]
     without = compile_module(
-        f"M DEFINITIONS ::= BEGIN {shared}\n  T ::= SEQUENCE {{ code C.&code }}\n"
-        .replace("{{", "{").replace("}}", "}") + "END\n", "<without>").module.types["T"]
+        f"M DEFINITIONS ::= BEGIN {shared}\n  T ::= SEQUENCE {{ code C.&code }}\n".replace(
+            "{{", "{"
+        ).replace("}}", "}")
+        + "END\n",
+        "<without>",
+    ).module.types["T"]
 
     assert with_table.components[0].type.table_values == (1, 2)
     assert with_table.components[0].type.constraint == without.components[0].type.constraint
 
     value = {"code": 2}
     for variant in (PerVariant.ALIGNED, PerVariant.UNALIGNED):
-        assert encode_per(with_table, value, variant=variant) == \
-               encode_per(without, value, variant=variant), variant
-    assert encode_oer(with_table, value, rules=OerRules.CANONICAL) == \
-           encode_oer(without, value, rules=OerRules.CANONICAL)
+        assert encode_per(with_table, value, variant=variant) == encode_per(
+            without, value, variant=variant
+        ), variant
+    assert encode_oer(with_table, value, rules=OerRules.CANONICAL) == encode_oer(
+        without, value, rules=OerRules.CANONICAL
+    )
 
 
 def test_a_component_relation_constraint_resolves_the_open_type():
@@ -146,13 +157,15 @@ def test_a_component_relation_constraint_resolves_the_open_type():
     ]
     for category, code, kind, value in cases:
         octets = _wrap(kind, value)
-        der = module.encode("ErrorReturn", {
-            "errorCategory": category, "errorCode": code, "errorInfo": octets})
+        der = module.encode(
+            "ErrorReturn", {"errorCategory": category, "errorCode": code, "errorInfo": octets}
+        )
         back = module.decode("ErrorReturn", der)
         assert back["errorInfo"] == octets, "the octets must survive unchanged"
         assert back["errorInfo.resolved"] == value, (
             f"row {category}/{code} should resolve to {value!r}, "
-            f"got {back.get('errorInfo.resolved')!r}")
+            f"got {back.get('errorInfo.resolved')!r}"
+        )
 
 
 def test_an_unknown_row_keeps_the_octets_instead_of_guessing():
@@ -163,17 +176,18 @@ def test_an_unknown_row_keeps_the_octets_instead_of_guessing():
     """
     module = _error_module()
     octets = _wrap(Primitive(Universal.INTEGER, "INTEGER"), 7)
-    der = module.encode("ErrorReturn", {
-        "errorCategory": "B", "errorCode": 9, "errorInfo": octets})
+    der = module.encode("ErrorReturn", {"errorCategory": "B", "errorCode": 9, "errorInfo": octets})
     back = module.decode("ErrorReturn", der)
     assert back["errorInfo"] == octets
     assert "errorInfo.resolved" not in back, (
-        "an unmatched row must not be resolved to some other row's type")
+        "an unmatched row must not be resolved to some other row's type"
+    )
 
 
 def test_an_object_set_unions_references_and_inherits_extensibility():
     """X.681 §12.3 (union, `...`) and §12.5 (a referenced set's marker is inherited)."""
-    module = compile_module("""
+    module = compile_module(
+        """
       M DEFINITIONS ::= BEGIN
         C ::= CLASS { &code INTEGER, &Type } WITH SYNTAX {&code &Type}
         base C ::= {3 BOOLEAN}
@@ -181,18 +195,23 @@ def test_an_object_set_unions_references_and_inherits_extensibility():
         Outer C ::= { Inner | {2 PrintableString} | base }
         T ::= SEQUENCE { code C.&code ({Outer}) }
       END
-    """, "<sets>").module
+    """,
+        "<sets>",
+    ).module
     values = module.types["T"].components[0].type.table_values
     assert values == (1, 2, 3), f"the union should hold all three objects, got {values}"
 
 
 def test_a_contents_constraint_resolves_the_contained_value():
     """X.682 §11.4: the octet string's abstract value IS an encoding of the named type."""
-    module = compile_module("""
+    module = compile_module(
+        """
       M DEFINITIONS ::= BEGIN
         T ::= SEQUENCE { blob OCTET STRING (CONTAINING INTEGER ENCODED BY {2 1 1}) }
       END
-    """, "<contents>").module
+    """,
+        "<contents>",
+    ).module
     blob = module.types["T"].components[0].type
     assert blob.contains is not None and blob.contains.universal == Universal.INTEGER
     assert blob.encoded_by == (2, 1, 1), "§11.2's object identifier must be recorded"
@@ -205,8 +224,9 @@ def test_a_contents_constraint_resolves_the_contained_value():
 def test_a_contents_constraint_is_refused_where_it_cannot_apply():
     """§11.3 allows it only on OCTET STRING and BIT STRING."""
     try:
-        compile_module("M DEFINITIONS ::= BEGIN\n"
-                       "  T ::= INTEGER (CONTAINING BOOLEAN)\nEND\n", "<bad>")
+        compile_module(
+            "M DEFINITIONS ::= BEGIN\n  T ::= INTEGER (CONTAINING BOOLEAN)\nEND\n", "<bad>"
+        )
         raise AssertionError("a contents constraint on an INTEGER must be refused")
     except Asn1SemanticError as exc:
         assert "11.3" in str(exc), exc
@@ -218,13 +238,15 @@ def test_a_user_defined_constraint_is_recorded_and_changes_no_encoding():
     constrained = compile_module(
         "M DEFINITIONS ::= BEGIN\n"
         "  T ::= SEQUENCE { v INTEGER (0..255) (CONSTRAINED BY {-- prime --}) }\nEND\n",
-        "<udc>").module.types["T"]
+        "<udc>",
+    ).module.types["T"]
     plain = compile_module(
-        "M DEFINITIONS ::= BEGIN\n  T ::= SEQUENCE { v INTEGER (0..255) }\nEND\n",
-        "<plain>").module.types["T"]
+        "M DEFINITIONS ::= BEGIN\n  T ::= SEQUENCE { v INTEGER (0..255) }\nEND\n", "<plain>"
+    ).module.types["T"]
     for variant in (PerVariant.ALIGNED, PerVariant.UNALIGNED):
-        assert encode_per(constrained, {"v": 7}, variant=variant) == \
-               encode_per(plain, {"v": 7}, variant=variant)
+        assert encode_per(constrained, {"v": 7}, variant=variant) == encode_per(
+            plain, {"v": 7}, variant=variant
+        )
 
 
 def test_an_x509_shaped_attribute_resolves_by_its_sibling_oid():
@@ -234,7 +256,8 @@ def test_an_x509_shaped_attribute_resolves_by_its_sibling_oid():
     in `type` selects the type of `value`. Before this, `value` decoded to opaque octets and
     a caller had to know the mapping out of band; now the module carries it.
     """
-    module = compile_module("""
+    module = compile_module(
+        """
       Pkix DEFINITIONS ::= BEGIN
         ATTRIBUTE ::= CLASS { &id OBJECT IDENTIFIER UNIQUE, &Type }
           WITH SYNTAX {&Type IDENTIFIED BY &id}
@@ -245,7 +268,9 @@ def test_an_x509_shaped_attribute_resolves_by_its_sibling_oid():
             type  ATTRIBUTE.&id ({SupportedAttributes}),
             value ATTRIBUTE.&Type ({SupportedAttributes}{@type}) }
       END
-    """, "<pkix>").module
+    """,
+        "<pkix>",
+    ).module
     from bcir.asn1.codec import Oid
 
     for arcs, kind, value in (
@@ -253,13 +278,13 @@ def test_an_x509_shaped_attribute_resolves_by_its_sibling_oid():
         ((2, 5, 4, 3), Primitive(Universal.UTF8_STRING, "UTF8String"), "Example CA"),
     ):
         octets = _wrap(kind, value)
-        der = module.encode("AttributeTypeAndValue",
-                            {"type": Oid(arcs), "value": octets})
+        der = module.encode("AttributeTypeAndValue", {"type": Oid(arcs), "value": octets})
         back = module.decode("AttributeTypeAndValue", der)
         assert back["value"] == octets
         assert back["value.resolved"] == value, (
             f"{arcs} should select {kind.name} and decode to {value!r}, "
-            f"got {back.get('value.resolved')!r}")
+            f"got {back.get('value.resolved')!r}"
+        )
 
 
 def test_an_open_type_with_no_table_constraint_stays_opaque():
@@ -268,13 +293,16 @@ def test_an_open_type_with_no_table_constraint_stays_opaque():
     It must keep behaving exactly as it did -- opaque octets -- rather than acquiring a
     resolution from some unrelated set in the module.
     """
-    module = compile_module("""
+    module = compile_module(
+        """
       M DEFINITIONS ::= BEGIN
         C ::= CLASS { &code INTEGER, &Type } WITH SYNTAX {&code &Type}
         S C ::= { {1 INTEGER} }
         T ::= SEQUENCE { code C.&code, body C.&Type }
       END
-    """, "<opaque>").module
+    """,
+        "<opaque>",
+    ).module
     body = module.types["T"].components[1].type
     assert isinstance(body, OpenType) and body.table is None
     octets = _wrap(Primitive(Universal.INTEGER, "INTEGER"), 5)
@@ -287,13 +315,16 @@ def test_an_open_type_with_no_table_constraint_stays_opaque():
 
 def test_a_parameterized_type_instantiates_per_actual_parameter():
     """X.683 §9.7: the actual parameter takes the place of the dummy reference."""
-    module = compile_module("""
+    module = compile_module(
+        """
       M DEFINITIONS ::= BEGIN
         Pair {X} ::= SEQUENCE { a X, b INTEGER }
         BoolPair ::= Pair {BOOLEAN}
         StrPair  ::= Pair {PrintableString}
       END
-    """, "<param>").module
+    """,
+        "<param>",
+    ).module
     assert module.types["BoolPair"].components[0].type.universal == Universal.BOOLEAN
     assert module.types["StrPair"].components[0].type.universal == Universal.PRINTABLE_STRING
     # Both instantiations share the un-parameterized component untouched.
@@ -312,7 +343,8 @@ def test_the_rfc5280_shape_resolves_through_a_parameterized_object_set():
     """
     from bcir.asn1.codec import Oid
 
-    module = compile_module("""
+    module = compile_module(
+        """
       Pkix DEFINITIONS ::= BEGIN
         ATTRIBUTE ::= CLASS { &id OBJECT IDENTIFIER UNIQUE, &Type }
           WITH SYNTAX {&Type IDENTIFIED BY &id}
@@ -324,25 +356,28 @@ def test_the_rfc5280_shape_resolves_through_a_parameterized_object_set():
             value ATTRIBUTE.&Type ({Supported}{@type}) }
         Attr ::= AttributeTypeAndValue {SupportedAttributes}
       END
-    """, "<rfc5280>").module
+    """,
+        "<rfc5280>",
+    ).module
 
     open_type = module.types["Attr"].components[1].type
     assert open_type.table is not None and len(open_type.table.rows) == 2, (
-        "the dummy object set must be rewritten to the actual before the table is built")
+        "the dummy object set must be rewritten to the actual before the table is built"
+    )
 
     for arcs, kind, value in (
         ((2, 5, 4, 6), Primitive(Universal.PRINTABLE_STRING, "PrintableString"), "GB"),
         ((2, 5, 4, 3), Primitive(Universal.UTF8_STRING, "UTF8String"), "Example CA"),
     ):
         octets = _wrap(kind, value)
-        back = module.decode("Attr", module.encode(
-            "Attr", {"type": Oid(arcs), "value": octets}))
+        back = module.decode("Attr", module.encode("Attr", {"type": Oid(arcs), "value": octets}))
         assert back["value.resolved"] == value, (arcs, back.get("value.resolved"))
 
 
 def test_two_instantiations_of_one_parameterized_type_stay_independent():
     """Memoising instantiations must key on the ACTUALS, not just the name."""
-    module = compile_module("""
+    module = compile_module(
+        """
       M DEFINITIONS ::= BEGIN
         C ::= CLASS { &id INTEGER UNIQUE, &Type } WITH SYNTAX {&Type IDENTIFIED BY &id}
         SetA C ::= { {INTEGER IDENTIFIED BY 1} }
@@ -351,23 +386,29 @@ def test_two_instantiations_of_one_parameterized_type_stay_independent():
         UsesA ::= Holder {SetA}
         UsesB ::= Holder {SetB}
       END
-    """, "<two>").module
+    """,
+        "<two>",
+    ).module
     a = module.types["UsesA"].components[1].type
     b = module.types["UsesB"].components[1].type
     assert len(a.table.rows) == 1 and len(b.table.rows) == 2, (
-        f"instantiations must not share a table: {len(a.table.rows)} vs {len(b.table.rows)}")
+        f"instantiations must not share a table: {len(a.table.rows)} vs {len(b.table.rows)}"
+    )
     assert a.resolve({("id",): 1}).universal == Universal.INTEGER
     assert b.resolve({("id",): 1}).universal == Universal.BOOLEAN
 
 
 def test_a_nested_parameterized_reference_instantiates():
     """A parameterized type may itself be an actual parameter (§9.5's Type alternative)."""
-    module = compile_module("""
+    module = compile_module(
+        """
       M DEFINITIONS ::= BEGIN
         Box {X} ::= SEQUENCE { item X }
         Pair {Y} ::= SEQUENCE { left Y, right Y }
         T ::= Pair {Box {INTEGER}}
       END
-    """, "<nested>").module
+    """,
+        "<nested>",
+    ).module
     left = module.types["T"].components[0].type
     assert left.components[0].type.universal == Universal.INTEGER

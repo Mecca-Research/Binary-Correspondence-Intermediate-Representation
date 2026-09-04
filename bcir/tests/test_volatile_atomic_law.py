@@ -26,9 +26,19 @@ def _mod(claims):
 
 
 def _claim(cid, *, volatile=False, hazard="unique", rd=(1, 2), wr=(3,)):
-    return Claim(id=cid, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                 count=1024, rd=rd, wr=wr, op="vector.add", domain=Domain.RAM,
-                 hazard=hazard, volatile=volatile)
+    return Claim(
+        id=cid,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=1024,
+        rd=rd,
+        wr=wr,
+        op="vector.add",
+        domain=Domain.RAM,
+        hazard=hazard,
+        volatile=volatile,
+    )
 
 
 def test_r5_volatile_with_unique_hazard_is_flagged():
@@ -55,10 +65,10 @@ def test_bundle_never_bundles_across_a_volatile_claim():
     # find_bundles never places it in a bundle and never reorders another claim across it.
     a, b = _claim(1, rd=(1, 2), wr=(3,)), _claim(3, rd=(1, 7), wr=(8,))
     v = _claim(2, volatile=True, hazard="barriered", rd=(1, 4), wr=(5,))
-    assert _conflict(a, v) and _conflict(v, b)                   # fences both neighbours
-    assert not _conflict(a, b)                                   # the A-sharers are independent
+    assert _conflict(a, v) and _conflict(v, b)  # fences both neighbours
+    assert not _conflict(a, b)  # the A-sharers are independent
     for bd in find_bundles(_mod([a, v, b])):
-        assert 2 not in bd.claim_ids                             # the volatile claim joins no bundle
+        assert 2 not in bd.claim_ids  # the volatile claim joins no bundle
 
 
 def test_cfront_mmio_claims_carry_the_volatile_qualifier():
@@ -67,12 +77,17 @@ def test_cfront_mmio_claims_carry_the_volatile_qualifier():
     # a plain RAM access stays `volatile=False`. The unit is R1-R8 clean -- MMIO claims already carried
     # `hazard="barriered"`, so the new R5 clause is satisfied by construction (non-disturbance).
     from bcir.frontends.cfront import compile_unit
-    src = ("typedef volatile unsigned int reg32;\n"
-           "struct dev { reg32 r; };\n"
-           "unsigned int rd(volatile struct dev *p, unsigned int x) { return p->r + x; }\n")
+
+    src = (
+        "typedef volatile unsigned int reg32;\n"
+        "struct dev { reg32 r; };\n"
+        "unsigned int rd(volatile struct dev *p, unsigned int x) { return p->r + x; }\n"
+    )
     r = compile_unit(src, check_clang=False)
     assert r.is_clean, r.diagnostics
-    claims = [c for fn in r.lowered.functions.values() for ph in fn.module.phases for c in ph.claims]
+    claims = [
+        c for fn in r.lowered.functions.values() for ph in fn.module.phases for c in ph.claims
+    ]
     mmio = [c for c in claims if c.domain == Domain.MMIO]
     assert mmio and all(c.volatile for c in mmio), [(c.op, c.volatile) for c in mmio]
     ram_access = [c for c in claims if c.domain == Domain.RAM and c.op in ("c.load", "c.store")]
@@ -91,7 +106,7 @@ def test_to_mlir_emits_is_volatile_only_when_set():
     assert "is_volatile" not in base
     m = vector_add()
     m.phases[0].claims[0].volatile = True
-    m.phases[0].claims[0].hazard = "barriered"                   # keep R5 legal
+    m.phases[0].claims[0].hazard = "barriered"  # keep R5 legal
     assert "is_volatile = true" in to_mlir(m, h, theta)
 
 

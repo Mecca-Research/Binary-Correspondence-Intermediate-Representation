@@ -14,8 +14,7 @@ import os
 from bcir.frontends.cfront import compile_unit
 from bcir.model import Domain
 
-_RUNTIME_C = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..",
-                                           "runtime", "c"))
+_RUNTIME_C = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "runtime", "c"))
 
 
 def _compiled():
@@ -48,7 +47,7 @@ def test_every_function_records_its_abi_contract():
     assert set(r.abi_contracts) == set(r.lowered.functions)
     assert r.abi_diagnostics == []
     c = r.abi_contracts["gpio_mode_set"]
-    assert len(c.params) == 5 and c.params[0][1] == 8       # the rcc pointer is LP64-wide
+    assert len(c.params) == 5 and c.params[0][1] == 8  # the rcc pointer is LP64-wide
 
 
 if __name__ == "__main__":

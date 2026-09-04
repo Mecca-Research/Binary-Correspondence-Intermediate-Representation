@@ -150,7 +150,7 @@ def _tokenize(text: str) -> tuple[list[_Token], list[tuple[int, str]]]:
         elif ch == ";":
             end = text.find("\n", at)
             end = len(text) if end < 0 else end
-            comments.append((len(tokens), text[at + 1:end].strip()))
+            comments.append((len(tokens), text[at + 1 : end].strip()))
             at = end
         elif ch in "()":
             tokens.append(_Token(ch, ch, line))
@@ -181,7 +181,7 @@ def _tokenize(text: str) -> tuple[list[_Token], list[tuple[int, str]]]:
             tokens.append(_Token(kind, value, line))
         else:
             start = at
-            while at < len(text) and not text[at].isspace() and text[at] not in "();\"":
+            while at < len(text) and not text[at].isspace() and text[at] not in '();"':
                 at += 1
             tokens.append(_Token("sym", text[start:at], line))
     return tokens, comments
@@ -208,7 +208,7 @@ def _read_string(text: str, at: int, line: int) -> tuple[str, int]:
             out.append(_UNESCAPES[code])
             at += 1
         elif code == "u":
-            digits = text[at + 1:at + 5]
+            digits = text[at + 1 : at + 5]
             if len(digits) != 4 or any(d not in "0123456789abcdefABCDEF" for d in digits):
                 raise Asn1Error(f"line {line}: \\u needs four hex digits, got {digits!r}")
             out.append(chr(int(digits, 16)))
@@ -240,8 +240,7 @@ def parse_surface(text: str) -> tuple[Graph, Presentation]:
     expect("(", "`(`")
     head = expect("sym", "`graph`")
     if head.value != "graph":
-        raise Asn1Error(f"line {head.line}: the top-level form is `graph`, not "
-                        f"{head.value!r}")
+        raise Asn1Error(f"line {head.line}: the top-level form is `graph`, not {head.value!r}")
 
     # Nodes are collected with their edge targets still as TEXT (`#3` or `@loop`) and
     # resolved once the whole form has been read. A cyclic graph makes forward references
@@ -266,8 +265,12 @@ def parse_surface(text: str) -> tuple[Graph, Presentation]:
         # whose kind is literally `roots` with no spelling at all, which is the lossiness
         # P5's gate exists to forbid. A quoted `("roots" "0")` is always a node.
         follows = tokens[pos + 1] if pos + 1 < len(tokens) else None
-        if (head is not None and head.kind == "sym" and head.value == "roots"
-                and (follows is None or follows.kind in (")", "index", "alias"))):
+        if (
+            head is not None
+            and head.kind == "sym"
+            and head.value == "roots"
+            and (follows is None or follows.kind in (")", "index", "alias"))
+        ):
             if seen_roots:
                 raise Asn1Error(f"line {head.line}: `roots` appears twice")
             seen_roots = True
@@ -297,8 +300,9 @@ def parse_surface(text: str) -> tuple[Graph, Presentation]:
                 pos += 1
             elif token.kind == "attr":
                 pos += 1
-                attributes.append((token.value,
-                                   expect("str", "the attribute's value, in quotes").value))
+                attributes.append(
+                    (token.value, expect("str", "the attribute's value, in quotes").value)
+                )
             elif token.kind == "(":
                 pos += 1
                 expect("arrow", "`->` opening an edge")
@@ -341,9 +345,14 @@ def parse_surface(text: str) -> tuple[Graph, Presentation]:
             raise Asn1Error(f"#{ref} is not a node index") from None
 
     resolved = tuple(
-        Node(kind=kind, label=label, attributes=attributes,
-             edges=tuple(Edge(edge_label, target(ref)) for edge_label, ref in edges))
-        for kind, label, attributes, edges in pending)
+        Node(
+            kind=kind,
+            label=label,
+            attributes=attributes,
+            edges=tuple(Edge(edge_label, target(ref)) for edge_label, ref in edges),
+        )
+        for kind, label, attributes, edges in pending
+    )
 
     for at, text_ in comments:
         index = _node_at(node_starts, at)
@@ -356,7 +365,8 @@ def parse_surface(text: str) -> tuple[Graph, Presentation]:
     presentation = Presentation(
         aliases=tuple(sorted(aliases.items())),
         comments=tuple(sorted(node_comments.items())),
-        preamble=preamble)
+        preamble=preamble,
+    )
     return graph, presentation
 
 
@@ -399,10 +409,10 @@ def print_surface(graph: Graph, presentation: Presentation | None = None) -> str
         comment = view.comment_of(index)
         if comment:
             head += f"  ; {comment}"
-        clauses = [f"{pad * 2}:{_symbol(name)} {_quote(value)}"
-                   for name, value in node.attributes]
-        clauses += [f"{pad * 2}(-> {_symbol(edge.label)} {ref(edge.target)})"
-                    for edge in node.edges]
+        clauses = [f"{pad * 2}:{_symbol(name)} {_quote(value)}" for name, value in node.attributes]
+        clauses += [
+            f"{pad * 2}(-> {_symbol(edge.label)} {ref(edge.target)})" for edge in node.edges
+        ]
         if clauses:
             body.append("\n".join([head, *clauses[:-1], clauses[-1] + ")"]))
         elif comment:
@@ -436,6 +446,11 @@ def jer_to_surface(data: bytes, presentation: Presentation | None = None, **kwar
 
 
 __all__ = [
-    "Presentation", "graph_to_surface", "jer_to_surface", "parse_surface", "print_surface",
-    "surface_to_graph", "surface_to_jer",
+    "Presentation",
+    "graph_to_surface",
+    "jer_to_surface",
+    "parse_surface",
+    "print_surface",
+    "surface_to_graph",
+    "surface_to_jer",
 ]

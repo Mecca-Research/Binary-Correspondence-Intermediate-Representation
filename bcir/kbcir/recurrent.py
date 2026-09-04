@@ -69,6 +69,7 @@ from .quantize import dequantize, quantize_per_group
 # Tier A -- the CLOSED-SET relu-RNN: a step builder over the autodiff Tape, an explicit vector unroll = BPTT.
 # ============================================================================================================
 
+
 @dataclass(frozen=True)
 class RnnParams:
     """The weights of one Elman (vanilla) RNN cell, all flat row-major. ``w_x`` is the input weight
@@ -88,9 +89,13 @@ class RnnParams:
         if di < 1 or dh < 1:
             raise ValueError(f"rnn dims must be >= 1; got input_dim={di} hidden_dim={dh}")
         if len(self.w_x) != dh * di:
-            raise ValueError(f"rnn w_x must be hidden_dim*input_dim = {dh * di}; got {len(self.w_x)}")
+            raise ValueError(
+                f"rnn w_x must be hidden_dim*input_dim = {dh * di}; got {len(self.w_x)}"
+            )
         if len(self.w_h) != dh * dh:
-            raise ValueError(f"rnn w_h must be hidden_dim*hidden_dim = {dh * dh}; got {len(self.w_h)}")
+            raise ValueError(
+                f"rnn w_h must be hidden_dim*hidden_dim = {dh * dh}; got {len(self.w_h)}"
+            )
         if len(self.b) != dh:
             raise ValueError(f"rnn b must be length hidden_dim = {dh}; got {len(self.b)}")
 
@@ -115,7 +120,9 @@ def rnn_relu_step(tape: Tape, h_prev_ids: tuple, x_ids: tuple, params: RnnParams
     ``unroll_scan`` builds, see the module docstring). Returns a tuple of ``hidden_dim`` node ids."""
     di, dh = params.input_dim, params.hidden_dim
     if len(h_prev_ids) != dh:
-        raise ValueError(f"rnn_relu_step: h_prev must have hidden_dim = {dh} nodes; got {len(h_prev_ids)}")
+        raise ValueError(
+            f"rnn_relu_step: h_prev must have hidden_dim = {dh} nodes; got {len(h_prev_ids)}"
+        )
     if len(x_ids) != di:
         raise ValueError(f"rnn_relu_step: x must have input_dim = {di} nodes; got {len(x_ids)}")
     zero = tape.const(0.0)
@@ -131,16 +138,20 @@ def rnn_relu_step(tape: Tape, h_prev_ids: tuple, x_ids: tuple, params: RnnParams
     return tuple(new_h)
 
 
-def rnn_scalar_step(tape: Tape, carry_nid: int, x_nid: int, *, w_h: float, w_x: float, b: float) -> int:
+def rnn_scalar_step(
+    tape: Tape, carry_nid: int, x_nid: int, *, w_h: float, w_x: float, b: float
+) -> int:
     """A SINGLE-hidden-unit (scalar-carry) relu-RNN step in the EXACT ``unroll_scan`` step signature
     ``step(tape, carry_nid, x_nid) -> nid``: ``h_t = relu(w_h*carry + w_x*x + b)``. Provided so the scalar
     recurrence can be folded by ``autodiff.unroll_scan`` VERBATIM (``rnn_relu_unroll_scalar``), pinning that the
     explicit vector unroll in ``rnn_relu_unroll`` is the SAME finite composition the scan builds for a scalar
     carry -- the contract ``unroll_scan`` already differentiates and the FD gate already checks."""
-    z = tape.add(tape.add(tape.mul(tape.const(w_h), carry_nid), tape.mul(tape.const(w_x), x_nid)),
-                 tape.const(b))
+    z = tape.add(
+        tape.add(tape.mul(tape.const(w_h), carry_nid), tape.mul(tape.const(w_x), x_nid)),
+        tape.const(b),
+    )
     zero = tape.const(0.0)
-    return tape.select(z, z, zero)                          # relu via the differentiable select
+    return tape.select(z, z, zero)  # relu via the differentiable select
 
 
 def rnn_relu_unroll(tape: Tape, x_var_names: list, h0_ids: tuple, params: RnnParams) -> tuple:
@@ -156,11 +167,15 @@ def rnn_relu_unroll(tape: Tape, x_var_names: list, h0_ids: tuple, params: RnnPar
     state IS backprop-through-time over the whole sequence -- no extra machinery."""
     di, dh = params.input_dim, params.hidden_dim
     if len(h0_ids) != dh:
-        raise ValueError(f"rnn_relu_unroll: h0 must have hidden_dim = {dh} nodes; got {len(h0_ids)}")
+        raise ValueError(
+            f"rnn_relu_unroll: h0 must have hidden_dim = {dh} nodes; got {len(h0_ids)}"
+        )
     h = tuple(h0_ids)
     for t, names in enumerate(x_var_names):
         if len(names) != di:
-            raise ValueError(f"rnn_relu_unroll: x[{t}] must have input_dim = {di} names; got {len(names)}")
+            raise ValueError(
+                f"rnn_relu_unroll: x[{t}] must have input_dim = {di} names; got {len(names)}"
+            )
         x_ids = tuple(tape.var(nm) for nm in names)
         h = rnn_relu_step(tape, h, x_ids, params)
     return h
@@ -175,11 +190,13 @@ def rnn_relu_reference(x_seq: list[float], h0: list[float], params: RnnParams) -
     if len(h0) != dh:
         raise ValueError(f"rnn_relu_reference: h0 must be length hidden_dim = {dh}; got {len(h0)}")
     if len(x_seq) % di != 0:
-        raise ValueError(f"rnn_relu_reference: x_seq length {len(x_seq)} not a multiple of input_dim = {di}")
+        raise ValueError(
+            f"rnn_relu_reference: x_seq length {len(x_seq)} not a multiple of input_dim = {di}"
+        )
     T = len(x_seq) // di
     h = [float(v) for v in h0]
     for t in range(T):
-        xt = x_seq[t * di:(t + 1) * di]
+        xt = x_seq[t * di : (t + 1) * di]
         new_h = [0.0] * dh
         for o in range(dh):
             z = params.b[o]
@@ -187,7 +204,7 @@ def rnn_relu_reference(x_seq: list[float], h0: list[float], params: RnnParams) -
                 z += params.w_x[o * di + j] * float(xt[j])
             for k in range(dh):
                 z += params.w_h[o * dh + k] * h[k]
-            new_h[o] = z if z > 0.0 else 0.0               # relu (a.e.; same convention as the select VJP)
+            new_h[o] = z if z > 0.0 else 0.0  # relu (a.e.; same convention as the select VJP)
         h = new_h
     return h
 
@@ -201,7 +218,7 @@ def rnn_relu_states(x_seq: list[float], h0: list[float], params: RnnParams) -> l
     h = [float(v) for v in h0]
     traj = [list(h)]
     for t in range(T):
-        xt = x_seq[t * di:(t + 1) * di]
+        xt = x_seq[t * di : (t + 1) * di]
         new_h = [0.0] * dh
         for o in range(dh):
             z = params.b[o]
@@ -218,6 +235,7 @@ def rnn_relu_states(x_seq: list[float], h0: list[float], params: RnnParams) -> l
 # ============================================================================================================
 # Tier B -- the transcendental gates: sigmoid / tanh helpers + their closed-form derivatives (the seed).
 # ============================================================================================================
+
 
 def sigmoid(x: float) -> float:
     """The logistic sigmoid ``1 / (1 + exp(-x))`` -- numerically guarded for large ``|x|`` so no OverflowError.
@@ -258,6 +276,7 @@ def _row_dot(w: list[float], v: list[float], o: int, d_in: int) -> float:
 # Tier B.1 -- the LSTM cell: numeric forward reference + the closed-form analytic gradients (the seed).
 # ============================================================================================================
 
+
 @dataclass(frozen=True)
 class LstmParams:
     """The weights of one LSTM cell, all flat row-major. For each gate g in {f (forget), i (input), o (output),
@@ -265,10 +284,18 @@ class LstmParams:
     ``hidden_dim x hidden_dim``, ``b_g`` the length-``hidden_dim`` bias. ``input_dim`` / ``hidden_dim`` are the
     extents. Validated in ``__post_init__`` (positive dims, consistent weight/bias shapes)."""
 
-    W_f: list[float]; U_f: list[float]; b_f: list[float]
-    W_i: list[float]; U_i: list[float]; b_i: list[float]
-    W_o: list[float]; U_o: list[float]; b_o: list[float]
-    W_g: list[float]; U_g: list[float]; b_g: list[float]
+    W_f: list[float]
+    U_f: list[float]
+    b_f: list[float]
+    W_i: list[float]
+    U_i: list[float]
+    b_i: list[float]
+    W_o: list[float]
+    U_o: list[float]
+    b_o: list[float]
+    W_g: list[float]
+    U_g: list[float]
+    b_g: list[float]
     input_dim: int
     hidden_dim: int
 
@@ -278,17 +305,22 @@ class LstmParams:
             raise ValueError(f"lstm dims must be >= 1; got input_dim={di} hidden_dim={dh}")
         for nm, W in (("W_f", self.W_f), ("W_i", self.W_i), ("W_o", self.W_o), ("W_g", self.W_g)):
             if len(W) != dh * di:
-                raise ValueError(f"lstm {nm} must be hidden_dim*input_dim = {dh * di}; got {len(W)}")
+                raise ValueError(
+                    f"lstm {nm} must be hidden_dim*input_dim = {dh * di}; got {len(W)}"
+                )
         for nm, U in (("U_f", self.U_f), ("U_i", self.U_i), ("U_o", self.U_o), ("U_g", self.U_g)):
             if len(U) != dh * dh:
-                raise ValueError(f"lstm {nm} must be hidden_dim*hidden_dim = {dh * dh}; got {len(U)}")
+                raise ValueError(
+                    f"lstm {nm} must be hidden_dim*hidden_dim = {dh * dh}; got {len(U)}"
+                )
         for nm, b in (("b_f", self.b_f), ("b_i", self.b_i), ("b_o", self.b_o), ("b_g", self.b_g)):
             if len(b) != dh:
                 raise ValueError(f"lstm {nm} must be length hidden_dim = {dh}; got {len(b)}")
 
 
-def lstm_cell_reference(x: list[float], h_prev: list[float], c_prev: list[float],
-                        params: LstmParams) -> tuple[list[float], list[float]]:
+def lstm_cell_reference(
+    x: list[float], h_prev: list[float], c_prev: list[float], params: LstmParams
+) -> tuple[list[float], list[float]]:
     """ONE standard LSTM cell step (numeric, the source of truth). For each hidden unit, with gate
     pre-activations ``a_g = W_g x + U_g h_prev + b_g``:
 
@@ -320,8 +352,9 @@ def lstm_cell_reference(x: list[float], h_prev: list[float], c_prev: list[float]
     return h, c
 
 
-def lstm_cell_grads(x: list[float], h_prev: list[float], c_prev: list[float],
-                    params: LstmParams) -> dict:
+def lstm_cell_grads(
+    x: list[float], h_prev: list[float], c_prev: list[float], params: LstmParams
+) -> dict:
     """The CLOSED-FORM analytic gradients of one LSTM cell's outputs w.r.t. its inputs (``x`` / ``h_prev`` /
     ``c_prev``), via the gate derivatives ``sigma' = s(1-s)`` and ``tanh' = 1 - t^2`` (the M1-style seed). The
     gradient is verified against CENTRAL finite differences (numeric, since tanh/sigmoid are not closed Tape
@@ -364,12 +397,16 @@ def lstm_cell_grads(x: list[float], h_prev: list[float], c_prev: list[float],
         a_o = _row_dot(params.W_o, x, u, di) + _row_dot(params.U_o, h_prev, u, dh) + params.b_o[u]
         a_g = _row_dot(params.W_g, x, u, di) + _row_dot(params.U_g, h_prev, u, dh) + params.b_g[u]
         f, i, o, g = sigmoid(a_f), sigmoid(a_i), sigmoid(a_o), math.tanh(a_g)
-        fp, ip, op = sigmoid_prime_from_value(f), sigmoid_prime_from_value(i), sigmoid_prime_from_value(o)
+        fp, ip, op = (
+            sigmoid_prime_from_value(f),
+            sigmoid_prime_from_value(i),
+            sigmoid_prime_from_value(o),
+        )
         gp = tanh_prime_from_value(g)
         c_u = f * float(c_prev[u]) + i * g
         tanh_c = math.tanh(c_u)
-        dh_dc_u = op * tanh_c                                 # d h[u] / d(c[u]) chained below: o' part + o*tanh'
-        o_tanhp = o * (1.0 - tanh_c * tanh_c)                 # o * tanh'(c[u])  -- the cell-state -> hidden path
+        dh_dc_u = op * tanh_c  # d h[u] / d(c[u]) chained below: o' part + o*tanh'
+        o_tanhp = o * (1.0 - tanh_c * tanh_c)  # o * tanh'(c[u])  -- the cell-state -> hidden path
 
         # --- derivatives w.r.t. x[j] (only through the gate pre-activations' weight rows W_*[u, j]) ---
         for j in range(di):
@@ -393,31 +430,41 @@ def lstm_cell_grads(x: list[float], h_prev: list[float], c_prev: list[float],
         #     the gates do not see c_prev, so the only path is the f*c_prev[u] term ---
         for k in range(dh):
             if k == u:
-                dc = f                                       # d(c[u])/d(c_prev[u]) = f (the forget gate)
+                dc = f  # d(c[u])/d(c_prev[u]) = f (the forget gate)
                 dc_dc[u * dh + k] = dc
-                dh_dc[u * dh + k] = o_tanhp * dc             # h[u] = o*tanh(c[u]) -> chain through tanh'
+                dh_dc[u * dh + k] = o_tanhp * dc  # h[u] = o*tanh(c[u]) -> chain through tanh'
             # k != u: c[u] does not depend on c_prev[k] -> 0 (left as the initialized 0.0)
-    return {"dh_dx": dh_dx, "dh_dh_prev": dh_dh, "dh_dc_prev": dh_dc,
-            "dc_dx": dc_dx, "dc_dh_prev": dc_dh, "dc_dc_prev": dc_dc}
+    return {
+        "dh_dx": dh_dx,
+        "dh_dh_prev": dh_dh,
+        "dh_dc_prev": dh_dc,
+        "dc_dx": dc_dx,
+        "dc_dh_prev": dc_dh,
+        "dc_dc_prev": dc_dc,
+    }
 
 
-def lstm_unroll(x_seq: list[float], h0: list[float], c0: list[float],
-                params: LstmParams) -> tuple[list[float], list[float]]:
+def lstm_unroll(
+    x_seq: list[float], h0: list[float], c0: list[float], params: LstmParams
+) -> tuple[list[float], list[float]]:
     """Roll the numeric LSTM cell over a sequence (= BPTT over the numeric cells, numerically). ``x_seq`` is
     ``T x input_dim`` flat row-major; ``h0`` / ``c0`` are the length-``hidden_dim`` initial hidden / cell
     states. Returns the FINAL ``(h, c)``. Side-effect-free."""
     di = params.input_dim
     if len(x_seq) % di != 0:
-        raise ValueError(f"lstm_unroll: x_seq length {len(x_seq)} not a multiple of input_dim = {di}")
+        raise ValueError(
+            f"lstm_unroll: x_seq length {len(x_seq)} not a multiple of input_dim = {di}"
+        )
     T = len(x_seq) // di
     h, c = [float(v) for v in h0], [float(v) for v in c0]
     for t in range(T):
-        h, c = lstm_cell_reference(x_seq[t * di:(t + 1) * di], h, c, params)
+        h, c = lstm_cell_reference(x_seq[t * di : (t + 1) * di], h, c, params)
     return h, c
 
 
-def lstm_states(x_seq: list[float], h0: list[float], c0: list[float],
-                params: LstmParams) -> list[tuple[list[float], list[float]]]:
+def lstm_states(
+    x_seq: list[float], h0: list[float], c0: list[float], params: LstmParams
+) -> list[tuple[list[float], list[float]]]:
     """Like :func:`lstm_unroll` but returns every ``(h_t, c_t)`` for t in 0..T (length ``T+1``) -- the full
     trajectory, for the temporal-dependence verifier (does ``h_T`` depend on ``x_0``?). Side-effect-free."""
     di = params.input_dim
@@ -425,13 +472,19 @@ def lstm_states(x_seq: list[float], h0: list[float], c0: list[float],
     h, c = [float(v) for v in h0], [float(v) for v in c0]
     traj = [(list(h), list(c))]
     for t in range(T):
-        h, c = lstm_cell_reference(x_seq[t * di:(t + 1) * di], h, c, params)
+        h, c = lstm_cell_reference(x_seq[t * di : (t + 1) * di], h, c, params)
         traj.append((list(h), list(c)))
     return traj
 
 
-def lstm_via_bridge(x_seq: list[float], h0: list[float], c0: list[float], params: LstmParams,
-                    group_size: int, bits: int) -> tuple[list[float], list[float]]:
+def lstm_via_bridge(
+    x_seq: list[float],
+    h0: list[float],
+    c0: list[float],
+    params: LstmParams,
+    group_size: int,
+    bits: int,
+) -> tuple[list[float], list[float]]:
     """E4: the Q8<->float32<->Q8 bridge wrapped around the TRUSTED LSTM unroll (integrate, don't reinvent) --
     the recurrent analog of ``transformer_block_via_bridge`` / ``attention_via_bridge``. The INPUT sequence
     ``x_seq`` arrives as per-group quantized storage; the bridge dequantizes it to float32 and the trusted
@@ -447,15 +500,22 @@ def lstm_via_bridge(x_seq: list[float], h0: list[float], c0: list[float], params
 # Tier B.2 -- the GRU cell: numeric forward reference + the closed-form analytic gradients (the seed).
 # ============================================================================================================
 
+
 @dataclass(frozen=True)
 class GruParams:
     """The weights of one GRU cell, all flat row-major. For each gate g in {z (update), r (reset), n
     (candidate)}: ``W_g`` is the input weight ``hidden_dim x input_dim``, ``U_g`` the recurrent weight
     ``hidden_dim x hidden_dim``, ``b_g`` the length-``hidden_dim`` bias. Validated in ``__post_init__``."""
 
-    W_z: list[float]; U_z: list[float]; b_z: list[float]
-    W_r: list[float]; U_r: list[float]; b_r: list[float]
-    W_n: list[float]; U_n: list[float]; b_n: list[float]
+    W_z: list[float]
+    U_z: list[float]
+    b_z: list[float]
+    W_r: list[float]
+    U_r: list[float]
+    b_r: list[float]
+    W_n: list[float]
+    U_n: list[float]
+    b_n: list[float]
     input_dim: int
     hidden_dim: int
 
@@ -468,7 +528,9 @@ class GruParams:
                 raise ValueError(f"gru {nm} must be hidden_dim*input_dim = {dh * di}; got {len(W)}")
         for nm, U in (("U_z", self.U_z), ("U_r", self.U_r), ("U_n", self.U_n)):
             if len(U) != dh * dh:
-                raise ValueError(f"gru {nm} must be hidden_dim*hidden_dim = {dh * dh}; got {len(U)}")
+                raise ValueError(
+                    f"gru {nm} must be hidden_dim*hidden_dim = {dh * dh}; got {len(U)}"
+                )
         for nm, b in (("b_z", self.b_z), ("b_r", self.b_r), ("b_n", self.b_n)):
             if len(b) != dh:
                 raise ValueError(f"gru {nm} must be length hidden_dim = {dh}; got {len(b)}")
@@ -496,7 +558,7 @@ def gru_cell_reference(x: list[float], h_prev: list[float], params: GruParams) -
         a_r = _row_dot(params.W_r, x, u, di) + _row_dot(params.U_r, h_prev, u, dh) + params.b_r[u]
         z = sigmoid(a_z)
         r = sigmoid(a_r)
-        recur_n = _row_dot(params.U_n, h_prev, u, dh)        # U_n h_prev for unit u
+        recur_n = _row_dot(params.U_n, h_prev, u, dh)  # U_n h_prev for unit u
         a_n = _row_dot(params.W_n, x, u, di) + r * recur_n + params.b_n[u]
         n = math.tanh(a_n)
         h[u] = (1.0 - z) * n + z * float(h_prev[u])
@@ -545,16 +607,18 @@ def gru_cell_grads(x: list[float], h_prev: list[float], params: GruParams) -> di
             dA_z = params.W_z[u * di + j]
             dA_r = params.W_r[u * di + j]
             dA_Wn = params.W_n[u * di + j]
-            d_an = dA_Wn + rp * dA_r * recur                 # d(recur)=0 for an x input
+            d_an = dA_Wn + rp * dA_r * recur  # d(recur)=0 for an x input
             dh_dx[u * di + j] = (-zp * dA_z * n) + (1.0 - z) * np_ * d_an + (zp * dA_z * hp_u)
         # --- d h[u] / d h_prev[k] ---
         for k in range(dh):
             dA_z = params.U_z[u * dh + k]
             dA_r = params.U_r[u * dh + k]
-            d_recur = params.U_n[u * dh + k]                 # d(U_n h_prev[u]) / d h_prev[k]
-            d_an = rp * dA_r * recur + r * d_recur           # dA_Wn_x = 0 for an h_prev input
-            carry = z if k == u else 0.0                     # z * d(h_prev[u])/d(h_prev[k])
-            dh_dh[u * dh + k] = (-zp * dA_z * n) + (1.0 - z) * np_ * d_an + (zp * dA_z * hp_u) + carry
+            d_recur = params.U_n[u * dh + k]  # d(U_n h_prev[u]) / d h_prev[k]
+            d_an = rp * dA_r * recur + r * d_recur  # dA_Wn_x = 0 for an h_prev input
+            carry = z if k == u else 0.0  # z * d(h_prev[u])/d(h_prev[k])
+            dh_dh[u * dh + k] = (
+                (-zp * dA_z * n) + (1.0 - z) * np_ * d_an + (zp * dA_z * hp_u) + carry
+            )
     return {"dh_dx": dh_dx, "dh_dh_prev": dh_dh}
 
 
@@ -563,11 +627,13 @@ def gru_unroll(x_seq: list[float], h0: list[float], params: GruParams) -> list[f
     flat row-major; ``h0`` is the length-``hidden_dim`` initial state. Returns the FINAL ``h``. Side-effect-free."""
     di = params.input_dim
     if len(x_seq) % di != 0:
-        raise ValueError(f"gru_unroll: x_seq length {len(x_seq)} not a multiple of input_dim = {di}")
+        raise ValueError(
+            f"gru_unroll: x_seq length {len(x_seq)} not a multiple of input_dim = {di}"
+        )
     T = len(x_seq) // di
     h = [float(v) for v in h0]
     for t in range(T):
-        h = gru_cell_reference(x_seq[t * di:(t + 1) * di], h, params)
+        h = gru_cell_reference(x_seq[t * di : (t + 1) * di], h, params)
     return h
 
 
@@ -579,13 +645,14 @@ def gru_states(x_seq: list[float], h0: list[float], params: GruParams) -> list[l
     h = [float(v) for v in h0]
     traj = [list(h)]
     for t in range(T):
-        h = gru_cell_reference(x_seq[t * di:(t + 1) * di], h, params)
+        h = gru_cell_reference(x_seq[t * di : (t + 1) * di], h, params)
         traj.append(list(h))
     return traj
 
 
-def gru_via_bridge(x_seq: list[float], h0: list[float], params: GruParams,
-                   group_size: int, bits: int) -> list[float]:
+def gru_via_bridge(
+    x_seq: list[float], h0: list[float], params: GruParams, group_size: int, bits: int
+) -> list[float]:
     """E4: the Q8<->float32<->Q8 bridge wrapped around the TRUSTED GRU unroll -- the GRU analog of
     ``lstm_via_bridge``. The INPUT sequence is round-tripped through the bridge then the trusted ``gru_unroll``
     runs; the SOLE certified error is the INPUT round-trip (R17). Side-effect-free."""
@@ -597,8 +664,10 @@ def gru_via_bridge(x_seq: list[float], h0: list[float], params: GruParams,
 # Independent verifiers (the genuine checks -- recomputed independently of the cell code paths).
 # ============================================================================================================
 
-def central_difference_jacobian(forward, base_inputs: list[float], n_out: int,
-                                 *, eps: float = 1e-6) -> list[float]:
+
+def central_difference_jacobian(
+    forward, base_inputs: list[float], n_out: int, *, eps: float = 1e-6
+) -> list[float]:
     """The CENTRAL finite-difference Jacobian of a numeric vector function -- the HARD gate for Tier B's
     closed-form analytic gradients (numeric, since tanh/sigmoid are not closed Tape primitives). ``forward`` is
     a callable ``list[float] -> list[float]`` (length ``n_out``); ``base_inputs`` is the point. Returns a flat
@@ -608,8 +677,10 @@ def central_difference_jacobian(forward, base_inputs: list[float], n_out: int,
     n_in = len(base_inputs)
     jac = [0.0] * (n_out * n_in)
     for k in range(n_in):
-        plus = list(base_inputs); plus[k] += eps
-        minus = list(base_inputs); minus[k] -= eps
+        plus = list(base_inputs)
+        plus[k] += eps
+        minus = list(base_inputs)
+        minus[k] -= eps
         fp = forward(plus)
         fm = forward(minus)
         for o in range(n_out):
@@ -644,7 +715,9 @@ def temporal_dependence(jac_block: list[float], n_out: int, n_in: int) -> float:
     NONZERO the final state depends on the FIRST input, i.e. the cell carries information across time (the whole
     point of a recurrent net). Returns ``max_{u,j} |J[u*n_in + j]|`` -- a value > 0 proves temporal dependence;
     ~0 would mean the early input was forgotten / never propagated."""
-    return max((abs(jac_block[u * n_in + j]) for u in range(n_out) for j in range(n_in)), default=0.0)
+    return max(
+        (abs(jac_block[u * n_in + j]) for u in range(n_out) for j in range(n_in)), default=0.0
+    )
 
 
 # ============================================================================================================
@@ -656,8 +729,9 @@ _DTYPES = ("f32", "i32")
 _CELLS = ("rnn", "lstm", "gru")
 
 
-def check_recurrent(cell: str, input_dim: int, hidden_dim: int, seq_len: int,
-                    in_dtype: str, out_dtype: str) -> list[str]:
+def check_recurrent(
+    cell: str, input_dim: int, hidden_dim: int, seq_len: int, in_dtype: str, out_dtype: str
+) -> list[str]:
     """Op-level well-formedness for a gem.recurrent-cell claim, returned as a list of error strings (empty ==
     well-formed) -- the shape/dtype-law shape gem.matmul / gem.attention / gem.transformer use, lifted into one
     named checker. NOT a globally-numbered R-law (matches ``check_transformer`` / ``check_attention``). The laws:
@@ -682,6 +756,8 @@ def check_recurrent(cell: str, input_dim: int, hidden_dim: int, seq_len: int,
         errs.append(f"recurrent: dtype not preserved (in {in_dtype!r} != out {out_dtype!r})")
     # the quarantine dtype rule: LSTM/GRU's tanh/sigmoid (the libm edges return float) need f32.
     if cell in ("lstm", "gru") and in_dtype != "f32":
-        errs.append(f"recurrent: {cell} contains tanh/sigmoid (transcendentals; the libm edges return float), "
-                    f"so it needs f32, got {in_dtype!r}")
+        errs.append(
+            f"recurrent: {cell} contains tanh/sigmoid (transcendentals; the libm edges return float), "
+            f"so it needs f32, got {in_dtype!r}"
+        )
     return errs

@@ -44,10 +44,11 @@ def _cc():
 
 # --- the probes read real signals (honest about what is present) -----------------
 
+
 def test_summary_reports_the_real_signal_split():
     s = summary()
     assert "cache_levels" in s and "dvfs_actuatable" in s and "hw_pmu" in s
-    assert s["os_counters"] is True                       # always real
+    assert s["os_counters"] is True  # always real
     assert s["rusage_counters"] is (silicon._resource is not None)
 
 
@@ -65,34 +66,48 @@ def test_real_cache_tier_map_when_sys_is_present():
 def test_allocator_with_the_real_tier_map_is_gains_only():
     # build a hot/ephemeral + cold/large module; place with the REAL cache sizes.
     m = Module(name="sil")
-    m.add_resource(Resource(rid=1, domain=Domain.RAM, shape=(64,)))            # hot, tiny
-    m.add_resource(Resource(rid=2, domain=Domain.RAM, shape=(1 << 24,)))       # 64 MB, cold
-    m.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.ADD, count=64, rd=(1,), wr=(1,), op="vector.add"),
-        Claim(id=2, opcode=Opcode.ADD, count=64, rd=(1,), wr=(1,), op="vector.add")]))
-    m.add_phase(Phase(phase_id=1, deps=(0,), claims=[
-        Claim(id=3, opcode=Opcode.ADD, count=1 << 24, rd=(2,), wr=(2,), op="vector.add")]))
+    m.add_resource(Resource(rid=1, domain=Domain.RAM, shape=(64,)))  # hot, tiny
+    m.add_resource(Resource(rid=2, domain=Domain.RAM, shape=(1 << 24,)))  # 64 MB, cold
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(id=1, opcode=Opcode.ADD, count=64, rd=(1,), wr=(1,), op="vector.add"),
+                Claim(id=2, opcode=Opcode.ADD, count=64, rd=(1,), wr=(1,), op="vector.add"),
+            ],
+        )
+    )
+    m.add_phase(
+        Phase(
+            phase_id=1,
+            deps=(0,),
+            claims=[
+                Claim(id=3, opcode=Opcode.ADD, count=1 << 24, rd=(2,), wr=(2,), op="vector.add")
+            ],
+        )
+    )
     pl = place(m, AVX, tier_capacity=silicon_tier_capacity())
-    assert pl.tier_of(1) in (MemTier.L1, MemTier.L2, MemTier.L3)   # hot tiny -> SRAM
+    assert pl.tier_of(1) in (MemTier.L1, MemTier.L2, MemTier.L3)  # hot tiny -> SRAM
     # gains-only: every relocation strictly lowered modeled cost (rationale records it)
     assert all("cost" in pl.rationale[r] for r in pl.moved)
 
 
 # --- the telemetry ring carries REAL measured counters ---------------------------
 
+
 def test_ring_is_fed_by_real_os_counters():
     ring = TelemetryRing(capacity=16)
     delta = sample_into_ring(ring, claim_id=42, work=lambda: sum(range(200000)))
-    assert delta.wall_ns > 0 and delta.cpu_ns >= 0       # both are genuine timer deltas
+    assert delta.wall_ns > 0 and delta.cpu_ns >= 0  # both are genuine timer deltas
     rec = ring.read_one()
-    assert rec.claim_id == 42 and rec.cycles > 0         # CPU or wall signal reached the ring
+    assert rec.claim_id == 42 and rec.cycles > 0  # CPU or wall signal reached the ring
 
 
 def test_counter_sampler_measures_real_deltas():
     s = CounterSampler()
     _ = [i * i for i in range(500000)]
     c = s.lap()
-    assert c.wall_ns > 0 and c.cpu_ns >= 0               # genuine timer deltas
+    assert c.wall_ns > 0 and c.cpu_ns >= 0  # genuine timer deltas
 
 
 def test_counter_sampler_degrades_without_posix_rusage():
@@ -116,13 +131,16 @@ def test_ring_uses_wall_delta_when_the_host_cpu_clock_is_too_coarse():
 
     class CoarseCpuSampler:
         def lap(self):
-            return Counters(wall_ns=73, cpu_ns=0, minor_faults=0, major_faults=0,
-                            vol_ctx=0, invol_ctx=0)
+            return Counters(
+                wall_ns=73, cpu_ns=0, minor_faults=0, major_faults=0, vol_ctx=0, invol_ctx=0
+            )
 
     calls = []
     ring = TelemetryRing(capacity=4)
-    with mock.patch.object(silicon, "CounterSampler", CoarseCpuSampler), \
-            mock.patch.object(silicon, "read_hw_counters", return_value=None):
+    with (
+        mock.patch.object(silicon, "CounterSampler", CoarseCpuSampler),
+        mock.patch.object(silicon, "read_hw_counters", return_value=None),
+    ):
         delta = sample_into_ring(ring, claim_id=9, work=lambda: calls.append("work"))
     rec = ring.read_one()
     assert calls == ["work"]
@@ -131,6 +149,7 @@ def test_ring_uses_wall_delta_when_the_host_cpu_clock_is_too_coarse():
 
 
 # --- synchronized zero-copy ring versus equivalent validated serialization -------
+
 
 def test_zero_copy_ring_benchmark_covers_the_synchronized_and_serializing_paths():
     # This is a smoke benchmark, not a shared-runner performance floor.  The ring now
@@ -157,11 +176,12 @@ def test_zero_copy_ring_benchmark_covers_the_synchronized_and_serializing_paths(
 
 # --- MEASURED gain #2: cache-resident access beats DRAM (justifies hot->SRAM) -----
 
+
 def test_cache_resident_access_is_measurably_faster_than_dram():
     cc = _cc()
     if cc is None or not cache_topology():
         return  # need a compiler + a real cache map
-    src = r'''
+    src = r"""
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -182,20 +202,23 @@ int main(int c,char**v){
   printf("%ld %ld\n", chase(small,steps), chase(big,steps));
   return 0;
 }
-'''
+"""
     with tempfile.TemporaryDirectory() as d:
-        exe = os.path.join(d, "lat"); s = os.path.join(d, "lat.c")
+        exe = os.path.join(d, "lat")
+        s = os.path.join(d, "lat.c")
         open(s, "w").write(src)
         b = subprocess.run([cc, "-O2", s, "-o", exe], capture_output=True, text=True)
         assert b.returncode == 0, b.stderr
         # small = 4096 nodes (32 KB, L1-resident); big = 64 M nodes (512 MB, exceeds L3).
-        out = subprocess.run([exe, "4096", str(64 << 20), "2000000"],
-                             capture_output=True, text=True)
+        out = subprocess.run(
+            [exe, "4096", str(64 << 20), "2000000"], capture_output=True, text=True
+        )
         l1_ns, dram_ns = (int(x) for x in out.stdout.split())
-        assert l1_ns > 0 and dram_ns >= 2 * l1_ns, (l1_ns, dram_ns)   # real tier gap
+        assert l1_ns > 0 and dram_ns >= 2 * l1_ns, (l1_ns, dram_ns)  # real tier gap
 
 
 # --- DVFS anchored to the real cpu frequency (actuation honestly gated) -----------
+
 
 def test_dvfs_quantizes_to_the_real_cpu_frequency():
     fq = cpufreq_info()
@@ -220,6 +243,7 @@ def test_perf_counter_probe_is_honest():
 
 # --- hardware PMU counters: attempt, then degrade gracefully ----------------------
 
+
 def test_hw_counters_attempt_degrades_gracefully():
     hw = read_hw_counters(lambda: sum(range(300_000)))
     if hw is None:
@@ -242,6 +266,7 @@ def test_ring_feed_runs_work_once_with_or_without_a_pmu():
 
 # --- DVFS actuation: attempt to set the clock, report the boundary honestly --------
 
+
 def test_dvfs_actuation_attempts_and_reports_the_boundary():
     fq = cpufreq_info()
     m = vector_add(1 << 16)
@@ -252,11 +277,11 @@ def test_dvfs_actuation_attempts_and_reports_the_boundary():
     assert len(results) == len(targets)
     for r in results:
         assert r.requested_khz > 0
-        assert r.applied == fq.actuatable          # never claims to have set what it couldn't
+        assert r.applied == fq.actuatable  # never claims to have set what it couldn't
         if not r.applied:
-            assert r.reason and r.observed_khz is None         # honest dry-run + reason
+            assert r.reason and r.observed_khz is None  # honest dry-run + reason
         else:
-            assert r.observed_khz is not None                  # confirmed on real hardware
+            assert r.observed_khz is not None  # confirmed on real hardware
 
 
 def test_dvfs_actuation_is_a_safe_noop_without_a_governor():
@@ -266,5 +291,6 @@ def test_dvfs_actuation_is_a_safe_noop_without_a_governor():
     if fq.actuatable:
         return  # this host CAN actuate -- covered by the test above
     from bcir.gem.dvfs import FreqTarget
+
     res = actuate([FreqTarget(phase_id=0, clock_q8=192, target_khz=1_000_000, settable=False)], fq)
     assert res[0].applied is False and "governor" in res[0].reason.lower()

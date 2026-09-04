@@ -31,13 +31,34 @@ from ..model.lanes import Domain
 # `exact`/`hash` cost O(count) and are width-independent, so the axis is a
 # tradeable RCSP resource rather than an inert placeholder (docs/PARITY.md).
 DIMS = (
-    "compute", "memory", "fabric", "sync", "compile",
-    "thermal", "power", "reliability", "security", "accuracy", "contention",
+    "compute",
+    "memory",
+    "fabric",
+    "sync",
+    "compile",
+    "thermal",
+    "power",
+    "reliability",
+    "security",
+    "accuracy",
+    "contention",
     "verification",
 )
 N = len(DIMS)
-(COMPUTE, MEMORY, FABRIC, SYNC, COMPILE, THERMAL, POWER, RELIABILITY,
- SECURITY, ACCURACY, CONTENTION, VERIFICATION) = range(N)
+(
+    COMPUTE,
+    MEMORY,
+    FABRIC,
+    SYNC,
+    COMPILE,
+    THERMAL,
+    POWER,
+    RELIABILITY,
+    SECURITY,
+    ACCURACY,
+    CONTENTION,
+    VERIFICATION,
+) = range(N)
 _INDEX = {name: i for i, name in enumerate(DIMS)}
 IDENTITY_FACTOR = (256,) * N  # x1.0 in Q8 per dimension
 
@@ -90,14 +111,14 @@ class CostVector:
 class Theta:
     """Live runtime state. All fields are 0..100 normalized pressures (0 = idle/cool)."""
 
-    thermal: int = 0       # 0 cool .. 100 throttling
-    power: int = 0         # 0 plenty .. 100 capped
+    thermal: int = 0  # 0 cool .. 100 throttling
+    power: int = 0  # 0 plenty .. 100 capped
     mem_pressure: int = 0  # 0 free .. 100 bandwidth-starved
-    contention: int = 0    # 0 idle .. 100 congested
+    contention: int = 0  # 0 idle .. 100 congested
     noise: int = 0
     wear: int = 0
     utilization: int = 0
-    voltage: int = 0       # CT4 data-DNA axis (reserved; 0 = nominal)
+    voltage: int = 0  # CT4 data-DNA axis (reserved; 0 = nominal)
 
     @staticmethod
     def cool() -> "Theta":
@@ -120,6 +141,7 @@ class Theta:
 # resource's domain selects its tier, and the memory cost scales by that tier's
 # factors. DRAM is the baseline, so RAM resources cost exactly as before.
 
+
 class MemTier(IntEnum):
     """Memory hierarchy tier (CT1). Integer values are normative and MUST match
     ``BCIR_MemTier`` in ``mlir/include/BCIR/BCIRAttrs.td`` exactly (docs/PARITY.md)."""
@@ -137,7 +159,7 @@ class MemTier(IntEnum):
 class Tier:
     name: str
     latency_cyc: int
-    bw_factor: int   # Q8 vs DRAM (lower = more bandwidth)
+    bw_factor: int  # Q8 vs DRAM (lower = more bandwidth)
     lat_factor: int  # Q8 vs DRAM
     capacity: int = 0
 
@@ -175,18 +197,23 @@ class MemoryHierarchy:
 
     @staticmethod
     def default() -> "MemoryHierarchy":
-        return MemoryHierarchy((
-            Tier("L1", 4, 16, 16),
-            Tier("L2", 12, 32, 48),
-            Tier("L3", 40, 96, 96),
-            _DRAM,                                            # x1.0 baseline
-            Tier("HBM", 160, bw_factor=64, lat_factor=192),  # ~4x bandwidth, lower latency
-            Tier("CXL", 350, bw_factor=384, lat_factor=512),  # memory-semantic, costlier than DRAM
-            Tier("SSD", 5000, bw_factor=1024, lat_factor=4096),  # semantic-swap backing store
-        ))
+        return MemoryHierarchy(
+            (
+                Tier("L1", 4, 16, 16),
+                Tier("L2", 12, 32, 48),
+                Tier("L3", 40, 96, 96),
+                _DRAM,  # x1.0 baseline
+                Tier("HBM", 160, bw_factor=64, lat_factor=192),  # ~4x bandwidth, lower latency
+                Tier(
+                    "CXL", 350, bw_factor=384, lat_factor=512
+                ),  # memory-semantic, costlier than DRAM
+                Tier("SSD", 5000, bw_factor=1024, lat_factor=4096),  # semantic-swap backing store
+            )
+        )
 
 
 # --- substrate / target descriptor H (the open container) -----------------------
+
 
 @dataclass(frozen=True)
 class TargetProfile:
@@ -201,21 +228,21 @@ class TargetProfile:
     triple: str = "x86_64-avx2"
     cacheline: int = 64
     elem_bytes: int = 4
-    lane_widths: tuple[int, ...] = (1, 8)   # element lanes per vector op
-    warp: int = 0                           # GPU warp size (0 = not a warp machine)
-    scalable: bool = False                  # vector-length-agnostic (SVE / RVV)
-    gather_penalty: int = 32                # per-access overhead for a random DRAM-miss gather
-    mem_unit: int = 1                       # bandwidth term per element per stream
-    base_overhead: int = 4                  # latency term per memory access op (unit stride)
-    thermal_density: int = 64               # heat ~ vector width
-    power_density: int = 64                 # current draw ~ vector width
+    lane_widths: tuple[int, ...] = (1, 8)  # element lanes per vector op
+    warp: int = 0  # GPU warp size (0 = not a warp machine)
+    scalable: bool = False  # vector-length-agnostic (SVE / RVV)
+    gather_penalty: int = 32  # per-access overhead for a random DRAM-miss gather
+    mem_unit: int = 1  # bandwidth term per element per stream
+    base_overhead: int = 4  # latency term per memory access op (unit stride)
+    thermal_density: int = 64  # heat ~ vector width
+    power_density: int = 64  # current draw ~ vector width
     per_op_heat: int = 1
     fma: bool = True
     isa_features: frozenset[str] = frozenset()
-    affinity_domains: int = 1               # cores / SMs available for pinning (CT2)
-    mem_channels: int = 4                   # concurrent bandwidth-bound streams sustained
-    cal_gen: int = 0                        # cost-table generation (0 = seeded constants;
-                                            # >=1 = a frozen CalibratedProfile was applied)
+    affinity_domains: int = 1  # cores / SMs available for pinning (CT2)
+    mem_channels: int = 4  # concurrent bandwidth-bound streams sustained
+    cal_gen: int = 0  # cost-table generation (0 = seeded constants;
+    # >=1 = a frozen CalibratedProfile was applied)
     mem: MemoryHierarchy = MemoryHierarchy.default()
 
     @property
@@ -228,40 +255,76 @@ class TargetProfile:
     # -- target factories (the container stays open: add a factory, not optimizer code) --
     @staticmethod
     def x86_avx2() -> "TargetProfile":
-        return TargetProfile(name="x86-64-avx2", triple="x86_64-avx2", lane_widths=(1, 8),
-                             isa_features=frozenset({"avx2", "fma"}), affinity_domains=8)
+        return TargetProfile(
+            name="x86-64-avx2",
+            triple="x86_64-avx2",
+            lane_widths=(1, 8),
+            isa_features=frozenset({"avx2", "fma"}),
+            affinity_domains=8,
+        )
 
     @staticmethod
     def x86_avx512() -> "TargetProfile":
-        return TargetProfile(name="x86-64-avx512", triple="x86_64-avx512", lane_widths=(1, 8, 16),
-                             isa_features=frozenset({"avx2", "avx512f", "fma"}), affinity_domains=8)
+        return TargetProfile(
+            name="x86-64-avx512",
+            triple="x86_64-avx512",
+            lane_widths=(1, 8, 16),
+            isa_features=frozenset({"avx2", "avx512f", "fma"}),
+            affinity_domains=8,
+        )
 
     @staticmethod
     def arm64_neon() -> "TargetProfile":
-        return TargetProfile(name="aarch64-neon", triple="aarch64-neon", cacheline=64,
-                             lane_widths=(1, 4), isa_features=frozenset({"neon"}), affinity_domains=8)
+        return TargetProfile(
+            name="aarch64-neon",
+            triple="aarch64-neon",
+            cacheline=64,
+            lane_widths=(1, 4),
+            isa_features=frozenset({"neon"}),
+            affinity_domains=8,
+        )
 
     @staticmethod
     def arm64_sve() -> "TargetProfile":
         # SVE is vector-length-agnostic; we model a representative width set.
-        return TargetProfile(name="aarch64-sve", triple="aarch64-sve", cacheline=64,
-                             lane_widths=(1, 8, 16), scalable=True,
-                             isa_features=frozenset({"neon", "sve"}), affinity_domains=8)
+        return TargetProfile(
+            name="aarch64-sve",
+            triple="aarch64-sve",
+            cacheline=64,
+            lane_widths=(1, 8, 16),
+            scalable=True,
+            isa_features=frozenset({"neon", "sve"}),
+            affinity_domains=8,
+        )
 
     @staticmethod
     def nvidia_ptx() -> "TargetProfile":
         # Warp machine: wide lanes, big HBM bandwidth, coalesced gather cheaper than CPU.
-        return TargetProfile(name="nvptx64-warp", triple="nvptx64-warp", cacheline=128,
-                             lane_widths=(1, 32), warp=32, gather_penalty=16,
-                             thermal_density=32, power_density=48,
-                             isa_features=frozenset({"ptx", "warp"}), affinity_domains=128,
-                             mem_channels=32)  # HBM: many concurrent streams
+        return TargetProfile(
+            name="nvptx64-warp",
+            triple="nvptx64-warp",
+            cacheline=128,
+            lane_widths=(1, 32),
+            warp=32,
+            gather_penalty=16,
+            thermal_density=32,
+            power_density=48,
+            isa_features=frozenset({"ptx", "warp"}),
+            affinity_domains=128,
+            mem_channels=32,
+        )  # HBM: many concurrent streams
 
     @staticmethod
     def riscv_rvv() -> "TargetProfile":
         # Open-ISA anchor (documented; proves the container is extensible). RVV is length-agnostic.
-        return TargetProfile(name="riscv64-rvv", triple="riscv64-rvv", lane_widths=(1, 8, 16),
-                             scalable=True, isa_features=frozenset({"rvv"}), affinity_domains=4)
+        return TargetProfile(
+            name="riscv64-rvv",
+            triple="riscv64-rvv",
+            lane_widths=(1, 8, 16),
+            scalable=True,
+            isa_features=frozenset({"rvv"}),
+            affinity_domains=4,
+        )
 
     @staticmethod
     def for_host() -> "TargetProfile":
@@ -271,6 +334,7 @@ class TargetProfile:
         else NEON; x86_64 -> AVX-512 if avx512f else AVX2; riscv64 -> RVV; anything else -> AVX2
         (a conservative default). BCIR is hardware-agnostic: nothing should assume x86."""
         import platform
+
         mach = platform.machine().lower()
         feat = _host_cpu_features()
         if mach in ("aarch64", "arm64"):
@@ -297,6 +361,7 @@ def _host_cpu_features() -> frozenset:
     except OSError:
         pass
     return frozenset()
+
 
 # Named registry so the CLI/tests can select a target by name.
 TARGETS = {

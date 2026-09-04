@@ -51,51 +51,57 @@ _FLAG_R12_ATTESTED = 1 << 0
 _FLAG_EXECUTABLE = 1 << 1
 _FLAG_PORTABLE = 1 << 2
 _FLAG_DEBUG = 1 << 3
-_FLAG_MASK = (
-    _FLAG_R12_ATTESTED | _FLAG_EXECUTABLE | _FLAG_PORTABLE | _FLAG_DEBUG
-)
+_FLAG_MASK = _FLAG_R12_ATTESTED | _FLAG_EXECUTABLE | _FLAG_PORTABLE | _FLAG_DEBUG
 
-_BUNDLE_KEYS = frozenset({
-    "version",
-    "rootVariant",
-    "defaultVariant",
-    "provenanceDigest",
-    "generation",
-    "variants",
-})
-_BUNDLE_REQUIRED_KEYS = frozenset({
-    "version",
-    "provenanceDigest",
-    "generation",
-    "variants",
-})
-_VARIANT_KEYS = frozenset({
-    "variantId",
-    "kind",
-    "format",
-    "payload",
-    "triple",
-    "architecture",
-    "osAbi",
-    "channel",
-    "entrySymbol",
-    "requiredFeatures",
-    "prohibitedFeatures",
-    "endianness",
-    "pointerBits",
-    "machine",
-    "priority",
-    "provenanceDigest",
-    "targetManifest",
-    "calibrationGen",
-    "flags",
-})
+_BUNDLE_KEYS = frozenset(
+    {
+        "version",
+        "rootVariant",
+        "defaultVariant",
+        "provenanceDigest",
+        "generation",
+        "variants",
+    }
+)
+_BUNDLE_REQUIRED_KEYS = frozenset(
+    {
+        "version",
+        "provenanceDigest",
+        "generation",
+        "variants",
+    }
+)
+_VARIANT_KEYS = frozenset(
+    {
+        "variantId",
+        "kind",
+        "format",
+        "payload",
+        "triple",
+        "architecture",
+        "osAbi",
+        "channel",
+        "entrySymbol",
+        "requiredFeatures",
+        "prohibitedFeatures",
+        "endianness",
+        "pointerBits",
+        "machine",
+        "priority",
+        "provenanceDigest",
+        "targetManifest",
+        "calibrationGen",
+        "flags",
+    }
+)
 
 _U8 = Primitive(Universal.INTEGER, "U8", ValueRange(0, (1 << 8) - 1))
 _U32 = Primitive(Universal.INTEGER, "U32", ValueRange(0, (1 << 32) - 1))
 _U64 = Primitive(Universal.INTEGER, "U64", ValueRange(0, (1 << 64) - 1))
 _I32 = Primitive(
-    Universal.INTEGER, "I32", ValueRange(-(1 << 31), (1 << 31) - 1),
+    Universal.INTEGER,
+    "I32",
+    ValueRange(-(1 << 31), (1 << 31) - 1),
 )
 # One ENUMERATED per named type, each carrying its own enumeration, rather than a single
 # anonymous `ENUMERATED` shared by all three. DER and OER encode the enumeration VALUE
@@ -104,73 +110,88 @@ _I32 = Primitive(
 # the root list. Sharing one object would additionally have given ArtifactKind and
 # Endianness the same PER width, which they do not have (5 bits against 2).
 _KIND_ENUM = Primitive(
-    Universal.ENUMERATED, "ArtifactKind",
-    enumeration=tuple((k.name.lower(), int(k)) for k in ArtifactKind))
+    Universal.ENUMERATED,
+    "ArtifactKind",
+    enumeration=tuple((k.name.lower(), int(k)) for k in ArtifactKind),
+)
 _FORMAT_ENUM = Primitive(
-    Universal.ENUMERATED, "ArtifactFormat",
-    enumeration=tuple((f.name.lower(), int(f)) for f in ArtifactFormat))
+    Universal.ENUMERATED,
+    "ArtifactFormat",
+    enumeration=tuple((f.name.lower(), int(f)) for f in ArtifactFormat),
+)
 _ENDIAN_ENUM = Primitive(
-    Universal.ENUMERATED, "Endianness",
-    enumeration=tuple((e.name.lower(), int(e)) for e in Endianness))
+    Universal.ENUMERATED,
+    "Endianness",
+    enumeration=tuple((e.name.lower(), int(e)) for e in Endianness),
+)
 _UTF8 = Primitive(Universal.UTF8_STRING, "UTF8String")
 _OCTETS = Primitive(Universal.OCTET_STRING, "OCTET STRING")
 _FEATURES = SequenceOf(_UTF8, "FeatureList")
 
-ARTIFACT_VARIANT = Sequence((
-    Component("variantId", _UTF8, tag=0),
-    Component("kind", _KIND_ENUM, tag=1),
-    Component("format", _FORMAT_ENUM, tag=2),
-    Component("payload", _OCTETS, tag=3),
-    Component("triple", _UTF8, tag=4),
-    Component("architecture", _UTF8, tag=5),
-    Component("osAbi", _UTF8, tag=6),
-    Component("channel", _UTF8, tag=7),
-    Component("entrySymbol", _UTF8, tag=8),
-    Component("requiredFeatures", _FEATURES, tag=9),
-    Component("prohibitedFeatures", _FEATURES, tag=10),
-    Component("endianness", _ENDIAN_ENUM, tag=11),
-    Component("pointerBits", _U8, tag=12),
-    Component("machine", _U32, tag=13),
-    Component("priority", _I32, tag=14),
-    Component("provenanceDigest", _U64, tag=15),
-    Component("targetManifest", _OCTETS, tag=16),
-    Component("calibrationGen", _U64, tag=17),
-    Component("flags", _U8, tag=18),
-), name="ArtifactVariant")
-
-ARTIFACT_BUNDLE = Sequence((
-    Component("version", _U8, tag=0),
-    Component("rootVariant", _UTF8, tag=1, optional=True),
-    Component("defaultVariant", _UTF8, tag=2, optional=True),
-    Component("provenanceDigest", _U64, tag=3),
-    Component("generation", _U64, tag=4),
-    Component(
-        "variants", SequenceOf(ARTIFACT_VARIANT, "SEQUENCE OF ArtifactVariant"),
-        tag=5,
+ARTIFACT_VARIANT = Sequence(
+    (
+        Component("variantId", _UTF8, tag=0),
+        Component("kind", _KIND_ENUM, tag=1),
+        Component("format", _FORMAT_ENUM, tag=2),
+        Component("payload", _OCTETS, tag=3),
+        Component("triple", _UTF8, tag=4),
+        Component("architecture", _UTF8, tag=5),
+        Component("osAbi", _UTF8, tag=6),
+        Component("channel", _UTF8, tag=7),
+        Component("entrySymbol", _UTF8, tag=8),
+        Component("requiredFeatures", _FEATURES, tag=9),
+        Component("prohibitedFeatures", _FEATURES, tag=10),
+        Component("endianness", _ENDIAN_ENUM, tag=11),
+        Component("pointerBits", _U8, tag=12),
+        Component("machine", _U32, tag=13),
+        Component("priority", _I32, tag=14),
+        Component("provenanceDigest", _U64, tag=15),
+        Component("targetManifest", _OCTETS, tag=16),
+        Component("calibrationGen", _U64, tag=17),
+        Component("flags", _U8, tag=18),
     ),
-), name="ArtifactBundle")
+    name="ArtifactVariant",
+)
 
-MODULE = Module("BCIR-ArtifactBundle", ARTIFACT_BUNDLE_MODULE_OID, {
-    "U8": _U8,
-    "U32": _U32,
-    "U64": _U64,
-    "I32": _I32,
-    "ArtifactKind": _KIND_ENUM,
-    "ArtifactFormat": _FORMAT_ENUM,
-    "Endianness": _ENDIAN_ENUM,
-    "FeatureList": _FEATURES,
-    "ArtifactVariant": ARTIFACT_VARIANT,
-    "ArtifactBundle": ARTIFACT_BUNDLE,
-})
+ARTIFACT_BUNDLE = Sequence(
+    (
+        Component("version", _U8, tag=0),
+        Component("rootVariant", _UTF8, tag=1, optional=True),
+        Component("defaultVariant", _UTF8, tag=2, optional=True),
+        Component("provenanceDigest", _U64, tag=3),
+        Component("generation", _U64, tag=4),
+        Component(
+            "variants",
+            SequenceOf(ARTIFACT_VARIANT, "SEQUENCE OF ArtifactVariant"),
+            tag=5,
+        ),
+    ),
+    name="ArtifactBundle",
+)
+
+MODULE = Module(
+    "BCIR-ArtifactBundle",
+    ARTIFACT_BUNDLE_MODULE_OID,
+    {
+        "U8": _U8,
+        "U32": _U32,
+        "U64": _U64,
+        "I32": _I32,
+        "ArtifactKind": _KIND_ENUM,
+        "ArtifactFormat": _FORMAT_ENUM,
+        "Endianness": _ENDIAN_ENUM,
+        "FeatureList": _FEATURES,
+        "ArtifactVariant": ARTIFACT_VARIANT,
+        "ArtifactBundle": ARTIFACT_BUNDLE,
+    },
+)
 
 
 def _bounded_octets(data: bytes, label: str) -> bytes:
     if not isinstance(data, bytes):
         raise BundleError(f"{label} must be immutable bytes")
     if not 1 <= len(data) <= MAX_PROJECTION_BYTES:
-        raise BundleError(
-            f"{label} size is outside [1, {MAX_PROJECTION_BYTES}] bytes"
-        )
+        raise BundleError(f"{label} size is outside [1, {MAX_PROJECTION_BYTES}] bytes")
     return data
 
 
@@ -193,7 +214,10 @@ def _strings(value, field: str) -> tuple[str, ...]:
 
 
 def _require_keys(
-    value: dict, allowed: frozenset[str], required: frozenset[str], label: str,
+    value: dict,
+    allowed: frozenset[str],
+    required: frozenset[str],
+    label: str,
 ) -> None:
     unknown = set(value) - allowed
     missing = required - set(value)
@@ -209,9 +233,7 @@ def _require_native_geometry(bundle: ArtifactBundle) -> None:
     for variant in bundle.variants:
         cursor = (cursor + len(variant.payload) + 7) & ~7
         if cursor > MAX_BUNDLE_BYTES:
-            raise BundleError(
-                f"bundle exceeds the {MAX_BUNDLE_BYTES}-byte native wire limit"
-            )
+            raise BundleError(f"bundle exceeds the {MAX_BUNDLE_BYTES}-byte native wire limit")
 
 
 def bundle_to_value(bundle: ArtifactBundle) -> dict:
@@ -230,30 +252,33 @@ def bundle_to_value(bundle: ArtifactBundle) -> dict:
     if bundle.default_variant_id:
         value["defaultVariant"] = bundle.default_variant_id
     for variant in bundle.variants:
-        value["variants"].append({
-            "variantId": variant.variant_id,
-            "kind": int(variant.kind),
-            "format": int(variant.format),
-            "payload": variant.payload,
-            "triple": variant.triple,
-            "architecture": variant.architecture,
-            "osAbi": variant.os_abi,
-            "channel": variant.channel,
-            "entrySymbol": variant.entry_symbol,
-            "requiredFeatures": list(variant.required_features),
-            "prohibitedFeatures": list(variant.prohibited_features),
-            "endianness": int(variant.endianness),
-            "pointerBits": variant.pointer_bits,
-            "machine": variant.e_machine,
-            "priority": variant.priority,
-            "provenanceDigest": variant.provenance_digest,
-            "targetManifest": (
-                bytes.fromhex(variant.target_manifest_sha256)
-                if variant.target_manifest_sha256 else b""
-            ),
-            "calibrationGen": variant.cal_gen,
-            "flags": variant.flags,
-        })
+        value["variants"].append(
+            {
+                "variantId": variant.variant_id,
+                "kind": int(variant.kind),
+                "format": int(variant.format),
+                "payload": variant.payload,
+                "triple": variant.triple,
+                "architecture": variant.architecture,
+                "osAbi": variant.os_abi,
+                "channel": variant.channel,
+                "entrySymbol": variant.entry_symbol,
+                "requiredFeatures": list(variant.required_features),
+                "prohibitedFeatures": list(variant.prohibited_features),
+                "endianness": int(variant.endianness),
+                "pointerBits": variant.pointer_bits,
+                "machine": variant.e_machine,
+                "priority": variant.priority,
+                "provenanceDigest": variant.provenance_digest,
+                "targetManifest": (
+                    bytes.fromhex(variant.target_manifest_sha256)
+                    if variant.target_manifest_sha256
+                    else b""
+                ),
+                "calibrationGen": variant.cal_gen,
+                "flags": variant.flags,
+            }
+        )
     return value
 
 
@@ -267,9 +292,7 @@ def value_to_bundle(value: dict) -> ArtifactBundle:
         raise BundleError(f"unsupported ASN.1 ArtifactBundle projection version {version}")
     raw_variants = value.get("variants")
     if not isinstance(raw_variants, list) or not 1 <= len(raw_variants) <= MAX_ENTRIES:
-        raise BundleError(
-            f"ASN.1 variants must contain 1..{MAX_ENTRIES} entries"
-        )
+        raise BundleError(f"ASN.1 variants must contain 1..{MAX_ENTRIES} entries")
 
     variants: list[ArtifactVariant] = []
     for index, raw in enumerate(raw_variants):
@@ -279,9 +302,7 @@ def value_to_bundle(value: dict) -> ArtifactBundle:
         manifest = raw.get("targetManifest")
         payload = raw.get("payload")
         if not isinstance(manifest, bytes) or len(manifest) not in (0, 32):
-            raise BundleError(
-                f"ASN.1 variant {index} targetManifest must contain 0 or 32 octets"
-            )
+            raise BundleError(f"ASN.1 variant {index} targetManifest must contain 0 or 32 octets")
         if not isinstance(payload, bytes):
             raise BundleError(f"ASN.1 variant {index} payload must be octets")
         flags = _integer(raw.get("flags"), f"variant {index} flags")
@@ -306,9 +327,7 @@ def value_to_bundle(value: dict) -> ArtifactBundle:
                     raw.get("prohibitedFeatures"),
                     f"variant {index} prohibitedFeatures",
                 ),
-                Endianness(
-                    _integer(raw.get("endianness"), f"variant {index} endianness")
-                ),
+                Endianness(_integer(raw.get("endianness"), f"variant {index} endianness")),
                 _integer(raw.get("pointerBits"), f"variant {index} pointerBits"),
                 _integer(raw.get("machine"), f"variant {index} machine"),
                 _integer(raw.get("priority"), f"variant {index} priority"),
@@ -317,9 +336,7 @@ def value_to_bundle(value: dict) -> ArtifactBundle:
                     f"variant {index} provenanceDigest",
                 ),
                 manifest.hex(),
-                _integer(
-                    raw.get("calibrationGen"), f"variant {index} calibrationGen"
-                ),
+                _integer(raw.get("calibrationGen"), f"variant {index} calibrationGen"),
                 bool(flags & _FLAG_R12_ATTESTED),
                 bool(flags & _FLAG_EXECUTABLE),
                 bool(flags & _FLAG_PORTABLE),
@@ -352,7 +369,9 @@ def encode_bundle_der(bundle: ArtifactBundle) -> bytes:
 
 
 def decode_bundle_der(
-    data: bytes, *, strictness: Strictness = Strictness.DER,
+    data: bytes,
+    *,
+    strictness: Strictness = Strictness.DER,
 ) -> ArtifactBundle:
     """Decode the projection, requiring DER unless BER is explicitly requested."""
     return value_to_bundle(
@@ -369,7 +388,9 @@ def encode_bundle_oer(bundle: ArtifactBundle) -> bytes:
     from .oer import OerRules, encode_oer
 
     return encode_oer(
-        ARTIFACT_BUNDLE, bundle_to_value(bundle), rules=OerRules.CANONICAL,
+        ARTIFACT_BUNDLE,
+        bundle_to_value(bundle),
+        rules=OerRules.CANONICAL,
     )
 
 
@@ -406,8 +427,10 @@ def encode_bundle_per(bundle: ArtifactBundle, *, aligned: bool = False) -> bytes
 
     variant = PerVariant.ALIGNED if aligned else PerVariant.UNALIGNED
     return encode_per(
-        ARTIFACT_BUNDLE, bundle_to_value(bundle),
-        variant=variant, rules=PerRules.CANONICAL,
+        ARTIFACT_BUNDLE,
+        bundle_to_value(bundle),
+        variant=variant,
+        rules=PerRules.CANONICAL,
     )
 
 
@@ -437,7 +460,9 @@ def native_to_der(data: bytes) -> bytes:
 
 
 def der_to_native(
-    data: bytes, *, strictness: Strictness = Strictness.DER,
+    data: bytes,
+    *,
+    strictness: Strictness = Strictness.DER,
 ) -> bytes:
     """Decode a DER/BER projection and reconstruct canonical native BCAB bytes."""
     return encode_bundle(decode_bundle_der(data, strictness=strictness))

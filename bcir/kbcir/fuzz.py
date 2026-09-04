@@ -32,15 +32,23 @@ from .realize import optimize
 # SystemError) is a finding: the boundary should reject hostile input with a domain
 # error, not a logic crash (a TypeError/AssertionError signals the decoder reached an
 # internal contract on attacker input instead of validating up front).
-_GRACEFUL = (ValueError, KeyError, IndexError, struct.error, EOFError,
-             UnicodeDecodeError, OverflowError, json.JSONDecodeError,
-             ZeroDivisionError)
+_GRACEFUL = (
+    ValueError,
+    KeyError,
+    IndexError,
+    struct.error,
+    EOFError,
+    UnicodeDecodeError,
+    OverflowError,
+    json.JSONDecodeError,
+    ZeroDivisionError,
+)
 
 
 @dataclass(frozen=True)
 class FuzzFinding:
     target: str
-    kind: str        # roundtrip | ungraceful
+    kind: str  # roundtrip | ungraceful
     detail: str
 
 
@@ -50,13 +58,13 @@ def _mutate_bytes(data: bytes, rng: random.Random) -> bytes:
         return b"\x00" * rng.randint(0, 8)
     b = bytearray(data)
     mode = rng.randint(0, 2)
-    if mode == 0:                                   # flip some bytes
+    if mode == 0:  # flip some bytes
         for _ in range(rng.randint(1, max(1, len(b) // 4))):
             i = rng.randrange(len(b))
             b[i] ^= 1 << rng.randint(0, 7)
-    elif mode == 1:                                 # truncate
-        return bytes(b[:rng.randint(0, len(b))])
-    else:                                           # pad with garbage
+    elif mode == 1:  # truncate
+        return bytes(b[: rng.randint(0, len(b))])
+    else:  # pad with garbage
         b.extend(rng.randbytes(rng.randint(1, 16)))
     return bytes(b)
 
@@ -67,12 +75,13 @@ def _mutate_text(text: str, rng: random.Random) -> str:
     chars = list(text)
     for _ in range(rng.randint(1, max(1, len(chars) // 8))):
         i = rng.randrange(len(chars))
-        chars[i] = rng.choice("{}[],:\"\\ \n0xZ;")
+        chars[i] = rng.choice('{}[],:"\\ \n0xZ;')
     out = "".join(chars)
-    return out[:rng.randint(0, len(out))] if rng.random() < 0.3 else out
+    return out[: rng.randint(0, len(out))] if rng.random() < 0.3 else out
 
 
 # --- StreamPack ABI codec --------------------------------------------------------
+
 
 def _fuzz_streampack(rng: random.Random, findings: list[FuzzFinding]) -> None:
     from ..abi import streampack_abi as abi
@@ -84,8 +93,9 @@ def _fuzz_streampack(rng: random.Random, findings: list[FuzzFinding]) -> None:
     # round-trip identity on the valid encoding (full segment equality, not just ids).
     back = abi.decode(blob)
     if back.segments != pack.segments:
-        findings.append(FuzzFinding("streampack", "roundtrip",
-                                    f"segments differ after decode ({m.name})"))
+        findings.append(
+            FuzzFinding("streampack", "roundtrip", f"segments differ after decode ({m.name})")
+        )
     # graceful rejection of the corrupted encoding.
     try:
         abi.decode(_mutate_bytes(blob, rng))
@@ -94,31 +104,41 @@ def _fuzz_streampack(rng: random.Random, findings: list[FuzzFinding]) -> None:
     except _GRACEFUL:
         pass
     except Exception as e:  # noqa: BLE001 - anything else is a robustness bug
-        findings.append(FuzzFinding("streampack", "ungraceful",
-                                    f"{type(e).__name__}: {e}"))
+        findings.append(FuzzFinding("streampack", "ungraceful", f"{type(e).__name__}: {e}"))
 
 
 # --- frozen-calibrator / certificate JSON ----------------------------------------
 
+
 def _fuzz_json(rng: random.Random, findings: list[FuzzFinding]) -> None:
     from .calibrate import FrozenCalibrator
 
-    fc = FrozenCalibrator(w_q8=tuple(rng.randint(-512, 512) for _ in range(4)),
-                          gen=rng.randint(1, 9), samples=rng.randint(0, 99))
+    fc = FrozenCalibrator(
+        w_q8=tuple(rng.randint(-512, 512) for _ in range(4)),
+        gen=rng.randint(1, 9),
+        samples=rng.randint(0, 99),
+    )
     if FrozenCalibrator.from_json(fc.to_json()) != fc:
-        findings.append(FuzzFinding("calibrator_json", "roundtrip",
-                                    "FrozenCalibrator round-trip changed the object"))
+        findings.append(
+            FuzzFinding(
+                "calibrator_json", "roundtrip", "FrozenCalibrator round-trip changed the object"
+            )
+        )
     for payload in (_mutate_text(fc.to_json(), rng), rng.choice(["", "{}", "null", "[1,2]"])):
         try:
             FrozenCalibrator.from_json(payload)
         except _GRACEFUL:
             pass
         except Exception as e:  # noqa: BLE001
-            findings.append(FuzzFinding("calibrator_json", "ungraceful",
-                                        f"{type(e).__name__}: {e!r} on {payload!r:.40}"))
+            findings.append(
+                FuzzFinding(
+                    "calibrator_json", "ungraceful", f"{type(e).__name__}: {e!r} on {payload!r:.40}"
+                )
+            )
 
 
 # --- text front-ends (ROP / MAP / ETL) -------------------------------------------
+
 
 def _fuzz_frontends(rng: random.Random, findings: list[FuzzFinding]) -> None:
     from ..frontends.rop import parse_rop_program
@@ -133,14 +153,18 @@ def _fuzz_frontends(rng: random.Random, findings: list[FuzzFinding]) -> None:
             pass
         except Exception as e:  # noqa: BLE001 - frontends define their own *Error subclasses of these
             # a frontend's declared error (MapError/ParseError/LexError) is graceful too.
-            if any(b.__name__ in ("MapError", "ParseError", "LexError", "RopError")
-                   for b in type(e).__mro__):
+            if any(
+                b.__name__ in ("MapError", "ParseError", "LexError", "RopError")
+                for b in type(e).__mro__
+            ):
                 continue
-            findings.append(FuzzFinding(f"frontend_{name}", "ungraceful",
-                                        f"{type(e).__name__}: {e}"))
+            findings.append(
+                FuzzFinding(f"frontend_{name}", "ungraceful", f"{type(e).__name__}: {e}")
+            )
 
 
 # --- ETL binary-record decoder (the binary twin of the text front-ends) ----------
+
 
 def _fuzz_etl_binary(rng: random.Random, findings: list[FuzzFinding]) -> None:
     """Fuzz `etl.binary.decode` -- the binary trust boundary whose C twin is
@@ -157,14 +181,20 @@ def _fuzz_etl_binary(rng: random.Random, findings: list[FuzzFinding]) -> None:
     payload = rng.randbytes(nbytes)
     rec = BinaryRecord("clean", (fld,))
     if decode(rec, payload)["v"] != int.from_bytes(payload, "little"):
-        findings.append(FuzzFinding("etl_binary", "roundtrip",
-                                    "byte-aligned decode != int.from_bytes"))
+        findings.append(
+            FuzzFinding("etl_binary", "roundtrip", "byte-aligned decode != int.from_bytes")
+        )
 
     # Adversarial: random fields (often unaligned / oversized) over a short buffer.
     fields = tuple(
-        BinaryField(f"f{i}", offset_bits=rng.randint(0, 96), width_bits=rng.randint(0, 96),
-                    kind=rng.choice(("u", "s", "f", "bytes")))
-        for i in range(rng.randint(1, 4)))
+        BinaryField(
+            f"f{i}",
+            offset_bits=rng.randint(0, 96),
+            width_bits=rng.randint(0, 96),
+            kind=rng.choice(("u", "s", "f", "bytes")),
+        )
+        for i in range(rng.randint(1, 4))
+    )
     record = BinaryRecord("fuzz", fields)
     data = _mutate_bytes(rng.randbytes(rng.randint(0, 8)), rng)
     try:
@@ -176,6 +206,7 @@ def _fuzz_etl_binary(rng: random.Random, findings: list[FuzzFinding]) -> None:
 
 
 # --- the MLIR emitter (structure-aware, seeded by gen_module) ---------------------
+
 
 def _fuzz_mlir(rng: random.Random, findings: list[FuzzFinding]) -> None:
     from ..lower.mlir import plan_view, to_mlir
@@ -191,7 +222,7 @@ def _fuzz_mlir(rng: random.Random, findings: list[FuzzFinding]) -> None:
     # (text building) from a fixed plan.
     result = optimize(m, h, th)
     a = to_mlir(m, h, th, result=result)
-    if to_mlir(m, h, th, result=result) != a:        # deterministic emission
+    if to_mlir(m, h, th, result=result) != a:  # deterministic emission
         findings.append(FuzzFinding("to_mlir", "roundtrip", f"non-deterministic emit ({m.name})"))
     if a.count("{") != a.count("}"):
         findings.append(FuzzFinding("to_mlir", "roundtrip", f"unbalanced braces ({m.name})"))
@@ -201,8 +232,11 @@ def _fuzz_mlir(rng: random.Random, findings: list[FuzzFinding]) -> None:
     law = law_select(pv)
     for cv in pv.claims:
         if law[cv.claim_id][0] != cv.selected:
-            findings.append(FuzzFinding("to_mlir", "roundtrip",
-                                        f"plan_view->law_select lost claim {cv.claim_id}"))
+            findings.append(
+                FuzzFinding(
+                    "to_mlir", "roundtrip", f"plan_view->law_select lost claim {cv.claim_id}"
+                )
+            )
 
 
 def run_fuzz(n: int = 400, seed: int = 0) -> list[FuzzFinding]:
@@ -224,8 +258,9 @@ def main(argv=None) -> int:
     import argparse
     import sys
 
-    p = argparse.ArgumentParser(prog="bcir.kbcir.fuzz",
-                                description="Fuzz the BCIR trust boundaries (seeded by gen_module)")
+    p = argparse.ArgumentParser(
+        prog="bcir.kbcir.fuzz", description="Fuzz the BCIR trust boundaries (seeded by gen_module)"
+    )
     p.add_argument("-n", type=int, default=1000)
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args(argv)
@@ -238,4 +273,5 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(main())

@@ -18,8 +18,15 @@ import tempfile
 import zlib
 
 from bcir.abi import encode
-from bcir.examples import (gather_reduce, histogram_gather, matmul_tiled, multi_histogram,
-                           saxpy_strided, scan, vector_add)
+from bcir.examples import (
+    gather_reduce,
+    histogram_gather,
+    matmul_tiled,
+    multi_histogram,
+    saxpy_strided,
+    scan,
+    vector_add,
+)
 from bcir.gem import hydrate
 from bcir.gem.streampack import hydrate_pipelined
 from bcir.kbcir import optimize
@@ -40,11 +47,24 @@ def _build(tmp):
     if cc is None:
         return None
     exe = os.path.join(tmp, "test_encode")
-    r = subprocess.run([cc, "-std=c23", "-O2", "-Wall", "-Wextra", "-I", _RUNTIME_C,
-                        os.path.join(_RUNTIME_C, "bcir_encode.c"),
-                        os.path.join(_RUNTIME_C, "bcir_runtime.c"),
-                        os.path.join(_RUNTIME_C, "test_encode.c"), "-o", exe],
-                       capture_output=True, text=True)
+    r = subprocess.run(
+        [
+            cc,
+            "-std=c23",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-I",
+            _RUNTIME_C,
+            os.path.join(_RUNTIME_C, "bcir_encode.c"),
+            os.path.join(_RUNTIME_C, "bcir_runtime.c"),
+            os.path.join(_RUNTIME_C, "test_encode.c"),
+            "-o",
+            exe,
+        ],
+        capture_output=True,
+        text=True,
+    )
     assert r.returncode == 0, r.stderr
     return exe
 
@@ -66,10 +86,24 @@ def test_c_encoder_builds_freestanding():
     if cc is None:
         return
     for std in ("c11", "c23"):
-        r = subprocess.run([cc, "-ffreestanding", "-nostdlib", f"-std={std}", "-Wall",
-                            "-Wextra", "-I", _RUNTIME_C, "-c",
-                            os.path.join(_RUNTIME_C, "bcir_encode.c"), "-o", os.devnull],
-                           capture_output=True, text=True)
+        r = subprocess.run(
+            [
+                cc,
+                "-ffreestanding",
+                "-nostdlib",
+                f"-std={std}",
+                "-Wall",
+                "-Wextra",
+                "-I",
+                _RUNTIME_C,
+                "-c",
+                os.path.join(_RUNTIME_C, "bcir_encode.c"),
+                "-o",
+                os.devnull,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert r.returncode == 0, f"{std}: {r.stderr}"
 
 
@@ -78,22 +112,27 @@ def test_reencode_is_byte_identical_across_corpus_v1_v2_and_v3():
     in v1 (frozen), v2 (pipeline/double-buffer tails), and v3 (dispatch/channel)."""
     if _cc() is None:
         return
-    mods = {"vector_add": vector_add(), "multi_histogram": multi_histogram(),
-            "matmul_tiled": matmul_tiled(), "scan": scan(),
-            "histogram_gather": histogram_gather(), "saxpy_strided": saxpy_strided()}
+    mods = {
+        "vector_add": vector_add(),
+        "multi_histogram": multi_histogram(),
+        "matmul_tiled": matmul_tiled(),
+        "scan": scan(),
+        "histogram_gather": histogram_gather(),
+        "saxpy_strided": saxpy_strided(),
+    }
     with tempfile.TemporaryDirectory() as tmp:
         exe = _build(tmp)
         assert exe is not None
         for name, m in mods.items():
             r = optimize(m, AVX, COOL)
-            for label, pack in (("v1", hydrate(m, r)),
-                                ("v2", hydrate_pipelined(m, r, depth=2))):
+            for label, pack in (("v1", hydrate(m, r)), ("v2", hydrate_pipelined(m, r, depth=2))):
                 blob = encode(pack)
                 assert _reencode(exe, tmp, blob) == blob, f"{name} {label}: not byte-identical"
         m = gather_reduce()
         pack = hydrate(m, optimize(m, AVX, COOL))
         pack.segments[0] = replace(
-            pack.segments[0], opcode="reduce.add", dispatch="pim", channel="hbm_pim")
+            pack.segments[0], opcode="reduce.add", dispatch="pim", channel="hbm_pim"
+        )
         blob = encode(pack)
         assert blob[4] == 3
         assert _reencode(exe, tmp, blob) == blob
@@ -106,14 +145,14 @@ def test_malformed_input_is_rejected_not_crashed():
         exe = _build(tmp)
         good = encode(hydrate(vector_add(), optimize(vector_add(), AVX, COOL)))
         trailing_body = good[:-4] + b"\x00"
-        trailing = trailing_body + struct.pack(
-            "<I", zlib.crc32(trailing_body) & 0xFFFFFFFF)
+        trailing = trailing_body + struct.pack("<I", zlib.crc32(trailing_body) & 0xFFFFFFFF)
         for bad in (b"", b"BSPK", good[:50], good[:-1], bytes(len(good)), trailing):
             ip = os.path.join(tmp, "bad.bin")
             with open(ip, "wb") as f:
                 f.write(bad)
-            r = subprocess.run([exe, ip, os.path.join(tmp, "o.bin")],
-                               capture_output=True, text=True)
+            r = subprocess.run(
+                [exe, ip, os.path.join(tmp, "o.bin")], capture_output=True, text=True
+            )
             assert r.returncode == 1, (bad[:8], r.returncode, r.stdout, r.stderr)
             assert "ERR" in r.stdout
 
@@ -125,6 +164,7 @@ def test_round_trip_decode_matches():
     if _cc() is None:
         return
     from bcir.abi import decode
+
     with tempfile.TemporaryDirectory() as tmp:
         exe = _build(tmp)
         m = multi_histogram()

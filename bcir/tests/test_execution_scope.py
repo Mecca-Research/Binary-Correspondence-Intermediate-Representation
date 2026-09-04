@@ -53,33 +53,65 @@ def _chain(order: str) -> Module:
     module = Module(name="chain")
     for rid in (1, 2, 3):
         module.add_resource(Resource(rid=rid, shape=(256,)))
-    first = Claim(id=10, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                  count=256, rd=(1,), wr=(2,), op="vector.add")
-    second = Claim(id=20, opcode=Opcode.MUL, lane=Lane.U, stride_class=StrideClass.UNIT,
-                   count=256, rd=(2,), wr=(3,), op="vector.mul")
-    module.add_phase(Phase(phase_id=0,
-                           claims=[first, second] if order == "ab" else [second, first]))
+    first = Claim(
+        id=10,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=256,
+        rd=(1,),
+        wr=(2,),
+        op="vector.add",
+    )
+    second = Claim(
+        id=20,
+        opcode=Opcode.MUL,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=256,
+        rd=(2,),
+        wr=(3,),
+        op="vector.mul",
+    )
+    module.add_phase(
+        Phase(phase_id=0, claims=[first, second] if order == "ab" else [second, first])
+    )
     return module
 
 
 def _slower_dram(target):
-    return replace(target, mem=MemoryHierarchy(tuple(
-        Tier(t.name, t.latency_cyc, t.bw_factor * 32, t.lat_factor * 32, t.capacity)
-        if t.name == "DRAM" else t for t in target.mem.tiers)))
+    return replace(
+        target,
+        mem=MemoryHierarchy(
+            tuple(
+                Tier(t.name, t.latency_cyc, t.bw_factor * 32, t.lat_factor * 32, t.capacity)
+                if t.name == "DRAM"
+                else t
+                for t in target.mem.tiers
+            )
+        ),
+    )
 
 
 def _full_scope(module=None):
     """A scope with every optimality-relevant component declared."""
-    return scope_for(module if module is not None else _chain("ab"), _HOST, Theta.cool(),
-                     PERF,
-                     objective={"relation": "scalarized", "weights": "PERF"},
-                     admitted={"candidates": "ALL_CANDIDATES"},
-                     budget={"caps": []}, workload={"shape": "static"},
-                     measurement={"protocol": "median-of-5"},
-                     uncertainty={"model": "none"}, generations={"cal_gen": 0})
+    return scope_for(
+        module if module is not None else _chain("ab"),
+        _HOST,
+        Theta.cool(),
+        PERF,
+        objective={"relation": "scalarized", "weights": "PERF"},
+        admitted={"candidates": "ALL_CANDIDATES"},
+        budget={"caps": []},
+        workload={"shape": "static"},
+        measurement={"protocol": "median-of-5"},
+        uncertainty={"model": "none"},
+        generations={"cal_gen": 0},
+    )
 
 
 # --- the two collisions --------------------------------------------------------------------
+
 
 def test_the_memory_hierarchy_is_inside_the_scope() -> None:
     """Scaling one tier moved a score thirty-fold under an unchanged digest."""
@@ -93,7 +125,8 @@ def test_the_memory_hierarchy_is_inside_the_scope() -> None:
     assert base.component("H")["memory_hierarchy"] != altered.component("H")["memory_hierarchy"]
     assert base.component("H")["target_hash"] == altered.component("H")["target_hash"], (
         "hash_target still collides -- which is exactly why the scope carries the tiers "
-        "itself rather than relying on it")
+        "itself rather than relying on it"
+    )
 
 
 def test_the_declared_claim_order_is_inside_the_scope() -> None:
@@ -104,7 +137,8 @@ def test_the_declared_claim_order_is_inside_the_scope() -> None:
     assert forward.digest() != reverse.digest()
     assert forward.diff(reverse) == ("P",)
     assert forward.component("P")["module_hash"] == reverse.component("P")["module_hash"], (
-        "the cross-rail module hash is unchanged by design; the scope adds the order on top")
+        "the cross-rail module hash is unchanged by design; the scope adds the order on top"
+    )
 
 
 def test_an_unchanged_program_produces_an_unchanged_scope() -> None:
@@ -120,6 +154,7 @@ def test_an_unchanged_program_produces_an_unchanged_scope() -> None:
 
 # --- canonical serialization ------------------------------------------------------------------
 
+
 def test_equal_scopes_serialize_to_equal_bytes_whatever_the_insertion_order() -> None:
     """The `value_digest` defect from the same audit, pre-empted here.
 
@@ -132,8 +167,7 @@ def test_equal_scopes_serialize_to_equal_bytes_whatever_the_insertion_order() ->
     assert forward.digest() == reverse.digest()
 
     # Sets are unordered as values, so they must be ordered as bytes.
-    assert (ExecutionScope(A={1, 2, 3}).digest()
-            == ExecutionScope(A={3, 2, 1}).digest())
+    assert ExecutionScope(A={1, 2, 3}).digest() == ExecutionScope(A={3, 2, 1}).digest()
 
 
 def test_a_float_may_not_enter_a_scope() -> None:
@@ -169,7 +203,7 @@ def test_the_serialization_is_versioned_and_complete() -> None:
 
 
 def test_undeclared_is_distinct_from_declared_and_empty() -> None:
-    """"Nobody said" and "said, and it is empty" are different statements about a model."""
+    """ "Nobody said" and "said, and it is empty" are different statements about a model."""
     silent = ExecutionScope()
     empty = ExecutionScope(W={})
     assert silent.digest() != empty.digest()
@@ -180,23 +214,47 @@ def test_undeclared_is_distinct_from_declared_and_empty() -> None:
 
 # --- the class ladder ---------------------------------------------------------------------
 
+
 def test_the_class_is_earned_by_evidence_not_asserted() -> None:
     """Each rung needs what it claims, and nothing promotes without it."""
     scope = _full_scope()
     incumbent = {"incumbent": 100}
     assert certificate_class_allowed(scope, incumbent)[0] == "TMSAO-4"
     assert certificate_class_allowed(scope, {**incumbent, "lower_bound": 80})[0] == "TMSAO-2"
-    assert certificate_class_allowed(
-        scope, {**incumbent, "search_coverage": 0.9,
-                "prediction_interval": (95, 105)})[0] == "TMSAO-3"
-    assert certificate_class_allowed(
-        scope, {**incumbent, "lower_bound": 80, "candidate_census": 12,
-                "proof": "branch-and-bound", "census_complete": True})[0] == "TMSAO-1"
+    assert (
+        certificate_class_allowed(
+            scope, {**incumbent, "search_coverage": 0.9, "prediction_interval": (95, 105)}
+        )[0]
+        == "TMSAO-3"
+    )
+    assert (
+        certificate_class_allowed(
+            scope,
+            {
+                **incumbent,
+                "lower_bound": 80,
+                "candidate_census": 12,
+                "proof": "branch-and-bound",
+                "census_complete": True,
+            },
+        )[0]
+        == "TMSAO-1"
+    )
 
     # A census that is not complete is not a proof of optimality, however large.
-    assert certificate_class_allowed(
-        scope, {**incumbent, "lower_bound": 80, "candidate_census": 12,
-                "proof": "branch-and-bound", "census_complete": False})[0] == "TMSAO-2"
+    assert (
+        certificate_class_allowed(
+            scope,
+            {
+                **incumbent,
+                "lower_bound": 80,
+                "candidate_census": 12,
+                "proof": "branch-and-bound",
+                "census_complete": False,
+            },
+        )[0]
+        == "TMSAO-2"
+    )
 
 
 def test_an_optimality_claim_needs_a_declared_model() -> None:
@@ -206,8 +264,13 @@ def test_an_optimality_claim_needs_a_declared_model() -> None:
     candidate census is a census of the admitted set. A scope missing either cannot support
     TMSAO-1 or TMSAO-2 no matter what evidence accompanies it.
     """
-    strong = {"incumbent": 100, "lower_bound": 80, "candidate_census": 12,
-              "proof": "branch-and-bound", "census_complete": True}
+    strong = {
+        "incumbent": 100,
+        "lower_bound": 80,
+        "candidate_census": 12,
+        "proof": "branch-and-bound",
+        "census_complete": True,
+    }
     for missing in ("O", "A"):
         partial = replace(_full_scope(), **{missing: UNDECLARED})
         name, reason = certificate_class_allowed(partial, strong)
@@ -217,13 +280,16 @@ def test_an_optimality_claim_needs_a_declared_model() -> None:
     # TMSAO-3 is about MEASURED evidence, so it is still available -- a measurement over an
     # undeclared objective is a real statement, it just is not an optimality one.
     partial = replace(_full_scope(), O=UNDECLARED)
-    assert certificate_class_allowed(
-        partial, {"incumbent": 100, "search_coverage": 0.9,
-                  "prediction_interval": (95, 105)})[0] == "TMSAO-3"
+    assert (
+        certificate_class_allowed(
+            partial, {"incumbent": 100, "search_coverage": 0.9, "prediction_interval": (95, 105)}
+        )[0]
+        == "TMSAO-3"
+    )
 
 
 def test_the_reason_is_always_actionable() -> None:
-    """"Why only TMSAO-4" is the question a reader has; the answer is a work item."""
+    """ "Why only TMSAO-4" is the question a reader has; the answer is a work item."""
     name, reason = certificate_class_allowed(_full_scope(), {"incumbent": 100})
     assert name == "TMSAO-4"
     assert "lower bound" in reason and "gap is only a gap when its size is known" in reason
@@ -231,8 +297,7 @@ def test_the_reason_is_always_actionable() -> None:
 
 def test_the_gap_is_reported_both_ways_and_refuses_a_contradiction() -> None:
     """`(U - L)` and `(U - L) / max(|U|, eps)`, as the proposal specifies."""
-    assert gap(100, 80) == {"incumbent": 100, "lower_bound": 80, "absolute": 20,
-                            "relative": 0.2}
+    assert gap(100, 80) == {"incumbent": 100, "lower_bound": 80, "absolute": 20, "relative": 0.2}
     assert gap(100, 100)["relative"] == 0.0, "on the bound is a zero gap, not an error"
 
     try:

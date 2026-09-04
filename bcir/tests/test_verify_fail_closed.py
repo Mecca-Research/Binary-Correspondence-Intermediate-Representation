@@ -42,8 +42,7 @@ from bcir.kbcir.cost import Theta
 from bcir.kbcir.provenance import ProvenanceMismatch, build_manifest, replay
 from bcir.kbcir.realize import Candidate, CostVector, candidates_for
 from bcir.kbcir.weights import PERF
-from bcir.model import (ATOMIC_OPCODES, Claim, Lane, Module, Opcode, Phase, Resource,
-                        StrideClass)
+from bcir.model import ATOMIC_OPCODES, Claim, Lane, Module, Opcode, Phase, Resource, StrideClass
 from bcir.verify import verify, verify_all, verify_pack, verify_plan
 
 _H = TARGETS[sorted(TARGETS)[0]]
@@ -57,13 +56,28 @@ def _laws(diags) -> set[str]:
 def _atomic_module(stride_class: StrideClass, opcode=Opcode.ATOMIC_ADD) -> Module:
     m = Module(name="atomics")
     m.add_resource(Resource(rid=1, shape=(64,)))
-    m.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=opcode, lane=Lane.A, stride_class=stride_class,
-              count=64, rd=(1,), wr=(1,), hazard="atomic")]))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=1,
+                    opcode=opcode,
+                    lane=Lane.A,
+                    stride_class=stride_class,
+                    count=64,
+                    rd=(1,),
+                    wr=(1,),
+                    hazard="atomic",
+                )
+            ],
+        )
+    )
     return m
 
 
 # --- R9: an atomic stays atomic -----------------------------------------------------------
+
 
 def test_an_atomic_opcode_has_exactly_one_realization() -> None:
     """Every atomic opcode, under every geometry, is offered A-lane width 1 and nothing else.
@@ -78,7 +92,8 @@ def test_an_atomic_opcode_has_exactly_one_realization() -> None:
             offered = candidates_for(claim, _H)
             assert [(c.lane, c.width) for c in offered] == [(Lane.A, 1)], (
                 f"{opcode.name}/{stride_class.name} offered "
-                f"{[(c.lane.name, c.width, c.name) for c in offered]}")
+                f"{[(c.lane.name, c.width, c.name) for c in offered]}"
+            )
 
 
 def test_r9_rejects_a_vectorized_or_gathered_atomic() -> None:
@@ -92,11 +107,19 @@ def test_r9_rejects_a_vectorized_or_gathered_atomic() -> None:
     honest = optimize(module, _H, _TH, PERF)
     assert not verify_plan(module, honest, _H), "the honest atomic plan must stay clean"
 
-    for lane, width, name in ((Lane.U, 16, "vec16"), (Lane.U, 4, "vec4"),
-                              (Lane.GGG, 1, "gather"), (Lane.A, 4, "atomic")):
-        forged = replace(honest, steps=tuple(
-            replace(s, candidate=replace(s.candidate, lane=lane, width=width, name=name))
-            for s in honest.steps))
+    for lane, width, name in (
+        (Lane.U, 16, "vec16"),
+        (Lane.U, 4, "vec4"),
+        (Lane.GGG, 1, "gather"),
+        (Lane.A, 4, "atomic"),
+    ):
+        forged = replace(
+            honest,
+            steps=tuple(
+                replace(s, candidate=replace(s.candidate, lane=lane, width=width, name=name))
+                for s in honest.steps
+            ),
+        )
         diags = verify_plan(module, forged, _H)
         assert "R9" in _laws(diags), f"{lane.name} width {width} was accepted for an atomic"
         assert any("atomic" in d.message for d in diags), diags
@@ -105,13 +128,27 @@ def test_r9_rejects_a_vectorized_or_gathered_atomic() -> None:
     # opcode, which is the whole point.
     plain = Module(name="plain")
     plain.add_resource(Resource(rid=1, shape=(64,)))
-    plain.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.SCALAR,
-              count=64, rd=(1,), wr=(1,))]))
+    plain.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=1,
+                    opcode=Opcode.ADD,
+                    lane=Lane.U,
+                    stride_class=StrideClass.SCALAR,
+                    count=64,
+                    rd=(1,),
+                    wr=(1,),
+                )
+            ],
+        )
+    )
     assert not verify_plan(plain, optimize(plain, _H, _TH, PERF), _H)
 
 
 # --- R9: the realization has to be one the planner could produce ---------------------------
+
 
 def test_r9_refuses_a_realization_the_target_does_not_admit() -> None:
     """A fabricated candidate is the plan a tampered or third-party artifact carries.
@@ -124,10 +161,18 @@ def test_r9_refuses_a_realization_the_target_does_not_admit() -> None:
     honest = optimize(module, _H, _TH, PERF)
     assert not verify_plan(module, honest, _H)
 
-    forged = replace(honest, score=0, steps=tuple(
-        replace(s, cost=0,
-                candidate=Candidate(Lane.U, 3, "forged-does-not-exist", CostVector.zero()))
-        for s in honest.steps))
+    forged = replace(
+        honest,
+        score=0,
+        steps=tuple(
+            replace(
+                s,
+                cost=0,
+                candidate=Candidate(Lane.U, 3, "forged-does-not-exist", CostVector.zero()),
+            )
+            for s in honest.steps
+        ),
+    )
 
     diags = verify_plan(module, forged, _H)
     assert "R9" in _laws(diags)
@@ -139,14 +184,16 @@ def test_r9_refuses_a_realization_the_target_does_not_admit() -> None:
 
     # A REAL candidate for the claim, chosen differently, is still legal -- the law
     # constrains the candidate set, not the planner's preference within it.
-    offered = candidates_for(module.phases[0].claims[0], _H,
-                             module.resource(module.phases[0].claims[0].rd[0]))
+    offered = candidates_for(
+        module.phases[0].claims[0], _H, module.resource(module.phases[0].claims[0].rd[0])
+    )
     other = next(c for c in offered if c.name != honest.steps[0].candidate.name)
     swapped = replace(honest, steps=(replace(honest.steps[0], candidate=other),))
     assert "R9" not in _laws(verify_plan(module, swapped, _H))
 
 
 # --- R10: the pack realizes the module, and comes from the plan ----------------------------
+
 
 def test_r10_refuses_a_pack_that_realizes_nothing() -> None:
     """The empty pack: every provenance loop was vacuous, so the law held over nothing."""
@@ -171,7 +218,8 @@ def test_r10_binds_the_pack_to_the_plan_it_was_hydrated_from() -> None:
     wide = optimize(module, _H, _TH, PERF)
     narrow = optimize(module, replace(_H, lane_widths=(1,)), _TH, PERF)
     assert wide.steps[0].candidate.width != narrow.steps[0].candidate.width, (
-        "the fixture needs two plans that differ")
+        "the fixture needs two plans that differ"
+    )
 
     pack = hydrate(module, wide)
     assert not verify_all(module, wide, pack, h=_H)
@@ -181,6 +229,7 @@ def test_r10_binds_the_pack_to_the_plan_it_was_hydrated_from() -> None:
 
 
 # --- the public artifact API ---------------------------------------------------------------
+
 
 def test_build_artifact_does_not_attest_an_illegal_module() -> None:
     """`attested` reads as "this artifact is legal"; it meant "the C matches the plan".
@@ -192,10 +241,25 @@ def test_build_artifact_does_not_attest_an_illegal_module() -> None:
     module = Module(name="volatile_add")
     for rid in (1, 2, 3):
         module.add_resource(Resource(rid=rid, shape=(64,)))
-    module.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=1000, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=64, rd=(1, 2), wr=(3,), op="vector.add",
-              hazard="unique", volatile=True)]))
+    module.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=1000,
+                    opcode=Opcode.ADD,
+                    lane=Lane.U,
+                    stride_class=StrideClass.UNIT,
+                    count=64,
+                    rd=(1, 2),
+                    wr=(3,),
+                    op="vector.add",
+                    hazard="unique",
+                    volatile=True,
+                )
+            ],
+        )
+    )
     assert "R5" in _laws(verify(module)), "the fixture must actually be illegal"
 
     artifact = build_artifact(module)
@@ -209,19 +273,28 @@ def test_build_artifact_does_not_attest_an_illegal_module() -> None:
 
 # --- the lowering subset says what it does not cover ----------------------------------------
 
+
 def test_the_lowering_subset_refuses_addressing_it_does_not_emit() -> None:
     """`offset` and `stride_k` were accepted and dropped, and R12 called the result clean.
 
     Both emitters go through one selection gate, so one refusal covers the LLVM and C
     rails together -- which is also why the defect appeared in both.
     """
+
     def module(**kw) -> Module:
         m = Module(name="addr")
         for rid in (1, 2, 3):
             m.add_resource(Resource(rid=rid, shape=(64,)))
-        fields = dict(id=1000, opcode=Opcode.ADD, lane=Lane.U,
-                      stride_class=StrideClass.UNIT, count=64, rd=(1, 2), wr=(3,),
-                      op="vector.add")
+        fields = dict(
+            id=1000,
+            opcode=Opcode.ADD,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=64,
+            rd=(1, 2),
+            wr=(3,),
+            op="vector.add",
+        )
         fields.update(kw)
         m.add_phase(Phase(phase_id=0, claims=[Claim(**fields)]))
         return m
@@ -229,20 +302,22 @@ def test_the_lowering_subset_refuses_addressing_it_does_not_emit() -> None:
     baseline = build_artifact(module())
     assert baseline.attested is True
 
-    for kw, why in (({"offset": 8}, "offset"),
-                    ({"offset": 1}, "offset"),
-                    ({"stride_k": 4, "stride_class": StrideClass.STRIDED}, "stride"),
-                    ({"stride_k": 2, "stride_class": StrideClass.STRIDED}, "stride")):
+    for kw, why in (
+        ({"offset": 8}, "offset"),
+        ({"offset": 1}, "offset"),
+        ({"stride_k": 4, "stride_class": StrideClass.STRIDED}, "stride"),
+        ({"stride_k": 2, "stride_class": StrideClass.STRIDED}, "stride"),
+    ):
         try:
             artifact = build_artifact(module(**kw))
         except NotImplementedError as exc:
             assert why in str(exc), (kw, str(exc))
             continue
-        raise AssertionError(
-            f"{kw} was lowered anyway, to:\n{artifact.kernel_c}")
+        raise AssertionError(f"{kw} was lowered anyway, to:\n{artifact.kernel_c}")
 
 
 # --- replay: a matching digest is not a matching plan ---------------------------------------
+
 
 def test_replay_refuses_to_return_a_plan_the_manifest_does_not_record() -> None:
     """`hash_target` omits the memory hierarchy, and that gap is not closed here.
@@ -261,13 +336,36 @@ def test_replay_refuses_to_return_a_plan_the_manifest_does_not_record() -> None:
     module = Module(name="dram")
     for rid in (1, 2, 3):
         module.add_resource(Resource(rid=rid, shape=(4096,)))
-    module.add_phase(Phase(phase_id=0, claims=[
-        Claim(id=10, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=4096, rd=(1, 2), wr=(3,), op="vector.add", cost_class="bandwidth")]))
+    module.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=10,
+                    opcode=Opcode.ADD,
+                    lane=Lane.U,
+                    stride_class=StrideClass.UNIT,
+                    count=4096,
+                    rd=(1, 2),
+                    wr=(3,),
+                    op="vector.add",
+                    cost_class="bandwidth",
+                )
+            ],
+        )
+    )
 
-    slower = replace(_H, mem=MemoryHierarchy(tuple(
-        Tier(t.name, t.latency_cyc, t.bw_factor * 32, t.lat_factor * 32, t.capacity)
-        if t.name == "DRAM" else t for t in _H.mem.tiers)))
+    slower = replace(
+        _H,
+        mem=MemoryHierarchy(
+            tuple(
+                Tier(t.name, t.latency_cyc, t.bw_factor * 32, t.lat_factor * 32, t.capacity)
+                if t.name == "DRAM"
+                else t
+                for t in _H.mem.tiers
+            )
+        ),
+    )
 
     manifest = build_manifest(module, _H, _TH, PERF)
     baseline = optimize(module, _H, _TH, PERF)
@@ -283,11 +381,12 @@ def test_replay_refuses_to_return_a_plan_the_manifest_does_not_record() -> None:
         assert "DIFFERENT plan" in str(exc), str(exc)
         return
     raise AssertionError(
-        f"replay returned a plan scoring {got.score} for a manifest recording "
-        f"{manifest.score}")
+        f"replay returned a plan scoring {got.score} for a manifest recording {manifest.score}"
+    )
 
 
 # --- the emitter must not assert an alias fact the claim contradicts -------------------------
+
 
 def test_noalias_is_emitted_only_where_the_rids_prove_it() -> None:
     """`noalias` is an assertion the caller must honour, not a hint.
@@ -309,9 +408,23 @@ def test_noalias_is_emitted_only_where_the_rids_prove_it() -> None:
         module = Module(name="alias")
         for rid in sorted(set(reads) | set(writes)):
             module.add_resource(Resource(rid=rid, shape=(64,)))
-        module.add_phase(Phase(phase_id=0, claims=[
-            Claim(id=1000, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                  count=64, rd=reads, wr=writes, op="vector.add")]))
+        module.add_phase(
+            Phase(
+                phase_id=0,
+                claims=[
+                    Claim(
+                        id=1000,
+                        opcode=Opcode.ADD,
+                        lane=Lane.U,
+                        stride_class=StrideClass.UNIT,
+                        count=64,
+                        rd=reads,
+                        wr=writes,
+                        op="vector.add",
+                    )
+                ],
+            )
+        )
         text = emit_kernel_ll(module, optimize(module, _H, _TH, PERF))
         return next(line for line in text.splitlines() if line.startswith("define"))
 

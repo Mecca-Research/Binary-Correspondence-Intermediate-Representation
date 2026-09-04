@@ -76,6 +76,7 @@ _MAX_REDFISH_NUMBER_BYTES = 128
 _PROM_NAME_RE = re.compile(r"[^a-zA-Z0-9_:]")
 _PROM_FIRST_RE = re.compile(r"^[^a-zA-Z_:]")
 
+
 def _is_counter(definition: MetricDefinition) -> bool:
     """Use the definition's declared semantics; exporters never infer from names/units."""
     return definition.metric_kind == MetricKind.COUNTER
@@ -97,7 +98,7 @@ def _sanitize_label_value(value: str) -> str:
     """Escape a label VALUE per the Prometheus text format: backslash, double-quote, and
     newline are escaped; everything else is allowed in a value (only the metric/label
     *names* are charset-restricted)."""
-    return (str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n"))
+    return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
 def _as_snapshot(registry_or_snapshot) -> dict[str, Reading | None]:
@@ -113,7 +114,7 @@ def _as_snapshot(registry_or_snapshot) -> dict[str, Reading | None]:
 def _fmt_value(value) -> str:
     """Render a numeric value for a text/JSON exposition: an ``int`` stays an int (no
     trailing ``.0``), a ``float`` uses ``repr`` (round-trippable). Deterministic."""
-    if isinstance(value, bool):           # defensive: a bool is an int in Python
+    if isinstance(value, bool):  # defensive: a bool is an int in Python
         return "1" if value else "0"
     if isinstance(value, int):
         return str(value)
@@ -122,7 +123,9 @@ def _fmt_value(value) -> str:
 
 # The label set carried on EVERY exported series (the research §2 taxonomy: cost_dim +
 # provenance + unit + the channel identity). Order is fixed for deterministic output.
-def _labels_for(definition: MetricDefinition, reading: Reading | None, channel: str) -> dict[str, str]:
+def _labels_for(
+    definition: MetricDefinition, reading: Reading | None, channel: str
+) -> dict[str, str]:
     """The deterministic label set for a metric: channel identity + the T1 taxonomy
     (cost_dim / provenance / unit). Provenance prefers the READING's actual provenance
     (how THIS sample was obtained) and falls back to the definition's nominal provenance
@@ -184,7 +187,9 @@ def to_prometheus(
 
     # --- the availability series (one type block, every signal up=0|1) ---
     up_name = _PREFIX + "signal_up"
-    lines.append(f"# HELP {up_name} 1 if the telemetry source is available on this host, else 0 (honest real/unavailable split).")
+    lines.append(
+        f"# HELP {up_name} 1 if the telemetry source is available on this host, else 0 (honest real/unavailable split)."
+    )
     lines.append(f"# TYPE {up_name} gauge")
     for name in snap:
         reading = snap[name]
@@ -201,7 +206,7 @@ def to_prometheus(
     for name in snap:
         reading = snap[name]
         if reading is None:
-            continue                                      # unavailable: no value line (honest)
+            continue  # unavailable: no value line (honest)
         definition = reading.definition
         metric = sanitize_metric_name(name)
         mtype = "counter" if _is_counter(definition) else "gauge"
@@ -223,19 +228,21 @@ def to_prometheus(
                 metric = sanitize_metric_name(f"derived.{fld}.{stat}")
                 lines.append(f"# HELP {metric} T3 derived .MEASURE {stat} of DataDNA field {fld}.")
                 lines.append(f"# TYPE {metric} gauge")
-                lines.append(f"{metric}{{field=\"{_sanitize_label_value(fld)}\"}} {_fmt_value(v)}")
+                lines.append(f'{metric}{{field="{_sanitize_label_value(fld)}"}} {_fmt_value(v)}')
 
     # --- optional: T3 sensitivity ranking ---
     if sensitivity:
         sens_name = _PREFIX + "signal_sensitivity"
-        lines.append(f"# HELP {sens_name} T3 .SENS |Delta score| of a telemetry signal on the optimized plan cost (sampling-budget rank).")
+        lines.append(
+            f"# HELP {sens_name} T3 .SENS |Delta score| of a telemetry signal on the optimized plan cost (sampling-budget rank)."
+        )
         lines.append(f"# TYPE {sens_name} gauge")
         for row in sensitivity:
             sig = getattr(row, "signal", None)
             ad = getattr(row, "abs_delta", None)
             if sig is None or ad is None:
                 continue
-            lines.append(f"{sens_name}{{signal=\"{_sanitize_label_value(sig)}\"}} {_fmt_value(ad)}")
+            lines.append(f'{sens_name}{{signal="{_sanitize_label_value(sig)}"}} {_fmt_value(ad)}')
 
     # --- optional: the integrity witness (suppression observable downstream) ---
     if witness is not None:
@@ -257,16 +264,48 @@ def _witness_lines(witness, channel: str) -> list[str]:
     out: list[str] = []
     lab = f'{{channel="{_sanitize_label_value(channel)}"}}'
     record_fields = (
-        ("telemetry_accepted", "accepted", "Telemetry records that passed the documented RT3 schema (the stream up-count)."),
-        ("telemetry_rejected", "rejected", "Telemetry records dropped for a schema violation (value injection)."),
-        ("telemetry_dropped", "dropped", "Telemetry records evicted upstream before read (ring overwrite / suppression)."),
+        (
+            "telemetry_accepted",
+            "accepted",
+            "Telemetry records that passed the documented RT3 schema (the stream up-count).",
+        ),
+        (
+            "telemetry_rejected",
+            "rejected",
+            "Telemetry records dropped for a schema violation (value injection).",
+        ),
+        (
+            "telemetry_dropped",
+            "dropped",
+            "Telemetry records evicted upstream before read (ring overwrite / suppression).",
+        ),
     )
     frame_fields = (
-        ("telemetry_frames_accepted", "frames_accepted", "BTLM telemetry frames that passed flags/version/length/CRC validation."),
-        ("telemetry_frames_rejected", "frames_rejected", "Magic-aligned telemetry candidates rejected for flags/version/length/CRC."),
-        ("telemetry_frames_missing", "frames_missing", "Telemetry frame sequence numbers missing between recovered frames."),
-        ("telemetry_frames_reordered", "frames_reordered", "Telemetry frames received behind the sequence watermark."),
-        ("telemetry_frames_duplicated", "frames_duplicated", "Telemetry frames repeating the current sequence number."),
+        (
+            "telemetry_frames_accepted",
+            "frames_accepted",
+            "BTLM telemetry frames that passed flags/version/length/CRC validation.",
+        ),
+        (
+            "telemetry_frames_rejected",
+            "frames_rejected",
+            "Magic-aligned telemetry candidates rejected for flags/version/length/CRC.",
+        ),
+        (
+            "telemetry_frames_missing",
+            "frames_missing",
+            "Telemetry frame sequence numbers missing between recovered frames.",
+        ),
+        (
+            "telemetry_frames_reordered",
+            "frames_reordered",
+            "Telemetry frames received behind the sequence watermark.",
+        ),
+        (
+            "telemetry_frames_duplicated",
+            "frames_duplicated",
+            "Telemetry frames repeating the current sequence number.",
+        ),
     )
     has_frame_evidence = any(getattr(witness, attr, 0) for _, attr, _ in frame_fields)
     fields = record_fields + (frame_fields if has_frame_evidence else ())
@@ -281,13 +320,17 @@ def _witness_lines(witness, channel: str) -> list[str]:
     frame_monotonic = getattr(witness, "frame_monotonic", None)
     if has_frame_evidence and frame_monotonic is not None:
         metric = _PREFIX + "telemetry_frame_monotonic"
-        out.append(f"# HELP {metric} 1 if recovered frame sequence order has no duplicate/reorder, else 0.")
+        out.append(
+            f"# HELP {metric} 1 if recovered frame sequence order has no duplicate/reorder, else 0."
+        )
         out.append(f"# TYPE {metric} gauge")
         out.append(f"{metric}{lab} {1 if frame_monotonic else 0}")
     blind = getattr(witness, "blind", None)
     if blind is not None:
         metric = _PREFIX + "telemetry_blind"
-        out.append(f"# HELP {metric} 1 if no valid telemetry survived (suppression / all-rejected / all-dropped), else 0.")
+        out.append(
+            f"# HELP {metric} 1 if no valid telemetry survived (suppression / all-rejected / all-dropped), else 0."
+        )
         out.append(f"# TYPE {metric} gauge")
         out.append(f"{metric}{lab} {1 if blind else 0}")
     return out
@@ -308,8 +351,8 @@ def _definition_only_labels(name: str) -> MetricDefinition | None:
     with _DEF_CACHE_LOCK:
         if not _DEF_CACHE:
             from .signal_registry import default_registry
-            built = {p.definition.name: p.definition
-                     for p in default_registry().providers()}
+
+            built = {p.definition.name: p.definition for p in default_registry().providers()}
             _DEF_CACHE.update(built)
         return _DEF_CACHE.get(name)
 
@@ -324,10 +367,11 @@ def scrape(registry_or_snapshot, **kwargs) -> str:
 
 # === 2. OpenTelemetry (OTLP) data model (PUSH) =======================================
 
+
 # OTLP metric kinds + temporality enums (the data-model vocabulary, research §3 #5).
 class OtlpKind:
-    GAUGE = "gauge"      # an instantaneous level; non-monotonic; no temporality
-    SUM = "sum"          # an accumulating sum; carries temporality + monotonicity
+    GAUGE = "gauge"  # an instantaneous level; non-monotonic; no temporality
+    SUM = "sum"  # an accumulating sum; carries temporality + monotonicity
 
 
 class OtlpTemporality:
@@ -359,7 +403,7 @@ class OtlpMetric:
     kind: str
     temporality: str
     monotonic: bool
-    points: list = field(default_factory=list)        # [(labels: dict, value)]
+    points: list = field(default_factory=list)  # [(labels: dict, value)]
     resource: str = "host"
     description: str = ""
 
@@ -370,8 +414,9 @@ class OtlpMetric:
         ``isMonotonic`` (a gauge carries neither — that is the point)."""
         data_points = [
             {
-                "attributes": [{"key": k, "value": {"stringValue": str(v)}}
-                               for k, v in labels.items()],
+                "attributes": [
+                    {"key": k, "value": {"stringValue": str(v)}} for k, v in labels.items()
+                ],
                 **_otlp_number(value),
             }
             for labels, value in self.points
@@ -446,11 +491,18 @@ def to_otlp(
         definition = reading.definition if reading is not None else _definition_only_labels(name)
         labels = _labels_for(definition, reading, channel) if definition else {"channel": channel}
         up_points.append((labels, 1 if reading is not None else 0))
-    metrics.append(OtlpMetric(
-        name=_PREFIX + "signal_up", unit=Unit.COUNT, kind=OtlpKind.GAUGE,
-        temporality=OtlpTemporality.UNSPECIFIED, monotonic=False, points=up_points,
-        resource=channel,
-        description="1 if the telemetry source is available on this host, else 0."))
+    metrics.append(
+        OtlpMetric(
+            name=_PREFIX + "signal_up",
+            unit=Unit.COUNT,
+            kind=OtlpKind.GAUGE,
+            temporality=OtlpTemporality.UNSPECIFIED,
+            monotonic=False,
+            points=up_points,
+            resource=channel,
+            description="1 if the telemetry source is available on this host, else 0.",
+        )
+    )
 
     for name in snap:
         reading = snap[name]
@@ -462,26 +514,44 @@ def to_otlp(
         for fld in sorted(derived):
             fm = derived[fld]
             stats = fm.as_dict() if hasattr(fm, "as_dict") else dict(fm)
-            pts = [({"field": fld, "stat": stat}, stats[stat])
-                   for stat in ("count", "min", "max", "avg", "rms")
-                   if stats.get(stat) is not None]
+            pts = [
+                ({"field": fld, "stat": stat}, stats[stat])
+                for stat in ("count", "min", "max", "avg", "rms")
+                if stats.get(stat) is not None
+            ]
             if pts:
-                metrics.append(OtlpMetric(
-                    name=sanitize_metric_name(f"derived.{fld}"), unit=Unit.NONE,
-                    kind=OtlpKind.GAUGE, temporality=OtlpTemporality.UNSPECIFIED,
-                    monotonic=False, points=pts, resource=channel,
-                    description=f"T3 derived .MEASURE figures-of-merit for DataDNA field {fld}."))
+                metrics.append(
+                    OtlpMetric(
+                        name=sanitize_metric_name(f"derived.{fld}"),
+                        unit=Unit.NONE,
+                        kind=OtlpKind.GAUGE,
+                        temporality=OtlpTemporality.UNSPECIFIED,
+                        monotonic=False,
+                        points=pts,
+                        resource=channel,
+                        description=f"T3 derived .MEASURE figures-of-merit for DataDNA field {fld}.",
+                    )
+                )
 
     if sensitivity:
-        pts = [({"signal": getattr(r, "signal", "")}, getattr(r, "abs_delta", 0))
-               for r in sensitivity
-               if getattr(r, "signal", None) is not None and getattr(r, "abs_delta", None) is not None]
+        pts = [
+            ({"signal": getattr(r, "signal", "")}, getattr(r, "abs_delta", 0))
+            for r in sensitivity
+            if getattr(r, "signal", None) is not None and getattr(r, "abs_delta", None) is not None
+        ]
         if pts:
-            metrics.append(OtlpMetric(
-                name=_PREFIX + "signal_sensitivity", unit=Unit.NONE, kind=OtlpKind.GAUGE,
-                temporality=OtlpTemporality.UNSPECIFIED, monotonic=False, points=pts,
-                resource=channel,
-                description="T3 .SENS |Delta score| per signal on the optimized plan cost."))
+            metrics.append(
+                OtlpMetric(
+                    name=_PREFIX + "signal_sensitivity",
+                    unit=Unit.NONE,
+                    kind=OtlpKind.GAUGE,
+                    temporality=OtlpTemporality.UNSPECIFIED,
+                    monotonic=False,
+                    points=pts,
+                    resource=channel,
+                    description="T3 .SENS |Delta score| per signal on the optimized plan cost.",
+                )
+            )
 
     if witness is not None:
         metrics.extend(_otlp_witness_metrics(witness, channel))
@@ -511,33 +581,58 @@ def _otlp_witness_metrics(witness, channel: str) -> list[OtlpMetric]:
     out: list[OtlpMetric] = []
     lbl = {"channel": channel}
     record_attrs = ("accepted", "rejected", "dropped")
-    frame_attrs = ("frames_accepted", "frames_rejected", "frames_missing", "frames_reordered",
-                   "frames_duplicated")
+    frame_attrs = (
+        "frames_accepted",
+        "frames_rejected",
+        "frames_missing",
+        "frames_reordered",
+        "frames_duplicated",
+    )
     has_frame_evidence = any(getattr(witness, attr, 0) for attr in frame_attrs)
     for attr in record_attrs + (frame_attrs if has_frame_evidence else ()):
         val = getattr(witness, attr, None)
         if val is None:
             continue
-        out.append(OtlpMetric(
-            name=_PREFIX + f"telemetry_{attr}", unit=Unit.COUNT, kind=OtlpKind.SUM,
-            temporality=OtlpTemporality.CUMULATIVE, monotonic=True,
-            points=[(lbl, val)], resource=channel,
-            description=f"Telemetry integrity counter: {attr}."))
+        out.append(
+            OtlpMetric(
+                name=_PREFIX + f"telemetry_{attr}",
+                unit=Unit.COUNT,
+                kind=OtlpKind.SUM,
+                temporality=OtlpTemporality.CUMULATIVE,
+                monotonic=True,
+                points=[(lbl, val)],
+                resource=channel,
+                description=f"Telemetry integrity counter: {attr}.",
+            )
+        )
     frame_monotonic = getattr(witness, "frame_monotonic", None)
     if has_frame_evidence and frame_monotonic is not None:
-        out.append(OtlpMetric(
-            name=_PREFIX + "telemetry_frame_monotonic", unit=Unit.COUNT,
-            kind=OtlpKind.GAUGE, temporality=OtlpTemporality.UNSPECIFIED,
-            monotonic=False, points=[(lbl, 1 if frame_monotonic else 0)],
-            resource=channel,
-            description="1 if recovered frame order has no duplicate/reorder, else 0."))
+        out.append(
+            OtlpMetric(
+                name=_PREFIX + "telemetry_frame_monotonic",
+                unit=Unit.COUNT,
+                kind=OtlpKind.GAUGE,
+                temporality=OtlpTemporality.UNSPECIFIED,
+                monotonic=False,
+                points=[(lbl, 1 if frame_monotonic else 0)],
+                resource=channel,
+                description="1 if recovered frame order has no duplicate/reorder, else 0.",
+            )
+        )
     blind = getattr(witness, "blind", None)
     if blind is not None:
-        out.append(OtlpMetric(
-            name=_PREFIX + "telemetry_blind", unit=Unit.COUNT, kind=OtlpKind.GAUGE,
-            temporality=OtlpTemporality.UNSPECIFIED, monotonic=False,
-            points=[(lbl, 1 if blind else 0)], resource=channel,
-            description="1 if no valid telemetry survived (suppression), else 0."))
+        out.append(
+            OtlpMetric(
+                name=_PREFIX + "telemetry_blind",
+                unit=Unit.COUNT,
+                kind=OtlpKind.GAUGE,
+                temporality=OtlpTemporality.UNSPECIFIED,
+                monotonic=False,
+                points=[(lbl, 1 if blind else 0)],
+                resource=channel,
+                description="1 if no valid telemetry survived (suppression), else 0.",
+            )
+        )
     return out
 
 
@@ -550,7 +645,10 @@ def otlp_to_json(registry_or_snapshot_or_dict, *, channel: str = "host", **kwarg
     already-built OTLP dict (serializes it directly). Deterministic: ``sort_keys=False``
     preserves the data-model order, ``separators`` are compact + stable, so two pushes of
     the same snapshot are byte-identical."""
-    if isinstance(registry_or_snapshot_or_dict, dict) and "resourceMetrics" in registry_or_snapshot_or_dict:
+    if (
+        isinstance(registry_or_snapshot_or_dict, dict)
+        and "resourceMetrics" in registry_or_snapshot_or_dict
+    ):
         payload = registry_or_snapshot_or_dict
     else:
         payload = to_otlp(registry_or_snapshot_or_dict, channel=channel, **kwargs)
@@ -572,8 +670,8 @@ def export_push(registry_or_snapshot, *, channel: str = "host", **kwargs) -> byt
 
 _REDFISH_TYPE_FOR_UNIT = {
     Unit.PERCENT: "Percent",
-    Unit.MILLICELSIUS: "Temperature",     # m°C; the value carries the scale
-    Unit.MICROJOULE: "EnergyJoules",      # a microjoule energy counter
+    Unit.MILLICELSIUS: "Temperature",  # m°C; the value carries the scale
+    Unit.MICROJOULE: "EnergyJoules",  # a microjoule energy counter
     Unit.MILLIWATT: "PowerWatts",
     Unit.MICROWATT: "PowerWatts",
     Unit.KHZ: "Frequency",
@@ -613,26 +711,30 @@ def metric_definitions(registry_or_snapshot) -> list[dict]:
                 definitions.append(d)
     out: list[dict] = []
     for d in definitions:
-        out.append({
-            "@odata.type": "#MetricDefinition.v1_0_0.MetricDefinition",
-            "Id": sanitize_metric_name(d.name),
-            "Name": d.name,
-            "MetricType": "Counter" if _is_counter(d) else "Gauge",
-            "Units": d.unit,
-            "MetricDataType": "Integer",
-            "Description": _help_text(d.description or d.name),
-            # provenance + the cost-dim taxonomy live HERE, on the definition (the 4-split).
-            "Oem": {"BCIR": {
-                "Provenance": d.provenance,
-                "CostDim": d.cost_dim or "none",
-                "SamplingModel": d.sampling_model,
-                "SignalId": d.signal_id,
-                "MetricKind": d.metric_kind,
-                "Temporality": d.temporality,
-                "Monotonic": d.monotonic,
-                "MinIntervalNs": d.min_interval_ns,
-            }},
-        })
+        out.append(
+            {
+                "@odata.type": "#MetricDefinition.v1_0_0.MetricDefinition",
+                "Id": sanitize_metric_name(d.name),
+                "Name": d.name,
+                "MetricType": "Counter" if _is_counter(d) else "Gauge",
+                "Units": d.unit,
+                "MetricDataType": "Integer",
+                "Description": _help_text(d.description or d.name),
+                # provenance + the cost-dim taxonomy live HERE, on the definition (the 4-split).
+                "Oem": {
+                    "BCIR": {
+                        "Provenance": d.provenance,
+                        "CostDim": d.cost_dim or "none",
+                        "SamplingModel": d.sampling_model,
+                        "SignalId": d.signal_id,
+                        "MetricKind": d.metric_kind,
+                        "Temporality": d.temporality,
+                        "Monotonic": d.monotonic,
+                        "MinIntervalNs": d.min_interval_ns,
+                    }
+                },
+            }
+        )
     return out
 
 
@@ -661,17 +763,21 @@ def to_redfish_metric_report(
         if reading is None:
             continue
         d = reading.definition
-        values.append({
-            "MetricId": sanitize_metric_name(name),
-            "MetricProperty": d.name,
-            "MetricValue": _fmt_value(reading.value),       # Redfish MetricValue is a string
-            "Timestamp": ts,
-            "Oem": {"BCIR": {
-                "Provenance": reading.provenance,
-                "CostDim": d.cost_dim or "none",
-                "Unit": d.unit,
-            }},
-        })
+        values.append(
+            {
+                "MetricId": sanitize_metric_name(name),
+                "MetricProperty": d.name,
+                "MetricValue": _fmt_value(reading.value),  # Redfish MetricValue is a string
+                "Timestamp": ts,
+                "Oem": {
+                    "BCIR": {
+                        "Provenance": reading.provenance,
+                        "CostDim": d.cost_dim or "none",
+                        "Unit": d.unit,
+                    }
+                },
+            }
+        )
     return {
         "@odata.type": "#MetricReport.v1_4_0.MetricReport",
         "@odata.id": f"/redfish/v1/TelemetryService/MetricReports/{report_id}",
@@ -736,15 +842,24 @@ def parse_redfish_metric_report(report_json) -> list[Reading]:
         else:
             safe_unit = unit if isinstance(unit, str) and unit in Unit.ALL else Unit.NONE
             safe_dim = cost_dim if isinstance(cost_dim, str) and cost_dim in DIMS else None
-            safe_provenance = (provenance if isinstance(provenance, str) and
-                               provenance in {"measured", "modeled", "simulated"}
-                               else "measured")
+            safe_provenance = (
+                provenance
+                if isinstance(provenance, str)
+                and provenance in {"measured", "modeled", "simulated"}
+                else "measured"
+            )
             definition = MetricDefinition(
-                name=name, unit=safe_unit, cost_dim=safe_dim, provenance=safe_provenance,
+                name=name,
+                unit=safe_unit,
+                cost_dim=safe_dim,
+                provenance=safe_provenance,
                 description="parsed from a Redfish MetricReport (foreign source).",
             )
-        prov = (provenance if isinstance(provenance, str) and
-                provenance in {"measured", "modeled", "simulated"} else "measured")
+        prov = (
+            provenance
+            if isinstance(provenance, str) and provenance in {"measured", "modeled", "simulated"}
+            else "measured"
+        )
         out.append(Reading(definition=definition, value=value, provenance=prov))
     return out
 
@@ -752,8 +867,9 @@ def parse_redfish_metric_report(report_json) -> list[Reading]:
 def _coerce_json(report_json):
     """Accept a dict or bounded strict JSON text/bytes and return the parsed object."""
     if isinstance(report_json, str):
-        return strict_json_loads(report_json, "Redfish MetricReport",
-                                 max_bytes=_MAX_REDFISH_JSON_BYTES)
+        return strict_json_loads(
+            report_json, "Redfish MetricReport", max_bytes=_MAX_REDFISH_JSON_BYTES
+        )
     if isinstance(report_json, (bytes, bytearray)):
         if len(report_json) > _MAX_REDFISH_JSON_BYTES:
             raise ValueError("Redfish MetricReport exceeds the JSON byte limit")
@@ -761,8 +877,7 @@ def _coerce_json(report_json):
             text = bytes(report_json).decode("utf-8")
         except UnicodeError as exc:
             raise ValueError("Redfish MetricReport is not UTF-8") from exc
-        return strict_json_loads(text, "Redfish MetricReport",
-                                 max_bytes=_MAX_REDFISH_JSON_BYTES)
+        return strict_json_loads(text, "Redfish MetricReport", max_bytes=_MAX_REDFISH_JSON_BYTES)
     return report_json
 
 

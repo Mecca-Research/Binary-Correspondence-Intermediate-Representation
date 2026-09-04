@@ -62,10 +62,13 @@ _UTF8 = Primitive(Universal.UTF8_STRING, "UTF8String")
 
 # --- the schema -------------------------------------------------------------------------------
 
-ATTRIBUTE_TYPE = Sequence((
-    Component("name", _UTF8),
-    Component("value", _UTF8),
-), name="Attribute")
+ATTRIBUTE_TYPE = Sequence(
+    (
+        Component("name", _UTF8),
+        Component("value", _UTF8),
+    ),
+    name="Attribute",
+)
 
 #: An edge names its target by INDEX. That single choice is what makes the representation
 #: cycle-tolerant, and it is why this is a node TABLE rather than a nested document.
@@ -74,28 +77,36 @@ ATTRIBUTE_TYPE = Sequence((
 #: so a node with several outgoing edges keeps them distinguishable without relying on
 #: order — though order is preserved too, because SEQUENCE OF is ordered and a program's
 #: operand list is not a set.
-EDGE_TYPE = Sequence((
-    Component("label", _UTF8),
-    Component("target", _INT),
-), name="Edge")
+EDGE_TYPE = Sequence(
+    (
+        Component("label", _UTF8),
+        Component("target", _INT),
+    ),
+    name="Edge",
+)
 
-NODE_TYPE = Sequence((
-    #: The object-set row key. The table types the node; see the module docstring for why
-    #: it is not an OPEN TYPE discriminator.
-    Component("kind", _UTF8),
-    Component("label", _UTF8, default=""),
-    Component("attributes", SequenceOf(ATTRIBUTE_TYPE, "SEQUENCE OF Attribute"),
-              default=()),
-    Component("edges", SequenceOf(EDGE_TYPE, "SEQUENCE OF Edge"), default=()),
-), name="Node")
+NODE_TYPE = Sequence(
+    (
+        #: The object-set row key. The table types the node; see the module docstring for why
+        #: it is not an OPEN TYPE discriminator.
+        Component("kind", _UTF8),
+        Component("label", _UTF8, default=""),
+        Component("attributes", SequenceOf(ATTRIBUTE_TYPE, "SEQUENCE OF Attribute"), default=()),
+        Component("edges", SequenceOf(EDGE_TYPE, "SEQUENCE OF Edge"), default=()),
+    ),
+    name="Node",
+)
 
-NODE_GRAPH = Sequence((
-    Component("version", _INT),
-    Component("nodes", SequenceOf(NODE_TYPE, "SEQUENCE OF Node")),
-    #: Entry points, by index. A graph with no roots is legal and means "a library" —
-    #: refusing it would make the schema unable to describe half of what it is for.
-    Component("roots", SequenceOf(_INT, "SEQUENCE OF INTEGER"), default=()),
-), name="NodeGraph")
+NODE_GRAPH = Sequence(
+    (
+        Component("version", _INT),
+        Component("nodes", SequenceOf(NODE_TYPE, "SEQUENCE OF Node")),
+        #: Entry points, by index. A graph with no roots is legal and means "a library" —
+        #: refusing it would make the schema unable to describe half of what it is for.
+        Component("roots", SequenceOf(_INT, "SEQUENCE OF INTEGER"), default=()),
+    ),
+    name="NodeGraph",
+)
 
 
 # --- the in-memory form ---------------------------------------------------------------------
@@ -131,10 +142,14 @@ def graph_to_value(graph: Graph) -> dict:
     return {
         "version": GRAPH_VERSION,
         "nodes": tuple(
-            {"kind": node.kind, "label": node.label,
-             "attributes": tuple({"name": k, "value": v} for k, v in node.attributes),
-             "edges": tuple({"label": e.label, "target": e.target} for e in node.edges)}
-            for node in graph.nodes),
+            {
+                "kind": node.kind,
+                "label": node.label,
+                "attributes": tuple({"name": k, "value": v} for k, v in node.attributes),
+                "edges": tuple({"label": e.label, "target": e.target} for e in node.edges),
+            }
+            for node in graph.nodes
+        ),
         "roots": tuple(graph.roots),
     }
 
@@ -144,15 +159,20 @@ def value_to_graph(value: dict) -> Graph:
     if version != GRAPH_VERSION:
         raise Asn1Error(
             f"node-graph version {version} is not {GRAPH_VERSION}; this reader refuses "
-            f"rather than inferring the shape from which members are present")
+            f"rather than inferring the shape from which members are present"
+        )
     return Graph(
         nodes=tuple(
-            Node(kind=n["kind"], label=n.get("label", ""),
-                 attributes=tuple((a["name"], a["value"]) for a in n.get("attributes", ())),
-                 edges=tuple(Edge(label=e["label"], target=e["target"])
-                             for e in n.get("edges", ())))
-            for n in value.get("nodes", ())),
-        roots=tuple(value.get("roots", ())))
+            Node(
+                kind=n["kind"],
+                label=n.get("label", ""),
+                attributes=tuple((a["name"], a["value"]) for a in n.get("attributes", ())),
+                edges=tuple(Edge(label=e["label"], target=e["target"]) for e in n.get("edges", ())),
+            )
+            for n in value.get("nodes", ())
+        ),
+        roots=tuple(value.get("roots", ())),
+    )
 
 
 def graph_to_jer(graph: Graph, *, rules: JerRules = JerRules.CANONICAL) -> bytes:
@@ -217,9 +237,14 @@ class GraphReport:
         return tuple(r for r in self.resolutions if not r.resolved)
 
 
-def resolve(graph: Graph, table: ObjectSetTable, *, kind_field: str = "kind",
-            payload_field: str = "Payload",
-            edge_field: str | None = "TargetKind") -> GraphReport:
+def resolve(
+    graph: Graph,
+    table: ObjectSetTable,
+    *,
+    kind_field: str = "kind",
+    payload_field: str = "Payload",
+    edge_field: str | None = "TargetKind",
+) -> GraphReport:
     """Type every node and edge against the object set. Never raises on the graph's content.
 
     §10.19's row selection is used exactly as the standard defines it — match the referenced
@@ -235,17 +260,23 @@ def resolve(graph: Graph, table: ObjectSetTable, *, kind_field: str = "kind",
     for index, node in enumerate(graph.nodes):
         rows = table.select({kind_field: node.kind})
         if not rows:
-            reason = (f"no row of {table.object_class} has {kind_field} = {node.kind!r}"
-                      + ("; the set is extensible, so this is a peer using an object "
-                         "outside it (X.681 12.9)" if table.extensible else
-                         "; the set is NOT extensible, so this is a schema violation"))
+            reason = f"no row of {table.object_class} has {kind_field} = {node.kind!r}" + (
+                "; the set is extensible, so this is a peer using an object outside it (X.681 12.9)"
+                if table.extensible
+                else "; the set is NOT extensible, so this is a schema violation"
+            )
             resolutions.append(Resolution(index, node.kind, None, reason))
             continue
         if len(rows) > 1:
-            resolutions.append(Resolution(
-                index, node.kind, None,
-                f"{len(rows)} rows match {kind_field} = {node.kind!r}; a table constraint "
-                f"must select at most one"))
+            resolutions.append(
+                Resolution(
+                    index,
+                    node.kind,
+                    None,
+                    f"{len(rows)} rows match {kind_field} = {node.kind!r}; a table constraint "
+                    f"must select at most one",
+                )
+            )
             continue
         resolutions.append(Resolution(index, node.kind, rows[0].get(payload_field)))
 
@@ -256,15 +287,26 @@ def resolve(graph: Graph, table: ObjectSetTable, *, kind_field: str = "kind",
             expected = rows[0].get(edge_field)
         for edge in node.edges:
             if not 0 <= edge.target < len(graph.nodes):
-                faults.append(EdgeFault(index, edge.label, edge.target,
-                                        f"target {edge.target} is outside the node table "
-                                        f"(0..{len(graph.nodes) - 1})"))
+                faults.append(
+                    EdgeFault(
+                        index,
+                        edge.label,
+                        edge.target,
+                        f"target {edge.target} is outside the node table "
+                        f"(0..{len(graph.nodes) - 1})",
+                    )
+                )
                 continue
             if expected is not None and graph.nodes[edge.target].kind != expected:
-                faults.append(EdgeFault(
-                    index, edge.label, edge.target,
-                    f"the table says {node.kind!r} points at {expected!r}, but node "
-                    f"{edge.target} is {graph.nodes[edge.target].kind!r}"))
+                faults.append(
+                    EdgeFault(
+                        index,
+                        edge.label,
+                        edge.target,
+                        f"the table says {node.kind!r} points at {expected!r}, but node "
+                        f"{edge.target} is {graph.nodes[edge.target].kind!r}",
+                    )
+                )
     return GraphReport(tuple(resolutions), tuple(faults))
 
 
@@ -301,12 +343,17 @@ def content_address(graph: Graph, index: int) -> str:
     visit(index)
     # Renumber every edge into traversal order, so the encoding carries no absolute index.
     renumbered = tuple(
-        Node(kind=node.kind, label=node.label, attributes=node.attributes,
-             edges=tuple(
-                 Edge(edge.label,
-                      order[edge.target] if 0 <= edge.target < len(graph.nodes) else -1)
-                 for edge in node.edges))
-        for node in collected)
+        Node(
+            kind=node.kind,
+            label=node.label,
+            attributes=node.attributes,
+            edges=tuple(
+                Edge(edge.label, order[edge.target] if 0 <= edge.target < len(graph.nodes) else -1)
+                for edge in node.edges
+            ),
+        )
+        for node in collected
+    )
     subgraph = Graph(nodes=renumbered, roots=(0,))
     return hashlib.sha256(graph_to_jer(subgraph)).hexdigest()
 
@@ -338,24 +385,44 @@ def dialect_to_graph(module) -> Graph:
         return tuple(sorted((k, v) for k, v in pairs if v is not None))
 
     root = len(nodes)
-    nodes.append(Node(kind=_MODULE, label=module.name, attributes=attributes((
-        ("oid", ",".join(str(a) for a in module.oid)),
-        ("rules", module.rules),
-        ("default_tagging", module.default_tagging),
-    ))))
+    nodes.append(
+        Node(
+            kind=_MODULE,
+            label=module.name,
+            attributes=attributes(
+                (
+                    ("oid", ",".join(str(a) for a in module.oid)),
+                    ("rules", module.rules),
+                    ("default_tagging", module.default_tagging),
+                )
+            ),
+        )
+    )
 
     for kind in module.types:
         type_index[kind.name] = len(nodes)
-        nodes.append(Node(kind=_TYPE, label=kind.name, attributes=attributes((
-            ("kind", kind.kind),
-            ("universal", None if kind.universal is None else str(kind.universal)),
-            ("constraint_low", None if kind.constraint_low is None
-             else str(kind.constraint_low)),
-            ("constraint_high", None if kind.constraint_high is None
-             else str(kind.constraint_high)),
-            ("size_low", None if kind.size_low is None else str(kind.size_low)),
-            ("size_high", None if kind.size_high is None else str(kind.size_high)),
-        ))))
+        nodes.append(
+            Node(
+                kind=_TYPE,
+                label=kind.name,
+                attributes=attributes(
+                    (
+                        ("kind", kind.kind),
+                        ("universal", None if kind.universal is None else str(kind.universal)),
+                        (
+                            "constraint_low",
+                            None if kind.constraint_low is None else str(kind.constraint_low),
+                        ),
+                        (
+                            "constraint_high",
+                            None if kind.constraint_high is None else str(kind.constraint_high),
+                        ),
+                        ("size_low", None if kind.size_low is None else str(kind.size_low)),
+                        ("size_high", None if kind.size_high is None else str(kind.size_high)),
+                    )
+                ),
+            )
+        )
 
     module_edges: list[Edge] = []
     for kind in module.types:
@@ -368,53 +435,77 @@ def dialect_to_graph(module) -> Graph:
             if kind.element in type_index:
                 edges.append(Edge("element", type_index[kind.element]))
             else:
-                nodes[at] = Node(kind=_TYPE, label=kind.name,
-                                 attributes=nodes[at].attributes +
-                                 (("element", kind.element),), edges=())
+                nodes[at] = Node(
+                    kind=_TYPE,
+                    label=kind.name,
+                    attributes=nodes[at].attributes + (("element", kind.element),),
+                    edges=(),
+                )
         for component in kind.components:
             component_at = len(nodes)
-            component_edges = ([Edge("type", type_index[component.type])]
-                               if component.type in type_index else [])
-            nodes.append(Node(
-                kind=_COMPONENT, label=component.name,
-                attributes=attributes((
-                    ("type", component.type),
-                    ("tag", None if component.tag is None else str(component.tag)),
-                    ("tagging", component.tagging),
-                    ("optional", "1" if component.optional else None),
-                    ("has_default", "1" if component.has_default else None),
-                    ("default_value", component.default_value),
-                )),
-                edges=tuple(component_edges)))
+            component_edges = (
+                [Edge("type", type_index[component.type])] if component.type in type_index else []
+            )
+            nodes.append(
+                Node(
+                    kind=_COMPONENT,
+                    label=component.name,
+                    attributes=attributes(
+                        (
+                            ("type", component.type),
+                            ("tag", None if component.tag is None else str(component.tag)),
+                            ("tagging", component.tagging),
+                            ("optional", "1" if component.optional else None),
+                            ("has_default", "1" if component.has_default else None),
+                            ("default_value", component.default_value),
+                        )
+                    ),
+                    edges=tuple(component_edges),
+                )
+            )
             edges.append(Edge("component", component_at))
         if edges:
-            nodes[at] = Node(kind=_TYPE, label=nodes[at].label,
-                             attributes=nodes[at].attributes,
-                             edges=tuple(list(nodes[at].edges) + edges))
+            nodes[at] = Node(
+                kind=_TYPE,
+                label=nodes[at].label,
+                attributes=nodes[at].attributes,
+                edges=tuple(list(nodes[at].edges) + edges),
+            )
 
     for operation in module.operations:
         at = len(nodes)
-        nodes.append(Node(
-            kind=_OPERATION, label=operation.name,
-            attributes=attributes((
-                ("op", operation.op),
-                ("type", operation.type),
-                ("rules", operation.rules),
-                ("strict_der", "1" if operation.strict_der else None),
-                ("strict_canonical", "1" if operation.strict_canonical else None),
-                ("source", operation.source),
-                ("from", operation.from_rules),
-                ("to", operation.to_rules),
-                ("preserve_value", "1" if operation.preserve_value else None),
-                ("native", operation.native),
-                ("additive", "1" if operation.additive else None),
-            )),
-            edges=(Edge("type", type_index[operation.type]),)
-            if operation.type in type_index else ()))
+        nodes.append(
+            Node(
+                kind=_OPERATION,
+                label=operation.name,
+                attributes=attributes(
+                    (
+                        ("op", operation.op),
+                        ("type", operation.type),
+                        ("rules", operation.rules),
+                        ("strict_der", "1" if operation.strict_der else None),
+                        ("strict_canonical", "1" if operation.strict_canonical else None),
+                        ("source", operation.source),
+                        ("from", operation.from_rules),
+                        ("to", operation.to_rules),
+                        ("preserve_value", "1" if operation.preserve_value else None),
+                        ("native", operation.native),
+                        ("additive", "1" if operation.additive else None),
+                    )
+                ),
+                edges=(Edge("type", type_index[operation.type]),)
+                if operation.type in type_index
+                else (),
+            )
+        )
         module_edges.append(Edge("operation", at))
 
-    nodes[root] = Node(kind=_MODULE, label=nodes[root].label,
-                       attributes=nodes[root].attributes, edges=tuple(module_edges))
+    nodes[root] = Node(
+        kind=_MODULE,
+        label=nodes[root].label,
+        attributes=nodes[root].attributes,
+        edges=tuple(module_edges),
+    )
     return Graph(nodes=tuple(nodes), roots=(root,))
 
 
@@ -422,8 +513,7 @@ def graph_to_dialect(graph: Graph):
     """The inverse. Reads the node table back into a `DialectModule`."""
     from .dialect import DialectComponent, DialectModule, DialectOperation, DialectType
 
-    roots = [i for i in graph.roots if 0 <= i < len(graph.nodes)
-             and graph.nodes[i].kind == _MODULE]
+    roots = [i for i in graph.roots if 0 <= i < len(graph.nodes) and graph.nodes[i].kind == _MODULE]
     if len(roots) != 1:
         raise Asn1Error(f"a dialect graph has exactly one module root, found {len(roots)}")
     root = roots[0]
@@ -449,29 +539,47 @@ def graph_to_dialect(graph: Graph):
                     element = graph.nodes[inner.target].label
                 elif inner.label == "component":
                     c = inner.target
-                    components.append(DialectComponent(
-                        name=graph.nodes[c].label, type=attr(c, "type", ""),
-                        tag=number(c, "tag"), tagging=attr(c, "tagging"),
-                        optional=attr(c, "optional") == "1",
-                        has_default=attr(c, "has_default") == "1",
-                        default_value=attr(c, "default_value")))
-            types.append(DialectType(
-                name=node.label, kind=attr(at, "kind", ""),
-                universal=number(at, "universal"), element=element,
-                constraint_low=number(at, "constraint_low"),
-                constraint_high=number(at, "constraint_high"),
-                size_low=number(at, "size_low"), size_high=number(at, "size_high"),
-                components=tuple(components)))
+                    components.append(
+                        DialectComponent(
+                            name=graph.nodes[c].label,
+                            type=attr(c, "type", ""),
+                            tag=number(c, "tag"),
+                            tagging=attr(c, "tagging"),
+                            optional=attr(c, "optional") == "1",
+                            has_default=attr(c, "has_default") == "1",
+                            default_value=attr(c, "default_value"),
+                        )
+                    )
+            types.append(
+                DialectType(
+                    name=node.label,
+                    kind=attr(at, "kind", ""),
+                    universal=number(at, "universal"),
+                    element=element,
+                    constraint_low=number(at, "constraint_low"),
+                    constraint_high=number(at, "constraint_high"),
+                    size_low=number(at, "size_low"),
+                    size_high=number(at, "size_high"),
+                    components=tuple(components),
+                )
+            )
         elif edge.label == "operation":
-            operations.append(DialectOperation(
-                op=attr(at, "op", ""), name=node.label, type=attr(at, "type", ""),
-                rules=attr(at, "rules"),
-                strict_der=attr(at, "strict_der") == "1",
-                strict_canonical=attr(at, "strict_canonical") == "1",
-                source=attr(at, "source"), from_rules=attr(at, "from"),
-                to_rules=attr(at, "to"),
-                preserve_value=attr(at, "preserve_value") == "1",
-                native=attr(at, "native"), additive=attr(at, "additive") == "1"))
+            operations.append(
+                DialectOperation(
+                    op=attr(at, "op", ""),
+                    name=node.label,
+                    type=attr(at, "type", ""),
+                    rules=attr(at, "rules"),
+                    strict_der=attr(at, "strict_der") == "1",
+                    strict_canonical=attr(at, "strict_canonical") == "1",
+                    source=attr(at, "source"),
+                    from_rules=attr(at, "from"),
+                    to_rules=attr(at, "to"),
+                    preserve_value=attr(at, "preserve_value") == "1",
+                    native=attr(at, "native"),
+                    additive=attr(at, "additive") == "1",
+                )
+            )
 
     oid = attr(root, "oid", "")
     return DialectModule(
@@ -479,24 +587,47 @@ def graph_to_dialect(graph: Graph):
         oid=tuple(int(a) for a in oid.split(",")) if oid else (),
         rules=attr(root, "rules", ""),
         default_tagging=attr(root, "default_tagging", ""),
-        types=tuple(types), operations=tuple(operations))
+        types=tuple(types),
+        operations=tuple(operations),
+    )
 
 
 #: The object set that types a dialect graph — X.681 §13's associated table, with a
 #: `TargetKind` column so `resolve` can check that an edge points at what the class says.
 #: Extensible, because a graph carrying a node kind this table does not know is exactly the
 #: versioned-peer case §12.9 exists for.
-DIALECT_NODE_CLASS = ObjectSetTable("BCIR-DIALECT-NODE", rows=(
-    {"kind": _MODULE, "Payload": _UTF8, "TargetKind": None},
-    {"kind": _TYPE, "Payload": _UTF8, "TargetKind": None},
-    {"kind": _COMPONENT, "Payload": _UTF8, "TargetKind": _TYPE},
-    {"kind": _OPERATION, "Payload": _UTF8, "TargetKind": _TYPE},
-), extensible=True)
+DIALECT_NODE_CLASS = ObjectSetTable(
+    "BCIR-DIALECT-NODE",
+    rows=(
+        {"kind": _MODULE, "Payload": _UTF8, "TargetKind": None},
+        {"kind": _TYPE, "Payload": _UTF8, "TargetKind": None},
+        {"kind": _COMPONENT, "Payload": _UTF8, "TargetKind": _TYPE},
+        {"kind": _OPERATION, "Payload": _UTF8, "TargetKind": _TYPE},
+    ),
+    extensible=True,
+)
 
 
 __all__ = [
-    "ATTRIBUTE_TYPE", "DIALECT_NODE_CLASS", "EDGE_TYPE", "GRAPH_MODULE_OID",
-    "GRAPH_VERSION", "NODE_GRAPH", "NODE_TYPE", "Edge", "EdgeFault", "Graph", "GraphReport",
-    "Node", "Resolution", "content_address", "dialect_to_graph", "graph_to_dialect",
-    "graph_to_jer", "graph_to_value", "jer_to_graph", "resolve", "value_to_graph",
+    "ATTRIBUTE_TYPE",
+    "DIALECT_NODE_CLASS",
+    "EDGE_TYPE",
+    "GRAPH_MODULE_OID",
+    "GRAPH_VERSION",
+    "NODE_GRAPH",
+    "NODE_TYPE",
+    "Edge",
+    "EdgeFault",
+    "Graph",
+    "GraphReport",
+    "Node",
+    "Resolution",
+    "content_address",
+    "dialect_to_graph",
+    "graph_to_dialect",
+    "graph_to_jer",
+    "graph_to_value",
+    "jer_to_graph",
+    "resolve",
+    "value_to_graph",
 ]

@@ -51,8 +51,9 @@ def _index_expr(layout: str, fields: int, records: int) -> tuple[str, str]:
     return f"(f) * {records}u + (r)", f"SoA: data[f*N + r] (N={records}, field-contiguous)"
 
 
-def emit_layout_kernel_c(plan: LayoutPlan, fn_name: str = "bcir_layout", elem: str = "f32",
-                         records: int | None = None) -> str:
+def emit_layout_kernel_c(
+    plan: LayoutPlan, fn_name: str = "bcir_layout", elem: str = "f32", records: int | None = None
+) -> str:
     """Emit the multi-field reduction kernel ``out[r] = sum_f data[r,f]*weight[f]`` lowered under the layout
     the cost model CHOSE (``plan.layout``) -- the emit HONORS the priced choice instead of a hard-coded
     ``soa`` constant. The only thing the chosen layout changes is the ``DATA(r,f)`` addressing macro
@@ -103,7 +104,9 @@ def emit_layout_selfcheck_c(fields: int, records: int, elem: str = "f32") -> str
     ``emit_layout_kernel_c`` with the corresponding ``LayoutPlan`` layout -- so the self-check exercises the
     REAL emit path, not a hand-written addressing."""
     if fields < 1 or records < 1:
-        raise ValueError(f"layout self-check needs fields>=1, records>=1; got F={fields} N={records}")
+        raise ValueError(
+            f"layout self-check needs fields>=1, records>=1; got F={fields} N={records}"
+        )
     ctype = _ctype(elem)
     soa_plan = LayoutPlan(rid=0, fields=fields, layout=SOA, soa_cost=0, aos_cost=0, accesses=())
     aos_plan = LayoutPlan(rid=0, fields=fields, layout=AOS, soa_cost=0, aos_cost=0, accesses=())
@@ -117,12 +120,15 @@ def emit_layout_selfcheck_c(fields: int, records: int, elem: str = "f32") -> str
     else:
         val = "(float)((int)((r * 7u + f * 3u) % 17u) - 8)"
         wexpr = "(float)((int)((f * 5u + 1u) % 9u) - 4)"
-        cmp = "soa_out[r] != aos_out[r]"   # integer-valued floats -> exact, so == is sound
+        cmp = "soa_out[r] != aos_out[r]"  # integer-valued floats -> exact, so == is sound
         fmt = "%g"
     return (
         "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
         + ("#include <stdint.h>\n" if elem == "i32" else "")
-        + "\n" + soa_kernel + "\n" + aos_kernel
+        + "\n"
+        + soa_kernel
+        + "\n"
+        + aos_kernel
         + f"""
 int main(void) {{
   const size_t F = {fields}u, N = {records}u;
@@ -156,7 +162,9 @@ int main(void) {{
     )
 
 
-def reference_layout_out(fields: int, records: int, data_soa, data_aos, weight) -> tuple[list, list]:
+def reference_layout_out(
+    fields: int, records: int, data_soa, data_aos, weight
+) -> tuple[list, list]:
     """The pure-Python oracle of the two layouts' output -- ``out[r] = sum_f data[r,f]*weight[f]`` evaluated
     by addressing ``data_soa`` as SoA (``f*N+r``) and ``data_aos`` as AoS (``r*F+f``). When both backing
     arrays hold the SAME logical ``data[r,f]``, the two outputs are IDENTICAL -- the invariance, proven in
@@ -172,12 +180,14 @@ def reference_layout_out(fields: int, records: int, data_soa, data_aos, weight) 
     return soa_out, aos_out
 
 
-def compile_and_run_layout_c(fields: int, records: int, elem: str = "f32",
-                             std: str = "c23", workdir: str | None = None) -> tuple[bool, str]:
+def compile_and_run_layout_c(
+    fields: int, records: int, elem: str = "f32", std: str = "c23", workdir: str | None = None
+) -> tuple[bool, str]:
     """Emit the layout invariance self-check, compile under ``-std=<std>``, run, and confirm it printed OK
     (SoA out == AoS out, bit-exact). Returns (ok, combined_output). Self-skips cleanly (False, message) when
     no C compiler is visible, exactly like ``c_kernel.compile_and_run_c``."""
     from shutil import which
+
     cc = which("clang") or which("cc") or which("gcc")
     if cc is None:
         return False, "no C compiler on PATH"
@@ -188,8 +198,11 @@ def compile_and_run_layout_c(fields: int, records: int, elem: str = "f32",
         exe = os.path.join(workdir, "lprog")
         with open(src, "w") as f:
             f.write(emit_layout_selfcheck_c(fields, records, elem))
-        build = subprocess.run([cc, f"-std={std}", "-O2", "-Wall", "-Wextra", src, "-o", exe],
-                               capture_output=True, text=True)
+        build = subprocess.run(
+            [cc, f"-std={std}", "-O2", "-Wall", "-Wextra", src, "-o", exe],
+            capture_output=True,
+            text=True,
+        )
         if build.returncode != 0:
             return False, "layout build failed:\n" + build.stdout + build.stderr
         run = subprocess.run([exe], capture_output=True, text=True)
@@ -198,4 +211,5 @@ def compile_and_run_layout_c(fields: int, records: int, elem: str = "f32",
     finally:
         if created:
             import shutil
+
             shutil.rmtree(workdir, ignore_errors=True)

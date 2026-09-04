@@ -59,12 +59,12 @@ import math
 from dataclasses import dataclass, field
 
 from .autodiff import Tape, evaluate, grad
-from .losses import (binary_cross_entropy_with_logits, mse, mse_value,
-                     softmax_cross_entropy)
+from .losses import binary_cross_entropy_with_logits, mse, mse_value, softmax_cross_entropy
 from ..lower.optimizers import adam_step, momentum_step, rmsprop_step, sgd_step
 
 
 # === a deterministic, dependency-free shuffle (no random / numpy -- a tiny reproducible LCG) ============
+
 
 def _lcg_permutation(n: int, seed: int) -> list[int]:
     """A DETERMINISTIC permutation of ``range(n)`` keyed by ``seed`` -- a Fisher-Yates shuffle whose random
@@ -73,7 +73,9 @@ def _lcg_permutation(n: int, seed: int) -> list[int]:
     is what makes an epoch's mini-batch order reproducible. The LCG is for SHUFFLE order only -- never for any
     legality-relevant choice (it is cost/optimization-side)."""
     idx = list(range(n))
-    state = (int(seed) & 0xFFFFFFFFFFFFFFFF) or 0x9E3779B97F4A7C15   # avoid a degenerate all-zero state
+    state = (
+        int(seed) & 0xFFFFFFFFFFFFFFFF
+    ) or 0x9E3779B97F4A7C15  # avoid a degenerate all-zero state
     for i in range(n - 1, 0, -1):
         # glibc-style 64-bit LCG step; take the high bits (better-distributed than the low ones).
         state = (state * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
@@ -83,6 +85,7 @@ def _lcg_permutation(n: int, seed: int) -> list[int]:
 
 
 # === the dataset / batching abstraction (plain lists/tuples, deterministic) =============================
+
 
 @dataclass(frozen=True)
 class Dataset:
@@ -125,7 +128,7 @@ def minibatches(dataset: Dataset, batch_size: int, *, seed: int = 0):
     n = len(dataset)
     order = _lcg_permutation(n, seed)
     for start in range(0, n, batch_size):
-        chunk = order[start:start + batch_size]
+        chunk = order[start : start + batch_size]
         xb = tuple(dataset.X[i] for i in chunk)
         yb = tuple(dataset.y[i] for i in chunk)
         yield xb, yb
@@ -142,7 +145,9 @@ def train_val_split(dataset: Dataset, frac: float, *, seed: int = 0) -> tuple[Da
     n = len(dataset)
     n_val = round(frac * n)
     if n_val >= n:
-        raise ValueError(f"train_val_split: frac={frac} leaves no training data (n_val={n_val} of {n})")
+        raise ValueError(
+            f"train_val_split: frac={frac} leaves no training data (n_val={n_val} of {n})"
+        )
     order = _lcg_permutation(n, seed)
     val_idx = order[:n_val]
     train_idx = order[n_val:]
@@ -154,6 +159,7 @@ def train_val_split(dataset: Dataset, frac: float, *, seed: int = 0) -> tuple[Da
 
 
 # === eval metrics (reference impls, deterministic, stdlib only) =========================================
+
 
 def accuracy(preds, labels) -> float:
     """Classification accuracy -- the fraction of correct predictions. Two modes, inferred from the shape of
@@ -172,7 +178,7 @@ def accuracy(preds, labels) -> float:
     correct = 0
     for p, y in zip(preds, labels):
         if isinstance(p, (list, tuple)):
-            pred_cls = max(range(len(p)), key=lambda k: p[k])     # argmax, ties -> lowest index
+            pred_cls = max(range(len(p)), key=lambda k: p[k])  # argmax, ties -> lowest index
         else:
             pred_cls = 1 if p >= 0.5 else 0
         if pred_cls == int(round(y)):
@@ -215,8 +221,15 @@ def binary_f1(preds, labels, *, threshold: float = 0.5) -> dict:
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
-    return {"precision": precision, "recall": recall, "f1": f1,
-            "tp": tp, "fp": fp, "fn": fn, "tn": tn}
+    return {
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "tn": tn,
+    }
 
 
 # === the loss spec (which M1 loss + which of the two composition paths) =================================
@@ -232,6 +245,7 @@ _LOSSES = _CLOSED_SET_LOSSES + _TRANSCENDENTAL_LOSSES
 
 
 # === the optimizer state manager (drives the M2 reference rules across steps) ===========================
+
 
 class _OptState:
     """Holds + advances one M2 optimizer's per-parameter state across training steps, dispatching by name to
@@ -256,22 +270,37 @@ class _OptState:
         if self.name == "sgd":
             return sgd_step(params, grads, self.lr)
         if self.name == "momentum":
-            new_p, self.velocity = momentum_step(params, grads, self.velocity, self.lr,
-                                                 beta=self.hp.get("beta", 0.9))
+            new_p, self.velocity = momentum_step(
+                params, grads, self.velocity, self.lr, beta=self.hp.get("beta", 0.9)
+            )
             return new_p
         if self.name == "rmsprop":
-            new_p, self.sq_avg = rmsprop_step(params, grads, self.sq_avg, self.lr,
-                                             beta=self.hp.get("beta", 0.9), eps=self.hp.get("eps", 1e-8))
+            new_p, self.sq_avg = rmsprop_step(
+                params,
+                grads,
+                self.sq_avg,
+                self.lr,
+                beta=self.hp.get("beta", 0.9),
+                eps=self.hp.get("eps", 1e-8),
+            )
             return new_p
         # adam
-        new_p, self.m, self.v, self.t = adam_step(params, grads, self.m, self.v, self.t, self.lr,
-                                                  beta1=self.hp.get("beta1", 0.9),
-                                                  beta2=self.hp.get("beta2", 0.999),
-                                                  eps=self.hp.get("eps", 1e-8))
+        new_p, self.m, self.v, self.t = adam_step(
+            params,
+            grads,
+            self.m,
+            self.v,
+            self.t,
+            self.lr,
+            beta1=self.hp.get("beta1", 0.9),
+            beta2=self.hp.get("beta2", 0.999),
+            eps=self.hp.get("eps", 1e-8),
+        )
         return new_p
 
 
 # === the per-batch forward -> loss -> gradient (the M1 two-path composition) ============================
+
 
 def _batch_loss_and_grad(model, params, param_names, xb, yb, loss):
     """ONE mini-batch: build the model's forward on this batch, compute the M1 loss, and the per-parameter
@@ -281,7 +310,7 @@ def _batch_loss_and_grad(model, params, param_names, xb, yb, loss):
     composes M1 + autodiff; the loop calls it, then hands ``grad_dict`` to the M2 optimizer."""
     env = dict(zip(param_names, params))
     tape = Tape()
-    out = model(tape, param_names, xb)         # the model builds the forward into `tape`; returns node(s)
+    out = model(tape, param_names, xb)  # the model builds the forward into `tape`; returns node(s)
     nb = len(xb)
 
     if loss == "mse":
@@ -303,9 +332,11 @@ def _batch_loss_and_grad(model, params, param_names, xb, yb, loss):
         # `out` is a list of scalar logit node ids, one per example (binary).
         for logit_node, y in zip(out, yb):
             z = evaluate(tape, logit_node, env)
-            lval, grad_logits = binary_cross_entropy_with_logits([z], [y])  # mean over 1 -> the per-example loss
-            seed = grad_logits[0]                                            # dL/dz = sigmoid(z) - y
-            dlogit = grad(tape, logit_node, env).grads                       # d(logit)/dparam, seed 1.0
+            lval, grad_logits = binary_cross_entropy_with_logits(
+                [z], [y]
+            )  # mean over 1 -> the per-example loss
+            seed = grad_logits[0]  # dL/dz = sigmoid(z) - y
+            dlogit = grad(tape, logit_node, env).grads  # d(logit)/dparam, seed 1.0
             for name in param_names:
                 grad_acc[name] += seed * dlogit.get(name, 0.0)
             total_loss += lval
@@ -317,10 +348,10 @@ def _batch_loss_and_grad(model, params, param_names, xb, yb, loss):
         zvec = [evaluate(tape, ln, env) for ln in logit_row]
         K = len(zvec)
         onehot = [1.0 if k == int(round(y)) else 0.0 for k in range(K)]
-        lval, grad_logits = softmax_cross_entropy(zvec, onehot)             # grad = softmax(z) - onehot
+        lval, grad_logits = softmax_cross_entropy(zvec, onehot)  # grad = softmax(z) - onehot
         for k, ln in enumerate(logit_row):
             seed = grad_logits[k]
-            dlogit = grad(tape, ln, env).grads                              # d(logit_k)/dparam
+            dlogit = grad(tape, ln, env).grads  # d(logit_k)/dparam
             for name in param_names:
                 grad_acc[name] += seed * dlogit.get(name, 0.0)
         total_loss += lval
@@ -329,6 +360,7 @@ def _batch_loss_and_grad(model, params, param_names, xb, yb, loss):
 
 
 # === predictions (for metrics) -- run the model forward and read off the probability/class ==============
+
 
 def _predict(model, params, param_names, X, loss):
     """Run the model forward over ``X`` and return a list of PREDICTIONS in the shape the metrics expect:
@@ -355,6 +387,7 @@ def _predict(model, params, param_names, X, loss):
 
 
 # === the early-stop hook (patience on the validation loss) ==============================================
+
 
 @dataclass
 class EarlyStop:
@@ -387,18 +420,21 @@ class EarlyStop:
 
 # === the result carrier =================================================================================
 
+
 @dataclass
 class TrainResult:
     """The outcome of :func:`train`: the per-epoch history (train loss, optional val loss, and each requested
     metric on train + val) plus the final parameters and the epoch count actually run (< the cap if early
     stop fired). Everything plain numeric -- no graded/verdict wrapper (training is cost-side)."""
 
-    params: list                         # the final (or best, if early-stopped) parameter vector
-    train_loss: list = field(default_factory=list)     # per-epoch mean training loss
-    val_loss: list = field(default_factory=list)       # per-epoch validation loss ([] if no val set)
-    train_metrics: dict = field(default_factory=dict)  # metric name -> per-epoch list on the train set
-    val_metrics: dict = field(default_factory=dict)    # metric name -> per-epoch list on the val set
-    epochs_run: int = 0                  # epochs actually executed (< the cap if early stop fired)
+    params: list  # the final (or best, if early-stopped) parameter vector
+    train_loss: list = field(default_factory=list)  # per-epoch mean training loss
+    val_loss: list = field(default_factory=list)  # per-epoch validation loss ([] if no val set)
+    train_metrics: dict = field(
+        default_factory=dict
+    )  # metric name -> per-epoch list on the train set
+    val_metrics: dict = field(default_factory=dict)  # metric name -> per-epoch list on the val set
+    epochs_run: int = 0  # epochs actually executed (< the cap if early stop fired)
     early_stopped: bool = False
 
     @property
@@ -411,6 +447,7 @@ class TrainResult:
 
 
 # === the metric drivers (apply a requested metric name to a set of predictions) =========================
+
 
 def _apply_metric(name: str, preds, labels, loss) -> float:
     """Compute one requested metric by name on a set of predictions (in the :func:`_predict` shape). Supported
@@ -427,9 +464,24 @@ def _apply_metric(name: str, preds, labels, loss) -> float:
 
 # === the training loop ==================================================================================
 
-def train(model, params0, dataset: Dataset, *, loss: str, optimizer: str = "adam", epochs: int = 100,
-          batch_size: int = 32, lr: float = 0.01, val: Dataset | None = None, metrics=(),
-          early_stop: EarlyStop | None = None, seed: int = 0, param_names=None, **opt_hp) -> TrainResult:
+
+def train(
+    model,
+    params0,
+    dataset: Dataset,
+    *,
+    loss: str,
+    optimizer: str = "adam",
+    epochs: int = 100,
+    batch_size: int = 32,
+    lr: float = 0.01,
+    val: Dataset | None = None,
+    metrics=(),
+    early_stop: EarlyStop | None = None,
+    seed: int = 0,
+    param_names=None,
+    **opt_hp,
+) -> TrainResult:
     """Train ``model`` end-to-end with mini-batch gradient descent -- the M3 capstone API.
 
     Composes M1 + M2 + the B3 autodiff into an epoch / mini-batch loop:
@@ -485,7 +537,7 @@ def train(model, params0, dataset: Dataset, *, loss: str, optimizer: str = "adam
             batch_loss, gdict = _batch_loss_and_grad(model, params, param_names, xb, yb, loss)
             grads = [gdict[name] for name in param_names]
             params = opt.step(params, grads)
-            epoch_loss_sum += batch_loss * len(xb)     # weight by batch size for the true epoch mean
+            epoch_loss_sum += batch_loss * len(xb)  # weight by batch size for the true epoch mean
             epoch_count += len(xb)
         result.params = params
         result.train_loss.append(epoch_loss_sum / max(1, epoch_count))
@@ -521,16 +573,19 @@ def train(model, params0, dataset: Dataset, *, loss: str, optimizer: str = "adam
 
 # === reference toy datasets + reference models (for the demos / tests) ==================================
 
+
 def make_linearly_separable(n: int = 80, *, seed: int = 0) -> Dataset:
     """A small linearly-separable 2-D binary dataset: two Gaussian-ish blobs (one per class) generated by a
     DETERMINISTIC LCG (no numpy), placed so a line cleanly separates them. Class 0 around (-2, -2), class 1
     around (+2, +2); the spread is small enough to stay separable. The headline logistic-regression demo
     trains on this and must reach ~100% accuracy."""
     state = (int(seed) & 0xFFFFFFFFFFFFFFFF) or 0x1234567
+
     def rnd():
         nonlocal state
         state = (state * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
-        return (state >> 33) / float(1 << 31) - 1.0          # ~ uniform in [-1, 1)
+        return (state >> 33) / float(1 << 31) - 1.0  # ~ uniform in [-1, 1)
+
     X, y = [], []
     for i in range(n):
         cls = i % 2
@@ -546,10 +601,12 @@ def make_xor(n_per_quadrant: int = 25, *, seed: int = 0) -> Dataset:
     but a 2-layer MLP with a hidden relu can. Deterministic LCG. The MLP demo trains on this and must clear
     the linear ceiling, proving the hidden layer learns the nonlinearity."""
     state = (int(seed) & 0xFFFFFFFFFFFFFFFF) or 0x7654321
+
     def rnd():
         nonlocal state
         state = (state * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
         return (state >> 33) / float(1 << 31) - 1.0
+
     X, y = [], []
     centers = [((1.5, 1.5), 1.0), ((-1.5, -1.5), 1.0), ((1.5, -1.5), 0.0), ((-1.5, 1.5), 0.0)]
     for (cx, cy), cls in centers:
@@ -564,7 +621,7 @@ def linear_model(tape: Tape, param_names, X):
     the Tape (a ``dot`` + a bias add -- the closed-set primitives). Parameters: ``w0..w{d-1}`` then ``b`` (so
     ``param_names`` is length ``d+1``). Returns one scalar logit node per example -- the ``loss="bce"`` shape.
     The reference model for the logistic-regression headline demo."""
-    d = len(param_names) - 1                                  # last name is the bias
+    d = len(param_names) - 1  # last name is the bias
     wvars = tuple(tape.var(param_names[i]) for i in range(d))
     bvar = tape.var(param_names[d])
     out = []
@@ -599,6 +656,7 @@ def mlp_model(n_in: int, n_hidden: int):
     hidden pre-activation ``a_h = dot(W1_h, x) + b1_h``, relu'd to ``r_h = select(a_h, a_h, 0)``, then the
     output ``z = dot(W2, r) + b2``. The hidden relu is what lets the MLP clear a linear model's ceiling on a
     non-linearly-separable set (the MLP demo proves this)."""
+
     def model(tape: Tape, param_names, X):
         # bind every parameter var once (hash-consed, so reused across examples).
         W1 = [[tape.var(f"W1_{h}_{i}") for i in range(n_in)] for h in range(n_hidden)]
@@ -617,4 +675,5 @@ def mlp_model(n_in: int, n_hidden: int):
             z = tape.add(tape.dot(tuple(W2), tuple(hidden)), b2)
             out.append(z)
         return out
+
     return model

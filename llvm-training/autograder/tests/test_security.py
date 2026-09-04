@@ -40,10 +40,14 @@ class SecurityTests(unittest.TestCase):
             outside.write_text("atomic ordering", encoding="utf-8")
             result = self.run_python(
                 GRADER,
-                "--exercise", "025",
-                "--answer", str(attempts / ".." / "outside.md"),
-                "--attempt-root", str(attempts),
-                "--format", "json",
+                "--exercise",
+                "025",
+                "--answer",
+                str(attempts / ".." / "outside.md"),
+                "--attempt-root",
+                str(attempts),
+                "--format",
+                "json",
             )
             self.assertEqual(result.returncode, 2)
             self.assertEqual(json.loads(result.stdout)["error"]["outcome"], "invalid_answer")
@@ -75,9 +79,12 @@ class SecurityTests(unittest.TestCase):
             result = self.run_python(
                 RUN_EVAL,
                 "prepare",
-                "--output-dir", str(root / "output"),
-                "--exercise", "001",
-                "--manifests-dir", str(manifests),
+                "--output-dir",
+                str(root / "output"),
+                "--exercise",
+                "001",
+                "--manifests-dir",
+                str(manifests),
             )
             self.assertEqual(result.returncode, 2)
             self.assertIn("run-eval: error:", result.stderr)
@@ -91,10 +98,14 @@ class SecurityTests(unittest.TestCase):
             answer.write_text("calling convention attributes ABI contract", encoding="utf-8")
             result = self.run_python(
                 GRADER,
-                "--exercise", "025",
-                "--answer", str(answer),
-                "--attempt-root", str(root),
-                "--format", "json",
+                "--exercise",
+                "025",
+                "--answer",
+                str(answer),
+                "--attempt-root",
+                str(root),
+                "--format",
+                "json",
             )
             self.assertIn(result.returncode, {0, 1})
             self.assertFalse(marker.exists())

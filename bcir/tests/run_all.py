@@ -48,23 +48,33 @@ from bcir.toolchain import resolve_llvm_tools
 # in the quick chain: every law R1-R18, all six targets, the StreamPack/ABI *logic*, and the
 # budget/RCSP correctness property are pure-Python and still run; only the C *byte-identity*
 # and native-*execute* checks defer to a heavier tier (CI runs `thorough`).
-_C_COMPILER = {"clang", "clang++", "cc", "gcc", "g++", "ld.lld", "lld", "ar",
-               "objdump", "llvm-objdump"}                      # build + inspect the C runtime
+_C_COMPILER = {
+    "clang",
+    "clang++",
+    "cc",
+    "gcc",
+    "g++",
+    "ld.lld",
+    "lld",
+    "ar",
+    "objdump",
+    "llvm-objdump",
+}  # build + inspect the C runtime
 _LLVM_JIT_WASM = {"lli", "opt", "llc", "llvm-as", "llvm-link", "wasm-ld", "node"}
 _ALL_TOOLCHAIN = _C_COMPILER | _LLVM_JIT_WASM
 
 # tier -> (host tools made visible to which(...), run the full BCIR_THOROUGH campaigns?)
 TIERS: dict[str, dict[str, object]] = {
     # pure-Python oracle/law/parity + honest-degrade silicon; instant, runs anywhere.
-    "quick":           {"visible": frozenset(),                    "thorough": False},
+    "quick": {"visible": frozenset(), "thorough": False},
     # + a C compiler: the freestanding-runtime / StreamPack-ABI byte-identity / C-kernel tier.
-    "c-runtime":       {"visible": frozenset(_C_COMPILER),         "thorough": False},
+    "c-runtime": {"visible": frozenset(_C_COMPILER), "thorough": False},
     # + the measured benchmarks compiled & run in *degrade* mode (assert correctness + valid
     #   measurement, never a faked speedup); the tier you run on real silicon to exercise the
     #   perf syscall / RAPL / cpufreq path, tolerant of a degraded rig (shared CI runner).
-    "silicon-degrade": {"visible": frozenset(_C_COMPILER),         "thorough": False},
+    "silicon-degrade": {"visible": frozenset(_C_COMPILER), "thorough": False},
     # everything: full toolchain (LLVM IR / JIT / WASM / native-execute) + the large campaigns.
-    "thorough":        {"visible": frozenset(_ALL_TOOLCHAIN),      "thorough": True},
+    "thorough": {"visible": frozenset(_ALL_TOOLCHAIN), "thorough": True},
 }
 _DEFAULT_TIER = "quick"
 _REAL_WHICH = shutil.which
@@ -110,8 +120,9 @@ def resolve_tier(argv: list[str] | None = None) -> str:
             tier = a.split("=", 1)[1]
             break
     else:
-        tier = os.environ.get("BCIR_TIER") or ("thorough" if os.environ.get("BCIR_THOROUGH")
-                                               else _DEFAULT_TIER)
+        tier = os.environ.get("BCIR_TIER") or (
+            "thorough" if os.environ.get("BCIR_THOROUGH") else _DEFAULT_TIER
+        )
     if tier not in TIERS:
         sys.stderr.write(f"[run_all] unknown tier {tier!r}; choose from {', '.join(TIERS)}\n")
         raise SystemExit(2)
@@ -124,9 +135,9 @@ def _apply_tier(tier: str) -> None:
     module-level `BCIR_THOROUGH` reads (campaign sizes) see the right value."""
     spec = TIERS[tier]
     os.environ["BCIR_TIER"] = tier
-    os.environ["PATH"] = _BASE_PATH                    # idempotent across repeated tier changes
-    shutil.which = _REAL_WHICH                         # idempotent across repeated tier changes
-    subprocess.run = _bounded_subprocess_run           # every tier bounds child processes
+    os.environ["PATH"] = _BASE_PATH  # idempotent across repeated tier changes
+    shutil.which = _REAL_WHICH  # idempotent across repeated tier changes
+    subprocess.run = _bounded_subprocess_run  # every tier bounds child processes
     if spec["thorough"]:
         os.environ["BCIR_THOROUGH"] = "1"
     else:
@@ -137,16 +148,21 @@ def _apply_tier(tier: str) -> None:
         # Many historical differential tests ask ``which("clang")`` directly. Promote
         # one supported coherent LLVM installation before those modules import, so an
         # old distro alternative cannot shadow an installed versioned toolchain.
-        llvm = resolve_llvm_tools("clang", "llvm-as", "llc",
-                                  pipeline="thorough test tier", minimum_major=15)
+        llvm = resolve_llvm_tools(
+            "clang", "llvm-as", "llc", pipeline="thorough test tier", minimum_major=15
+        )
         if llvm.ok:
             bins = {os.path.dirname(os.path.realpath(path)) for path in llvm.paths.values()}
             if len(bins) == 1:
                 selected = next(iter(bins))
-                entries = [entry for entry in os.environ["PATH"].split(os.pathsep)
-                           if entry and os.path.abspath(entry) != os.path.abspath(selected)]
+                entries = [
+                    entry
+                    for entry in os.environ["PATH"].split(os.pathsep)
+                    if entry and os.path.abspath(entry) != os.path.abspath(selected)
+                ]
                 os.environ["PATH"] = os.pathsep.join([selected, *entries])
-        return                                                  # thorough: nothing gated
+        return  # thorough: nothing gated
+
     def _gated_which(cmd, *args, **kwargs):
         base = os.path.basename(str(cmd)).lower()
         if base.endswith(".exe"):
@@ -419,7 +435,7 @@ _TIER_BLURB = {
     "quick": "pure-Python oracle/law/parity + honest-degrade silicon (toolchain hidden)",
     "c-runtime": "+ C compiler: freestanding-runtime / StreamPack-ABI byte-identity / C kernels",
     "silicon-degrade": "+ measured benchmarks in degrade mode (correctness + valid measurement, "
-                       "no faked speedup)",
+    "no faked speedup)",
     "thorough": "everything: full toolchain (IR/JIT/WASM/native) + the large campaigns",
 }
 
@@ -457,68 +473,70 @@ _REPO_ONLY_TREES = ("tools",)
 # CHECKOUT binds `bcir` to the repository, so every module under test then
 # comes from there and the whole survey reports clean. Read the registry as
 # text, or run entirely inside the installed tree.
-_REPO_ONLY_MODULES = frozenset({
-    "bcir.tests.test_artifact_bundle",
-    "bcir.tests.test_asn1_calibration",
-    "bcir.tests.test_asn1_dialect",
-    "bcir.tests.test_asn1_ecn_law_parity",
-    "bcir.tests.test_asn1_frontend",
-    "bcir.tests.test_asn1_graph",
-    "bcir.tests.test_asn1_law_parity",
-    "bcir.tests.test_asn1_native_bench",
-    "bcir.tests.test_asn1_simd_hosts",
-    "bcir.tests.test_asn1_surface",
-    "bcir.tests.test_c_asn1",
-    "bcir.tests.test_c_asn1_streampack",
-    "bcir.tests.test_c_cfront",
-    "bcir.tests.test_c_channel",
-    "bcir.tests.test_c_emit",
-    "bcir.tests.test_c_encoder",
-    "bcir.tests.test_c_executor",
-    "bcir.tests.test_c_jer",
-    "bcir.tests.test_c_oer",
-    "bcir.tests.test_c_per",
-    "bcir.tests.test_c_per_plan",
-    "bcir.tests.test_c_runtime",
-    "bcir.tests.test_c_xer",
-    "bcir.tests.test_cfront",
-    "bcir.tests.test_cfront_link",
-    "bcir.tests.test_cfront_roundtrip",
-    "bcir.tests.test_channel_plugin",
-    "bcir.tests.test_cpp_handoff",
-    "bcir.tests.test_cpp_jer_index",
-    "bcir.tests.test_cpp_jer_simd",
-    "bcir.tests.test_decode_c_kernels",
-    "bcir.tests.test_device_manifest",
-    "bcir.tests.test_differential",
-    "bcir.tests.test_docs_claims",
-    "bcir.tests.test_driver_gpio",
-    "bcir.tests.test_etl_binrec",
-    "bcir.tests.test_event_phases",
-    "bcir.tests.test_gemplus_baseline",
-    "bcir.tests.test_hosted_model_spec",
-    "bcir.tests.test_import_quarantine",
-    "bcir.tests.test_ir_structural_parity",
-    "bcir.tests.test_lowbit",
-    "bcir.tests.test_microbench",
-    "bcir.tests.test_model_assets",
-    "bcir.tests.test_model_weights_io",
-    "bcir.tests.test_native_ai",
-    "bcir.tests.test_native_object_gate",
-    "bcir.tests.test_provenance_twin",
-    "bcir.tests.test_q8_embed",
-    "bcir.tests.test_security_assurance",
-    "bcir.tests.test_security_hardening",
-    "bcir.tests.test_silicon_runbook",
-    "bcir.tests.test_sycl_channel",
-    "bcir.tests.test_sycl_dispatch",
-    "bcir.tests.test_target_matrix",
-    "bcir.tests.test_telemetry_frame",
-    "bcir.tests.test_toolchain",
-    "bcir.tests.test_train_c_kernels",
-    "bcir.tests.test_train_pack_exec",
-    "bcir.tests.test_verify_differential",
-})
+_REPO_ONLY_MODULES = frozenset(
+    {
+        "bcir.tests.test_artifact_bundle",
+        "bcir.tests.test_asn1_calibration",
+        "bcir.tests.test_asn1_dialect",
+        "bcir.tests.test_asn1_ecn_law_parity",
+        "bcir.tests.test_asn1_frontend",
+        "bcir.tests.test_asn1_graph",
+        "bcir.tests.test_asn1_law_parity",
+        "bcir.tests.test_asn1_native_bench",
+        "bcir.tests.test_asn1_simd_hosts",
+        "bcir.tests.test_asn1_surface",
+        "bcir.tests.test_c_asn1",
+        "bcir.tests.test_c_asn1_streampack",
+        "bcir.tests.test_c_cfront",
+        "bcir.tests.test_c_channel",
+        "bcir.tests.test_c_emit",
+        "bcir.tests.test_c_encoder",
+        "bcir.tests.test_c_executor",
+        "bcir.tests.test_c_jer",
+        "bcir.tests.test_c_oer",
+        "bcir.tests.test_c_per",
+        "bcir.tests.test_c_per_plan",
+        "bcir.tests.test_c_runtime",
+        "bcir.tests.test_c_xer",
+        "bcir.tests.test_cfront",
+        "bcir.tests.test_cfront_link",
+        "bcir.tests.test_cfront_roundtrip",
+        "bcir.tests.test_channel_plugin",
+        "bcir.tests.test_cpp_handoff",
+        "bcir.tests.test_cpp_jer_index",
+        "bcir.tests.test_cpp_jer_simd",
+        "bcir.tests.test_decode_c_kernels",
+        "bcir.tests.test_device_manifest",
+        "bcir.tests.test_differential",
+        "bcir.tests.test_docs_claims",
+        "bcir.tests.test_driver_gpio",
+        "bcir.tests.test_etl_binrec",
+        "bcir.tests.test_event_phases",
+        "bcir.tests.test_gemplus_baseline",
+        "bcir.tests.test_hosted_model_spec",
+        "bcir.tests.test_import_quarantine",
+        "bcir.tests.test_ir_structural_parity",
+        "bcir.tests.test_lowbit",
+        "bcir.tests.test_microbench",
+        "bcir.tests.test_model_assets",
+        "bcir.tests.test_model_weights_io",
+        "bcir.tests.test_native_ai",
+        "bcir.tests.test_native_object_gate",
+        "bcir.tests.test_provenance_twin",
+        "bcir.tests.test_q8_embed",
+        "bcir.tests.test_security_assurance",
+        "bcir.tests.test_security_hardening",
+        "bcir.tests.test_silicon_runbook",
+        "bcir.tests.test_sycl_channel",
+        "bcir.tests.test_sycl_dispatch",
+        "bcir.tests.test_target_matrix",
+        "bcir.tests.test_telemetry_frame",
+        "bcir.tests.test_toolchain",
+        "bcir.tests.test_train_c_kernels",
+        "bcir.tests.test_train_pack_exec",
+        "bcir.tests.test_verify_differential",
+    }
+)
 
 
 def _is_source_checkout() -> bool:
@@ -605,9 +623,11 @@ def _resolve_shard(argv: list[str] | None = None) -> tuple[int, int]:
     raw: str | None = None
     for i, a in enumerate(argv):
         if a == "--shard" and i + 1 < len(argv):
-            raw = argv[i + 1]; break
+            raw = argv[i + 1]
+            break
         if a.startswith("--shard="):
-            raw = a.split("=", 1)[1]; break
+            raw = a.split("=", 1)[1]
+            break
     if raw is None:
         return (1, 1)
     try:
@@ -633,11 +653,14 @@ def _resolve_jobs(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     for i, a in enumerate(argv):
         if a in ("-j", "--jobs") and i + 1 < len(argv):
-            val = argv[i + 1]; break
+            val = argv[i + 1]
+            break
         if a.startswith("-j") and a != "-j":
-            val = a[2:]; break
+            val = a[2:]
+            break
         if a.startswith("--jobs="):
-            val = a.split("=", 1)[1]; break
+            val = a.split("=", 1)[1]
+            break
     if val is None:
         val = os.environ.get("BCIR_JOBS")
     cpu = os.cpu_count() or 1
@@ -664,23 +687,29 @@ def main() -> int:
             print(f"  {name:<16} {_TIER_BLURB[name]}")
         return 0
     tier = resolve_tier()
-    _apply_tier(tier)                       # gate the toolchain BEFORE importing test modules
+    _apply_tier(tier)  # gate the toolchain BEFORE importing test modules
     jobs = _resolve_jobs()
     shard, shards = _resolve_shard()
-    print(f"[run_all] tier={tier} — {_TIER_BLURB[tier]}  (jobs={jobs}"
-          + (f", shard {shard}/{shards}" if shards > 1 else "") + ")\n")
-    pairs, skipped = _collect_tests()       # stable discovery; fork also benefits from the warm imports
+    print(
+        f"[run_all] tier={tier} — {_TIER_BLURB[tier]}  (jobs={jobs}"
+        + (f", shard {shard}/{shards}" if shards > 1 else "")
+        + ")\n"
+    )
+    pairs, skipped = _collect_tests()  # stable discovery; fork also benefits from the warm imports
     for modname, tree in skipped:
         # Never a silent thinning: a run that inspects less than the full
         # registry says so, by name, on every host that does it.
-        detail = (f"needs the repo-only '{tree}/' tree" if tree != "repository assets"
-                  else "needs repository assets")
+        detail = (
+            f"needs the repo-only '{tree}/' tree"
+            if tree != "repository assets"
+            else "needs repository assets"
+        )
         print(f"[run_all] SKIP {modname} ({detail}; not shipped in the wheel)")
     if skipped:
         print()
     total = len(pairs)
     if shards > 1:
-        pairs = pairs[shard - 1::shards]
+        pairs = pairs[shard - 1 :: shards]
         print(f"[run_all] shard {shard}/{shards}: {len(pairs)} of {total} tests\n")
     passed = failed = 0
 
@@ -694,7 +723,7 @@ def main() -> int:
             print(f"FAIL {modname}.{name}\n{tb}", end="")
 
     if jobs <= 1:
-        for pair in pairs:                  # the historic serial path, unchanged
+        for pair in pairs:  # the historic serial path, unchanged
             _report(*_run_one(pair))
     else:
         # Fork where available; otherwise spawn. The initializer installs the tier gate before any
@@ -705,8 +734,8 @@ def main() -> int:
         # worker-process global, so it is still built once per worker).
         ctx = _pool_context()
         with concurrent.futures.ProcessPoolExecutor(
-                max_workers=jobs, mp_context=ctx,
-                initializer=_worker_init, initargs=(tier,)) as pool:
+            max_workers=jobs, mp_context=ctx, initializer=_worker_init, initargs=(tier,)
+        ) as pool:
             for res in pool.map(_run_one, pairs, chunksize=1):
                 _report(*res)
 

@@ -29,12 +29,23 @@ import sys
 
 from bcir.asn1.dialect import parse_mlir
 from bcir.asn1.graph import (
-    DIALECT_NODE_CLASS, Edge, Graph, Node, content_address, dialect_to_graph,
-    graph_to_dialect, graph_to_jer, resolve,
+    DIALECT_NODE_CLASS,
+    Edge,
+    Graph,
+    Node,
+    content_address,
+    dialect_to_graph,
+    graph_to_dialect,
+    graph_to_jer,
+    resolve,
 )
 from bcir.asn1.program import graph_to_module, module_to_graph, verdicts
 from bcir.asn1.surface import (
-    Presentation, jer_to_surface, parse_surface, print_surface, surface_to_graph,
+    Presentation,
+    jer_to_surface,
+    parse_surface,
+    print_surface,
+    surface_to_graph,
     surface_to_jer,
 )
 from bcir.asn1.tags import Asn1Error
@@ -95,13 +106,13 @@ def test_the_verdicts_survive_the_text_surface():
 
 
 _TERSE = '(graph (roots #0) (program "demo" (-> phase #1)) (phase "0"))'
-_RICH = '''; the entry point
+_RICH = """; the entry point
 (graph
   (roots @entry)
   (program "demo" @entry      ; the module
       (-> phase @loop))
   (phase "0" @loop))
-'''
+"""
 _QUOTED = '(graph(roots #0)("program" "demo"(-> "phase" #1))("phase" "0"))'
 
 
@@ -173,10 +184,12 @@ def test_a_node_whose_kind_is_the_roots_keyword_has_a_spelling():
     by the following TOKEN — a node's second token is always its quoted label — so the two
     forms are distinguishable wherever they appear.
     """
-    for graph in (Graph((Node(kind="roots", label="0"),)),
-                  Graph((Node(kind="roots", label="0"),), roots=(0,)),
-                  Graph((Node(kind="roots", label="", edges=(Edge("roots", 0),)),)),
-                  Graph((Node(kind="graph", label="0"),))):
+    for graph in (
+        Graph((Node(kind="roots", label="0"),)),
+        Graph((Node(kind="roots", label="0"),), roots=(0,)),
+        Graph((Node(kind="roots", label="", edges=(Edge("roots", 0),)),)),
+        Graph((Node(kind="graph", label="0"),)),
+    ):
         assert _round_trips(graph), graph.nodes[0].kind
     # And the roots form is no longer confined to the head of the table.
     assert surface_to_graph('(graph (a "x") (roots #0))').roots == (0,)
@@ -190,18 +203,31 @@ def test_a_node_whose_kind_is_the_roots_keyword_has_a_spelling():
 
 def test_hostile_labels_and_values_survive():
     """Quotes, newlines, control characters and astral-plane text are all legal UTF8String."""
-    for label in ('', 'he said "hi"', "a\nb\tc\\d", "\x00\x1f\x7f", "\U0001f600 emoji",
-                  "; not a comment", "(paren) #0 @alias -> :attr"):
+    for label in (
+        "",
+        'he said "hi"',
+        "a\nb\tc\\d",
+        "\x00\x1f\x7f",
+        "\U0001f600 emoji",
+        "; not a comment",
+        "(paren) #0 @alias -> :attr",
+    ):
         assert _round_trips(Graph((Node(kind="k", label=label),))), repr(label)
-        assert _round_trips(Graph((Node(kind="k", label="x",
-                                        attributes=(("n", label),)),))), repr(label)
+        assert _round_trips(Graph((Node(kind="k", label="x", attributes=(("n", label),)),))), repr(
+            label
+        )
         assert _round_trips(Graph((Node(kind=label or "k", label="x"),))), repr(label)
 
 
 def test_a_cycle_has_a_spelling():
     """The reason P1 chose a node table at all — so the surface must not reintroduce nesting."""
-    cycle = Graph((Node(kind="a", label="0", edges=(Edge("next", 1),)),
-                   Node(kind="b", label="1", edges=(Edge("next", 0),))), roots=(0,))
+    cycle = Graph(
+        (
+            Node(kind="a", label="0", edges=(Edge("next", 1),)),
+            Node(kind="b", label="1", edges=(Edge("next", 0),)),
+        ),
+        roots=(0,),
+    )
     assert _round_trips(cycle)
     # A forward reference by alias resolves after the whole form is read, so a cycle written
     # "backwards" costs nothing.
@@ -221,8 +247,7 @@ def test_duplicate_attribute_names_survive():
     """`attributes` is a SEQUENCE OF, not a map: two rows with one name is a legal document."""
     graph = Graph((Node(kind="k", label="x", attributes=(("a", "1"), ("a", "2"))),))
     assert _round_trips(graph)
-    assert surface_to_graph(print_surface(graph)).nodes[0].attributes == (("a", "1"),
-                                                                          ("a", "2"))
+    assert surface_to_graph(print_surface(graph)).nodes[0].attributes == (("a", "1"), ("a", "2"))
 
 
 def test_a_dangling_edge_is_carried_and_reported_rather_than_refused():
@@ -244,20 +269,20 @@ def test_a_dangling_edge_is_carried_and_reported_rather_than_refused():
 
 def test_the_reader_refuses_what_it_cannot_read_unambiguously():
     for text, fragment in (
-            ('(graph (program "d" (-> phase @nope)))', "never defined"),
-            ('(graph (a "x" @n) (b "y" @n))', "used twice"),
-            ('(graph (a "x" @n @m))', "already has an alias"),
-            ('(graph (a "x")) trailing', "text after the closing"),
-            ('(module (a "x"))', "top-level form is `graph`"),
-            ('(graph (a x))', "label, in quotes"),
-            ('(graph (a "x" :k))', "value, in quotes"),
-            ('(graph (a "x" (-> lab)))', "#index or @alias"),
-            ('(graph (a "x\\q"))', "unknown escape"),
-            ('(graph (a "x\\u00"))', "four hex digits"),
-            ('(graph (a "x))', "never closed"),
-            ('(graph (a "x")', "closing `graph`"),
-            ('', "an empty surface"),
-            ('(graph (roots #0) (roots #0))', "appears twice"),
+        ('(graph (program "d" (-> phase @nope)))', "never defined"),
+        ('(graph (a "x" @n) (b "y" @n))', "used twice"),
+        ('(graph (a "x" @n @m))', "already has an alias"),
+        ('(graph (a "x")) trailing', "text after the closing"),
+        ('(module (a "x"))', "top-level form is `graph`"),
+        ("(graph (a x))", "label, in quotes"),
+        ('(graph (a "x" :k))', "value, in quotes"),
+        ('(graph (a "x" (-> lab)))', "#index or @alias"),
+        ('(graph (a "x\\q"))', "unknown escape"),
+        ('(graph (a "x\\u00"))', "four hex digits"),
+        ('(graph (a "x))', "never closed"),
+        ('(graph (a "x")', "closing `graph`"),
+        ("", "an empty surface"),
+        ("(graph (roots #0) (roots #0))", "appears twice"),
     ):
         try:
             parse_surface(text)
@@ -288,9 +313,13 @@ def test_neither_direction_of_the_surface_recurses():
     would only appear on the programs big enough to matter.
     """
     size = 1000
-    chain = Graph(tuple(Node(kind="link", label=str(i),
-                             edges=(Edge("next", i + 1),) if i + 1 < size else ())
-                        for i in range(size)), roots=(0,))
+    chain = Graph(
+        tuple(
+            Node(kind="link", label=str(i), edges=(Edge("next", i + 1),) if i + 1 < size else ())
+            for i in range(size)
+        ),
+        roots=(0,),
+    )
     previous = sys.getrecursionlimit()
     sys.setrecursionlimit(80)
     try:

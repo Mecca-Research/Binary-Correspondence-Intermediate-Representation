@@ -6,8 +6,9 @@ from bcir.model import Claim, Lane, Module, Opcode, Phase, Resource, StrideClass
 
 
 def _c(cid, rd, wr):
-    return Claim(id=cid, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                 count=8, rd=rd, wr=wr)
+    return Claim(
+        id=cid, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT, count=8, rd=rd, wr=wr
+    )
 
 
 def _mod(claims, phases=None, rids=(10, 11, 12, 13)):
@@ -41,13 +42,13 @@ def test_raw_chain_awaits_producer():
     m = _mod([_c(1, (10,), (12,)), _c(2, (12,), (13,)), _c(3, (13,), (11,))])
     plan = async_plan(m)
     assert plan.awaits[1] == []
-    assert plan.awaits[2] == [1]   # 2 depends on 1's write
-    assert plan.awaits[3] == [2]   # 3 depends on 2's write (not transitively on 1)
+    assert plan.awaits[2] == [1]  # 2 depends on 1's write
+    assert plan.awaits[3] == [2]  # 3 depends on 2's write (not transitively on 1)
 
 
 def test_cross_phase_dependency():
     load = _c(1, (10,), (10,))
-    calc = _c(2, (10,), (12,))   # reads what phase-0 wrote
+    calc = _c(2, (10,), (12,))  # reads what phase-0 wrote
     m = _mod(None, phases=[Phase(0, (), [load]), Phase(1, (0,), [calc])])
     plan = async_plan(m)
     assert plan.awaits[2] == [1]

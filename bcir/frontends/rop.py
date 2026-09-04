@@ -203,10 +203,16 @@ class _P:
         # resolve resource names -> rids via the module is done by caller context;
         # here we trust earlier `resource` decls registered names. The caller passes
         # a name->rid resolver implicitly through the module; we look it up at build.
-        return Claim(id=cid, opcode=op, lane=lane, stride_class=stride, count=count,
-                     rd=tuple(resolve(n) for n in reads),
-                     wr=tuple(resolve(n) for n in writes),
-                     op=f"rop.{name}")
+        return Claim(
+            id=cid,
+            opcode=op,
+            lane=lane,
+            stride_class=stride,
+            count=count,
+            rd=tuple(resolve(n) for n in reads),
+            wr=tuple(resolve(n) for n in writes),
+            op=f"rop.{name}",
+        )
 
 
 def parse_rop_program(text: str) -> Module:
@@ -234,7 +240,9 @@ def parse_rop_program(text: str) -> Module:
                 if name in resolver:
                     raise ParseError(f"duplicate resource name {name!r}")
                 if rid in rid_names:
-                    raise ParseError(f"duplicate resource rid {rid} for {name!r} and {rid_names[rid]!r}")
+                    raise ParseError(
+                        f"duplicate resource rid {rid} for {name!r} and {rid_names[rid]!r}"
+                    )
                 resolver[name] = rid
                 rid_names[rid] = name
         i += 1

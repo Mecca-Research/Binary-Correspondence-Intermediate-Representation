@@ -42,11 +42,11 @@ def test_committed_files_match_a_fresh_emission():
 
 def test_header_uses_embed_guarded_with_a_fallback():
     h = q8_tables.q8_tables_header()
-    assert '#embed "q8_tiers.bin"' in h            # the C23 directive
-    assert "defined(__has_embed)" in h             # feature-probed
-    assert "#  if __has_embed(" in h               # ... in a NESTED #if (pre-#embed safe)
-    assert "BCIR_Q8_EMBED 0" in h                  # the fallback path
-    assert "0x" in h                               # the fallback array bytes
+    assert '#embed "q8_tiers.bin"' in h  # the C23 directive
+    assert "defined(__has_embed)" in h  # feature-probed
+    assert "#  if __has_embed(" in h  # ... in a NESTED #if (pre-#embed safe)
+    assert "BCIR_Q8_EMBED 0" in h  # the fallback path
+    assert "0x" in h  # the fallback array bytes
     assert "_Static_assert(sizeof(bcir_q8_tiers_blob)" in h
 
 
@@ -58,8 +58,11 @@ def test_header_builds_and_self_checks_under_c11_and_c23():
     with tempfile.TemporaryDirectory() as d:
         for std in ("c11", "c23"):
             exe = os.path.join(d, f"q8_{std}")
-            build = subprocess.run([cc, f"-std={std}", "-Wall", "-Wextra", "-I", _RUNTIME_C,
-                                    src, "-o", exe], capture_output=True, text=True)
+            build = subprocess.run(
+                [cc, f"-std={std}", "-Wall", "-Wextra", "-I", _RUNTIME_C, src, "-o", exe],
+                capture_output=True,
+                text=True,
+            )
             assert build.returncode == 0, f"{std} build: {build.stderr}"
             run = subprocess.run([exe], capture_output=True, text=True)
             assert run.returncode == 0 and run.stdout.startswith("OK q8"), run.stdout + run.stderr

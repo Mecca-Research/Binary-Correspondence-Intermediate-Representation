@@ -15,8 +15,17 @@ def vector_add(n: int = 1024) -> Module:
     m.add_resource(Resource(rid=10, domain=Domain.RAM, shape=(n,), name="A"))
     m.add_resource(Resource(rid=11, domain=Domain.RAM, shape=(n,), name="B"))
     m.add_resource(Resource(rid=12, domain=Domain.RAM, shape=(n,), name="C"))
-    add = Claim(id=1000, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                count=n, rd=(10, 11), wr=(12,), op="vector.add", domain=Domain.RAM)
+    add = Claim(
+        id=1000,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=n,
+        rd=(10, 11),
+        wr=(12,),
+        op="vector.add",
+        domain=Domain.RAM,
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=[add]))
     return m
 
@@ -27,8 +36,17 @@ def vector_add_hbm(n: int = 1024) -> Module:
     m.add_resource(Resource(rid=10, domain=Domain.HBM, shape=(n,), name="A"))
     m.add_resource(Resource(rid=11, domain=Domain.HBM, shape=(n,), name="B"))
     m.add_resource(Resource(rid=12, domain=Domain.HBM, shape=(n,), name="C"))
-    add = Claim(id=1000, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                count=n, rd=(10, 11), wr=(12,), op="vector.add", domain=Domain.HBM)
+    add = Claim(
+        id=1000,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=n,
+        rd=(10, 11),
+        wr=(12,),
+        op="vector.add",
+        domain=Domain.HBM,
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=[add]))
     return m
 
@@ -38,8 +56,18 @@ def saxpy_strided(n: int = 1024, k: int = 4) -> Module:
     m = Module(name="saxpy_strided")
     m.add_resource(Resource(rid=20, domain=Domain.RAM, shape=(n * k,), name="X"))
     m.add_resource(Resource(rid=21, domain=Domain.RAM, shape=(n,), name="Y"))
-    claim = Claim(id=2000, opcode=Opcode.MUL, lane=Lane.U, stride_class=StrideClass.STRIDED,
-                  count=n, stride_k=k, rd=(20,), wr=(21,), op="vector.axpy", domain=Domain.RAM)
+    claim = Claim(
+        id=2000,
+        opcode=Opcode.MUL,
+        lane=Lane.U,
+        stride_class=StrideClass.STRIDED,
+        count=n,
+        stride_k=k,
+        rd=(20,),
+        wr=(21,),
+        op="vector.axpy",
+        domain=Domain.RAM,
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=[claim]))
     return m
 
@@ -47,11 +75,23 @@ def saxpy_strided(n: int = 1024, k: int = 4) -> Module:
 def histogram_gather(n: int = 1024, ham: bool = False) -> Module:
     """A random-access (gather) claim. With ``ham=True`` the table uses O(log n) access."""
     m = Module(name="histogram_ham" if ham else "histogram_gather")
-    m.add_resource(Resource(rid=30, domain=Domain.RAM, shape=(n,),
-                            access="ham" if ham else "flat", name="TABLE"))
+    m.add_resource(
+        Resource(
+            rid=30, domain=Domain.RAM, shape=(n,), access="ham" if ham else "flat", name="TABLE"
+        )
+    )
     m.add_resource(Resource(rid=31, domain=Domain.RAM, shape=(n,), name="OUT"))
-    claim = Claim(id=3000, opcode=Opcode.GGG_LOAD, lane=Lane.GGG, stride_class=StrideClass.RANDOM,
-                  count=n, rd=(30,), wr=(31,), op="histogram.scatter", domain=Domain.RAM)
+    claim = Claim(
+        id=3000,
+        opcode=Opcode.GGG_LOAD,
+        lane=Lane.GGG,
+        stride_class=StrideClass.RANDOM,
+        count=n,
+        rd=(30,),
+        wr=(31,),
+        op="histogram.scatter",
+        domain=Domain.RAM,
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=[claim]))
     return m
 
@@ -71,8 +111,17 @@ def gather_reduce(n: int = 1024) -> Module:
     # *realizable* unit-stride (the blocked sum) -- that is its canonical lane; the
     # gather is the de-optimized alternative the cost model rejects. (UNIT keeps the
     # claim and the selected blocked plan legal under the lane law R6/R9.)
-    claim = Claim(id=5000, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                  count=n, rd=(50,), wr=(51,), op="reduce.gather", domain=Domain.RAM)
+    claim = Claim(
+        id=5000,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=n,
+        rd=(50,),
+        wr=(51,),
+        op="reduce.gather",
+        domain=Domain.RAM,
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=[claim]))
     return m
 
@@ -85,13 +134,30 @@ def fused_chain(n: int = 1024) -> Module:
     m = Module(name="fused_chain")
     for rid, nm in ((60, "A"), (61, "B"), (62, "C"), (63, "E"), (64, "D")):
         m.add_resource(Resource(rid=rid, domain=Domain.RAM, shape=(n,), name=nm))
-    c1 = Claim(id=6001, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-               count=n, rd=(60, 61), wr=(62,), op="vector.add", domain=Domain.RAM)
-    c2 = Claim(id=6002, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-               count=n, rd=(60, 63), wr=(64,), op="vector.add", domain=Domain.RAM)
+    c1 = Claim(
+        id=6001,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=n,
+        rd=(60, 61),
+        wr=(62,),
+        op="vector.add",
+        domain=Domain.RAM,
+    )
+    c2 = Claim(
+        id=6002,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=n,
+        rd=(60, 63),
+        wr=(64,),
+        op="vector.add",
+        domain=Domain.RAM,
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=[c1, c2]))
     return m
-
 
 
 def scan_chain(n: int = 1024) -> Module:
@@ -105,10 +171,28 @@ def scan_chain(n: int = 1024) -> Module:
     m = Module(name="scan_chain")
     for rid, nm in ((80, "A"), (81, "B"), (82, "C"), (83, "T"), (84, "O")):
         m.add_resource(Resource(rid=rid, domain=Domain.RAM, shape=(n,), name=nm))
-    c1 = Claim(id=8001, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-               count=n, rd=(80, 81), wr=(83,), op="vector.add", domain=Domain.RAM)
-    c2 = Claim(id=8002, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-               count=n, rd=(83, 82), wr=(84,), op="vector.add", domain=Domain.RAM)
+    c1 = Claim(
+        id=8001,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=n,
+        rd=(80, 81),
+        wr=(83,),
+        op="vector.add",
+        domain=Domain.RAM,
+    )
+    c2 = Claim(
+        id=8002,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=n,
+        rd=(83, 82),
+        wr=(84,),
+        op="vector.add",
+        domain=Domain.RAM,
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=[c1, c2]))
     return m
 
@@ -120,8 +204,17 @@ def tiled_matmul(n: int = 256) -> Module:
     m.add_resource(Resource(rid=40, domain=Domain.RAM, shape=(n, n), name="A"))
     m.add_resource(Resource(rid=41, domain=Domain.RAM, shape=(n, n), name="B"))
     m.add_resource(Resource(rid=42, domain=Domain.HBM, shape=(n, n), name="C"))
-    claim = Claim(id=4000, opcode=Opcode.T_MACC, lane=Lane.T, stride_class=StrideClass.TILE,
-                  count=n * n, rd=(40, 41), wr=(42,), op="linalg.matmul", domain=Domain.RAM)
+    claim = Claim(
+        id=4000,
+        opcode=Opcode.T_MACC,
+        lane=Lane.T,
+        stride_class=StrideClass.TILE,
+        count=n * n,
+        rd=(40, 41),
+        wr=(42,),
+        op="linalg.matmul",
+        domain=Domain.RAM,
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=[claim]))
     return m
 
@@ -134,6 +227,7 @@ def tiled_matmul(n: int = 256) -> Module:
 # scan/prefix pipeline, and a map/reduce histogram of independent gathers feeding a
 # reduction. Each carries Python<->MLIR parity across the six TARGETS (see
 # bcir.kbcir.differential + mlir/test/passes/gem_corpus.mlir).
+
 
 def matmul_tiled(n: int = 256, tile: int = 128) -> Module:
     """A real blocked matmul C[n,n] = A[n,n] @ B[n,n], tiled into `tile`x`tile`
@@ -152,22 +246,30 @@ def matmul_tiled(n: int = 256, tile: int = 128) -> Module:
 
     # Non-overlapping per-array RID spaces (each holds up to g^2 < 1e6 tiles), so the
     # builder stays R1-legal for any g, not just the default 2x2.
-    def aid(i, k): return 1_000_000 + i * g + k
-    def bid(k, j): return 2_000_000 + k * g + j
-    def cid(i, j): return 3_000_000 + i * g + j
+    def aid(i, k):
+        return 1_000_000 + i * g + k
+
+    def bid(k, j):
+        return 2_000_000 + k * g + j
+
+    def cid(i, j):
+        return 3_000_000 + i * g + j
 
     for i in range(g):
         for k in range(g):
-            m.add_resource(Resource(rid=aid(i, k), domain=Domain.RAM,
-                                    shape=(tile, tile), name=f"A_{i}_{k}"))
+            m.add_resource(
+                Resource(rid=aid(i, k), domain=Domain.RAM, shape=(tile, tile), name=f"A_{i}_{k}")
+            )
     for k in range(g):
         for j in range(g):
-            m.add_resource(Resource(rid=bid(k, j), domain=Domain.RAM,
-                                    shape=(tile, tile), name=f"B_{k}_{j}"))
+            m.add_resource(
+                Resource(rid=bid(k, j), domain=Domain.RAM, shape=(tile, tile), name=f"B_{k}_{j}")
+            )
     for i in range(g):
         for j in range(g):
-            m.add_resource(Resource(rid=cid(i, j), domain=Domain.HBM,
-                                    shape=(tile, tile), name=f"C_{i}_{j}"))
+            m.add_resource(
+                Resource(rid=cid(i, j), domain=Domain.HBM, shape=(tile, tile), name=f"C_{i}_{j}")
+            )
 
     claims = []
     claim_id = 4000
@@ -176,9 +278,19 @@ def matmul_tiled(n: int = 256, tile: int = 128) -> Module:
             for k in range(g):
                 # k>0 accumulates into the existing C tile (read it back -> fuse it).
                 rd = (aid(i, k), bid(k, j)) + ((cid(i, j),) if k > 0 else ())
-                claims.append(Claim(id=claim_id, opcode=Opcode.T_MACC, lane=Lane.T,
-                                    stride_class=StrideClass.TILE, count=tcount, rd=rd,
-                                    wr=(cid(i, j),), op="linalg.matmul", domain=Domain.RAM))
+                claims.append(
+                    Claim(
+                        id=claim_id,
+                        opcode=Opcode.T_MACC,
+                        lane=Lane.T,
+                        stride_class=StrideClass.TILE,
+                        count=tcount,
+                        rd=rd,
+                        wr=(cid(i, j),),
+                        op="linalg.matmul",
+                        domain=Domain.RAM,
+                    )
+                )
                 claim_id += 1
     m.add_phase(Phase(phase_id=0, deps=(), claims=claims))
     return m
@@ -197,10 +309,28 @@ def matmul_activation(n: int = 1024, kind: str = "relu") -> Module:
     m = Module(name=f"matmul_activation_{kind}")
     for rid, nm in ((1, "A"), (2, "B"), (3, "CPRE"), (4, "C")):
         m.add_resource(Resource(rid=rid, domain=Domain.RAM, shape=(n,), name=nm))
-    mm = Claim(id=1, opcode=Opcode.T_MACC, lane=Lane.T, stride_class=StrideClass.TILE,
-               count=n, rd=(1, 2), wr=(3,), op="gem.matmul", domain=Domain.RAM)
-    act = Claim(id=2, opcode=Opcode.MUL, lane=Lane.U, stride_class=StrideClass.UNIT,
-                count=n, rd=(3,), wr=(4,), op=f"gem.activation:{kind}", domain=Domain.RAM)
+    mm = Claim(
+        id=1,
+        opcode=Opcode.T_MACC,
+        lane=Lane.T,
+        stride_class=StrideClass.TILE,
+        count=n,
+        rd=(1, 2),
+        wr=(3,),
+        op="gem.matmul",
+        domain=Domain.RAM,
+    )
+    act = Claim(
+        id=2,
+        opcode=Opcode.MUL,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=n,
+        rd=(3,),
+        wr=(4,),
+        op=f"gem.activation:{kind}",
+        domain=Domain.RAM,
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=[mm, act]))
     return m
 
@@ -226,9 +356,19 @@ def scan(n: int = 4096, stages: int = 4) -> Module:
             c_rid = 8200 + s
             m.add_resource(Resource(rid=c_rid, domain=Domain.RAM, shape=(n,), name=f"C{s}"))
             rd = (prev_out, c_rid)
-        claims.append(Claim(id=8300 + s, opcode=Opcode.ADD, lane=Lane.U,
-                            stride_class=StrideClass.UNIT, count=n, rd=rd, wr=(out_rid,),
-                            op="vector.add", domain=Domain.RAM))
+        claims.append(
+            Claim(
+                id=8300 + s,
+                opcode=Opcode.ADD,
+                lane=Lane.U,
+                stride_class=StrideClass.UNIT,
+                count=n,
+                rd=rd,
+                wr=(out_rid,),
+                op="vector.add",
+                domain=Domain.RAM,
+            )
+        )
         prev_out = out_rid
     m.add_phase(Phase(phase_id=0, deps=(), claims=claims))
     return m
@@ -249,12 +389,31 @@ def multi_histogram(n: int = 1024, bins: int = 3) -> Module:
         prid = 9100 + b
         m.add_resource(Resource(rid=prid, domain=Domain.RAM, shape=(n,), name=f"PART{b}"))
         part_rids.append(prid)
-        gathers.append(Claim(id=9300 + b, opcode=Opcode.GGG_LOAD, lane=Lane.GGG,
-                             stride_class=StrideClass.RANDOM, count=n, rd=(9000,),
-                             wr=(prid,), op="histogram.scatter", domain=Domain.RAM))
+        gathers.append(
+            Claim(
+                id=9300 + b,
+                opcode=Opcode.GGG_LOAD,
+                lane=Lane.GGG,
+                stride_class=StrideClass.RANDOM,
+                count=n,
+                rd=(9000,),
+                wr=(prid,),
+                op="histogram.scatter",
+                domain=Domain.RAM,
+            )
+        )
     m.add_resource(Resource(rid=9200, domain=Domain.RAM, shape=(n,), name="OUT"))
-    merge = Claim(id=9400, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                  count=n, rd=tuple(part_rids), wr=(9200,), op="reduce.add", domain=Domain.RAM)
+    merge = Claim(
+        id=9400,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=n,
+        rd=tuple(part_rids),
+        wr=(9200,),
+        op="reduce.add",
+        domain=Domain.RAM,
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=gathers))
     m.add_phase(Phase(phase_id=1, deps=(0,), claims=[merge]))
     return m

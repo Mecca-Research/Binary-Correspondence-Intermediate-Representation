@@ -48,10 +48,10 @@ class KernelArtifact:
     score: int
     cal_gen: int
     manifest_digest: int
-    attested: bool                 # R12 (verify_c_lowering) passed with no diagnostics
-    diagnostics: tuple             # ((law, message), ...) -- empty iff attested
-    budget: tuple                  # ((dim, cap), ...) -- the RCSP caps in force (or ())
-    feasible: bool                 # R(pi,Theta) <= B on every cap (True when no budget)
+    attested: bool  # R12 (verify_c_lowering) passed with no diagnostics
+    diagnostics: tuple  # ((law, message), ...) -- empty iff attested
+    budget: tuple  # ((dim, cap), ...) -- the RCSP caps in force (or ())
+    feasible: bool  # R(pi,Theta) <= B on every cap (True when no budget)
     kernel_c: str
     header_c: str
 
@@ -98,9 +98,17 @@ def _parse_budget(budget) -> Budget:
     return Budget.of(**caps)
 
 
-def build_artifact(program, *, target: str = "", theta: str = "cool",
-                   policy: str = "latency", elem: str = "f32", table=None,
-                   budget=None, fn_name: str = "bcir_kernel") -> KernelArtifact:
+def build_artifact(
+    program,
+    *,
+    target: str = "",
+    theta: str = "cool",
+    policy: str = "latency",
+    elem: str = "f32",
+    table=None,
+    budget=None,
+    fn_name: str = "bcir_kernel",
+) -> KernelArtifact:
     """Plan a program for a target/Θ and emit a deployable, R12-attested kernel
     artifact. `table` is an optional frozen `CalibratedProfile` (applies measured
     constants); `budget` (a `Budget`, dict, or "thermal=700,power=700") switches to
@@ -108,7 +116,7 @@ def build_artifact(program, *, target: str = "", theta: str = "cool",
     a correctness property a budget-unaware compiler cannot honor. Raises
     `Infeasible` if no legal plan fits. Pure -- no compilation."""
     name, module = _resolve(program)
-    h = TARGETS[target or default_target_name()]   # default to the host's architecture
+    h = TARGETS[target or default_target_name()]  # default to the host's architecture
     if table is not None:
         h = table.apply(h)
     th = _THETAS.get(theta, Theta.cool())
@@ -128,19 +136,30 @@ def build_artifact(program, *, target: str = "", theta: str = "cool",
     # volatile access carrying the `unique` hazard) came back `attested=True` with an
     # empty diagnostic tuple. The lowering can be a faithful rendering of an illegal
     # plan; that is precisely the case a deployable-artifact API must not bless.
-    diags = (verify(module)
-             + verify_plan(module, result, h, theta=th, policy=pol,
-                           budget=b if b.caps else None)
-             + verify_c_lowering(module, result, kernel_c, elem, hw_width=hw_width))
+    diags = (
+        verify(module)
+        + verify_plan(module, result, h, theta=th, policy=pol, budget=b if b.caps else None)
+        + verify_c_lowering(module, result, kernel_c, elem, hw_width=hw_width)
+    )
     manifest = build_manifest(module, h, th, pol)
 
     return KernelArtifact(
-        fn_name=fn_name, program=name, target=h.name, elem=elem,
-        op=C_OP.get(claim.opcode, "?"), width=int(cand.width), score=int(result.score),
-        cal_gen=int(getattr(h, "cal_gen", 0)), manifest_digest=int(manifest.digest),
-        attested=not diags, diagnostics=tuple((d.law, d.message) for d in diags),
-        budget=tuple(b.caps), feasible=feasible(result, th, b),
-        kernel_c=kernel_c, header_c=header_c)
+        fn_name=fn_name,
+        program=name,
+        target=h.name,
+        elem=elem,
+        op=C_OP.get(claim.opcode, "?"),
+        width=int(cand.width),
+        score=int(result.score),
+        cal_gen=int(getattr(h, "cal_gen", 0)),
+        manifest_digest=int(manifest.digest),
+        attested=not diags,
+        diagnostics=tuple((d.law, d.message) for d in diags),
+        budget=tuple(b.caps),
+        feasible=feasible(result, th, b),
+        kernel_c=kernel_c,
+        header_c=header_c,
+    )
 
 
 def compile_kernel(program, *, run: bool = False, **kw):
@@ -155,7 +174,8 @@ def compile_kernel(program, *, run: bool = False, **kw):
         h = kw["table"].apply(h)
     th = _THETAS.get(kw.get("theta", "cool"), Theta.cool())
     pol = POLICIES.get(kw.get("policy", "latency"), PERF)
-    result = optimize(module, h, th, pol)        # deterministic: same plan as build_artifact
-    ok, out = compile_and_run_c(module, result, fn_name=art.fn_name, elem=kw.get("elem", "f32"),
-                                hw_width=h.vector_width)   # self-check the deployed (go-fast) form
+    result = optimize(module, h, th, pol)  # deterministic: same plan as build_artifact
+    ok, out = compile_and_run_c(
+        module, result, fn_name=art.fn_name, elem=kw.get("elem", "f32"), hw_width=h.vector_width
+    )  # self-check the deployed (go-fast) form
     return art, (ok, out)

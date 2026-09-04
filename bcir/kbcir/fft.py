@@ -39,7 +39,9 @@ def dft_reference(x: list[float], n: int) -> list[float]:
         re = 0.0
         im = 0.0
         for k in range(n):
-            ang = -2.0 * math.pi * ((j * k) % n) / n      # reduced phase: matches the C kernel's `(j*k)%n`
+            ang = (
+                -2.0 * math.pi * ((j * k) % n) / n
+            )  # reduced phase: matches the C kernel's `(j*k)%n`
             c = math.cos(ang)
             s = math.sin(ang)
             xr = x[2 * k]

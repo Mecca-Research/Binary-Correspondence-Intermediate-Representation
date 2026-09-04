@@ -7,6 +7,7 @@ helpers, and literal ``shell=True`` / string-command subprocess calls.
 Aliases, control flow, ``**kwargs``, and nested scopes are out of
 scope — those belong to a dedicated linter, not a BCIR rail.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,7 +19,10 @@ from typing import Any
 
 try:
     from tools.security.git_index import (
-        STAGED_OVERSIZED, staged_blob, staged_divergent, staged_mode,
+        STAGED_OVERSIZED,
+        staged_blob,
+        staged_divergent,
+        staged_mode,
     )
     from tools.security.scan_secrets import redacted_path
 except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
@@ -66,10 +70,7 @@ def _tracked(root: Path) -> Any:
         # tracked; that must fail the audit, never downgrade it.
         return _DISCOVERY_FAILED
     # surrogateescape: a non-UTF-8 tracked filename must not kill discovery.
-    return {
-        item.decode("utf-8", "surrogateescape")
-        for item in result.stdout.split(b"\0") if item
-    }
+    return {item.decode("utf-8", "surrogateescape") for item in result.stdout.split(b"\0") if item}
 
 
 def _iter_python(root: Path) -> tuple[list[Path], list[str], bool]:
@@ -123,7 +124,7 @@ def _iter_python(root: Path) -> tuple[list[Path], list[str], bool]:
 
 def _is_generated(parts: tuple[str, ...]) -> bool:
     """A generated tree is a PREFIX of the path, never a name anywhere in it."""
-    return any(parts[:len(root)] == root for root in SKIP_ROOTS)
+    return any(parts[: len(root)] == root for root in SKIP_ROOTS)
 
 
 def _is_true(node: ast.AST) -> bool:
@@ -147,15 +148,22 @@ def _boundary_findings(tree: ast.AST, shown: str, rel: str) -> list[dict[str, An
                 name = func.attr
             if name in {"system", "popen"} and isinstance(func, ast.Attribute):
                 if isinstance(func.value, ast.Name) and func.value.id == "os":
-                    findings.append({
-                        "path": shown, "line": node.lineno, "rule": "os.system-or-popen",
-                    })
+                    findings.append(
+                        {
+                            "path": shown,
+                            "line": node.lineno,
+                            "rule": "os.system-or-popen",
+                        }
+                    )
             if name in SHELL_HELPERS and isinstance(func, ast.Attribute):
                 if isinstance(func.value, ast.Name) and func.value.id == "subprocess":
-                    findings.append({
-                        "path": shown, "line": node.lineno,
-                        "rule": "subprocess-shell-helper",
-                    })
+                    findings.append(
+                        {
+                            "path": shown,
+                            "line": node.lineno,
+                            "rule": "subprocess-shell-helper",
+                        }
+                    )
             if name in {"run", "Popen", "check_output", "check_call", "call"}:
                 if not (
                     isinstance(func, ast.Attribute)
@@ -165,22 +173,29 @@ def _boundary_findings(tree: ast.AST, shown: str, rel: str) -> list[dict[str, An
                     continue
                 keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
                 if "shell" in keywords and _is_true(keywords["shell"]):
-                    findings.append({
-                        "path": shown, "line": node.lineno, "rule": "subprocess-shell-true",
-                    })
+                    findings.append(
+                        {
+                            "path": shown,
+                            "line": node.lineno,
+                            "rule": "subprocess-shell-true",
+                        }
+                    )
                 # The command may be the first positional OR the literal
                 # `args=` keyword — subprocess's public parameter name.
                 command = node.args[0] if node.args else keywords.get("args")
                 # An f-string is a string command too: ast.JoinedStr,
                 # not ast.Constant, but a string at the call site.
                 if isinstance(command, ast.JoinedStr) or (
-                    isinstance(command, ast.Constant)
-                    and isinstance(command.value, str)
+                    isinstance(command, ast.Constant) and isinstance(command.value, str)
                 ):
                     if "/tests/" not in f"/{rel}" and not rel.startswith("bcir/tests/"):
-                        findings.append({
-                            "path": shown, "line": node.lineno, "rule": "subprocess-string-command",
-                        })
+                        findings.append(
+                            {
+                                "path": shown,
+                                "line": node.lineno,
+                                "rule": "subprocess-string-command",
+                            }
+                        )
     return findings
 
 
@@ -200,9 +215,7 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
         }
     for rel in missing:
         printable = rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
-        findings.append(
-            {"path": redacted_path(printable), "line": 0, "rule": "file-missing"}
-        )
+        findings.append({"path": redacted_path(printable), "line": 0, "rule": "file-missing"})
     for path in paths:
         rel = str(path.relative_to(root)).replace("\\", "/")
         # rel keeps its surrogates for logic (tracked-set membership needs
@@ -214,9 +227,7 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
         # path can BE a credential (tools/ghp_....py), and a report that
         # copies it verbatim republishes the secret into the CI log. One
         # predicate, both rails (L14) — this rail must not grow a second.
-        shown = redacted_path(
-            rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
-        )
+        shown = redacted_path(rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace"))
         if path.is_symlink():
             # The tracked blob is the target string, not Python source;
             # following it would audit arbitrary host content (or crash on
@@ -253,11 +264,13 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
         except (SyntaxError, ValueError) as exc:
             # An unparseable file is uninspectable; fail closed with a finding
             # rather than escaping as a traceback.
-            findings.append({
-                "path": shown,
-                "line": int(getattr(exc, "lineno", 0) or 0),
-                "rule": "python-parse-error",
-            })
+            findings.append(
+                {
+                    "path": shown,
+                    "line": int(getattr(exc, "lineno", 0) or 0),
+                    "rule": "python-parse-error",
+                }
+            )
             continue
         findings.extend(_boundary_findings(tree, shown, rel))
     # The walk above audited the WORKTREE; the next commit records the
@@ -276,9 +289,7 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
             or _is_generated(tuple(parts))
         ):
             continue
-        shown = redacted_path(
-            rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
-        )
+        shown = redacted_path(rel.encode("utf-8", "surrogateescape").decode("utf-8", "replace"))
         shown = f"{shown} (staged)"
         if staged_mode(root, rel) == "120000":
             # The index entry is a SYMLINK: its blob is the target string,
@@ -301,11 +312,13 @@ def audit_boundaries(root: Path) -> dict[str, Any]:
         try:
             staged_tree = ast.parse(blob, filename=shown)
         except (SyntaxError, ValueError) as exc:
-            findings.append({
-                "path": shown,
-                "line": int(getattr(exc, "lineno", 0) or 0),
-                "rule": "python-parse-error",
-            })
+            findings.append(
+                {
+                    "path": shown,
+                    "line": int(getattr(exc, "lineno", 0) or 0),
+                    "rule": "python-parse-error",
+                }
+            )
             continue
         findings.extend(_boundary_findings(staged_tree, shown, rel))
     report = {

@@ -19,9 +19,9 @@ class Opcode(IntEnum):
     BARRIER = 10
     PHASE_ENTER = 11
     PHASE_LEAVE = 12
-    GGG_LOAD = 13   # gather
+    GGG_LOAD = 13  # gather
     GGG_STORE = 14  # scatter
-    T_MACC = 15     # tile matmul-accumulate
+    T_MACC = 15  # tile matmul-accumulate
     GEM_DISPATCH = 16
     PROV_NOTE = 17  # provenance note (H lane)
 
@@ -30,5 +30,6 @@ class Opcode(IntEnum):
 #: enum rather than in one consumer because both the verifier (R5, R9) and candidate
 #: generation have to agree on the set: they disagreed, and the verifier certified a
 #: plan that realized an atomic as a 16-wide vector op.
-ATOMIC_OPCODES = frozenset({Opcode.ATOMIC_ADD, Opcode.ATOMIC_SUB, Opcode.ATOMIC_XOR,
-                            Opcode.CMPXCHG})
+ATOMIC_OPCODES = frozenset(
+    {Opcode.ATOMIC_ADD, Opcode.ATOMIC_SUB, Opcode.ATOMIC_XOR, Opcode.CMPXCHG}
+)

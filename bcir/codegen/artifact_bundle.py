@@ -26,7 +26,12 @@ from .targets import CODEGEN_TARGETS
 
 
 _ELF_MACHINE_ARCH = {
-    3: "i386", 40: "arm", 62: "x86_64", 183: "aarch64", 243: "riscv64", 247: "bpf",
+    3: "i386",
+    40: "arm",
+    62: "x86_64",
+    183: "aarch64",
+    243: "riscv64",
+    247: "bpf",
 }
 _COFF_MACHINE_ARCH = {0x014C: "i386", 0x8664: "x86_64", 0xAA64: "aarch64"}
 
@@ -46,7 +51,10 @@ def _native_identity(payload: bytes) -> tuple[ArtifactFormat, Endianness, int, i
         endian = Endianness.LITTLE if data == 1 else Endianness.BIG
         machine = struct.unpack_from("<H" if data == 1 else ">H", payload, 18)[0]
         return (
-            ArtifactFormat.ELF, endian, 32 if cls == 1 else 64, machine,
+            ArtifactFormat.ELF,
+            endian,
+            32 if cls == 1 else 64,
+            machine,
             _ELF_MACHINE_ARCH.get(machine, ""),
         )
     macho = {
@@ -59,7 +67,10 @@ def _native_identity(payload: bytes) -> tuple[ArtifactFormat, Endianness, int, i
         endian, bits, prefix = macho[payload[:4]]
         machine = struct.unpack_from(prefix + "I", payload, 4)[0]
         arch = {
-            7: "i386", 0x01000007: "x86_64", 12: "arm", 0x0100000C: "aarch64",
+            7: "i386",
+            0x01000007: "x86_64",
+            12: "arm",
+            0x0100000C: "aarch64",
         }.get(machine, "")
         return ArtifactFormat.MACHO, endian, bits, machine, arch
     if len(payload) >= 20:
@@ -67,7 +78,10 @@ def _native_identity(payload: bytes) -> tuple[ArtifactFormat, Endianness, int, i
         if machine in _COFF_MACHINE_ARCH:
             bits = 64 if machine in (0x8664, 0xAA64) else 32
             return (
-                ArtifactFormat.COFF, Endianness.LITTLE, bits, machine,
+                ArtifactFormat.COFF,
+                Endianness.LITTLE,
+                bits,
+                machine,
                 _COFF_MACHINE_ARCH[machine],
             )
     raise BundleError("compiler output is not a recognized ELF, COFF, or Mach-O object")
@@ -94,55 +108,113 @@ class ArtifactBundleBuilder:
             raise BundleError("skipped variants require an ID and reason")
         self._skipped.append((variant_id, reason))
 
-    def add_stream_pack(self, variant_id: str, pack, *, channel: str = "host",
-                        priority: int = 0) -> None:
-        self.add(ArtifactVariant(
-            variant_id, ArtifactKind.STREAM_PACK, ArtifactFormat.STREAM_PACK,
-            encode_stream_pack(pack), channel=channel, priority=priority,
-            provenance_digest=self.provenance_digest, portable=True,
-        ))
+    def add_stream_pack(
+        self, variant_id: str, pack, *, channel: str = "host", priority: int = 0
+    ) -> None:
+        self.add(
+            ArtifactVariant(
+                variant_id,
+                ArtifactKind.STREAM_PACK,
+                ArtifactFormat.STREAM_PACK,
+                encode_stream_pack(pack),
+                channel=channel,
+                priority=priority,
+                provenance_digest=self.provenance_digest,
+                portable=True,
+            )
+        )
 
-    def add_c_source(self, variant_id: str, source: str, *,
-                     entry_symbol: str = "bcir_kernel") -> None:
+    def add_c_source(
+        self, variant_id: str, source: str, *, entry_symbol: str = "bcir_kernel"
+    ) -> None:
         if not isinstance(source, str):
             raise BundleError("C source must be text")
-        self.add(ArtifactVariant(
-            variant_id, ArtifactKind.C_SOURCE, ArtifactFormat.TEXT, source.encode("utf-8"),
-            entry_symbol=entry_symbol, provenance_digest=self.provenance_digest, portable=True,
-        ))
+        self.add(
+            ArtifactVariant(
+                variant_id,
+                ArtifactKind.C_SOURCE,
+                ArtifactFormat.TEXT,
+                source.encode("utf-8"),
+                entry_symbol=entry_symbol,
+                provenance_digest=self.provenance_digest,
+                portable=True,
+            )
+        )
 
-    def add_sycl_source(self, variant_id: str, source: str, *, entry_symbol: str,
-                        required_features: tuple[str, ...] = ("sycl",)) -> None:
-        self.add(ArtifactVariant(
-            variant_id, ArtifactKind.SYCL_SOURCE, ArtifactFormat.TEXT, source.encode("utf-8"),
-            channel="sycl_spirv", entry_symbol=entry_symbol,
-            required_features=required_features, provenance_digest=self.provenance_digest,
-            portable=True,
-        ))
+    def add_sycl_source(
+        self,
+        variant_id: str,
+        source: str,
+        *,
+        entry_symbol: str,
+        required_features: tuple[str, ...] = ("sycl",),
+    ) -> None:
+        self.add(
+            ArtifactVariant(
+                variant_id,
+                ArtifactKind.SYCL_SOURCE,
+                ArtifactFormat.TEXT,
+                source.encode("utf-8"),
+                channel="sycl_spirv",
+                entry_symbol=entry_symbol,
+                required_features=required_features,
+                provenance_digest=self.provenance_digest,
+                portable=True,
+            )
+        )
 
-    def add_native_object(self, variant_id: str, payload: bytes, *, triple: str = "",
-                          channel: str = "host", priority: int = 0,
-                          target_manifest_sha256: str = "", cal_gen: int = 0,
-                          r12_attested: bool = True) -> None:
+    def add_native_object(
+        self,
+        variant_id: str,
+        payload: bytes,
+        *,
+        triple: str = "",
+        channel: str = "host",
+        priority: int = 0,
+        target_manifest_sha256: str = "",
+        cal_gen: int = 0,
+        r12_attested: bool = True,
+    ) -> None:
         fmt, endian, bits, machine, architecture = _native_identity(payload)
         kind = {
             ArtifactFormat.ELF: ArtifactKind.ELF_OBJECT,
             ArtifactFormat.COFF: ArtifactKind.COFF_OBJECT,
             ArtifactFormat.MACHO: ArtifactKind.MACHO_OBJECT,
         }[fmt]
-        self.add(ArtifactVariant(
-            variant_id, kind, fmt, payload, triple=triple, architecture=architecture,
-            channel=channel, entry_symbol="bcir_kernel", endianness=endian,
-            pointer_bits=bits, e_machine=machine, priority=priority,
-            provenance_digest=self.provenance_digest,
-            target_manifest_sha256=target_manifest_sha256, cal_gen=cal_gen,
-            r12_attested=r12_attested, executable=True,
-        ))
+        self.add(
+            ArtifactVariant(
+                variant_id,
+                kind,
+                fmt,
+                payload,
+                triple=triple,
+                architecture=architecture,
+                channel=channel,
+                entry_symbol="bcir_kernel",
+                endianness=endian,
+                pointer_bits=bits,
+                e_machine=machine,
+                priority=priority,
+                provenance_digest=self.provenance_digest,
+                target_manifest_sha256=target_manifest_sha256,
+                cal_gen=cal_gen,
+                r12_attested=r12_attested,
+                executable=True,
+            )
+        )
 
-    def add_linked_image(self, variant_id: str, payload: bytes, *, triple: str = "",
-                         channel: str = "host", shared: bool = False,
-                         entry_symbol: str = "", priority: int = 0,
-                         r12_attested: bool = True) -> None:
+    def add_linked_image(
+        self,
+        variant_id: str,
+        payload: bytes,
+        *,
+        triple: str = "",
+        channel: str = "host",
+        shared: bool = False,
+        entry_symbol: str = "",
+        priority: int = 0,
+        r12_attested: bool = True,
+    ) -> None:
         """Add a real ELF/PE/Mach-O linker product with header-derived metadata."""
         if payload.startswith(b"\x7fELF"):
             fmt, endian, bits, machine, architecture = _native_identity(payload)
@@ -160,7 +232,7 @@ class ArtifactBundleBuilder:
             if len(payload) < 0x40:
                 raise BundleError("linked PE image is truncated")
             pe_offset = struct.unpack_from("<I", payload, 0x3C)[0]
-            if pe_offset > len(payload) - 24 or payload[pe_offset:pe_offset + 4] != b"PE\0\0":
+            if pe_offset > len(payload) - 24 or payload[pe_offset : pe_offset + 4] != b"PE\0\0":
                 raise BundleError("linked PE image has no bounded PE header")
             machine = struct.unpack_from("<H", payload, pe_offset + 4)[0]
             optional_size = struct.unpack_from("<H", payload, pe_offset + 20)[0]
@@ -186,29 +258,64 @@ class ArtifactBundleBuilder:
             if file_type != expected:
                 raise BundleError("linked Mach-O file type disagrees with shared=")
             kind = ArtifactKind.MACHO_SHARED if shared else ArtifactKind.MACHO_EXECUTABLE
-        self.add(ArtifactVariant(
-            variant_id, kind, fmt, payload, triple=triple, architecture=architecture,
-            channel=channel, entry_symbol=entry_symbol, endianness=endian,
-            pointer_bits=bits, e_machine=machine, priority=priority,
-            provenance_digest=self.provenance_digest, r12_attested=r12_attested,
-            executable=True,
-        ))
+        self.add(
+            ArtifactVariant(
+                variant_id,
+                kind,
+                fmt,
+                payload,
+                triple=triple,
+                architecture=architecture,
+                channel=channel,
+                entry_symbol=entry_symbol,
+                endianness=endian,
+                pointer_bits=bits,
+                e_machine=machine,
+                priority=priority,
+                provenance_digest=self.provenance_digest,
+                r12_attested=r12_attested,
+                executable=True,
+            )
+        )
 
     def add_archive(self, variant_id: str, payload: bytes, *, priority: int = 0) -> None:
-        self.add(ArtifactVariant(
-            variant_id, ArtifactKind.ARCHIVE, ArtifactFormat.ARCHIVE, payload,
-            priority=priority, provenance_digest=self.provenance_digest,
-        ))
+        self.add(
+            ArtifactVariant(
+                variant_id,
+                ArtifactKind.ARCHIVE,
+                ArtifactFormat.ARCHIVE,
+                payload,
+                priority=priority,
+                provenance_digest=self.provenance_digest,
+            )
+        )
 
-    def add_raw_binary(self, variant_id: str, payload: bytes, *, architecture: str,
-                       channel: str, entry_symbol: str = "", priority: int = 0,
-                       r12_attested: bool = True) -> None:
-        self.add(ArtifactVariant(
-            variant_id, ArtifactKind.RAW_BINARY, ArtifactFormat.RAW, payload,
-            architecture=architecture, channel=channel, entry_symbol=entry_symbol,
-            priority=priority, provenance_digest=self.provenance_digest,
-            r12_attested=r12_attested, executable=True,
-        ))
+    def add_raw_binary(
+        self,
+        variant_id: str,
+        payload: bytes,
+        *,
+        architecture: str,
+        channel: str,
+        entry_symbol: str = "",
+        priority: int = 0,
+        r12_attested: bool = True,
+    ) -> None:
+        self.add(
+            ArtifactVariant(
+                variant_id,
+                ArtifactKind.RAW_BINARY,
+                ArtifactFormat.RAW,
+                payload,
+                architecture=architecture,
+                channel=channel,
+                entry_symbol=entry_symbol,
+                priority=priority,
+                provenance_digest=self.provenance_digest,
+                r12_attested=r12_attested,
+                executable=True,
+            )
+        )
 
     def add_codegen_result(self, result: CodegenResult, *, priority: int = 0) -> None:
         variant_id = f"target-{result.target}"
@@ -218,7 +325,9 @@ class ArtifactBundleBuilder:
         target = CODEGEN_TARGETS.get(result.target)
         if isinstance(result.artifact, bytes):
             self.add_native_object(
-                variant_id, result.artifact, triple=target.triple if target else "",
+                variant_id,
+                result.artifact,
+                triple=target.triple if target else "",
                 priority=priority,
             )
             return
@@ -227,70 +336,134 @@ class ArtifactBundleBuilder:
             kind, channel = ArtifactKind.PTX, "nvidia_ptx"
         else:
             kind, channel = ArtifactKind.ASSEMBLY, result.target
-        self.add(ArtifactVariant(
-            variant_id, kind, ArtifactFormat.TEXT, payload,
-            triple=target.triple if target else "", architecture=result.target,
-            channel=channel, entry_symbol="bcir_kernel", priority=priority,
-            provenance_digest=self.provenance_digest, r12_attested=True,
-            executable=True,
-        ))
+        self.add(
+            ArtifactVariant(
+                variant_id,
+                kind,
+                ArtifactFormat.TEXT,
+                payload,
+                triple=target.triple if target else "",
+                architecture=result.target,
+                channel=channel,
+                entry_symbol="bcir_kernel",
+                priority=priority,
+                provenance_digest=self.provenance_digest,
+                r12_attested=True,
+                executable=True,
+            )
+        )
 
-    def add_wasm(self, variant_id: str, payload: bytes, *, priority: int = 0,
-                 r12_attested: bool = True) -> None:
-        self.add(ArtifactVariant(
-            variant_id, ArtifactKind.WASM, ArtifactFormat.WASM, payload,
-            triple="wasm32-unknown-unknown", architecture="wasm32", channel="wasm",
-            entry_symbol="bcir_kernel", endianness=Endianness.LITTLE, pointer_bits=32,
-            priority=priority, provenance_digest=self.provenance_digest,
-            r12_attested=r12_attested, executable=True, portable=True,
-        ))
+    def add_wasm(
+        self, variant_id: str, payload: bytes, *, priority: int = 0, r12_attested: bool = True
+    ) -> None:
+        self.add(
+            ArtifactVariant(
+                variant_id,
+                ArtifactKind.WASM,
+                ArtifactFormat.WASM,
+                payload,
+                triple="wasm32-unknown-unknown",
+                architecture="wasm32",
+                channel="wasm",
+                entry_symbol="bcir_kernel",
+                endianness=Endianness.LITTLE,
+                pointer_bits=32,
+                priority=priority,
+                provenance_digest=self.provenance_digest,
+                r12_attested=r12_attested,
+                executable=True,
+                portable=True,
+            )
+        )
 
-    def add_stack_program(self, variant_prefix: str, ops: list[StackOp], *,
-                          class_name: str = "BcirStackKernel") -> None:
+    def add_stack_program(
+        self, variant_prefix: str, ops: list[StackOp], *, class_name: str = "BcirStackKernel"
+    ) -> None:
         jvm_text = tuple(to_jvm(ops))
-        self.add(ArtifactVariant(
-            f"{variant_prefix}-jvm", ArtifactKind.JVM_CLASS, ArtifactFormat.JVM_CLASS,
-            build_jvm_class(class_name, jvm_text), triple="jvm-unknown-java",
-            architecture="jvm", channel="jvm", entry_symbol="run",
-            provenance_digest=self.provenance_digest, r12_attested=True,
-            executable=True, portable=True,
-        ))
-        self.add(ArtifactVariant(
-            f"{variant_prefix}-cil", ArtifactKind.CIL, ArtifactFormat.TEXT,
-            ("\n".join(to_cil(ops)) + "\n").encode(), triple="cil-unknown-dotnet",
-            architecture="cil", channel="cil", entry_symbol="run",
-            provenance_digest=self.provenance_digest, r12_attested=True,
-            executable=True, portable=True,
-        ))
-        self.add(ArtifactVariant(
-            f"{variant_prefix}-wasm-text", ArtifactKind.ASSEMBLY, ArtifactFormat.TEXT,
-            ("\n".join(to_wasm(ops)) + "\n").encode(), triple="wasm32-unknown-unknown",
-            architecture="wasm32", channel="wasm", entry_symbol="run",
-            provenance_digest=self.provenance_digest, r12_attested=True,
-            executable=True, portable=True,
-        ))
+        self.add(
+            ArtifactVariant(
+                f"{variant_prefix}-jvm",
+                ArtifactKind.JVM_CLASS,
+                ArtifactFormat.JVM_CLASS,
+                build_jvm_class(class_name, jvm_text),
+                triple="jvm-unknown-java",
+                architecture="jvm",
+                channel="jvm",
+                entry_symbol="run",
+                provenance_digest=self.provenance_digest,
+                r12_attested=True,
+                executable=True,
+                portable=True,
+            )
+        )
+        self.add(
+            ArtifactVariant(
+                f"{variant_prefix}-cil",
+                ArtifactKind.CIL,
+                ArtifactFormat.TEXT,
+                ("\n".join(to_cil(ops)) + "\n").encode(),
+                triple="cil-unknown-dotnet",
+                architecture="cil",
+                channel="cil",
+                entry_symbol="run",
+                provenance_digest=self.provenance_digest,
+                r12_attested=True,
+                executable=True,
+                portable=True,
+            )
+        )
+        self.add(
+            ArtifactVariant(
+                f"{variant_prefix}-wasm-text",
+                ArtifactKind.ASSEMBLY,
+                ArtifactFormat.TEXT,
+                ("\n".join(to_wasm(ops)) + "\n").encode(),
+                triple="wasm32-unknown-unknown",
+                architecture="wasm32",
+                channel="wasm",
+                entry_symbol="run",
+                provenance_digest=self.provenance_digest,
+                r12_attested=True,
+                executable=True,
+                portable=True,
+            )
+        )
 
-    def finish(self, *, root_variant_id: str = "",
-               default_variant_id: str = "") -> BundleBuildReport:
+    def finish(
+        self, *, root_variant_id: str = "", default_variant_id: str = ""
+    ) -> BundleBuildReport:
         if not self._variants:
             raise BundleError("cannot finish an empty artifact bundle")
         variants = tuple(self._variants[key] for key in sorted(self._variants))
         bundle = ArtifactBundle(
-            variants, root_variant_id, default_variant_id,
-            self.provenance_digest, self.generation,
+            variants,
+            root_variant_id,
+            default_variant_id,
+            self.provenance_digest,
+            self.generation,
         )
         return BundleBuildReport(
-            bundle, tuple(v.variant_id for v in variants), tuple(self._skipped),
+            bundle,
+            tuple(v.variant_id for v in variants),
+            tuple(self._skipped),
         )
 
 
-def build_codegen_bundle(module, realization, stream_pack, *, include_targets: bool = True,
-                         include_c_object: bool = True, include_c_source: bool = True,
-                         provenance_digest: int = 0,
-                         generation: int = 0) -> BundleBuildReport:
+def build_codegen_bundle(
+    module,
+    realization,
+    stream_pack,
+    *,
+    include_targets: bool = True,
+    include_c_object: bool = True,
+    include_c_source: bool = True,
+    provenance_digest: int = 0,
+    generation: int = 0,
+) -> BundleBuildReport:
     """Build all available host/cross artifacts without inventing missing outputs."""
     builder = ArtifactBundleBuilder(
-        provenance_digest=provenance_digest, generation=generation,
+        provenance_digest=provenance_digest,
+        generation=generation,
     )
     builder.add_stream_pack("00-streampack", stream_pack, priority=100)
     if include_c_source:
@@ -301,7 +474,8 @@ def build_codegen_bundle(module, realization, stream_pack, *, include_targets: b
         for target_name in sorted(CODEGEN_TARGETS):
             builder.add_codegen_result(codegen(module, realization, target_name), priority=40)
     return builder.finish(
-        root_variant_id="00-streampack", default_variant_id="00-streampack",
+        root_variant_id="00-streampack",
+        default_variant_id="00-streampack",
     )
 
 

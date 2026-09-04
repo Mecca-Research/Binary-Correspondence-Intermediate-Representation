@@ -117,8 +117,10 @@ class TensorRecord:
     layer: int
 
     def __post_init__(self) -> None:
-        _string(self.name, "tensor name"); _string(self.shard, "tensor shard")
-        _string(self.dtype, "tensor dtype"); _string(self.role, "tensor role")
+        _string(self.name, "tensor name")
+        _string(self.shard, "tensor shard")
+        _string(self.dtype, "tensor dtype")
+        _string(self.role, "tensor role")
         if not isinstance(self.shape, (tuple, list)):
             raise ValueError("tensor shape must be a sequence")
         shape = tuple(self.shape)
@@ -135,7 +137,9 @@ class TensorRecord:
         _integer(self.layer, "tensor layer", minimum=-1, maximum=(1 << 31) - 1)
 
     def to_dict(self) -> dict:
-        value = asdict(self); value["shape"] = list(self.shape); return value
+        value = asdict(self)
+        value["shape"] = list(self.shape)
+        return value
 
 
 @dataclass(frozen=True)
@@ -175,24 +179,37 @@ class TensorInventory:
         if self.schema != _SCHEMA:
             raise ValueError("unsupported tensor inventory schema")
         _string(self.architecture, "architecture")
-        for field in ("vocab_size", "hidden_size", "intermediate_size",
-                      "num_hidden_layers", "num_attention_heads", "num_key_value_heads",
-                      "max_position_embeddings"):
+        for field in (
+            "vocab_size",
+            "hidden_size",
+            "intermediate_size",
+            "num_hidden_layers",
+            "num_attention_heads",
+            "num_key_value_heads",
+            "max_position_embeddings",
+        ):
             _integer(getattr(self, field), field)
         if type(self.tied_embeddings) is not bool:
             raise ValueError("tied_embeddings must be Boolean")
-        if not isinstance(self.tensors, (tuple, list)) or not isinstance(self.shards, (tuple, list)):
+        if not isinstance(self.tensors, (tuple, list)) or not isinstance(
+            self.shards, (tuple, list)
+        ):
             raise ValueError("inventory tensors and shards must be sequences")
         tensors, shards = tuple(self.tensors), tuple(self.shards)
-        if any(not isinstance(row, TensorRecord) for row in tensors) \
-                or any(not isinstance(row, ShardLayout) for row in shards):
+        if any(not isinstance(row, TensorRecord) for row in tensors) or any(
+            not isinstance(row, ShardLayout) for row in shards
+        ):
             raise ValueError("inventory contains malformed tensor/shard rows")
-        if tuple(sorted(tensors, key=lambda row: (row.shard, row.data_offset, row.name))) != tensors:
+        if (
+            tuple(sorted(tensors, key=lambda row: (row.shard, row.data_offset, row.name)))
+            != tensors
+        ):
             raise ValueError("inventory tensors are not in canonical physical order")
         if tuple(sorted(shards, key=lambda row: row.file)) != shards:
             raise ValueError("inventory shards are not in canonical filename order")
-        if len({row.name for row in tensors}) != len(tensors) \
-                or len({row.file for row in shards}) != len(shards):
+        if len({row.name for row in tensors}) != len(tensors) or len(
+            {row.file for row in shards}
+        ) != len(shards):
             raise ValueError("inventory has duplicate tensor names or shard files")
         census = {row.file: 0 for row in shards}
         for tensor in tensors:
@@ -214,7 +231,8 @@ class TensorInventory:
                 raise ValueError(f"inventory shard {shard.file!r} payload does not reconcile")
         _integer(sum(row.element_count for row in tensors), "inventory total element count")
         _integer(sum(row.file_bytes for row in shards), "inventory total file bytes")
-        object.__setattr__(self, "tensors", tensors); object.__setattr__(self, "shards", shards)
+        object.__setattr__(self, "tensors", tensors)
+        object.__setattr__(self, "shards", shards)
 
     @property
     def parameter_count(self) -> int:
@@ -237,13 +255,17 @@ class TensorInventory:
         return hashlib.sha256(self.to_json().encode("utf-8")).hexdigest()
 
     def layer_bytes(self) -> tuple[int, ...]:
-        return tuple(sum(row.nbytes for row in self.tensors if row.layer == layer)
-                     for layer in range(self.num_hidden_layers))
+        return tuple(
+            sum(row.nbytes for row in self.tensors if row.layer == layer)
+            for layer in range(self.num_hidden_layers)
+        )
 
     def to_dict(self) -> dict:
         return {
-            "schema": self.schema, "architecture": self.architecture,
-            "vocab_size": self.vocab_size, "hidden_size": self.hidden_size,
+            "schema": self.schema,
+            "architecture": self.architecture,
+            "vocab_size": self.vocab_size,
+            "hidden_size": self.hidden_size,
             "intermediate_size": self.intermediate_size,
             "num_hidden_layers": self.num_hidden_layers,
             "num_attention_heads": self.num_attention_heads,
@@ -261,15 +283,26 @@ class TensorInventory:
     def from_json(cls, text: str) -> "TensorInventory":
         doc = strict_json_loads(text, "tensor inventory", max_bytes=_MAX_JSON)
         if not isinstance(doc, dict) or set(doc) != {
-                "schema", "architecture", "vocab_size", "hidden_size", "intermediate_size",
-                "num_hidden_layers", "num_attention_heads", "num_key_value_heads",
-                "max_position_embeddings", "tied_embeddings", "tensors", "shards"}:
+            "schema",
+            "architecture",
+            "vocab_size",
+            "hidden_size",
+            "intermediate_size",
+            "num_hidden_layers",
+            "num_attention_heads",
+            "num_key_value_heads",
+            "max_position_embeddings",
+            "tied_embeddings",
+            "tensors",
+            "shards",
+        }:
             raise ValueError("tensor inventory has missing or unknown fields")
         if not isinstance(doc["tensors"], list) or not isinstance(doc["shards"], list):
             raise ValueError("tensor inventory tensors/shards must be arrays")
         try:
-            tensors = tuple(TensorRecord(**{**row, "shape": tuple(row["shape"])})
-                            for row in doc.pop("tensors"))
+            tensors = tuple(
+                TensorRecord(**{**row, "shape": tuple(row["shape"])}) for row in doc.pop("tensors")
+            )
             shards = tuple(ShardLayout(**row) for row in doc.pop("shards"))
             return cls(**doc, tensors=tensors, shards=shards)
         except (KeyError, TypeError) as exc:
@@ -288,7 +321,9 @@ def build_tensor_inventory(shard_paths: list[str], config: dict) -> TensorInvent
     if not isinstance(config, dict) or not shard_paths:
         raise ValueError("inventory requires a config object and at least one shard")
     architectures = config.get("architectures", [config.get("model_type", "unknown")])
-    architecture = architectures[0] if isinstance(architectures, list) and architectures else architectures
+    architecture = (
+        architectures[0] if isinstance(architectures, list) and architectures else architectures
+    )
     _string(architecture, "config architecture")
     tied = config.get("tie_word_embeddings", True)
     if type(tied) is not bool:
@@ -296,42 +331,70 @@ def build_tensor_inventory(shard_paths: list[str], config: dict) -> TensorInvent
 
     rows: list[TensorRecord] = []
     shards: list[ShardLayout] = []
-    seen_names: set[str] = set(); seen_files: set[str] = set()
+    seen_names: set[str] = set()
+    seen_files: set[str] = set()
     for raw_path in sorted(shard_paths, key=lambda value: os.path.basename(os.fspath(value))):
-        path = os.fspath(raw_path); basename = os.path.basename(path)
+        path = os.fspath(raw_path)
+        basename = os.path.basename(path)
         if not basename or basename in seen_files:
             raise ValueError(f"duplicate or invalid shard basename {basename!r}")
         seen_files.add(basename)
         tensors, _metadata, data_offset, file_size = parse_safetensors_layout(path)
-        for name, spec in sorted(tensors.items(), key=lambda item: (item[1]["data_offsets"][0], item[0])):
+        for name, spec in sorted(
+            tensors.items(), key=lambda item: (item[1]["data_offsets"][0], item[0])
+        ):
             if name in seen_names:
                 raise ValueError(f"tensor {name!r} appears in multiple shards")
             seen_names.add(name)
             lo, hi = spec["data_offsets"]
-            shape = tuple(spec["shape"]); elements = _product(shape, f"tensor {name!r} shape")
-            row = TensorRecord(name, basename, spec["dtype"], shape, elements, lo,
-                               hi - lo, _role(name), _layer_index(name))
+            shape = tuple(spec["shape"])
+            elements = _product(shape, f"tensor {name!r} shape")
+            row = TensorRecord(
+                name,
+                basename,
+                spec["dtype"],
+                shape,
+                elements,
+                lo,
+                hi - lo,
+                _role(name),
+                _layer_index(name),
+            )
             rows.append(row)
-        shards.append(ShardLayout(basename, file_size, data_offset,
-                                  file_size - data_offset, len(tensors)))
+        shards.append(
+            ShardLayout(basename, file_size, data_offset, file_size - data_offset, len(tensors))
+        )
 
     return TensorInventory(
         architecture=str(architecture),
         vocab_size=_config_int(config, "vocab_size", ("vocab_size",)),
         hidden_size=_config_int(config, "hidden_size", ("hidden_size", "n_embd", "d_model")),
-        intermediate_size=_config_int(config, "intermediate_size",
-                                      ("intermediate_size", "n_inner", "d_ff")),
-        num_hidden_layers=_config_int(config, "num_hidden_layers",
-                                      ("num_hidden_layers", "n_layer", "n_layers")),
-        num_attention_heads=_config_int(config, "num_attention_heads",
-                                        ("num_attention_heads", "n_head", "n_heads")),
-        num_key_value_heads=_config_int(config, "num_key_value_heads",
-                                        ("num_key_value_heads", "n_kv_heads"),
-                                        _config_int(config, "num_attention_heads",
-                                                    ("num_attention_heads", "n_head", "n_heads"))),
-        max_position_embeddings=_config_int(config, "max_position_embeddings",
-                                            ("max_position_embeddings", "n_positions", "context_length")),
-        tied_embeddings=tied, tensors=tuple(rows), shards=tuple(shards))
+        intermediate_size=_config_int(
+            config, "intermediate_size", ("intermediate_size", "n_inner", "d_ff")
+        ),
+        num_hidden_layers=_config_int(
+            config, "num_hidden_layers", ("num_hidden_layers", "n_layer", "n_layers")
+        ),
+        num_attention_heads=_config_int(
+            config, "num_attention_heads", ("num_attention_heads", "n_head", "n_heads")
+        ),
+        num_key_value_heads=_config_int(
+            config,
+            "num_key_value_heads",
+            ("num_key_value_heads", "n_kv_heads"),
+            _config_int(
+                config, "num_attention_heads", ("num_attention_heads", "n_head", "n_heads")
+            ),
+        ),
+        max_position_embeddings=_config_int(
+            config,
+            "max_position_embeddings",
+            ("max_position_embeddings", "n_positions", "context_length"),
+        ),
+        tied_embeddings=tied,
+        tensors=tuple(rows),
+        shards=tuple(shards),
+    )
 
 
 __all__ = ["ShardLayout", "TensorInventory", "TensorRecord", "build_tensor_inventory"]

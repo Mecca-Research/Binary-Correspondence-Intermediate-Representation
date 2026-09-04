@@ -4,6 +4,7 @@
 A zero-file scan is INVALID, not clean. Matches are reported by path, rule, line,
 and a non-reversible fingerprint — never the matched value.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -27,7 +28,10 @@ from typing import Any
 
 try:
     from tools.security.git_index import (
-        STAGED_OVERSIZED, staged_blob, staged_divergent, staged_mode,
+        STAGED_OVERSIZED,
+        staged_blob,
+        staged_divergent,
+        staged_mode,
     )
     from tools.security.proc_bounds import run_bounded
 except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
@@ -36,22 +40,61 @@ except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
 
 ROOT = Path(__file__).resolve().parents[2]
 
-BINARY_SUFFIXES = frozenset({
-    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp",
-    ".woff", ".woff2", ".ttf", ".otf", ".eot",
-    ".bin", ".o", ".a", ".so", ".dll", ".dylib", ".exe", ".wasm",
-    ".bc", ".bcab", ".bcirq8", ".safetensors", ".pt", ".pth", ".onnx",
-    ".pdf", ".mp3", ".mp4", ".wav",
-})
+BINARY_SUFFIXES = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".ico",
+        ".bmp",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".otf",
+        ".eot",
+        ".bin",
+        ".o",
+        ".a",
+        ".so",
+        ".dll",
+        ".dylib",
+        ".exe",
+        ".wasm",
+        ".bc",
+        ".bcab",
+        ".bcirq8",
+        ".safetensors",
+        ".pt",
+        ".pth",
+        ".onnx",
+        ".pdf",
+        ".mp3",
+        ".mp4",
+        ".wav",
+    }
+)
 # Only formats _archive_entries can actually open are archives. Bare single-file
 # compression and 7z have no inspection path here, so they follow the binary
 # policy (recorded, never parsed) — calling them archives made the scan FAIL on
 # legitimate tracked files it could never read.
-ARCHIVE_SUFFIXES = frozenset({
-    ".zip", ".whl", ".egg", ".jar",
-    ".tar", ".tgz", ".tbz", ".tbz2", ".txz",
-    ".tar.gz", ".tar.bz2", ".tar.xz",
-})
+ARCHIVE_SUFFIXES = frozenset(
+    {
+        ".zip",
+        ".whl",
+        ".egg",
+        ".jar",
+        ".tar",
+        ".tgz",
+        ".tbz",
+        ".tbz2",
+        ".txz",
+        ".tar.gz",
+        ".tar.bz2",
+        ".tar.xz",
+    }
+)
 SINGLE_FILE_COMPRESSION = frozenset({".gz", ".bz2", ".xz", ".7z"})
 TEXT_SAMPLE = 8192
 ARCHIVE_MEMBER_CAP = 1 << 20
@@ -114,23 +157,26 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     # Delimiters: assignment (=) AND mapping (:) syntax — YAML `password:`
     # and JSON `"password":` store the same credential; the optional quote
     # before the delimiter is the JSON key's closing quote.
-    ("assignment-secret", re.compile(
-        r"(?i)(?:\b|(?<=[0-9A-Za-z]_))(?:api[_-]?key|secret|password|token|passwd)"
-        r"(?:[_-][A-Za-z0-9]{1,64}){0,16}+['\"]?\s*(?::\s*" + YAML_NODE_PROPS + r"|=\s*)"
-        # Split by delimiter, and escape-aware in each: `[^'\"]` knew
-        # neither which quote opened the value nor that a backslash escapes
-        # the next character, so a JSON value containing an escaped quote
-        # ended at that raw quote and no branch could recover the
-        # assignment. The two alternatives are unambiguous (one starts
-        # with a backslash, the other cannot contain one), so this stays
-        # linear.
-        r"(?:\"(?P<value>(?:[^\"\\]|\\.){12,})\""
-        r"|'(?P<svalue>(?:[^'\\]|\\.){12,})'"
-        r"|(?P<uvalue>(?=[A-Za-z0-9+/_.\-]*\d)[A-Za-z0-9+/_.\-]{16,}={0,2}"
-        r"|(?-i:[a-z]{20,})(?![A-Za-z0-9_])"
-        r"|(?-i:(?=[a-z\-]{16,}(?![A-Za-z0-9_.\-]))[a-z]+(?:-[a-z]+){2,})"
-        r"(?![A-Za-z0-9_.\-])))"
-    )),
+    (
+        "assignment-secret",
+        re.compile(
+            r"(?i)(?:\b|(?<=[0-9A-Za-z]_))(?:api[_-]?key|secret|password|token|passwd)"
+            r"(?:[_-][A-Za-z0-9]{1,64}){0,16}+['\"]?\s*(?::\s*" + YAML_NODE_PROPS + r"|=\s*)"
+            # Split by delimiter, and escape-aware in each: `[^'\"]` knew
+            # neither which quote opened the value nor that a backslash escapes
+            # the next character, so a JSON value containing an escaped quote
+            # ended at that raw quote and no branch could recover the
+            # assignment. The two alternatives are unambiguous (one starts
+            # with a backslash, the other cannot contain one), so this stays
+            # linear.
+            r"(?:\"(?P<value>(?:[^\"\\]|\\.){12,})\""
+            r"|'(?P<svalue>(?:[^'\\]|\\.){12,})'"
+            r"|(?P<uvalue>(?=[A-Za-z0-9+/_.\-]*\d)[A-Za-z0-9+/_.\-]{16,}={0,2}"
+            r"|(?-i:[a-z]{20,})(?![A-Za-z0-9_])"
+            r"|(?-i:(?=[a-z\-]{16,}(?![A-Za-z0-9_.\-]))[a-z]+(?:-[a-z]+){2,})"
+            r"(?![A-Za-z0-9_.\-])))"
+        ),
+    ),
 )
 
 # Suppression recognizes placeholder VALUES, never substrings: a real
@@ -159,11 +205,7 @@ def _is_prose(value: str) -> bool:
 
 
 def _is_placeholder(value: str) -> bool:
-    return bool(
-        FILLER.search(value)
-        or WORD_PLACEHOLDER.search(value)
-        or REFERENCE.match(value)
-    )
+    return bool(FILLER.search(value) or WORD_PLACEHOLDER.search(value) or REFERENCE.match(value))
 
 
 def redacted_path(rel: str) -> str:
@@ -181,9 +223,7 @@ def redacted_path(rel: str) -> str:
     second caller, and the second rail (the boundary audit) is exactly
     where it would have landed."""
     parts = rel.split("/")
-    redacted = [
-        "<redacted>" if _scan_text(part, part) else part for part in parts
-    ]
+    redacted = ["<redacted>" if _scan_text(part, part) else part for part in parts]
     if redacted != parts:
         return "/".join(redacted)
     if not _scan_text(rel, rel):
@@ -223,10 +263,7 @@ def _git_files(root: Path) -> list[str] | None:
     # surrogateescape: git hands back raw filename bytes; a non-UTF-8 name
     # must reach the scan loop (which records it) instead of killing
     # discovery with a UnicodeDecodeError before any verdict.
-    return [
-        item.decode("utf-8", "surrogateescape")
-        for item in result.stdout.split(b"\0") if item
-    ]
+    return [item.decode("utf-8", "surrogateescape") for item in result.stdout.split(b"\0") if item]
 
 
 def _suffix_matches(lower: str, suffixes: frozenset[str]) -> bool:
@@ -235,8 +272,10 @@ def _suffix_matches(lower: str, suffixes: frozenset[str]) -> bool:
 
 # UTF-32 before UTF-16: BOM_UTF32_LE starts with BOM_UTF16_LE's bytes.
 _BOMS: tuple[tuple[bytes, str], ...] = (
-    (codecs.BOM_UTF32_LE, "utf-32"), (codecs.BOM_UTF32_BE, "utf-32"),
-    (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16"),
+    (codecs.BOM_UTF32_LE, "utf-32"),
+    (codecs.BOM_UTF32_BE, "utf-32"),
+    (codecs.BOM_UTF16_LE, "utf-16"),
+    (codecs.BOM_UTF16_BE, "utf-16"),
     (codecs.BOM_UTF8, "utf-8-sig"),
 )
 
@@ -255,8 +294,8 @@ def _utf32_bomless(data: bytes) -> str | None:
     """
     if len(data) % 4:
         return None
-    sample = data[:TEXT_SAMPLE - (TEXT_SAMPLE % 4)]
-    sample = sample[:len(sample) - (len(sample) % 4)]
+    sample = data[: TEXT_SAMPLE - (TEXT_SAMPLE % 4)]
+    sample = sample[: len(sample) - (len(sample) % 4)]
     if len(sample) < 8:
         return None
     # VALIDITY decides, not NUL density. Counting three-NUL groups asked
@@ -293,8 +332,8 @@ def _utf16_bomless(data: bytes) -> str | None:
     whole text decodes it once."""
     if len(data) % 2:
         return None
-    sample = data[:TEXT_SAMPLE - (TEXT_SAMPLE % 4)]
-    sample = sample[:len(sample) - (len(sample) % 4)]
+    sample = data[: TEXT_SAMPLE - (TEXT_SAMPLE % 4)]
+    sample = sample[: len(sample) - (len(sample) % 4)]
     if len(sample) < 4:
         return None
     even = sample[0::2].count(0)
@@ -319,7 +358,7 @@ def _utf16_bomless(data: bytes) -> str | None:
         even = 0
         odd = 0
         for start in range(0, len(data), 1 << 16):
-            chunk = data[start:start + (1 << 16)]
+            chunk = data[start : start + (1 << 16)]
             even += chunk[0::2].count(0)
             odd += chunk[1::2].count(0)
         if odd >= 8 and odd > even * 4:
@@ -489,7 +528,7 @@ def _wrapped_value_findings(path: str, lines: list[str]) -> list[dict[str, Any]]
         if not WRAPPED_KEY.match(line):
             continue
         follower = ""
-        for candidate in lines[index + 1:]:
+        for candidate in lines[index + 1 :]:
             if candidate.strip():
                 follower = candidate.strip()
                 break
@@ -528,7 +567,7 @@ def _block_scalar_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
             continue
         base = len(match.group("indent"))
         collected: list[str] = []
-        for follower in lines[index + 1:]:
+        for follower in lines[index + 1 :]:
             if not follower.strip():
                 collected.append("")
                 continue
@@ -574,7 +613,7 @@ def _multiline_close(text: str, delim: str) -> int:
     limit = len(text)
     while index < limit:
         if text[index] == "\\":
-            index += 2          # the escaped character closes nothing
+            index += 2  # the escaped character closes nothing
             continue
         if text.startswith(delim, index):
             return index
@@ -592,9 +631,7 @@ EXPLICIT_KEY = re.compile(
     r"(?:api[_-]?key|secret|password|token|passwd)(?:[_-][A-Za-z0-9]+)*"
     r"['\"]?[ \t]*$"
 )
-EXPLICIT_VALUE = re.compile(
-    r"^\s*:[ \t]*" + YAML_NODE_PROPS + r"(?P<value>.*)$"
-)
+EXPLICIT_VALUE = re.compile(r"^\s*:[ \t]*" + YAML_NODE_PROPS + r"(?P<value>.*)$")
 
 
 def _explicit_key_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
@@ -603,7 +640,7 @@ def _explicit_key_findings(path: str, lines: list[str]) -> list[dict[str, Any]]:
     for index, line in enumerate(lines):
         if not EXPLICIT_KEY.match(line):
             continue
-        for follower in lines[index + 1:]:
+        for follower in lines[index + 1 :]:
             if not follower.strip():
                 continue
             match = EXPLICIT_VALUE.match(follower)
@@ -643,15 +680,15 @@ def _folded_scalar_findings(path: str, lines: list[str]) -> list[dict[str, Any]]
         if not match:
             continue
         rest = match.group("rest")
-        if _multiline_close(rest, "\"") >= 0:
+        if _multiline_close(rest, '"') >= 0:
             # The scalar closes on its own line: inline territory, and the
             # assignment rule has already judged it.
             continue
         segments = [rest]
         closed = False
-        for follower in lines[index + 1:]:
+        for follower in lines[index + 1 :]:
             stripped = follower.strip()
-            at = _multiline_close(stripped, "\"")
+            at = _multiline_close(stripped, '"')
             if at >= 0:
                 segments.append(stripped[:at])
                 closed = True
@@ -664,9 +701,9 @@ def _folded_scalar_findings(path: str, lines: list[str]) -> list[dict[str, Any]]
         value = segments[0]
         for segment in segments[1:]:
             if value.endswith("\\"):
-                value = value[:-1] + segment    # escaped break: no space
+                value = value[:-1] + segment  # escaped break: no space
             elif value:
-                value = f"{value} {segment}"    # a folded break IS a space
+                value = f"{value} {segment}"  # a folded break IS a space
             else:
                 value = segment
         finding = _continuation_finding(path, index, value)
@@ -700,7 +737,7 @@ def _toml_multiline_findings(path: str, lines: list[str]) -> list[dict[str, Any]
                 findings.append(finding)
             continue
         collected = [rest] if rest else []
-        for follower in lines[index + 1:]:
+        for follower in lines[index + 1 :]:
             closing = _multiline_close(follower, delim)
             if closing >= 0:
                 collected.append(follower[:closing])
@@ -729,12 +766,14 @@ def _decode_text_escapes(line: str) -> str:
     rules match, and leaving it as written keeps the shadow line the same
     length as the raw one so reported columns stay meaningful.
     """
+
     def _one(match: re.Match[str]) -> str:
         digits = match.group(1) or match.group(2) or match.group(3)
         point = int(digits, 16)
         return chr(point) if 0x20 <= point < 0x7F else match.group(0)
 
     return _TEXT_ESCAPE.sub(_one, line)
+
 
 def _reportable(match: "re.Match[str]") -> str | None:
     """The matched credential, or None when suppression applies.
@@ -749,8 +788,7 @@ def _reportable(match: "re.Match[str]") -> str | None:
     # Placeholder checks run on the VALUE (assignment RHS or the token
     # itself), not on the key or surrounding text.
     if _is_placeholder(
-        groups.get("value") or groups.get("svalue")
-        or groups.get("uvalue") or value
+        groups.get("value") or groups.get("svalue") or groups.get("uvalue") or value
     ):
         return None
     # Prose suppression applies ONLY to the quoted branch: the unquoted
@@ -834,26 +872,34 @@ def _scan_text(path: str, text: str) -> list[dict[str, Any]]:
                         fingerprint = _fingerprint(value)
                         if fingerprint in seen:
                             continue
-                        findings.append({
-                            "path": path, "line": number,
-                            "rule": rule, "fingerprint": fingerprint,
-                        })
+                        findings.append(
+                            {
+                                "path": path,
+                                "line": number,
+                                "rule": rule,
+                                "fingerprint": fingerprint,
+                            }
+                        )
         for rule, pattern in RULES:
             for match in pattern.finditer(line):
                 value = _reportable(match)
                 if value is None:
                     continue
-                findings.append({
-                    "path": path,
-                    "line": number,
-                    "rule": rule,
-                    "fingerprint": _fingerprint(value),
-                })
+                findings.append(
+                    {
+                        "path": path,
+                        "line": number,
+                        "rule": rule,
+                        "fingerprint": _fingerprint(value),
+                    }
+                )
     return findings
 
 
 _COMPRESSED_TAR_MAGIC: tuple[tuple[bytes, str], ...] = (
-    (b"\x1f\x8b", "gzip"), (b"BZh", "bz2"), (b"\xfd7zXZ\x00", "xz"),
+    (b"\x1f\x8b", "gzip"),
+    (b"BZh", "bz2"),
+    (b"\xfd7zXZ\x00", "xz"),
 )
 
 
@@ -888,9 +934,11 @@ def _members_bounded(data: bytes, kind: str) -> bytes:
     """
     if kind == "gzip":
         import zlib
+
         new = lambda: zlib.decompressobj(16 + zlib.MAX_WBITS)  # noqa: E731
     else:
         import bz2
+
         new = bz2.BZ2Decompressor
     chunks: list[bytes] = []
     total = 0
@@ -909,7 +957,7 @@ def _members_bounded(data: bytes, kind: str) -> bytes:
             elif getattr(decomp, "needs_input", True):
                 if offset >= len(view):
                     raise EOFError(f"truncated {kind} stream")
-                block = bytes(view[offset:offset + FEED_CHUNK])
+                block = bytes(view[offset : offset + FEED_CHUNK])
                 offset += len(block)
             else:
                 block = b""
@@ -965,7 +1013,7 @@ def _xz_bounded(data: bytes) -> bytes:
                     # decompressor hands back what it did not consume, so
                     # feeding the suffix made every stream re-copy the tail
                     # after it — quadratic in the stream count.
-                    block = bytes(view[offset:offset + FEED_CHUNK])
+                    block = bytes(view[offset : offset + FEED_CHUNK])
                     offset += len(block)
                 else:
                     block = b""
@@ -990,11 +1038,11 @@ def _zip_declared_members(data: bytes) -> int | None:
     byte size cap the member estimate BEFORE ZipFile materializes a ZipInfo
     per entry. A ZIP64 sentinel exceeds the inspection budget outright; an
     absent record returns None and ZipFile decides (and fails closed)."""
-    tail = data[-((1 << 16) + 22):]
+    tail = data[-((1 << 16) + 22) :]
     at = tail.rfind(b"PK\x05\x06")
     if at < 0 or at + 16 > len(tail):
         return None
-    entries, size_cd = struct.unpack("<HI", tail[at + 10:at + 16])
+    entries, size_cd = struct.unpack("<HI", tail[at + 10 : at + 16])
     if entries == 0xFFFF or size_cd == 0xFFFFFFFF:
         return ARCHIVE_MEMBER_CAP + 1
     # 46 bytes is the minimal central-directory record; the declared size
@@ -1089,26 +1137,38 @@ def _scan_archive(rel: str, path: Path, data: bytes) -> tuple[list[dict[str, Any
     try:
         checks, members = _archive_entries(path, data)
     except (
-        zipfile.BadZipFile, tarfile.TarError, OSError, ValueError, RuntimeError,
+        zipfile.BadZipFile,
+        tarfile.TarError,
+        OSError,
+        ValueError,
+        RuntimeError,
         # The decompressor error classes escape the stdlib wrappers: EOFError
         # from a truncated gzip stream mid-iteration, zlib.error from a
         # corrupt deflate payload on the ZIP symlink read, LZMAError from a
         # corrupt xz stream. Each is the same uninspectable-archive failure.
-        EOFError, zlib.error, lzma.LZMAError,
+        EOFError,
+        zlib.error,
+        lzma.LZMAError,
     ) as exc:
-        findings.append({
-            "path": rel, "line": 0, "rule": "archive-unreadable",
-            "fingerprint": _fingerprint(type(exc).__name__),
-        })
+        findings.append(
+            {
+                "path": rel,
+                "line": 0,
+                "rule": "archive-unreadable",
+                "fingerprint": _fingerprint(type(exc).__name__),
+            }
+        )
         return findings, {"path": rel, "status": "unreadable", "error": type(exc).__name__}
     unsafe = [name for name in checks if _archive_path_unsafe(name)]
     for name in unsafe:
-        findings.append({
-            "path": rel,
-            "line": 0,
-            "rule": "archive-path-traversal",
-            "fingerprint": _fingerprint(name),
-        })
+        findings.append(
+            {
+                "path": rel,
+                "line": 0,
+                "rule": "archive-path-traversal",
+                "fingerprint": _fingerprint(name),
+            }
+        )
     for name in checks:
         # A member name or link target is committed metadata exactly like a
         # tree entry: a credential spelled into one ships in every clone.
@@ -1116,10 +1176,14 @@ def _scan_archive(rel: str, path: Path, data: bytes) -> tuple[list[dict[str, Any
         # the secret rules run over them too, and the finding carries only
         # the archive's path plus the fingerprint — never the member name.
         for hit in _scan_text(rel, name):
-            findings.append({
-                "path": rel, "line": 0, "rule": "archive-metadata-secret",
-                "fingerprint": hit["fingerprint"],
-            })
+            findings.append(
+                {
+                    "path": rel,
+                    "line": 0,
+                    "rule": "archive-metadata-secret",
+                    "fingerprint": hit["fingerprint"],
+                }
+            )
     return findings, {
         "path": rel,
         "status": "inspected",
@@ -1143,10 +1207,14 @@ def scan_tree(root: Path) -> dict[str, Any]:
             "binary_files": 0,
             "archive_files": 0,
             "skipped_missing": 0,
-            "findings": [{
-                "path": ".", "line": 0, "rule": "tracked-discovery-failed",
-                "fingerprint": _fingerprint("tracked-discovery-failed"),
-            }],
+            "findings": [
+                {
+                    "path": ".",
+                    "line": 0,
+                    "rule": "tracked-discovery-failed",
+                    "fingerprint": _fingerprint("tracked-discovery-failed"),
+                }
+            ],
             "binaries": [],
             "archives": [],
             "symlinks": [],
@@ -1196,17 +1264,25 @@ def scan_tree(root: Path) -> dict[str, Any]:
         if name_hits:
             display = redacted_path(printable)
             for hit in name_hits:
-                report["findings"].append({
-                    "path": display, "line": 0,
-                    "rule": "filename-secret", "fingerprint": hit["fingerprint"],
-                })
+                report["findings"].append(
+                    {
+                        "path": display,
+                        "line": 0,
+                        "rule": "filename-secret",
+                        "fingerprint": hit["fingerprint"],
+                    }
+                )
         if not encodable:
             # Record it fail-closed rather than scanning through — or
             # printing — an unencodable path.
-            report["findings"].append({
-                "path": display, "line": 0, "rule": "filename-not-utf8",
-                "fingerprint": _fingerprint(printable),
-            })
+            report["findings"].append(
+                {
+                    "path": display,
+                    "line": 0,
+                    "rule": "filename-not-utf8",
+                    "fingerprint": _fingerprint(printable),
+                }
+            )
             continue
         path = root / rel
         if path.is_symlink():
@@ -1218,10 +1294,14 @@ def scan_tree(root: Path) -> dict[str, Any]:
             try:
                 target = os.readlink(path)
             except OSError as exc:
-                report["findings"].append({
-                    "path": display, "line": 0, "rule": "file-unreadable",
-                    "fingerprint": _fingerprint(type(exc).__name__),
-                })
+                report["findings"].append(
+                    {
+                        "path": display,
+                        "line": 0,
+                        "rule": "file-unreadable",
+                        "fingerprint": _fingerprint(type(exc).__name__),
+                    }
+                )
                 continue
             report["findings"].extend(_scan_text(display, target))
             continue
@@ -1234,18 +1314,19 @@ def scan_tree(root: Path) -> dict[str, Any]:
             # A tracked path absent from the worktree was not inspected; its
             # indexed blob still ships in every clone, so a silent skip could
             # hide a removed-but-tracked credential under PASS.
-            report["findings"].append({
-                "path": display, "line": 0, "rule": "file-missing",
-                "fingerprint": _fingerprint("missing-worktree-file"),
-            })
+            report["findings"].append(
+                {
+                    "path": display,
+                    "line": 0,
+                    "rule": "file-missing",
+                    "fingerprint": _fingerprint("missing-worktree-file"),
+                }
+            )
             continue
         lower = rel.lower()
         archive_shaped = _suffix_matches(lower, ARCHIVE_SUFFIXES)
         compressed_shaped = _suffix_matches(lower, SINGLE_FILE_COMPRESSION)
-        if (
-            not archive_shaped and not compressed_shaped
-            and _suffix_matches(lower, BINARY_SUFFIXES)
-        ):
+        if not archive_shaped and not compressed_shaped and _suffix_matches(lower, BINARY_SUFFIXES):
             # Suffix-classified binaries are recorded, never materialized —
             # but bounded head and tail signature probes run first, so an
             # archive hiding under payload.pdf cannot dodge inspection. The
@@ -1259,10 +1340,14 @@ def scan_tree(root: Path) -> dict[str, Any]:
                     handle.seek(probe_size - tail_len)
                     tail = handle.read(tail_len)
             except OSError as exc:
-                report["findings"].append({
-                    "path": display, "line": 0, "rule": "file-unreadable",
-                    "fingerprint": _fingerprint(type(exc).__name__),
-                })
+                report["findings"].append(
+                    {
+                        "path": display,
+                        "line": 0,
+                        "rule": "file-unreadable",
+                        "fingerprint": _fingerprint(type(exc).__name__),
+                    }
+                )
                 continue
             if (
                 head[:4] == b"PK\x03\x04"
@@ -1280,10 +1365,14 @@ def scan_tree(root: Path) -> dict[str, Any]:
             try:
                 size = path.stat().st_size
             except OSError as exc:
-                report["findings"].append({
-                    "path": display, "line": 0, "rule": "file-unreadable",
-                    "fingerprint": _fingerprint(type(exc).__name__),
-                })
+                report["findings"].append(
+                    {
+                        "path": display,
+                        "line": 0,
+                        "rule": "file-unreadable",
+                        "fingerprint": _fingerprint(type(exc).__name__),
+                    }
+                )
                 continue
             if size > ARCHIVE_LOGICAL_CAP:
                 if archive_shaped:
@@ -1293,10 +1382,14 @@ def scan_tree(root: Path) -> dict[str, Any]:
                     report["archives"].append(
                         {"path": display, "status": "oversized", "size": size}
                     )
-                    report["findings"].append({
-                        "path": display, "line": 0, "rule": "archive-oversized",
-                        "fingerprint": _fingerprint("archive-oversized"),
-                    })
+                    report["findings"].append(
+                        {
+                            "path": display,
+                            "line": 0,
+                            "rule": "archive-oversized",
+                            "fingerprint": _fingerprint("archive-oversized"),
+                        }
+                    )
                 else:
                     # A compressed stream too large to probe follows the
                     # binary policy: recorded, never parsed.
@@ -1310,16 +1403,24 @@ def scan_tree(root: Path) -> dict[str, Any]:
             try:
                 size = path.stat().st_size
             except OSError as exc:
-                report["findings"].append({
-                    "path": display, "line": 0, "rule": "file-unreadable",
-                    "fingerprint": _fingerprint(type(exc).__name__),
-                })
+                report["findings"].append(
+                    {
+                        "path": display,
+                        "line": 0,
+                        "rule": "file-unreadable",
+                        "fingerprint": _fingerprint(type(exc).__name__),
+                    }
+                )
                 continue
             if size > ARCHIVE_LOGICAL_CAP:
-                report["findings"].append({
-                    "path": display, "line": 0, "rule": "file-oversized",
-                    "fingerprint": _fingerprint("file-oversized"),
-                })
+                report["findings"].append(
+                    {
+                        "path": display,
+                        "line": 0,
+                        "rule": "file-oversized",
+                        "fingerprint": _fingerprint("file-oversized"),
+                    }
+                )
                 continue
         try:
             with path.open("rb") as handle:
@@ -1332,18 +1433,26 @@ def scan_tree(root: Path) -> dict[str, Any]:
                 # blob and the boundary audit's worktree read already do.
                 data = handle.read(ARCHIVE_LOGICAL_CAP + 1)
             if len(data) > ARCHIVE_LOGICAL_CAP:
-                report["findings"].append({
-                    "path": display, "line": 0, "rule": "file-oversized",
-                    "fingerprint": _fingerprint("file-oversized"),
-                })
+                report["findings"].append(
+                    {
+                        "path": display,
+                        "line": 0,
+                        "rule": "file-oversized",
+                        "fingerprint": _fingerprint("file-oversized"),
+                    }
+                )
                 continue
         except OSError as exc:
             # A tracked file the scanner cannot read was not inspected — that
             # is a failing finding, never a silent skip.
-            report["findings"].append({
-                "path": display, "line": 0, "rule": "file-unreadable",
-                "fingerprint": _fingerprint(type(exc).__name__),
-            })
+            report["findings"].append(
+                {
+                    "path": display,
+                    "line": 0,
+                    "rule": "file-unreadable",
+                    "fingerprint": _fingerprint(type(exc).__name__),
+                }
+            )
             continue
         kind = _kind_for(rel, data)
         if kind == "binary":
@@ -1365,10 +1474,14 @@ def scan_tree(root: Path) -> dict[str, Any]:
     # mandated before-commit validation reports PASS.
     staged = staged_divergent(root)
     if staged is None:
-        report["findings"].append({
-            "path": ".", "line": 0, "rule": "staged-discovery-failed",
-            "fingerprint": _fingerprint("staged-discovery-failed"),
-        })
+        report["findings"].append(
+            {
+                "path": ".",
+                "line": 0,
+                "rule": "staged-discovery-failed",
+                "fingerprint": _fingerprint("staged-discovery-failed"),
+            }
+        )
     for rel in staged or ():
         try:
             rel.encode("utf-8")
@@ -1390,32 +1503,42 @@ def scan_tree(root: Path) -> dict[str, Any]:
             report["symlinks"].append(display)
             target = staged_blob(root, rel, cap=ZIP_SYMLINK_MAX)
             if target is None or target is STAGED_OVERSIZED:
-                report["findings"].append({
-                    "path": display, "line": 0, "rule": "staged-unreadable",
-                    "fingerprint": _fingerprint("staged-unreadable"),
-                })
+                report["findings"].append(
+                    {
+                        "path": display,
+                        "line": 0,
+                        "rule": "staged-unreadable",
+                        "fingerprint": _fingerprint("staged-unreadable"),
+                    }
+                )
                 continue
-            report["findings"].extend(
-                _scan_text(display, target.decode("utf-8", "replace"))
-            )
+            report["findings"].extend(_scan_text(display, target.decode("utf-8", "replace")))
             continue
         data = staged_blob(root, rel, cap=ARCHIVE_LOGICAL_CAP)
         if data is None:
             # git reported the path divergent but its index blob cannot be
             # read (or the path is index-deleted): not inspected, so not
             # clean.
-            report["findings"].append({
-                "path": display, "line": 0, "rule": "staged-unreadable",
-                "fingerprint": _fingerprint("staged-unreadable"),
-            })
+            report["findings"].append(
+                {
+                    "path": display,
+                    "line": 0,
+                    "rule": "staged-unreadable",
+                    "fingerprint": _fingerprint("staged-unreadable"),
+                }
+            )
             continue
         if data is STAGED_OVERSIZED:
             # Refused at ingress by `cat-file -s`, before any bytes were
             # materialized — a finding, never an OOM of the required scan.
-            report["findings"].append({
-                "path": display, "line": 0, "rule": "file-oversized",
-                "fingerprint": _fingerprint("file-oversized"),
-            })
+            report["findings"].append(
+                {
+                    "path": display,
+                    "line": 0,
+                    "rule": "file-oversized",
+                    "fingerprint": _fingerprint("file-oversized"),
+                }
+            )
             continue
         kind = _kind_for(rel, data)
         if kind == "binary":
@@ -1435,13 +1558,16 @@ def scan_tree(root: Path) -> dict[str, Any]:
                 # The spool is I/O like any other: a full or unavailable
                 # temporary directory must not turn the required scan into
                 # a traceback that skips its verdict and its --json-out.
-                report["findings"].append({
-                    "path": display, "line": 0, "rule": "archive-unreadable",
-                    "fingerprint": _fingerprint(type(exc).__name__),
-                })
+                report["findings"].append(
+                    {
+                        "path": display,
+                        "line": 0,
+                        "rule": "archive-unreadable",
+                        "fingerprint": _fingerprint(type(exc).__name__),
+                    }
+                )
                 report["archives"].append(
-                    {"path": display, "status": "unreadable",
-                     "error": type(exc).__name__}
+                    {"path": display, "status": "unreadable", "error": type(exc).__name__}
                 )
                 continue
             try:
@@ -1465,6 +1591,7 @@ def _try_gitleaks(root: Path) -> dict[str, Any] | None:
     if os.name == "nt":
         return None
     from shutil import which
+
     exe = which("gitleaks")
     if not exe:
         return None
@@ -1474,8 +1601,20 @@ def _try_gitleaks(root: Path) -> dict[str, Any] | None:
     # bound and per-stream byte budgets: a stalled or flooding gitleaks is
     # a structured (and failing) outcome, never a hang or an OOM.
     outcome = run_bounded(
-        [exe, "detect", "--redact", "--no-git", "--source", str(root), "--config",
-         str(root / ".gitleaks.toml"), "--report-format", "json", "--exit-code", "2"],
+        [
+            exe,
+            "detect",
+            "--redact",
+            "--no-git",
+            "--source",
+            str(root),
+            "--config",
+            str(root / ".gitleaks.toml"),
+            "--report-format",
+            "json",
+            "--exit-code",
+            "2",
+        ],
         timeout=GITLEAKS_TIMEOUT,
         cap=GITLEAKS_OUTPUT_CAP,
         cwd=root,
@@ -1519,16 +1658,22 @@ def main(argv: list[str] | None = None) -> int:
             # An opted-in engine that reports findings or dies must fail the
             # scan, not ride along as metadata under a green verdict.
             report["state"] = "FAIL"
-            report["findings"].append({
-                "path": ".", "line": 0, "rule": "gitleaks-nonzero",
-                "fingerprint": _fingerprint(f"gitleaks:{extra['returncode']}"),
-            })
+            report["findings"].append(
+                {
+                    "path": ".",
+                    "line": 0,
+                    "rule": "gitleaks-nonzero",
+                    "fingerprint": _fingerprint(f"gitleaks:{extra['returncode']}"),
+                }
+            )
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(f"scan_secrets: {report['state']} tracked={report['tracked_files']} "
-          f"text={report['text_files']} binary={report['binary_files']} "
-          f"archive={report['archive_files']} findings={len(report['findings'])}")
+    print(
+        f"scan_secrets: {report['state']} tracked={report['tracked_files']} "
+        f"text={report['text_files']} binary={report['binary_files']} "
+        f"archive={report['archive_files']} findings={len(report['findings'])}"
+    )
     for finding in report["findings"][:20]:
         print(f"  {finding['path']}:{finding['line']} {finding['rule']} {finding['fingerprint']}")
     return 0 if report["state"] == "PASS" else 1

@@ -25,6 +25,7 @@ from .weights import ENERGY, PERF, SAFE, THROUGHPUT, Policy
 
 # --- workload classes: the deterministic plan-time selector ----------------------
 
+
 def classify(theta: Theta) -> str:
     """Bucket the live runtime state into a workload class (a pure table rule;
     thresholds are L2 parameters, adapted only through the gate)."""
@@ -72,10 +73,12 @@ class PolicyPortfolio:
     def default() -> "PolicyPortfolio":
         # The seeded incumbents are certified by construction (they ARE the
         # behavior every pinned worked example was measured under).
-        return PolicyPortfolio(entries={
-            p.name: PortfolioEntry(policy=p, gen=1, certified=True)
-            for p in (PERF, THROUGHPUT, ENERGY, SAFE)
-        })
+        return PolicyPortfolio(
+            entries={
+                p.name: PortfolioEntry(policy=p, gen=1, certified=True)
+                for p in (PERF, THROUGHPUT, ENERGY, SAFE)
+            }
+        )
 
     def select(self, theta: Theta) -> Policy:
         """Deterministic plan-time selection: workload class -> certified entry."""
@@ -85,27 +88,31 @@ class PolicyPortfolio:
             return entry.policy
         return self.entries["latency"].policy
 
-    def promote(self, name: str, candidate: Policy,
-                certificate: ReplayCertificate) -> PortfolioEntry:
+    def promote(
+        self, name: str, candidate: Policy, certificate: ReplayCertificate
+    ) -> PortfolioEntry:
         """Swap in a new gain schedule -- only behind an admitting certificate."""
         if not certificate.admitted:
             raise ValueError(
                 f"replay gate rejected {certificate.candidate!r}: "
-                f"{certificate.regressions} regression(s) over {certificate.episodes} episode(s)")
+                f"{certificate.regressions} regression(s) over {certificate.episodes} episode(s)"
+            )
         if certificate.candidate != candidate.name or certificate.incumbent != name:
             raise ValueError("certificate does not cover this promotion")
         incumbent = self.entries.get(name)
-        entry = PortfolioEntry(policy=candidate,
-                               gen=(incumbent.gen + 1 if incumbent else 1),
-                               certified=True)
+        entry = PortfolioEntry(
+            policy=candidate, gen=(incumbent.gen + 1 if incumbent else 1), certified=True
+        )
         self.entries[name] = entry
         return entry
 
 
 # --- the replay gate --------------------------------------------------------------
 
-def replay_gate(module: Module, h, candidate: Policy, incumbent: Policy,
-                episodes: list[Theta]) -> ReplayCertificate:
+
+def replay_gate(
+    module: Module, h, candidate: Policy, incumbent: Policy, episodes: list[Theta]
+) -> ReplayCertificate:
     """Counterfactual no-regression check on logged Theta episodes.
 
     For each episode, both policies plan; both plans are priced under the
@@ -123,8 +130,12 @@ def replay_gate(module: Module, h, candidate: Policy, incumbent: Policy,
         m_i = price_scheduled(module, plan_i, h, theta, incumbent).makespan
         if m_c > m_i:
             regressions += 1
-    return ReplayCertificate(candidate=candidate.name, incumbent=incumbent.name,
-                             episodes=len(episodes), regressions=regressions)
+    return ReplayCertificate(
+        candidate=candidate.name,
+        incumbent=incumbent.name,
+        episodes=len(episodes),
+        regressions=regressions,
+    )
 
 
 def episodes_from(batches, calibrator, base: Theta = Theta.cool()) -> list[Theta]:

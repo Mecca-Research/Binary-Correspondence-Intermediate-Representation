@@ -39,6 +39,7 @@ WELL-DEFINEDNESS (so Clang is a sound oracle -- every program is UB-free by cons
 
 Usage:  python tools/c/fuzz_cfront.py --count 400 --seed 0 [--verbose]
 Exit status is nonzero on the first divergence (the offending source is printed)."""
+
 from __future__ import annotations
 
 import argparse
@@ -58,30 +59,30 @@ if _ROOT not in sys.path:
 
 from bcir.toolchain import host_link_args  # noqa: E402
 
-_PMAX = 1 << 14                 # the max |value| the driver feeds a wide-signed (int/long) parameter
-_ARRSZ = 8                      # the backing array length for a pointer parameter (accesses masked `& 7u`)
+_PMAX = 1 << 14  # the max |value| the driver feeds a wide-signed (int/long) parameter
+_ARRSZ = 8  # the backing array length for a pointer parameter (accesses masked `& 7u`)
 _CMP = ["<", ">", "<=", ">=", "==", "!=", "&&", "||"]
 
 # storage type code -> (C spelling, width bytes, signed-int, |value| cap (signed-int only), arithmetic type
 # after integer promotion). char/short promote to int; the rest keep their arithmetic type.
 _ST = {
-    "i8":  ("signed char",   1, True,  127,            "i32"),   # `signed char`, NOT plain `char` (which is
-    "i16": ("short",         2, True,  32767,          "i32"),
-    "i32": ("int",           4, True,  (1 << 31) - 1,  "i32"),
-    "i64": ("long",          8, True,  (1 << 63) - 1,  "i64"),
-    "u32": ("unsigned",      4, False, 0,              "u32"),
-    "u64": ("unsigned long", 8, False, 0,              "u64"),
-    "f32": ("float",         4, False, 0,              "f32"),
-    "f64": ("double",        8, False, 0,              "f64"),
+    "i8": ("signed char", 1, True, 127, "i32"),  # `signed char`, NOT plain `char` (which is
+    "i16": ("short", 2, True, 32767, "i32"),
+    "i32": ("int", 4, True, (1 << 31) - 1, "i32"),
+    "i64": ("long", 8, True, (1 << 63) - 1, "i64"),
+    "u32": ("unsigned", 4, False, 0, "u32"),
+    "u64": ("unsigned long", 8, False, 0, "u64"),
+    "f32": ("float", 4, False, 0, "f32"),
+    "f64": ("double", 8, False, 0, "f64"),
     # `_Bool`: a 1-byte object that store-NORMALIZES any nonzero to 1 (§6.3.1.2). It reads as 0/1 (an `int`
     # after promotion, |value| bound 1), so it slots into the signed-int bound model with cap 1; a write of
     # ANY value lands 0/1 (the bound stays <= 1, the value is normalized by both rails + Clang). Member /
     # member-array element only for now (a local's normalization is already covered by cfront_boolnorm).
-    "bool": ("_Bool",        1, True,  1,              "i32"),
+    "bool": ("_Bool", 1, True, 1, "i32"),
 }
-_TYPES = ["i8", "i16", "i32", "i64", "u32", "u64"]          # integer storage types
-_ALL = _TYPES + ["f32", "f64"]                             # all storage types (params / locals / returns)
-_AELEM = _ALL + ["bool"]                                   # struct ARRAY-member element types (+ _Bool)
+_TYPES = ["i8", "i16", "i32", "i64", "u32", "u64"]  # integer storage types
+_ALL = _TYPES + ["f32", "f64"]  # all storage types (params / locals / returns)
+_AELEM = _ALL + ["bool"]  # struct ARRAY-member element types (+ _Bool)
 _FLOATS = ("f32", "f64")
 # bitfield member types `unsigned a:W` / `int b:W` (struct members only -- never a standalone local/param, so
 # they stay out of _ALL). They read as int (integer promotion) with a |value| bound of 2^W-1 (unsigned) /
@@ -92,14 +93,22 @@ for _W in range(1, 9):
     _ST[f"bfu{_W}"] = ("unsigned", 4, True, (1 << _W) - 1, "i32")
     _ST[f"bfs{_W}"] = ("int", 4, True, 1 << (_W - 1), "i32")
     _BF[f"bfu{_W}"], _BF[f"bfs{_W}"] = _W, _W
-_MEMBER_TYPES = _ALL + ["bool"] + list(_BF)                # what a STRUCT member may be (scalar / _Bool / bitfield)
+_MEMBER_TYPES = (
+    _ALL + ["bool"] + list(_BF)
+)  # what a STRUCT member may be (scalar / _Bool / bitfield)
 _AW = {"i32": 4, "u32": 4, "i64": 8, "u64": 8, "f32": 4, "f64": 8}
-_ACAST = {"i32": "(int)", "i64": "(long)", "u32": "(unsigned)", "u64": "(unsigned long)",
-          "f32": "(float)", "f64": "(double)"}
+_ACAST = {
+    "i32": "(int)",
+    "i64": "(long)",
+    "u32": "(unsigned)",
+    "u64": "(unsigned long)",
+    "f32": "(float)",
+    "f64": "(double)",
+}
 _ASUF = {"i32": "", "i64": "L", "u32": "u", "u64": "uL"}
 
 
-def _sgn(aty: str) -> bool:                     # a signed-integer arithmetic type
+def _sgn(aty: str) -> bool:  # a signed-integer arithmetic type
     return aty[0] == "i"
 
 
@@ -111,11 +120,11 @@ def _tmax(aty: str) -> int:
     return (1 << (8 * _AW[aty] - 1)) - 1
 
 
-def _uw(aty: str) -> str:                       # the unsigned type of the same width (a launder target)
+def _uw(aty: str) -> str:  # the unsigned type of the same width (a launder target)
     return "u32" if _AW[aty] == 4 else "u64"
 
 
-def _uac(a: str, b: str) -> str:                # usual arithmetic conversions (floats outrank integers)
+def _uac(a: str, b: str) -> str:  # usual arithmetic conversions (floats outrank integers)
     if "f64" in (a, b):
         return "f64"
     if "f32" in (a, b):
@@ -142,6 +151,7 @@ def _fconst(v: float, aty: str) -> str:
 class E:
     """A generated expression: its C text, arithmetic type (i32/i64/u32/u64/f32/f64 after promotion), and a
     static bound on |value| (meaningful for signed integers; 0 for unsigned/float, which never trap)."""
+
     __slots__ = ("text", "aty", "bound")
 
     def __init__(self, text: str, aty: str, bound: int = 0):
@@ -165,19 +175,19 @@ class Gen:
     def __init__(self, rng: random.Random):
         self.rng = rng
         self.counter = 0
-        self.helpers: list = []          # (name, [param storage codes], ret storage code) for same-unit calls
-        self.aggdefs: dict = {}          # tag -> ("struct"/"union", [(member, code)], union active-member index)
+        self.helpers: list = []  # (name, [param storage codes], ret storage code) for same-unit calls
+        self.aggdefs: dict = {}  # tag -> ("struct"/"union", [(member, code)], union active-member index)
         # per-function state (reset by _enter_function):
         self.scopes: list = [[]]
-        self.styp: dict = {}             # name -> storage code
-        self.bound: dict = {}            # name -> |value| bound (signed-int names)
-        self.loopvars: set = set()       # `for` counters: readable, never a mutation target
-        self.locked: set = set()         # names an embedded value stmt-expr must not mutate
-        self.pure = False                # inside a value stmt-expr (no pointer write -- unsequenced)
-        self.loopdepth = 0               # loop nesting: wide-signed locals are immutable while > 0
-        self.params: list = []           # this function's scalar parameter names
-        self.ptrs: list = []             # the `unsigned *` parameter names (0..2), which may alias
-        self.arrs: list = []             # (access-prefix, member, elem-code) for struct array members `s.arr[i]`
+        self.styp: dict = {}  # name -> storage code
+        self.bound: dict = {}  # name -> |value| bound (signed-int names)
+        self.loopvars: set = set()  # `for` counters: readable, never a mutation target
+        self.locked: set = set()  # names an embedded value stmt-expr must not mutate
+        self.pure = False  # inside a value stmt-expr (no pointer write -- unsequenced)
+        self.loopdepth = 0  # loop nesting: wide-signed locals are immutable while > 0
+        self.params: list = []  # this function's scalar parameter names
+        self.ptrs: list = []  # the `unsigned *` parameter names (0..2), which may alias
+        self.arrs: list = []  # (access-prefix, member, elem-code) for struct array members `s.arr[i]`
         self.allow_calls = False
 
     # -- scope / mutability ----------------------------------------------------------------------------
@@ -191,9 +201,16 @@ class Gen:
         return (code not in ("i32", "i64") and code not in _BF) or self.loopdepth == 0
 
     def _targets(self) -> list:
-        return [n for s in self.scopes for n in s
-                if n not in self.loopvars and n not in self.locked and n not in self.ptrs
-                and n in self.styp and self._mutable(self.styp[n])]
+        return [
+            n
+            for s in self.scopes
+            for n in s
+            if n not in self.loopvars
+            and n not in self.locked
+            and n not in self.ptrs
+            and n in self.styp
+            and self._mutable(self.styp[n])
+        ]
 
     def _fresh(self, code: str, bound: int) -> str:
         self.counter += 1
@@ -212,7 +229,7 @@ class Gen:
     def _store_bound(self, e: E, code: str) -> int:
         # the |value| bound after storing `e` into a local of type `code`: a signed narrow type caps at its
         # range; otherwise the value's own bound (a narrowing conversion is impl-defined, not UB).
-        if not _ST[code][2]:                                # unsigned / float: no signed bound
+        if not _ST[code][2]:  # unsigned / float: no signed bound
             return 0
         return min(_vbound(e), _ST[code][3])
 
@@ -222,7 +239,7 @@ class Gen:
         if depth <= 0 or r.random() < 0.34:
             return self._ileaf(depth)
         k = r.random()
-        if k < 0.28:                                    # binary arithmetic + - *
+        if k < 0.28:  # binary arithmetic + - *
             a, b = self.iexpr(depth - 1), self.iexpr(depth - 1)
             op = r.choice("+-*")
             ra = _uac(a.aty, b.aty)
@@ -233,25 +250,29 @@ class Gen:
                 uw = _uw(ra)
                 return E(f"({_coerce(a, uw)} {op} {_coerce(b, uw)})", uw, 0)
             return E(f"({a.text} {op} {b.text})", ra, 0)
-        if k < 0.40:                                    # bitwise & | ^ -> unsigned
+        if k < 0.40:  # bitwise & | ^ -> unsigned
             a, b = self.iexpr(depth - 1), self.iexpr(depth - 1)
             uw = _uw(_uac(a.aty, b.aty))
             return E(f"({_coerce(a, uw)} {r.choice('&|^')} {_coerce(b, uw)})", uw, 0)
-        if k < 0.50:                                    # shift
+        if k < 0.50:  # shift
             a = self.iexpr(depth - 1)
             amt = f"({r.randint(0, 255)}u & {8 * _AW[a.aty] - 1}u)"
-            if r.random() < 0.5:                        # `>>`: arithmetic on signed (keeps type + bound)
+            if r.random() < 0.5:  # `>>`: arithmetic on signed (keeps type + bound)
                 return E(f"(({a.text}) >> {amt})", a.aty, a.bound if _sgn(a.aty) else 0)
-            uw = _uw(a.aty)                             # `<<`: unsigned only (signed << can be UB)
+            uw = _uw(a.aty)  # `<<`: unsigned only (signed << can be UB)
             return E(f"(({_coerce(a, uw)}) << {amt})", uw, 0)
-        if k < 0.62:                                    # comparison / logical -> int 0/1 (operands may be float)
+        if k < 0.62:  # comparison / logical -> int 0/1 (operands may be float)
             a, b = self._num(depth - 1), self._num(depth - 1)
             return E(f"({a.text} {r.choice(_CMP)} {b.text})", "i32", 1)
-        if k < 0.74:                                    # ternary -> common int type (a pure select)
+        if k < 0.74:  # ternary -> common int type (a pure select)
             a, b, c = self.iexpr(depth - 1), self.iexpr(depth - 1), self.iexpr(depth - 1)
             ra = _uac(a.aty, b.aty)
-            return E(f"({c.text} ? {a.text} : {b.text})", ra, max(_vbound(a), _vbound(b)) if _sgn(ra) else 0)
-        if k < 0.82:                                    # unary
+            return E(
+                f"({c.text} ? {a.text} : {b.text})",
+                ra,
+                max(_vbound(a), _vbound(b)) if _sgn(ra) else 0,
+            )
+        if k < 0.82:  # unary
             a = self.iexpr(depth - 1)
             if r.random() < 0.5 and _sgn(a.aty):
                 return E(f"(-{a.text})", a.aty, a.bound)
@@ -264,17 +285,20 @@ class Gen:
 
     def _ileaf(self, depth: int) -> E:
         r = self.rng
-        if self.ptrs and depth > 0 and r.random() < 0.18:               # a bounded pointer read
+        if self.ptrs and depth > 0 and r.random() < 0.18:  # a bounded pointer read
             p = r.choice(self.ptrs)
             if r.random() < 0.5:
                 return E(f"{p}[({_coerce(self.iexpr(depth - 1), 'u32')}) & {_ARRSZ - 1}u]", "u32")
             return E(f"(*{p})", "u32")
-        ia = [a for a in self.arrs if a[2] not in _FLOATS]              # a bounded struct array-member read
+        ia = [a for a in self.arrs if a[2] not in _FLOATS]  # a bounded struct array-member read
         if ia and depth > 0 and r.random() < 0.18:
             pfx, an, c = r.choice(ia)
             aty = _ST[c][4]
-            return E(f"{pfx}{an}[({_coerce(self.iexpr(depth - 1), 'u32')}) & {_ARRSZ // 2 - 1}u]",
-                     aty, _ST[c][3] if _sgn(aty) else 0)
+            return E(
+                f"{pfx}{an}[({_coerce(self.iexpr(depth - 1), 'u32')}) & {_ARRSZ // 2 - 1}u]",
+                aty,
+                _ST[c][3] if _sgn(aty) else 0,
+            )
         live = [n for n in self._live() if n not in self.ptrs and self.styp.get(n) not in _FLOATS]
         if live and r.random() < 0.6:
             n = r.choice(live)
@@ -290,13 +314,13 @@ class Gen:
         if depth <= 0 or r.random() < 0.4:
             return self._fleaf()
         k = r.random()
-        if k < 0.5:                                     # float arithmetic + - * /  (all defined)
+        if k < 0.5:  # float arithmetic + - * /  (all defined)
             a, b = self.fexpr(depth - 1), self.fexpr(depth - 1)
             return E(f"({a.text} {r.choice('+-*/')} {b.text})", _uac(a.aty, b.aty), 0)
-        if k < 0.68:                                    # ternary
+        if k < 0.68:  # ternary
             a, b = self.fexpr(depth - 1), self.fexpr(depth - 1)
             return E(f"({self.iexpr(depth - 1).text} ? {a.text} : {b.text})", _uac(a.aty, b.aty), 0)
-        if k < 0.82:                                    # int -> float (always defined)
+        if k < 0.82:  # int -> float (always defined)
             ft = r.choice(_FLOATS)
             return E(f"{_ACAST[ft]}({self.iexpr(depth - 1).text})", ft, 0)
         if k < 0.90:
@@ -306,7 +330,7 @@ class Gen:
 
     def _fleaf(self) -> E:
         r = self.rng
-        fa = [a for a in self.arrs if a[2] in _FLOATS]                  # a float struct array-member read
+        fa = [a for a in self.arrs if a[2] in _FLOATS]  # a float struct array-member read
         if fa and r.random() < 0.3:
             pfx, an, c = r.choice(fa)
             return E(f"{pfx}{an}[({_coerce(self._ileaf(0), 'u32')}) & {_ARRSZ // 2 - 1}u]", c, 0)
@@ -314,23 +338,25 @@ class Gen:
         if fvars and r.random() < 0.5:
             n = fvars[r.randrange(len(fvars))]
             return E(n, self.styp[n], 0)
-        if r.random() < 0.4:                            # an integer widened to float
+        if r.random() < 0.4:  # an integer widened to float
             ft = r.choice(_FLOATS)
             return E(f"{_ACAST[ft]}({self._ileaf(0).text})", ft, 0)
         ft = r.choice(_FLOATS)
         return E(_fconst(round(r.uniform(-1000, 1000), 3), ft), ft, 0)
 
-    def _num(self, depth: int) -> E:                    # a comparison operand: either lane
+    def _num(self, depth: int) -> E:  # a comparison operand: either lane
         return self.fexpr(depth) if self.rng.random() < 0.35 else self.iexpr(depth)
 
-    def _val(self, depth: int, code: str) -> E:         # a value of the storage type `code`
+    def _val(self, depth: int, code: str) -> E:  # a value of the storage type `code`
         return self.fexpr(depth) if code in _FLOATS else self.iexpr(depth)
 
     # -- calls / statement expressions -----------------------------------------------------------------
     def _wide_arg(self, ptype: str) -> str:
         # an argument to a wide-signed (int/long) parameter must respect the callee's PMAX bound assumption:
         # a narrow-signed leaf (always <= 32767) or a small constant -- never a (possibly-mutated) wide one.
-        narrows = [n for n in self._live() if n not in self.ptrs and self.styp.get(n) in ("i8", "i16")]
+        narrows = [
+            n for n in self._live() if n not in self.ptrs and self.styp.get(n) in ("i8", "i16")
+        ]
         if narrows and self.rng.random() < 0.5:
             return self.rng.choice(narrows)
         return _const_text(self.rng.randint(-1000, 1000), ptype)
@@ -391,7 +417,7 @@ class Gen:
         aggregate leaf-by-leaf."""
         out = []
         for mn, c in members:
-            if c in self.aggdefs:                                # a by-value nested struct member (recurse)
+            if c in self.aggdefs:  # a by-value nested struct member (recurse)
                 out += [(f"{mn}.{acc}", ic) for acc, ic in self._leaves(self.aggdefs[c][1])]
             else:
                 out.append((mn, c))
@@ -402,7 +428,11 @@ class Gen:
         NESTED struct member -- a positional brace `{ inner inits }` (recursing). Used for a local decl and a
         by-value RETURN compound literal."""
         if c in self.aggdefs:
-            return "{ " + ", ".join(self._member_init(depth, ic) for _, ic in self.aggdefs[c][1]) + " }"
+            return (
+                "{ "
+                + ", ".join(self._member_init(depth, ic) for _, ic in self.aggdefs[c][1])
+                + " }"
+            )
         return self._val(depth, c).text
 
     def _agg_decl(self, depth: int) -> str:
@@ -412,7 +442,7 @@ class Gen:
         members are registered for later reads/writes -- but only at FUNCTION TOP-LEVEL scope, where the
         flat `self.arrs` list stays in scope for the rest of the body (an inner-block local would leak)."""
         r = self.rng
-        top = len(self.scopes) == 1                                  # function top-level: array-bearing OK
+        top = len(self.scopes) == 1  # function top-level: array-bearing OK
         cands = [n for n in self.aggdefs if top or not self.aggdefs[n][3]]
         if not cands:
             return self._decl_scalar(depth)
@@ -420,21 +450,27 @@ class Gen:
         kind, members, active, arrs = self.aggdefs[agg]
         self.counter += 1
         vn = f"s{self.counter}"
-        if kind == "struct":                                    # init exprs generated BEFORE the members are
-            parts, scal = [], []                                # in scope (so they can't read themselves)
+        if kind == "struct":  # init exprs generated BEFORE the members are
+            parts, scal = [], []  # in scope (so they can't read themselves)
             for mn, c in members:
-                if c in self.aggdefs:                           # a nested struct member -> a nested brace
+                if c in self.aggdefs:  # a nested struct member -> a nested brace
                     parts.append(self._member_init(depth, c))
                 else:
-                    e = self._val(depth, c); parts.append(e.text); scal.append((mn, c, e))
-            arr_inits = [[self._val(max(0, depth - 1), c) for _ in range(_ARRSZ // 2)] for _, c in arrs]
-            for mn, c in members:                               # register the nested member's `s.in.x` leaves
+                    e = self._val(depth, c)
+                    parts.append(e.text)
+                    scal.append((mn, c, e))
+            arr_inits = [
+                [self._val(max(0, depth - 1), c) for _ in range(_ARRSZ // 2)] for _, c in arrs
+            ]
+            for mn, c in members:  # register the nested member's `s.in.x` leaves
                 if c in self.aggdefs:
                     for acc, ic in self._leaves([(mn, c)]):
                         self._add_member(f"{vn}.{acc}", ic, _ST[ic][3] if _ST[ic][2] else 0)
             for mn, c, e in scal:
                 self._add_member(f"{vn}.{mn}", c, self._store_bound(e, c))
-            for (an, c), elems in zip(arrs, arr_inits):         # a nested brace per array member, then register
+            for (an, c), elems in zip(
+                arrs, arr_inits
+            ):  # a nested brace per array member, then register
                 parts.append("{ " + ", ".join(e.text for e in elems) + " }")
                 self.arrs.append((f"{vn}.", an, c))
             return f"struct {agg} {vn} = {{ {', '.join(parts)} }};"
@@ -451,57 +487,65 @@ class Gen:
 
     def stmt(self, depth: int, allow_block: bool = True) -> str:
         r = self.rng
-        if not self._targets():                                 # nothing mutable yet -> declare a local
+        if not self._targets():  # nothing mutable yet -> declare a local
             return self._decl(depth)
         k = r.random()
-        if k < 0.22:                                            # a fresh initialised local
+        if k < 0.22:  # a fresh initialised local
             return self._decl(depth)
-        if k < 0.42:                                            # plain assignment
+        if k < 0.42:  # plain assignment
             tgts = self._targets()
             # a CHAINED assignment `n1 = n2 = expr;` -- the inner `n2 = expr` is an assignment EXPRESSION whose
             # value flows into n1 (right-associative, fully sequenced, so no unsequenced read/write UB). n2 (the
             # value-yielding target) is a NAMED LOCAL or a SINGLE-LEVEL plain SCALAR member (`s.m` / `p->m`, one
             # member separator) -- both rails now handle those as a value. A bitfield/nested/array member stays a
             # follow-on (both rails fall back), so exclude `[`, `_BF`, and a 2+-separator nested member.
-            inner = [n for n in tgts if self.styp[n] not in _FLOATS and self.styp[n] not in _BF
-                     and "[" not in n and (n.count(".") + n.count("->")) <= 1]
+            inner = [
+                n
+                for n in tgts
+                if self.styp[n] not in _FLOATS
+                and self.styp[n] not in _BF
+                and "[" not in n
+                and (n.count(".") + n.count("->")) <= 1
+            ]
             if len(inner) >= 1 and r.random() < 0.3:
                 n2 = r.choice(inner)
                 n1 = r.choice([n for n in tgts if self.styp[n] not in _FLOATS] or [n2])
                 e = self._val(depth, self.styp[n2])
                 self.bound[n2] = self._store_bound(e, self.styp[n2])
-                chained = E(n2, _ST[self.styp[n2]][4], self.bound[n2])   # the inner assignment's value (n2's slot)
+                chained = E(
+                    n2, _ST[self.styp[n2]][4], self.bound[n2]
+                )  # the inner assignment's value (n2's slot)
                 self.bound[n1] = self._store_bound(chained, self.styp[n1])
                 return f"{n1} = {n2} = {e.text};"
             return self._assign_to(r.choice(tgts), depth)
-        if k < 0.56:                                            # compound assignment
+        if k < 0.56:  # compound assignment
             return self._compound(depth)
-        if k < 0.66:                                            # inc / dec on an integer target (value discarded)
+        if k < 0.66:  # inc / dec on an integer target (value discarded)
             ints = [n for n in self._targets() if self.styp[n] not in _FLOATS]
             if ints:
                 n = r.choice(ints)
                 self._bump(n)
                 return f"{n}{r.choice(['++', '--'])};"
             return self._assign_to(r.choice(self._targets()), depth)
-        if self.ptrs and not self.pure and k < 0.74:            # a pointer write (sequenced statement)
+        if self.ptrs and not self.pure and k < 0.74:  # a pointer write (sequenced statement)
             return self._ptr_write(depth)
-        if self.arrs and not self.pure and k < 0.78:            # a struct array-member write (sequenced)
+        if self.arrs and not self.pure and k < 0.78:  # a struct array-member write (sequenced)
             r2 = self.rng
             pfx, an, c = r2.choice(self.arrs)
             idx = _coerce(self.iexpr(depth - 1) if depth > 0 else self._ileaf(0), "u32")
             rhs = (self.fexpr(depth) if c in _FLOATS else self.iexpr(depth)).text
-            return f"{pfx}{an}[({idx}) & {_ARRSZ // 2 - 1}u] = {rhs};"   # plain store (element conversion, no overflow)
-        if depth <= 0:                                          # base case: no more nesting
+            return f"{pfx}{an}[({idx}) & {_ARRSZ // 2 - 1}u] = {rhs};"  # plain store (element conversion, no overflow)
+        if depth <= 0:  # base case: no more nesting
             return self._assign_to(r.choice(self._targets()), 0)
-        if k < 0.82:                                            # a statement expression used as a statement
+        if k < 0.82:  # a statement expression used as a statement
             self.scopes.append([])
             pre = self.stmt(depth - 1, allow_block=False)
             val = self.iexpr(depth - 1).text
             self.scopes.pop()
             return f"({{ {pre} {val}; }});"
-        if not allow_block:                                     # inside a value stmt-expr: no blocks
+        if not allow_block:  # inside a value stmt-expr: no blocks
             return self._assign_to(r.choice(self._targets()), depth)
-        if k < 0.91:                                            # if / else
+        if k < 0.91:  # if / else
             cond = self.iexpr(depth - 1).text
             self.scopes.append([])
             then = " ".join(self.stmt(depth - 1) for _ in range(r.randint(1, 2)))
@@ -513,28 +557,28 @@ class Gen:
                 self.scopes.pop()
                 out += f" else {{ {els} }}"
             return out
-        return self._for(depth)                                # a bounded for loop
+        return self._for(depth)  # a bounded for loop
 
     def _compound(self, depth: int) -> str:
         r = self.rng
         n = r.choice(self._targets())
         code = self.styp[n]
-        if code in _FLOATS:                                     # float compound: +-*/ (never traps)
+        if code in _FLOATS:  # float compound: +-*/ (never traps)
             return f"{n} {r.choice(['+', '-', '*', '/'])}= {self.fexpr(depth).text};"
         op = r.choice(["+", "-", "*", "&", "|", "^"])
         e = self.iexpr(depth)
-        if op in "&|^":                                         # bitwise: no overflow; result re-bounded by type
+        if op in "&|^":  # bitwise: no overflow; result re-bounded by type
             self.bound[n] = _ST[code][3] if _ST[code][2] else 0
             return f"{n} {op}= {e.text};"
-        nat = _ST[code][4]                                      # additive/mult: the promoted op must not overflow
+        nat = _ST[code][4]  # additive/mult: the promoted op must not overflow
         ra = _uac(nat, e.aty)
         cur = self.bound.get(n, 0) if _sgn(nat) else (1 << (8 * _AW[nat])) - 1
         if _sgn(ra):
             bd = cur * _vbound(e) if op == "*" else cur + _vbound(e)
-            if bd > _tmax(ra):                                  # would overflow -> shrink the RHS to a constant
+            if bd > _tmax(ra):  # would overflow -> shrink the RHS to a constant
                 e = E(_const_text(r.randint(-100, 100), nat), nat, 100)
                 bd = cur * 100 if op == "*" else cur + 100
-                if bd > _tmax(ra):                              # still tight (a near-max wide local) -> plain store
+                if bd > _tmax(ra):  # still tight (a near-max wide local) -> plain store
                     return self._assign_to(n, 0)
             self.bound[n] = self._store_bound(E("", ra, bd), code)
         else:
@@ -543,11 +587,11 @@ class Gen:
 
     def _bump(self, n: str):
         code = self.styp[n]
-        if not _ST[code][2]:                                   # unsigned wraps
+        if not _ST[code][2]:  # unsigned wraps
             self.bound[n] = 0
-        elif code in ("i8", "i16"):                            # narrow: re-caps to type range
+        elif code in ("i8", "i16"):  # narrow: re-caps to type range
             self.bound[n] = _ST[code][3]
-        else:                                                  # wide (outside loops): +1, capped at the type max
+        else:  # wide (outside loops): +1, capped at the type max
             self.bound[n] = min(self.bound.get(n, 0) + 1, _ST[code][3])
 
     def _ptr_write(self, depth: int) -> str:
@@ -555,7 +599,7 @@ class Gen:
         p = r.choice(self.ptrs)
         rhs = _coerce(self.iexpr(depth), "u32")
         if r.random() < 0.35:
-            return f"*{p} = {rhs};"                       # `*p = x` (canonical); `(*p) = x` is a twin parse gap
+            return f"*{p} = {rhs};"  # `*p = x` (canonical); `(*p) = x` is a twin parse gap
         idx = _coerce(self.iexpr(depth - 1) if depth > 0 else self._ileaf(0), "u32")
         op = r.choice(["=", "+=", "-=", "*=", "|=", "&=", "^="])
         return f"{p}[({idx}) & {_ARRSZ - 1}u] {op} {rhs};"
@@ -564,9 +608,9 @@ class Gen:
         r = self.rng
         iv = f"i{self.counter}"
         self.counter += 1
-        for n in self._live():                                 # loop-entry inflation: a narrow-signed local may
-            if self.styp.get(n) in ("i8", "i16"):              # be mutated to anywhere in its range on a later
-                self.bound[n] = _ST[self.styp[n]][3]           # iteration, so a read must use the type cap.
+        for n in self._live():  # loop-entry inflation: a narrow-signed local may
+            if self.styp.get(n) in ("i8", "i16"):  # be mutated to anywhere in its range on a later
+                self.bound[n] = _ST[self.styp[n]][3]  # iteration, so a read must use the type cap.
         self.scopes.append([iv])
         self.styp[iv] = "u32"
         self.loopvars.add(iv)
@@ -584,17 +628,19 @@ class Gen:
         # call). An aggregate / aggregate-pointer parameter contributes its member lvalues to scope.
         self.scopes = [[]]
         self.styp, self.bound = {}, {}
-        self.arrs = []                                         # (access-prefix, member, elem-code) array members
+        self.arrs = []  # (access-prefix, member, elem-code) array members
         for pname, ptype in params:
-            if ptype.startswith("*"):                          # a `struct T *` parameter: members via `->`
+            if ptype.startswith("*"):  # a `struct T *` parameter: members via `->`
                 _kind, members, _active, arrs = self.aggdefs[ptype[1:]]
-                for acc, c in self._leaves(members):           # a nested member: `p->in.x` lvalues
+                for acc, c in self._leaves(members):  # a nested member: `p->in.x` lvalues
                     self._add_member(f"{pname}->{acc}", c, _ST[c][3] if _ST[c][2] else 0)
                 self.arrs += [(f"{pname}->", an, c) for an, c in arrs]
             elif ptype in self.aggdefs:
                 kind, members, active, arrs = self.aggdefs[ptype]
-                leaves = self._leaves(members) if kind == "struct" else self._leaves([members[active]])
-                for acc, c in leaves:                          # a nested struct member contributes `s.in.x` lvalues
+                leaves = (
+                    self._leaves(members) if kind == "struct" else self._leaves([members[active]])
+                )
+                for acc, c in leaves:  # a nested struct member contributes `s.in.x` lvalues
                     self._add_member(f"{pname}.{acc}", c, _ST[c][3] if _ST[c][2] else 0)
                 self.arrs += [(f"{pname}.", an, c) for an, c in arrs]
             else:
@@ -609,20 +655,33 @@ class Gen:
         self._enter_function(params, nptr)
         self.allow_calls = allow_calls
         body = [self.stmt(2) for _ in range(self.rng.randint(2, 5))]
-        if ret in self.aggdefs:                            # a struct return BY VALUE: a member-init compound
-            _kind, members, _active, ret_arrs = self.aggdefs[ret]   # literal, with NESTED braces for an array
-            parts = [self._member_init(3, c) for _, c in members]   # member (or a nested struct member's brace)
-            parts += ["{ " + ", ".join(self._val(2, c).text for _ in range(_ARRSZ // 2)) + " }"
-                      for _, c in ret_arrs]
+        if ret in self.aggdefs:  # a struct return BY VALUE: a member-init compound
+            _kind, members, _active, ret_arrs = self.aggdefs[
+                ret
+            ]  # literal, with NESTED braces for an array
+            parts = [
+                self._member_init(3, c) for _, c in members
+            ]  # member (or a nested struct member's brace)
+            parts += [
+                "{ " + ", ".join(self._val(2, c).text for _ in range(_ARRSZ // 2)) + " }"
+                for _, c in ret_arrs
+            ]
             body.append(f"return (struct {ret}){{ {', '.join(parts)} }};")
             ret_c = f"struct {ret}"
         else:
             rv = self._val(3, ret)
             body.append(f"return {_coerce(rv, _ST[ret][4]) if _ST[ret][4] != rv.aty else rv.text};")
             ret_c = _ST[ret][0]
-        parts = [(f"{self.aggdefs[t[1:]][0]} {t[1:]} *{n}" if t.startswith("*")
-                  else f"{self.aggdefs[t][0]} {t} {n}" if t in self.aggdefs else f"{_ST[t][0]} {n}")
-                 for n, t in params]
+        parts = [
+            (
+                f"{self.aggdefs[t[1:]][0]} {t[1:]} *{n}"
+                if t.startswith("*")
+                else f"{self.aggdefs[t][0]} {t} {n}"
+                if t in self.aggdefs
+                else f"{_ST[t][0]} {n}"
+            )
+            for n, t in params
+        ]
         parts += [f"unsigned *{pn}" for pn in self.ptrs]
         src = f"{ret_c} {name}({', '.join(parts)})\n{{\n  " + "\n  ".join(body) + "\n}\n"
         return src
@@ -630,7 +689,7 @@ class Gen:
     def program(self) -> "Program":
         r = self.rng
         self.aggdefs, agg_src, self.packed = {}, [], set()
-        for i in range(r.randint(1, 3)):                        # struct / union type definitions
+        for i in range(r.randint(1, 3)):  # struct / union type definitions
             kind = r.choice(["struct", "struct", "union"])
             nm = ("S" if kind == "struct" else "U") + str(i)
             # struct members mix scalars + bitfields freely (a bitfield may follow a sub-word member, e.g.
@@ -643,21 +702,31 @@ class Gen:
             # a NESTED struct member `struct S0 in;` (one level): an earlier all-scalar struct (no arrays, no
             # nesting). A nestable inner struct just has no arrays; it MAY itself nest (an earlier struct),
             # so `S2{ S1{ S0 } }` multi-level nesting forms -- read as `s.in.deep.x`, all leaves flattened.
-            nestable = [t for t, v in self.aggdefs.items() if v[0] == "struct" and not v[3]
-                        and t not in self.packed]
-            nested = kind == "struct" and nestable and not members[0][1] in self.aggdefs and r.random() < 0.3
+            nestable = [
+                t
+                for t, v in self.aggdefs.items()
+                if v[0] == "struct" and not v[3] and t not in self.packed
+            ]
+            nested = (
+                kind == "struct"
+                and nestable
+                and members[0][1] not in self.aggdefs
+                and r.random() < 0.3
+            )
             if nested:
                 members.append((f"n{len(members)}", r.choice(nestable)))
             # array members `T arr[4]` come LAST (struct-only, mutually exclusive with a nested member here).
-            arrs = ([(f"a{j}", r.choice(_AELEM)) for j in range(r.randint(1, 2))]
-                    if (kind == "struct" and not nested and r.random() < 0.25)
-                    else [])
+            arrs = (
+                [(f"a{j}", r.choice(_AELEM)) for j in range(r.randint(1, 2))]
+                if (kind == "struct" and not nested and r.random() < 0.25)
+                else []
+            )
             # a `__attribute__((packed))` (no-padding) struct: scalars + BITFIELDS pack bit-by-bit with no
             # storage-unit reservation (a field may straddle byte/word boundaries) -- both rails now lay this
             # out + access it like Clang (the LAYOUT differential validates each packed `sizeof`/`offsetof`,
             # the behaviour check the byte-spanning read-modify-writes). Arrays/nested members stay out of a
             # packed struct for now (a separate packed-aggregate layout step).
-            packed = (kind == "struct" and not arrs and not nested and r.random() < 0.45)
+            packed = kind == "struct" and not arrs and not nested and r.random() < 0.45
             if packed:
                 self.packed.add(nm)
             # over-align some plain scalar members `_Alignas(N) T m;`: raises that member's offset AND the
@@ -677,17 +746,26 @@ class Gen:
             # differential) while reserving the anonymous struct as a unit. Scalars only (independent -- an
             # anonymous UNION's aliasing would break the value-safety model; the fixture pins that case) and not
             # alongside a nested member (keeps the flat brace-init via elision unambiguous).
-            anon = ([(f"an{j}", r.choice(_ALL)) for j in range(r.randint(2, 3))]
-                    if (kind == "struct" and not nested and not packed and r.random() < 0.3) else [])
+            anon = (
+                [(f"an{j}", r.choice(_ALL)) for j in range(r.randint(2, 3))]
+                if (kind == "struct" and not nested and not packed and r.random() < 0.3)
+                else []
+            )
             anon_names = {mn for mn, _ in anon}
 
-            def _mdef(mn, c):
+            def _mdef(mn, c, malign=malign):  # bound now: applied inside this iteration
                 pre = f"_Alignas({malign[mn]}) " if mn in malign else ""
                 if c in self.aggdefs:
                     return f"{pre}struct {c} {mn};"
                 return f"{pre}{_ST[c][0]} {mn}{(' : ' + str(_BF[c])) if c in _BF else ''};"
-            members = members + anon                          # promoted leaves are direct members for ACCESS
-            self.aggdefs[nm] = (kind, members, r.randrange(len(members)) if kind == "union" else None, arrs)
+
+            members = members + anon  # promoted leaves are direct members for ACCESS
+            self.aggdefs[nm] = (
+                kind,
+                members,
+                r.randrange(len(members)) if kind == "union" else None,
+                arrs,
+            )
             frags = [_mdef(mn, c) for mn, c in members if mn not in anon_names]
             # inject UNNAMED / ZERO-WIDTH bitfields `T : N;` / `T : 0;`: layout-only padding with NO declarator --
             # a non-zero one reserves N bits (shifting later fields), a zero-width one bumps the next bitfield to
@@ -699,12 +777,14 @@ class Gen:
                     ut = r.choice(["unsigned", "unsigned short", "unsigned char"])
                     frags.insert(r.randint(0, len(frags)), f"{ut} : {r.choice([0, 1, 2, 3, 5])};")
             body = " ".join(frags)
-            if anon:                                          # wrap the promoted leaves in an anonymous struct
+            if anon:  # wrap the promoted leaves in an anonymous struct
                 body += " struct { " + " ".join(f"{_ST[c][0]} {mn};" for mn, c in anon) + " };"
             body += "".join(f" {_ST[c][0]} {an}[{_ARRSZ // 2}];" for an, c in arrs)
-            agg_src.append(f"{kind}{' __attribute__((packed))' if packed else ''} {nm} {{ {body} }};")
+            agg_src.append(
+                f"{kind}{' __attribute__((packed))' if packed else ''} {nm} {{ {body} }};"
+            )
         self.helpers, helper_src = [], []
-        for hi in range(r.randint(0, 3)):                       # leaf helpers (scalar params, no calls, no ptr)
+        for hi in range(r.randint(0, 3)):  # leaf helpers (scalar params, no calls, no ptr)
             hp = [(chr(97 + k), r.choice(_ALL)) for k in range(r.randint(1, 3))]
             ret = r.choice(_ALL)
             helper_src.append(self._function(f"g{hi}", hp, ret, nptr=0, allow_calls=False))
@@ -715,16 +795,21 @@ class Gen:
         def _fparam_type():
             roll = r.random()
             if structs and roll < 0.15:
-                return "*" + r.choice(structs)                 # a `struct T *` (read+written through the ptr)
+                return "*" + r.choice(structs)  # a `struct T *` (read+written through the ptr)
             if aggnames and roll < 0.4:
-                return r.choice(aggnames)                       # an aggregate by value (may be nest-containing)
+                return r.choice(aggnames)  # an aggregate by value (may be nest-containing)
             return r.choice(_ALL)
+
         fparams = [(chr(97 + k), _fparam_type()) for k in range(r.randint(2, 4))]
-        fret = r.choice(structs) if (structs and r.random() < 0.15) else r.choice(_ALL)   # array/nested members OK
+        fret = (
+            r.choice(structs) if (structs and r.random() < 0.15) else r.choice(_ALL)
+        )  # array/nested members OK
         nptr = r.choice([0, 0, 1, 1, 2])
         alias = nptr == 2 and r.random() < 0.5
         fsrc = self._function("f", fparams, fret, nptr=nptr, allow_calls=True)
-        return Program("\n".join(agg_src + helper_src + [fsrc]), fparams, fret, nptr, alias, dict(self.aggdefs))
+        return Program(
+            "\n".join(agg_src + helper_src + [fsrc]), fparams, fret, nptr, alias, dict(self.aggdefs)
+        )
 
 
 class Program:
@@ -737,6 +822,7 @@ class Program:
 
 def _oracle_outcome(src: str):
     from bcir.frontends.cfront.pipeline import compile_with_fallback
+
     r = compile_with_fallback(src, check_clang=False)
     return (2 if r.needs_fallback else (0 if r.is_clean else 1)), r
 
@@ -744,19 +830,22 @@ def _oracle_outcome(src: str):
 def _oracle_summary_emit(src: str):
     from bcir.frontends.cfront import compile_unit
     from bcir.model import Domain
-    from bcir.verify import cfront_structural_digest        # the cross-rail per-claim STRUCTURAL digest
+    from bcir.verify import cfront_structural_digest  # the cross-rail per-claim STRUCTURAL digest
+
     r = compile_unit(src, check_clang=False)
     funcs = r.lowered.functions
-    cl = funcs[next(reversed(funcs))].claims                    # the entry `f` is the last-defined function
-    summ = (f"funcs={len(funcs)} claims={len(cl)} "
-            f"mmio={sum(1 for c in cl if c.op == 'c.load' and c.domain == Domain.MMIO)} "
-            f"bf={sum(1 for c in cl if c.op == 'c.bf.get')} "
-            f"const={sum(1 for c in cl if c.op == 'c.const')} "
-            f"binop={sum(1 for c in cl if c.op.startswith('c.bin.'))} "
-            f"call={sum(1 for c in cl if c.op.startswith('c.call'))} "
-            f"repro={sum(1 for fn in funcs.values() if getattr(fn, 'reproducible', False))} "
-            f"ok={1 if r.is_clean else 0} "
-            f"digest={cfront_structural_digest(r.lowered):016x}")   # byte-identical to the C twin's digest
+    cl = funcs[next(reversed(funcs))].claims  # the entry `f` is the last-defined function
+    summ = (
+        f"funcs={len(funcs)} claims={len(cl)} "
+        f"mmio={sum(1 for c in cl if c.op == 'c.load' and c.domain == Domain.MMIO)} "
+        f"bf={sum(1 for c in cl if c.op == 'c.bf.get')} "
+        f"const={sum(1 for c in cl if c.op == 'c.const')} "
+        f"binop={sum(1 for c in cl if c.op.startswith('c.bin.'))} "
+        f"call={sum(1 for c in cl if c.op.startswith('c.call'))} "
+        f"repro={sum(1 for fn in funcs.values() if getattr(fn, 'reproducible', False))} "
+        f"ok={1 if r.is_clean else 0} "
+        f"digest={cfront_structural_digest(r.lowered):016x}"
+    )  # byte-identical to the C twin's digest
     return summ, "\n".join(r.emitted[n] for n in funcs)
 
 
@@ -779,19 +868,19 @@ def _twin(exe: str, src: str):
 
 
 _POOL = {
-    "i8":  [0, 1, -1, 127, -128, 50, -50, 99],
+    "i8": [0, 1, -1, 127, -128, 50, -50, 99],
     "i16": [0, 1, -1, 32767, -32768, 1000, -1000, 12345],
     "i32": [0, 1, -1, _PMAX, -_PMAX, 12345, -12345, 100],
     "i64": [0, 1, -1, _PMAX, -_PMAX, 9999, -9999, 5000],
     "u32": [0, 1, 255, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 123456789, 3],
     "u64": [0, 1, 0xFFFFFFFF, 0x100000000, 0xFFFFFFFFFFFFFFFF, 7, 1000000, 42],
-    "bool": [0, 1, 2, 255, 0, 1, 256, 7],                  # non-0/1 values exercise store-normalization to 0/1
+    "bool": [0, 1, 2, 255, 0, 1, 256, 7],  # non-0/1 values exercise store-normalization to 0/1
 }
 _FPOOL = [0.0, 1.0, -1.0, 0.5, -0.5, 3.14159, -2.71828, 100.25, -0.001, 1234.5, -99999.0, 1e-7]
 
 
 def _lit(code: str, j: int, k: int) -> str:
-    if code in _BF:                                            # a bitfield member: a small in-range int literal
+    if code in _BF:  # a bitfield member: a small in-range int literal
         w = _BF[code]
         if code[2] == "u":
             pool = [0, 1, (1 << w) - 1, (1 << w) >> 1]
@@ -810,24 +899,27 @@ _FEQ = (
     "  if((x<0)!=(y<0))return 0; int32_t d=x>y?x-y:y-x; return d<=4; }\n"
     "static int feqd(double a,double b){ if(isnan(a)&&isnan(b))return 1; if(isnan(a)||isnan(b))return 0;\n"
     "  if(a==b)return 1; int64_t x,y; memcpy(&x,&a,8); memcpy(&y,&b,8);\n"
-    "  if((x<0)!=(y<0))return 0; int64_t d=x>y?x-y:y-x; return d<=4; }\n")
+    "  if((x<0)!=(y<0))return 0; int64_t d=x>y?x-y:y-x; return d<=4; }\n"
+)
 
 
 def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tuple[bool, str]:
-    renamed = re.sub(r"\bf\b", "f_s", prog.source)              # the entry `f` -> `f_s`; helpers untouched
-    struct_ret = prog.ret in prog.aggdefs                       # f returns a struct BY VALUE
+    renamed = re.sub(r"\bf\b", "f_s", prog.source)  # the entry `f` -> `f_s`; helpers untouched
+    struct_ret = prog.ret in prog.aggdefs  # f returns a struct BY VALUE
     rtype = f"struct {prog.ret}" if struct_ret else _ST[prog.ret][0]
-    cmp = None if struct_ret else {"f32": "feqf", "f64": "feqd"}.get(prog.ret)   # None -> exact integer compare
+    cmp = (
+        None if struct_ret else {"f32": "feqf", "f64": "feqd"}.get(prog.ret)
+    )  # None -> exact integer compare
 
-    def _mcmp(lhs: str, rhs: str, code: str) -> str:           # one member's value comparison (float-aware)
+    def _mcmp(lhs: str, rhs: str, code: str) -> str:  # one member's value comparison (float-aware)
         if code in _FLOATS:
             return f"if(!{'feqf' if code == 'f32' else 'feqd'}({lhs},{rhs})) return 1;"
         return f"if({lhs}!={rhs}) return 1;"
 
-    def _flat(members):                                        # scalar leaves with access suffix (nested -> in...x)
+    def _flat(members):  # scalar leaves with access suffix (nested -> in...x)
         out = []
         for mn, c in members:
-            if c in prog.aggdefs:                              # recurse through any depth of nesting
+            if c in prog.aggdefs:  # recurse through any depth of nesting
                 out += [(f"{mn}.{acc}", ic) for acc, ic in _flat(prog.aggdefs[c][1])]
             else:
                 out.append((mn, c))
@@ -835,39 +927,65 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
 
     if struct_ret:
         members, ret_arrs = prog.aggdefs[prog.ret][1], prog.aggdefs[prog.ret][3]
-        chk = " ".join(_mcmp(f"r1.{acc}", f"r2.{acc}", c) for acc, c in _flat(members))   # nested -> r1.in.x
-        chk += " " + " ".join(_mcmp(f"r1.{an}[{e}]", f"r2.{an}[{e}]", c)   # array members element-by-element
-                              for an, c in ret_arrs for e in range(_ARRSZ // 2))
+        chk = " ".join(
+            _mcmp(f"r1.{acc}", f"r2.{acc}", c) for acc, c in _flat(members)
+        )  # nested -> r1.in.x
+        chk += " " + " ".join(
+            _mcmp(f"r1.{an}[{e}]", f"r2.{an}[{e}]", c)  # array members element-by-element
+            for an, c in ret_arrs
+            for e in range(_ARRSZ // 2)
+        )
     else:
         chk = f"if(!{cmp}(r1,r2)) return 1;" if cmp else "if(r1!=r2) return 1;"
+
     # the float-equality helpers are needed for a float compare anywhere (return, struct-return member, or a
     # struct-pointer member).
-    def _has_float_agg(tag):                                    # a float scalar/array element, incl. a nested member
+    def _has_float_agg(tag):  # a float scalar/array element, incl. a nested member
         _k, mems, _a, arrs = prog.aggdefs[tag]
-        return (any(c in _FLOATS for _, c in mems) or any(c in _FLOATS for _, c in arrs)
-                or any(c in prog.aggdefs and _has_float_agg(c) for _, c in mems))
-    need_feq = (cmp is not None
-                or (struct_ret and _has_float_agg(prog.ret))
-                or any(t.startswith("*") and _has_float_agg(t[1:]) for _, t in prog.ptypes))
+        return (
+            any(c in _FLOATS for _, c in mems)
+            or any(c in _FLOATS for _, c in arrs)
+            or any(c in prog.aggdefs and _has_float_agg(c) for _, c in mems)
+        )
+
+    need_feq = (
+        cmp is not None
+        or (struct_ret and _has_float_agg(prog.ret))
+        or any(t.startswith("*") and _has_float_agg(t[1:]) for _, t in prog.ptypes)
+    )
     init = "{3u,140u,7u,0u,99u,1234567u,255u,42u}"
     np, alias = prog.nptr, prog.alias
     lines = ["int main(void){"]
     for j in range(16):
         decls, post, a1, a2 = [], [], [], []
         for k, (_pn, t) in enumerate(prog.ptypes):
-            if t.startswith("*"):                               # struct pointer: a backing struct per rail,
-                agg = t[1:]                                     # member/element-initialised, then compared BY
-                _kind, members, _active, arrs = prog.aggdefs[agg]   # VALUE after the call (per member/element:
-                va, vb = f"S{k}A", f"S{k}B"                     # feqf/feqd for a float -- nan/-0.0 aware -- else exact)
-                decls.append(f"struct {agg} {va},{vb}; memset(&{va},0,sizeof {va}); memset(&{vb},0,sizeof {vb});")
-                cells = [(f"{{v}}.{acc}", c, k + mi) for mi, (acc, c) in enumerate(_flat(members))]   # nested -> v.in.x
-                cells += [(f"{{v}}.{an}[{e}]", c, k + ai + e)
-                          for ai, (an, c) in enumerate(arrs) for e in range(_ARRSZ // 2)]
+            if t.startswith("*"):  # struct pointer: a backing struct per rail,
+                agg = t[1:]  # member/element-initialised, then compared BY
+                _kind, members, _active, arrs = prog.aggdefs[
+                    agg
+                ]  # VALUE after the call (per member/element:
+                va, vb = (
+                    f"S{k}A",
+                    f"S{k}B",
+                )  # feqf/feqd for a float -- nan/-0.0 aware -- else exact)
+                decls.append(
+                    f"struct {agg} {va},{vb}; memset(&{va},0,sizeof {va}); memset(&{vb},0,sizeof {vb});"
+                )
+                cells = [
+                    (f"{{v}}.{acc}", c, k + mi) for mi, (acc, c) in enumerate(_flat(members))
+                ]  # nested -> v.in.x
+                cells += [
+                    (f"{{v}}.{an}[{e}]", c, k + ai + e)
+                    for ai, (an, c) in enumerate(arrs)
+                    for e in range(_ARRSZ // 2)
+                ]
                 for ref, c, key in cells:
                     lit = _lit(c, j, key)
                     decls.append(f"{ref.format(v=va)}={lit}; {ref.format(v=vb)}={lit};")
                     if c in _FLOATS:
-                        post.append(f"if(!{'feqf' if c == 'f32' else 'feqd'}({ref.format(v=va)},{ref.format(v=vb)})) return {5 + k};")
+                        post.append(
+                            f"if(!{'feqf' if c == 'f32' else 'feqd'}({ref.format(v=va)},{ref.format(v=vb)})) return {5 + k};"
+                        )
                     else:
                         post.append(f"if({ref.format(v=va)}!={ref.format(v=vb)}) return {5 + k};")
                 a1.append(f"&{va}")
@@ -875,14 +993,24 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
             elif t in prog.aggdefs:
                 kind, members, active, arrs = prog.aggdefs[t]
                 if kind == "struct":
-                    def _memlit(c, key):                       # a nested struct member -> a braced sub-literal
+
+                    def _memlit(c, key, j=j):  # a nested struct member -> a braced sub-literal
                         if c in prog.aggdefs:
-                            return ("{ " + ", ".join(_memlit(ic, key + ii)
-                                    for ii, (_, ic) in enumerate(prog.aggdefs[c][1])) + " }")
+                            return (
+                                "{ "
+                                + ", ".join(
+                                    _memlit(ic, key + ii)
+                                    for ii, (_, ic) in enumerate(prog.aggdefs[c][1])
+                                )
+                                + " }"
+                            )
                         return _lit(c, j, key)
+
                     parts = [_memlit(c, k + mi) for mi, (_, c) in enumerate(members)]
-                    parts += ["{ " + ", ".join(_lit(c, j, k + ai + e) for e in range(_ARRSZ // 2)) + " }"
-                              for ai, (_, c) in enumerate(arrs)]
+                    parts += [
+                        "{ " + ", ".join(_lit(c, j, k + ai + e) for e in range(_ARRSZ // 2)) + " }"
+                        for ai, (_, c) in enumerate(arrs)
+                    ]
                     lit = f"(struct {t}){{ {', '.join(parts)} }}"
                 else:
                     mn, c = members[active]
@@ -907,28 +1035,41 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
                     a2.append("Q2")
                     post.append("for(int kk=0;kk<8;kk++) if(Q1[kk]!=Q2[kk]) return 3;")
         c1, c2 = f"bcir_f({', '.join(a1)})", f"f_s({', '.join(a2)})"
-        lines.append(f"  {{ {' '.join(decls)} {rtype} r1={c1}; {rtype} r2={c2}; {chk} {' '.join(post)} }}")
+        lines.append(
+            f"  {{ {' '.join(decls)} {rtype} r1={c1}; {rtype} r2={c2}; {chk} {' '.join(post)} }}"
+        )
     lines.append("  return 0;}")
-    harness = ("#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <math.h>\n"
-               "#include <stdlib.h>\n#include <stddef.h>\n"
-               # §5.12 bounds-quarantine: a `masked` local-array access emits BCIR_CHK(rid,idx,N) for a READ
-               # and BCIR_CHK_W(...) for a WRITE (an OOB store never clamps -- the write handler is noreturn).
-               # Both stubs are never reached for an in-bounds index (the generator's are), so transparent.
-               "static size_t bcir_bounds_quarantine(uint64_t r,uint64_t i,uint64_t e,const char*s){(void)r;(void)i;(void)e;(void)s;abort();return 0;}\n"
-               "static void bcir_bounds_quarantine_write(uint64_t r,uint64_t i,uint64_t e,const char*s){(void)r;(void)i;(void)e;(void)s;abort();}\n"
-               "#define BCIR_CHK(rid,idx,n,site) ((uint64_t)(idx)<(uint64_t)(n)?(size_t)(idx):"
-               "bcir_bounds_quarantine((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n),(site)))\n"
-               "#define BCIR_CHK_W(rid,idx,n,site) ((uint64_t)(idx)<(uint64_t)(n)?(size_t)(idx):"
-               "(bcir_bounds_quarantine_write((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n),(site)),(size_t)(idx)))\n"
-               + (_FEQ if need_feq else "") + renamed + "\n" + emit + "\n" + "\n".join(lines))
+    harness = (
+        "#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <math.h>\n"
+        "#include <stdlib.h>\n#include <stddef.h>\n"
+        # §5.12 bounds-quarantine: a `masked` local-array access emits BCIR_CHK(rid,idx,N) for a READ
+        # and BCIR_CHK_W(...) for a WRITE (an OOB store never clamps -- the write handler is noreturn).
+        # Both stubs are never reached for an in-bounds index (the generator's are), so transparent.
+        "static size_t bcir_bounds_quarantine(uint64_t r,uint64_t i,uint64_t e,const char*s){(void)r;(void)i;(void)e;(void)s;abort();return 0;}\n"
+        "static void bcir_bounds_quarantine_write(uint64_t r,uint64_t i,uint64_t e,const char*s){(void)r;(void)i;(void)e;(void)s;abort();}\n"
+        "#define BCIR_CHK(rid,idx,n,site) ((uint64_t)(idx)<(uint64_t)(n)?(size_t)(idx):"
+        "bcir_bounds_quarantine((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n),(site)))\n"
+        "#define BCIR_CHK_W(rid,idx,n,site) ((uint64_t)(idx)<(uint64_t)(n)?(size_t)(idx):"
+        "(bcir_bounds_quarantine_write((uint64_t)(rid),(uint64_t)(idx),(uint64_t)(n),(site)),(size_t)(idx)))\n"
+        + (_FEQ if need_feq else "")
+        + renamed
+        + "\n"
+        + emit
+        + "\n"
+        + "\n".join(lines)
+    )
     cpath = os.path.join(d, f"{label}.c")
     epath = os.path.join(d, label)
     with open(cpath, "w") as fh:
         fh.write(harness)
-    for std in ("c23", "c2x", "c17"):                           # -ffp-contract=off: no FMA, so float is exact
-        b = subprocess.run(host_link_args(
-            [cc, f"-std={std}", "-O2", "-ffp-contract=off", cpath, "-o", epath, "-lm"]),
-                           capture_output=True, text=True)
+    for std in ("c23", "c2x", "c17"):  # -ffp-contract=off: no FMA, so float is exact
+        b = subprocess.run(
+            host_link_args(
+                [cc, f"-std={std}", "-O2", "-ffp-contract=off", cpath, "-o", epath, "-lm"]
+            ),
+            capture_output=True,
+            text=True,
+        )
         if b.returncode == 0:
             break
     else:
@@ -936,7 +1077,10 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
     try:
         run = subprocess.run([epath], capture_output=True, text=True, timeout=10)
     except subprocess.TimeoutExpired:
-        return True, f"{label} run timed out (skipped)"     # a (well-defined) slow loop -- not a divergence
+        return (
+            True,
+            f"{label} run timed out (skipped)",
+        )  # a (well-defined) slow loop -- not a divergence
     return run.returncode == 0, f"{label} behaviour != Clang (rc={run.returncode})"
 
 
@@ -947,24 +1091,40 @@ def _layout_ok(prog: "Program", cc: str, d: str, label: str) -> tuple[bool, str]
     so this is the guard for struct-size + offset bugs (e.g. the deferred packed+bitfield layout). The two
     rails share one layout algorithm (parity-gated), so the oracle's layout stands in for both."""
     from bcir.frontends.cfront.pipeline import compile_unit
+
     try:
         aggs = compile_unit(prog.source, check_clang=False).lowered.aggregates
     except Exception:
-        return True, ""                                  # un-lowerable: the outcome check already owns it
-    defs = [ln for ln in prog.source.splitlines()
-            if (ln.startswith("struct ") or ln.startswith("union ")) and ln.rstrip().endswith("};")]
+        return True, ""  # un-lowerable: the outcome check already owns it
+    defs = [
+        ln
+        for ln in prog.source.splitlines()
+        if (ln.startswith("struct ") or ln.startswith("union ")) and ln.rstrip().endswith("};")
+    ]
     asserts = []
     for tag, ct in aggs.items():
-        if tag.startswith("$"):                          # a synthesized tag for an ANONYMOUS aggregate -- it is
-            continue                                      # not nameable in C (`sizeof(struct $anon0)` won't compile);
-        kw = "union" if ct.kind == "union" else "struct"  # its promoted leaves are validated via the PARENT's
-        asserts.append(f'_Static_assert(sizeof({kw} {tag})=={ct.size},"sz {tag}");')   # offsetof asserts instead.
+        if tag.startswith("$"):  # a synthesized tag for an ANONYMOUS aggregate -- it is
+            continue  # not nameable in C (`sizeof(struct $anon0)` won't compile);
+        kw = (
+            "union" if ct.kind == "union" else "struct"
+        )  # its promoted leaves are validated via the PARENT's
+        asserts.append(
+            f'_Static_assert(sizeof({kw} {tag})=={ct.size},"sz {tag}");'
+        )  # offsetof asserts instead.
         for fn, _fty, boff, _bo, bw in ct.fields:
-            if not bw:                                   # a bitfield has no offsetof
-                asserts.append(f'_Static_assert(__builtin_offsetof({kw} {tag},{fn})=={boff},"off {tag}.{fn}");')
+            if not bw:  # a bitfield has no offsetof
+                asserts.append(
+                    f'_Static_assert(__builtin_offsetof({kw} {tag},{fn})=={boff},"off {tag}.{fn}");'
+                )
     if not asserts:
         return True, ""
-    src = "#include <stddef.h>\n" + "\n".join(defs) + "\n" + "\n".join(asserts) + "\nint main(void){return 0;}\n"
+    src = (
+        "#include <stddef.h>\n"
+        + "\n".join(defs)
+        + "\n"
+        + "\n".join(asserts)
+        + "\nint main(void){return 0;}\n"
+    )
     cp = os.path.join(d, f"L{label}.c")
     with open(cp, "w") as fh:
         fh.write(src)
@@ -972,7 +1132,9 @@ def _layout_ok(prog: "Program", cc: str, d: str, label: str) -> tuple[bool, str]
     if b.returncode == 0:
         return True, ""
     fails = [l for l in b.stderr.splitlines() if "static" in l.lower() and "assert" in l.lower()]
-    return False, "layout != Clang: " + (fails[0].strip() if fails else (b.stderr.strip().splitlines() or [""])[-1])
+    return False, "layout != Clang: " + (
+        fails[0].strip() if fails else (b.stderr.strip().splitlines() or [""])[-1]
+    )
 
 
 def run_seed(twin: str, cc, count: int, seed: int, d: str, verbose: bool = False):
@@ -986,28 +1148,42 @@ def run_seed(twin: str, cc, count: int, seed: int, d: str, verbose: bool = False
         src = prog.source
         try:
             o_out, _ = _oracle_outcome(src)
-        except Exception as e:                      # the oracle must never crash on in-subset input
-            return f"ORACLE CRASH on program #{i} (seed {seed}):\n{src}\n{type(e).__name__}: {e}", stats
+        except Exception as e:  # the oracle must never crash on in-subset input
+            return (
+                f"ORACLE CRASH on program #{i} (seed {seed}):\n{src}\n{type(e).__name__}: {e}",
+                stats,
+            )
         t_out, t_first, t_emit = _twin(twin, src)
         if o_out != t_out:
-            return (f"OUTCOME DIVERGENCE on program #{i} (seed {seed}): "
-                    f"oracle={names[o_out]} twin={names[t_out]}\n{src}\ntwin: {t_first}", stats)
+            return (
+                f"OUTCOME DIVERGENCE on program #{i} (seed {seed}): "
+                f"oracle={names[o_out]} twin={names[t_out]}\n{src}\ntwin: {t_first}",
+                stats,
+            )
         if o_out != 0:
             stats["fallback" if o_out == 2 else "dirty"] += 1
             continue
         stats["clean"] += 1
         o_summ, o_emit = _oracle_summary_emit(src)
         if o_summ != t_first:
-            return (f"PARITY DIVERGENCE on program #{i} (seed {seed}):\n{src}\n"
-                    f"oracle: {o_summ}\ntwin  : {t_first}", stats)
+            return (
+                f"PARITY DIVERGENCE on program #{i} (seed {seed}):\n{src}\n"
+                f"oracle: {o_summ}\ntwin  : {t_first}",
+                stats,
+            )
         if cc:
-            lok, lmsg = _layout_ok(prog, cc, d, str(i))          # struct sizeof/offsetof == Clang (size-blind otherwise)
+            lok, lmsg = _layout_ok(
+                prog, cc, d, str(i)
+            )  # struct sizeof/offsetof == Clang (size-blind otherwise)
             if not lok:
                 return f"LAYOUT DIVERGENCE on program #{i} (seed {seed}): {lmsg}\n{src}", stats
             for tag, emit in (("twin", t_emit), ("oracle", o_emit)):
                 ok, msg = _behaviour_ok(cc, prog, emit, d, f"{tag}{i}")
                 if not ok:
-                    return f"BEHAVIOUR DIVERGENCE on program #{i} (seed {seed}): {msg}\n{src}", stats
+                    return (
+                        f"BEHAVIOUR DIVERGENCE on program #{i} (seed {seed}): {msg}\n{src}",
+                        stats,
+                    )
             stats["checked"] += 1
         if verbose and i % 50 == 0:
             print(f"  #{i}: {stats}")
@@ -1017,8 +1193,20 @@ def run_seed(twin: str, cc, count: int, seed: int, d: str, verbose: bool = False
 def _build_twin(cc, d: str) -> str:
     twin = os.path.join(d, "tcf")
     srcs = ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c", "bcir_runtime.c", "test_cfront.c")
-    build = subprocess.run([cc or "clang", "-std=c2x", "-O2", "-I", _C, *[os.path.join(_C, s) for s in srcs],
-                            "-o", twin], capture_output=True, text=True)
+    build = subprocess.run(
+        [
+            cc or "clang",
+            "-std=c2x",
+            "-O2",
+            "-I",
+            _C,
+            *[os.path.join(_C, s) for s in srcs],
+            "-o",
+            twin,
+        ],
+        capture_output=True,
+        text=True,
+    )
     if build.returncode != 0:
         raise RuntimeError("twin build failed:\n" + build.stderr)
     return twin
@@ -1043,7 +1231,9 @@ def main() -> int:
     if divergence:
         print(divergence)
         return 1
-    print(f"OK seed={args.seed} count={args.count}: {stats} (no outcome/parity/behaviour divergence)")
+    print(
+        f"OK seed={args.seed} count={args.count}: {stats} (no outcome/parity/behaviour divergence)"
+    )
     return 0
 
 

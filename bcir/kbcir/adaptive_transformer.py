@@ -10,6 +10,7 @@ The architecture features are independent research contracts, not automatic rewr
 BCIR's stable Llama/BCIRQ8 decoder format.  Unsupported combinations fail at construction
 rather than silently changing semantics.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -67,8 +68,7 @@ def _checked_mul(*values: int) -> int:
     return product
 
 
-def _int_tuple(value, field: str, *, minimum: int = 1,
-               maximum: int = _MAX_U63) -> tuple[int, ...]:
+def _int_tuple(value, field: str, *, minimum: int = 1, maximum: int = _MAX_U63) -> tuple[int, ...]:
     if not isinstance(value, tuple) or not value:
         raise ValueError(f"{field} must be a nonempty tuple")
     for index, item in enumerate(value):
@@ -102,7 +102,8 @@ class WidthScheduleSpec:
         if self.transition != "carry_forward":
             raise ValueError("only transition='carry_forward' is admitted")
         for index, (width, heads, ff_width) in enumerate(
-                zip(self.widths, self.heads, self.ff_widths)):
+            zip(self.widths, self.heads, self.ff_widths)
+        ):
             if width % heads:
                 raise ValueError(f"width {index} must be divisible by its head count")
             if width // heads % 2:
@@ -111,9 +112,16 @@ class WidthScheduleSpec:
                 raise ValueError(f"ff_widths[{index}] must be at least its model width")
 
     @classmethod
-    def symmetric_u(cls, *, layers: int, outer_width: int, inner_width: int,
-                    head_dim: int, ff_multiplier: int = 4,
-                    quantum: int = 8) -> "WidthScheduleSpec":
+    def symmetric_u(
+        cls,
+        *,
+        layers: int,
+        outer_width: int,
+        inner_width: int,
+        head_dim: int,
+        ff_multiplier: int = 4,
+        quantum: int = 8,
+    ) -> "WidthScheduleSpec":
         """Build a deterministic wide-edge/narrow-middle schedule.
 
         Widths follow a symmetric geometric interpolation and are rounded to ``quantum``.
@@ -181,8 +189,12 @@ class ReferenceWindowSpec:
 
     def additive_mask(self, sequence_length: int, *, masked: float = -1.0e30) -> tuple[float, ...]:
         _integer(sequence_length, "sequence_length", minimum=1, maximum=_MAX_CONTEXT)
-        if isinstance(masked, bool) or not isinstance(masked, (int, float)) \
-                or not math.isfinite(masked) or masked >= 0:
+        if (
+            isinstance(masked, bool)
+            or not isinstance(masked, (int, float))
+            or not math.isfinite(masked)
+            or masked >= 0
+        ):
             raise ValueError("masked value must be a finite negative number")
         elements = _checked_mul(sequence_length, sequence_length)
         if elements > _MAX_MATERIALIZED_MASK_ELEMENTS:
@@ -203,7 +215,8 @@ class ReferenceWindowSpec:
         else:
             local_pairs = _checked_add(
                 _checked_mul(self.window_tokens, self.window_tokens + 1) // 2,
-                _checked_mul(continuation - self.window_tokens, self.window_tokens))
+                _checked_mul(continuation - self.window_tokens, self.window_tokens),
+            )
         return _checked_add(prefix_pairs, _checked_mul(prefix, continuation), local_pairs)
 
     def cache_tokens(self, continuation_tokens: int) -> int:
@@ -292,8 +305,9 @@ class AdaptiveLanguageSpec:
                 raise ValueError("the first ExoFormer rail requires a fixed-width MHA schedule")
             if self.anchor.source_depth >= self.effective_layers:
                 raise ValueError("anchor source_depth must precede a later layer")
-        _checked_mul(self.effective_layers, self.context_length,
-                     max(self.schedule.widths), self.vocab_size)
+        _checked_mul(
+            self.effective_layers, self.context_length, max(self.schedule.widths), self.vocab_size
+        )
 
     @property
     def effective_layers(self) -> int:
@@ -301,13 +315,17 @@ class AdaptiveLanguageSpec:
 
     @property
     def loop_alpha(self) -> float:
-        return math.sqrt(2.0 * self.effective_layers) \
-            if self.residual_mode == "loop_deepnorm" else 1.0
+        return (
+            math.sqrt(2.0 * self.effective_layers) if self.residual_mode == "loop_deepnorm" else 1.0
+        )
 
     @property
     def loop_beta(self) -> float:
-        return 1.0 / math.sqrt(8.0 * self.effective_layers) \
-            if self.residual_mode == "loop_deepnorm" else 1.0
+        return (
+            1.0 / math.sqrt(8.0 * self.effective_layers)
+            if self.residual_mode == "loop_deepnorm"
+            else 1.0
+        )
 
     def to_dict(self) -> dict:
         return {
@@ -319,7 +337,8 @@ class AdaptiveLanguageSpec:
             "tied_embeddings": self.tied_embeddings,
             "residual_mode": self.residual_mode,
             "gated_attention": self.gated_attention,
-            "reference_window": None if self.reference_window is None
+            "reference_window": None
+            if self.reference_window is None
             else asdict(self.reference_window),
             "anchor": None if self.anchor is None else asdict(self.anchor),
         }
@@ -352,15 +371,27 @@ class AdaptiveCostReport:
     classification: str = "analytic-lower-bound"
 
     def __post_init__(self) -> None:
-        if not isinstance(self.spec_sha256, str) or len(self.spec_sha256) != 64 \
-                or any(character not in "0123456789abcdef" for character in self.spec_sha256):
+        if (
+            not isinstance(self.spec_sha256, str)
+            or len(self.spec_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in self.spec_sha256)
+        ):
             raise ValueError("cost report spec_sha256 must be lowercase SHA-256")
-        for field in ("parameter_elements", "physical_layers", "effective_layers",
-                      "prefill_tokens", "prefill_attention_pairs", "prefill_flops",
-                      "decode_flops_per_token", "kv_cache_bytes",
-                      "width_transition_elements", "anchor_parameter_elements",
-                      "anchor_prefill_flops", "output_projection_flops",
-                      "uniform_baseline_prefill_flops"):
+        for field in (
+            "parameter_elements",
+            "physical_layers",
+            "effective_layers",
+            "prefill_tokens",
+            "prefill_attention_pairs",
+            "prefill_flops",
+            "decode_flops_per_token",
+            "kv_cache_bytes",
+            "width_transition_elements",
+            "anchor_parameter_elements",
+            "anchor_prefill_flops",
+            "output_projection_flops",
+            "uniform_baseline_prefill_flops",
+        ):
             _integer(getattr(self, field), f"cost report {field}")
         if type(self.prefill_flop_delta) is not int:
             raise ValueError("prefill_flop_delta must be an integer")
@@ -394,8 +425,7 @@ def fixed_residual_view(values, rows: int, residual_width: int, active_width: in
     return result
 
 
-def fixed_residual_update(residual, active, rows: int,
-                          residual_width: int, active_width: int):
+def fixed_residual_update(residual, active, rows: int, residual_width: int, active_width: int):
     """Replace the active prefix while preserving every inactive coordinate.
 
     The returned list owns its storage.  A narrower block therefore cannot mutate carried
@@ -432,12 +462,14 @@ def _cache_tokens(spec: AdaptiveLanguageSpec, length: int) -> int:
     return _checked_add(prefix, min(continuation, spec.reference_window.window_tokens))
 
 
-def _layer_matmul_flops(width: int, ff_width: int, tokens: int,
-                        gated_attention: bool) -> int:
+def _layer_matmul_flops(width: int, ff_width: int, tokens: int, gated_attention: bool) -> int:
     # Q, K, V, output, optional gate, plus the three SwiGLU matrices.
     projections = 5 if gated_attention else 4
-    return _checked_mul(2, tokens, _checked_add(_checked_mul(projections, width, width),
-                                                _checked_mul(3, width, ff_width)))
+    return _checked_mul(
+        2,
+        tokens,
+        _checked_add(_checked_mul(projections, width, width), _checked_mul(3, width, ff_width)),
+    )
 
 
 def _layer_attention_flops(width: int, pairs: int) -> int:
@@ -450,29 +482,38 @@ def _anchor_costs(spec: AdaptiveLanguageSpec, tokens: int) -> tuple[int, int]:
         return 0, 0
     width, heads = spec.schedule.widths[0], spec.schedule.heads[0]
     channels = spec.anchor.coefficient_channels(width, heads)
-    params = _checked_add(_checked_mul(4, width, width), _checked_mul(4, width),
-                          _checked_mul(spec.schedule.physical_layers, 8, channels))
+    params = _checked_add(
+        _checked_mul(4, width, width),
+        _checked_mul(4, width),
+        _checked_mul(spec.schedule.physical_layers, 8, channels),
+    )
     if spec.anchor.mode == "dynamic":
-        per_layer = _checked_add(_checked_mul(width, spec.anchor.dynamic_hidden),
-                                 _checked_mul(spec.anchor.dynamic_hidden, 8), 8)
-        params = _checked_add(params,
-                              _checked_mul(spec.schedule.physical_layers, per_layer))
+        per_layer = _checked_add(
+            _checked_mul(width, spec.anchor.dynamic_hidden),
+            _checked_mul(spec.anchor.dynamic_hidden, 8),
+            8,
+        )
+        params = _checked_add(params, _checked_mul(spec.schedule.physical_layers, per_layer))
     projection = _checked_mul(8, width, width, tokens)
     if spec.anchor.mode == "dynamic":
         per_token_layer = _checked_add(
             _checked_mul(2, width, spec.anchor.dynamic_hidden),
             _checked_mul(2, spec.anchor.dynamic_hidden, 8),
-            _checked_mul(12, width))
+            _checked_mul(12, width),
+        )
     else:
         per_token_layer = _checked_mul(12, width)
-    mixing = _checked_mul(spec.effective_layers - spec.anchor.source_depth,
-                          tokens, per_token_layer)
+    mixing = _checked_mul(spec.effective_layers - spec.anchor.source_depth, tokens, per_token_layer)
     return params, _checked_add(projection, mixing)
 
 
-def assess_adaptive_language(spec: AdaptiveLanguageSpec, *, prefill_tokens: int,
-                             decode_context: int | None = None,
-                             bytes_per_element: int = 2) -> AdaptiveCostReport:
+def assess_adaptive_language(
+    spec: AdaptiveLanguageSpec,
+    *,
+    prefill_tokens: int,
+    decode_context: int | None = None,
+    bytes_per_element: int = 2,
+) -> AdaptiveCostReport:
     """Account exact architecture sizes and analytic operation counts.
 
     Parameter sizes are exact for the hosted architecture.  FLOPs count dominant
@@ -493,19 +534,19 @@ def assess_adaptive_language(spec: AdaptiveLanguageSpec, *, prefill_tokens: int,
     projections = 5 if spec.gated_attention else 4
     norm_parameters = 6 if spec.residual_mode == "loop_deepnorm" else 4
     for width, ff_width in zip(schedule.widths, schedule.ff_widths):
-        parameters = _checked_add(parameters,
-                                  _checked_mul(projections, width, width),
-                                  _checked_mul(3, width, ff_width),
-                                  _checked_mul(norm_parameters, width))
+        parameters = _checked_add(
+            parameters,
+            _checked_mul(projections, width, width),
+            _checked_mul(3, width, ff_width),
+            _checked_mul(norm_parameters, width),
+        )
     parameters = _checked_add(parameters, schedule.widths[-1])
     if not spec.tied_embeddings:
-        parameters = _checked_add(parameters,
-                                  _checked_mul(spec.vocab_size, schedule.widths[-1]))
+        parameters = _checked_add(parameters, _checked_mul(spec.vocab_size, schedule.widths[-1]))
 
     anchor_parameters, anchor_prefill = _anchor_costs(spec, prefill_tokens)
     parameters = _checked_add(parameters, anchor_parameters)
-    output_projection = _checked_mul(
-        2, prefill_tokens, schedule.widths[-1], spec.vocab_size)
+    output_projection = _checked_mul(2, prefill_tokens, schedule.widths[-1], spec.vocab_size)
     pairs = _attention_pairs(spec, prefill_tokens)
     prefill = _checked_add(anchor_prefill, output_projection)
     transitions = 0
@@ -514,55 +555,77 @@ def assess_adaptive_language(spec: AdaptiveLanguageSpec, *, prefill_tokens: int,
         for width, ff_width in zip(schedule.widths, schedule.ff_widths):
             if width != previous_width:
                 transitions = _checked_add(
-                    transitions, _checked_mul(prefill_tokens, max(width, previous_width)))
-            prefill = _checked_add(prefill,
-                                   _layer_matmul_flops(width, ff_width, prefill_tokens,
-                                                       spec.gated_attention),
-                                   _layer_attention_flops(width, pairs))
+                    transitions, _checked_mul(prefill_tokens, max(width, previous_width))
+                )
+            prefill = _checked_add(
+                prefill,
+                _layer_matmul_flops(width, ff_width, prefill_tokens, spec.gated_attention),
+                _layer_attention_flops(width, pairs),
+            )
             previous_width = width
 
-    visible_decode = len(spec.reference_window.visible_keys(decode_context - 1, decode_context)) \
-        if spec.reference_window is not None else decode_context
+    visible_decode = (
+        len(spec.reference_window.visible_keys(decode_context - 1, decode_context))
+        if spec.reference_window is not None
+        else decode_context
+    )
     decode = _checked_mul(2, schedule.widths[-1], spec.vocab_size)
     for width, ff_width in zip(schedule.widths, schedule.ff_widths):
-        decode = _checked_add(decode,
-                              _checked_mul(spec.repeats,
-                                           _layer_matmul_flops(width, ff_width, 1,
-                                                               spec.gated_attention)),
-                              _checked_mul(spec.repeats,
-                                           _layer_attention_flops(width, visible_decode)))
+        decode = _checked_add(
+            decode,
+            _checked_mul(
+                spec.repeats, _layer_matmul_flops(width, ff_width, 1, spec.gated_attention)
+            ),
+            _checked_mul(spec.repeats, _layer_attention_flops(width, visible_decode)),
+        )
     if spec.anchor is not None:
         width = schedule.widths[0]
         decode = _checked_add(decode, _checked_mul(8, width, width))
         if spec.anchor.mode == "dynamic":
-            mix = _checked_add(_checked_mul(2, width, spec.anchor.dynamic_hidden),
-                               _checked_mul(2, spec.anchor.dynamic_hidden, 8),
-                               _checked_mul(12, width))
+            mix = _checked_add(
+                _checked_mul(2, width, spec.anchor.dynamic_hidden),
+                _checked_mul(2, spec.anchor.dynamic_hidden, 8),
+                _checked_mul(12, width),
+            )
         else:
             mix = _checked_mul(12, width)
-        decode = _checked_add(decode,
-                              _checked_mul(spec.effective_layers - spec.anchor.source_depth, mix))
+        decode = _checked_add(
+            decode, _checked_mul(spec.effective_layers - spec.anchor.source_depth, mix)
+        )
 
     cache_tokens = _cache_tokens(spec, decode_context)
-    kv = _checked_mul(2, bytes_per_element, cache_tokens, spec.repeats,
-                      sum(schedule.widths))
+    kv = _checked_mul(2, bytes_per_element, cache_tokens, spec.repeats, sum(schedule.widths))
 
     baseline_width = max(schedule.widths)
     baseline_ff = max(schedule.ff_widths)
-    baseline = _checked_mul(spec.effective_layers,
-                            _checked_add(_layer_matmul_flops(
-                                baseline_width, baseline_ff, prefill_tokens,
-                                spec.gated_attention),
-                                _layer_attention_flops(baseline_width, pairs)))
+    baseline = _checked_mul(
+        spec.effective_layers,
+        _checked_add(
+            _layer_matmul_flops(baseline_width, baseline_ff, prefill_tokens, spec.gated_attention),
+            _layer_attention_flops(baseline_width, pairs),
+        ),
+    )
     if spec.anchor is not None:
         # Compare the same anchor policy at the uniform outer width.
         baseline = _checked_add(baseline, anchor_prefill)
     baseline = _checked_add(baseline, output_projection)
     return AdaptiveCostReport(
-        spec.digest, parameters, schedule.physical_layers, spec.effective_layers,
-        prefill_tokens, pairs, prefill, decode, kv, transitions,
-        anchor_parameters, anchor_prefill, output_projection,
-        baseline, prefill - baseline)
+        spec.digest,
+        parameters,
+        schedule.physical_layers,
+        spec.effective_layers,
+        prefill_tokens,
+        pairs,
+        prefill,
+        decode,
+        kv,
+        transitions,
+        anchor_parameters,
+        anchor_prefill,
+        output_projection,
+        baseline,
+        prefill - baseline,
+    )
 
 
 @dataclass(frozen=True)
@@ -580,10 +643,16 @@ class MultiPatchSpec:
     condition_tokens: int = 0
 
     def __post_init__(self) -> None:
-        for field, maximum in (("image_size", 16384), ("input_channels", 4096),
-                               ("hidden_width", _MAX_WIDTH), ("heads", _MAX_WIDTH),
-                               ("coarse_patch", 1024), ("fine_patch", 1024),
-                               ("coarse_layers", _MAX_LAYERS), ("fine_layers", _MAX_LAYERS)):
+        for field, maximum in (
+            ("image_size", 16384),
+            ("input_channels", 4096),
+            ("hidden_width", _MAX_WIDTH),
+            ("heads", _MAX_WIDTH),
+            ("coarse_patch", 1024),
+            ("fine_patch", 1024),
+            ("coarse_layers", _MAX_LAYERS),
+            ("fine_layers", _MAX_LAYERS),
+        ):
             _integer(getattr(self, field), field, minimum=1, maximum=maximum)
         _integer(self.condition_tokens, "condition_tokens", maximum=_MAX_CONTEXT)
         if self.hidden_width % self.heads or self.hidden_width // self.heads % 2:
@@ -592,8 +661,7 @@ class MultiPatchSpec:
             raise ValueError("multi-patch hidden width must be divisible by four for 2D positions")
         if self.image_size % self.coarse_patch or self.image_size % self.fine_patch:
             raise ValueError("image size must be divisible by both patch sizes")
-        if self.coarse_patch <= self.fine_patch \
-                or self.coarse_patch % self.fine_patch:
+        if self.coarse_patch <= self.fine_patch or self.coarse_patch % self.fine_patch:
             raise ValueError("coarse_patch must be an integer multiple larger than fine_patch")
         if self.coarse_patch // self.fine_patch > 8:
             raise ValueError("multi-patch upsample factor is bounded to 8")
@@ -647,12 +715,22 @@ class MultiPatchCostReport:
     classification: str = "analytic-lower-bound"
 
     def __post_init__(self) -> None:
-        if not isinstance(self.spec_sha256, str) or len(self.spec_sha256) != 64 \
-                or any(character not in "0123456789abcdef" for character in self.spec_sha256):
+        if (
+            not isinstance(self.spec_sha256, str)
+            or len(self.spec_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in self.spec_sha256)
+        ):
             raise ValueError("multi-patch report spec_sha256 must be lowercase SHA-256")
-        for field in ("parameter_elements", "coarse_tokens", "fine_tokens",
-                      "attention_pairs", "baseline_attention_pairs",
-                      "estimated_flops", "baseline_flops", "flop_reduction_q20"):
+        for field in (
+            "parameter_elements",
+            "coarse_tokens",
+            "fine_tokens",
+            "attention_pairs",
+            "baseline_attention_pairs",
+            "estimated_flops",
+            "baseline_flops",
+            "flop_reduction_q20",
+        ):
             _integer(getattr(self, field), f"multi-patch report {field}")
         if self.flop_reduction_q20 > _Q20:
             raise ValueError("multi-patch flop reduction must be in Q20 [0, 1]")
@@ -671,44 +749,62 @@ def assess_multi_patch(spec: MultiPatchSpec) -> MultiPatchCostReport:
     if not isinstance(spec, MultiPatchSpec):
         raise ValueError("spec must be MultiPatchSpec")
     width = spec.hidden_width
-    ratio2 = spec.upsample_factor ** 2
+    ratio2 = spec.upsample_factor**2
     # MultiheadAttention + 4x GELU MLP + two affine LayerNorms, including biases.
-    block_parameters = _checked_add(_checked_mul(12, width, width),
-                                    _checked_mul(13, width))
+    block_parameters = _checked_add(_checked_mul(12, width, width), _checked_mul(13, width))
     coarse_embed = _checked_add(
-        _checked_mul(spec.coarse_patch, spec.coarse_patch,
-                     spec.input_channels, width), width)
+        _checked_mul(spec.coarse_patch, spec.coarse_patch, spec.input_channels, width), width
+    )
     fine_embed = _checked_add(
-        _checked_mul(spec.fine_patch, spec.fine_patch,
-                     spec.input_channels, width), width)
+        _checked_mul(spec.fine_patch, spec.fine_patch, spec.input_channels, width), width
+    )
     upsample = _checked_add(
-        _checked_mul(width, width, ratio2), _checked_mul(width, ratio2),
-        _checked_mul(2, width), _checked_mul(width, width), width)
+        _checked_mul(width, width, ratio2),
+        _checked_mul(width, ratio2),
+        _checked_mul(2, width),
+        _checked_mul(width, width),
+        width,
+    )
     output_width = _checked_mul(spec.fine_patch, spec.fine_patch, spec.input_channels)
     parameters = _checked_add(
-        coarse_embed, fine_embed,
+        coarse_embed,
+        fine_embed,
         _checked_mul(spec.condition_tokens, width),
         _checked_mul(spec.total_layers, block_parameters),
-        upsample, _checked_mul(width, output_width), output_width)
-    pairs = _checked_add(_checked_mul(spec.coarse_layers, spec.coarse_tokens,
-                                     spec.coarse_tokens),
-                         _checked_mul(spec.fine_layers, spec.fine_tokens,
-                                     spec.fine_tokens))
+        upsample,
+        _checked_mul(width, output_width),
+        output_width,
+    )
+    pairs = _checked_add(
+        _checked_mul(spec.coarse_layers, spec.coarse_tokens, spec.coarse_tokens),
+        _checked_mul(spec.fine_layers, spec.fine_tokens, spec.fine_tokens),
+    )
     baseline_pairs = _checked_mul(spec.total_layers, spec.fine_tokens, spec.fine_tokens)
     block_matmul_weights = _checked_mul(12, width, width)
-    projection = _checked_mul(2, block_matmul_weights,
-                              _checked_add(_checked_mul(spec.coarse_layers, spec.coarse_tokens),
-                                           _checked_mul(spec.fine_layers, spec.fine_tokens)))
+    projection = _checked_mul(
+        2,
+        block_matmul_weights,
+        _checked_add(
+            _checked_mul(spec.coarse_layers, spec.coarse_tokens),
+            _checked_mul(spec.fine_layers, spec.fine_tokens),
+        ),
+    )
     attention = _checked_mul(4, width, pairs)
     flops = _checked_add(projection, attention)
-    baseline_projection = _checked_mul(2, block_matmul_weights,
-                                       spec.total_layers, spec.fine_tokens)
-    baseline = _checked_add(baseline_projection,
-                            _checked_mul(4, width, baseline_pairs))
+    baseline_projection = _checked_mul(2, block_matmul_weights, spec.total_layers, spec.fine_tokens)
+    baseline = _checked_add(baseline_projection, _checked_mul(4, width, baseline_pairs))
     reduction = max(0, baseline - flops) * _Q20 // baseline
-    return MultiPatchCostReport(spec.digest, parameters, spec.coarse_tokens,
-                                spec.fine_tokens, pairs, baseline_pairs, flops,
-                                baseline, reduction)
+    return MultiPatchCostReport(
+        spec.digest,
+        parameters,
+        spec.coarse_tokens,
+        spec.fine_tokens,
+        pairs,
+        baseline_pairs,
+        flops,
+        baseline,
+        reduction,
+    )
 
 
 @dataclass(frozen=True)
@@ -721,59 +817,98 @@ class LoweredAdaptivePlan:
     artifact_sha256: str
 
 
-def lower_adaptive_language(spec: AdaptiveLanguageSpec, *, sequence_length: int,
-                            batch: int = 1,
-                            target: TargetProfile | None = None) -> LoweredAdaptivePlan:
+def lower_adaptive_language(
+    spec: AdaptiveLanguageSpec,
+    *,
+    sequence_length: int,
+    batch: int = 1,
+    target: TargetProfile | None = None,
+) -> LoweredAdaptivePlan:
     """Lower architecture work into verified claims and a provenance-carrying StreamPack."""
     if not isinstance(spec, AdaptiveLanguageSpec):
         raise ValueError("spec must be AdaptiveLanguageSpec")
     _integer(sequence_length, "sequence_length", minimum=1, maximum=spec.context_length)
     _integer(batch, "batch", minimum=1, maximum=1 << 16)
-    report = assess_adaptive_language(spec, prefill_tokens=sequence_length,
-                                      decode_context=sequence_length)
+    report = assess_adaptive_language(
+        spec, prefill_tokens=sequence_length, decode_context=sequence_length
+    )
     rows = _checked_mul(batch, sequence_length)
     maximum_width = max(spec.schedule.widths)
     maximum_ff_width = max(spec.schedule.ff_widths)
     scratch_width = max(
         _checked_mul(5 if spec.gated_attention else 4, maximum_width),
-        _checked_mul(3, maximum_ff_width))
+        _checked_mul(3, maximum_ff_width),
+    )
     module = Module(name=f"adaptive-transformer:{spec.digest[:16]}")
     module.add_resource(Resource(1, Domain.RAM, 4, (rows,), name="token_ids"))
     module.add_resource(Resource(2, Domain.RAM, 4, (rows, maximum_width), name="hidden"))
     module.add_resource(Resource(3, Domain.RAM, 4, (rows, scratch_width), name="scratch"))
     module.add_resource(Resource(4, Domain.RAM, 4, (report.parameter_elements,), name="weights"))
-    module.add_resource(Resource(
-        5, Domain.RAM, 1, (max(1, report.kv_cache_bytes),), name="kv_cache"))
+    module.add_resource(
+        Resource(5, Domain.RAM, 1, (max(1, report.kv_cache_bytes),), name="kv_cache")
+    )
     if spec.anchor is not None:
-        module.add_resource(Resource(6, Domain.RAM, 4,
-                                     (4, rows, spec.schedule.widths[0]), name="anchor"))
-    module.add_resource(Resource(7, Domain.RAM, 4,
-                                 (rows, spec.vocab_size), name="logits"))
+        module.add_resource(
+            Resource(6, Domain.RAM, 4, (4, rows, spec.schedule.widths[0]), name="anchor")
+        )
+    module.add_resource(Resource(7, Domain.RAM, 4, (rows, spec.vocab_size), name="logits"))
 
     phase_id = 0
     claim_id = 0
 
-    def emit(opcode: Opcode, lane: Lane, stride: StrideClass, *, count: int,
-             reads: tuple[int, ...], writes: tuple[int, ...], op: str,
-             cost_class: str) -> None:
+    def emit(
+        opcode: Opcode,
+        lane: Lane,
+        stride: StrideClass,
+        *,
+        count: int,
+        reads: tuple[int, ...],
+        writes: tuple[int, ...],
+        op: str,
+        cost_class: str,
+    ) -> None:
         nonlocal phase_id, claim_id
         phase_id += 1
         claim_id += 1
-        claim = Claim(claim_id, opcode, lane, stride, count=max(1, count),
-                      rd=reads, wr=writes, hazard="barriered", bounds="assumed_safe",
-                      domain=Domain.RAM, op=op, cost_class=cost_class)
+        claim = Claim(
+            claim_id,
+            opcode,
+            lane,
+            stride,
+            count=max(1, count),
+            rd=reads,
+            wr=writes,
+            hazard="barriered",
+            bounds="assumed_safe",
+            domain=Domain.RAM,
+            op=op,
+            cost_class=cost_class,
+        )
         module.add_phase(Phase(phase_id, (phase_id - 1,) if phase_id > 1 else (), [claim]))
 
-    emit(Opcode.LOAD, Lane.GGG, StrideClass.RANDOM,
-         count=_checked_mul(rows, spec.schedule.widths[0]),
-         reads=(1, 4), writes=(2,), op="model.embedding.lookup",
-         cost_class="bandwidth")
+    emit(
+        Opcode.LOAD,
+        Lane.GGG,
+        StrideClass.RANDOM,
+        count=_checked_mul(rows, spec.schedule.widths[0]),
+        reads=(1, 4),
+        writes=(2,),
+        op="model.embedding.lookup",
+        cost_class="bandwidth",
+    )
 
     def emit_anchor() -> None:
         width = spec.schedule.widths[0]
-        emit(Opcode.T_MACC, Lane.T, StrideClass.TILE,
-             count=_checked_mul(rows, 4, width, width), reads=(2, 4), writes=(6,),
-             op="model.exogenous_anchor.project_once", cost_class="compute")
+        emit(
+            Opcode.T_MACC,
+            Lane.T,
+            StrideClass.TILE,
+            count=_checked_mul(rows, 4, width, width),
+            reads=(2, 4),
+            writes=(6,),
+            op="model.exogenous_anchor.project_once",
+            cost_class="compute",
+        )
 
     if spec.anchor is not None and spec.anchor.source_depth == 0:
         emit_anchor()
@@ -781,65 +916,121 @@ def lower_adaptive_language(spec: AdaptiveLanguageSpec, *, sequence_length: int,
     previous_width = spec.schedule.widths[0]
     for repeat in range(spec.repeats):
         for physical, (width, ff_width) in enumerate(
-                zip(spec.schedule.widths, spec.schedule.ff_widths)):
+            zip(spec.schedule.widths, spec.schedule.ff_widths)
+        ):
             effective = repeat * spec.schedule.physical_layers + physical
             if width != previous_width:
-                emit(Opcode.LOAD, Lane.U, StrideClass.UNIT,
-                     count=_checked_mul(rows, max(width, previous_width)),
-                     reads=(2,), writes=(2,), op="model.width.carry_forward_view",
-                     cost_class="bandwidth")
-            projection_reads = (2, 4) + ((6,) if spec.anchor is not None
-                                         and effective >= spec.anchor.source_depth else ())
-            emit(Opcode.T_MACC, Lane.T, StrideClass.TILE,
-                 count=_checked_mul(rows, 5 if spec.gated_attention else 4,
-                                    width, width),
-                 reads=projection_reads, writes=(3, 5),
-                 op="model.attention.project_mix" if spec.anchor is not None
-                 else "model.attention.project",
-                 cost_class="compute")
+                emit(
+                    Opcode.LOAD,
+                    Lane.U,
+                    StrideClass.UNIT,
+                    count=_checked_mul(rows, max(width, previous_width)),
+                    reads=(2,),
+                    writes=(2,),
+                    op="model.width.carry_forward_view",
+                    cost_class="bandwidth",
+                )
+            projection_reads = (2, 4) + (
+                (6,) if spec.anchor is not None and effective >= spec.anchor.source_depth else ()
+            )
+            emit(
+                Opcode.T_MACC,
+                Lane.T,
+                StrideClass.TILE,
+                count=_checked_mul(rows, 5 if spec.gated_attention else 4, width, width),
+                reads=projection_reads,
+                writes=(3, 5),
+                op="model.attention.project_mix"
+                if spec.anchor is not None
+                else "model.attention.project",
+                cost_class="compute",
+            )
             pairs = _attention_pairs(spec, sequence_length)
-            attention_op = "model.attention.reference_sliding" \
-                if spec.reference_window is not None else "model.attention.causal"
-            emit(Opcode.T_MACC, Lane.T, StrideClass.TILE,
-                 count=_checked_mul(batch, 2, width, pairs), reads=(3, 5), writes=(2,),
-                 op=attention_op, cost_class="compute")
-            emit(Opcode.T_MACC, Lane.T, StrideClass.TILE,
-                 count=_checked_mul(rows, 3, width, ff_width), reads=(2, 4), writes=(2,),
-                 op="model.mlp.swiglu", cost_class="compute")
+            attention_op = (
+                "model.attention.reference_sliding"
+                if spec.reference_window is not None
+                else "model.attention.causal"
+            )
+            emit(
+                Opcode.T_MACC,
+                Lane.T,
+                StrideClass.TILE,
+                count=_checked_mul(batch, 2, width, pairs),
+                reads=(3, 5),
+                writes=(2,),
+                op=attention_op,
+                cost_class="compute",
+            )
+            emit(
+                Opcode.T_MACC,
+                Lane.T,
+                StrideClass.TILE,
+                count=_checked_mul(rows, 3, width, ff_width),
+                reads=(2, 4),
+                writes=(2,),
+                op="model.mlp.swiglu",
+                cost_class="compute",
+            )
             if spec.anchor is not None and effective + 1 == spec.anchor.source_depth:
                 emit_anchor()
             previous_width = width
         if repeat + 1 < spec.repeats:
-            emit(Opcode.BARRIER, Lane.H, StrideClass.SCALAR, count=1,
-                 reads=(2, 5), writes=(), op="model.loop.iteration_barrier",
-                 cost_class="latency")
+            emit(
+                Opcode.BARRIER,
+                Lane.H,
+                StrideClass.SCALAR,
+                count=1,
+                reads=(2, 5),
+                writes=(),
+                op="model.loop.iteration_barrier",
+                cost_class="latency",
+            )
 
-    emit(Opcode.T_MACC, Lane.T, StrideClass.TILE,
-         count=_checked_mul(rows, spec.schedule.widths[-1], spec.vocab_size),
-         reads=(2, 4), writes=(7,), op="model.head.logits",
-         cost_class="compute")
+    emit(
+        Opcode.T_MACC,
+        Lane.T,
+        StrideClass.TILE,
+        count=_checked_mul(rows, spec.schedule.widths[-1], spec.vocab_size),
+        reads=(2, 4),
+        writes=(7,),
+        op="model.head.logits",
+        cost_class="compute",
+    )
 
     chosen_target = target or TargetProfile.for_host()
     realization = optimize(module, chosen_target, Theta.cool())
-    pack = hydrate_pipelined(module, realization,
-                             plan=f"adaptive:{spec.digest[:16]}", depth=2)
-    diagnostics = verify_all(module, result=realization, pack=pack, h=chosen_target,
-                             theta=Theta.cool())
+    pack = hydrate_pipelined(module, realization, plan=f"adaptive:{spec.digest[:16]}", depth=2)
+    diagnostics = verify_all(
+        module, result=realization, pack=pack, h=chosen_target, theta=Theta.cool()
+    )
     diagnostics += verify_smart_lowering(module, pack=pack)
     if diagnostics:
         message = "; ".join(f"{row.law}: {row.message}" for row in diagnostics)
         raise ValueError("adaptive-transformer lowering failed verification: " + message)
     data = encode(pack)
-    artifact = _digest({"spec": spec.digest, "report": report.digest,
-                        "module": hash_module(module),
-                        "streampack": hashlib.sha256(data).hexdigest()})
+    artifact = _digest(
+        {
+            "spec": spec.digest,
+            "report": report.digest,
+            "module": hash_module(module),
+            "streampack": hashlib.sha256(data).hexdigest(),
+        }
+    )
     return LoweredAdaptivePlan(report, module, realization, pack, data, artifact)
 
 
 __all__ = [
-    "AdaptiveCostReport", "AdaptiveLanguageSpec", "ExogenousAnchorSpec",
-    "LoweredAdaptivePlan", "MultiPatchCostReport", "MultiPatchSpec",
-    "ReferenceWindowSpec", "WidthScheduleSpec", "assess_adaptive_language",
-    "assess_multi_patch", "fixed_residual_update", "fixed_residual_view",
+    "AdaptiveCostReport",
+    "AdaptiveLanguageSpec",
+    "ExogenousAnchorSpec",
+    "LoweredAdaptivePlan",
+    "MultiPatchCostReport",
+    "MultiPatchSpec",
+    "ReferenceWindowSpec",
+    "WidthScheduleSpec",
+    "assess_adaptive_language",
+    "assess_multi_patch",
+    "fixed_residual_update",
+    "fixed_residual_view",
     "lower_adaptive_language",
 ]

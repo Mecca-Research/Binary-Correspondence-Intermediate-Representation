@@ -22,10 +22,27 @@ import types
 # Modules that must NOT load merely to plan a program and emit its kernel. Includes
 # the opt-in "smart" organs (allocator / sensing / cim / dvfs / specialist): they
 # are capabilities the caller invokes explicitly, never on the simple path.
-_HEAVY_KBCIR = ("calibloop", "microbench", "accel", "portfolio", "moegate", "regret",
-                "softdp", "egraph", "operad", "twotruth", "memory", "throttle",
-                "mapping", "bayescal", "allocator", "sensing", "precision", "cache_predict")
-_HEAVY_LOWER = ("jit", "wasm", "specialist")                    # JIT + WASM/stack + specialist
+_HEAVY_KBCIR = (
+    "calibloop",
+    "microbench",
+    "accel",
+    "portfolio",
+    "moegate",
+    "regret",
+    "softdp",
+    "egraph",
+    "operad",
+    "twotruth",
+    "memory",
+    "throttle",
+    "mapping",
+    "bayescal",
+    "allocator",
+    "sensing",
+    "precision",
+    "cache_predict",
+)
+_HEAVY_LOWER = ("jit", "wasm", "specialist")  # JIT + WASM/stack + specialist
 _HEAVY_GEM = ("concurrency", "overlap", "schedule", "async_tokens", "cim", "dvfs")
 
 
@@ -42,17 +59,22 @@ _HEAVY_TOP = ("bcir.silicon", "bcir.performance_audit")
 
 
 def _heavy() -> set[str]:
-    return ({f"bcir.kbcir.{m}" for m in _HEAVY_KBCIR}
-            | {f"bcir.lower.{m}" for m in _HEAVY_LOWER}
-            | {f"bcir.gem.{m}" for m in _HEAVY_GEM}
-            | set(_HEAVY_TOP))
+    return (
+        {f"bcir.kbcir.{m}" for m in _HEAVY_KBCIR}
+        | {f"bcir.lower.{m}" for m in _HEAVY_LOWER}
+        | {f"bcir.gem.{m}" for m in _HEAVY_GEM}
+        | set(_HEAVY_TOP)
+    )
 
 
 # --- the simple path stays lean ---------------------------------------------------
 
+
 def test_simple_emit_path_does_not_load_the_research_stack():
     # the whole public "plan + emit a deployable kernel" path.
-    loaded = _bcir_modules_after("from bcir.api import build_artifact; build_artifact('vector_add')")
+    loaded = _bcir_modules_after(
+        "from bcir.api import build_artifact; build_artifact('vector_add')"
+    )
     leaked = sorted(_heavy() & loaded)
     assert not leaked, f"simple emit path eagerly imported heavy modules: {leaked}"
 
@@ -67,12 +89,14 @@ def test_cli_plan_does_not_load_executor_or_research_stack():
     # `python -m bcir.run vector_add` (the default plan-and-print) is a "simple
     # process"; it must not pull the executor/scheduler or the learned organs.
     loaded = _bcir_modules_after(
-        "import sys; sys.argv = ['bcir.run', 'vector_add']; from bcir.run import main; main()")
+        "import sys; sys.argv = ['bcir.run', 'vector_add']; from bcir.run import main; main()"
+    )
     leaked = sorted(_heavy() & loaded)
     assert not leaked, f"CLI plan eagerly imported heavy modules: {leaked}"
 
 
 # --- the full public API is still reachable + collisions resolve correctly --------
+
 
 def test_full_public_api_is_reachable_lazily():
     for pkg in ("bcir.kbcir", "bcir.lower", "bcir.gem"):
@@ -87,11 +111,11 @@ def test_submodule_name_collisions_resolve_to_the_function_not_the_module():
     import bcir.gem as g
     import bcir.kbcir as k
     import bcir.lower as low
+
     for value in (k.weights, low.stackify, g.execute):
         assert callable(value) and not isinstance(value, types.ModuleType)
 
 
 def test_submodules_remain_directly_importable():
-    for m in ("bcir.kbcir.egraph", "bcir.kbcir.microbench", "bcir.lower.wasm",
-              "bcir.gem.execute"):
+    for m in ("bcir.kbcir.egraph", "bcir.kbcir.microbench", "bcir.lower.wasm", "bcir.gem.execute"):
         assert importlib.import_module(m) is not None

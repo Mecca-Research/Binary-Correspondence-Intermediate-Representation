@@ -13,9 +13,9 @@ from __future__ import annotations
 
 # BCIR hazard contract -> the LLVM ordering its accesses require.
 HAZARD_ORDERING = {
-    "unique": "monotonic",     # no inter-lane sharing; atomicity only, no fences
-    "atomic": "acq_rel",       # atomic read-modify-write: acquire + release
-    "barriered": "seq_cst",    # an explicit full barrier
+    "unique": "monotonic",  # no inter-lane sharing; atomicity only, no fences
+    "atomic": "acq_rel",  # atomic read-modify-write: acquire + release
+    "barriered": "seq_cst",  # an explicit full barrier
 }
 
 # BCIR MemOrdering mnemonic -> LLVM ordering (identity; matches BCIRAttrs.td).
@@ -76,16 +76,19 @@ def barrier_fence_ir(ordering: str = "seq_cst") -> str:
 # `record_size`/bounds match. `RING_MAGIC_STAMP` mirrors `telemetry.RING_STAMP`.
 
 RING_HEADER_BYTES = 32
-RING_RECORD_BYTES = 56          # 7 x int64, == struct.calcsize("<7q")
+RING_RECORD_BYTES = 56  # 7 x int64, == struct.calcsize("<7q")
 RING_FIELDS = ("claim_id", "cycles", "bytes", "misses", "thermal", "voltage", "utilization")
 # Self-describing header stamp written to slot [24]; MUST equal telemetry.RING_STAMP.
-RING_MAGIC_STAMP = (0x42434952 << 16) | 1       # ("BCIR" << 16) | version 1
+RING_MAGIC_STAMP = (0x42434952 << 16) | 1  # ("BCIR" << 16) | version 1
 
 # LLVM ordering -> C11 stdatomic memory_order_*.
 _C_MEMORDER = {
-    "unordered": "memory_order_relaxed", "monotonic": "memory_order_relaxed",
-    "acquire": "memory_order_acquire", "release": "memory_order_release",
-    "acq_rel": "memory_order_acq_rel", "seq_cst": "memory_order_seq_cst",
+    "unordered": "memory_order_relaxed",
+    "monotonic": "memory_order_relaxed",
+    "acquire": "memory_order_acquire",
+    "release": "memory_order_release",
+    "acq_rel": "memory_order_acq_rel",
+    "seq_cst": "memory_order_seq_cst",
 }
 
 
@@ -126,7 +129,8 @@ def emit_ring_header_c(fn_prefix: str = "bcir_ring") -> str:
         "  uint64_t h = atomic_load_explicit(head, memory_order_relaxed);\n"
         f"  int64_t *rec = (int64_t *)((char *)base + {RING_HEADER_BYTES}"
         f" + (h %% cap) * {RING_RECORD_BYTES});\n".replace("%%", "%")
-        + stores + "\n"
+        + stores
+        + "\n"
         f"  atomic_store_explicit(head, h + 1u, {publish});  /* publish after record */\n"
         "}\n"
     )

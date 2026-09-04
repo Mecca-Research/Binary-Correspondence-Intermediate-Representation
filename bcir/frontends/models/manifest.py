@@ -19,13 +19,28 @@ from dataclasses import asdict, dataclass
 
 _MAX_HEADER = 100_000_000  # Safetensors v0.8.0's normative parser ceiling
 _SAFETENSORS_DTYPE_BITS = {
-    "F4": 4, "F6_E2M3": 6, "F6_E3M2": 6,
-    "BOOL": 8, "U8": 8, "I8": 8,
-    "F8_E4M3": 8, "F8_E4M3FNUZ": 8,
-    "F8_E5M2": 8, "F8_E5M2FNUZ": 8, "F8_E8M0": 8,
-    "U16": 16, "I16": 16, "F16": 16, "BF16": 16,
-    "U32": 32, "I32": 32, "F32": 32, "C64": 64,
-    "U64": 64, "I64": 64, "F64": 64,
+    "F4": 4,
+    "F6_E2M3": 6,
+    "F6_E3M2": 6,
+    "BOOL": 8,
+    "U8": 8,
+    "I8": 8,
+    "F8_E4M3": 8,
+    "F8_E4M3FNUZ": 8,
+    "F8_E5M2": 8,
+    "F8_E5M2FNUZ": 8,
+    "F8_E8M0": 8,
+    "U16": 16,
+    "I16": 16,
+    "F16": 16,
+    "BF16": 16,
+    "U32": 32,
+    "I32": 32,
+    "F32": 32,
+    "C64": 64,
+    "U64": 64,
+    "I64": 64,
+    "F64": 64,
 }
 
 
@@ -43,8 +58,7 @@ def _unique_object(pairs):
     return out
 
 
-def _tensor_nbytes(dtype: str, shape: list[int], data_size: int,
-                   path: str, name: str) -> int:
+def _tensor_nbytes(dtype: str, shape: list[int], data_size: int, path: str, name: str) -> int:
     try:
         bits = _SAFETENSORS_DTYPE_BITS[dtype]
     except KeyError as exc:
@@ -93,8 +107,8 @@ def _read_safetensors_header(stream, path: str, size: int) -> tuple[dict, dict, 
 
     metadata = header.get("__metadata__", {})
     if not isinstance(metadata, dict) or any(
-            not isinstance(key, str) or not isinstance(value, str)
-            for key, value in metadata.items()):
+        not isinstance(key, str) or not isinstance(value, str) for key, value in metadata.items()
+    ):
         raise ValueError(f"{path}: __metadata__ must be a string-to-string object")
 
     data_off = 8 + hlen
@@ -108,29 +122,35 @@ def _read_safetensors_header(stream, path: str, size: int) -> tuple[dict, dict, 
             raise ValueError(f"{path}: tensor {name!r} is not an object")
         required = {"dtype", "shape", "data_offsets"}
         if set(spec) != required:
-            raise ValueError(f"{path}: tensor {name!r} fields must be exactly "
-                             f"{sorted(required)}; got {sorted(spec)}")
+            raise ValueError(
+                f"{path}: tensor {name!r} fields must be exactly "
+                f"{sorted(required)}; got {sorted(spec)}"
+            )
         dtype, shape, offsets = spec["dtype"], spec["shape"], spec["data_offsets"]
         if not isinstance(dtype, str) or not dtype:
             raise ValueError(f"{path}: tensor {name!r} has an invalid dtype")
         if not isinstance(shape, list) or any(
-                not isinstance(dim, int) or isinstance(dim, bool) or dim < 0
-                for dim in shape):
+            not isinstance(dim, int) or isinstance(dim, bool) or dim < 0 for dim in shape
+        ):
             raise ValueError(f"{path}: tensor {name!r} has an invalid shape {shape!r}")
-        if (not isinstance(offsets, list) or len(offsets) != 2
-                or any(not isinstance(value, int) or isinstance(value, bool)
-                       for value in offsets)):
+        if (
+            not isinstance(offsets, list)
+            or len(offsets) != 2
+            or any(not isinstance(value, int) or isinstance(value, bool) for value in offsets)
+        ):
             raise ValueError(f"{path}: tensor {name!r} has invalid data_offsets")
         lo, hi = offsets
         if not (0 <= lo <= hi <= data_size):
-            raise ValueError(f"{path}: tensor {name!r} byte span [{lo}, {hi}) "
-                             "escapes the data section")
+            raise ValueError(
+                f"{path}: tensor {name!r} byte span [{lo}, {hi}) escapes the data section"
+            )
         expected_bytes = _tensor_nbytes(dtype, shape, data_size, path, name)
         if hi - lo != expected_bytes:
-            raise ValueError(f"{path}: tensor {name!r} byte span has {hi - lo} bytes; "
-                             f"dtype/shape require {expected_bytes}")
-        tensors[name] = {"dtype": dtype, "shape": list(shape),
-                         "data_offsets": [lo, hi]}
+            raise ValueError(
+                f"{path}: tensor {name!r} byte span has {hi - lo} bytes; "
+                f"dtype/shape require {expected_bytes}"
+            )
+        tensors[name] = {"dtype": dtype, "shape": list(shape), "data_offsets": [lo, hi]}
         spans.append((lo, hi, name))
 
     # Safetensors requires the payload to be one complete, non-overlapping partition.
@@ -154,9 +174,12 @@ def parse_safetensors_header(path: str) -> tuple[dict, dict]:
     bytes are never touched here (the rung-1 contract)."""
     with open(path, "rb") as f:
         tensors, metadata, _data_off = _read_safetensors_header(
-            f, path, os.fstat(f.fileno()).st_size)
-    return ({name: {"dtype": spec["dtype"], "shape": spec["shape"]}
-             for name, spec in tensors.items()}, metadata)
+            f, path, os.fstat(f.fileno()).st_size
+        )
+    return (
+        {name: {"dtype": spec["dtype"], "shape": spec["shape"]} for name, spec in tensors.items()},
+        metadata,
+    )
 
 
 def parse_safetensors_layout(path: str) -> tuple[dict, dict, int, int]:
@@ -171,8 +194,7 @@ def parse_safetensors_layout(path: str) -> tuple[dict, dict, int, int]:
     """
     with open(path, "rb") as stream:
         size = os.fstat(stream.fileno()).st_size
-        tensors, metadata, data_offset = _read_safetensors_header(
-            stream, path, size)
+        tensors, metadata, data_offset = _read_safetensors_header(stream, path, size)
     return tensors, metadata, data_offset, size
 
 
@@ -203,14 +225,14 @@ class ModelManifest:
     architecture: str
     param_count: int
     tensor_count: int
-    dtypes: tuple[tuple[str, int], ...]     # (dtype, tensor count), sorted by dtype
-    shards: tuple[ShardRecord, ...]         # in ingestion (filename-sorted) order
+    dtypes: tuple[tuple[str, int], ...]  # (dtype, tensor count), sorted by dtype
+    shards: tuple[ShardRecord, ...]  # in ingestion (filename-sorted) order
     context_length: int = 0
     vocab_size: int = 0
-    tokenizer_ref: str = ""                 # e.g. the tokenizer.json/model path or hub id
-    tokenizer_digest: str = ""              # sha256 of the tokenizer file (rung-2 parity tie)
+    tokenizer_ref: str = ""  # e.g. the tokenizer.json/model path or hub id
+    tokenizer_digest: str = ""  # sha256 of the tokenizer file (rung-2 parity tie)
     license: str = ""
-    source: str = ""                        # where the shards came from (path / hub id)
+    source: str = ""  # where the shards came from (path / hub id)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
@@ -232,8 +254,14 @@ def manifest_from_json(text: str) -> ModelManifest:
     if not isinstance(d, dict):
         raise ValueError("model manifest root must be an object")
     required = {"name", "architecture", "param_count", "tensor_count", "dtypes", "shards"}
-    optional = {"context_length", "vocab_size", "tokenizer_ref", "tokenizer_digest",
-                "license", "source"}
+    optional = {
+        "context_length",
+        "vocab_size",
+        "tokenizer_ref",
+        "tokenizer_digest",
+        "license",
+        "source",
+    }
     if not required <= set(d) or set(d) - required - optional:
         raise ValueError("model manifest has missing or unknown fields")
 
@@ -242,16 +270,18 @@ def manifest_from_json(text: str) -> ModelManifest:
             raise ValueError(f"model manifest {field} must be a non-negative integer")
         return value
 
-    for field in ("name", "architecture", "tokenizer_ref", "tokenizer_digest",
-                  "license", "source"):
+    for field in ("name", "architecture", "tokenizer_ref", "tokenizer_digest", "license", "source"):
         if field in d and not isinstance(d[field], str):
             raise ValueError(f"model manifest {field} must be a string")
     for field in ("param_count", "tensor_count", "context_length", "vocab_size"):
         if field in d:
             d[field] = nonnegative_int(d[field], field)
     digest = d.get("tokenizer_digest", "")
-    if digest and (len(digest) != 64 or digest != digest.lower()
-                   or any(ch not in "0123456789abcdef" for ch in digest)):
+    if digest and (
+        len(digest) != 64
+        or digest != digest.lower()
+        or any(ch not in "0123456789abcdef" for ch in digest)
+    ):
         raise ValueError("model manifest tokenizer_digest must be lowercase SHA-256 hex")
 
     if not isinstance(d["dtypes"], list):
@@ -259,13 +289,19 @@ def manifest_from_json(text: str) -> ModelManifest:
     dtype_rows = []
     seen_dtypes: set[str] = set()
     for row in d["dtypes"]:
-        if (not isinstance(row, list) or len(row) != 2 or not isinstance(row[0], str)
-                or not row[0] or row[0] in seen_dtypes):
+        if (
+            not isinstance(row, list)
+            or len(row) != 2
+            or not isinstance(row[0], str)
+            or not row[0]
+            or row[0] in seen_dtypes
+        ):
             raise ValueError("model manifest has a malformed or duplicate dtype row")
         count = nonnegative_int(row[1], f"dtype {row[0]!r} count")
         if count < 1:
             raise ValueError("model manifest dtype counts must be positive")
-        seen_dtypes.add(row[0]); dtype_rows.append((row[0], count))
+        seen_dtypes.add(row[0])
+        dtype_rows.append((row[0], count))
     if dtype_rows != sorted(dtype_rows):
         raise ValueError("model manifest dtypes must be in canonical sorted order")
     d["dtypes"] = tuple(dtype_rows)
@@ -277,29 +313,51 @@ def manifest_from_json(text: str) -> ModelManifest:
     for index, row in enumerate(d["shards"]):
         if not isinstance(row, dict) or set(row) != {"file", "sha256", "n_tensors", "n_params"}:
             raise ValueError(f"model manifest shard {index} has invalid fields")
-        file = row["file"]; sha = row["sha256"]
-        if (not isinstance(file, str) or not file or file != os.path.basename(file)
-                or file in seen_files):
+        file = row["file"]
+        sha = row["sha256"]
+        if (
+            not isinstance(file, str)
+            or not file
+            or file != os.path.basename(file)
+            or file in seen_files
+        ):
             raise ValueError(f"model manifest shard {index} has an invalid/duplicate filename")
-        if (not isinstance(sha, str) or len(sha) != 64 or sha != sha.lower()
-                or any(ch not in "0123456789abcdef" for ch in sha)):
+        if (
+            not isinstance(sha, str)
+            or len(sha) != 64
+            or sha != sha.lower()
+            or any(ch not in "0123456789abcdef" for ch in sha)
+        ):
             raise ValueError(f"model manifest shard {index} has an invalid SHA-256")
         seen_files.add(file)
-        shards.append(ShardRecord(file=file, sha256=sha,
-                                  n_tensors=nonnegative_int(row["n_tensors"], "n_tensors"),
-                                  n_params=nonnegative_int(row["n_params"], "n_params")))
+        shards.append(
+            ShardRecord(
+                file=file,
+                sha256=sha,
+                n_tensors=nonnegative_int(row["n_tensors"], "n_tensors"),
+                n_params=nonnegative_int(row["n_params"], "n_params"),
+            )
+        )
     d["shards"] = tuple(shards)
-    if sum(row.n_tensors for row in shards) != d["tensor_count"] \
-            or sum(row.n_params for row in shards) != d["param_count"] \
-            or sum(count for _dtype, count in dtype_rows) != d["tensor_count"]:
+    if (
+        sum(row.n_tensors for row in shards) != d["tensor_count"]
+        or sum(row.n_params for row in shards) != d["param_count"]
+        or sum(count for _dtype, count in dtype_rows) != d["tensor_count"]
+    ):
         raise ValueError("model manifest aggregate counts do not reconcile")
     return ModelManifest(**d)
 
 
-def build_manifest(shard_paths: list[str], config: dict, *, name: str = "",
-                   tokenizer_ref: str = "", tokenizer_path: str | None = None,
-                   license: str = "",  # noqa: A002 -- the manifest field
-                   source: str = "") -> ModelManifest:
+def build_manifest(
+    shard_paths: list[str],
+    config: dict,
+    *,
+    name: str = "",
+    tokenizer_ref: str = "",
+    tokenizer_path: str | None = None,
+    license: str = "",  # noqa: A002 -- the manifest field
+    source: str = "",
+) -> ModelManifest:
     """Ingest a model MANIFEST-FIRST: parse every shard's header (dtype/shape census +
     parameter count), hash every shard's bytes, and take architecture/context/vocab from the
     model `config` dict (the parsed `config.json`). No weight is loaded or interpreted."""
@@ -325,8 +383,11 @@ def build_manifest(shard_paths: list[str], config: dict, *, name: str = "",
                 n *= d
             n_params += n
             dtype_hist[spec["dtype"]] = dtype_hist.get(spec["dtype"], 0) + 1
-        shards.append(ShardRecord(file=basename, sha256=shard_digest(path),
-                                  n_tensors=len(tensors), n_params=n_params))
+        shards.append(
+            ShardRecord(
+                file=basename, sha256=shard_digest(path), n_tensors=len(tensors), n_params=n_params
+            )
+        )
         total_params += n_params
         total_tensors += len(tensors)
     arch = config.get("architectures", [config.get("model_type", "")])

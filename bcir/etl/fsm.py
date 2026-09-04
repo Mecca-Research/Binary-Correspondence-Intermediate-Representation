@@ -23,9 +23,9 @@ class State:
 class Transition:
     src: str
     dst: str
-    on: str                         # symbol/token kind to match ("*" = catch-all)
-    action: Optional[str] = None    # capture action label
-    guard: Optional[str] = None     # documented guard name (advisory in the oracle)
+    on: str  # symbol/token kind to match ("*" = catch-all)
+    action: Optional[str] = None  # capture action label
+    guard: Optional[str] = None  # documented guard name (advisory in the oracle)
 
 
 @dataclass

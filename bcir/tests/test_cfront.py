@@ -46,11 +46,12 @@ def _assert_six_artifacts(name: str, *, includes=None, embeds=None):
 
 # --- L1: fixed-width integer expressions ---------------------------------------------------------
 
+
 def test_L1_integer_expressions():
     r = _assert_six_artifacts("L1_int_expr.c")
     claims = r.lowered.functions["l1_compute"].claims
     ops = {c.op.rsplit(".", 1)[-1] for c in claims}
-    assert {"add", "mul", "xor", "shl", "sub"} <= ops          # the source operators are present
+    assert {"add", "mul", "xor", "shl", "sub"} <= ops  # the source operators are present
     assert not any(c.op.startswith("c.call") for c in claims)  # no calls at L1
 
 
@@ -59,29 +60,33 @@ def test_L1_string_literal_sizeof():
     char-array length (decoded bytes + the NUL) -- matching Clang. (The literal is not materialized
     as a value yet; that is the next slice.)"""
     from bcir.frontends.cfront.clex import tokenize
+
     assert [t.text for t in tokenize(r'x "a\tb" y') if t.kind == "STRING"] == [r'"a\tb"']
 
     def szof(lit: str) -> int:
         r = compile_unit(f"uint32_t f(void){{ return sizeof {lit}; }}", check_clang=False)
         return next(c.imm[0] for c in r.lowered.functions["f"].claims if c.op == "c.const")
+
     assert szof(r'"hello"') == 6
     assert szof('""') == 1
-    assert szof(r'"tab\there"') == 9        # \t is one byte
-    assert szof(r'"\x41\x42"') == 3         # hex escapes -> one byte each
-    assert szof(r'"\0"') == 2               # octal NUL -> one byte
+    assert szof(r'"tab\there"') == 9  # \t is one byte
+    assert szof(r'"\x41\x42"') == 3  # hex escapes -> one byte each
+    assert szof(r'"\0"') == 2  # octal NUL -> one byte
 
 
 def test_L3_string_literal_value():
     """A string literal lowers to an anonymous read-only char[] global; using it decays to a pointer
     (indexing reads a byte; the bare literal is the pointer). The emitter renders the anonymous global
     as the inline literal, so the emit is Clang-equivalent with no synthesized declaration."""
-    def eqok(r):                            # match when Clang is present, else cleanly skipped
+
+    def eqok(r):  # match when Clang is present, else cleanly skipped
         return r.equivalence == "match" or r.equivalence.startswith("skip")
+
     # indexing a string literal -> the i-th byte, via an anonymous global referenced by a load.
     r = compile_unit('uint32_t pick(uint32_t i){ return "ABCD"[i & 3]; }\n')
     lf = r.lowered.functions["pick"]
     assert r.is_clean and eqok(r)
-    assert '"ABCD"' in lf.globals_used.values()                  # the anon global renders inline
+    assert '"ABCD"' in lf.globals_used.values()  # the anon global renders inline
     assert any(c.op == "c.load" for c in lf.claims)
     # the bare literal is a const char* pointer (return-only: rendered inline, no claims/decl).
     r2 = compile_unit('const char *msg(void){ return "hello"; }\n')
@@ -96,19 +101,21 @@ def test_L1_character_constants():
     `\\xHH`), and a multi-character `'AB'` packs big-endian like Clang/GCC -- so it lowers to a
     `c.const` and stays behaviour-equal to Clang."""
     from bcir.frontends.cfront.clex import parse_char_literal, tokenize
+
     assert [t.text for t in tokenize(r"x 'A' '\n'") if t.kind == "CHAR"] == ["'A'", r"'\n'"]
     assert parse_char_literal("'A'") == 65
     assert parse_char_literal(r"'\n'") == 10 and parse_char_literal(r"'\t'") == 9
     assert parse_char_literal(r"'\x7a'") == 122 and parse_char_literal(r"'\101'") == 65
     assert parse_char_literal(r"'\0'") == 0
-    assert parse_char_literal("'AB'") == 0x4142            # multi-character constant (big-endian pack)
+    assert parse_char_literal("'AB'") == 0x4142  # multi-character constant (big-endian pack)
 
     def eqok(r):
         return r.equivalence == "match" or r.equivalence.startswith("skip")
+
     r = compile_unit("uint32_t f(void){ return 'A' + '\\n' + 'AB'; }\n")
     lf = r.lowered.functions["f"]
     assert r.is_clean and eqok(r)
-    assert sum(1 for c in lf.claims if c.op == "c.const") == 3   # three char constants, all folded
+    assert sum(1 for c in lf.claims if c.op == "c.const") == 3  # three char constants, all folded
 
 
 def test_L3_string_literal_dedup_and_table():
@@ -116,13 +123,13 @@ def test_L3_string_literal_dedup_and_table():
     longer than any fixed-size name buffer still materializes in full -- the spelling is held
     out-of-band, so the emit can inline it at any length and stay Clang-equivalent."""
     long_lit = "this string literal is definitely longer than thirty-two bytes"
-    src = ('uint32_t f(uint32_t i){ return "kv"[i & 1] + "kv"[i & 1] + "%s"[i %% 7]; }\n' % long_lit)
+    src = 'uint32_t f(uint32_t i){ return "kv"[i & 1] + "kv"[i & 1] + "%s"[i %% 7]; }\n' % long_lit
     r = compile_unit(src, check_clang=False)
     lf = r.lowered.functions["f"]
     str_rids = [rid for rid in lf.resources if rid >= 970000]
-    assert len(str_rids) == 2                                    # "kv" used twice -> one global (dedup)
-    assert ('"%s"' % long_lit) in lf.globals_used.values()       # the long literal survives in full
-    assert max(len(s) for s in lf.globals_used.values()) > 34    # past the old 32-byte name cap
+    assert len(str_rids) == 2  # "kv" used twice -> one global (dedup)
+    assert ('"%s"' % long_lit) in lf.globals_used.values()  # the long literal survives in full
+    assert max(len(s) for s in lf.globals_used.values()) > 34  # past the old 32-byte name cap
 
 
 def test_L7_string_literal_concatenation():
@@ -136,15 +143,15 @@ def test_L7_string_literal_concatenation():
         f = r.lowered.functions["f"]
         return [c for c in f.claims if c.op == "c.const"][-1].imm[0]
 
-    assert _str_bytes('"abc" "de"') == 5 and szof('"abc" "de"') == 6        # 5 chars + NUL
-    assert _str_bytes(r'"tab\t" "x"') == 5                                  # \t stays one byte
-    assert _str_bytes(r'"\x41" "2"') == 2                                   # escape boundary: 'A','2'
+    assert _str_bytes('"abc" "de"') == 5 and szof('"abc" "de"') == 6  # 5 chars + NUL
+    assert _str_bytes(r'"tab\t" "x"') == 5  # \t stays one byte
+    assert _str_bytes(r'"\x41" "2"') == 2  # escape boundary: 'A','2'
     assert szof(r'"\x41" "2"') == 3
     # the concatenation is one literal, so postfix `[]` indexes the joined bytes (8 chars).
     r = compile_unit('uint32_t g(uint32_t i){ return "hi " "there"[i % 8]; }\n')
     lg = r.lowered.functions["g"]
     assert r.is_clean and (r.equivalence == "match" or r.equivalence.startswith("skip"))
-    assert '"hi " "there"' in lg.globals_used.values()                      # pieces kept adjacent
+    assert '"hi " "there"' in lg.globals_used.values()  # pieces kept adjacent
 
 
 def test_L7_wide_and_utf_literal_prefixes():
@@ -154,8 +161,10 @@ def test_L7_wide_and_utf_literal_prefixes():
     from bcir.frontends.cfront.clex import parse_char_literal, tokenize
 
     kinds = {(t.kind, t.text) for t in tokenize('L"a" u8"b" u\'c\' U + Label')}
-    assert ("STRING", 'L"a"') in kinds and ("STRING", 'u8"b"') in kinds and ("CHAR", "u'c'") in kinds
-    assert ("IDENT", "U") in kinds and ("IDENT", "Label") in kinds          # bare prefix -> identifier
+    assert (
+        ("STRING", 'L"a"') in kinds and ("STRING", 'u8"b"') in kinds and ("CHAR", "u'c'") in kinds
+    )
+    assert ("IDENT", "U") in kinds and ("IDENT", "Label") in kinds  # bare prefix -> identifier
     assert parse_char_literal(r"L'\n'") == 10 and parse_char_literal("u'A'") == 65
 
     def szof(lit: str) -> int:
@@ -163,9 +172,9 @@ def test_L7_wide_and_utf_literal_prefixes():
         f = r.lowered.functions["f"]
         return [c for c in f.claims if c.op == "c.const"][-1].imm[0]
 
-    assert szof('"hi"') == 3 and szof('u8"hi"') == 3       # char / char (3 units × 1 byte)
-    assert szof('u"hi"') == 6                              # char16_t (× 2)
-    assert szof('L"hi"') == 12 and szof('U"hi"') == 12     # wchar_t / char32_t (× 4)
+    assert szof('"hi"') == 3 and szof('u8"hi"') == 3  # char / char (3 units × 1 byte)
+    assert szof('u"hi"') == 6  # char16_t (× 2)
+    assert szof('L"hi"') == 12 and szof('U"hi"') == 12  # wchar_t / char32_t (× 4)
     r = compile_unit("uint32_t f(void){ return L'\\n' + u'A'; }\n")
     assert r.is_clean and (r.equivalence == "match" or r.equivalence.startswith("skip"))
 
@@ -182,17 +191,25 @@ def test_floating_point_minimal_core():
         return r.equivalence == "match" or r.equivalence.startswith("skip")
 
     # a float literal lexes as one FLOAT token; member access (a.b) is NOT a float.
-    assert [t.text for t in tokenize("1.5 .5 1e10 3.14f 2.0") if t.kind == "FLOAT"] == \
-        ["1.5", ".5", "1e10", "3.14f", "2.0"]
-    assert [(t.kind, t.text) for t in tokenize("a.b") if t.kind != "EOF"] == \
-        [("IDENT", "a"), ("PUNCT", "."), ("IDENT", "b")]
+    assert [t.text for t in tokenize("1.5 .5 1e10 3.14f 2.0") if t.kind == "FLOAT"] == [
+        "1.5",
+        ".5",
+        "1e10",
+        "3.14f",
+        "2.0",
+    ]
+    assert [(t.kind, t.text) for t in tokenize("a.b") if t.kind != "EOF"] == [
+        ("IDENT", "a"),
+        ("PUNCT", "."),
+        ("IDENT", "b"),
+    ]
 
     r = compile_unit("float favg(float a, float b){ float s = a + b; return s * 0.5f; }\n")
     lf = r.lowered.functions["favg"]
     assert r.is_clean and eqok(r)
     assert lf.ret_type.is_float and lf.ret_type.name == "float"
-    assert any(c.op.startswith("c.fconst:") for c in lf.claims)        # the 0.5f constant
-    assert "float t" in emit_function(lf)                             # temps render as float, not uint32
+    assert any(c.op.startswith("c.fconst:") for c in lf.claims)  # the 0.5f constant
+    assert "float t" in emit_function(lf)  # temps render as float, not uint32
 
     # double arithmetic; a comparison over floats yields int (not float).
     rd = compile_unit("double g(double x){ return x * 2.0 + 1.0; }\n")
@@ -201,7 +218,7 @@ def test_floating_point_minimal_core():
     lc = rc.lowered.functions["lt"]
     cmp = [c for c in lc.claims if c.op == "c.bin.lt"][0]
     ct = lc.rid_types.get(cmp.wr[0])
-    assert ct is not None and not ct.is_float                        # a comparison result is int
+    assert ct is not None and not ct.is_float  # a comparison result is int
     assert rc.is_clean and eqok(rc)
 
 
@@ -217,17 +234,23 @@ def test_floating_point_hex_literals():
         return r.equivalence == "match" or r.equivalence.startswith("skip")
 
     # a hex float lexes as one FLOAT token; a hex integer (no `p`) stays an INT and is not swallowed.
-    assert [t.text for t in tokenize("0x1p4 0x1.8p3 0x.8p1 0xAp-2f 0X1P4") if t.kind == "FLOAT"] == \
-        ["0x1p4", "0x1.8p3", "0x.8p1", "0xAp-2f", "0X1P4"]
-    assert [(t.kind, t.text) for t in tokenize("0x1f+2") if t.kind != "EOF"] == \
-        [("INT", "0x1f"), ("OP", "+"), ("INT", "2")]
+    assert [
+        t.text for t in tokenize("0x1p4 0x1.8p3 0x.8p1 0xAp-2f 0X1P4") if t.kind == "FLOAT"
+    ] == ["0x1p4", "0x1.8p3", "0x.8p1", "0xAp-2f", "0X1P4"]
+    assert [(t.kind, t.text) for t in tokenize("0x1f+2") if t.kind != "EOF"] == [
+        ("INT", "0x1f"),
+        ("OP", "+"),
+        ("INT", "2"),
+    ]
 
     # end-to-end: hex-float constants lower to typed c.fconst, emit verbatim, and match Clang.
     r = compile_unit("double hexf(double x){ double s = 0x1.8p1; return x * s + 0x1p-2; }\n")
     lf = r.lowered.functions["hexf"]
     assert r.is_clean and eqok(r)
-    assert [c.op for c in lf.claims if c.op.startswith("c.fconst:")] == \
-        ["c.fconst:0x1.8p1", "c.fconst:0x1p-2"]                       # spelling carried through
+    assert [c.op for c in lf.claims if c.op.startswith("c.fconst:")] == [
+        "c.fconst:0x1.8p1",
+        "c.fconst:0x1p-2",
+    ]  # spelling carried through
     assert "0x1.8p1" in emit_function(lf) and "0x1p-2" in emit_function(lf)
     # the f suffix on a hex float still selects `float`.
     rf = compile_unit("float h(float x){ return x + 0x1p-1f; }\n")
@@ -255,16 +278,18 @@ def test_math_h_library_calls():
     # double sqrt: one c.call.libm claim, emitted as the real `sqrt(` (no bcir_ prefix), R18 clean.
     r = compile_unit("double f(double x){ return sqrt(x) + pow(x, 2.0); }\n")
     lf = r.lowered.functions["f"]
-    assert [c.op for c in lf.claims if c.op.startswith("c.call.libm:")] == \
-        ["c.call.libm:sqrt", "c.call.libm:pow"]
-    assert r.is_clean and eqok(r)                                # R18 sees no undefined callee
+    assert [c.op for c in lf.claims if c.op.startswith("c.call.libm:")] == [
+        "c.call.libm:sqrt",
+        "c.call.libm:pow",
+    ]
+    assert r.is_clean and eqok(r)  # R18 sees no undefined callee
     em = emit_function(lf)
-    assert "sqrt(" in em and "bcir_sqrt(" not in em             # the real libm function, not a twin
+    assert "sqrt(" in em and "bcir_sqrt(" not in em  # the real libm function, not a twin
 
     # the f suffix selects float; a NaN-domain result (asin(x), x>1) still verifies as equal.
     rf = compile_unit("float g(float x){ return sqrtf(x); }\n")
     assert rf.lowered.functions["g"].ret_type.name == "float" and rf.is_clean and eqok(rf)
-    rn = compile_unit("double a(double x){ return asin(x); }\n")    # x in [0,1000) -> NaN for x > 1
+    rn = compile_unit("double a(double x){ return asin(x); }\n")  # x in [0,1000) -> NaN for x > 1
     assert rn.is_clean and eqok(rn)
 
     # a genuinely undefined (non-libm) callee is still an R18 violation, not silently external.
@@ -284,14 +309,16 @@ def test_math_h_mixed_arg_and_int_return():
     # mixed-arg / int-return typing (the suffix types the arg, not ilogb's int result).
     assert _libm_type("ldexp").name == "double" and _libm_type("ldexpf").name == "float"
     assert _libm_type("scalbln").name == "double" and _libm_type("nanf").name == "float"
-    assert _libm_type("ilogb").name == _libm_type("ilogbf").name == _libm_type("ilogbl").name == "int"
+    assert (
+        _libm_type("ilogb").name == _libm_type("ilogbf").name == _libm_type("ilogbl").name == "int"
+    )
 
     r = compile_unit("double f(double x){ return ldexp(x, 3) + scalbn(x, 2) + scalbln(x, 4L); }\n")
     assert r.is_clean and eqok(r)
-    ri = compile_unit("int g(double x){ return ilogb(x); }\n")          # int result, lossless 4-byte
+    ri = compile_unit("int g(double x){ return ilogb(x); }\n")  # int result, lossless 4-byte
     assert ri.lowered.functions["g"].ret_type.name == "int" and ri.is_clean and eqok(ri)
-    rnan = compile_unit("double h(double x){ return x + nan(\"\"); }\n")
-    assert rnan.is_clean and eqok(rnan)                                 # tag-string arg; NaN-safe compare
+    rnan = compile_unit('double h(double x){ return x + nan(""); }\n')
+    assert rnan.is_clean and eqok(rnan)  # tag-string arg; NaN-safe compare
 
 
 def test_math_h_eight_byte_returns_and_pointer_out_params():
@@ -311,8 +338,10 @@ def test_math_h_eight_byte_returns_and_pointer_out_params():
     rl = compile_unit("long k(double x){ return lround(x); }\n")
     klf = rl.lowered.functions["k"]
     assert klf.ret_type.name == "long" and rl.is_clean and eqok(rl)
-    assert "long t" in emit_function(klf) and "uint32_t" not in \
-        [ln for ln in emit_function(klf).splitlines() if "lround" in ln][0]   # not narrowed
+    assert (
+        "long t" in emit_function(klf)
+        and "uint32_t" not in [ln for ln in emit_function(klf).splitlines() if "lround" in ln][0]
+    )  # not narrowed
     rll = compile_unit("long long k(double x){ return llround(x * 1e9); }\n")
     assert rll.lowered.functions["k"].ret_type.name == "long long" and rll.is_clean and eqok(rll)
 
@@ -321,7 +350,9 @@ def test_math_h_eight_byte_returns_and_pointer_out_params():
     flf = rfx.lowered.functions["f"]
     assert any(c.op == "c.addrof" for c in flf.claims) and rfx.is_clean and eqok(rfx)
     assert "&e" in emit_function(flf) and "frexp(" in emit_function(flf)
-    rmf = compile_unit("double f(double x){ double ip; double fp = modf(x, &ip); return fp + ip; }\n")
+    rmf = compile_unit(
+        "double f(double x){ double ip; double fp = modf(x, &ip); return fp + ip; }\n"
+    )
     assert rmf.is_clean and eqok(rmf)
     rrq = compile_unit("double f(double x, double y){ int q; return remquo(x, y, &q) + q; }\n")
     assert rrq.is_clean and eqok(rrq)
@@ -342,16 +373,19 @@ def test_user_call_returns_typed_by_callee():
     flf = rv.lowered.functions["f"]
     assert any(c.op == "c.call.void:g" for c in flf.claims) and rv.is_clean and eqok(rv)
     em = emit_function(flf)
-    assert "bcir_g(t" in em and "= bcir_g(" not in em            # a statement, no assignment of void
+    assert "bcir_g(t" in em and "= bcir_g(" not in em  # a statement, no assignment of void
 
     # `return g();` where g is void -> the call statement then a bare `return;` (g returns void).
-    rh = compile_unit("void g(int *p){ *p=5; } void h(int *p){ return g(p); } "
-                       "int f(int *p){ h(p); return *p; }\n")
+    rh = compile_unit(
+        "void g(int *p){ *p=5; } void h(int *p){ return g(p); } int f(int *p){ h(p); return *p; }\n"
+    )
     hem = emit_function(rh.lowered.functions["h"])
     assert "bcir_g(p);" in hem and "return;" in hem and rh.is_clean and eqok(rh)
 
     # a float return propagates: the result temp is declared double (so `+ 1.5` stays float).
-    rd = compile_unit("double g(double x){ return x*2.0; } double f(double x){ return g(x) + 1.5; }\n")
+    rd = compile_unit(
+        "double g(double x){ return x*2.0; } double f(double x){ return g(x) + 1.5; }\n"
+    )
     assert "double t" in emit_function(rd.lowered.functions["f"]) and rd.is_clean and eqok(rd)
     # a wide (8-byte) integer return keeps its width, not narrowed to uint32.
     rl = compile_unit("long g(double x){ return lround(x); } long f(double x){ return g(x); }\n")
@@ -363,11 +397,14 @@ def test_user_call_returns_typed_by_callee():
     callln = next(l for l in iem.splitlines() if "bcir_g(x)" in l)
     assert callln.strip().startswith("int ") and ">> " in iem and ri.is_clean and eqok(ri)
     # an UNSIGNED int return keeps the 4-byte uint32 value unit (the sign fix is signed-only).
-    ru = compile_unit("unsigned g(unsigned x){ return x+1u; } unsigned f(unsigned x){ return g(x)*2u; }\n")
+    ru = compile_unit(
+        "unsigned g(unsigned x){ return x+1u; } unsigned f(unsigned x){ return g(x)*2u; }\n"
+    )
     assert "uint32_t t" in emit_function(ru.lowered.functions["f"]) and ru.is_clean and eqok(ru)
 
 
 # --- L2: struct / union layout + member access ---------------------------------------------------
+
 
 def test_L2_struct_member_access():
     r = _assert_six_artifacts("L2_struct.c")
@@ -381,6 +418,7 @@ def test_L2_struct_member_access():
 
 # --- L3: pointers / arrays (GEP-equivalent indexing) ---------------------------------------------
 
+
 def test_L3_pointer_array_indexing():
     r = _assert_six_artifacts("L3_ptr_array.c")
     lf = r.lowered.functions["l3_index"]
@@ -392,16 +430,17 @@ def test_L3_array_of_row_pointer_declarator():
     """A pointer-to-array parameter `(*m)[8]` (the row-pointer a 2D array decays to) lowers like the
     2D array param: it decays to a flat element pointer with the inner extent recorded, and `m[i][j]`
     flattens row-major to `i*8 + j` -- so the outer index is scaled by the inner dim (8)."""
-    src = ("uint32_t f(uint32_t (*m)[8], uint32_t i, uint32_t j){ return m[i & 7][j & 7]; }\n")
+    src = "uint32_t f(uint32_t (*m)[8], uint32_t i, uint32_t j){ return m[i & 7][j & 7]; }\n"
     r = compile_unit(src)
     lf = r.lowered.functions["f"]
     assert r.is_clean and (r.equivalence == "match" or r.equivalence.startswith("skip"))
     p0 = lf.params[0][2]
-    assert p0.kind == "pointer" and p0.shape[1] == 8           # decayed row pointer, inner extent 8
-    assert any(c.op == "c.const" and c.imm and c.imm[0] == 8 for c in lf.claims)   # the row stride
+    assert p0.kind == "pointer" and p0.shape[1] == 8  # decayed row pointer, inner extent 8
+    assert any(c.op == "c.const" and c.imm and c.imm[0] == 8 for c in lf.claims)  # the row stride
 
 
 # --- L4: functions + the call graph -> R18 -------------------------------------------------------
+
 
 def test_L4_call_graph_is_R18_clean():
     r = _assert_six_artifacts("L4_callgraph.c")
@@ -413,8 +452,10 @@ def test_L4_call_graph_is_R18_clean():
 
 # --- L5: volatile / MMIO register map + bitfields ------------------------------------------------
 
+
 def test_L5_mmio_register_map_and_bitfields():
     from bcir.model import Domain
+
     r = _assert_six_artifacts("L5_mmio_regmap.c")
     dec = r.lowered.functions["uart_decode"]
     # the volatile register pointer became an MMIO resource...
@@ -425,23 +466,26 @@ def test_L5_mmio_register_map_and_bitfields():
     # ...and bitfields lowered to explicit mask/shift extract claims.
     assert [c for c in dec.claims if c.op == "c.bf.get"]
     cfg = r.lowered.aggregates["ctrl_bits"]
-    assert cfg.field("enable")[2] == 0 and cfg.field("baud")[2] == 3   # bit offsets pack LSB-first
+    assert cfg.field("enable")[2] == 0 and cfg.field("baud")[2] == 3  # bit offsets pack LSB-first
 
 
 def test_L5_mmio_write_requires_barriered_hazard():
     from bcir.model import Domain
+
     r = compile_unit(_fixture("L5_mmio_regmap.c"), check_clang=False)
     cfg = r.lowered.functions["uart_configure"]
     stores = [c for c in cfg.claims if c.op == "c.store" and c.domain == Domain.MMIO]
-    assert stores and all(c.hazard == "barriered" for c in stores)   # R3: MMIO write hazard
-    assert r.is_clean                                                  # R3/R5 clean
+    assert stores and all(c.hazard == "barriered" for c in stores)  # R3: MMIO write hazard
+    assert r.is_clean  # R3/R5 clean
 
 
 # --- L6: control flow (branches + bounded loops) -------------------------------------------------
 
+
 def test_L6_branches():
     r = _assert_six_artifacts("L6_branch.c")
     from bcir.frontends.cfront.lower import IfNode
+
     body = r.lowered.functions["l6_clamp"].body
     assert any(isinstance(n, IfNode) for n in body), "if should lower to an IfNode in the body tree"
     assert "if (" in r.emitted["l6_clamp"]
@@ -450,12 +494,14 @@ def test_L6_branches():
 def test_L6_bounded_loop():
     r = _assert_six_artifacts("L6_loop.c")
     from bcir.frontends.cfront.lower import WhileNode
+
     body = r.lowered.functions["l6_weighted_sum"].body
     assert any(isinstance(n, WhileNode) for n in body), "while should lower to a WhileNode"
     assert "while (1)" in r.emitted["l6_weighted_sum"]
 
 
 # --- L7: the preprocessor (macros / conditionals / include / #embed) -----------------------------
+
 
 def test_L7_object_and_function_macros():
     r = _assert_six_artifacts("L7_macros.c")
@@ -474,18 +520,24 @@ def test_L7_c23_embed_table():
     data = bytes((i * 37) & 0xFF for i in range(16))
     r = _assert_six_artifacts("L7_embed.c", embeds={"crc.bin": data})
     g = r.lowered.functions["l7_crc_step"].globals_used
-    assert "crc_table" in g.values()                          # the #embed table is a referenced global
-    assert r.lowered.aggregates == r.lowered.aggregates       # (no aggregates needed here)
+    assert "crc_table" in g.values()  # the #embed table is a referenced global
+    assert r.lowered.aggregates == r.lowered.aggregates  # (no aggregates needed here)
 
 
 def test_L7_preprocessor_unit():
     from bcir.frontends.cfront.cpp import preprocess
+
     out = preprocess("#define A 2\n#define SQ(x) ((x)*(x))\nint v = SQ(A+1);")
-    assert "((2+1)*(2+1))" in out.replace(" ", "")            # arg expanded + rescanned
+    assert "((2+1)*(2+1))" in out.replace(" ", "")  # arg expanded + rescanned
     assert preprocess("#if 1+1==2\nyes\n#else\nno\n#endif").strip() == "yes"
-    assert preprocess("#ifdef X\na\n#elifndef Y\nb\n#endif").strip() == "b"   # C23 #elifndef
-    assert preprocess("x\n#embed \"d\"\ny", embeds={"d": bytes([1, 2, 3])}).split() == \
-        ["x", "1,", "2,", "3", "y"]
+    assert preprocess("#ifdef X\na\n#elifndef Y\nb\n#endif").strip() == "b"  # C23 #elifndef
+    assert preprocess('x\n#embed "d"\ny', embeds={"d": bytes([1, 2, 3])}).split() == [
+        "x",
+        "1,",
+        "2,",
+        "3",
+        "y",
+    ]
 
 
 def test_L7_comments_stripped_before_preprocessing():
@@ -494,19 +546,25 @@ def test_L7_comments_stripped_before_preprocessing():
     never executed. String/char literals keep their comment-like bytes; C23 digit separators are not
     read as char quotes; a block comment keeps its newlines so __LINE__ stays aligned."""
     from bcir.frontends.cfront.cpp import preprocess
+
     # a comment in a #define body / on the directive line is dropped (body is just the value).
     assert preprocess("#define FOO /* c */ 1\nint x = FOO;").replace(" ", "") == "intx=1;\n"
     assert preprocess("#define N 5 // five\nint a[N];").replace(" ", "") == "inta[5];\n"
     # a `#define` *inside* a block comment is text, not a directive — it must not take effect.
     out = preprocess("/* x\n#define EVIL 999\n */ int b = EVIL;")
     assert "EVIL" in out and "999" not in out
-    assert out.count("\n") == 3                       # the comment's newlines survive (line count kept)
+    assert out.count("\n") == 3  # the comment's newlines survive (line count kept)
     # comment markers inside string/char literals are data, copied verbatim.
     assert preprocess('char *s = "a/*b*/c//d";') == 'char*s="a/*b*/c//d";\n'
-    assert preprocess("char q = '\"'; int z = 1 /* c */ + 2;").replace(" ", "") == "charq='\"';intz=1+2;\n"
+    assert (
+        preprocess("char q = '\"'; int z = 1 /* c */ + 2;").replace(" ", "")
+        == "charq='\"';intz=1+2;\n"
+    )
     # a C23 digit separator (flanked by hex digits) is not mistaken for a char-literal quote.
-    assert preprocess("int v = 1'000'000; /* c */ int w = 0xca'fe;").replace(" ", "") == \
-        "intv=1'000'000;intw=0xca'fe;\n"
+    assert (
+        preprocess("int v = 1'000'000; /* c */ int w = 0xca'fe;").replace(" ", "")
+        == "intv=1'000'000;intw=0xca'fe;\n"
+    )
     # __LINE__ is still accurate on the line after a multi-line block comment.
     assert preprocess("a __LINE__\n/* p\nq\nr */ b __LINE__").split() == ["a", "1", "b", "4"]
 
@@ -516,8 +574,16 @@ def test_L7_predefined_file_and_line():
     (reflecting the macro *invocation* site, not the definition), __FILE__ the current file name,
     and both report as `defined` to #ifdef / defined(). __STDC_HOSTED__ is predefined too."""
     from bcir.frontends.cfront.cpp import Preprocessor, preprocess
+
     # __LINE__ counts logical lines from 1; __FILE__ is a string literal of the file name.
-    assert preprocess("a __LINE__\nb __LINE__\nc __LINE__").split() == ["a", "1", "b", "2", "c", "3"]
+    assert preprocess("a __LINE__\nb __LINE__\nc __LINE__").split() == [
+        "a",
+        "1",
+        "b",
+        "2",
+        "c",
+        "3",
+    ]
     assert Preprocessor().process("x __FILE__", name="foo.c").strip() == 'x"foo.c"'
     # __LINE__ through an object / function macro reflects the invocation line, not the #define line.
     assert "intc=3;" in preprocess("#define L __LINE__\nq\nint c = L;").replace(" ", "")
@@ -528,8 +594,10 @@ def test_L7_predefined_file_and_line():
     # __STDC_HOSTED__ is predefined (the hosted-C signal).
     assert preprocess("#if __STDC_HOSTED__\nhosted\n#endif").strip() == "hosted"
     # across an #include boundary __FILE__/__LINE__ switch to the header and restore on return.
-    body = preprocess('t __LINE__ __FILE__\n#include "h"\nu __LINE__ __FILE__\n',
-                      includes={"h": "in __LINE__ __FILE__"})
+    body = preprocess(
+        't __LINE__ __FILE__\n#include "h"\nu __LINE__ __FILE__\n',
+        includes={"h": "in __LINE__ __FILE__"},
+    )
     assert body == 't 1"<source>"\nin 1"h"\nu 3"<source>"\n'
 
 
@@ -537,9 +605,16 @@ def test_L7_line_directive():
     """`#line N ["file"]` resets the presumed line number of the *following* line (and __FILE__ when a
     name is given); operands are macro-expanded; a #line-set name survives an #include and restores."""
     from bcir.frontends.cfront.cpp import preprocess
+
     # #line sets the NEXT line; numbering then counts up from there.
-    assert preprocess("a __LINE__\n#line 100\nb __LINE__\nc __LINE__").split() == \
-        ["a", "1", "b", "100", "c", "101"]
+    assert preprocess("a __LINE__\n#line 100\nb __LINE__\nc __LINE__").split() == [
+        "a",
+        "1",
+        "b",
+        "100",
+        "c",
+        "101",
+    ]
     # a file-name operand redirects __FILE__ too, and operands are macro-expanded.
     assert preprocess('#line 50 "foo.c"\nx __LINE__ __FILE__').strip() == 'x 50"foo.c"'
     assert preprocess("#define N 200\n#line N\nq __LINE__").split() == ["q", "200"]
@@ -547,8 +622,10 @@ def test_L7_line_directive():
     assert preprocess("p __LINE__\n#line\nq __LINE__").split() == ["p", "1", "q", "3"]
     assert preprocess("#if 0\n#line 999\n#endif\nr __LINE__").split() == ["r", "4"]
     # a #line-set name persists across an #include and is restored on return.
-    body = preprocess('#line 7 "a.h"\nt __LINE__ __FILE__\n#include "i"\nu __LINE__ __FILE__\n',
-                      includes={"i": "in __LINE__ __FILE__"})
+    body = preprocess(
+        '#line 7 "a.h"\nt __LINE__ __FILE__\n#include "i"\nu __LINE__ __FILE__\n',
+        includes={"i": "in __LINE__ __FILE__"},
+    )
     assert body == 't 7"a.h"\nin 1"i"\nu 9"a.h"\n'
 
 
@@ -557,12 +634,13 @@ def test_L7_predefined_date_and_time():
     are reproducible (a single-digit day is space-padded), and reported as `defined`."""
     import os
     from bcir.frontends.cfront.cpp import preprocess
+
     old = os.environ.get("SOURCE_DATE_EPOCH")
     try:
-        os.environ["SOURCE_DATE_EPOCH"] = "1234567890"        # 2009-02-13 23:31:30 UTC
+        os.environ["SOURCE_DATE_EPOCH"] = "1234567890"  # 2009-02-13 23:31:30 UTC
         assert preprocess("__DATE__ __TIME__").strip() == '"Feb 13 2009""23:31:30"'
-        os.environ["SOURCE_DATE_EPOCH"] = "1577836800"        # 2020-01-01 00:00:00 UTC
-        assert preprocess("d=__DATE__").strip() == 'd="Jan  1 2020"'    # single-digit day padded
+        os.environ["SOURCE_DATE_EPOCH"] = "1577836800"  # 2020-01-01 00:00:00 UTC
+        assert preprocess("d=__DATE__").strip() == 'd="Jan  1 2020"'  # single-digit day padded
         assert preprocess("#ifdef __TIME__\nyes\n#endif").strip() == "yes"
         assert preprocess("#if defined(__DATE__)\nok\n#endif").strip() == "ok"
     finally:
@@ -576,9 +654,10 @@ def test_L7_pragma_operator():
     """`_Pragma("...")` is a lowering no-op (like `#pragma`): it is recognized anywhere a token can
     appear — including when produced by a macro via `#` stringize — and consumed, emitting nothing."""
     from bcir.frontends.cfront.cpp import preprocess
+
     assert preprocess('int x; _Pragma("once") int y;').strip() == "int x;int y;"
     assert preprocess('a _Pragma("GCC diagnostic push") b').strip() == "a b"
-    assert preprocess('p _Pragma("a(b)c") q').strip() == "p q"        # balanced parens consumed
+    assert preprocess('p _Pragma("a(b)c") q').strip() == "p q"  # balanced parens consumed
     # produced by a macro (destringize) — still consumed after rescanning.
     assert preprocess("#define DO(x) _Pragma(#x)\nDO(message hi)\nz").strip() == "z"
     assert preprocess('#define PUSH _Pragma("pack(push,1)")\nPUSH\nint a;').strip() == "int a;"
@@ -592,9 +671,12 @@ def test_L7_file_macro_real_path():
     compiled code awaits string-literal lexing; today it surfaces via the preprocessor / `-E`.)"""
     from bcir.frontends.cfront.cpp import preprocess
     from bcir.frontends.cfront import compile_unit
-    assert preprocess("a __FILE__\nb __FILE__", name="proj/foo.c").strip() == \
-        'a"proj/foo.c"\nb"proj/foo.c"'
-    assert preprocess("x __FILE__").strip() == 'x"<source>"'                  # default unchanged
+
+    assert (
+        preprocess("a __FILE__\nb __FILE__", name="proj/foo.c").strip()
+        == 'a"proj/foo.c"\nb"proj/foo.c"'
+    )
+    assert preprocess("x __FILE__").strip() == 'x"<source>"'  # default unchanged
     # compile_unit accepts + forwards `filename` to the preprocessor (no crash; plumbing for __FILE__).
     compile_unit("unsigned int n(void){ return __LINE__; }\n", filename="k.c", check_clang=False)
 
@@ -604,6 +686,7 @@ def test_L7_has_feature_macros():
     (packed/aligned, GCC `__x__` spelling too) and nothing else; `__has_builtin`/`__has_c_attribute`
     report 0 (none supported yet). All `__has_*` operators are reported as `defined`."""
     from bcir.frontends.cfront.cpp import preprocess
+
     assert preprocess("#if __has_attribute(packed)\nY\n#else\nN\n#endif").strip() == "Y"
     assert preprocess("#if __has_attribute(__aligned__)\nY\n#else\nN\n#endif").strip() == "Y"
     assert preprocess("#if __has_attribute(deprecated)\nY\n#else\nN\n#endif").strip() == "N"
@@ -611,60 +694,81 @@ def test_L7_has_feature_macros():
     assert preprocess("#if __has_c_attribute(nodiscard)\nY\n#else\nN\n#endif").strip() == "N"
     # the standard defined-guarded idiom works (the operators report as `defined`).
     assert preprocess("#ifdef __has_attribute\nD\n#endif").strip() == "D"
-    assert preprocess("#if defined(__has_attribute) && __has_attribute(aligned)\nOK\n#endif").strip() \
+    assert (
+        preprocess("#if defined(__has_attribute) && __has_attribute(aligned)\nOK\n#endif").strip()
         == "OK"
+    )
 
 
 def test_L7_has_include():
     """`__has_include` probes the header search path (resolved against the in-memory mount here),
     both the quoted and angle forms; the dual-rail C twin resolves the same names from disk."""
     from bcir.frontends.cfront.cpp import preprocess
+
     inc = {"there.h": "int x;"}
-    assert preprocess('#if __has_include("there.h")\nY\n#else\nN\n#endif', includes=inc).strip() == "Y"
-    assert preprocess("#if __has_include(<there.h>)\nY\n#else\nN\n#endif", includes=inc).strip() == "Y"
-    assert preprocess('#if __has_include("gone.h")\nY\n#else\nN\n#endif', includes=inc).strip() == "N"
-    assert preprocess('#if defined(__has_include) && __has_include("there.h")\nOK\n#endif',
-                      includes=inc).strip() == "OK"
+    assert (
+        preprocess('#if __has_include("there.h")\nY\n#else\nN\n#endif', includes=inc).strip() == "Y"
+    )
+    assert (
+        preprocess("#if __has_include(<there.h>)\nY\n#else\nN\n#endif", includes=inc).strip() == "Y"
+    )
+    assert (
+        preprocess('#if __has_include("gone.h")\nY\n#else\nN\n#endif', includes=inc).strip() == "N"
+    )
+    assert (
+        preprocess(
+            '#if defined(__has_include) && __has_include("there.h")\nOK\n#endif', includes=inc
+        ).strip()
+        == "OK"
+    )
 
 
 def test_L7_variadic_macros():
     """Variadic `#define M(...)` / `M(a, ...)`: __VA_ARGS__ expands to *all* trailing args
     (comma-joined), works empty, and through `#` stringize / `##` paste."""
     from bcir.frontends.cfront.cpp import preprocess
+
     assert preprocess("#define V(...) f(__VA_ARGS__)\nV(1,2,3)").strip() == "f(1,2,3)"
     assert preprocess("#define L(a, ...) g(a, __VA_ARGS__)\nL(x,1,2)").strip() == "g(x,1,2)"
-    assert preprocess("#define E(a, ...) k(a, __VA_ARGS__)\nE(z)").strip() == "k(z,)"   # empty
-    assert preprocess("#define S(...) #__VA_ARGS__\nS(1, 2, 3)").strip() == '"1,2,3"'   # stringize
-    assert preprocess("#define P(...) x ## __VA_ARGS__\nP(1,2)").strip() == "x1,2"      # paste
+    assert preprocess("#define E(a, ...) k(a, __VA_ARGS__)\nE(z)").strip() == "k(z,)"  # empty
+    assert preprocess("#define S(...) #__VA_ARGS__\nS(1, 2, 3)").strip() == '"1,2,3"'  # stringize
+    assert preprocess("#define P(...) x ## __VA_ARGS__\nP(1,2)").strip() == "x1,2"  # paste
     # C23 __VA_OPT__: the content appears iff __VA_ARGS__ is non-empty (the trailing-comma idiom).
     log = "#define LOG(fmt, ...) p(fmt __VA_OPT__(,) __VA_ARGS__)\n"
     assert preprocess(log + 'LOG("hi")').strip() == 'p("hi")'
     assert preprocess(log + 'LOG("hi", 1, 2)').strip() == 'p("hi",1,2)'
     assert preprocess("#define M(...) a __VA_OPT__(X) b\nM()\nM(1)").strip() == "a b\na X b"
-    assert preprocess("#define E(...) z __VA_OPT__(Y)\nE(,)").strip() == "z Y"   # a comma is a token
+    assert preprocess("#define E(...) z __VA_OPT__(Y)\nE(,)").strip() == "z Y"  # a comma is a token
 
 
 # --- L8: ABI — struct return-by-value, packed/aligned, calling convention vs Clang ----------------
 
+
 def _clang_layout(struct_src: str, tag: str, fields: list):
     """sizeof + offsetof of `struct tag` as *Clang* computes them (the ABI ground truth)."""
-    probe = (f"#include <stdint.h>\n#include <stddef.h>\n#include <stdio.h>\n{struct_src}\n"
-             f"int main(void){{ printf(\"%zu\", sizeof(struct {tag}));"
-             + "".join(f' printf(" %zu", offsetof(struct {tag}, {f}));' for f in fields)
-             + " return 0; }")
+    probe = (
+        f"#include <stdint.h>\n#include <stddef.h>\n#include <stdio.h>\n{struct_src}\n"
+        f'int main(void){{ printf("%zu", sizeof(struct {tag}));'
+        + "".join(f' printf(" %zu", offsetof(struct {tag}, {f}));' for f in fields)
+        + " return 0; }"
+    )
     with tempfile.TemporaryDirectory() as d:
         src, exe = os.path.join(d, "p.c"), os.path.join(d, "p")
         open(src, "w").write(probe)
-        if subprocess.run([_CLANG, "-std=c23", src, "-o", exe],
-                          capture_output=True).returncode != 0:
+        if (
+            subprocess.run([_CLANG, "-std=c23", src, "-o", exe], capture_output=True).returncode
+            != 0
+        ):
             subprocess.run([_CLANG, src, "-o", exe], capture_output=True, check=True)
-        nums = [int(x) for x in subprocess.run([exe], capture_output=True, text=True).stdout.split()]
+        nums = [
+            int(x) for x in subprocess.run([exe], capture_output=True, text=True).stdout.split()
+        ]
     return nums[0], dict(zip(fields, nums[1:]))
 
 
 def test_L8_struct_return_by_value():
     r = _assert_six_artifacts("L8_struct_return.c")
-    assert r.lowered.functions["l8_swap"].ret_type.is_aggregate    # returns a struct by value
+    assert r.lowered.functions["l8_swap"].ret_type.is_aggregate  # returns a struct by value
 
 
 def test_L8_packed_layout_matches_clang():
@@ -672,59 +776,72 @@ def test_L8_packed_layout_matches_clang():
     hdr = r.lowered.aggregates["wire_hdr"]
     # the frontend's packed layout (no padding): cmd@0, addr@1, len@5, size 7.
     assert hdr.field("addr")[1] == 1 and hdr.field("len")[1] == 5 and hdr.size == 7
-    if _CLANG:                                                # cross-check against Clang's ABI
-        src = ("struct __attribute__((packed)) wire_hdr "
-               "{ uint8_t cmd; uint32_t addr; uint16_t len; };")
+    if _CLANG:  # cross-check against Clang's ABI
+        src = (
+            "struct __attribute__((packed)) wire_hdr { uint8_t cmd; uint32_t addr; uint16_t len; };"
+        )
         size, offs = _clang_layout(src, "wire_hdr", ["cmd", "addr", "len"])
         assert size == hdr.size
-        assert offs == {"cmd": hdr.field("cmd")[1], "addr": hdr.field("addr")[1],
-                        "len": hdr.field("len")[1]}
+        assert offs == {
+            "cmd": hdr.field("cmd")[1],
+            "addr": hdr.field("addr")[1],
+            "len": hdr.field("len")[1],
+        }
 
 
 def test_L8_natural_and_aligned_layout_matches_clang():
-    src = ("#include <stdint.h>\n"
-           "struct natural { uint8_t a; uint32_t b; uint16_t c; };\n"
-           "struct __attribute__((aligned(16))) blk { uint32_t v; };\n"
-           "uint32_t use(struct natural n) { return n.a; }\n")
+    src = (
+        "#include <stdint.h>\n"
+        "struct natural { uint8_t a; uint32_t b; uint16_t c; };\n"
+        "struct __attribute__((aligned(16))) blk { uint32_t v; };\n"
+        "uint32_t use(struct natural n) { return n.a; }\n"
+    )
     r = compile_unit(src, check_clang=False)
     nat, blk = r.lowered.aggregates["natural"], r.lowered.aggregates["blk"]
-    assert nat.field("b")[1] == 4 and nat.size == 12          # natural alignment padding
-    assert blk.align == 16 and blk.size == 16                 # forced alignment
+    assert nat.field("b")[1] == 4 and nat.size == 12  # natural alignment padding
+    assert blk.align == 16 and blk.size == 16  # forced alignment
     if _CLANG:
-        size, offs = _clang_layout("struct natural { uint8_t a; uint32_t b; uint16_t c; };",
-                                   "natural", ["a", "b", "c"])
+        size, offs = _clang_layout(
+            "struct natural { uint8_t a; uint32_t b; uint16_t c; };", "natural", ["a", "b", "c"]
+        )
         assert size == nat.size and offs["b"] == nat.field("b")[1]
 
 
 # --- C.2: the self-check artifact + attestation --------------------------------------------------
 
+
 def test_C2_selfcheck_artifact_runs():
     from bcir.frontends.cfront import emit_selfcheck
+
     r = compile_unit(_fixture("L5_mmio_regmap.c"))
     sc = emit_selfcheck(r)
     assert "int main(" in sc and "bcir_uart_decode" in sc
-    if _CLANG:                                    # the artifact is a real, compilable self-check
+    if _CLANG:  # the artifact is a real, compilable self-check
         assert r.behaviour_equivalent
 
 
 def test_R18_rejects_recursion():
-    r = compile_unit("#include <stdint.h>\nuint32_t f(uint32_t n){ return f(n - 1); }\n",
-                     check_clang=False)
+    r = compile_unit(
+        "#include <stdint.h>\nuint32_t f(uint32_t n){ return f(n - 1); }\n", check_clang=False
+    )
     assert not r.r18_ok
     assert any(d.law == "R18" and "recurs" in d.message for d in r.diagnostics)
 
 
 def test_R18_rejects_undefined_callee():
-    r = compile_unit("#include <stdint.h>\nuint32_t g(uint32_t a){ return missing(a); }\n",
-                     check_clang=False)
+    r = compile_unit(
+        "#include <stdint.h>\nuint32_t g(uint32_t a){ return missing(a); }\n", check_clang=False
+    )
     assert not r.r18_ok
     assert any(d.law == "R18" and "undefined" in d.message for d in r.diagnostics)
 
 
 # --- the frontend lowers to the SAME model the oracle verifies (the dual-rail invariant) ---------
 
+
 def test_lowering_targets_the_real_claim_graph_model():
     from bcir.model import Claim, Module, Resource
+
     r = compile_unit(_fixture("L1_int_expr.c"), check_clang=False)
     m = r.lowered.functions["l1_compute"].module
     assert isinstance(m, Module)

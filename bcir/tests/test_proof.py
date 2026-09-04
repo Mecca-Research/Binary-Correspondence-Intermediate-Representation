@@ -41,16 +41,14 @@ def test_record_round_trips_through_json():
 
 def test_record_decoder_rejects_ambiguous_or_forged_proofs():
     rec = explain(vector_add(), AVX, COOL, target_name="x86_avx512")
-    bad_documents = [rec.to_json().replace('"schema": 2',
-                                           '"schema": 2, "schema": 2')]
+    bad_documents = [rec.to_json().replace('"schema": 2', '"schema": 2, "schema": 2')]
 
     for mutate in (
         lambda d: d["record"].update(total_score=True),
         lambda d: d["record"]["decisions"][0].update(width=True),
         lambda d: d["record"]["decisions"][0].update(chosen="not-a-candidate"),
         lambda d: d["record"]["decisions"][0].update(candidates=[["vec16"]]),
-        lambda d: d["record"]["decisions"].append(
-            dict(d["record"]["decisions"][0])),
+        lambda d: d["record"]["decisions"].append(dict(d["record"]["decisions"][0])),
     ):
         bad = json.loads(rec.to_json())
         mutate(bad)
@@ -75,11 +73,13 @@ def test_replay_checks_complete_rationale_and_metadata():
     assert not replay(replace(rec, decisions=()), vector_add(), AVX, COOL).reproduced
     forged_candidate = replace(
         decision,
-        candidates=tuple((name, score + (1 if name == "vec8" else 0))
-                         for name, score in decision.candidates),
+        candidates=tuple(
+            (name, score + (1 if name == "vec8" else 0)) for name, score in decision.candidates
+        ),
     )
-    assert not replay(replace(rec, decisions=(forged_candidate,)),
-                      vector_add(), AVX, COOL).reproduced
+    assert not replay(
+        replace(rec, decisions=(forged_candidate,)), vector_add(), AVX, COOL
+    ).reproduced
     assert not replay(replace(rec, module_name="forged"), vector_add(), AVX, COOL).reproduced
 
 
@@ -88,10 +88,11 @@ def test_records_are_versioned_self_describing_envelopes():
     version, so a decoder can upgrade -- or refuse -- by version alone."""
     import json
     from bcir.kbcir.proof import RECORD_KIND, SCHEMA_VERSION
+
     d = json.loads(explain(vector_add(), AVX, COOL, target_name="x86_avx512").to_json())
     assert d["kind"] == RECORD_KIND == "bcir.decision_record"
     assert d["schema"] == SCHEMA_VERSION == 2
-    assert d["record"]["module_name"] == "vec_add"       # the payload sits under the envelope
+    assert d["record"]["module_name"] == "vec_add"  # the payload sits under the envelope
 
 
 def test_a_legacy_v1_record_upgrades_and_replays():
@@ -99,9 +100,10 @@ def test_a_legacy_v1_record_upgrades_and_replays():
     build wrote -- decodes through the upgrade chain to the identical record and still
     replays bit-for-bit. Old certificates never rot."""
     import json
+
     rec = explain(vector_add(), AVX, COOL, target_name="x86_avx512")
     v1_text = json.dumps(json.loads(rec.to_json())["record"], indent=2, sort_keys=True)
-    assert "schema" not in json.loads(v1_text)           # genuinely the old bare shape
+    assert "schema" not in json.loads(v1_text)  # genuinely the old bare shape
     upgraded = DecisionRecord.from_json(v1_text)
     assert upgraded == rec
     assert replay(upgraded, vector_add(), AVX, COOL).reproduced
@@ -109,15 +111,16 @@ def test_a_legacy_v1_record_upgrades_and_replays():
 
 def test_an_unknown_schema_fails_loudly_never_misreads():
     import json
+
     rec = json.loads(explain(vector_add(), AVX, COOL, target_name="x86_avx512").to_json())
-    rec["schema"] = 99                                   # a future revision this build lacks
+    rec["schema"] = 99  # a future revision this build lacks
     try:
         DecisionRecord.from_json(json.dumps(rec))
         raise AssertionError("a newer schema must be refused")
     except ValueError as e:
         assert "newer" in str(e)
     rec["schema"] = 2
-    rec["kind"] = "not.a.record"                         # the wrong document kind
+    rec["kind"] = "not.a.record"  # the wrong document kind
     try:
         DecisionRecord.from_json(json.dumps(rec))
         raise AssertionError("a wrong kind must be refused")
@@ -161,12 +164,13 @@ def test_reduce_minimizes_to_a_legal_witness():
     # fused_chain has 2 claims; reduce to the minimal still-plannable module.
     red = reduce(fused_chain(), lambda m: any(ph.claims for ph in m.phases))
     assert sum(len(ph.claims) for ph in red.phases) >= 1
-    assert verify(red) == []                       # the witness stays legal
-    assert optimize(red, AVX, COOL).score > 0      # ... and plannable
+    assert verify(red) == []  # the witness stays legal
+    assert optimize(red, AVX, COOL).score > 0  # ... and plannable
 
     # multi_histogram reduces too, preserving the predicate (a gather claim present).
     def has_gather(m):
         return any(c.op == "histogram.scatter" for ph in m.phases for c in ph.claims)
+
     red2 = reduce(multi_histogram(), has_gather)
     assert has_gather(red2) and verify(red2) == []
 
@@ -186,11 +190,14 @@ def test_mlir_replay_recheck_is_in_sync():
     score (9999) is flagged with the exact (w16/7808) != (w16/9999) divergence."""
     from dataclasses import replace
     from bcir.kbcir.proof import ClaimDecision
+
     rec = explain(vector_add(), AVX, COOL, target_name="x86_avx512")
     assert rec.total_score == 7808
     (d,) = rec.decisions
-    assert d.width == 16 and d.score == 7808              # the record -bcir-explain emits
-    assert replay(rec, vector_add(), AVX, COOL).reproduced  # faithful -> reproduced (replay_reproduced=true)
+    assert d.width == 16 and d.score == 7808  # the record -bcir-explain emits
+    assert replay(
+        rec, vector_add(), AVX, COOL
+    ).reproduced  # faithful -> reproduced (replay_reproduced=true)
     # Tamper the claim's recorded edge score: replay flags exactly that field (replay_mismatches).
     bad = replace(rec, decisions=(replace(d, score=9999),))
     rr = replay(bad, vector_add(), AVX, COOL)
@@ -208,18 +215,33 @@ def test_the_external_replay_cli_contract():
     import subprocess
     import sys
     import tempfile
+
     rec = explain(vector_add(), AVX, COOL, target_name="x86_avx512")
-    env = {**os.environ, "PYTHONPATH": os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "..", ".."))}
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")),
+    }
 
     def cli(record_text, program="vector_add"):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "rec.json")
             with open(path, "w", encoding="utf-8") as f:
                 f.write(record_text)
-            r = subprocess.run([sys.executable, "-m", "bcir.run", program,
-                                "--target", "x86_avx512", "--replay", path],
-                               capture_output=True, text=True, env=env)
+            r = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "bcir.run",
+                    program,
+                    "--target",
+                    "x86_avx512",
+                    "--replay",
+                    path,
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
         verdicts = [ln for ln in r.stdout.splitlines() if ln.startswith("replay-verdict:")]
         assert len(verdicts) == 1, r.stdout + r.stderr
         return r.returncode, verdicts[0]
@@ -227,12 +249,12 @@ def test_the_external_replay_cli_contract():
     rc, line = cli(rec.to_json())
     assert rc == 0 and "reproduced" in line, (rc, line)
     tampered = json.loads(rec.to_json())
-    tampered["record"]["total_score"] = 1                   # a lying score must DIVERGE
+    tampered["record"]["total_score"] = 1  # a lying score must DIVERGE
     rc, line = cli(json.dumps(tampered))
     assert rc == 3 and "diverged" in line, (rc, line)
     rc, line = cli("{not json")
     assert rc == 4 and "undecodable" in line, (rc, line)
     rc, line = cli(" " * ((1 << 20) + 1))
     assert rc == 4 and "undecodable" in line, (rc, line)
-    rc, line = cli(rec.to_json(), program="matmul_tiled")   # wrong module: usage error,
-    assert rc == 4 and "undecodable" in line, (rc, line)    # never a bogus divergence
+    rc, line = cli(rec.to_json(), program="matmul_tiled")  # wrong module: usage error,
+    assert rc == 4 and "undecodable" in line, (rc, line)  # never a bogus divergence

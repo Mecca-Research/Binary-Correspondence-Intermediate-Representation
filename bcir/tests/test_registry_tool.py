@@ -23,8 +23,9 @@ def test_governed_poke_bumps_generation_and_stales_existing_pack():
     assert result.previous is None and result.value == 42
     assert result.previous_data_gen == 0 and result.data_gen == 1
     assert inspector.getp("10[3]") == 42
-    assert any(diag.law == "R11" and "data_gen" in diag.message
-               for diag in verify_pack(module, pack))
+    assert any(
+        diag.law == "R11" and "data_gen" in diag.message for diag in verify_pack(module, pack)
+    )
 
 
 def test_failed_poke_does_not_mutate_value_or_generation():

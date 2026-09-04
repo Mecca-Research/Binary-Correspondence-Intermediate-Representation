@@ -10,8 +10,13 @@ from bcir.kbcir.cost import TargetProfile, Theta
 from bcir.toolchain import resolve_llvm_tools
 
 # target name -> the keyword that appears in `llc --version` when its backend is built in.
-_ARCH_KW = {"x86_64": "x86-64", "aarch64": "aarch64", "riscv64": "riscv64",
-            "nvptx64": "nvptx64", "bpf": "bpf"}
+_ARCH_KW = {
+    "x86_64": "x86-64",
+    "aarch64": "aarch64",
+    "riscv64": "riscv64",
+    "nvptx64": "nvptx64",
+    "bpf": "bpf",
+}
 
 
 def _result():

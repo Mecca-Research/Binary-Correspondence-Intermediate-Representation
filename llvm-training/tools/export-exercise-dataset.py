@@ -146,15 +146,16 @@ def build_record(
     mlir_assumption = "MLIR >= 15" if uses_mlir else None
 
     artifacts = [
-        {"path": path, "role": role_for(path, manifest), "required": True}
-        for path in paths
+        {"path": path, "role": role_for(path, manifest), "required": True} for path in paths
     ]
     if not solution_path:
-        artifacts.append({
-            "path": manifest["prompt"],
-            "role": "grading_reference",
-            "required": True,
-        })
+        artifacts.append(
+            {
+                "path": manifest["prompt"],
+                "role": "grading_reference",
+                "required": True,
+            }
+        )
     artifacts = sorted(
         {json.dumps(item, sort_keys=True): item for item in artifacts}.values(),
         key=lambda item: (item["path"], item["role"]),
@@ -215,11 +216,17 @@ def build_record(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=Path("-"), help="JSONL output path, or - for stdout")
+    parser.add_argument(
+        "--output", type=Path, default=Path("-"), help="JSONL output path, or - for stdout"
+    )
     parser.add_argument("--split", choices=("train", "validation", "test", "all"), default="all")
     modes = parser.add_mutually_exclusive_group()
-    modes.add_argument("--include-solutions", action="store_true", help="embed reference solution content")
-    modes.add_argument("--without-solutions", action="store_true", help="omit reference solution content (default)")
+    modes.add_argument(
+        "--include-solutions", action="store_true", help="embed reference solution content"
+    )
+    modes.add_argument(
+        "--without-solutions", action="store_true", help="omit reference solution content (default)"
+    )
     return parser.parse_args()
 
 
@@ -251,9 +258,13 @@ def main() -> int:
                 records.append(record)
         extra_assignments = sorted(set(assignments) - seen)
         if extra_assignments:
-            raise ValueError(f"split manifest has unknown exercise IDs: {', '.join(extra_assignments)}")
+            raise ValueError(
+                f"split manifest has unknown exercise IDs: {', '.join(extra_assignments)}"
+            )
         records.sort(key=lambda record: record["id"])
-        output = "".join(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n" for record in records)
+        output = "".join(
+            json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n" for record in records
+        )
         if args.output == Path("-"):
             sys.stdout.write(output)
         else:

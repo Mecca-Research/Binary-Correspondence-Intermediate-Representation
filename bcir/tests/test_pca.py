@@ -33,9 +33,15 @@ import tempfile
 from bcir.toolchain import host_link_args
 
 from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee
-from bcir.kbcir.pca import (center_columns, covariance_matrix, eigen_residual,
-                            orthonormality_residual, pca_reference, pca_via_bridge,
-                            trace_residual)
+from bcir.kbcir.pca import (
+    center_columns,
+    covariance_matrix,
+    eigen_residual,
+    orthonormality_residual,
+    pca_reference,
+    pca_via_bridge,
+    trace_residual,
+)
 from bcir.kbcir.precision import quantization_error_bound
 from bcir.lower.c_kernel import emit_lapack_eigh_c
 
@@ -47,10 +53,16 @@ def _lapack_link():
         return None
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "p.c")
-        open(src, "w").write("#include <lapacke.h>\nint main(void){return (int)LAPACK_ROW_MAJOR*0;}\n")
+        open(src, "w").write(
+            "#include <lapacke.h>\nint main(void){return (int)LAPACK_ROW_MAJOR*0;}\n"
+        )
         for lib in (["-llapacke", "-llapack"], ["-llapacke"], ["-llapack"]):
-            if subprocess.run([cc, src, *lib, "-o", os.path.join(d, "p")],
-                              capture_output=True).returncode == 0:
+            if (
+                subprocess.run(
+                    [cc, src, *lib, "-o", os.path.join(d, "p")], capture_output=True
+                ).returncode
+                == 0
+            ):
                 return lib
     return None
 
@@ -62,7 +74,7 @@ def _axis_dataset(m: int, axis, spread: float, jitter: float, seed: int):
     row-major m x n list."""
     n = len(axis)
     rng = random.Random(seed)
-    ts = [(-1.0 + 2.0 * i / (m - 1)) for i in range(m)]   # spread along the axis: -1 .. 1
+    ts = [(-1.0 + 2.0 * i / (m - 1)) for i in range(m)]  # spread along the axis: -1 .. 1
     x = []
     for i in range(m):
         for j in range(n):
@@ -71,6 +83,7 @@ def _axis_dataset(m: int, axis, spread: float, jitter: float, seed: int):
 
 
 # --- the oracle reference: recovers known eigenpairs / a known dominant direction -------------------------
+
 
 def test_pca_recovers_known_eigenpairs_of_a_hand_built_symmetric_matrix():
     # Build data so the covariance is a KNOWN diagonal matrix with distinct entries: feature j is an
@@ -104,7 +117,7 @@ def test_pca_recovers_known_eigenpairs_of_a_hand_built_symmetric_matrix():
 def test_pca_finds_the_known_dominant_direction_of_a_spread_dataset():
     # Points spread along a known (non-axis-aligned) unit direction with small jitter -> the FIRST principal
     # component is ~ that axis and its explained-variance RATIO dominates.
-    axis = [0.6, 0.8]                                     # a known unit direction (0.6^2 + 0.8^2 = 1)
+    axis = [0.6, 0.8]  # a known unit direction (0.6^2 + 0.8^2 = 1)
     m, n = 40, 2
     x = _axis_dataset(m, axis, spread=5.0, jitter=0.02, seed=0xE2)
     vals, vecs = pca_reference(x, m, n)
@@ -138,7 +151,7 @@ def test_eigenvalues_sorted_descending_and_sum_equals_trace():
     x = [rng.uniform(-2.0, 2.0) for _ in range(m * n)]
     c = covariance_matrix(x, m, n)
     vals, _ = pca_reference(x, m, n)
-    assert all(vals[t] >= vals[t + 1] for t in range(n - 1)), vals      # descending
+    assert all(vals[t] >= vals[t + 1] for t in range(n - 1)), vals  # descending
     assert trace_residual(c, vals, n) <= 1e-9, trace_residual(c, vals, n)  # sum(eigvals) ~ trace(C)
 
 
@@ -165,21 +178,21 @@ def test_sign_convention_is_deterministic_and_largest_magnitude_entry_positive()
     x = [scales[j] * (rng.random() - 0.5) for _ in range(m) for j in range(n)]
     vals1, vecs1 = pca_reference(x, m, n)
     vals2, vecs2 = pca_reference(x, m, n)
-    assert vecs1 == vecs2 and vals1 == vals2                # fully deterministic
+    assert vecs1 == vecs2 and vals1 == vals2  # fully deterministic
     for t in range(n):
         comp = [vecs1[t * n + j] for j in range(n)]
-        bj = max(range(n), key=lambda j: abs(comp[j]))      # the largest-magnitude entry
+        bj = max(range(n), key=lambda j: abs(comp[j]))  # the largest-magnitude entry
         assert comp[bj] > 0.0, (t, comp)
 
 
 def test_pca_reference_rejects_malformed_inputs():
     # n<1, m<1, bad x length, k<1, k>n -- each the honest dimension failure.
     bad = [
-        ([1.0], 1, 0, None),                                 # n < 1
-        ([], 0, 2, None),                                    # m < 1
-        ([1.0, 2.0, 3.0], 3, 2, None),                       # len(x) != m*n
-        ([1.0, 2.0, 3.0, 4.0], 2, 2, 0),                     # k < 1
-        ([1.0, 2.0, 3.0, 4.0], 2, 2, 3),                     # k > n
+        ([1.0], 1, 0, None),  # n < 1
+        ([], 0, 2, None),  # m < 1
+        ([1.0, 2.0, 3.0], 3, 2, None),  # len(x) != m*n
+        ([1.0, 2.0, 3.0, 4.0], 2, 2, 0),  # k < 1
+        ([1.0, 2.0, 3.0, 4.0], 2, 2, 3),  # k > n
     ]
     for args in bad:
         try:
@@ -191,7 +204,7 @@ def test_pca_reference_rejects_malformed_inputs():
 
 def test_covariance_rejects_bad_ddof():
     # ddof >= m (a non-positive divisor) and ddof < 0 are the honest failures.
-    x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]                       # m=3, n=2
+    x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]  # m=3, n=2
     for ddof in (3, 4, -1):
         try:
             covariance_matrix(x, 3, 2, ddof=ddof)
@@ -218,6 +231,7 @@ def test_pca_reference_center_and_covariance_are_side_effect_free():
 
 # --- the oracle bridge: tracks the reference within the R17 input round-trip bound ------------------------
 
+
 def test_bridged_pca_tracks_the_reference_within_quant_error():
     # A WELL-CONDITIONED dataset with a WELL-SEPARATED dominant eigenvalue (spread along one axis): PCA forms
     # C = Xc^T Xc / (m-1), which (like OLS's normal equations) squares the input sensitivity, so we bound the
@@ -227,11 +241,16 @@ def test_bridged_pca_tracks_the_reference_within_quant_error():
     m, n = 50, 2
     x = _axis_dataset(m, axis, spread=6.0, jitter=0.05, seed=0xE2E)
     from bcir.kbcir.quantize import max_abs_error
-    q_err = max_abs_error(x, group_size=8, bits=8)            # the R17 input round-trip bound (real units)
+
+    q_err = max_abs_error(x, group_size=8, bits=8)  # the R17 input round-trip bound (real units)
     ref_vals, ref_vecs = pca_reference(x, m, n)
     got_vals, got_vecs = pca_via_bridge(x, m, n, None, group_size=8, bits=8)
-    amp = 500.0                                               # conservative Xc^T Xc-style amplification
-    assert all(abs(r - g) <= amp * q_err + 1e-3 for r, g in zip(ref_vals, got_vals)), (ref_vals, got_vals, q_err)
+    amp = 500.0  # conservative Xc^T Xc-style amplification
+    assert all(abs(r - g) <= amp * q_err + 1e-3 for r, g in zip(ref_vals, got_vals)), (
+        ref_vals,
+        got_vals,
+        q_err,
+    )
     # the dominant eigenVECTOR (well-separated -> stable) tracks too (cosine ~ 1).
     cos0 = abs(sum(ref_vecs[j] * got_vecs[j] for j in range(n)))
     assert cos0 > 0.99, (ref_vecs, got_vecs, cos0)
@@ -241,6 +260,7 @@ def test_bridge_is_a_clean_roundtrip_then_trusted_pca():
     # pca_via_bridge == pca_reference of the dequantized (round-tripped) input -- the trusted eig sees exactly
     # the bridged values, so the bridge is the only error source (mirrors ols_via_bridge / solve_via_bridge).
     from bcir.kbcir.quantize import dequantize, quantize_per_group
+
     rng = random.Random(0xE2F)
     m, n = 18, 3
     x = [rng.uniform(-3, 3) for _ in range(m * n)]
@@ -252,16 +272,21 @@ def test_bridge_is_a_clean_roundtrip_then_trusted_pca():
 
 # --- the emitted wrapper: LAPACKE_ssyev + portable Jacobi fallback, BCIR owns the layout ------------------
 
+
 def test_emit_wraps_lapack_ssyev_with_a_jacobi_fallback():
     c = emit_lapack_eigh_c(4, "eigh")
-    assert "LAPACKE_ssyev(LAPACK_ROW_MAJOR, 'V', 'U', 4, scratch, 4, val)" in c   # the trusted symmetric eig
-    assert "c.call.libm:LAPACKE_ssyev" in c                                       # the LAPACK callee edge label
-    assert "BCIR_USE_LAPACK" in c and "BCIR_EIGH_LAPACK" in c                      # link-selected
-    assert "JACOBI rotation" in c                                                  # the Jacobi fallback marker
-    assert "copysignf(1.0f, theta)" in c                                           # the Jacobi rotation angle
-    assert "#include <lapacke.h>" in c                                             # the LAPACKE header on the linked path
-    assert "void eigh(const float *C, float *eigvals, float *eigvecs)" in c        # the signature bakes n in
-    assert "DESCENDING" in c                                                       # the sort convention
+    assert (
+        "LAPACKE_ssyev(LAPACK_ROW_MAJOR, 'V', 'U', 4, scratch, 4, val)" in c
+    )  # the trusted symmetric eig
+    assert "c.call.libm:LAPACKE_ssyev" in c  # the LAPACK callee edge label
+    assert "BCIR_USE_LAPACK" in c and "BCIR_EIGH_LAPACK" in c  # link-selected
+    assert "JACOBI rotation" in c  # the Jacobi fallback marker
+    assert "copysignf(1.0f, theta)" in c  # the Jacobi rotation angle
+    assert "#include <lapacke.h>" in c  # the LAPACKE header on the linked path
+    assert (
+        "void eigh(const float *C, float *eigvals, float *eigvecs)" in c
+    )  # the signature bakes n in
+    assert "DESCENDING" in c  # the sort convention
     # n<1 raises (the honest dimension failure).
     for bad in (0, -1):
         try:
@@ -274,13 +299,15 @@ def test_emit_wraps_lapack_ssyev_with_a_jacobi_fallback():
 def _run_eigh_kernel(cc, kernel, c, n, define=None, libs=None):
     """Compile the emitted eigh kernel + a main that calls it on (a copy of) the symmetric C and prints the
     eigenvalues then the eigenvectors (row-major); return (eigvals, eigvecs). The kernel does NOT mutate C."""
-    main = (f"\n#include <stdio.h>\nint main(void){{\n"
-            f"  float C[{n * n}] = {{{', '.join(f'{v:.8f}f' for v in c)}}};\n"
-            f"  float vals[{n}] = {{0}};\n"
-            f"  float vecs[{n * n}] = {{0}};\n"
-            f"  eigh(C, vals, vecs);\n"
-            f'  for (int i=0;i<{n};++i) printf("%.8f ", vals[i]);\n'
-            f'  for (int i=0;i<{n * n};++i) printf("%.8f ", vecs[i]);\n  return 0;\n}}\n')
+    main = (
+        f"\n#include <stdio.h>\nint main(void){{\n"
+        f"  float C[{n * n}] = {{{', '.join(f'{v:.8f}f' for v in c)}}};\n"
+        f"  float vals[{n}] = {{0}};\n"
+        f"  float vecs[{n * n}] = {{0}};\n"
+        f"  eigh(C, vals, vecs);\n"
+        f'  for (int i=0;i<{n};++i) printf("%.8f ", vals[i]);\n'
+        f'  for (int i=0;i<{n * n};++i) printf("%.8f ", vecs[i]);\n  return 0;\n}}\n'
+    )
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "e.c")
         open(src, "w").write(kernel + main)
@@ -291,7 +318,7 @@ def _run_eigh_kernel(cc, kernel, c, n, define=None, libs=None):
         cmd += [src]
         if libs:
             cmd += libs
-        cmd += ["-lm", "-o", exe]                              # -lm: sqrtf/fabsf/copysignf in the Jacobi path
+        cmd += ["-lm", "-o", exe]  # -lm: sqrtf/fabsf/copysignf in the Jacobi path
         bld = subprocess.run(host_link_args(cmd), capture_output=True, text=True)
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
@@ -303,7 +330,7 @@ def _run_eigh_kernel(cc, kernel, c, n, define=None, libs=None):
 def test_fallback_path_compiles_runs_and_matches_the_reference():
     cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
     if not cc:
-        return                                                # quick tier hides the toolchain -> self-skip
+        return  # quick tier hides the toolchain -> self-skip
     # A symmetric covariance with WELL-SEPARATED eigenvalues: independent (orthogonal DCT) per-feature patterns
     # scaled by [3,2,1] -> a full-rank, near-diagonal covariance (distinct eigenvalues 9:4:1).
     m, n = 12, 3
@@ -329,22 +356,20 @@ def test_fallback_recovers_a_hand_built_diagonal_spectrum():
     # A hand-built DIAGONAL symmetric matrix with distinct entries: the eigenvalues ARE the diagonal
     # (descending) and the eigenvectors are the standard basis. The C fallback must recover them.
     n = 3
-    c = [5.0, 0.0, 0.0,
-         0.0, 3.0, 0.0,
-         0.0, 0.0, 1.0]
+    c = [5.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 1.0]
     got_vals, got_vecs = _run_eigh_kernel(cc, emit_lapack_eigh_c(n, "eigh"), c, n)
     assert all(abs(g - w) < 1e-4 for g, w in zip(got_vals, [5.0, 3.0, 1.0])), got_vals
     for t in range(n):
         for j in range(n):
             want = 1.0 if j == t else 0.0
             assert abs(abs(got_vecs[t * n + j]) - want) < 1e-4, (t, j, got_vecs)
-        assert got_vecs[t * n + t] > 0.0, (t, got_vecs)       # sign convention
+        assert got_vecs[t * n + t] > 0.0, (t, got_vecs)  # sign convention
 
 
 def test_linked_lapack_path_agrees_when_lapack_is_present():
     libs = _lapack_link()
     if not libs:
-        return                                                # no LAPACK here -> the real-link path self-skips
+        return  # no LAPACK here -> the real-link path self-skips
     cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
     m, n = 12, 3
     scales = [3.0, 2.0, 1.0]
@@ -352,8 +377,9 @@ def test_linked_lapack_path_agrees_when_lapack_is_present():
     x = [scales[j] * patterns[j][i] for i in range(m) for j in range(n)]
     c = covariance_matrix(x, m, n)
     ref_vals, ref_vecs = pca_reference(x, m, n)
-    got_vals, got_vecs = _run_eigh_kernel(cc, emit_lapack_eigh_c(n, "eigh"), c, n,
-                                          define="-DBCIR_USE_LAPACK", libs=libs)
+    got_vals, got_vecs = _run_eigh_kernel(
+        cc, emit_lapack_eigh_c(n, "eigh"), c, n, define="-DBCIR_USE_LAPACK", libs=libs
+    )
     # ssyev (Householder + QR) and the Jacobi reference find the SAME spectrum on well-separated eigenvalues;
     # agree to float round-off (the honest note: different realization, same decomposition).
     assert all(abs(g - r) < 1e-3 for g, r in zip(got_vals, ref_vals)), (got_vals, ref_vals)
@@ -362,6 +388,7 @@ def test_linked_lapack_path_agrees_when_lapack_is_present():
 
 
 # --- R17 boundary: the bridge step is the INPUT round-trip alone (the eig is trusted/exact) ---------------
+
 
 def test_r17_bound_is_the_input_roundtrip_for_the_quantized_pca():
     # The certified boundary error of a quantized PCA call is the bridge's round-trip step (the trusted
@@ -372,27 +399,32 @@ def test_r17_bound_is_the_input_roundtrip_for_the_quantized_pca():
 
 # --- the LAPACK link-flag rule: LAPACKE_ssyev -> -llapack (REUSES the existing rule; no regression) -------
 
+
 def test_pca_link_flag_rule_reuses_the_existing_lapack_rule():
     # LAPACKE_ssyev MATCHES the existing LAPACKE_* rule, so NO linkflags change is needed -- verify it.
-    assert library_for_callee("LAPACKE_ssyev") == "-llapack"        # the PCA callee (the wrapper's actual symbol)
-    assert library_for_callee("LAPACKE_sgels") == "-llapack"        # the E1 OLS sibling still maps
-    assert library_for_callee("LAPACKE_sgesv") == "-llapack"        # the square-solve sibling still maps
+    assert (
+        library_for_callee("LAPACKE_ssyev") == "-llapack"
+    )  # the PCA callee (the wrapper's actual symbol)
+    assert library_for_callee("LAPACKE_sgels") == "-llapack"  # the E1 OLS sibling still maps
+    assert library_for_callee("LAPACKE_sgesv") == "-llapack"  # the square-solve sibling still maps
     # no regression on the other library rules + libm + libc + unknown.
-    assert library_for_callee("gsl_stats_mean") == "-lgsl"          # #62 GSL still maps
-    assert library_for_callee("Sleef_expf1_u10") == "-lsleef"       # #63 SLEEF still maps
-    assert library_for_callee("fftwf_execute") == "-lfftw3"         # B2 FFTW still maps
-    assert library_for_callee("cblas_sgemm") == "-lcblas"           # B5 BLAS still maps
-    assert library_for_callee("sqrtf") == "-lm"                     # libm still maps
-    assert library_for_callee("free") == NO_FLAG                    # libc-implicit, known (not unknown)
-    assert library_for_callee("totally_unknown_fn") is None         # unknown-callee policy unchanged
+    assert library_for_callee("gsl_stats_mean") == "-lgsl"  # #62 GSL still maps
+    assert library_for_callee("Sleef_expf1_u10") == "-lsleef"  # #63 SLEEF still maps
+    assert library_for_callee("fftwf_execute") == "-lfftw3"  # B2 FFTW still maps
+    assert library_for_callee("cblas_sgemm") == "-lcblas"  # B5 BLAS still maps
+    assert library_for_callee("sqrtf") == "-lm"  # libm still maps
+    assert library_for_callee("free") == NO_FLAG  # libc-implicit, known (not unknown)
+    assert library_for_callee("totally_unknown_fn") is None  # unknown-callee policy unchanged
 
 
 # --- the two-truth quarantine: the PCA module imports no verifier / emits no Diagnostic -------------------
+
 
 def test_pca_touches_no_verifier_and_emits_no_diagnostic():
     # PCA is a cost-side / oracle quantity (off the legality path), never an R-law legality verdict. Inspect
     # the IMPORTED module object: no verify / Diagnostic / Graded names bound, and no verifier module imported.
     import bcir.kbcir.pca as pca_mod
+
     bound = set(vars(pca_mod))
     assert not (bound & {"verify_quarantine", "Diagnostic", "Graded", "decide"}), sorted(bound)
     tree = ast.parse(open(pca_mod.__file__, encoding="utf-8").read())
@@ -404,7 +436,7 @@ def test_pca_touches_no_verifier_and_emits_no_diagnostic():
             imported.add(node.module or "")
     assert not any("verify" in m for m in imported), sorted(imported)
     # the returned values are plain floats (no graded/confidence wrapper).
-    x = [3.0, 0.0, -3.0, 0.0, 0.0, 2.0, 0.0, -2.0]            # m=4, n=2
+    x = [3.0, 0.0, -3.0, 0.0, 0.0, 2.0, 0.0, -2.0]  # m=4, n=2
     vals, vecs = pca_reference(x, 4, 2)
     assert isinstance(vals, list) and all(isinstance(v, float) for v in vals)
     assert isinstance(vecs, list) and all(isinstance(v, float) for v in vecs)

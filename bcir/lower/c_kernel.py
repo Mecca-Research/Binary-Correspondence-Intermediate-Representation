@@ -53,9 +53,14 @@ def _selected_segment(module: Module, result: RealizationResult, claim):
     return None
 
 
-def emit_kernel_c(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel",
-                  elem: str = "f32", width_override: int | None = None,
-                  hw_width: int | None = None) -> str:
+def emit_kernel_c(
+    module: Module,
+    result: RealizationResult,
+    fn_name: str = "bcir_kernel",
+    elem: str = "f32",
+    width_override: int | None = None,
+    hw_width: int | None = None,
+) -> str:
     """Emit a portable C23 kernel for the selected elementwise realization, driven
     by the GEM StreamPack segment (lane width -> loop structure, op, resources).
     `elem` is "f32" (float) or "i32" (int32_t for FP-less targets); `width_override`
@@ -121,8 +126,10 @@ def emit_kernel_c(module: Module, result: RealizationResult, fn_name: str = "bci
         f'_Static_assert(sizeof({ctype}) == 4, "BCIR {ctype} kernel needs a 4-byte element");\n'
         f"{fp_pragma}\n"
     )
-    sig = (f"void {fn_name}(const {ctype} *{rqual} A, const {ctype} *{rqual} B,\n"
-           f"             {ctype} *{rqual} C, size_t n)")
+    sig = (
+        f"void {fn_name}(const {ctype} *{rqual} A, const {ctype} *{rqual} B,\n"
+        f"             {ctype} *{rqual} C, size_t n)"
+    )
 
     if w == 1 or full_lane:
         # Idiomatic loop: scalar (w==1) or the full-lane go-fast form. The compiler
@@ -130,10 +137,7 @@ def emit_kernel_c(module: Module, result: RealizationResult, fn_name: str = "bci
         # hand-blocked loop would pin it at exactly w. Measured-neutral on
         # bandwidth-bound kernels -- this is the correct division of labor, not a
         # speedup claim.
-        body = (f"{sig} {{\n"
-                f"  for (size_t i = 0; i < n; ++i)\n"
-                f"    C[i] = A[i] {op} B[i];\n"
-                f"}}\n")
+        body = f"{sig} {{\n  for (size_t i = 0; i < n; ++i)\n    C[i] = A[i] {op} B[i];\n}}\n"
     else:
         # Sub-maximal throttle: a fixed-trip width-w inner loop the compiler
         # vectorizes to exactly w (honoring the deliberate sub-maximal lane), plus a
@@ -156,6 +160,7 @@ def emit_kernel_c(module: Module, result: RealizationResult, fn_name: str = "bci
 
 # --- Q-fixed lane arithmetic with exact-width _BitInt(N) (C23) --------------------
 
+
 def _std_int_for(bits: int) -> str:
     """The smallest standard signed integer type holding >= `bits` value bits -- the
     C11 fallback when _BitInt(N) is unavailable."""
@@ -165,9 +170,13 @@ def _std_int_for(bits: int) -> str:
     raise ValueError(f"no standard integer type for {bits} bits (max 64)")
 
 
-def emit_qfixed_kernel_c(module: Module, result: RealizationResult,
-                         fn_name: str = "bcir_qfixed", lane_bits: int = 16,
-                         frac_bits: int = 8) -> str:
+def emit_qfixed_kernel_c(
+    module: Module,
+    result: RealizationResult,
+    fn_name: str = "bcir_qfixed",
+    lane_bits: int = 16,
+    frac_bits: int = 8,
+) -> str:
     """Emit a **Q-fixed** elementwise kernel whose lanes are *exactly* `lane_bits`
     wide, using C23 `_BitInt(N)` (ISO/IEC 9899:2023 6.2.5) -- the place _BitInt pays.
 
@@ -207,8 +216,11 @@ def emit_qfixed_kernel_c(module: Module, result: RealizationResult,
     rqual = " restrict" if not (set(reads) & set(writes)) else ""
 
     # MUL rescales by >> frac_bits; ADD/SUB keep the Q scale (no shift).
-    combine = (f"((q_acc_t)A[i] * (q_acc_t)B[i]) >> {qn}" if is_mul
-               else f"(q_acc_t)A[i] {op} (q_acc_t)B[i]")
+    combine = (
+        f"((q_acc_t)A[i] * (q_acc_t)B[i]) >> {qn}"
+        if is_mul
+        else f"(q_acc_t)A[i] {op} (q_acc_t)B[i]"
+    )
 
     return (
         f"/* BCIR -> Q-fixed C23 kernel (exact-width _BitInt). op={claim.op or op} "
@@ -226,7 +238,7 @@ def emit_qfixed_kernel_c(module: Module, result: RealizationResult,
         f"  typedef {acc_std} q_acc_t;\n"
         f"  #define BCIR_QFIXED_BITINT 0\n"
         f"#endif\n"
-        f'_Static_assert(BCIR_QFIXED_BITINT || sizeof(q_acc_t) * 8 >= {n2},\n'
+        f"_Static_assert(BCIR_QFIXED_BITINT || sizeof(q_acc_t) * 8 >= {n2},\n"
         f'               "BCIR Q-fixed accumulator must hold the {n2}-bit product");\n'
         f"\n"
         f"void {fn_name}(const q_lane_t *{rqual} A, const q_lane_t *{rqual} B,\n"
@@ -251,11 +263,14 @@ def emit_quantized_dot_c(lane_bits: int, count: int, fn_name: str = "bcir_qdot")
     the pure exact-integer core."""
     if lane_bits < 2:
         raise ValueError(f"lane_bits must be >= 2; got {lane_bits}")
-    from ..kbcir.quantize import accumulator_bits          # the exact-accumulation width contract
+    from ..kbcir.quantize import accumulator_bits  # the exact-accumulation width contract
+
     acc_bits = accumulator_bits(lane_bits, count)
     if acc_bits > 64:
-        raise ValueError(f"acc_bits {acc_bits} (lane_bits={lane_bits}, count={count}) exceeds the 64-bit "
-                         f"standard-int fallback ceiling; the C23 _BitInt path would still hold it")
+        raise ValueError(
+            f"acc_bits {acc_bits} (lane_bits={lane_bits}, count={count}) exceeds the 64-bit "
+            f"standard-int fallback ceiling; the C23 _BitInt path would still hold it"
+        )
     lane_std, acc_std = _std_int_for(lane_bits), _std_int_for(acc_bits)
     return (
         f"/* BCIR -> quantized integer dot product (exact-width _BitInt lanes). lane_bits={lane_bits} "
@@ -272,7 +287,7 @@ def emit_quantized_dot_c(lane_bits: int, count: int, fn_name: str = "bcir_qdot")
         f"  typedef {acc_std} q_acc_t;\n"
         f"  #define BCIR_QDOT_BITINT 0\n"
         f"#endif\n"
-        f'_Static_assert(BCIR_QDOT_BITINT || sizeof(q_acc_t) * 8 >= {acc_bits},\n'
+        f"_Static_assert(BCIR_QDOT_BITINT || sizeof(q_acc_t) * 8 >= {acc_bits},\n"
         f'               "BCIR quantized-dot accumulator must hold the {acc_bits}-bit exact sum");\n'
         f"\n"
         f"int64_t {fn_name}(const q_lane_t * restrict A, const q_lane_t * restrict B, size_t n) {{\n"
@@ -349,31 +364,39 @@ def emit_tuned_gemm_c(plan, fn_name: str = "bcir_gemm_tuned") -> str:
     major = "CblasColMajor" if not plan.is_row_major else "CblasRowMajor"
     # The chosen cblas call. Column-major passes B first (the C^T=B^T A^T swap) into the SAME C buffer.
     if plan.is_row_major:
-        cblas_call = (f"  cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,\n"
-                      f"              {M}, {N}, {K}, 1.0f, A, {K}, B, {N}, 0.0f, C, {N});\n")
+        cblas_call = (
+            f"  cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,\n"
+            f"              {M}, {N}, {K}, 1.0f, A, {K}, B, {N}, 0.0f, C, {N});\n"
+        )
     else:
-        cblas_call = (f"  /* column-major C^T = B^T A^T into the SAME row-major C buffer (identical result) */\n"
-                      f"  cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,\n"
-                      f"              {N}, {M}, {K}, 1.0f, B, {N}, A, {K}, 0.0f, C, {N});\n")
+        cblas_call = (
+            f"  /* column-major C^T = B^T A^T into the SAME row-major C buffer (identical result) */\n"
+            f"  cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,\n"
+            f"              {N}, {M}, {K}, 1.0f, B, {N}, A, {K}, 0.0f, C, {N});\n"
+        )
     # The portable fallback: ALWAYS the row-major reference math (layout-independent), with the chosen
     # prefetch hints. A `__builtin_prefetch` is a pure cache hint -- zero numeric effect.
     blk = max(1, plan.block.tile_m)
     if plan.prefetches:
-        pf = (f"      /* B3 prefetch: pull the next row block of A (distance {plan.prefetch_distance} "
-              f"block(s)) -- a pure cache hint, 0 numeric effect */\n"
-              f"      if (i + {plan.prefetch_distance * blk}u < {M}u)\n"
-              f"        __builtin_prefetch(&A[(i + {plan.prefetch_distance * blk}u) * {K}u], 0, 1);\n")
+        pf = (
+            f"      /* B3 prefetch: pull the next row block of A (distance {plan.prefetch_distance} "
+            f"block(s)) -- a pure cache hint, 0 numeric effect */\n"
+            f"      if (i + {plan.prefetch_distance * blk}u < {M}u)\n"
+            f"        __builtin_prefetch(&A[(i + {plan.prefetch_distance * blk}u) * {K}u], 0, 1);\n"
+        )
     else:
         pf = ""
-    fallback = (f"  for (size_t i = 0; i < {M}; ++i) {{\n"
-                f"{pf}"
-                f"    for (size_t j = 0; j < {N}; ++j) {{\n"
-                f"      float s = 0.0f;\n"
-                f"      for (size_t k = 0; k < {K}; ++k) s += A[i * {K} + k] * B[k * {N} + j];\n"
-                f"      C[i * {N} + j] = s;\n"
-                f"    }}\n"
-                f"  }}\n")
-    pf_note = (f"prefetch dist={plan.prefetch_distance}" if plan.prefetches else "no prefetch")
+    fallback = (
+        f"  for (size_t i = 0; i < {M}; ++i) {{\n"
+        f"{pf}"
+        f"    for (size_t j = 0; j < {N}; ++j) {{\n"
+        f"      float s = 0.0f;\n"
+        f"      for (size_t k = 0; k < {K}; ++k) s += A[i * {K} + k] * B[k * {N} + j];\n"
+        f"      C[i * {N} + j] = s;\n"
+        f"    }}\n"
+        f"  }}\n"
+    )
+    pf_note = f"prefetch dist={plan.prefetch_distance}" if plan.prefetches else "no prefetch"
     return (
         f"/* BCIR -> B3 calling-side-tuned wrapped GEMM (cost-model-priced plan; integrate, don't reinvent). "
         f"row-major C[{M}x{N}] = A[{M}x{K}] @ B[{K}x{N}]; major-order={major}, {pf_note}, "
@@ -916,29 +939,38 @@ def emit_gsl_stats_c(kind: str, n: int, fn_name: str = "bcir_stats") -> str:
         "#endif\n"
     )
     # The trusted GSL call. gsl_stats_* take a (data, stride, n) triple; BCIR fixes stride=1 (dense).
-    linked = (f"  /* The trusted external kernel: {gsl_call}(data, stride=1, n={n}). */\n"
-              f"  return (float){gsl_call}(data, 1, {n});  /* c.call.libm:{gsl_call} */\n")
+    linked = (
+        f"  /* The trusted external kernel: {gsl_call}(data, stride=1, n={n}). */\n"
+        f"  return (float){gsl_call}(data, 1, {n});  /* c.call.libm:{gsl_call} */\n"
+    )
     # The portable reference: the IDENTICAL textbook statistic GSL computes (two-pass mean then, for
     # variance/sd, the unbiased sum-of-squared-deviations / (n-1)). Float math, so it agrees with the linked
     # GSL (double-internally) to float round-off, exactly as the FFTW/LAPACK fallbacks do.
     if kind == "mean":
-        fallback = (f"  /* gsl_stats_mean reference: (1/n) sum data[i]. */\n"
-                    f"  float sum = 0.0f;\n"
-                    f"  for (size_t i = 0; i < {n}; ++i) sum += data[i];\n"
-                    f"  return sum / (float){n};\n")
+        fallback = (
+            f"  /* gsl_stats_mean reference: (1/n) sum data[i]. */\n"
+            f"  float sum = 0.0f;\n"
+            f"  for (size_t i = 0; i < {n}; ++i) sum += data[i];\n"
+            f"  return sum / (float){n};\n"
+        )
     else:
-        var_body = (f"  /* gsl_stats_variance reference: (1/(n-1)) sum (data[i]-mean)^2 -- the UNBIASED\n"
-                    f"     (sample) variance, GSL's n-1 divisor. Two-pass: mean, then squared deviations. */\n"
-                    f"  float sum = 0.0f;\n"
-                    f"  for (size_t i = 0; i < {n}; ++i) sum += data[i];\n"
-                    f"  float mean = sum / (float){n};\n"
-                    f"  float ss = 0.0f;\n"
-                    f"  for (size_t i = 0; i < {n}; ++i) {{ float d = data[i] - mean; ss += d * d; }}\n"
-                    f"  float var = ss / (float)({n} - 1);\n")
+        var_body = (
+            f"  /* gsl_stats_variance reference: (1/(n-1)) sum (data[i]-mean)^2 -- the UNBIASED\n"
+            f"     (sample) variance, GSL's n-1 divisor. Two-pass: mean, then squared deviations. */\n"
+            f"  float sum = 0.0f;\n"
+            f"  for (size_t i = 0; i < {n}; ++i) sum += data[i];\n"
+            f"  float mean = sum / (float){n};\n"
+            f"  float ss = 0.0f;\n"
+            f"  for (size_t i = 0; i < {n}; ++i) {{ float d = data[i] - mean; ss += d * d; }}\n"
+            f"  float var = ss / (float)({n} - 1);\n"
+        )
         if kind == "variance":
             fallback = var_body + "  return var;\n"
         else:  # sd = sqrt(variance) -- the only transcendental, on the c.call.libm:sqrtf edge
-            fallback = var_body + "  return sqrtf(var);   /* c.call.libm:sqrtf -- the sole transcendental */\n"
+            fallback = (
+                var_body
+                + "  return sqrtf(var);   /* c.call.libm:sqrtf -- the sole transcendental */\n"
+            )
     return (
         head
         + f"float {fn_name}(const float *data) {{\n"
@@ -1271,8 +1303,18 @@ def emit_sycl_matmul_c(m: int, k: int, n: int, fn_name: str = "bcir_matmul") -> 
 # integer/exact inputs, float round-off otherwise). The conv arithmetic is pure multiply-accumulate -- NO
 # transcendental, so it stays on the deterministic rail (no libm; like the exact relu / the gemm fallback).
 
-def emit_conv2d_c(in_c: int, in_h: int, in_w: int, out_c: int, kh: int, kw: int,
-                  stride: int = 1, pad: int = 0, fn_name: str = "bcir_conv2d") -> str:
+
+def emit_conv2d_c(
+    in_c: int,
+    in_h: int,
+    in_w: int,
+    out_c: int,
+    kh: int,
+    kw: int,
+    stride: int = 1,
+    pad: int = 0,
+    fn_name: str = "bcir_conv2d",
+) -> str:
     """Emit a portable C kernel for a single-group 2-D convolution (cross-correlation, the ML convention),
     reproducing ``kbcir.conv.conv2d_reference`` exactly. Layout is NCHW-flat: ``in`` is C_in*H*W row-major,
     ``W`` is C_out*C_in*Kh*Kw row-major, ``out`` is C_out*out_h*out_w row-major. Zero padding is implicit
@@ -1283,8 +1325,10 @@ def emit_conv2d_c(in_c: int, in_h: int, in_w: int, out_c: int, kh: int, kw: int,
     realization (kbcir.conv) computes the IDENTICAL products, so this transparent direct emit IS the
     reference both realizations are verified against."""
     if min(in_c, in_h, in_w, out_c, kh, kw) < 1:
-        raise ValueError(f"conv dims must be >= 1; got C_in={in_c} H={in_h} W={in_w} C_out={out_c} "
-                         f"Kh={kh} Kw={kw}")
+        raise ValueError(
+            f"conv dims must be >= 1; got C_in={in_c} H={in_h} W={in_w} C_out={out_c} "
+            f"Kh={kh} Kw={kw}"
+        )
     if stride < 1 or pad < 0:
         raise ValueError(f"conv needs stride >= 1 (got {stride}) and pad >= 0 (got {pad})")
     out_h = (in_h + 2 * pad - kh) // stride + 1
@@ -1325,6 +1369,7 @@ def emit_conv2d_c(in_c: int, in_h: int, in_w: int, out_c: int, kh: int, kw: int,
 # routes that exp through the trusted ``c.call.libm:`` edge (`<math.h>` expf, -lm) exactly as the activation
 # softmax / B5 do -- the transcendental stays OFF the deterministic legality rail. So the emit matches the
 # reference bit-exactly on the matmul/scale, to float round-off through the softmax.
+
 
 def emit_attention_c(seq_len: int, d_k: int, fn_name: str = "bcir_attention") -> str:
     """Emit a portable C kernel for single-head scaled-dot-product attention ``out = softmax(Q@K^T/
@@ -1462,7 +1507,9 @@ def emit_lstm_cell_c(input_dim: int, hidden_dim: int, fn_name: str = "bcir_lstm_
     sigmoid); the trusted libm ``tanhf`` / ``expf`` are the sole externals. ``h`` / ``c`` are distinct output
     buffers and may NOT alias the inputs."""
     if input_dim < 1 or hidden_dim < 1:
-        raise ValueError(f"lstm cell dims must be >= 1; got input_dim={input_dim} hidden_dim={hidden_dim}")
+        raise ValueError(
+            f"lstm cell dims must be >= 1; got input_dim={input_dim} hidden_dim={hidden_dim}"
+        )
     return (
         f"/* BCIR -> gem.recurrent LSTM cell (E4 recurrent-cell C seam): one step, per unit "
         f"f=sigmoid(Wf x+Uf h+bf), i,o likewise, g=tanhf(Wg x+Ug h+bg), c=f*c_prev+i*g, h=o*tanhf(c). "
@@ -1517,6 +1564,7 @@ def emit_lstm_cell_c(input_dim: int, hidden_dim: int, fn_name: str = "bcir_lstm_
 # c.call.libm: edge, -lm; the dot/distance sums are exact) and an exact one (the tree: pure comparisons + a leaf
 # return, NO transcendental). BCIR owns the calling side (the row-major layout, the baked params); libsvm is the
 # canonical SVM library in the framing only -- the decision function is emitted self-contained.
+
 
 def emit_svm_rbf_predict_c(n_sv: int, n_feat: int, fn_name: str = "bcir_svm_rbf") -> str:
     """E5 (ML-breadth): emit a portable C RBF-SVM DECISION-FUNCTION predict kernel -- the classical-ML
@@ -1618,6 +1666,7 @@ def emit_tree_predict_c(n_nodes: int, n_feat: int, fn_name: str = "bcir_tree") -
 # NO libm -- so the C-vs-oracle check is INTEGER-EXACT (the same argmin cluster id), not merely to round-off. C
 # twin of kbcir.unsupervised.kmeans_assign.
 
+
 def emit_kmeans_assign_c(k: int, n_feat: int, fn_name: str = "bcir_kmeans_assign") -> str:
     """E6 (ML-breadth): emit a portable C K-MEANS nearest-centroid ASSIGN kernel -- the unsupervised-learning
     EXACT-predictor seam (the analog of E5's exact decision-tree kernel), reproducing
@@ -1673,6 +1722,7 @@ def emit_kmeans_assign_c(k: int, n_feat: int, fn_name: str = "bcir_kmeans_assign
 # keeping the transcendental fully OFF the deterministic legality rail (libm is opaque/trusted, like any
 # external edge). All are f32 (the libm edge returns float); relu additionally supports i32.
 
+
 def emit_relu_kernel_c(n: int, fn_name: str = "bcir_relu", elem: str = "f32") -> str:
     """Emit the EXACT relu kernel `C[i] = max(0, A[i])` -- the integer/Q-fixed-clean activation. No
     transcendental, no libm, 0-ULP exact on f32 OR i32 (a pure comparison/select the compiler lowers to a
@@ -1693,8 +1743,9 @@ def emit_relu_kernel_c(n: int, fn_name: str = "bcir_relu", elem: str = "f32") ->
     )
 
 
-def emit_activation_kernel_c(kind: str, n: int, fn_name: str = "bcir_activation",
-                             axis_len: int | None = None) -> str:
+def emit_activation_kernel_c(
+    kind: str, n: int, fn_name: str = "bcir_activation", axis_len: int | None = None
+) -> str:
     """Emit a gem.activation C kernel. ``relu`` -> the exact `emit_relu_kernel_c` (f32). The transcendental
     four route their exp/tanh through the trusted ``c.call.libm:`` edge (`<math.h>` `expf`/`tanhf`, -lm),
     exactly as B5's `emit_blas_gemm_c` wraps `cblas_sgemm` -- the transcendental is the trusted external,
@@ -1707,50 +1758,61 @@ def emit_activation_kernel_c(kind: str, n: int, fn_name: str = "bcir_activation"
       softmax: per row of `axis_len`: m=max(row); e=expf(x-m); C=e/sum(e)     (the stable reduce-max form)
     """
     from ..kbcir.activation import _check_kind, libm_edges
+
     _check_kind(kind)
     if n < 1:
         raise ValueError(f"activation length must be >= 1; got {n}")
     if kind == "relu":
         return emit_relu_kernel_c(n, fn_name, elem="f32")
 
-    edges = libm_edges(kind)                       # the trusted libm symbols this kernel calls
-    head = (f"/* BCIR -> gem.activation {kind} via the c.call.libm: edge ({', '.join(edges)}; trusted "
-            f"external, BCIR owns the calling side -- the B5 wrap pattern). f32 n={n}. */\n"
-            "#include <stddef.h>\n#include <math.h>\n")
+    edges = libm_edges(kind)  # the trusted libm symbols this kernel calls
+    head = (
+        f"/* BCIR -> gem.activation {kind} via the c.call.libm: edge ({', '.join(edges)}; trusted "
+        f"external, BCIR owns the calling side -- the B5 wrap pattern). f32 n={n}. */\n"
+        "#include <stddef.h>\n#include <math.h>\n"
+    )
 
     if kind == "sigmoid":
-        body = (f"void {fn_name}(const float *restrict A, float *restrict C, size_t n) {{\n"
-                f"  for (size_t i = 0; i < n; ++i)\n"
-                f"    C[i] = 1.0f / (1.0f + expf(-A[i]));   /* c.call.libm:expf */\n"
-                f"}}\n")
+        body = (
+            f"void {fn_name}(const float *restrict A, float *restrict C, size_t n) {{\n"
+            f"  for (size_t i = 0; i < n; ++i)\n"
+            f"    C[i] = 1.0f / (1.0f + expf(-A[i]));   /* c.call.libm:expf */\n"
+            f"}}\n"
+        )
     elif kind == "tanh":
-        body = (f"void {fn_name}(const float *restrict A, float *restrict C, size_t n) {{\n"
-                f"  for (size_t i = 0; i < n; ++i)\n"
-                f"    C[i] = tanhf(A[i]);                   /* c.call.libm:tanhf */\n"
-                f"}}\n")
+        body = (
+            f"void {fn_name}(const float *restrict A, float *restrict C, size_t n) {{\n"
+            f"  for (size_t i = 0; i < n; ++i)\n"
+            f"    C[i] = tanhf(A[i]);                   /* c.call.libm:tanhf */\n"
+            f"}}\n"
+        )
     elif kind == "gelu":
-        body = (f"void {fn_name}(const float *restrict A, float *restrict C, size_t n) {{\n"
-                f"  const float c = sqrtf(2.0f / 3.14159265358979323846f);\n"
-                f"  for (size_t i = 0; i < n; ++i) {{\n"
-                f"    float x = A[i];\n"
-                f"    C[i] = 0.5f * x * (1.0f + tanhf(c * (x + 0.044715f * x * x * x)));  /* c.call.libm:tanhf */\n"
-                f"  }}\n"
-                f"}}\n")
+        body = (
+            f"void {fn_name}(const float *restrict A, float *restrict C, size_t n) {{\n"
+            f"  const float c = sqrtf(2.0f / 3.14159265358979323846f);\n"
+            f"  for (size_t i = 0; i < n; ++i) {{\n"
+            f"    float x = A[i];\n"
+            f"    C[i] = 0.5f * x * (1.0f + tanhf(c * (x + 0.044715f * x * x * x)));  /* c.call.libm:tanhf */\n"
+            f"  }}\n"
+            f"}}\n"
+        )
     else:  # softmax
         ax = axis_len if axis_len is not None else n
         if ax < 1 or n % ax != 0:
             raise ValueError(f"softmax: axis_len {ax} must be >= 1 and divide n {n}")
-        body = (f"void {fn_name}(const float *restrict A, float *restrict C, size_t n) {{\n"
-                f"  const size_t ax = {ax}u;   /* the last-axis (reduction) length */\n"
-                f"  for (size_t r = 0; r < n; r += ax) {{\n"
-                f"    float m = A[r];\n"
-                f"    for (size_t j = 1; j < ax; ++j) if (A[r + j] > m) m = A[r + j];  /* reduce-max */\n"
-                f"    float s = 0.0f;\n"
-                f"    for (size_t j = 0; j < ax; ++j) {{ C[r + j] = expf(A[r + j] - m); s += C[r + j]; }}  /* c.call.libm:expf */\n"
-                f"    if (s == 0.0f) s = 1.0f;\n"
-                f"    for (size_t j = 0; j < ax; ++j) C[r + j] /= s;                  /* normalize */\n"
-                f"  }}\n"
-                f"}}\n")
+        body = (
+            f"void {fn_name}(const float *restrict A, float *restrict C, size_t n) {{\n"
+            f"  const size_t ax = {ax}u;   /* the last-axis (reduction) length */\n"
+            f"  for (size_t r = 0; r < n; r += ax) {{\n"
+            f"    float m = A[r];\n"
+            f"    for (size_t j = 1; j < ax; ++j) if (A[r + j] > m) m = A[r + j];  /* reduce-max */\n"
+            f"    float s = 0.0f;\n"
+            f"    for (size_t j = 0; j < ax; ++j) {{ C[r + j] = expf(A[r + j] - m); s += C[r + j]; }}  /* c.call.libm:expf */\n"
+            f"    if (s == 0.0f) s = 1.0f;\n"
+            f"    for (size_t j = 0; j < ax; ++j) C[r + j] /= s;                  /* normalize */\n"
+            f"  }}\n"
+            f"}}\n"
+        )
     return head + body
 
 
@@ -1763,6 +1825,7 @@ def emit_activation_kernel_c(kind: str, n: int, fn_name: str = "bcir_activation"
 # softmax is NOT supported here (a last-axis row reduction can not be an inline per-element epilogue -- it
 # is scoped out of fusion in kbcir.fusion).
 
+
 def _inline_activation_expr(kind: str, var: str) -> tuple[str, bool]:
     """The C expression applying activation `kind` INLINE to the float scalar `var` (the matmul output
     element), plus whether it needs ``<math.h>``. relu -> the exact ``(var > 0.0f ? var : 0.0f)`` (no libm);
@@ -1771,19 +1834,24 @@ def _inline_activation_expr(kind: str, var: str) -> tuple[str, bool]:
     if kind == "relu":
         return f"({var} > 0.0f ? {var} : 0.0f)", False
     if kind == "sigmoid":
-        return f"(1.0f / (1.0f + expf(-({var}))))", True            # c.call.libm:expf
+        return f"(1.0f / (1.0f + expf(-({var}))))", True  # c.call.libm:expf
     if kind == "tanh":
-        return f"tanhf({var})", True                                # c.call.libm:tanhf
+        return f"tanhf({var})", True  # c.call.libm:tanhf
     if kind == "gelu":
         # the GPT/BERT tanh-approximation GELU, identical to emit_activation_kernel_c's gelu form.
-        return (f"(0.5f * ({var}) * (1.0f + tanhf(0.7978845608028654f * "
-                f"(({var}) + 0.044715f * ({var}) * ({var}) * ({var})))))"), True   # c.call.libm:tanhf
-    raise ValueError(f"{kind!r} is not an inline-fusible activation (softmax is a row reduction; relu/"
-                     f"sigmoid/tanh/gelu fuse)")
+        return (
+            f"(0.5f * ({var}) * (1.0f + tanhf(0.7978845608028654f * "
+            f"(({var}) + 0.044715f * ({var}) * ({var}) * ({var})))))"
+        ), True  # c.call.libm:tanhf
+    raise ValueError(
+        f"{kind!r} is not an inline-fusible activation (softmax is a row reduction; relu/"
+        f"sigmoid/tanh/gelu fuse)"
+    )
 
 
-def emit_matmul_activation_c(M: int, N: int, K: int, kind: str = "relu",
-                             fn_name: str = "bcir_matmul_act") -> str:
+def emit_matmul_activation_c(
+    M: int, N: int, K: int, kind: str = "relu", fn_name: str = "bcir_matmul_act"
+) -> str:
     """G2: a FUSED matmul -> activation epilogue kernel -- ``C[i,j] = act( (A@B)[i,j] )`` with the activation
     applied INLINE as each output element is produced and NO intermediate buffer materialized (the whole
     point of the fusion: the un-activated product never round-trips to memory). This is what the tropical
@@ -1804,9 +1872,12 @@ def emit_matmul_activation_c(M: int, N: int, K: int, kind: str = "relu",
         raise ValueError(f"matmul+act dims must be >= 1; got M={M} N={N} K={K}")
     expr, needs_math = _inline_activation_expr(kind, "s")
     includes = "#include <stddef.h>\n" + ("#include <math.h>\n" if needs_math else "")
-    note = (f"relu: EXACT inline max(0,s), no libm" if kind == "relu"
-            else f"{kind}: inline via the c.call.libm: edge (the same trusted call the standalone kernel "
-                 f"uses); fused == unfused reference to float round-off")
+    note = (
+        "relu: EXACT inline max(0,s), no libm"
+        if kind == "relu"
+        else f"{kind}: inline via the c.call.libm: edge (the same trusted call the standalone kernel "
+        f"uses); fused == unfused reference to float round-off"
+    )
     return (
         f"/* BCIR -> FUSED gem.matmul + gem.activation({kind}) epilogue (optimizer's priced choice; "
         f"kbcir.fusion). row-major C[{M}x{N}] = act(A[{M}x{K}] @ B[{K}x{N}]); the activation is applied "
@@ -1823,9 +1894,13 @@ def emit_matmul_activation_c(M: int, N: int, K: int, kind: str = "relu",
     )
 
 
-def emit_qfixed_selfcheck_c(module: Module, result: RealizationResult,
-                            fn_name: str = "bcir_qfixed", lane_bits: int = 16,
-                            frac_bits: int = 8) -> str:
+def emit_qfixed_selfcheck_c(
+    module: Module,
+    result: RealizationResult,
+    fn_name: str = "bcir_qfixed",
+    lane_bits: int = 16,
+    frac_bits: int = 8,
+) -> str:
     """Wrap the Q-fixed kernel with a self-checking `main`: it computes the reference
     in a 64-bit accumulator and asserts the kernel matches at the selected count and a
     tail-exercising size. In-range inputs keep the Q-fixed result within `lane_bits`,
@@ -1835,8 +1910,11 @@ def emit_qfixed_selfcheck_c(module: Module, result: RealizationResult,
     is_mul = claim.opcode == Opcode.MUL
     op = C_OP[claim.opcode]
     kernel = emit_qfixed_kernel_c(module, result, fn_name, lane_bits, frac_bits)
-    ref = (f"((int64_t)A[i] * (int64_t)B[i]) >> {frac_bits}" if is_mul
-           else f"(int64_t)A[i] {op} (int64_t)B[i]")
+    ref = (
+        f"((int64_t)A[i] * (int64_t)B[i]) >> {frac_bits}"
+        if is_mul
+        else f"(int64_t)A[i] {op} (int64_t)B[i]"
+    )
     # Inputs use ~half the lane so the product>>frac and the sum stay within lane_bits.
     half = lane_bits // 2
     return (
@@ -1874,10 +1952,15 @@ int main(void) {{
     )
 
 
-def compile_and_run_qfixed_c(module: Module, result: RealizationResult,
-                             fn_name: str = "bcir_qfixed", lane_bits: int = 16,
-                             frac_bits: int = 8, std: str = "c23",
-                             workdir: str | None = None) -> tuple[bool, str]:
+def compile_and_run_qfixed_c(
+    module: Module,
+    result: RealizationResult,
+    fn_name: str = "bcir_qfixed",
+    lane_bits: int = 16,
+    frac_bits: int = 8,
+    std: str = "c23",
+    workdir: str | None = None,
+) -> tuple[bool, str]:
     """Emit the Q-fixed self-check, compile under `-std=<std>` (c23 exercises the
     `_BitInt(N)` lanes; c11 exercises the portable fallback), run, and confirm it
     printed OK. Returns (ok, combined_output)."""
@@ -1891,8 +1974,11 @@ def compile_and_run_qfixed_c(module: Module, result: RealizationResult,
         exe = os.path.join(workdir, "qprog")
         with open(src, "w") as f:
             f.write(emit_qfixed_selfcheck_c(module, result, fn_name, lane_bits, frac_bits))
-        build = subprocess.run([cc, f"-std={std}", "-O2", "-Wall", "-Wextra", src, "-o", exe],
-                               capture_output=True, text=True)
+        build = subprocess.run(
+            [cc, f"-std={std}", "-O2", "-Wall", "-Wextra", src, "-o", exe],
+            capture_output=True,
+            text=True,
+        )
         if build.returncode != 0:
             return False, "Q-fixed build failed:\n" + build.stdout + build.stderr
         run = subprocess.run([exe], capture_output=True, text=True)
@@ -1901,11 +1987,13 @@ def compile_and_run_qfixed_c(module: Module, result: RealizationResult,
     finally:
         if created:
             import shutil
+
             shutil.rmtree(workdir, ignore_errors=True)
 
 
-def emit_gather_kernel_c(module: Module, result: RealizationResult,
-                         fn_name: str = "bcir_gather", elem: str = "f32") -> str:
+def emit_gather_kernel_c(
+    module: Module, result: RealizationResult, fn_name: str = "bcir_gather", elem: str = "f32"
+) -> str:
     """Emit the **gather** realization the cost model AVOIDS: an indexed read
     `C[i] = A[idx[i]] op B[i]` (an extra `const long *restrict idx`). This is the
     form a gather/scatter-unaware lowering would use; it pays `gather_penalty`
@@ -1949,10 +2037,11 @@ def find_reduce(module: Module, result: RealizationResult) -> tuple:
 
 # --- CIM/PIM-aware spatial partitioning (optimize_spatial) ------------------------
 
+
 @dataclass(frozen=True)
 class SpatialBinding:
     claim_id: int
-    target: str                # "pim" | "core"
+    target: str  # "pim" | "core"
     transport_bytes_saved: int  # operand bytes that stay in memory (host transport skipped)
 
 
@@ -1992,7 +2081,8 @@ def optimize_spatial(module: Module, result: RealizationResult, h) -> SpatialPla
     transport-avoided figure. On a non-PIM target every claim stays on the core (a
     clean no-op). Next-phase work (a real PIM target + emitter) is tracked in
     docs/kernel/HARDWARE_VALIDATION.md."""
-    from ..gem.cim import cim_decision    # lazy: keep gem.cim off the simple emit path
+    from ..gem.cim import cim_decision  # lazy: keep gem.cim off the simple emit path
+
     pim = is_pim_target(h)
     by_claim = result.by_claim()
     bindings: list[SpatialBinding] = []
@@ -2005,13 +2095,18 @@ def optimize_spatial(module: Module, result: RealizationResult, h) -> SpatialPla
                 res = module.resource(claim.rd[0])
                 eb = res.elem_bytes if res else 4
                 if cim_decision(claim.op, claim.count, eb, h).offload:
-                    target, saved = "pim", claim.count * eb   # read stream stays in memory
+                    target, saved = "pim", claim.count * eb  # read stream stays in memory
             bindings.append(SpatialBinding(claim.id, target, saved))
     return SpatialPlan(bindings=tuple(bindings), pim_capable=pim)
 
 
-def emit_reduce_c(module: Module, result: RealizationResult, fn_name: str = "bcir_reduce",
-                  elem: str = "i32", gather: bool | None = None) -> str:
+def emit_reduce_c(
+    module: Module,
+    result: RealizationResult,
+    fn_name: str = "bcir_reduce",
+    elem: str = "i32",
+    gather: bool | None = None,
+) -> str:
     """Lower a `reduce.gather` claim to C: `acc = sum_i T[i]` (blocked) or
     `acc = sum_i T[idx[i]]` (gather), per the K_BCIR-selected realization. Integer
     by default -- integer addition is associative, so the blocked (sequential) and
@@ -2050,7 +2145,7 @@ def emit_compensated_reduce_c(fn_name: str = "bcir_reduce_comp") -> str:
     Determinism note: requires arithmetic (floor) right shift on signed ints -- the C23
     semantics, and universal on real targets -- so `full >> 8` matches the oracle's `>>`."""
     return (
-        f"/* BCIR -> compensated Q8 reduction (precision=\"compensated\"; residual-carry MAC). "
+        f'/* BCIR -> compensated Q8 reduction (precision="compensated"; residual-carry MAC). '
         f"acc*256 + resid == sum(T[i]*weight) so far -> bit-identical to the int64-exact "
         f"reduction (vs naive per-term truncation, which drifts up to n ULP). */\n"
         "#include <stddef.h>\n#include <stdint.h>\n"
@@ -2114,8 +2209,9 @@ int main(void) {{
     )
 
 
-def compile_and_run_compensated_c(fn_name: str = "bcir_reduce_comp", n: int = 1000,
-                                  std: str = "c23", workdir: str | None = None) -> tuple[bool, str]:
+def compile_and_run_compensated_c(
+    fn_name: str = "bcir_reduce_comp", n: int = 1000, std: str = "c23", workdir: str | None = None
+) -> tuple[bool, str]:
     """Emit the compensated-reduction self-check, compile under `-std=<std>`, run, and
     confirm it printed OK (compensated == exact, naive drifts within the n-ULP bound)."""
     cc = _which("clang") or _which("cc") or _which("gcc")
@@ -2128,8 +2224,11 @@ def compile_and_run_compensated_c(fn_name: str = "bcir_reduce_comp", n: int = 10
         exe = os.path.join(workdir, "cprog")
         with open(src, "w") as f:
             f.write(emit_compensated_selfcheck_c(fn_name, n))
-        build = subprocess.run([cc, f"-std={std}", "-O2", "-Wall", "-Wextra", src, "-o", exe],
-                               capture_output=True, text=True)
+        build = subprocess.run(
+            [cc, f"-std={std}", "-O2", "-Wall", "-Wextra", src, "-o", exe],
+            capture_output=True,
+            text=True,
+        )
         if build.returncode != 0:
             return False, "compensated build failed:\n" + build.stdout + build.stderr
         run = subprocess.run([exe], capture_output=True, text=True)
@@ -2138,6 +2237,7 @@ def compile_and_run_compensated_c(fn_name: str = "bcir_reduce_comp", n: int = 10
     finally:
         if created:
             import shutil
+
             shutil.rmtree(workdir, ignore_errors=True)
 
 
@@ -2154,8 +2254,13 @@ def find_strided(module: Module, result: RealizationResult) -> tuple:
     raise NotImplementedError("no strided claim selected in this plan")
 
 
-def emit_strided_c(module: Module, result: RealizationResult, fn_name: str = "bcir_strided",
-                   elem: str = "f32", gather: bool | None = None) -> str:
+def emit_strided_c(
+    module: Module,
+    result: RealizationResult,
+    fn_name: str = "bcir_strided",
+    elem: str = "f32",
+    gather: bool | None = None,
+) -> str:
     """Lower a STRIDED claim `Y[i] = X[i*k]` to C: the **direct strided** access
     (the cost model's pick) or the **gather** alternative `Y[i] = X[idx[i]]` (a
     gather-unaware lowering, idx[i] = i*k -- the same elements through indexed
@@ -2206,8 +2311,13 @@ def emit_header_c(fn_name: str = "bcir_kernel", elem: str = "f32") -> str:
     )
 
 
-def emit_selfcheck_c(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel",
-                     elem: str = "f32", hw_width: int | None = None) -> str:
+def emit_selfcheck_c(
+    module: Module,
+    result: RealizationResult,
+    fn_name: str = "bcir_kernel",
+    elem: str = "f32",
+    hw_width: int | None = None,
+) -> str:
     """Wrap the kernel with a self-checking C23 `main` (the AOT path). Checks the
     selected count and a non-divisible size (count + 7) to exercise the tail.
     `hw_width` is forwarded so the self-check validates the exact deployed kernel
@@ -2252,9 +2362,14 @@ int main(void) {{
     )
 
 
-def compile_and_run_c(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel",
-                      elem: str = "f32", workdir: str | None = None,
-                      hw_width: int | None = None) -> tuple[bool, str]:
+def compile_and_run_c(
+    module: Module,
+    result: RealizationResult,
+    fn_name: str = "bcir_kernel",
+    elem: str = "f32",
+    workdir: str | None = None,
+    hw_width: int | None = None,
+) -> tuple[bool, str]:
     """Emit the self-checking C, compile it (C23: clang -std=c23, else gcc -std=c2x),
     run, and check it printed OK. Returns (ok, combined_output). `hw_width` selects
     the width-aware form so the self-check validates the deployed kernel."""
@@ -2271,8 +2386,9 @@ def compile_and_run_c(module: Module, result: RealizationResult, fn_name: str = 
             f.write(emit_selfcheck_c(module, result, fn_name, elem, hw_width=hw_width))
         build = None
         for std in ("-std=c23", "-std=c2x"):
-            build = subprocess.run([cc, std, "-O2", "-Wall", "-Wextra", src, "-o", exe],
-                                   capture_output=True, text=True)
+            build = subprocess.run(
+                [cc, std, "-O2", "-Wall", "-Wextra", src, "-o", exe], capture_output=True, text=True
+            )
             if build.returncode == 0:
                 break
         if build is None or build.returncode != 0:
@@ -2283,9 +2399,11 @@ def compile_and_run_c(module: Module, result: RealizationResult, fn_name: str = 
     finally:
         if created:
             import shutil
+
             shutil.rmtree(workdir, ignore_errors=True)
 
 
 def _which(name: str) -> str | None:
     from shutil import which
+
     return which(name)

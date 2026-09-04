@@ -30,10 +30,22 @@ tier), exactly like the autodiff-kernel / inference tests."""
 import math
 import shutil
 
-from bcir.kbcir.autodiff import (Tape, evaluate, finite_difference_grad, grad,
-                                  gradients_match, max_grad_error)
-from bcir.kbcir.losses import (binary_cross_entropy_with_logits, hinge, mse, mse_grad,
-                               mse_value, softmax_cross_entropy)
+from bcir.kbcir.autodiff import (
+    Tape,
+    evaluate,
+    finite_difference_grad,
+    grad,
+    gradients_match,
+    max_grad_error,
+)
+from bcir.kbcir.losses import (
+    binary_cross_entropy_with_logits,
+    hinge,
+    mse,
+    mse_grad,
+    mse_value,
+    softmax_cross_entropy,
+)
 from bcir.lower.autodiff_kernel import compile_and_run_grad_c, emit_autodiff_kernel_c
 
 
@@ -42,6 +54,7 @@ def _cc():
 
 
 # === Path 1: MSE is closed-set -- autodiff.grad on the MSE-rooted Tape == finite difference ===========
+
 
 def test_mse_into_tape_grad_matches_finite_difference_on_a_var_model():
     # the simplest model: predictions ARE the parameters (a few vars). MSE built into the Tape; the EXISTING
@@ -112,10 +125,11 @@ def test_mse_rejects_bad_lengths():
 
 # === MSE lowers to C: emitted forward + grads match the oracle (self-skips with no compiler) ===========
 
+
 def test_mse_into_tape_lowers_to_c_and_matches_the_oracle():
     cc = _cc()
     if not cc:
-        return                                              # quick tier hides the toolchain -> self-skip
+        return  # quick tier hides the toolchain -> self-skip
     # a linear model + MSE, all closed-set, so emit_autodiff_kernel_c lowers it with NO new machinery.
     t = Tape()
     w0, w1, b = t.var("w0"), t.var("w1"), t.var("b")
@@ -131,8 +145,12 @@ def test_mse_into_tape_lowers_to_c_and_matches_the_oracle():
     fd = finite_difference_grad(t, loss, env)
     assert abs(value - oref.value) < 1e-4, (value, oref.value, out)
     cgrad = {name: grads[i] for i, name in enumerate(params)}
-    assert max_grad_error(cgrad, oref.grads) < 1e-4, (cgrad, oref.grads, out)   # C == oracle reverse-mode
-    assert max_grad_error(cgrad, fd) < 1e-4, (cgrad, fd, out)                   # C == finite difference
+    assert max_grad_error(cgrad, oref.grads) < 1e-4, (
+        cgrad,
+        oref.grads,
+        out,
+    )  # C == oracle reverse-mode
+    assert max_grad_error(cgrad, fd) < 1e-4, (cgrad, fd, out)  # C == finite difference
     # the emit is the closed-set kernel: no libm, the closed primitive set only.
     src = emit_autodiff_kernel_c(t, loss, params)
     assert "math.h" not in src and "neg/add/sub/mul/div/dot/select" in src
@@ -140,20 +158,23 @@ def test_mse_into_tape_lowers_to_c_and_matches_the_oracle():
 
 # === Path 2a: softmax cross-entropy -- transcendental value, closed-form grad seed ====================
 
+
 def _fd_grad_of_loss(loss_fn, logits, eps=1e-6):
     """Central finite-difference of a scalar loss w.r.t. each logit (the hard gate for the closed-form
     grad_logits). ``loss_fn`` maps a logit vector -> the scalar loss value."""
     out = []
     for i in range(len(logits)):
-        plus = list(logits); plus[i] += eps
-        minus = list(logits); minus[i] -= eps
+        plus = list(logits)
+        plus[i] += eps
+        minus = list(logits)
+        minus[i] -= eps
         out.append((loss_fn(plus) - loss_fn(minus)) / (2 * eps))
     return out
 
 
 def test_softmax_ce_value_matches_neg_log_softmax_of_the_true_class():
     logits = [2.0, 0.5, -1.0, 1.5]
-    true = 2                                                # the true class index
+    true = 2  # the true class index
     onehot = [1.0 if k == true else 0.0 for k in range(len(logits))]
     loss, _ = softmax_cross_entropy(logits, onehot)
     # independent stdlib recompute: -log(softmax[true]), stable max-subtraction.
@@ -167,7 +188,7 @@ def test_softmax_ce_uniform_logits_anchor_is_log_K():
     # the closed-form anchor: with uniform logits every class is equally likely (p = 1/K), so the loss for
     # any true class is -log(1/K) = log(K).
     for K in (2, 3, 5):
-        logits = [0.7] * K                                  # uniform -> equal probabilities
+        logits = [0.7] * K  # uniform -> equal probabilities
         onehot = [1.0] + [0.0] * (K - 1)
         loss, grad_logits = softmax_cross_entropy(logits, onehot)
         assert abs(loss - math.log(K)) < 1e-12, (K, loss, math.log(K))
@@ -200,13 +221,15 @@ def test_softmax_ce_rejects_bad_lengths():
 
 # === Path 2b: BCE-with-logits -- stable transcendental value, sigmoid-target grad seed ================
 
+
 def test_bce_with_logits_value_matches_an_independent_stable_recompute():
     logits = [0.5, -1.2, 2.0, -0.3]
     target = [1.0, 0.0, 1.0, 0.0]
     loss, _ = binary_cross_entropy_with_logits(logits, target)
     # independent stable recompute (same algebra, recomputed here): mean of max(z,0) - z*y + log1p(exp(-|z|)).
-    expect = sum(max(z, 0.0) - z * y + math.log1p(math.exp(-abs(z)))
-                 for z, y in zip(logits, target)) / len(logits)
+    expect = sum(
+        max(z, 0.0) - z * y + math.log1p(math.exp(-abs(z))) for z, y in zip(logits, target)
+    ) / len(logits)
     assert abs(loss - expect) < 1e-12, (loss, expect)
 
 
@@ -228,7 +251,7 @@ def test_bce_stable_form_does_not_overflow_on_large_logits():
     # the whole point of the stable form: large |z| where the naive sigmoid-then-log would overflow/underflow
     # (log(0)). The stable form returns a finite, correct value.
     logits = [100.0, -100.0, 50.0, -50.0]
-    target = [1.0, 0.0, 0.0, 1.0]                           # two correct (loss ~0), two wrong (loss ~|z|)
+    target = [1.0, 0.0, 0.0, 1.0]  # two correct (loss ~0), two wrong (loss ~|z|)
     loss, grad_logits = binary_cross_entropy_with_logits(logits, target)
     assert math.isfinite(loss) and loss >= 0.0, loss
     assert all(math.isfinite(g) for g in grad_logits), grad_logits
@@ -259,9 +282,10 @@ def test_bce_rejects_bad_lengths():
 
 # === Hinge (the optional SVM-style loss): value + subgradient match a finite-difference a.e. ===========
 
+
 def test_hinge_value_and_subgradient():
     scores = [0.5, 2.0, -0.3, 1.5]
-    target = [1.0, 1.0, -1.0, -1.0]                         # labels in {-1, +1}
+    target = [1.0, 1.0, -1.0, -1.0]  # labels in {-1, +1}
     loss, g = hinge(scores, target)
     n = len(scores)
     margins = [1.0 - y * s for s, y in zip(scores, target)]
@@ -274,11 +298,12 @@ def test_hinge_value_and_subgradient():
 
     fd = _fd_grad_of_loss(loss_only, scores, eps=1e-6)
     for i, m in enumerate(margins):
-        if abs(m) > 1e-3:                                   # skip the measure-zero kink (a.e. convention)
+        if abs(m) > 1e-3:  # skip the measure-zero kink (a.e. convention)
             assert abs(g[i] - fd[i]) < 1e-5, (i, g[i], fd[i], m)
 
 
 # === COMPOSITION: the headline -- logistic regression, grad_logits seeds the model backward ============
+
 
 def _logreg_full_loss(w, b, x, y):
     """The full scalar logistic-regression loss as a plain Python function of (w, b): logits = dot(w, x) + b
@@ -309,25 +334,34 @@ def test_logistic_regression_composition_grad_via_seed_matches_finite_difference
     # --- forward the model to the logit value, then the closed-form grad seed from BCE ---
     z = evaluate(t, logits_node, env)
     loss_val, grad_logits = binary_cross_entropy_with_logits([z], [y])
-    seed = grad_logits[0]                                   # dL/dz = sigmoid(z) - y, the closed-set seed
+    seed = grad_logits[0]  # dL/dz = sigmoid(z) - y, the closed-set seed
 
     # --- SEED the model's backward: dL/dparam = seed * d(logits)/d(param). The model logits IS a scalar
     #     output, so we scale the model's own grad (seed = 1 case) by the seed. Equivalently, differentiate
     #     (seed * logits) -- but seed is a constant, so just multiply the model gradient by it. ---
-    model_grad = grad(t, logits_node, env).grads            # d(logits)/d(param), seed 1.0
+    model_grad = grad(t, logits_node, env).grads  # d(logits)/d(param), seed 1.0
     seeded = {name: seed * gv for name, gv in model_grad.items()}
 
     # --- the gate: finite-difference the FULL loss(w, b) and compare to the seeded gradient ---
     eps = 1e-6
     fd = {}
     for i in range(len(x)):
-        wp = list(w_val); wp[i] += eps
-        wm = list(w_val); wm[i] -= eps
-        fd[f"w{i}"] = (_logreg_full_loss(wp, b_val, x, y) - _logreg_full_loss(wm, b_val, x, y)) / (2 * eps)
-    fd["b"] = (_logreg_full_loss(w_val, b_val + eps, x, y)
-               - _logreg_full_loss(w_val, b_val - eps, x, y)) / (2 * eps)
+        wp = list(w_val)
+        wp[i] += eps
+        wm = list(w_val)
+        wm[i] -= eps
+        fd[f"w{i}"] = (_logreg_full_loss(wp, b_val, x, y) - _logreg_full_loss(wm, b_val, x, y)) / (
+            2 * eps
+        )
+    fd["b"] = (
+        _logreg_full_loss(w_val, b_val + eps, x, y) - _logreg_full_loss(w_val, b_val - eps, x, y)
+    ) / (2 * eps)
 
-    assert gradients_match(seeded, fd, rtol=1e-4, atol=1e-6), (seeded, fd, max_grad_error(seeded, fd))
+    assert gradients_match(seeded, fd, rtol=1e-4, atol=1e-6), (
+        seeded,
+        fd,
+        max_grad_error(seeded, fd),
+    )
     # and the closed forms directly: dL/dw_i = (sigmoid(z) - y) * x_i, dL/db = sigmoid(z) - y.
     s = 1.0 / (1.0 + math.exp(-z))
     for i in range(len(x)):
@@ -342,7 +376,7 @@ def test_softmax_ce_composition_seed_matches_finite_difference_on_a_linear_head(
     x = [1.0, -2.0]
     true = 1
     K = 3
-    W = [[0.1, 0.2], [-0.3, 0.4], [0.5, -0.1]]              # K rows, each len(x)
+    W = [[0.1, 0.2], [-0.3, 0.4], [0.5, -0.1]]  # K rows, each len(x)
     onehot = [1.0 if k == true else 0.0 for k in range(K)]
 
     def logits_of(Wmat):
@@ -359,14 +393,17 @@ def test_softmax_ce_composition_seed_matches_finite_difference_on_a_linear_head(
     eps = 1e-6
     for k in range(K):
         for j in range(len(x)):
-            Wp = [row[:] for row in W]; Wp[k][j] += eps
-            Wm = [row[:] for row in W]; Wm[k][j] -= eps
+            Wp = [row[:] for row in W]
+            Wp[k][j] += eps
+            Wm = [row[:] for row in W]
+            Wm[k][j] -= eps
             fd = (full_loss(Wp) - full_loss(Wm)) / (2 * eps)
             assert abs(seeded[(k, j)] - fd) < 1e-5, (k, j, seeded[(k, j)], fd)
     assert math.isfinite(loss_val)
 
 
 # === The two-truth invariant: the loss module is cost/optimization-side, never a verdict ===============
+
 
 def test_losses_touch_no_verifier_and_emit_no_diagnostic():
     # the loss module must not import or call the verifier rail (a loss is a cost-side quantity, never an
@@ -375,6 +412,7 @@ def test_losses_touch_no_verifier_and_emit_no_diagnostic():
     # the quarantine in prose; we check the live code, not the prose, so strip the docstring first.)
     import ast
     import bcir.kbcir.losses as losses_mod
+
     # (1) no verifier / diagnostic / graded name is bound in the live module namespace.
     bound = set(vars(losses_mod))
     assert not (bound & {"verify_quarantine", "Diagnostic", "Graded", "decide"}), sorted(bound)

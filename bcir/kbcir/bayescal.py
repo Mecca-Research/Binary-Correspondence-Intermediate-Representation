@@ -42,6 +42,7 @@ from .weights import PERF, Policy
 
 # --- conjugate-Gaussian (VI-exact) posterior over a scalar ratio -----------------
 
+
 @dataclass(frozen=True)
 class Posterior:
     """A Gaussian posterior over one ratio (Q8 units). For a Gaussian likelihood
@@ -55,8 +56,9 @@ class Posterior:
         return math.sqrt(max(0.0, self.var))
 
 
-def gaussian_update(obs: list[float], prior_mean: float, prior_var: float = 1e9,
-                    obs_var: float | None = None) -> Posterior:
+def gaussian_update(
+    obs: list[float], prior_mean: float, prior_var: float = 1e9, obs_var: float | None = None
+) -> Posterior:
     """Normal-Normal conjugate update over a batch (the exact Gaussian VI).
 
     A weak prior (`prior_var` large) makes the posterior mean the sample mean.
@@ -79,6 +81,7 @@ def gaussian_update(obs: list[float], prior_mean: float, prior_var: float = 1e9,
 
 # --- split conformal prediction (distribution-free +/- delta) --------------------
 
+
 def conformal_delta(residuals: list[float], coverage: float = 0.9) -> float:
     """The split-conformal +/- half-width with finite-sample coverage >= `coverage`
     (Vovk): the ceil((n+1)(1-alpha))-th smallest absolute residual. Distribution
@@ -95,6 +98,7 @@ def conformal_delta(residuals: list[float], coverage: float = 0.9) -> float:
 
 # --- the frozen artifact: point table + certified conformal interval -------------
 
+
 @dataclass(frozen=True)
 class BayesianCalibratedProfile:
     """A frozen point table (posterior means, Q8) plus a certified conformal +/-
@@ -102,8 +106,8 @@ class BayesianCalibratedProfile:
     Duck-types `CalibratedProfile` for R13 (cal_gen / gather_penalty / ...)."""
 
     point: CalibratedProfile
-    coverage_milli: int        # conformal coverage x 1000 (e.g. 900 = 90%)
-    random_delta_q8: int       # +/- half-width on random_q8 (Q8 units), >= 0
+    coverage_milli: int  # conformal coverage x 1000 (e.g. 900 = 90%)
+    random_delta_q8: int  # +/- half-width on random_q8 (Q8 units), >= 0
 
     # -- delegate the point-table contract (so verify_provenance works unchanged) --
     @property
@@ -136,10 +140,15 @@ class BayesianCalibratedProfile:
         return (lo, hi)
 
     def to_json(self) -> str:
-        return json.dumps({"point": asdict(self.point),
-                           "coverage_milli": self.coverage_milli,
-                           "random_delta_q8": self.random_delta_q8},
-                          indent=2, sort_keys=True)
+        return json.dumps(
+            {
+                "point": asdict(self.point),
+                "coverage_milli": self.coverage_milli,
+                "random_delta_q8": self.random_delta_q8,
+            },
+            indent=2,
+            sort_keys=True,
+        )
 
     @staticmethod
     def from_json(text: str) -> "BayesianCalibratedProfile":
@@ -148,30 +157,44 @@ class BayesianCalibratedProfile:
             raise ValueError("Bayesian calibrated profile has unknown or missing fields")
         coverage = d["coverage_milli"]
         delta = d["random_delta_q8"]
-        if (isinstance(coverage, bool) or not isinstance(coverage, int) or
-                not 1 <= coverage <= 1000):
+        if isinstance(coverage, bool) or not isinstance(coverage, int) or not 1 <= coverage <= 1000:
             raise ValueError("coverage_milli must be an integer in [1, 1000]")
-        if (isinstance(delta, bool) or not isinstance(delta, int) or
-                not 0 <= delta <= (1 << 63) - 1):
+        if isinstance(delta, bool) or not isinstance(delta, int) or not 0 <= delta <= (1 << 63) - 1:
             raise ValueError("random_delta_q8 must be a non-negative i63")
         if not isinstance(d["point"], dict):
             raise ValueError("Bayesian calibrated profile point must be an object")
         return BayesianCalibratedProfile(
             point=CalibratedProfile.from_json(json.dumps(d["point"])),
-            coverage_milli=coverage, random_delta_q8=delta)
+            coverage_milli=coverage,
+            random_delta_q8=delta,
+        )
 
 
-def _freeze_point(name: str, cal_gen: int, samples: int, provenance: str,
-                  stream_q8: int, strided_q8: int, random_q8: int,
-                  compute_q8: int) -> CalibratedProfile:
-    return CalibratedProfile(name=name, cal_gen=max(1, cal_gen), samples=samples,
-                             provenance=provenance, stream_q8=stream_q8,
-                             strided_q8=strided_q8, random_q8=random_q8,
-                             compute_q8=compute_q8)
+def _freeze_point(
+    name: str,
+    cal_gen: int,
+    samples: int,
+    provenance: str,
+    stream_q8: int,
+    strided_q8: int,
+    random_q8: int,
+    compute_q8: int,
+) -> CalibratedProfile:
+    return CalibratedProfile(
+        name=name,
+        cal_gen=max(1, cal_gen),
+        samples=samples,
+        provenance=provenance,
+        stream_q8=stream_q8,
+        strided_q8=strided_q8,
+        random_q8=random_q8,
+        compute_q8=compute_q8,
+    )
 
 
-def bayes_calibrate(h: TargetProfile, raws: list[MicrobenchRaw],
-                    coverage: float = 0.9, cal_gen: int = 1) -> BayesianCalibratedProfile:
+def bayes_calibrate(
+    h: TargetProfile, raws: list[MicrobenchRaw], coverage: float = 0.9, cal_gen: int = 1
+) -> BayesianCalibratedProfile:
     """Conjugate-Gaussian posterior over each ratio + a split-conformal delta on
     the random ratio, frozen to a Q8 table. The Bayesian twin of
     `microbench.calibrate_from_raw` over *repeated* measurements."""
@@ -189,16 +212,22 @@ def bayes_calibrate(h: TargetProfile, raws: list[MicrobenchRaw],
     delta = round(conformal_delta(residuals, coverage))
 
     point = _freeze_point(
-        name=h.name, cal_gen=cal_gen, samples=len(raws),
+        name=h.name,
+        cal_gen=cal_gen,
+        samples=len(raws),
         provenance=f"bayes (conjugate VI + split conformal cov={coverage}) over {len(raws)} raws",
-        stream_q8=Q8, strided_q8=max(Q8, round(gaussian_update(strided, Q8).mean)),
-        random_q8=mean_random, compute_q8=max(Q8, round(gaussian_update(compute, Q8).mean)))
-    return BayesianCalibratedProfile(point=point,
-                                     coverage_milli=round(coverage * 1000),
-                                     random_delta_q8=delta)
+        stream_q8=Q8,
+        strided_q8=max(Q8, round(gaussian_update(strided, Q8).mean)),
+        random_q8=mean_random,
+        compute_q8=max(Q8, round(gaussian_update(compute, Q8).mean)),
+    )
+    return BayesianCalibratedProfile(
+        point=point, coverage_milli=round(coverage * 1000), random_delta_q8=delta
+    )
 
 
 # --- ABC: the GEM/optimize forward model as the simulator ------------------------
+
 
 @dataclass(frozen=True)
 class ABCPosterior:
@@ -213,8 +242,9 @@ class ABCPosterior:
     def gather_penalties(self) -> list[int]:
         return sorted(p.gather_penalty for p in self.accepted)
 
-    def to_bayesian(self, h: TargetProfile, coverage: float = 0.9,
-                    cal_gen: int = 1) -> BayesianCalibratedProfile:
+    def to_bayesian(
+        self, h: TargetProfile, coverage: float = 0.9, cal_gen: int = 1
+    ) -> BayesianCalibratedProfile:
         """Fold the accepted ABC sample into a frozen Bayesian table: posterior
         mean = accepted-sample mean random ratio, delta = split-conformal over it."""
         if not self.accepted:
@@ -224,23 +254,39 @@ class ABCPosterior:
         mean_random = max(Q8, round(post.mean))
         delta = round(conformal_delta([r - mean_random for r in random], coverage))
         a0 = self.accepted[0]
-        point = _freeze_point(h.name, cal_gen, len(self.accepted),
-                              f"abc (GEM-simulated, eps={self.epsilon}, "
-                              f"{len(self.accepted)}/{self.proposed} accepted)",
-                              Q8, a0.strided_q8, mean_random, a0.compute_q8)
+        point = _freeze_point(
+            h.name,
+            cal_gen,
+            len(self.accepted),
+            f"abc (GEM-simulated, eps={self.epsilon}, "
+            f"{len(self.accepted)}/{self.proposed} accepted)",
+            Q8,
+            a0.strided_q8,
+            mean_random,
+            a0.compute_q8,
+        )
         return BayesianCalibratedProfile(point, round(coverage * 1000), delta)
 
 
-def abc_calibrate(module, h: TargetProfile, theta, observed_score: int,
-                  proposals: list[CalibratedProfile], epsilon: int,
-                  judge: Policy = PERF) -> ABCPosterior:
+def abc_calibrate(
+    module,
+    h: TargetProfile,
+    theta,
+    observed_score: int,
+    proposals: list[CalibratedProfile],
+    epsilon: int,
+    judge: Policy = PERF,
+) -> ABCPosterior:
     """ABC with the optimizer as the simulator: accept a proposed cost table iff
     `optimize(module, table.apply(h), theta, judge).score` is within epsilon of
     the observed score. Likelihood-free inference grounded in the real scheduler."""
     from .realize import optimize
 
     accepted = tuple(
-        p for p in proposals
-        if abs(optimize(module, p.apply(h), theta, judge).score - observed_score) <= epsilon)
-    return ABCPosterior(accepted=accepted, proposed=len(proposals),
-                        epsilon=epsilon, observed=observed_score)
+        p
+        for p in proposals
+        if abs(optimize(module, p.apply(h), theta, judge).score - observed_score) <= epsilon
+    )
+    return ABCPosterior(
+        accepted=accepted, proposed=len(proposals), epsilon=epsilon, observed=observed_score
+    )

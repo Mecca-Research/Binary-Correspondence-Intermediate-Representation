@@ -90,6 +90,7 @@ from .autodiff_kernel import _fc, _which, emit_sgd_step_c  # noqa: F401  (re-exp
 
 # === reference update rules (pure Python, deterministic, side-effect-free -> new (params, state)) ========
 
+
 def sgd_step(params, grads, lr):
     """One plain-SGD step: ``p <- p - lr*g`` over the parameter vector. Re-exposed for parity with the
     existing C SGD (``emit_sgd_step_c``); ``beta=0`` momentum is the same rule. Returns the NEW params list
@@ -115,8 +116,9 @@ def momentum_step(params, grads, velocity, lr, beta=0.9):
     velocity = [float(v) for v in velocity]
     n = len(params)
     if not (len(grads) == len(velocity) == n):
-        raise ValueError(f"momentum_step: length mismatch params={n} grads={len(grads)} "
-                         f"velocity={len(velocity)}")
+        raise ValueError(
+            f"momentum_step: length mismatch params={n} grads={len(grads)} velocity={len(velocity)}"
+        )
     new_v = [beta * v + g for v, g in zip(velocity, grads)]
     new_p = [p - lr * v for p, v in zip(params, new_v)]
     return new_p, new_v
@@ -137,7 +139,9 @@ def rmsprop_step(params, grads, sq_avg, lr, beta=0.9, eps=1e-8):
     sq_avg = [float(s) for s in sq_avg]
     n = len(params)
     if not (len(grads) == len(sq_avg) == n):
-        raise ValueError(f"rmsprop_step: length mismatch params={n} grads={len(grads)} sq_avg={len(sq_avg)}")
+        raise ValueError(
+            f"rmsprop_step: length mismatch params={n} grads={len(grads)} sq_avg={len(sq_avg)}"
+        )
     new_s = [beta * s + (1.0 - beta) * g * g for s, g in zip(sq_avg, grads)]
     new_p = [p - lr * g / (math.sqrt(s) + eps) for p, g, s in zip(params, grads, new_s)]
     return new_p, new_s
@@ -165,10 +169,12 @@ def adam_step(params, grads, m, v, t, lr, beta1=0.9, beta2=0.999, eps=1e-8):
     v = [float(x) for x in v]
     n = len(params)
     if not (len(grads) == len(m) == len(v) == n):
-        raise ValueError(f"adam_step: length mismatch params={n} grads={len(grads)} m={len(m)} v={len(v)}")
+        raise ValueError(
+            f"adam_step: length mismatch params={n} grads={len(grads)} m={len(m)} v={len(v)}"
+        )
     t_new = int(t) + 1
-    bc1 = 1.0 - beta1 ** t_new          # bias-correction divisor for the 1st moment
-    bc2 = 1.0 - beta2 ** t_new          # bias-correction divisor for the 2nd moment
+    bc1 = 1.0 - beta1**t_new  # bias-correction divisor for the 1st moment
+    bc2 = 1.0 - beta2**t_new  # bias-correction divisor for the 2nd moment
     new_m = [beta1 * mi + (1.0 - beta1) * g for mi, g in zip(m, grads)]
     new_v = [beta2 * vi + (1.0 - beta2) * g * g for vi, g in zip(v, grads)]
     new_p = []
@@ -180,6 +186,7 @@ def adam_step(params, grads, m, v, t, lr, beta1=0.9, beta2=0.999, eps=1e-8):
 
 
 # === emitted C step functions (mirror emit_sgd_step_c; in-place update of params + state buffers) ========
+
 
 def emit_momentum_step_c(n_params: int, fn_name: str = "bcir_momentum_step") -> str:
     """Emit the heavy-ball MOMENTUM step as one self-contained C function
@@ -290,10 +297,10 @@ def emit_adam_step_c(n_params: int, fn_name: str = "bcir_adam_step") -> str:
 # + a caller can dispatch by name. ``libm`` -> link -lm; ``state`` -> the float state-buffer names (Adam also
 # carries the int step count ``t``, handled specially).
 _OPTIMIZERS = {
-    "sgd":      {"emit": None,                "state": (),           "libm": False},
+    "sgd": {"emit": None, "state": (), "libm": False},
     "momentum": {"emit": emit_momentum_step_c, "state": ("velocity",), "libm": False},
-    "rmsprop":  {"emit": emit_rmsprop_step_c,  "state": ("sq_avg",),   "libm": True},
-    "adam":     {"emit": emit_adam_step_c,     "state": ("m", "v"),    "libm": True},
+    "rmsprop": {"emit": emit_rmsprop_step_c, "state": ("sq_avg",), "libm": True},
+    "adam": {"emit": emit_adam_step_c, "state": ("m", "v"), "libm": True},
 }
 
 
@@ -320,12 +327,21 @@ def reference_optimizer_trajectory(opt: str, params, grad_source, lr, steps, **h
         elif opt == "momentum":
             cur, velocity = momentum_step(cur, g, velocity, lr, beta=hp.get("beta", 0.9))
         elif opt == "rmsprop":
-            cur, sq_avg = rmsprop_step(cur, g, sq_avg, lr,
-                                       beta=hp.get("beta", 0.9), eps=hp.get("eps", 1e-8))
+            cur, sq_avg = rmsprop_step(
+                cur, g, sq_avg, lr, beta=hp.get("beta", 0.9), eps=hp.get("eps", 1e-8)
+            )
         elif opt == "adam":
-            cur, m, v, t = adam_step(cur, g, m, v, t, lr,
-                                     beta1=hp.get("beta1", 0.9), beta2=hp.get("beta2", 0.999),
-                                     eps=hp.get("eps", 1e-8))
+            cur, m, v, t = adam_step(
+                cur,
+                g,
+                m,
+                v,
+                t,
+                lr,
+                beta1=hp.get("beta1", 0.9),
+                beta2=hp.get("beta2", 0.999),
+                eps=hp.get("eps", 1e-8),
+            )
         traj.append(list(cur))
     return traj
 
@@ -356,7 +372,9 @@ def compile_and_run_optimizer_c(opt: str, params, grads, lr, steps, *, workdir=N
     grads = [float(g) for g in grads]
     n = len(params)
     if len(grads) != n:
-        raise ValueError(f"compile_and_run_optimizer_c: params/grads length mismatch ({n} != {len(grads)})")
+        raise ValueError(
+            f"compile_and_run_optimizer_c: params/grads length mismatch ({n} != {len(grads)})"
+        )
 
     beta = hp.get("beta", 0.9)
     beta1 = hp.get("beta1", 0.9)
@@ -381,8 +399,10 @@ def compile_and_run_optimizer_c(opt: str, params, grads, lr, steps, *, workdir=N
     else:  # adam
         step_src = emit_adam_step_c(n, "bcir_adam_step")
         decls = f"  float m[{n}] = {{0}}; float v[{n}] = {{0}}; int t = 0;\n"
-        call = (f"    bcir_adam_step(params, grad, m, v, &t, lr, "
-                f"{_fc(beta1)}, {_fc(beta2)}, {_fc(eps)});\n")
+        call = (
+            f"    bcir_adam_step(params, grad, m, v, &t, lr, "
+            f"{_fc(beta1)}, {_fc(beta2)}, {_fc(eps)});\n"
+        )
 
     main = (
         f"\n#include <stdio.h>\nint main(void) {{\n"
@@ -390,12 +410,13 @@ def compile_and_run_optimizer_c(opt: str, params, grads, lr, steps, *, workdir=N
         f"  const float grad[{n}] = {{{ginit}}};\n"
         f"  float lr = {_fc(lr)};\n"
         f"{decls}"
-        f'  for (int i = 0; i < {n}; ++i) printf("P %.9g\\n", params[i]);\n'   # the initial point (step 0)
+        f'  for (int i = 0; i < {n}; ++i) printf("P %.9g\\n", params[i]);\n'  # the initial point (step 0)
         f"  for (int s = 0; s < {nsteps}; ++s) {{\n"
         f"{call}"
         f'    for (int i = 0; i < {n}; ++i) printf("P %.9g\\n", params[i]);\n'
         f"  }}\n"
-        f"  return 0;\n}}\n")
+        f"  return 0;\n}}\n"
+    )
 
     created = workdir is None
     workdir = workdir or tempfile.mkdtemp(prefix=f"bcir-opt-{opt}-")
@@ -407,9 +428,11 @@ def compile_and_run_optimizer_c(opt: str, params, grads, lr, steps, *, workdir=N
         link = ["-lm"] if spec["libm"] else []
         build = None
         for std in ("-std=c23", "-std=c2x", "-std=c11"):
-            build = subprocess.run(host_link_args(
-                [cc, std, "-O2", "-Wall", "-Wextra", src, "-o", exe, *link]),
-                                   capture_output=True, text=True)
+            build = subprocess.run(
+                host_link_args([cc, std, "-O2", "-Wall", "-Wextra", src, "-o", exe, *link]),
+                capture_output=True,
+                text=True,
+            )
             if build.returncode == 0:
                 break
         if build is None or build.returncode != 0:
@@ -419,9 +442,10 @@ def compile_and_run_optimizer_c(opt: str, params, grads, lr, steps, *, workdir=N
             return False, [], "opt run failed:\n" + run.stdout + run.stderr
         flat = [float(ln[2:]) for ln in run.stdout.split("\n") if ln.strip().startswith("P ")]
         # flat is (steps+1) blocks of n params each -> reshape into the trajectory.
-        traj = [flat[k * n:(k + 1) * n] for k in range(nsteps + 1)]
+        traj = [flat[k * n : (k + 1) * n] for k in range(nsteps + 1)]
         return True, traj, run.stdout + run.stderr
     finally:
         if created:
             import shutil
+
             shutil.rmtree(workdir, ignore_errors=True)

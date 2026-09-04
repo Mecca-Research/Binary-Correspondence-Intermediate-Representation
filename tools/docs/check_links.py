@@ -5,6 +5,7 @@ snippets that look like `foo[i](Type t)` are never mistaken for links.
     python tools/docs/check_links.py            # scan the whole tree
     python tools/docs/check_links.py path/...    # scan specific files/dirs
 """
+
 from __future__ import annotations
 
 import os
@@ -17,9 +18,9 @@ _LINK = re.compile(r"\[[^\]]*\]\(\s*<?([^)>\s]+)>?\s*(?:\"[^\"]*\")?\)")
 
 
 def _strip_code(text: str) -> str:
-    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)   # fenced blocks
+    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)  # fenced blocks
     text = re.sub(r"~~~.*?~~~", "", text, flags=re.DOTALL)
-    text = re.sub(r"`[^`\n]*`", "", text)                    # inline code
+    text = re.sub(r"`[^`\n]*`", "", text)  # inline code
     return text
 
 

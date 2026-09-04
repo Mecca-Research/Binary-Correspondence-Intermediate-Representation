@@ -9,6 +9,7 @@ It also pins the R24 rules the oracle enforces at *encode* time against the fixt
 MLIR rail rejects at *verify* time — the same rules, checked at two different moments,
 which is the whole point of having a law rail and an executable oracle.
 """
+
 from __future__ import annotations
 
 import os
@@ -25,7 +26,11 @@ _ATTRS_TD = os.path.join(_ROOT, "mlir", "include", "BCIR", "BCIRAttrs.td")
 _ASN1_TD = os.path.join(_ROOT, "mlir", "include", "BCIR", "BCIRAsn1Ops.td")
 _FIXTURE = os.path.join(_ROOT, "mlir", "test", "passes", "verify_asn1.mlir")
 _ARTIFACT_FIXTURE = os.path.join(
-    _ROOT, "mlir", "test", "passes", "artifact_bundle_asn1.mlir",
+    _ROOT,
+    "mlir",
+    "test",
+    "passes",
+    "artifact_bundle_asn1.mlir",
 )
 
 
@@ -33,8 +38,10 @@ def _cases(name: str) -> dict[str, int]:
     text = open(_ATTRS_TD, encoding="utf-8").read()
     match = re.search(rf"def BCIR_{name}\s*:\s*BCIR_Enum<.*?\]>;", text, re.S)
     assert match, f"BCIR_{name} not found in {_ATTRS_TD}"
-    return {m.group(3): int(m.group(2)) for m in
-            re.finditer(r'I32EnumAttrCase<"(\w+)",\s*(\d+),\s*"([\w.]+)">', match.group(0))}
+    return {
+        m.group(3): int(m.group(2))
+        for m in re.finditer(r'I32EnumAttrCase<"(\w+)",\s*(\d+),\s*"([\w.]+)">', match.group(0))
+    }
 
 
 def test_tag_class_values_match_x690_table_1_on_both_rails():
@@ -46,10 +53,12 @@ def test_tag_class_values_match_x690_table_1_on_both_rails():
     """
     expected = {"universal": 0, "application": 1, "context": 2, "private": 3}
     assert _cases("Asn1Class") == expected, "law rail drifted from X.690 Table 1"
-    assert {c.name.lower(): int(c) for c in TagClass} == expected, \
+    assert {c.name.lower(): int(c) for c in TagClass} == expected, (
         "oracle rail drifted from X.690 Table 1"
+    )
     # And the values really are the identifier octet's high bits, not a coincidence.
     from bcir.asn1.tags import Tag, encode_tag
+
     for name, value in expected.items():
         octet = encode_tag(Tag(TagClass[name.upper()], 1))[0]
         assert octet >> 6 == value, (name, hex(octet))
@@ -60,12 +69,19 @@ def test_tag_class_values_match_x690_table_1_on_both_rails():
 #: extension had to be ADDITIVE: every artifact, bytecode file and fixture written before
 #: the other families existed must still parse and still mean what it meant.
 _EXPECTED_RULES = {
-    "ber": 0, "cer": 1, "der": 2,
-    "basic_per_aligned": 3, "basic_per_unaligned": 4,
-    "canonical_per_aligned": 5, "canonical_per_unaligned": 6,
-    "oer": 7, "coer": 8,
-    "xer": 9, "cxer": 10,
-    "jer": 11, "bcir_canonical_jer": 12,
+    "ber": 0,
+    "cer": 1,
+    "der": 2,
+    "basic_per_aligned": 3,
+    "basic_per_unaligned": 4,
+    "canonical_per_aligned": 5,
+    "canonical_per_unaligned": 6,
+    "oer": 7,
+    "coer": 8,
+    "xer": 9,
+    "cxer": 10,
+    "jer": 11,
+    "bcir_canonical_jer": 12,
 }
 
 
@@ -125,13 +141,18 @@ def test_canonicality_agrees_between_the_law_rail_and_the_measured_candidates():
     from bcir.asn1.selection import ALL_CANDIDATES
 
     source = open(os.path.join(_ROOT, "mlir", "lib", "BCIRDialect.cpp"), encoding="utf-8")
-    body = re.search(r"bool isCanonicalAsn1Rules\(Asn1Rules rules\) \{.*?\n\}",
-                     source.read(), re.S)
+    body = re.search(r"bool isCanonicalAsn1Rules\(Asn1Rules rules\) \{.*?\n\}", source.read(), re.S)
     assert body, "isCanonicalAsn1Rules not found; R24's law rests on it"
     returns_true = body.group(0).split("return true;")[0]
     law_canonical = set(re.findall(r"case Asn1Rules::(\w+):", returns_true))
-    assert law_canonical == {"Der", "CanonicalPerAligned", "CanonicalPerUnaligned",
-                             "Coer", "Cxer", "BcirCanonicalJer"}, sorted(law_canonical)
+    assert law_canonical == {
+        "Der",
+        "CanonicalPerAligned",
+        "CanonicalPerUnaligned",
+        "Coer",
+        "Cxer",
+        "BcirCanonicalJer",
+    }, sorted(law_canonical)
     # CER is classified, and classified as NOT canonical.
     assert "Cer" not in law_canonical, "CER is not byte-stable (X.690 9.1)"
 
@@ -142,14 +163,22 @@ def test_canonicality_agrees_between_the_law_rail_and_the_measured_candidates():
     for candidate in ALL_CANDIDATES:
         assert (camel(candidate.rules) in law_canonical) == candidate.canonical, (
             f"{candidate.name}: the oracle says canonical={candidate.canonical}, "
-            f"the law rail disagrees")
+            f"the law rail disagrees"
+        )
 
 
 def test_law_rail_declares_every_op_the_oracle_needs():
     """The schema layer's constructors must all be nameable in the IR."""
     text = open(_ASN1_TD, encoding="utf-8").read()
-    for mnemonic in ("asn1.module", "asn1.type", "asn1.component", "asn1.encode",
-                     "asn1.decode", "asn1.projection", "asn1.transcode"):
+    for mnemonic in (
+        "asn1.module",
+        "asn1.type",
+        "asn1.component",
+        "asn1.encode",
+        "asn1.decode",
+        "asn1.projection",
+        "asn1.transcode",
+    ):
         assert f'BCIR_Op<"{mnemonic}"' in text, mnemonic
 
 
@@ -174,8 +203,13 @@ def test_the_generalized_r24_laws_are_pinned_by_the_fixture():
     ):
         assert needle in fixture, f"no fixture witnesses: {needle}"
     # And the positive direction: every canonical syntax must be emittable somewhere.
-    for spelling in ("canonical_per_unaligned", "canonical_per_aligned", "coer", "cxer",
-                     "bcir_canonical_jer"):
+    for spelling in (
+        "canonical_per_unaligned",
+        "canonical_per_aligned",
+        "coer",
+        "cxer",
+        "bcir_canonical_jer",
+    ):
         assert f"rules = #bcir.asn1_rules<{spelling}>" in fixture, spelling
 
 
@@ -188,7 +222,8 @@ def test_reserved_universal_tags_agree_with_the_law_fixture():
     assert not (assigned & RESERVED_UNIVERSAL), sorted(assigned & RESERVED_UNIVERSAL)
     fixture = open(_FIXTURE, encoding="utf-8").read()
     assert "reserved universal tag number 15" in fixture, (
-        "the law fixture must pin the reserved-tag case the oracle also refuses")
+        "the law fixture must pin the reserved-tag case the oracle also refuses"
+    )
 
 
 def test_streampack_module_oid_is_the_one_the_law_fixture_names():
@@ -196,7 +231,8 @@ def test_streampack_module_oid_is_the_one_the_law_fixture_names():
     fixture = open(_FIXTURE, encoding="utf-8").read()
     arcs = ", ".join(str(a) for a in STREAMPACK_MODULE_OID)
     assert f"array<i64: {arcs}>" in fixture, (
-        f"the law fixture must name the oracle's module OID {arcs}")
+        f"the law fixture must name the oracle's module OID {arcs}"
+    )
 
 
 def test_artifact_bundle_module_oid_and_additive_projection_match_both_rails():
@@ -219,8 +255,9 @@ def test_oracle_refuses_the_same_component_faults_r24_rejects():
 
     # A DEFAULT-valued component must be omitted (X.690 11.5) -- the oracle's half of
     # the rule the law states about the type.
-    seq = Sequence((Component("a", integer, tag=0),
-                    Component("b", integer, tag=1, default=42)), name="T")
+    seq = Sequence(
+        (Component("a", integer, tag=0), Component("b", integer, tag=1, default=42)), name="T"
+    )
     module = Module("T", STREAMPACK_MODULE_OID, {"T": seq})
     assert module.encode("T", {"a": 1, "b": 42}) == module.encode("T", {"a": 1})
     assert module.encode("T", {"a": 1, "b": 43}) != module.encode("T", {"a": 1})
@@ -246,7 +283,7 @@ def test_the_law_rail_carries_the_effective_constraint_bounds_the_oracle_compute
     which reports NO bounds (X.696 8.2.2 g) and therefore can never trip R24's emptiness
     check however odd its root looks.
     """
-    from bcir.asn1.constraints import (Extensible, Size, ValueRange, is_unsatisfiable)
+    from bcir.asn1.constraints import Extensible, Size, ValueRange, is_unsatisfiable
 
     text = open(_ASN1_TD, encoding="utf-8").read()
     for attribute in ("constraint_low", "constraint_high", "size_low", "size_high"):
@@ -263,7 +300,8 @@ def test_the_law_rail_carries_the_effective_constraint_bounds_the_oracle_compute
     assert not is_unsatisfiable(Extensible(ValueRange(10, 1)))
     assert "@extensible_ok" in fixture, (
         "the law fixture must pin the extensible case as a POSITIVE, since X.696 8.2.2 g "
-        "makes it carry no effective bounds at all")
+        "makes it carry no effective bounds at all"
+    )
 
 
 def test_law_fixture_covers_every_r24_diagnostic_the_pass_can_emit():
@@ -273,8 +311,9 @@ def test_law_fixture_covers_every_r24_diagnostic_the_pass_can_emit():
     diagnostic the pass can emit with the fixture that provokes it, so adding a rule
     without a fixture fails here rather than shipping unexercised.
     """
-    pass_src = open(os.path.join(_ROOT, "mlir", "lib", "passes",
-                                 "BCIRVerifyPass.cpp"), encoding="utf-8").read()
+    pass_src = open(
+        os.path.join(_ROOT, "mlir", "lib", "passes", "BCIRVerifyPass.cpp"), encoding="utf-8"
+    ).read()
     fixture = open(_FIXTURE, encoding="utf-8").read()
     # The distinctive fragment of every R24 diagnostic in the pass.
     fragments = [

@@ -33,11 +33,22 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 
-from .jer import (Array, Base64, JerRules, Name, ObjectAs, Text, Unwrapped,
-                  _bitstring_size, _flatten, _json_kinds, _member_name, _Opts)
+from .jer import (
+    Array,
+    Base64,
+    JerRules,
+    Name,
+    ObjectAs,
+    Text,
+    Unwrapped,
+    _bitstring_size,
+    _flatten,
+    _json_kinds,
+    _member_name,
+    _Opts,
+)
 from .jer_bounded import JerErrorCode, JerLimits, _fail, decode_bounded
-from .schema import (Asn1Type, Choice, OpenType, Primitive, Sequence, SequenceOf, Set,
-                     SetOf)
+from .schema import Asn1Type, Choice, OpenType, Primitive, Sequence, SequenceOf, Set, SetOf
 from .tags import Asn1Error, Universal
 
 #: §5.1's "deterministic schema-plan version and compiler identity". Both are serialized,
@@ -151,7 +162,8 @@ def _serialize_node(node: PlanNode, path: str, out: list[str]) -> None:
         f"depth={node.max_depth} octets={'?' if node.bounded_octets is None else node.bounded_octets} "
         f"dup={node.duplicate_policy} ext={'1' if node.extensible else '0'} "
         f"instr={'|'.join(node.instructions)} constraint={node.constraint or '-'} "
-        f"enum={'|'.join(node.enumeration) or '-'}")
+        f"enum={'|'.join(node.enumeration) or '-'}"
+    )
     for name, index in node.dispatch:
         out.append(f"dispatch {here} {name} {index}")
     for member in node.members:
@@ -159,7 +171,8 @@ def _serialize_node(node: PlanNode, path: str, out: list[str]) -> None:
             f"member {here} {member.index} name={member.name} id={member.identifier} "
             f"req={'1' if member.required else '0'} "
             f"def={'1' if member.has_default else '0'} "
-            f"ext={'1' if member.extension else '0'}")
+            f"ext={'1' if member.extension else '0'}"
+        )
         _serialize_node(member.node, f"{here}/{member.name}", out)
     if node.element is not None:
         _serialize_node(node.element, f"{here}[]", out)
@@ -168,10 +181,14 @@ def _serialize_node(node: PlanNode, path: str, out: list[str]) -> None:
 # --- compilation --------------------------------------------------------------------------
 
 _PRIMITIVE_KIND = {
-    Universal.BOOLEAN: "boolean", Universal.INTEGER: "integer",
-    Universal.ENUMERATED: "enumerated", Universal.REAL: "real",
-    Universal.NULL: "null", Universal.BIT_STRING: "bitstring",
-    Universal.OCTET_STRING: "octetstring", Universal.OBJECT_IDENTIFIER: "oid",
+    Universal.BOOLEAN: "boolean",
+    Universal.INTEGER: "integer",
+    Universal.ENUMERATED: "enumerated",
+    Universal.REAL: "real",
+    Universal.NULL: "null",
+    Universal.BIT_STRING: "bitstring",
+    Universal.OCTET_STRING: "octetstring",
+    Universal.OBJECT_IDENTIFIER: "oid",
     Universal.RELATIVE_OID: "relative-oid",
 }
 
@@ -180,9 +197,14 @@ def _instruction_names(opts: _Opts, target) -> tuple[str, ...]:
     if opts.instructions is None:
         return ()
     found = []
-    for category, label in ((Array, "ARRAY"), (Base64, "BASE64"), (Name, "NAME"),
-                            (ObjectAs, "OBJECT"), (Text, "TEXT"),
-                            (Unwrapped, "UNWRAPPED")):
+    for category, label in (
+        (Array, "ARRAY"),
+        (Base64, "BASE64"),
+        (Name, "NAME"),
+        (ObjectAs, "OBJECT"),
+        (Text, "TEXT"),
+        (Unwrapped, "UNWRAPPED"),
+    ):
         if opts.instructions.get(target, category) is not None:
             found.append(label)
     return tuple(found)
@@ -197,25 +219,28 @@ def _bounded(node_kind: str, kind, opts: _Opts) -> int | None:
     admits.
     """
     if node_kind == "boolean":
-        return 5                                             # `false`
+        return 5  # `false`
     if node_kind == "null":
-        return 4                                             # `null`
+        return 4  # `null`
     if node_kind == "enumerated" and kind.enumeration:
         text = _instruction_names(opts, kind)
         if "TEXT" in text:
-            return None                                      # a TEXT rewrite is unbounded
+            return None  # a TEXT rewrite is unbounded
         return max(len(name) for name, _n in kind.enumeration) + 2
     if node_kind == "bitstring" and kind.contains is None:
         low, high = _bitstring_size(kind)
-        if low is not None and low == high:                  # §24.2, a fixed-size string
+        if low is not None and low == high:  # §24.2, a fixed-size string
             return 2 + 2 * ((low + 7) // 8)
     return None
 
 
 def _compile_node(kind: Asn1Type, opts: _Opts, path: str, depth: int) -> PlanNode:
     if depth > 64:
-        raise _fail(JerErrorCode.SCHEMA, path=path,
-                    detail="schema recursion beyond the 5.1 recursion bound of 64")
+        raise _fail(
+            JerErrorCode.SCHEMA,
+            path=path,
+            detail="schema recursion beyond the 5.1 recursion bound of 64",
+        )
     if isinstance(kind, OpenType):
         # Decided before `_json_kinds`, which refuses an open type with §19.2.4's message
         # about unwrapped choices -- true in that context and misleading in this one. The
@@ -223,10 +248,13 @@ def _compile_node(kind: Asn1Type, opts: _Opts, path: str, depth: int) -> PlanNod
         # type, and the table (X.682 §10.19) picks that from a sibling's value at decode
         # time, which a static descriptor does not have. JER offers no hexadecimal fallback
         # the way XER's §8.5 does, so this is fail-closed per §5.1 rather than a gap.
-        raise _fail(JerErrorCode.SCHEMA, path=path,
-                    detail="41 encodes an open type AS its contained type, which is "
-                           "chosen by a sibling's value at decode time; a static plan "
-                           "cannot name it")
+        raise _fail(
+            JerErrorCode.SCHEMA,
+            path=path,
+            detail="41 encodes an open type AS its contained type, which is "
+            "chosen by a sibling's value at decode time; a static plan "
+            "cannot name it",
+        )
     kinds = tuple(sorted(_json_kinds(kind, opts)))
     instructions = _instruction_names(opts, kind)
 
@@ -234,62 +262,99 @@ def _compile_node(kind: Asn1Type, opts: _Opts, path: str, depth: int) -> PlanNod
         node_kind = _PRIMITIVE_KIND.get(kind.universal, "string")
         if node_kind == "enumerated" and not kind.enumeration:
             # Fail closed (§5.1): X.697 §22.2 encodes the identifier, which does not exist.
-            raise _fail(JerErrorCode.SCHEMA, path=path,
-                        detail="an ENUMERATED with no enumeration has no JER spelling "
-                               "(22.2); the plan refuses rather than deferring the fault")
+            raise _fail(
+                JerErrorCode.SCHEMA,
+                path=path,
+                detail="an ENUMERATED with no enumeration has no JER spelling "
+                "(22.2); the plan refuses rather than deferring the fault",
+            )
         constraint = ""
         if node_kind == "bitstring":
             low, high = _bitstring_size(kind)
             constraint = f"size={low}..{high}" if low is not None else "size=variable"
         if kind.contains is not None and kind.encoded_by is None:
             constraint = (constraint + ";" if constraint else "") + "containing"
-        return PlanNode(node_kind, kinds, instructions=instructions,
-                        constraint=constraint,
-                        bounded_octets=_bounded(node_kind, kind, opts),
-                        enumeration=tuple(name for name, _n in (kind.enumeration or ())))
+        return PlanNode(
+            node_kind,
+            kinds,
+            instructions=instructions,
+            constraint=constraint,
+            bounded_octets=_bounded(node_kind, kind, opts),
+            enumeration=tuple(name for name, _n in (kind.enumeration or ())),
+        )
 
     if isinstance(kind, (Sequence, Set)):
         members: list[PlanMember] = []
         deepest = 0
-        total: int | None = 2                                # the braces
+        total: int | None = 2  # the braces
         for index, comp in enumerate(_flatten(kind.components)):
             child = _compile_node(comp.type, opts, f"{path}/{comp.name}", depth + 1)
             name = _member_name(opts, comp)
-            members.append(PlanMember(name, comp.name, index,
-                                      not (comp.optional or comp.has_default),
-                                      comp.has_default, comp.extension, child))
+            members.append(
+                PlanMember(
+                    name,
+                    comp.name,
+                    index,
+                    not (comp.optional or comp.has_default),
+                    comp.has_default,
+                    comp.extension,
+                    child,
+                )
+            )
             deepest = max(deepest, child.max_depth)
             if total is not None and child.bounded_octets is not None:
-                total += child.bounded_octets + len(name) + 4   # "name": plus a comma
+                total += child.bounded_octets + len(name) + 4  # "name": plus a comma
             else:
                 total = None
         dispatch = tuple(sorted((m.name, m.index) for m in members))
         if len({name for name, _i in dispatch}) != len(dispatch):
-            raise _fail(JerErrorCode.SCHEMA, path=path,
-                        detail="two members share a JSON name after NAME instructions "
-                               "(16.2)")
-        node_kind = "array" if "ARRAY" in instructions else (
-            "set" if isinstance(kind, Set) else "sequence")
-        return PlanNode(node_kind, kinds, tuple(members), None, dispatch,
-                        instructions=instructions, extensible=kind.extensible,
-                        max_depth=deepest + 1, bounded_octets=total)
+            raise _fail(
+                JerErrorCode.SCHEMA,
+                path=path,
+                detail="two members share a JSON name after NAME instructions (16.2)",
+            )
+        node_kind = (
+            "array" if "ARRAY" in instructions else ("set" if isinstance(kind, Set) else "sequence")
+        )
+        return PlanNode(
+            node_kind,
+            kinds,
+            tuple(members),
+            None,
+            dispatch,
+            instructions=instructions,
+            extensible=kind.extensible,
+            max_depth=deepest + 1,
+            bounded_octets=total,
+        )
 
     if isinstance(kind, (SequenceOf, SetOf)):
         element = _compile_node(kind.element, opts, f"{path}[]", depth + 1)
-        node_kind = "object-map" if "OBJECT" in instructions else (
-            "set-of" if isinstance(kind, SetOf) else "sequence-of")
+        node_kind = (
+            "object-map"
+            if "OBJECT" in instructions
+            else ("set-of" if isinstance(kind, SetOf) else "sequence-of")
+        )
         # No bound: §7.2.2 h) hides a SIZE from JER, so the occurrence count is unbounded
         # as far as an encoder can see.
-        return PlanNode(node_kind, kinds, element=element, instructions=instructions,
-                        max_depth=element.max_depth + 1)
+        return PlanNode(
+            node_kind,
+            kinds,
+            element=element,
+            instructions=instructions,
+            max_depth=element.max_depth + 1,
+        )
 
     if isinstance(kind, Choice):
         members = []
         deepest = 0
         for index, alt in enumerate(_flatten(kind.alternatives)):
             child = _compile_node(alt.type, opts, f"{path}/{alt.name}", depth + 1)
-            members.append(PlanMember(_member_name(opts, alt), alt.name, index,
-                                      False, False, alt.extension, child))
+            members.append(
+                PlanMember(
+                    _member_name(opts, alt), alt.name, index, False, False, alt.extension, child
+                )
+            )
             deepest = max(deepest, child.max_depth)
         dispatch = tuple(sorted((m.name, m.index) for m in members))
         unwrapped = "UNWRAPPED" in instructions
@@ -303,23 +368,41 @@ def _compile_node(kind: Asn1Type, opts: _Opts, path: str, depth: int) -> PlanNod
                         continue
                     if shape in seen:
                         raise _fail(
-                            JerErrorCode.SCHEMA, path=path,
+                            JerErrorCode.SCHEMA,
+                            path=path,
                             detail=f"19.2.2 admits at most one alternative producing a "
-                                   f"JSON {shape}; {seen[shape]} and {member.identifier} "
-                                   f"both do, so this choice cannot carry UNWRAPPED")
+                            f"JSON {shape}; {seen[shape]} and {member.identifier} "
+                            f"both do, so this choice cannot carry UNWRAPPED",
+                        )
                     seen[shape] = member.identifier
-        return PlanNode("unwrapped-choice" if unwrapped else "choice", kinds,
-                        tuple(members), None, dispatch, instructions=instructions,
-                        extensible=kind.extensible,
-                        max_depth=deepest + (0 if unwrapped else 1))
+        return PlanNode(
+            "unwrapped-choice" if unwrapped else "choice",
+            kinds,
+            tuple(members),
+            None,
+            dispatch,
+            instructions=instructions,
+            extensible=kind.extensible,
+            max_depth=deepest + (0 if unwrapped else 1),
+        )
 
-    raise _fail(JerErrorCode.SCHEMA, path=path,
-                detail=f"{type(kind).__name__} has no JER plan representation")
+    raise _fail(
+        JerErrorCode.SCHEMA,
+        path=path,
+        detail=f"{type(kind).__name__} has no JER plan representation",
+    )
 
 
-def compile_plan(kind: Asn1Type, *, module: str, type_name: str,
-                 source: str | bytes = b"", rules: JerRules = JerRules.CANONICAL,
-                 instructions=None, direct_builder: str = "") -> JerSchemaPlan:
+def compile_plan(
+    kind: Asn1Type,
+    *,
+    module: str,
+    type_name: str,
+    source: str | bytes = b"",
+    rules: JerRules = JerRules.CANONICAL,
+    instructions=None,
+    direct_builder: str = "",
+) -> JerSchemaPlan:
     """Compile one root type into a §5.1 descriptor.
 
     `source` is the ASN.1 module text, hashed into the descriptor so a plan names the
@@ -330,13 +413,17 @@ def compile_plan(kind: Asn1Type, *, module: str, type_name: str,
     opts = _Opts(rules, instructions)
     root = _compile_node(kind, opts, "", 0)
     return JerSchemaPlan(
-        module=module, type_name=type_name,
+        module=module,
+        type_name=type_name,
         source_sha256=hashlib.sha256(octets).hexdigest(),
         family=FAMILY,
         profile=PROFILE_CANONICAL if rules is JerRules.CANONICAL else PROFILE_BASIC,
         instruction_hash=_instruction_hash(root),
-        root=root, direct_builder=direct_builder,
-        _kind=kind, _instructions=instructions)
+        root=root,
+        direct_builder=direct_builder,
+        _kind=kind,
+        _instructions=instructions,
+    )
 
 
 def _instruction_hash(root: PlanNode) -> str:
@@ -363,6 +450,7 @@ def _instruction_hash(root: PlanNode) -> str:
 
 # --- the table-driven decode, and its trace ------------------------------------------------
 
+
 def trace_of(plan: JerSchemaPlan, value) -> tuple[str, ...]:
     """The event trace a decode of `value` under `plan` visits, in order.
 
@@ -383,8 +471,7 @@ def _trace(node: PlanNode, value, path: str, events: list[str]) -> None:
         for member in node.members:
             if member.identifier in value:
                 events.append(f"member {here}/{member.name}")
-                _trace(member.node, value[member.identifier],
-                       f"{here}/{member.name}", events)
+                _trace(member.node, value[member.identifier], f"{here}/{member.name}", events)
     elif node.kind in ("sequence-of", "set-of", "object-map"):
         for index, item in enumerate(value):
             events.append(f"element {here}[{index}]")
@@ -399,8 +486,7 @@ def _trace(node: PlanNode, value, path: str, events: list[str]) -> None:
     events.append(f"leave {here}")
 
 
-def decode_with_plan(plan: JerSchemaPlan, data: bytes | str, *,
-                     limits: JerLimits = JerLimits()):
+def decode_with_plan(plan: JerSchemaPlan, data: bytes | str, *, limits: JerLimits = JerLimits()):
     """Decode through the plan, returning `(value, trace)`.
 
     The plan carries the dispatch tables a J3 twin will walk; this rail still delegates the
@@ -410,18 +496,28 @@ def decode_with_plan(plan: JerSchemaPlan, data: bytes | str, *,
     the direct decode produces.
     """
     if plan._kind is None:
-        raise _fail(JerErrorCode.SCHEMA,
-                    detail="this plan was deserialized and carries no type model; a "
-                           "descriptor is data (5.1) and cannot decode by itself")
-    rules = (JerRules.CANONICAL if plan.profile == PROFILE_CANONICAL
-             else JerRules.BASIC)
-    value = decode_bounded(data, plan._kind, rules=rules, limits=limits,
-                           instructions=plan._instructions)
+        raise _fail(
+            JerErrorCode.SCHEMA,
+            detail="this plan was deserialized and carries no type model; a "
+            "descriptor is data (5.1) and cannot decode by itself",
+        )
+    rules = JerRules.CANONICAL if plan.profile == PROFILE_CANONICAL else JerRules.BASIC
+    value = decode_bounded(
+        data, plan._kind, rules=rules, limits=limits, instructions=plan._instructions
+    )
     return value, trace_of(plan, value)
 
 
 __all__ = [
-    "FAMILY", "PLAN_COMPILER", "PLAN_VERSION", "PROFILE_BASIC", "PROFILE_CANONICAL",
-    "JerSchemaPlan", "PlanMember", "PlanNode", "compile_plan", "decode_with_plan",
+    "FAMILY",
+    "PLAN_COMPILER",
+    "PLAN_VERSION",
+    "PROFILE_BASIC",
+    "PROFILE_CANONICAL",
+    "JerSchemaPlan",
+    "PlanMember",
+    "PlanNode",
+    "compile_plan",
+    "decode_with_plan",
     "trace_of",
 ]

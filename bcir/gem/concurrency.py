@@ -18,10 +18,10 @@ from ..model import Claim, Lane, Module, StrideClass, topological_phase_ids
 
 @dataclass
 class ConcurrentSchedule:
-    waves: list[list[int]] = field(default_factory=list)   # claim ids per wave, in order
-    ggg_tail: list[int] = field(default_factory=list)      # decoupled random/gather claims
+    waves: list[list[int]] = field(default_factory=list)  # claim ids per wave, in order
+    ggg_tail: list[int] = field(default_factory=list)  # decoupled random/gather claims
     affinity: dict[int, int] = field(default_factory=dict)  # claim id -> affinity domain
-    contention: int = 0                                     # cache-thrash oversubscription
+    contention: int = 0  # cache-thrash oversubscription
 
     def max_parallelism(self) -> int:
         return max((len(w) for w in self.waves), default=0)

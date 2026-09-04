@@ -20,9 +20,19 @@ Three of its sentences are traps, and this file exists mostly for them:
 """
 
 from bcir.asn1.ecn_mapping import (
-    AbstractValueOrdering, AlternativesOrdering, BooleanOrdering, DistributionEntry,
-    ExplicitValues, IntToBits, IntToBitsEntry, IntegerOrdering, MatchingFields, NullOrdering,
-    SingleComponentOrdering, TransformMapping, ValueDistribution,
+    AbstractValueOrdering,
+    AlternativesOrdering,
+    BooleanOrdering,
+    DistributionEntry,
+    ExplicitValues,
+    IntToBits,
+    IntToBitsEntry,
+    IntegerOrdering,
+    MatchingFields,
+    NullOrdering,
+    SingleComponentOrdering,
+    TransformMapping,
+    ValueDistribution,
 )
 from bcir.asn1.ecn_transform import IntOp, IntToInt, TransformChain
 from bcir.asn1.tags import Asn1Error
@@ -38,6 +48,7 @@ def _refuses(citation: str, build):
 
 
 # --- §19.5's orderings ------------------------------------------------------------------------
+
 
 def test_boolean_orders_true_before_false_which_no_language_does():
     """§19.5.5: "Classes in the boolean category are defined to have `TRUE` before `FALSE`."
@@ -62,19 +73,28 @@ def test_an_integer_ordering_needs_a_lower_bound_to_have_a_first_value():
     An unbounded-below integer has none, so it is refused rather than started from zero."""
     _refuses("19.5.4.2", lambda: IntegerOrdering(low=None))
     assert IntegerOrdering(0, 255).count() == 256
-    assert IntegerOrdering(low=0).count() is None       # §19.5.4.2 a)'s infinite case
+    assert IntegerOrdering(low=0).count() is None  # §19.5.4.2 a)'s infinite case
     assert IntegerOrdering(-3, -1).value_at(0) == -3
 
 
 def test_alternatives_concatenate_their_orderings_in_textual_order():
     """§19.5.7: "the (ordered) abstract values from the textually first alternative, followed by
     those from the textually second alternative, and so on"."""
-    ordering = AlternativesOrdering(alternatives=(
-        ("nothing", NullOrdering()), ("flag", BooleanOrdering()),
-        ("small", IntegerOrdering(0, 1))))
+    ordering = AlternativesOrdering(
+        alternatives=(
+            ("nothing", NullOrdering()),
+            ("flag", BooleanOrdering()),
+            ("small", IntegerOrdering(0, 1)),
+        )
+    )
     assert ordering.count() == 5
     assert [ordering.value_at(index) for index in range(5)] == [
-        ("nothing", None), ("flag", True), ("flag", False), ("small", 0), ("small", 1)]
+        ("nothing", None),
+        ("flag", True),
+        ("flag", False),
+        ("small", 0),
+        ("small", 1),
+    ]
     assert ordering.index_of(("small", 1)) == 4
 
 
@@ -83,10 +103,15 @@ def test_only_the_last_alternative_may_be_infinite():
     except the last are defined to have a finite set of ordered values, and the last
     alternative is defined to have an infinite set". An infinite alternative in the middle puts
     every later one at a position no index reaches."""
-    _refuses("19.5.4.2", lambda: AlternativesOrdering(alternatives=(
-        ("unbounded", IntegerOrdering(low=0)), ("after", BooleanOrdering()))))
-    tail = AlternativesOrdering(alternatives=(
-        ("flag", BooleanOrdering()), ("unbounded", IntegerOrdering(low=0))))
+    _refuses(
+        "19.5.4.2",
+        lambda: AlternativesOrdering(
+            alternatives=(("unbounded", IntegerOrdering(low=0)), ("after", BooleanOrdering()))
+        ),
+    )
+    tail = AlternativesOrdering(
+        alternatives=(("flag", BooleanOrdering()), ("unbounded", IntegerOrdering(low=0)))
+    )
     assert tail.count() is None
     assert tail.value_at(2) == ("unbounded", 0)
 
@@ -104,14 +129,17 @@ def test_a_concatenation_orders_by_its_single_non_optional_component():
 
 # --- §19.5's mapping ---------------------------------------------------------------------------
 
+
 def test_ordered_values_compacts_a_choice_into_a_contiguous_integer():
     """§19.5.1's headline use: "the compaction of integer values or enumerations into a
     contiguous set of integer values". §19.5.9 does it by position."""
-    source = AlternativesOrdering(alternatives=(
-        ("nothing", NullOrdering()), ("flag", BooleanOrdering())))
+    source = AlternativesOrdering(
+        alternatives=(("nothing", NullOrdering()), ("flag", BooleanOrdering()))
+    )
     mapping = AbstractValueOrdering(source=source, target=IntegerOrdering(0, 2))
-    assert [mapping.map(value) for value in
-            (("nothing", None), ("flag", True), ("flag", False))] == [0, 1, 2]
+    assert [
+        mapping.map(value) for value in (("nothing", None), ("flag", True), ("flag", False))
+    ] == [0, 1, 2]
     assert mapping.unmap(2) == ("flag", False)
 
 
@@ -134,13 +162,16 @@ def test_unequal_orderings_are_reported_and_not_refused():
     assert wide.map(3) == 3
 
     # An infinite source into a finite target loses values; the reverse does not.
-    assert AbstractValueOrdering(source=IntegerOrdering(low=0),
-                                 target=IntegerOrdering(0, 9)).loses_values()
-    assert not AbstractValueOrdering(source=IntegerOrdering(0, 9),
-                                     target=IntegerOrdering(low=0)).loses_values()
+    assert AbstractValueOrdering(
+        source=IntegerOrdering(low=0), target=IntegerOrdering(0, 9)
+    ).loses_values()
+    assert not AbstractValueOrdering(
+        source=IntegerOrdering(0, 9), target=IntegerOrdering(low=0)
+    ).loses_values()
 
 
 # --- §19.2, §19.3, §19.4 --------------------------------------------------------------------
+
 
 def test_explicit_values_map_source_to_target_and_refuse_the_unlisted():
     """§19.2.6 fixes the direction — `MappedValue1` is the source, `MappedValue2` the target.
@@ -202,15 +233,19 @@ def test_a_transform_mapping_requires_reversibility_where_the_value_path_does_no
 
 # --- §19.6 and §19.7 --------------------------------------------------------------------------
 
+
 def test_a_distribution_sends_each_range_to_its_own_field():
     """§19.6.1: it "takes ranges of values from an encoding class in the integer category,
     mapping each range to a different integer field". One value lands in one field; §19.6.1's
     remaining "fields which receive no abstract values shall have their values determined by
     the application of determinants"."""
-    mapping = ValueDistribution(entries=(
-        DistributionEntry(field_name="small", low=0, high=99),
-        DistributionEntry(field_name="exact", value=1000),
-        DistributionEntry(field_name="large", remainder=True)))
+    mapping = ValueDistribution(
+        entries=(
+            DistributionEntry(field_name="small", low=0, high=99),
+            DistributionEntry(field_name="exact", value=1000),
+            DistributionEntry(field_name="large", remainder=True),
+        )
+    )
     assert mapping.map(5) == {"small": 5}
     assert mapping.map(1000) == {"exact": 1000}
     assert mapping.map(70000) == {"large": 70000}
@@ -222,24 +257,49 @@ def test_remainder_is_once_and_last_and_a_value_reaches_one_field():
     value shall not be mapped to more than one target field" — while permitting, in the same
     sentence, that "several `SelectedValues` may have the same destination", so an overlap that
     agrees about the field is legal and only a disagreement is a fault."""
-    _refuses("19.6.10", lambda: ValueDistribution(entries=(
-        DistributionEntry(field_name="rest", remainder=True),
-        DistributionEntry(field_name="small", low=0, high=9))))
-    _refuses("19.6.11", lambda: ValueDistribution(entries=(
-        DistributionEntry(field_name="a", low=0, high=9),
-        DistributionEntry(field_name="b", low=5, high=20))))
-    _refuses("19.6.11", lambda: ValueDistribution(entries=(
-        DistributionEntry(field_name="a", low=0, high=9),
-        DistributionEntry(field_name="b", value=5))))
+    _refuses(
+        "19.6.10",
+        lambda: ValueDistribution(
+            entries=(
+                DistributionEntry(field_name="rest", remainder=True),
+                DistributionEntry(field_name="small", low=0, high=9),
+            )
+        ),
+    )
+    _refuses(
+        "19.6.11",
+        lambda: ValueDistribution(
+            entries=(
+                DistributionEntry(field_name="a", low=0, high=9),
+                DistributionEntry(field_name="b", low=5, high=20),
+            )
+        ),
+    )
+    _refuses(
+        "19.6.11",
+        lambda: ValueDistribution(
+            entries=(
+                DistributionEntry(field_name="a", low=0, high=9),
+                DistributionEntry(field_name="b", value=5),
+            )
+        ),
+    )
     # Two SelectedValues with ONE destination: legal, and §19.6.11 says so outright.
-    agreeing = ValueDistribution(entries=(
-        DistributionEntry(field_name="a", low=0, high=9),
-        DistributionEntry(field_name="a", value=50)))
+    agreeing = ValueDistribution(
+        entries=(
+            DistributionEntry(field_name="a", low=0, high=9),
+            DistributionEntry(field_name="a", value=50),
+        )
+    )
     assert agreeing.map(50) == {"a": 50}
     _refuses("19.6.8", lambda: DistributionEntry(field_name="a", low=9, high=9))
     _refuses("19.6.6", lambda: DistributionEntry(field_name="a", value=1, remainder=True))
-    _refuses("19.6", lambda: ValueDistribution(entries=(
-        DistributionEntry(field_name="a", low=0, high=9),)).map(99))
+    _refuses(
+        "19.6",
+        lambda: ValueDistribution(entries=(DistributionEntry(field_name="a", low=0, high=9),)).map(
+            99
+        ),
+    )
 
 
 def test_int_to_bits_is_huffmans_shape_and_ranges_must_advance_together():
@@ -251,9 +311,12 @@ def test_int_to_bits_is_huffmans_shape_and_ranges_must_advance_together():
     both load-bearing: "a) They are all the same length in bits. b) When interpreted as a
     positive integer value, the corresponding integer values are contiguous and increasing."
     """
-    mapping = IntToBits(entries=(
-        IntToBitsEntry(value=0, bits=(0,)),                                  # the common one
-        IntToBitsEntry(value=1, bits=(1, 0, 0), high=4, high_bits=(1, 1, 1))))
+    mapping = IntToBits(
+        entries=(
+            IntToBitsEntry(value=0, bits=(0,)),  # the common one
+            IntToBitsEntry(value=1, bits=(1, 0, 0), high=4, high_bits=(1, 1, 1)),
+        )
+    )
     assert mapping.map(0) == (0,)
     assert mapping.map(1) == (1, 0, 0)
     assert mapping.map(3) == (1, 1, 0)
@@ -263,15 +326,19 @@ def test_int_to_bits_is_huffmans_shape_and_ranges_must_advance_together():
     _refuses("19.7.9", lambda: mapping.map(5))
 
     # §19.7.8 a) — the ends of a range have to be the same width.
-    _refuses("19.7.8 a", lambda: IntToBitsEntry(value=0, bits=(0, 0), high=3,
-                                                high_bits=(0, 1, 1)))
+    _refuses("19.7.8 a", lambda: IntToBitsEntry(value=0, bits=(0, 0), high=3, high_bits=(0, 1, 1)))
     # §19.7.8 b) — and the two ranges have to span the same number of values.
-    _refuses("19.7.8 b", lambda: IntToBitsEntry(value=0, bits=(0, 0), high=3,
-                                                high_bits=(1, 0)))
+    _refuses("19.7.8 b", lambda: IntToBitsEntry(value=0, bits=(0, 0), high=3, high_bits=(1, 0)))
     _refuses("19.7.7", lambda: IntToBitsEntry(value=5, bits=(0,), high=1, high_bits=(1,)))
-    _refuses("19.7", lambda: IntToBits(entries=(
-        IntToBitsEntry(value=0, bits=(0,), high=3, high_bits=(1, 1)),
-        IntToBitsEntry(value=2, bits=(1, 0, 1)))))
+    _refuses(
+        "19.7",
+        lambda: IntToBits(
+            entries=(
+                IntToBitsEntry(value=0, bits=(0,), high=3, high_bits=(1, 1)),
+                IntToBitsEntry(value=2, bits=(1, 0, 1)),
+            )
+        ),
+    )
     _refuses("19.7.5", lambda: IntToBits())
 
 

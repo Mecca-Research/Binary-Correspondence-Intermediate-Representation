@@ -31,19 +31,44 @@ import tempfile
 
 from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee
 from bcir.toolchain import host_link_args
-from bcir.kbcir.autodiff import (Tape, evaluate, finite_difference_grad, grad,
-                                 gradients_match, max_grad_error, unroll_scan)
+from bcir.kbcir.autodiff import (
+    Tape,
+    evaluate,
+    finite_difference_grad,
+    grad,
+    gradients_match,
+    max_grad_error,
+    unroll_scan,
+)
 from bcir.kbcir.precision import quantization_error_bound
-from bcir.kbcir.recurrent import (GruParams, LstmParams, RnnParams,
-                                  central_difference_jacobian, check_recurrent,
-                                  gate_range_residual, gru_cell_grads, gru_cell_reference,
-                                  gru_states, gru_unroll, gru_via_bridge,
-                                  lstm_cell_grads, lstm_cell_reference, lstm_states,
-                                  lstm_unroll, lstm_via_bridge, max_jacobian_error,
-                                  rnn_relu_reference, rnn_relu_states, rnn_relu_step,
-                                  rnn_relu_unroll, rnn_scalar_step, sigmoid,
-                                  sigmoid_prime_from_value, tanh_prime_from_value,
-                                  temporal_dependence)
+from bcir.kbcir.recurrent import (
+    GruParams,
+    LstmParams,
+    RnnParams,
+    central_difference_jacobian,
+    check_recurrent,
+    gate_range_residual,
+    gru_cell_grads,
+    gru_cell_reference,
+    gru_states,
+    gru_unroll,
+    gru_via_bridge,
+    lstm_cell_grads,
+    lstm_cell_reference,
+    lstm_states,
+    lstm_unroll,
+    lstm_via_bridge,
+    max_jacobian_error,
+    rnn_relu_reference,
+    rnn_relu_states,
+    rnn_relu_step,
+    rnn_relu_unroll,
+    rnn_scalar_step,
+    sigmoid,
+    sigmoid_prime_from_value,
+    tanh_prime_from_value,
+    temporal_dependence,
+)
 from bcir.lower.c_kernel import emit_lstm_cell_c
 from bcir.tests._convergence import assert_converged
 
@@ -55,6 +80,7 @@ def _vec(rng, n, lo=-0.5, hi=0.5):
 # ============================================================================================================
 # 1. TIER A -- the closed-set relu-RNN: BPTT (unroll + grad) == finite differences (THE HEADLINE).
 # ============================================================================================================
+
 
 def _rnn_params(rng, di, dh, *, positive_bias=True):
     b = _vec(rng, dh, 0.1, 0.5) if positive_bias else _vec(rng, dh)
@@ -101,7 +127,8 @@ def test_tier_a_bptt_matches_finite_difference_wrt_inputs():
     g = grad(tape, readout, env)
     fd = finite_difference_grad(tape, readout, env)
     assert gradients_match(g.grads, fd), (
-        f"BPTT != FD: max_abs_err={max_grad_error(g.grads, fd)} analytic={g.grads} fd={fd}")
+        f"BPTT != FD: max_abs_err={max_grad_error(g.grads, fd)} analytic={g.grads} fd={fd}"
+    )
 
 
 def test_tier_a_bptt_matches_finite_difference_wrt_weights():
@@ -150,7 +177,8 @@ def test_tier_a_bptt_matches_finite_difference_wrt_weights():
     g = grad(tape, out, env)
     fd = finite_difference_grad(tape, out, env)
     assert gradients_match(g.grads, fd), (
-        f"weight-BPTT != FD: max_abs_err={max_grad_error(g.grads, fd)}")
+        f"weight-BPTT != FD: max_abs_err={max_grad_error(g.grads, fd)}"
+    )
 
 
 def test_tier_a_scalar_recurrence_through_unroll_scan_verbatim():
@@ -192,11 +220,13 @@ def test_tier_a_step_builder_validates_and_is_closed_set():
 
 
 def test_tier_a_rnn_params_validate():
-    for args in [([0.0] * 2, [0.0] * 4, [0.0] * 2, 0, 2),     # input_dim < 1
-                 ([0.0] * 2, [0.0] * 4, [0.0] * 2, 1, 0),     # hidden_dim < 1
-                 ([0.0] * 3, [0.0] * 4, [0.0] * 2, 1, 2),     # bad w_x length
-                 ([0.0] * 2, [0.0] * 3, [0.0] * 2, 1, 2),     # bad w_h length
-                 ([0.0] * 2, [0.0] * 4, [0.0] * 1, 1, 2)]:    # bad b length
+    for args in [
+        ([0.0] * 2, [0.0] * 4, [0.0] * 2, 0, 2),  # input_dim < 1
+        ([0.0] * 2, [0.0] * 4, [0.0] * 2, 1, 0),  # hidden_dim < 1
+        ([0.0] * 3, [0.0] * 4, [0.0] * 2, 1, 2),  # bad w_x length
+        ([0.0] * 2, [0.0] * 3, [0.0] * 2, 1, 2),  # bad w_h length
+        ([0.0] * 2, [0.0] * 4, [0.0] * 1, 1, 2),
+    ]:  # bad b length
         try:
             RnnParams(*args)
             assert False, f"{args} should raise"
@@ -235,15 +265,15 @@ def test_tier_a_end_to_end_training_drives_loss_down():
         s = [rng.uniform(0.4, 1.0) for _ in range(T * di)]
         hT = rnn_relu_reference(s, [0.0] * dh, rnn)
         seqs.append(tuple(s))
-        ys.append(0.7 * hT[0] - 0.3 * hT[1] + 0.05)            # a linear target over the final state
+        ys.append(0.7 * hT[0] - 0.3 * hT[1] + 0.05)  # a linear target over the final state
     ds = Dataset(tuple(seqs), tuple(ys))
 
     # model: build the (constant-weight) RNN forward per example, then a trainable linear readout r0*hT0+r1*hT1+r2.
     def model(tape, param_names, X):
         out = []
-        r = [tape.var(nm) for nm in param_names]               # r0, r1, bias
+        r = [tape.var(nm) for nm in param_names]  # r0, r1, bias
         for row in X:
-            x_names = []                                       # encode the sequence as per-step const nodes
+            x_names = []  # encode the sequence as per-step const nodes
             h = [tape.const(0.0) for _ in range(dh)]
             for t in range(T):
                 xc = [tape.const(row[t * di + j]) for j in range(di)]
@@ -262,8 +292,18 @@ def test_tier_a_end_to_end_training_drives_loss_down():
         return out
 
     names = ["r0", "r1", "r2"]
-    res = train(model, [0.0, 0.0, 0.0], ds, loss="mse", optimizer="sgd", epochs=40,
-                batch_size=8, lr=0.3, seed=1, param_names=names)
+    res = train(
+        model,
+        [0.0, 0.0, 0.0],
+        ds,
+        loss="mse",
+        optimizer="sgd",
+        epochs=40,
+        batch_size=8,
+        lr=0.3,
+        seed=1,
+        param_names=names,
+    )
     # the shared convergence gate: decreased + absolute threshold + substantial drop.
     assert_converged(res.train_loss, final_below=1e-2, name="E4 Tier-A readout")
 
@@ -272,16 +312,17 @@ def test_tier_a_end_to_end_training_drives_loss_down():
 # 2. TIER B -- the gate helpers: sigmoid guard + the closed-form gate derivatives.
 # ============================================================================================================
 
+
 def test_sigmoid_is_guarded_and_in_range():
     assert sigmoid(0.0) == 0.5
-    assert abs(sigmoid(1000.0) - 1.0) < 1e-12       # no overflow (saturates to 1.0)
-    assert abs(sigmoid(-1000.0) - 0.0) < 1e-12      # no overflow (underflows to 0.0)
-    assert 0.0 <= sigmoid(1000.0) <= 1.0 and 0.0 <= sigmoid(-1000.0) <= 1.0   # always within [0, 1]
+    assert abs(sigmoid(1000.0) - 1.0) < 1e-12  # no overflow (saturates to 1.0)
+    assert abs(sigmoid(-1000.0) - 0.0) < 1e-12  # no overflow (underflows to 0.0)
+    assert 0.0 <= sigmoid(1000.0) <= 1.0 and 0.0 <= sigmoid(-1000.0) <= 1.0  # always within [0, 1]
     rng = random.Random(0xE408)
     for _ in range(200):
-        x = rng.uniform(-15, 15)                    # a realistic pre-activation range (no float saturation)
+        x = rng.uniform(-15, 15)  # a realistic pre-activation range (no float saturation)
         s = sigmoid(x)
-        assert 0.0 < s < 1.0                        # strictly in (0, 1) away from float saturation
+        assert 0.0 < s < 1.0  # strictly in (0, 1) away from float saturation
         # the value matches the naive form (the guarded form is algebraically exact for |x| in range).
         assert abs(s - 1.0 / (1.0 + math.exp(-x))) < 1e-12
 
@@ -302,17 +343,34 @@ def test_gate_derivatives_match_finite_difference():
 # 3. TIER B.1 -- the LSTM cell: hand-computed forward + analytic grads vs central FD + the unroll.
 # ============================================================================================================
 
+
 def _lstm_params(rng, di, dh):
     def w(n):
         return _vec(rng, n)
-    return LstmParams(w(dh * di), w(dh * dh), w(dh), w(dh * di), w(dh * dh), w(dh),
-                      w(dh * di), w(dh * dh), w(dh), w(dh * di), w(dh * dh), w(dh), di, dh)
+
+    return LstmParams(
+        w(dh * di),
+        w(dh * dh),
+        w(dh),
+        w(dh * di),
+        w(dh * dh),
+        w(dh),
+        w(dh * di),
+        w(dh * dh),
+        w(dh),
+        w(dh * di),
+        w(dh * dh),
+        w(dh),
+        di,
+        dh,
+    )
 
 
 def test_lstm_forward_matches_a_hand_computed_example():
     # A 1x1 LSTM with W_*=1, U_*=0, b_*=0, x=[0.5], h_prev=[0], c_prev=[0]: every gate pre-activation is 0.5.
-    p = LstmParams([1.0], [0.0], [0.0], [1.0], [0.0], [0.0],
-                   [1.0], [0.0], [0.0], [1.0], [0.0], [0.0], 1, 1)
+    p = LstmParams(
+        [1.0], [0.0], [0.0], [1.0], [0.0], [0.0], [1.0], [0.0], [0.0], [1.0], [0.0], [0.0], 1, 1
+    )
     h, c = lstm_cell_reference([0.5], [0.0], [0.0], p)
     f = i = o = sigmoid(0.5)
     g = math.tanh(0.5)
@@ -359,12 +417,13 @@ def test_lstm_gate_ranges_and_side_effect_free():
     x, h_prev, c_prev = _vec(rng, di, -3, 3), _vec(rng, dh, -3, 3), _vec(rng, dh, -3, 3)
     x0, h0, c0 = list(x), list(h_prev), list(c_prev)
     h, c = lstm_cell_reference(x, h_prev, c_prev, p)
-    assert x == x0 and h_prev == h0 and c_prev == c0          # side-effect-free
+    assert x == x0 and h_prev == h0 and c_prev == c0  # side-effect-free
     # reconstruct the gate values to range-check them (independent recompute of the pre-activations).
     from bcir.kbcir.recurrent import _row_dot
+
     sigs, tanhs = [], []
     for u in range(dh):
-        for (W, U, b) in ((p.W_f, p.U_f, p.b_f), (p.W_i, p.U_i, p.b_i), (p.W_o, p.U_o, p.b_o)):
+        for W, U, b in ((p.W_f, p.U_f, p.b_f), (p.W_i, p.U_i, p.b_i), (p.W_o, p.U_o, p.b_o)):
             sigs.append(sigmoid(_row_dot(W, x, u, di) + _row_dot(U, h_prev, u, dh) + b[u]))
         a_g = _row_dot(p.W_g, x, u, di) + _row_dot(p.U_g, h_prev, u, dh) + p.b_g[u]
         tanhs.append(math.tanh(a_g))
@@ -382,7 +441,7 @@ def test_lstm_unroll_is_repeated_cell_and_validates():
     # unroll == manually stepping the cell T times.
     h, c = list(h0), list(c0)
     for t in range(T):
-        h, c = lstm_cell_reference(x_seq[t * di:(t + 1) * di], h, c, p)
+        h, c = lstm_cell_reference(x_seq[t * di : (t + 1) * di], h, c, p)
     hu, cu = lstm_unroll(x_seq, h0, c0, p)
     assert all(abs(a - b) < 1e-15 for a, b in zip(h, hu))
     assert all(abs(a - b) < 1e-15 for a, b in zip(c, cu))
@@ -390,7 +449,7 @@ def test_lstm_unroll_is_repeated_cell_and_validates():
     traj = lstm_states(x_seq, h0, c0, p)
     assert len(traj) == T + 1 and traj[0][0] == [float(v) for v in h0]
     try:
-        lstm_unroll(x_seq + [0.0], h0, c0, p)                 # not a multiple of input_dim
+        lstm_unroll(x_seq + [0.0], h0, c0, p)  # not a multiple of input_dim
         assert False
     except ValueError:
         pass
@@ -409,17 +468,29 @@ def test_lstm_temporal_dependence_h_T_depends_on_x0():
         return lstm_unroll(xs, h0, c0, p)[0]
 
     jac = central_difference_jacobian(fwd_x0, x_seq[0:di], dh)
-    assert temporal_dependence(jac, dh, di) > 1e-6            # x_0 genuinely propagates to h_T
+    assert temporal_dependence(jac, dh, di) > 1e-6  # x_0 genuinely propagates to h_T
 
 
 def test_lstm_params_validate():
     for kwargs in [{"input_dim": 0}, {"hidden_dim": 0}]:
         try:
             di, dh = kwargs.get("input_dim", 2), kwargs.get("hidden_dim", 2)
-            LstmParams([0.0] * (dh * di), [0.0] * (dh * dh), [0.0] * dh,
-                       [0.0] * (dh * di), [0.0] * (dh * dh), [0.0] * dh,
-                       [0.0] * (dh * di), [0.0] * (dh * dh), [0.0] * dh,
-                       [0.0] * (dh * di), [0.0] * (dh * dh), [0.0] * dh, di, dh)
+            LstmParams(
+                [0.0] * (dh * di),
+                [0.0] * (dh * dh),
+                [0.0] * dh,
+                [0.0] * (dh * di),
+                [0.0] * (dh * dh),
+                [0.0] * dh,
+                [0.0] * (dh * di),
+                [0.0] * (dh * dh),
+                [0.0] * dh,
+                [0.0] * (dh * di),
+                [0.0] * (dh * dh),
+                [0.0] * dh,
+                di,
+                dh,
+            )
             assert False, f"{kwargs} should raise"
         except ValueError:
             pass
@@ -429,11 +500,24 @@ def test_lstm_params_validate():
 # 4. TIER B.2 -- the GRU cell: hand-computed forward + analytic grads vs central FD + the unroll.
 # ============================================================================================================
 
+
 def _gru_params(rng, di, dh):
     def w(n):
         return _vec(rng, n)
-    return GruParams(w(dh * di), w(dh * dh), w(dh), w(dh * di), w(dh * dh), w(dh),
-                     w(dh * di), w(dh * dh), w(dh), di, dh)
+
+    return GruParams(
+        w(dh * di),
+        w(dh * dh),
+        w(dh),
+        w(dh * di),
+        w(dh * dh),
+        w(dh),
+        w(dh * di),
+        w(dh * dh),
+        w(dh),
+        di,
+        dh,
+    )
 
 
 def test_gru_forward_matches_a_hand_computed_example():
@@ -442,7 +526,7 @@ def test_gru_forward_matches_a_hand_computed_example():
     h = gru_cell_reference([0.5], [0.3], p)
     z = sigmoid(0.5)
     r = sigmoid(0.5)
-    n = math.tanh(0.5 + r * 0.0)                              # U_n h_prev = 0
+    n = math.tanh(0.5 + r * 0.0)  # U_n h_prev = 0
     h_exp = (1.0 - z) * n + z * 0.3
     assert abs(h[0] - h_exp) < 1e-15, (h, h_exp)
 
@@ -456,7 +540,9 @@ def test_gru_analytic_gradients_match_central_finite_difference():
     fd_dx = central_difference_jacobian(lambda v: gru_cell_reference(v, h_prev, p), x, dh)
     fd_dh = central_difference_jacobian(lambda v: gru_cell_reference(x, v, p), h_prev, dh)
     assert max_jacobian_error(G["dh_dx"], fd_dx) < 1e-6, max_jacobian_error(G["dh_dx"], fd_dx)
-    assert max_jacobian_error(G["dh_dh_prev"], fd_dh) < 1e-6, max_jacobian_error(G["dh_dh_prev"], fd_dh)
+    assert max_jacobian_error(G["dh_dh_prev"], fd_dh) < 1e-6, max_jacobian_error(
+        G["dh_dh_prev"], fd_dh
+    )
 
 
 def test_gru_unroll_and_temporal_dependence():
@@ -467,12 +553,13 @@ def test_gru_unroll_and_temporal_dependence():
     # unroll == repeated cell.
     h = list(h0)
     for t in range(T):
-        h = gru_cell_reference(x_seq[t * di:(t + 1) * di], h, p)
+        h = gru_cell_reference(x_seq[t * di : (t + 1) * di], h, p)
     assert all(abs(a - b) < 1e-15 for a, b in zip(h, gru_unroll(x_seq, h0, p)))
     assert len(gru_states(x_seq, h0, p)) == T + 1
     # temporal dependence: h_T depends on x_0.
     jac = central_difference_jacobian(
-        lambda x0: gru_unroll(x0 + x_seq[di:], h0, p), x_seq[0:di], dh)
+        lambda x0: gru_unroll(x0 + x_seq[di:], h0, p), x_seq[0:di], dh
+    )
     assert temporal_dependence(jac, dh, di) > 1e-6
 
 
@@ -490,8 +577,10 @@ def test_gru_is_side_effect_free():
 # 5. The Q8 bridge: tracks the reference within the R17 input bound + is a clean round-trip.
 # ============================================================================================================
 
+
 def test_lstm_bridge_tracks_the_reference_within_quant_error():
     from bcir.kbcir.quantize import max_abs_error
+
     rng = random.Random(0xE411)
     di, dh, T = 4, 3, 4
     p = _lstm_params(rng, di, dh)
@@ -507,6 +596,7 @@ def test_lstm_bridge_tracks_the_reference_within_quant_error():
 
 def test_lstm_bridge_is_unroll_of_the_roundtrip():
     from bcir.kbcir.quantize import dequantize, quantize_per_group
+
     rng = random.Random(0xE412)
     di, dh, T = 4, 2, 3
     p = _lstm_params(rng, di, dh)
@@ -517,6 +607,7 @@ def test_lstm_bridge_is_unroll_of_the_roundtrip():
 
 def test_gru_bridge_is_unroll_of_the_roundtrip():
     from bcir.kbcir.quantize import dequantize, quantize_per_group
+
     rng = random.Random(0xE413)
     di, dh, T = 4, 2, 3
     p = _gru_params(rng, di, dh)
@@ -526,18 +617,19 @@ def test_gru_bridge_is_unroll_of_the_roundtrip():
 
 
 def test_r17_bound_is_the_input_roundtrip():
-    assert quantization_error_bound() == 1                    # 1 ULP, as every wrap
+    assert quantization_error_bound() == 1  # 1 ULP, as every wrap
 
 
 # ============================================================================================================
 # 6. Shape/dtype well-formedness (op-level validation, NOT a new global R-law).
 # ============================================================================================================
 
+
 def test_check_recurrent_accepts_well_formed_claims():
     assert check_recurrent("rnn", 3, 4, 5, "f32", "f32") == []
     assert check_recurrent("lstm", 8, 16, 10, "f32", "f32") == []
     assert check_recurrent("gru", 2, 2, 1, "f32", "f32") == []
-    assert check_recurrent("rnn", 3, 4, 5, "i32", "i32") == []   # the closed-set relu-RNN may be i32
+    assert check_recurrent("rnn", 3, 4, 5, "i32", "i32") == []  # the closed-set relu-RNN may be i32
 
 
 def test_check_recurrent_rejects_malformed_claims():
@@ -555,6 +647,7 @@ def test_check_recurrent_rejects_malformed_claims():
 # 7. The emitted LSTM C kernel compiles + reproduces the reference (self-skip when no toolchain).
 # ============================================================================================================
 
+
 def _cc():
     return shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
 
@@ -567,22 +660,27 @@ def _compile_run_lstm(x, h_prev, c_prev, p):
     cc = _cc()
     di, dh = p.input_dim, p.hidden_dim
     kernel = emit_lstm_cell_c(di, dh, "lc")
-    main = (f"\n#include <stdio.h>\nint main(void){{\n"
-            f"  float X[{di}]={_arr(x)}; float HP[{dh}]={_arr(h_prev)}; float CP[{dh}]={_arr(c_prev)};\n"
-            f"  float Wf[{dh * di}]={_arr(p.W_f)}, Uf[{dh * dh}]={_arr(p.U_f)}, bf[{dh}]={_arr(p.b_f)};\n"
-            f"  float Wi[{dh * di}]={_arr(p.W_i)}, Ui[{dh * dh}]={_arr(p.U_i)}, bi[{dh}]={_arr(p.b_i)};\n"
-            f"  float Wo[{dh * di}]={_arr(p.W_o)}, Uo[{dh * dh}]={_arr(p.U_o)}, bo[{dh}]={_arr(p.b_o)};\n"
-            f"  float Wg[{dh * di}]={_arr(p.W_g)}, Ug[{dh * dh}]={_arr(p.U_g)}, bg[{dh}]={_arr(p.b_g)};\n"
-            f"  float H[{dh}], C[{dh}];\n"
-            f"  lc(X,HP,CP,Wf,Uf,bf,Wi,Ui,bi,Wo,Uo,bo,Wg,Ug,bg,H,C);\n"
-            f'  for (int i=0;i<{dh};++i) printf("%.7f ", H[i]);\n'
-            f'  for (int i=0;i<{dh};++i) printf("%.7f ", C[i]);\n  return 0;\n}}\n')
+    main = (
+        f"\n#include <stdio.h>\nint main(void){{\n"
+        f"  float X[{di}]={_arr(x)}; float HP[{dh}]={_arr(h_prev)}; float CP[{dh}]={_arr(c_prev)};\n"
+        f"  float Wf[{dh * di}]={_arr(p.W_f)}, Uf[{dh * dh}]={_arr(p.U_f)}, bf[{dh}]={_arr(p.b_f)};\n"
+        f"  float Wi[{dh * di}]={_arr(p.W_i)}, Ui[{dh * dh}]={_arr(p.U_i)}, bi[{dh}]={_arr(p.b_i)};\n"
+        f"  float Wo[{dh * di}]={_arr(p.W_o)}, Uo[{dh * dh}]={_arr(p.U_o)}, bo[{dh}]={_arr(p.b_o)};\n"
+        f"  float Wg[{dh * di}]={_arr(p.W_g)}, Ug[{dh * dh}]={_arr(p.U_g)}, bg[{dh}]={_arr(p.b_g)};\n"
+        f"  float H[{dh}], C[{dh}];\n"
+        f"  lc(X,HP,CP,Wf,Uf,bf,Wi,Ui,bi,Wo,Uo,bo,Wg,Ug,bg,H,C);\n"
+        f'  for (int i=0;i<{dh};++i) printf("%.7f ", H[i]);\n'
+        f'  for (int i=0;i<{dh};++i) printf("%.7f ", C[i]);\n  return 0;\n}}\n'
+    )
     with tempfile.TemporaryDirectory() as dd:
         src = os.path.join(dd, "lc.c")
         open(src, "w").write(kernel + main)
         exe = os.path.join(dd, "lc")
-        bld = subprocess.run(host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
-                             capture_output=True, text=True)
+        bld = subprocess.run(
+            host_link_args([cc, "-std=c11", "-O2", src, "-lm", "-o", exe]),
+            capture_output=True,
+            text=True,
+        )
         assert bld.returncode == 0, bld.stderr
         out = subprocess.run([exe], capture_output=True, text=True)
         return [float(t) for t in out.stdout.split()]
@@ -591,7 +689,7 @@ def _compile_run_lstm(x, h_prev, c_prev, p):
 def test_lstm_c_kernel_matches_the_reference():
     cc = _cc()
     if not cc:
-        return                                                # quick tier hides the toolchain -> self-skip
+        return  # quick tier hides the toolchain -> self-skip
     rng = random.Random(0xE414)
     di, dh = 3, 2
     p = _lstm_params(rng, di, dh)
@@ -605,9 +703,11 @@ def test_lstm_c_kernel_matches_the_reference():
 
 def test_lstm_c_emit_routes_transcendentals_through_the_libm_edge():
     src = emit_lstm_cell_c(3, 2, "lc")
-    assert "math.h" in src and "tanhf" in src and "expf" in src   # the gate transcendentals ride the libm edge
-    assert "c.call.libm:" in src                                  # the edge label in the docstring comment
-    assert "void lc(const float *restrict x," in src             # the baked-in signature
+    assert (
+        "math.h" in src and "tanhf" in src and "expf" in src
+    )  # the gate transcendentals ride the libm edge
+    assert "c.call.libm:" in src  # the edge label in the docstring comment
+    assert "void lc(const float *restrict x," in src  # the baked-in signature
     for bad in [(0, 2), (2, 0)]:
         try:
             emit_lstm_cell_c(*bad)
@@ -620,29 +720,32 @@ def test_lstm_c_emit_routes_transcendentals_through_the_libm_edge():
 # 8. The link-flag rule: tanhf/expf -> -lm (REUSES the existing libm rule; no linkflags change).
 # ============================================================================================================
 
+
 def test_recurrent_link_flag_rule_reuses_the_existing_libm_rule():
     # The LSTM/GRU gate tanhf + the sigmoid's expf MATCH the existing libm rule -- NO linkflags change needed.
-    assert library_for_callee("tanhf") == "-lm"                # the gate tanh edge
-    assert library_for_callee("expf") == "-lm"                 # the sigmoid exp edge
-    assert library_for_callee("tanh") == "-lm"                 # the double forms too
+    assert library_for_callee("tanhf") == "-lm"  # the gate tanh edge
+    assert library_for_callee("expf") == "-lm"  # the sigmoid exp edge
+    assert library_for_callee("tanh") == "-lm"  # the double forms too
     assert library_for_callee("exp") == "-lm"
     # no regression on the other library rules + libc + unknown.
-    assert library_for_callee("sqrtf") == "-lm"                # E3 layernorm still maps
-    assert library_for_callee("LAPACKE_ssyev") == "-llapack"   # E2 PCA still maps
-    assert library_for_callee("cblas_sgemm") == "-lcblas"      # B5 BLAS still maps
-    assert library_for_callee("free") == NO_FLAG               # libc-implicit, known
-    assert library_for_callee("totally_unknown_fn") is None    # unknown-callee policy unchanged
+    assert library_for_callee("sqrtf") == "-lm"  # E3 layernorm still maps
+    assert library_for_callee("LAPACKE_ssyev") == "-llapack"  # E2 PCA still maps
+    assert library_for_callee("cblas_sgemm") == "-lcblas"  # B5 BLAS still maps
+    assert library_for_callee("free") == NO_FLAG  # libc-implicit, known
+    assert library_for_callee("totally_unknown_fn") is None  # unknown-callee policy unchanged
 
 
 # ============================================================================================================
 # the two-truth quarantine: the recurrent module imports no verifier / emits no Diagnostic.
 # ============================================================================================================
 
+
 def test_recurrent_touches_no_verifier_and_emits_no_diagnostic():
     # The recurrent cells are cost-side / oracle quantities (off the legality path), never an R-law verdict.
     # AST-inspect the module: no verify / Diagnostic / Graded names bound, no verifier module imported (exactly
     # as test_ols / test_pca / test_transformer).
     import bcir.kbcir.recurrent as rc_mod
+
     bound = set(vars(rc_mod))
     assert not (bound & {"verify_quarantine", "Diagnostic", "Graded", "decide"}), sorted(bound)
     tree = ast.parse(open(rc_mod.__file__, encoding="utf-8").read())
@@ -691,8 +794,17 @@ def test_tier_b_lstm_readout_training_drives_loss_down():
         return out
 
     names = [f"r{j}" for j in range(dh)] + ["b"]
-    res = train(model, [0.0] * (dh + 1), Dataset(tuple(feats), tuple(ys)), loss="mse", optimizer="adam",
-                epochs=120, lr=0.05, seed=1, param_names=names)
+    res = train(
+        model,
+        [0.0] * (dh + 1),
+        Dataset(tuple(feats), tuple(ys)),
+        loss="mse",
+        optimizer="adam",
+        epochs=120,
+        lr=0.05,
+        seed=1,
+        param_names=names,
+    )
     # the shared convergence gate: decreased + absolute threshold + substantial drop.
     assert_converged(res.train_loss, final_below=1e-2, name="E4 Tier-B LSTM readout")
 
@@ -726,8 +838,17 @@ def test_tier_b_gru_readout_training_drives_loss_down():
         return out
 
     names = [f"r{j}" for j in range(dh)] + ["b"]
-    res = train(model, [0.0] * (dh + 1), Dataset(tuple(feats), tuple(ys)), loss="mse", optimizer="adam",
-                epochs=120, lr=0.05, seed=1, param_names=names)
+    res = train(
+        model,
+        [0.0] * (dh + 1),
+        Dataset(tuple(feats), tuple(ys)),
+        loss="mse",
+        optimizer="adam",
+        epochs=120,
+        lr=0.05,
+        seed=1,
+        param_names=names,
+    )
     assert_converged(res.train_loss, final_below=1e-2, name="E4 Tier-B GRU readout")
 
 
@@ -743,17 +864,21 @@ def test_tier_a_rnn_weights_train_end_to_end():
 
     rng = random.Random(0xE4C2)
     di, dh, T = 1, 2, 3
-    teacher = RnnParams(_vec(rng, dh * di, 0.3, 0.7), _vec(rng, dh * dh, 0.1, 0.3),
-                        _vec(rng, dh, 0.1, 0.3), di, dh)
+    teacher = RnnParams(
+        _vec(rng, dh * di, 0.3, 0.7), _vec(rng, dh * dh, 0.1, 0.3), _vec(rng, dh, 0.1, 0.3), di, dh
+    )
     seqs, ys = [], []
     for _ in range(24):
         s = [rng.uniform(0.4, 1.0) for _ in range(T * di)]
         hT = rnn_relu_reference(s, [0.0] * dh, teacher)
         seqs.append(tuple(s))
-        ys.append(hT[0] + hT[1])                                  # the FIXED readout: sum of the final state
+        ys.append(hT[0] + hT[1])  # the FIXED readout: sum of the final state
 
-    names = ([f"wx{i}" for i in range(dh * di)] + [f"wh{i}" for i in range(dh * dh)]
-             + [f"b{i}" for i in range(dh)])
+    names = (
+        [f"wx{i}" for i in range(dh * di)]
+        + [f"wh{i}" for i in range(dh * dh)]
+        + [f"b{i}" for i in range(dh)]
+    )
 
     def model(tape, param_names, X):
         w = {nm: tape.var(nm) for nm in param_names}
@@ -770,15 +895,25 @@ def test_tier_a_rnn_weights_train_end_to_end():
                         z = tape.add(z, tape.mul(w[f"wx{o * di + j}"], xc[j]))
                     for k in range(dh):
                         z = tape.add(z, tape.mul(w[f"wh{o * dh + k}"], h[k]))
-                    new_h.append(tape.select(z, z, zero))         # relu (closed-set)
+                    new_h.append(tape.select(z, z, zero))  # relu (closed-set)
                 h = new_h
-            out.append(tape.add(h[0], h[1]))                      # fixed sum readout: no readout params
+            out.append(tape.add(h[0], h[1]))  # fixed sum readout: no readout params
         return out
 
-    p0 = [rng.uniform(0.35, 0.65) for _ in names]                 # a different (positive) init from the teacher
-    res = train(model, p0, Dataset(tuple(seqs), tuple(ys)), loss="mse", optimizer="adam",
-                epochs=200, batch_size=8, lr=0.05, seed=1, param_names=names)
-    assert list(res.params) != list(p0)                           # the gradient genuinely flowed into the weights
+    p0 = [rng.uniform(0.35, 0.65) for _ in names]  # a different (positive) init from the teacher
+    res = train(
+        model,
+        p0,
+        Dataset(tuple(seqs), tuple(ys)),
+        loss="mse",
+        optimizer="adam",
+        epochs=200,
+        batch_size=8,
+        lr=0.05,
+        seed=1,
+        param_names=names,
+    )
+    assert list(res.params) != list(p0)  # the gradient genuinely flowed into the weights
     assert_converged(res.train_loss, final_below=1e-3, max_ratio=0.1, name="E4 Tier-A RNN weights")
 
 

@@ -40,8 +40,8 @@ from .concurrency import _is_sparse, _topo_phase_ids, _wave_indices
 class ScheduledPrice:
     """M(pi, Theta) alongside the serial Sigma bound it generalizes."""
 
-    makespan: int   # (max,+) over the wave schedule
-    serial: int     # Sigma over the textual chain (the degenerate price)
+    makespan: int  # (max,+) over the wave schedule
+    serial: int  # Sigma over the textual chain (the degenerate price)
 
     @property
     def overlap_gain(self) -> int:
@@ -64,8 +64,7 @@ def _chain_cost(chain: list[tuple[Claim, Candidate]], w_phase, theta) -> int:
     return total
 
 
-def _makespan(module: Module, assignment: dict[int, Candidate], h, theta,
-              policy: Policy) -> int:
+def _makespan(module: Module, assignment: dict[int, Candidate], h, theta, policy: Policy) -> int:
     """M(pi, Theta): max over parallel bins/tail, sum over series, per phase."""
     domains = max(1, getattr(h, "affinity_domains", 1))
     pmap = module.phase_map()
@@ -99,8 +98,9 @@ def _makespan(module: Module, assignment: dict[int, Candidate], h, theta,
     return total
 
 
-def _serial_result(module: Module, assignment: dict[int, Candidate], h, theta,
-                   policy: Policy) -> RealizationResult:
+def _serial_result(
+    module: Module, assignment: dict[int, Candidate], h, theta, policy: Policy
+) -> RealizationResult:
     """Re-price a fixed assignment under the serial chain semantics (so the
     returned plan's score == Sigma of its step costs: R9-consistent)."""
     steps: list[ChosenStep] = []
@@ -116,8 +116,9 @@ def _serial_result(module: Module, assignment: dict[int, Candidate], h, theta,
     return RealizationResult(steps, total)
 
 
-def price_scheduled(module: Module, result: RealizationResult, h, theta,
-                    policy: Policy = PERF) -> ScheduledPrice:
+def price_scheduled(
+    module: Module, result: RealizationResult, h, theta, policy: Policy = PERF
+) -> ScheduledPrice:
     """Price a selected plan under the CT2 wave schedule (the M of the equation)."""
     assignment = result.by_claim()
     return ScheduledPrice(
@@ -126,8 +127,9 @@ def price_scheduled(module: Module, result: RealizationResult, h, theta,
     )
 
 
-def optimize_scheduled(module: Module, h, theta, policy: Policy = PERF
-                       ) -> tuple[RealizationResult, ScheduledPrice]:
+def optimize_scheduled(
+    module: Module, h, theta, policy: Policy = PERF
+) -> tuple[RealizationResult, ScheduledPrice]:
     """Select -> schedule -> re-price, iterated once.
 
     Starts from the serial optimum, then sweeps each claim once (in flatten
@@ -142,7 +144,7 @@ def optimize_scheduled(module: Module, h, theta, policy: Policy = PERF
     if not assignment:
         return result, ScheduledPrice(0, 0)
 
-    cand_map = fused_candidates(module, h)    # fusion-aware alternatives (consistent costs)
+    cand_map = fused_candidates(module, h)  # fusion-aware alternatives (consistent costs)
     best_m = _makespan(module, assignment, h, theta, policy)
     changed = False
     for _phase_id, claim in _flatten(module):

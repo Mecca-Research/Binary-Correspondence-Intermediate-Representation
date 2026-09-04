@@ -138,62 +138,80 @@ _UTF8 = Primitive(Universal.UTF8_STRING)
 _INT = Primitive(Universal.INTEGER)
 _BOOL = Primitive(Universal.BOOLEAN)
 
-COMPONENT_TYPE = Sequence((
-    Component("name", _UTF8),
-    Component("type", _UTF8),
-    Component("tag", _INT, optional=True),
-    Component("tagging", _UTF8, optional=True),
-    # DEFAULT FALSE rather than OPTIONAL: a flag that is absent and a flag that is false
-    # are the same fact, and X.690 §11.5 (with X.697 §21.2 following it) makes the
-    # canonical encoder omit a component encoded at its default. So the canonical JER for
-    # an unset flag carries no member at all, which is both smaller and unambiguous —
-    # whereas OPTIONAL would let `false` and absent both appear and mean one thing.
-    Component("optional", _BOOL, default=False),
-    Component("hasDefault", _BOOL, default=False),
-    Component("defaultValue", _UTF8, optional=True),
-), name="DialectComponent")
+COMPONENT_TYPE = Sequence(
+    (
+        Component("name", _UTF8),
+        Component("type", _UTF8),
+        Component("tag", _INT, optional=True),
+        Component("tagging", _UTF8, optional=True),
+        # DEFAULT FALSE rather than OPTIONAL: a flag that is absent and a flag that is false
+        # are the same fact, and X.690 §11.5 (with X.697 §21.2 following it) makes the
+        # canonical encoder omit a component encoded at its default. So the canonical JER for
+        # an unset flag carries no member at all, which is both smaller and unambiguous —
+        # whereas OPTIONAL would let `false` and absent both appear and mean one thing.
+        Component("optional", _BOOL, default=False),
+        Component("hasDefault", _BOOL, default=False),
+        Component("defaultValue", _UTF8, optional=True),
+    ),
+    name="DialectComponent",
+)
 
-TYPE_TYPE = Sequence((
-    Component("name", _UTF8),
-    Component("kind", _UTF8),
-    Component("universal", _INT, optional=True),
-    Component("element", _UTF8, optional=True),
-    Component("constraintLow", _INT, optional=True),
-    Component("constraintHigh", _INT, optional=True),
-    Component("sizeLow", _INT, optional=True),
-    Component("sizeHigh", _INT, optional=True),
-    Component("components", SequenceOf(COMPONENT_TYPE), default=()),
-), name="DialectType")
+TYPE_TYPE = Sequence(
+    (
+        Component("name", _UTF8),
+        Component("kind", _UTF8),
+        Component("universal", _INT, optional=True),
+        Component("element", _UTF8, optional=True),
+        Component("constraintLow", _INT, optional=True),
+        Component("constraintHigh", _INT, optional=True),
+        Component("sizeLow", _INT, optional=True),
+        Component("sizeHigh", _INT, optional=True),
+        Component("components", SequenceOf(COMPONENT_TYPE), default=()),
+    ),
+    name="DialectType",
+)
 
-ENCODE_TYPE = Sequence((
-    Component("name", _UTF8),
-    Component("type", _UTF8),
-    Component("rules", _UTF8),
-    Component("source", _UTF8, optional=True),
-), name="DialectEncode")
+ENCODE_TYPE = Sequence(
+    (
+        Component("name", _UTF8),
+        Component("type", _UTF8),
+        Component("rules", _UTF8),
+        Component("source", _UTF8, optional=True),
+    ),
+    name="DialectEncode",
+)
 
-DECODE_TYPE = Sequence((
-    Component("name", _UTF8),
-    Component("type", _UTF8),
-    Component("rules", _UTF8),
-    Component("strictDer", _BOOL, default=False),
-    Component("strictCanonical", _BOOL, default=False),
-), name="DialectDecode")
+DECODE_TYPE = Sequence(
+    (
+        Component("name", _UTF8),
+        Component("type", _UTF8),
+        Component("rules", _UTF8),
+        Component("strictDer", _BOOL, default=False),
+        Component("strictCanonical", _BOOL, default=False),
+    ),
+    name="DialectDecode",
+)
 
-TRANSCODE_TYPE = Sequence((
-    Component("name", _UTF8),
-    Component("type", _UTF8),
-    Component("from", _UTF8),
-    Component("to", _UTF8),
-    Component("preserveValue", _BOOL, default=False),
-), name="DialectTranscode")
+TRANSCODE_TYPE = Sequence(
+    (
+        Component("name", _UTF8),
+        Component("type", _UTF8),
+        Component("from", _UTF8),
+        Component("to", _UTF8),
+        Component("preserveValue", _BOOL, default=False),
+    ),
+    name="DialectTranscode",
+)
 
-PROJECTION_TYPE = Sequence((
-    Component("name", _UTF8),
-    Component("type", _UTF8),
-    Component("native", _UTF8),
-    Component("additive", _BOOL, default=False),
-), name="DialectProjection")
+PROJECTION_TYPE = Sequence(
+    (
+        Component("name", _UTF8),
+        Component("type", _UTF8),
+        Component("native", _UTF8),
+        Component("additive", _BOOL, default=False),
+    ),
+    name="DialectProjection",
+)
 
 #: X.680 §29. An operation IS one of four things; it does not have four optional halves.
 #:
@@ -203,22 +221,28 @@ PROJECTION_TYPE = Sequence((
 #: refuses the untagged version at construction. JER never sees a tag (X.697 §23 encodes a
 #: CHOICE as a single-member object keyed by the alternative's *name*), so the tags cost
 #: nothing here and are what lets the same schema project to DER or COER unchanged.
-OPERATION_TYPE = Choice((
-    Component("encode", ENCODE_TYPE, tag=0),
-    Component("decode", DECODE_TYPE, tag=1),
-    Component("transcode", TRANSCODE_TYPE, tag=2),
-    Component("projection", PROJECTION_TYPE, tag=3),
-), name="DialectOperation")
+OPERATION_TYPE = Choice(
+    (
+        Component("encode", ENCODE_TYPE, tag=0),
+        Component("decode", DECODE_TYPE, tag=1),
+        Component("transcode", TRANSCODE_TYPE, tag=2),
+        Component("projection", PROJECTION_TYPE, tag=3),
+    ),
+    name="DialectOperation",
+)
 
-MODULE_TYPE = Sequence((
-    Component("version", _INT),
-    Component("name", _UTF8),
-    Component("oid", SequenceOf(_INT)),
-    Component("rules", _UTF8),
-    Component("defaultTagging", _UTF8),
-    Component("types", SequenceOf(TYPE_TYPE), default=()),
-    Component("operations", SequenceOf(OPERATION_TYPE), default=()),
-), name="DialectModule")
+MODULE_TYPE = Sequence(
+    (
+        Component("version", _INT),
+        Component("name", _UTF8),
+        Component("oid", SequenceOf(_INT)),
+        Component("rules", _UTF8),
+        Component("defaultTagging", _UTF8),
+        Component("types", SequenceOf(TYPE_TYPE), default=()),
+        Component("operations", SequenceOf(OPERATION_TYPE), default=()),
+    ),
+    name="DialectModule",
+)
 
 
 # --- pivot <-> ASN.1 value ------------------------------------------------------------------
@@ -305,28 +329,44 @@ def value_to_module(value: dict) -> DialectModule:
         # format acquires two incompatible readings of the same document.
         raise Asn1Error(
             f"projection version {version} is not {PROJECTION_VERSION}; this reader "
-            f"refuses rather than inferring the shape from which members are present")
+            f"refuses rather than inferring the shape from which members are present"
+        )
     types = tuple(
         DialectType(
-            name=t["name"], kind=t["kind"],
-            universal=t.get("universal"), element=t.get("element"),
-            constraint_low=t.get("constraintLow"), constraint_high=t.get("constraintHigh"),
-            size_low=t.get("sizeLow"), size_high=t.get("sizeHigh"),
+            name=t["name"],
+            kind=t["kind"],
+            universal=t.get("universal"),
+            element=t.get("element"),
+            constraint_low=t.get("constraintLow"),
+            constraint_high=t.get("constraintHigh"),
+            size_low=t.get("sizeLow"),
+            size_high=t.get("sizeHigh"),
             components=tuple(
                 DialectComponent(
-                    name=c["name"], type=c["type"], tag=c.get("tag"),
-                    tagging=c.get("tagging"), optional=c.get("optional", False),
+                    name=c["name"],
+                    type=c["type"],
+                    tag=c.get("tag"),
+                    tagging=c.get("tagging"),
+                    optional=c.get("optional", False),
                     has_default=c.get("hasDefault", False),
-                    default_value=c.get("defaultValue"))
-                for c in t.get("components", ())),
+                    default_value=c.get("defaultValue"),
+                )
+                for c in t.get("components", ())
+            ),
         )
         for t in value.get("types", ())
     )
-    operations = tuple(_operation_from_value(alt, body)
-                       for alt, body in value.get("operations", ()))
+    operations = tuple(
+        _operation_from_value(alt, body) for alt, body in value.get("operations", ())
+    )
     return DialectModule(
-        name=value["name"], oid=tuple(value["oid"]), rules=value["rules"],
-        default_tagging=value["defaultTagging"], types=types, operations=operations)
+        name=value["name"],
+        oid=tuple(value["oid"]),
+        rules=value["rules"],
+        default_tagging=value["defaultTagging"],
+        types=types,
+        operations=operations,
+    )
 
 
 def _operation_from_value(alternative: str, body: dict) -> DialectOperation:
@@ -334,23 +374,30 @@ def _operation_from_value(alternative: str, body: dict) -> DialectOperation:
     if alternative == "encode":
         return DialectOperation(**common, rules=body["rules"], source=body.get("source"))
     if alternative == "decode":
-        return DialectOperation(**common, rules=body["rules"],
-                                strict_der=body.get("strictDer", False),
-                                strict_canonical=body.get("strictCanonical", False))
+        return DialectOperation(
+            **common,
+            rules=body["rules"],
+            strict_der=body.get("strictDer", False),
+            strict_canonical=body.get("strictCanonical", False),
+        )
     if alternative == "transcode":
-        return DialectOperation(**common, from_rules=body["from"], to_rules=body["to"],
-                                preserve_value=body.get("preserveValue", False))
+        return DialectOperation(
+            **common,
+            from_rules=body["from"],
+            to_rules=body["to"],
+            preserve_value=body.get("preserveValue", False),
+        )
     if alternative == "projection":
-        return DialectOperation(**common, native=body["native"],
-                                additive=body.get("additive", False))
+        return DialectOperation(
+            **common, native=body["native"], additive=body.get("additive", False)
+        )
     raise Asn1Error(f"no bcir.asn1 operation is named {alternative!r}")
 
 
 # --- pivot <-> JER --------------------------------------------------------------------------
 
 
-def module_to_jer(module: DialectModule, *,
-                  rules: JerRules = JerRules.CANONICAL) -> bytes:
+def module_to_jer(module: DialectModule, *, rules: JerRules = JerRules.CANONICAL) -> bytes:
     return encode_jer(MODULE_TYPE, module_to_value(module), rules=rules)
 
 
@@ -369,8 +416,10 @@ def jer_to_module(data: bytes, *, rules: JerRules = JerRules.CANONICAL) -> Diale
 # loudly instead of silently projecting a smaller module than it was given.
 
 _MODULE_RE = re.compile(r"bcir\.asn1\.module\s+@([A-Za-z_][\w.$]*)\s+attributes\s*\{")
-_OP_RE = re.compile(r"bcir\.asn1\.(type|component|encode|decode|transcode|projection)"
-                    r"(?:\s+@([A-Za-z_][\w.$]*))?\s*(?:attributes\s*)?\{")
+_OP_RE = re.compile(
+    r"bcir\.asn1\.(type|component|encode|decode|transcode|projection)"
+    r"(?:\s+@([A-Za-z_][\w.$]*))?\s*(?:attributes\s*)?\{"
+)
 _RULES_RE = re.compile(r"#bcir\.asn1_rules<(\w+)>")
 _TAGGING_RE = re.compile(r"#bcir\.asn1_tagging<(\w+)>")
 _ARRAY_RE = re.compile(r"array<i64:\s*([^>]*)>")
@@ -424,13 +473,13 @@ def _attributes(body: str) -> dict:
             break
         key = re.match(r"([A-Za-z_]\w*)", body[at:])
         if not key:
-            raise Asn1Error(f"not an attribute name at {body[at:at + 24]!r}")
+            raise Asn1Error(f"not an attribute name at {body[at : at + 24]!r}")
         name = key.group(1)
         at += key.end()
         while at < end and body[at] in " \t\r\n":
             at += 1
         if at >= end or body[at] != "=":
-            out[name] = True                      # a unit attribute
+            out[name] = True  # a unit attribute
             continue
         at += 1
         while at < end and body[at] in " \t\r\n":
@@ -483,14 +532,20 @@ def parse_mlir(text: str) -> tuple[DialectModule, ...]:
     for match in _MODULE_RE.finditer(stripped):
         attr_start = stripped.index("{", match.end() - 1)
         attr_end = _balanced(stripped, attr_start)
-        attrs = _attributes(stripped[attr_start + 1:attr_end - 1])
+        attrs = _attributes(stripped[attr_start + 1 : attr_end - 1])
         body_start = stripped.index("{", attr_end)
         body_end = _balanced(stripped, body_start)
-        types, operations = _parse_body(stripped[body_start + 1:body_end - 1])
-        modules.append(DialectModule(
-            name=match.group(1), oid=tuple(attrs.get("oid", ())),
-            rules=attrs.get("rules", ""), default_tagging=attrs.get("default_tagging", ""),
-            types=types, operations=operations))
+        types, operations = _parse_body(stripped[body_start + 1 : body_end - 1])
+        modules.append(
+            DialectModule(
+                name=match.group(1),
+                oid=tuple(attrs.get("oid", ())),
+                rules=attrs.get("rules", ""),
+                default_tagging=attrs.get("default_tagging", ""),
+                types=types,
+                operations=operations,
+            )
+        )
     return tuple(modules)
 
 
@@ -505,32 +560,45 @@ def _parse_body(body: str) -> tuple[tuple[DialectType, ...], tuple[DialectOperat
         mnemonic, symbol = match.group(1), match.group(2)
         attr_start = body.index("{", match.end() - 1)
         attr_end = _balanced(body, attr_start)
-        attrs = _attributes(body[attr_start + 1:attr_end - 1])
+        attrs = _attributes(body[attr_start + 1 : attr_end - 1])
         at = attr_end
         if mnemonic == "type":
             region_start = body.index("{", attr_end)
             region_end = _balanced(body, region_start)
-            components = _parse_components(body[region_start + 1:region_end - 1])
+            components = _parse_components(body[region_start + 1 : region_end - 1])
             at = region_end
-            types.append(DialectType(
-                name=symbol, kind=attrs.get("kind", ""),
-                universal=attrs.get("universal"), element=attrs.get("element"),
-                constraint_low=attrs.get("constraint_low"),
-                constraint_high=attrs.get("constraint_high"),
-                size_low=attrs.get("size_low"), size_high=attrs.get("size_high"),
-                components=components))
+            types.append(
+                DialectType(
+                    name=symbol,
+                    kind=attrs.get("kind", ""),
+                    universal=attrs.get("universal"),
+                    element=attrs.get("element"),
+                    constraint_low=attrs.get("constraint_low"),
+                    constraint_high=attrs.get("constraint_high"),
+                    size_low=attrs.get("size_low"),
+                    size_high=attrs.get("size_high"),
+                    components=components,
+                )
+            )
         elif mnemonic == "component":
-            continue                              # owned by a type's region, never loose
+            continue  # owned by a type's region, never loose
         else:
-            operations.append(DialectOperation(
-                op=mnemonic, name=symbol, type=attrs.get("type", ""),
-                rules=attrs.get("rules"), strict_der=bool(attrs.get("strict_der", False)),
-                strict_canonical=bool(attrs.get("strict_canonical", False)),
-                source=attrs.get("source"), from_rules=attrs.get("from"),
-                to_rules=attrs.get("to"),
-                preserve_value=bool(attrs.get("preserve_value", False)),
-                native=attrs.get("native"),
-                additive=bool(attrs.get("additive", False))))
+            operations.append(
+                DialectOperation(
+                    op=mnemonic,
+                    name=symbol,
+                    type=attrs.get("type", ""),
+                    rules=attrs.get("rules"),
+                    strict_der=bool(attrs.get("strict_der", False)),
+                    strict_canonical=bool(attrs.get("strict_canonical", False)),
+                    source=attrs.get("source"),
+                    from_rules=attrs.get("from"),
+                    to_rules=attrs.get("to"),
+                    preserve_value=bool(attrs.get("preserve_value", False)),
+                    native=attrs.get("native"),
+                    additive=bool(attrs.get("additive", False)),
+                )
+            )
     return tuple(types), tuple(operations)
 
 
@@ -543,14 +611,19 @@ def _parse_components(region: str) -> tuple[DialectComponent, ...]:
             break
         start = region.index("{", match.end() - 1)
         stop = _balanced(region, start)
-        attrs = _attributes(region[start + 1:stop - 1])
+        attrs = _attributes(region[start + 1 : stop - 1])
         at = stop
-        out.append(DialectComponent(
-            name=attrs.get("name", ""), type=attrs.get("type", ""),
-            tag=attrs.get("tag"), tagging=attrs.get("tagging"),
-            optional=bool(attrs.get("optional", False)),
-            has_default=bool(attrs.get("has_default", False)),
-            default_value=attrs.get("default_value")))
+        out.append(
+            DialectComponent(
+                name=attrs.get("name", ""),
+                type=attrs.get("type", ""),
+                tag=attrs.get("tag"),
+                tagging=attrs.get("tagging"),
+                optional=bool(attrs.get("optional", False)),
+                has_default=bool(attrs.get("has_default", False)),
+                default_value=attrs.get("default_value"),
+            )
+        )
     return tuple(out)
 
 
@@ -566,25 +639,28 @@ def emit_mlir(module: DialectModule) -> str:
     reprint it differently and remain correct — which is exactly why the round-trip law in
     this direction is the identity on the dialect rather than on the octets.
     """
-    lines = [f"bcir.asn1.module @{module.name} attributes {{",
-             f"  oid = array<i64: {', '.join(str(a) for a in module.oid)}>,",
-             f"  rules = #bcir.asn1_rules<{module.rules}>,",
-             f"  default_tagging = #bcir.asn1_tagging<{module.default_tagging}>",
-             "} {"]
+    lines = [
+        f"bcir.asn1.module @{module.name} attributes {{",
+        f"  oid = array<i64: {', '.join(str(a) for a in module.oid)}>,",
+        f"  rules = #bcir.asn1_rules<{module.rules}>,",
+        f"  default_tagging = #bcir.asn1_tagging<{module.default_tagging}>",
+        "} {",
+    ]
     for kind in module.types:
-        attrs = [f'kind = {_quote(kind.kind)}']
+        attrs = [f"kind = {_quote(kind.kind)}"]
         if kind.universal is not None:
             attrs.append(f"universal = {kind.universal} : i64")
         if kind.element is not None:
             attrs.append(f"element = @{kind.element}")
-        for name, value in (("constraint_low", kind.constraint_low),
-                            ("constraint_high", kind.constraint_high),
-                            ("size_low", kind.size_low),
-                            ("size_high", kind.size_high)):
+        for name, value in (
+            ("constraint_low", kind.constraint_low),
+            ("constraint_high", kind.constraint_high),
+            ("size_low", kind.size_low),
+            ("size_high", kind.size_high),
+        ):
             if value is not None:
                 attrs.append(f"{name} = {value} : i64")
-        lines.append(f"  bcir.asn1.type @{kind.name} attributes "
-                     f"{{ {', '.join(attrs)} }} {{")
+        lines.append(f"  bcir.asn1.type @{kind.name} attributes {{ {', '.join(attrs)} }} {{")
         for component in kind.components:
             parts = [f"name = {_quote(component.name)}", f"type = @{component.type}"]
             if component.tag is not None:
@@ -620,8 +696,7 @@ def emit_mlir(module: DialectModule) -> str:
             parts.append(f"native = {_quote(operation.native)}")
             if operation.additive:
                 parts.append("additive")
-        lines.append(f"  bcir.asn1.{operation.op} @{operation.name} "
-                     f"{{ {', '.join(parts)} }}")
+        lines.append(f"  bcir.asn1.{operation.op} @{operation.name} {{ {', '.join(parts)} }}")
     lines.append("}")
     return "\n".join(lines) + "\n"
 
@@ -646,9 +721,22 @@ def jer_to_mlir_to_jer(data: bytes) -> bytes:
 
 
 __all__ = [
-    "COMPONENT_TYPE", "DIALECT_MODULE_OID", "MODULE_TYPE", "OPERATION_TYPE",
-    "PROJECTION_VERSION", "TYPE_TYPE", "DialectComponent", "DialectModule",
-    "DialectOperation", "DialectType", "emit_mlir", "jer_to_mlir_to_jer", "jer_to_module",
-    "mlir_to_jer_to_mlir", "module_to_jer", "module_to_value", "parse_mlir",
+    "COMPONENT_TYPE",
+    "DIALECT_MODULE_OID",
+    "MODULE_TYPE",
+    "OPERATION_TYPE",
+    "PROJECTION_VERSION",
+    "TYPE_TYPE",
+    "DialectComponent",
+    "DialectModule",
+    "DialectOperation",
+    "DialectType",
+    "emit_mlir",
+    "jer_to_mlir_to_jer",
+    "jer_to_module",
+    "mlir_to_jer_to_mlir",
+    "module_to_jer",
+    "module_to_value",
+    "parse_mlir",
     "value_to_module",
 ]

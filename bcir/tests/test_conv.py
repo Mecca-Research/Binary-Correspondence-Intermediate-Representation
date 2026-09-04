@@ -17,9 +17,20 @@ import subprocess
 import tempfile
 
 from bcir.kbcir import matmul
-from bcir.kbcir.conv import (ConvSpec, bottleneck, check_conv, conv2d_im2col, conv2d_realize,
-                             conv2d_reference, conv_via_bridge, cost_of, cost_vector, im2col,
-                             plan_conv, weights_as_matrix)
+from bcir.kbcir.conv import (
+    ConvSpec,
+    bottleneck,
+    check_conv,
+    conv2d_im2col,
+    conv2d_realize,
+    conv2d_reference,
+    conv_via_bridge,
+    cost_of,
+    cost_vector,
+    im2col,
+    plan_conv,
+    weights_as_matrix,
+)
 from bcir.kbcir.cost import ACCURACY, COMPUTE, MEMORY, CostVector, TargetProfile
 from bcir.lower.c_kernel import emit_conv2d_c
 
@@ -27,7 +38,7 @@ _HOST = TargetProfile.for_host()
 
 
 def _ivec(rng, n, lo=-4, hi=4):
-    return [float(rng.randint(lo, hi)) for _ in range(n)]   # integer-valued -> float sums are exact
+    return [float(rng.randint(lo, hi)) for _ in range(n)]  # integer-valued -> float sums are exact
 
 
 def _spec(in_c, in_h, in_w, out_c, kh, kw, stride=1, pad=0, dtype="f32"):
@@ -35,6 +46,7 @@ def _spec(in_c, in_h, in_w, out_c, kh, kw, stride=1, pad=0, dtype="f32"):
 
 
 # --- the verification: the im2col+gemm realization reproduces the naive direct conv ----------------
+
 
 def test_im2col_gemm_equals_the_direct_reference_bit_exact():
     rng = random.Random(0xC04)
@@ -68,17 +80,21 @@ def test_planned_realization_matches_the_reference():
     rng = random.Random(0xC1A)
     spec = plan_conv(3, 7, 7, 4, 3, 3, stride=1, pad=1, target=_HOST)
     x, w = _ivec(rng, spec.in_count), _ivec(rng, spec.weight_count)
-    base = _spec(3, 7, 7, 4, 3, 3, 1, 1)                    # the reference (untiled) spec
+    base = _spec(3, 7, 7, 4, 3, 3, 1, 1)  # the reference (untiled) spec
     assert conv2d_realize(x, w, spec) == conv2d_reference(x, w, base)
 
 
 def test_fuzz_realization_invariance_over_random_shapes():
     rng = random.Random(0xC0FF)
     for _ in range(60):
-        in_c = rng.randint(1, 3); out_c = rng.randint(1, 3)
-        kh = rng.randint(1, 3); kw = rng.randint(1, 3)
-        in_h = rng.randint(kh, kh + 4); in_w = rng.randint(kw, kw + 4)
-        stride = rng.randint(1, 2); pad = rng.randint(0, 1)
+        in_c = rng.randint(1, 3)
+        out_c = rng.randint(1, 3)
+        kh = rng.randint(1, 3)
+        kw = rng.randint(1, 3)
+        in_h = rng.randint(kh, kh + 4)
+        in_w = rng.randint(kw, kw + 4)
+        stride = rng.randint(1, 2)
+        pad = rng.randint(0, 1)
         spec = plan_conv(in_c, in_h, in_w, out_c, kh, kw, stride, pad, target=_HOST)
         if spec.out_h < 1 or spec.out_w < 1:
             continue
@@ -89,6 +105,7 @@ def test_fuzz_realization_invariance_over_random_shapes():
 
 
 # --- the Q8 bridge tracks the reference within the input-quantization (R17) bound ------------------
+
 
 def test_conv_bridge_tracks_the_reference_within_quant_error():
     rng = random.Random(0xC819)
@@ -106,6 +123,7 @@ def test_conv_bridge_is_the_conv_of_the_roundtrip():
     # conv_via_bridge == direct conv of the dequantized (round-tripped) inputs -- the bridge is the SOLE
     # error source, mirroring matmul.gemm_via_bridge / activation_via_bridge.
     from bcir.kbcir.quantize import dequantize, quantize_per_group
+
     rng = random.Random(0xB1D6E)
     spec = _spec(2, 4, 4, 2, 2, 2, stride=1, pad=0)
     x = [rng.uniform(-3, 3) for _ in range(spec.in_count)]
@@ -116,6 +134,7 @@ def test_conv_bridge_is_the_conv_of_the_roundtrip():
 
 
 # --- the plan is deterministic + wires into the production 12-d algebra (priced via matmul.cost_of) -
+
 
 def test_plan_is_deterministic():
     for args in [(3, 8, 8, 4, 3, 3, 1, 1), (1, 16, 16, 8, 5, 5, 2, 2), (2, 5, 5, 3, 3, 3, 1, 0)]:
@@ -132,7 +151,7 @@ def test_plan_is_priced_through_the_existing_matmul_roofline():
     compute, mem, _ = cost_of(spec, "im2col", _HOST, spec.tile)
     tile = spec.tile or matmul.plan_matmul(m, n, k, _HOST)
     mc, mm, _ = matmul.cost_of(m, n, k, tile.tile_m, tile.tile_n, tile.tile_k, _HOST)
-    assert (compute, mem) == (mc, mm)                       # no new roofline term -- the matmul's, reused
+    assert (compute, mem) == (mc, mm)  # no new roofline term -- the matmul's, reused
     # the direct strategy is the UNTILED gemm cost (same compute -- the conv's MACs are fixed).
     dc, dm, _ = cost_of(spec, "direct", _HOST)
     uc, um, _ = matmul.cost_of(m, n, k, m, n, k, _HOST)
@@ -153,8 +172,10 @@ def test_cost_vector_wires_into_the_production_12d_algebra():
 
 def test_cost_vector_carries_the_r17_bound_on_the_accuracy_axis_when_quantized():
     spec = plan_conv(2, 6, 6, 4, 3, 3, target=_HOST)
-    assert cost_vector(spec, quant_bits=0).v[ACCURACY] == 0     # dense: no accuracy cost
-    assert cost_vector(spec, quant_bits=8).v[ACCURACY] == 1     # quantized: the R17 bridge bound (1 ULP)
+    assert cost_vector(spec, quant_bits=0).v[ACCURACY] == 0  # dense: no accuracy cost
+    assert (
+        cost_vector(spec, quant_bits=8).v[ACCURACY] == 1
+    )  # quantized: the R17 bridge bound (1 ULP)
 
 
 def test_r17_certifies_the_bridge_on_a_quantized_conv_call():
@@ -164,19 +185,31 @@ def test_r17_certifies_the_bridge_on_a_quantized_conv_call():
     from bcir.model import Claim, Domain, Lane, Opcode, StrideClass
 
     def call(qbits):
-        return Claim(id=7200, opcode=Opcode.MUL, lane=Lane.U, stride_class=StrideClass.UNIT, count=1,
-                     rd=(70, 71), wr=(72,), op="gem.conv", domain=Domain.RAM, quantized_bits=qbits)
-    assert accuracy_bound(call(8)) == accuracy_bound(call(0)) + 1   # the +1 ULP bridge step
-    assert accuracy_bound(call(0)) == 1                            # dense call: the op's own 1 ULP
+        return Claim(
+            id=7200,
+            opcode=Opcode.MUL,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=1,
+            rd=(70, 71),
+            wr=(72,),
+            op="gem.conv",
+            domain=Domain.RAM,
+            quantized_bits=qbits,
+        )
+
+    assert accuracy_bound(call(8)) == accuracy_bound(call(0)) + 1  # the +1 ULP bridge step
+    assert accuracy_bound(call(0)) == 1  # dense call: the op's own 1 ULP
     assert quantization_error_bound() == 1
 
 
 # --- shape/dtype well-formedness: op-level validation (NOT a new global R-law) ---------------------
 
+
 def test_check_conv_accepts_well_formed_claims():
     s = _spec(3, 8, 8, 4, 3, 3, 1, 1)
     assert check_conv(s, (3, 8, 8), "f32", (4, 3, 3, 3), (4, s.out_h, s.out_w), "f32") == []
-    si = _spec(1, 5, 5, 2, 3, 3, 2, 0, "i32")              # integer conv (exact rail) is well-formed
+    si = _spec(1, 5, 5, 2, 3, 3, 2, 0, "i32")  # integer conv (exact rail) is well-formed
     assert check_conv(si, (1, 5, 5), "i32", (2, 1, 3, 3), (2, si.out_h, si.out_w), "i32") == []
 
 
@@ -192,13 +225,18 @@ def test_check_conv_rejects_malformed_claims():
     assert check_conv(s, (3, 8, 8), "f32", (4, 3, 3, 3), (4, 99, 99), "f32")
     # (5) a kernel larger than the padded input.
     big = _spec(1, 3, 3, 1, 5, 5, 1, 0)
-    assert any("does not fit" in e or "empty" in e for e in
-               check_conv(big, (1, 3, 3), "f32", (1, 1, 5, 5), (1, big.out_h, big.out_w), "f32"))
+    assert any(
+        "does not fit" in e or "empty" in e
+        for e in check_conv(big, (1, 3, 3), "f32", (1, 1, 5, 5), (1, big.out_h, big.out_w), "f32")
+    )
     # (6) bad hyperparameters: stride 0 / negative pad.
-    assert check_conv(_spec(1, 4, 4, 1, 2, 2, 0, 0), (1, 4, 4), "f32", (1, 1, 2, 2), (1, 3, 3), "f32")
+    assert check_conv(
+        _spec(1, 4, 4, 1, 2, 2, 0, 0), (1, 4, 4), "f32", (1, 1, 2, 2), (1, 3, 3), "f32"
+    )
 
 
 # --- the emitted C kernel compiles + reproduces the reference (self-skip when toolchain hidden) ----
+
 
 def _cc():
     return shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
@@ -207,24 +245,28 @@ def _cc():
 def test_conv_c_kernel_is_bit_exact():
     cc = _cc()
     if not cc:
-        return                                              # quick tier hides the toolchain -> self-skip
+        return  # quick tier hides the toolchain -> self-skip
     rng = random.Random(0xC0DE)
     spec = _spec(2, 6, 7, 3, 3, 3, stride=2, pad=1)
-    x = [float(rng.randint(-9, 9)) for _ in range(spec.in_count)]   # integer-valued -> bit-exact
+    x = [float(rng.randint(-9, 9)) for _ in range(spec.in_count)]  # integer-valued -> bit-exact
     w = [float(rng.randint(-9, 9)) for _ in range(spec.weight_count)]
     ref = conv2d_reference(x, w, spec)
     kernel = emit_conv2d_c(2, 6, 7, 3, 3, 3, 2, 1, "cv")
-    main = (f"\n#include <stdio.h>\nint main(void){{\n"
-            f"  float in[{spec.in_count}] = {{{', '.join(f'{v:.1f}f' for v in x)}}};\n"
-            f"  float W[{spec.weight_count}] = {{{', '.join(f'{v:.1f}f' for v in w)}}};\n"
-            f"  float out[{spec.out_count}];\n  cv(in, W, out);\n"
-            f'  for (int i=0;i<{spec.out_count};++i) printf("%.1f ", out[i]);\n  return 0;\n}}\n')
+    main = (
+        f"\n#include <stdio.h>\nint main(void){{\n"
+        f"  float in[{spec.in_count}] = {{{', '.join(f'{v:.1f}f' for v in x)}}};\n"
+        f"  float W[{spec.weight_count}] = {{{', '.join(f'{v:.1f}f' for v in w)}}};\n"
+        f"  float out[{spec.out_count}];\n  cv(in, W, out);\n"
+        f'  for (int i=0;i<{spec.out_count};++i) printf("%.1f ", out[i]);\n  return 0;\n}}\n'
+    )
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "cv.c")
         open(src, "w").write(kernel + main)
         exe = os.path.join(d, "cv")
-        bld = subprocess.run([cc, "-std=c11", "-O2", src, "-o", exe], capture_output=True, text=True)
-        assert bld.returncode == 0, bld.stderr                # no transcendental -> no -lm needed
+        bld = subprocess.run(
+            [cc, "-std=c11", "-O2", src, "-o", exe], capture_output=True, text=True
+        )
+        assert bld.returncode == 0, bld.stderr  # no transcendental -> no -lm needed
         out = subprocess.run([exe], capture_output=True, text=True)
         got = [float(t) for t in out.stdout.split()]
         assert got == [round(r, 1) for r in ref], (got, ref)
@@ -238,4 +280,4 @@ def test_conv_c_emit_validates_dims():
         except ValueError:
             pass
     src = emit_conv2d_c(2, 5, 5, 3, 3, 3, 1, 1, "cv")
-    assert "math.h" not in src and "expf" not in src        # the conv is a pure MAC -- no libm
+    assert "math.h" not in src and "expf" not in src  # the conv is a pure MAC -- no libm

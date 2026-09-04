@@ -77,8 +77,19 @@ from decimal import Decimal
 from enum import Enum
 
 from .codec import Strictness
-from .schema import (Asn1Type, Choice, Component, Module, OpenType, Primitive,
-                     Sequence, SequenceOf, Set, SetOf, _resolve_open_type)
+from .schema import (
+    Asn1Type,
+    Choice,
+    Component,
+    Module,
+    OpenType,
+    Primitive,
+    Sequence,
+    SequenceOf,
+    Set,
+    SetOf,
+    _resolve_open_type,
+)
 from .tags import Asn1Error, TagClass, Universal
 from .tlv import decode_one, encode_tlv
 from .values import BitString, is_ascii_digits, is_number_form
@@ -160,32 +171,71 @@ _XMLASN1TYPENAME: dict[int, str] = {
 }
 
 #: X.680 §41 — the restricted character string types, whose XMLValue is an `xmlcstring`.
-_STRING_UNIVERSALS = frozenset({
-    Universal.UTF8_STRING, Universal.NUMERIC_STRING, Universal.PRINTABLE_STRING,
-    Universal.TELETEX_STRING, Universal.VIDEOTEX_STRING, Universal.IA5_STRING,
-    Universal.GRAPHIC_STRING, Universal.VISIBLE_STRING, Universal.GENERAL_STRING,
-    Universal.UNIVERSAL_STRING, Universal.BMP_STRING, Universal.OBJECT_DESCRIPTOR,
-})
+_STRING_UNIVERSALS = frozenset(
+    {
+        Universal.UTF8_STRING,
+        Universal.NUMERIC_STRING,
+        Universal.PRINTABLE_STRING,
+        Universal.TELETEX_STRING,
+        Universal.VIDEOTEX_STRING,
+        Universal.IA5_STRING,
+        Universal.GRAPHIC_STRING,
+        Universal.VISIBLE_STRING,
+        Universal.GENERAL_STRING,
+        Universal.UNIVERSAL_STRING,
+        Universal.BMP_STRING,
+        Universal.OBJECT_DESCRIPTOR,
+    }
+)
 
 #: X.680 §38/§39 — the TIME type and the useful time types, which §9.13 canonicalizes with
 #: rules this rail cannot apply to an unparsed string. See the module docstring.
-_TIME_UNIVERSALS = frozenset({
-    Universal.TIME, Universal.DATE, Universal.TIME_OF_DAY, Universal.DATE_TIME,
-    Universal.DURATION,
-})
+_TIME_UNIVERSALS = frozenset(
+    {
+        Universal.TIME,
+        Universal.DATE,
+        Universal.TIME_OF_DAY,
+        Universal.DATE_TIME,
+        Universal.DURATION,
+    }
+)
 
 #: X.680 Table 3 (§12.15.5) — the control characters that have no direct spelling in an
 #: `xmlcstring` and are written as empty elements instead. Note what is NOT here: 9, 10
 #: and 13 appear literally (the Table's own NOTE), which is why `_WHITESPACE` and this
 #: table are disjoint.
 _CONTROL_ELEMENT: dict[int, str] = {
-    0: "nul", 1: "soh", 2: "stx", 3: "etx", 4: "eot", 5: "enq", 6: "ack", 7: "bel",
-    8: "bs", 11: "vt", 12: "ff", 14: "so", 15: "si", 16: "dle", 17: "dc1", 18: "dc2",
-    19: "dc3", 20: "dc4", 21: "nak", 22: "syn", 23: "etb", 24: "can", 25: "em",
-    26: "sub", 27: "esc", 28: "is4", 29: "is3", 30: "is2", 31: "is1",
+    0: "nul",
+    1: "soh",
+    2: "stx",
+    3: "etx",
+    4: "eot",
+    5: "enq",
+    6: "ack",
+    7: "bel",
+    8: "bs",
+    11: "vt",
+    12: "ff",
+    14: "so",
+    15: "si",
+    16: "dle",
+    17: "dc1",
+    18: "dc2",
+    19: "dc3",
+    20: "dc4",
+    21: "nak",
+    22: "syn",
+    23: "etb",
+    24: "can",
+    25: "em",
+    26: "sub",
+    27: "esc",
+    28: "is4",
+    29: "is3",
+    30: "is2",
+    31: "is1",
 }
-_CONTROL_CHARACTER: dict[str, str] = {
-    name: chr(code) for code, name in _CONTROL_ELEMENT.items()}
+_CONTROL_CHARACTER: dict[str, str] = {name: chr(code) for code, name in _CONTROL_ELEMENT.items()}
 
 
 def rules_oid(rules: XerRules) -> tuple[int, ...]:
@@ -194,6 +244,7 @@ def rules_oid(rules: XerRules) -> tuple[int, ...]:
 
 
 # --- §14.2 the XML tag name of a type ---------------------------------------------------
+
 
 class XerTypeNames:
     """The `typereference` that names a type in an XML tag (X.680 §14.2, §26.10).
@@ -247,8 +298,8 @@ def _builtin_xml_name(kind: Asn1Type) -> str:
         name = _XMLASN1TYPENAME.get(kind.universal)
         if name is None:
             raise Asn1Error(
-                f"XER: UNIVERSAL {int(kind.universal)} has no xmlasn1typename "
-                f"(X.680 Table 4)")
+                f"XER: UNIVERSAL {int(kind.universal)} has no xmlasn1typename (X.680 Table 4)"
+            )
         return name
     if isinstance(kind, Sequence):
         return "SEQUENCE"
@@ -262,7 +313,8 @@ def _builtin_xml_name(kind: Asn1Type) -> str:
         return "CHOICE"
     raise Asn1Error(
         f"XER: {type(kind).__name__} has no XML tag name; an open type is named by the "
-        f"type its table selects, not by itself (X.681 14)")
+        f"type its table selects, not by itself (X.681 14)"
+    )
 
 
 def xml_type_name(kind: Asn1Type, names: XerTypeNames | None = None) -> str:
@@ -275,6 +327,7 @@ def xml_type_name(kind: Asn1Type, names: XerTypeNames | None = None) -> str:
 
 
 # --- §12.15 the xmlcstring lexical item -------------------------------------------------
+
 
 def escape_xmlcstring(value: str) -> str:
     """X.680 §12.15.4/§12.15.5 — the escapes an `xmlcstring` requires.
@@ -293,24 +346,30 @@ def escape_xmlcstring(value: str) -> str:
     for character in value:
         code = ord(character)
         if character == "&":
-            out.append("&amp;")                              # §12.15.4
+            out.append("&amp;")  # §12.15.4
         elif character == "<":
             out.append("&lt;")
         elif character == ">":
             out.append("&gt;")
         elif code in _CONTROL_ELEMENT:
-            out.append(f"<{_CONTROL_ELEMENT[code]}/>")       # §12.15.5
-        elif code in (9, 10, 13) or 32 <= code <= 0xD7FF \
-                or 0xE000 <= code <= 0xFFFD or 0x10000 <= code <= 0x10FFFF:
-            out.append(character)                            # §12.15.1
+            out.append(f"<{_CONTROL_ELEMENT[code]}/>")  # §12.15.5
+        elif (
+            code in (9, 10, 13)
+            or 32 <= code <= 0xD7FF
+            or 0xE000 <= code <= 0xFFFD
+            or 0x10000 <= code <= 0x10FFFF
+        ):
+            out.append(character)  # §12.15.1
         else:
             raise Asn1Error(
                 f"XER: U+{code:04X} is not an xmlcstring character (X.680 12.15.1) and "
-                f"has no escape; the value cannot be transferred in XER (X.680 41.10)")
+                f"has no escape; the value cannot be transferred in XER (X.680 41.10)"
+            )
     return "".join(out)
 
 
 # --- clause 9 canonical spellings -------------------------------------------------------
+
 
 def canonical_realnumber(value: float) -> str:
     """§9.2.3-§9.2.5 — one non-zero integer digit, a trimmed fraction, `E`, no `+`.
@@ -320,7 +379,7 @@ def canonical_realnumber(value: float) -> str:
     digit, which is why the trim and the pad are two separate steps rather than one.
     """
     if value == 0:
-        return "0"                                           # §9.2.1
+        return "0"  # §9.2.1
     number = Decimal(repr(abs(value)))
     _sign, digits, exponent = number.as_tuple()
     # `as_tuple` gives the digit string and a base-10 exponent; the scientific exponent is
@@ -330,9 +389,9 @@ def canonical_realnumber(value: float) -> str:
     while len(trimmed) > 1 and trimmed[-1] == 0:
         trimmed.pop()
     if len(trimmed) == 1:
-        trimmed.append(0)                                    # §9.2.3: at least one digit
+        trimmed.append(0)  # §9.2.3: at least one digit
     body = f"{trimmed[0]}.{''.join(str(d) for d in trimmed[1:])}E{scientific}"
-    return ("-" + body) if value < 0 else body                # §9.2.5: no "+"
+    return ("-" + body) if value < 0 else body  # §9.2.5: no "+"
 
 
 def _canonical_time(text: str, universal: int) -> str:
@@ -348,23 +407,24 @@ def _canonical_time(text: str, universal: int) -> str:
     clause = "9.10" if universal == Universal.GENERALIZED_TIME else "9.11"
     if not text.endswith("Z"):
         raise Asn1Error(
-            f"XER: CXER requires a {what} to terminate with \"Z\" ({clause}.1); "
+            f'XER: CXER requires a {what} to terminate with "Z" ({clause}.1); '
             f"{text!r} carries a local time or an offset, and converting it is a "
-            f"calendar operation on a value this layer holds as text")
-    body = text[:-1].replace(",", ".")                       # §9.10.4
+            f"calendar operation on a value this layer holds as text"
+        )
+    body = text[:-1].replace(",", ".")  # §9.10.4
     integer, _, fraction = body.partition(".")
     wanted = 14 if universal == Universal.GENERALIZED_TIME else 12
     if len(integer) != wanted or not is_ascii_digits(integer):
         raise Asn1Error(
             f"XER: CXER requires the seconds of a {what} to be present ({clause}.2); "
-            f"{text!r} is not the {wanted}-digit form")
+            f"{text!r} is not the {wanted}-digit form"
+        )
     if universal == Universal.UTC_TIME:
         if fraction:
-            raise Asn1Error(
-                f"XER: UTCTime has no fractional seconds ({clause}.2); got {text!r}")
+            raise Asn1Error(f"XER: UTCTime has no fractional seconds ({clause}.2); got {text!r}")
         return integer + "Z"
-    fraction = fraction.rstrip("0")                           # §9.10.3
-    return (f"{integer}.{fraction}Z" if fraction else f"{integer}Z")
+    fraction = fraction.rstrip("0")  # §9.10.3
+    return f"{integer}.{fraction}Z" if fraction else f"{integer}Z"
 
 
 def _canonical_key(comp: Component) -> tuple[int, int]:
@@ -382,11 +442,13 @@ def _canonical_key(comp: Component) -> tuple[int, int]:
     if not tags:
         raise Asn1Error(
             f"XER: component {comp.name!r} shows no tag, so CXER cannot place it in the "
-            f"canonical order a SET requires (9.6.1)")
+            f"canonical order a SET requires (9.6.1)"
+        )
     return min((int(tag.cls), tag.number) for tag in tags)
 
 
 # --- the component list ------------------------------------------------------------------
+
 
 def _flatten(components: tuple[Component, ...]) -> tuple[Component, ...]:
     """Expand X.680 §25.1 version brackets into their members.
@@ -423,8 +485,15 @@ def _ordered(kind, rules: XerRules) -> tuple[Component, ...]:
 
 # --- encoding ----------------------------------------------------------------------------
 
-def _typed(name: str, kind: Asn1Type, value, rules: XerRules,
-           names: XerTypeNames | None, context: dict | None = None) -> str:
+
+def _typed(
+    name: str,
+    kind: Asn1Type,
+    value,
+    rules: XerRules,
+    names: XerTypeNames | None,
+    context: dict | None = None,
+) -> str:
     """X.680 §16.2's `XMLTypedValue`, with the §17.8/§9.1.4 empty-element form.
 
     §17.8 lets a start tag immediately followed by an end tag collapse to `<name/>`;
@@ -435,8 +504,9 @@ def _typed(name: str, kind: Asn1Type, value, rules: XerRules,
     return f"<{name}/>" if body == "" else f"<{name}>{body}</{name}>"
 
 
-def _contained_typed(kind: Primitive, octets: bytes, rules: XerRules,
-                     names: XerTypeNames | None) -> str:
+def _contained_typed(
+    kind: Primitive, octets: bytes, rules: XerRules, names: XerTypeNames | None
+) -> str:
     """§9.3.1/§9.4 with X.680 §22.11/§23.4 — a contents constraint chooses the encoding.
 
     The octets of a CONTAINING string *are* a complete encoding of the constrained type
@@ -459,12 +529,12 @@ def _governing_context(kind: OpenType, siblings: dict | None) -> dict:
     """
     if not siblings:
         return {}
-    return {path: siblings[path[-1]] for path in kind.governing
-            if path[-1] in siblings}
+    return {path: siblings[path[-1]] for path in kind.governing if path[-1] in siblings}
 
 
-def _open_type(kind: OpenType, octets: bytes, rules: XerRules,
-               names: XerTypeNames | None, context: dict | None) -> str:
+def _open_type(
+    kind: OpenType, octets: bytes, rules: XerRules, names: XerTypeNames | None, context: dict | None
+) -> str:
     """§8.5 with X.681 §14.6, and §9.12's deletion of one of the two alternatives.
 
     BASIC-XER may spell an open type as an `xmlhstring`, and §8.5's NOTE is candid that
@@ -480,13 +550,15 @@ def _open_type(kind: OpenType, octets: bytes, rules: XerRules,
         raise Asn1Error(
             f"XER: CXER forbids the xmlhstring alternative for an open type (9.12), and "
             f"{kind.name} could not be resolved to a type by its table (X.682 10.19); "
-            f"there is no canonical encoding for these octets")
+            f"there is no canonical encoding for these octets"
+        )
     value = contained.decode(decode_one(octets), strictness=Strictness.BER)
     return _typed(xml_type_name(contained, names), contained, value, rules, names)
 
 
-def _xml_value(kind: Asn1Type, value, rules: XerRules,
-               names: XerTypeNames | None, context: dict | None = None) -> str:
+def _xml_value(
+    kind: Asn1Type, value, rules: XerRules, names: XerTypeNames | None, context: dict | None = None
+) -> str:
     """X.680 §17.7's `XMLValue` — everything *between* a type's tags."""
     if isinstance(kind, Primitive):
         return _primitive_value(kind, value, rules, names)
@@ -500,28 +572,28 @@ def _xml_value(kind: Asn1Type, value, rules: XerRules,
         if not isinstance(value, (bytes, bytearray)):
             raise Asn1Error(
                 f"{kind.name}: an open type value is the contained value's complete "
-                f"encoding, so it must be bytes, not {type(value).__name__}")
+                f"encoding, so it must be bytes, not {type(value).__name__}"
+            )
         return _open_type(kind, bytes(value), rules, names, context)
     raise Asn1Error(f"XER: no encoding for schema type {type(kind).__name__}")
 
 
-def _primitive_value(kind: Primitive, value, rules: XerRules,
-                     names: XerTypeNames | None) -> str:
+def _primitive_value(kind: Primitive, value, rules: XerRules, names: XerTypeNames | None) -> str:
     universal = kind.universal
 
-    if universal == Universal.BOOLEAN:                       # §8.3.5
+    if universal == Universal.BOOLEAN:  # §8.3.5
         if not isinstance(value, bool):
             raise Asn1Error(f"{kind.name}: expected bool, got {type(value).__name__}")
         return "<true/>" if value else "<false/>"
 
-    if universal == Universal.INTEGER:                       # §8.3.6
+    if universal == Universal.INTEGER:  # §8.3.6
         if isinstance(value, bool) or not isinstance(value, int):
             raise Asn1Error(f"{kind.name}: expected int, got {type(value).__name__}")
         # X.680 §19.13 forbids "-" & number when the number is zero; `str` of an int
         # never produces "-0", so the rule holds by construction.
         return str(value)
 
-    if universal == Universal.ENUMERATED:                    # §8.3.7
+    if universal == Universal.ENUMERATED:  # §8.3.7
         return _enumerated_value(kind, value)
 
     if universal == Universal.REAL:
@@ -530,12 +602,12 @@ def _primitive_value(kind: Primitive, value, rules: XerRules,
     if universal == Universal.NULL:
         if value is not None:
             raise Asn1Error(f"{kind.name}: a NULL value is None, got {value!r}")
-        return ""                                            # X.680 §24.3: `empty`
+        return ""  # X.680 §24.3: `empty`
 
-    if universal == Universal.BIT_STRING:                    # §8.3.9, §9.3
+    if universal == Universal.BIT_STRING:  # §8.3.9, §9.3
         return _bitstring_value(kind, value, rules, names)
 
-    if universal == Universal.OCTET_STRING:                  # §9.4
+    if universal == Universal.OCTET_STRING:  # §9.4
         return _octetstring_value(kind, value, rules, names)
 
     if universal in (Universal.OBJECT_IDENTIFIER, Universal.RELATIVE_OID):
@@ -555,17 +627,19 @@ def _primitive_value(kind: Primitive, value, rules: XerRules,
             raise Asn1Error(
                 f"XER: 9.13 canonicalizes {kind.name} by deleting components from a "
                 f"parsed duration and interval, and this rail carries the value as its "
-                f"value-notation string; BASIC-XER encodes it unchanged")
+                f"value-notation string; BASIC-XER encodes it unchanged"
+            )
         return escape_xmlcstring(value)
 
-    if universal in (Universal.OID_IRI, Universal.RELATIVE_OID_IRI) \
-            or universal in _STRING_UNIVERSALS:
+    if (
+        universal in (Universal.OID_IRI, Universal.RELATIVE_OID_IRI)
+        or universal in _STRING_UNIVERSALS
+    ):
         if not isinstance(value, str):
             raise Asn1Error(f"{kind.name}: expected str, got {type(value).__name__}")
-        return escape_xmlcstring(value)                # X.680 §41.9
+        return escape_xmlcstring(value)  # X.680 §41.9
 
-    raise Asn1Error(
-        f"XER: no XMLValue notation for UNIVERSAL {int(universal)} in this rail")
+    raise Asn1Error(f"XER: no XMLValue notation for UNIVERSAL {int(universal)} in this rail")
 
 
 def _enumerated_value(kind: Primitive, value) -> str:
@@ -573,7 +647,8 @@ def _enumerated_value(kind: Primitive, value) -> str:
         raise Asn1Error(
             f"{kind.name}: ENUMERATED has no enumeration; XER encodes the enumeration "
             f"IDENTIFIER (X.680 20.8), which — unlike BER's value (X.690 8.4) — cannot "
-            f"be derived from the number alone")
+            f"be derived from the number alone"
+        )
     if isinstance(value, str):
         known = {name for name, _number in kind.enumeration}
         if value not in known:
@@ -586,14 +661,15 @@ def _enumerated_value(kind: Primitive, value) -> str:
             return f"<{name}/>"
     raise Asn1Error(
         f"{kind.name}: {value} names no enumeration item, and XER has no numeric "
-        f"spelling to fall back to (X.680 20.8)")
+        f"spelling to fall back to (X.680 20.8)"
+    )
 
 
 def _real_value(value) -> str:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise Asn1Error(f"REAL: expected a number, got {type(value).__name__}")
     number = float(value)
-    if number != number:                                     # §8.3.8: EmptyElementReal
+    if number != number:  # §8.3.8: EmptyElementReal
         return "<NOT-A-NUMBER/>"
     if number == float("inf"):
         return "<PLUS-INFINITY/>"
@@ -604,17 +680,17 @@ def _real_value(value) -> str:
     return canonical_realnumber(number)
 
 
-def _bitstring_value(kind: Primitive, value, rules: XerRules,
-                     names: XerTypeNames | None) -> str:
-    if kind.contains is not None and kind.encoded_by is None \
-            and rules is XerRules.CANONICAL:                 # §9.3.1 with X.680 §22.11
+def _bitstring_value(kind: Primitive, value, rules: XerRules, names: XerTypeNames | None) -> str:
+    if (
+        kind.contains is not None and kind.encoded_by is None and rules is XerRules.CANONICAL
+    ):  # §9.3.1 with X.680 §22.11
         if not isinstance(value, BitString):
-            raise Asn1Error(f"{kind.name}: expected BitString, got "
-                            f"{type(value).__name__}")
+            raise Asn1Error(f"{kind.name}: expected BitString, got {type(value).__name__}")
         if value.unused:
             raise Asn1Error(
                 f"{kind.name}: a CONTAINING bitstring's bits are a complete encoding "
-                f"(X.682 11.4), so it cannot end {value.unused} bits into an octet")
+                f"(X.682 11.4), so it cannot end {value.unused} bits into an octet"
+            )
         return _contained_typed(kind, bytes(value.octets), rules, names)
     if not isinstance(value, BitString):
         raise Asn1Error(f"{kind.name}: expected BitString, got {type(value).__name__}")
@@ -622,14 +698,14 @@ def _bitstring_value(kind: Primitive, value, rules: XerRules,
     return "".join(str(value[index]) for index in range(value.bit_length))
 
 
-def _octetstring_value(kind: Primitive, value, rules: XerRules,
-                       names: XerTypeNames | None) -> str:
+def _octetstring_value(kind: Primitive, value, rules: XerRules, names: XerTypeNames | None) -> str:
     if not isinstance(value, (bytes, bytearray)):
         raise Asn1Error(f"{kind.name}: expected bytes, got {type(value).__name__}")
-    if kind.contains is not None and kind.encoded_by is None \
-            and rules is XerRules.CANONICAL:                 # §9.4 with X.680 §23.4
+    if (
+        kind.contains is not None and kind.encoded_by is None and rules is XerRules.CANONICAL
+    ):  # §9.4 with X.680 §23.4
         return _contained_typed(kind, bytes(value), rules, names)
-    return bytes(value).hex().upper()                        # §9.4: upper-case, no space
+    return bytes(value).hex().upper()  # §9.4: upper-case, no space
 
 
 def _oid_value(kind: Primitive, value) -> str:
@@ -638,8 +714,7 @@ def _oid_value(kind: Primitive, value) -> str:
     elif isinstance(value, (tuple, list)):
         arcs = tuple(value)
     else:
-        raise Asn1Error(
-            f"{kind.name}: expected a tuple of arcs, got {type(value).__name__}")
+        raise Asn1Error(f"{kind.name}: expected a tuple of arcs, got {type(value).__name__}")
     if not arcs:
         raise Asn1Error(f"{kind.name}: an object identifier has at least one arc")
     for arc in arcs:
@@ -654,8 +729,7 @@ def _components_value(kind, value, rules: XerRules, names: XerTypeNames | None) 
         raise Asn1Error(f"{kind.name}: expected a dict, got {type(value).__name__}")
     components = _ordered(kind, rules)
     known = {comp.name for comp in components}
-    unknown = {name for name in value if name not in known and not name.endswith(
-        ".resolved")}
+    unknown = {name for name in value if name not in known and not name.endswith(".resolved")}
     if unknown:
         raise Asn1Error(f"{kind.name}: unknown component(s) {sorted(unknown)}")
     parts: list[str] = []
@@ -691,16 +765,13 @@ def _uses_value_list(element: Asn1Type) -> bool:
     if isinstance(element, Choice):
         return True
     if isinstance(element, Primitive):
-        return element.universal in (
-            Universal.NULL, Universal.BOOLEAN, Universal.ENUMERATED)
+        return element.universal in (Universal.NULL, Universal.BOOLEAN, Universal.ENUMERATED)
     return False
 
 
 def _list_value(kind, value, rules: XerRules, names: XerTypeNames | None) -> str:
     if isinstance(value, (str, bytes, bytearray)) or not hasattr(value, "__iter__"):
-        raise Asn1Error(
-            f"{kind.name}: expected a sequence of elements, got "
-            f"{type(value).__name__}")
+        raise Asn1Error(f"{kind.name}: expected a sequence of elements, got {type(value).__name__}")
     element = kind.element
     element_name = xml_type_name(element, names)
     parts: list[str] = []
@@ -720,12 +791,11 @@ def _list_value(kind, value, rules: XerRules, names: XerTypeNames | None) -> str
     return "".join(parts)
 
 
-def _choice_value(kind: Choice, value, rules: XerRules,
-                  names: XerTypeNames | None) -> str:
+def _choice_value(kind: Choice, value, rules: XerRules, names: XerTypeNames | None) -> str:
     if not (isinstance(value, tuple) and len(value) == 2):
         raise Asn1Error(
-            f"{kind.name}: value must be an (alternative, value) pair, got "
-            f"{type(value).__name__}")
+            f"{kind.name}: value must be an (alternative, value) pair, got {type(value).__name__}"
+        )
     chosen, payload = value
     for alt in _flatten(kind.alternatives):
         if alt.name == chosen:
@@ -733,13 +803,19 @@ def _choice_value(kind: Choice, value, rules: XerRules,
             return _typed(alt.name, alt.type, payload, rules, names)
     raise Asn1Error(
         f"{kind.name}: {chosen!r} is not an alternative; an unknown extension "
-        f"alternative arrives as raw XML on decode (8.6.3) and is not re-encodable")
+        f"alternative arrives as raw XML on decode (8.6.3) and is not re-encodable"
+    )
 
 
-def encode_xer(kind: Asn1Type, value, *, name: str | None = None,
-               rules: XerRules = XerRules.CANONICAL,
-               names: XerTypeNames | None = None,
-               prolog: bool = False) -> bytes:
+def encode_xer(
+    kind: Asn1Type,
+    value,
+    *,
+    name: str | None = None,
+    rules: XerRules = XerRules.CANONICAL,
+    names: XerTypeNames | None = None,
+    prolog: bool = False,
+) -> bytes:
     """Encode `value` as a complete XER encoding of `kind` (§8.1).
 
     The result is UTF-8 octets, because §8.1.3 says the XML document "shall be encoded
@@ -759,6 +835,7 @@ def encode_xer(kind: Asn1Type, value, *, name: str | None = None,
 
 
 # --- decoding ----------------------------------------------------------------------------
+
 
 class _Reader:
     """A scanner for the XML subset clause 8 permits, and nothing else.
@@ -801,7 +878,8 @@ class _Reader:
             if self.text.startswith("<?", self.pos):
                 raise self.error(
                     "the only XML processing instruction a conforming encoder produces "
-                    "is the 8.2.1 prolog, verbatim and separated by single SPACEs (8.2.2)")
+                    "is the 8.2.1 prolog, verbatim and separated by single SPACEs (8.2.2)"
+                )
             return False
         if self.rules is XerRules.CANONICAL:
             raise self.error("CXER requires an empty XML prolog (9.1.1)")
@@ -830,21 +908,20 @@ class _Reader:
     def _scan_tag(self) -> tuple[str, str]:
         text = self.text
         if self.at_end() or text[self.pos] != "<":
-            raise self.error(f"expected a tag, found {text[self.pos:self.pos + 16]!r}")
+            raise self.error(f"expected a tag, found {text[self.pos : self.pos + 16]!r}")
         if text.startswith("<!--", self.pos):
-            raise self.error(
-                "XML comments are not part of a BASIC-XER encoding (8.1.2 NOTE)")
+            raise self.error("XML comments are not part of a BASIC-XER encoding (8.1.2 NOTE)")
         if text.startswith("<![CDATA[", self.pos):
-            raise self.error(
-                "CDATA sections are not part of a BASIC-XER encoding (8.1.2 NOTE)")
+            raise self.error("CDATA sections are not part of a BASIC-XER encoding (8.1.2 NOTE)")
         if text.startswith("<!", self.pos):
             raise self.error(
-                "a document type declaration is not part of a BASIC-XER encoding "
-                "(8.1.2 NOTE)")
+                "a document type declaration is not part of a BASIC-XER encoding (8.1.2 NOTE)"
+            )
         if text.startswith("<?", self.pos):
             raise self.error(
                 "an XML processing instruction is not part of a BASIC-XER encoding "
-                "(8.1.2 NOTE); only the 8.2.1 prolog is permitted, and only first")
+                "(8.1.2 NOTE); only the 8.2.1 prolog is permitted, and only first"
+            )
         start = self.pos + 1
         closing = text.startswith("</", self.pos)
         if closing:
@@ -863,19 +940,22 @@ class _Reader:
             raise self.error(
                 f"{text[cursor]!r} is not a character of an XER element name; X.680 12.2 "
                 f"and 12.3 admit only letters, digits and HYPHEN-MINUS, and X.680 14.2 "
-                f"adds LOW LINE")
+                f"adds LOW LINE"
+            )
         if ":" in name:
             raise self.error(
                 f"{name!r} is a namespace-qualified name; namespaces arrive with the "
                 f"EXTENDED-XER NAMESPACE instruction (clause 29), which is not "
-                f"implemented")
+                f"implemented"
+            )
         self.pos = cursor
         self.skip_space()
         if self.pos < len(self.text) and self.text[self.pos] not in "/>":
             raise self.error(
                 f"element {name!r} carries an XML attribute; BASIC-XER produces no "
                 f"attributes, they arrive with the EXTENDED-XER ATTRIBUTE instruction "
-                f"(clause 20), which is not implemented")
+                f"(clause 20), which is not implemented"
+            )
         if self.text.startswith("/>", self.pos):
             if closing:
                 raise self.error(f"</{name}/> is not a tag")
@@ -914,7 +994,7 @@ class _Reader:
         start = self.pos
         kind, name = self._scan_tag()
         if kind == "empty":
-            return self.text[start:self.pos]
+            return self.text[start : self.pos]
         if kind != "start":
             raise self.error(f"expected an element, found </{name}>")
         depth = 1
@@ -928,7 +1008,7 @@ class _Reader:
                 depth += 1
             elif inner == "end":
                 depth -= 1
-        return self.text[start:self.pos]
+        return self.text[start : self.pos]
 
     def read_plain_text(self, name: str) -> str:
         """The text content of an element that is not a character string.
@@ -941,7 +1021,7 @@ class _Reader:
         index = self.text.find("<", self.pos)
         if index < 0:
             raise self.error(f"unterminated element {name!r}")
-        body = self.text[self.pos:index]
+        body = self.text[self.pos : index]
         self.pos = index
         if not self.text.startswith("</", self.pos):
             # Something other than the end tag interrupts the value. Scanning it here is
@@ -952,8 +1032,7 @@ class _Reader:
             save = self.pos
             self._scan_tag()
             self.pos = save
-            raise self.error(
-                f"an element interrupts the value of {name!r}, whose XMLValue is text")
+            raise self.error(f"an element interrupts the value of {name!r}, whose XMLValue is text")
         return body.strip("".join(_WHITESPACE))
 
     def read_string_text(self, name: str) -> str:
@@ -968,7 +1047,7 @@ class _Reader:
             index = self.text.find("<", self.pos)
             if index < 0:
                 raise self.error(f"unterminated element {name!r}")
-            out.append(self._unescape(self.text[self.pos:index]))
+            out.append(self._unescape(self.text[self.pos : index]))
             self.pos = index
             if self.text.startswith("</", self.pos):
                 return "".join(out)
@@ -979,7 +1058,8 @@ class _Reader:
                 self.pos = save
                 raise self.error(
                     f"element {found!r} inside the character string value of {name!r} is "
-                    f"not one of the X.680 Table 3 control-character escapes")
+                    f"not one of the X.680 Table 3 control-character escapes"
+                )
             out.append(character)
 
     def _unescape(self, body: str) -> str:
@@ -989,16 +1069,17 @@ class _Reader:
             character = body[index]
             if character == ">":
                 raise self.error(
-                    "\">\" appears literally; X.680 12.15.2 admits it only as \"&gt;\" "
-                    "or a numeric escape")
+                    '">" appears literally; X.680 12.15.2 admits it only as "&gt;" '
+                    "or a numeric escape"
+                )
             if character != "&":
                 out.append(character)
                 index += 1
                 continue
             stop = body.find(";", index)
             if stop < 0:
-                raise self.error("an \"&\" begins an escape that is never terminated")
-            entity = body[index + 1:stop]
+                raise self.error('an "&" begins an escape that is never terminated')
+            entity = body[index + 1 : stop]
             index = stop + 1
             if entity == "amp":
                 out.append("&")
@@ -1012,7 +1093,8 @@ class _Reader:
                 # here, so it is checked rather than tolerated.
                 if self.rules is XerRules.CANONICAL:
                     raise self.error(
-                        f"the numeric escape \"&{entity};\" is forbidden in CXER (9.1.3)")
+                        f'the numeric escape "&{entity};" is forbidden in CXER (9.1.3)'
+                    )
                 digits = entity[1:]
                 # §12.15.8's escape is `&#` + decimal digits or `&#x` + hex digits. Handing
                 # the remainder to `int()` accepted a far wider language: PEP 515
@@ -1023,26 +1105,37 @@ class _Reader:
                 # were nine accepted spellings of the character `A`.
                 hexform = digits[:1] in ("x", "X")
                 body_digits = digits[1:] if hexform else digits
-                legal = (all(character in "0123456789abcdefABCDEF"
-                             for character in body_digits) and body_digits
-                         if hexform else is_ascii_digits(body_digits))
+                legal = (
+                    all(character in "0123456789abcdefABCDEF" for character in body_digits)
+                    and body_digits
+                    if hexform
+                    else is_ascii_digits(body_digits)
+                )
                 if not legal:
                     raise self.error(
-                        f"\"&{entity};\" is not a numeric escape; X.680 12.15.8 spells it "
-                        f"with DIGIT ZERO..DIGIT NINE (or hexadecimal digits after \"x\")")
+                        f'"&{entity};" is not a numeric escape; X.680 12.15.8 spells it '
+                        f'with DIGIT ZERO..DIGIT NINE (or hexadecimal digits after "x")'
+                    )
                 code = int(body_digits, 16 if hexform else 10)
                 if not 0 <= code <= 0x10FFFF:
-                    raise self.error(f"\"&{entity};\" is not an ISO/IEC 10646 character")
+                    raise self.error(f'"&{entity};" is not an ISO/IEC 10646 character')
                 out.append(chr(code))
             else:
                 raise self.error(
-                    f"\"&{entity};\" is not one of the escapes X.680 12.15.4 permits; "
-                    f"XER defines no general entity mechanism")
+                    f'"&{entity};" is not one of the escapes X.680 12.15.4 permits; '
+                    f"XER defines no general entity mechanism"
+                )
         return "".join(out)
 
 
-def _decode_typed(reader: _Reader, name: str, kind: Asn1Type, rules: XerRules,
-                  names: XerTypeNames | None, context: dict | None = None):
+def _decode_typed(
+    reader: _Reader,
+    name: str,
+    kind: Asn1Type,
+    rules: XerRules,
+    names: XerTypeNames | None,
+    context: dict | None = None,
+):
     """Read one `XMLTypedValue` named `name` and return the value it denotes."""
     empty = reader.expect_start(name)
     if empty:
@@ -1060,7 +1153,9 @@ def _decode_empty(kind: Asn1Type, name: str, reader: _Reader):
         if kind.universal == Universal.NULL:
             return None
         if kind.universal in _STRING_UNIVERSALS or kind.universal in (
-                Universal.OID_IRI, Universal.RELATIVE_OID_IRI):
+            Universal.OID_IRI,
+            Universal.RELATIVE_OID_IRI,
+        ):
             return ""
         if kind.universal == Universal.OCTET_STRING:
             return b""
@@ -1074,8 +1169,14 @@ def _decode_empty(kind: Asn1Type, name: str, reader: _Reader):
     raise reader.error(f"<{name}/> is not a value of {kind.name}")
 
 
-def _decode_value(reader: _Reader, kind: Asn1Type, name: str, rules: XerRules,
-                  names: XerTypeNames | None, context: dict | None):
+def _decode_value(
+    reader: _Reader,
+    kind: Asn1Type,
+    name: str,
+    rules: XerRules,
+    names: XerTypeNames | None,
+    context: dict | None,
+):
     if isinstance(kind, Primitive):
         return _decode_primitive(reader, kind, name, rules, names)
     if isinstance(kind, (Sequence, Set)):
@@ -1089,43 +1190,48 @@ def _decode_value(reader: _Reader, kind: Asn1Type, name: str, rules: XerRules,
     raise reader.error(f"no decoding for schema type {type(kind).__name__}")
 
 
-def _decode_primitive(reader: _Reader, kind: Primitive, name: str, rules: XerRules,
-                      names: XerTypeNames | None):
+def _decode_primitive(
+    reader: _Reader, kind: Primitive, name: str, rules: XerRules, names: XerTypeNames | None
+):
     universal = kind.universal
 
-    if universal == Universal.BOOLEAN:                       # §8.3.5
+    if universal == Universal.BOOLEAN:  # §8.3.5
         tag = reader.peek_tag()
         if tag is None or tag[0] != "empty" or tag[1] not in ("true", "false"):
             raise reader.error(
                 "a BASIC-XER boolean is <true/> or <false/> (8.3.5); the text spelling "
-                "arrives with the EXTENDED-XER TEXT instruction (clause 31)")
+                "arrives with the EXTENDED-XER TEXT instruction (clause 31)"
+            )
         reader.read_tag()
         return tag[1] == "true"
 
-    if universal == Universal.ENUMERATED:                    # §8.3.7
+    if universal == Universal.ENUMERATED:  # §8.3.7
         tag = reader.peek_tag()
         if tag is None or tag[0] != "empty":
             raise reader.error(
                 "a BASIC-XER enumerated value is <identifier/> (8.3.7), and X.680 20.8 "
-                "gives an enumerated value no numeric spelling at all")
+                "gives an enumerated value no numeric spelling at all"
+            )
         _tag, found = reader.read_tag()
         if not kind.enumeration:
             raise reader.error(
                 f"{kind.name}: ENUMERATED has no enumeration, so <{found}/> cannot be "
-                f"mapped to a value (X.680 20.8)")
+                f"mapped to a value (X.680 20.8)"
+            )
         for item, number in kind.enumeration:
             if item == found:
                 return number
-        raise reader.error(
-            f"{found!r} is not an enumeration identifier of {kind.name}")
+        raise reader.error(f"{found!r} is not an enumeration identifier of {kind.name}")
 
     if universal == Universal.REAL:
         tag = reader.peek_tag()
-        if tag is not None and tag[0] == "empty":            # §8.3.8
+        if tag is not None and tag[0] == "empty":  # §8.3.8
             _kind, found = reader.read_tag()
-            special = {"PLUS-INFINITY": float("inf"),
-                       "MINUS-INFINITY": float("-inf"),
-                       "NOT-A-NUMBER": float("nan")}
+            special = {
+                "PLUS-INFINITY": float("inf"),
+                "MINUS-INFINITY": float("-inf"),
+                "NOT-A-NUMBER": float("nan"),
+            }
             if found not in special:
                 raise reader.error(f"<{found}/> is not an XMLSpecialRealValue (X.680 21.6)")
             return special[found]
@@ -1137,12 +1243,13 @@ def _decode_primitive(reader: _Reader, kind: Primitive, name: str, rules: XerRul
             raise reader.error(f"a NULL value has no content (X.680 24.3); got {body!r}")
         return None
 
-    if universal == Universal.INTEGER:                       # §8.3.6
+    if universal == Universal.INTEGER:  # §8.3.6
         tag = reader.peek_tag()
         if tag is not None and tag[0] != "end":
             raise reader.error(
                 f"<{tag[1]}> is not an XMLSignedNumber; 8.3.6 removes both identifier "
-                f"forms X.680 19.9 would otherwise allow for an integer")
+                f"forms X.680 19.9 would otherwise allow for an integer"
+            )
         return _parse_integer(reader, reader.read_plain_text(name))
 
     if universal == Universal.BIT_STRING:
@@ -1169,11 +1276,12 @@ def _decode_primitive(reader: _Reader, kind: Primitive, name: str, rules: XerRul
         return reader.read_plain_text(name)
 
     if universal in _STRING_UNIVERSALS or universal in (
-            Universal.OID_IRI, Universal.RELATIVE_OID_IRI):
-        return reader.read_string_text(name)                 # X.680 §41.9
+        Universal.OID_IRI,
+        Universal.RELATIVE_OID_IRI,
+    ):
+        return reader.read_string_text(name)  # X.680 §41.9
 
-    raise reader.error(
-        f"no XMLValue notation for UNIVERSAL {int(universal)} in this rail")
+    raise reader.error(f"no XMLValue notation for UNIVERSAL {int(universal)} in this rail")
 
 
 def _parse_integer(reader: _Reader, body: str) -> int:
@@ -1182,11 +1290,12 @@ def _parse_integer(reader: _Reader, body: str) -> int:
     if not is_ascii_digits(digits):
         raise reader.error(
             f"{body!r} is not an XMLSignedNumber (X.680 19.9); 8.3.6 admits no other "
-            f"spelling of an integer")
+            f"spelling of an integer"
+        )
     if digits[0] == "0" and len(digits) > 1:
         raise reader.error(f"{body!r} has a leading zero (X.680 12.8)")
     if body.startswith("-") and digits == "0":
-        raise reader.error("\"-0\" is forbidden by X.680 19.13")
+        raise reader.error('"-0" is forbidden by X.680 19.13')
     return int(body)
 
 
@@ -1205,7 +1314,7 @@ def _parse_real(reader: _Reader, body: str) -> float:
         if not is_ascii_digits(signless):
             raise reader.error(f"{body!r} has no valid exponent (X.680 12.9)")
         if exponent.startswith("+"):
-            raise reader.error(f"{body!r} carries a \"+\"; X.680 12.9 admits only \"-\"")
+            raise reader.error(f'{body!r} carries a "+"; X.680 12.9 admits only "-"')
     return float(body)
 
 
@@ -1215,7 +1324,7 @@ def _parse_bitstring(reader: _Reader, body: str) -> BitString:
     if any(character not in "01" for character in bits):
         raise reader.error(f"{body!r} is not an xmlbstring (X.680 12.11)")
     padded = bits + "0" * (-len(bits) % 8)
-    octets = bytes(int(padded[at:at + 8], 2) for at in range(0, len(padded), 8))
+    octets = bytes(int(padded[at : at + 8], 2) for at in range(0, len(padded), 8))
     return BitString(octets, (-len(bits)) % 8)
 
 
@@ -1225,7 +1334,8 @@ def _parse_hex(reader: _Reader, body: str) -> bytes:
     if len(digits) % 2:
         raise reader.error(
             f"an xmlhstring denotes whole octets, so it has an even number of "
-            f"characters; got {len(digits)}")
+            f"characters; got {len(digits)}"
+        )
     try:
         return bytes.fromhex(digits)
     except ValueError:
@@ -1244,12 +1354,14 @@ def _parse_oid(reader: _Reader, body: str) -> tuple[int, ...]:
         raise reader.error(
             f"{body!r} is not an XMLObjectIdentifierValue; 9.8 requires every component "
             f"to be an XMLNumberForm of DIGIT ZERO..DIGIT NINE with no leading zero "
-            f"(X.680 12.26)")
+            f"(X.680 12.26)"
+        )
     return tuple(int(part) for part in parts)
 
 
-def _decode_contained(reader: _Reader, kind: Primitive, rules: XerRules,
-                      names: XerTypeNames | None) -> bytes:
+def _decode_contained(
+    reader: _Reader, kind: Primitive, rules: XerRules, names: XerTypeNames | None
+) -> bytes:
     """The `XMLTypedValue` alternative of a CONTAINING string (X.680 §22.11/§23.4).
 
     The model holds such a value as the contained value's *octets*, so decoding the XML
@@ -1263,26 +1375,33 @@ def _decode_contained(reader: _Reader, kind: Primitive, rules: XerRules,
     return encode_tlv(contained.encode(value))
 
 
-def _decode_open_type(reader: _Reader, kind: OpenType, name: str, rules: XerRules,
-                      names: XerTypeNames | None, context: dict | None) -> bytes:
+def _decode_open_type(
+    reader: _Reader,
+    kind: OpenType,
+    name: str,
+    rules: XerRules,
+    names: XerTypeNames | None,
+    context: dict | None,
+) -> bytes:
     tag = reader.peek_tag()
-    if tag is not None and tag[0] in ("start", "empty"):     # X.681 §14.6's XMLTypedValue
+    if tag is not None and tag[0] in ("start", "empty"):  # X.681 §14.6's XMLTypedValue
         contained = kind.resolve(_governing_context(kind, context))
         if contained is None:
             raise reader.error(
                 f"{kind.name} is spelled as a typed value, but its table selects no row "
                 f"for the governing components (X.682 10.19), so there is no type to "
-                f"decode <{tag[1]}> with")
+                f"decode <{tag[1]}> with"
+            )
         expected = xml_type_name(contained, names)
         if tag[1] != expected:
             raise reader.error(
                 f"the table selects {expected} for this open type, but the value is "
-                f"spelled <{tag[1]}>")
+                f"spelled <{tag[1]}>"
+            )
         value = _decode_typed(reader, expected, contained, rules, names)
         return encode_tlv(contained.encode(value))
     if rules is XerRules.CANONICAL:
-        raise reader.error(
-            "CXER forbids the xmlhstring alternative for an open type (9.12)")
+        raise reader.error("CXER forbids the xmlhstring alternative for an open type (9.12)")
     return _parse_hex(reader, reader.read_plain_text(name))
 
 
@@ -1292,16 +1411,15 @@ def _finish_components(kind, out: dict, reader: _Reader) -> dict:
         if comp.name in out:
             continue
         if comp.has_default:
-            out[comp.name] = comp.default                    # X.680 §25.12
+            out[comp.name] = comp.default  # X.680 §25.12
         elif not comp.optional:
             raise reader.error(
-                f"{kind.name}: mandatory component {comp.name!r} is missing "
-                f"(X.680 25.20)")
+                f"{kind.name}: mandatory component {comp.name!r} is missing (X.680 25.20)"
+            )
     return out
 
 
-def _decode_components(reader: _Reader, kind, rules: XerRules,
-                       names: XerTypeNames | None) -> dict:
+def _decode_components(reader: _Reader, kind, rules: XerRules, names: XerTypeNames | None) -> dict:
     """A SEQUENCE in definition order (X.680 §25.20) or a SET in any order (§27.9).
 
     §8.6.1-§8.6.2 are what the `extensible` branch implements: a decoder "shall accept as
@@ -1320,18 +1438,26 @@ def _decode_components(reader: _Reader, kind, rules: XerRules,
             break
         element = tag[1]
         if unordered:
-            position = next((at for at, comp in enumerate(components)
-                             if comp.name == element and comp.name not in out), None)
+            position = next(
+                (
+                    at
+                    for at, comp in enumerate(components)
+                    if comp.name == element and comp.name not in out
+                ),
+                None,
+            )
         else:
-            position = next((at for at in range(index, len(components))
-                             if components[at].name == element), None)
+            position = next(
+                (at for at in range(index, len(components)) if components[at].name == element), None
+            )
         if position is None:
             if kind.extensible:
-                reader.read_raw_element()                    # §8.6.2
+                reader.read_raw_element()  # §8.6.2
                 continue
             raise reader.error(
                 f"{kind.name}: <{element}> matches no component, and the type carries no "
-                f"extension marker (8.6.2)")
+                f"extension marker (8.6.2)"
+            )
         if not unordered:
             for skipped in components[index:position]:
                 if skipped.has_default:
@@ -1339,7 +1465,8 @@ def _decode_components(reader: _Reader, kind, rules: XerRules,
                 elif not skipped.optional:
                     raise reader.error(
                         f"{kind.name}: mandatory component {skipped.name!r} is missing "
-                        f"or out of order (X.680 25.20)")
+                        f"or out of order (X.680 25.20)"
+                    )
             index = position + 1
         comp = components[position]
         out[comp.name] = _decode_typed(reader, comp.name, comp.type, rules, names, out)
@@ -1347,8 +1474,7 @@ def _decode_components(reader: _Reader, kind, rules: XerRules,
     return _finish_components(kind, out, reader)
 
 
-def _decode_list(reader: _Reader, kind, rules: XerRules,
-                 names: XerTypeNames | None) -> list:
+def _decode_list(reader: _Reader, kind, rules: XerRules, names: XerTypeNames | None) -> list:
     element = kind.element
     element_name = xml_type_name(element, names)
     values: list = []
@@ -1360,15 +1486,15 @@ def _decode_list(reader: _Reader, kind, rules: XerRules,
             if isinstance(element, Choice):
                 values.append(_decode_choice(reader, element, rules, names))
                 continue
-            if isinstance(element, Primitive) \
-                    and element.universal == Universal.NULL:
+            if isinstance(element, Primitive) and element.universal == Universal.NULL:
                 # §26.4: SEQUENCE OF NULL spells each element `<NULL/>` because its
                 # XMLValue is `empty` and there would otherwise be nothing to count.
                 found_kind, found = reader.read_tag()
                 if found_kind != "empty" or found != element_name:
                     raise reader.error(
                         f"expected <{element_name}/> for a NULL element (X.680 26.4); "
-                        f"found a {found_kind} tag for {found!r}")
+                        f"found a {found_kind} tag for {found!r}"
+                    )
                 values.append(None)
                 continue
             values.append(_decode_primitive(reader, element, element_name, rules, names))
@@ -1376,19 +1502,20 @@ def _decode_list(reader: _Reader, kind, rules: XerRules,
         if tag[1] != element_name:
             raise reader.error(
                 f"expected <{element_name}> for an element of {kind.name} "
-                f"(X.680 26.10); found <{tag[1]}>")
+                f"(X.680 26.10); found <{tag[1]}>"
+            )
         values.append(_decode_typed(reader, element_name, element, rules, names))
 
 
-def _decode_choice(reader: _Reader, kind: Choice, rules: XerRules,
-                   names: XerTypeNames | None) -> tuple:
+def _decode_choice(
+    reader: _Reader, kind: Choice, rules: XerRules, names: XerTypeNames | None
+) -> tuple:
     tag = reader.peek_tag()
     if tag is None or tag[0] == "end":
         raise reader.error(f"{kind.name}: a CHOICE value is one element (X.680 29.11)")
     for alt in _flatten(kind.alternatives):
         if alt.name == tag[1]:
-            return (alt.name,
-                    _decode_typed(reader, alt.name, alt.type, rules, names))
+            return (alt.name, _decode_typed(reader, alt.name, alt.type, rules, names))
     if kind.extensible:
         # §8.6.3: an unknown extension alternative is a single unexpected element, and the
         # decoder "shall accept" it. There is no type to decode it with, so the raw XML is
@@ -1398,12 +1525,18 @@ def _decode_choice(reader: _Reader, kind: Choice, rules: XerRules,
         return (tag[1], reader.read_raw_element())
     raise reader.error(
         f"{kind.name}: <{tag[1]}> matches no alternative and the CHOICE carries no "
-        f"extension marker (8.6.3)")
+        f"extension marker (8.6.3)"
+    )
 
 
-def decode_xer(data: bytes | str, kind: Asn1Type, *, name: str | None = None,
-               rules: XerRules = XerRules.CANONICAL,
-               names: XerTypeNames | None = None) -> object:
+def decode_xer(
+    data: bytes | str,
+    kind: Asn1Type,
+    *,
+    name: str | None = None,
+    rules: XerRules = XerRules.CANONICAL,
+    names: XerTypeNames | None = None,
+) -> object:
     """Decode a complete XER encoding of `kind` (§8.1.1).
 
     `rules` selects what the decoder *accepts*, not what it expects to see: CANONICAL is
@@ -1416,14 +1549,13 @@ def decode_xer(data: bytes | str, kind: Asn1Type, *, name: str | None = None,
         text = data
     elif isinstance(data, (bytes, bytearray)):
         try:
-            text = bytes(data).decode("utf-8")               # §8.1.3
+            text = bytes(data).decode("utf-8")  # §8.1.3
         except UnicodeDecodeError as error:
-            raise Asn1Error(
-                f"XER: the encoding is a UTF-8 XML document (8.1.3): {error}") from None
+            raise Asn1Error(f"XER: the encoding is a UTF-8 XML document (8.1.3): {error}") from None
     else:
         raise Asn1Error("XER: expected bytes or str")
     if text.startswith("﻿"):
-        text = text[1:]                                      # a UTF-8 byte order mark
+        text = text[1:]  # a UTF-8 byte order mark
     reader = _Reader(text, rules)
     reader.read_prolog()
     value = _decode_typed(reader, name or xml_type_name(kind, names), kind, rules, names)
@@ -1431,13 +1563,24 @@ def decode_xer(data: bytes | str, kind: Asn1Type, *, name: str | None = None,
     if not reader.at_end():
         raise reader.error(
             f"{len(text) - reader.pos} character(s) follow the XML document element; "
-            f"an XER encoding is one document element (8.1.1)")
+            f"an XER encoding is one document element (8.1.1)"
+        )
     return value
 
 
 __all__ = [
-    "ASN1_NAMESPACE", "ASN1_NAMESPACE_OID",
-    "BASIC_XER_OID", "CANONICAL_XER_OID", "EXTENDED_XER_OID", "XML_PROLOG",
-    "XerRules", "XerTypeNames", "canonical_realnumber", "decode_xer", "encode_xer",
-    "escape_xmlcstring", "rules_oid", "xml_type_name",
+    "ASN1_NAMESPACE",
+    "ASN1_NAMESPACE_OID",
+    "BASIC_XER_OID",
+    "CANONICAL_XER_OID",
+    "EXTENDED_XER_OID",
+    "XML_PROLOG",
+    "XerRules",
+    "XerTypeNames",
+    "canonical_realnumber",
+    "decode_xer",
+    "encode_xer",
+    "escape_xmlcstring",
+    "rules_oid",
+    "xml_type_name",
 ]

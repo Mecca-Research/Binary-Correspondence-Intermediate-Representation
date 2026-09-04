@@ -36,8 +36,17 @@ from bcir.asn1.jer import (
     decode_jer,
     encode_jer,
 )
-from bcir.asn1.schema import (Choice, Component, ObjectSetTable, OpenType, Primitive,
-                              Sequence, SequenceOf, Set, SetOf)
+from bcir.asn1.schema import (
+    Choice,
+    Component,
+    ObjectSetTable,
+    OpenType,
+    Primitive,
+    Sequence,
+    SequenceOf,
+    Set,
+    SetOf,
+)
 from bcir.asn1.tags import Universal
 from bcir.asn1.tlv import encode_tlv
 from bcir.asn1.values import BitString
@@ -64,10 +73,14 @@ _PERSONNEL_RECORD = {
     "dateOfHire": "19710917",
     "nameOfSpouse": {"givenName": "Mary", "initial": "T", "familyName": "Smith"},
     "children": [
-        {"name": {"givenName": "Ralph", "initial": "T", "familyName": "Smith"},
-         "dateOfBirth": "19571111"},
-        {"name": {"givenName": "Susan", "initial": "B", "familyName": "Jones"},
-         "dateOfBirth": "19590717"},
+        {
+            "name": {"givenName": "Ralph", "initial": "T", "familyName": "Smith"},
+            "dateOfBirth": "19571111",
+        },
+        {
+            "name": {"givenName": "Susan", "initial": "B", "familyName": "Jones"},
+            "dateOfBirth": "19590717",
+        },
     ],
 }
 
@@ -142,7 +155,8 @@ def test_the_canonical_encoding_carries_exactly_the_members_annex_a3_shows():
         '"children":[{"name":{"givenName":"Ralph","initial":"T","familyName":"Smith"},'
         '"dateOfBirth":"19571111"},'
         '{"name":{"givenName":"Susan","initial":"B","familyName":"Jones"},'
-        '"dateOfBirth":"19590717"}]}'), got
+        '"dateOfBirth":"19590717"}]}'
+    ), got
 
 
 def test_the_annex_a_record_round_trips_under_both_profiles():
@@ -179,7 +193,8 @@ def test_x697_registers_one_object_identifier_and_no_canonical_variant():
 
     registered = [name for name in dir(jer) if name.endswith("_OID")]
     assert registered == ["JER_OID"], (
-        f"X.697 42.2 assigns one object identifier; {registered} claims more")
+        f"X.697 42.2 assigns one object identifier; {registered} claims more"
+    )
 
 
 # --- clause 7.2: what JER can and cannot see ---------------------------------------------
@@ -211,13 +226,12 @@ def test_a_bitstring_size_is_the_one_constraint_that_chooses_a_form():
     makes an *extensible* subtype constraint invisible, so it is a variable-size bitstring
     and takes §24.3's object form. One `...` changes the shape of the JSON.
     """
-    value = BitString(b"\xa0\x40", 6)                       # ten bits
+    value = BitString(b"\xa0\x40", 6)  # ten bits
     fixed = Primitive(Universal.BIT_STRING, "BIT STRING", Size(ValueRange(10, 10)))
-    extensible = Primitive(Universal.BIT_STRING, "BIT STRING",
-                           Extensible(Size(ValueRange(10, 10))))
+    extensible = Primitive(Universal.BIT_STRING, "BIT STRING", Extensible(Size(ValueRange(10, 10))))
     unconstrained = Primitive(Universal.BIT_STRING, "BIT STRING")
-    assert encode_jer(fixed, value) == b'"A040"'                        # §24.2
-    assert encode_jer(extensible, value) == b'{"value":"A040","length":10}'   # §24.3
+    assert encode_jer(fixed, value) == b'"A040"'  # §24.2
+    assert encode_jer(extensible, value) == b'{"value":"A040","length":10}'  # §24.3
     assert encode_jer(unconstrained, value) == b'{"value":"A040","length":10}'
     for kind in (fixed, extensible, unconstrained):
         assert decode_jer(encode_jer(kind, value), kind) == value
@@ -234,8 +248,9 @@ def test_a_contents_constraint_unlocks_the_containing_form():
     assert decode_jer(b'{"containing":{"n":7}}', contained) == octets
     # §7.2.1 e) says "without ENCODED BY": naming other rules is a statement about the
     # octets, not licence to read them as this rail's own type.
-    encoded_by = Primitive(Universal.OCTET_STRING, "OCTET STRING", contains=inner,
-                           encoded_by=(2, 1, 2, 1))
+    encoded_by = Primitive(
+        Universal.OCTET_STRING, "OCTET STRING", contains=inner, encoded_by=(2, 1, 2, 1)
+    )
     assert encode_jer(encoded_by, octets) == b'"' + octets.hex().upper().encode() + b'"'
 
 
@@ -243,13 +258,13 @@ def test_a_contents_constraint_unlocks_the_containing_form():
 
 
 def test_the_scalar_encodings():
-    assert encode_jer(Primitive(Universal.BOOLEAN, "BOOLEAN"), True) == b"true"    # §20
+    assert encode_jer(Primitive(Universal.BOOLEAN, "BOOLEAN"), True) == b"true"  # §20
     assert encode_jer(Primitive(Universal.BOOLEAN, "BOOLEAN"), False) == b"false"
-    assert encode_jer(Primitive(Universal.INTEGER, "INTEGER"), -42) == b"-42"      # §21
+    assert encode_jer(Primitive(Universal.INTEGER, "INTEGER"), -42) == b"-42"  # §21
     assert encode_jer(Primitive(Universal.INTEGER, "INTEGER"), 0) == b"0"
-    assert encode_jer(Primitive(Universal.NULL, "NULL"), None) == b"null"          # §26
+    assert encode_jer(Primitive(Universal.NULL, "NULL"), None) == b"null"  # §26
     oid = Primitive(Universal.OBJECT_IDENTIFIER, "OBJECT IDENTIFIER")
-    assert encode_jer(oid, (2, 1, 7)) == b'"2.1.7"'                                # §32
+    assert encode_jer(oid, (2, 1, 7)) == b'"2.1.7"'  # §32
     assert decode_jer(b'"2.1.7"', oid) == (2, 1, 7)
 
 
@@ -260,8 +275,9 @@ def test_an_enumerated_value_is_a_json_string_and_has_no_numeric_spelling():
     (X.690 §8.4), so the identifier is not recoverable from the octets alone, and a type
     without its enumeration cannot be encoded here at all.
     """
-    kind = Primitive(Universal.ENUMERATED, "ENUMERATED",
-                     enumeration=(("red", 0), ("yellow", 1), ("green", 2)))
+    kind = Primitive(
+        Universal.ENUMERATED, "ENUMERATED", enumeration=(("red", 0), ("yellow", 1), ("green", 2))
+    )
     assert encode_jer(kind, 1) == b'"yellow"'
     assert decode_jer(b'"green"', kind) == 2
     _refuses(lambda: decode_jer(b"1", kind), "expected a JSON string")
@@ -277,11 +293,11 @@ def test_the_special_real_values_are_json_strings():
     assert encode_jer(kind, float("-inf")) == b'"-INF"'
     assert encode_jer(kind, float("nan")) == b'"NaN"'
     assert encode_jer(kind, -0.0) == b'"-0"'
-    assert encode_jer(kind, 0.0) == b"0"                    # §23.1.2: the value 0
-    assert encode_jer(kind, 3.5) == b"3.5"                  # §23.3: a base-2 value
+    assert encode_jer(kind, 0.0) == b"0"  # §23.1.2: the value 0
+    assert encode_jer(kind, 3.5) == b"3.5"  # §23.3: a base-2 value
     assert decode_jer(b'"INF"', kind) == float("inf")
     assert decode_jer(b"3.5", kind) == 3.5
-    assert decode_jer(b'{"base10Value":1.5}', kind) == 1.5   # §23.4
+    assert decode_jer(b'{"base10Value":1.5}', kind) == 1.5  # §23.4
     nan = decode_jer(b'"NaN"', kind)
     assert nan != nan
     _refuses(lambda: decode_jer(b'"Inf"', kind), "Table 2")
@@ -290,8 +306,10 @@ def test_the_special_real_values_are_json_strings():
 def test_a_set_is_encoded_as_if_it_were_a_sequence():
     """§29 — "A value of a set type shall be encoded as if the type had been declared a
     sequence type", so there is no tag-order rule the way CXER §9.6.1 has one."""
-    components = (Component("b", Primitive(Universal.INTEGER, "INTEGER"), tag=1),
-                  Component("a", Primitive(Universal.INTEGER, "INTEGER"), tag=0))
+    components = (
+        Component("b", Primitive(Universal.INTEGER, "INTEGER"), tag=1),
+        Component("a", Primitive(Universal.INTEGER, "INTEGER"), tag=0),
+    )
     value = {"b": 2, "a": 1}
     assert encode_jer(Set(components), value) == encode_jer(Sequence(components), value)
     assert encode_jer(Set(components), value) == b'{"b":2,"a":1}'
@@ -307,8 +325,12 @@ def test_sequence_of_keeps_order_and_set_of_is_sorted_only_by_the_canonical_prof
 
 def test_a_choice_is_an_object_with_exactly_one_member():
     """§31.3.1/§31.3.2 — the wrapped encoding, which is the default without UNWRAPPED."""
-    kind = Choice((Component("a", Primitive(Universal.INTEGER, "INTEGER"), tag=0),
-                   Component("b", Primitive(Universal.UTF8_STRING, "UTF8String"), tag=1)))
+    kind = Choice(
+        (
+            Component("a", Primitive(Universal.INTEGER, "INTEGER"), tag=0),
+            Component("b", Primitive(Universal.UTF8_STRING, "UTF8String"), tag=1),
+        )
+    )
     assert encode_jer(kind, ("b", "hi")) == b'{"b":"hi"}'
     assert decode_jer(b'{"a":1}', kind) == ("a", 1)
     _refuses(lambda: decode_jer(b'{"a":1,"b":"x"}', kind), "exactly one member")
@@ -334,16 +356,18 @@ def test_an_open_type_has_no_hexadecimal_fallback():
     inner = Sequence((Component("n", Primitive(Universal.INTEGER, "INTEGER")),), "Inner")
     octets = encode_tlv(inner.encode({"n": 7}))
     table = ObjectSetTable("C", ({"&id": 1, "&Type": inner},))
-    opened = OpenType("OPEN", table=table, field="&Type",
-                      governing=(("id",),), governing_fields=("&id",))
-    kind = Sequence((Component("id", Primitive(Universal.INTEGER, "INTEGER")),
-                     Component("body", opened)), "Outer")
+    opened = OpenType(
+        "OPEN", table=table, field="&Type", governing=(("id",),), governing_fields=("&id",)
+    )
+    kind = Sequence(
+        (Component("id", Primitive(Universal.INTEGER, "INTEGER")), Component("body", opened)),
+        "Outer",
+    )
     assert encode_jer(kind, {"id": 1, "body": octets}) == b'{"id":1,"body":{"n":7}}'
     decoded = decode_jer(b'{"id":1,"body":{"n":7}}', kind)
     assert decoded["body"] == octets
     assert decoded["body.resolved"] == {"n": 7}
-    _refuses(lambda: encode_jer(kind, {"id": 9, "body": octets}),
-             "no hexadecimal alternative")
+    _refuses(lambda: encode_jer(kind, {"id": 9, "body": octets}), "no hexadecimal alternative")
 
 
 # --- the canonical profile, and what it refuses ------------------------------------------
@@ -355,12 +379,14 @@ def test_a_default_valued_component_is_omitted_by_the_canonical_profile():
     DER §11.5 and COER omit; CXER §9.5 requires the value present. JER is in the candidate
     set on size, so it omits.
     """
-    kind = Sequence((Component("x", Primitive(Universal.INTEGER, "INTEGER")),
-                     Component("y", Primitive(Universal.BOOLEAN, "BOOLEAN"), tag=0,
-                               default=False)))
+    kind = Sequence(
+        (
+            Component("x", Primitive(Universal.INTEGER, "INTEGER")),
+            Component("y", Primitive(Universal.BOOLEAN, "BOOLEAN"), tag=0, default=False),
+        )
+    )
     assert encode_jer(kind, {"x": 1, "y": False}) == b'{"x":1}'
-    assert encode_jer(kind, {"x": 1, "y": False}, rules=JerRules.BASIC) \
-        == b'{"x":1,"y":false}'
+    assert encode_jer(kind, {"x": 1, "y": False}, rules=JerRules.BASIC) == b'{"x":1,"y":false}'
     assert encode_jer(kind, {"x": 1, "y": True}) == b'{"x":1,"y":true}'
     # Either spelling decodes to the same abstract value (X.680 §25.12).
     for text in (b'{"x":1}', b'{"x":1,"y":false}'):
@@ -369,10 +395,13 @@ def test_a_default_valued_component_is_omitted_by_the_canonical_profile():
 
 def test_member_order_is_free_for_basic_and_fixed_for_the_canonical_profile():
     """§27.3.3 — "may be added to the encoding in any order"."""
-    kind = Sequence((Component("x", Primitive(Universal.INTEGER, "INTEGER")),
-                     Component("y", Primitive(Universal.BOOLEAN, "BOOLEAN"), tag=0)))
-    assert decode_jer(b'{"y":true,"x":1}', kind, rules=JerRules.BASIC) \
-        == {"x": 1, "y": True}
+    kind = Sequence(
+        (
+            Component("x", Primitive(Universal.INTEGER, "INTEGER")),
+            Component("y", Primitive(Universal.BOOLEAN, "BOOLEAN"), tag=0),
+        )
+    )
+    assert decode_jer(b'{"y":true,"x":1}', kind, rules=JerRules.BASIC) == {"x": 1, "y": True}
     _refuses(lambda: decode_jer(b'{"y":true,"x":1}', kind), "canonical profile")
 
 
@@ -382,13 +411,15 @@ def test_an_extensible_type_skips_a_member_it_does_not_know():
     JSON is self-delimiting, so skipping is structural — PER needs §19.9's open-type wrapper
     to achieve the same thing.
     """
-    extensible = Sequence((Component("x", Primitive(Universal.INTEGER, "INTEGER")),),
-                          extensible=True)
-    assert decode_jer(b'{"x":1,"future":[1,2]}', extensible,
-                      rules=JerRules.BASIC) == {"x": 1}
+    extensible = Sequence(
+        (Component("x", Primitive(Universal.INTEGER, "INTEGER")),), extensible=True
+    )
+    assert decode_jer(b'{"x":1,"future":[1,2]}', extensible, rules=JerRules.BASIC) == {"x": 1}
     closed = Sequence((Component("x", Primitive(Universal.INTEGER, "INTEGER")),))
-    _refuses(lambda: decode_jer(b'{"x":1,"future":2}', closed, rules=JerRules.BASIC),
-             "no extension marker")
+    _refuses(
+        lambda: decode_jer(b'{"x":1,"future":2}', closed, rules=JerRules.BASIC),
+        "no extension marker",
+    )
 
 
 def test_the_things_json_accepts_that_jer_does_not():
@@ -409,8 +440,7 @@ def test_the_things_json_accepts_that_jer_does_not():
     kind = Sequence((Component("x", Primitive(Universal.INTEGER, "INTEGER")),))
     _refuses(lambda: decode_jer(b'{"x":1,"x":2}', kind), "more than once")
     # §7.6.2: the encoding is UTF-8.
-    _refuses(lambda: decode_jer(b'"\xff"', Primitive(Universal.UTF8_STRING, "UTF8String")),
-             "7.6.2")
+    _refuses(lambda: decode_jer(b'"\xff"', Primitive(Universal.UTF8_STRING, "UTF8String")), "7.6.2")
 
 
 def test_an_unquoted_member_name_is_refused():
@@ -443,39 +473,33 @@ def test_the_five_name_keyword_case_operations():
     identifier is a no-op, which is the case a looser implementation gets wrong by also
     stripping hyphens.
     """
-    assert apply_name_keyword("some-name-here", NameKeyword.CAPITALIZED) \
-        == "Some-name-here"
-    assert apply_name_keyword("some-name-here", NameKeyword.UPPERCASED) \
-        == "SOME-NAME-HERE"
-    assert apply_name_keyword("some-name-here", NameKeyword.LOWERCASED) \
-        == "some-name-here"
-    assert apply_name_keyword("some-name-here", NameKeyword.UPPERCAMELCASED) \
-        == "SomeNameHere"
-    assert apply_name_keyword("some-name-here", NameKeyword.LOWERCAMELCASED) \
-        == "someNameHere"
+    assert apply_name_keyword("some-name-here", NameKeyword.CAPITALIZED) == "Some-name-here"
+    assert apply_name_keyword("some-name-here", NameKeyword.UPPERCASED) == "SOME-NAME-HERE"
+    assert apply_name_keyword("some-name-here", NameKeyword.LOWERCASED) == "some-name-here"
+    assert apply_name_keyword("some-name-here", NameKeyword.UPPERCAMELCASED) == "SomeNameHere"
+    assert apply_name_keyword("some-name-here", NameKeyword.LOWERCAMELCASED) == "someNameHere"
     assert apply_name_keyword("A-b", NameKeyword.LOWERCASED) == "a-b"
 
 
 def _abc_sequence() -> Sequence:
-    return Sequence((Component("a", Primitive(Universal.INTEGER, "INTEGER")),
-                     Component("b", Primitive(Universal.BOOLEAN, "BOOLEAN"), tag=0),
-                     Component("c", Primitive(Universal.INTEGER, "INTEGER"), tag=1,
-                               optional=True)))
+    return Sequence(
+        (
+            Component("a", Primitive(Universal.INTEGER, "INTEGER")),
+            Component("b", Primitive(Universal.BOOLEAN, "BOOLEAN"), tag=0),
+            Component("c", Primitive(Universal.INTEGER, "INTEGER"), tag=1, optional=True),
+        )
+    )
 
 
 def test_array_encodes_a_sequence_positionally():
     """§14.1.2 with §27.2 — a JSON array instead of a JSON object."""
     kind = _abc_sequence()
     instructions = JerInstructions().assign(kind, Array())
-    assert encode_jer(kind, {"a": 1, "b": True, "c": 3},
-                      instructions=instructions) == b"[1,true,3]"
+    assert encode_jer(kind, {"a": 1, "b": True, "c": 3}, instructions=instructions) == b"[1,true,3]"
     assert encode_jer(kind, {"a": 1, "b": True}) == b'{"a":1,"b":true}'
-    assert decode_jer(b"[1,true,3]", kind, instructions=instructions) \
-        == {"a": 1, "b": True, "c": 3}
-    assert decode_jer(b"[1,true,null]", kind, instructions=instructions) \
-        == {"a": 1, "b": True}
-    _refuses(lambda: decode_jer(b"[1,true,3,4]", kind, instructions=instructions),
-             "27.2.1")
+    assert decode_jer(b"[1,true,3]", kind, instructions=instructions) == {"a": 1, "b": True, "c": 3}
+    assert decode_jer(b"[1,true,null]", kind, instructions=instructions) == {"a": 1, "b": True}
+    _refuses(lambda: decode_jer(b"[1,true,3,4]", kind, instructions=instructions), "27.2.1")
 
 
 def test_a_trailing_null_may_be_omitted_and_the_canonical_profile_omits_it():
@@ -484,24 +508,34 @@ def test_a_trailing_null_may_be_omitted_and_the_canonical_profile_omits_it():
     kind = _abc_sequence()
     instructions = JerInstructions().assign(kind, Array())
     assert encode_jer(kind, {"a": 1, "b": True}, instructions=instructions) == b"[1,true]"
-    assert encode_jer(kind, {"a": 1, "b": True}, rules=JerRules.BASIC,
-                      instructions=instructions) == b"[1,true,null]"
+    assert (
+        encode_jer(kind, {"a": 1, "b": True}, rules=JerRules.BASIC, instructions=instructions)
+        == b"[1,true,null]"
+    )
     # Both spellings denote the same abstract value.
     for text in (b"[1,true]", b"[1,true,null]"):
-        assert decode_jer(text, kind, rules=JerRules.BASIC,
-                          instructions=instructions) == {"a": 1, "b": True}
+        assert decode_jer(text, kind, rules=JerRules.BASIC, instructions=instructions) == {
+            "a": 1,
+            "b": True,
+        }
 
 
 def test_array_forbids_an_optional_component_that_could_itself_be_null():
     """§14.2 — because the array has no names, an absent component and a present NULL
     would be the same three characters."""
-    kind = Sequence((Component("a", Primitive(Universal.INTEGER, "INTEGER")),
-                     Component("n", Primitive(Universal.NULL, "NULL"), tag=0,
-                               optional=True)))
+    kind = Sequence(
+        (
+            Component("a", Primitive(Universal.INTEGER, "INTEGER")),
+            Component("n", Primitive(Universal.NULL, "NULL"), tag=0, optional=True),
+        )
+    )
     _refuses(lambda: JerInstructions().assign(kind, Array()), "14.2")
-    _refuses(lambda: JerInstructions().assign(
-        Set((Component("a", Primitive(Universal.INTEGER, "INTEGER")),)), Array()),
-        "14.2 restricts ARRAY to a sequence type")
+    _refuses(
+        lambda: JerInstructions().assign(
+            Set((Component("a", Primitive(Universal.INTEGER, "INTEGER")),)), Array()
+        ),
+        "14.2 restricts ARRAY to a sequence type",
+    )
 
 
 def test_base64_replaces_the_hexadecimal_octetstring_encoding():
@@ -509,16 +543,14 @@ def test_base64_replaces_the_hexadecimal_octetstring_encoding():
     apply", which is why the encoder never folds lines."""
     kind = Primitive(Universal.OCTET_STRING, "OCTET STRING")
     instructions = JerInstructions().assign(kind, Base64())
-    assert encode_jer(kind, b"hello world", instructions=instructions) \
-        == b'"aGVsbG8gd29ybGQ="'
+    assert encode_jer(kind, b"hello world", instructions=instructions) == b'"aGVsbG8gd29ybGQ="'
     assert encode_jer(kind, b"hello world") == b'"68656C6C6F20776F726C64"'
-    assert decode_jer(b'"aGVsbG8gd29ybGQ="', kind, instructions=instructions) \
-        == b"hello world"
+    assert decode_jer(b'"aGVsbG8gd29ybGQ="', kind, instructions=instructions) == b"hello world"
     assert encode_jer(kind, bytes(range(70)), instructions=instructions).count(b"\n") == 0
-    _refuses(lambda: decode_jer(b'"not base64!"', kind, instructions=instructions),
-             "RFC 2045")
-    _refuses(lambda: JerInstructions().assign(
-        Primitive(Universal.INTEGER, "INTEGER"), Base64()), "15.2")
+    _refuses(lambda: decode_jer(b'"not base64!"', kind, instructions=instructions), "RFC 2045")
+    _refuses(
+        lambda: JerInstructions().assign(Primitive(Universal.INTEGER, "INTEGER"), Base64()), "15.2"
+    )
 
 
 def test_name_changes_a_member_name_and_is_keyed_on_the_component():
@@ -529,17 +561,21 @@ def test_name_changes_a_member_name_and_is_keyed_on_the_component():
     referencing one assigned type would. Keying NAME on the type would rename both.
     """
     shared = Primitive(Universal.INTEGER, "INTEGER")
-    kind = Sequence((Component("first", shared),
-                     Component("second", shared, tag=0)))
+    kind = Sequence((Component("first", shared), Component("second", shared, tag=0)))
     instructions = JerInstructions().assign(kind.components[0], Name("alpha"))
-    assert encode_jer(kind, {"first": 1, "second": 2}, instructions=instructions) \
+    assert (
+        encode_jer(kind, {"first": 1, "second": 2}, instructions=instructions)
         == b'{"alpha":1,"second":2}'
-    assert decode_jer(b'{"alpha":1,"second":2}', kind, instructions=instructions) \
-        == {"first": 1, "second": 2}
-    keyworded = JerInstructions().assign(kind.components[1],
-                                         Name(NameKeyword.UPPERCASED))
-    assert encode_jer(kind, {"first": 1, "second": 2}, instructions=keyworded) \
+    )
+    assert decode_jer(b'{"alpha":1,"second":2}', kind, instructions=instructions) == {
+        "first": 1,
+        "second": 2,
+    }
+    keyworded = JerInstructions().assign(kind.components[1], Name(NameKeyword.UPPERCASED))
+    assert (
+        encode_jer(kind, {"first": 1, "second": 2}, instructions=keyworded)
         == b'{"first":1,"SECOND":2}'
+    )
 
 
 def test_name_applies_to_a_choice_alternative_too():
@@ -551,9 +587,14 @@ def test_name_applies_to_a_choice_alternative_too():
 
 
 def _map_setof() -> SetOf:
-    return SetOf(Sequence((
-        Component("key", Primitive(Universal.UTF8_STRING, "UTF8String")),
-        Component("val", Primitive(Universal.INTEGER, "INTEGER"), tag=0))))
+    return SetOf(
+        Sequence(
+            (
+                Component("key", Primitive(Universal.UTF8_STRING, "UTF8String")),
+                Component("val", Primitive(Universal.INTEGER, "INTEGER"), tag=0),
+            )
+        )
+    )
 
 
 def test_object_turns_a_set_of_pairs_into_a_json_map():
@@ -563,42 +604,86 @@ def test_object_turns_a_set_of_pairs_into_a_json_map():
     instructions = JerInstructions().assign(kind, ObjectAs())
     items = [{"key": "b", "val": 2}, {"key": "a", "val": 1}]
     assert encode_jer(kind, items, instructions=instructions) == b'{"a":1,"b":2}'
-    assert encode_jer(kind, items) \
-        == b'[{"key":"a","val":1},{"key":"b","val":2}]'
-    assert decode_jer(b'{"a":1,"b":2}', kind, instructions=instructions) \
-        == [{"key": "a", "val": 1}, {"key": "b", "val": 2}]
+    assert encode_jer(kind, items) == b'[{"key":"a","val":1},{"key":"b","val":2}]'
+    assert decode_jer(b'{"a":1,"b":2}', kind, instructions=instructions) == [
+        {"key": "a", "val": 1},
+        {"key": "b", "val": 2},
+    ]
 
 
 def test_object_restrictions_are_all_of_clause_17_2():
     """§17.2 — every clause of it, because a map is only unambiguous if all of them hold."""
     integer = Primitive(Universal.INTEGER, "INTEGER")
-    pair = Sequence((Component("key", Primitive(Universal.UTF8_STRING, "UTF8String")),
-                     Component("val", integer, tag=0)))
-    _refuses(lambda: JerInstructions().assign(SequenceOf(pair), ObjectAs()),
-             "17.2 restricts OBJECT to a set-of type")
-    _refuses(lambda: JerInstructions().assign(SetOf(integer), ObjectAs()),
-             "to be a sequence type")
-    _refuses(lambda: JerInstructions().assign(
-        SetOf(Sequence((Component("a", integer), Component("b", integer, tag=0),
-                        Component("c", integer, tag=1)))), ObjectAs()),
-        "exactly two components")
+    pair = Sequence(
+        (
+            Component("key", Primitive(Universal.UTF8_STRING, "UTF8String")),
+            Component("val", integer, tag=0),
+        )
+    )
+    _refuses(
+        lambda: JerInstructions().assign(SequenceOf(pair), ObjectAs()),
+        "17.2 restricts OBJECT to a set-of type",
+    )
+    _refuses(lambda: JerInstructions().assign(SetOf(integer), ObjectAs()), "to be a sequence type")
+    _refuses(
+        lambda: JerInstructions().assign(
+            SetOf(
+                Sequence(
+                    (
+                        Component("a", integer),
+                        Component("b", integer, tag=0),
+                        Component("c", integer, tag=1),
+                    )
+                )
+            ),
+            ObjectAs(),
+        ),
+        "exactly two components",
+    )
     # The key becomes a JSON member name, which ECMA-404 clause 6 requires to be a string.
-    _refuses(lambda: JerInstructions().assign(
-        SetOf(Sequence((Component("k", integer), Component("v", integer, tag=0)))),
-        ObjectAs()), "17.2 restricts the first component")
-    _refuses(lambda: JerInstructions().assign(
-        SetOf(Sequence((Component("k", Primitive(Universal.UTF8_STRING, "UTF8String")),
-                        Component("v", integer, tag=0, optional=True)))), ObjectAs()),
-        "OPTIONAL or DEFAULT")
-    _refuses(lambda: JerInstructions().assign(
-        SetOf(Sequence((Component("k", Primitive(Universal.UTF8_STRING, "UTF8String")),
-                        Component("v", integer, tag=0)), extensible=True)), ObjectAs()),
-        "without an extension marker")
+    _refuses(
+        lambda: JerInstructions().assign(
+            SetOf(Sequence((Component("k", integer), Component("v", integer, tag=0)))), ObjectAs()
+        ),
+        "17.2 restricts the first component",
+    )
+    _refuses(
+        lambda: JerInstructions().assign(
+            SetOf(
+                Sequence(
+                    (
+                        Component("k", Primitive(Universal.UTF8_STRING, "UTF8String")),
+                        Component("v", integer, tag=0, optional=True),
+                    )
+                )
+            ),
+            ObjectAs(),
+        ),
+        "OPTIONAL or DEFAULT",
+    )
+    _refuses(
+        lambda: JerInstructions().assign(
+            SetOf(
+                Sequence(
+                    (
+                        Component("k", Primitive(Universal.UTF8_STRING, "UTF8String")),
+                        Component("v", integer, tag=0),
+                    ),
+                    extensible=True,
+                )
+            ),
+            ObjectAs(),
+        ),
+        "without an extension marker",
+    )
 
 
 def _colour() -> Primitive:
-    return Primitive(Universal.ENUMERATED, "ENUMERATED",
-                     enumeration=(("red", 0), ("light-blue", 1), ("green", 2)))
+    return Primitive(
+        Universal.ENUMERATED,
+        "ENUMERATED",
+        enumeration=(("red", 0), ("light-blue", 1), ("green", 2)),
+    )
 
 
 def test_text_rewrites_the_enumeration_strings_and_all_covers_the_rest():
@@ -606,7 +691,8 @@ def test_text_rewrites_the_enumeration_strings_and_all_covers_the_rest():
     enumeration items whose identifiers do not appear in this TEXT encoding instruction"."""
     kind = _colour()
     instructions = JerInstructions().assign(
-        kind, Text((("red", "ROT"), ("ALL", NameKeyword.UPPERCAMELCASED))))
+        kind, Text((("red", "ROT"), ("ALL", NameKeyword.UPPERCAMELCASED)))
+    )
     assert encode_jer(kind, 0, instructions=instructions) == b'"ROT"'
     assert encode_jer(kind, 1, instructions=instructions) == b'"LightBlue"'
     assert encode_jer(kind, 2, instructions=instructions) == b'"Green"'
@@ -620,32 +706,45 @@ def test_text_rewrites_the_enumeration_strings_and_all_covers_the_rest():
 def test_text_restrictions():
     """§18.2.1-§18.2.3."""
     kind = _colour()
-    _refuses(lambda: JerInstructions().assign(
-        Primitive(Universal.INTEGER, "INTEGER"), Text((("a", "b"),))), "18.2.1")
-    _refuses(lambda: JerInstructions().assign(kind, Text((("purple", "X"),))),
-             "not an enumeration identifier")
-    _refuses(lambda: JerInstructions().assign(kind, Text((("red", "A"), ("red", "B")))),
-             "18.2.2")
-    _refuses(lambda: JerInstructions().assign(kind, Text((("ALL", "X"),))),
-             "to be a Keyword when the IdentifierOrAll is ALL")
+    _refuses(
+        lambda: JerInstructions().assign(
+            Primitive(Universal.INTEGER, "INTEGER"), Text((("a", "b"),))
+        ),
+        "18.2.1",
+    )
+    _refuses(
+        lambda: JerInstructions().assign(kind, Text((("purple", "X"),))),
+        "not an enumeration identifier",
+    )
+    _refuses(lambda: JerInstructions().assign(kind, Text((("red", "A"), ("red", "B")))), "18.2.2")
+    _refuses(
+        lambda: JerInstructions().assign(kind, Text((("ALL", "X"),))),
+        "to be a Keyword when the IdentifierOrAll is ALL",
+    )
     # §18.2.3: the final set of strings shall not contain two identical strings.
     _refuses(lambda: JerInstructions().assign(kind, Text((("red", "green"),))), "18.2.3")
 
 
 def test_unwrapped_drops_the_wrapping_object():
     """§19.1.2 with §31.2 — "the encoding of the chosen alternative", and nothing else."""
-    kind = Choice((
-        Component("n", Primitive(Universal.INTEGER, "INTEGER"), tag=0),
-        Component("s", Primitive(Universal.UTF8_STRING, "UTF8String"), tag=1),
-        Component("l", SequenceOf(Primitive(Universal.INTEGER, "INTEGER")), tag=2),
-        Component("z", Primitive(Universal.NULL, "NULL"), tag=3),
-    ))
+    kind = Choice(
+        (
+            Component("n", Primitive(Universal.INTEGER, "INTEGER"), tag=0),
+            Component("s", Primitive(Universal.UTF8_STRING, "UTF8String"), tag=1),
+            Component("l", SequenceOf(Primitive(Universal.INTEGER, "INTEGER")), tag=2),
+            Component("z", Primitive(Universal.NULL, "NULL"), tag=3),
+        )
+    )
     instructions = JerInstructions().assign(kind, Unwrapped())
-    for value, text in ((("n", 5), b"5"), (("s", "hi"), b'"hi"'),
-                        (("l", [1, 2]), b"[1,2]"), (("z", None), b"null")):
+    for value, text in (
+        (("n", 5), b"5"),
+        (("s", "hi"), b'"hi"'),
+        (("l", [1, 2]), b"[1,2]"),
+        (("z", None), b"null"),
+    ):
         assert encode_jer(kind, value, instructions=instructions) == text
         assert decode_jer(text, kind, instructions=instructions) == value
-    assert encode_jer(kind, ("n", 5)) == b'{"n":5}'         # §31.3 without the instruction
+    assert encode_jer(kind, ("n", 5)) == b'{"n":5}'  # §31.3 without the instruction
 
 
 def test_unwrapped_discriminates_two_object_alternatives_by_member_name():
@@ -666,8 +765,12 @@ def test_a_19_2_violation_surfaces_as_an_ambiguity_rather_than_a_guess():
     lands. Decoding is the point where the ambiguity becomes real, so that is where it is
     reported — against the clause, rather than by picking a winner.
     """
-    kind = Choice((Component("i", Primitive(Universal.INTEGER, "INTEGER"), tag=0),
-                   Component("j", Primitive(Universal.INTEGER, "INTEGER"), tag=1)))
+    kind = Choice(
+        (
+            Component("i", Primitive(Universal.INTEGER, "INTEGER"), tag=0),
+            Component("j", Primitive(Universal.INTEGER, "INTEGER"), tag=1),
+        )
+    )
     instructions = JerInstructions().assign(kind, Unwrapped())
     # Encoding is unambiguous -- the caller named the alternative.
     assert encode_jer(kind, ("i", 1), instructions=instructions) == b"1"
@@ -696,8 +799,7 @@ def test_clause_13_precedence_negating_and_replacement():
     # §13.3.2: a second positive instruction of the same category REPLACES the first.
     kind = _abc_sequence()
     replaced = JerInstructions().assign(kind.components[0], Name("one"), Name("two"))
-    assert encode_jer(kind, {"a": 1, "b": True}, instructions=replaced) \
-        == b'{"two":1,"b":true}'
+    assert encode_jer(kind, {"a": 1, "b": True}, instructions=replaced) == b'{"two":1,"b":true}'
     # Negating a category that was never assigned is harmless (§13.2's NOTE 1).
     JerInstructions().assign(octets, Not(Base64))
 
@@ -706,28 +808,41 @@ def test_instructions_compose_across_a_whole_value():
     """All six at once, because the interesting failures are in the interactions."""
     colour = _colour()
     pairs = _map_setof()
-    inner = Sequence((Component("blob", Primitive(Universal.OCTET_STRING,
-                                                  "OCTET STRING")),
-                      Component("shade", colour, tag=0)))
-    kind = Sequence((Component("head", inner),
-                     Component("tags", pairs, tag=0)))
-    instructions = (JerInstructions()
-                    .assign(inner, Array())
-                    .assign(inner.components[0].type, Base64())
-                    .assign(colour, Text((("ALL", NameKeyword.UPPERCASED),)))
-                    .assign(pairs, ObjectAs())
-                    .assign(kind.components[1], Name("labels")))
-    value = {"head": {"blob": b"\x01\x02", "shade": 1},
-             "tags": [{"key": "b", "val": 2}, {"key": "a", "val": 1}]}
-    assert encode_jer(kind, value, instructions=instructions) \
+    inner = Sequence(
+        (
+            Component("blob", Primitive(Universal.OCTET_STRING, "OCTET STRING")),
+            Component("shade", colour, tag=0),
+        )
+    )
+    kind = Sequence((Component("head", inner), Component("tags", pairs, tag=0)))
+    instructions = (
+        JerInstructions()
+        .assign(inner, Array())
+        .assign(inner.components[0].type, Base64())
+        .assign(colour, Text((("ALL", NameKeyword.UPPERCASED),)))
+        .assign(pairs, ObjectAs())
+        .assign(kind.components[1], Name("labels"))
+    )
+    value = {
+        "head": {"blob": b"\x01\x02", "shade": 1},
+        "tags": [{"key": "b", "val": 2}, {"key": "a", "val": 1}],
+    }
+    assert (
+        encode_jer(kind, value, instructions=instructions)
         == b'{"head":["AQI=","LIGHT-BLUE"],"labels":{"a":1,"b":2}}'
+    )
     # The set-of comes back in canonical order rather than the caller's, which is what
     # §30.3.3 leaves free and X.680 §28.3's NOTE 2 says outright: "Encoding rules are not
     # required to preserve the order of these values."
     sorted_value = dict(value, tags=[{"key": "a", "val": 1}, {"key": "b", "val": 2}])
-    assert decode_jer(encode_jer(kind, value, instructions=instructions), kind,
-                      instructions=instructions) == sorted_value
+    assert (
+        decode_jer(
+            encode_jer(kind, value, instructions=instructions), kind, instructions=instructions
+        )
+        == sorted_value
+    )
     # Without the instructions the same value is a completely different document.
     assert encode_jer(kind, value) == (
         b'{"head":{"blob":"0102","shade":"light-blue"},'
-        b'"tags":[{"key":"a","val":1},{"key":"b","val":2}]}')
+        b'"tags":[{"key":"a","val":1},{"key":"b","val":2}]}'
+    )

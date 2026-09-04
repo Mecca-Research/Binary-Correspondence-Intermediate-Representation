@@ -25,9 +25,21 @@ def test_runtime_is_freestanding():
     if clang is None:
         return
     r = subprocess.run(
-        [clang, "-ffreestanding", "-nostdlib", "-std=c11", "-Wall", "-Wextra",
-         "-c", os.path.join(_C_DIR, "bcir_runtime.c"), "-o", os.devnull],
-        capture_output=True, text=True)
+        [
+            clang,
+            "-ffreestanding",
+            "-nostdlib",
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-c",
+            os.path.join(_C_DIR, "bcir_runtime.c"),
+            "-o",
+            os.devnull,
+        ],
+        capture_output=True,
+        text=True,
+    )
     assert r.returncode == 0, r.stderr
 
 
@@ -40,11 +52,20 @@ def test_python_encodes_c_decodes():
     with tempfile.TemporaryDirectory() as d:
         exe = os.path.join(d, "test_runtime")
         build = subprocess.run(
-            [clang, "-std=c11", "-O2",
-             os.path.join(_C_DIR, "bcir_runtime.c"),
-             os.path.join(_C_DIR, "test_runtime.c"),
-             "-I", _C_DIR, "-o", exe],
-            capture_output=True, text=True)
+            [
+                clang,
+                "-std=c11",
+                "-O2",
+                os.path.join(_C_DIR, "bcir_runtime.c"),
+                os.path.join(_C_DIR, "test_runtime.c"),
+                "-I",
+                _C_DIR,
+                "-o",
+                exe,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert build.returncode == 0, build.stderr
 
         blob = os.path.join(d, "pack.bin")
@@ -77,17 +98,26 @@ def test_python_encodes_v2_c_decodes():
         return
     from bcir.gem import hydrate_pipelined
     from bcir.kbcir import optimize as _opt
+
     m = vector_add(1024)
-    pack = hydrate_pipelined(m, _opt(m, TargetProfile.x86_avx512(), Theta.cool()),
-                             depth=2)
+    pack = hydrate_pipelined(m, _opt(m, TargetProfile.x86_avx512(), Theta.cool()), depth=2)
     with tempfile.TemporaryDirectory() as d:
         exe = os.path.join(d, "test_runtime")
         build = subprocess.run(
-            [clang, "-std=c11", "-O2",
-             os.path.join(_C_DIR, "bcir_runtime.c"),
-             os.path.join(_C_DIR, "test_runtime.c"),
-             "-I", _C_DIR, "-o", exe],
-            capture_output=True, text=True)
+            [
+                clang,
+                "-std=c11",
+                "-O2",
+                os.path.join(_C_DIR, "bcir_runtime.c"),
+                os.path.join(_C_DIR, "test_runtime.c"),
+                "-I",
+                _C_DIR,
+                "-o",
+                exe,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert build.returncode == 0, build.stderr
         blob = os.path.join(d, "pack.bin")
         with open(blob, "wb") as f:
@@ -100,12 +130,26 @@ def test_python_encodes_v2_c_decodes():
         assert int(out["walked"]) == len(pack.segments)
 
 
-def _build_runtime_harness(clang, d, name="test_runtime", srcs=("bcir_runtime.c", "test_runtime.c")):
+def _build_runtime_harness(
+    clang, d, name="test_runtime", srcs=("bcir_runtime.c", "test_runtime.c")
+):
     exe = os.path.join(d, name)
     build = subprocess.run(
-        [clang, "-std=c23", "-O2", "-Wall", "-Wextra", *[os.path.join(_C_DIR, s) for s in srcs],
-         "-I", _C_DIR, "-o", exe],
-        capture_output=True, text=True)
+        [
+            clang,
+            "-std=c23",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            *[os.path.join(_C_DIR, s) for s in srcs],
+            "-I",
+            _C_DIR,
+            "-o",
+            exe,
+        ],
+        capture_output=True,
+        text=True,
+    )
     assert build.returncode == 0, build.stderr
     return exe
 
@@ -113,12 +157,24 @@ def _build_runtime_harness(clang, d, name="test_runtime", srcs=("bcir_runtime.c"
 def _v3_pack():
     from bcir.gem.streampack import LaneSegment, Prefetch, StreamPack, TraceNote
     from bcir.model import Lane
+
     p = StreamPack(source_plan="plan0", topo_gen=1, map_gen=7, data_gen=19)
     p.prefetches.append(Prefetch("pf0", 4, (10, 11)))
-    p.segments.append(LaneSegment(
-        name="seg0", claim_id=1000, phase_id=0, lane=Lane.GGG, width=16,
-        opcode="reduce.add", reads=(10, 11), writes=(12,), prefetch="pf0",
-        dispatch="pim", channel="nvidia_ptx"))
+    p.segments.append(
+        LaneSegment(
+            name="seg0",
+            claim_id=1000,
+            phase_id=0,
+            lane=Lane.GGG,
+            width=16,
+            opcode="reduce.add",
+            reads=(10, 11),
+            writes=(12,),
+            prefetch="pf0",
+            dispatch="pim",
+            channel="nvidia_ptx",
+        )
+    )
     p.trace_notes.append(TraceNote(claim_id=1000))
     return p
 
@@ -140,7 +196,7 @@ def test_python_encodes_v3_c_decodes_dispatch_channel():
         assert run.returncode == 0, run.stdout + run.stderr
         out = dict(line.split("=", 1) for line in run.stdout.splitlines() if "=" in line)
         assert int(out["version"]) == 3
-        assert int(out["seg0.dispatch"]) == 1            # pim
+        assert int(out["seg0.dispatch"]) == 1  # pim
         assert out["seg0.channel"] == "nvidia_ptx"
         assert out["seg0.prefetch"] == "pf0"
 
@@ -154,6 +210,7 @@ def test_c_decode_equals_python_decode_differential():
         return
     from bcir.abi import decode as py_decode
     from bcir.gem import hydrate_pipelined
+
     m = vector_add(1024)
     packs = {
         1: _pack(),
@@ -183,7 +240,7 @@ def test_c_decode_equals_python_decode_differential():
             assert int(c["seg0.read0"]) == s.reads[0]
             assert int(c["seg0.write0"]) == s.writes[0]
             assert int(c["seg0.dispatch"]) == {"core": 0, "pim": 1}[s.dispatch]
-            assert c["seg0.channel"] == s.channel        # "host" on v1/v2, set on v3
+            assert c["seg0.channel"] == s.channel  # "host" on v1/v2, set on v3
             assert c["seg0.prefetch"] == (s.prefetch or "")
 
 
@@ -195,6 +252,7 @@ def test_c_rejects_crc_valid_semantically_corrupt_packs():
     if clang is None:
         return
     import sys
+
     repo = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     mutator = os.path.join(repo, "tools", "c", "streampack_corrupt.py")
     want = {
@@ -215,18 +273,21 @@ def test_c_rejects_crc_valid_semantically_corrupt_packs():
     env = dict(os.environ, PYTHONPATH=repo + os.pathsep + os.environ.get("PYTHONPATH", ""))
     with tempfile.TemporaryDirectory() as d:
         exe = _build_runtime_harness(
-            clang, d, name="test_sem",
-            srcs=("bcir_exec.c", "bcir_runtime.c", "bcir_verify.c",
-                  "test_streampack_semantic.c"))
+            clang,
+            d,
+            name="test_sem",
+            srcs=("bcir_exec.c", "bcir_runtime.c", "bcir_verify.c", "test_streampack_semantic.c"),
+        )
         for kind, code in want.items():
             bin_path = os.path.join(d, f"{kind}.bin")
-            meta = subprocess.run([sys.executable, mutator, kind, bin_path],
-                                  capture_output=True, text=True, env=env)
+            meta = subprocess.run(
+                [sys.executable, mutator, kind, bin_path], capture_output=True, text=True, env=env
+            )
             assert meta.returncode == 0, meta.stderr
             _k, _n, mapg, datag = meta.stdout.split()
             argv = [exe, bin_path]
             if kind == "stale_generation":
-                argv += [mapg, datag]                    # tell the C rail the live generation
+                argv += [mapg, datag]  # tell the C rail the live generation
             run = subprocess.run(argv, capture_output=True, text=True)
             # harness prints:  crc=<name>\nstatus=<n> name=<NAME>\nexec=<NAME>
             fields = {}
@@ -243,8 +304,8 @@ def test_c_rejects_crc_valid_semantically_corrupt_packs():
             # The graph-verifier API has no live registry argument, so only the
             # stale-generation case remains intrinsically well-formed there.
             assert fields.get("verify_pack") == (
-                "BCIR_OK" if kind == "stale_generation" else "BCIR_ERR"), (
-                    kind, run.stdout)
+                "BCIR_OK" if kind == "stale_generation" else "BCIR_ERR"
+            ), (kind, run.stdout)
             assert run.returncode == 1, (kind, run.stdout)
 
 
@@ -254,23 +315,37 @@ def test_c_planner_rejects_unrepresentable_cost_instead_of_wrapping():
         return
     source = (
         '#include <stdint.h>\n#include <string.h>\n#include "bcir_plan.h"\n'
-        'int main(void){bcir_claim c;bcir_func f;bcir_plan_step s;bcir_plan p;'
-        'memset(&c,0,sizeof c);memset(&f,0,sizeof f);memset(&s,0xa5,sizeof s);'
-        'memset(&p,0xa5,sizeof p);'
-        'c.opcode=BCIR_OP_ATOMIC_ADD;c.domain=BCIR_DOM_MMIO;c.count=UINT32_MAX;'
-        'f.claims=&c;f.n_claims=1;'
-        'if(bcir_plan_func(&f,&s,1,&p)!=BCIR_ERR_OVERFLOW)return 1;'
-        'for(size_t i=0;i<sizeof s;i++)if(((unsigned char*)&s)[i]!=0xa5)return 2;'
-        'if(p.steps||p.n||p.total_cost)return 3;return 0;}\n'
+        "int main(void){bcir_claim c;bcir_func f;bcir_plan_step s;bcir_plan p;"
+        "memset(&c,0,sizeof c);memset(&f,0,sizeof f);memset(&s,0xa5,sizeof s);"
+        "memset(&p,0xa5,sizeof p);"
+        "c.opcode=BCIR_OP_ATOMIC_ADD;c.domain=BCIR_DOM_MMIO;c.count=UINT32_MAX;"
+        "f.claims=&c;f.n_claims=1;"
+        "if(bcir_plan_func(&f,&s,1,&p)!=BCIR_ERR_OVERFLOW)return 1;"
+        "for(size_t i=0;i<sizeof s;i++)if(((unsigned char*)&s)[i]!=0xa5)return 2;"
+        "if(p.steps||p.n||p.total_cost)return 3;return 0;}\n"
     )
     with tempfile.TemporaryDirectory() as d:
         driver = os.path.join(d, "plan_overflow.c")
         with open(driver, "w", encoding="utf-8") as f:
             f.write(source)
         exe = os.path.join(d, "plan_overflow")
-        build = subprocess.run([clang, "-std=c11", "-Wall", "-Wextra", "-Werror", "-I", _C_DIR,
-                                os.path.join(_C_DIR, "bcir_plan.c"), driver, "-o", exe],
-                               capture_output=True, text=True)
+        build = subprocess.run(
+            [
+                clang,
+                "-std=c11",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C_DIR,
+                os.path.join(_C_DIR, "bcir_plan.c"),
+                driver,
+                "-o",
+                exe,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert build.returncode == 0, build.stderr
         assert subprocess.run([exe], capture_output=True).returncode == 0
 
@@ -279,7 +354,7 @@ def test_c_hydrator_preflights_before_writing_an_artifact():
     clang = which("clang")
     if clang is None:
         return
-    source = r'''
+    source = r"""
 #include <stdint.h>
 #include <string.h>
 #include "bcir_hydrate.h"
@@ -300,16 +375,31 @@ int main(void){
   if(bcir_sp_verify_semantic(out,n,UINT32_MAX,UINT32_MAX)!=BCIR_OK)return 5;
   return 0;
 }
-'''
+"""
     with tempfile.TemporaryDirectory() as d:
         driver = os.path.join(d, "hydrate_preflight.c")
         with open(driver, "w", encoding="utf-8") as f:
             f.write(source)
         exe = os.path.join(d, "hydrate_preflight")
         build = subprocess.run(
-            [clang, "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror", "-I", _C_DIR,
-             os.path.join(_C_DIR, "bcir_runtime.c"), os.path.join(_C_DIR, "bcir_hydrate.c"),
-             driver, "-o", exe], capture_output=True, text=True)
+            [
+                clang,
+                "-std=c11",
+                "-O1",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C_DIR,
+                os.path.join(_C_DIR, "bcir_runtime.c"),
+                os.path.join(_C_DIR, "bcir_hydrate.c"),
+                driver,
+                "-o",
+                exe,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert build.returncode == 0, build.stderr
         run = subprocess.run([exe], capture_output=True, text=True)
         assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
@@ -320,7 +410,7 @@ def test_c_lifetime_verifier_tracks_more_than_256_freed_resources():
     clang = which("clang")
     if clang is None:
         return
-    source = r'''
+    source = r"""
 #include <string.h>
 #include "bcir_verify.h"
 static int reports;
@@ -340,16 +430,31 @@ int main(void){
   bcir_verify_lifetime(0,report,0);bcir_verify_lifetime(&u,0,0);
   return reports==1?0:1;
 }
-'''
+"""
     with tempfile.TemporaryDirectory() as d:
         driver = os.path.join(d, "lifetime_many.c")
         with open(driver, "w", encoding="utf-8") as f:
             f.write(source)
         exe = os.path.join(d, "lifetime_many")
         build = subprocess.run(
-            [clang, "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror", "-I", _C_DIR,
-             os.path.join(_C_DIR, "bcir_runtime.c"), os.path.join(_C_DIR, "bcir_verify.c"),
-             driver, "-o", exe], capture_output=True, text=True)
+            [
+                clang,
+                "-std=c11",
+                "-O1",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C_DIR,
+                os.path.join(_C_DIR, "bcir_runtime.c"),
+                os.path.join(_C_DIR, "bcir_verify.c"),
+                driver,
+                "-o",
+                exe,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert build.returncode == 0, build.stderr
         run = subprocess.run([exe], capture_output=True, text=True)
         assert run.returncode == 0, (run.stdout, run.stderr)

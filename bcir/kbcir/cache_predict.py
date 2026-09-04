@@ -74,15 +74,16 @@ def _is_pow2(n: int) -> bool:
 
 # --- the access shape the predictor reasons over --------------------------------------------------
 
+
 @dataclass(frozen=True)
 class AccessShape:
     """The plan-time access SHAPE the predictor prices: a claim touches ``count`` elements of
     ``elem_bytes`` each at element stride ``stride`` (1 == contiguous/unit sweep). This is read off a claim's
     declared geometry (``from_claim``) -- no new model field; the SHAPE is the cost-model lever."""
 
-    stride: int              # element stride (1 == unit/contiguous; >1 == strided; large == gather-like)
-    elem_bytes: int          # bytes per element
-    count: int               # elements touched
+    stride: int  # element stride (1 == unit/contiguous; >1 == strided; large == gather-like)
+    elem_bytes: int  # bytes per element
+    count: int  # elements touched
 
     @staticmethod
     def from_claim(claim: Claim, target: TargetProfile) -> "AccessShape":
@@ -111,6 +112,7 @@ class AccessShape:
 
 # --- the frozen Q8 predictor (analytic; cache-line waste + bank conflict) -------------------------
 
+
 @dataclass(frozen=True)
 class CachePredictor:
     """A FROZEN, deterministic cache-line / bank-conflict predictor (the L1 analytic artifact).
@@ -124,11 +126,11 @@ class CachePredictor:
     calibrated refinement that replaced them under ``cost.cal_gen``). Integer-only forward: the same shape +
     params always yield the same Q8 cost (reproducible, host-independent)."""
 
-    cacheline: int = 64          # bytes per cache line (frozen analytic constant)
-    banks: int = 4               # interleaved bank/channel count (== mem_channels)
-    waste_weight: int = Q8       # Q8 scale on the cache-line-utilization-waste term (x1.0)
-    conflict_weight: int = Q8    # Q8 scale on the bank-conflict term (x1.0)
-    gen: int = 0                 # provenance: 0 = seeded analytic; >=1 = a calibrated refinement
+    cacheline: int = 64  # bytes per cache line (frozen analytic constant)
+    banks: int = 4  # interleaved bank/channel count (== mem_channels)
+    waste_weight: int = Q8  # Q8 scale on the cache-line-utilization-waste term (x1.0)
+    conflict_weight: int = Q8  # Q8 scale on the bank-conflict term (x1.0)
+    gen: int = 0  # provenance: 0 = seeded analytic; >=1 = a calibrated refinement
 
     @staticmethod
     def for_target(target: TargetProfile) -> "CachePredictor":
@@ -136,8 +138,9 @@ class CachePredictor:
         count (``mem_channels`` -- the concurrent bandwidth-bound streams that ARE the banks). Seeded
         analytic constants (gen 0); a calibrated table would bump ``gen`` and replace the weights under
         ``cost.cal_gen``."""
-        return CachePredictor(cacheline=max(1, target.cacheline),
-                              banks=max(1, target.mem_channels), gen=0)
+        return CachePredictor(
+            cacheline=max(1, target.cacheline), banks=max(1, target.mem_channels), gen=0
+        )
 
     def _elems_per_line(self, elem_bytes: int) -> int:
         """How many useful elements a single cache line holds (>=1)."""
@@ -155,8 +158,8 @@ class CachePredictor:
         at ``epl - 1`` (one line per element -- a full gather). Unit stride => 0; the larger the stride the
         more lines are dragged in per useful element."""
         epl = self._elems_per_line(shape.elem_bytes)
-        reach = min(max(1, shape.stride), epl)     # distinct lines touched per useful element (>=1)
-        return (reach - 1) * Q8                      # Q8 waste ratio above the unit-sweep baseline
+        reach = min(max(1, shape.stride), epl)  # distinct lines touched per useful element (>=1)
+        return (reach - 1) * Q8  # Q8 waste ratio above the unit-sweep baseline
 
     def bank_conflict_q8(self, shape: AccessShape) -> int:
         """The bank-conflict serialization degree in Q8 (0 == conflict-free, reaches all banks).
@@ -169,8 +172,8 @@ class CachePredictor:
         ``gcd(s, banks)``, so ``banks/reached_banks``). Maximal at ``banks - 1`` (a stride == #banks, one bank,
         fully serialized)."""
         s = max(1, shape.stride)
-        g = gcd(s, self.banks)          # the shared factor: banks reached == banks/g, serialization == g
-        return (g - 1) * Q8             # Q8 conflict degree above the conflict-free (all-banks) baseline
+        g = gcd(s, self.banks)  # the shared factor: banks reached == banks/g, serialization == g
+        return (g - 1) * Q8  # Q8 conflict degree above the conflict-free (all-banks) baseline
 
     def contention_q8(self, shape: AccessShape) -> int:
         """The combined per-element CONTENTION signal in Q8: the weighted sum of the cache-line waste and the
@@ -210,6 +213,7 @@ class CachePredictor:
 
 # --- the proof-carrying record + the opt-in ranking helper ----------------------------------------
 
+
 @dataclass(frozen=True)
 class ContentionPrediction:
     """The proof-carrying record of ONE contention prediction -- modeled on the ``layout``/``fusion``
@@ -218,10 +222,10 @@ class ContentionPrediction:
     NOTHING about legality -- it is a GRADED cost signal that only informs plan ranking."""
 
     shape: AccessShape
-    line_waste_q8: int       # Q8 cache-line-utilization waste (0 == perfect)
-    bank_conflict_q8: int    # Q8 bank-conflict serialization degree (0 == conflict-free)
-    contention_cost: int     # the combined integer CONTENTION cost (scaled by count)
-    gen: int                 # the predictor generation that produced it (provenance)
+    line_waste_q8: int  # Q8 cache-line-utilization waste (0 == perfect)
+    bank_conflict_q8: int  # Q8 bank-conflict serialization degree (0 == conflict-free)
+    contention_cost: int  # the combined integer CONTENTION cost (scaled by count)
+    gen: int  # the predictor generation that produced it (provenance)
 
     @property
     def is_conflict_free(self) -> bool:
@@ -234,8 +238,9 @@ class ContentionPrediction:
         return self.contention_cost == 0
 
 
-def predict(claim: Claim, target: TargetProfile,
-            predictor: CachePredictor | None = None) -> ContentionPrediction:
+def predict(
+    claim: Claim, target: TargetProfile, predictor: CachePredictor | None = None
+) -> ContentionPrediction:
     """Predict a claim's CONTENTION signal: read its access shape and price the cache-line waste + bank
     conflict through the frozen analytic predictor, returning the proof-carrying ``ContentionPrediction``.
     Deterministic + opt-in -- callers consult it explicitly; it NEVER runs on the default plan path. The
@@ -251,8 +256,9 @@ def predict(claim: Claim, target: TargetProfile,
     )
 
 
-def rank_realizations(candidates, claim: Claim, target: TargetProfile,
-                      predictor: CachePredictor | None = None):
+def rank_realizations(
+    candidates, claim: Claim, target: TargetProfile, predictor: CachePredictor | None = None
+):
     """Rank a claim's candidate realizations by their base scalar cost PLUS the predicted CONTENTION cost,
     so a conflict-prone realization ranks more expensive and a conflict-free one is preferred. This is the
     OPT-IN consultation: the caller passes the candidates (e.g. from ``realize.candidates_for``) and gets them
@@ -275,8 +281,9 @@ def rank_realizations(candidates, claim: Claim, target: TargetProfile,
         # everything else inherits the claim's declared stride shape.
         if cand.lane == Lane.GGG:
             eb = max(1, target.elem_bytes)
-            shape = AccessShape(stride=max(1, target.cacheline // eb), elem_bytes=eb,
-                                count=max(1, claim.count))
+            shape = AccessShape(
+                stride=max(1, target.cacheline // eb), elem_bytes=eb, count=max(1, claim.count)
+            )
         else:
             shape = AccessShape.from_claim(claim, target)
         base_cost = sum(cand.base.v)

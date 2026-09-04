@@ -33,12 +33,26 @@ from dataclasses import replace
 
 from bcir.model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
 from bcir.kbcir.cost import MEMORY, TargetProfile
-from bcir.kbcir.layout import (AOS, SINGLE_FIELD, SOA, WHOLE_RECORD, FieldAccess, LayoutCertificate,
-                               LayoutPlan, analyze_resource_accesses, certify_layout, plan_layout,
-                               pivot_resource_layout)
+from bcir.kbcir.layout import (
+    AOS,
+    SINGLE_FIELD,
+    SOA,
+    WHOLE_RECORD,
+    FieldAccess,
+    LayoutCertificate,
+    LayoutPlan,
+    analyze_resource_accesses,
+    certify_layout,
+    plan_layout,
+    pivot_resource_layout,
+)
 from bcir.kbcir.realize import candidates_for
-from bcir.lower.layout_kernel import (compile_and_run_layout_c, emit_layout_kernel_c,
-                                      emit_layout_selfcheck_c, reference_layout_out)
+from bcir.lower.layout_kernel import (
+    compile_and_run_layout_c,
+    emit_layout_kernel_c,
+    emit_layout_selfcheck_c,
+    reference_layout_out,
+)
 
 AVX = TargetProfile.x86_avx512()
 F, N = 4, 1024
@@ -49,16 +63,21 @@ def _cc():
 
 
 def _sweeps(n_claims=4, fields=F, records=N):
-    return tuple(FieldAccess(claim_id=i, shape=SINGLE_FIELD, records=records, fields=fields)
-                 for i in range(n_claims))
+    return tuple(
+        FieldAccess(claim_id=i, shape=SINGLE_FIELD, records=records, fields=fields)
+        for i in range(n_claims)
+    )
 
 
 def _records(n_claims=4, fields=F, records=N):
-    return tuple(FieldAccess(claim_id=i, shape=WHOLE_RECORD, records=records, fields=fields)
-                 for i in range(n_claims))
+    return tuple(
+        FieldAccess(claim_id=i, shape=WHOLE_RECORD, records=records, fields=fields)
+        for i in range(n_claims)
+    )
 
 
 # --- access-pattern analysis: the stride shape is the cost-model lever, not a discount -------------
+
 
 def test_single_field_sweep_is_unit_under_soa_and_strided_under_aos():
     a = FieldAccess(claim_id=1, shape=SINGLE_FIELD, records=N, fields=F)
@@ -77,12 +96,21 @@ def test_layout_cost_is_the_existing_candidates_memory_term_not_a_bespoke_discou
     # term every claim is priced by. A UNIT claim vectorizes + pays base_overhead*1; a STRIDED(F) claim is
     # pinned scalar + pays base_overhead*min(F, cacheline/elem), so it is genuinely more expensive.
     def best_mem(sc, sk):
-        c = Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=sc, stride_k=sk,
-                  count=N, rd=(1, 2), wr=(3,))
+        c = Claim(
+            id=1,
+            opcode=Opcode.ADD,
+            lane=Lane.U,
+            stride_class=sc,
+            stride_k=sk,
+            count=N,
+            rd=(1, 2),
+            wr=(3,),
+        )
         return min(cand.base.v[MEMORY] for cand in candidates_for(c, AVX))
+
     unit = best_mem(StrideClass.UNIT, 1)
     strided = best_mem(StrideClass.STRIDED, F)
-    assert strided > unit                       # the stride penalty makes the unfavorable layout costlier
+    assert strided > unit  # the stride penalty makes the unfavorable layout costlier
     # and the layout planner's per-access cost equals exactly that candidate min (no extra factor).
     plan = plan_layout(rid=1, fields=F, accesses=(FieldAccess(1, SINGLE_FIELD, N, F),), target=AVX)
     assert plan.soa_cost == unit and plan.aos_cost == strided
@@ -90,16 +118,17 @@ def test_layout_cost_is_the_existing_candidates_memory_term_not_a_bespoke_discou
 
 # --- the priced choice: single-field -> SoA, whole-record -> AoS ----------------------------------
 
+
 def test_single_field_sweep_workload_prices_soa_cheaper_and_chooses_it():
     plan = plan_layout(rid=7, fields=F, accesses=_sweeps(), target=AVX)
-    assert plan.soa_cost < plan.aos_cost            # single-field sweeps are unit under SoA
-    assert plan.is_soa and plan.layout == SOA       # the minimum-cost layout is chosen
+    assert plan.soa_cost < plan.aos_cost  # single-field sweeps are unit under SoA
+    assert plan.is_soa and plan.layout == SOA  # the minimum-cost layout is chosen
 
 
 def test_whole_record_workload_prices_aos_cheaper_and_chooses_it():
     plan = plan_layout(rid=7, fields=F, accesses=_records(), target=AVX)
-    assert plan.aos_cost < plan.soa_cost            # whole-record access is unit under AoS
-    assert plan.is_aos and plan.layout == AOS       # the cost model pivots to AoS
+    assert plan.aos_cost < plan.soa_cost  # whole-record access is unit under AoS
+    assert plan.is_aos and plan.layout == AOS  # the cost model pivots to AoS
 
 
 def test_mixed_workload_picks_the_dominant_shape():
@@ -118,11 +147,12 @@ def test_the_choice_is_a_genuine_cost_comparison_across_field_counts():
         plan = plan_layout(7, f, _records(4, fields=f), AVX)
         cert = certify_layout(plan)
         assert plan.layout == AOS and cert.gain > 0
-        assert cert.gain >= prev_gain               # the win is non-decreasing in F (stride penalty grows)
+        assert cert.gain >= prev_gain  # the win is non-decreasing in F (stride penalty grows)
         prev_gain = cert.gain
 
 
 # --- the certificate: proof-carrying record + the clean no-op -------------------------------------
+
 
 def test_certificate_records_resource_chosen_layout_costs_and_win():
     plan = plan_layout(rid=42, fields=F, accesses=_records(), target=AVX)
@@ -138,7 +168,9 @@ def test_certificate_records_resource_chosen_layout_costs_and_win():
 def test_certificate_is_a_clean_noop_when_soa_is_already_optimal():
     plan = plan_layout(rid=7, fields=F, accesses=_sweeps(), target=AVX)
     cert = certify_layout(plan)
-    assert plan.is_soa and cert.gain == 0 and cert.is_noop      # single-field sweep stays on default SoA
+    assert (
+        plan.is_soa and cert.gain == 0 and cert.is_noop
+    )  # single-field sweep stays on default SoA
 
 
 def test_one_field_resource_is_a_clean_noop():
@@ -171,14 +203,26 @@ def test_is_deterministic():
 
 # --- end-to-end on a Module: analyze + price + certify --------------------------------------------
 
+
 def _aos_module(fields=F, records=N):
     """A module whose claims touch resource rid=1 as WHOLE-RECORD accesses (op tagged :whole_record)."""
     m = Module(name="g3_aos")
     m.add_resource(Resource(rid=1, domain=Domain.RAM, shape=(records * fields,), name="records"))
     m.add_resource(Resource(rid=2, domain=Domain.RAM, shape=(fields,), name="weight"))
     m.add_resource(Resource(rid=3, domain=Domain.RAM, shape=(records,), name="out"))
-    claims = [Claim(id=i, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT, count=records,
-                    rd=(1, 2), wr=(3,), op="reduce.record:whole_record") for i in range(3)]
+    claims = [
+        Claim(
+            id=i,
+            opcode=Opcode.ADD,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=records,
+            rd=(1, 2),
+            wr=(3,),
+            op="reduce.record:whole_record",
+        )
+        for i in range(3)
+    ]
     m.add_phase(Phase(phase_id=0, claims=claims))
     return m
 
@@ -188,8 +232,19 @@ def _soa_module(fields=F, records=N):
     m = Module(name="g3_soa")
     m.add_resource(Resource(rid=1, domain=Domain.RAM, shape=(records * fields,), name="fields"))
     m.add_resource(Resource(rid=3, domain=Domain.RAM, shape=(records,), name="out"))
-    claims = [Claim(id=i, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT, count=records,
-                    rd=(1,), wr=(3,), op="vector.scale") for i in range(3)]
+    claims = [
+        Claim(
+            id=i,
+            opcode=Opcode.ADD,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=records,
+            rd=(1,),
+            wr=(3,),
+            op="vector.scale",
+        )
+        for i in range(3)
+    ]
     m.add_phase(Phase(phase_id=0, claims=claims))
     return m
 
@@ -213,37 +268,41 @@ def test_pivot_resource_layout_keeps_soa_for_single_field_module():
 
 # --- the emit honors the chosen layout (addressing macro + MLIR attribute) ------------------------
 
+
 def test_emit_kernel_honors_the_chosen_layout_addressing():
     soa_plan = LayoutPlan(rid=0, fields=F, layout=SOA, soa_cost=0, aos_cost=0, accesses=())
     aos_plan = LayoutPlan(rid=0, fields=F, layout=AOS, soa_cost=0, aos_cost=0, accesses=())
     ks = emit_layout_kernel_c(soa_plan, "k", records=8)
     ka = emit_layout_kernel_c(aos_plan, "k", records=8)
-    assert "(f) * 8u + (r)" in ks and "layout=soa" in ks         # SoA: field-contiguous f*N+r
-    assert "(r) * 4u + (f)" in ka and "layout=aos" in ka         # AoS: record-contiguous r*F+f
-    assert "data[DATA(r, f)] * weight[f]" in ks                  # the same computation in both
+    assert "(f) * 8u + (r)" in ks and "layout=soa" in ks  # SoA: field-contiguous f*N+r
+    assert "(r) * 4u + (f)" in ka and "layout=aos" in ka  # AoS: record-contiguous r*F+f
+    assert "data[DATA(r, f)] * weight[f]" in ks  # the same computation in both
 
 
 def test_mlir_emitter_honors_the_chosen_layout():
     # the chosen layout flows into the resource attribute AND the path attributes (no hard-coded soa).
     from bcir.kbcir.cost import Theta
     from bcir.lower.mlir import to_mlir
+
     m = _aos_module()
     plan, _ = pivot_resource_layout(m, rid=1, fields=F, target=AVX)
     m.resources[1] = replace(m.resources[1], layout=plan.layout)
     mlir = to_mlir(m, AVX, Theta.cool(), run_pipeline=False)
-    assert "layout = #bcir.layout<aos>" in mlir                  # the resource carries the chosen aos
-    assert mlir.count("#bcir.layout<aos>") >= 2                  # resource + at least one path
+    assert "layout = #bcir.layout<aos>" in mlir  # the resource carries the chosen aos
+    assert mlir.count("#bcir.layout<aos>") >= 2  # resource + at least one path
 
 
 def test_default_soa_module_mlir_is_unchanged():
     # a default-layout (soa) module still emits #bcir.layout<soa> everywhere (no regression / drift).
     from bcir.kbcir.cost import Theta
     from bcir.lower.mlir import to_mlir
+
     mlir = to_mlir(_soa_module(), AVX, Theta.cool(), run_pipeline=False)
     assert "#bcir.layout<aos>" not in mlir and "#bcir.layout<soa>" in mlir
 
 
 # --- REFERENCE-INVARIANCE (the gate that matters): SoA result == AoS result, bit-exact ------------
+
 
 def test_python_reference_invariance_soa_equals_aos_bit_exact():
     # pure Python, NO compiler: the SAME logical data[r,f] addressed as SoA (f*N+r) and AoS (r*F+f) yields
@@ -257,18 +316,18 @@ def test_python_reference_invariance_soa_equals_aos_bit_exact():
         for r in range(records):
             for f in range(fields):
                 v = rng.randint(-9, 9)
-                data_soa[f * records + r] = v          # SoA address
-                data_aos[r * fields + f] = v           # AoS address -- same value
+                data_soa[f * records + r] = v  # SoA address
+                data_aos[r * fields + f] = v  # AoS address -- same value
         weight = [rng.randint(-4, 4) for _ in range(fields)]
         soa_out, aos_out = reference_layout_out(fields, records, data_soa, data_aos, weight)
-        assert soa_out == aos_out, (fields, records)   # bit-exact, every time
+        assert soa_out == aos_out, (fields, records)  # bit-exact, every time
 
 
 def test_compiled_invariance_f32_is_bit_exact():
     if not _cc():
-        return                                          # quick tier hides the toolchain -> self-skip
+        return  # quick tier hides the toolchain -> self-skip
     ok, out = compile_and_run_layout_c(F, 256, elem="f32")
-    assert ok, out                                      # the emitted SoA + AoS kernels agree bit-exact
+    assert ok, out  # the emitted SoA + AoS kernels agree bit-exact
 
 
 def test_compiled_invariance_i32_is_bit_exact():
@@ -297,8 +356,11 @@ def test_emitted_selfcheck_runs_both_real_kernels():
         path = os.path.join(d, "s.c")
         open(path, "w").write(src)
         exe = os.path.join(d, "s")
-        bld = subprocess.run([_cc(), "-std=c23", "-O2", "-Wall", "-Wextra", path, "-o", exe],
-                             capture_output=True, text=True)
+        bld = subprocess.run(
+            [_cc(), "-std=c23", "-O2", "-Wall", "-Wextra", path, "-o", exe],
+            capture_output=True,
+            text=True,
+        )
         assert bld.returncode == 0, bld.stderr
         run = subprocess.run([exe], capture_output=True, text=True)
         assert run.returncode == 0 and "OK" in run.stdout, run.stdout + run.stderr

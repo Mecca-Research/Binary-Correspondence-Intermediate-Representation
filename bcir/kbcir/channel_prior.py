@@ -47,11 +47,11 @@ def channel_features(M: int, N: int, K: int, ch) -> list[float]:
         min(4.0, shape_class(M, N, K)[0] / 8.0),
         min(4.0, shape_class(M, N, K)[1] / 8.0),
         min(4.0, shape_class(M, N, K)[2] / 8.0),
-        min(2.0, p.mem_channels / 32.0),               # bandwidth-stream capacity
-        min(2.0, p.gather_penalty / 32.0),             # random-access cost (lower is better)
-        min(2.0, max(p.lane_widths) / 16.0),           # widest vector lane
-        1.0 if ch.kind == "cpu" else 0.0,              # the host tie-break axis
-        1.0,                                           # bias
+        min(2.0, p.mem_channels / 32.0),  # bandwidth-stream capacity
+        min(2.0, p.gather_penalty / 32.0),  # random-access cost (lower is better)
+        min(2.0, max(p.lane_widths) / 16.0),  # widest vector lane
+        1.0 if ch.kind == "cpu" else 0.0,  # the host tie-break axis
+        1.0,  # bias
     ]
 
 
@@ -67,6 +67,7 @@ class LearnedChannelPrior:
         z = sum(w * f for w, f in zip(self.w, feats))
         z = max(-30.0, min(30.0, z))
         import math
+
         return 1.0 / (1.0 + math.exp(-z))
 
     def freeze(self) -> "FrozenChannelPrior":
@@ -80,9 +81,9 @@ class FrozenChannelPrior:
     wq: tuple
 
     def __post_init__(self) -> None:
-        if (len(self.wq) != LearnedChannelPrior.N_FEATURES or
-                any(isinstance(v, bool) or not isinstance(v, int) or abs(v) > (1 << 31) - 1
-                    for v in self.wq)):
+        if len(self.wq) != LearnedChannelPrior.N_FEATURES or any(
+            isinstance(v, bool) or not isinstance(v, int) or abs(v) > (1 << 31) - 1 for v in self.wq
+        ):
             raise ValueError("FrozenChannelPrior requires exactly 8 signed 32-bit weights")
 
     def order(self, cands: list, feats: list[list[float]]) -> list:
@@ -94,12 +95,13 @@ class FrozenChannelPrior:
         return [c for _, _, c in sorted(scored, key=lambda t: (t[0], t[1]))]
 
 
-def prior_channel_samples(shapes: list, channels: list, theta: Theta,
-                          policy: Policy = PERF) -> list:
+def prior_channel_samples(
+    shapes: list, channels: list, theta: Theta, policy: Policy = PERF
+) -> list:
     """(features, label) pairs from the EXACT per-channel pricing: label 1 iff the channel is
     the exhaustive argmin under the calling-side key (cost, host-tie, name) for that shape."""
     samples: list = []
-    for (M, N, K) in shapes:
+    for M, N, K in shapes:
         claim = _gemm_claim(M, N, K)
         suit = [c for c in channels if channel_suits(claim, c)]
         if not suit:
@@ -111,8 +113,9 @@ def prior_channel_samples(shapes: list, channels: list, theta: Theta,
     return samples
 
 
-def train_channel_prior(samples: list, *, epochs: int = 200,
-                        lr: float = 0.5) -> LearnedChannelPrior:
+def train_channel_prior(
+    samples: list, *, epochs: int = 200, lr: float = 0.5
+) -> LearnedChannelPrior:
     """Deterministic logistic SGD (the train_ranker recipe, verbatim from tile_prior)."""
     prior = LearnedChannelPrior()
     for _ in range(epochs):
@@ -124,14 +127,13 @@ def train_channel_prior(samples: list, *, epochs: int = 200,
     return prior
 
 
-def build_channel_table(shapes: list, channels: list, theta: Theta,
-                        policy: Policy = PERF) -> dict:
+def build_channel_table(shapes: list, channels: list, theta: Theta, policy: Policy = PERF) -> dict:
     """The per-shape-class table: class -> the exhaustively-priced winning channel NAME.
     Ground truth by construction (every entry is an exhaustive argmin under the same key
     plan_calling_side uses); generalization to unseen shapes IN a trained class is what the
     certificate measures (mismatches MUST be 0)."""
     table: dict = {}
-    for (M, N, K) in shapes:
+    for M, N, K in shapes:
         claim = _gemm_claim(M, N, K)
         suit = [c for c in channels if channel_suits(claim, c)]
         if not suit:
@@ -142,9 +144,17 @@ def build_channel_table(shapes: list, channels: list, theta: Theta,
     return table
 
 
-def guided_plan_channel(M: int, N: int, K: int, channels: list, theta: Theta,
-                        policy: Policy = PERF, *, table: dict | None = None,
-                        prior: FrozenChannelPrior | None = None):
+def guided_plan_channel(
+    M: int,
+    N: int,
+    K: int,
+    channels: list,
+    theta: Theta,
+    policy: Policy = PERF,
+    *,
+    table: dict | None = None,
+    prior: FrozenChannelPrior | None = None,
+):
     """The guided channel choice: a table HIT answers with ZERO pricings (the class's verified
     winner, provided it still suits); a MISS prices every suitable channel -- in prior order
     when a prior is given (anytime warm-start) -- and returns the exhaustive argmin. Returns
@@ -159,7 +169,7 @@ def guided_plan_channel(M: int, N: int, K: int, channels: list, theta: Theta,
         if hit is not None:
             for c in suit:
                 if c.name == hit:
-                    return c, 0                        # the certified zero-pricing answer
+                    return c, 0  # the certified zero-pricing answer
     cands = suit
     if prior is not None:
         feats = [channel_features(M, N, K, c) for c in suit]
@@ -189,22 +199,28 @@ class ChannelPriorCertificate:
         return 1.0 - self.priced_guided / max(1, self.priced_exhaustive)
 
 
-def channel_prior_certificate(shapes: list, channels: list, theta: Theta,
-                              policy: Policy = PERF, *, table: dict,
-                              prior: FrozenChannelPrior | None = None) -> ChannelPriorCertificate:
+def channel_prior_certificate(
+    shapes: list,
+    channels: list,
+    theta: Theta,
+    policy: Policy = PERF,
+    *,
+    table: dict,
+    prior: FrozenChannelPrior | None = None,
+) -> ChannelPriorCertificate:
     """Certify the guided path against the exhaustive path per held-out shape."""
     checked = mismatches = pg = pe = 0
-    for (M, N, K) in shapes:
-        guided, n = guided_plan_channel(M, N, K, channels, theta, policy,
-                                        table=table, prior=prior)
-        exact, ne = guided_plan_channel(M, N, K, channels, theta, policy)   # no table: exhaustive
+    for M, N, K in shapes:
+        guided, n = guided_plan_channel(M, N, K, channels, theta, policy, table=table, prior=prior)
+        exact, ne = guided_plan_channel(M, N, K, channels, theta, policy)  # no table: exhaustive
         checked += 1
         pg += n
         pe += ne
         if guided.name != exact.name:
             mismatches += 1
-    return ChannelPriorCertificate(checked=checked, mismatches=mismatches,
-                                   priced_guided=pg, priced_exhaustive=pe)
+    return ChannelPriorCertificate(
+        checked=checked, mismatches=mismatches, priced_guided=pg, priced_exhaustive=pe
+    )
 
 
 # --- the persisted envelope (D3: "per-shape-class tables persisted alongside cal_gen") --------
@@ -236,8 +252,10 @@ def _prior_document(doc: object) -> tuple[list, tuple[int, ...], dict]:
     if isinstance(schema, bool) or not isinstance(schema, int):
         raise ValueError("channel-prior schema must be an integer")
     if schema > PRIOR_SCHEMA:
-        raise ValueError(f"channel-prior schema v{schema} is newer than this build's "
-                         f"v{PRIOR_SCHEMA}; upgrade BCIR to load this prior")
+        raise ValueError(
+            f"channel-prior schema v{schema} is newer than this build's "
+            f"v{PRIOR_SCHEMA}; upgrade BCIR to load this prior"
+        )
     if schema != PRIOR_SCHEMA:
         raise ValueError(f"unsupported channel-prior schema v{schema}")
 
@@ -249,11 +267,19 @@ def _prior_document(doc: object) -> tuple[list, tuple[int, ...], dict]:
         if not isinstance(pair, list) or len(pair) != 2:
             raise ValueError(f"channel-prior tower[{i}] must be [name, cal_gen]")
         name, generation = pair
-        if (not isinstance(name, str) or not name or len(name) > 128 or
-                any(ord(ch) < 0x20 for ch in name)):
+        if (
+            not isinstance(name, str)
+            or not name
+            or len(name) > 128
+            or any(ord(ch) < 0x20 for ch in name)
+        ):
             raise ValueError(f"channel-prior tower[{i}] has an invalid name")
-        if (isinstance(generation, bool) or not isinstance(generation, int) or
-                generation < 0 or generation > (1 << 63) - 1):
+        if (
+            isinstance(generation, bool)
+            or not isinstance(generation, int)
+            or generation < 0
+            or generation > (1 << 63) - 1
+        ):
             raise ValueError(f"channel-prior tower[{i}] has an invalid cal_gen")
         tower.append([name, generation])
     if len({name for name, _ in tower}) != len(tower):
@@ -293,12 +319,15 @@ def _tower_id(channels: list) -> list:
     return sorted([c.name, int(c.profile.cal_gen)] for c in channels)
 
 
-def save_channel_prior(path: str, prior: FrozenChannelPrior, table: dict,
-                       channels: list) -> None:
+def save_channel_prior(path: str, prior: FrozenChannelPrior, table: dict, channels: list) -> None:
     """Persist a validated prior atomically; never leave a partial installable artifact."""
-    doc = {"kind": PRIOR_KIND, "schema": PRIOR_SCHEMA, "tower": _tower_id(channels),
-           "wq": list(prior.wq),
-           "table": {",".join(str(v) for v in k): name for k, name in sorted(table.items())}}
+    doc = {
+        "kind": PRIOR_KIND,
+        "schema": PRIOR_SCHEMA,
+        "tower": _tower_id(channels),
+        "wq": list(prior.wq),
+        "table": {",".join(str(v) for v in k): name for k, name in sorted(table.items())},
+    }
     _prior_document(doc)
     payload = json.dumps(doc, indent=2, sort_keys=True) + "\n"
     directory = os.path.dirname(os.path.abspath(path)) or "."
@@ -334,12 +363,16 @@ def load_channel_prior(path: str, expect_channels: list):
     if len({name for name, _ in live}) != len(live):
         raise ValueError("live channel tower contains duplicate names")
     if sorted(n for n, _ in saved) != sorted(n for n, _ in live):
-        raise ValueError(f"channel prior was trained for tower "
-                         f"{[n for n, _ in saved]}, not {[n for n, _ in live]} -- retrain")
+        raise ValueError(
+            f"channel prior was trained for tower "
+            f"{[n for n, _ in saved]}, not {[n for n, _ in live]} -- retrain"
+        )
     for (sn, sg), (ln, lg) in zip(sorted(saved), sorted(live)):
         if sg != lg:
-            raise ValueError(f"channel prior is STALE: trained under {sn}@cal_gen {sg}, "
-                             f"the live tower has {ln}@cal_gen {lg} -- retrain")
+            raise ValueError(
+                f"channel prior is STALE: trained under {sn}@cal_gen {sg}, "
+                f"the live tower has {ln}@cal_gen {lg} -- retrain"
+            )
     prior = FrozenChannelPrior(wq=weights)
     return prior, table
 
@@ -347,8 +380,9 @@ def load_channel_prior(path: str, expect_channels: list):
 # --- D3.4: the table wired into orchestrate (opt-in) + the tower certificate --------------------
 
 
-def orchestrate_guided(module, channels: list, theta: Theta, policy: Policy = PERF, *,
-                       table: dict, dims: dict):
+def orchestrate_guided(
+    module, channels: list, theta: Theta, policy: Policy = PERF, *, table: dict, dims: dict
+):
     """D3.4: the per-shape-class table wired into the TOWER pass -- opt-in, so
     `channels.orchestrate` itself stays untouched (the module's own non-disturbance
     precedent). `dims` maps a gemm claim id to its (M, N, K) -- dimensions the module's
@@ -361,6 +395,7 @@ def orchestrate_guided(module, channels: list, theta: Theta, policy: Policy = PE
     (a poisoned table CHANGES PLACEMENTS and is caught, mismatches must be 0)."""
     from ..channels import orchestrate
     from .realize import _flatten
+
     keep: set = set()
     full = False
     for _, claim in _flatten(module):
@@ -369,9 +404,9 @@ def orchestrate_guided(module, channels: list, theta: Theta, policy: Policy = PE
             hit = table.get(shape_class(M, N, K))
             suits = {ch.name for ch in channels if channel_suits(claim, ch)}
             if hit is not None and hit in suits:
-                keep.add(hit)                          # the certified winner, pinned
+                keep.add(hit)  # the certified winner, pinned
             else:
-                full = True                            # a miss prices the whole tower
+                full = True  # a miss prices the whole tower
         else:
             keep.update(ch.name for ch in channels if channel_suits(claim, ch))
     tower = channels if full else [ch for ch in channels if ch.name in keep]
@@ -403,16 +438,16 @@ class OrchestratePriorCertificate:
         return 1.0 - self.priced_guided / self.priced_exhaustive
 
 
-def orchestrate_prior_certificate(fixtures: list, channels: list, theta: Theta,
-                                  policy: Policy = PERF, *,
-                                  table: dict) -> OrchestratePriorCertificate:
+def orchestrate_prior_certificate(
+    fixtures: list, channels: list, theta: Theta, policy: Policy = PERF, *, table: dict
+) -> OrchestratePriorCertificate:
     """Certify the wiring over `fixtures` (a list of (module, dims) pairs): run the
     guided pass and the exhaustive pass, compare every placement's chosen channel."""
     from ..channels import orchestrate
+
     checked = mismatches = pg = pe = 0
     for module, dims in fixtures:
-        guided, priced = orchestrate_guided(module, channels, theta, policy,
-                                            table=table, dims=dims)
+        guided, priced = orchestrate_guided(module, channels, theta, policy, table=table, dims=dims)
         exact = orchestrate(module, channels, theta, policy)
         pg += priced
         pe += len(channels)
@@ -420,5 +455,6 @@ def orchestrate_prior_certificate(fixtures: list, channels: list, theta: Theta,
             checked += 1
             if (a.claim_id, a.channel) != (b.claim_id, b.channel):
                 mismatches += 1
-    return OrchestratePriorCertificate(checked=checked, mismatches=mismatches,
-                                       priced_guided=pg, priced_exhaustive=pe)
+    return OrchestratePriorCertificate(
+        checked=checked, mismatches=mismatches, priced_guided=pg, priced_exhaustive=pe
+    )

@@ -43,10 +43,10 @@ class AmortizationCertificate:
     """A learned component's plan-time cost declaration + its placement verdict."""
 
     component: str
-    tier: str                 # "L0" | "L1" | "L2" | "L3"
-    inference_cost: int       # cost per decision (Q-units; 0 == compiled-out)
-    gain: int                 # improvement per decision (same units)
-    budget: int = None        # tier inference budget (defaults to TIER_BUDGET[tier])
+    tier: str  # "L0" | "L1" | "L2" | "L3"
+    inference_cost: int  # cost per decision (Q-units; 0 == compiled-out)
+    gain: int  # improvement per decision (same units)
+    budget: int = None  # tier inference budget (defaults to TIER_BUDGET[tier])
 
     def _budget(self) -> int:
         return self.budget if self.budget is not None else TIER_BUDGET.get(self.tier, 0)
@@ -67,15 +67,19 @@ class AmortizationCertificate:
     def admitted(self) -> bool:
         """The component belongs at its tier: L0 prohibition + it pays for itself
         + within the tier's inference budget."""
-        return (self.tier in TIER_BUDGET and self.l0_ok and self.amortizes
-                and self.within_budget)
+        return self.tier in TIER_BUDGET and self.l0_ok and self.amortizes and self.within_budget
 
 
-def certify(component: str, tier: str, inference_cost: int, gain: int,
-            budget: int = None) -> AmortizationCertificate:
-    return AmortizationCertificate(component=component, tier=tier,
-                                   inference_cost=int(inference_cost), gain=int(gain),
-                                   budget=budget)
+def certify(
+    component: str, tier: str, inference_cost: int, gain: int, budget: int = None
+) -> AmortizationCertificate:
+    return AmortizationCertificate(
+        component=component,
+        tier=tier,
+        inference_cost=int(inference_cost),
+        gain=int(gain),
+        budget=budget,
+    )
 
 
 @dataclass
@@ -92,13 +96,17 @@ class ThrottleReport:
         return [c for c in self.certs if not c.admitted]
 
     def render(self) -> str:
-        lines = [f"L1 cost throttle ({len(self.certs)} component(s))",
-                 f"{'component':<16} {'tier':>4} {'infer':>10} {'gain':>10} "
-                 f"{'budget':>12} {'verdict':>9}"]
+        lines = [
+            f"L1 cost throttle ({len(self.certs)} component(s))",
+            f"{'component':<16} {'tier':>4} {'infer':>10} {'gain':>10} "
+            f"{'budget':>12} {'verdict':>9}",
+        ]
         for c in self.certs:
-            lines.append(f"{c.component:<16} {c.tier:>4} {c.inference_cost:>10} "
-                         f"{c.gain:>10} {c._budget():>12} "
-                         f"{'admit' if c.admitted else 'THROTTLE':>9}")
+            lines.append(
+                f"{c.component:<16} {c.tier:>4} {c.inference_cost:>10} "
+                f"{c.gain:>10} {c._budget():>12} "
+                f"{'admit' if c.admitted else 'THROTTLE':>9}"
+            )
         return "\n".join(lines)
 
 

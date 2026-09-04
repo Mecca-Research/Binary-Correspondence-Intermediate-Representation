@@ -18,7 +18,13 @@ import tempfile
 
 from bcir.asn1.certified import MIN_SAMPLES
 from bcir.asn1.simd_hosts import (
-    DEDICATED, SHARED, STORE, HostRecord, load_records, render, two_host_verdict,
+    DEDICATED,
+    SHARED,
+    STORE,
+    HostRecord,
+    load_records,
+    render,
+    two_host_verdict,
 )
 from bcir.asn1.tags import Asn1Error
 
@@ -28,7 +34,10 @@ _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 def _record(**overrides) -> HostRecord:
     """A clean, admissible record showing a large advantage. Overridden per test."""
     base = {
-        "host": "a dedicated rig", "arch": "aarch64", "tenancy": DEDICATED, "tier": "neon",
+        "host": "a dedicated rig",
+        "arch": "aarch64",
+        "tenancy": DEDICATED,
+        "tier": "neon",
         "scalar_ns": tuple([28000 + (index % 7) * 20 for index in range(41)]),
         "vector_ns": tuple([1100 + (index % 7) * 5 for index in range(41)]),
         "cpus": (7,),
@@ -62,19 +71,23 @@ def test_two_hosts_of_the_same_architecture_are_the_same_evidence_twice():
     `bcir_jer_simd` compiles SSE2, AVX2 and NEON from one source, and NEON is the path no
     x86 host exercises at all. Two x86 boxes agreeing says nothing about the third.
     """
-    verdict = two_host_verdict([
-        _record(host="rig A", arch="x86_64", tier="avx2"),
-        _record(host="rig B", arch="x86_64", tier="avx2"),
-    ])
+    verdict = two_host_verdict(
+        [
+            _record(host="rig A", arch="x86_64", tier="avx2"),
+            _record(host="rig B", arch="x86_64", tier="avx2"),
+        ]
+    )
     assert not verdict.met
     assert "same evidence twice" in verdict.reason
     assert set(verdict.admitted) == {"rig A", "rig B"}, "both are admissible individually"
 
     # One of each closes it.
-    verdict = two_host_verdict([
-        _record(host="rig A", arch="x86_64", tier="avx2"),
-        _record(host="a phone", arch="aarch64", tier="neon"),
-    ])
+    verdict = two_host_verdict(
+        [
+            _record(host="rig A", arch="x86_64", tier="avx2"),
+            _record(host="a phone", arch="aarch64", tier="neon"),
+        ]
+    )
     assert verdict.met, verdict.reason
     assert set(verdict.admitted) == {"rig A", "a phone"}
 
@@ -122,8 +135,8 @@ def test_core_migration_refuses_itself_even_when_the_cpu_field_is_missing():
     # And with the scalar rail steady, a migrating vector rail still cannot claim a win.
     half_migrated = _record(vector_ns=bimodal)
     assert not half_migrated.shows_advantage(), (
-        f"scalar {half_migrated.scalar_interval()!r} vs vector "
-        f"{half_migrated.vector_interval()!r}")
+        f"scalar {half_migrated.scalar_interval()!r} vs vector {half_migrated.vector_interval()!r}"
+    )
 
 
 def test_the_advantage_is_disjoint_intervals_and_not_a_median_ratio():
@@ -132,19 +145,20 @@ def test_the_advantage_is_disjoint_intervals_and_not_a_median_ratio():
     # separate, and the honest answer is "no advantage demonstrated".
     noisy = _record(
         scalar_ns=tuple([1000 + (index * 37) % 400 for index in range(41)]),
-        vector_ns=tuple([950 + (index * 41) % 400 for index in range(41)]))
+        vector_ns=tuple([950 + (index * 41) % 400 for index in range(41)]),
+    )
     assert noisy.scalar_interval().median > noisy.vector_interval().median
     assert not noisy.shows_advantage()
     verdict = two_host_verdict([noisy, _record(host="p", arch="aarch64")])
     assert not verdict.met
-    assert any("intervals overlap" in reason
-               for _host, reasons in verdict.rejected for reason in reasons)
+    assert any(
+        "intervals overlap" in reason for _host, reasons in verdict.rejected for reason in reasons
+    )
 
 
 def test_too_few_rounds_is_refused_rather_than_interpolated():
     """An order-statistic interval below `MIN_SAMPLES` covers almost nothing."""
-    thin = _record(scalar_ns=(28000,) * (MIN_SAMPLES - 1),
-                   vector_ns=(1100,) * (MIN_SAMPLES - 1))
+    thin = _record(scalar_ns=(28000,) * (MIN_SAMPLES - 1), vector_ns=(1100,) * (MIN_SAMPLES - 1))
     assert not thin.admissible()
     assert any(str(MIN_SAMPLES) in reason for reason in thin.refusals())
 
@@ -191,18 +205,22 @@ def test_the_recorded_clause_state_matches_what_the_store_actually_supports():
         # The clause is closed, so the prose must say so — in both places, because a summary
         # row that lags the section under it is how a reader ends up with the wrong picture.
         assert "two-host clause is MET" in text, (
-            f"the store closes J5's advantage clause ({verdict.reason}) but §7.3 does not "
-            f"say so")
+            f"the store closes J5's advantage clause ({verdict.reason}) but §7.3 does not say so"
+        )
         assert "Advantage on at least two hosts: MET" in text, (
-            "the J5 row still records the advantage clause as unmet")
+            "the J5 row still records the advantage clause as unmet"
+        )
         for host in verdict.admitted:
             assert host.split(" (")[0].split(",")[0] in text, (
                 f"§7.3 names no measurement for the admitted host {host!r}; an admitted "
-                f"record a reader cannot find in the prose is evidence nobody will check")
+                f"record a reader cannot find in the prose is evidence nobody will check"
+            )
         return
     assert "two-host clause is not met" in text.lower(), (
-        "§7.3 no longer records the clause as unmet, but the store does not close it")
+        "§7.3 no longer records the clause as unmet, but the store does not close it"
+    )
     tally = f"UNMET at {len(verdict.admitted)} of 2"
     assert tally in text, (
         f"the J5 row does not say {tally!r}; the store admits "
-        f"{len(verdict.admitted)} host(s) ({list(verdict.admitted)}) and the row must match")
+        f"{len(verdict.admitted)} host(s) ({list(verdict.admitted)}) and the row must match"
+    )

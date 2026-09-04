@@ -19,19 +19,34 @@ off by reflex and carry that habit into the decisions where it matters.
 from __future__ import annotations
 
 from bcir.asn1.certified import (
-    COST_TABLE_VERSION, MIN_SAMPLES, TIE_BREAK, Certificate, CostRow, EncodingCostTable,
-    Infeasible, Interval, Stage, UnmeasuredTarget, build_table, interval_of,
-    measure_repeatedly, select_budgeted, select_certified,
+    COST_TABLE_VERSION,
+    MIN_SAMPLES,
+    TIE_BREAK,
+    Certificate,
+    CostRow,
+    EncodingCostTable,
+    Infeasible,
+    Interval,
+    Stage,
+    UnmeasuredTarget,
+    build_table,
+    interval_of,
+    measure_repeatedly,
+    select_budgeted,
+    select_certified,
 )
 from bcir.asn1.schema import Component, Primitive, Sequence
 from bcir.asn1.selection import ALL_CANDIDATES, Objective
 from bcir.asn1.tags import Asn1Error, Universal
 
 _INT = Primitive(Universal.INTEGER)
-_RECORD = Sequence((
-    Component("id", _INT),
-    Component("name", Primitive(Universal.UTF8_STRING)),
-), name="Record")
+_RECORD = Sequence(
+    (
+        Component("id", _INT),
+        Component("name", Primitive(Universal.UTF8_STRING)),
+    ),
+    name="Record",
+)
 _VALUE = {"id": 42, "name": "a-name"}
 
 
@@ -59,8 +74,9 @@ def _as_measured(table: EncodingCostTable) -> EncodingCostTable:
     tests below can exercise the code that runs after the provenance gate without
     pretending the numbers are something they are not; every test that uses it says so.
     """
-    return EncodingCostTable(target=table.target, cal_gen=table.cal_gen,
-                             provenance="measured", rows=table.rows)
+    return EncodingCostTable(
+        target=table.target, cal_gen=table.cal_gen, provenance="measured", rows=table.rows
+    )
 
 
 # --- §6.2's refusal ---------------------------------------------------------------------
@@ -100,9 +116,12 @@ def test_a_wire_size_objective_is_decidable_without_any_timing():
 def test_an_unmeasured_candidate_is_refused_even_in_a_measured_table():
     """A measured table is not a licence to guess about a row it does not have."""
     table = _as_measured(_oracle_table())
-    thinned = EncodingCostTable(target=table.target, cal_gen=table.cal_gen,
-                                provenance="measured",
-                                rows=tuple(r for r in table.rows if r.candidate != "COER"))
+    thinned = EncodingCostTable(
+        target=table.target,
+        cal_gen=table.cal_gen,
+        provenance="measured",
+        rows=tuple(r for r in table.rows if r.candidate != "COER"),
+    )
     try:
         select_certified(_INT, 42, thinned, objective=Objective.DECODE_LATENCY)
     except UnmeasuredTarget as error:
@@ -126,9 +145,12 @@ def test_the_refusal_has_its_own_exception_class():
 
 def test_legality_is_settled_before_any_number_is_looked_at():
     """Law 1. A candidate that cannot carry the value is not an expensive candidate."""
-    certificate = select_certified(_RECORD, _VALUE, _as_measured(
-        build_table(_RECORD, _VALUE, target="host", cal_gen=1)),
-        objective=Objective.WIRE_SIZE)
+    certificate = select_certified(
+        _RECORD,
+        _VALUE,
+        _as_measured(build_table(_RECORD, _VALUE, target="host", cal_gen=1)),
+        objective=Objective.WIRE_SIZE,
+    )
     admitted = set(certificate.admitted)
     refused = dict(certificate.refused)
     assert admitted and not (admitted & set(refused))
@@ -165,7 +187,8 @@ def test_the_interval_is_distribution_free_and_its_coverage_is_exact():
     interval = interval_of(samples)
     assert interval.low <= interval.median <= interval.high
     assert interval.low in samples and interval.high in samples, (
-        "the bounds must be observed samples, not fitted parameters")
+        "the bounds must be observed samples, not fitted parameters"
+    )
     assert 900_000 <= interval.coverage_ppm <= 1_000_000
     # The heavy tail is inside the interval's reach but does not drag the median, which is
     # the property a mean would not have.
@@ -212,8 +235,12 @@ def test_indistinguishable_candidates_are_resolved_by_the_exact_measurement():
     )
     table = EncodingCostTable(target="host", cal_gen=1, provenance="measured", rows=rows)
     certificate = select_certified(
-        _INT, 42, table, objective=Objective.DECODE_LATENCY,
-        candidates=_only("CANONICAL-PER-UNALIGNED", "COER", "DER"))
+        _INT,
+        42,
+        table,
+        objective=Objective.DECODE_LATENCY,
+        candidates=_only("CANONICAL-PER-UNALIGNED", "COER", "DER"),
+    )
     # Every interval overlaps every other, so the smallest exact encoding wins.
     assert certificate.selected == "COER"
     assert set(certificate.indistinguishable) == {"CANONICAL-PER-UNALIGNED", "DER"}
@@ -221,20 +248,24 @@ def test_indistinguishable_candidates_are_resolved_by_the_exact_measurement():
 
 
 def test_the_certificate_records_which_candidates_it_could_not_separate():
-    """"We chose A over B" and "A and B were the same" are different decisions.
+    """ "We chose A over B" and "A and B were the same" are different decisions.
 
     A certificate that hid the difference would overstate what the measurement showed.
     """
     tight = Interval(low=10, high=11, median=10, samples=9, coverage_ppm=980_000)
     loose = Interval(low=900, high=999, median=950, samples=9, coverage_ppm=980_000)
-    rows = (CostRow(candidate="COER", octets=4, encode=tight, decode=tight),
-            CostRow(candidate="DER", octets=7, encode=loose, decode=loose))
+    rows = (
+        CostRow(candidate="COER", octets=4, encode=tight, decode=tight),
+        CostRow(candidate="DER", octets=7, encode=loose, decode=loose),
+    )
     table = EncodingCostTable(target="host", cal_gen=1, provenance="measured", rows=rows)
-    certificate = select_certified(_INT, 42, table, objective=Objective.DECODE_LATENCY,
-                                   candidates=_only("COER", "DER"))
+    certificate = select_certified(
+        _INT, 42, table, objective=Objective.DECODE_LATENCY, candidates=_only("COER", "DER")
+    )
     assert certificate.selected == "COER"
     assert certificate.indistinguishable == (), (
-        "a clearly separated candidate was reported as indistinguishable")
+        "a clearly separated candidate was reported as indistinguishable"
+    )
 
 
 # --- repeatability and the table -----------------------------------------------------------
@@ -255,13 +286,15 @@ def test_a_frozen_table_is_content_addressed_and_names_no_candidate_twice():
     """The table is data with an identity, so a certificate can bind to it."""
     table = _oracle_table()
     assert table.version == COST_TABLE_VERSION
-    assert table.digest() == EncodingCostTable(
-        target=table.target, cal_gen=table.cal_gen, provenance=table.provenance,
-        rows=table.rows).digest()
+    assert (
+        table.digest()
+        == EncodingCostTable(
+            target=table.target, cal_gen=table.cal_gen, provenance=table.provenance, rows=table.rows
+        ).digest()
+    )
     duplicated = table.rows + (table.rows[0],)
     try:
-        EncodingCostTable(target="host", cal_gen=1, provenance="measured",
-                          rows=duplicated)
+        EncodingCostTable(target="host", cal_gen=1, provenance="measured", rows=duplicated)
     except Asn1Error as error:
         assert "twice" in str(error)
     else:
@@ -282,23 +315,30 @@ def test_a_decode_latency_verdict_says_which_decode_question_it_answered():
     before any number is read, and DER would have won both tables by default.
     """
     fixed = _iv(1, 1, 1, 950_000)
-    free = EncodingCostTable(target="host", cal_gen=1, provenance="measured", rows=(
-        CostRow("DER", octets=3, encode=fixed, decode=_iv(90, 100, 110, 950_000)),
-        CostRow("COER", octets=3, encode=fixed, decode=_iv(280, 300, 320, 950_000)),
-    ))
+    free = EncodingCostTable(
+        target="host",
+        cal_gen=1,
+        provenance="measured",
+        rows=(
+            CostRow("DER", octets=3, encode=fixed, decode=_iv(90, 100, 110, 950_000)),
+            CostRow("COER", octets=3, encode=fixed, decode=_iv(280, 300, 320, 950_000)),
+        ),
+    )
     # The same two candidates, measured the other way: being handed the plan reverses them.
     directed = EncodingCostTable(
-        target="host", cal_gen=1, provenance="measured", decode_kind="schema-directed",
+        target="host",
+        cal_gen=1,
+        provenance="measured",
+        decode_kind="schema-directed",
         rows=(
             CostRow("DER", octets=3, encode=fixed, decode=_iv(280, 300, 320, 950_000)),
             CostRow("COER", octets=3, encode=fixed, decode=_iv(90, 100, 110, 950_000)),
-        ))
+        ),
+    )
 
     pair = _only("DER", "COER")
-    a = select_certified(_INT, 42, free, objective=Objective.DECODE_LATENCY,
-                         candidates=pair)
-    b = select_certified(_INT, 42, directed, objective=Objective.DECODE_LATENCY,
-                         candidates=pair)
+    a = select_certified(_INT, 42, free, objective=Objective.DECODE_LATENCY, candidates=pair)
+    b = select_certified(_INT, 42, directed, objective=Objective.DECODE_LATENCY, candidates=pair)
 
     # Legality-first, so both admit the same candidates; only the verdict moves.
     assert a.admitted == b.admitted == ("DER", "COER")
@@ -319,8 +359,7 @@ def test_a_wire_size_verdict_records_the_decode_kind_it_did_not_use():
     rather than the arithmetic that produced this particular answer. A field that appeared
     only on the certificates that consulted it would make its absence ambiguous.
     """
-    certificate = select_certified(_INT, 42, _oracle_table(),
-                                   objective=Objective.WIRE_SIZE)
+    certificate = select_certified(_INT, 42, _oracle_table(), objective=Objective.WIRE_SIZE)
     assert certificate.provenance == "oracle"
     assert certificate.decode_kind == "schema-free"
 
@@ -339,8 +378,12 @@ def test_the_two_decode_kinds_cannot_meet_inside_one_table():
     """
     fixed = _iv(1, 1, 1, 950_000)
     directed = EncodingCostTable(
-        target="host", cal_gen=1, provenance="measured", decode_kind="schema-directed",
-        rows=(CostRow("COER", octets=3, encode=fixed, decode=_iv(9, 10, 11, 950_000)),))
+        target="host",
+        cal_gen=1,
+        provenance="measured",
+        decode_kind="schema-directed",
+        rows=(CostRow("COER", octets=3, encode=fixed, decode=_iv(9, 10, 11, 950_000)),),
+    )
     try:
         select_certified(_INT, 42, directed, objective=Objective.DECODE_LATENCY)
     except UnmeasuredTarget as error:
@@ -349,11 +392,12 @@ def test_the_two_decode_kinds_cannot_meet_inside_one_table():
         assert "no measured row" in str(error)
     else:
         raise AssertionError(
-            "a directed table holding one candidate must refuse a decision over all of them")
+            "a directed table holding one candidate must refuse a decision over all of them"
+        )
     # Narrowed to what the table holds, the same call decides.
-    certificate = select_certified(_INT, 42, directed,
-                                   objective=Objective.DECODE_LATENCY,
-                                   candidates=_only("COER"))
+    certificate = select_certified(
+        _INT, 42, directed, objective=Objective.DECODE_LATENCY, candidates=_only("COER")
+    )
     assert certificate.selected == "COER"
     assert certificate.decode_kind == "schema-directed"
 
@@ -402,19 +446,27 @@ def test_two_targets_with_different_tables_may_select_differently_and_say_why():
     fast_text = Interval(low=20, high=22, median=21, samples=9, coverage_ppm=980_000)
 
     target_a = EncodingCostTable(
-        target="alpha", cal_gen=3, provenance="measured",
-        rows=(CostRow("COER", 4, fast_binary, fast_binary),
-              CostRow("JER-BCIR-CANONICAL", 20, fast_text, fast_text)))
+        target="alpha",
+        cal_gen=3,
+        provenance="measured",
+        rows=(
+            CostRow("COER", 4, fast_binary, fast_binary),
+            CostRow("JER-BCIR-CANONICAL", 20, fast_text, fast_text),
+        ),
+    )
     target_b = EncodingCostTable(
-        target="beta", cal_gen=5, provenance="measured",
-        rows=(CostRow("COER", 4, slow_binary, slow_binary),
-              CostRow("JER-BCIR-CANONICAL", 20, fast_text, fast_text)))
+        target="beta",
+        cal_gen=5,
+        provenance="measured",
+        rows=(
+            CostRow("COER", 4, slow_binary, slow_binary),
+            CostRow("JER-BCIR-CANONICAL", 20, fast_text, fast_text),
+        ),
+    )
 
     pair = _only("COER", "JER-BCIR-CANONICAL")
-    a = select_certified(_INT, 42, target_a, objective=Objective.DECODE_LATENCY,
-                         candidates=pair)
-    b = select_certified(_INT, 42, target_b, objective=Objective.DECODE_LATENCY,
-                         candidates=pair)
+    a = select_certified(_INT, 42, target_a, objective=Objective.DECODE_LATENCY, candidates=pair)
+    b = select_certified(_INT, 42, target_b, objective=Objective.DECODE_LATENCY, candidates=pair)
     assert a.selected == "COER" and b.selected == "JER-BCIR-CANONICAL"
     # Each certificate binds to the table it read, so the two are distinguishable after
     # the fact rather than being two undated claims about "the" cost of an encoding.
@@ -422,8 +474,12 @@ def test_two_targets_with_different_tables_may_select_differently_and_say_why():
     assert (a.target, a.cal_gen) == ("alpha", 3)
     assert (b.target, b.cal_gen) == ("beta", 5)
     # And re-running either reproduces it exactly.
-    assert select_certified(_INT, 42, target_b, objective=Objective.DECODE_LATENCY,
-                            candidates=pair).digest() == b.digest()
+    assert (
+        select_certified(
+            _INT, 42, target_b, objective=Objective.DECODE_LATENCY, candidates=pair
+        ).digest()
+        == b.digest()
+    )
 
 
 # --- the certificate ---------------------------------------------------------------------------
@@ -466,18 +522,22 @@ def test_the_certificate_separates_the_verdict_from_the_costs():
 
 
 def _iv(low: int, median: int, high: int, coverage_ppm: int = 950_000) -> Interval:
-    return Interval(low=low, high=high, median=median, samples=11,
-                    coverage_ppm=coverage_ppm)
+    return Interval(low=low, high=high, median=median, samples=11, coverage_ppm=coverage_ppm)
 
 
 def _budget_table(coverage_ppm: int = 950_000) -> EncodingCostTable:
     """Three candidates spanning the trade-off: fast-and-fat, slow-and-thin, middling."""
     fixed = _iv(1, 1, 1, coverage_ppm)
-    return EncodingCostTable(target="host", cal_gen=1, provenance="measured", rows=(
-        CostRow("A", octets=10, encode=fixed, decode=_iv(90, 100, 110, coverage_ppm)),
-        CostRow("B", octets=4, encode=fixed, decode=_iv(280, 300, 320, coverage_ppm)),
-        CostRow("C", octets=6, encode=fixed, decode=_iv(190, 200, 210, coverage_ppm)),
-    ))
+    return EncodingCostTable(
+        target="host",
+        cal_gen=1,
+        provenance="measured",
+        rows=(
+            CostRow("A", octets=10, encode=fixed, decode=_iv(90, 100, 110, coverage_ppm)),
+            CostRow("B", octets=4, encode=fixed, decode=_iv(280, 300, 320, coverage_ppm)),
+            CostRow("C", octets=6, encode=fixed, decode=_iv(190, 200, 210, coverage_ppm)),
+        ),
+    )
 
 
 _TWO = (Stage("s1", ("A", "B", "C")), Stage("s2", ("A", "B", "C")))
@@ -492,15 +552,14 @@ def test_the_budgeted_plan_reproduces_a_hand_derived_optimum():
     """
     table = _budget_table()
     expected = {
-        20: (["A", "A"], 200),   # both fast, exactly on budget
-        16: (["A", "C"], 300),   # A+A no longer fits
-        14: (["C", "C"], 400),   # ties A+B at 400 and spends four fewer octets
-        10: (["B", "C"], 500),   # A cannot appear at all
-        8: (["B", "B"], 600),    # the cheapest plan there is
+        20: (["A", "A"], 200),  # both fast, exactly on budget
+        16: (["A", "C"], 300),  # A+A no longer fits
+        14: (["C", "C"], 400),  # ties A+B at 400 and spends four fewer octets
+        10: (["B", "C"], 500),  # A cannot appear at all
+        8: (["B", "B"], 600),  # the cheapest plan there is
     }
     for budget, (chosen, median) in expected.items():
-        plan = select_budgeted(table, _TWO, budget=budget,
-                               objective=Objective.DECODE_LATENCY)
+        plan = select_budgeted(table, _TWO, budget=budget, objective=Objective.DECODE_LATENCY)
         assert [name for _, name in plan.chosen] == chosen, budget
         assert plan.latency_median == median, budget
         assert plan.total_octets <= budget
@@ -541,14 +600,13 @@ def test_summing_intervals_decays_their_coverage_and_the_plan_says_so():
     seen = {}
     for count in (1, 2, 5, 10, 20):
         stages = tuple(Stage(f"s{i}", ("B",)) for i in range(count))
-        plan = select_budgeted(table, stages, budget=4 * count,
-                               objective=Objective.DECODE_LATENCY)
+        plan = select_budgeted(table, stages, budget=4 * count, objective=Objective.DECODE_LATENCY)
         seen[count] = (plan.coverage_ppm, plan.certified)
     assert seen[1] == (950_000, True)
     assert seen[2] == (900_000, True)
     assert seen[5] == (750_000, True)
-    assert seen[10] == (500_000, True)     # exactly at the default floor
-    assert seen[20] == (0, False)          # the answer survives; the evidence does not
+    assert seen[10] == (500_000, True)  # exactly at the default floor
+    assert seen[20] == (0, False)  # the answer survives; the evidence does not
     # Monotone, and never negative — a coverage that wrapped would read as a strong claim.
     values = [seen[n][0] for n in sorted(seen)]
     assert values == sorted(values, reverse=True) and min(values) >= 0
@@ -563,18 +621,21 @@ def test_the_coverage_floor_is_the_callers_and_is_reported_not_enforced():
     """
     stages = tuple(Stage(f"s{i}", ("B",)) for i in range(10))
     table = _budget_table()
-    strict = select_budgeted(table, stages, budget=40, min_coverage_ppm=900_000,
-                             objective=Objective.DECODE_LATENCY)
-    lax = select_budgeted(table, stages, budget=40, min_coverage_ppm=100_000,
-                          objective=Objective.DECODE_LATENCY)
+    strict = select_budgeted(
+        table, stages, budget=40, min_coverage_ppm=900_000, objective=Objective.DECODE_LATENCY
+    )
+    lax = select_budgeted(
+        table, stages, budget=40, min_coverage_ppm=100_000, objective=Objective.DECODE_LATENCY
+    )
     assert strict.chosen == lax.chosen and strict.latency_median == lax.latency_median
     assert strict.certified is False and lax.certified is True
 
 
 def test_a_budgeted_timing_plan_refuses_an_oracle_table():
     """The same §6.2 refusal as the single selection, at the point a timing is consulted."""
-    oracle = EncodingCostTable(target="host", cal_gen=1, provenance="oracle",
-                               rows=_budget_table().rows)
+    oracle = EncodingCostTable(
+        target="host", cal_gen=1, provenance="oracle", rows=_budget_table().rows
+    )
     try:
         select_budgeted(oracle, _TWO, budget=20, objective=Objective.DECODE_LATENCY)
     except UnmeasuredTarget as error:
@@ -582,8 +643,9 @@ def test_a_budgeted_timing_plan_refuses_an_oracle_table():
     else:
         raise AssertionError("a budgeted timing plan must not read an oracle table")
     # And it is permitted when the caller records the experiment as one.
-    plan = select_budgeted(oracle, _TWO, budget=20, objective=Objective.DECODE_LATENCY,
-                           allow_oracle_table=True)
+    plan = select_budgeted(
+        oracle, _TWO, budget=20, objective=Objective.DECODE_LATENCY, allow_oracle_table=True
+    )
     assert plan.total_octets == 20
 
 

@@ -40,11 +40,23 @@ def _build(d: str) -> str:
     exe = os.path.join(d, "test_orch")
     for std in ("c++17", "c++14"):
         b = subprocess.run(
-            [_CXX, f"-std={std}", "-O2", "-Wall", "-Wextra", "-I", _C,
-             os.path.join(_CPP, "bcir_orchestrator.cpp"),
-             os.path.join(_CPP, "test_orchestrator.cpp"),
-             os.path.join(_C, "bcir_runtime.c"), "-o", exe],
-            capture_output=True, text=True)
+            [
+                _CXX,
+                f"-std={std}",
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-I",
+                _C,
+                os.path.join(_CPP, "bcir_orchestrator.cpp"),
+                os.path.join(_CPP, "test_orchestrator.cpp"),
+                os.path.join(_C, "bcir_runtime.c"),
+                "-o",
+                exe,
+            ],
+            capture_output=True,
+            text=True,
+        )
         if b.returncode == 0:
             return exe
     raise AssertionError(f"C++ hand-off scaffold build failed:\n{b.stderr}")
@@ -57,14 +69,14 @@ def test_artifact_the_seam_consumes_is_producible_and_decodable():
     for fn in (multi_histogram, vector_add):
         data = _pack(fn)
         assert data[:4] == b"BSPK", "the hand-off artifact must be a StreamPack"
-        pack = decode(data)            # the Python rail decodes it (round-trippable artifact)
+        pack = decode(data)  # the Python rail decodes it (round-trippable artifact)
         assert pack.segments, "a non-trivial artifact has segments to dispatch"
 
 
 def test_single_node_orchestrator_round_trip_identity():
     """The REAL seam: the C++ single-node Orchestrator's dispatch order == the direct C/IR
     decode of the same artifact (round-trip identity), on two fixtures."""
-    if not _CXX:                       # quick tier: deferred to where a C++ compiler is visible.
+    if not _CXX:  # quick tier: deferred to where a C++ compiler is visible.
         return
     with tempfile.TemporaryDirectory() as d:
         exe = _build(d)
@@ -84,25 +96,39 @@ def test_corrupted_artifact_rejected_at_the_boundary():
     with tempfile.TemporaryDirectory() as d:
         drv = os.path.join(d, "reject.cpp")
         open(drv, "w").write(
-            '#include <cstdio>\n#include <cstdint>\n#include <vector>\n'
+            "#include <cstdio>\n#include <cstdint>\n#include <vector>\n"
             '#include "bcir_orchestrator.hpp"\n'
-            'int main(int c, char** v){ if(c<2) return 2;\n'
+            "int main(int c, char** v){ if(c<2) return 2;\n"
             '  std::FILE* f=std::fopen(v[1],"rb"); if(!f) return 2;\n'
-            '  std::fseek(f,0,SEEK_END); long n=std::ftell(f); std::fseek(f,0,SEEK_SET);\n'
-            '  std::vector<std::uint8_t> b(n>0?(size_t)n:0);\n'
-            '  if(n>0 && std::fread(b.data(),1,b.size(),f)!=b.size()){std::fclose(f);return 2;}\n'
-            '  std::fclose(f);\n'
-            '  bcir::SingleNodeOrchestrator s;\n'
-            '  bcir_status st=s.admit(b.data(), b.size());\n'
-            '  return st==BCIR_OK ? 1 : 0; }\n')
+            "  std::fseek(f,0,SEEK_END); long n=std::ftell(f); std::fseek(f,0,SEEK_SET);\n"
+            "  std::vector<std::uint8_t> b(n>0?(size_t)n:0);\n"
+            "  if(n>0 && std::fread(b.data(),1,b.size(),f)!=b.size()){std::fclose(f);return 2;}\n"
+            "  std::fclose(f);\n"
+            "  bcir::SingleNodeOrchestrator s;\n"
+            "  bcir_status st=s.admit(b.data(), b.size());\n"
+            "  return st==BCIR_OK ? 1 : 0; }\n"
+        )
         exe = os.path.join(d, "reject")
         built = False
         for std in ("c++17", "c++14"):
             b = subprocess.run(
-                [_CXX, f"-std={std}", "-O2", "-I", _C, "-I", _CPP, drv,
-                 os.path.join(_CPP, "bcir_orchestrator.cpp"),
-                 os.path.join(_C, "bcir_runtime.c"), "-o", exe],
-                capture_output=True, text=True)
+                [
+                    _CXX,
+                    f"-std={std}",
+                    "-O2",
+                    "-I",
+                    _C,
+                    "-I",
+                    _CPP,
+                    drv,
+                    os.path.join(_CPP, "bcir_orchestrator.cpp"),
+                    os.path.join(_C, "bcir_runtime.c"),
+                    "-o",
+                    exe,
+                ],
+                capture_output=True,
+                text=True,
+            )
             if b.returncode == 0:
                 built = True
                 break
@@ -112,7 +138,7 @@ def test_corrupted_artifact_rejected_at_the_boundary():
         open(clean, "wb").write(_pack(multi_histogram))
         assert subprocess.run([exe, clean]).returncode == 1, "clean pack should admit"
         bad = bytearray(open(clean, "rb").read())
-        bad[20] ^= 0xFF                # corrupt n_segments -> breaks the CRC
+        bad[20] ^= 0xFF  # corrupt n_segments -> breaks the CRC
         badp = os.path.join(d, "bad.bin")
         open(badp, "wb").write(bad)
         assert subprocess.run([exe, badp]).returncode == 0, "corrupted pack must be rejected"

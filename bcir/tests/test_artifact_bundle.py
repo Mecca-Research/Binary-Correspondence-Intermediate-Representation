@@ -56,8 +56,9 @@ def _pack_bytes() -> bytes:
     return encode(hydrate(module, optimize(module, TargetProfile.x86_avx512(), Theta.cool())))
 
 
-def _elf(machine: int = 62, *, bits: int = 64, endian: Endianness = Endianness.LITTLE,
-         elf_type: int = 1) -> bytes:
+def _elf(
+    machine: int = 62, *, bits: int = 64, endian: Endianness = Endianness.LITTLE, elf_type: int = 1
+) -> bytes:
     payload = bytearray(20)
     payload[:4] = b"\x7fELF"
     payload[4] = 1 if bits == 32 else 2
@@ -69,33 +70,61 @@ def _elf(machine: int = 62, *, bits: int = 64, endian: Endianness = Endianness.L
 
 
 def _three_bundle() -> ArtifactBundle:
-    return ArtifactBundle((
-        ArtifactVariant(
-            "00-root", ArtifactKind.STREAM_PACK, ArtifactFormat.STREAM_PACK,
-            _pack_bytes(), channel="host", portable=True,
+    return ArtifactBundle(
+        (
+            ArtifactVariant(
+                "00-root",
+                ArtifactKind.STREAM_PACK,
+                ArtifactFormat.STREAM_PACK,
+                _pack_bytes(),
+                channel="host",
+                portable=True,
+            ),
+            ArtifactVariant(
+                "portable-c",
+                ArtifactKind.C_SOURCE,
+                ArtifactFormat.TEXT,
+                b"int bcir_kernel(void){return 0;}\n",
+                portable=True,
+            ),
+            ArtifactVariant(
+                "x86-avx2",
+                ArtifactKind.ELF_OBJECT,
+                ArtifactFormat.ELF,
+                _elf(),
+                triple="x86_64-unknown-linux-gnu",
+                architecture="x86_64",
+                os_abi="linux-gnu",
+                channel="host",
+                entry_symbol="bcir_kernel",
+                required_features=("avx2",),
+                endianness=Endianness.LITTLE,
+                pointer_bits=64,
+                e_machine=62,
+                priority=9,
+                r12_attested=True,
+                executable=True,
+            ),
         ),
-        ArtifactVariant(
-            "portable-c", ArtifactKind.C_SOURCE, ArtifactFormat.TEXT,
-            b"int bcir_kernel(void){return 0;}\n", portable=True,
-        ),
-        ArtifactVariant(
-            "x86-avx2", ArtifactKind.ELF_OBJECT, ArtifactFormat.ELF, _elf(),
-            triple="x86_64-unknown-linux-gnu", architecture="x86_64",
-            os_abi="linux-gnu", channel="host", entry_symbol="bcir_kernel",
-            required_features=("avx2",), endianness=Endianness.LITTLE,
-            pointer_bits=64, e_machine=62, priority=9,
-            r12_attested=True, executable=True,
-        ),
-    ), "00-root", "portable-c", 123, 7)
+        "00-root",
+        "portable-c",
+        123,
+        7,
+    )
 
 
 def _host_envelope(**changes) -> CompatibilityEnvelope:
     values = dict(
-        triple="x86_64-unknown-linux-gnu", architecture="x86_64",
-        os_abi="linux-gnu", channel="host", features=frozenset(("avx2",)),
+        triple="x86_64-unknown-linux-gnu",
+        architecture="x86_64",
+        os_abi="linux-gnu",
+        channel="host",
+        features=frozenset(("avx2",)),
         accepted_kinds=frozenset((ArtifactKind.ELF_OBJECT,)),
         accepted_formats=frozenset((ArtifactFormat.ELF,)),
-        endianness=Endianness.LITTLE, pointer_bits=64, e_machine=62,
+        endianness=Endianness.LITTLE,
+        pointer_bits=64,
+        e_machine=62,
     )
     values.update(changes)
     return CompatibilityEnvelope(**values)
@@ -123,18 +152,18 @@ def _semantic_streampack_spoof() -> bytes:
     """Return a fully re-sealed BCAB whose root has a dangling trace binding."""
     original = bytearray(encode_bundle(_three_bundle()))
     root_span = next(
-        span for span in inspect_bundle(bytes(original)).spans
+        span
+        for span in inspect_bundle(bytes(original)).spans
         if span.kind == "payload" and span.name == "00-root"
     )
-    pack = bytearray(original[root_span.offset:root_span.end])
-    trace = next(span for span in inspect_stream_pack(bytes(pack)).spans
-                 if span.kind == "trace")
+    pack = bytearray(original[root_span.offset : root_span.end])
+    trace = next(span for span in inspect_stream_pack(bytes(pack)).spans if span.kind == "trace")
     struct.pack_into("<Q", pack, trace.offset, 0xFFFFFFFFFFFFFFFF)
     struct.pack_into("<I", pack, len(pack) - 4, zlib.crc32(pack[:-4]) & 0xFFFFFFFF)
-    original[root_span.offset:root_span.end] = pack
+    original[root_span.offset : root_span.end] = pack
     entry = ARTIFACT_HEADER_SIZE
     struct.pack_into("<I", original, entry + 48, zlib.crc32(pack) & 0xFFFFFFFF)
-    original[entry + 56:entry + 88] = hashlib.sha256(pack).digest()
+    original[entry + 56 : entry + 88] = hashlib.sha256(pack).digest()
     return _reseal(original)
 
 
@@ -158,7 +187,9 @@ def test_bcab_constants_deterministic_roundtrip_and_exact_span_partition():
 
 def test_constructor_rejects_noncanonical_metadata_and_payload_identity():
     base = dict(
-        variant_id="x", kind=ArtifactKind.C_SOURCE, format=ArtifactFormat.TEXT,
+        variant_id="x",
+        kind=ArtifactKind.C_SOURCE,
+        format=ArtifactFormat.TEXT,
         payload=b"int x;\n",
     )
     cases = [
@@ -171,14 +202,21 @@ def test_constructor_rejects_noncanonical_metadata_and_payload_identity():
         {**base, "pointer_bits": 16},
         {**base, "target_manifest_sha256": "A" * 64},
         {
-            "variant_id": "native-no-machine", "kind": ArtifactKind.ELF_OBJECT,
-            "format": ArtifactFormat.ELF, "payload": _elf(),
-            "endianness": Endianness.LITTLE, "pointer_bits": 64,
+            "variant_id": "native-no-machine",
+            "kind": ArtifactKind.ELF_OBJECT,
+            "format": ArtifactFormat.ELF,
+            "payload": _elf(),
+            "endianness": Endianness.LITTLE,
+            "pointer_bits": 64,
         },
         {
-            "variant_id": "unmarked-executable", "kind": ArtifactKind.ELF_EXECUTABLE,
-            "format": ArtifactFormat.ELF, "payload": _elf(elf_type=2),
-            "endianness": Endianness.LITTLE, "pointer_bits": 64, "e_machine": 62,
+            "variant_id": "unmarked-executable",
+            "kind": ArtifactKind.ELF_EXECUTABLE,
+            "format": ArtifactFormat.ELF,
+            "payload": _elf(elf_type=2),
+            "endianness": Endianness.LITTLE,
+            "pointer_bits": 64,
+            "e_machine": 62,
             "r12_attested": True,
         },
     ]
@@ -195,24 +233,43 @@ def test_constructor_rejects_noncanonical_metadata_and_payload_identity():
     except BundleError:
         pass
     try:
-        ArtifactBundle((ArtifactVariant(
-            "run", ArtifactKind.RAW_BINARY, ArtifactFormat.RAW, b"run",
-            architecture="test", channel="device", executable=True,
-        ),), default_variant_id="run")
+        ArtifactBundle(
+            (
+                ArtifactVariant(
+                    "run",
+                    ArtifactKind.RAW_BINARY,
+                    ArtifactFormat.RAW,
+                    b"run",
+                    architecture="test",
+                    channel="device",
+                    executable=True,
+                ),
+            ),
+            default_variant_id="run",
+        )
         assert False, "an executable default without R12 attestation must fail"
     except BundleError:
         pass
 
 
 def test_encode_preflights_wire_limit_before_materializing_directory_or_payload_copies():
-    bundle = ArtifactBundle((
-        ArtifactVariant(
-            "raw", ArtifactKind.RAW_BINARY, ArtifactFormat.RAW, b"x" * 32,
+    bundle = ArtifactBundle(
+        (
+            ArtifactVariant(
+                "raw",
+                ArtifactKind.RAW_BINARY,
+                ArtifactFormat.RAW,
+                b"x" * 32,
+            ),
+        )
+    )
+    with (
+        patch("bcir.abi.artifact_bundle.MAX_BUNDLE_BYTES", ARTIFACT_HEADER_SIZE),
+        patch(
+            "bcir.abi.artifact_bundle._pack_entry",
+            side_effect=AssertionError("must not materialize"),
         ),
-    ))
-    with patch("bcir.abi.artifact_bundle.MAX_BUNDLE_BYTES", ARTIFACT_HEADER_SIZE), \
-            patch("bcir.abi.artifact_bundle._pack_entry",
-                  side_effect=AssertionError("must not materialize")):
+    ):
         try:
             encode_bundle(bundle)
             assert False, "oversized projected wire must fail during preflight"
@@ -241,31 +298,75 @@ def test_compatibility_inputs_and_explicit_ids_are_strictly_bounded():
 
 def test_payload_identity_validation_covers_standard_backend_formats():
     jvm = build_jvm_class("BcirBundleTest", ("ldc 2.0f",))
-    coff = bytearray(20); struct.pack_into("<H", coff, 0, 0x8664)
-    macho = bytearray(28); macho[:4] = b"\xcf\xfa\xed\xfe"; struct.pack_into("<I", macho, 4, 0x01000007); struct.pack_into("<I", macho, 12, 1)
-    pe = bytearray(0x80); pe[:2] = b"MZ"; struct.pack_into("<I", pe, 0x3C, 0x40)
-    pe[0x40:0x44] = b"PE\0\0"; struct.pack_into("<H", pe, 0x44, 0x8664)
-    struct.pack_into("<H", pe, 0x54, 2); struct.pack_into("<H", pe, 0x58, 0x20B)
+    coff = bytearray(20)
+    struct.pack_into("<H", coff, 0, 0x8664)
+    macho = bytearray(28)
+    macho[:4] = b"\xcf\xfa\xed\xfe"
+    struct.pack_into("<I", macho, 4, 0x01000007)
+    struct.pack_into("<I", macho, 12, 1)
+    pe = bytearray(0x80)
+    pe[:2] = b"MZ"
+    struct.pack_into("<I", pe, 0x3C, 0x40)
+    pe[0x40:0x44] = b"PE\0\0"
+    struct.pack_into("<H", pe, 0x44, 0x8664)
+    struct.pack_into("<H", pe, 0x54, 2)
+    struct.pack_into("<H", pe, 0x58, 0x20B)
     payloads = (
         ArtifactVariant("archive", ArtifactKind.ARCHIVE, ArtifactFormat.ARCHIVE, b"!<arch>\n"),
-        ArtifactVariant("bitcode", ArtifactKind.LLVM_BITCODE, ArtifactFormat.LLVM_BITCODE, b"BC\xc0\xde"),
-        ArtifactVariant("coff", ArtifactKind.COFF_OBJECT, ArtifactFormat.COFF, bytes(coff),
-                        endianness=Endianness.LITTLE, pointer_bits=64, e_machine=0x8664),
-        ArtifactVariant("jvm", ArtifactKind.JVM_CLASS, ArtifactFormat.JVM_CLASS, jvm,
-                        portable=True),
-        ArtifactVariant("macho", ArtifactKind.MACHO_OBJECT, ArtifactFormat.MACHO, bytes(macho),
-                        endianness=Endianness.LITTLE, pointer_bits=64, e_machine=0x01000007),
-        ArtifactVariant("ptx", ArtifactKind.PTX, ArtifactFormat.TEXT,
-                        b".version 7.0\n.target sm_50\nmov.u32 %r1, %r2;\n"),
+        ArtifactVariant(
+            "bitcode", ArtifactKind.LLVM_BITCODE, ArtifactFormat.LLVM_BITCODE, b"BC\xc0\xde"
+        ),
+        ArtifactVariant(
+            "coff",
+            ArtifactKind.COFF_OBJECT,
+            ArtifactFormat.COFF,
+            bytes(coff),
+            endianness=Endianness.LITTLE,
+            pointer_bits=64,
+            e_machine=0x8664,
+        ),
+        ArtifactVariant(
+            "jvm", ArtifactKind.JVM_CLASS, ArtifactFormat.JVM_CLASS, jvm, portable=True
+        ),
+        ArtifactVariant(
+            "macho",
+            ArtifactKind.MACHO_OBJECT,
+            ArtifactFormat.MACHO,
+            bytes(macho),
+            endianness=Endianness.LITTLE,
+            pointer_bits=64,
+            e_machine=0x01000007,
+        ),
+        ArtifactVariant(
+            "ptx",
+            ArtifactKind.PTX,
+            ArtifactFormat.TEXT,
+            b".version 7.0\n.target sm_50\nmov.u32 %r1, %r2;\n",
+        ),
         ArtifactVariant("raw", ArtifactKind.RAW_BINARY, ArtifactFormat.RAW, b"\x01\x02\x03"),
-        ArtifactVariant("pe", ArtifactKind.PE_EXECUTABLE, ArtifactFormat.PE, bytes(pe),
-                        endianness=Endianness.LITTLE, pointer_bits=64, e_machine=0x8664,
-                        r12_attested=True, executable=True),
-        ArtifactVariant("spirv", ArtifactKind.SPIRV, ArtifactFormat.SPIRV,
-                        b"\x03\x02\x23\x07" + bytes(16)),
-        ArtifactVariant("wasm", ArtifactKind.WASM, ArtifactFormat.WASM,
-                        b"\x00asm\x01\x00\x00\x00", endianness=Endianness.LITTLE,
-                        pointer_bits=32, portable=True),
+        ArtifactVariant(
+            "pe",
+            ArtifactKind.PE_EXECUTABLE,
+            ArtifactFormat.PE,
+            bytes(pe),
+            endianness=Endianness.LITTLE,
+            pointer_bits=64,
+            e_machine=0x8664,
+            r12_attested=True,
+            executable=True,
+        ),
+        ArtifactVariant(
+            "spirv", ArtifactKind.SPIRV, ArtifactFormat.SPIRV, b"\x03\x02\x23\x07" + bytes(16)
+        ),
+        ArtifactVariant(
+            "wasm",
+            ArtifactKind.WASM,
+            ArtifactFormat.WASM,
+            b"\x00asm\x01\x00\x00\x00",
+            endianness=Endianness.LITTLE,
+            pointer_bits=32,
+            portable=True,
+        ),
     )
     bundle = ArtifactBundle(tuple(sorted(payloads, key=lambda variant: variant.variant_id)))
     assert decode_bundle(encode_bundle(bundle)) == bundle
@@ -285,8 +386,9 @@ def test_selector_is_fail_closed_and_deterministic():
         _host_envelope(pointer_bits=32),
         _host_envelope(e_machine=183),
         _host_envelope(channel="sycl_spirv"),
-        _host_envelope(require_r12=True, allow_debug=False,
-                       accepted_kinds=frozenset((ArtifactKind.WASM,))),
+        _host_envelope(
+            require_r12=True, allow_debug=False, accepted_kinds=frozenset((ArtifactKind.WASM,))
+        ),
     )
     for incompatible in rejects:
         try:
@@ -302,49 +404,84 @@ def test_selector_is_fail_closed_and_deterministic():
 
 
 def test_host_envelope_admits_both_windows_native_container_formats():
-    with patch("bcir.abi.artifact_bundle.platform.machine", return_value="AMD64"), \
-            patch("bcir.abi.artifact_bundle.platform.system", return_value="Windows"):
+    with (
+        patch("bcir.abi.artifact_bundle.platform.machine", return_value="AMD64"),
+        patch("bcir.abi.artifact_bundle.platform.system", return_value="Windows"),
+    ):
         envelope = host_envelope()
     assert envelope.triple == "x86_64-pc-windows-msvc"
     assert envelope.e_machine == 0x8664
     assert ArtifactFormat.COFF in envelope.accepted_formats
     assert ArtifactFormat.PE in envelope.accepted_formats
-    with patch("bcir.abi.artifact_bundle.platform.machine", return_value="arm64"), \
-            patch("bcir.abi.artifact_bundle.platform.system", return_value="Darwin"):
+    with (
+        patch("bcir.abi.artifact_bundle.platform.machine", return_value="arm64"),
+        patch("bcir.abi.artifact_bundle.platform.system", return_value="Darwin"),
+    ):
         darwin = host_envelope()
     assert darwin.e_machine == 0x0100000C
-    assert darwin.accepted_formats == frozenset((
-        ArtifactFormat.MACHO, ArtifactFormat.WASM, ArtifactFormat.TEXT,
-        ArtifactFormat.STREAM_PACK, ArtifactFormat.LLVM_BITCODE,
-        ArtifactFormat.JVM_CLASS, ArtifactFormat.SPIRV,
-    ))
+    assert darwin.accepted_formats == frozenset(
+        (
+            ArtifactFormat.MACHO,
+            ArtifactFormat.WASM,
+            ArtifactFormat.TEXT,
+            ArtifactFormat.STREAM_PACK,
+            ArtifactFormat.LLVM_BITCODE,
+            ArtifactFormat.JVM_CLASS,
+            ArtifactFormat.SPIRV,
+        )
+    )
 
 
 def test_selector_gates_manifest_generation_debug_and_r12_then_tiebreaks_by_id():
     manifest = "11" * 32
     common = dict(
-        kind=ArtifactKind.WASM, format=ArtifactFormat.WASM,
-        payload=b"\x00asm\x01\x00\x00\x00", architecture="wasm32", channel="wasm",
-        required_features=("simd128",), endianness=Endianness.LITTLE,
-        pointer_bits=32, target_manifest_sha256=manifest, cal_gen=4,
-        priority=3, executable=True, portable=True,
+        kind=ArtifactKind.WASM,
+        format=ArtifactFormat.WASM,
+        payload=b"\x00asm\x01\x00\x00\x00",
+        architecture="wasm32",
+        channel="wasm",
+        required_features=("simd128",),
+        endianness=Endianness.LITTLE,
+        pointer_bits=32,
+        target_manifest_sha256=manifest,
+        cal_gen=4,
+        priority=3,
+        executable=True,
+        portable=True,
     )
-    bundle = ArtifactBundle((
-        ArtifactVariant("a", r12_attested=True, **common),
-        ArtifactVariant("b", r12_attested=True, **common),
-        ArtifactVariant("debug", r12_attested=True, debug=True, priority=99,
-                        **{k: v for k, v in common.items() if k != "priority"}),
-        ArtifactVariant("unattested", r12_attested=False, priority=100,
-                        **{k: v for k, v in common.items() if k != "priority"}),
-    ))
+    bundle = ArtifactBundle(
+        (
+            ArtifactVariant("a", r12_attested=True, **common),
+            ArtifactVariant("b", r12_attested=True, **common),
+            ArtifactVariant(
+                "debug",
+                r12_attested=True,
+                debug=True,
+                priority=99,
+                **{k: v for k, v in common.items() if k != "priority"},
+            ),
+            ArtifactVariant(
+                "unattested",
+                r12_attested=False,
+                priority=100,
+                **{k: v for k, v in common.items() if k != "priority"},
+            ),
+        )
+    )
     envelope = CompatibilityEnvelope(
-        architecture="wasm32", channel="wasm", features=frozenset(("simd128",)),
-        accepted_kinds=frozenset((ArtifactKind.WASM,)), endianness=Endianness.LITTLE,
-        pointer_bits=32, target_manifest_sha256=manifest, cal_gen=4,
+        architecture="wasm32",
+        channel="wasm",
+        features=frozenset(("simd128",)),
+        accepted_kinds=frozenset((ArtifactKind.WASM,)),
+        endianness=Endianness.LITTLE,
+        pointer_bits=32,
+        target_manifest_sha256=manifest,
+        cal_gen=4,
     )
     assert select_variant(bundle, envelope).variant_id == "a"
     for changed in (
-        {"target_manifest_sha256": "22" * 32}, {"cal_gen": 5},
+        {"target_manifest_sha256": "22" * 32},
+        {"cal_gen": 5},
     ):
         values = {**envelope.__dict__, **changed}
         try:
@@ -357,22 +494,34 @@ def test_selector_gates_manifest_generation_debug_and_r12_then_tiebreaks_by_id()
 def test_wire_rejects_header_body_digest_directory_geometry_and_payload_corruption():
     original = encode_bundle(_three_bundle())
     mutations = []
-    blob = bytearray(original); blob[80] ^= 1; mutations.append((bytes(blob), "header CRC"))
-    blob = bytearray(original); blob[-1] ^= 1; mutations.append((bytes(blob), "body CRC"))
-    blob = bytearray(original); blob[84] ^= 1
-    struct.pack_into("<I", blob, 80, 0); struct.pack_into("<I", blob, 80, zlib.crc32(blob[:128]) & 0xFFFFFFFF)
+    blob = bytearray(original)
+    blob[80] ^= 1
+    mutations.append((bytes(blob), "header CRC"))
+    blob = bytearray(original)
+    blob[-1] ^= 1
+    mutations.append((bytes(blob), "body CRC"))
+    blob = bytearray(original)
+    blob[84] ^= 1
+    struct.pack_into("<I", blob, 80, 0)
+    struct.pack_into("<I", blob, 80, zlib.crc32(blob[:128]) & 0xFFFFFFFF)
     mutations.append((bytes(blob), "embedded SHA"))
-    blob = bytearray(original); blob[116] = 1; mutations.append((_reseal(blob), "reserved"))
-    blob = bytearray(original); struct.pack_into("<I", blob, 128 + 52, 1)
+    blob = bytearray(original)
+    blob[116] = 1
     mutations.append((_reseal(blob), "reserved"))
-    blob = bytearray(original); struct.pack_into("<Q", blob, 128 + 16, len(original) - 8)
+    blob = bytearray(original)
+    struct.pack_into("<I", blob, 128 + 52, 1)
+    mutations.append((_reseal(blob), "reserved"))
+    blob = bytearray(original)
+    struct.pack_into("<Q", blob, 128 + 16, len(original) - 8)
     mutations.append((_reseal(blob), "geometry"))
     first_payload = inspect_bundle(original).spans[-3]
     payload_spans = [span for span in inspect_bundle(original).spans if span.kind == "payload"]
     assert payload_spans
-    blob = bytearray(original); blob[payload_spans[0].offset] ^= 1
+    blob = bytearray(original)
+    blob[payload_spans[0].offset] ^= 1
     mutations.append((_reseal(blob), "payload CRC"))
-    blob = bytearray(original); blob[128 + 56] ^= 1
+    blob = bytearray(original)
+    blob[128 + 56] ^= 1
     mutations.append((_reseal(blob), "payload SHA"))
     for malformed, needle in mutations:
         _must_reject(malformed, needle)
@@ -385,15 +534,18 @@ def test_crc_valid_payload_spoof_and_nonzero_padding_are_rejected():
     info = inspect_bundle(original)
     spans = sorted(info.spans, key=lambda span: span.offset)
     padding = next(span for span in spans if span.kind == "padding")
-    blob = bytearray(original); blob[padding.offset] = 1
+    blob = bytearray(original)
+    blob[padding.offset] = 1
     _must_reject(_reseal(blob), "padding")
 
     payload = next(span for span in spans if span.kind == "payload" and span.name == "x86-avx2")
-    blob = bytearray(original); blob[payload.offset:payload.offset + 4] = b"NOPE"
-    entry_index = 2; entry = 128 + entry_index * 448
-    changed = bytes(blob[payload.offset:payload.end])
+    blob = bytearray(original)
+    blob[payload.offset : payload.offset + 4] = b"NOPE"
+    entry_index = 2
+    entry = 128 + entry_index * 448
+    changed = bytes(blob[payload.offset : payload.end])
     struct.pack_into("<I", blob, entry + 48, zlib.crc32(changed) & 0xFFFFFFFF)
-    blob[entry + 56:entry + 88] = hashlib.sha256(changed).digest()
+    blob[entry + 56 : entry + 88] = hashlib.sha256(changed).digest()
     _must_reject(_reseal(blob), "ELF")
 
     blob = bytearray(original)
@@ -404,7 +556,8 @@ def test_crc_valid_payload_spoof_and_nonzero_padding_are_rejected():
 
 
 def test_atomic_file_io_listing_hexdump_selection_and_extraction_cli():
-    bundle = _three_bundle(); data = encode_bundle(bundle)
+    bundle = _three_bundle()
+    data = encode_bundle(bundle)
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "sample.bcab"
         write_bundle(path, bundle)
@@ -472,11 +625,17 @@ def test_builder_wraps_real_backend_types_and_preserves_explicit_skips():
     builder.add_stack_program("stack", stackify(BinOp("add", Const(2), Const(3))))
     report = builder.finish(default_variant_id="c-source")
     assert report.skipped == (("target-spirv64", "backend unavailable"),)
-    assert {variant.kind for variant in report.bundle.variants}.issuperset({
-        ArtifactKind.ELF_OBJECT, ArtifactKind.WASM, ArtifactKind.JVM_CLASS,
-        ArtifactKind.CIL, ArtifactKind.SYCL_SOURCE,
-        ArtifactKind.ARCHIVE, ArtifactKind.RAW_BINARY,
-    })
+    assert {variant.kind for variant in report.bundle.variants}.issuperset(
+        {
+            ArtifactKind.ELF_OBJECT,
+            ArtifactKind.WASM,
+            ArtifactKind.JVM_CLASS,
+            ArtifactKind.CIL,
+            ArtifactKind.SYCL_SOURCE,
+            ArtifactKind.ARCHIVE,
+            ArtifactKind.RAW_BINARY,
+        }
+    )
     assert decode_bundle(encode_bundle(report.bundle)) == report.bundle
     try:
         builder.add_linked_image("bad-shared", _elf(elf_type=2), shared=True)
@@ -505,8 +664,7 @@ def test_native_object_builder_recognizes_big_endian_macho64():
 def test_jvm_class_backend_rejects_bad_stack_and_produces_real_class_shape():
     payload = build_jvm_class("BcirKernel", ("ldc 1.0f", "ldc 2.0f", "fadd"))
     assert payload[:4] == b"\xca\xfe\xba\xbe" and len(payload) > 100
-    for name, program in (("bad/name", ("ldc 1.0f",)),
-                          ("Good", ("fadd",)), ("Good", ("unknown",))):
+    for name, program in (("bad/name", ("ldc 1.0f",)), ("Good", ("fadd",)), ("Good", ("unknown",))):
         try:
             build_jvm_class(name, program)
             assert False, (name, program)
@@ -520,10 +678,11 @@ def test_jvm_class_backend_rejects_bad_stack_and_produces_real_class_shape():
 
 
 def test_mlir_lowering_carries_verified_directory_and_content_address():
-    bundle = _three_bundle(); envelope = _host_envelope()
+    bundle = _three_bundle()
+    envelope = _host_envelope()
     text = bundle_to_mlir(bundle, symbol_name="release_bundle")
     assert "bcir.artifact.bundle @release_bundle" in text
-    assert "bcir.artifact.variant @\"00-root\"" in text
+    assert 'bcir.artifact.variant @"00-root"' in text
     assert 'kind = "elf_object", format = "elf"' in text
     assert 'provenance_digest = "0000000000000000"' in text
     assert hashlib.sha256(encode_bundle(bundle)).hexdigest() in text
@@ -544,13 +703,25 @@ def test_c_freestanding_reader_and_selector_match_python():
         write_bundle(bundle, _three_bundle())
         executable = Path(directory) / ("test.exe" if compiler.lower().endswith(".exe") else "test")
         command = [
-            compiler, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", str(c),
-            str(c / "bcir_artifact_bundle.c"), str(c / "bcir_runtime.c"),
-            str(c / "test_artifact_bundle.c"), "-o", str(executable),
+            compiler,
+            "-std=c11",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-I",
+            str(c),
+            str(c / "bcir_artifact_bundle.c"),
+            str(c / "bcir_runtime.c"),
+            str(c / "test_artifact_bundle.c"),
+            "-o",
+            str(executable),
         ]
         build = subprocess.run(command, capture_output=True, text=True, timeout=60)
         assert build.returncode == 0, build.stderr
-        run = subprocess.run([str(executable), str(bundle)], capture_output=True, text=True, timeout=30)
+        run = subprocess.run(
+            [str(executable), str(bundle)], capture_output=True, text=True, timeout=30
+        )
         assert run.returncode == 0, run.stderr
         assert run.stdout.startswith("OK entries=3")
         malformed = bytearray(bundle.read_bytes())
@@ -559,7 +730,9 @@ def test_c_freestanding_reader_and_selector_match_python():
         malformed_path.write_bytes(_reseal(malformed))
         rejected = subprocess.run(
             [str(executable), str(malformed_path), "reject"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         assert rejected.returncode == 0, rejected.stderr
         assert rejected.stdout.startswith("REJECT metadata")
@@ -567,7 +740,9 @@ def test_c_freestanding_reader_and_selector_match_python():
         semantic_path.write_bytes(_semantic_streampack_spoof())
         rejected = subprocess.run(
             [str(executable), str(semantic_path), "reject"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         assert rejected.returncode == 0, rejected.stderr
         assert rejected.stdout.startswith("REJECT payload")
@@ -580,16 +755,23 @@ def test_resident_compiler_and_linker_products_roundtrip_when_available():
     with tempfile.TemporaryDirectory() as directory:
         source = Path(directory) / "kernel.c"
         image = Path(directory) / ("kernel.exe" if compiler.lower().endswith(".exe") else "kernel")
-        source.write_text("int bcir_kernel(void){return 7;} int main(void){return bcir_kernel()!=7;}\n")
+        source.write_text(
+            "int bcir_kernel(void){return 7;} int main(void){return bcir_kernel()!=7;}\n"
+        )
         build = subprocess.run(
-            [compiler, str(source), "-o", str(image)], capture_output=True, text=True, timeout=60,
+            [compiler, str(source), "-o", str(image)],
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         if build.returncode:
             return  # cross/minimal compilers can compile objects but lack a host linker
         payload = image.read_bytes()
         builder = ArtifactBundleBuilder(provenance_digest=11)
         builder.add_linked_image(
-            "host-linked", payload, triple="x86_64-unknown-linux-gnu",
+            "host-linked",
+            payload,
+            triple="x86_64-unknown-linux-gnu",
             entry_symbol="bcir_kernel",
         )
         bundle = builder.finish(default_variant_id="host-linked").bundle

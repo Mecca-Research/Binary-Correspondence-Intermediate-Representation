@@ -96,5 +96,10 @@ def run_bounded(
         stdout, stdout_truncated = _bounded_text(stdout_path, max_output_bytes)
         stderr, stderr_truncated = _bounded_text(stderr_path, max_output_bytes)
         return ProcessResult(
-            list(command), returncode, stdout, stderr, timed_out, stdout_truncated or stderr_truncated
+            list(command),
+            returncode,
+            stdout,
+            stderr,
+            timed_out,
+            stdout_truncated or stderr_truncated,
         )

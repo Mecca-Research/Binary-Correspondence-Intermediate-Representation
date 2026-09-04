@@ -35,9 +35,20 @@ def _out_of_order_module():
     m = Module(name="ooo")
     for rid in range(1, 10):
         m.add_resource(Resource(rid=rid, domain=Domain.RAM, shape=(1024,)))
-    claims = [Claim(id=i, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                    count=1024, rd=(1, 2), wr=(3,), op="vector.add", domain=Domain.RAM)
-              for i in (30, 10, 20)]
+    claims = [
+        Claim(
+            id=i,
+            opcode=Opcode.ADD,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=1024,
+            rd=(1, 2),
+            wr=(3,),
+            op="vector.add",
+            domain=Domain.RAM,
+        )
+        for i in (30, 10, 20)
+    ]
     m.add_phase(Phase(phase_id=0, deps=(), claims=claims))
     return m
 
@@ -47,11 +58,24 @@ def _build_harness(tmp):
     if cc is None:
         return None
     exe = os.path.join(tmp, "test_exec")
-    r = subprocess.run([cc, "-std=c23", "-O2", "-Wall", "-Wextra", "-I", _RUNTIME_C,
-                        os.path.join(_RUNTIME_C, "bcir_exec.c"),
-                        os.path.join(_RUNTIME_C, "bcir_runtime.c"),
-                        os.path.join(_RUNTIME_C, "test_exec.c"), "-o", exe],
-                       capture_output=True, text=True)
+    r = subprocess.run(
+        [
+            cc,
+            "-std=c23",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-I",
+            _RUNTIME_C,
+            os.path.join(_RUNTIME_C, "bcir_exec.c"),
+            os.path.join(_RUNTIME_C, "bcir_runtime.c"),
+            os.path.join(_RUNTIME_C, "test_exec.c"),
+            "-o",
+            exe,
+        ],
+        capture_output=True,
+        text=True,
+    )
     assert r.returncode == 0, r.stderr
     return exe
 
@@ -77,10 +101,24 @@ def test_c_executor_builds_freestanding():
     if cc is None:
         return
     for std in ("c11", "c23"):
-        r = subprocess.run([cc, "-ffreestanding", "-nostdlib", f"-std={std}", "-Wall",
-                            "-Wextra", "-I", _RUNTIME_C, "-c",
-                            os.path.join(_RUNTIME_C, "bcir_exec.c"), "-o", os.devnull],
-                           capture_output=True, text=True)
+        r = subprocess.run(
+            [
+                cc,
+                "-ffreestanding",
+                "-nostdlib",
+                f"-std={std}",
+                "-Wall",
+                "-Wextra",
+                "-I",
+                _RUNTIME_C,
+                "-c",
+                os.path.join(_RUNTIME_C, "bcir_exec.c"),
+                "-o",
+                os.devnull,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert r.returncode == 0, f"{std}: {r.stderr}"
 
 
@@ -90,8 +128,10 @@ def test_dispatch_order_and_telemetry_match_gem_execute():
     if _cc() is None:
         return
     mods = {
-        "vector_add": vector_add(), "multi_histogram": multi_histogram(),
-        "matmul_tiled": matmul_tiled(), "scan": scan(),
+        "vector_add": vector_add(),
+        "multi_histogram": multi_histogram(),
+        "matmul_tiled": matmul_tiled(),
+        "scan": scan(),
         "out_of_order": _out_of_order_module(),
     }
     with tempfile.TemporaryDirectory() as tmp:
@@ -113,8 +153,7 @@ def test_intra_phase_sort_is_by_claim_id():
         return
     with tempfile.TemporaryDirectory() as tmp:
         exe = _build_harness(tmp)
-        pack = encode(hydrate(_out_of_order_module(),
-                              optimize(_out_of_order_module(), AVX, COOL)))
+        pack = encode(hydrate(_out_of_order_module(), optimize(_out_of_order_module(), AVX, COOL)))
         order, phases = _run(exe, tmp, pack)
         assert order == [10, 20, 30]
         assert phases == [(0, 3, 3)]

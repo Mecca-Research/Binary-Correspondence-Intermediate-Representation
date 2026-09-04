@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Bounded from-random-weights -> Safetensors -> BCIRQ8 -> standalone-C gate."""
+
 from __future__ import annotations
 
 import argparse
@@ -36,8 +37,7 @@ from bcir.frontends.models.weights_io import read_q8_decoder, write_q8_decoder
 from bcir.hosted.models.checkpoint import load_safe_checkpoint
 from bcir.hosted.models.export import export_hf_checkpoint, sha256_file
 from bcir.hosted.models.model import HostedLlama
-from bcir.hosted.models.spec import (CorpusManifest, HostedTrainSpec,
-                                     SequenceTokenSource)
+from bcir.hosted.models.spec import CorpusManifest, HostedTrainSpec, SequenceTokenSource
 from bcir.hosted.models.train import train_hosted
 from bcir.frontends.models.decode import DecoderSpec
 
@@ -59,48 +59,93 @@ def _write_byte_tokenizer(path: Path) -> None:
             {"content": "</s>", "id": 258, "special": True},
             {"content": "<pad>", "id": 259, "special": True},
         ],
-        "model": {"type": "BPE", "vocab": {alphabet[byte]: byte for byte in range(256)},
-                  "merges": []},
+        "model": {
+            "type": "BPE",
+            "vocab": {alphabet[byte]: byte for byte in range(256)},
+            "merges": [],
+        },
     }
-    path.write_text(json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n",
-                    encoding="utf-8")
+    path.write_text(
+        json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8"
+    )
 
 
 def _spec() -> HostedTrainSpec:
     return HostedTrainSpec(
-        decoder=DecoderSpec(vocab_size=260, d_model=64, n_heads=4, n_layers=2,
-                            d_ff=128, activation="silu_gate", n_kv_heads=2,
-                            tied_embeddings=True, rms_norm_eps=1e-6),
-        context_length=16, batch_size=4, gradient_accumulation=1,
-        steps=64, checkpoint_every=32, optimizer="adamw",
-        learning_rate=3e-3, min_learning_rate=0.0, warmup_steps=4,
-        beta1=0.9, beta2=0.95, epsilon=1e-8, weight_decay=0.0,
-        grad_clip=1.0, seed=1729, dtype="float32",
-        activation_checkpointing=False)
+        decoder=DecoderSpec(
+            vocab_size=260,
+            d_model=64,
+            n_heads=4,
+            n_layers=2,
+            d_ff=128,
+            activation="silu_gate",
+            n_kv_heads=2,
+            tied_embeddings=True,
+            rms_norm_eps=1e-6,
+        ),
+        context_length=16,
+        batch_size=4,
+        gradient_accumulation=1,
+        steps=64,
+        checkpoint_every=32,
+        optimizer="adamw",
+        learning_rate=3e-3,
+        min_learning_rate=0.0,
+        warmup_steps=4,
+        beta1=0.9,
+        beta2=0.95,
+        epsilon=1e-8,
+        weight_decay=0.0,
+        grad_clip=1.0,
+        seed=1729,
+        dtype="float32",
+        activation_checkpointing=False,
+    )
 
 
 def _optimizer(model: HostedLlama, spec: HostedTrainSpec):
-    return torch.optim.AdamW(model.parameters(), lr=spec.learning_rate,
-                             betas=(spec.beta1, spec.beta2), eps=spec.epsilon,
-                             weight_decay=spec.weight_decay, amsgrad=False)
+    return torch.optim.AdamW(
+        model.parameters(),
+        lr=spec.learning_rate,
+        betas=(spec.beta1, spec.beta2),
+        eps=spec.epsilon,
+        weight_decay=spec.weight_decay,
+        amsgrad=False,
+    )
 
 
 def _host_link_args() -> list[str]:
     from bcir.toolchain import host_link_args
+
     return list(host_link_args(["-lm"]))
 
 
 def _build_c_cli(output: Path) -> None:
-    compiler = os.environ.get("CC") or shutil.which("clang") or shutil.which("cc") \
-        or shutil.which("gcc")
+    compiler = (
+        os.environ.get("CC") or shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+    )
     if not compiler:
         raise RuntimeError("hosted model gate requires a C11 compiler")
     runtime = ROOT / "runtime" / "c"
-    command = [compiler, "-std=c11", "-O2", "-ffp-contract=off", "-Wall", "-Wextra",
-               "-Werror", "-I", str(runtime), str(runtime / "bcir_q8_model.c"),
-               str(runtime / "bcir_decode.c"), str(runtime / "bcir_ai_kernels.c"),
-               str(runtime / "bcir_llama.c"),
-               str(runtime / "bcir_llama_cli.c"), "-o", str(output), *_host_link_args()]
+    command = [
+        compiler,
+        "-std=c11",
+        "-O2",
+        "-ffp-contract=off",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-I",
+        str(runtime),
+        str(runtime / "bcir_q8_model.c"),
+        str(runtime / "bcir_decode.c"),
+        str(runtime / "bcir_ai_kernels.c"),
+        str(runtime / "bcir_llama.c"),
+        str(runtime / "bcir_llama_cli.c"),
+        "-o",
+        str(output),
+        *_host_link_args(),
+    ]
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError(f"standalone C build failed:\n{result.stderr}")
@@ -134,33 +179,56 @@ def run_gate(output_dir: os.PathLike | str) -> dict:
     token_ids = tokenizer.encode(pattern * 1024)
     source_raw = bytes(token_ids)
     corpus = CorpusManifest(
-        name="bcir-next-byte-micro-v1", revision="generated-v1", split="train",
+        name="bcir-next-byte-micro-v1",
+        revision="generated-v1",
+        split="train",
         license="LicenseRef-BCIR-NC-1.0",
         source_sha256=hashlib.sha256(source_raw).hexdigest(),
-        tokenizer_sha256=sha256_file(tokenizer_path), token_count=len(token_ids),
-        vocab_size=260, bos_token_id=257, eos_token_id=258, pad_token_id=259)
+        tokenizer_sha256=sha256_file(tokenizer_path),
+        token_count=len(token_ids),
+        vocab_size=260,
+        bos_token_id=257,
+        eos_token_id=258,
+        pad_token_id=259,
+    )
     source = SequenceTokenSource(token_ids, corpus)
     spec = _spec()
 
     telemetry_path = output / "training-telemetry.jsonl"
     with telemetry_path.open("w", encoding="utf-8", newline="\n") as telemetry:
+
         def sink(event):
-            telemetry.write(json.dumps(event.to_dict(), sort_keys=True,
-                                       separators=(",", ":")) + "\n")
+            telemetry.write(
+                json.dumps(event.to_dict(), sort_keys=True, separators=(",", ":")) + "\n"
+            )
+
         full = train_hosted(spec, source, output / "training-full", telemetry_sink=sink)
     telemetry_rows = [json.loads(line) for line in telemetry_path.read_text("utf-8").splitlines()]
-    if len(telemetry_rows) != spec.steps \
-            or [row["step"] for row in telemetry_rows] != list(range(1, spec.steps + 1)) \
-            or telemetry_rows[-1]["tokens_processed"] != full.tokens_processed \
-            or any(not math.isfinite(row[field]) for row in telemetry_rows
-                   for field in ("loss", "learning_rate", "grad_norm")):
+    if (
+        len(telemetry_rows) != spec.steps
+        or [row["step"] for row in telemetry_rows] != list(range(1, spec.steps + 1))
+        or telemetry_rows[-1]["tokens_processed"] != full.tokens_processed
+        or any(
+            not math.isfinite(row[field])
+            for row in telemetry_rows
+            for field in ("loss", "learning_rate", "grad_norm")
+        )
+    ):
         raise AssertionError("hosted telemetry is incomplete, unordered, or non-finite")
     step32 = sorted((output / "training-full" / "checkpoints").glob("step-00000032-*"))
     if len(step32) != 1:
         raise AssertionError("the micro run did not publish exactly one step-32 checkpoint")
     resumed = train_hosted(spec, source, output / "training-resumed", resume_from=step32[0])
-    identity_fields = ("steps", "batch_index", "tokens_processed", "initial_loss", "final_loss",
-                       "model_sha256", "optimizer_sha256", "checkpoint_sha256")
+    identity_fields = (
+        "steps",
+        "batch_index",
+        "tokens_processed",
+        "initial_loss",
+        "final_loss",
+        "model_sha256",
+        "optimizer_sha256",
+        "checkpoint_sha256",
+    )
     if any(getattr(full, name) != getattr(resumed, name) for name in identity_fields):
         raise AssertionError("uninterrupted and resumed hosted runs are not identical")
     if not full.final_loss < full.initial_loss:
@@ -169,13 +237,20 @@ def run_gate(output_dir: os.PathLike | str) -> dict:
     torch.manual_seed(spec.seed)
     model = HostedLlama(spec.decoder, context_length=spec.context_length)
     optimizer = _optimizer(model, spec)
-    load_safe_checkpoint(output / "training-full", model, optimizer, spec=spec,
-                         corpus=corpus, device=torch.device("cpu"))
-    export = export_hf_checkpoint(model, output / "inference", tokenizer_path=tokenizer_path,
-                                  corpus_manifest=corpus)
-    repeat = export_hf_checkpoint(model, output / "inference-repeat",
-                                  tokenizer_path=tokenizer_path,
-                                  corpus_manifest=corpus)
+    load_safe_checkpoint(
+        output / "training-full",
+        model,
+        optimizer,
+        spec=spec,
+        corpus=corpus,
+        device=torch.device("cpu"),
+    )
+    export = export_hf_checkpoint(
+        model, output / "inference", tokenizer_path=tokenizer_path, corpus_manifest=corpus
+    )
+    repeat = export_hf_checkpoint(
+        model, output / "inference-repeat", tokenizer_path=tokenizer_path, corpus_manifest=corpus
+    )
     _same_export(export.directory, repeat.directory)
 
     decoder_spec, weights, ingest_report = ingest_checkpoint_with_report(str(export.directory))
@@ -193,58 +268,97 @@ def run_gate(output_dir: os.PathLike | str) -> dict:
     if _argmax(hosted_logits) != expected_id or float_id != expected_id:
         raise AssertionError("trained float model did not learn prompt 'abc' -> token 'd'")
 
-    hashes = {"model": export.model_sha256, "config": export.config_sha256,
-              "tokenizer": export.tokenizer_sha256}
-    tokenizer_ids = {"bos": corpus.bos_token_id, "eos": corpus.eos_token_id,
-                     "pad": corpus.pad_token_id, "context_length": spec.context_length}
+    hashes = {
+        "model": export.model_sha256,
+        "config": export.config_sha256,
+        "tokenizer": export.tokenizer_sha256,
+    }
+    tokenizer_ids = {
+        "bos": corpus.bos_token_id,
+        "eos": corpus.eos_token_id,
+        "pad": corpus.pad_token_id,
+        "context_length": spec.context_length,
+    }
     artifact = output / "bcir-micro.bcirq8"
     artifact_repeat = output / "bcir-micro-repeat.bcirq8"
-    metadata = write_q8_decoder(artifact, decoder_spec, weights, group_size=32,
-                                source_hashes=hashes, tokenizer_ids=tokenizer_ids)
-    metadata_repeat = write_q8_decoder(artifact_repeat, decoder_spec, weights, group_size=32,
-                                       source_hashes=hashes, tokenizer_ids=tokenizer_ids)
-    if metadata.artifact_sha256 != metadata_repeat.artifact_sha256 \
-            or artifact.read_bytes() != artifact_repeat.read_bytes():
+    metadata = write_q8_decoder(
+        artifact,
+        decoder_spec,
+        weights,
+        group_size=32,
+        source_hashes=hashes,
+        tokenizer_ids=tokenizer_ids,
+    )
+    metadata_repeat = write_q8_decoder(
+        artifact_repeat,
+        decoder_spec,
+        weights,
+        group_size=32,
+        source_hashes=hashes,
+        tokenizer_ids=tokenizer_ids,
+    )
+    if (
+        metadata.artifact_sha256 != metadata_repeat.artifact_sha256
+        or artifact.read_bytes() != artifact_repeat.read_bytes()
+    ):
         raise AssertionError("micro BCIRQ8 export is not deterministic")
 
     # Assess the trained asset from its bounded Safetensors header.  These fixed
     # calibration rows are a portable CI fixture, not measurements of the host.
     config = json.loads((export.directory / "config.json").read_text("utf-8"))
-    inventory = build_tensor_inventory(
-        [str(export.directory / "model.safetensors")], config)
+    inventory = build_tensor_inventory([str(export.directory / "model.safetensors")], config)
     if inventory.parameter_count != ingest_report.decoder_element_count:
         raise AssertionError("header-only inventory disagrees with strict checkpoint ingestion")
-    bank = BankEnvelope(
-        "ram", "RAM", "host", 1 << 30, 1 << 30,
-        20_000_000_000, 20_000_000_000)
+    bank = BankEnvelope("ram", "RAM", "host", 1 << 30, 1 << 30, 20_000_000_000, 20_000_000_000)
     benchmarks = tuple(
-        KernelBenchmark(operation, "host", weight_format,
-                        median - 100, median, median + 100,
-                        tokens, 1_000_000, max(1, inventory.payload_bytes),
-                        1 << 20, 5)
+        KernelBenchmark(
+            operation,
+            "host",
+            weight_format,
+            median - 100,
+            median,
+            median + 100,
+            tokens,
+            1_000_000,
+            max(1, inventory.payload_bytes),
+            1 << 20,
+            5,
+        )
         for weight_format, scale in (("source", 2), ("bcirq8-group32", 1))
-        for operation, tokens, median in (("prefill", len(prompt_ids), 2000 * scale),
-                                          ("decode", 1, 1000 * scale)))
+        for operation, tokens, median in (
+            ("prefill", len(prompt_ids), 2000 * scale),
+            ("decode", 1, 1000 * scale),
+        )
+    )
     hardware = HardwareEnvelope(
-        "hosted-model-gate-synthetic", "portable-ci-reference", (bank,), (), benchmarks)
+        "hosted-model-gate-synthetic", "portable-ci-reference", (bank,), (), benchmarks
+    )
     workload = ModelWorkloadSpec(
-        mode="inference", batch_size=1, sessions=1,
-        prompt_tokens=len(prompt_ids), context_tokens=spec.context_length,
-        max_new_tokens=1, activation_dtype="f32", kv_dtype="f32",
-        gradient_dtype="f32", optimizer="none", lora_rank=0,
-        checkpoint_segments=1, formats=("source", "bcirq8-group32"))
+        mode="inference",
+        batch_size=1,
+        sessions=1,
+        prompt_tokens=len(prompt_ids),
+        context_tokens=spec.context_length,
+        max_new_tokens=1,
+        activation_dtype="f32",
+        kv_dtype="f32",
+        gradient_dtype="f32",
+        optimizer="none",
+        lora_rank=0,
+        checkpoint_segments=1,
+        formats=("source", "bcirq8-group32"),
+    )
     cost_report = assess_model(inventory, hardware, workload)
     selected = select_execution_candidate(cost_report)
     if selected.weight_format != "bcirq8-group32" or selected.classification != "quantized":
         raise AssertionError("synthetic model assessment did not select the Q8 resident plan")
-    predicted_q8 = next(row for row in cost_report.formats
-                        if row.name == "bcirq8-group32")
+    predicted_q8 = next(row for row in cost_report.formats if row.name == "bcirq8-group32")
     if predicted_q8.file_bytes != artifact.stat().st_size:
         raise AssertionError("header-only BCIRQ8 size prediction disagrees with export")
-    lowered = lower_model_execution(
-        cost_report, selected, inventory, hardware, workload)
-    if lowered.artifact.classification != "quantized" \
-            or lowered.artifact.streampack_bytes != len(lowered.streampack_data):
+    lowered = lower_model_execution(cost_report, selected, inventory, hardware, workload)
+    if lowered.artifact.classification != "quantized" or lowered.artifact.streampack_bytes != len(
+        lowered.streampack_data
+    ):
         raise AssertionError("quantized model execution plan did not reconcile")
 
     q8_spec, q8_weights, read_metadata = read_q8_decoder(artifact)
@@ -259,9 +373,20 @@ def run_gate(output_dir: os.PathLike | str) -> dict:
     logits_path = output / "c-logits.f64"
     _build_c_cli(executable)
     result = subprocess.run(
-        [str(executable), "--model", str(artifact), "--prompt-ids",
-         ",".join(map(str, prompt_ids)), "--max-new", "1", "--logits-out", str(logits_path)],
-        capture_output=True, text=True)
+        [
+            str(executable),
+            "--model",
+            str(artifact),
+            "--prompt-ids",
+            ",".join(map(str, prompt_ids)),
+            "--max-new",
+            "1",
+            "--logits-out",
+            str(logits_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
     if result.returncode:
         raise RuntimeError(f"standalone C inference failed:\n{result.stderr}")
     c_ids = [int(value) for value in json.loads(result.stdout)["generated_ids"]]
@@ -288,35 +413,57 @@ def run_gate(output_dir: os.PathLike | str) -> dict:
             "selected_candidate": selected.candidate_id,
             "streampack_bytes": len(lowered.streampack_data),
         },
-        "artifact": {"bytes": metadata.file_size, "group_size": metadata.group_size,
-                     "sha256": metadata.artifact_sha256},
+        "artifact": {
+            "bytes": metadata.file_size,
+            "group_size": metadata.group_size,
+            "sha256": metadata.artifact_sha256,
+        },
         "corpus": corpus.to_dict(),
-        "decode": {"expected_id": expected_id, "float_id": float_id,
-                   "q8_python_id": q8_id, "q8_c_ids": c_ids,
-                   "max_abs_logit_error_host_vs_bcir": max_host_error,
-                   "max_abs_logit_error_c_vs_q8": max_c_error,
-                   "max_abs_logit_drift_q8_vs_float": max(
-                       abs(left - right) for left, right in zip(float_logits, q8_logits)),
-                   "prompt": "abc", "prompt_ids": prompt_ids},
-        "export": {"config_sha256": export.config_sha256,
-                   "manifest_sha256": export.artifact_manifest_sha256,
-                   "model_sha256": export.model_sha256,
-                   "tokenizer_sha256": export.tokenizer_sha256},
-        "model": {"decoder_elements": ingest_report.decoder_element_count,
-                  "d_ff": decoder_spec.d_ff, "d_model": decoder_spec.d_model,
-                  "n_heads": decoder_spec.n_heads, "n_kv_heads": decoder_spec.kv_heads,
-                  "n_layers": decoder_spec.n_layers, "tied_embeddings": True,
-                  "vocab_size": decoder_spec.vocab_size},
-        "training": {"batch_index": full.batch_index, "final_loss": full.final_loss,
-                     "initial_loss": full.initial_loss, "model_sha256": full.model_sha256,
-                     "optimizer_sha256": full.optimizer_sha256,
-                     "resume_exact": True, "steps": full.steps,
-                     "telemetry_sha256": sha256_file(telemetry_path),
-                     "tokens_processed": full.tokens_processed},
+        "decode": {
+            "expected_id": expected_id,
+            "float_id": float_id,
+            "q8_python_id": q8_id,
+            "q8_c_ids": c_ids,
+            "max_abs_logit_error_host_vs_bcir": max_host_error,
+            "max_abs_logit_error_c_vs_q8": max_c_error,
+            "max_abs_logit_drift_q8_vs_float": max(
+                abs(left - right) for left, right in zip(float_logits, q8_logits)
+            ),
+            "prompt": "abc",
+            "prompt_ids": prompt_ids,
+        },
+        "export": {
+            "config_sha256": export.config_sha256,
+            "manifest_sha256": export.artifact_manifest_sha256,
+            "model_sha256": export.model_sha256,
+            "tokenizer_sha256": export.tokenizer_sha256,
+        },
+        "model": {
+            "decoder_elements": ingest_report.decoder_element_count,
+            "d_ff": decoder_spec.d_ff,
+            "d_model": decoder_spec.d_model,
+            "n_heads": decoder_spec.n_heads,
+            "n_kv_heads": decoder_spec.kv_heads,
+            "n_layers": decoder_spec.n_layers,
+            "tied_embeddings": True,
+            "vocab_size": decoder_spec.vocab_size,
+        },
+        "training": {
+            "batch_index": full.batch_index,
+            "final_loss": full.final_loss,
+            "initial_loss": full.initial_loss,
+            "model_sha256": full.model_sha256,
+            "optimizer_sha256": full.optimizer_sha256,
+            "resume_exact": True,
+            "steps": full.steps,
+            "telemetry_sha256": sha256_file(telemetry_path),
+            "tokens_processed": full.tokens_processed,
+        },
         "passed": True,
     }
     (output / "parity-report.json").write_text(
-        json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+        json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8"
+    )
     return report
 
 
@@ -325,9 +472,15 @@ def main() -> int:
     parser.add_argument("--output-dir", default=str(ROOT / "build" / "hosted-model-gate"))
     args = parser.parse_args()
     report = run_gate(args.output_dir)
-    print(json.dumps({"passed": report["passed"],
-                      "report": str(Path(args.output_dir) / "parity-report.json")},
-                     sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "passed": report["passed"],
+                "report": str(Path(args.output_dir) / "parity-report.json"),
+            },
+            sort_keys=True,
+        )
+    )
     return 0
 
 

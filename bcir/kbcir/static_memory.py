@@ -46,15 +46,22 @@ def _integer(value, field: str, *, minimum: int = 0) -> int:
 
 
 def _name(value, field: str) -> str:
-    if (not isinstance(value, str) or not value or len(value.encode("utf-8")) > 4096
-            or any(ord(character) < 0x20 for character in value)):
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value.encode("utf-8")) > 4096
+        or any(ord(character) < 0x20 for character in value)
+    ):
         raise ValueError(f"{field} must be a bounded, control-free string")
     return value
 
 
 def _digest(value, field: str) -> str:
-    if (not isinstance(value, str) or len(value) != 64
-            or any(character not in "0123456789abcdef" for character in value)):
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
         raise ValueError(f"{field} must be lowercase SHA-256")
     return value
 
@@ -90,8 +97,7 @@ def _release_interval(free: list[tuple[int, int]], start: int, end: int) -> None
     free.insert(index, (start, end))
 
 
-def _take_first_fit(free: list[tuple[int, int]], size: int,
-                    alignment: int) -> int | None:
+def _take_first_fit(free: list[tuple[int, int]], size: int, alignment: int) -> int | None:
     """Consume the lowest aligned free span that fits, preserving its fragments."""
     for index, (start, end) in enumerate(free):
         offset = _align(start, alignment)
@@ -103,7 +109,7 @@ def _take_first_fit(free: list[tuple[int, int]], size: int,
             replacement.append((start, offset))
         if allocation_end < end:
             replacement.append((allocation_end, end))
-        free[index:index + 1] = replacement
+        free[index : index + 1] = replacement
         return offset
     return None
 
@@ -132,8 +138,11 @@ class StaticAllocation:
         _integer(self.rid, "allocation rid", minimum=1)
         _name(self.bank, "allocation bank")
         for field in ("offset", "size_bytes", "alignment", "first_phase", "last_phase"):
-            _integer(getattr(self, field), f"allocation {field}",
-                     minimum=1 if field in ("size_bytes", "alignment") else 0)
+            _integer(
+                getattr(self, field),
+                f"allocation {field}",
+                minimum=1 if field in ("size_bytes", "alignment") else 0,
+            )
         if self.alignment & (self.alignment - 1):
             raise ValueError("allocation alignment must be a power of two")
         if self.offset % self.alignment:
@@ -181,13 +190,19 @@ class StaticMemoryPlan:
             raise ValueError("unsupported static memory plan schema")
         _digest(self.module_digest, "static plan module_digest")
         _digest(self.hardware_digest, "static plan hardware_digest")
-        if (not isinstance(self.allocations, tuple) or not self.allocations
-                or len(self.allocations) > _MAX_RESOURCES
-                or any(not isinstance(row, StaticAllocation) for row in self.allocations)):
+        if (
+            not isinstance(self.allocations, tuple)
+            or not self.allocations
+            or len(self.allocations) > _MAX_RESOURCES
+            or any(not isinstance(row, StaticAllocation) for row in self.allocations)
+        ):
             raise ValueError("static memory plan needs a bounded allocation tuple")
-        if (not isinstance(self.banks, tuple) or not self.banks
-                or len(self.banks) > _MAX_BANKS
-                or any(not isinstance(row, BankMemoryPlan) for row in self.banks)):
+        if (
+            not isinstance(self.banks, tuple)
+            or not self.banks
+            or len(self.banks) > _MAX_BANKS
+            or any(not isinstance(row, BankMemoryPlan) for row in self.banks)
+        ):
             raise ValueError("static memory plan needs typed bank summaries")
         if len({row.rid for row in self.allocations}) != len(self.allocations):
             raise ValueError("static memory plan has duplicate resource allocations")
@@ -199,10 +214,13 @@ class StaticMemoryPlan:
             raise ValueError("static memory bank summaries must be sorted by name")
 
     def to_dict(self) -> dict:
-        return {"schema": self.schema, "module_digest": self.module_digest,
-                "hardware_digest": self.hardware_digest,
-                "allocations": [asdict(row) for row in self.allocations],
-                "banks": [asdict(row) for row in self.banks]}
+        return {
+            "schema": self.schema,
+            "module_digest": self.module_digest,
+            "hardware_digest": self.hardware_digest,
+            "allocations": [asdict(row) for row in self.allocations],
+            "banks": [asdict(row) for row in self.banks],
+        }
 
     def to_json(self) -> str:
         return _canonical(self.to_dict())
@@ -217,10 +235,14 @@ class StaticMemoryPlan:
         expected = {"schema", "module_digest", "hardware_digest", "allocations", "banks"}
         if not isinstance(doc, dict) or set(doc) != expected:
             raise ValueError("static memory plan has missing or unknown fields")
-        if (not isinstance(doc["allocations"], list) or not doc["allocations"]
-                or len(doc["allocations"]) > _MAX_RESOURCES
-                or not isinstance(doc["banks"], list) or not doc["banks"]
-                or len(doc["banks"]) > _MAX_BANKS):
+        if (
+            not isinstance(doc["allocations"], list)
+            or not doc["allocations"]
+            or len(doc["allocations"]) > _MAX_RESOURCES
+            or not isinstance(doc["banks"], list)
+            or not doc["banks"]
+            or len(doc["banks"]) > _MAX_BANKS
+        ):
             raise ValueError("static memory plan arrays are empty, malformed, or unbounded")
         try:
             allocations = tuple(StaticAllocation(**row) for row in doc.pop("allocations"))
@@ -252,8 +274,15 @@ class _RangeMaximum:
         self.maximum = [0] * (4 * size)
         self.lazy = [0] * (4 * size)
 
-    def add(self, left: int, right: int, delta: int, node: int = 1,
-            low: int = 0, high: int | None = None) -> None:
+    def add(
+        self,
+        left: int,
+        right: int,
+        delta: int,
+        node: int = 1,
+        low: int = 0,
+        high: int | None = None,
+    ) -> None:
         if high is None:
             high = self.size - 1
         if right < low or high < left:
@@ -266,10 +295,12 @@ class _RangeMaximum:
         self.add(left, right, delta, node * 2, low, middle)
         self.add(left, right, delta, node * 2 + 1, middle + 1, high)
         self.maximum[node] = self.lazy[node] + max(
-            self.maximum[node * 2], self.maximum[node * 2 + 1])
+            self.maximum[node * 2], self.maximum[node * 2 + 1]
+        )
 
-    def query(self, left: int, right: int, node: int = 1,
-              low: int = 0, high: int | None = None) -> int:
+    def query(
+        self, left: int, right: int, node: int = 1, low: int = 0, high: int | None = None
+    ) -> int:
         if high is None:
             high = self.size - 1
         if right < low or high < left:
@@ -279,7 +310,8 @@ class _RangeMaximum:
         middle = (low + high) // 2
         return self.lazy[node] + max(
             self.query(left, right, node * 2, low, middle),
-            self.query(left, right, node * 2 + 1, middle + 1, high))
+            self.query(left, right, node * 2 + 1, middle + 1, high),
+        )
 
 
 def _has_live_alias(rows: list[StaticAllocation]) -> bool:
@@ -288,8 +320,7 @@ def _has_live_alias(rows: list[StaticAllocation]) -> bool:
         return False
     import heapq
 
-    phases = sorted({value for row in rows for value in (
-        row.first_phase, row.last_phase)})
+    phases = sorted({value for row in rows for value in (row.first_phase, row.last_phase)})
     phase_index = {value: index for index, value in enumerate(phases)}
     occupancy = _RangeMaximum(len(phases))
     active: list[tuple[int, int, int, int]] = []
@@ -351,33 +382,43 @@ def plan_static_memory(module: Module, resource_banks, hardware) -> StaticMemory
             lo, hi = intervals[rid]
             alignment = max(resource.align, bank.alignment)
             if alignment & (alignment - 1):
-                raise ValueError(f"resource {rid} or bank {bank_name!r} has non-power-of-two alignment")
+                raise ValueError(
+                    f"resource {rid} or bank {bank_name!r} has non-power-of-two alignment"
+                )
             naive = _checked_add(_align(naive, alignment), size)
             while active and active[0][0] < lo:
                 _last, _rid, prior_offset, prior_end = heapq.heappop(active)
                 _release_interval(free, prior_offset, prior_end)
             offset = _take_first_fit(free, size, alignment)
             if offset is None:
-                raise ValueError(f"static address plan exceeds allocatable bytes in bank {bank_name!r}")
+                raise ValueError(
+                    f"static address plan exceeds allocatable bytes in bank {bank_name!r}"
+                )
             if _checked_add(offset, size) > bank.allocatable_bytes:
-                raise ValueError(f"static address plan exceeds allocatable bytes in bank {bank_name!r}")
+                raise ValueError(
+                    f"static address plan exceeds allocatable bytes in bank {bank_name!r}"
+                )
             row = StaticAllocation(rid, bank_name, offset, size, alignment, lo, hi)
             placed.append(row)
             extent = max(extent, row.end)
             heapq.heappush(active, (hi, rid, offset, row.end))
         summaries.append(BankMemoryPlan(bank_name, extent, naive, bank.allocatable_bytes))
         allocations.extend(placed)
-    plan = StaticMemoryPlan(_module_digest(module), hardware.digest,
-                            tuple(sorted(allocations, key=lambda row: row.rid)),
-                            tuple(summaries))
+    plan = StaticMemoryPlan(
+        _module_digest(module),
+        hardware.digest,
+        tuple(sorted(allocations, key=lambda row: row.rid)),
+        tuple(summaries),
+    )
     errors = verify_static_memory_plan(plan, module, resource_banks, hardware)
     if errors:
         raise ValueError("static memory plan failed verification: " + "; ".join(errors))
     return plan
 
 
-def verify_static_memory_plan(plan: StaticMemoryPlan, module: Module,
-                              resource_banks, hardware) -> tuple[str, ...]:
+def verify_static_memory_plan(
+    plan: StaticMemoryPlan, module: Module, resource_banks, hardware
+) -> tuple[str, ...]:
     """Independently check identity, capacity, alignment, lifetime, and alias safety."""
     errors: list[str] = []
     intervals = live_intervals(module)
@@ -393,7 +434,8 @@ def verify_static_memory_plan(plan: StaticMemoryPlan, module: Module,
     if set(rows) != set(intervals) or set(bindings) != set(intervals):
         errors.append("allocation/binding census mismatch")
     for rid in sorted(set(rows) & set(intervals) & set(bindings)):
-        row = rows[rid]; resource = module.resource(rid)
+        row = rows[rid]
+        resource = module.resource(rid)
         if resource is None:
             errors.append(f"resource {rid} is absent from the module registry")
             continue
@@ -406,8 +448,10 @@ def verify_static_memory_plan(plan: StaticMemoryPlan, module: Module,
             errors.append(f"resource {rid} domain does not match its bank")
         expected_size = resource.count * resource.elem_bytes
         expected_alignment = max(resource.align, bank.alignment)
-        if row.bank != bindings[rid]: errors.append(f"resource {rid} bank mismatch")
-        if row.size_bytes != expected_size: errors.append(f"resource {rid} size mismatch")
+        if row.bank != bindings[rid]:
+            errors.append(f"resource {rid} bank mismatch")
+        if row.size_bytes != expected_size:
+            errors.append(f"resource {rid} size mismatch")
         if row.alignment != expected_alignment or row.offset % expected_alignment:
             errors.append(f"resource {rid} alignment mismatch")
         if (row.first_phase, row.last_phase) != intervals[rid]:
@@ -446,5 +490,11 @@ def verify_static_memory_plan(plan: StaticMemoryPlan, module: Module,
     return tuple(errors)
 
 
-__all__ = ["BankMemoryPlan", "ResourceBankBinding", "StaticAllocation",
-           "StaticMemoryPlan", "plan_static_memory", "verify_static_memory_plan"]
+__all__ = [
+    "BankMemoryPlan",
+    "ResourceBankBinding",
+    "StaticAllocation",
+    "StaticMemoryPlan",
+    "plan_static_memory",
+    "verify_static_memory_plan",
+]

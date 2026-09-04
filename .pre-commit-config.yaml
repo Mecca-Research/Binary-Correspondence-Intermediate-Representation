@@ -37,8 +37,10 @@ repos:
         types_or: [c++]
         files: '^(runtime/cpp|mlir/(lib|include|tools))/.*\.(cpp|hpp|h)$'
 
-  # ruff (lint + format) from the locally-installed tool (`.[dev]`), so the version never
-  # drifts from pyproject's config.
+  # ruff (lint + format) from the locally-installed tool (`.[dev]`, an EXACT pin), so the
+  # version never drifts from pyproject's config. The tree is ruff-format clean and lint clean
+  # under that pin, and CI's "Python style" job keeps it so with the same commands -- these
+  # hooks therefore never rewrite a file CI accepts (policy: pyproject.toml, [tool.ruff]).
   - repo: local
     hooks:
       - id: ruff-lint

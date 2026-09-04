@@ -50,6 +50,7 @@ _NO_INDEX = 0
 
 # --- labeling / indexing functions (the preservation laws f_L, f_I) --------------
 
+
 def f_label(parent_label: tuple, child_labels: tuple) -> tuple:
     """Label preservation: the composed operation's label is a systematic function
     of its constituents' labels. The operator's own hierarchical label dominates;
@@ -69,6 +70,7 @@ def f_index(name: str, label: tuple, child_indexes: tuple) -> int:
 
 # --- the enriched operation + 2-cell ---------------------------------------------
 
+
 @dataclass(frozen=True)
 class EnrichedOp:
     """An n-ary operation enriched with a label and a content-addressed index, plus
@@ -77,10 +79,10 @@ class EnrichedOp:
 
     name: str
     arity: int
-    label: tuple          # hierarchical label (L1, L2, ...) -- () when labeling is off
-    index: int            # content-addressed index -- _NO_INDEX when indexing is off
+    label: tuple  # hierarchical label (L1, L2, ...) -- () when labeling is off
+    index: int  # content-addressed index -- _NO_INDEX when indexing is off
     children: tuple = ()  # child indexes (the operation-tree edges)
-    local: int = 0        # position within the parent's child list
+    local: int = 0  # position within the parent's child list
 
 
 @dataclass(frozen=True)
@@ -90,10 +92,11 @@ class TwoCell:
 
     src: int
     dst: int
-    rule: tuple           # the rewrite's hierarchical label, e.g. ("REWRITE","factor")
+    rule: tuple  # the rewrite's hierarchical label, e.g. ("REWRITE","factor")
 
 
 # --- the enriched operad (the system) --------------------------------------------
+
 
 class EnrichedOperad:
     """A content-addressed operad of labeled, indexed operations with traceback.
@@ -111,8 +114,9 @@ class EnrichedOperad:
 
     # add / compose (γ_L, η_L) ----------------------------------------------------
 
-    def add(self, name: str, arity: int = 0, label: tuple = None,
-            children: tuple = (), local: int = 0) -> int:
+    def add(
+        self, name: str, arity: int = 0, label: tuple = None, children: tuple = (), local: int = 0
+    ) -> int:
         """Add an operation (η_L for a leaf, γ_L for a composite). The index is
         content-addressed over (name, label, children); identical operations
         collapse to one entry -- CSE / the liked-pair memory."""
@@ -121,25 +125,27 @@ class EnrichedOperad:
         # content addressing: an identical op is already present (a liked pair).
         if index in self.ops:
             return index
-        self.ops[index] = EnrichedOp(name=name, arity=arity, label=label,
-                                     index=index, children=tuple(children), local=local)
+        self.ops[index] = EnrichedOp(
+            name=name, arity=arity, label=label, index=index, children=tuple(children), local=local
+        )
         return index
 
-    def compose(self, name: str, children: tuple, label: tuple = None,
-                local: int = 0) -> int:
+    def compose(self, name: str, children: tuple, label: tuple = None, local: int = 0) -> int:
         """γ_L: compose `children` under operation `name`, preserving labels
         (`f_label`) and indexes (`f_index`)."""
         child_labels = tuple(self.ops[c].label for c in children if c in self.ops)
         base = self._resolve_label(name, label)
         composed_label = f_label(base, child_labels) if self.enable_labeling else ()
-        return self.add(name, arity=len(children), label=composed_label,
-                        children=tuple(children), local=local)
+        return self.add(
+            name, arity=len(children), label=composed_label, children=tuple(children), local=local
+        )
 
     def record_rewrite(self, src: int, dst: int, rule) -> TwoCell:
         """Record a 2-morphism (a rewrite) between two operations -- transformation
         tracking with label inheritance (the higher-category layer)."""
-        cell = TwoCell(src=src, dst=dst, rule=tuple(rule) if not isinstance(rule, str)
-                       else ("REWRITE", rule))
+        cell = TwoCell(
+            src=src, dst=dst, rule=tuple(rule) if not isinstance(rule, str) else ("REWRITE", rule)
+        )
         self.cells.append(cell)
         return cell
 
@@ -222,6 +228,7 @@ class EnrichedOperad:
 
 # --- the bridge: lift a memory module into an enriched operad ---------------------
 
+
 def _op_label(expr: Expr) -> tuple:
     """The hierarchical label for a memory operation, by kind."""
     if expr.op == "const":
@@ -233,8 +240,7 @@ def _op_label(expr: Expr) -> tuple:
     return ("MEMORY", "op", expr.op)
 
 
-def enrich_memory(memory, *, enable_labeling: bool = True,
-                  enable_indexing: bool = True):
+def enrich_memory(memory, *, enable_labeling: bool = True, enable_indexing: bool = True):
     """Lift a frozen memory module (`kbcir.memory.MemoryModule`, whose `.expr` is a
     resolved operation tree) into an enriched operad: every operation gains a
     hierarchical label and a content-addressed index, and the tree's edges become
@@ -244,13 +250,17 @@ def enrich_memory(memory, *, enable_labeling: bool = True,
     labeled, indexed, traceable structure -- queryable by label, navigable by
     index, with `trace` recovering the sources of any node -- while the memory
     module itself stays the deterministic, generation-tagged artifact."""
-    operad = EnrichedOperad(enable_labeling=enable_labeling,
-                            enable_indexing=enable_indexing)
+    operad = EnrichedOperad(enable_labeling=enable_labeling, enable_indexing=enable_indexing)
 
     def build(expr: Expr, local: int = 0) -> int:
         child_indexes = tuple(build(a, i) for i, a in enumerate(expr.args))
-        return operad.add(expr.op, arity=len(expr.args), label=_op_label(expr),
-                          children=child_indexes, local=local)
+        return operad.add(
+            expr.op,
+            arity=len(expr.args),
+            label=_op_label(expr),
+            children=child_indexes,
+            local=local,
+        )
 
     root = build(memory.expr)
     return operad, root

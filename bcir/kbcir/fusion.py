@@ -63,6 +63,7 @@ def _is_activation_op(op: str | None) -> bool:
     suffixed form)."""
     return op == _ACTIVATION_OP or (op or "").startswith(_ACTIVATION_OP + ":")
 
+
 # Epilogue-fusible activation kinds: the ELEMENTWISE family. softmax is a last-axis reduction (it needs the
 # whole row before any output element is final), so it can NOT be applied inline as each matmul element is
 # produced -- it is scoped out of epilogue fusion (the documented non-fusible kind).
@@ -85,9 +86,9 @@ class MatmulActivationEpilogue:
     phase_id: int
     matmul_id: int
     activation_id: int
-    inter_rid: int          # the intermediate (un-activated matmul output) buffer that fusion elides
-    out_rid: int            # the activation's output
-    act_kind: str           # relu / sigmoid / tanh / gelu / softmax (softmax is non-fusible)
+    inter_rid: int  # the intermediate (un-activated matmul output) buffer that fusion elides
+    out_rid: int  # the activation's output
+    act_kind: str  # relu / sigmoid / tanh / gelu / softmax (softmax is non-fusible)
 
     @property
     def fusible(self) -> bool:
@@ -102,8 +103,10 @@ class FusionCertificate:
     materializes at a phase barrier) and after (fused: the intermediate is deforested), and the win."""
 
     epilogue: MatmulActivationEpilogue
-    unfused_score: int       # plan score with the intermediate MATERIALIZED (matmul, then a separate pass)
-    fused_score: int         # ... and with it DEFOREST-elided (the inline epilogue)
+    unfused_score: (
+        int  # plan score with the intermediate MATERIALIZED (matmul, then a separate pass)
+    )
+    fused_score: int  # ... and with it DEFOREST-elided (the inline epilogue)
     act_kind: str
 
     @property
@@ -162,9 +165,16 @@ def find_matmul_activation_epilogues(module: Module) -> list[MatmulActivationEpi
             # The activation must not also write the intermediate (it reads it, writes a fresh output).
             if inter in act.wr:
                 continue
-            epilogues.append(MatmulActivationEpilogue(
-                phase_id=ph.phase_id, matmul_id=mm.id, activation_id=act.id,
-                inter_rid=inter, out_rid=act.wr[0], act_kind=_act_kind(act)))
+            epilogues.append(
+                MatmulActivationEpilogue(
+                    phase_id=ph.phase_id,
+                    matmul_id=mm.id,
+                    activation_id=act.id,
+                    inter_rid=inter,
+                    out_rid=act.wr[0],
+                    act_kind=_act_kind(act),
+                )
+            )
     return epilogues
 
 
@@ -185,8 +195,9 @@ def _split_phase_at_barrier(module: Module, epi: MatmulActivationEpilogue) -> Mo
     return m
 
 
-def optimize_fused(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF
-                   ) -> tuple[RealizationResult, list[FusionCertificate]]:
+def optimize_fused(
+    module: Module, h: HProfile, theta: Theta, policy: Policy = PERF
+) -> tuple[RealizationResult, list[FusionCertificate]]:
     """Score every detected matmul -> activation epilogue FUSED vs UNFUSED through the unchanged tropical
     optimizer and adopt the fusion iff it strictly wins -- the autonomous, priced epilogue-fusion decision.
 
@@ -205,11 +216,11 @@ def optimize_fused(module: Module, h: HProfile, theta: Theta, policy: Policy = P
     result = optimize(module, h, theta, policy)
     certs: list[FusionCertificate] = []
     for epi in find_matmul_activation_epilogues(module):
-        if not epi.fusible:                       # softmax: a row reduction, not an inline epilogue -> skip
+        if not epi.fusible:  # softmax: a row reduction, not an inline epilogue -> skip
             continue
-        fused_score = result.score                # the module as given: producer+consumer same phase
+        fused_score = result.score  # the module as given: producer+consumer same phase
         unfused = _split_phase_at_barrier(module, epi)
         unfused_score = optimize(unfused, h, theta, policy).score
-        if fused_score < unfused_score:           # the priced win -- adopt the fusion
+        if fused_score < unfused_score:  # the priced win -- adopt the fusion
             certs.append(FusionCertificate(epi, unfused_score, fused_score, epi.act_kind))
     return result, certs

@@ -36,9 +36,11 @@ import tempfile
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
 _CPP = os.path.join(_ROOT, "runtime", "cpp")
-_CXX_SOURCES = [os.path.join(_CPP, "bcir_jer_index.cpp"),
-                os.path.join(_CPP, "bcir_jer_simd.cpp"),
-                os.path.join(_CPP, "test_jer_index.cpp")]
+_CXX_SOURCES = [
+    os.path.join(_CPP, "bcir_jer_index.cpp"),
+    os.path.join(_CPP, "bcir_jer_simd.cpp"),
+    os.path.join(_CPP, "test_jer_index.cpp"),
+]
 _C_SOURCES = [os.path.join(_C, "bcir_jer.c"), os.path.join(_C, "bcir_runtime.c")]
 
 #: Ceilings swept per document. The point is not any single value — it is walking the budget's
@@ -57,14 +59,33 @@ def _build(tmp: str) -> str:
     cxx = shutil.which("clang++") or shutil.which("g++") or shutil.which("c++")
     cc = shutil.which("clang") or shutil.which("gcc") or shutil.which("cc")
     objects = []
-    for source, compiler, std in ([(s, cxx, "-std=c++17") for s in _CXX_SOURCES]
-                                  + [(s, cc, "-std=c11") for s in _C_SOURCES]):
+    for source, compiler, std in [(s, cxx, "-std=c++17") for s in _CXX_SOURCES] + [
+        (s, cc, "-std=c11") for s in _C_SOURCES
+    ]:
         obj = os.path.join(tmp, os.path.basename(source) + ".o")
         proc = subprocess.run(
-            [compiler, std, "-O2", "-Wall", "-Wextra", "-Werror", "-I", _C, "-I", _CPP,
-             "-c", source, "-o", obj], capture_output=True, text=True)
+            [
+                compiler,
+                std,
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C,
+                "-I",
+                _CPP,
+                "-c",
+                source,
+                "-o",
+                obj,
+            ],
+            capture_output=True,
+            text=True,
+        )
         assert proc.returncode == 0, (
-            f"{os.path.basename(source)} must build warning-clean:\n{proc.stderr[:2000]}")
+            f"{os.path.basename(source)} must build warning-clean:\n{proc.stderr[:2000]}"
+        )
         objects.append(obj)
     out = os.path.join(tmp, "test_jer_index")
     proc = subprocess.run([cxx, *objects, "-o", out], capture_output=True, text=True)
@@ -73,8 +94,9 @@ def _build(tmp: str) -> str:
 
 
 def _drive(binary: str, lines: list[str]) -> list[str]:
-    proc = subprocess.run([binary], input="\n".join(lines) + "\n", capture_output=True,
-                          text=True, timeout=600)
+    proc = subprocess.run(
+        [binary], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=600
+    )
     assert proc.returncode == 0, proc.stderr[:2000]
     return proc.stdout.splitlines()
 
@@ -116,9 +138,12 @@ def _corpus() -> list[tuple[str, bytes]]:
     ]
     generator = random.Random(11)
     for index in range(300):
-        cases.append((f"random-{index}",
-                      bytes(generator.randrange(256)
-                            for _ in range(generator.randrange(0, 140)))))
+        cases.append(
+            (
+                f"random-{index}",
+                bytes(generator.randrange(256) for _ in range(generator.randrange(0, 140))),
+            )
+        )
     # Whitespace-heavy randoms, so the bulk path is hit by generated input too rather than
     # only by the documents someone thought to write down.
     for index in range(200):
@@ -148,8 +173,9 @@ def test_the_rebuilt_dispatch_answers_exactly_as_the_scalar_scan_does_at_every_t
     if not _available():
         return
     cases = _corpus()
-    lines = ["tiers"] + [f"both {cap} {octets.hex() or '-'}"
-                         for _label, octets in cases for cap in _WORK_CAPS]
+    lines = ["tiers"] + [
+        f"both {cap} {octets.hex() or '-'}" for _label, octets in cases for cap in _WORK_CAPS
+    ]
     with tempfile.TemporaryDirectory() as tmp:
         replies = _drive(_build(tmp), lines)
     header, replies = replies[0], replies[1:]
@@ -162,7 +188,8 @@ def test_the_rebuilt_dispatch_answers_exactly_as_the_scalar_scan_does_at_every_t
     expected_tiers = sum(1 for tier, flag in enumerate(compiled) if flag and tier <= available)
     assert expected_tiers >= 1, header
     assert len(replies) == len(cases) * len(_WORK_CAPS), (
-        f"{len(replies)} replies for {len(cases) * len(_WORK_CAPS)} comparisons")
+        f"{len(replies)} replies for {len(cases) * len(_WORK_CAPS)} comparisons"
+    )
     index = 0
     tiers_seen = 0
     for label, _octets in cases:
@@ -173,14 +200,17 @@ def test_the_rebuilt_dispatch_answers_exactly_as_the_scalar_scan_does_at_every_t
             assert len(rebuilt) == expected_tiers, (
                 f"{label} at work<={cap}: {len(rebuilt)} tier(s) answered, but the build "
                 f"reports {expected_tiers} runnable ({header}); a tier that skips the corpus "
-                f"is a tier nothing shows correct")
+                f"is a tier nothing shows correct"
+            )
             tiers_seen = max(tiers_seen, len(rebuilt))
             for group in rebuilt:
                 assert scalar.split()[1:] == group.split(), (
                     f"{label} at work<={cap} [{header}]: scalar {scalar.strip()!r} against "
-                    f"index {group.strip()!r}")
+                    f"index {group.strip()!r}"
+                )
     assert index * tiers_seen > 5000, (
-        f"the sweep collapsed to {index} documents x {tiers_seen} tier(s)")
+        f"the sweep collapsed to {index} documents x {tiers_seen} tier(s)"
+    )
 
 
 def test_the_sweep_actually_exercises_a_budget_failure_inside_a_bulk_charge():
@@ -195,8 +225,7 @@ def test_the_sweep_actually_exercises_a_budget_failure_inside_a_bulk_charge():
     document = b" " * 5000 + b'{"a":1}'
     caps = (1, 2, 17, 100, 999, 4999)
     with tempfile.TemporaryDirectory() as tmp:
-        replies = _drive(_build(tmp),
-                         [f"both {cap} {document.hex()}" for cap in caps])
+        replies = _drive(_build(tmp), [f"both {cap} {document.hex()}" for cap in caps])
     exceeded = 0
     for cap, reply in zip(caps, replies):
         scalar, *rebuilt = reply.split("|")
@@ -214,7 +243,8 @@ def test_the_sweep_actually_exercises_a_budget_failure_inside_a_bulk_charge():
         assert needed == cap + 1, f"work<={cap}: needed {needed}, expected {cap + 1}"
     assert exceeded >= 5, (
         f"only {exceeded} of {len(caps)} ceilings exhausted the budget; the sweep is not "
-        f"reaching the case it exists for")
+        f"reaching the case it exists for"
+    )
 
 
 def test_the_index_reuses_the_token_scanners_rather_than_reimplementing_them():
@@ -228,22 +258,39 @@ def test_the_index_reuses_the_token_scanners_rather_than_reimplementing_them():
     none of the tells of a private UTF-8 or escape decision.
     """
     source = open(os.path.join(_CPP, "bcir_jer_index.cpp"), encoding="utf-8").read()
-    body = "\n".join(line for line in source.splitlines()
-                     if not line.strip().startswith("*") and "/*" not in line)
-    for required in ("bcir_jer_scan_charge", "bcir_jer_scan_string_token",
-                     "bcir_jer_scan_number_token", "bcir_jer_scan_literal_token"):
+    body = "\n".join(
+        line
+        for line in source.splitlines()
+        if not line.strip().startswith("*") and "/*" not in line
+    )
+    for required in (
+        "bcir_jer_scan_charge",
+        "bcir_jer_scan_string_token",
+        "bcir_jer_scan_number_token",
+        "bcir_jer_scan_literal_token",
+    ):
         assert required in body, f"the index does not go through {required}"
-    for invented in ("0xD800", "0xDC00", "\\\\u", "string_bytes", "number_bytes",
-                     "integer_digits", "exponent_magnitude", "0x80"):
+    for invented in (
+        "0xD800",
+        "0xDC00",
+        "\\\\u",
+        "string_bytes",
+        "number_bytes",
+        "integer_digits",
+        "exponent_magnitude",
+        "0x80",
+    ):
         assert invented not in body, (
             f"the index references {invented!r}, which suggests it decides a §4.3 limit or a "
-            f"UTF-8 question itself; that is the second semantics rail §4.1 forbids")
+            f"UTF-8 question itself; that is the second semantics rail §4.1 forbids"
+        )
     # Tier resolution belongs to the SIMD rail. A second CPU probe here would be a second
     # thing that can be wrong about the machine, and J5's "no unsupported-CPU fault" clause
     # would then hold on one rail and not the other.
     for probed in ("__builtin_cpu_supports", "__builtin_cpu_init", "cpuid", "getauxval"):
         assert probed not in body, (
-            f"the index calls {probed!r} rather than deferring to bcir_jer_simd_tier_available")
+            f"the index calls {probed!r} rather than deferring to bcir_jer_simd_tier_available"
+        )
     assert "bcir_jer_simd_tier_available" in body, "the index does not defer tier resolution"
 
 
@@ -259,17 +306,22 @@ def test_the_vector_pass_and_the_scalar_predicate_share_one_whitespace_set():
     octets out where they could diverge one at a time.
     """
     source = open(os.path.join(_CPP, "bcir_jer_index.cpp"), encoding="utf-8").read()
-    body = "\n".join(line for line in source.splitlines()
-                     if not line.strip().startswith("*") and "/*" not in line)
+    body = "\n".join(
+        line
+        for line in source.splitlines()
+        if not line.strip().startswith("*") and "/*" not in line
+    )
     names = ("kSpace", "kTab", "kLineFeed", "kReturn")
     for name in names:
         # Once to define it, once in `is_space`, and once per vector width present.
         assert body.count(name) >= 3, (
             f"{name} appears {body.count(name)} time(s); the vector pass and the scalar "
-            f"predicate are meant to share it rather than each spell the octet out")
+            f"predicate are meant to share it rather than each spell the octet out"
+        )
     # The literal octets may appear only where the four names are bound.
     for literal in ("0x20", "0x09", "0x0A", "0x0D"):
         holders = [line for line in body.splitlines() if literal in line]
         assert len(holders) <= 1, (
             f"{literal} is written on {len(holders)} lines; a second spelling of the "
-            f"whitespace set is exactly how the tiers come to disagree:\n" + "\n".join(holders))
+            f"whitespace set is exactly how the tiers come to disagree:\n" + "\n".join(holders)
+        )

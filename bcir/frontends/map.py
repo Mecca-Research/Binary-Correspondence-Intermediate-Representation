@@ -67,8 +67,9 @@ def parse_map(text: str) -> Module:
             if not 1 <= rid <= _MAX_U32:
                 raise MapError(f"line {lineno}: rid must be in [1, 2^32-1]")
             if rid in names_by_rid:
-                raise MapError(f"line {lineno}: duplicate rid {rid} for {name!r} and "
-                               f"{names_by_rid[rid]!r}")
+                raise MapError(
+                    f"line {lineno}: duplicate rid {rid} for {name!r} and {names_by_rid[rid]!r}"
+                )
             if not 1 <= n <= _MAX_U64:
                 raise MapError(f"line {lineno}: n must be in [1, 2^64-1]")
             if domain_name not in _DOMAINS:
@@ -118,8 +119,18 @@ def parse_map(text: str) -> Module:
         rd = tuple(rid_of[s] for s in srcs)
         if dst not in rid_of:
             raise MapError(f"line {lineno}: undeclared destination {dst!r}")
-        claims.append(Claim(id=cid, opcode=op, lane=lane, stride_class=stride, count=count,
-                            rd=rd, wr=(rid_of[dst],), op=f"map.{head}"))
+        claims.append(
+            Claim(
+                id=cid,
+                opcode=op,
+                lane=lane,
+                stride_class=stride,
+                count=count,
+                rd=rd,
+                wr=(rid_of[dst],),
+                op=f"map.{head}",
+            )
+        )
         cid += 1
 
     if claims:

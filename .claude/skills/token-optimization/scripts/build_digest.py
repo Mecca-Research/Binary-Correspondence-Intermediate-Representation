@@ -14,6 +14,7 @@ Stdlib-only, deterministic. Inspired by: reversible compression (originals stay
 on disk; the digest is the retrieval key), hierarchical modular encoding (one
 module = one summary line), and docs/STATUS.md's generated-count discipline.
 """
+
 from __future__ import annotations
 
 import os
@@ -32,7 +33,10 @@ K_BEGIN, K_END = "<!-- KNOWLEDGE:BEGIN -->", "<!-- KNOWLEDGE:END -->"
 def _top_level_dirs() -> str:
     result = subprocess.run(
         ["git", "ls-tree", "-d", "--name-only", "HEAD"],
-        cwd=ROOT, capture_output=True, text=True, check=False,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     names = sorted(n for n in result.stdout.splitlines() if n and not n.startswith("."))
     return " ".join(f"./{n}" for n in names)
@@ -51,7 +55,9 @@ def doc_map() -> str:
         rel = os.path.relpath(p, ROOT).replace(os.sep, "/")
         lines = open(p, encoding="utf-8").read().splitlines()
         heads = [l.lstrip("# ").strip() for l in lines if re.match(r"^##? ", l)][:14]
-        out.append(f"- **{rel}** ({len(lines)}L): " + " · ".join(h[:60] for h in heads[1:] or heads))
+        out.append(
+            f"- **{rel}** ({len(lines)}L): " + " · ".join(h[:60] for h in heads[1:] or heads)
+        )
     return "\n".join(out)
 
 
@@ -59,7 +65,9 @@ def mechanical() -> str:
     status = ""
     sp = os.path.join(ROOT, "docs", "STATUS.md")
     if os.path.exists(sp):
-        status = "\n".join(l for l in open(sp, encoding="utf-8").read().splitlines() if l.startswith("|"))[:1200]
+        status = "\n".join(
+            l for l in open(sp, encoding="utf-8").read().splitlines() if l.startswith("|")
+        )[:1200]
     tree = _top_level_dirs()
     return (
         "## Generated inventory (do not edit — rebuild with build_digest.py)\n\n"
@@ -73,12 +81,14 @@ def main() -> int:
     check = "--check" in sys.argv
     cur = open(DIGEST, encoding="utf-8").read() if os.path.exists(DIGEST) else ""
     if K_BEGIN in cur and K_END in cur:
-        knowledge = cur[cur.index(K_BEGIN): cur.index(K_END) + len(K_END)]
+        knowledge = cur[cur.index(K_BEGIN) : cur.index(K_END) + len(K_END)]
     else:
         knowledge = f"{K_BEGIN}\n(curated subsystem knowledge goes here)\n{K_END}"
     new = (
         "# BCIR repo digest (compressed knowledge base — read this INSTEAD of exploring)\n\n"
-        + knowledge + "\n\n" + mechanical()
+        + knowledge
+        + "\n\n"
+        + mechanical()
     )
     if check:
         ok = cur == new

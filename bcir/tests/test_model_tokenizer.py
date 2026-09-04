@@ -22,11 +22,15 @@ def _mini_tokenizer(d):
     vocab = {_B2U[b]: b for b in range(256)}
     for tok, i in (("he", 256), ("ll", 257), ("hell", 258), ("hello", 259)):
         vocab[tok] = i
-    doc = {"model": {"type": "BPE", "vocab": vocab,
-                     "merges": ["h e", "l l", "he ll", "hell o"]},
-           "added_tokens": [{"content": "<bos>", "id": 260}, {"content": "<eos>", "id": 261},
-                            {"content": "<start_of_turn>", "id": 262},
-                            {"content": "<end_of_turn>", "id": 263}]}
+    doc = {
+        "model": {"type": "BPE", "vocab": vocab, "merges": ["h e", "l l", "he ll", "hell o"]},
+        "added_tokens": [
+            {"content": "<bos>", "id": 260},
+            {"content": "<eos>", "id": 261},
+            {"content": "<start_of_turn>", "id": 262},
+            {"content": "<end_of_turn>", "id": 263},
+        ],
+    }
     path = os.path.join(d, "tokenizer.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(doc, f)
@@ -36,11 +40,11 @@ def _mini_tokenizer(d):
 def test_golden_ids_over_the_mini_fixture():
     with tempfile.TemporaryDirectory() as d:
         tok = load_tokenizer(_mini_tokenizer(d))
-        assert tok.encode("hello") == [259]                        # the full merge chain
-        assert tok.encode(" hello") == [32, 259]                   # leading space = byte token 32
+        assert tok.encode("hello") == [259]  # the full merge chain
+        assert tok.encode(" hello") == [32, 259]  # leading space = byte token 32
         assert tok.encode("hell") == [258]
-        assert tok.encode("helo") == [256, 108, 111]               # he + l + o (no ll pair)
-        assert tok.encode("<bos>hello<eos>") == [260, 259, 261]    # specials never split
+        assert tok.encode("helo") == [256, 108, 111]  # he + l + o (no ll pair)
+        assert tok.encode("<bos>hello<eos>") == [260, 259, 261]  # specials never split
 
 
 def test_round_trip_is_lossless_over_arbitrary_unicode():
@@ -61,31 +65,39 @@ def test_pretokenizer_partition_reproduces_the_text():
 def test_chat_template_golden_and_round_trip():
     turns = [("user", "What is BCIR?"), ("model", "A correspondence IR."), ("user", "Thanks")]
     got = render_chat(turns)
-    want = ("<bos><start_of_turn>user\nWhat is BCIR?<end_of_turn>\n"
-            "<start_of_turn>model\nA correspondence IR.<end_of_turn>\n"
-            "<start_of_turn>user\nThanks<end_of_turn>\n"
-            "<start_of_turn>model\n")
-    assert got == want                                             # the pinned fixture contract
+    want = (
+        "<bos><start_of_turn>user\nWhat is BCIR?<end_of_turn>\n"
+        "<start_of_turn>model\nA correspondence IR.<end_of_turn>\n"
+        "<start_of_turn>user\nThanks<end_of_turn>\n"
+        "<start_of_turn>model\n"
+    )
+    assert got == want  # the pinned fixture contract
     with tempfile.TemporaryDirectory() as d:
         tok = load_tokenizer(_mini_tokenizer(d))
         ids = tok.encode(got)
-        assert tok.decode(ids) == got                              # template survives the rail
-        assert ids.count(262) == 4 and ids[0] == 260               # turn markers ride as specials
+        assert tok.decode(ids) == got  # template survives the rail
+        assert ids.count(262) == 4 and ids[0] == 260  # turn markers ride as specials
 
 
 def test_tokenizer_digest_ties_into_the_manifest():
     import struct
     from bcir.frontends.models import build_manifest
+
     with tempfile.TemporaryDirectory() as d:
         tok_path = _mini_tokenizer(d)
         tok = load_tokenizer(tok_path)
         shard = os.path.join(d, "model.safetensors")
-        blob = json.dumps({"w": {"dtype": "F32", "shape": [2, 2],
-                                 "data_offsets": [0, 16]}}).encode()
+        blob = json.dumps(
+            {"w": {"dtype": "F32", "shape": [2, 2], "data_offsets": [0, 16]}}
+        ).encode()
         with open(shard, "wb") as f:
             f.write(struct.pack("<Q", len(blob)) + blob + b"\x00" * 16)
-        m = build_manifest([shard], {"model_type": "toy", "vocab_size": 264},
-                           tokenizer_ref="tokenizer.json", tokenizer_path=tok_path)
+        m = build_manifest(
+            [shard],
+            {"model_type": "toy", "vocab_size": 264},
+            tokenizer_ref="tokenizer.json",
+            tokenizer_path=tok_path,
+        )
         assert m.tokenizer_digest == tok.digest and len(tok.digest) == 64
         # rung-2 parity check: a tokenizer whose bytes do not hash to the manifest's record
         # is the WRONG tokenizer for this model.

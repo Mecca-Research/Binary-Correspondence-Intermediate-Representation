@@ -56,7 +56,9 @@ from .quantize import dequantize, quantize_per_group
 # sweeps; the cap is generous and the off-diagonal threshold is the real stopping rule. Both are fixed so the
 # reference is fully reproducible.
 _JACOBI_MAX_SWEEPS = 100
-_JACOBI_OFFDIAG_EPS = 1e-300        # stop when the off-diagonal Frobenius norm is below this (full precision)
+_JACOBI_OFFDIAG_EPS = (
+    1e-300  # stop when the off-diagonal Frobenius norm is below this (full precision)
+)
 
 
 def _offdiag_norm(a: list[list[float]], n: int) -> float:
@@ -66,12 +68,15 @@ def _offdiag_norm(a: list[list[float]], n: int) -> float:
     for p in range(n):
         for q in range(p + 1, n):
             s += a[p][q] * a[p][q]
-    return math.sqrt(2.0 * s)        # symmetric -> the lower triangle mirrors the upper
+    return math.sqrt(2.0 * s)  # symmetric -> the lower triangle mirrors the upper
 
 
-def _jacobi_eigh(c: list[float], n: int,
-                 max_sweeps: int = _JACOBI_MAX_SWEEPS,
-                 offdiag_eps: float = _JACOBI_OFFDIAG_EPS):
+def _jacobi_eigh(
+    c: list[float],
+    n: int,
+    max_sweeps: int = _JACOBI_MAX_SWEEPS,
+    offdiag_eps: float = _JACOBI_OFFDIAG_EPS,
+):
     """Symmetric eigendecomposition by the classic JACOBI ROTATION algorithm -- the deterministic source of
     truth for the spectrum of the real symmetric ``c`` (n x n, row-major). Returns ``(eigvals, eigvecs)``: a
     length-n list of eigenvalues and an n x n list-of-rows ``eigvecs`` whose ROW t is the unit eigenvector for
@@ -93,7 +98,9 @@ def _jacobi_eigh(c: list[float], n: int,
     falls quadratically once the rotations localize)."""
     # Working copies (list-of-rows), so the input ``c`` survives unchanged (side-effect-free).
     a = [[float(c[p * n + q]) for q in range(n)] for p in range(n)]
-    v = [[1.0 if p == q else 0.0 for q in range(n)] for p in range(n)]   # accumulated rotations (identity)
+    v = [
+        [1.0 if p == q else 0.0 for q in range(n)] for p in range(n)
+    ]  # accumulated rotations (identity)
 
     for _ in range(max_sweeps):
         if _offdiag_norm(a, n) <= offdiag_eps:
@@ -102,12 +109,12 @@ def _jacobi_eigh(c: list[float], n: int,
             for q in range(p + 1, n):
                 apq = a[p][q]
                 if apq == 0.0:
-                    continue                                   # already zero -> no rotation needed
+                    continue  # already zero -> no rotation needed
                 # The rotation that annihilates a[p][q] (the smaller-root form for stability).
                 theta = (a[q][q] - a[p][p]) / (2.0 * apq)
                 tval = math.copysign(1.0, theta) / (abs(theta) + math.sqrt(theta * theta + 1.0))
-                cc = 1.0 / math.sqrt(tval * tval + 1.0)        # cos
-                ss = tval * cc                                 # sin
+                cc = 1.0 / math.sqrt(tval * tval + 1.0)  # cos
+                ss = tval * cc  # sin
                 # Apply the similarity transform A <- J^T A J (rows/cols p,q only), preserving symmetry.
                 for k in range(n):
                     akp, akq = a[k][p], a[k][q]
@@ -117,7 +124,7 @@ def _jacobi_eigh(c: list[float], n: int,
                     apk, aqk = a[p][k], a[q][k]
                     a[p][k] = cc * apk - ss * aqk
                     a[q][k] = ss * apk + cc * aqk
-                a[p][q] = 0.0                                  # force the annihilated entries exactly to zero
+                a[p][q] = 0.0  # force the annihilated entries exactly to zero
                 a[q][p] = 0.0
                 # Accumulate the rotation into the eigenvector matrix V <- V J.
                 for k in range(n):
@@ -125,8 +132,10 @@ def _jacobi_eigh(c: list[float], n: int,
                     v[k][p] = cc * vkp - ss * vkq
                     v[k][q] = ss * vkp + cc * vkq
 
-    eigvals = [a[i][i] for i in range(n)]                      # the diagonal holds the eigenvalues
-    eigvecs = [[v[r][t] for r in range(n)] for t in range(n)]  # eigvecs[t] = column t of V (eigenvector t)
+    eigvals = [a[i][i] for i in range(n)]  # the diagonal holds the eigenvalues
+    eigvecs = [
+        [v[r][t] for r in range(n)] for t in range(n)
+    ]  # eigvecs[t] = column t of V (eigenvector t)
     return eigvals, eigvecs
 
 
@@ -165,8 +174,10 @@ def covariance_matrix(x: list[float], m: int, n: int, ddof: int = 1) -> list[flo
     if ddof < 0:
         raise ValueError(f"ddof must be >= 0; got {ddof}")
     if ddof >= m:
-        raise ValueError(f"covariance needs ddof < m (a positive divisor m-ddof); got ddof={ddof}, m={m}")
-    xc = center_columns(x, m, n)                               # validates n>=1, m>=1, len(x)==m*n
+        raise ValueError(
+            f"covariance needs ddof < m (a positive divisor m-ddof); got ddof={ddof}, m={m}"
+        )
+    xc = center_columns(x, m, n)  # validates n>=1, m>=1, len(x)==m*n
     denom = float(m - ddof)
     cmat = [0.0] * (n * n)
     for p in range(n):
@@ -224,8 +235,8 @@ def pca_reference(x: list[float], m: int, n: int, k: int | None = None):
     if k > n:
         raise ValueError(f"cannot keep k={k} components of an n={n}-feature space (k > n)")
 
-    cmat = covariance_matrix(x, m, n, ddof=1)                  # the symmetric covariance (ddof=1 default)
-    vals, vecs = _jacobi_eigh(cmat, n)                         # the trusted symmetric eig (Jacobi)
+    cmat = covariance_matrix(x, m, n, ddof=1)  # the symmetric covariance (ddof=1 default)
+    vals, vecs = _jacobi_eigh(cmat, n)  # the trusted symmetric eig (Jacobi)
     # Sort eigenpairs by eigenvalue DESCENDING (PCA convention), carrying eigenvectors along; ties broken by
     # the original index so the order is fully deterministic.
     order = sorted(range(n), key=lambda t: (-vals[t], t))
@@ -233,12 +244,13 @@ def pca_reference(x: list[float], m: int, n: int, k: int | None = None):
     out_vecs: list[float] = []
     for t in order[:k]:
         out_vals.append(vals[t])
-        out_vecs.extend(_apply_sign_convention(vecs[t], n))    # deterministic sign per component
+        out_vecs.extend(_apply_sign_convention(vecs[t], n))  # deterministic sign per component
     return out_vals, out_vecs
 
 
-def eigen_residual(c: list[float], eigvals: list[float], eigvecs: list[float],
-                   n: int, k: int | None = None) -> float:
+def eigen_residual(
+    c: list[float], eigvals: list[float], eigvecs: list[float], n: int, k: int | None = None
+) -> float:
     """The defining-eigen-equation residual ``max |C v - lambda v|`` over the returned (lambda, v) pairs (real
     units) -- the INDEPENDENT correctness check a symmetric eigendecomposition must satisfy. At a correct
     decomposition ``C v = lambda v`` for every eigenpair, so this is ~0. Recomputed DIRECTLY from ``C`` and the
@@ -251,7 +263,7 @@ def eigen_residual(c: list[float], eigvals: list[float], eigvecs: list[float],
     for t in range(k):
         lam = float(eigvals[t])
         for p in range(n):
-            acc = 0.0                                          # (C v)_p, recomputed directly
+            acc = 0.0  # (C v)_p, recomputed directly
             for q in range(n):
                 acc += float(c[p * n + q]) * float(eigvecs[t * n + q])
             worst = max(worst, abs(acc - lam * float(eigvecs[t * n + p])))
@@ -287,8 +299,7 @@ def trace_residual(c: list[float], eigvals: list[float], n: int) -> float:
     return abs(sum(float(v) for v in eigvals) - tr)
 
 
-def pca_via_bridge(x: list[float], m: int, n: int, k: int | None,
-                   group_size: int, bits: int):
+def pca_via_bridge(x: list[float], m: int, n: int, k: int | None, group_size: int, bits: int):
     """E2: the Q8<->float32<->Q8 bridge wrapped around a TRUSTED eigendecomposition (integrate, don't
     reinvent) -- the PCA analog of ``ols_via_bridge`` / ``solve_via_bridge``. The DATA matrix arrives as
     per-group quantized storage; the bridge dequantizes it to float32, then ``pca_reference`` centers, forms the

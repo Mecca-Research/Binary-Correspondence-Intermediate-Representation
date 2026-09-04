@@ -6,8 +6,15 @@ from the safetensors HEADERS + the model config, BEFORE any weight is ever loade
 interpreted. Later rungs (tokenizer parity, reference decode, quantized artifacts, the
 C/MLIR law rail, serving) build on this record. Dep-free (stdlib only), oracle-side."""
 
-from .manifest import (ModelManifest, ShardRecord, build_manifest, manifest_from_json,
-                       parse_safetensors_header, parse_safetensors_layout, shard_digest)
+from .manifest import (
+    ModelManifest,
+    ShardRecord,
+    build_manifest,
+    manifest_from_json,
+    parse_safetensors_header,
+    parse_safetensors_layout,
+    shard_digest,
+)
 from .inventory import ShardLayout, TensorInventory, TensorRecord, build_tensor_inventory
 from .tokenizer import Tokenizer, bytes_to_unicode, load_tokenizer, render_chat
 
@@ -29,12 +36,28 @@ def __getattr__(name):
     if name not in _LAZY:
         raise AttributeError(name)
     from importlib import import_module
+
     module_name, symbol = _LAZY[name]
     value = getattr(import_module(module_name, __name__), symbol)
     globals()[name] = value
     return value
 
-__all__ = ["ModelManifest", "ShardLayout", "ShardRecord", "TensorInventory", "TensorRecord",
-           "Tokenizer", "build_manifest", "build_tensor_inventory", "bytes_to_unicode",
-           "load_tokenizer", "manifest_from_json", "parse_safetensors_header",
-           "parse_safetensors_layout", "render_chat", "shard_digest", *_LAZY]
+
+__all__ = [
+    "ModelManifest",
+    "ShardLayout",
+    "ShardRecord",
+    "TensorInventory",
+    "TensorRecord",
+    "Tokenizer",
+    "build_manifest",
+    "build_tensor_inventory",
+    "bytes_to_unicode",
+    "load_tokenizer",
+    "manifest_from_json",
+    "parse_safetensors_header",
+    "parse_safetensors_layout",
+    "render_chat",
+    "shard_digest",
+    *_LAZY,
+]

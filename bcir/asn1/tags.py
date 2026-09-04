@@ -33,7 +33,7 @@ class TagClass(IntEnum):
 
     UNIVERSAL = 0b00
     APPLICATION = 0b01
-    CONTEXT = 0b10          # "context-specific" in the text
+    CONTEXT = 0b10  # "context-specific" in the text
     PRIVATE = 0b11
 
 
@@ -53,7 +53,7 @@ class Universal(IntEnum):
     NULL = 5
     OBJECT_IDENTIFIER = 6
     OBJECT_DESCRIPTOR = 7
-    EXTERNAL = 8            # also Instance-of (X.690 §8.16.1)
+    EXTERNAL = 8  # also Instance-of (X.690 §8.16.1)
     REAL = 9
     ENUMERATED = 10
     EMBEDDED_PDV = 11
@@ -61,20 +61,20 @@ class Universal(IntEnum):
     RELATIVE_OID = 13
     TIME = 14
     # 15 reserved for future editions
-    SEQUENCE = 16           # also Sequence-of
-    SET = 17                # also Set-of
+    SEQUENCE = 16  # also Sequence-of
+    SET = 17  # also Set-of
     NUMERIC_STRING = 18
     PRINTABLE_STRING = 19
-    TELETEX_STRING = 20     # T61String
+    TELETEX_STRING = 20  # T61String
     VIDEOTEX_STRING = 21
     IA5_STRING = 22
     UTC_TIME = 23
     GENERALIZED_TIME = 24
     GRAPHIC_STRING = 25
-    VISIBLE_STRING = 26     # ISO646String
+    VISIBLE_STRING = 26  # ISO646String
     GENERAL_STRING = 27
     UNIVERSAL_STRING = 28
-    CHARACTER_STRING = 29   # the unrestricted character string type
+    CHARACTER_STRING = 29  # the unrestricted character string type
     BMP_STRING = 30
     DATE = 31
     TIME_OF_DAY = 32
@@ -186,7 +186,9 @@ def decode_tag(data: bytes, pos: int = 0) -> tuple[Tag, int]:
         raise Asn1Error(
             "high-tag-number form has a redundant leading zero group "
             "(X.690 8.1.2.4.2 c: bits 7 to 1 of the first subsequent octet "
-            "shall not all be zero)", start)
+            "shall not all be zero)",
+            start,
+        )
     number = 0
     while True:
         if pos >= len(data):
@@ -201,5 +203,7 @@ def decode_tag(data: bytes, pos: int = 0) -> tuple[Tag, int]:
     if number <= 30:
         raise Asn1Error(
             f"tag number {number} used the high-tag-number form but fits the short "
-            f"form (X.690 8.1.2.2 applies for numbers 0 to 30)", start)
+            f"form (X.690 8.1.2.2 applies for numbers 0 to 30)",
+            start,
+        )
     return Tag(cls, number, constructed), pos

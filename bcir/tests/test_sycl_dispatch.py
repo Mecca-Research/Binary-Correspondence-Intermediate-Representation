@@ -22,8 +22,13 @@ from bcir.kbcir import optimize
 from bcir.kbcir.cost import TargetProfile, Theta
 from bcir.kbcir.sycl_saxpy import saxpy_reference
 from bcir.lower.sycl_dispatch import (
-    ChannelDispatcher, DispatchUnavailable, SyclDispatcher, build_execute_kernels,
-    seed_store, sycl_cxx, try_emit_spirv,
+    ChannelDispatcher,
+    DispatchUnavailable,
+    SyclDispatcher,
+    build_execute_kernels,
+    seed_store,
+    sycl_cxx,
+    try_emit_spirv,
 )
 from bcir.model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
 import bcir.verify as bverify
@@ -51,13 +56,24 @@ def _saxpy_module(n=8, a=_A):
     m.add_resource(Resource(rid=71, domain=Domain.RAM, shape=(n,), name="x"))
     m.add_resource(Resource(rid=72, domain=Domain.RAM, shape=(n,), name="y"))
     m.add_resource(Resource(rid=73, domain=Domain.RAM, shape=(n,), name="out"))
-    claim = Claim(id=7100, opcode=Opcode.MUL, lane=Lane.U, stride_class=StrideClass.STRIDED, count=n,
-                  rd=(71, 72), wr=(73,), op="call.saxpy", domain=Domain.RAM, imm=(a,))
+    claim = Claim(
+        id=7100,
+        opcode=Opcode.MUL,
+        lane=Lane.U,
+        stride_class=StrideClass.STRIDED,
+        count=n,
+        rd=(71, 72),
+        wr=(73,),
+        op="call.saxpy",
+        domain=Domain.RAM,
+        imm=(a,),
+    )
     m.add_phase(Phase(phase_id=0, deps=(), claims=[claim]))
     return m
 
 
 # --- (1) the headline: end-to-end round-trip -- the channel EXECUTES a routed claim --------------------
+
 
 def test_end_to_end_routed_saxpy_executes_and_matches_reference():
     sycl = _sycl_channel()
@@ -75,32 +91,33 @@ def test_end_to_end_routed_saxpy_executes_and_matches_reference():
     store = seed_store(m, {71: list(_X), 72: list(_Y)})
     disp = SyclDispatcher()
     kernels = build_execute_kernels(m, plan, store, {"sycl_spirv": disp})
-    assert 7100 in kernels and callable(kernels[7100])           # the seam is built
+    assert 7100 in kernels and callable(kernels[7100])  # the seam is built
 
     try:
-        res = execute(m, kernels)                                # run the module end-to-end
+        res = execute(m, kernels)  # run the module end-to-end
     except DispatchUnavailable:
-        return                                                   # no C++ compiler -> self-skip the run
+        return  # no C++ compiler -> self-skip the run
     finally:
         disp.close()
 
     assert res.executed == 1 and res.order == [7100]
-    got = store[73]                                              # the sycl-dispatched output
+    got = store[73]  # the sycl-dispatched output
     ref = saxpy_reference(_A, _X, _Y)
     assert len(got) == len(ref)
-    for g, r in zip(got, ref):                                   # executed == reference to float round-off
+    for g, r in zip(got, ref):  # executed == reference to float round-off
         assert abs(g - r) < 1e-4 * (1.0 + abs(r)), (g, r)
-    assert disp.mode in ("fallback", "sycl-device")             # honest: a real path executed
+    assert disp.mode in ("fallback", "sycl-device")  # honest: a real path executed
 
 
 # --- (2) the dispatcher direct: run_saxpy matches the reference + mode is honest -----------------------
+
 
 def test_dispatcher_run_saxpy_matches_reference():
     disp = SyclDispatcher()
     try:
         got = disp.run_saxpy(_A, _X, _Y)
     except DispatchUnavailable:
-        return                                                   # no C++ compiler -> self-skip
+        return  # no C++ compiler -> self-skip
     finally:
         disp.close()
     ref = saxpy_reference(_A, _X, _Y)
@@ -109,7 +126,7 @@ def test_dispatcher_run_saxpy_matches_reference():
     # mode reports the path that ran: "fallback" on CI (no SYCL toolchain), "sycl-device" if one is present.
     assert disp.mode in ("fallback", "sycl-device")
     if sycl_cxx() is None:
-        assert disp.mode == "fallback"                           # the expected CI mode
+        assert disp.mode == "fallback"  # the expected CI mode
 
 
 def test_dispatcher_is_a_channel_dispatcher_and_validates_inputs():
@@ -165,20 +182,22 @@ def test_dispatcher_rejects_attacker_scaled_geometry_before_compilation():
 
 # --- (3) the device path is GATED: runs + agrees only if a real SYCL compiler is present ---------------
 
+
 def test_device_path_agrees_when_a_sycl_compiler_is_present():
     sy = sycl_cxx()
     if not sy:
-        return        # no SYCL toolchain here -> the -fsycl device path self-skips (the EXPECTED CI case)
+        return  # no SYCL toolchain here -> the -fsycl device path self-skips (the EXPECTED CI case)
     disp = SyclDispatcher(prefer_device=True)
     got = disp.run_saxpy(_A, _X, _Y)
     disp.close()
-    assert disp.mode == "sycl-device"                            # the device path actually ran
+    assert disp.mode == "sycl-device"  # the device path actually ran
     ref = saxpy_reference(_A, _X, _Y)
     for g, r in zip(got, ref):
-        assert abs(g - r) < 1e-2 * (1.0 + abs(r)), (g, r)        # the SYCL device computes the same SAXPY
+        assert abs(g - r) < 1e-2 * (1.0 + abs(r)), (g, r)  # the SYCL device computes the same SAXPY
 
 
 # --- (4) the SPIR-V emission attempt: reachable, never crashes -----------------------------------------
+
 
 def test_try_emit_spirv_never_crashes_and_returns_a_note():
     # the channel's SPIR-V codegen identity is reachable via the spirv64 target. Stock llc has no SPIR-V
@@ -188,19 +207,20 @@ def test_try_emit_spirv_never_crashes_and_returns_a_note():
     result = optimize(m, TargetProfile.x86_avx512(), Theta.cool())
     ok, note = try_emit_spirv(m, result)
     assert isinstance(ok, bool)
-    assert isinstance(note, str) and note                        # a sensible, non-empty note
+    assert isinstance(note, str) and note  # a sensible, non-empty note
     if not ok:
         assert "no SPIR-V backend" in note or "llc not found" in note, note
 
 
 # --- (5) two-truth: the dispatch path is DATA only, never a legality verdict ---------------------------
 
+
 def test_dispatch_is_off_the_legality_path():
     # The dispatcher EXECUTES (produces data); it must NEVER render or alter an R-law legality verdict.
     # The module verifies clean BEFORE any dispatch, and STILL verifies clean after the end-to-end run --
     # the dispatch produced no Diagnostic and did not touch the verifier (it is a graded backend above G8).
     m = _saxpy_module()
-    assert bverify.verify(m) == []                               # clean before dispatch
+    assert bverify.verify(m) == []  # clean before dispatch
     plan = orchestrate(m, [_sycl_channel()], Theta.cool())
     store = seed_store(m, {71: list(_X), 72: list(_Y)})
     disp = SyclDispatcher()
@@ -208,16 +228,17 @@ def test_dispatch_is_off_the_legality_path():
     try:
         execute(m, kernels)
     except DispatchUnavailable:
-        pass                                                     # the run self-skips; the verdict check still holds
+        pass  # the run self-skips; the verdict check still holds
     finally:
         disp.close()
-    assert bverify.verify(m) == []                               # STILL clean after dispatch (no verdict change)
+    assert bverify.verify(m) == []  # STILL clean after dispatch (no verdict change)
     # try_emit_spirv likewise returns data/notes only -- it produces no Diagnostic.
     ok, note = try_emit_spirv(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()))
     assert isinstance(note, str)
 
 
 # --- (6) the architectural boundary: SYCL is still NOT a link-flag edge ---------------------------------
+
 
 def test_sycl_dispatch_is_not_a_link_flag_edge():
     # defends the boundary (mirrors test_sycl_channel): the emitted kernel name resolves to None (SYCL is a
@@ -227,6 +248,7 @@ def test_sycl_dispatch_is_not_a_link_flag_edge():
 
 
 # --- (7) the kernels/store wiring is built even without a dispatcher (non-sycl reference kernel) -------
+
 
 def test_build_kernels_wires_every_placed_claim():
     sycl = _sycl_channel()
@@ -240,11 +262,12 @@ def test_build_kernels_wires_every_placed_claim():
     res = execute(m, kernels)
     assert res.executed == 1
     ref = saxpy_reference(_A, _X, _Y)
-    assert store[73] == ref                                      # the reference kernel ran (pure data)
+    assert store[73] == ref  # the reference kernel ran (pure data)
 
 
 if __name__ == "__main__":
     import sys
+
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
         fn()

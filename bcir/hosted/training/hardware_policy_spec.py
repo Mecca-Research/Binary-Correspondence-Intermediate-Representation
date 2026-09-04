@@ -17,13 +17,23 @@ class HardwarePolicySpec:
     max_telemetry_tokens: int = 32
 
     def __post_init__(self) -> None:
-        for field in ("hidden_dim", "heads", "transformer_layers", "graph_layers",
-                      "max_telemetry_tokens"):
+        for field in (
+            "hidden_dim",
+            "heads",
+            "transformer_layers",
+            "graph_layers",
+            "max_telemetry_tokens",
+        ):
             require_int(getattr(self, field), field, minimum=1, maximum=1024)
         if self.hidden_dim % self.heads:
             raise ValueError("hardware policy hidden_dim must be divisible by heads")
-        if self.hidden_dim > 256 or self.heads > 16 or self.transformer_layers > 8 \
-                or self.graph_layers > 8 or self.max_telemetry_tokens > 4096:
+        if (
+            self.hidden_dim > 256
+            or self.heads > 16
+            or self.transformer_layers > 8
+            or self.graph_layers > 8
+            or self.max_telemetry_tokens > 4096
+        ):
             raise ValueError("hardware policy exceeds the bounded reference-model envelope")
 
     def to_json(self) -> str:
@@ -54,8 +64,14 @@ class HardwarePolicyTrainSpec:
         for field in ("reward_steps", "dpo_steps", "ppo_steps"):
             require_int(getattr(self, field), field, minimum=1, maximum=4096)
         require_int(self.seed, "seed")
-        for field in ("learning_rate", "epsilon", "grad_clip", "dpo_beta",
-                      "ppo_clip", "value_coefficient"):
+        for field in (
+            "learning_rate",
+            "epsilon",
+            "grad_clip",
+            "dpo_beta",
+            "ppo_clip",
+            "value_coefficient",
+        ):
             require_finite(getattr(self, field), field, minimum=0.0)
             if getattr(self, field) == 0.0:
                 raise ValueError(f"{field} must be positive")
@@ -105,13 +121,17 @@ class HardwarePolicyRunReport:
     model_sha256: str
 
     def __post_init__(self) -> None:
-        for field in ("model_spec_sha256", "train_spec_sha256", "input_sha256",
-                      "model_sha256"):
+        for field in ("model_spec_sha256", "train_spec_sha256", "input_sha256", "model_sha256"):
             require_sha256(getattr(self, field), field)
         require_finite(self.initial_reward_loss, "initial_reward_loss", minimum=0.0)
         require_finite(self.final_reward_loss, "final_reward_loss", minimum=0.0)
-        for field in ("initial_top1_correct", "final_top1_correct", "episodes",
-                      "candidates", "total_steps"):
+        for field in (
+            "initial_top1_correct",
+            "final_top1_correct",
+            "episodes",
+            "candidates",
+            "total_steps",
+        ):
             require_int(getattr(self, field), field, minimum=0)
         if self.episodes < 1 or self.candidates < 2 or self.total_steps < 1:
             raise ValueError("hardware policy report has an empty training inventory")
@@ -126,12 +146,25 @@ class HardwarePolicyRunReport:
     @classmethod
     def from_json(cls, text: str) -> "HardwarePolicyRunReport":
         doc = strict_json_loads(text, "hardware policy report", max_bytes=1024 * 1024)
-        fields = {"schema", "model_spec_sha256", "train_spec_sha256", "input_sha256",
-                  "initial_reward_loss", "final_reward_loss", "initial_top1_correct",
-                  "final_top1_correct", "episodes", "candidates", "total_steps",
-                  "model_sha256"}
-        if not isinstance(doc, dict) or set(doc) != fields \
-                or doc.pop("schema") != "bcir.hardware_policy_report.v1":
+        fields = {
+            "schema",
+            "model_spec_sha256",
+            "train_spec_sha256",
+            "input_sha256",
+            "initial_reward_loss",
+            "final_reward_loss",
+            "initial_top1_correct",
+            "final_top1_correct",
+            "episodes",
+            "candidates",
+            "total_steps",
+            "model_sha256",
+        }
+        if (
+            not isinstance(doc, dict)
+            or set(doc) != fields
+            or doc.pop("schema") != "bcir.hardware_policy_report.v1"
+        ):
             raise ValueError("hardware policy report has missing or unknown fields")
         try:
             return cls(**doc)
@@ -152,5 +185,10 @@ class HardwarePolicyArtifact:
         require_sha256(self.model_sha256, "model_sha256")
 
 
-__all__ = ["HardwarePolicyArtifact", "HardwarePolicyEvent", "HardwarePolicyRunReport",
-           "HardwarePolicySpec", "HardwarePolicyTrainSpec"]
+__all__ = [
+    "HardwarePolicyArtifact",
+    "HardwarePolicyEvent",
+    "HardwarePolicyRunReport",
+    "HardwarePolicySpec",
+    "HardwarePolicyTrainSpec",
+]

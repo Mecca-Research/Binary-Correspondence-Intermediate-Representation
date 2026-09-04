@@ -16,7 +16,7 @@ class BinaryField:
     name: str
     offset_bits: int
     width_bits: int
-    kind: str = "u"        # u | s | f | bytes
+    kind: str = "u"  # u | s | f | bytes
     semantic: str = ""
 
 
@@ -30,18 +30,20 @@ class BinaryRecord:
 @dataclass(frozen=True)
 class BinaryFormat:
     name: str
-    endianness: str = "little"     # little | big
+    endianness: str = "little"  # little | big
     alignment_bits: int = 8
     records: tuple[BinaryRecord, ...] = ()
 
 
 def _extract(data: bytes, field: BinaryField, endianness: str) -> int:
     if field.offset_bits % 8 != 0 or field.width_bits % 8 != 0:
-        raise ValueError(f"field {field.name!r}: only byte-aligned fields are supported "
-                         f"(offset={field.offset_bits}, width={field.width_bits})")
+        raise ValueError(
+            f"field {field.name!r}: only byte-aligned fields are supported "
+            f"(offset={field.offset_bits}, width={field.width_bits})"
+        )
     start = field.offset_bits // 8
     nbytes = field.width_bits // 8
-    chunk = data[start:start + nbytes]
+    chunk = data[start : start + nbytes]
     if len(chunk) != nbytes:
         raise ValueError(f"field {field.name!r}: out of bounds (need {nbytes} bytes at {start})")
     byteorder = "little" if endianness in ("little", "le") else "big"
@@ -58,8 +60,12 @@ NVME_SQE_HEADER = BinaryRecord(
     name="nvme_sqe_header",
     fields=(
         BinaryField("opcode", offset_bits=0, width_bits=8, kind="u", semantic="command_opcode"),
-        BinaryField("command_id", offset_bits=16, width_bits=16, kind="u", semantic="queue_command_id"),
-        BinaryField("namespace_id", offset_bits=32, width_bits=32, kind="u", semantic="resource_namespace"),
+        BinaryField(
+            "command_id", offset_bits=16, width_bits=16, kind="u", semantic="queue_command_id"
+        ),
+        BinaryField(
+            "namespace_id", offset_bits=32, width_bits=32, kind="u", semantic="resource_namespace"
+        ),
     ),
     size_bits=64,
 )

@@ -60,21 +60,22 @@ def _independent_saxpy(a, x, y):
 
 # --- (1) the channel manifest: validates, registers, and a data_parallel claim routes to it ------------
 
+
 def test_sycl_manifest_validates_and_registers():
     m = load_manifest(_MANIFEST)
     assert m.validate() == [], m.validate()
     # identity + codegen + provenance + capabilities are the modeled SPIR-V/SYCL GPU channel.
     assert m.name == "sycl_spirv" and m.kind == "gpu"
     assert m.llvm_triple == "spirv64-unknown-unknown"
-    assert m.e_machine == 0                                 # off-host: SPIR-V is not a host ELF
+    assert m.e_machine == 0  # off-host: SPIR-V is not a host ELF
     assert m.provenance == "modeled" and m.modeled is True  # no resident driver / calibration yet
     assert m.profile.triple == "spirv64"
-    assert m.profile.lane_widths[0] == 1                    # scalar width first (validate() requires it)
-    assert m.profile.warp == 32                             # a warp-ish subgroup machine
+    assert m.profile.lane_widths[0] == 1  # scalar width first (validate() requires it)
+    assert m.profile.warp == 32  # a warp-ish subgroup machine
     assert m.capabilities == frozenset({"data_parallel", "matmul", "reduce"})
     ch = _sycl_channel()
     assert isinstance(ch, HardwareChannel) and ch.name == "sycl_spirv"
-    assert ch.kind == "gpu" and not ch.is_host_elf          # off-host (no host ELF object)
+    assert ch.kind == "gpu" and not ch.is_host_elf  # off-host (no host ELF object)
 
 
 def test_a_data_parallel_claim_routes_to_the_sycl_channel():
@@ -83,9 +84,18 @@ def test_a_data_parallel_claim_routes_to_the_sycl_channel():
     # among a candidate set it is the specialized pick (mirrors how test_channel_plugin exercises capability
     # routing -- a plugin's declared tag wins over a legacy kind-routed CPU fallback).
     sycl = _sycl_channel()
-    claim = Claim(id=7100, opcode=Opcode.MUL, lane=Lane.U, stride_class=StrideClass.STRIDED, count=8,
-                  rd=(71,), wr=(72,), op="call.saxpy", domain=Domain.RAM)
-    assert channel_suits(claim, sycl)                       # the declared data_parallel tag matches
+    claim = Claim(
+        id=7100,
+        opcode=Opcode.MUL,
+        lane=Lane.U,
+        stride_class=StrideClass.STRIDED,
+        count=8,
+        rd=(71,),
+        wr=(72,),
+        op="call.saxpy",
+        domain=Domain.RAM,
+    )
+    assert channel_suits(claim, sycl)  # the declared data_parallel tag matches
     # build a candidate set: the host CPU channel (legacy, kind-routed universal) + the sycl plugin. The
     # plugin declares one of the claim's concrete required caps, so route_claim prefers it over the
     # unspecialized CPU fallback.
@@ -96,14 +106,16 @@ def test_a_data_parallel_claim_routes_to_the_sycl_channel():
 
 # --- (2) the oracle reference: matches an independent recompute (+ a known closed-form) ----------------
 
+
 def test_saxpy_reference_matches_an_independent_recompute():
     import random
+
     rng = random.Random(0x7100)
     a = rng.uniform(-3, 3)
     x = [rng.uniform(-5, 5) for _ in range(17)]
     y = [rng.uniform(-5, 5) for _ in range(17)]
     got = saxpy_reference(a, x, y)
-    want = _independent_saxpy(a, x, y)                      # independent of BCIR's code
+    want = _independent_saxpy(a, x, y)  # independent of BCIR's code
     assert len(got) == len(want)
     for g, w in zip(got, want):
         assert abs(g - w) <= 1e-9 * (1.0 + abs(w)), (g, w)
@@ -120,11 +132,13 @@ def test_saxpy_reference_known_closed_form():
 
 def test_saxpy_reference_rejects_empty_and_mismatch():
     try:
-        saxpy_reference(2.0, [], []); assert False, "empty saxpy should raise"
+        saxpy_reference(2.0, [], [])
+        assert False, "empty saxpy should raise"
     except ValueError:
         pass
     try:
-        saxpy_reference(2.0, [1.0, 2.0], [1.0]); assert False, "length mismatch should raise"
+        saxpy_reference(2.0, [1.0, 2.0], [1.0])
+        assert False, "length mismatch should raise"
     except ValueError:
         pass
 
@@ -139,6 +153,7 @@ def test_saxpy_reference_is_side_effect_free():
 
 # --- (3) the oracle bridge: tracks the reference within the R17 quant-error bound ----------------------
 
+
 def test_bridged_saxpy_tracks_the_reference_within_quant_error():
     # SAXPY is EXACT arithmetic (mul+add, NO transcendental), so the only error source is the R17 input
     # round-trip. A round-trip error e on x is scaled by |a| (the multiply); the round-trip error on y
@@ -146,13 +161,14 @@ def test_bridged_saxpy_tracks_the_reference_within_quant_error():
     # (|a| + 1) * e. (Contrast the SLEEF exp wrap, whose transcendental amplifies by exp(x).)
     import random
     from bcir.kbcir.quantize import max_abs_error
+
     rng = random.Random(0x71F7)
     a = 1.75
     x = [rng.uniform(-4, 4) for _ in range(16)]
     y = [rng.uniform(-4, 4) for _ in range(16)]
-    qx = max_abs_error(x, group_size=8, bits=8)            # the R17 input round-trip bound on x (real units)
-    qy = max_abs_error(y, group_size=8, bits=8)            # ... and on y
-    bound = abs(a) * qx + qy + 1e-6                         # exact-arithmetic bound: |a|*e_x + 1*e_y
+    qx = max_abs_error(x, group_size=8, bits=8)  # the R17 input round-trip bound on x (real units)
+    qy = max_abs_error(y, group_size=8, bits=8)  # ... and on y
+    bound = abs(a) * qx + qy + 1e-6  # exact-arithmetic bound: |a|*e_x + 1*e_y
     ref = saxpy_reference(a, x, y)
     got = saxpy_via_bridge(a, x, y, group_size=8, bits=8)
     for r, g in zip(ref, got):
@@ -165,6 +181,7 @@ def test_bridge_is_a_clean_roundtrip_then_exact_arithmetic():
     # adds no certified error -- like the dense BLAS gemm path, not the exp wrap).
     import random
     from bcir.kbcir.quantize import dequantize, quantize_per_group
+
     rng = random.Random(710)
     a = 2.0
     x = [rng.uniform(-2, 2) for _ in range(12)]
@@ -176,20 +193,22 @@ def test_bridge_is_a_clean_roundtrip_then_exact_arithmetic():
 
 # --- (4) the emitted kernel: a SYCL parallel_for + a portable scalar fallback, NOT a c.call.libm: edge -
 
+
 def test_emit_wraps_a_sycl_parallel_for_with_a_scalar_fallback():
     c = emit_sycl_saxpy_c(8, "bcir_saxpy")
-    assert "parallel_for" in c                                            # the SYCL device kernel
-    assert "sycl::" in c                                                  # SYCL namespace (queue/range/id)
-    assert "#if defined(BCIR_USE_SYCL)" in c                             # toolchain-selected device path
-    assert "#include <sycl/sycl.hpp>" in c                              # the SYCL header on the device path
-    assert "a * x[i] + y[i]" in c                                        # the portable scalar fallback SAXPY
+    assert "parallel_for" in c  # the SYCL device kernel
+    assert "sycl::" in c  # SYCL namespace (queue/range/id)
+    assert "#if defined(BCIR_USE_SYCL)" in c  # toolchain-selected device path
+    assert "#include <sycl/sycl.hpp>" in c  # the SYCL header on the device path
+    assert "a * x[i] + y[i]" in c  # the portable scalar fallback SAXPY
     # the signature bakes n in: (a, x, y, out), C++ (no extern "C").
     assert "void bcir_saxpy(float a, const float *x, const float *y, float *out)" in c
     # CRITICAL: SYCL is a compiler MODE, not a c.call.libm: external-symbol edge -- the emitter mints NO
     # such label (unlike the five Area-B library wraps).
     assert "c.call.libm:" not in c
     try:
-        emit_sycl_saxpy_c(0, "bcir_saxpy"); assert False, "n=0 should raise"
+        emit_sycl_saxpy_c(0, "bcir_saxpy")
+        assert False, "n=0 should raise"
     except ValueError:
         pass
 
@@ -206,13 +225,15 @@ def _run_saxpy_kernel(cxx, kernel, a, x, y, define=None, extra=None):
     n = len(x)
     xb = ", ".join(f"{v:.8f}f" for v in x)
     yb = ", ".join(f"{v:.8f}f" for v in y)
-    main = (f"\n#include <cstdio>\nint main(void){{\n"
-            f"  float a = {a:.8f}f;\n"
-            f"  float x[{n}] = {{{xb}}};\n"
-            f"  float y[{n}] = {{{yb}}};\n"
-            f"  float out[{n}];\n  bcir_saxpy(a, x, y, out);\n"
-            f"  for (int i = 0; i < {n}; ++i) printf(\"%.8f\\n\", (double)out[i]);\n"
-            f"  return 0;\n}}\n")
+    main = (
+        f"\n#include <cstdio>\nint main(void){{\n"
+        f"  float a = {a:.8f}f;\n"
+        f"  float x[{n}] = {{{xb}}};\n"
+        f"  float y[{n}] = {{{yb}}};\n"
+        f"  float out[{n}];\n  bcir_saxpy(a, x, y, out);\n"
+        f'  for (int i = 0; i < {n}; ++i) printf("%.8f\\n", (double)out[i]);\n'
+        f"  return 0;\n}}\n"
+    )
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "s.cpp")
         with open(src, "w") as f:
@@ -234,13 +255,13 @@ def _run_saxpy_kernel(cxx, kernel, a, x, y, define=None, extra=None):
 def test_fallback_path_compiles_runs_and_is_correct():
     cxx = _cxx()
     if not cxx:
-        return                                              # quick tier hides the toolchain -> self-skip
+        return  # quick tier hides the toolchain -> self-skip
     a = 2.0
     x = [1.0, 2.0, 3.0, 0.5, -1.0, 4.0, -2.5, 0.0]
     y = [10.0, 20.0, 30.0, -0.5, 1.0, -4.0, 2.5, 7.0]
     ref = saxpy_reference(a, x, y)
-    want = _independent_saxpy(a, x, y)                      # the genuine independent check (stdlib)
-    got = _run_saxpy_kernel(cxx, emit_sycl_saxpy_c(len(x), "bcir_saxpy"), a, x, y)   # NO -fsycl
+    want = _independent_saxpy(a, x, y)  # the genuine independent check (stdlib)
+    got = _run_saxpy_kernel(cxx, emit_sycl_saxpy_c(len(x), "bcir_saxpy"), a, x, y)  # NO -fsycl
     assert len(got) == len(x)
     for g, r, w in zip(got, ref, want):
         # the C++ fallback IS the same SAXPY (float32 vs the oracle's float64) -> agree to float round-off.
@@ -258,19 +279,19 @@ def _sycl_cxx():
     if shutil.which("icpx"):
         candidates.append((shutil.which("icpx"), ["-fsycl"]))
     if shutil.which("acpp"):
-        candidates.append((shutil.which("acpp"), []))       # acpp/Open SYCL drives -fsycl itself
+        candidates.append((shutil.which("acpp"), []))  # acpp/Open SYCL drives -fsycl itself
     if shutil.which("clang++"):
         candidates.append((shutil.which("clang++"), ["-fsycl"]))
-    probe = ("#include <sycl/sycl.hpp>\n"
-             "int main(){ sycl::queue q; (void)q; return 0; }\n")
+    probe = "#include <sycl/sycl.hpp>\nint main(){ sycl::queue q; (void)q; return 0; }\n"
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "probe.cpp")
         with open(src, "w") as f:
             f.write(probe)
         for cxx, extra in candidates:
             exe = os.path.join(d, "probe")
-            r = subprocess.run([cxx, "-std=c++17", *extra, src, "-o", exe],
-                               capture_output=True, text=True)
+            r = subprocess.run(
+                [cxx, "-std=c++17", *extra, src, "-o", exe], capture_output=True, text=True
+            )
             if r.returncode == 0:
                 return cxx, extra
     return None
@@ -279,14 +300,15 @@ def _sycl_cxx():
 def test_sycl_device_path_agrees_when_a_sycl_compiler_is_present():
     sy = _sycl_cxx()
     if not sy:
-        return                                              # no SYCL toolchain here -> the device path self-skips
+        return  # no SYCL toolchain here -> the device path self-skips
     cxx, extra = sy
     a = 2.0
     x = [1.0, 2.0, 3.0, 0.5, -1.0, 4.0, -2.5, 0.0]
     y = [10.0, 20.0, 30.0, -0.5, 1.0, -4.0, 2.5, 7.0]
     ref = saxpy_reference(a, x, y)
-    got = _run_saxpy_kernel(cxx, emit_sycl_saxpy_c(len(x), "bcir_saxpy"), a, x, y,
-                            define="-DBCIR_USE_SYCL", extra=extra)
+    got = _run_saxpy_kernel(
+        cxx, emit_sycl_saxpy_c(len(x), "bcir_saxpy"), a, x, y, define="-DBCIR_USE_SYCL", extra=extra
+    )
     for g, r in zip(got, ref):
         # the SYCL device computes the identical SAXPY; agree within a loose float tolerance.
         assert abs(g - r) < 1e-2 * (1.0 + abs(r)), (g, r)
@@ -294,37 +316,51 @@ def test_sycl_device_path_agrees_when_a_sycl_compiler_is_present():
 
 # --- (5) R17 boundary: the bridge step is certified on the wrapped call --------------------------------
 
+
 def test_r17_certifies_the_bridge_on_a_quantized_saxpy_call():
     # a SAXPY call that consumes quantized lanes carries the bridge's round-trip step in its bound (the
     # multiply-add itself is exact); a dense call does not. Mirrors test_sleef/test_gsl/test_blas.
     def call(qbits):
-        return Claim(id=7100, opcode=Opcode.MUL, lane=Lane.U, stride_class=StrideClass.UNIT, count=1,
-                     rd=(71,), wr=(72,), op="call.saxpy", domain=Domain.RAM, quantized_bits=qbits)
-    assert accuracy_bound(call(8)) == accuracy_bound(call(0)) + 1     # the +1 ULP bridge step
-    assert accuracy_bound(call(0)) == 1                              # dense call: the op's own 1 ULP
-    assert quantization_error_bound() == 1                          # the R17 grid bound the bridge is held to
+        return Claim(
+            id=7100,
+            opcode=Opcode.MUL,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=1,
+            rd=(71,),
+            wr=(72,),
+            op="call.saxpy",
+            domain=Domain.RAM,
+            quantized_bits=qbits,
+        )
+
+    assert accuracy_bound(call(8)) == accuracy_bound(call(0)) + 1  # the +1 ULP bridge step
+    assert accuracy_bound(call(0)) == 1  # dense call: the op's own 1 ULP
+    assert quantization_error_bound() == 1  # the R17 grid bound the bridge is held to
 
 
 # --- (6) SYCL is NOT a link-flag edge: the five library rules still map; a SYCL symbol is unknown ------
+
 
 def test_sycl_is_not_a_link_flag_edge():
     # CRITICAL architectural assertion: SYCL is a compiler MODE (-fsycl), NOT a `c.call.libm:` -l<lib>
     # external-symbol edge. So NO link rule was added for it (linkflags.py is untouched): a SYCL-ish symbol
     # resolves to None (unknown), while the five existing library rules + libm + libc still resolve.
-    assert library_for_callee("sycl_saxpy_kernel") is None          # a SYCL-ish symbol: unknown (no rule)
-    assert library_for_callee("bcir_saxpy") is None                 # the emitted kernel name: unknown too
+    assert library_for_callee("sycl_saxpy_kernel") is None  # a SYCL-ish symbol: unknown (no rule)
+    assert library_for_callee("bcir_saxpy") is None  # the emitted kernel name: unknown too
     # no regression on the five existing library classifications + libm + libc-implicit.
-    assert library_for_callee("cblas_sgemm") == "-lcblas"           # B5 BLAS still maps
-    assert library_for_callee("fftwf_execute") == "-lfftw3"         # B2 FFTW still maps
-    assert library_for_callee("LAPACKE_sgesv") == "-llapack"        # #61 LAPACK still maps
-    assert library_for_callee("gsl_stats_mean") == "-lgsl"          # #62 GSL still maps
-    assert library_for_callee("Sleef_expf1_u10") == "-lsleef"       # #63 SLEEF still maps
-    assert library_for_callee("expf") == "-lm"                      # libm still maps
-    assert library_for_callee("free") == NO_FLAG                    # libc-implicit, known (not unknown)
+    assert library_for_callee("cblas_sgemm") == "-lcblas"  # B5 BLAS still maps
+    assert library_for_callee("fftwf_execute") == "-lfftw3"  # B2 FFTW still maps
+    assert library_for_callee("LAPACKE_sgesv") == "-llapack"  # #61 LAPACK still maps
+    assert library_for_callee("gsl_stats_mean") == "-lgsl"  # #62 GSL still maps
+    assert library_for_callee("Sleef_expf1_u10") == "-lsleef"  # #63 SLEEF still maps
+    assert library_for_callee("expf") == "-lm"  # libm still maps
+    assert library_for_callee("free") == NO_FLAG  # libc-implicit, known (not unknown)
 
 
 if __name__ == "__main__":
     import sys
+
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
         fn()

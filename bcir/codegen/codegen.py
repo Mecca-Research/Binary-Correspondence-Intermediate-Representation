@@ -34,8 +34,13 @@ def _tool(*names: str) -> str | None:
     return None
 
 
-def codegen(module: Module, result: RealizationResult, target_name: str,
-            fn_name: str = "bcir_kernel", workdir: str | None = None) -> CodegenResult:
+def codegen(
+    module: Module,
+    result: RealizationResult,
+    target_name: str,
+    fn_name: str = "bcir_kernel",
+    workdir: str | None = None,
+) -> CodegenResult:
     """Generate a real artifact for `target_name` (an object or asm)."""
     if target_name not in CODEGEN_TARGETS:
         return CodegenResult(False, target_name, None, f"unknown target {target_name!r}")
@@ -52,7 +57,9 @@ def codegen(module: Module, result: RealizationResult, target_name: str,
         ll = os.path.join(workdir, "kernel.ll")
         out = os.path.join(workdir, "kernel.out")
         with open(ll, "w") as f:
-            f.write(emit_kernel_ll(module, result, fn_name, elem=tgt.elem, width_override=tgt.width))
+            f.write(
+                emit_kernel_ll(module, result, fn_name, elem=tgt.elem, width_override=tgt.width)
+            )
 
         cmd = [llc, f"-mtriple={tgt.triple}", *tgt.extra_flags]
         if tgt.filetype == "obj":
@@ -60,8 +67,9 @@ def codegen(module: Module, result: RealizationResult, target_name: str,
         cmd += [ll, "-o", out]
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
-            return CodegenResult(False, target_name, None,
-                                 f"llc failed for {tgt.triple}:\n{r.stderr.strip()}")
+            return CodegenResult(
+                False, target_name, None, f"llc failed for {tgt.triple}:\n{r.stderr.strip()}"
+            )
 
         if tgt.filetype == "obj":
             with open(out, "rb") as f:
@@ -69,18 +77,25 @@ def codegen(module: Module, result: RealizationResult, target_name: str,
             objdump = llvm.paths["llvm-objdump"]
             fmt = subprocess.run([objdump, "-f", out], capture_output=True, text=True).stdout
             ok = (not tgt.object_format) or (tgt.object_format in fmt)
-            return CodegenResult(ok, target_name, data,
-                                 f"{len(data)} bytes, format ok" if ok
-                                 else f"unexpected object format (want {tgt.object_format})")
+            return CodegenResult(
+                ok,
+                target_name,
+                data,
+                f"{len(data)} bytes, format ok"
+                if ok
+                else f"unexpected object format (want {tgt.object_format})",
+            )
         else:
             with open(out, "r") as f:
                 text = f.read()
             ok = (not tgt.asm_marker) or (tgt.asm_marker in text)
-            return CodegenResult(ok, target_name, text,
-                                 "asm ok" if ok else f"missing marker {tgt.asm_marker!r}")
+            return CodegenResult(
+                ok, target_name, text, "asm ok" if ok else f"missing marker {tgt.asm_marker!r}"
+            )
     finally:
         if created:
             import shutil
+
             shutil.rmtree(workdir, ignore_errors=True)
 
 
@@ -92,8 +107,12 @@ def emit_c_source(module: Module, result: RealizationResult, fn_name: str = "bci
     return emit_kernel_c(module, result, fn_name)
 
 
-def codegen_c(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel",
-              workdir: str | None = None) -> CodegenResult:
+def codegen_c(
+    module: Module,
+    result: RealizationResult,
+    fn_name: str = "bcir_kernel",
+    workdir: str | None = None,
+) -> CodegenResult:
     """Emit the C fallback and compile it to an object (proves it builds anywhere)."""
     cc = _tool("clang", "cc", "gcc")
     if cc is None:
@@ -106,17 +125,21 @@ def codegen_c(module: Module, result: RealizationResult, fn_name: str = "bcir_ke
         with open(src, "w") as f:
             f.write(emit_c_source(module, result, fn_name))
         r = None
-        for std in ("-std=c23", "-std=c2x"):   # C23 (clang) then c2x (gcc 13)
-            r = subprocess.run([cc, std, "-O2", "-c", src, "-o", obj],
-                               capture_output=True, text=True)
+        for std in ("-std=c23", "-std=c2x"):  # C23 (clang) then c2x (gcc 13)
+            r = subprocess.run(
+                [cc, std, "-O2", "-c", src, "-o", obj], capture_output=True, text=True
+            )
             if r.returncode == 0:
                 break
         ok = r is not None and r.returncode == 0 and os.path.exists(obj)
         data = open(obj, "rb").read() if ok else None
-        return CodegenResult(ok, "c", data, "compiled" if ok else (r.stderr.strip() if r else "no compiler"))
+        return CodegenResult(
+            ok, "c", data, "compiled" if ok else (r.stderr.strip() if r else "no compiler")
+        )
     finally:
         if created:
             import shutil
+
             shutil.rmtree(workdir, ignore_errors=True)
 
 
@@ -137,24 +160,35 @@ def codegen_all(module: Module, result: RealizationResult) -> dict:
 # a genuine ELF object for the expected machine. eBPF is integer-only (no FP), so it
 # takes the i32 kernel and `-ffreestanding` (no libc). EM_BPF = 247, EM_X86_64 = 62.
 _OBJECT_TARGETS: dict[str, dict] = {
-    "bpf":     {"triple": "bpf", "e_machine": 247, "elem": "i32", "freestanding": True},
-    "x86_64":  {"triple": "x86_64-linux-gnu", "e_machine": 62, "elem": "i32", "freestanding": False},
+    "bpf": {"triple": "bpf", "e_machine": 247, "elem": "i32", "freestanding": True},
+    "x86_64": {"triple": "x86_64-linux-gnu", "e_machine": 62, "elem": "i32", "freestanding": False},
     # EM_AARCH64 = 183: the ARM (Raspberry Pi 5) native-object target, alongside x86_64.
-    "aarch64": {"triple": "aarch64-linux-gnu", "e_machine": 183, "elem": "i32", "freestanding": False},
+    "aarch64": {
+        "triple": "aarch64-linux-gnu",
+        "e_machine": 183,
+        "elem": "i32",
+        "freestanding": False,
+    },
 }
 
 
 def _elf_machine(obj: bytes) -> int | None:
     """The ELF e_machine of a relocatable object, or None if it is not ELF."""
     import struct
+
     if len(obj) < 20 or obj[:4] != b"\x7fELF":
         return None
-    endi = "<" if obj[5] == 1 else ">"     # EI_DATA: 1 = little-endian
+    endi = "<" if obj[5] == 1 else ">"  # EI_DATA: 1 = little-endian
     return struct.unpack_from(endi + "H", obj, 18)[0]
 
 
-def codegen_object_c(module: Module, result: RealizationResult, target: str = "bpf",
-                     fn_name: str = "bcir_kernel", workdir: str | None = None) -> CodegenResult:
+def codegen_object_c(
+    module: Module,
+    result: RealizationResult,
+    target: str = "bpf",
+    fn_name: str = "bcir_kernel",
+    workdir: str | None = None,
+) -> CodegenResult:
     """Compile the emitted C kernel to a REAL native object for `target` via the
     resident compiler -- the warranted slice of the native-object decision gate (no
     BCIR-native isel). Returns the object bytes; `ok` iff it is an ELF object for the
@@ -177,15 +211,22 @@ def codegen_object_c(module: Module, result: RealizationResult, target: str = "b
             cmd.insert(1, "-ffreestanding")
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0 or not os.path.exists(obj):
-            return CodegenResult(False, target, None,
-                                 f"clang --target={spec['triple']} failed:\n{r.stderr.strip()}")
+            return CodegenResult(
+                False, target, None, f"clang --target={spec['triple']} failed:\n{r.stderr.strip()}"
+            )
         data = open(obj, "rb").read()
         mach = _elf_machine(data)
         ok = mach == spec["e_machine"]
-        return CodegenResult(ok, target, data,
-                             f"{len(data)}-byte ELF object, e_machine={mach}" if ok
-                             else f"unexpected object (e_machine={mach}, want {spec['e_machine']})")
+        return CodegenResult(
+            ok,
+            target,
+            data,
+            f"{len(data)}-byte ELF object, e_machine={mach}"
+            if ok
+            else f"unexpected object (e_machine={mach}, want {spec['e_machine']})",
+        )
     finally:
         if created:
             import shutil
+
             shutil.rmtree(workdir, ignore_errors=True)

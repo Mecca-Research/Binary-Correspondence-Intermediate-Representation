@@ -69,8 +69,8 @@ def reduce_reorder_bound(x: list[float]) -> float:
     n = len(x)
     if n < 1:
         raise ValueError("sycl reduce: need at least one element")
-    eps_f32 = 2.0 ** -23                       # float32 machine epsilon (the device/fallback use float32)
-    s_abs = sum(abs(float(xi)) for xi in x)    # bounds the magnitude of any partial sum
+    eps_f32 = 2.0**-23  # float32 machine epsilon (the device/fallback use float32)
+    s_abs = sum(abs(float(xi)) for xi in x)  # bounds the magnitude of any partial sum
     return (n - 1) * eps_f32 * s_abs
 
 

@@ -22,8 +22,15 @@ def _exe(directory: str, name: str) -> str:
 
 def _filesystem_which(command: str, path: str | None = None) -> str | None:
     """Small ungated which used only for synthetic resolver fixtures."""
-    candidates = [command] if os.path.dirname(command) else [
-        os.path.join(directory, command) for directory in (path or "").split(os.pathsep) if directory]
+    candidates = (
+        [command]
+        if os.path.dirname(command)
+        else [
+            os.path.join(directory, command)
+            for directory in (path or "").split(os.pathsep)
+            if directory
+        ]
+    )
     for candidate in candidates:
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
@@ -55,19 +62,29 @@ def test_host_bash_prefers_git_for_windows_over_the_wsl_launcher():
         def which(name):
             return {"git": git, "bash": wsl_bash}.get(name)
 
-        assert host_bash("win32", which=which, is_file=lambda path: path in files,
-                         env={}) == git_bash
+        assert (
+            host_bash("win32", which=which, is_file=lambda path: path in files, env={}) == git_bash
+        )
 
 
 def test_host_bash_rejects_a_lone_windows_wsl_launcher():
     wsl_bash = os.path.join(os.sep, "Windows", "System32", "bash.exe")
-    assert host_bash("win32", which=lambda name: wsl_bash if name == "bash" else None,
-                     is_file=lambda path: False, env={}) is None
+    assert (
+        host_bash(
+            "win32",
+            which=lambda name: wsl_bash if name == "bash" else None,
+            is_file=lambda path: False,
+            env={},
+        )
+        is None
+    )
 
 
 def test_host_bash_uses_path_normally_on_posix():
-    assert host_bash("linux", which=lambda name: "/bin/bash" if name == "bash" else None,
-                     env={}) == "/bin/bash"
+    assert (
+        host_bash("linux", which=lambda name: "/bin/bash" if name == "bash" else None, env={})
+        == "/bin/bash"
+    )
 
 
 def test_versioned_llvm_resolves_highest_complete_major():
@@ -113,8 +130,7 @@ def test_llvm_suffix_and_bin_take_precedence():
 
 
 def test_local_mlir_environment_pins_backend_tools_to_its_distribution():
-    env_script = (_ROOT / "tools" / "local" / "env_mlir.sh").read_text(
-        encoding="utf-8")
+    env_script = (_ROOT / "tools" / "local" / "env_mlir.sh").read_text(encoding="utf-8")
     assert 'export LLVM_BIN="${_ENV}/bin"' in env_script
 
 
@@ -133,12 +149,14 @@ def test_detectably_old_unversioned_toolchain_does_not_shadow_supported_versione
     with tempfile.TemporaryDirectory() as root:
         old = os.path.join(root, "llvm-14", "bin")
         new = os.path.join(root, "llvm-22", "bin")
-        os.makedirs(old); os.makedirs(new)
+        os.makedirs(old)
+        os.makedirs(new)
         for name in ("clang", "llvm-as", "llc"):
             _exe(old, name)
             _exe(new, name + "-22")
-        r = _resolve("clang", "llvm-as", "llc", pipeline="minimum",
-                     env={"PATH": os.pathsep.join((old, new))})
+        r = _resolve(
+            "clang", "llvm-as", "llc", pipeline="minimum", env={"PATH": os.pathsep.join((old, new))}
+        )
         assert r.ok and r.major == 22, r.message
         assert all(path.endswith("-22") for path in r.paths.values())
 

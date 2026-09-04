@@ -5,6 +5,7 @@ Python surfaces always run. The C sanitizer/libFuzzer rail is invoked when clang
 and compiler-rt are available; otherwise it is recorded as UNAVAILABLE/SKIPPED.
 A campaign that hits fewer than the required Python surfaces is INVALID.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -92,6 +93,7 @@ def _graceful_for(surface: str) -> tuple[type[BaseException], ...]:
     raises is ungraceful — a new surface must declare its contract to be
     counted, never inherit a blanket one."""
     import importlib
+
     entry = _DECLARED_REJECTIONS.get(surface)
     if entry is None:
         return ()
@@ -109,14 +111,19 @@ def _mutate(data: bytes, rng: random.Random) -> bytes:
             blob[rng.randrange(len(blob))] ^= 1 << rng.randint(0, 7)
         return bytes(blob)
     if mode == 1:
-        return bytes(blob[:rng.randint(0, len(blob))])
+        return bytes(blob[: rng.randint(0, len(blob))])
     blob.extend(rng.randbytes(rng.randint(1, 24)))
     return bytes(blob)
 
 
-def _probe(name: str, decode: Callable[[bytes], Any], seed: bytes,
-           rng: random.Random, mutations: int,
-           timeout: float = DECODE_TIMEOUT) -> dict[str, Any]:
+def _probe(
+    name: str,
+    decode: Callable[[bytes], Any],
+    seed: bytes,
+    rng: random.Random,
+    mutations: int,
+    timeout: float = DECODE_TIMEOUT,
+) -> dict[str, Any]:
     findings: list[dict[str, str]] = []
     accepted = 0
     rejected = 0
@@ -169,6 +176,7 @@ def _streampack_seed() -> bytes:
     from bcir.gem import hydrate
     from bcir.kbcir import optimize
     from bcir.kbcir.cost import TargetProfile, Theta
+
     module = vector_add(32)
     pack = hydrate(module, optimize(module, TargetProfile.x86_avx512(), Theta.cool()))
     return encode(pack)
@@ -176,14 +184,29 @@ def _streampack_seed() -> bytes:
 
 def _bcab_seed(pack: bytes) -> bytes:
     from bcir.abi.artifact_bundle import (
-        ArtifactBundle, ArtifactFormat, ArtifactKind, ArtifactVariant, encode_bundle,
+        ArtifactBundle,
+        ArtifactFormat,
+        ArtifactKind,
+        ArtifactVariant,
+        encode_bundle,
     )
-    bundle = ArtifactBundle((
-        ArtifactVariant(
-            "00-root", ArtifactKind.STREAM_PACK, ArtifactFormat.STREAM_PACK,
-            pack, channel="host", portable=True,
+
+    bundle = ArtifactBundle(
+        (
+            ArtifactVariant(
+                "00-root",
+                ArtifactKind.STREAM_PACK,
+                ArtifactFormat.STREAM_PACK,
+                pack,
+                channel="host",
+                portable=True,
+            ),
         ),
-    ), "00-root", "00-root", 7, 3)
+        "00-root",
+        "00-root",
+        7,
+        3,
+    )
     return encode_bundle(bundle)
 
 
@@ -191,16 +214,18 @@ def _q8_seed() -> bytes:
     from bcir.frontends.models.hf_ingest import spec_from_config, weights_from_tensors
     from bcir.frontends.models.weights_io import write_q8_decoder
     from bcir.tests.test_model_ingest import _CONFIG, _hf_tensors
+
     spec = spec_from_config(_CONFIG)
     prepared = {
-        name: ("F32", shape, values)
-        for name, (shape, values) in _hf_tensors(_CONFIG).items()
+        name: ("F32", shape, values) for name, (shape, values) in _hf_tensors(_CONFIG).items()
     }
     weights = weights_from_tensors(spec, prepared)
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "model.bcirq8"
         write_q8_decoder(
-            path, spec, weights,
+            path,
+            spec,
+            weights,
             source_hashes={"model": "00" * 32, "config": "11" * 32, "tokenizer": "22" * 32},
             tokenizer_ids={"bos": 1, "eos": 2, "pad": 0, "context_length": 32},
         )
@@ -209,6 +234,7 @@ def _q8_seed() -> bytes:
 
 def _decode_q8_bytes(data: bytes) -> Any:
     from bcir.frontends.models.weights_io import read_q8_decoder
+
     # Campaign I/O is environmental, not a decode verdict: a disk-full or
     # permission failure in this plumbing must surface as a finding
     # (RuntimeError sits outside the graceful set), never count as a
@@ -244,11 +270,13 @@ def _seed_failure(name: str, exc: Exception) -> dict[str, Any]:
         "accepted": 0,
         "rejected": 0,
         "mutations": 0,
-        "findings": [{
-            "kind": "seed-construction-failed",
-            "type": type(exc).__name__,
-            "detail": str(exc)[:200],
-        }],
+        "findings": [
+            {
+                "kind": "seed-construction-failed",
+                "type": type(exc).__name__,
+                "detail": str(exc)[:200],
+            }
+        ],
     }
 
 
@@ -260,6 +288,7 @@ def run_python_campaign(mutations: int, seed: int) -> list[dict[str, Any]]:
     # KeyboardInterrupt either.
     try:
         from bcir.abi.streampack_abi import decode as decode_pack
+
         pack = _streampack_seed()
     except Exception as exc:  # noqa: BLE001 - every failure shape is the verdict
         # BCAB's seed embeds the StreamPack seed, so neither surface can
@@ -270,6 +299,7 @@ def run_python_campaign(mutations: int, seed: int) -> list[dict[str, Any]]:
         results.append(_probe("streampack", decode_pack, pack, rng, mutations))
         try:
             from bcir.abi.artifact_bundle import decode_bundle
+
             bundle = _bcab_seed(pack)
         except Exception as exc:  # noqa: BLE001
             results.append(_seed_failure("bcab", exc))
@@ -332,11 +362,13 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
         missing = configured or "clang"
         return {"state": "UNAVAILABLE/SKIPPED", "reason": f"{missing} missing"}
     env = dict(os.environ)
-    env.update({
-        "FUZZ_RUNS": str(runs),
-        "FUZZ_MAX_TOTAL_TIME": str(seconds),
-        "FUZZ_JOBS": "2",
-    })
+    env.update(
+        {
+            "FUZZ_RUNS": str(runs),
+            "FUZZ_MAX_TOTAL_TIME": str(seconds),
+            "FUZZ_JOBS": "2",
+        }
+    )
     # ~15 targets on 2 workers can each reach the per-target time bound, plus
     # compile time — a timeout sized to one target aborts healthy campaigns.
     timeout = 180 + seconds * 8
@@ -370,10 +402,14 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
     state: dict[str, Any] = {"overflow": False, "proc": proc}
     drains = [
         threading.Thread(
-            target=_drain_capped, args=(proc.stdout, out_chunks, state), daemon=True,
+            target=_drain_capped,
+            args=(proc.stdout, out_chunks, state),
+            daemon=True,
         ),
         threading.Thread(
-            target=_drain_capped, args=(proc.stderr, err_chunks, state), daemon=True,
+            target=_drain_capped,
+            args=(proc.stderr, err_chunks, state),
+            daemon=True,
         ),
     ]
     for drain in drains:
@@ -411,9 +447,7 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
     if state["overflow"]:
         return {
             "state": "FAIL",
-            "reason": (
-                f"C campaign output exceeded {CAMPAIGN_OUTPUT_CAP} bytes per stream"
-            ),
+            "reason": (f"C campaign output exceeded {CAMPAIGN_OUTPUT_CAP} bytes per stream"),
             "stdout_tail": stdout[-800:],
             "stderr_tail": stderr[-800:],
         }
@@ -442,7 +476,11 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
 
 
 def run_campaign(
-    root: Path, mutations: int, seed: int, fuzz_runs: int, fuzz_seconds: int,
+    root: Path,
+    mutations: int,
+    seed: int,
+    fuzz_runs: int,
+    fuzz_seconds: int,
     require_c: bool = False,
 ) -> dict[str, Any]:
     if mutations < 1 or fuzz_runs < 1 or fuzz_seconds < 1:
@@ -492,14 +530,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=20260824)
     parser.add_argument("--fuzz-runs", type=int, default=200)
     parser.add_argument("--fuzz-seconds", type=int, default=8)
-    parser.add_argument("--require-c", action="store_true",
-                        help="treat an unavailable C campaign as failure (CI)")
+    parser.add_argument(
+        "--require-c", action="store_true", help="treat an unavailable C campaign as failure (CI)"
+    )
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args(argv)
     if str(args.root) not in sys.path:
         sys.path.insert(0, str(args.root))
     report = run_campaign(
-        args.root, args.mutations, args.seed, args.fuzz_runs, args.fuzz_seconds,
+        args.root,
+        args.mutations,
+        args.seed,
+        args.fuzz_runs,
+        args.fuzz_seconds,
         require_c=args.require_c,
     )
     if args.json_out:

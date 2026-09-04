@@ -33,13 +33,23 @@ from ..kbcir.realize import (
 from ..kbcir.weights import PERF, Policy, weights
 
 # Enum -> MLIR spelling (BCIRAttrs.td; docs/PARITY.md). Normative.
-_LANE_SPELL = {Lane.U: "u", Lane.UX: "ux", Lane.T: "t", Lane.GGG: "ggg",
-               Lane.A: "a", Lane.H: "h"}
-_STRIDE_SPELL = {StrideClass.SCALAR: "scalar", StrideClass.UNIT: "unit",
-                 StrideClass.STRIDED: "strided", StrideClass.CACHELINE: "cacheline",
-                 StrideClass.TILE: "tile", StrideClass.RANDOM: "random"}
-_DOMAIN_SPELL = {Domain.RAM: "ram", Domain.VRAM: "vram", Domain.NVM: "nvm",
-                 Domain.MMIO: "mmio", Domain.CXL: "cxl", Domain.HBM: "hbm"}
+_LANE_SPELL = {Lane.U: "u", Lane.UX: "ux", Lane.T: "t", Lane.GGG: "ggg", Lane.A: "a", Lane.H: "h"}
+_STRIDE_SPELL = {
+    StrideClass.SCALAR: "scalar",
+    StrideClass.UNIT: "unit",
+    StrideClass.STRIDED: "strided",
+    StrideClass.CACHELINE: "cacheline",
+    StrideClass.TILE: "tile",
+    StrideClass.RANDOM: "random",
+}
+_DOMAIN_SPELL = {
+    Domain.RAM: "ram",
+    Domain.VRAM: "vram",
+    Domain.NVM: "nvm",
+    Domain.MMIO: "mmio",
+    Domain.CXL: "cxl",
+    Domain.HBM: "hbm",
+}
 # Resource.layout -> the #bcir.layout<...> spelling (BCIRAttrs.td BCIR_Layout). The chosen
 # layout (G3: kbcir.layout's SoA<->AoS pivot) flows here instead of a hard-coded `soa`; an
 # unrecognized value falls back to the declared "soa" default so the emit never breaks.
@@ -50,8 +60,14 @@ def _layout_spell(layout: str) -> str:
     """The #bcir.layout<...> spelling for a resource's chosen layout (soa/aos/aosoa/blocked),
     defaulting to the declared `soa` for any unknown value so the emitter stays parseable."""
     return _LAYOUT_SPELL.get((layout or "soa").lower(), "soa")
-_POLICY_MODE = {"latency": "latency", "throughput": "throughput",
-                "energy": "energy", "safe": "safe"}
+
+
+_POLICY_MODE = {
+    "latency": "latency",
+    "throughput": "throughput",
+    "energy": "energy",
+    "safe": "safe",
+}
 
 
 @dataclass(frozen=True)
@@ -80,13 +96,17 @@ class ClaimView:
     verify: str
     bounds: str
     paths: tuple[PathView, ...]
-    selected: str          # the oracle's chosen candidate name
-    score: int             # the oracle's per-claim cost (effective cost . weights)
-    width: int             # the chosen lane geometry (segment width)
-    volatile: bool = False  # SS5.14 Phase 2: the volatile qualifier, emitted as `is_volatile = true`
-                            # ONLY when set (so the existing corpus stays byte-identical)
-    bounds_provenance: str = ""  # SS5.14 Phase 2: the extent-provenance signal, emitted only when set
-    callee_sig: str = ""    # SS5.14 Phase 2: the declared indirect-callee signature, emitted when set
+    selected: str  # the oracle's chosen candidate name
+    score: int  # the oracle's per-claim cost (effective cost . weights)
+    width: int  # the chosen lane geometry (segment width)
+    volatile: bool = (
+        False  # SS5.14 Phase 2: the volatile qualifier, emitted as `is_volatile = true`
+    )
+    # ONLY when set (so the existing corpus stays byte-identical)
+    bounds_provenance: str = (
+        ""  # SS5.14 Phase 2: the extent-provenance signal, emitted only when set
+    )
+    callee_sig: str = ""  # SS5.14 Phase 2: the declared indirect-callee signature, emitted when set
 
 
 @dataclass(frozen=True)
@@ -105,8 +125,13 @@ class PlanView:
     total_score: int
 
 
-def plan_view(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF,
-              result: RealizationResult | None = None) -> PlanView:
+def plan_view(
+    module: Module,
+    h: HProfile,
+    theta: Theta,
+    policy: Policy = PERF,
+    result: RealizationResult | None = None,
+) -> PlanView:
     """Reconstruct the IR-level candidate view of `module`'s plan under (H, Theta,
     policy). Each claim's candidates are priced under the *chosen predecessor*'s
     context (so the per-claim argmin reproduces the oracle's coupled plan); the
@@ -141,30 +166,54 @@ def plan_view(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF,
         eff_sel = sel.base.couple(_context_factor(prev_cand, sel, theta))
         score = eff_sel.dot(w0)
         total += score
-        views.append(ClaimView(
-            claim_id=claim.id, phase_id=phase_id, op=claim.op or claim.opcode.name,
-            lane=claim.lane, stride_class=claim.stride_class, stride_k=claim.stride_k,
-            count=claim.count, reads=tuple(claim.rd), writes=tuple(claim.wr),
-            domain=claim.domain, hazard=claim.hazard, verify=claim.verify,
-            bounds=claim.bounds, paths=tuple(paths), selected=sel.name,
-            score=score, width=sel.width, volatile=claim.volatile,
-            bounds_provenance=claim.bounds_provenance, callee_sig=claim.callee_sig))
+        views.append(
+            ClaimView(
+                claim_id=claim.id,
+                phase_id=phase_id,
+                op=claim.op or claim.opcode.name,
+                lane=claim.lane,
+                stride_class=claim.stride_class,
+                stride_k=claim.stride_k,
+                count=claim.count,
+                reads=tuple(claim.rd),
+                writes=tuple(claim.wr),
+                domain=claim.domain,
+                hazard=claim.hazard,
+                verify=claim.verify,
+                bounds=claim.bounds,
+                paths=tuple(paths),
+                selected=sel.name,
+                score=score,
+                width=sel.width,
+                volatile=claim.volatile,
+                bounds_provenance=claim.bounds_provenance,
+                callee_sig=claim.callee_sig,
+            )
+        )
         prev_cand = sel
 
     if total != result.score:
         raise AssertionError(
             f"plan_view reconstruction {total} != oracle score {result.score} "
-            f"({module.name}): the IR-level per-claim decomposition drifted")
+            f"({module.name}): the IR-level per-claim decomposition drifted"
+        )
 
     pmap = module.phase_map()
-    order = list(dict.fromkeys(pid for pid, _ in flat))   # unique phase ids, topo order
+    order = list(dict.fromkeys(pid for pid, _ in flat))  # unique phase ids, topo order
     deps = {pid: tuple(pmap[pid].deps) for pid in order}
-    return PlanView(module_name=module.name, policy_mode=_POLICY_MODE.get(policy.name, "latency"),
-                    weights=tuple(w0), claims=tuple(views), phase_ids=tuple(order),
-                    phase_deps=deps, total_score=result.score)
+    return PlanView(
+        module_name=module.name,
+        policy_mode=_POLICY_MODE.get(policy.name, "latency"),
+        weights=tuple(w0),
+        claims=tuple(views),
+        phase_ids=tuple(order),
+        phase_deps=deps,
+        total_score=result.score,
+    )
 
 
 # --- MLIR text emission ---------------------------------------------------------
+
 
 def _refs(rids: tuple[int, ...]) -> str:
     return "[" + ", ".join(f"@r{r}" for r in rids) + "]"
@@ -179,9 +228,18 @@ def _path_sym(claim_id: int, name: str) -> str:
     return f"path_{claim_id}_{name}"
 
 
-def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
-            result: RealizationResult | None = None, module_suffix: str = "",
-            run_pipeline: bool = True, filecheck: bool = False, budget=None) -> str:
+def to_mlir(
+    module: Module,
+    h: HProfile,
+    theta: Theta,
+    policy: Policy = PERF,
+    *,
+    result: RealizationResult | None = None,
+    module_suffix: str = "",
+    run_pipeline: bool = True,
+    filecheck: bool = False,
+    budget=None,
+) -> str:
     """Emit the GEM-pipeline BCIR-MLIR text for `module`'s plan. The result parses
     and runs through `-bcir-classify-lanes -bcir-select-realization -bcir-batch
     -bcir-schedule -bcir-lower-to-llvm` (the same surface as
@@ -192,11 +250,15 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
     name = f"{module.name}{module_suffix}"
     L = []
     if filecheck:
-        L.append("// RUN: bcir-opt -bcir-classify-lanes -bcir-select-realization "
-                 "-bcir-batch -bcir-schedule -bcir-lower-to-llvm %s | FileCheck %s")
+        L.append(
+            "// RUN: bcir-opt -bcir-classify-lanes -bcir-select-realization "
+            "-bcir-batch -bcir-schedule -bcir-lower-to-llvm %s | FileCheck %s"
+        )
         L.append("//")
-        L.append(f"// Generated from the oracle plan for `{module.name}` on {h.name} "
-                 "(cool Theta, latency).")
+        L.append(
+            f"// Generated from the oracle plan for `{module.name}` on {h.name} "
+            "(cool Theta, latency)."
+        )
         L.append("// Regenerate: python -m bcir.kbcir.differential --emit-corpus. The law's")
         L.append("// min-plus argmin must recompute the oracle's per-claim score (parity).")
         L.append("")
@@ -208,17 +270,19 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
     # so a non-x86 target (arm64 / RISC-V / GPU) plans from its own constants, not the
     # CPU defaults. `warp` / `mem_channels` carry the warp geometry + roofline knee
     # (mem_channels feeds -bcir-schedule's bandwidth-bound parallelism).
-    isa = ", ".join(f"\"{x}\"" for x in sorted(h.isa_features))
+    isa = ", ".join(f'"{x}"' for x in sorted(h.isa_features))
     lw = ", ".join(str(x) for x in h.lane_widths)
-    L.append(f"  bcir.target.capability @cpu {{ triple = \"{h.triple}\", "
-             f"isa_features = [{isa}], lane_widths = array<i64: {lw}>, "
-             f"warp = {h.warp} : i32, cacheline = {h.cacheline} : i32, "
-             f"gather_penalty = {h.gather_penalty} : i32, "
-             f"affinity_domains = {h.affinity_domains} : i32, "
-             f"mem_channels = {h.mem_channels} : i32, "
-             f"thermal_density = {h.thermal_density} : i32, power_density = {h.power_density} : i32, "
-             f"mem_unit = {h.mem_unit} : i32, base_overhead = {h.base_overhead} : i32, "
-             f"per_op_heat = {h.per_op_heat} : i32, elem_bytes = {h.elem_bytes} : i32 }}")
+    L.append(
+        f'  bcir.target.capability @cpu {{ triple = "{h.triple}", '
+        f"isa_features = [{isa}], lane_widths = array<i64: {lw}>, "
+        f"warp = {h.warp} : i32, cacheline = {h.cacheline} : i32, "
+        f"gather_penalty = {h.gather_penalty} : i32, "
+        f"affinity_domains = {h.affinity_domains} : i32, "
+        f"mem_channels = {h.mem_channels} : i32, "
+        f"thermal_density = {h.thermal_density} : i32, power_density = {h.power_density} : i32, "
+        f"mem_unit = {h.mem_unit} : i32, base_overhead = {h.base_overhead} : i32, "
+        f"per_op_heat = {h.per_op_heat} : i32, elem_bytes = {h.elem_bytes} : i32 }}"
+    )
     # registry: the resources the claims reference (so the cost model resolves the
     # tier from each claim's read[0] domain, and HAM access).
     L.append("  bcir.registry @RES {")
@@ -228,29 +292,35 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
         access = f", access = #bcir.access<{'ham' if r.access == 'ham' else 'flat'}>"
         # MLIR 22 forbids a Symbol op from having an SSA result -- a resource is a pure
         # symbol (addressed by @rN); the old !bcir.resource handle was vestigial.
-        L.append(f"    bcir.resource @r{rid} {{ rid = {rid} : i32, "
-                 f"domain_kind = #bcir.domain<{_DOMAIN_SPELL[r.domain]}>, "
-                 f"shape = array<i64: {shape}>, "
-                 f"layout = #bcir.layout<{_layout_spell(r.layout)}>{access} }}")
+        L.append(
+            f"    bcir.resource @r{rid} {{ rid = {rid} : i32, "
+            f"domain_kind = #bcir.domain<{_DOMAIN_SPELL[r.domain]}>, "
+            f"shape = array<i64: {shape}>, "
+            f"layout = #bcir.layout<{_layout_spell(r.layout)}>{access} }}"
+        )
     L.append("  }")
     # live runtime state Theta: the emitter folds it into the policy weights (for
     # scalarization) AND emits it raw, so -bcir-plan / -bcir-overlap can apply the
     # multiplicative thermal coupling (the AVX-512 downclock) the weights cannot encode.
-    L.append(f"  bcir.kbcir.theta @theta {{ thermal = {theta.thermal} : i32, "
-             f"power = {theta.power} : i32, mem_pressure = {theta.mem_pressure} : i32, "
-             f"contention = {theta.contention} : i32 }}")
+    L.append(
+        f"  bcir.kbcir.theta @theta {{ thermal = {theta.thermal} : i32, "
+        f"power = {theta.power} : i32, mem_pressure = {theta.mem_pressure} : i32, "
+        f"contention = {theta.contention} : i32 }}"
+    )
     # policy (theta-folded weights; mode drives -bcir-select-realization lookup).
     wlist = ", ".join(str(x) for x in pv.weights)
-    L.append(f"  bcir.kbcir.policy @perf {{ mode = #bcir.policy_mode<{pv.policy_mode}>, "
-             f"weights = array<i64: {wlist}> }}")
+    L.append(
+        f"  bcir.kbcir.policy @perf {{ mode = #bcir.policy_mode<{pv.policy_mode}>, "
+        f"weights = array<i64: {wlist}> }}"
+    )
     # optional plan-wide budget B(H,Theta): hard caps on additive resource dims that
     # -bcir-rcsp-plan's accumulated-budget label DP must respect (mirrors rcsp.Budget).
     if budget is not None and budget.caps:
         from ..kbcir.cost import DIMS as _DIMS
-        dims = ", ".join(f"\"{_DIMS[d]}\"" for d, _ in budget.caps)
+
+        dims = ", ".join(f'"{_DIMS[d]}"' for d, _ in budget.caps)
         caps = ", ".join(str(cap) for _, cap in budget.caps)
-        L.append(f"  bcir.kbcir.budget @cap {{ dims = [{dims}], "
-                 f"caps = array<i64: {caps}> }}")
+        L.append(f"  bcir.kbcir.budget @cap {{ dims = [{dims}], caps = array<i64: {caps}> }}")
     # phases
     for pid in pv.phase_ids:
         deps = ", ".join(f"@p{d}" for d in pv.phase_deps.get(pid, ()))
@@ -259,7 +329,7 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
     for cv in pv.claims:
         L.append(
             f"  bcir.claim @c{cv.claim_id} attributes {{ claim_id = {cv.claim_id} : i32, "
-            f"phase = @p{cv.phase_id}, op = \"{cv.op}\", reads = {_refs(cv.reads)}, "
+            f'phase = @p{cv.phase_id}, op = "{cv.op}", reads = {_refs(cv.reads)}, '
             f"writes = {_refs(cv.writes)}, count = {cv.count} : i64, "
             f"lane = #bcir.lane<{_LANE_SPELL[cv.lane]}>, "
             f"stride_class = #bcir.stride_class<{_STRIDE_SPELL[cv.stride_class]}>, "
@@ -267,9 +337,11 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
             f"hazard = #bcir.hazard<{cv.hazard}>, verify = #bcir.verify<{cv.verify}>, "
             f"bounds = #bcir.bounds<{cv.bounds}>"
             + (", is_volatile = true" if cv.volatile else "")
-            + (f", bounds_provenance = \"{cv.bounds_provenance}\"" if cv.bounds_provenance else "")
-            + (f", callee_sig = \"{cv.callee_sig}\"" if cv.callee_sig else "") + " } "
-            f"{{ %i = bcir.index_range 0 to {cv.count} step 1 }}")
+            + (f', bounds_provenance = "{cv.bounds_provenance}"' if cv.bounds_provenance else "")
+            + (f', callee_sig = "{cv.callee_sig}"' if cv.callee_sig else "")
+            + " } "
+            f"{{ %i = bcir.index_range 0 to {cv.count} step 1 }}"
+        )
     # the K_BCIR plan: candidate paths + per-claim min-plus select.
     L.append("  bcir.kbcir.plan @plan0 {")
     for cv in pv.claims:
@@ -283,15 +355,17 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
             # kbcir.path is a Symbol (referenced by @sym) -> no SSA result on MLIR 22.
             L.append(
                 f"    bcir.kbcir.path @{sym} {{ claim = @c{cv.claim_id}, "
-                f"realization = \"{_LANE_SPELL[p.lane]}.{p.name}\", "
+                f'realization = "{_LANE_SPELL[p.lane]}.{p.name}", '
                 f"lane = #bcir.lane<{_LANE_SPELL[p.lane]}>, layout = #bcir.layout<{path_layout}>, "
-                f"cost = {_costvec(p.cost)} }}")
+                f"cost = {_costvec(p.cost)} }}"
+            )
         frm = ", ".join(f"@{_path_sym(cv.claim_id, p.name)}" for p in cv.paths)
         L.append(
             f"    %sel_{cv.claim_id} = bcir.kbcir.select @c{cv.claim_id} from [{frm}] {{ "
             f"policy = #bcir.policy_mode<{pv.policy_mode}>, semiring = #bcir.semiring<min_plus>, "
             f"selected = @{_path_sym(cv.claim_id, cv.selected)}, score = {cv.score} : i64 }} "
-            ": !bcir.path")
+            ": !bcir.path"
+        )
     L.append("  }")
     # GEM lane segments (one per claim; preserve lane + resource set for R12 lower).
     for cv in pv.claims:
@@ -299,16 +373,21 @@ def to_mlir(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF, *,
             f"  bcir.gem.lane_segment @seg_{cv.claim_id} {{ claim = @c{cv.claim_id}, "
             f"phase = @p{cv.phase_id}, lane = #bcir.lane<{_LANE_SPELL[cv.lane]}>, "
             f"stride_k = {cv.stride_k} : i32, width = {cv.width} : i32, "
-            f"opcode = \"{cv.op}\", reads = {_refs(cv.reads)}, writes = {_refs(cv.writes)}, "
-            f"fence_before = [], fence_after = [] }}")
+            f'opcode = "{cv.op}", reads = {_refs(cv.reads)}, writes = {_refs(cv.writes)}, '
+            f"fence_before = [], fence_after = [] }}"
+        )
     L.append("}")
     if filecheck:
         L.append("")
         L.append(f"// CHECK-LABEL: bcir.module @{_ident(name)}")
         for cv in pv.claims:
-            L.append(f"// CHECK-DAG: kbcir.classified_lane = \"{_LANE_SPELL[_canonical_lane(cv.stride_class)]}\"")
+            L.append(
+                f'// CHECK-DAG: kbcir.classified_lane = "{_LANE_SPELL[_canonical_lane(cv.stride_class)]}"'
+            )
         for cv in pv.claims:
-            L.append(f"// CHECK-DAG: kbcir.computed_selected = @{_path_sym(cv.claim_id, cv.selected)}")
+            L.append(
+                f"// CHECK-DAG: kbcir.computed_selected = @{_path_sym(cv.claim_id, cv.selected)}"
+            )
             L.append(f"// CHECK-DAG: kbcir.computed_score = {cv.score}")
         L.append("// CHECK-DAG: kbcir.lowered = true")
     return "\n".join(L) + "\n"
@@ -320,6 +399,11 @@ def _ident(name: str) -> str:
 
 def _canonical_lane(sc: StrideClass) -> Lane:
     """The lane -bcir-classify-lanes assigns (mirrors BCIRPasses.cpp canonicalLane)."""
-    return {StrideClass.SCALAR: Lane.U, StrideClass.UNIT: Lane.U,
-            StrideClass.STRIDED: Lane.U, StrideClass.CACHELINE: Lane.UX,
-            StrideClass.TILE: Lane.T, StrideClass.RANDOM: Lane.GGG}[sc]
+    return {
+        StrideClass.SCALAR: Lane.U,
+        StrideClass.UNIT: Lane.U,
+        StrideClass.STRIDED: Lane.U,
+        StrideClass.CACHELINE: Lane.UX,
+        StrideClass.TILE: Lane.T,
+        StrideClass.RANDOM: Lane.GGG,
+    }[sc]

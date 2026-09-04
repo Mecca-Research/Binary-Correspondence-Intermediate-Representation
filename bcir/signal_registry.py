@@ -64,21 +64,35 @@ class Unit:
     """The fixed, typed telemetry units. A :class:`Reading`'s value is in its
     definition's ``unit`` — no ambiguous bare floats."""
 
-    PERCENT = "percent"            # 0..100 normalized pressure (Theta's scale)
+    PERCENT = "percent"  # 0..100 normalized pressure (Theta's scale)
     MILLICELSIUS = "millicelsius"  # m°C (hwmon temp* convention)
-    MICROJOULE = "microjoule"      # µJ (RAPL energy_uj; a monotonic counter)
-    MILLIWATT = "milliwatt"        # mW (Redfish/BMC power level)
-    MICROWATT = "microwatt"        # µW (hwmon power* convention)
-    KHZ = "khz"                    # kilohertz (cpufreq)
-    BYTES = "bytes"                # bytes (cache capacities, transfer sizes)
+    MICROJOULE = "microjoule"  # µJ (RAPL energy_uj; a monotonic counter)
+    MILLIWATT = "milliwatt"  # mW (Redfish/BMC power level)
+    MICROWATT = "microwatt"  # µW (hwmon power* convention)
+    KHZ = "khz"  # kilohertz (cpufreq)
+    BYTES = "bytes"  # bytes (cache capacities, transfer sizes)
     BYTES_PER_SECOND = "bytes_per_second"  # byte/s bandwidth/rate
-    BITMASK = "bitmask"            # fixed-width state/reason bits
-    COUNT = "count"                # a dimensionless count / capability flag (0 or 1)
-    RATIO_MILLI = "ratio_milli"    # a ratio in milli-units (e.g. IPC*1000), Q-free
-    NONE = "none"                  # no meaningful unit
+    BITMASK = "bitmask"  # fixed-width state/reason bits
+    COUNT = "count"  # a dimensionless count / capability flag (0 or 1)
+    RATIO_MILLI = "ratio_milli"  # a ratio in milli-units (e.g. IPC*1000), Q-free
+    NONE = "none"  # no meaningful unit
 
-    ALL = frozenset({PERCENT, MILLICELSIUS, MICROJOULE, MILLIWATT, MICROWATT,
-                     KHZ, BYTES, BYTES_PER_SECOND, BITMASK, COUNT, RATIO_MILLI, NONE})
+    ALL = frozenset(
+        {
+            PERCENT,
+            MILLICELSIUS,
+            MICROJOULE,
+            MILLIWATT,
+            MICROWATT,
+            KHZ,
+            BYTES,
+            BYTES_PER_SECOND,
+            BITMASK,
+            COUNT,
+            RATIO_MILLI,
+            NONE,
+        }
+    )
 
 
 # --- Provenance + sampling model (carried on the definition, Redfish-style) ----------
@@ -90,9 +104,9 @@ class Provenance:
     """How a reading is obtained. Reuses the channel/calibration vocabulary
     (``real`` ↔ ``MEASURED``)."""
 
-    MEASURED = "measured"     # read from real silicon / OS (channel `real`)
-    MODELED = "modeled"       # derived from a model, not directly sensed
-    SIMULATED = "simulated"   # produced by a simulator
+    MEASURED = "measured"  # read from real silicon / OS (channel `real`)
+    MODELED = "modeled"  # derived from a model, not directly sensed
+    SIMULATED = "simulated"  # produced by a simulator
 
     ALL = frozenset({MEASURED, MODELED, SIMULATED})
 
@@ -165,10 +179,14 @@ class MetricDefinition:
         if self.provenance not in Provenance.ALL:
             errs.append(f"provenance {self.provenance!r} not in {sorted(Provenance.ALL)}")
         if self.sampling_model not in SamplingModel.ALL:
-            errs.append(f"sampling_model {self.sampling_model!r} not in "
-                        f"{sorted(SamplingModel.ALL)}")
-        if (not isinstance(self.signal_id, int) or isinstance(self.signal_id, bool)
-                or not 0 <= self.signal_id <= 0xFFFFFFFF):
+            errs.append(
+                f"sampling_model {self.sampling_model!r} not in {sorted(SamplingModel.ALL)}"
+            )
+        if (
+            not isinstance(self.signal_id, int)
+            or isinstance(self.signal_id, bool)
+            or not 0 <= self.signal_id <= 0xFFFFFFFF
+        ):
             errs.append("signal_id must be an unsigned 32-bit integer")
         if self.metric_kind not in MetricKind.ALL:
             errs.append(f"metric_kind {self.metric_kind!r} not in {sorted(MetricKind.ALL)}")
@@ -176,8 +194,11 @@ class MetricDefinition:
             errs.append(f"temporality {self.temporality!r} not in {sorted(Temporality.ALL)}")
         if not isinstance(self.monotonic, bool):
             errs.append("monotonic must be bool")
-        if (not isinstance(self.min_interval_ns, int) or isinstance(self.min_interval_ns, bool)
-                or not 0 <= self.min_interval_ns <= 0xFFFFFFFFFFFFFFFF):
+        if (
+            not isinstance(self.min_interval_ns, int)
+            or isinstance(self.min_interval_ns, bool)
+            or not 0 <= self.min_interval_ns <= 0xFFFFFFFFFFFFFFFF
+        ):
             errs.append("min_interval_ns must be an unsigned 64-bit integer")
         if self.metric_kind == MetricKind.GAUGE:
             if self.temporality != Temporality.UNSPECIFIED:
@@ -267,10 +288,14 @@ class ThermalPressureProvider(_DefinedProvider):
     (:func:`silicon.thermal_pressure`). PERCENT, dim ``thermal``."""
 
     _DEF = MetricDefinition(
-        "thermal.pressure", Unit.PERCENT, "thermal", Provenance.MEASURED,
+        "thermal.pressure",
+        Unit.PERCENT,
+        "thermal",
+        Provenance.MEASURED,
         SamplingModel.POLLED,
         "On-die temperature mapped to Theta's 0..100 thermal pressure (silicon.thermal_pressure).",
-        signal_id=1)
+        signal_id=1,
+    )
 
     def available(self) -> bool:
         return silicon.thermal_pressure() is not None
@@ -285,10 +310,14 @@ class DieTempProvider(_DefinedProvider):
     MILLICELSIUS, dim ``thermal``."""
 
     _DEF = MetricDefinition(
-        "thermal.die_millicelsius", Unit.MILLICELSIUS, "thermal", Provenance.MEASURED,
+        "thermal.die_millicelsius",
+        Unit.MILLICELSIUS,
+        "thermal",
+        Provenance.MEASURED,
         SamplingModel.POLLED,
         "CPU/package die temperature in milli-degrees Celsius (silicon.read_thermal_millideg).",
-        signal_id=2)
+        signal_id=2,
+    )
 
     def available(self) -> bool:
         return silicon.read_thermal_millideg() is not None
@@ -308,11 +337,17 @@ class RaplEnergyProvider(_DefinedProvider):
     power figure — the work-scoped delta lives in :class:`silicon.RaplSampler`."""
 
     _DEF = MetricDefinition(
-        "power.rapl_energy_uj", Unit.MICROJOULE, "power", Provenance.MEASURED,
+        "power.rapl_energy_uj",
+        Unit.MICROJOULE,
+        "power",
+        Provenance.MEASURED,
         SamplingModel.POLLED,
         "RAPL package energy counter, microjoules (monotonic; watts is a T3-derived metric).",
-        signal_id=3, metric_kind=MetricKind.COUNTER,
-        temporality=Temporality.CUMULATIVE, monotonic=True)
+        signal_id=3,
+        metric_kind=MetricKind.COUNTER,
+        temporality=Temporality.CUMULATIVE,
+        monotonic=True,
+    )
 
     def available(self) -> bool:
         return silicon.rapl_available()
@@ -327,10 +362,14 @@ class CpuFreqProvider(_DefinedProvider):
     ``compute``."""
 
     _DEF = MetricDefinition(
-        "compute.cpu_nominal_khz", Unit.KHZ, "compute", Provenance.MEASURED,
+        "compute.cpu_nominal_khz",
+        Unit.KHZ,
+        "compute",
+        Provenance.MEASURED,
         SamplingModel.POLLED,
         "Nominal CPU frequency in kHz from cpufreq / /proc/cpuinfo (silicon.cpufreq_info).",
-        signal_id=4)
+        signal_id=4,
+    )
 
     def available(self) -> bool:
         return silicon.cpufreq_info().nominal_khz is not None
@@ -352,17 +391,32 @@ class CacheCapacityProvider(_DefinedProvider):
 
     _DEFS = {
         MemTier.L1: MetricDefinition(
-            "memory.cache_l1_bytes", Unit.BYTES, "memory", Provenance.MEASURED,
-            SamplingModel.POLLED, "L1 data-cache capacity in bytes (silicon.tier_capacities).",
-            signal_id=5),
+            "memory.cache_l1_bytes",
+            Unit.BYTES,
+            "memory",
+            Provenance.MEASURED,
+            SamplingModel.POLLED,
+            "L1 data-cache capacity in bytes (silicon.tier_capacities).",
+            signal_id=5,
+        ),
         MemTier.L2: MetricDefinition(
-            "memory.cache_l2_bytes", Unit.BYTES, "memory", Provenance.MEASURED,
-            SamplingModel.POLLED, "L2 cache capacity in bytes (silicon.tier_capacities).",
-            signal_id=6),
+            "memory.cache_l2_bytes",
+            Unit.BYTES,
+            "memory",
+            Provenance.MEASURED,
+            SamplingModel.POLLED,
+            "L2 cache capacity in bytes (silicon.tier_capacities).",
+            signal_id=6,
+        ),
         MemTier.L3: MetricDefinition(
-            "memory.cache_l3_bytes", Unit.BYTES, "memory", Provenance.MEASURED,
-            SamplingModel.POLLED, "L3 cache capacity in bytes (silicon.tier_capacities).",
-            signal_id=7),
+            "memory.cache_l3_bytes",
+            Unit.BYTES,
+            "memory",
+            Provenance.MEASURED,
+            SamplingModel.POLLED,
+            "L3 cache capacity in bytes (silicon.tier_capacities).",
+            signal_id=7,
+        ),
     }
 
     def __init__(self, tier: MemTier):
@@ -399,11 +453,15 @@ class PmuAvailabilityProvider(_DefinedProvider):
     PMU is present, else ``None``."""
 
     _DEF = MetricDefinition(
-        "compute.pmu_available", Unit.COUNT, "compute", Provenance.MEASURED,
+        "compute.pmu_available",
+        Unit.COUNT,
+        "compute",
+        Provenance.MEASURED,
         SamplingModel.EVENT_DRIVEN,
         "Hardware PMU capability flag (silicon.perf_counters_available); actual counters "
         "are work-scoped via silicon.read_hw_counters / silicon_dna and stay there.",
-        signal_id=8)
+        signal_id=8,
+    )
 
     def available(self) -> bool:
         return silicon.perf_counters_available()
@@ -435,11 +493,17 @@ class GpuPowerProvider(_UnavailableProvider):
     Needs an NVML / amd-smi backend (no GPU telemetry binding here yet)."""
 
     _DEF = MetricDefinition(
-        "power.gpu_energy_uj", Unit.MICROJOULE, "power", Provenance.MEASURED,
+        "power.gpu_energy_uj",
+        Unit.MICROJOULE,
+        "power",
+        Provenance.MEASURED,
         SamplingModel.STREAMED,
         "GPU board energy via NVML/amd-smi (gap: needs a vendor GPU telemetry backend).",
-        signal_id=9, metric_kind=MetricKind.COUNTER,
-        temporality=Temporality.CUMULATIVE, monotonic=True)
+        signal_id=9,
+        metric_kind=MetricKind.COUNTER,
+        temporality=Temporality.CUMULATIVE,
+        monotonic=True,
+    )
 
 
 class BmcPowerProvider(_UnavailableProvider):
@@ -447,10 +511,14 @@ class BmcPowerProvider(_UnavailableProvider):
     OS-independent tier; needs a Redfish/IPMI backend."""
 
     _DEF = MetricDefinition(
-        "power.bmc_node_milliwatt", Unit.MILLIWATT, "power", Provenance.MEASURED,
+        "power.bmc_node_milliwatt",
+        Unit.MILLIWATT,
+        "power",
+        Provenance.MEASURED,
         SamplingModel.POLLED,
         "Out-of-band node/chassis power via Redfish/BMC (gap: needs an out-of-band backend).",
-        signal_id=10)
+        signal_id=10,
+    )
 
 
 class MemBandwidthProvider(_UnavailableProvider):
@@ -458,10 +526,14 @@ class MemBandwidthProvider(_UnavailableProvider):
     dim ``memory``. Needs a PCM/DCGM backend (under-covered dim, research §4)."""
 
     _DEF = MetricDefinition(
-        "memory.bandwidth_bytes_per_s", Unit.BYTES_PER_SECOND, "memory", Provenance.MEASURED,
+        "memory.bandwidth_bytes_per_s",
+        Unit.BYTES_PER_SECOND,
+        "memory",
+        Provenance.MEASURED,
         SamplingModel.STREAMED,
         "Memory/VRAM bandwidth via PCM IMC / DCGM DRAM-active (gap: needs a PCM/DCGM backend).",
-        signal_id=11)
+        signal_id=11,
+    )
 
 
 class FabricBytesProvider(_UnavailableProvider):
@@ -469,11 +541,17 @@ class FabricBytesProvider(_UnavailableProvider):
     DCGM / PCM backend (under-covered dim, research §4)."""
 
     _DEF = MetricDefinition(
-        "fabric.interconnect_bytes", Unit.BYTES, "fabric", Provenance.MEASURED,
+        "fabric.interconnect_bytes",
+        Unit.BYTES,
+        "fabric",
+        Provenance.MEASURED,
         SamplingModel.STREAMED,
         "Interconnect bytes (NVLink/PCIe/UPI) via DCGM/PCM (gap: needs a fabric-counter backend).",
-        signal_id=12, metric_kind=MetricKind.COUNTER,
-        temporality=Temporality.CUMULATIVE, monotonic=True)
+        signal_id=12,
+        metric_kind=MetricKind.COUNTER,
+        temporality=Temporality.CUMULATIVE,
+        monotonic=True,
+    )
 
 
 class ThrottleStateProvider(_UnavailableProvider):
@@ -481,10 +559,14 @@ class ThrottleStateProvider(_UnavailableProvider):
     ClocksEventReasons / amd-smi / RAPL → dim ``contention``. Needs a vendor backend."""
 
     _DEF = MetricDefinition(
-        "contention.throttle_state", Unit.BITMASK, "contention", Provenance.MEASURED,
+        "contention.throttle_state",
+        Unit.BITMASK,
+        "contention",
+        Provenance.MEASURED,
         SamplingModel.EVENT_DRIVEN,
         "Throttle / clock-event-reason bitfield (gap: needs NVML/amd-smi/RAPL throttle backend).",
-        signal_id=13)
+        signal_id=13,
+    )
 
 
 class ReliabilityProvider(_UnavailableProvider):
@@ -492,10 +574,14 @@ class ReliabilityProvider(_UnavailableProvider):
     amd-smi RAS / Synopsys SLM / proteanTecs → dim ``reliability``. Needs a backend."""
 
     _DEF = MetricDefinition(
-        "reliability.ecc_rul", Unit.COUNT, "reliability", Provenance.MEASURED,
+        "reliability.ecc_rul",
+        Unit.COUNT,
+        "reliability",
+        Provenance.MEASURED,
         SamplingModel.EVENT_DRIVEN,
         "Reliability (ECC/XID/RAS/margin-drift/RUL) via DCGM/amd-smi/SLM (gap: needs a backend).",
-        signal_id=14)
+        signal_id=14,
+    )
 
 
 class HwmonPowerProvider(_UnavailableProvider):
@@ -505,10 +591,14 @@ class HwmonPowerProvider(_UnavailableProvider):
     reports unavailable here rather than pretend."""
 
     _DEF = MetricDefinition(
-        "power.hwmon_microwatt", Unit.MICROWATT, "power", Provenance.MEASURED,
+        "power.hwmon_microwatt",
+        Unit.MICROWATT,
+        "power",
+        Provenance.MEASURED,
         SamplingModel.POLLED,
         "hwmon power* / INA226 shunt-monitor board power (gap: needs an hwmon power-rail backend).",
-        signal_id=15)
+        signal_id=15,
+    )
 
 
 # --- the registry --------------------------------------------------------------------
@@ -552,8 +642,11 @@ class SignalRegistry:
     def get_by_id(self, signal_id: int) -> SignalProvider | None:
         """Resolve a stable nonzero built-in/vendor signal ID. ID 0 is intentionally
         local/unassigned and is therefore never indexed."""
-        if (not isinstance(signal_id, int) or isinstance(signal_id, bool)
-                or not 0 < signal_id <= 0xFFFFFFFF):
+        if (
+            not isinstance(signal_id, int)
+            or isinstance(signal_id, bool)
+            or not 0 < signal_id <= 0xFFFFFFFF
+        ):
             return None
         with self._lock:
             return self._providers_by_id.get(signal_id)
@@ -569,8 +662,11 @@ class SignalRegistry:
     def providers_for_dim(self, dim: str) -> list[SignalProvider]:
         """Every registered provider whose definition maps to cost dimension ``dim``."""
         with self._lock:
-            return [self._providers[n] for n in sorted(self._providers)
-                    if self._providers[n].definition.cost_dim == dim]
+            return [
+                self._providers[n]
+                for n in sorted(self._providers)
+                if self._providers[n].definition.cost_dim == dim
+            ]
 
     def snapshot(self) -> dict[str, Reading | None]:
         """One entry per provider: the current :class:`Reading`, or ``None`` when the
@@ -580,8 +676,7 @@ class SignalRegistry:
         counters cannot be negative, and percent pressures must be exact integers in
         ``0..100``. Honest — never a fabricated or silently coerced value."""
         with self._lock:
-            providers = tuple((name, self._providers[name])
-                              for name in sorted(self._providers))
+            providers = tuple((name, self._providers[name]) for name in sorted(self._providers))
         out: dict[str, Reading | None] = {}
         for name, provider in providers:
             reading = provider.read()
@@ -599,18 +694,21 @@ class SignalRegistry:
         if reading.definition != provider.definition:
             raise ValueError(f"provider {name!r} returned a reading for a different definition")
         if reading.provenance not in Provenance.ALL:
-            raise ValueError(f"provider {name!r} returned invalid provenance "
-                             f"{reading.provenance!r}")
+            raise ValueError(
+                f"provider {name!r} returned invalid provenance {reading.provenance!r}"
+            )
         value = reading.value
-        if (not isinstance(value, (int, float)) or isinstance(value, bool)
-                or (isinstance(value, float) and not math.isfinite(value))):
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or (isinstance(value, float) and not math.isfinite(value))
+        ):
             raise ValueError(f"provider {name!r} returned a non-finite or non-numeric value")
         if reading.definition.metric_kind == MetricKind.COUNTER and value < 0:
             raise ValueError(f"provider {name!r} returned a negative monotonic counter")
         if reading.definition.unit == Unit.PERCENT:
             if not isinstance(value, int) or not 0 <= value <= 100:
-                raise ValueError(
-                    f"provider {name!r} percent pressure must be an integer in 0..100")
+                raise ValueError(f"provider {name!r} percent pressure must be an integer in 0..100")
 
     def availability(self, snapshot: dict[str, Reading | None] | None = None) -> dict[str, bool]:
         """The coherent real/unavailable split derived from one canonical read snapshot.

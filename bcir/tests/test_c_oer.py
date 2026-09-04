@@ -42,8 +42,7 @@ _SOURCES = ["bcir_oer.c", "test_oer.c"]
 _SEED = 20260728
 
 #: `bcir_oer_status`, mirrored so a failure names the status rather than a number.
-_STATUS = {0: "OK", 1: "TRUNCATED", 2: "MALFORMED", 3: "RANGE", 4: "OVERFLOW",
-           5: "INVALID"}
+_STATUS = {0: "OK", 1: "TRUNCATED", 2: "MALFORMED", 3: "RANGE", 4: "OVERFLOW", 5: "INVALID"}
 #: `bcir_oer_kind`.
 _INTEGER, _BOOLEAN, _NULL, _FIXED_OCTETS, _VAR_OCTETS = 0, 1, 2, 3, 4
 
@@ -56,17 +55,31 @@ def _build(tmp: str) -> str | None:
     proc = None
     for std in ("c23", "c2x", "c11"):
         proc = subprocess.run(
-            [cc, f"-std={std}", "-O1", "-Wall", "-Wextra", "-Werror", "-I", _C,
-             *[os.path.join(_C, name) for name in _SOURCES], "-o", out],
-            capture_output=True, text=True)
+            [
+                cc,
+                f"-std={std}",
+                "-O1",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C,
+                *[os.path.join(_C, name) for name in _SOURCES],
+                "-o",
+                out,
+            ],
+            capture_output=True,
+            text=True,
+        )
         if proc.returncode == 0:
             return out
     raise AssertionError(f"the OER twin must build warning-clean:\n{proc.stderr[:3000]}")
 
 
 def _run(binary: str, lines: list[str]) -> list[str]:
-    proc = subprocess.run([binary], input="\n".join(lines) + "\n",
-                          capture_output=True, text=True, timeout=180)
+    proc = subprocess.run(
+        [binary], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=180
+    )
     assert proc.returncode == 0, f"driver exited {proc.returncode}: {proc.stderr[:2000]}"
     return proc.stdout.splitlines()
 
@@ -110,8 +123,9 @@ def test_a_redundant_leading_zero_is_accepted_and_reported_as_non_canonical():
             return
         # 0x82 0x00 0x80 is 128 written in two octets; 0x81 0x80 is the canonical form.
         basic, canonical = bytes([0x82, 0x00, 0x80]), encode_length(128)
-        got_basic, got_canonical = _run(binary, [f"length {_hex(basic)} 0",
-                                                 f"length {_hex(canonical)} 0"])
+        got_basic, got_canonical = _run(
+            binary, [f"length {_hex(basic)} 0", f"length {_hex(canonical)} 0"]
+        )
         assert got_basic.split()[1] == "128" and got_basic.split()[3] == "0"
         assert got_canonical.split()[1] == "128" and got_canonical.split()[3] == "1"
         # Python accepts the BASIC spelling too, and reads the same value.
@@ -155,10 +169,10 @@ def test_every_fixed_width_integer_form_round_trips_against_the_python_encoder()
     cases = [
         (_int_type(0, 255), 1, 0, [0, 1, 200, 255]),
         (_int_type(0, 65535), 2, 0, [0, 4096, 65535]),
-        (_int_type(0, 2 ** 32 - 1), 4, 0, [0, 1 << 20, 2 ** 32 - 1]),
+        (_int_type(0, 2**32 - 1), 4, 0, [0, 1 << 20, 2**32 - 1]),
         (_int_type(-128, 127), 1, 1, [-128, -1, 0, 127]),
         (_int_type(-32768, 32767), 2, 1, [-32768, -1, 32767]),
-        (_int_type(-(2 ** 31), 2 ** 31 - 1), 4, 1, [-(2 ** 31), -1, 2 ** 31 - 1]),
+        (_int_type(-(2**31), 2**31 - 1), 4, 1, [-(2**31), -1, 2**31 - 1]),
     ]
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
@@ -185,7 +199,7 @@ def test_the_length_prefixed_integer_form_agrees():
     abstract value in a bounded type, which is the constraint story `oer.py` documents.
     """
     kind = Primitive(Universal.INTEGER, "INTEGER")
-    values = [0, 1, -1, 127, -128, 128, -129, 32767, -32768, 2 ** 40, -(2 ** 40)]
+    values = [0, 1, -1, 127, -128, 128, -129, 32767, -32768, 2**40, -(2**40)]
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
@@ -224,11 +238,14 @@ def test_the_preamble_bit_order_matches_the_python_encoder():
     more than one optional component, so this walks every subset of three.
     """
     inner = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 255))
-    kind = Sequence((
-        Component("a", inner, optional=True),
-        Component("b", inner, optional=True),
-        Component("c", inner, optional=True),
-    ), name="ThreeOptional")
+    kind = Sequence(
+        (
+            Component("a", inner, optional=True),
+            Component("b", inner, optional=True),
+            Component("c", inner, optional=True),
+        ),
+        name="ThreeOptional",
+    )
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
@@ -289,14 +306,21 @@ def test_a_record_decodes_field_for_field_against_the_python_encoder():
     byte = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 255))
     word = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(-32768, 32767))
     text = Primitive(Universal.UTF8_STRING, "UTF8String")
-    kind = Sequence((
-        Component("id", byte),
-        Component("delta", word),
-        Component("label", text),
-        Component("note", text, optional=True),
-    ), name="Record")
-    plan = _plan((_INTEGER, 1, 0, 0, 0), (_INTEGER, 2, 1, 0, 0),
-                 (_VAR_OCTETS, 0, 0, 0, 0), (_VAR_OCTETS, 0, 0, 1, 0))
+    kind = Sequence(
+        (
+            Component("id", byte),
+            Component("delta", word),
+            Component("label", text),
+            Component("note", text, optional=True),
+        ),
+        name="Record",
+    )
+    plan = _plan(
+        (_INTEGER, 1, 0, 0, 0),
+        (_INTEGER, 2, 1, 0, 0),
+        (_VAR_OCTETS, 0, 0, 0, 0),
+        (_VAR_OCTETS, 0, 0, 1, 0),
+    )
     values = [
         {"id": 7, "delta": -3, "label": "abc", "note": "n"},
         {"id": 0, "delta": 0, "label": "", "note": ""},
@@ -330,10 +354,13 @@ def test_an_absent_optional_component_consumes_no_octets():
     after it — and would usually still return a value for the next field.
     """
     byte = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 255))
-    kind = Sequence((
-        Component("maybe", byte, optional=True),
-        Component("always", byte),
-    ), name="Gapped")
+    kind = Sequence(
+        (
+            Component("maybe", byte, optional=True),
+            Component("always", byte),
+        ),
+        name="Gapped",
+    )
     plan = _plan((_INTEGER, 1, 0, 1, 0), (_INTEGER, 1, 0, 0, 0))
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
@@ -342,8 +369,9 @@ def test_an_absent_optional_component_consumes_no_octets():
         with_it = encode_oer(kind, {"maybe": 9, "always": 4}, rules=OerRules.CANONICAL)
         without = encode_oer(kind, {"always": 4}, rules=OerRules.CANONICAL)
         assert len(without) == len(with_it) - 1, "the encoder did not omit the component"
-        a, b = _run(binary, [f"sequence {_hex(with_it)} {plan}",
-                             f"sequence {_hex(without)} {plan}"])
+        a, b = _run(
+            binary, [f"sequence {_hex(with_it)} {plan}", f"sequence {_hex(without)} {plan}"]
+        )
         assert a.split()[3:5] == ["i9", "i4"], a
         assert b.split()[3:5] == ["-", "i4"], b
 
@@ -390,16 +418,16 @@ def test_truncation_is_diagnosed_at_every_prefix_of_a_real_encoding():
     """
     byte = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 255))
     text = Primitive(Universal.UTF8_STRING, "UTF8String")
-    kind = Sequence((Component("id", byte), Component("label", text),
-                     Component("note", text, optional=True)), name="R")
-    plan = _plan((_INTEGER, 1, 0, 0, 0), (_VAR_OCTETS, 0, 0, 0, 0),
-                 (_VAR_OCTETS, 0, 0, 1, 0))
+    kind = Sequence(
+        (Component("id", byte), Component("label", text), Component("note", text, optional=True)),
+        name="R",
+    )
+    plan = _plan((_INTEGER, 1, 0, 0, 0), (_VAR_OCTETS, 0, 0, 0, 0), (_VAR_OCTETS, 0, 0, 1, 0))
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
             return
-        full = encode_oer(kind, {"id": 3, "label": "hello", "note": "x"},
-                          rules=OerRules.CANONICAL)
+        full = encode_oer(kind, {"id": 3, "label": "hello", "note": "x"}, rules=OerRules.CANONICAL)
         lines = [f"sequence {_hex(full[:cut])} {plan}" for cut in range(len(full))]
         for cut, got in enumerate(_run(binary, lines)):
             assert got.startswith("ERR "), f"prefix of {cut} octets decoded: {got}"
@@ -415,20 +443,33 @@ def test_a_generated_corpus_keeps_the_two_rails_in_step():
     byte = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 255))
     word = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(-32768, 32767))
     text = Primitive(Universal.UTF8_STRING, "UTF8String")
-    kind = Sequence((Component("id", byte), Component("delta", word),
-                     Component("label", text), Component("note", text, optional=True)),
-                    name="Record")
-    plan = _plan((_INTEGER, 1, 0, 0, 0), (_INTEGER, 2, 1, 0, 0),
-                 (_VAR_OCTETS, 0, 0, 0, 0), (_VAR_OCTETS, 0, 0, 1, 0))
+    kind = Sequence(
+        (
+            Component("id", byte),
+            Component("delta", word),
+            Component("label", text),
+            Component("note", text, optional=True),
+        ),
+        name="Record",
+    )
+    plan = _plan(
+        (_INTEGER, 1, 0, 0, 0),
+        (_INTEGER, 2, 1, 0, 0),
+        (_VAR_OCTETS, 0, 0, 0, 0),
+        (_VAR_OCTETS, 0, 0, 1, 0),
+    )
     with tempfile.TemporaryDirectory() as tmp:
         binary = _build(tmp)
         if binary is None:
             return
         values = []
         for _ in range(150):
-            value = {"id": rng.randrange(256), "delta": rng.randrange(-32768, 32768),
-                     # Lengths straddling 127 are where the determinant changes form.
-                     "label": "a" * rng.choice([0, 1, 126, 127, 128, 129, 300])}
+            value = {
+                "id": rng.randrange(256),
+                "delta": rng.randrange(-32768, 32768),
+                # Lengths straddling 127 are where the determinant changes form.
+                "label": "a" * rng.choice([0, 1, 126, 127, 128, 129, 300]),
+            }
             if rng.random() < 0.5:
                 value["note"] = "n" * rng.randrange(0, 130)
             values.append(value)
@@ -440,5 +481,6 @@ def test_a_generated_corpus_keeps_the_two_rails_in_step():
             assert int(parts[1]) == len(raw), f"{value}: consumed {parts[1]} of {len(raw)}"
             assert parts[3] == f"i{value['id']}" and parts[4] == f"i{value['delta']}"
             assert parts[5] == "s" + (value["label"].encode().hex() or "-")
-            assert parts[6] == ("-" if "note" not in value
-                                else "s" + (value["note"].encode().hex() or "-"))
+            assert parts[6] == (
+                "-" if "note" not in value else "s" + (value["note"].encode().hex() or "-")
+            )

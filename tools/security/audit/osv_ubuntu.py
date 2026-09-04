@@ -14,6 +14,7 @@ Ubuntu's priority). The export
 (https://osv-vulnerabilities.storage.googleapis.com/Ubuntu:<release>:LTS/all.zip) is
 downloaded into --osv-dir when absent. Exit 1 when anything is AFFECTING.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -61,7 +62,9 @@ def resolve_binary(binary: str) -> tuple[str, str] | None:
 
 
 def dpkg_lt(a: str, b: str) -> bool | None:
-    outcome = run_bounded(["dpkg", "--compare-versions", a, "lt", b], timeout=APT_TIMEOUT, cap=APT_CAP)
+    outcome = run_bounded(
+        ["dpkg", "--compare-versions", a, "lt", b], timeout=APT_TIMEOUT, cap=APT_CAP
+    )
     if not outcome["launched"] or outcome["timed_out"] or outcome["returncode"] not in (0, 1):
         return None
     return outcome["returncode"] == 0
@@ -86,7 +89,9 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--osv-dir", required=True)
     ap.add_argument("--release", default="24.04")
-    ap.add_argument("--binary", action="append", default=[], help="binary package, resolved through apt-cache")
+    ap.add_argument(
+        "--binary", action="append", default=[], help="binary package, resolved through apt-cache"
+    )
     ap.add_argument("--package", action="append", default=[], help="source=version stated directly")
     ap.add_argument("--out")
     args = ap.parse_args(argv)
@@ -126,24 +131,40 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     below = dpkg_lt(ver, fixed)
                     status = "unevaluable" if below is None else ("affecting" if below else "fixed")
-            buckets[status].append({
-                "id": record["id"],
-                "aliases": [a for a in record.get("aliases", []) if a.startswith("CVE-")],
-                "priority": (entry.get("ecosystem_specific") or {}).get("ubuntu_priority"),
-                "summary": record.get("summary", "")[:100],
-            })
+            buckets[status].append(
+                {
+                    "id": record["id"],
+                    "aliases": [a for a in record.get("aliases", []) if a.startswith("CVE-")],
+                    "priority": (entry.get("ecosystem_specific") or {}).get("ubuntu_priority"),
+                    "summary": record.get("summary", "")[:100],
+                }
+            )
         affecting_total += len(buckets["affecting"])
-        out[source] = {"version": ver, "binaries": info["binaries"], "advisories_on_record": len(index.get(source, [])),
-                       "fixed_at_or_below": len(buckets["fixed"]), "affecting": buckets["affecting"],
-                       "open_no_fix": buckets["open"], "unevaluable": buckets["unevaluable"]}
+        out[source] = {
+            "version": ver,
+            "binaries": info["binaries"],
+            "advisories_on_record": len(index.get(source, [])),
+            "fixed_at_or_below": len(buckets["fixed"]),
+            "affecting": buckets["affecting"],
+            "open_no_fix": buckets["open"],
+            "unevaluable": buckets["unevaluable"],
+        }
         by_priority = collections.Counter(x["priority"] for x in buckets["open"])
-        print(f"  {source:20s} {ver:28s} on record {len(index.get(source, [])):3d}  fixed<= {len(buckets['fixed']):3d}  "
-              f"AFFECTING {len(buckets['affecting']):2d}  open {len(buckets['open']):2d} {dict(by_priority) if buckets['open'] else ''}")
-    print(f"osv_ubuntu: {ecosystem}; {len(out)} source packages; {affecting_total} affecting; "
-          f"unresolved binaries: {unresolved or 'none'}")
+        print(
+            f"  {source:20s} {ver:28s} on record {len(index.get(source, [])):3d}  fixed<= {len(buckets['fixed']):3d}  "
+            f"AFFECTING {len(buckets['affecting']):2d}  open {len(buckets['open']):2d} {dict(by_priority) if buckets['open'] else ''}"
+        )
+    print(
+        f"osv_ubuntu: {ecosystem}; {len(out)} source packages; {affecting_total} affecting; "
+        f"unresolved binaries: {unresolved or 'none'}"
+    )
     if args.out:
         with open(args.out, "w", encoding="utf-8") as handle:
-            json.dump({"ecosystem": ecosystem, "unresolved_binaries": unresolved, "packages": out}, handle, indent=1)
+            json.dump(
+                {"ecosystem": ecosystem, "unresolved_binaries": unresolved, "packages": out},
+                handle,
+                indent=1,
+            )
             handle.write("\n")
     return 1 if affecting_total else 0
 

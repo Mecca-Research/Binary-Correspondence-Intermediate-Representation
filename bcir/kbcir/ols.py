@@ -88,14 +88,15 @@ def ols_reference(a: list[float], b: list[float], m: int, n: int, nrhs: int = 1)
     if len(b) != m * nrhs:
         raise ValueError(f"right-hand side must have m*nrhs = {m * nrhs} entries; got {len(b)}")
 
-    g = _normal_matrix(a, m, n)                 # G = A^T A   (n x n)
-    c = _normal_rhs(a, b, m, n, nrhs)           # c = A^T b   (n x nrhs)
+    g = _normal_matrix(a, m, n)  # G = A^T A   (n x n)
+    c = _normal_rhs(a, b, m, n, nrhs)  # c = A^T b   (n x nrhs)
     # Reuse the trusted square solve -- raises ValueError on a singular G (rank-deficient A): the honest fail.
     return solve_reference(g, c, n, nrhs)
 
 
-def normal_equation_residual(a: list[float], x: list[float], b: list[float],
-                             m: int, n: int, nrhs: int = 1) -> float:
+def normal_equation_residual(
+    a: list[float], x: list[float], b: list[float], m: int, n: int, nrhs: int = 1
+) -> float:
     """The OLS optimality residual ``max|A^T(A x - b)|`` (real units) -- the INDEPENDENT correctness check an
     OLS solution must satisfy. At the least-squares optimum the gradient ``d/dx ||A x - b||^2 = 2 A^T(A x - b)``
     is zero, so ``A^T(A x - b) = 0`` -- this is ~0 even when ``||A x - b|| > 0`` (an inconsistent system: the
@@ -121,8 +122,9 @@ def normal_equation_residual(a: list[float], x: list[float], b: list[float],
     return worst
 
 
-def ols_via_bridge(a: list[float], b: list[float], m: int, n: int, nrhs: int,
-                   group_size: int, bits: int) -> list[float]:
+def ols_via_bridge(
+    a: list[float], b: list[float], m: int, n: int, nrhs: int, group_size: int, bits: int
+) -> list[float]:
     """E1: the Q8<->float32<->Q8 bridge wrapped around a TRUSTED external least-squares solve (integrate, don't
     reinvent) -- the OLS analog of ``linsolve.solve_via_bridge``. The design matrix and right-hand side arrive
     as per-group quantized storage; the bridge dequantizes them to float32, a trusted external solver (LAPACK

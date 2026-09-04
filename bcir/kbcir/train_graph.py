@@ -56,13 +56,15 @@ class TrainStepSpec:
         if self.loss not in _LOSSES:
             raise ValueError(f"loss must be one of {_LOSSES}; got {self.loss!r}")
         if self.loss == "bce" and self.activation != "sigmoid":
-            raise ValueError("bce requires activation='sigmoid' (the fused BCE-with-logits gradient)")
+            raise ValueError(
+                "bce requires activation='sigmoid' (the fused BCE-with-logits gradient)"
+            )
         if self.optimizer not in _OPTIMIZERS:
             raise ValueError(f"optimizer must be one of {_OPTIMIZERS}; got {self.optimizer!r}")
 
     @property
     def n_params(self) -> int:
-        return self.n_features + 1                   # weights + bias, the M3 readout shape
+        return self.n_features + 1  # weights + bias, the M3 readout shape
 
 
 def _optimizer_state_rids(spec: TrainStepSpec) -> tuple[int, ...]:
@@ -81,11 +83,13 @@ def _optimizer_resources(spec: TrainStepSpec) -> tuple[Resource, ...]:
     if spec.optimizer == "rmsprop":
         return (Resource(rid=_OPT_STATE1, domain=Domain.RAM, shape=(np_,), name="SQ_AVG"),)
     if spec.optimizer == "adam":
-        return (Resource(rid=_OPT_STATE1, domain=Domain.RAM, shape=(np_,), name="ADAM_M"),
-                Resource(rid=_OPT_STATE2, domain=Domain.RAM, shape=(np_,), name="ADAM_V"),
-                # The update claim is vector-width ``n_params``; model the scalar step as
-                # a broadcast lane so the ordinary extent law remains exact.
-                Resource(rid=_OPT_STEP, domain=Domain.RAM, shape=(np_,), name="ADAM_STEP"))
+        return (
+            Resource(rid=_OPT_STATE1, domain=Domain.RAM, shape=(np_,), name="ADAM_M"),
+            Resource(rid=_OPT_STATE2, domain=Domain.RAM, shape=(np_,), name="ADAM_V"),
+            # The update claim is vector-width ``n_params``; model the scalar step as
+            # a broadcast lane so the ordinary extent law remains exact.
+            Resource(rid=_OPT_STEP, domain=Domain.RAM, shape=(np_,), name="ADAM_STEP"),
+        )
     return ()
 
 
@@ -114,23 +118,73 @@ def _step_claims(spec: TrainStepSpec, base_id: int = 0) -> tuple[tuple[Claim, ..
         # forward reads ALL of W per output element (a structured tile walk): the affine R7
         # extent model does not describe it, so the claim is `assumed_safe` -- the tensor-level
         # validation is the gem shape law (R22), not the per-index affine proof.
-        Claim(id=c + 1, opcode=Opcode.T_MACC, lane=Lane.T, stride_class=StrideClass.TILE,
-              count=b, rd=(_X, _W), wr=(_Z,), op="gem.matmul", domain=Domain.RAM,
-              bounds="assumed_safe"),
-        Claim(id=c + 2, opcode=Opcode.MUL, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=b, rd=(_Z,), wr=(_ACT,), op=f"gem.activation:{spec.activation}",
-              domain=Domain.RAM),
-        Claim(id=c + 3, opcode=Opcode.MUL, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=b, rd=(_ACT, _Y), wr=(_LOSSV,), op=f"gem.loss:{spec.loss}",
-              domain=Domain.RAM),
-        Claim(id=c + 4, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=b, rd=(_LOSSV,), wr=(_LOSS,), op="reduce.loss_mean", domain=Domain.RAM),
-        Claim(id=c + 5, opcode=Opcode.T_MACC, lane=Lane.T, stride_class=StrideClass.TILE,
-              count=np_, rd=backward_rd, wr=(_GRAD,), op="gem.autodiff", domain=Domain.RAM),
-        Claim(id=c + 6, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=np_, rd=(_GRAD, _W, *opt_state), wr=(_W, *opt_state),
-              op=f"gem.opt_step:{spec.optimizer}",
-              domain=Domain.RAM),
+        Claim(
+            id=c + 1,
+            opcode=Opcode.T_MACC,
+            lane=Lane.T,
+            stride_class=StrideClass.TILE,
+            count=b,
+            rd=(_X, _W),
+            wr=(_Z,),
+            op="gem.matmul",
+            domain=Domain.RAM,
+            bounds="assumed_safe",
+        ),
+        Claim(
+            id=c + 2,
+            opcode=Opcode.MUL,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=b,
+            rd=(_Z,),
+            wr=(_ACT,),
+            op=f"gem.activation:{spec.activation}",
+            domain=Domain.RAM,
+        ),
+        Claim(
+            id=c + 3,
+            opcode=Opcode.MUL,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=b,
+            rd=(_ACT, _Y),
+            wr=(_LOSSV,),
+            op=f"gem.loss:{spec.loss}",
+            domain=Domain.RAM,
+        ),
+        Claim(
+            id=c + 4,
+            opcode=Opcode.ADD,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=b,
+            rd=(_LOSSV,),
+            wr=(_LOSS,),
+            op="reduce.loss_mean",
+            domain=Domain.RAM,
+        ),
+        Claim(
+            id=c + 5,
+            opcode=Opcode.T_MACC,
+            lane=Lane.T,
+            stride_class=StrideClass.TILE,
+            count=np_,
+            rd=backward_rd,
+            wr=(_GRAD,),
+            op="gem.autodiff",
+            domain=Domain.RAM,
+        ),
+        Claim(
+            id=c + 6,
+            opcode=Opcode.ADD,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=np_,
+            rd=(_GRAD, _W, *opt_state),
+            wr=(_W, *opt_state),
+            op=f"gem.opt_step:{spec.optimizer}",
+            domain=Domain.RAM,
+        ),
     )
     return tuple((s,) for s in stages)
 
@@ -159,12 +213,20 @@ def train_run_region(spec: TrainStepSpec, steps: int) -> Region:
     return Seq(tuple(step for _ in range(max(1, steps))))
 
 
-def plan_train_run(spec: TrainStepSpec, steps: int, h: HProfile, theta: Theta,
-                   policy: Policy = PERF, *, budget: Budget = None) -> CompositeResult:
+def plan_train_run(
+    spec: TrainStepSpec,
+    steps: int,
+    h: HProfile,
+    theta: Theta,
+    policy: Policy = PERF,
+    *,
+    budget: Budget = None,
+) -> CompositeResult:
     """Price a whole training run compositionally -- and, with an RCSP `budget`, decide its
     FEASIBILITY before it ever executes (`rcsp.Infeasible` when a stage cannot fit the caps)."""
-    return plan_composite(train_run_region(spec, steps), {}, _resources(spec), h, theta,
-                          policy, budget=budget)
+    return plan_composite(
+        train_run_region(spec, steps), {}, _resources(spec), h, theta, policy, budget=budget
+    )
 
 
 def steps_for(n_examples: int, batch_size: int, epochs: int) -> int:
@@ -182,17 +244,22 @@ def steps_for(n_examples: int, batch_size: int, epochs: int) -> int:
 # the claim graph instead of a Python loop, and every epoch commits a ProvenanceManifest
 # (the R13 flight-recorder entry: same plan inputs, the epoch as the in-force artifact tag).
 
-from .provenance import ProvenanceManifest, build_manifest      # noqa: E402
-from ..gem.execute import ExecResult, execute                   # noqa: E402
-from ..gem.streampack import StreamPack, hydrate                # noqa: E402
-from .realize import RealizationResult, optimize                # noqa: E402
-from .recurrent import sigmoid                                  # noqa: E402
-from ..lower.optimizers import (adam_step, momentum_step,       # noqa: E402
-                                rmsprop_step, sgd_step)
+from .provenance import ProvenanceManifest, build_manifest  # noqa: E402
+from ..gem.execute import ExecResult, execute  # noqa: E402
+from ..gem.streampack import StreamPack, hydrate  # noqa: E402
+from .realize import RealizationResult, optimize  # noqa: E402
+from .recurrent import sigmoid  # noqa: E402
+from ..lower.optimizers import (
+    adam_step,
+    momentum_step,  # noqa: E402
+    rmsprop_step,
+    sgd_step,
+)
 
 
-def hydrate_train_step(spec: TrainStepSpec, h: HProfile, theta: Theta,
-                       policy: Policy = PERF) -> tuple[StreamPack, RealizationResult]:
+def hydrate_train_step(
+    spec: TrainStepSpec, h: HProfile, theta: Theta, policy: Policy = PERF
+) -> tuple[StreamPack, RealizationResult]:
     """Plan one training step and lower the selected realization into a StreamPack."""
     m = train_step_module(spec)
     result = optimize(m, h, theta, policy)
@@ -218,14 +285,14 @@ def _activation_and_derivative(kind: str, z: float) -> tuple[float, float]:
         inner = k * (z + 0.044715 * z * z * z)
         t = math.tanh(inner)
         value = 0.5 * z * (1.0 + t)
-        deriv = (0.5 * (1.0 + t)
-                 + 0.5 * z * (1.0 - t * t) * k * (1.0 + 3.0 * 0.044715 * z * z))
+        deriv = 0.5 * (1.0 + t) + 0.5 * z * (1.0 - t * t) * k * (1.0 + 3.0 * 0.044715 * z * z)
         return value, deriv
     raise ValueError(f"unsupported activation {kind!r}")
 
 
-def _loss_and_dz(loss: str, activation: str, z: float, prediction: float,
-                 target: float) -> tuple[float, float]:
+def _loss_and_dz(
+    loss: str, activation: str, z: float, prediction: float, target: float
+) -> tuple[float, float]:
     """One example's loss and derivative with respect to the affine logit ``z``."""
     if loss == "bce":
         # TrainStepSpec admits only sigmoid+BCE.  Preserve the historic monitored-value
@@ -271,7 +338,8 @@ class _OptimizerRuntime:
             new_params, self.state1 = rmsprop_step(params, grads, self.state1, lr)
         else:
             new_params, self.state1, self.state2, self.step_index = adam_step(
-                params, grads, self.state1, self.state2, self.step_index, lr)
+                params, grads, self.state1, self.state2, self.step_index, lr
+            )
         params[:] = new_params
 
 
@@ -283,30 +351,33 @@ def _step_kernels(spec: TrainStepSpec, st: dict) -> dict[int, "object"]:
     """
     nf, b = spec.n_features, spec.batch
 
-    def forward():                                   # claim 1: z = X @ w + bias
+    def forward():  # claim 1: z = X @ w + bias
         for i in range(b):
             st["z"][i] = sum(st["X"][i][j] * st["w"][j] for j in range(nf)) + st["w"][nf]
 
-    def activation():                                # claim 2: selected activation
+    def activation():  # claim 2: selected activation
         for i in range(b):
             st["act"][i] = _activation_and_derivative(spec.activation, st["z"][i])[0]
 
-    def loss_vec():                                  # claim 3: selected per-example loss
+    def loss_vec():  # claim 3: selected per-example loss
         for i in range(b):
             st["lossv"][i] = _loss_and_dz(
-                spec.loss, spec.activation, st["z"][i], st["act"][i], st["y"][i])[0]
+                spec.loss, spec.activation, st["z"][i], st["act"][i], st["y"][i]
+            )[0]
 
-    def reduce_mean():                               # claim 4: loss = mean(lossv)
+    def reduce_mean():  # claim 4: loss = mean(lossv)
         st["loss"][0] = sum(st["lossv"]) / b
 
-    def backward():                                  # claim 5: d(loss)/dz through selected activation
-        dz = [_loss_and_dz(spec.loss, spec.activation, st["z"][i], st["act"][i],
-                           st["y"][i])[1] for i in range(b)]
+    def backward():  # claim 5: d(loss)/dz through selected activation
+        dz = [
+            _loss_and_dz(spec.loss, spec.activation, st["z"][i], st["act"][i], st["y"][i])[1]
+            for i in range(b)
+        ]
         for j in range(nf):
             st["grad"][j] = sum(dz[i] * st["X"][i][j] for i in range(b)) / b
         st["grad"][nf] = sum(dz) / b
 
-    def update():                                    # claim 6: selected stateful optimizer
+    def update():  # claim 6: selected stateful optimizer
         st["optimizer"].update(st["w"], st["grad"], st["lr"])
 
     return {1: forward, 2: activation, 3: loss_vec, 4: reduce_mean, 5: backward, 6: update}
@@ -321,12 +392,21 @@ class PlannedTrainRun:
     losses: list
     manifests: tuple
     pack: StreamPack
-    exec_orders: list                                # per executed step: the claim dispatch order
+    exec_orders: list  # per executed step: the claim dispatch order
 
 
-def train_planned(spec: TrainStepSpec, X: list, y: list, w0: list, *, epochs: int,
-                  lr: float, h: HProfile, theta: Theta,
-                  policy: Policy = PERF) -> PlannedTrainRun:
+def train_planned(
+    spec: TrainStepSpec,
+    X: list,
+    y: list,
+    w0: list,
+    *,
+    epochs: int,
+    lr: float,
+    h: HProfile,
+    theta: Theta,
+    policy: Policy = PERF,
+) -> PlannedTrainRun:
     """REAL training on the PLANNED path: the GEM executor dispatches the six stage kernels
     in the claim graph's phase order for every step (deterministic batches, no shuffle), and
     each epoch commits a ProvenanceManifest whose artifact tags pin the epoch + the pack
@@ -340,10 +420,18 @@ def train_planned(spec: TrainStepSpec, X: list, y: list, w0: list, *, epochs: in
 
     def make_context(batch_spec: TrainStepSpec, module: Module) -> tuple[Module, dict, dict]:
         bs = batch_spec.batch
-        state = {"X": [[0.0] * spec.n_features for _ in range(bs)], "y": [0.0] * bs,
-                 "w": weights, "z": [0.0] * bs, "act": [0.0] * bs,
-                 "lossv": [0.0] * bs, "loss": [0.0],
-                 "grad": [0.0] * spec.n_params, "lr": lr, "optimizer": optimizer}
+        state = {
+            "X": [[0.0] * spec.n_features for _ in range(bs)],
+            "y": [0.0] * bs,
+            "w": weights,
+            "z": [0.0] * bs,
+            "act": [0.0] * bs,
+            "lossv": [0.0] * bs,
+            "loss": [0.0],
+            "grad": [0.0] * spec.n_params,
+            "lr": lr,
+            "optimizer": optimizer,
+        }
         return module, state, _step_kernels(batch_spec, state)
 
     contexts = {b: make_context(spec, m)}
@@ -359,7 +447,7 @@ def train_planned(spec: TrainStepSpec, X: list, y: list, w0: list, *, epochs: in
     exec_orders: list = []
     for e in range(epochs):
         epoch_loss_sum = 0.0
-        for lo in range(0, n, b):                    # deterministic full batches + one planned tail
+        for lo in range(0, n, b):  # deterministic full batches + one planned tail
             active = min(b, n - lo)
             batch_module, st, kernels = contexts[active]
             for i in range(active):
@@ -369,12 +457,27 @@ def train_planned(spec: TrainStepSpec, X: list, y: list, w0: list, *, epochs: in
             exec_orders.append(list(r.order))
             epoch_loss_sum += st["loss"][0] * active
         losses.append(epoch_loss_sum / max(1, n))
-        manifests.append(build_manifest(
-            m, h, theta, policy,
-            artifacts=(("epoch", e), ("topo_gen", pack.topo_gen),
-                       ("map_gen", pack.map_gen), ("data_gen", pack.data_gen))))
-    return PlannedTrainRun(weights=list(weights), losses=losses, manifests=tuple(manifests),
-                           pack=pack, exec_orders=exec_orders)
+        manifests.append(
+            build_manifest(
+                m,
+                h,
+                theta,
+                policy,
+                artifacts=(
+                    ("epoch", e),
+                    ("topo_gen", pack.topo_gen),
+                    ("map_gen", pack.map_gen),
+                    ("data_gen", pack.data_gen),
+                ),
+            )
+        )
+    return PlannedTrainRun(
+        weights=list(weights),
+        losses=losses,
+        manifests=tuple(manifests),
+        pack=pack,
+        exec_orders=exec_orders,
+    )
 
 
 # --- D1 step 5: overlap/EFT scheduling of the stage streams (software pipelining) --------------
@@ -418,15 +521,16 @@ class PipelineCertificate:
 
     @property
     def overlap_win(self) -> int:
-        return self.barriered - self.pipelined         # >= 0: what the token DAG buys
+        return self.barriered - self.pipelined  # >= 0: what the token DAG buys
 
     @property
     def admitted(self) -> bool:
         return 0 < self.pipelined <= self.barriered <= self.serial
 
 
-def schedule_train_run(spec: TrainStepSpec, steps: int, h: HProfile, theta: Theta,
-                       policy: Policy = PERF) -> tuple[PipelineCertificate, GemSchedule]:
+def schedule_train_run(
+    spec: TrainStepSpec, steps: int, h: HProfile, theta: Theta, policy: Policy = PERF
+) -> tuple[PipelineCertificate, GemSchedule]:
     """Price + place a multi-step training run: optimize the run module (per-claim step
     costs -> durations), schedule it phase-barriered AND token-pipelined, and certify the
     overlap win. Returns (certificate, the pipelined schedule)."""
@@ -436,8 +540,9 @@ def schedule_train_run(spec: TrainStepSpec, steps: int, h: HProfile, theta: Thet
     serial = sum(dur.values())
     barriered = schedule_eft(m, dur, target=h)
     pipelined = execute_tokens(m, dur, target=h)
-    cert = PipelineCertificate(steps=steps, serial=serial, barriered=barriered.makespan,
-                               pipelined=pipelined.makespan)
+    cert = PipelineCertificate(
+        steps=steps, serial=serial, barriered=barriered.makespan, pipelined=pipelined.makespan
+    )
     return cert, pipelined
 
 
@@ -457,27 +562,78 @@ def schedule_train_run(spec: TrainStepSpec, steps: int, h: HProfile, theta: Thet
 def _stream_claims(spec: TrainStepSpec, s: int, mb: int) -> tuple[tuple[Claim, ...], ...]:
     """Stream s's five stages (forward .. backward) over its own RID band, micro-batch mb."""
     np_, c, o = spec.n_params, s * 10, s * 10
-    x, z, act, y, lossv, loss, grad = o + _X, o + _Z, o + _ACT, o + _Y, o + _LOSSV, o + _LOSS, o + _GRAD
+    x, z, act, y, lossv, loss, grad = (
+        o + _X,
+        o + _Z,
+        o + _ACT,
+        o + _Y,
+        o + _LOSSV,
+        o + _LOSS,
+        o + _GRAD,
+    )
     backward_rd = (x, act, y) if spec.loss == "bce" else (x, z, act, y)
     stages = (
-        Claim(id=c + 1, opcode=Opcode.T_MACC, lane=Lane.T, stride_class=StrideClass.TILE,
-              count=mb, rd=(x, _W), wr=(z,), op="gem.matmul", domain=Domain.RAM,
-              bounds="assumed_safe"),
-        Claim(id=c + 2, opcode=Opcode.MUL, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=mb, rd=(z,), wr=(act,), op=f"gem.activation:{spec.activation}",
-              domain=Domain.RAM),
-        Claim(id=c + 3, opcode=Opcode.MUL, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=mb, rd=(act, y), wr=(lossv,), op=f"gem.loss:{spec.loss}",
-              domain=Domain.RAM),
-        Claim(id=c + 4, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-              count=mb, rd=(lossv,), wr=(loss,), op="reduce.loss_mean", domain=Domain.RAM),
+        Claim(
+            id=c + 1,
+            opcode=Opcode.T_MACC,
+            lane=Lane.T,
+            stride_class=StrideClass.TILE,
+            count=mb,
+            rd=(x, _W),
+            wr=(z,),
+            op="gem.matmul",
+            domain=Domain.RAM,
+            bounds="assumed_safe",
+        ),
+        Claim(
+            id=c + 2,
+            opcode=Opcode.MUL,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=mb,
+            rd=(z,),
+            wr=(act,),
+            op=f"gem.activation:{spec.activation}",
+            domain=Domain.RAM,
+        ),
+        Claim(
+            id=c + 3,
+            opcode=Opcode.MUL,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=mb,
+            rd=(act, y),
+            wr=(lossv,),
+            op=f"gem.loss:{spec.loss}",
+            domain=Domain.RAM,
+        ),
+        Claim(
+            id=c + 4,
+            opcode=Opcode.ADD,
+            lane=Lane.U,
+            stride_class=StrideClass.UNIT,
+            count=mb,
+            rd=(lossv,),
+            wr=(loss,),
+            op="reduce.loss_mean",
+            domain=Domain.RAM,
+        ),
         # backward reads the WHOLE micro-batch per output parameter (a structured tile
         # walk, like the forward): with mb < n_params the affine R7 extent model cannot
         # describe it, so the claim is `assumed_safe` -- the tensor-level validation is the
         # gem shape law (R22), the same posture as the forward matmul above.
-        Claim(id=c + 5, opcode=Opcode.T_MACC, lane=Lane.T, stride_class=StrideClass.TILE,
-              count=spec.n_params, rd=backward_rd, wr=(grad,), op="gem.autodiff",
-              domain=Domain.RAM, bounds="assumed_safe"),
+        Claim(
+            id=c + 5,
+            opcode=Opcode.T_MACC,
+            lane=Lane.T,
+            stride_class=StrideClass.TILE,
+            count=spec.n_params,
+            rd=backward_rd,
+            wr=(grad,),
+            op="gem.autodiff",
+            domain=Domain.RAM,
+            bounds="assumed_safe",
+        ),
     )
     del np_
     return tuple((st,) for st in stages)
@@ -492,45 +648,63 @@ def train_stream_module(spec: TrainStepSpec, streams: int) -> Module:
     if streams < 1:
         raise ValueError(f"train_stream_module needs streams >= 1; got {streams}")
     if spec.batch % streams:
-        raise ValueError(f"batch {spec.batch} not divisible by streams {streams} "
-                         f"(equal micro-batches, or the gradient mean is not the batch mean)")
+        raise ValueError(
+            f"batch {spec.batch} not divisible by streams {streams} "
+            f"(equal micro-batches, or the gradient mean is not the batch mean)"
+        )
     mb = spec.batch // streams
     nf, np_ = spec.n_features, spec.n_params
     m = Module(name=f"train_stream_{streams}x_{spec.activation}_{spec.loss}_{spec.optimizer}")
     m.add_resource(Resource(rid=_W, domain=Domain.RAM, shape=(np_,), name="W"))
     for r in _optimizer_resources(spec):
         m.add_resource(r)
-    gradc = streams * 10 + _GRAD                       # the combined gradient's RID
+    gradc = streams * 10 + _GRAD  # the combined gradient's RID
     for s in range(streams):
         o = s * 10
-        for r in (Resource(rid=o + _X, domain=Domain.RAM, shape=(mb, nf), name=f"X{s}"),
-                  Resource(rid=o + _Z, domain=Domain.RAM, shape=(mb,), name=f"Z{s}"),
-                  Resource(rid=o + _ACT, domain=Domain.RAM, shape=(mb,), name=f"ACT{s}"),
-                  Resource(rid=o + _Y, domain=Domain.RAM, shape=(mb,), name=f"Y{s}"),
-                  Resource(rid=o + _LOSSV, domain=Domain.RAM, shape=(mb,), name=f"LOSSV{s}"),
-                  Resource(rid=o + _LOSS, domain=Domain.RAM, shape=(1,), name=f"LOSS{s}"),
-                  Resource(rid=o + _GRAD, domain=Domain.RAM, shape=(np_,), name=f"GRAD{s}")):
+        for r in (
+            Resource(rid=o + _X, domain=Domain.RAM, shape=(mb, nf), name=f"X{s}"),
+            Resource(rid=o + _Z, domain=Domain.RAM, shape=(mb,), name=f"Z{s}"),
+            Resource(rid=o + _ACT, domain=Domain.RAM, shape=(mb,), name=f"ACT{s}"),
+            Resource(rid=o + _Y, domain=Domain.RAM, shape=(mb,), name=f"Y{s}"),
+            Resource(rid=o + _LOSSV, domain=Domain.RAM, shape=(mb,), name=f"LOSSV{s}"),
+            Resource(rid=o + _LOSS, domain=Domain.RAM, shape=(1,), name=f"LOSS{s}"),
+            Resource(rid=o + _GRAD, domain=Domain.RAM, shape=(np_,), name=f"GRAD{s}"),
+        ):
             m.add_resource(r)
     m.add_resource(Resource(rid=gradc, domain=Domain.RAM, shape=(np_,), name="GRADC"))
     last_pids = []
     pid = 0
-    for s in range(streams):                           # parallel per-stream chains
+    for s in range(streams):  # parallel per-stream chains
         prev: tuple[int, ...] = ()
         for stage in _stream_claims(spec, s, mb):
             m.add_phase(Phase(phase_id=pid, deps=prev, claims=list(stage)))
             prev = (pid,)
             pid += 1
         last_pids.append(pid - 1)
-    combine = Claim(id=streams * 10 + 1, opcode=Opcode.ADD, lane=Lane.U,
-                    stride_class=StrideClass.UNIT, count=np_,
-                    rd=tuple(s * 10 + _GRAD for s in range(streams)), wr=(gradc,),
-                    op="reduce.grad_mean", domain=Domain.RAM)
+    combine = Claim(
+        id=streams * 10 + 1,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=np_,
+        rd=tuple(s * 10 + _GRAD for s in range(streams)),
+        wr=(gradc,),
+        op="reduce.grad_mean",
+        domain=Domain.RAM,
+    )
     m.add_phase(Phase(phase_id=pid, deps=tuple(last_pids), claims=[combine]))
     opt_state = _optimizer_state_rids(spec)
-    update = Claim(id=streams * 10 + 2, opcode=Opcode.ADD, lane=Lane.U,
-                   stride_class=StrideClass.UNIT, count=np_, rd=(gradc, _W, *opt_state),
-                   wr=(_W, *opt_state), op=f"gem.opt_step:{spec.optimizer}",
-                   domain=Domain.RAM)
+    update = Claim(
+        id=streams * 10 + 2,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=np_,
+        rd=(gradc, _W, *opt_state),
+        wr=(_W, *opt_state),
+        op=f"gem.opt_step:{spec.optimizer}",
+        domain=Domain.RAM,
+    )
     m.add_phase(Phase(phase_id=pid + 1, deps=(pid,), claims=[update]))
     return m
 
@@ -549,15 +723,16 @@ class StreamCertificate:
 
     @property
     def overlap_win(self) -> int:
-        return self.barriered - self.pipelined         # >= 0: what stream concurrency buys
+        return self.barriered - self.pipelined  # >= 0: what stream concurrency buys
 
     @property
     def admitted(self) -> bool:
         return 0 < self.pipelined <= self.barriered <= self.serial
 
 
-def schedule_stream_step(spec: TrainStepSpec, streams: int, h: HProfile, theta: Theta,
-                         policy: Policy = PERF) -> tuple[StreamCertificate, GemSchedule]:
+def schedule_stream_step(
+    spec: TrainStepSpec, streams: int, h: HProfile, theta: Theta, policy: Policy = PERF
+) -> tuple[StreamCertificate, GemSchedule]:
     """Price + place one streamed step: optimize the stream module (per-claim costs ->
     durations), schedule it barriered AND token-pipelined, certify the concurrency win.
     Returns (certificate, the pipelined schedule)."""
@@ -567,8 +742,9 @@ def schedule_stream_step(spec: TrainStepSpec, streams: int, h: HProfile, theta: 
     serial = sum(dur.values())
     barriered = schedule_eft(m, dur, target=h)
     pipelined = execute_tokens(m, dur, target=h)
-    cert = StreamCertificate(streams=streams, serial=serial, barriered=barriered.makespan,
-                             pipelined=pipelined.makespan)
+    cert = StreamCertificate(
+        streams=streams, serial=serial, barriered=barriered.makespan, pipelined=pipelined.makespan
+    )
     return cert, pipelined
 
 
@@ -582,48 +758,54 @@ def _stream_kernels(spec: TrainStepSpec, streams: int, st: dict) -> dict[int, "o
     shared -- the resources of the streamed claim graph, materialized (the step-2 pattern)."""
     nf, mb = spec.n_features, spec.batch // streams
 
-    def forward(s):                                  # s*10+1: z_s = X_s @ w + bias
+    def forward(s):  # s*10+1: z_s = X_s @ w + bias
         def k():
             for i in range(mb):
-                st["z"][s][i] = (sum(st["X"][s][i][j] * st["w"][j] for j in range(nf))
-                                 + st["w"][nf])
+                st["z"][s][i] = sum(st["X"][s][i][j] * st["w"][j] for j in range(nf)) + st["w"][nf]
+
         return k
 
-    def activation(s):                               # s*10+2: selected activation
+    def activation(s):  # s*10+2: selected activation
         def k():
             for i in range(mb):
-                st["act"][s][i] = _activation_and_derivative(
-                    spec.activation, st["z"][s][i])[0]
+                st["act"][s][i] = _activation_and_derivative(spec.activation, st["z"][s][i])[0]
+
         return k
 
-    def loss_vec(s):                                 # s*10+3: selected per-example loss
+    def loss_vec(s):  # s*10+3: selected per-example loss
         def k():
             for i in range(mb):
                 st["lossv"][s][i] = _loss_and_dz(
-                    spec.loss, spec.activation, st["z"][s][i], st["act"][s][i],
-                    st["y"][s][i])[0]
+                    spec.loss, spec.activation, st["z"][s][i], st["act"][s][i], st["y"][s][i]
+                )[0]
+
         return k
 
-    def reduce_mean(s):                              # s*10+4: loss_s = mean(lossv_s)
+    def reduce_mean(s):  # s*10+4: loss_s = mean(lossv_s)
         def k():
             st["loss"][s] = sum(st["lossv"][s]) / mb
+
         return k
 
-    def backward(s):                                 # s*10+5: selected loss/activation mean gradient
+    def backward(s):  # s*10+5: selected loss/activation mean gradient
         def k():
-            dz = [_loss_and_dz(spec.loss, spec.activation, st["z"][s][i],
-                               st["act"][s][i], st["y"][s][i])[1] for i in range(mb)]
+            dz = [
+                _loss_and_dz(
+                    spec.loss, spec.activation, st["z"][s][i], st["act"][s][i], st["y"][s][i]
+                )[1]
+                for i in range(mb)
+            ]
             for j in range(nf):
-                st["grad"][s][j] = sum(dz[i] * st["X"][s][i][j]
-                                       for i in range(mb)) / mb
+                st["grad"][s][j] = sum(dz[i] * st["X"][s][i][j] for i in range(mb)) / mb
             st["grad"][s][nf] = sum(dz) / mb
+
         return k
 
-    def combine():                                   # streams*10+1: mean of the stream means
+    def combine():  # streams*10+1: mean of the stream means
         for j in range(nf + 1):
             st["gradc"][j] = sum(st["grad"][s][j] for s in range(streams)) / streams
 
-    def update():                                    # streams*10+2: the SINGLE selected optimizer step
+    def update():  # streams*10+2: the SINGLE selected optimizer step
         st["optimizer"].update(st["w"], st["gradc"], st["lr"])
 
     kernels: dict = {}
@@ -638,9 +820,19 @@ def _stream_kernels(spec: TrainStepSpec, streams: int, st: dict) -> dict[int, "o
     return kernels
 
 
-def train_streamed(spec: TrainStepSpec, streams: int, X: list, y: list, w0: list, *,
-                   epochs: int, lr: float, h: HProfile, theta: Theta,
-                   policy: Policy = PERF) -> PlannedTrainRun:
+def train_streamed(
+    spec: TrainStepSpec,
+    streams: int,
+    X: list,
+    y: list,
+    w0: list,
+    *,
+    epochs: int,
+    lr: float,
+    h: HProfile,
+    theta: Theta,
+    policy: Policy = PERF,
+) -> PlannedTrainRun:
     """REAL training on the STREAMED planned path (D1 step 7): every batch splits into
     `streams` equal micro-batches (stream s takes rows [s*mb, (s+1)*mb) -- the split the C
     twin reproduces), the GEM executor dispatches the per-stream stage kernels + the
@@ -649,13 +841,15 @@ def train_streamed(spec: TrainStepSpec, streams: int, X: list, y: list, w0: list
     matches `train_planned` to float round-off (mean-of-equal-split-means == the batch
     mean; only the summation ORDER differs). A divisible dataset tail gets its own reduced
     planned module; a ragged tail refuses before optimizer state can advance."""
-    m = train_stream_module(spec, streams)           # validates streams/batch divisibility
+    m = train_stream_module(spec, streams)  # validates streams/batch divisibility
     b = spec.batch
     n = len(X)
     remainder = n % b
     if remainder and remainder % streams:
-        raise ValueError(f"dataset remainder {remainder} not divisible by streams {streams}; "
-                         "equal micro-batches are required (no training was executed)")
+        raise ValueError(
+            f"dataset remainder {remainder} not divisible by streams {streams}; "
+            "equal micro-batches are required (no training was executed)"
+        )
     result = optimize(m, h, theta, policy)
     pack = hydrate(m, result, plan=m.name)
     weights = list(w0)
@@ -663,15 +857,19 @@ def train_streamed(spec: TrainStepSpec, streams: int, X: list, y: list, w0: list
 
     def make_context(batch_spec: TrainStepSpec, module: Module) -> tuple[Module, dict, dict]:
         mb = batch_spec.batch // streams
-        state = {"X": [[[0.0] * spec.n_features for _ in range(mb)] for _ in range(streams)],
-                 "y": [[0.0] * mb for _ in range(streams)],
-                 "z": [[0.0] * mb for _ in range(streams)],
-                 "act": [[0.0] * mb for _ in range(streams)],
-                 "lossv": [[0.0] * mb for _ in range(streams)],
-                 "loss": [0.0] * streams,
-                 "grad": [[0.0] * spec.n_params for _ in range(streams)],
-                 "gradc": [0.0] * spec.n_params, "w": weights, "lr": lr,
-                 "optimizer": optimizer}
+        state = {
+            "X": [[[0.0] * spec.n_features for _ in range(mb)] for _ in range(streams)],
+            "y": [[0.0] * mb for _ in range(streams)],
+            "z": [[0.0] * mb for _ in range(streams)],
+            "act": [[0.0] * mb for _ in range(streams)],
+            "lossv": [[0.0] * mb for _ in range(streams)],
+            "loss": [0.0] * streams,
+            "grad": [[0.0] * spec.n_params for _ in range(streams)],
+            "gradc": [0.0] * spec.n_params,
+            "w": weights,
+            "lr": lr,
+            "optimizer": optimizer,
+        }
         return module, state, _stream_kernels(batch_spec, streams, state)
 
     contexts = {b: make_context(spec, m)}
@@ -686,7 +884,7 @@ def train_streamed(spec: TrainStepSpec, streams: int, X: list, y: list, w0: list
     exec_orders: list = []
     for e in range(epochs):
         epoch_loss_sum = 0.0
-        for lo in range(0, n, b):                    # deterministic full batches + divisible tail
+        for lo in range(0, n, b):  # deterministic full batches + divisible tail
             active = min(b, n - lo)
             batch_module, st, kernels = contexts[active]
             mb = active // streams
@@ -696,15 +894,31 @@ def train_streamed(spec: TrainStepSpec, streams: int, X: list, y: list, w0: list
                     st["y"][s][i] = float(y[lo + s * mb + i])
             r: ExecResult = execute(batch_module, kernels)
             exec_orders.append(list(r.order))
-            batch_loss = sum(st["loss"]) / streams          # == the full-batch mean loss
+            batch_loss = sum(st["loss"]) / streams  # == the full-batch mean loss
             epoch_loss_sum += batch_loss * active
         losses.append(epoch_loss_sum / max(1, n))
-        manifests.append(build_manifest(
-            m, h, theta, policy,
-            artifacts=(("epoch", e), ("streams", streams), ("topo_gen", pack.topo_gen),
-                       ("map_gen", pack.map_gen), ("data_gen", pack.data_gen))))
-    return PlannedTrainRun(weights=list(weights), losses=losses, manifests=tuple(manifests),
-                           pack=pack, exec_orders=exec_orders)
+        manifests.append(
+            build_manifest(
+                m,
+                h,
+                theta,
+                policy,
+                artifacts=(
+                    ("epoch", e),
+                    ("streams", streams),
+                    ("topo_gen", pack.topo_gen),
+                    ("map_gen", pack.map_gen),
+                    ("data_gen", pack.data_gen),
+                ),
+            )
+        )
+    return PlannedTrainRun(
+        weights=list(weights),
+        losses=losses,
+        manifests=tuple(manifests),
+        pack=pack,
+        exec_orders=exec_orders,
+    )
 
 
 # --- D1 step 8: the stream COUNT is a plan decision ---------------------------------------------
@@ -718,17 +932,24 @@ class StreamPlan:
     nothing, the simpler plan wins)."""
 
     streams: int
-    swept: tuple                       # ((streams, pipelined_makespan), ...) sweep order
-    certificate: StreamCertificate     # the chosen count's full D1.6 certificate
+    swept: tuple  # ((streams, pipelined_makespan), ...) sweep order
+    certificate: StreamCertificate  # the chosen count's full D1.6 certificate
 
     @property
     def admitted(self) -> bool:
-        return (self.certificate.admitted
-                and all(self.certificate.pipelined <= mk for _, mk in self.swept))
+        return self.certificate.admitted and all(
+            self.certificate.pipelined <= mk for _, mk in self.swept
+        )
 
 
-def plan_stream_count(spec: TrainStepSpec, h: HProfile, theta: Theta,
-                      policy: Policy = PERF, *, max_streams: int | None = None) -> StreamPlan:
+def plan_stream_count(
+    spec: TrainStepSpec,
+    h: HProfile,
+    theta: Theta,
+    policy: Policy = PERF,
+    *,
+    max_streams: int | None = None,
+) -> StreamPlan:
     """D1 step 8: sweep every divisor of the batch (equal micro-batches -- the
     single-update law's precondition) up to `max_streams`, price each streamed step
     through the D1.6 machinery, and CHOOSE the argmin pipelined makespan. Strict `<`

@@ -33,7 +33,11 @@ _TOOL = os.path.join("tools", "perf", "gemplus_baseline.py")
 
 sys.path.insert(0, _ROOT)
 from tools.perf.gemplus_baseline import (  # noqa: E402
-    METRICS, SOURCE, Metric, compare, measure_exact,
+    METRICS,
+    SOURCE,
+    Metric,
+    compare,
+    measure_exact,
 )
 
 
@@ -62,10 +66,12 @@ def test_every_metric_is_well_formed_and_points_the_right_way() -> None:
             # A bound must actually be a bound: reachable, and on the improving side.
             if metric.lower_is_better:
                 assert metric.bound <= metric.baseline, (
-                    f"{metric.key}: bound {metric.bound} is worse than the baseline")
+                    f"{metric.key}: bound {metric.bound} is worse than the baseline"
+                )
             else:
                 assert metric.bound >= metric.baseline, (
-                    f"{metric.key}: bound {metric.bound} is worse than the baseline")
+                    f"{metric.key}: bound {metric.bound} is worse than the baseline"
+                )
 
 
 def test_headroom_is_zero_at_the_bound_and_positive_above_it() -> None:
@@ -76,8 +82,9 @@ def test_headroom_is_zero_at_the_bound_and_positive_above_it() -> None:
     assert lower.headroom(25.0) == 0.0
     assert lower.headroom(10.0) == 0.0, "past the bound is finished, never negative"
 
-    higher = Metric("t", "g", "w", 5.0, "x", "ratio", bound=10.0,
-                    lower_is_better=False, slice_owner="G0")
+    higher = Metric(
+        "t", "g", "w", 5.0, "x", "ratio", bound=10.0, lower_is_better=False, slice_owner="G0"
+    )
     assert higher.headroom(5.0) == 0.5
     assert higher.headroom(10.0) == 0.0
     assert higher.headroom(12.0) == 0.0
@@ -131,7 +138,8 @@ def test_the_divergence_row_reproduces_the_reports_own_number() -> None:
     assert value is not None, "the §6.2 fixture no longer builds; the row measures nothing"
     assert abs(value - 51200 / 25700) < 1e-6, (
         f"the divergence fixture measures {value}, the report measures "
-        f"{51200 / 25700}; the fixture and the report have come apart")
+        f"{51200 / 25700}; the fixture and the report have come apart"
+    )
 
     # And the meaning: any value but 1.0 is two prices for one plan.
     assert value > 1.5, "the fixture must still EXHIBIT the divergence it exists to track"
@@ -147,8 +155,9 @@ def test_compare_reports_every_metric_exactly_once() -> None:
 
 def test_the_tool_runs_and_lists_its_baseline() -> None:
     """`--list` is how a reader finds the target before writing a slice."""
-    done = subprocess.run([sys.executable, _TOOL, "--list"], cwd=_ROOT,
-                          capture_output=True, text=True, timeout=180)
+    done = subprocess.run(
+        [sys.executable, _TOOL, "--list"], cwd=_ROOT, capture_output=True, text=True, timeout=180
+    )
     assert done.returncode == 0, done.stderr
     assert "frozen metrics" in done.stdout
     for key in ("optimize_scheduled.512", "pricing.eft.divergence", "memory.worst.ratio"):

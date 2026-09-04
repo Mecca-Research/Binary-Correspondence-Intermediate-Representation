@@ -34,6 +34,7 @@ document that is a dated snapshot carries a file marker:
 Any hyphen, en dash, em dash, figure dash or minus sign between the two law names is
 accepted, because the documents use all of them.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -101,28 +102,36 @@ def offenders(root: str, last: int) -> list[tuple[str, int, str, str]]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", default=ROOT, help="tree to scan (tests point this at a fixture)")
-    ap.add_argument("--last-law", type=int, default=None,
-                    help="override the derived last law (tests only)")
+    ap.add_argument(
+        "--last-law", type=int, default=None, help="override the derived last law (tests only)"
+    )
     ap.add_argument("--list", action="store_true", help="print the derived last law and scope")
     args = ap.parse_args(argv)
     last = args.last_law if args.last_law is not None else last_law()
     files = md_files(args.root)
     if args.list:
-        print(f"[check_law_range] last law R{last}; scanning {len(files)} Markdown files under "
-              f"{os.path.relpath(args.root, os.getcwd()) or '.'}")
-        print(f"[check_law_range] line marker '<!-- {LINE_MARKER} ... -->', "
-              f"file marker '<!-- {FILE_MARKER} -->'")
+        print(
+            f"[check_law_range] last law R{last}; scanning {len(files)} Markdown files under "
+            f"{os.path.relpath(args.root, os.getcwd()) or '.'}"
+        )
+        print(
+            f"[check_law_range] line marker '<!-- {LINE_MARKER} ... -->', "
+            f"file marker '<!-- {FILE_MARKER} -->'"
+        )
     bad = offenders(args.root, last)
     if bad:
-        sys.stderr.write(f"[check_law_range] {len(bad)} stale law range(s); the tree's last law "
-                         f"is R{last}. Fix the range, or mark a deliberate historical quote with "
-                         f"'<!-- {LINE_MARKER} <reason> -->' on the line (or '<!-- {FILE_MARKER} "
-                         f"-->' in a dated snapshot):\n")
+        sys.stderr.write(
+            f"[check_law_range] {len(bad)} stale law range(s); the tree's last law "
+            f"is R{last}. Fix the range, or mark a deliberate historical quote with "
+            f"'<!-- {LINE_MARKER} <reason> -->' on the line (or '<!-- {FILE_MARKER} "
+            f"-->' in a dated snapshot):\n"
+        )
         for rel, i, rng, line in bad:
             sys.stderr.write(f"  {rel}:{i}: {rng}    {line}\n")
         return 1
-    sys.stderr.write(f"[check_law_range] no stale verifier-law ranges (last law R{last}, "
-                     f"{len(files)} files).\n")
+    sys.stderr.write(
+        f"[check_law_range] no stale verifier-law ranges (last law R{last}, {len(files)} files).\n"
+    )
     return 0
 
 

@@ -11,8 +11,12 @@ by mlir/test/passes/verify_laws_deep.mlir on the toolchain rail.)
 
 import shutil
 
-from bcir.kbcir.precision import (accuracy_bound, compensated_reduce_q8, exact_reduce_q8,
-                                  naive_reduce_q8)
+from bcir.kbcir.precision import (
+    accuracy_bound,
+    compensated_reduce_q8,
+    exact_reduce_q8,
+    naive_reduce_q8,
+)
 from bcir.lower.c_kernel import compile_and_run_compensated_c, emit_compensated_reduce_c
 from bcir.model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
 from bcir.verify import verify_accuracy, verify_smart_lowering
@@ -23,9 +27,19 @@ def _no_clang():
 
 
 def _reduce_claim(count=1000, precision="", tol=0):
-    return Claim(id=5000, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                 count=count, rd=(50,), wr=(51,), op="reduce.add", domain=Domain.RAM,
-                 precision=precision, tolerance_ulp=tol)
+    return Claim(
+        id=5000,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=count,
+        rd=(50,),
+        wr=(51,),
+        op="reduce.add",
+        domain=Domain.RAM,
+        precision=precision,
+        tolerance_ulp=tol,
+    )
 
 
 def _module(claim):
@@ -38,13 +52,14 @@ def _module(claim):
 
 # --- the compensated C kernel ----------------------------------------------------
 
+
 def test_compensated_kernel_emits_residual_carry():
     c = emit_compensated_reduce_c()
     assert "residual-carry" in c.lower()
-    assert "resid = (int32_t)(full & 0xFF)" in c          # carry the dropped low 8 bits
-    assert "acc += (int32_t)(full >> 8)" in c             # floor-shift accumulate
+    assert "resid = (int32_t)(full & 0xFF)" in c  # carry the dropped low 8 bits
+    assert "acc += (int32_t)(full >> 8)" in c  # floor-shift accumulate
     assert "restrict" in c
-    assert "_Static_assert((-256 >> 8) == -1" in c        # requires arithmetic shift
+    assert "_Static_assert((-256 >> 8) == -1" in c  # requires arithmetic shift
 
 
 def test_compensated_kernel_is_bit_identical_to_exact_c11_and_c23():
@@ -60,15 +75,16 @@ def test_oracle_compensated_equals_exact_and_naive_drifts():
     w = 200
     assert compensated_reduce_q8(vals, w) == exact_reduce_q8(vals, w)
     drift = exact_reduce_q8(vals, w) - naive_reduce_q8(vals, w)
-    assert 0 < drift <= len(vals)                          # within the n-ULP bound, and real
+    assert 0 < drift <= len(vals)  # within the n-ULP bound, and real
 
 
 # --- R17: the accuracy contract --------------------------------------------------
 
+
 def test_accuracy_bound_naive_vs_compensated():
     c = _reduce_claim(1000)
-    assert accuracy_bound(c, compensated=False) == 1000    # naive drifts O(count)
-    assert accuracy_bound(c, compensated=True) == 1        # compensated: 1 ULP
+    assert accuracy_bound(c, compensated=False) == 1000  # naive drifts O(count)
+    assert accuracy_bound(c, compensated=True) == 1  # compensated: 1 ULP
 
 
 def test_r17_fires_when_a_tight_tolerance_needs_compensation():
@@ -88,8 +104,18 @@ def test_r17_is_a_noop_without_a_declared_tolerance():
     # the default (tolerance_ulp == 0) is unconstrained -- the corpus is unaffected.
     assert verify_accuracy(_module(_reduce_claim(1000, tol=0))) == []
     # an elementwise op truncates at most 1 ULP, so a 1-ULP tolerance is met.
-    elt = Claim(id=1, opcode=Opcode.ADD, lane=Lane.U, stride_class=StrideClass.UNIT,
-                count=4096, rd=(50,), wr=(51,), op="vector.add", domain=Domain.RAM, tolerance_ulp=1)
+    elt = Claim(
+        id=1,
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=4096,
+        rd=(50,),
+        wr=(51,),
+        op="vector.add",
+        domain=Domain.RAM,
+        tolerance_ulp=1,
+    )
     assert verify_accuracy(_module(elt)) == []
 
 

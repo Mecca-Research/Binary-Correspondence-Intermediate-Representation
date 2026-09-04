@@ -12,6 +12,7 @@ The third is the one that matters for compatibility — a pack can leave BCIR as
 be handled by an ASN.1-speaking peer, and come back as the *same native octets*, which
 is what keeps StreamPack digests and provenance manifests valid across the round trip.
 """
+
 from __future__ import annotations
 
 from bcir.abi import decode as abi_decode, encode as abi_encode
@@ -78,13 +79,25 @@ def test_projection_omits_default_valued_components():
     value = pack_to_value(pack)
     raw = encode_pack(pack)
     # topoGen defaults to 1; a pack that uses the default must not encode the field.
-    default_pack = StreamPack(source_plan=pack.source_plan, topo_gen=1, map_gen=0,
-                              data_gen=0, pipeline_depth=1, segments=pack.segments)
+    default_pack = StreamPack(
+        source_plan=pack.source_plan,
+        topo_gen=1,
+        map_gen=0,
+        data_gen=0,
+        pipeline_depth=1,
+        segments=pack.segments,
+    )
     smaller = encode_pack(default_pack)
-    nondefault = StreamPack(source_plan=pack.source_plan, topo_gen=7, map_gen=0,
-                            data_gen=0, pipeline_depth=1, segments=pack.segments)
+    nondefault = StreamPack(
+        source_plan=pack.source_plan,
+        topo_gen=7,
+        map_gen=0,
+        data_gen=0,
+        pipeline_depth=1,
+        segments=pack.segments,
+    )
     assert len(encode_pack(nondefault)) > len(smaller)
-    assert decode_pack(smaller).topo_gen == 1        # absent means DEFAULT, not zero
+    assert decode_pack(smaller).topo_gen == 1  # absent means DEFAULT, not zero
     assert value["version"] == PROJECTION_VERSION
     del raw
 
@@ -103,12 +116,22 @@ def test_enumerations_reject_values_outside_the_enumeration():
     """X.680 §20: a closed enumeration is the point of ENUMERATED over INTEGER."""
     _, pack = next(_packs())
     segment = pack.segments[0]
-    bad = StreamPack(source_plan=pack.source_plan, segments=[
-        LaneSegment(name=segment.name, claim_id=segment.claim_id,
-                    phase_id=segment.phase_id, lane=segment.lane, width=segment.width,
-                    opcode=segment.opcode, reads=segment.reads, writes=segment.writes,
-                    dispatch="not-a-dispatch"),
-    ])
+    bad = StreamPack(
+        source_plan=pack.source_plan,
+        segments=[
+            LaneSegment(
+                name=segment.name,
+                claim_id=segment.claim_id,
+                phase_id=segment.phase_id,
+                lane=segment.lane,
+                width=segment.width,
+                opcode=segment.opcode,
+                reads=segment.reads,
+                writes=segment.writes,
+                dispatch="not-a-dispatch",
+            ),
+        ],
+    )
     try:
         encode_pack(bad)
         raise AssertionError("accepted a dispatch outside the enumeration")

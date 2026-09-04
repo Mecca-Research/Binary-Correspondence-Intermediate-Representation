@@ -52,9 +52,19 @@ def compile_to_wasm(
         wasm = os.path.join(workdir, "kernel.wasm")
         with open(ll, "w") as f:
             f.write(emit_kernel_ll(module, result, fn_name))
-        cmd = [clang, "--target=wasm32", f"-fuse-ld={wasm_ld}", "-nostdlib", "-O2",
-               "-Wl,--no-entry", f"-Wl,--export={fn_name}", "-Wl,--export-memory",
-               ll, "-o", wasm]
+        cmd = [
+            clang,
+            "--target=wasm32",
+            f"-fuse-ld={wasm_ld}",
+            "-nostdlib",
+            "-O2",
+            "-Wl,--no-entry",
+            f"-Wl,--export={fn_name}",
+            "-Wl,--export-memory",
+            ll,
+            "-o",
+            wasm,
+        ]
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
             return False, None, "wasm compile failed:\n" + r.stdout + r.stderr
@@ -66,6 +76,7 @@ def compile_to_wasm(
     finally:
         if created:
             import shutil
+
             shutil.rmtree(workdir, ignore_errors=True)
 
 
@@ -107,8 +118,15 @@ def run_wasm_node(
         return False, "node not found for WASM execution"
     if n is None:
         # the single elementwise claim's count
-        n = next((c.count for ph in module.phases for c in ph.claims
-                  if len(c.rd) == 2 and len(c.wr) == 1), 1024)
+        n = next(
+            (
+                c.count
+                for ph in module.phases
+                for c in ph.claims
+                if len(c.rd) == 2 and len(c.wr) == 1
+            ),
+            1024,
+        )
 
     workdir = tempfile.mkdtemp(prefix="bcir-wasm-run-")
     try:
@@ -126,4 +144,5 @@ def run_wasm_node(
         return ok, run.stdout + run.stderr
     finally:
         import shutil
+
         shutil.rmtree(workdir, ignore_errors=True)

@@ -28,6 +28,7 @@ def _plan():
 
 def _clang_targets() -> str:
     import subprocess
+
     clang = shutil.which("clang")
     if not clang:
         return ""
@@ -85,6 +86,7 @@ def test_ebpf_is_integer_only():
     """eBPF has no FP unit -- the gate path must lower the integer (i32) kernel, never
     a float one (the same constraint the llc bpf CodegenTarget encodes)."""
     from bcir.codegen.codegen import _OBJECT_TARGETS
+
     assert _OBJECT_TARGETS["bpf"]["elem"] == "i32"
     assert _OBJECT_TARGETS["bpf"]["freestanding"] is True
 

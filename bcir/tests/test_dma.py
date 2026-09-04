@@ -26,16 +26,19 @@ def test_contiguity_is_read_straight_off_the_stride_vector():
     assert dense == [Descriptor(src_off=0, dst_off=0, nbytes=16 * 32 * 4)]
     gappy = dma_descriptors(_view("hbm0", strides=(64, 1)), _view("hbm1"), _MAN)
     assert len(gappy) == 16 and all(d.nbytes == 32 * 4 for d in gappy)
-    assert [d.src_off for d in gappy] == [256 * i for i in range(16)]   # src walks gapped
-    assert [d.dst_off for d in gappy] == [128 * i for i in range(16)]   # dst stays dense
-    scatter = dma_descriptors(_view("hbm0", shape=(16, 16), strides=(64, 2)),
-                              _view("hbm1", shape=(16, 16), strides=(16, 1)), _MAN)
+    assert [d.src_off for d in gappy] == [256 * i for i in range(16)]  # src walks gapped
+    assert [d.dst_off for d in gappy] == [128 * i for i in range(16)]  # dst stays dense
+    scatter = dma_descriptors(
+        _view("hbm0", shape=(16, 16), strides=(64, 2)),
+        _view("hbm1", shape=(16, 16), strides=(16, 1)),
+        _MAN,
+    )
     assert len(scatter) == 256 and all(d.nbytes == 4 for d in scatter)
     assert [d.src_off for d in scatter[:17]] == [8 * i for i in range(16)] + [256]
     assert [d.src_off for d in scatter[-16:]] == [15 * 256 + 8 * i for i in range(16)]
     assert len({d.src_off for d in scatter}) == 256
     for descs in (dense, gappy, scatter):
-        assert sum(d.nbytes for d in descs) in (2048, 1024)       # 16x32x4 or 16x16x4
+        assert sum(d.nbytes for d in descs) in (2048, 1024)  # 16x32x4 or 16x16x4
 
 
 def test_refusals_are_d_r4_live():
@@ -43,11 +46,17 @@ def test_refusals_are_d_r4_live():
     (the native-tile law), a shape mismatch, an element-width mismatch, and a same-bank
     overlap (in-place DMA is the corruption shape)."""
     cases = (
-        (_view("hbm0", shape=(15, 15), strides=(15, 1)), _view("hbm1", shape=(15, 15),
-         strides=(15, 1)), "native tile 16"),
+        (
+            _view("hbm0", shape=(15, 15), strides=(15, 1)),
+            _view("hbm1", shape=(15, 15), strides=(15, 1)),
+            "native tile 16",
+        ),
         (_view("hbm0"), _view("hbm1", shape=(16, 16), strides=(16, 1)), "shape mismatch"),
-        (_view("hbm0"), StridedView(bank="hbm1", offset_bytes=0, shape=(16, 32),
-         strides=(32, 1), elem_bytes=8), "width mismatch"),
+        (
+            _view("hbm0"),
+            StridedView(bank="hbm1", offset_bytes=0, shape=(16, 32), strides=(32, 1), elem_bytes=8),
+            "width mismatch",
+        ),
         (_view("hbm0"), _view("hbm0", off=256), "overlap"),
     )
     for src, dst, needle in cases:
@@ -57,7 +66,7 @@ def test_refusals_are_d_r4_live():
         except ValueError as e:
             assert needle in str(e), (needle, str(e))
     apart = dma_descriptors(_view("hbm0"), _view("hbm0", off=16 * 32 * 4), _MAN)
-    assert len(apart) == 1                                        # disjoint same-bank: legal
+    assert len(apart) == 1  # disjoint same-bank: legal
 
 
 def test_pricing_is_d_r3_with_a_fragmentation_premium():
@@ -71,18 +80,20 @@ def test_pricing_is_d_r3_with_a_fragmentation_premium():
     assert 0 < near < far
     gap_v = _view("hbm0", strides=(64, 1))
     gappy = dma_cost(_MAN, gap_v, _view("hbm1"), dma_descriptors(gap_v, _view("hbm1"), _MAN))
-    assert gappy > near                                           # fragmentation costs
+    assert gappy > near  # fragmentation costs
 
 
 def test_invalid_descriptor_programs_cannot_underprice_or_copy_backwards():
     """Externally supplied descriptor lists are a trust boundary, not an opportunity
     to mint negative transfer/setup costs or zero-length commands."""
     src, dst = _view("hbm0"), _view("hbm1")
-    for descs, setup in (([Descriptor(-1, 0, 4)], 16),
-                         ([Descriptor(0, 0, 0)], 16),
-                         ([Descriptor(0, 0, 4)], -1),
-                         ([Descriptor(0, 0, 4)], 16),
-                         ([Descriptor(True, 0, 4)], 16)):
+    for descs, setup in (
+        ([Descriptor(-1, 0, 4)], 16),
+        ([Descriptor(0, 0, 0)], 16),
+        ([Descriptor(0, 0, 4)], -1),
+        ([Descriptor(0, 0, 4)], 16),
+        ([Descriptor(True, 0, 4)], 16),
+    ):
         try:
             dma_cost(_MAN, src, dst, descs, desc_setup=setup)
             raise AssertionError("expected invalid descriptor/cost refusal")
@@ -107,6 +118,7 @@ def test_the_transfer_module_composes_the_whole_law_stack():
     from bcir.kbcir.cost import Theta
     from bcir.kbcir.realize import optimize
     from bcir.verify import verify, verify_pack
+
     m = dma_transfer_module(_MAN, _view("sram0"), _view("hbm0"), engine="dma0")
     assert verify(m) == [], verify(m)
     assert check_event_phases(m) == [], check_event_phases(m)

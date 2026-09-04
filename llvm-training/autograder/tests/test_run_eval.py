@@ -26,9 +26,15 @@ class RunEvalTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_name:
             output = Path(temp_name) / "run"
             result = self.run_eval(
-                "run", "--output-dir", str(output), "--exercise", "001",
-                "--fixture-adapter", "reference",
-                "--generation-parameters", '{"seed": 7}',
+                "run",
+                "--output-dir",
+                str(output),
+                "--exercise",
+                "001",
+                "--fixture-adapter",
+                "reference",
+                "--generation-parameters",
+                '{"seed": 7}',
             )
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
 
@@ -73,8 +79,13 @@ class RunEvalTests(unittest.TestCase):
             with self.subTest(adapter=adapter), tempfile.TemporaryDirectory() as temp_name:
                 output = Path(temp_name) / "run"
                 result = self.run_eval(
-                    "run", "--output-dir", str(output), "--exercise", "001",
-                    "--fixture-adapter", adapter,
+                    "run",
+                    "--output-dir",
+                    str(output),
+                    "--exercise",
+                    "001",
+                    "--fixture-adapter",
+                    adapter,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                 summary = json.loads((output / "summary.json").read_text())
@@ -112,8 +123,15 @@ Path(a.output).write_text(json.dumps(response))
             output = root / "run with spaces"
             command = f"{shlex_quote(sys.executable)} {shlex_quote(str(adapter))} --input {{input}} --output {{output}}"
             result = self.run_eval(
-                "run", "--output-dir", str(output), "--exercise", "001",
-                "--generator-command", command, "--generator-id", "test-local",
+                "run",
+                "--output-dir",
+                str(output),
+                "--exercise",
+                "001",
+                "--generator-command",
+                command,
+                "--generator-id",
+                "test-local",
             )
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             generated = json.loads((output / "attempts/001/generator-output.json").read_text())
@@ -124,6 +142,7 @@ Path(a.output).write_text(json.dumps(response))
 
 def shlex_quote(value: str) -> str:
     import shlex
+
     return shlex.quote(value)
 
 
