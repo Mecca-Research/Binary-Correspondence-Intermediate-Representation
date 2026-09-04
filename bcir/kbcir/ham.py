@@ -1096,7 +1096,7 @@ def _lower(actions: tuple[HAMAction, ...], workload: HAMWorkload, hardware):
     pack = hydrate_pipelined(module, result, plan=f"ham:{workload.digest[:16]}", depth=2)
     pack.segments = [replace(segment, channel=claim_channels[segment.claim_id])
                      for segment in pack.segments]
-    diagnostics = verify_all(module, result=result, pack=pack)
+    diagnostics = verify_all(module, result=result, pack=pack, h=target, theta=Theta.cool())
     diagnostics += verify_smart_lowering(module, pack=pack)
     bank_errors = check_bank_moves(module)
     if diagnostics or bank_errors:

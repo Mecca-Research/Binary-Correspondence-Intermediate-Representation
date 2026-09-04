@@ -173,7 +173,7 @@ def compile_unit(source: str, *, includes: dict | None = None, embeds: dict | No
     for name, lf in lowered.functions.items():
         diags = verify(lf.module)
         plan = optimize(lf.module, h, theta, policy)
-        diags += verify_plan(lf.module, plan)
+        diags += verify_plan(lf.module, plan, h, theta=theta, policy=policy)
         res.plans[name] = plan
         res.emitted[name] = emit_function(lf)
         res.explain[name] = _explain(lf.module, h, theta, policy)

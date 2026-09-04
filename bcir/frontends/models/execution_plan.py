@@ -309,7 +309,8 @@ def lower_model_execution(report: ModelCostReport, candidate: PlacementCandidate
     pack.segments = [replace(segment,
                              channel=builder.claim_channels.get(segment.claim_id, "host"))
                      for segment in pack.segments]
-    diagnostics = verify_all(builder.module, result=result, pack=pack)
+    diagnostics = verify_all(builder.module, result=result, pack=pack, h=target,
+                             theta=Theta.cool())
     diagnostics += verify_smart_lowering(builder.module, pack=pack)
     bank_errors = check_bank_moves(builder.module)
     if diagnostics or bank_errors:
@@ -319,7 +320,7 @@ def lower_model_execution(report: ModelCostReport, candidate: PlacementCandidate
     action_json = json.dumps([action.__dict__ for action in builder.actions],
                              sort_keys=True, separators=(",", ":"))
     module_digest = hashlib.sha256(
-        f"{hash_module(builder.module)}:{action_json}".encode("utf-8")).hexdigest()
+        f"{hash_module(builder.module)}:{action_json}".encode()).hexdigest()
     artifact = ModelExecutionPlan(
         report.digest, candidate.candidate_id, candidate.classification,
         tuple(builder.actions), module_digest, hashlib.sha256(pack_data).hexdigest(),

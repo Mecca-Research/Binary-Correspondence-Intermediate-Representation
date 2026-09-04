@@ -329,3 +329,178 @@ def test_noalias_is_emitted_only_where_the_rids_prove_it() -> None:
     shared_reads = signature((1, 1), (2,))
     assert shared_reads.count("noalias") == 1, shared_reads
     assert "ptr noalias %C" in shared_reads, shared_reads
+
+
+# --- R9: the scope re-derives what the planner priced (S0-A) ---------------------------------
+
+
+def _chain_module() -> Module:
+    """A producer->consumer pair in one phase: the consumer earns the deforestation
+    discount, so its planned candidate's base is NOT the plain `candidates_for` base."""
+    m = Module(name="chain")
+    for rid in (1, 2, 3):
+        m.add_resource(Resource(rid=rid, shape=(64,)))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=1,
+                    opcode=Opcode.ADD,
+                    lane=Lane.U,
+                    stride_class=StrideClass.UNIT,
+                    count=64,
+                    rd=(1,),
+                    wr=(2,),
+                ),
+                Claim(
+                    id=2,
+                    opcode=Opcode.MUL,
+                    lane=Lane.U,
+                    stride_class=StrideClass.UNIT,
+                    count=64,
+                    rd=(2,),
+                    wr=(3,),
+                ),
+            ],
+        )
+    )
+    return m
+
+
+def test_r9_admits_the_planners_own_fused_plan() -> None:
+    """The planner draws from `fused_candidates`; R9 must re-derive THAT set. Re-deriving
+    from `candidates_for` rejected every fused consumer -- the audit's matmul fixture drew
+    3,840 false R9 diagnostics out of 4,096 claims -- and no real caller passed `h`."""
+    m = _chain_module()
+    res = optimize(m, _H, _TH, PERF)
+    assert (
+        res.steps[1].candidate.base.v
+        != tuple(
+            c
+            for c in candidates_for(m.phases[0].claims[1], _H, m.resource(2))
+            if c.name == res.steps[1].candidate.name
+        )[0].base.v
+    ), "the fixture must be fused"
+    assert not verify_plan(m, res, _H), verify_plan(m, res, _H)
+    assert not verify_plan(m, res, _H, theta=_TH, policy=PERF)
+    assert not verify_all(m, result=res, h=_H, theta=_TH, policy=PERF)
+
+
+def test_r9_refuses_a_forged_step_cost_only_the_scope_can_see() -> None:
+    """A legitimate candidate carrying a forged realized cost: the score still sums, the
+    candidate is admitted, every geometry rule holds. Only re-deriving the cost from
+    (h, theta, policy) exposes it. Without theta the documented weaker mode passes it --
+    pinned here so the gap stays a deliberate choice, never an accident."""
+    m = _chain_module()
+    honest = optimize(m, _H, _TH, PERF)
+    cheap = replace(honest.steps[1], cost=honest.steps[1].cost // 2)
+    forged = replace(
+        honest, steps=[honest.steps[0], cheap], score=honest.steps[0].cost + cheap.cost
+    )
+    assert "R9" not in _laws(verify_plan(m, forged, _H))
+    diags = verify_plan(m, forged, _H, theta=_TH, policy=PERF)
+    assert "R9" in _laws(diags)
+    assert any("does not re-derive" in d.message for d in diags), diags
+    # the assessment's reproduction -- a zero-cost plan -- is refused on the same ground
+    zero = replace(honest, score=0, steps=[replace(s, cost=0) for s in honest.steps])
+    assert any(
+        "does not re-derive" in d.message for d in verify_plan(m, zero, _H, theta=_TH, policy=PERF)
+    )
+    # and the policy is part of the scope: the same plan priced under another policy
+    from bcir.kbcir.weights import ENERGY
+
+    assert "R9" in _laws(verify_plan(m, honest, _H, theta=_TH, policy=ENERGY))
+
+
+def test_r9_refuses_a_plan_that_exceeds_its_budget() -> None:
+    """R(pi, Theta) <= B is part of legality (the LangRef central equation): a plan checked
+    against caps it violates is refused with the dimension named, the constrained planner's
+    plan under the same caps is admitted, and a budget without theta is a refused call, not
+    a skipped check."""
+    from bcir.kbcir.cost import DIMS
+    from bcir.kbcir.rcsp import Budget, optimize_constrained, pareto_plans, plan_resources
+
+    m = _chain_module()
+    free = optimize(m, _H, _TH, PERF)
+    thermal = DIMS.index("thermal")
+    hot = plan_resources(free, _TH).v[thermal]
+    cooler = [
+        p
+        for p in pareto_plans(m, _H, _TH, PERF, dims=("thermal",))
+        if plan_resources(p, _TH).v[thermal] < hot
+    ]
+    assert cooler, "the fixture needs a thermal trade-off on its Pareto front"
+    cap = plan_resources(cooler[0], _TH).v[thermal]
+    tight = Budget.of(thermal=cap)
+    diags = verify_plan(m, free, _H, theta=_TH, policy=PERF, budget=tight)
+    assert "R9" in _laws(diags)
+    assert any("exceeds its budget" in d.message and "thermal" in d.message for d in diags), diags
+    fitted = optimize_constrained(m, _H, _TH, PERF, tight)
+    assert not verify_plan(m, fitted, _H, theta=_TH, policy=PERF, budget=tight)
+    try:
+        verify_plan(m, free, _H, budget=tight)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("budget feasibility without theta must be refused, not skipped")
+
+
+# --- EV1-EV3 are module laws, so the canonical verifier carries them ----------------------
+
+
+def test_ev_laws_are_part_of_the_canonical_verifier() -> None:
+    """EV1-EV3 lived in `kbcir.events` and `verify_all` never invoked them: an unarmed event
+    phase reported EV2 there while the canonical chain called the module lawful. They are
+    module laws; `verify(module)` carries them, vacuous over the eventless corpus."""
+    from bcir.kbcir.events import mask_claim, unmask_claim
+
+    def irq_module(armed: bool) -> Module:
+        m = Module(name="irq")
+        m.add_resource(Resource(rid=1, shape=(1,)))  # the controller (IER)
+        m.add_resource(Resource(rid=2, shape=(16,)))  # the ring the handler fills
+        m.add_resource(Resource(rid=3, shape=(16,)))  # program-only data
+        program = [
+            Claim(
+                id=1,
+                opcode=Opcode.ADD,
+                lane=Lane.U,
+                stride_class=StrideClass.UNIT,
+                count=16,
+                rd=(3,),
+                wr=(3,),
+            )
+        ]
+        if armed:
+            program.append(unmask_claim("uart.rx", 1, 3))
+        m.add_phase(Phase(phase_id=0, claims=program))
+        m.add_phase(
+            Phase(
+                phase_id=1,
+                event="uart.rx",
+                claims=[
+                    Claim(
+                        id=2,
+                        opcode=Opcode.STORE,
+                        lane=Lane.U,
+                        stride_class=StrideClass.SCALAR,
+                        count=1,
+                        wr=(2,),
+                    )
+                ],
+            )
+        )
+        return m
+
+    assert "EV2" in _laws(verify(irq_module(armed=False)))
+    assert "EV2" in _laws(verify_all(irq_module(armed=False)))
+    assert not {law for law in _laws(verify(irq_module(armed=True))) if law.startswith("EV")}
+    # the well-formedness sub-law holds on an eventless module too
+    bad = Module(name="mask")
+    bad.add_resource(Resource(rid=1, shape=(1,)))
+    bad.add_resource(Resource(rid=2, shape=(1,)))
+    wide = replace(mask_claim("uart.rx", 1, 9), wr=(1, 2))
+    bad.add_phase(Phase(phase_id=0, claims=[wide]))
+    assert "EV" in _laws(verify(bad))
+    # vacuous over the eventless corpus
+    assert not {law for law in _laws(verify(vector_add())) if law.startswith("EV")}

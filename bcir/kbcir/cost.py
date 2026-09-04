@@ -42,6 +42,14 @@ _INDEX = {name: i for i, name in enumerate(DIMS)}
 IDENTITY_FACTOR = (256,) * N  # x1.0 in Q8 per dimension
 
 
+def _couple_one(c: int, f: int) -> int:
+    return (c * f) >> 8
+
+
+def _mul(c: int, w: int) -> int:
+    return c * w
+
+
 @dataclass(frozen=True)
 class CostVector:
     v: tuple[int, ...]
@@ -68,11 +76,11 @@ class CostVector:
 
     def couple(self, factor: tuple[int, ...]) -> "CostVector":
         """(X) : element-wise scale by a Q8 context-factor vector."""
-        return CostVector(tuple((c * f) >> 8 for c, f in zip(self.v, factor)))
+        return CostVector(tuple(map(_couple_one, self.v, factor)))
 
     def dot(self, weights: tuple[int, ...]) -> int:
         """Scalarize under a weight vector: sum_d w_d * c_d."""
-        return sum(c * w for c, w in zip(self.v, weights))
+        return sum(map(_mul, self.v, weights))
 
     def as_dict(self) -> dict[str, int]:
         return {name: self.v[i] for i, name in enumerate(DIMS)}

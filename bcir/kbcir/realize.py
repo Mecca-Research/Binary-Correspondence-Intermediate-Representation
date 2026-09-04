@@ -129,9 +129,11 @@ def _cost(claim: Claim, h: HProfile, width: int, stride_penalty: int, extra_comp
     memory = mem_shared + ((access_ops * overhead * lat_f) >> 8)
     thermal = width * h.thermal_density + ceil * h.per_op_heat
     power = width * h.power_density + ceil * h.per_op_heat
-    return CostVector.of(
-        compute=compute, memory=memory, thermal=thermal, power=power, compile=extra_compile,
-        verification=_verify_cost(claim),
+    # Positional in DIMS order (compute, memory, fabric, sync, compile, thermal, power,
+    # reliability, security, accuracy, contention, verification): `CostVector.of` resolves
+    # names through a dict on every call, and this is the planner's innermost constructor.
+    return CostVector(
+        (compute, memory, 0, 0, extra_compile, thermal, power, 0, 0, 0, 0, _verify_cost(claim))
     )
 
 
@@ -205,7 +207,9 @@ def candidates_for(claim: Claim, h: HProfile, resource=None) -> list[Candidate]:
         cands.append(Candidate(claim.lane, 1, "scalar",
                                _cost(claim, h, 1, _stride_penalty(claim, h), tier=tier), claim.rd))
     wr = tuple(claim.wr)
-    return [replace(c, writes=wr) for c in cands]
+    # Positional construction, not `dataclasses.replace`: `replace` introspects the fields on
+    # every call, and this runs once per candidate per claim on both the planner and R9.
+    return [Candidate(c.lane, c.width, c.name, c.base, c.reads, wr) for c in cands]
 
 
 # --- context coupling f_i(pi) ---------------------------------------------------
@@ -229,6 +233,19 @@ def _context_factor(prev: "Candidate | None", cand: Candidate, theta: Theta) -> 
         f[THERMAL] = 320  # x1.25
         f[POWER] = 320
     return tuple(f)
+
+
+def edge_cost(prev: "Candidate | None", cand: Candidate, theta: Theta, w_phase) -> int:
+    """The realized cost of `cand` following `prev` under the phase weights `w_phase`: the
+    planner's DAG edge weight, and the number R9 re-derives per step. One predicate for
+    both, so the plan score and the verdict cannot disagree about what a step costs."""
+    return cand.base.couple(_context_factor(prev, cand, theta)).dot(w_phase)
+
+
+def step_cost(prev: "Candidate | None", cand: Candidate, h: HProfile, theta: Theta,
+              phase_id: int, policy: Policy = PERF) -> int:
+    """`edge_cost` with the phase weights derived from the scope (h, theta, policy)."""
+    return edge_cost(prev, cand, theta, weights(h, theta, phase_id, policy))
 
 
 # --- phase ordering -------------------------------------------------------------
@@ -297,13 +314,16 @@ def fused_candidates(module: Module, h: HProfile) -> dict[int, list[Candidate]]:
         cands = candidates_for(claim, h, resource)
         shared = pset & set(claim.rd)
         if claim.rd and sig in seenmap:                  # CSE: identical value already computed
-            cands = [replace(c, base=c.base.couple(_cse_factor(claim))) for c in cands]
+            cse = _cse_factor(claim)
+            cands = [Candidate(c.lane, c.width, c.name, c.base.couple(cse), c.reads, c.writes)
+                     for c in cands]
         elif shared:                                     # producer->consumer deforestation
             # ASM3b: a barriered claim is a first-class ordering edge -- no fusion across it. Skip the
             # deforestation discount when the consumer is barriered OR a shared operand was produced by
             # a barriered producer (the fence forces the intermediate to materialize, no round-trip elision).
             if claim.hazard != "barriered" and not (shared & bset):
-                cands = [replace(c, base=c.base.couple(_DEFOREST_FACTOR)) for c in cands]
+                cands = [Candidate(c.lane, c.width, c.name, c.base.couple(_DEFOREST_FACTOR),
+                                   c.reads, c.writes) for c in cands]
 
         if claim.rd:
             seenmap.setdefault(sig, claim.id)            # first occurrence pays full
@@ -340,9 +360,7 @@ def optimize(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF) -
             node_meta.append((phase_id, claim, cand))
             adj.append([])
             for pu, pc in zip(prev_nodes, prev_cands):
-                factor = _context_factor(pc, cand, theta)
-                cost = cand.base.couple(factor).dot(w_phase)
-                adj[pu].append((nid, cost))
+                adj[pu].append((nid, edge_cost(pc, cand, theta, w_phase)))
             col_nodes.append(nid)
             col_cands.append(cand)
         prev_nodes, prev_cands = col_nodes, col_cands
