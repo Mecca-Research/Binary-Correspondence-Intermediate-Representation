@@ -986,6 +986,32 @@ def audit_installed(root: Path, expect: list[str]) -> dict[str, Any]:
     return report
 
 
+_SUMMARY_LIMIT = 8
+
+
+def _findings_summary(vulnerable: list[dict[str, Any]]) -> str:
+    """The vulnerable distributions as one console token: name==version and each
+    advisory id with its fix versions, so a job log says what to bump without
+    the JSON report (L7: bounded, no descriptions, no URLs; the engine reports the
+    same advisory under more than one record, so ids are de-duplicated)."""
+    items = []
+    for item in vulnerable[:_SUMMARY_LIMIT]:
+        seen: dict[str, list[str]] = {}
+        for vuln in item.get("vulns", []):
+            seen.setdefault(vuln["id"], [])
+            for fix in vuln.get("fix_versions", []):
+                if fix not in seen[vuln["id"]]:
+                    seen[vuln["id"]].append(fix)
+        advisories = "; ".join(
+            f"{ident} fix {'/'.join(fixes)}" if fixes else f"{ident} no fix"
+            for ident, fixes in seen.items()
+        )
+        items.append(f"{item['name']}=={item['version']}[{advisories}]")
+    if len(vulnerable) > _SUMMARY_LIMIT:
+        items.append(f"+{len(vulnerable) - _SUMMARY_LIMIT} more")
+    return ", ".join(items)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="audit_dependencies")
     parser.add_argument("--root", type=Path, default=ROOT)
@@ -1024,6 +1050,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     if "error" in advisory:
         detail += f" error={advisory['error']!r}"
+    if advisory.get("vulnerable"):
+        detail += f" vulnerable={_findings_summary(advisory['vulnerable'])}"
     if report.get("mode") == "installed":
         print(
             f"audit_dependencies: {report['state']} mode=installed "

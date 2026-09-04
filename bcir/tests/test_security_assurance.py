@@ -4452,6 +4452,11 @@ def test_ci_owns_the_installed_audit() -> None:
     for name in ("torch", "safetensors", "numpy"):
         assert f"--expect {name}" in owner, f"the audit must find {name} in the environment it claims to audit"
     assert "pip==" in owner, "pip is pinned as part of the audited environment"
+    # torch's CPU wheel depends on setuptools and the PyTorch index resolves that to a
+    # release with open advisories (78.1.0 on the audit's first run): the pin is ours,
+    # installed from PyPI before torch so that index never gets to choose it.
+    assert "setuptools==" in owner, "setuptools is pinned as part of the audited environment"
+    assert owner.index("setuptools==") < owner.index("torch==2."), "setuptools is pinned before torch is installed"
     # the audit runs AFTER the environment is installed and BEFORE the gates use it
     install = owner.index("Install pinned hosted-model CPU environment")
     audit = owner.index("audit_dependencies.py --installed")
@@ -4567,6 +4572,39 @@ def test_installed_mode_reconciles_coverage_and_findings() -> None:
         "run": "installed", "name": "torch", "version": "2.13.0",
         "vulns": [{"id": "GHSA-test-torch", "aliases": [], "fix_versions": ["2.14.0"]}],
     }]
+
+
+def test_console_line_names_the_vulnerable_distributions() -> None:
+    """A job log is the only egress the hosted jobs have, and "4 known
+    vulnerability(ies) in 1 package(s)" does not say what to bump: the console
+    line names each vulnerable distribution with its advisory ids and fix
+    versions, ids de-duplicated (the engine reports one advisory under several
+    records), bounded to a few distributions (L7)."""
+    import contextlib
+    import io
+    from unittest.mock import patch
+    from tools.security import audit_dependencies as deps
+    finding = {"torch": [
+        {"id": "PYSEC-2099-1", "fix_versions": ["2.14.0"], "aliases": ["CVE-2099-1"]},
+        {"id": "PYSEC-2099-1", "fix_versions": ["2.14.0"], "aliases": []},
+        {"id": "GHSA-nofx-xxxx-xxxx", "fix_versions": [], "aliases": []},
+    ]}
+    with patch.dict(os.environ, {"PIP_AUDIT": ""}), \
+            patch.object(deps, "_installed_distributions", return_value=_MODEL_LAB), \
+            patch.object(deps.shutil, "which", return_value="/usr/bin/pip-audit"), \
+            patch.object(deps, "run_bounded", side_effect=_installed_engine({}, finding)), \
+            contextlib.redirect_stdout(io.StringIO()) as out:
+        exit_code = deps.main(["--installed", "--expect", "torch"])
+    line = out.getvalue().strip()
+    assert exit_code == 1
+    assert line.startswith("audit_dependencies: FAIL mode=installed ")
+    assert "vulnerable=torch==2.13.0[PYSEC-2099-1 fix 2.14.0; GHSA-nofx-xxxx-xxxx no fix]" in line
+    assert line.count("PYSEC-2099-1") == 1
+    # bounded: many vulnerable distributions collapse to a count
+    many = [{"name": f"pkg{i}", "version": "1.0", "vulns": [{"id": f"PYSEC-{i}", "fix_versions": [], "aliases": []}]}
+            for i in range(11)]
+    summary = deps._findings_summary(many)
+    assert summary.count("[") == deps._SUMMARY_LIMIT and summary.endswith(", +3 more")
 
 
 def test_installed_mode_enumeration_failure_is_a_verdict() -> None:

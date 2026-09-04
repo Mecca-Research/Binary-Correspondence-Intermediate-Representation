@@ -99,7 +99,10 @@ Installed-environment audit instances: `test_installed_mode_requires_an_engine`
 `test_installed_mode_refuses_an_environment_missing_what_it_claims` (a job that
 claims to audit the model-lab closure but runs in an interpreter without torch
 has audited some other environment; the missing expectation is a FAIL that
-names it, and the engine still ran over what was there).
+names it, and the engine still ran over what was there). Live instance: the
+gate fired on its first CI run, on both runners, over `setuptools` 78.1.0 that
+torch's CPU wheel had pulled from the PyTorch index (2026-09-04 audit F12) —
+a gate that can fire, and did, before anything else was proven about it.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
