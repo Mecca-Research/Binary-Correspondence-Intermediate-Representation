@@ -125,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.out:
         with open(args.out, "w", encoding="utf-8") as handle:
             json.dump(report, handle, indent=1)
+            handle.write("\n")
     return 0
 
 

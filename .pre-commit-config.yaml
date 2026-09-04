@@ -6,13 +6,18 @@ default_stages: [pre-commit]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
         exclude: '\.(ll|mlir)$|^llvm-training/dataset/'
       - id: end-of-file-fixer
-        exclude: '^llvm-training/dataset/'
+        # .ll/.mlir: the differential emits the pass corpora with a trailing blank line and CI
+        # drift-gates them byte for byte; cfront_sec_lextail.c is intentionally unterminated
+        # (a lexer-tail sanitizer fixture; its header says so). Hooks must not fight either.
+        exclude: '\.(ll|mlir)$|^llvm-training/dataset/|^runtime/c/cfront_sec_lextail\.c$'
       - id: check-yaml
+        # .clang-format is a two-document YAML stream (the per-language section).
+        args: ["--allow-multiple-documents"]
       - id: check-json
       - id: check-toml
       - id: check-merge-conflict

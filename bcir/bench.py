@@ -492,4 +492,3 @@ def compare_strided(program="saxpy_strided", *, target: str = default_target_nam
         direct = Measurement("strided", 1, opt, n, reps, int(bm.group(1)), True)
         gather = Measurement("gather", 1, opt, n, reps, int(gm.group(1)), True)
         return ReduceComparison(name, opt, n, reps, cand.name, True, direct, gather)
-
