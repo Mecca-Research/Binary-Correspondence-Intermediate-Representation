@@ -10,16 +10,17 @@ INC="${ROOT}/mlir/include"
 
 # Resolve mlir-tblgen version-agnostically: the highest /usr/lib/llvm-*/bin/mlir-tblgen (the
 # installed major -- 23 now), then versioned / unversioned names on PATH.
-MLIR_TBLGEN="${MLIR_TBLGEN:-$(ls /usr/lib/llvm-*/bin/mlir-tblgen 2>/dev/null | sort -V | tail -1)}"
+MLIR_TBLGEN="${MLIR_TBLGEN:-$(ls /usr/lib/llvm-*/bin/mlir-tblgen 2>/dev/null | sort -V | tail -1 || true)}"
 MLIR_TBLGEN="${MLIR_TBLGEN:-$(command -v mlir-tblgen-23 || command -v mlir-tblgen-22 || command -v mlir-tblgen || command -v mlir-tblgen-18 || true)}"
 if [ -z "${MLIR_TBLGEN}" ]; then
   echo "mlir-tblgen not found; cannot validate ODS on this host (install mlir-NN-tools)." >&2
   exit 0
 fi
 
-# Auto-detect the MLIR/LLVM .td include dir (contains mlir/IR/OpBase.td).
+# Auto-detect the MLIR/LLVM .td include dir (contains mlir/IR/OpBase.td): the include tree
+# beside the resolved mlir-tblgen first (a /opt or /usr/local install), then the apt layouts.
 if [ -z "${MLIR_INCLUDE:-}" ]; then
-  for d in /usr/lib/llvm-*/include /usr/include; do
+  for d in "$(cd "$(dirname "${MLIR_TBLGEN}")/.." && pwd)/include" /usr/lib/llvm-*/include /usr/include; do
     [ -f "${d}/mlir/IR/OpBase.td" ] && MLIR_INCLUDE="${d}" && break
   done
 fi
