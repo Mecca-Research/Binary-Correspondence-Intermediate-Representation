@@ -594,7 +594,7 @@ def main(argv: list[str] | None = None) -> int:
     available = sum(item["points_available"] for item in results)
     report = {
         "schema_version": SCHEMA_VERSION,
-        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "generated_at": dt.datetime.now(dt.UTC).isoformat(),
         "registry": str(registry_path),
         "registry_sha256": hashlib.sha256(registry_path.read_bytes()).hexdigest(),
         "toolchain": {
@@ -666,4 +666,4 @@ if __name__ == "__main__":
             print(json.dumps(payload, sort_keys=True))
         else:
             print(f"grader failure: {exc}", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None

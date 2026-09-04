@@ -354,7 +354,7 @@ def test_activation_loss_logit_gradients_match_finite_difference():
     ):
         for z, target in ((-0.7, 0.2), (0.4, 0.8)):
 
-            def value(at):
+            def value(at, activation=activation, loss=loss, target=target):
                 pred = _activation_and_derivative(activation, at)[0]
                 return _loss_and_dz(loss, activation, at, pred, target)[0]
 

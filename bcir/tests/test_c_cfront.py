@@ -5589,7 +5589,7 @@ def _pp_fuzz_cycle_and_bomb(rng):
     exponentially-growing nested expansion (the cap must stop it). Deterministic given `rng`."""
     out = []
     # a mutual-reference cycle: blue paint must leave the painted identifiers, not loop forever.
-    out.append(f"#define A B\n#define B A\nA B\n")
+    out.append("#define A B\n#define B A\nA B\n")
     # a self-referential function macro.
     out.append(f"#define f(x) f(f(x))\nf({rng.randint(0, 9)})\n")
     # a doubling chain L0->L1->...: each level concatenates the previous twice. Bounded depth so it is a

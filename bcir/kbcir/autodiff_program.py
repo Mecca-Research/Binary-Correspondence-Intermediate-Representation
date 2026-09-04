@@ -155,12 +155,15 @@ def functionalize_scalar_mutation(inputs, statements, output: str) -> Functional
                 ADQuarantineReason.UNKNOWN_CALL, f"unknown mutation operand {statement.operand!r}"
             )
         previous = current[statement.target]
+        # Plain callables over (previous, operand), not closures over the loop's variables:
+        # the table is applied at once, and a closure here reads as the deferred-call bug
+        # it is not (ruff B023).
         current[statement.target] = {
-            "assign": lambda: operand,
-            "add": lambda: tape.add(previous, operand),
-            "sub": lambda: tape.sub(previous, operand),
-            "mul": lambda: tape.mul(previous, operand),
-        }[statement.operation]()
+            "assign": lambda _previous, value: value,
+            "add": tape.add,
+            "sub": tape.sub,
+            "mul": tape.mul,
+        }[statement.operation](previous, operand)
         versions[statement.target] += 1
         history.append((statement.target, versions[statement.target]))
     if output not in current:

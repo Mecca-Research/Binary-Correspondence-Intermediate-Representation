@@ -710,7 +710,7 @@ class Gen:
             nested = (
                 kind == "struct"
                 and nestable
-                and not members[0][1] in self.aggdefs
+                and members[0][1] not in self.aggdefs
                 and r.random() < 0.3
             )
             if nested:
@@ -753,7 +753,7 @@ class Gen:
             )
             anon_names = {mn for mn, _ in anon}
 
-            def _mdef(mn, c):
+            def _mdef(mn, c, malign=malign):  # bound now: applied inside this iteration
                 pre = f"_Alignas({malign[mn]}) " if mn in malign else ""
                 if c in self.aggdefs:
                     return f"{pre}struct {c} {mn};"
@@ -994,7 +994,7 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
                 kind, members, active, arrs = prog.aggdefs[t]
                 if kind == "struct":
 
-                    def _memlit(c, key):  # a nested struct member -> a braced sub-literal
+                    def _memlit(c, key, j=j):  # a nested struct member -> a braced sub-literal
                         if c in prog.aggdefs:
                             return (
                                 "{ "

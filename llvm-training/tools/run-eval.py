@@ -34,7 +34,7 @@ FORBIDDEN_GENERATED_NAMES = {"Makefile", "CMakeLists.txt", "build.ninja", "meson
 
 
 def utc_now() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat()
+    return dt.datetime.now(dt.UTC).isoformat()
 
 
 def read_json(path: Path) -> Any:

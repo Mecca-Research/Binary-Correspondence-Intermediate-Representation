@@ -1873,7 +1873,7 @@ def emit_matmul_activation_c(
     expr, needs_math = _inline_activation_expr(kind, "s")
     includes = "#include <stddef.h>\n" + ("#include <math.h>\n" if needs_math else "")
     note = (
-        f"relu: EXACT inline max(0,s), no libm"
+        "relu: EXACT inline max(0,s), no libm"
         if kind == "relu"
         else f"{kind}: inline via the c.call.libm: edge (the same trusted call the standalone kernel "
         f"uses); fused == unfused reference to float round-off"

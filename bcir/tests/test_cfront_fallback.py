@@ -225,10 +225,10 @@ def test_deeply_nested_compile_unit_raises_cparseerror_not_recursionerror():
     try:
         compile_unit(_DEEP_PAREN, check_clang=False)
         raise AssertionError("deep input must raise, not compile")
-    except RecursionError:
+    except RecursionError as exc:
         raise AssertionError(
             "deep input must raise CParseError, never RecursionError (the pre-fix crash)"
-        )
+        ) from exc
     except CParseError:
         pass
 

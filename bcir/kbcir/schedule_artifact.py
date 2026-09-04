@@ -7,6 +7,7 @@ an in-flight execution.  Activation requires a separately reviewed artifact gene
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import math
@@ -293,7 +294,7 @@ def measure_schedule_candidates(
             sampler = CounterSampler()
             work(plan)
             laps.append(sampler.lap())
-        hardware = read_hw_counters(lambda: work(plan))
+        hardware = read_hw_counters(functools.partial(work, plan))
         evidence.append(
             MeasuredScheduleCandidate(
                 plan,

@@ -160,7 +160,7 @@ def test_bridged_solve_tracks_the_reference_within_quant_error():
     a = []
     for i in range(n):
         for j in range(n):
-            a.append((20.0 if i == j else rng.uniform(-1, 1)))  # strongly diagonally dominant
+            a.append(20.0 if i == j else rng.uniform(-1, 1))  # strongly diagonally dominant
     b = [rng.uniform(-5, 5) for _ in range(n * nrhs)]
     from bcir.kbcir.quantize import max_abs_error
 
