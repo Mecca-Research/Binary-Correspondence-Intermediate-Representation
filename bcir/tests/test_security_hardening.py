@@ -182,9 +182,17 @@ def test_python_style_gate_and_hooks_run_one_pinned_ruff() -> None:
     into unrelated changes (the 2026-09-04 finding behind the one-time reformat)."""
     import tomllib
 
-    project = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    pins = [entry for entry in project["optional-dependencies"]["dev"] if entry.startswith("ruff")]
+    pyproject = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    pins = [
+        entry
+        for entry in pyproject["project"]["optional-dependencies"]["dev"]
+        if entry.startswith("ruff")
+    ]
     assert len(pins) == 1 and re.fullmatch(r"ruff==\d+\.\d+\.\d+", pins[0]), pins
+    # One scope for both: the hooks pass python/pyi files only, so CI's tree walk must be
+    # pinned to the same types -- ruff 0.16 otherwise formats Python fences inside Markdown,
+    # which the hooks never see (the first run of the CI job failed on four .md files).
+    assert pyproject["tool"]["ruff"]["include"] == ["*.py", "*.pyi"]
 
     hooks = (_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
     assert "entry: ruff check --force-exclude --fix" in hooks

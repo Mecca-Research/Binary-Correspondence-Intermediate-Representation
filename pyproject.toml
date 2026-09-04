@@ -78,9 +78,14 @@ include = ["bcir*"]
 #     tree with the SAME pinned ruff the hook uses (`.[dev]`), so the hook can never rewrite a
 #     file CI accepts, and a lint finding never waits for a developer's commit to surface.
 #   * `--force-exclude` everywhere, so an explicitly named path still honours the excludes.
+#   * ONE scope for the hooks and CI: `include` names exactly the file types the pre-commit
+#     hooks pass (python, pyi). ruff 0.16 also formats Python fences inside Markdown by
+#     default; the hooks never see Markdown, and the documentation's examples are prose laid
+#     out by hand (aligned trailing comments), so CI must not restyle what the hooks cannot.
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+include = ["*.py", "*.pyi"]
 extend-exclude = ["build", "llvm-training/dataset"]
 
 [tool.ruff.lint]
