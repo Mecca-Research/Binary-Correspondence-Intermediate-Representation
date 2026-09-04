@@ -13,6 +13,9 @@
       "torch==2.13.0",
       "safetensors[numpy]==0.8.0",
       "numpy==2.2.6"
+    ],
+    "telemetry-kafka": [
+      "kafka-python>=2.3.2"
     ]
   }
 }

@@ -141,6 +141,15 @@ also what covers `setuptools`, dropped by pip-audit's scratch venv) reconciled a
 declared names; every other job asserts the inventory only. Dated findings and the currency
 table: `docs/security/DEPENDENCY_AUDIT_2026-09-03.md`.
 
+2026-09-04 full-surface dependency audit (`docs/security/DEPENDENCY_AUDIT_2026-09-04.md`,
+evidence in `docs/security/audit-2026-09-04/`, tooling in `tools/security/audit/`): 0 known
+vulnerabilities across 77 package-versions by two sources (pip-audit/PyPI API and an offline OSV
+evaluation); every action/hook pin is a release commit but checkout/setup-python/cache/
+upload-artifact are 2–3 majors behind (exact target SHAs recorded); the runners' apt `nodejs` is
+the EOL 18 line with 20 open Ubuntu advisories; kafka-python became the declared `telemetry-kafka`
+extra (floor 2.3.2). A first-pass OSV false positive on torch (non-PEP-440 `last_affected`
+values in PYSEC records) is root-caused in `osv_pypi.py`'s docstring.
+
 <!-- KNOWLEDGE:END -->
 
 ## Generated inventory (do not edit — rebuild with build_digest.py)
@@ -227,5 +236,6 @@ Top-level: ./bcir ./channels ./docs ./llvm-training ./mlir ./runtime ./tools
 - **docs/research/BCIR_TMSAO_ASN1_JSON_DRIVER_PROPOSAL.md** (974L): 1. Executive verdict · 2. Operational definition of TMSAO · 3. Source-backed state at PR #739 · 4. GEM+: the canonical architecture · 5. Solver portfolio and lower-bound stack · 6. Scaling, scheduling, and memory program · 7. ASN.1 through PR #739 and its GEM+ role · 8. Python-to-C++ migration roadmap · 9. Hardware profiles and the native measurement rig · 10. API, database, service, and IPC architecture · 11. Driver, kernel, FPGA, and SASOS implications · 12. Prioritized implementation program · 13. Risk register and decision rules
 - **docs/research/BCIR_TRITON_COMPARATIVE_ANALYSIS.md** (271L): 0. Executive verdict · 1. The comparison matrix · 2. Where the two systems actually touch (BCIR surfaces, anch · 3. The migration ledger · 4. Direct answers to the three questions · 5. Recommended next steps (ranked) · 6. Messaging discipline (the corrections, restated so they d
 - **docs/research/CLANG_COMPARISON.md** (98L): The fair frame · Results · Where we WIN · Where we MATCH · Where we LOSE (honest) · Bottom line
-- **docs/security/DEPENDENCY_AUDIT_2026-09-03.md** (227L): 1. Verdict · 2. Inventory and currency · 3. The advisory scan — method and result · 4. What the rail enforces from this slice on · 5. What this audit does not cover · 6. Recommendations
+- **docs/security/DEPENDENCY_AUDIT_2026-09-03.md** (233L): 1. Verdict · 2. Inventory and currency · 3. The advisory scan — method and result · 4. What the rail enforces from this slice on · 5. What this audit does not cover · 6. Recommendations
+- **docs/security/DEPENDENCY_AUDIT_2026-09-04.md** (288L): 1. Verdict · 2. Scope and method · 3. Inventory · 4. Advisory results · 5. Findings and dispositions · 6. Changes landed with this audit · 7. Reproduction · from the repository root; a scratch venv with pip-audit==2.1
 - **docs/security/laws.md** (715L): The harvest protocol · The staleness rule (declared, not discretionary) · The laws · Campaign classification summary

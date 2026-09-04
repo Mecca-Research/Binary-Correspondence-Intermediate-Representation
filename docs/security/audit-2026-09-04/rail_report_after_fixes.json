@@ -1,0 +1,57 @@
+{
+  "state": "PASS",
+  "inventory_asserted": true,
+  "expected_packages": 7,
+  "declared": {
+    "runtime": [],
+    "build_system": [
+      "setuptools>=83.0.0"
+    ],
+    "optional": {
+      "dev": [
+        "ruff>=0.6",
+        "pre-commit>=3.5"
+      ],
+      "model-lab": [
+        "torch==2.13.0",
+        "safetensors[numpy]==0.8.0",
+        "numpy==2.2.6"
+      ],
+      "telemetry-kafka": [
+        "kafka-python>=2.3.2"
+      ]
+    },
+    "dynamic": []
+  },
+  "mismatches": [],
+  "advisory": {
+    "state": "PASS",
+    "engine": "pip-audit",
+    "declared": 7,
+    "runs": {
+      "resolved": {
+        "state": "PASS",
+        "audited": 41,
+        "returncode": 0,
+        "stderr_tail": "No known vulnerabilities found\n"
+      },
+      "floor": {
+        "state": "PASS",
+        "audited": 7,
+        "returncode": 0,
+        "stderr_tail": "WARNING:pip_audit._cli:--no-deps is supported, but users are encouraged to fully hash their pinned dependencies\nWARNING:pip_audit._cli:Consider using a tool like `pip-compile`: https://pip-tools.readthedocs.io/en/latest/#using-hashes\nNo known vulnerabilities found\n"
+      }
+    },
+    "audited": 48,
+    "covered": [
+      "kafka-python",
+      "numpy",
+      "pre-commit",
+      "ruff",
+      "safetensors",
+      "setuptools",
+      "torch"
+    ],
+    "uncovered": []
+  }
+}

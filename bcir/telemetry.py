@@ -576,7 +576,7 @@ class KafkaSink(TelemetrySink):
             from kafka import KafkaProducer  # type: ignore
         except ImportError as exc:  # pragma: no cover - exercised only with a broker
             raise ImportError(
-                "KafkaSink.connect requires kafka-python (pip install kafka-python)"
+                "KafkaSink.connect requires kafka-python (pip install 'bcir[telemetry-kafka]')"
             ) from exc
         return cls(KafkaProducer(bootstrap_servers=bootstrap_servers), topic)
 

@@ -1,0 +1,608 @@
+{
+ "source": "https://osv-vulnerabilities.storage.googleapis.com/PyPI/all.zip",
+ "advisories": 25276,
+ "withdrawn_skipped": 549,
+ "unevaluable_feed_values": [
+  "bc2caa7fdf006894eff7af936babde69ab5a40f8-huydhn-debug",
+  "ciflow/inductor/3b9a386",
+  "ciflow/inductor/3d4b92b",
+  "ciflow/inductor/d224ac7",
+  "ciflow/periodic/054a2fd",
+  "ciflow/periodic/2a6d37d",
+  "ciflow/periodic/317eeb8",
+  "ciflow/periodic/3c32",
+  "ciflow/periodic/3e98831",
+  "ciflow/periodic/94512-point",
+  "ciflow/periodic/csl/test87519",
+  "ciflow/periodic/csltest88275",
+  "ciflow/periodic/csltest88761",
+  "ciflow/periodic/sha-ec5b83",
+  "ciflow/slow/01c7106",
+  "ciflow/slow/0577043",
+  "ciflow/slow/0d5b74da0cab798fbfdb9caa53fad816999c8386-sdym",
+  "ciflow/slow/0e81104",
+  "ciflow/slow/1732077",
+  "ciflow/slow/187eb7c",
+  "ciflow/slow/1faef89",
+  "ciflow/slow/3920ec1",
+  "ciflow/slow/3b7c6b2",
+  "ciflow/slow/59a3759",
+  "ciflow/slow/70ef0bb",
+  "ciflow/slow/788ff06",
+  "ciflow/slow/8751002215790a3a88750faa8f4366933e296693-sdym",
+  "ciflow/slow/9d85864",
+  "ciflow/slow/9ffad5b",
+  "ciflow/slow/a206e8b",
+  "ciflow/slow/a837609",
+  "ciflow/slow/af841f3",
+  "ciflow/slow/da3aba1e46157c4df504b067477cdf2b3c96b194-sdym",
+  "ciflow/unstable/123",
+  "malfet/tag-2ef5611",
+  "malfet/tag-317b1a0",
+  "malfet/tag-ec6f767",
+  "nightly-binary",
+  "v0.1.1d"
+ ],
+ "rows": [
+  {
+   "name": "boolean-py",
+   "version": "5.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "build",
+   "version": "1.2.2.post1",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "cachecontrol",
+   "version": "0.14.4",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "certifi",
+   "version": "2026.7.22",
+   "advisories_on_record": 6,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "cfgv",
+   "version": "3.5.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "charset-normalizer",
+   "version": "3.5.1",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "clang-format",
+   "version": "18.1.8",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "cuda-bindings",
+   "version": "13.3.1",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "cuda-pathfinder",
+   "version": "1.8.1",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "cuda-toolkit",
+   "version": "13.0.3.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "cyclonedx-python-lib",
+   "version": "11.12.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "defusedxml",
+   "version": "0.7.1",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "distlib",
+   "version": "0.4.3",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "filelock",
+   "version": "3.32.5",
+   "advisories_on_record": 4,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "fsspec",
+   "version": "2026.7.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "identify",
+   "version": "2.6.19",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "idna",
+   "version": "3.19",
+   "advisories_on_record": 4,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "jinja2",
+   "version": "3.1.6",
+   "advisories_on_record": 20,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": [
+    "GHSA-cpwx-vrp4-4pq7",
+    "PYSEC-2026-1471"
+   ]
+  },
+  {
+   "name": "kafka-python",
+   "version": "2.3.2",
+   "advisories_on_record": 4,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": [
+    "GHSA-2jcm-hq8r-84wx",
+    "GHSA-m3px-q5gj-j9x7",
+    "PYSEC-2026-2190",
+    "PYSEC-2026-2191"
+   ]
+  },
+  {
+   "name": "kafka-python",
+   "version": "3.0.11",
+   "advisories_on_record": 4,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "license-expression",
+   "version": "30.4.4",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "lit",
+   "version": "23.1.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "markdown-it-py",
+   "version": "4.2.0",
+   "advisories_on_record": 4,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "markupsafe",
+   "version": "3.0.3",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "mdurl",
+   "version": "0.1.2",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "mpmath",
+   "version": "1.3.0",
+   "advisories_on_record": 2,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": [
+    "GHSA-f865-m6cq-j9vx",
+    "PYSEC-2021-427"
+   ]
+  },
+  {
+   "name": "msgpack",
+   "version": "1.2.2",
+   "advisories_on_record": 2,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "networkx",
+   "version": "3.6.1",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "ninja",
+   "version": "1.13.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nodeenv",
+   "version": "1.10.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "numpy",
+   "version": "2.2.6",
+   "advisories_on_record": 16,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nvidia-cublas",
+   "version": "13.1.1.3",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nvidia-cuda-cupti",
+   "version": "13.0.85",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nvidia-cuda-nvrtc",
+   "version": "13.0.88",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nvidia-cuda-runtime",
+   "version": "13.0.96",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nvidia-cudnn-cu13",
+   "version": "9.20.0.48",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nvidia-cufft",
+   "version": "12.0.0.61",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nvidia-cufile",
+   "version": "1.15.1.6",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nvidia-curand",
+   "version": "10.4.0.35",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nvidia-cusolver",
+   "version": "12.0.4.66",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nvidia-cusparse",
+   "version": "12.6.3.3",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nvidia-cusparselt-cu13",
+   "version": "0.8.1",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nvidia-nccl-cu13",
+   "version": "2.29.7",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nvidia-nvjitlink",
+   "version": "13.3.33",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nvidia-nvshmem-cu13",
+   "version": "3.4.5",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "nvidia-nvtx",
+   "version": "13.0.85",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "packageurl-python",
+   "version": "0.17.6",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "pip",
+   "version": "26.2.1",
+   "advisories_on_record": 26,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "pip-api",
+   "version": "0.0.34",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "pip-audit",
+   "version": "2.10.1",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "pip-requirements-parser",
+   "version": "32.0.1",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "platformdirs",
+   "version": "4.11.7",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "pre-commit",
+   "version": "3.5",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "pre-commit",
+   "version": "4.6.2",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "py-serializable",
+   "version": "2.1.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "pygments",
+   "version": "2.21.0",
+   "advisories_on_record": 10,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "pyparsing",
+   "version": "3.3.2",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "pyproject-hooks",
+   "version": "1.2.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "python-discovery",
+   "version": "1.6.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "pyyaml",
+   "version": "6.0.3",
+   "advisories_on_record": 8,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "requests",
+   "version": "2.34.2",
+   "advisories_on_record": 16,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "rich",
+   "version": "15.0.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "ruff",
+   "version": "0.16.6",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "ruff",
+   "version": "0.6",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "safetensors",
+   "version": "0.8.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "setuptools",
+   "version": "83.0.0",
+   "advisories_on_record": 10,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": [
+    "GHSA-h35f-9h28-mq5c",
+    "PYSEC-2026-3447"
+   ]
+  },
+  {
+   "name": "setuptools",
+   "version": "84.0.0",
+   "advisories_on_record": 10,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "sortedcontainers",
+   "version": "2.4.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "sympy",
+   "version": "1.14.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "tomli",
+   "version": "2.4.1",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "tomli-w",
+   "version": "1.2.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "torch",
+   "version": "2.13.0",
+   "advisories_on_record": 43,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": [
+    "GHSA-rrmf-rvhw-rf47"
+   ]
+  },
+  {
+   "name": "triton",
+   "version": "3.7.1",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "typing-extensions",
+   "version": "4.16.0",
+   "advisories_on_record": 0,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "urllib3",
+   "version": "2.7.0",
+   "advisories_on_record": 38,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": [
+    "GHSA-mf9v-mfxr-j63j",
+    "GHSA-qccp-gfcp-xxvc",
+    "PYSEC-2026-141",
+    "PYSEC-2026-142"
+   ]
+  },
+  {
+   "name": "virtualenv",
+   "version": "21.7.8",
+   "advisories_on_record": 6,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  },
+  {
+   "name": "wheel",
+   "version": "0.48.0",
+   "advisories_on_record": 4,
+   "affected_by": [],
+   "fixed_exactly_at_this_version": []
+  }
+ ]
+}

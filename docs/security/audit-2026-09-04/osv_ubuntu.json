@@ -1,0 +1,312 @@
+{
+ "ecosystem": "Ubuntu:24.04:LTS",
+ "unresolved_binaries": [],
+ "packages": {
+  "ccache": {
+   "version": "4.9.1-1",
+   "binaries": [
+    "ccache"
+   ],
+   "advisories_on_record": 0,
+   "fixed_at_or_below": 0,
+   "affecting": [],
+   "open_no_fix": [],
+   "unevaluable": []
+  },
+  "cmake": {
+   "version": "3.28.3-1build7",
+   "binaries": [
+    "cmake"
+   ],
+   "advisories_on_record": 0,
+   "fixed_at_or_below": 0,
+   "affecting": [],
+   "open_no_fix": [],
+   "unevaluable": []
+  },
+  "cppcheck": {
+   "version": "2.13.0-2ubuntu3",
+   "binaries": [
+    "cppcheck"
+   ],
+   "advisories_on_record": 1,
+   "fixed_at_or_below": 0,
+   "affecting": [],
+   "open_no_fix": [
+    {
+     "id": "UBUNTU-CVE-2023-39070",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    }
+   ],
+   "unevaluable": []
+  },
+  "curl": {
+   "version": "8.5.0-2ubuntu10.13",
+   "binaries": [
+    "curl"
+   ],
+   "advisories_on_record": 13,
+   "fixed_at_or_below": 13,
+   "affecting": [],
+   "open_no_fix": [],
+   "unevaluable": []
+  },
+  "git": {
+   "version": "1:2.43.0-1ubuntu7.3",
+   "binaries": [
+    "git"
+   ],
+   "advisories_on_record": 7,
+   "fixed_at_or_below": 6,
+   "affecting": [],
+   "open_no_fix": [
+    {
+     "id": "UBUNTU-CVE-2018-1000021",
+     "aliases": [],
+     "priority": "low",
+     "summary": ""
+    }
+   ],
+   "unevaluable": []
+  },
+  "llvm-defaults": {
+   "version": "1:18.0-59~exp2",
+   "binaries": [
+    "clang",
+    "lld",
+    "llvm",
+    "clang-tools",
+    "libclang-rt-dev"
+   ],
+   "advisories_on_record": 0,
+   "fixed_at_or_below": 0,
+   "affecting": [],
+   "open_no_fix": [],
+   "unevaluable": []
+  },
+  "llvm-toolchain-18": {
+   "version": "1:18.1.3-1ubuntu1",
+   "binaries": [
+    "clang-18",
+    "lld-18",
+    "llvm-18",
+    "libclang-rt-18-dev"
+   ],
+   "advisories_on_record": 0,
+   "fixed_at_or_below": 0,
+   "affecting": [],
+   "open_no_fix": [],
+   "unevaluable": []
+  },
+  "mono": {
+   "version": "6.8.0.105+dfsg-3.6ubuntu2",
+   "binaries": [
+    "mono-devel"
+   ],
+   "advisories_on_record": 4,
+   "fixed_at_or_below": 0,
+   "affecting": [],
+   "open_no_fix": [
+    {
+     "id": "UBUNTU-CVE-2018-8416",
+     "aliases": [],
+     "priority": "low",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2021-32840",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2021-32841",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2021-32842",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    }
+   ],
+   "unevaluable": []
+  },
+  "ninja-build": {
+   "version": "1.11.1-2",
+   "binaries": [
+    "ninja-build"
+   ],
+   "advisories_on_record": 1,
+   "fixed_at_or_below": 0,
+   "affecting": [],
+   "open_no_fix": [
+    {
+     "id": "UBUNTU-CVE-2024-36823",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    }
+   ],
+   "unevaluable": []
+  },
+  "nodejs": {
+   "version": "18.19.1+dfsg-6ubuntu5",
+   "binaries": [
+    "nodejs"
+   ],
+   "advisories_on_record": 34,
+   "fixed_at_or_below": 14,
+   "affecting": [],
+   "open_no_fix": [
+    {
+     "id": "UBUNTU-CVE-2020-11080",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2021-44531",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2021-44532",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2021-44533",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2021-44534",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2022-21824",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2023-38552",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2023-39331",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2023-39333",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2023-44487",
+     "aliases": [],
+     "priority": "high",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2023-46809",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2024-22017",
+     "aliases": [],
+     "priority": "high",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2024-22018",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2024-22020",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2024-22025",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2024-27982",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2024-27983",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2024-36137",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2024-36138",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    },
+    {
+     "id": "UBUNTU-CVE-2024-37372",
+     "aliases": [],
+     "priority": "medium",
+     "summary": ""
+    }
+   ],
+   "unevaluable": []
+  },
+  "python3.12": {
+   "version": "3.12.3-1ubuntu0.16",
+   "binaries": [
+    "python3.12"
+   ],
+   "advisories_on_record": 16,
+   "fixed_at_or_below": 16,
+   "affecting": [],
+   "open_no_fix": [],
+   "unevaluable": []
+  },
+  "valgrind": {
+   "version": "1:3.22.0-0ubuntu3",
+   "binaries": [
+    "valgrind"
+   ],
+   "advisories_on_record": 0,
+   "fixed_at_or_below": 0,
+   "affecting": [],
+   "open_no_fix": [],
+   "unevaluable": []
+  }
+ }
+}
