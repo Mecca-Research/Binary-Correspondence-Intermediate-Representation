@@ -13,6 +13,10 @@ Grounded in three documents, all in this tree:
 - [`BCIR_SECURITY_AUDIT_2026-08-12.md`](BCIR_SECURITY_AUDIT_2026-08-12.md) and
   [`BCIR_SECURITY_AUDIT_2026-08-12b.md`](BCIR_SECURITY_AUDIT_2026-08-12b.md) — the correctness
   closure that had to land first, and the two items it deliberately left for this work.
+- [`BCIR_GEMPLUS_TMSAO_STAGED_PLAN_2026-09-04.md`](BCIR_GEMPLUS_TMSAO_STAGED_PLAN_2026-09-04.md)
+  — the 2026-09-04 review that re-staged this roadmap: the disposition of the earlier
+  assessment's findings against the tree, today's re-measurement, the contracts the slices
+  were missing (G11–G18), and the PR-sized sections in order.
 
 ---
 
@@ -402,6 +406,134 @@ are missing and are worth having on their own.
 | `ratio` `native.*` | must not regress |
 
 
+### G11 — `ExecutionPlanV1`: the plan as bytes
+
+*New, from the 2026-09-04 review. The canonical plan cannot be Python objects if the C twin,
+the MLIR rail and a resident executor are to read it.*
+
+An append-only StreamPack v4 record family carrying what G1 makes canonical: schedule slots
+(claim, stream, bin, start, duration), lifetimes and addresses (from G5), movement edges (for
+G8), and the per-resource generation vectors (R11, the closure item S0-2). A C twin decodes it;
+BCAB gains a kind for it; the ASN.1 projection follows the StreamPack precedent. The pack stays
+the executable; the plan is what the pack was derived from and what every reader prices.
+
+| Gate | Target |
+|---|---|
+| `exact` `plan.abi.roundtrip` | Python encode → C decode → Python re-encode is byte-identical |
+| `exact` `plan.readers.agree` | pricing, token execution, static memory and StreamPack lowering read the plan and produce identical traces |
+| `exact` Stale generation vector | a pack whose plan carries an older vector for any resource is refused by both rails |
+| `exact` Malformed plan | truncated, duplicated, out-of-order and unknown-claim records refused before publication |
+
+### G12 — the dispatch law, work-unit budgets, resumable search
+
+*New. Turns "a solver portfolio" into a deterministic choice the certificate can name.*
+
+A dispatch function from (region kind, instance size, requested certificate class, work budget)
+to solver, recorded in the certificate with the budget, the stop reason and the bound source.
+Budgets are counted in the solver's own work units — expansions, relaxations, evaluations —
+never seconds, so a certificate class means the same thing on every host. Search state
+(frontier, incumbent, bound, stop reason) is a content-addressed artifact; resuming from it
+reproduces the same continuation. A plan diff (which claims moved, which bins changed, which
+bound tightened) is the structured answer to "what is the residual gap made of".
+
+| Gate | Target |
+|---|---|
+| `exact` `dispatch.incumbent.first` | a legal incumbent exists at every interruption point of every solver |
+| `exact` `solver.budget.units` | two runs with equal budgets and inputs produce identical plans and stop reasons |
+| `exact` Resume reproduces | continuing from a checkpoint equals the uninterrupted run |
+| `exact` The learned ranker cannot remove a candidate | the census is identical with and without it |
+
+### G13 — the workload component `W` and the measured-candidate corpus
+
+*New. The scope table marks `W` "not modelled"; best-fit dispatch cannot fit work it cannot see.*
+
+A declared workload descriptor — shapes, batch, concurrency, service-level requirement,
+horizon — becomes the `W` component of `ExecutionScopeV1`, and the B1 measured schedule
+artifacts (`schedule_artifact.py`) become the replay corpus and candidate database that
+*informs* dispatch through the L2 replay gate (`portfolio.py`) and never decides legality.
+
+| Gate | Target |
+|---|---|
+| `exact` A scope digest separates two workloads | plans for `W₁` and `W₂` on one program carry distinct digests |
+| `exact` Replay-gate no-regression | a policy promoted by the corpus never loses to the incumbent on the logged episodes |
+
+### G14 — control-plane record ABI
+
+*New, Stage 3. Lease, generation, quiescence, activation, rollback and cancellation are prose
+and an `admit(map_gen, data_gen)` argument today.*
+
+Small, fixed, versioned records with a C twin and a DER/COER projection, carried across every
+boundary (L2–L5 of the review's level table), so a stale generation is refused by bytes rather
+than by convention. Capability-scoped handles and signatures are part of the first record, not
+a later hardening.
+
+| Gate | Target |
+|---|---|
+| `exact` `control.record.bytes` | every record is bounded and versioned; an unknown version or a trailing byte is refused on both rails |
+| `exact` Stale generation refused | activation with an older generation than the resident one fails at every boundary |
+| `exact` Quiescent switch | a generation switches only at a phase/event boundary; a switch requested mid-phase is deferred, never applied |
+
+### G15 — the live shared ring
+
+*New, Stage 3. The telemetry frame is frozen and byte-identical; the transport under it is not
+built.*
+
+A single-producer/single-consumer shared ring with head/tail, acquire/release publication,
+per-slot sequence numbers, a declared overwrite or backpressure policy and exact loss
+accounting — the "version-zero triple" of the 2026-09-03 analysis — carrying telemetry records
+first and G14 control records second, with restart, stale-generation, wrap, saturation and
+peer-death tests on both rails.
+
+| Gate | Target |
+|---|---|
+| `exact` `ring.loss.accounting` | records lost to overwrite are counted exactly; a consumer that falls behind sees the count, never a torn record |
+| `exact` Sequence continuity | gaps, reorders and duplicates are reported as the frame ABI already does for frames |
+| `ratio` `ring.throughput` | records per second against a `memcpy` floor of the same bytes, indicative on shared hosts |
+
+### G16 — data-plane hand-off
+
+*New, Stage 3. The C++ seam is specified and single-node real; this makes its contract hold.*
+
+Borrowed zero-copy views with explicit lifetime, generation gating at `admit()` against the
+live registry generation, the dynamic-graph builder that freezes a fresh StreamPack per step
+through the C/IR rail, and the manifest-of-shards format for graphs too large to ship as one
+pack. The node level (MPI/NCCL) stays a declared stub until a cluster exists.
+
+| Gate | Target |
+|---|---|
+| `exact` No copy where a borrow suffices | the hand-off moves bytes once; a view outliving its owner is refused |
+| `exact` Generation gating | `admit()` refuses a pack older than the registry generation |
+| `exact` Shard manifest | shards by digest reassemble to the whole-pack bytes |
+
+### G17 — compact indexed planner, then native parity
+
+*New, Stage 4. The profile's hot spot: Python objects per claim, immutable values rebuilt.*
+
+Replace per-claim dataclass churn with compact indexed arrays behind the same API, proved by
+byte-identical plans over the corpus; then the proposal's CXX2/CXX3 native planner, which may
+own a certificate only after it reproduces the Python plan byte for byte over a generated
+corpus — the same way the C twins earn their rails.
+
+| Gate | Target |
+|---|---|
+| `exact` `planner.parity` | identical plan bytes before and after, and Python versus native |
+| `exact` `planner.calls` | Python call count at scale 8 (6.06 M in the profile) reduced by a stated factor |
+| `wall` `audit.kbcir-streampack.scale4` | indicative only |
+
+### G18 — incremental re-verification and delta StreamPack
+
+*New, Stage 4. Incremental plans are only honest if the laws are re-checked incrementally
+**and** the incremental verifier is proven equal to the full one.*
+
+Dependency-scoped re-verification of the R-laws after a delta plan, a delta StreamPack that
+re-emits only changed segments, and the differential that keeps both truthful.
+
+| Gate | Target |
+|---|---|
+| `exact` `verify.delta.identity` | delta verification equals full verification over the corpus, including every injected violation |
+| `exact` Delta pack identity | a delta-emitted pack equals the full re-emission byte for byte |
+| `ratio` `kbcir-streampack.delta` | incremental re-plan against the full re-plan, a stated mechanism |
+
 ---
 
 ## 4. The sublinearity question, answered precisely
@@ -447,29 +579,42 @@ what is *legal* is outside the architecture entirely.
 
 ---
 
-## 6. Order of work
+## 6. Order of work — the six stages
+
+Re-staged on 2026-09-04 (the review in
+[`BCIR_GEMPLUS_TMSAO_STAGED_PLAN_2026-09-04.md`](BCIR_GEMPLUS_TMSAO_STAGED_PLAN_2026-09-04.md)
+§6–§7 carries the exit gates and the PR-sized sections). Stage-local ids `S0-n` are the
+correctness-closure items that are prerequisites rather than GEM+ slices.
 
 ```
-G0  scope identity + class ladder        <- LANDED
-G1  one schedule artifact                <- correctness; unblocks G2, G5
-G3  digest computed once                 <- cheap; makes the rest measurable
-G2  incremental delta pricing            <- largest visible win
-G4  bounded exact + lower bounds         <- first TMSAO-2 certificate
-G5  schedule-aware + exact memory        <- needs G1
-G7  native measurement repair            <- small, invalidates a current number
-G6  typed regions + semirings            <- architectural
-G9  export declared alias facts          <- PARTLY LANDED; small, fixes a false assertion
-G8  movement as first-class              <- needs G6
-G10 escape analysis + call narrowing     <- needs G6
+Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)
+                                           S0-2 R11 per-resource generation vectors
+                                           S0-3 verify checkpoints in bcir-optimize/-hydrate + the inert fixtures
+                                           S0-4 EV1–EV3 in verify_all
+                                           S0-5 module-scoped verifier walks
+                                           S0-6 shared structural-law corpus, both rails
+                                           S0-7 R9 re-derives cost/feasibility; C R9 width/cost
+                                           S0-8 lowering tail contract; convolution overflow fixture
+                                           S0-9 ODS→IRDL inventory gate
+                                           S0-10 bcir-performance-audit rename + wording sweep
+                                           G7   native measurement repair
+Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5
+Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13
+Stage 3  IPC at every level                G14 → G15 → G16
+Stage 4  performance program               G17, G18
+Stage 5  movement, alias, escape           G8, G9 remainder, G10
+Stage 6  physical evidence                 two targets, PMU/energy — hardware-gated
 ```
+
+G0 is landed. Stage 1 needs S0-1 and S0-2 (the identity the plan binds to and the vectors it
+carries); Stage 2 needs G1 and G11; Stage 3 needs G11, and G14 precedes G16; Stage 4 needs G1
+and G18's differential; Stage 5 needs G6; Stage 6 needs hardware. G3 and G7 are out of
+dependency order on purpose: both are small, and each removes a false number from the table.
 
 The [advanced-technique triage](BCIR_ADVANCED_TECHNIQUE_TRIAGE.md) records why the rest of the
 standard advanced-compiler catalogue is absent: four techniques are already built, five are the
 slices above under other names, and six belong to LLVM — where BCIR's job is to supply the
 declared fact, not to reimplement the pass.
-
-G0 and G1 are prerequisites. G3 is out of dependency order on purpose: it is small, and it
-removes measurement noise that would otherwise contaminate every slice after it.
 
 ---
 
@@ -483,3 +628,23 @@ removes measurement noise that would otherwise contaminate every slice after it.
 - **No optimality claim on a row with no lower bound.** Five rows are in that state today and
   they are listed in §0.3 rather than quietly graded.
 - **No sublinear claim on an Ω(n) operation** without naming the admitted work that changed.
+- **No IPC claim beyond the loopback/simulator** until a device or a second process runs the
+  contract; the node level stays a declared stub until a cluster exists.
+- **No cached or incremental result above TMSAO-4** unless its invalidation predicate is in the
+  scope and the incremental verifier has been proved equal to the full one.
+
+---
+
+## 8. Current state, 2026-09-04
+
+`tools/perf/gemplus_baseline.py --compare` on a host that is not the baseline's (Python 3.11,
+no PMU):
+
+| Row | Slice | Baseline | Today | Verdict |
+|---|---|---:|---:|---|
+| `pricing.eft.divergence` | G1 | 1.9922 | 1.9922 | NO-CHANGE — outcome (a): the owning slice has not landed |
+| `optimize_scheduled.slowdown.512` | G2 | 69.2× | 65.5× | NO-CHANGE — inside the `ratio` band; outcome (a) |
+| five `wall` rows | G0–G3 | — | 1.5–3× faster | INDICATIVE — a faster host and interpreter, not evidence |
+| fourteen rows | G0, G4–G6 | — | not measured | need the exact oracles, the digest fixtures or the native rig |
+
+Everything BCIR emits is still TMSAO-4. G4 remains the first slice that can change that.
