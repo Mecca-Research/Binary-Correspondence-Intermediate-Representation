@@ -16,15 +16,26 @@ never a quieter kind of pass. The metadata parser is the standard library's
 tomllib, unconditionally: the repository's floor is 3.11, and no hand-rolled TOML
 subset stands in anywhere — a subset reader has an unbounded surface of valid
 spellings and can only lose to them.
+
+``--installed`` asks a different question of the same engine: not "what does the
+declaration admit" but "what is installed in THIS interpreter" -- the hosted model jobs
+install torch's CPU wheels from an index that is not PyPI, so that closure exists only
+where it is installed. Every distribution the interpreter can see is pinned at its
+public version (a local label such as ``+cpu`` names a build of the same release, and
+the advisory database is keyed by release), audited with no resolver, and reconciled
+back against the installed set; ``--expect`` names must be present, or the audit is of
+some other environment than the one claimed. The engine is always required there.
 """
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import os
 import re
 import shutil
 import stat
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -883,6 +894,124 @@ def _parse_advisory_report(
             })
     return names, skipped, vulnerable
 
+_LOCAL_LABEL = re.compile(r"\+.*$")
+
+
+def _installed_distributions() -> list[tuple[str, str]]:
+    """(name, version) for every distribution the running interpreter can import.
+
+    A seam: the unit witnesses replace it (L19); the hosted jobs run it for real.
+    """
+    found: list[tuple[str, str]] = []
+    for dist in importlib.metadata.distributions():
+        name = dist.metadata["Name"] if dist.metadata is not None else None
+        version = dist.version
+        if isinstance(name, str) and name and isinstance(version, str) and version:
+            found.append((name, version))
+    return found
+
+
+def project_names(root: Path) -> set[str]:
+    """The repository's own distribution name, canonical: never sent to the advisory
+    database, where an unrelated project may own the same name."""
+    try:
+        with (root / "pyproject.toml").open("rb") as handle:
+            name = tomllib.load(handle).get("project", {}).get("name")
+    except (OSError, tomllib.TOMLDecodeError, AttributeError):
+        return set()
+    return {canonical_name(name)} if isinstance(name, str) and name else set()
+
+
+def audit_installed(root: Path, expect: list[str]) -> dict[str, Any]:
+    """Audit what is installed in the running interpreter, by exact public pin.
+
+    The engine is required (an environment audit with no engine is nothing), every
+    installed distribution must come back audited (L15), and every ``expect`` name
+    must be installed -- a job that claims to audit the model-lab closure but runs in
+    an interpreter without torch has audited some other environment (L2).
+    """
+    expected = sorted({canonical_name(name) for name in expect})
+    report: dict[str, Any] = {
+        "state": "FAIL", "mode": "installed", "interpreter": sys.executable,
+        "expected": expected,
+    }
+    try:
+        found = _installed_distributions()
+    except Exception as exc:  # noqa: BLE001 -- broken metadata is a verdict, never a traceback (L1)
+        report["error"] = _redacted_requirement(
+            f"could not enumerate installed distributions: {exc}"
+        )
+        report["advisory"] = {"state": "UNAVAILABLE/SKIPPED", "engine": None}
+        return report
+    own = project_names(root)
+    pins: list[str] = []
+    names: list[str] = []
+    excluded: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for name, version in sorted(found):
+        canon = canonical_name(name)
+        public = _LOCAL_LABEL.sub("", version.strip())
+        if canon in own:
+            excluded.append(f"{name}=={version}")
+            continue
+        if (canon, public) in seen:
+            continue
+        seen.add((canon, public))
+        pins.append(f"{name}=={public}")
+        names.append(canon)
+    report["installed"] = len(pins)
+    report["excluded"] = _redacted(excluded)
+    missing = sorted(set(expected) - set(names))
+    report["missing_expected"] = missing
+    engine = advisory_engine()
+    if not engine:
+        report["advisory"] = {
+            "state": "FAIL", "engine": ADVISORY_ENGINE, "error": _absent_engine_error(),
+        }
+        return report
+    if not pins:
+        report["advisory"] = {
+            "state": "FAIL", "engine": ADVISORY_ENGINE,
+            "error": "INVALID/VACUOUS: no distribution to audit in this interpreter",
+        }
+        return report
+    run = _engine_run(engine, pins, floor=True)
+    advisory = _combined_verdict(pins, names, [], {"installed": run})
+    if missing:
+        reason = f"expected distribution(s) not installed: {', '.join(missing)}"
+        advisory["error"] = reason + (f"; {advisory['error']}" if "error" in advisory else "")
+        advisory["state"] = "FAIL"
+    report["advisory"] = advisory
+    report["state"] = advisory["state"]
+    return report
+
+
+_SUMMARY_LIMIT = 8
+
+
+def _findings_summary(vulnerable: list[dict[str, Any]]) -> str:
+    """The vulnerable distributions as one console token: name==version and each
+    advisory id with its fix versions, so a job log says what to bump without
+    the JSON report (L7: bounded, no descriptions, no URLs; the engine reports the
+    same advisory under more than one record, so ids are de-duplicated)."""
+    items = []
+    for item in vulnerable[:_SUMMARY_LIMIT]:
+        seen: dict[str, list[str]] = {}
+        for vuln in item.get("vulns", []):
+            seen.setdefault(vuln["id"], [])
+            for fix in vuln.get("fix_versions", []):
+                if fix not in seen[vuln["id"]]:
+                    seen[vuln["id"]].append(fix)
+        advisories = "; ".join(
+            f"{ident} fix {'/'.join(fixes)}" if fixes else f"{ident} no fix"
+            for ident, fixes in seen.items()
+        )
+        items.append(f"{item['name']}=={item['version']}[{advisories}]")
+    if len(vulnerable) > _SUMMARY_LIMIT:
+        items.append(f"+{len(vulnerable) - _SUMMARY_LIMIT} more")
+    return ", ".join(items)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="audit_dependencies")
     parser.add_argument("--root", type=Path, default=ROOT)
@@ -894,8 +1023,21 @@ def main(argv: list[str] | None = None) -> int:
              "pip-audit passes this and owns the rail's absence (L10); every other caller "
              "asserts the inventory and records a missing engine as skipped.",
     )
+    parser.add_argument(
+        "--installed", action="store_true",
+        help="audit what is INSTALLED in this interpreter (exact public pins, no resolver) "
+             "instead of the declared inventory; the engine is required",
+    )
+    parser.add_argument(
+        "--expect", action="append", default=[], metavar="NAME",
+        help="with --installed: a distribution that must be installed, or the audit is of "
+             "some other environment than the one claimed (repeatable)",
+    )
     args = parser.parse_args(argv)
-    report = audit(args.root, args.expected, require_advisory=args.require_advisory)
+    if args.installed:
+        report = audit_installed(args.root, args.expect)
+    else:
+        report = audit(args.root, args.expected, require_advisory=args.require_advisory)
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -908,6 +1050,16 @@ def main(argv: list[str] | None = None) -> int:
         )
     if "error" in advisory:
         detail += f" error={advisory['error']!r}"
+    if advisory.get("vulnerable"):
+        detail += f" vulnerable={_findings_summary(advisory['vulnerable'])}"
+    if report.get("mode") == "installed":
+        print(
+            f"audit_dependencies: {report['state']} mode=installed "
+            f"installed={report.get('installed', 0)} excluded={len(report.get('excluded', []))} "
+            f"missing_expected={report.get('missing_expected', [])} "
+            f"advisory={advisory['state']}{detail}"
+        )
+        return 0 if report["state"] == "PASS" else 1
     print(
         f"audit_dependencies: {report['state']} asserted={report['inventory_asserted']} "
         f"expected={report['expected_packages']} mismatches={len(report['mismatches'])} "

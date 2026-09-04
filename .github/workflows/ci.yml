@@ -366,9 +366,41 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install pinned hosted-model CPU environment
+        # pip and setuptools are part of the environment the audit below covers, so they are
+        # pinned like everything else in it rather than left at whatever the toolcache bundled
+        # or whatever the PyTorch index resolves torch's `setuptools>=77.0.3` to: the audit's
+        # first run found setuptools 78.1.0 there, with PYSEC-2025-49 (CVE-2025-47273) and
+        # PYSEC-2026-3447 (CVE-2026-59890) open (2026-09-04 audit F12). Installed before torch,
+        # from PyPI, so the PyTorch index never gets to choose it.
         run: |
+          python -m pip install --disable-pip-version-check --no-input pip==26.2.1 setuptools==84.0.0
           python -m pip install --disable-pip-version-check --no-input --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
           python -m pip install --disable-pip-version-check --no-input "safetensors[numpy]==0.8.0" numpy==2.2.6
+
+      - name: Install the advisory engine in its own environment (pinned)
+        # The CPU wheels come from download.pytorch.org, not PyPI, so this closure exists
+        # only where it is installed: the audit below runs over the interpreter's installed
+        # distributions by exact public pin (2026-09-04 audit F12). The engine lives in a
+        # scratch venv so its own dependencies never enter the environment being audited;
+        # PIP_AUDIT names it for the rail (L13). Written in Python so the same step runs on
+        # both runners of the matrix.
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, subprocess, venv
+          root = os.path.join(os.environ["RUNNER_TEMP"], "pip-audit")
+          venv.EnvBuilder(with_pip=True).create(root)
+          scripts = "Scripts" if os.name == "nt" else "bin"
+          exe = ".exe" if os.name == "nt" else ""
+          python = os.path.join(root, scripts, "python" + exe)
+          subprocess.check_call([python, "-m", "pip", "install", "--disable-pip-version-check",
+                                 "--no-input", "pip-audit==2.10.1"])
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write("PIP_AUDIT=" + os.path.join(root, scripts, "pip-audit" + exe) + "\n")
+          PY
+
+      - name: Advisory audit of the installed model-lab closure (audit F12)
+        run: python tools/security/audit_dependencies.py --installed --expect torch --expect safetensors --expect numpy
 
       - name: Hosted model configuration, checkpoint, resume, export, and train-to-C gate
         run: python tools/models/test_hosted_model_lab.py --output-dir build/hosted-model-gate

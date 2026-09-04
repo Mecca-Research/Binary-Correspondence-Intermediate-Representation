@@ -167,6 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         with open(args.out, "w", encoding="utf-8") as handle:
             json.dump({"source": EXPORT, "advisories": total, "withdrawn_skipped": withdrawn,
                        "unevaluable_feed_values": sorted(UNEVALUABLE), "rows": rows}, handle, indent=1)
+            handle.write("\n")
     return 1 if findings else 0
 
 

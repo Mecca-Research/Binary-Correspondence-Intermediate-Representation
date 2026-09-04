@@ -64,6 +64,10 @@ Post-campaign instance: `test_unwritable_requirements_are_a_verdict` (the
 advisory rail's own temporary directory and requirements file are
 resources of the run; a full or read-only TMPDIR is that run's fail-closed
 verdict, not a traceback out of the required audit).
+Post-campaign instance (the installed-environment audit, 2026-09-04):
+`test_installed_mode_enumeration_failure_is_a_verdict` (broken distribution
+metadata makes `importlib.metadata` raise; in a required job that is a
+structured FAIL with the reason, never a traceback).
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -90,6 +94,15 @@ day it first ran live), `test_require_advisory_fails_when_the_engine_is_absent`
 recorded, never silent), `test_advisory_over_zero_dependencies_is_vacuous`
 (an engine that exits 0 over an install set it collected nothing from has
 audited nothing).
+Installed-environment audit instances: `test_installed_mode_requires_an_engine`
+(an environment audit with no engine is nothing, and has no flag to opt out),
+`test_installed_mode_refuses_an_environment_missing_what_it_claims` (a job that
+claims to audit the model-lab closure but runs in an interpreter without torch
+has audited some other environment; the missing expectation is a FAIL that
+names it, and the engine still ran over what was there). Live instance: the
+gate fired on its first CI run, on both runners, over `setuptools` 78.1.0 that
+torch's CPU wheel had pulled from the PyTorch index (2026-09-04 audit F12) —
+a gate that can fire, and did, before anything else was proven about it.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -273,6 +286,12 @@ Witnesses: `test_decoder_seed_rejection_is_a_finding`,
 Post-campaign instance: `test_ci_owns_the_advisory_rail` (exactly one job
 installs pip-audit, pinned, and that job passes `--require-advisory`; the
 audit asserts the inventory only everywhere else).
+Installed-environment audit instance: `test_ci_owns_the_installed_audit` (the
+hosted model jobs, whose torch wheels come from an index that is not PyPI,
+install the engine pinned into a scratch venv of their own, hand it to the
+rail as `PIP_AUDIT`, and pass `--installed` with the three names the audit
+must find; `test_ci_owns_the_advisory_rail` now pins that every job installing
+the engine is a job that requires it, and only those).
 **Port note:** the C header's error enum IS the contract; the fuzz harness
 whitelists those values and nothing else.
 
@@ -373,6 +392,11 @@ resolver run drops its scratch venv's own setuptools from the report, so
 the one security-motivated floor in the tree was audited by nothing and
 exited 0 — the floor run now covers it by name, and a declared name neither
 run reports is a FAIL that says which).
+Installed-environment audit instance:
+`test_installed_mode_reconciles_coverage_and_findings` (every distribution the
+interpreter sees must come back audited; the repository's own distribution is
+the one declared exclusion, reported, because an unrelated project may own
+that name on PyPI).
 **Port note:** identical everywhere.
 
 ### L16 — Never green yourself by editing the neighbor
@@ -422,6 +446,10 @@ Post-campaign instance: the advisory tests fake `which` and the bounded
 runner together (and clear `PIP_AUDIT`), and `test_advisory_output_is_redacted`
 runs a stub engine end to end, so a host's real pip-audit never decides a
 unit verdict and the spawn path is exercised wherever the stub can execute.
+Installed-environment audit instance: the enumeration of the interpreter is a
+seam (`_installed_distributions`) the witnesses replace, so the quick tier
+never audits the host it runs on; `test_installed_mode_audits_the_interpreter_by_exact_public_pin`
+fakes both the seam and the bounded runner.
 **Port note:** identical; in C the "fake" is a stub binary on PATH.
 
 ### L20 — Reserved implementation values are not valid domain values
