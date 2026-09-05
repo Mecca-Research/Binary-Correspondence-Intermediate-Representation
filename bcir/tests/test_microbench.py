@@ -10,11 +10,15 @@ from bcir.examples import histogram_gather, vector_add
 from bcir.kbcir import TARGETS, optimize
 from bcir.kbcir.cost import TargetProfile, Theta
 from bcir.kbcir.microbench import (
+    TENANCIES,
     CalibratedProfile,
     MicrobenchRaw,
+    NativeEvidence,
     calibrate_from_raw,
+    calibrate_native,
     reference_table,
     run_microbench,
+    strided_order,
 )
 from bcir.verify import verify_plan
 
@@ -127,6 +131,183 @@ def test_every_target_accepts_a_table():
         t = calibrate_from_raw(raw, h)
         hh = t.apply(h)
         assert hh.cal_gen == 1 and hh.gather_penalty == 16 and hh.base_overhead == 8
+
+
+def test_strided_order_is_a_full_cycle_permutation():
+    # G7 (S0-F): `(k * stride) % n` visits n / gcd(n, stride) elements and repeats that
+    # cycle -- n/16 of a power-of-two buffer at the default stride. The coset walk
+    # visits every element exactly once at the declared stride, for any (n, stride).
+    from math import gcd
+
+    for n, stride in ((1 << 12, 16), (1000, 16), (97, 16), (1 << 10, 1 << 10), (2, 16), (3, 16)):
+        order = strided_order(n, stride)
+        assert sorted(order) == list(range(n)), (n, stride)
+        parent = {(k * stride) % n for k in range(n)}
+        assert len(parent) == n // gcd(n, stride)  # the defect, pinned as the witness
+    assert len({(k * 16) % (1 << 22) for k in range(1 << 22)}) == (1 << 22) // 16
+    # the walk keeps the stride: consecutive visits within a coset differ by `stride` mod n
+    # (n = 4096, stride 16: 16 cosets of 256 elements each)
+    order = strided_order(1 << 12, 16)
+    assert all(
+        (order[k + 1] - order[k]) % (1 << 12) == 16
+        for k in range(len(order) - 1)
+        if (k + 1) % 256 != 0
+    )
+    assert order[:3] == [0, 16, 32] and order[256:258] == [1, 17]
+    for bad in ((0, 16), (16, 0)):
+        try:
+            strided_order(*bad)
+            assert False, "expected a refusal"
+        except ValueError:
+            pass
+
+
+def _native_rig(d, n, repeats):
+    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        return None
+    root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    source = os.path.join(root, "runtime", "c", "bcir_microbench.c")
+    exe = os.path.join(d, "microbench")
+    build = subprocess.run(
+        [cc, "-std=c11", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-O2", source, "-o", exe],
+        capture_output=True,
+        text=True,
+    )
+    assert build.returncode == 0, build.stderr
+    run = subprocess.run([exe, str(n), str(repeats), "1"], capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    return run.stdout
+
+
+def _host_signals():
+    """The virtualization/PMU facts read from the same files the rig reads (Linux)."""
+
+    def contains(path, needle):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                return any(needle in line.lower() for line in fh)
+        except OSError:
+            return False
+
+    hypervisor = contains("/proc/cpuinfo", " hypervisor") or os.path.exists("/sys/hypervisor/type")
+    wsl = contains("/proc/version", "microsoft")
+    container = os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
+    pmu = any(
+        os.path.exists(f"/sys/bus/event_source/devices/{src}/type")
+        for src in ("cpu", "cpu_core", "cpu_atom", "armv8_pmuv3", "armv8_pmuv3_0")
+    )
+    return hypervisor, wsl, container, pmu
+
+
+def test_native_rig_reports_census_samples_and_an_attested_tenancy():
+    """G7 (S0-F): the rig's table is the summary of evidence it prints -- a counted
+    census (every regime touches all n elements), one raw sample per repeat with the
+    statistic re-derived from them, and a tenancy decided by the host's own signals.
+    "bare-metal" appears in the provenance only when the evidence proves it."""
+    with tempfile.TemporaryDirectory() as d:
+        out = _native_rig(d, 4096, 3)
+        if out is None:
+            return
+    table = CalibratedProfile.from_json(out)  # re-derives the ratios from the evidence
+    ev = table.evidence
+    assert isinstance(ev, NativeEvidence)
+    assert (ev.n, ev.repeats, ev.stride) == (4096, 3, 16)
+    assert ev.unique_stream == ev.unique_strided == ev.unique_random == 4096
+    assert ev.working_set_bytes == 4096 * 8
+    for regime in ("stream", "strided", "random", "compute"):
+        samples = getattr(ev, f"{regime}_ns")
+        assert len(samples) == 3 and all(x >= 1 for x in samples)
+        lo, med, hi, mad = getattr(ev, f"{regime}_stat")
+        assert lo <= med <= hi and med == sorted(samples)[1]
+    assert (table.strided_q8, table.random_q8, table.compute_q8) == ev.q8_ratios()
+    assert table.samples == 3
+    assert ev.tenancy in TENANCIES
+    assert table.provenance.startswith(f"native microbench ({ev.tenancy}: {ev.signals})")
+    assert ("bare-metal" in table.provenance) == ev.silicon
+    assert "unique=4096/4096/4096" in table.provenance
+    assert ev.timer_quantum_ns >= 0 and ev.os and ev.arch and ev.compiler
+    # the attestation agrees with the same facts read from Python (two readers, one truth)
+    hypervisor, wsl, container, pmu = _host_signals()
+    assert ev.hardware_pmu == pmu
+    if hypervisor or wsl:
+        assert ev.tenancy == "virtualized" and not ev.silicon
+    elif container:
+        assert ev.tenancy == "containerized" and not ev.silicon
+    elif pmu:
+        assert ev.tenancy == "bare-metal" and ev.silicon
+    else:
+        assert ev.tenancy == "unproven" and not ev.silicon
+    assert CalibratedProfile.from_json(table.to_json()) == table
+
+
+def test_native_table_summary_must_agree_with_its_evidence():
+    """A table whose Q8 ratios, sample count, statistics or tenancy claim disagree with
+    the evidence it carries is refused: the summary a v1 reader sees is derived from
+    the samples, never a second source of truth."""
+    with tempfile.TemporaryDirectory() as d:
+        out = _native_rig(d, 4096, 3)
+        if out is None:
+            return
+    document = json.loads(out)
+    good = CalibratedProfile.from_json(json.dumps(document))
+    assert good.evidence is not None
+    bad_documents = []
+    bad = json.loads(json.dumps(document))
+    bad["random_q8"] = bad["random_q8"] + 1  # a ratio the medians do not imply
+    bad_documents.append(bad)
+    bad = json.loads(json.dumps(document))
+    bad["samples"] = 4  # more samples than the evidence carries
+    bad_documents.append(bad)
+    bad = json.loads(json.dumps(document))
+    bad["evidence"]["strided_stat"][1] += 1  # a statistic that is not the samples'
+    bad_documents.append(bad)
+    bad = json.loads(json.dumps(document))
+    bad["evidence"]["stream_ns"] = bad["evidence"]["stream_ns"][:-1]  # a dropped sample
+    bad_documents.append(bad)
+    bad = json.loads(json.dumps(document))
+    bad["evidence"]["tenancy"] = "silicon"  # outside the closed set
+    bad_documents.append(bad)
+    bad = json.loads(json.dumps(document))
+    bad["evidence"]["tenancy"] = "bare-metal"  # a claim without a PMU, or without the
+    bad["evidence"]["hardware_pmu"] = True  # provenance saying so
+    bad_documents.append(bad)
+    bad = json.loads(json.dumps(document))
+    bad["provenance"] = "native microbench (bare-metal) n=4096"  # the old unconditional claim
+    bad_documents.append(bad)
+    bad = json.loads(json.dumps(document))
+    bad["evidence"]["working_set_bytes"] = 8  # not the census
+    bad_documents.append(bad)
+    bad = json.loads(json.dumps(document))
+    del bad["evidence"]["clocksource"]  # a missing field
+    bad_documents.append(bad)
+    for doc in bad_documents:
+        try:
+            CalibratedProfile.from_json(json.dumps(doc))
+            assert False, "expected the disagreeing table to be refused"
+        except ValueError:
+            pass
+
+
+def test_calibrate_native_refuses_an_unproved_bare_metal_claim():
+    """The old rig said "bare-metal" under WSL and under a hypervisor alike, and the
+    calibration loop froze that string into a certificate. `require_baremetal=True`
+    now refuses every tenancy the evidence did not prove, naming the signals."""
+    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("ggc")
+    if cc is None:
+        return
+    table = calibrate_native(AVX, n=4096, repeats=2, cal_gen=2)
+    assert table.evidence is not None and table.name == AVX.name and table.cal_gen == 2
+    if table.evidence.silicon:
+        strict = calibrate_native(AVX, n=4096, repeats=2, cal_gen=2, require_baremetal=True)
+        assert "bare-metal" in strict.provenance
+    else:
+        try:
+            calibrate_native(AVX, n=4096, repeats=2, cal_gen=2, require_baremetal=True)
+            assert False, "expected the unproved tenancy to be refused"
+        except RuntimeError as exc:
+            assert table.evidence.tenancy in str(exc) and "refusing the claim" in str(exc)
+        assert "bare-metal" not in table.provenance
 
 
 def test_native_microbench_rejects_overflowing_cli_sizes():

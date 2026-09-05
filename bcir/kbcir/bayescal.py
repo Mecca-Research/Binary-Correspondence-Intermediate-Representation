@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 
 from .._artifact_json import strict_json_loads
 from .cost import TargetProfile
@@ -142,7 +142,8 @@ class BayesianCalibratedProfile:
     def to_json(self) -> str:
         return json.dumps(
             {
-                "point": asdict(self.point),
+                # the point's own writer: a table without native evidence keeps its form
+                "point": json.loads(self.point.to_json()),
                 "coverage_milli": self.coverage_milli,
                 "random_delta_q8": self.random_delta_q8,
             },
