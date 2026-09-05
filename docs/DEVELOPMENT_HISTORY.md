@@ -476,6 +476,38 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   drives every kernel with the planned count, `count + 7`, a sub-width count and zero
   behind 64-element canaries. With S0-A through S0-G landed, Stage 0 of the GEM+/TMSAO
   program is closed and Stage 1 (G1, G3, G11, G5) is unblocked.
+  S1-A (2026-09-05) landed G1, the one canonical schedule artifact (the 2026-08-12 report's
+  P0.1 and the assessment's rows 6 and 7). The objective had priced fixed greedy conflict
+  waves with round-robin affinity bins while the executor ran LPT/EFT placement -- two prices
+  for one plan, 51,200 against 25,700 on four independent claims (`pricing.eft.divergence`
+  1.9922) -- and both split the sparse GGG tail off BEFORE building any hazard edge, so a
+  gather that read what a wave claim wrote started at the phase start (measured RED on both
+  rails: the oracle's `schedule_eft`/`execute_tokens`/`price_scheduled` and the law rail's
+  `-bcir-schedule-eft`/`-bcir-async`/`-bcir-overlap` all placed the tail at 0 before its
+  producer's 5248), and a data-independent claim overlapped a `barriered` fence.
+  `gem.schedule.schedule_plan` now places the plan's own step costs by the hazard-honoring
+  LPT/EFT dispatch: `concurrency.hazard_predecessors` -- the ONE hazard DAG of the GEM rails,
+  RAW/WAR/WAW plus the `barriered`/`volatile` fence edges, the predicate `kbcir.bundle`
+  already used -- is built over every claim of a phase before the split, and the tail runs on
+  its own stream inside the same event loop. `price_scheduled` reads that placement
+  (`.schedule` is the artifact; the divergence row reads 1.0 exactly), `optimize_scheduled`
+  sweeps it, both executors return it, and `BCIRSchedule.h` is the law-rail twin shared by
+  the four passes (`schedule_hazards.mlir`, emitted by the oracle: identical slots, awaits and
+  price on both rails; the gate checks the priced makespan equals the placed one on the
+  corpus). The retired wave pricer stays as `price_waves_legacy`, read by nothing but the
+  harness witness, which still reproduces the report's 1.9922 on the same fixture. The CSE
+  credit had keyed on the op string and the read versions with the barrier guard checked
+  afterwards, so a duplicate over a different count, offset or immediate, and an atomic,
+  barriered or volatile duplicate, all took the copy credit (RED on both rails);
+  `realize.cse_identity` / `cse_eligible` and their `BCIRCostModel.h` mirrors carry the
+  complete value identity and the categorical exclusions, and an ineligible claim never
+  seeds a match (`cost_model_cse_neg.mlir`, `test_fusion.py`). Durations are exactly the
+  plan's step costs, so the serial bound is their sum and R9 holds by construction; the
+  re-selection sweep builds the hazard DAG once and places only step-shortening
+  alternatives (`optimize_scheduled.slowdown.512` 69.2x -> 6.3x, `optimize_scheduled.512`
+  1,148 -> 83 ms A/B on one host, identical assignments to the exhaustive sweep everywhere
+  measured). The corpus plans, the matmul 253952 / 761856 overlap, the six-target matrix and
+  all 13 performance-audit result digests are unchanged.
 
 ---
 

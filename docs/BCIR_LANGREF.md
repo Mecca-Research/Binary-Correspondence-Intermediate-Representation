@@ -47,13 +47,21 @@ K_BCIR(G | H, Θ) = min_{π ∈ Legal(G,H)}  M(π, Θ)    subject to    R(π, Θ
 
 - `G` — the goal graph (a BCIR program); `π` — a realization plan (lane/stride
   class, batching, schedule, prefetch).
-- `M(π, Θ)` — the **schedule-aware price**: series composition (claims chained
-  on one affinity domain, the decoupled GGG tail, successive waves and phases)
-  accumulates with (min,+) ⊗; parallel composition (claims co-executing in a
-  CT2 wave on distinct domains) combines with **max**. A transition's coupling
-  `f_i` applies against its *actual* schedule predecessor — a fusion discount
-  belongs only to claims that really run back-to-back. M is (max,+) over the
-  wave/token DAG (`gem.overlap.price_scheduled`).
+- `M(π, Θ)` — the **schedule-aware price**: the makespan of the **one canonical
+  schedule artifact** of π (`gem.schedule.schedule_plan`, G1). The plan's step
+  costs `T_i ⊗ f_i(π)` — the textual-chain coupling the planner summed and R9
+  re-derives — are placed by the hazard-honoring LPT/EFT dispatch the executor
+  runs: series composition (claims chained on one affinity domain, the
+  decoupled GGG tail on its own stream, successive phases) accumulates with
+  (min,+) ⊗; parallel composition (claims co-executing on distinct domains)
+  combines with **max**. The dependency DAG is built over every claim of a
+  phase before the tail split — RAW/WAR/WAW hazards and the ordering fences
+  (`barriered` / `volatile` claims, overlapped by nothing) — so a gather that
+  reads what a wave claim writes waits for it. Phase-barriered (`eft`) or
+  token-pipelined (`tokens`), it is the same placement over different edge
+  sets, and `gem.overlap.price_scheduled(...).schedule` *is* the artifact the
+  executors return. Σ of the durations is the serial bound, so
+  `makespan + overlap_gain = serial` holds by construction (R9).
 - `R(π, Θ)` — the additive resource ledger, `Σ_i T_i ⊗ f_i(π)` per dimension
   (`T_i` a 12-d cost vector; `⊗` element-wise Q8 coupling, **not** scalar
   multiply).
