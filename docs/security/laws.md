@@ -163,6 +163,15 @@ as a witness: `stale_vector`, `missing_vector_entry` and `undeclared_vector_rid`
 must pass the maxima-only API and fail the vector
 (`test_c_rejects_stale_generation_vectors_per_resource`,
 `test_generation_drift_under_the_maxima_is_R11`, `verify_generation_vector.mlir`).
+S0-F instance (2026-09-05): the native rig's strided pass iterated n times over
+n/16 elements -- `(k * 16) % n` on a power-of-two n -- and reported a
+"cache-defeating" regime whose working set was one sixteenth of the buffer;
+nothing counted what the walk touched, so the claim could not fail. The walk is
+now a proved full-cycle permutation AND a non-timed census counts the unique
+elements per regime into the evidence the table carries
+(`test_strided_order_is_a_full_cycle_permutation` pins the parent's n/gcd,
+`test_native_rig_reports_census_samples_and_an_attested_tenancy` reads the
+count back). A measurement's coverage claim needs a witness like any other gate.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -359,6 +368,15 @@ install the engine pinned into a scratch venv of their own, hand it to the
 rail as `PIP_AUDIT`, and pass `--installed` with the three names the audit
 must find; `test_ci_owns_the_advisory_rail` now pins that every job installing
 the engine is a job that requires it, and only those).
+S0-G instance (2026-09-05): the LLVM kernel's self-check harness called the
+kernel only at the claim's own count -- a multiple of the vector width by
+construction -- so the vector loop that stepped to `n` itself never met the
+runtime `n` it was wrong for, and every lowering test was green over a
+miscompile. The harness now drives every kernel with `count + 7`, a
+sub-width count and zero behind canaries, and the parent's kernel fails it
+(`FAIL n=1031: wrote past n at 1031`); R12 holds the contract in the text
+(`test_missing_tail_contract_is_R12`, `test_harness_drives_the_tail_contract`).
+A witness exercises the input the law is about, not the one that flatters it.
 **Port note:** the C header's error enum IS the contract; the fuzz harness
 whitelists those values and nothing else.
 
@@ -492,6 +510,13 @@ well-formedness (ascending RIDs, header maxima) shared by the encoder and the
 decoder (`_validate_generation_vector`, `bcir_sp_verify_semantic`, and
 `GEMStreamPackOp::verify`) and the ASN.1 projection carrying the same record. The
 legacy maxima API was kept, not re-implemented, so the two R11 forms cannot drift.
+S0-F instance (2026-09-05): the native rig's tenancy verdict is ONE predicate with a
+declared Python twin (`attest()` in `bcir_microbench.c` / `microbench.host_attestation`),
+and the test holds the rig to the twin field by field. The first test read fewer
+signals than the rig (no DMI, no cgroup markers) and the GitHub aarch64 runner -- a
+DMI-attested VM that also exposes a PMU -- called the rig wrong for saying
+"virtualized": a mirror that checks a subset is a second rule, and it disagrees on
+exactly the host that matters.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -570,6 +595,17 @@ findings by pointing at the declaration. Fifteen alias-tracking fixes were
 rolled back under this law.
 Witnesses: the `audit_tool_boundaries` module docstring;
 `test_fstring_subprocess_commands_are_flagged` where present in the suite.
+S0-F instance (2026-09-05): the native cost rig printed `native microbench
+(bare-metal)` as a literal -- a scope it never checked, so it held under WSL
+and under this session's hypervisor. The tenancy is now DERIVED in the tool
+from the host's own signals (hypervisor flag and nodes, DMI, WSL, container,
+the PMU event source) with the closed set `bare-metal` / `virtualized` /
+`containerized` / `unproven`, "bare-metal" reserved for no virtualization
+signal plus an exposed PMU, and the reader refuses a provenance whose claim
+the evidence does not attest
+(`test_native_rig_reports_census_samples_and_an_attested_tenancy`,
+`test_calibrate_native_refuses_an_unproved_bare_metal_claim`). A label a
+tool cannot check is a scope it has not declared.
 **Port note:** identical for any static analysis shipped as a gate.
 
 ### L19 — Unit tests mock the expensive rail

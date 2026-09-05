@@ -449,6 +449,33 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   before it was closed; the mutator keeps the witness (`stale_vector` and its siblings pass
   the maxima-only API and fail the vector). Hand-built packs without a vector stay
   byte-frozen v1–v3; a hydrated vector_add pack grows from 220 to 264 bytes.
+  S0-F (2026-09-05) repaired the native measurement rig (GEM+ G7, report P0.3): the strided
+  walk `(k * 16) % n` had visited n/16 of a power-of-two buffer (a 2 MiB working set under a
+  nominal 32 MiB one) and the rig printed `native microbench (bare-metal)` under any
+  hypervisor -- both measured RED on this session's virtualized host before the fix. The walk
+  now runs the gcd(stride, n) cosets of the stride, a non-timed census counts the unique
+  elements per regime, the rig prints one raw sample per repeat with min/median/max/MAD and
+  an attestation of the host (hypervisor flag and nodes, DMI, WSL, container, PMU event
+  source, `perf_event_paranoid`, governor, RAPL, clocksource, timer quantum), and derives a
+  tenancy from it -- "bare-metal" only with no virtualization signal and an exposed PMU.
+  `CalibratedProfile` carries the evidence, re-derives the Q8 ratios from the sample medians
+  and refuses a summary or a tenancy claim its evidence does not support;
+  `calibrate_native(require_baremetal=True)` refuses every other tenancy with the signals that
+  decided it. `strided_order` is the Python twin of the walk, with the parent's n/gcd pinned
+  as the witness.
+  S0-G (2026-09-05) closed Stage 0's last item, S0-8, the LLVM kernel's runtime-`n` tail
+  contract: the single-claim vector kernel had stepped its loop to the runtime `n` itself,
+  so any `n` that was not a multiple of the selected width read and wrote past the buffers
+  (vector_add at width 16 called with n = 1031 wrote C[1031..1039]; measured RED with the
+  new canary harness against the parent's kernel), and a non-divisible compile-time count
+  had been legalized to scalar. The kernel now runs its vector loop over `n & -W` and
+  finishes the remainder in a scalar epilogue at the selected width, declares
+  `epilogue=scalar`, refuses a width the mask cannot express; R12 holds the mask, the
+  epilogue and the declaration (an unbounded loop, a missing epilogue and an undeclared one
+  are each refused); and the self-check harness -- shared by the AOT, JIT and WASM paths --
+  drives every kernel with the planned count, `count + 7`, a sub-width count and zero
+  behind 64-element canaries. With S0-A through S0-G landed, Stage 0 of the GEM+/TMSAO
+  program is closed and Stage 1 (G1, G3, G11, G5) is unblocked.
 
 ---
 

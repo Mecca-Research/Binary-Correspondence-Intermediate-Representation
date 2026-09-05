@@ -1109,6 +1109,7 @@ _LEGAL_RESULT_OPS = {
     "add",
     "sub",
     "mul",
+    "and",  # the tail contract's mask: nvec = n & -W
     "fadd",
     "fsub",
     "fmul",
@@ -1117,6 +1118,7 @@ _LEGAL_STMT_OPS = {"store", "br", "ret", "fence"}
 _RESULT_RE = re.compile(r"^%[\w.]+\s*=\s*(\w+)")
 _GUARD_RE = re.compile(r"icmp\s+\w+\s+i64\s+%\w+,\s*%n\b")
 _WIDTH_RE = re.compile(r"\bwidth=(\d+)\b")
+_EPILOGUE_RE = re.compile(r"\bepilogue=(\w+)\b")
 
 
 def verify_support_preservation(source, target, mapping=None) -> list[Diagnostic]:
@@ -1174,8 +1176,11 @@ def verify_lowering(
 
     Checks the textual kernel produced by `lower.llvm.emit_kernel_ll` against the
     K_BCIR-selected realization. The head comment is the discharge record: it must
-    declare the realized width, and that width must be the selected one or the
-    documented scalar legalization (count not divisible by the vector width).
+    declare the realized width, and that width must be the selected one. The kernel's
+    trip count is a RUNTIME value, so a vector kernel must discharge the tail contract
+    (S0-8): its vector loop is bounded by `n & -W` and a scalar epilogue finishes the
+    remainder, and the head declares `epilogue=scalar`. A kernel that steps its vector
+    loop to `n` is a miscompile for any `n` that is not a multiple of W.
     """
     from ..lower.llvm import _FOP, _IOP, find_elementwise
     from ..lower.memory_model import hazard_to_ordering
@@ -1195,11 +1200,10 @@ def verify_lowering(
         return [Diagnostic("R12", "discharge note does not declare a width")]
     declared_w = int(m.group(1))
 
-    # Lane geometry: the realized width is the K_BCIR-selected width, or the
-    # documented scalar legalization when the trip count is not divisible.
-    n = max(1, claim.count)
+    # Lane geometry: the realized width is the K_BCIR-selected width, whatever the
+    # count -- the epilogue, not a scalar legalization, absorbs a non-divisible trip.
     base_w = width_override if width_override else cand.width
-    expected_w = base_w if (base_w >= 1 and n % base_w == 0) else 1
+    expected_w = base_w if base_w >= 1 else 1
     if declared_w != expected_w:
         diags.append(
             Diagnostic(
@@ -1223,6 +1227,43 @@ def verify_lowering(
     if declared_w == 1 and f"x {ety}>" in ll_text:
         diags.append(
             Diagnostic("R12", "lane geometry not preserved: vector types in a scalar lowering")
+        )
+
+    # The tail contract (S0-8): a vector kernel bounds its vector loop by the largest
+    # multiple of the width not above the runtime n and finishes the rest in a scalar
+    # epilogue, and says so in its discharge note.
+    em = _EPILOGUE_RE.search(head)
+    epilogue = em.group(1) if em else None
+    if declared_w > 1:
+        if epilogue != "scalar":
+            diags.append(
+                Diagnostic(
+                    "R12",
+                    "tail contract not discharged: a vector kernel must declare "
+                    f"epilogue=scalar (got {epilogue!r})",
+                )
+            )
+        if f"and i64 %n, -{declared_w}" not in ll_text:
+            diags.append(
+                Diagnostic(
+                    "R12",
+                    "tail contract not discharged: the vector loop is not bounded by the "
+                    f"largest multiple of the width (no `and i64 %n, -{declared_w}` mask)",
+                )
+            )
+        if f"{op_ll} {ety} " not in ll_text:
+            diags.append(
+                Diagnostic(
+                    "R12",
+                    "tail contract not discharged: no scalar epilogue "
+                    f"('{op_ll} {ety}') for the remainder of a runtime n",
+                )
+            )
+    elif epilogue not in (None, "none"):
+        diags.append(
+            Diagnostic(
+                "R12", f"lane geometry not preserved: a scalar kernel declares epilogue={epilogue}"
+            )
         )
 
     # No invented instructions: every emitted instruction is in the legal set.

@@ -1304,6 +1304,11 @@ and reject work outside it. The current profiles are:
   surface and route-to-resident-compiler fallback. It must not claim complete ISO C23.
 - **LLVM AOT/JIT profile:** exactly one selected, two-read/one-write elementwise
   add/sub/mul claim on the Python path. Additional executable claims are a hard error.
+  The kernel takes its trip count at runtime under the **tail contract**: a vector
+  kernel bounds its `<W x …>` loop by `n & -W` and finishes the remainder in a scalar
+  epilogue, so it is bounds-safe for any `n` at the selected width; R12 holds the mask
+  and the epilogue, and the self-check harness drives every kernel with a non-divisible
+  count, a sub-width count and zero behind canaries.
   MLIR `bcir-aot` is partial preparation and may leave mixed BCIR/GEM/LLVM operations.
 - **x86 ordinary-entry profile:** long-mode C handoff, descriptor/segment operations,
   and the accepted ordinary interrupt/trap vectors described in §11. It excludes reset

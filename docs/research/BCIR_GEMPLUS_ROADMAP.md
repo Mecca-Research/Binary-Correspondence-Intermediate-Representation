@@ -326,21 +326,22 @@ and loses a 11.68× structural win is a net loss.
 
 "Semiring" must not become a label that admits arbitrary operators without their laws.
 
-### G7 — repair the native measurement rig
+### G7 — repair the native measurement rig — **landed (S0-F)**
 
-*Report P0.3. Small, and it invalidates a number currently in use.*
+*Report P0.3. Small, and it invalidated a number that was in use.*
 
-The microbench uses `(k * 16) % n` with a power-of-two `n`, so `gcd(n,16) = 16` and the walk
-visits `n/16` unique elements — a nominal 32 MiB buffer with a **2 MiB** working set. It also
-prints `native microbench (bare-metal)` under WSL.
+The microbench used `(k * 16) % n` with a power-of-two `n`, so `gcd(n,16) = 16` and the walk
+visited `n/16` unique elements — a nominal 32 MiB buffer with a **2 MiB** working set. It also
+printed `native microbench (bare-metal)` under WSL and under this session's hypervisor alike.
 
-| Gate | Baseline | Target |
-|---|---|---|
-| `exact` Unique elements visited | n/16 | n (coprime stride or proved full-cycle permutation) |
-| `exact` Provenance under virtualization | claims bare-metal | refuses the claim |
-| `exact` Report contents | ratios only | raw samples, intervals, working-set census, counter availability |
+| Gate | Baseline | Target | S0-F |
+|---|---|---|---|
+| `exact` Unique elements visited | n/16 | n (coprime stride or proved full-cycle permutation) | n: the walk runs the gcd(stride, n) cosets of ⟨stride⟩ in Z_n, each a full cycle, and a non-timed **census** counts the unique elements per regime (`unique=n/n/n` in the provenance; `strided_order` is the Python twin and the test pins the parent's n/gcd as the witness) |
+| `exact` Provenance under virtualization | claims bare-metal | refuses the claim | the rig attests hypervisor flag, hypervisor nodes, DMI, WSL, container and the PMU event source, derives a **tenancy** (`virtualized` / `containerized` / `bare-metal` / `unproven`) and reserves "bare-metal" for no virtualization signal plus an exposed PMU; `CalibratedProfile.from_json` refuses a provenance whose claim the evidence does not attest and `calibrate_native(require_baremetal=True)` refuses every other tenancy |
+| `exact` Report contents | ratios only | raw samples, intervals, working-set census, counter availability | `NativeEvidence`: one raw sample per repeat and its (min, median, max, MAD), the census and working-set bytes, PMU source, `perf_event_paranoid`, governor, RAPL, clocksource, the observed timer quantum, OS/arch/compiler; the reader re-derives the Q8 ratios from the medians and refuses a disagreeing summary |
 
-Until this lands, no `native.*` row is a silicon certificate — only a structural comparison.
+A `native.*` row is a silicon certificate only where its evidence says `bare-metal`; on this
+session's host it says `virtualized: hypervisor-flag`, which is the refusal made mechanical.
 
 ### G8 — data movement as a first-class transformation
 
@@ -597,10 +598,10 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
                                            S0-5 module-scoped verifier walks             <- LANDED (S0-B)
                                            S0-6 shared structural-law corpus, both rails    <- LANDED (S0-C)
                                            S0-7 R9 re-derives offer/cost/feasibility; C R9 width/cost  <- LANDED (S0-A)
-                                           S0-8 lowering tail contract; convolution overflow fixture  <- fixture + checked arithmetic LANDED (S0-C); tail contract open
+                                           S0-8 lowering tail contract; convolution overflow fixture  <- fixture + checked arithmetic LANDED (S0-C); tail contract LANDED (S0-G)
                                            S0-9 ODS→IRDL inventory gate                  <- LANDED (S0-B)
                                            S0-10 bcir-performance-audit rename + wording sweep  <- LANDED (S0-A)
-                                           G7   native measurement repair
+                                           G7   native measurement repair          <- LANDED (S0-F)
 Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5
 Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13
 Stage 3  IPC at every level                G14 → G15 → G16

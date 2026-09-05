@@ -145,9 +145,19 @@ def test_native_microbench_measures_a_wellformed_table():
     assert t.cal_gen == 2 and t.name == AVX.name
     assert t.stream_q8 == 256  # streaming baseline (R8)
     assert all(r >= 256 for r in (t.stream_q8, t.strided_q8, t.random_q8, t.compute_q8))
-    # bare metal sees real latency: gather is at least as dear as streaming.
+    # real cache latency: gather is at least as dear as streaming.
     assert t.random_q8 >= t.stream_q8 and t.gather_penalty >= 1
-    assert "bare-metal" in t.provenance
+    # G7 (S0-F): the provenance carries the tenancy the rig attested; "bare-metal" is a
+    # verdict the evidence has to earn, never a label (this host may be virtualized).
+    assert t.evidence is not None and t.evidence.tenancy in (
+        "bare-metal",
+        "virtualized",
+        "containerized",
+        "unproven",
+    )
+    assert t.provenance.startswith(f"native microbench ({t.evidence.tenancy}: ")
+    assert ("bare-metal" in t.provenance) == t.evidence.silicon
+    assert t.evidence.unique_strided == t.evidence.n  # the census, not the old n/16
 
 
 def test_native_loop_closes_admissibly():
