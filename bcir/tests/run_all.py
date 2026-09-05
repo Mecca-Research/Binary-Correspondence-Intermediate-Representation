@@ -248,6 +248,7 @@ _MODULES = [
     "bcir.tests.test_indirect_effect",
     "bcir.tests.test_volatile_atomic_law",
     "bcir.tests.test_provenance_twin",
+    "bcir.tests.test_hash_parity",
     "bcir.tests.test_ir_structural_parity",
     "bcir.tests.test_cfront_roundtrip",
     "bcir.tests.test_cfront_link",
