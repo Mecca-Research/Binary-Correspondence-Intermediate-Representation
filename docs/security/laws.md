@@ -68,6 +68,11 @@ Post-campaign instance (the installed-environment audit, 2026-09-04):
 `test_installed_mode_enumeration_failure_is_a_verdict` (broken distribution
 metadata makes `importlib.metadata` raise; in a required job that is a
 structured FAIL with the reason, never a traceback).
+Review instance (#761, 2026-09-05):
+`test_a_manifest_whose_root_is_not_an_object_is_a_finding_not_a_traceback`
+(`[]` and `null` are valid JSON; the ODS→IRDL inventory gate dereferenced
+the decoded root and raised `AttributeError` in place of its verdict, with
+no `--json-out` report and no exit code).
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -134,6 +139,19 @@ zero stride folded to 1, a negative count verified clean, and an HBM-only MAP
 program was refused. The corpus's own comparison is witnessed:
 `test_findings_name_every_kind_of_disagreement` injects each way a rail can
 disagree with the corpus and asserts each is a finding.
+Review instances (#761/#762, 2026-09-05): the ODS→IRDL inventory gate counted
+a `//`-commented `irdl.operation` as projected and stayed PASS over a
+projection that defined one operation less
+(`test_a_commented_out_declaration_is_not_a_declaration`); the
+fixture-execution gate counted a `#`-commented runner line as an execution --
+green on the exact scenario it exists to catch
+(`test_a_commented_out_reference_is_not_an_execution`); and the corpus's
+`also_laws` was an allowlist, so a rail that dropped a required diagnostic
+passed the subset check
+(`test_a_declared_additional_law_is_required_not_merely_allowed`). A text
+gate reads its sources the way their compilers do (`active_text`,
+`active_shell_text`), and a documented requirement is asserted, never merely
+permitted.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -163,6 +181,13 @@ data allocates like any other input),
 `test_concatenated_compressed_streams_are_counted` (the same stream-COUNT
 bound the xz rail got, on gzip and bzip2 — a budget that measures the
 wrong resource is not a budget).
+Review instances (#762, 2026-09-05): `-bcir-verify` derived `4*strided_q8`
+unchecked -- a ratio above INT64_MAX/4 passes R8's floor, and the signed
+overflow was undefined behaviour where the law owes a refusal (a wrap prices
+the derivation at 1); the product goes through `checkedMulNonnegative` like
+every other product in the pass (`calibration.strided_q8_overflow`, both
+rails). The oracle's `BinaryField` admitted an end offset the law rail's
+signed 64-bit field arithmetic cannot represent (`m5.field.end_overflow`).
 **Port note:** this is the memory-safety law. In Python these failures were
 OOMs; in C the same shapes are allocator abuse and heap corruption. Every
 `malloc` sized from input data is an L3 site.
@@ -346,6 +371,15 @@ law or for another reason is a finding (`structural_corpus.findings`), and the
 law-rail projection pins one `expected-error` per expected diagnostic, so a
 case that trips two laws (the MAP device-register write: R3 and R5) declares
 both rather than passing on either.
+Review instances (#762, 2026-09-05): three M5 descriptor rules had a twin on
+one rail only -- the tokenless grammar and the duplicate record NAME (refused
+by the oracle's constructors, admitted by the op verifiers, which see symbols
+and not names) and the field end overflow (refused by `BinaryFieldOp`,
+admitted by the oracle) -- and none had a corpus case, so the differential
+could not see them. Each has both twins and its case now
+(`m5.grammar.no_tokens`, `m5.format.duplicate_record_name`,
+`m5.field.end_overflow`): a construct absent from the corpus is untested,
+however many tests run over it.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -424,6 +458,19 @@ hierarchy via two dialect attributes with a pinned default, the declared claim o
 dropping a sort on both sides -- with `test_hash_parity.py` driving the law rail over
 emitted modules and their real manifests. A hash widened on one rail is a content
 address the rails disagree about, which is worse than the gap it closes.
+Review instances (#761/#762, 2026-09-05): S0-A's R9 re-derivation had landed on
+the oracle and the C rail and not on the law rail, so `bcir-optimize`'s trailing
+checkpoint accepted any `kbcir.plan_width` / `plan_cost` / `plan_score` the plan
+pass -- or a forger -- wrote: the dominant defect shape once more, a mechanism
+on two rails out of three. `-bcir-verify` re-derives the emitted plan through the
+planner's own `cm::` functions (`verify_plan_annotations.mlir`: the emitted plan
+accepted, four corruptions refused). The ROP frontend's pre-scan registered every
+rid and not its domain, so a forward-declared MMIO register derived RAM -- a
+shared predicate with an unstated precondition (declaration before use) that its
+second caller violated (`test_rop_forward_declared_resource_keeps_its_declared_domain`).
+And the pointer-width mirror is compared entry for entry out of both sources
+(`test_the_pointer_width_tables_are_one_table_on_both_rails`), not on the
+handful of triples the corpus happens to use: `arm64_32` was 64 on both.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -580,6 +627,31 @@ whose CTest manifest names build-tree fixtures, a pkg-config file
 pointing at headers the install step never copied, a `make check` that
 passes only in the source directory. The manifest is the promise; the
 install tree is the audit.
+
+### L22 — Every rule admits a witness
+A law's rows are proved both ways: an illegal case the row refuses AND a
+legal case it admits. A row whose admissible set is empty under the other
+rules in force is not strictness, it is a defect no green run can show. The
+R12 address-width table carried 16-bit contracts for `avr` and `msp430`
+while the op-level address floor refused every operand narrower than 32
+bits: on those targets an i16 address failed the floor and an i32 address
+failed R12, so no MMIO or atomic access was legal and every fixture over
+them would have been an illegal case (#762 review, 2026-09-05). This is the
+dual of L2: prove the gate can PASS on the input it exists to admit, not
+only that it can fire. The structural corpus asks it per law family (a legal
+and an illegal case each,
+`test_the_corpus_is_non_trivial_and_declares_every_rail`); this law asks it
+per row, and the rows below the floor are gone from both tables rather than
+kept as a contract nothing can meet.
+Witnesses: `test_the_pointer_width_tables_are_one_table_on_both_rails` (no
+tabulated width below `ADDRESS_FLOOR_BITS` / `kAddressFloorBits`, on either
+rail), the corpus's `addr.i32_under_arm64_32` and `addr.i32_under_riscv32`
+(a legal address per tabulated width class),
+`verify_plan_annotations.mlir` `@plan_ok` (the plan the planner emits is
+accepted before four corruptions are refused).
+**Port note:** identical everywhere; in C the shape is a range check whose
+lower bound another check has already raised past its upper bound, or an
+`enum` value no `switch` arm admits.
 
 ## Campaign classification summary
 

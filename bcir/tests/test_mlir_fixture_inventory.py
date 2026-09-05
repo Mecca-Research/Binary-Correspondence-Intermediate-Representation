@@ -25,11 +25,51 @@ RUNNERS = Path("tools/wsl")
 _REFERENCE = re.compile(r"(?:\$\{T\}|mlir/test/passes)/([A-Za-z0-9_]+\.mlir)")
 
 
+def active_shell_text(text: str) -> str:
+    """The script with its comments removed, by bash's rule: a `#` that begins a word outside
+    quotes starts a comment to the end of the line; a `#` inside '...' or "..." or in `${#v}` is
+    data. A fixture named only in a comment -- a disabled invocation, or shell documentation --
+    is not executed, and the gate must say so: it stayed green on the text of the comment, the
+    exact scenario it exists to catch (laws.md L2)."""
+    out: list[str] = []
+    quote = ""
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if quote:
+            out.append(c)
+            if c == "\\" and quote == '"' and i + 1 < n:  # an escape inside "..."
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = ""
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:  # an escaped character outside quotes
+            out.append(c)
+            out.append(text[i + 1])
+            i += 2
+            continue
+        if c in "'\"":
+            quote = c
+            out.append(c)
+            i += 1
+            continue
+        if c == "#" and (i == 0 or text[i - 1] in " \t\n;|&()<>"):  # a word-initial `#`
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def reconcile(fixture_dir: Path, runner_dir: Path) -> dict:
     fixtures = {path.name for path in fixture_dir.glob("*.mlir")}
     referenced: set[str] = set()
     for script in sorted(runner_dir.glob("*.sh")):
-        referenced |= set(_REFERENCE.findall(script.read_text(encoding="utf-8")))
+        referenced |= set(_REFERENCE.findall(active_shell_text(script.read_text(encoding="utf-8"))))
     return {
         "executed": sorted(fixtures & referenced),
         "unexecuted": sorted(fixtures - referenced),
@@ -80,3 +120,29 @@ def test_a_dangling_reference_is_a_finding() -> None:
         report = reconcile(fixtures, runners)
         assert report["dangling"] == ["ghost.mlir", "gone.mlir"]
         assert report["unexecuted"] == []
+
+
+def test_a_commented_out_reference_is_not_an_execution() -> None:
+    """L2: disabling a fixture's invocation with `#`, or naming the fixture in a comment, leaves
+    it unexecuted -- the gate fires on both. A `#` inside a quoted string is data (the runners
+    echo `#PF` and `#DF` in their labels), so a reference on such a line still counts."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fixtures, runners = Path(tmp) / "passes", Path(tmp) / "wsl"
+        fixtures.mkdir()
+        runners.mkdir()
+        for name in ("run", "disabled", "documented", "quoted"):
+            (fixtures / f"{name}.mlir").write_text("// RUN: bcir-opt %s\n", encoding="utf-8")
+        (runners / "check.sh").write_text(
+            '"${BO}" "${T}/run.mlir" # see mlir/test/passes/documented.mlir for the shape\n'
+            '# "${BO}" "${T}/disabled.mlir"\n'
+            "  #  run_fc -bcir-verify mlir/test/passes/disabled.mlir\n"
+            'echo "ok   #PF hardware error ${T}/quoted.mlir"; "${BO}" "${T}/quoted.mlir"\n',
+            encoding="utf-8",
+        )
+        report = reconcile(fixtures, runners)
+        assert report["executed"] == ["quoted.mlir", "run.mlir"]
+        assert report["unexecuted"] == ["disabled.mlir", "documented.mlir"]
+        assert report["dangling"] == []
+    assert active_shell_text("a='#x' b=\"y #z\" ${#v} # c\n#d\n e \\# f") == (
+        "a='#x' b=\"y #z\" ${#v} \n\n e \\# f"
+    )

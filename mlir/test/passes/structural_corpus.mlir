@@ -516,6 +516,41 @@ bcir.module @m {
 
 // -----
 
+// addr.i32_under_arm64_32 [legal] -- the watchOS ILP32 ABI: a 32-bit pointer on a 64-bit family (the family prefix claimed it as 64; #762 review)
+bcir.module @m {
+  bcir.target.capability @cpu { triple = "arm64_32-apple-watchos", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32 }
+  func.func @f(%addr: i32) -> i32 {
+    %v = bcir.volatile_load %addr : i32 -> i32
+    return %v : i32
+  }
+}
+
+// -----
+
+// addr.i64_under_arm64_32 [R12]
+bcir.module @m {
+  bcir.target.capability @cpu { triple = "arm64_32-apple-watchos", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32 }
+  func.func @f(%addr: i64) -> i32 {
+    // expected-error @+1 {{R12: the device-register address is 64 bits but the target 'arm64_32-apple-watchos' addresses 32-bit pointers; the inttoptr lowering would leave it truncated}}
+    %v = bcir.volatile_load %addr : i64 -> i32
+    return %v : i32
+  }
+}
+
+// -----
+
+// addr.i16_below_the_floor [R12] -- the floor holds whatever the target (an unknown one here): the op verifier on the law rail, R12 on the oracle -- and no tabulated width is below it (#762 review)
+bcir.module @m {
+  bcir.target.capability @cpu { triple = "x", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32 }
+  func.func @f(%addr: i16) -> i32 {
+    // expected-error @+1 {{the device-register address must be an integer of at least pointer width (>= 32 bits; got 'i16')}}
+    %v = bcir.volatile_load %addr : i16 -> i32
+    return %v : i32
+  }
+}
+
+// -----
+
 // addr.i32_unknown_triple [legal] -- an architecture the table does not know: the law is vacuous, the >= 32-bit floor holds
 bcir.module @m {
   bcir.target.capability @cpu { triple = "x", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32 }
@@ -657,6 +692,15 @@ bcir.module @m {
 
 // -----
 
+// calibration.strided_q8_overflow [R13] -- a ratio above INT64_MAX/4 passes R8's floor; the oracle prices in unbounded integers and sees the drift, the law rail refuses the derivation it cannot represent instead of overflowing (#762 review)
+bcir.module @m {
+  // expected-error @+1 {{R13: capability @cpu certificate @cal strided_q8 4611686018427387904 overflows the base_overhead derivation (4*strided_q8 exceeds signed 64-bit range)}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, gather_penalty = 32 : i32, base_overhead = 4 : i32, mem_unit = 1 : i32, cal_gen = 1 : i64 }
+  bcir.kbcir.calibration @cal { target = @cpu, cal_gen = 1 : i64, samples = 5 : i64, provenance = "host", stream_q8 = 256 : i64, strided_q8 = 4611686018427387904 : i64, random_q8 = 8192 : i64, compute_q8 = 256 : i64 }
+}
+
+// -----
+
 // m5.binary.legal [legal] -- the NVMe SQE header
 bcir.module @m {
   bcir.binary.format @f attributes { endianness = "little", alignment_bits = 8 : i64 } {
@@ -696,6 +740,17 @@ bcir.module @m {
   bcir.binary.format @f attributes { endianness = "little", alignment_bits = 8 : i64 } {
     // expected-error @+1 {{field 'a': kind must be one of u|s|f|bytes (got 'q')}}
     bcir.binary.field @a { name = "a", offset_bits = 0 : i64, width_bits = 8 : i64, kind = "q", semantic = "" }
+    bcir.binary.record @r { name = "r", fields = [@a], size_bits = 0 : i64 }
+  }
+}
+
+// -----
+
+// m5.field.end_overflow [R21] -- the end offset is signed 64-bit on the wire; the oracle admitted an end it could not hand the law rail (#762 review)
+bcir.module @m {
+  bcir.binary.format @f attributes { endianness = "little", alignment_bits = 8 : i64 } {
+    // expected-error @+1 {{field 'a': offset_bits + width_bits exceeds signed 64-bit range}}
+    bcir.binary.field @a { name = "a", offset_bits = 9223372036854775807 : i64, width_bits = 1 : i64, kind = "u", semantic = "" }
     bcir.binary.record @r { name = "r", fields = [@a], size_bits = 0 : i64 }
   }
 }
@@ -753,6 +808,18 @@ bcir.module @m {
   bcir.binary.format @f attributes { endianness = "little", alignment_bits = 0 : i64 } {
     bcir.binary.field @b { name = "b", offset_bits = 0 : i64, width_bits = 32 : i64, kind = "u", semantic = "" }
     bcir.binary.record @r { name = "r", fields = [@b], size_bits = 0 : i64 }
+  }
+}
+
+// -----
+
+// m5.format.duplicate_record_name [R21] -- two records with distinct symbols and one name: the symbol table cannot see it (#762 review)
+bcir.module @m {
+  // expected-error @+1 {{format 'f': duplicate record name 'r'}}
+  bcir.binary.format @f attributes { endianness = "little", alignment_bits = 8 : i64 } {
+    bcir.binary.field @a { name = "a", offset_bits = 0 : i64, width_bits = 8 : i64, kind = "u", semantic = "" }
+    bcir.binary.record @r { name = "r", fields = [@a], size_bits = 0 : i64 }
+    bcir.binary.record @r2 { name = "r", fields = [@a], size_bits = 0 : i64 }
   }
 }
 
@@ -863,6 +930,16 @@ bcir.module @m {
   // expected-error @+1 {{grammar 'g': start_symbol must be non-empty}}
   bcir.parse.grammar @g attributes { syntax = "ebnf", start_symbol = "" } {
     bcir.parse.token @IDENT { pattern = "[A-Za-z_]+", skip = false, precedence = 0 : i32 }
+  }
+}
+
+// -----
+
+// m5.grammar.no_tokens [R21] -- the tokenless body is spelled as an empty block (`^bb0:`) on the law rail (#762 review)
+bcir.module @m {
+  // expected-error @+1 {{grammar 'g': at least one token rule is required (tokens must be non-empty)}}
+  bcir.parse.grammar @g attributes { syntax = "ebnf", start_symbol = "claim" } {
+  ^bb0:
   }
 }
 

@@ -9,6 +9,7 @@
 #include "BCIR/BCIRDialect.h"
 #include "BCIR/BCIROps.h"
 #include "BCIR/BCIRPasses.h"
+#include "BCIRCostModel.h"
 #include "BCIRPassSupport.h"
 
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
@@ -877,6 +878,109 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
+    // R9 (the emitted plan; S0-3 / #761 review): -bcir-plan annotates each claim with
+    // kbcir.plan_width + kbcir.plan_cost and the module with kbcir.plan_score, and the
+    // checkpointed pipelines verify the module AFTER planning -- so the checkpoint has to read
+    // the plan, or a corrupt annotation verifies exactly as a sound one does (the trailing
+    // verifier repeated the entry checks over unchanged inputs). The oracle's verify_plan R9,
+    // in C++: every claim of a planned module is realized (both annotations, together); each
+    // realized width is one this target admits for the claim (the planner's own offer --
+    // fusedColumns / candidatesFor); each realized cost re-derives from the scope -- the
+    // candidate coupled by the context factor of the realized predecessor, scalarized under
+    // the policy weights, BCIRPlanPass's edge exactly; and the score is the sum of the
+    // realized costs. Consistency, not optimality: another candidate of the same offer,
+    // consistently priced, is a different legal plan, as it is on the oracle.
+    {
+      auto planScore = root->getAttrOfType<IntegerAttr>("kbcir.plan_score");
+      bool annotated = static_cast<bool>(planScore);
+      walkScope(root, [&](ClaimOp c) {
+        if (c->getAttr("kbcir.plan_width") || c->getAttr("kbcir.plan_cost"))
+          annotated = true;
+      });
+      if (annotated) {
+        cm::PlanAnalysis pa(root);
+        const bool weighted =
+            pa.weights.size() == 12 && llvm::all_of(pa.weights, [](int64_t w) { return w >= 0; });
+        auto joined = [](ArrayRef<int64_t> values) {
+          std::string out;
+          for (int64_t v : values)
+            out += (out.empty() ? "" : ", ") + std::to_string(v);
+          return out;
+        };
+        if (!pa.hasCap) {
+          root->emitError(
+              "R9: plan annotations without a target.capability and claims to re-derive them from");
+          ok = false;
+        } else if (!weighted) {
+          root->emitError("R9: plan annotations without a 12-d non-negative kbcir.policy to "
+                          "re-derive the scalarization under");
+          ok = false;
+        } else {
+          int64_t sum = 0;
+          bool complete = true;
+          int64_t prevWidth = 0;
+          ArrayRef<StringRef> prevReads;
+          for (const cm::Column &col : pa.cols) {
+            ClaimOp claim = col.claim; // a value handle: the accessors are non-const
+            auto widthAttr = claim->getAttrOfType<IntegerAttr>("kbcir.plan_width");
+            auto costAttr = claim->getAttrOfType<IntegerAttr>("kbcir.plan_cost");
+            if (!widthAttr || !costAttr) {
+              claim.emitError("R9: plan does not realize claim @")
+                  << claim.getSymName()
+                  << " (a planned module annotates every claim with kbcir.plan_width and "
+                     "kbcir.plan_cost together)";
+              ok = false;
+              complete = false;
+              prevWidth = 0;
+              prevReads = {};
+              continue;
+            }
+            const int64_t width = widthAttr.getInt(), cost = costAttr.getInt();
+            if (cost < 0) {
+              claim.emitError("R8: claim @")
+                  << claim.getSymName() << " negative realized cost " << cost;
+              ok = false;
+            }
+            SmallVector<int64_t> offered, prices;
+            for (const cm::Cand &cand : col.cands) {
+              if (!llvm::is_contained(offered, cand.width))
+                offered.push_back(cand.width);
+              if (cand.width != width)
+                continue;
+              cm::Cost e = cand.cost;
+              cm::applyFactor(
+                  e, cm::contextFactor(pa.thetaThermal, prevReads, prevWidth, col.reads, width));
+              prices.push_back(cm::scalarize(e, pa.weights));
+            }
+            if (prices.empty()) {
+              claim.emitError("R9: claim @")
+                  << claim.getSymName() << " realized at width " << width << ", not among the "
+                  << offered.size()
+                  << " candidate width(s) this target admits: " << joined(offered);
+              ok = false;
+            } else if (!llvm::is_contained(prices, cost)) {
+              claim.emitError("R9: claim @") << claim.getSymName() << " realized cost " << cost
+                                             << " does not re-derive from the scope (expected "
+                                             << joined(prices) << " for width " << width << ")";
+              ok = false;
+            }
+            sum = saturatingAddNonnegative(sum, std::max<int64_t>(0, cost));
+            prevWidth = width;
+            prevReads = col.reads;
+          }
+          if (!planScore) {
+            root->emitError(
+                "R9: claims carry plan annotations but the module declares no kbcir.plan_score");
+            ok = false;
+          } else if (complete && planScore.getInt() != sum) {
+            root->emitError("R9: plan score ")
+                << planScore.getInt() << " != sum of realized costs " << sum;
+            ok = false;
+          }
+        }
+      }
+    }
+
     // R9: L2 learning placement -- portfolios carry parallel generation/
     // certification state over declared policies; a replay certificate admits
     // only on zero regressions over at least one episode.
@@ -968,7 +1072,20 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       // base_overhead = max(1, 4*strided_q8/256), mem_unit = 1 (CalibratedProfile.apply). A
       // matching generation with drifted constants is a table the rule in force never used.
       int64_t gather = std::max<int64_t>(1, static_cast<int64_t>(cal.getRandomQ8()) / 256);
-      int64_t base = std::max<int64_t>(1, (4 * static_cast<int64_t>(cal.getStridedQ8())) / 256);
+      // 4*strided_q8 is checked: a ratio above INT64_MAX/4 passes R8's lower bound, and the
+      // signed overflow was undefined behaviour (a wrap prices the derivation at 1) where the
+      // law owes a deterministic refusal.
+      int64_t strided = static_cast<int64_t>(cal.getStridedQ8());
+      int64_t strided4 = 0;
+      if (strided < 0 || !checkedMulNonnegative(4, strided, strided4)) {
+        t.emitError("R13: capability @")
+            << t.getSymName() << " certificate @" << cal.getSymName() << " strided_q8 " << strided
+            << " overflows the base_overhead derivation (4*strided_q8 exceeds signed 64-bit "
+               "range)";
+        ok = false;
+        return;
+      }
+      int64_t base = std::max<int64_t>(1, strided4 / 256);
       int64_t haveGather = static_cast<int64_t>(t.getGatherPenalty());
       int64_t haveBase = static_cast<int64_t>(t.getBaseOverhead());
       int64_t haveUnit = static_cast<int64_t>(t.getMemUnit());
@@ -1198,7 +1315,12 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       KBCIRThetaOp theta;
       TargetCapabilityOp cap;
       KBCIRPolicyOp pol;
-      bool hasClaim = false;
+      // The goal graph hash_module folds: the module's resources, phases and claims. A module
+      // with resources or phases and no claim is hashable (provenance.hash_module and
+      // hashModuleFromIR both fold its metadata, resources and phases), so its manifest's
+      // m_module recomputes; presence keyed on a claim refused such a manifest as "no claim
+      // graph" (#762 review).
+      bool hasGraph = false;
       modOp->walk([&](Operation *op) {
         if (auto t = dyn_cast<KBCIRThetaOp>(op)) {
           if (!theta)
@@ -1209,8 +1331,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         } else if (auto p = dyn_cast<KBCIRPolicyOp>(op)) {
           if (!pol && p.getBaseWeights())
             pol = p;
-        } else if (isa<ClaimOp>(op)) {
-          hasClaim = true;
+        } else if (isa<ClaimOp, ResourceOp, PhaseOp>(op)) {
+          hasGraph = true;
         }
       });
       auto crossCheck = [&](StringRef field, int64_t declared, int64_t recomputed) {
@@ -1227,7 +1349,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       // attached to a module missing the very input it claims to have been planned from. A
       // bare manifest record (a module holding nothing but manifests) stays a digest-only
       // artifact, back-compatible.
-      const bool realModule = theta || cap || pol || hasClaim;
+      const bool realModule = theta || cap || pol || hasGraph;
       auto absent = [&](StringRef field, int64_t declared, bool present, StringRef what) {
         if (realModule && declared && !present) {
           pm.emitError("R13: manifest declares ")
@@ -1238,14 +1360,14 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       absent("m_theta", mth, static_cast<bool>(theta), "kbcir.theta");
       absent("m_policy", mp, static_cast<bool>(pol), "kbcir.policy with base_weights");
       absent("m_target", mt, static_cast<bool>(cap), "target.capability");
-      absent("m_module", mm, hasClaim, "claim graph");
+      absent("m_module", mm, hasGraph, "resource, phase or claim graph");
       if (mth && theta)
         crossCheck("m_theta", mth, hashThetaFromIR(theta));
       if (mp && pol)
         crossCheck("m_policy", mp, hashPolicyFromIR(pol));
       if (mt && cap)
         crossCheck("m_target", mt, hashTargetFromIR(cap));
-      if (mm && hasClaim)
+      if (mm && hasGraph)
         crossCheck("m_module", mm, hashModuleFromIR(modOp));
     });
 

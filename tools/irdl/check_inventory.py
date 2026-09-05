@@ -26,7 +26,9 @@ names differ from the dialect's.
 
 THE VERDICT (laws.md L1/L2): PASS, FAIL (every finding names its operation and its kind), or
 INVALID/VACUOUS when an inventory is empty -- a gate over nothing has audited nothing. No
-toolchain is needed: the inputs are text, so this runs on every host and in the quick tier."""
+toolchain is needed: the inputs are text, so this runs on every host and in the quick tier.
+The text is read the way its compilers read it: comments are not declarations (`active_text`),
+and a manifest whose root is not an object is a finding, never a traceback."""
 
 from __future__ import annotations
 
@@ -51,6 +53,54 @@ _IRDL_OP = re.compile(r'irdl\.operation\s+@"?([A-Za-z0-9_.]+)"?')
 _ODS_OP_CLASS = "BCIR_Op"
 
 
+def active_text(text: str) -> str:
+    """`text` with every `//` line comment and `/* */` block comment blanked (string literals
+    untouched, newlines kept). ODS (TableGen) and IRDL (MLIR) share C's comment syntax, and the
+    two parsers below read only what their compilers would: an `irdl.operation` or an ODS `def`
+    disabled by commenting it out is text, not an operation. The gate used to count it as one --
+    a projection with a commented-out operation reported PASS, and for an operation with no
+    corpus witness the round-trip gate would not have exposed the missing definition either
+    (laws.md L2: a gate must be able to fire on the change it exists to catch)."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':  # a string literal: copied verbatim, escapes included
+            out.append(c)
+            i += 1
+            while i < n:
+                ch = text[i]
+                out.append(ch)
+                i += 1
+                if ch == "\\" and i < n:
+                    out.append(text[i])
+                    i += 1
+                elif ch == '"':
+                    break
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":  # a line comment
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":  # a block comment (TableGen nests them)
+            depth, i = 1, i + 2
+            while i < n and depth:
+                if text.startswith("/*", i):
+                    depth += 1
+                    i += 2
+                elif text.startswith("*/", i):
+                    depth -= 1
+                    i += 2
+                else:
+                    if text[i] == "\n":
+                        out.append("\n")
+                    i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def projected_name(ods_name: str) -> str:
     """The IRDL spelling of an ODS operation name (the one naming rule)."""
     return ods_name.replace(".", "_")
@@ -61,7 +111,7 @@ def ods_operations(include_dir: Path) -> tuple[dict[str, str], list[dict]]:
     ops: dict[str, str] = {}
     findings: list[dict] = []
     for td in sorted(include_dir.glob("*.td")):
-        text = td.read_text(encoding="utf-8")
+        text = active_text(td.read_text(encoding="utf-8"))
         for match in _ODS_OP.finditer(text):
             op_class, name = match.group(1), match.group(2)
             if op_class != _ODS_OP_CLASS:
@@ -87,7 +137,7 @@ def ods_operations(include_dir: Path) -> tuple[dict[str, str], list[dict]]:
 
 
 def irdl_operations(irdl_file: Path) -> tuple[list[str], list[dict]]:
-    names = _IRDL_OP.findall(irdl_file.read_text(encoding="utf-8"))
+    names = _IRDL_OP.findall(active_text(irdl_file.read_text(encoding="utf-8")))
     findings = [
         {
             "kind": "duplicate-irdl-op",
@@ -104,6 +154,14 @@ def load_manifest(path: Path) -> tuple[dict, list[dict]]:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         return {}, [{"kind": "manifest-unreadable", "operation": "", "detail": str(exc)}]
+    if not isinstance(manifest, dict):  # valid JSON whose root is not an object: `[]`, `null`
+        return {}, [
+            {
+                "kind": "manifest-shape",
+                "operation": "",
+                "detail": f"the manifest's top level must be a JSON object (got {type(manifest).__name__})",
+            }
+        ]
     findings: list[dict] = []
     if manifest.get("schema") != SCHEMA:
         findings.append(

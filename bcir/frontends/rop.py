@@ -48,11 +48,15 @@ _MAX_U64 = (1 << 64) - 1
 
 
 class _P:
-    def __init__(self, toks: list[Token], resolver: dict[str, int]):
+    def __init__(self, toks: list[Token], resolver: dict[str, int], domains: dict[int, Domain]):
         self.t = toks
         self.i = 0
         self.resolver = dict(resolver)
-        self.domains: dict[int, Domain] = {}  # rid -> declared domain (the R3 derivation)
+        # rid -> declared domain (the R3 derivation), registered by the same pre-scan as the
+        # rids: a claim resolves a resource declared anywhere in the module, so its domain has to
+        # be known anywhere too -- filled in textual order it defaulted a forward-declared MMIO
+        # register to RAM, and the parsed module then failed R3.
+        self.domains: dict[int, Domain] = dict(domains)
         self.resource_names: set[str] = set()
         self.resource_ids: set[int] = set()
         self.phase_ids: set[int] = set()
@@ -131,11 +135,10 @@ class _P:
             raise ParseError(f"duplicate resource rid {rid}")
         if not 1 <= count <= _MAX_U64:
             raise ParseError(f"resource {name!r} count must be in [1, 2^64-1]")
-        if self.resolver.get(name) != rid:
+        if self.resolver.get(name) != rid or self.domains.get(rid) is not domain:
             raise ParseError(f"resource pre-scan disagrees for {name!r}")
         self.resource_names.add(name)
         self.resource_ids.add(rid)
-        self.domains[rid] = domain
         m.add_resource(Resource(rid=rid, domain=domain, shape=(count,), name=name))
 
     def _phase(self, cid_start: int) -> tuple[int, tuple[int, ...], list[Claim]]:
@@ -226,11 +229,16 @@ class _P:
 
         rd = tuple(resolve(n) for n in reads)
         wr = tuple(resolve(n) for n in writes)
-        # The domain contract is derived from the touched resources' declared domains (the
-        # pre-scan registered every rid; a resource declared AFTER this claim still resolves
-        # because `self.domains` is filled by `_resource` in textual order -- a claim that
-        # names a resource declared later than itself is refused by the resolver above).
-        touched = [Resource(rid=r, domain=self.domains.get(r, Domain.RAM)) for r in wr + rd]
+        # The domain contract is derived from the touched resources' DECLARED domains. The
+        # pre-scan registered every rid with its domain, so a resource declared after the claim
+        # that names it (the grammar allows any order) derives from its declaration, never from
+        # a default -- total by construction: the resolver and the domain map are one scan.
+        try:
+            touched = [Resource(rid=r, domain=self.domains[r]) for r in wr + rd]
+        except KeyError as exc:
+            raise ParseError(
+                f"claim {name!r} names resource rid {exc.args[0]} with no declared domain"
+            ) from exc
         try:
             domain = derived_claim_domain(touched[: len(wr)], touched[len(wr) :])
         except ValueError as exc:
@@ -257,21 +265,27 @@ def parse_rop_program(text: str) -> Module:
     toks = Lexer().tokenize(text)
     if len(toks) > _MAX_TOKENS:
         raise ParseError(f"ROP token count exceeds {_MAX_TOKENS}")
-    # Pre-scan resource decls to build the name->rid map before claims resolve.
+    # Pre-scan resource decls to build the name->rid map AND the rid->domain map before claims
+    # resolve: both are needed wherever a claim names a resource, in either textual order.
     resolver: dict[str, int] = {}
     rid_names: dict[int, str] = {}
+    domains: dict[int, Domain] = {}
     i = 0
     while i < len(toks) - 1:
         if toks[i].kind == "IDENT" and toks[i].text == "resource" and toks[i + 1].kind == "IDENT":
             name = toks[i + 1].text
-            # find rid token
+            rid: int | None = None
+            domain = Domain.RAM
             j = i + 2
-            while j < len(toks) and not (toks[j].kind == "IDENT" and toks[j].text == "rid"):
-                if toks[j].kind == "RBRACE":
-                    break
+            while j < len(toks) and toks[j].kind != "RBRACE":
+                if toks[j].kind == "IDENT" and j + 1 < len(toks):
+                    if toks[j].text == "rid" and toks[j + 1].kind == "INT":
+                        rid = int(toks[j + 1].text)
+                    elif toks[j].text == "domain" and toks[j + 1].kind == "IDENT":
+                        # an unknown spelling is refused by `_resource`; the default stands
+                        domain = _DOMAINS.get(toks[j + 1].text.lower(), domain)
                 j += 1
-            if j + 1 < len(toks) and toks[j].text == "rid" and toks[j + 1].kind == "INT":
-                rid = int(toks[j + 1].text)
+            if rid is not None:
                 if name in resolver:
                     raise ParseError(f"duplicate resource name {name!r}")
                 if rid in rid_names:
@@ -280,5 +294,6 @@ def parse_rop_program(text: str) -> Module:
                     )
                 resolver[name] = rid
                 rid_names[rid] = name
+                domains[rid] = domain
         i += 1
-    return _P(toks, resolver).parse()
+    return _P(toks, resolver, domains).parse()

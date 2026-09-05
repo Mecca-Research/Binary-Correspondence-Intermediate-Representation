@@ -329,28 +329,39 @@ inline bool isIsolatedDomain(Domain d) {
   return d == Domain::MMIO;
 }
 
+// The address operand of an MMIO or atomic access is at least this wide: the op floor of
+// verifyMmioAccess / verifyAtomicAddr (BCIRDialect.cpp), the oracle's ADDRESS_FLOOR_BITS.
+constexpr unsigned kAddressFloorBits = 32;
+
 // Pointer width (bits) of a target triple's architecture, or nullopt when the table does not
 // know it -- the R12 address-width law reads it. Mirrors bcir/kbcir/cost.py pointer_width:
 // only the architecture component matters, exact spellings first, then the versioned families
-// (`armv7`, `thumbv8`, `mipsel`, `powerpc64le`, ...). The structural corpus checks the two
-// tables agree on every triple in use.
+// (`armv7`, `thumbv8`, `mipsel`, `powerpc64le`, ...); a 32-bit ABI on a 64-bit family
+// (`arm64_32` / `aarch64_32`) is an exact entry so the family prefix cannot claim it. No width
+// below kAddressFloorBits is tabulated: a contract no operand the floor admits could meet is a
+// defect dressed as strictness (laws.md L22). test_structural_corpus reads both tables out of
+// their sources and requires them equal, entry for entry.
 inline std::optional<unsigned> pointerWidthOfTriple(StringRef triple) {
   std::string archStorage = triple.split('-').first.lower();
   StringRef arch(archStorage);
   if (arch.empty())
     return std::nullopt;
   static const std::pair<const char *, unsigned> kExact[] = {
-      {"x86_64", 64},      {"amd64", 64},       {"aarch64", 64},  {"aarch64_be", 64},
-      {"arm64", 64},       {"arm64e", 64},      {"riscv64", 64},  {"nvptx64", 64},
-      {"amdgcn", 64},      {"ppc64", 64},       {"ppc64le", 64},  {"powerpc64", 64},
-      {"powerpc64le", 64}, {"mips64", 64},      {"mips64el", 64}, {"wasm64", 64},
-      {"bpf", 64},         {"bpfel", 64},       {"bpfeb", 64},    {"sparcv9", 64},
-      {"sparc64", 64},     {"s390x", 64},       {"systemz", 64},  {"loongarch64", 64},
-      {"i386", 32},        {"i486", 32},        {"i586", 32},     {"i686", 32},
-      {"x86", 32},         {"arm", 32},         {"armeb", 32},    {"thumb", 32},
-      {"thumbeb", 32},     {"riscv32", 32},     {"nvptx", 32},    {"wasm32", 32},
-      {"mips", 32},        {"mipsel", 32},      {"ppc", 32},      {"powerpc", 32},
-      {"sparc", 32},       {"loongarch32", 32}, {"avr", 16},      {"msp430", 16},
+      {"x86_64", 64},     {"x86_64h", 64},     {"amd64", 64},       {"aarch64", 64},
+      {"aarch64_be", 64}, {"arm64", 64},       {"arm64e", 64},      {"arm64ec", 64},
+      {"riscv64", 64},    {"nvptx64", 64},     {"amdgcn", 64},      {"ppc64", 64},
+      {"ppc64le", 64},    {"powerpc64", 64},   {"powerpc64le", 64}, {"mips64", 64},
+      {"mips64el", 64},   {"wasm64", 64},      {"bpf", 64},         {"bpfel", 64},
+      {"bpfeb", 64},      {"sparcv9", 64},     {"sparc64", 64},     {"s390x", 64},
+      {"systemz", 64},    {"loongarch64", 64}, {"spir64", 64},      {"spirv64", 64},
+      {"ve", 64},         {"i386", 32},        {"i486", 32},        {"i586", 32},
+      {"i686", 32},       {"x86", 32},         {"arm", 32},         {"armeb", 32},
+      {"thumb", 32},      {"thumbeb", 32},     {"aarch64_32", 32},  {"arm64_32", 32},
+      {"riscv32", 32},    {"nvptx", 32},       {"wasm32", 32},      {"mips", 32},
+      {"mipsel", 32},     {"ppc", 32},         {"ppcle", 32},       {"powerpc", 32},
+      {"sparc", 32},      {"sparcel", 32},     {"loongarch32", 32}, {"spir", 32},
+      {"spirv32", 32},    {"hexagon", 32},     {"m68k", 32},        {"xtensa", 32},
+      {"csky", 32},       {"lanai", 32},       {"xcore", 32},       {"arc", 32},
   };
   unsigned exact = 0;
   for (const auto &[name, bits] : kExact)

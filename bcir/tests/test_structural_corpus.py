@@ -13,6 +13,7 @@ disagreement of every kind is a finding, never a pass.
 
 from __future__ import annotations
 
+import re
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -144,3 +145,70 @@ def test_the_cli_reports_the_verdict() -> None:
     text = out.getvalue()
     assert text.startswith("structural_corpus: ") and "findings 0" in text, text
     assert rc == 0
+
+
+def test_a_declared_additional_law_is_required_not_merely_allowed() -> None:
+    """`also_laws` names the further families BOTH rails must report. A rail that drops one --
+    the R5 volatile-hazard diagnostic beside the R3 domain refusal -- passed the subset check;
+    it is a `law` finding, and the complete verdict is not (#762 review)."""
+    case = next(c for c in sc.CASES if c.also_laws)
+    oracle_only = replace(case, rails=(sc.ORACLE,))
+    partial = sc.Verdict(sc.ORACLE, True, (f"R3: {case.oracle}",), ("R3",))
+    found = sc.findings(oracle_only, {sc.ORACLE: partial})
+    assert [f.kind for f in found] == ["law"], found
+    assert "requires ['R3', 'R5']" in found[0].detail
+    full = sc.Verdict(sc.ORACLE, True, (f"R3: {case.oracle}", "R5: ordered"), ("R3", "R5"))
+    assert sc.findings(oracle_only, {sc.ORACLE: full}) == []
+    extra = sc.Verdict(sc.ORACLE, True, (f"R3: {case.oracle}",), ("R3", "R5", "R7"))
+    assert [f.kind for f in sc.findings(oracle_only, {sc.ORACLE: extra})] == ["law"]
+
+
+_SUPPORT_H = Path("mlir/lib/passes/BCIRPassSupport.h")
+_TABLE_ENTRY = re.compile(r'\{"([a-z0-9_]+)",\s*(\d+)\}')
+
+
+def _law_rail_table(name: str) -> list[tuple[str, int]]:
+    """The `{"arch", bits}` pairs of one initializer of pointerWidthOfTriple, read out of the
+    C++ source itself (L14: never a third copy)."""
+    text = (_ROOT / _SUPPORT_H).read_text(encoding="utf-8")
+    start = text.index(f"{name}[] = {{")
+    end = text.index("};", start)
+    return [(arch, int(bits)) for arch, bits in _TABLE_ENTRY.findall(text[start:end])]
+
+
+def test_the_pointer_width_tables_are_one_table_on_both_rails() -> None:
+    """`pointer_width` and `pointerWidthOfTriple` are read out of their own sources and must
+    agree entry for entry, in order (L14: a mirror list WILL drift; the corpus's cases exercise
+    a handful of triples, this exercises every row). And no row is below the address floor:
+    a 16-bit contract could be met by no operand the op floor admits, so R12 refused every
+    address on `avr`/`msp430` -- a row no input can satisfy is a defect, not strictness (L22);
+    the watchOS ILP32 ABI (`arm64_32`) is 32-bit, which the `arm64` family prefix used to
+    claim as 64 (#762 review)."""
+    from bcir.kbcir import cost
+
+    assert _law_rail_table("kExact") == list(cost._POINTER_BITS.items())
+    assert _law_rail_table("kPrefixes") == list(cost._POINTER_BITS_PREFIX)
+    assert len(cost._POINTER_BITS) >= 50 and len(cost._POINTER_BITS_PREFIX) >= 5
+    floor = cost.ADDRESS_FLOOR_BITS
+    assert floor == 32
+    assert f"kAddressFloorBits = {floor};" in (_ROOT / _SUPPORT_H).read_text(encoding="utf-8")
+    assert all(bits >= floor for bits in cost._POINTER_BITS.values())
+    assert all(bits >= floor for _, bits in cost._POINTER_BITS_PREFIX)
+    assert cost.pointer_width("arm64_32-apple-watchos") == 32
+    assert cost.pointer_width("aarch64_32-apple-watchos") == 32
+    assert cost.pointer_width("arm64e-apple-ios") == 64
+    assert cost.pointer_width("avr-unknown-unknown") is None  # below the floor: no contract
+    assert cost.pointer_width("msp430-none-elf") is None
+    assert cost.pointer_width("spirv") is None  # logical addressing: no pointer width
+
+
+def test_the_address_floor_is_a_law_on_the_oracle_too() -> None:
+    """The law rail's op verifiers refuse an address narrower than 32 bits whatever the target;
+    the oracle used to accept i16 under an unknown triple (vacuous), a rail disagreement the
+    corpus never exercised. Now `addr.i16_below_the_floor` runs on both rails."""
+    from bcir.verify import verify_address_width
+
+    assert [d.law for d in verify_address_width("x", 16)] == ["R12"]
+    assert verify_address_width("x", 32) == []
+    assert [d.law for d in verify_address_width("arm64_32-apple-watchos", 64)] == ["R12"]
+    assert verify_address_width("arm64_32-apple-watchos", 32) == []

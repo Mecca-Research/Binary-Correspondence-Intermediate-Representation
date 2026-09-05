@@ -25,6 +25,7 @@ from tools.irdl.check_inventory import (  # noqa: E402
     INCLUDE_DIR,
     IRDL_FILE,
     MANIFEST,
+    active_text,
     audit,
     main,
     projected_name,
@@ -187,3 +188,53 @@ def test_the_cli_exit_code_is_the_verdict() -> None:
             assert main(["--root", str(tree), "--json-out", str(report_path)]) == 1
         assert "orphan" in out.getvalue()
         assert json.loads(report_path.read_text(encoding="utf-8"))["state"] == "FAIL"
+
+
+def test_a_commented_out_declaration_is_not_a_declaration() -> None:
+    """The gate reads the sources the way their compilers do: an `irdl.operation` disabled with
+    `//` no longer projects its ODS operation (undeclared), and an ODS `def` disabled with a
+    block comment leaves its projection an orphan. Both used to count, and the gate stayed PASS
+    over a projection that defined one operation less (L2)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = _copy_tree(Path(tmp))
+        irdl = tree / IRDL_FILE
+        text = irdl.read_text(encoding="utf-8")
+        assert text.count("irdl.operation @gem_stream_pack") == 1
+        irdl.write_text(
+            text.replace("irdl.operation @gem_stream_pack", "// irdl.operation @gem_stream_pack"),
+            encoding="utf-8",
+        )
+        report = audit(tree)
+        assert report["state"] == "FAIL"
+        assert ("undeclared", "gem.stream_pack") in _kinds(report), report["findings"]
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = _copy_tree(Path(tmp))
+        td = tree / INCLUDE_DIR / "BCIRGEMOps.td"
+        text = td.read_text(encoding="utf-8")
+        needle = 'BCIR_Op<"gem.stream_pack"'
+        assert text.count(needle) == 1
+        start = text.rfind("\ndef ", 0, text.index(needle)) + 1
+        end = text.index("\n", text.index(needle))
+        td.write_text(text[:start] + "/* " + text[start:end] + " */" + text[end:], encoding="utf-8")
+        report = audit(tree)
+        assert report["state"] == "FAIL"
+        assert ("orphan", "gem_stream_pack") in _kinds(report), report["findings"]
+    # the stripper itself: comments go, string literals and newlines stay, block comments nest.
+    assert (
+        active_text('a // x\nb /* c /* d */ e */ f "g // h /* i */" j')
+        == 'a \nb  f "g // h /* i */" j'
+    )
+
+
+def test_a_manifest_whose_root_is_not_an_object_is_a_finding_not_a_traceback() -> None:
+    """L1: `[]` and `null` are valid JSON; dereferencing them raised AttributeError in place of
+    the verdict (no --json-out report, no exit code contract)."""
+    for text in ("[]", "null", '"unprojected"', "3"):
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = _copy_tree(Path(tmp))
+            (tree / MANIFEST).write_text(text + "\n", encoding="utf-8")
+            report = audit(tree)
+            assert report["state"] == "FAIL", text
+            assert any(f["kind"] == "manifest-shape" for f in report["findings"]), text
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert main(["--root", str(tree)]) == 1
