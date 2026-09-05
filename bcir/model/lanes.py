@@ -40,3 +40,15 @@ class Domain(IntEnum):
     MMIO = 3
     CXL = 4
     HBM = 5
+
+
+#: The device-ISOLATED domains (LangRef R3): an MMIO register is a distinct address space the
+#: host cannot transparently substitute for a memory tier. RAM/HBM/VRAM/CXL/NVM are the
+#: tiers a claim may stage across (`kbcir.device_manifest._MEM_TIERS`; the HAM fabric reads
+#: NVM into VRAM by design, and the law rail's "NVM cell" isolation had no fixture -- the
+#: structural corpus surfaced the divergence and the tier model won). A resource in an
+#: isolated domain may be touched only by a claim that declares that domain; such a claim
+#: may still carry host-memory operands (the value an MMIO write stores, the index a
+#: register read uses) -- the shape every cfront MMIO access has. One predicate, both rails
+#: (`BCIRPassSupport.h` `isIsolatedDomain`).
+ISOLATED_DOMAINS: frozenset = frozenset({Domain.MMIO})

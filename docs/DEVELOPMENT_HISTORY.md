@@ -410,7 +410,19 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   runners, the verify/select/GEM passes are anchored at `bcir.module` through one scope
   predicate (a claim can no longer resolve another module's resource; namesake paths price per
   module), and the IRDL projection's subset is a manifest reconciled against ODS both ways
-  (38 of 133 operations declared unprojected, the underscore naming rule stated once).
+  (38 of 133 operations declared unprojected, the underscore naming rule stated once). S0-C
+  (2026-09-05) landed the shared structural-law corpus: `bcir/verify/structural_corpus.py`
+  holds 93 rail-neutral cases (widths, alignments, shapes, strides, phase identity and the one
+  canonical phase order, the isolated-domain rule, the target descriptor, the address width
+  under a declared target, the R13 manifest/portfolio/calibration records, the M5 descriptors,
+  the convolution wire domain, the MAP/ROP derived domain) that the quick tier runs on the oracle
+  and a generated, drift-gated `structural_corpus.mlir` runs under `check_passes.sh`, every
+  mismatch a finding. Seven assessment rows closed with the parent build's defects measured
+  first: the oracle folded a zero stride to 1 and refused an HBM-only MAP program; the law rail
+  admitted a duplicate phase id, a dangling dependency, an i32 device-register address under
+  x86_64 and an unsorted manifest artifact record, ignored a calibration certificate's
+  constants, validated no M5 descriptor, sorted phases by numeric id (an exec order that broke
+  the phase DAG), and lowered a verifier-legal one-tile convolution to a `count = 0` block.
 
 ---
 

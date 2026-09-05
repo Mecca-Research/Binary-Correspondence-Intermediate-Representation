@@ -133,7 +133,10 @@ static int64_t computeMakespan(const std::vector<cm::Column> &cols, ArrayRef<int
     if (std::find(phaseOrder.begin(), phaseOrder.end(), cols[i].phase) == phaseOrder.end())
       phaseOrder.push_back(cols[i].phase);
   }
-  llvm::sort(phaseOrder);
+  // S0-6 (row 9): the columns arrive in the canonical dependency-first phase order
+  // (fusedColumns), which is the order overlap.py::_makespan walks (_topo_phase_ids); a
+  // numeric sort here put a dependent phase before its producer when ids were declared out
+  // of dependency order. First appearance IS the canonical order.
 
   int64_t makespan = 0;
   for (int32_t pid : phaseOrder) {

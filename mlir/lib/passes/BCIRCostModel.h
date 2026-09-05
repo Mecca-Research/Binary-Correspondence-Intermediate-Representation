@@ -262,17 +262,21 @@ inline void symRefs(ArrayAttr a, SmallVectorImpl<StringRef> &out) {
       out.push_back(r.getValue());
 }
 
-// realize.fused_candidates: claims in (phase id, declared) order with the intra-phase
-// deforestation/CSE credits baked into every candidate. The plan pass adds the
-// path-based shared-input factor per edge on top of these.
+// realize.fused_candidates: claims in (canonical phase order, declared) order with the
+// intra-phase deforestation/CSE credits baked into every candidate. The plan pass adds the
+// path-based shared-input factor per edge on top of these. S0-6 (row 9): the phase order is
+// the ONE canonical dependency-first order (canonicalPhaseRank, the twin of the oracle's
+// _topo_phases), so the columns -- and every consumer that walks them in first-appearance
+// order (-bcir-overlap's makespan, -bcir-bundle) -- follow the phase DAG, not the numeric ids.
 inline std::vector<Column> fusedColumns(Operation *root, const Cap &h,
                                         const llvm::DenseMap<StringRef, ResourceOp> &resByName) {
   llvm::DenseMap<StringRef, int32_t> phaseId;
   root->walk([&](PhaseOp p) { phaseId[p.getSymName()] = p.getId(); });
+  llvm::DenseMap<StringRef, int64_t> rank = canonicalPhaseRank(root);
   SmallVector<ClaimOp> claims;
   root->walk([&](ClaimOp c) { claims.push_back(c); });
   llvm::stable_sort(claims, [&](ClaimOp a, ClaimOp z) {
-    return phaseId.lookup(a.getPhase()) < phaseId.lookup(z.getPhase());
+    return phaseRankOf(rank, a.getPhase()) < phaseRankOf(rank, z.getPhase());
   });
 
   std::vector<Column> cols;

@@ -286,6 +286,24 @@ def check_conv(
         )
     if spec.out_h < 1 or spec.out_w < 1:
         errs.append(f"conv: output is empty (out_h={spec.out_h}, out_w={spec.out_w})")
+    # The signed 64-bit WIRE domain (S0-6 / row 13 of the 2026-07/08 assessment): every derived
+    # extent -- the padded frame, the im2col dims, the output element count and the im2col work
+    # M*N*K -- must fit the i64 the MLIR attributes and the C runtime carry. The oracle's integers
+    # never overflow, so a conv the law rail's checked arithmetic refuses was admitted here, and a
+    # verifier-legal one-tile conv wrapped `count = rows*cols` in the GEM lowerer to 0. Same
+    # messages as the `bcir.gem.conv` op verifier (one law, two rails).
+    i64 = (1 << 63) - 1
+    m, n, k = spec.gemm_dims
+    if max(spec.in_h + 2 * spec.pad, spec.in_w + 2 * spec.pad) > i64:
+        errs.append("conv: padded input extent exceeds signed 64-bit range")
+    if m > i64 or k > i64:
+        errs.append("conv: derived im2col dimensions exceed signed 64-bit range")
+    elif m * n > i64:
+        errs.append("conv: output element count exceeds signed 64-bit range")
+    elif m * n * k > i64:
+        errs.append("conv: im2col work M*N*K exceeds signed 64-bit range")
+    if errs:
+        return errs
     # (2) dtype known + preserved.
     for nm, dt in (("in", in_dtype), ("weight", out_dtype), ("spec", spec.dtype)):
         if dt not in _DTYPES:

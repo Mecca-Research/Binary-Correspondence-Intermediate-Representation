@@ -39,6 +39,18 @@ class TokenRule:
     skip: bool = False
     precedence: int = 0
 
+    def __post_init__(self) -> None:
+        # Construction-time validation (S0-6): a nameless or patternless token rule, or one
+        # whose pattern is not a regular expression, is refused where it is written.
+        if not isinstance(self.name, str) or not self.name:
+            raise ValueError(f"token rule: name must be a non-empty string (got {self.name!r})")
+        if not isinstance(self.pattern, str) or not self.pattern:
+            raise ValueError(f"token rule {self.name!r}: pattern must be a non-empty string")
+        try:
+            re.compile(self.pattern)
+        except re.error as exc:
+            raise ValueError(f"token rule {self.name!r}: pattern does not compile: {exc}") from exc
+
 
 @dataclass(frozen=True)
 class Grammar:
@@ -48,6 +60,19 @@ class Grammar:
     syntax: str
     start_symbol: str
     tokens: tuple[TokenRule, ...]
+
+    def __post_init__(self) -> None:
+        for field in ("name", "syntax", "start_symbol"):
+            value = getattr(self, field)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"grammar: {field} must be a non-empty string (got {value!r})")
+        if not isinstance(self.tokens, tuple) or not self.tokens:
+            raise ValueError(
+                f"grammar {self.name!r}: tokens must be a non-empty tuple of TokenRule"
+            )
+        names = [t.name for t in self.tokens]
+        if len(set(names)) != len(names):
+            raise ValueError(f"grammar {self.name!r}: duplicate token rule names")
 
 
 class LexError(Exception):

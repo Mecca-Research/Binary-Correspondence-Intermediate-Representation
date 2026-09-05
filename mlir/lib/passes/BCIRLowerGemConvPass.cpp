@@ -120,6 +120,17 @@ struct LowerGemConvPass : public PassWrapper<LowerGemConvPass, OperationPass<>> 
           << kMaxMaterializedBlocksPerOp << "-block safety limit";
       return false;
     }
+    // S0-8 / row 13 (checked arithmetic): every tile's origin `i0*N + j0` and element count
+    // `rows*cols` lie within the M x N output, so the one bound that matters is the output
+    // element count itself. The op verifier refuses a conv whose M*N does not fit the signed
+    // 64-bit wire domain; a programmatically built op is held to the same bound here, and the
+    // per-tile arithmetic below stays checked -- a verifier-legal one-tile conv (M = 2^62,
+    // N = 4) used to wrap its count to 0 (lower_gem_conv_overflow.mlir).
+    int64_t outElems;
+    if (!checkedMulNonnegative(M, N, outElems)) {
+      conv.emitError("bcir-lower-gem-conv: output element count M*N exceeds signed 64-bit range");
+      return false;
+    }
 
     // --- cross-check the host-INDEPENDENT roofline invariant the cost model rests on --
     // The host-pinned compute_cost/mem_cost ride the op (the oracle prices them through
@@ -171,13 +182,15 @@ struct LowerGemConvPass : public PassWrapper<LowerGemConvPass, OperationPass<>> 
     // strideD = N (the output is M x N) -- the im2col gemm strides, exactly as
     // -bcir-lower-gem-matmul.
     int64_t idx = 0;
+    bool overflow = false;
     auto emitTile = [&](int64_t i, int64_t j) {
-      const int64_t i0 = i * tm;
-      const int64_t j0 = j * tn;
-      const int64_t rows = std::min(tm, M - i0);
-      const int64_t cols = std::min(tn, N - j0);
-      const int64_t base = i0 * N + j0;  // row-major gemm-output origin
-      const int64_t count = rows * cols; // tile element count
+      int64_t i0, j0, rowBase, base, count;
+      if (!checkedMulNonnegative(i, tm, i0) || !checkedMulNonnegative(j, tn, j0) ||
+          !checkedMulNonnegative(i0, N, rowBase) || !checkedAddNonnegative(rowBase, j0, base) ||
+          !checkedMulNonnegative(std::min(tm, M - i0), std::min(tn, N - j0), count)) {
+        overflow = true; // unreachable under the M*N bound above; never silent if it is not
+        return;
+      }
 
       std::string sym = (name + "_t" + Twine(idx)).str();
       GEMBlockOp::create(builder, loc,
@@ -208,6 +221,11 @@ struct LowerGemConvPass : public PassWrapper<LowerGemConvPass, OperationPass<>> 
         for (int64_t j = 0; j < nJ; ++j)
           for (int64_t k = 0; k < nK; ++k)
             emitTile(i, j);
+    }
+
+    if (overflow) {
+      conv.emitError("bcir-lower-gem-conv: tile origin/element count exceeds signed 64-bit range");
+      return false;
     }
 
     // Annotate the recomputed K_BCIR plan (strategy + the priced roofline + the R17

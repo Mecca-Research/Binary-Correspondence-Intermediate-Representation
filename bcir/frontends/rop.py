@@ -10,19 +10,35 @@ Grammar (brace-delimited, keyword-driven; whitespace-insensitive):
       }
     }
 
-Reuses the ETL lexer; lists (reads/writes) run until the next field keyword.
+Reuses the ETL lexer; lists (reads/writes) run until the next field keyword. A claim may
+declare `hazard unique|atomic|barriered`; its domain contract is DERIVED from the resources it
+touches (`model.derived_claim_domain`, LangRef R3): an isolated domain (mmio) it touches is
+its domain, else its first write's. A device-register access is therefore volatile and needs an
+ordered hazard -- the verifier's R3/R5 say so when it is missing, the frontend never invents one.
 """
 
 from __future__ import annotations
 
 from ..etl.parse import Lexer, ParseError, Token
-from ..model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
+from ..model import (
+    ISOLATED_DOMAINS,
+    Claim,
+    Domain,
+    Lane,
+    Module,
+    Opcode,
+    Phase,
+    Resource,
+    StrideClass,
+    derived_claim_domain,
+)
 
 _DOMAINS = {d.name.lower(): d for d in Domain}
 _LANES = {l.name.lower(): l for l in Lane}
 _STRIDES = {s.name.lower(): s for s in StrideClass}
 _OPCODES = {o.name.lower(): o for o in Opcode}
-_CLAIM_FIELDS = {"op", "reads", "writes", "count", "lane", "stride"}
+_CLAIM_FIELDS = {"op", "reads", "writes", "count", "lane", "stride", "hazard"}
+_HAZARDS = ("unique", "atomic", "barriered")
 _MAX_SOURCE_CHARS = 1 << 20
 _MAX_TOKENS = 1 << 18
 _MAX_RESOURCES = 1 << 16
@@ -36,6 +52,7 @@ class _P:
         self.t = toks
         self.i = 0
         self.resolver = dict(resolver)
+        self.domains: dict[int, Domain] = {}  # rid -> declared domain (the R3 derivation)
         self.resource_names: set[str] = set()
         self.resource_ids: set[int] = set()
         self.phase_ids: set[int] = set()
@@ -118,6 +135,7 @@ class _P:
             raise ParseError(f"resource pre-scan disagrees for {name!r}")
         self.resource_names.add(name)
         self.resource_ids.add(rid)
+        self.domains[rid] = domain
         m.add_resource(Resource(rid=rid, domain=domain, shape=(count,), name=name))
 
     def _phase(self, cid_start: int) -> tuple[int, tuple[int, ...], list[Claim]]:
@@ -149,6 +167,7 @@ class _P:
         count = 1
         lane = Lane.U
         stride = StrideClass.UNIT
+        hazard = "unique"
         seen: set[str] = set()
 
         def idlist() -> list[str]:
@@ -188,6 +207,11 @@ class _P:
                 if spelling not in _STRIDES:
                     raise ParseError(f"claim {name!r} has unknown stride {spelling!r}")
                 stride = _STRIDES[spelling]
+            elif f == "hazard":
+                spelling = self.expect("IDENT").text.lower()
+                if spelling not in _HAZARDS:
+                    raise ParseError(f"claim {name!r} has unknown hazard {spelling!r}")
+                hazard = spelling
             else:
                 raise ParseError(f"unknown claim field {f!r}")
         self.expect("RBRACE")
@@ -200,17 +224,28 @@ class _P:
                 raise ParseError(f"claim {name!r} names unknown resource {resource!r}")
             return self.resolver[resource]
 
-        # resolve resource names -> rids via the module is done by caller context;
-        # here we trust earlier `resource` decls registered names. The caller passes
-        # a name->rid resolver implicitly through the module; we look it up at build.
+        rd = tuple(resolve(n) for n in reads)
+        wr = tuple(resolve(n) for n in writes)
+        # The domain contract is derived from the touched resources' declared domains (the
+        # pre-scan registered every rid; a resource declared AFTER this claim still resolves
+        # because `self.domains` is filled by `_resource` in textual order -- a claim that
+        # names a resource declared later than itself is refused by the resolver above).
+        touched = [Resource(rid=r, domain=self.domains.get(r, Domain.RAM)) for r in wr + rd]
+        try:
+            domain = derived_claim_domain(touched[: len(wr)], touched[len(wr) :])
+        except ValueError as exc:
+            raise ParseError(f"claim {name!r}: {exc}") from exc
         return Claim(
             id=cid,
             opcode=op,
             lane=lane,
             stride_class=stride,
             count=count,
-            rd=tuple(resolve(n) for n in reads),
-            wr=tuple(resolve(n) for n in writes),
+            rd=rd,
+            wr=wr,
+            hazard=hazard,
+            domain=domain,
+            volatile=domain in ISOLATED_DOMAINS,
             op=f"rop.{name}",
         )
 

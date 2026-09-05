@@ -312,6 +312,15 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
     return emitOpError() << "conv: declared im2col gemm dims (" << gm << "," << gn << "," << gk
                          << ") != (out_h*out_w, out_c, in_c*kh*kw) = (" << wantM << "," << wantN
                          << "," << wantK << ")";
+  // (3c) the signed 64-bit WIRE domain (S0-6 / row 13): the output element count M*N and the
+  // im2col work M*N*K must fit i64 -- the lowerer's tile origin/count and the cost passes'
+  // roofline derive from them, and a verifier-legal one-tile conv once wrapped its count to 0
+  // in the GEM lowerer. Mirrors conv.check_conv (same messages, one law on two rails).
+  int64_t outElems, work;
+  if (!checkedMulNonnegative(wantM, wantN, outElems))
+    return emitOpError() << "conv: output element count exceeds signed 64-bit range";
+  if (!checkedMulNonnegative(outElems, wantK, work))
+    return emitOpError() << "conv: im2col work M*N*K exceeds signed 64-bit range";
 
   // (2) dtype known + preserved (the op carries a single declared dtype: input == output == spec).
   ::llvm::StringRef dtype = getDtype();
@@ -1432,6 +1441,194 @@ static ::mlir::LogicalResult verifyAtomicAddr(::mlir::Operation *op, ::mlir::Typ
     return emitOpError() << "the CAS result must have the comparand type (old-value semantics; got "
                          << getResult().getType() << " vs " << getExpected().getType() << ")";
   return verifyAtomicAddr(*this, getAddr().getType());
+}
+
+// ---- M5 descriptor well-formedness (S0-6 / row 21 of the 2026-07/08 assessment) ------------
+// Construction-time validation of the Event Transduction Layer descriptors, the op-level twins of
+// bcir/etl/{binary,events,fsm,parse}.py's `__post_init__` rules: a field with a zero width or a
+// negative offset, a record whose fields overlap or overrun its size, a format of unknown
+// endianness, a stream of unknown kind, a state both accepting and error, a transition to an
+// undeclared state -- each refused where it is written, not when a packet exercises it. Op-level
+// structural checks, NOT new globally-numbered R-laws (the gem.* precedent).
+
+static const char *const kFieldKinds[] = {"u", "s", "f", "bytes"};
+static const char *const kEndianness[] = {"little", "big", "le", "be"};
+static const char *const kStreamKinds[] = {"text",   "binary", "telemetry",
+                                           "packet", "driver", "token"};
+static const char *const kStreamEncodings[] = {"utf8", "bytes", "le", "be", "records", "custom"};
+
+template <size_t N>
+static bool oneOf(::llvm::StringRef value, const char *const (&table)[N]) {
+  for (const char *item : table)
+    if (value == item)
+      return true;
+  return false;
+}
+
+template <size_t N>
+static std::string joined(const char *const (&table)[N]) {
+  std::string out;
+  for (const char *item : table) {
+    if (!out.empty())
+      out += "|";
+    out += item;
+  }
+  return out;
+}
+
+::mlir::LogicalResult BinaryFieldOp::verify() {
+  if (getName().empty())
+    return emitOpError() << "binary field: name must be non-empty";
+  int64_t off = static_cast<int64_t>(getOffsetBits()), width = static_cast<int64_t>(getWidthBits());
+  if (off < 0)
+    return emitOpError() << "field '" << getName() << "': offset_bits must be non-negative (got "
+                         << off << ")";
+  if (width < 1)
+    return emitOpError() << "field '" << getName() << "': width_bits must be positive (got "
+                         << width << ")";
+  if (off > std::numeric_limits<int64_t>::max() - width)
+    return emitOpError() << "field '" << getName()
+                         << "': offset_bits + width_bits exceeds signed "
+                            "64-bit range";
+  if (!oneOf(getKind(), kFieldKinds))
+    return emitOpError() << "field '" << getName() << "': kind must be one of "
+                         << joined(kFieldKinds) << " (got '" << getKind() << "')";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult BinaryRecordOp::verify() {
+  if (getName().empty())
+    return emitOpError() << "binary record: name must be non-empty";
+  int64_t size = static_cast<int64_t>(getSizeBits());
+  if (size < 0)
+    return emitOpError() << "record '" << getName() << "': size_bits must be non-negative (got "
+                         << size << ")";
+  // Every field reference resolves to a bcir.binary.field (in the enclosing format's symbol
+  // table); the fields are disjoint bit ranges that fit the declared size; names are unique.
+  struct Span {
+    int64_t offset, end;
+    std::string name;
+  };
+  ::llvm::SmallVector<Span> fields;
+  ::llvm::StringSet<> seenNames;
+  for (::mlir::Attribute a : getFields()) {
+    auto ref = ::mlir::dyn_cast<::mlir::FlatSymbolRefAttr>(a);
+    if (!ref)
+      return emitOpError() << "record '" << getName() << "': fields must be symbol references";
+    auto field = ::mlir::SymbolTable::lookupNearestSymbolFrom<BinaryFieldOp>(getOperation(), ref);
+    if (!field)
+      return emitOpError() << "record '" << getName() << "': field @" << ref.getValue()
+                           << " does not resolve to a bcir.binary.field";
+    if (!seenNames.insert(field.getName()).second)
+      return emitOpError() << "record '" << getName() << "': duplicate field name '"
+                           << field.getName() << "'";
+    int64_t end =
+        static_cast<int64_t>(field.getOffsetBits()) + static_cast<int64_t>(field.getWidthBits());
+    if (size && end > size)
+      return emitOpError() << "record '" << getName() << "': field '" << field.getName()
+                           << "' ends at bit " << end << ", beyond the record's " << size
+                           << " bits";
+    fields.push_back({static_cast<int64_t>(field.getOffsetBits()), end, field.getName().str()});
+  }
+  ::llvm::stable_sort(fields, [](const Span &x, const Span &y) { return x.offset < y.offset; });
+  for (size_t i = 1; i < fields.size(); ++i) {
+    const Span &prev = fields[i - 1], &cur = fields[i];
+    if (cur.offset < prev.end)
+      return emitOpError() << "record '" << getName() << "': fields '" << prev.name << "' and '"
+                           << cur.name << "' overlap (bits [" << prev.offset << ", " << prev.end
+                           << ") and [" << cur.offset << ", " << cur.end << "))";
+  }
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult BinaryFormatOp::verify() {
+  if (!oneOf(getEndianness(), kEndianness))
+    return emitOpError() << "format '" << getSymName() << "': endianness must be one of "
+                         << joined(kEndianness) << " (got '" << getEndianness() << "')";
+  if (static_cast<int64_t>(getAlignmentBits()) < 1)
+    return emitOpError() << "format '" << getSymName() << "': alignment_bits must be positive (got "
+                         << static_cast<int64_t>(getAlignmentBits()) << ")";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult EventStreamOp::verify() {
+  if (!oneOf(getKind(), kStreamKinds))
+    return emitOpError() << "stream '" << getSymName() << "': kind must be one of "
+                         << joined(kStreamKinds) << " (got '" << getKind() << "')";
+  if (!oneOf(getEncoding(), kStreamEncodings))
+    return emitOpError() << "stream '" << getSymName() << "': encoding must be one of "
+                         << joined(kStreamEncodings) << " (got '" << getEncoding() << "')";
+  if (static_cast<int64_t>(getElementBits()) < 1)
+    return emitOpError() << "stream '" << getSymName() << "': element_bits must be positive (got "
+                         << static_cast<int64_t>(getElementBits()) << ")";
+  if (static_cast<int64_t>(getMaxWindow()) < 1)
+    return emitOpError() << "stream '" << getSymName() << "': max_window must be positive (got "
+                         << static_cast<int64_t>(getMaxWindow()) << ")";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult EventKindOp::verify() {
+  if (getName().empty())
+    return emitOpError() << "event kind: name must be non-empty";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult FSMStateOp::verify() {
+  if (getAccepting() && getError())
+    return emitOpError() << "fsm state '" << getSymName()
+                         << "': a state is accepting or an error, not both";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult FSMTransitionOp::verify() {
+  for (::mlir::FlatSymbolRefAttr end : {getFromAttr(), getToAttr()})
+    if (!::mlir::SymbolTable::lookupNearestSymbolFrom<FSMStateOp>(getOperation(), end))
+      return emitOpError() << "fsm transition '" << getSymName() << "': @" << end.getValue()
+                           << " does not resolve to a bcir.fsm.state";
+  if (getOn().empty())
+    return emitOpError() << "fsm transition '" << getSymName()
+                         << "': on must name a symbol, token or event ('*' = catch-all)";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult FSMMachineOp::verify() {
+  if (getKind().empty())
+    return emitOpError() << "fsm machine '" << getSymName() << "': kind must be non-empty";
+  auto start = ::mlir::SymbolTable::lookupSymbolIn(getOperation(), getStartStateAttr());
+  if (!start || !::mlir::isa<FSMStateOp>(start))
+    return emitOpError() << "fsm machine '" << getSymName() << "': start_state @" << getStartState()
+                         << " does not name a bcir.fsm.state of this machine";
+  // No two transitions of one machine share a (from, on) key -- the oracle's table refused
+  // the silent last-one-wins the old Transducer kept.
+  ::llvm::StringSet<> keys;
+  for (::mlir::Operation &op : getBody().front())
+    if (auto t = ::mlir::dyn_cast<FSMTransitionOp>(&op)) {
+      std::string key = (t.getFrom() + "\x1f" + t.getOn()).str();
+      if (!keys.insert(key).second)
+        return emitOpError() << "fsm machine '" << getSymName() << "': transition on '" << t.getOn()
+                             << "' from @" << t.getFrom() << " is declared twice";
+    }
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult ParseGrammarOp::verify() {
+  if (getSyntax().empty())
+    return emitOpError() << "grammar '" << getSymName() << "': syntax must be non-empty";
+  if (getStartSymbol().empty())
+    return emitOpError() << "grammar '" << getSymName() << "': start_symbol must be non-empty";
+  ::llvm::StringSet<> names;
+  for (::mlir::Operation &op : getBody().front())
+    if (auto t = ::mlir::dyn_cast<ParseTokenOp>(&op))
+      if (!names.insert(t.getSymName()).second)
+        return emitOpError() << "grammar '" << getSymName() << "': duplicate token rule '"
+                             << t.getSymName() << "'";
+  return ::mlir::success();
+}
+
+::mlir::LogicalResult ParseTokenOp::verify() {
+  if (getPattern().empty())
+    return emitOpError() << "token rule '" << getSymName() << "': pattern must be non-empty";
+  return ::mlir::success();
 }
 
 ::mlir::LogicalResult AbiContractOp::verify() {

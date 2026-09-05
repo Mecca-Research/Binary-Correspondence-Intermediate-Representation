@@ -124,6 +124,16 @@ verifier checkpoints and ran no verifier, so an illegal module planned and
 hydrated (`pipeline_checkpoints.mlir` refuses it under both); and R2 held
 vacuously across modules -- a root-global registry map let one module's
 claim resolve another's resource (`verify_module_scope.mlir`).
+S0-C instances (both rails, 2026-09-05): the parent build admitted every defect
+shape the structural corpus now carries -- a duplicate phase id, a dependency on
+an undeclared phase, an i32 device-register address under a 64-bit target, an
+unsorted or arity-mismatched manifest artifact record, a calibration certificate
+whose constants the capability never used, an M5 field of width 0 -- and
+`-bcir-schedule` put a phase before the phase it depends on; on the oracle a
+zero stride folded to 1, a negative count verified clean, and an HBM-only MAP
+program was refused. The corpus's own comparison is witnessed:
+`test_findings_name_every_kind_of_disagreement` injects each way a rail can
+disagree with the corpus and asserts each is a finding.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -330,6 +340,12 @@ Witnesses: `test_python_witness_paired_to_its_intended_law`,
 `test_compiled_diagnostic_marker_survives_long_notes`,
 `test_dependency_declarations_are_redacted_in_reports` (asserts the
 redacted requirement exactly, not that a host substring is present).
+S0-C instance (2026-09-05): every case of the structural corpus declares the
+law family and the diagnostic each rail must produce; a refusal under another
+law or for another reason is a finding (`structural_corpus.findings`), and the
+law-rail projection pins one `expected-error` per expected diagnostic, so a
+case that trips two laws (the MAP device-register write: R3 and R5) declares
+both rather than passing on either.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -395,6 +411,12 @@ S0-B instance (2026-09-04): the scope of an MLIR pass is ONE predicate
 (`BCIRPassSupport.h` `forEachScope` / `walkScope`), shared by `-bcir-verify`,
 `-bcir-select-realization`, `-bcir-rcsp` and the GEM batch/schedule/lower passes -- the
 finding was the same root-global walk landed in each of them separately.
+S0-C instances (2026-09-05): the isolated-domain rule, the triple -> pointer-width
+table and the canonical phase order are each ONE predicate with a declared mirror
+(`model.ISOLATED_DOMAINS` / `isIsolatedDomain`; `kbcir.cost.pointer_width` /
+`pointerWidthOfTriple`; `model.topological_phase_ids` / `canonicalPhaseOrder`),
+and the corpus checks that the mirrors agree -- five phase orders and two
+isolated-domain rules were in use before.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -436,6 +458,10 @@ runs, a reference to no fixture), reading both rather than a third list;
 `tools/irdl/check_inventory.py` reconciles the ODS dialect, the IRDL
 projection and the manifest of declared-unprojected operations both ways,
 and refuses an empty inventory as vacuous.
+S0-C instance (2026-09-05): the law-rail fixture `structural_corpus.mlir` is
+GENERATED from the corpus and `--check` refuses drift in the quick tier, so the
+cases `check_passes.sh` executes are the cases the oracle runs -- never a third
+list that can fall behind either.
 **Port note:** identical everywhere.
 
 ### L16 — Never green yourself by editing the neighbor

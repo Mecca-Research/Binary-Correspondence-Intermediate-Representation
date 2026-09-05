@@ -317,6 +317,133 @@ void walkScope(Operation *scope, Fn &&fn) {
     fn(op);
 }
 
+// ---- S0-6: the shared structural predicates -- one table, one order, both rails ----------
+
+// The device-ISOLATED domains (R3): an MMIO register is a distinct address space the host
+// cannot substitute for a memory tier; RAM/HBM/VRAM/CXL/NVM are the tiers a claim may stage
+// across (the oracle's device_manifest._MEM_TIERS -- the HAM fabric reads NVM into VRAM by
+// design, and this rail's former "NVM cell" isolation had no fixture). A resource in an
+// isolated domain may be touched only by a claim declaring that domain; the claim may still
+// carry host operands. Mirrors bcir/model/lanes.py ISOLATED_DOMAINS.
+inline bool isIsolatedDomain(Domain d) {
+  return d == Domain::MMIO;
+}
+
+// Pointer width (bits) of a target triple's architecture, or nullopt when the table does not
+// know it -- the R12 address-width law reads it. Mirrors bcir/kbcir/cost.py pointer_width:
+// only the architecture component matters, exact spellings first, then the versioned families
+// (`armv7`, `thumbv8`, `mipsel`, `powerpc64le`, ...). The structural corpus checks the two
+// tables agree on every triple in use.
+inline std::optional<unsigned> pointerWidthOfTriple(StringRef triple) {
+  std::string archStorage = triple.split('-').first.lower();
+  StringRef arch(archStorage);
+  if (arch.empty())
+    return std::nullopt;
+  static const std::pair<const char *, unsigned> kExact[] = {
+      {"x86_64", 64},      {"amd64", 64},       {"aarch64", 64},  {"aarch64_be", 64},
+      {"arm64", 64},       {"arm64e", 64},      {"riscv64", 64},  {"nvptx64", 64},
+      {"amdgcn", 64},      {"ppc64", 64},       {"ppc64le", 64},  {"powerpc64", 64},
+      {"powerpc64le", 64}, {"mips64", 64},      {"mips64el", 64}, {"wasm64", 64},
+      {"bpf", 64},         {"bpfel", 64},       {"bpfeb", 64},    {"sparcv9", 64},
+      {"sparc64", 64},     {"s390x", 64},       {"systemz", 64},  {"loongarch64", 64},
+      {"i386", 32},        {"i486", 32},        {"i586", 32},     {"i686", 32},
+      {"x86", 32},         {"arm", 32},         {"armeb", 32},    {"thumb", 32},
+      {"thumbeb", 32},     {"riscv32", 32},     {"nvptx", 32},    {"wasm32", 32},
+      {"mips", 32},        {"mipsel", 32},      {"ppc", 32},      {"powerpc", 32},
+      {"sparc", 32},       {"loongarch32", 32}, {"avr", 16},      {"msp430", 16},
+  };
+  unsigned exact = 0;
+  for (const auto &[name, bits] : kExact)
+    if (arch == name)
+      exact = bits;
+  if (exact)
+    return exact;
+  static const std::pair<const char *, unsigned> kPrefixes[] = {
+      {"aarch64", 64}, {"arm64", 64},     {"armv", 32},  {"thumbv", 32}, {"mips64", 64},
+      {"mips", 32},    {"powerpc64", 64}, {"ppc64", 64}, {"sparcv", 32},
+  };
+  for (const auto &[prefix, bits] : kPrefixes)
+    if (arch.starts_with(prefix))
+      return bits;
+  return std::nullopt;
+}
+
+// The ONE canonical phase order (S0-6, row 9 of the 2026-07/08 assessment): dependency-first,
+// roots in textual order, each phase's deps visited in declared order -- the iterative twin of
+// bcir/model/graph.py topological_phase_ids (the order the oracle's planner, verifier, GEM
+// scheduler and overlap model all use). Every law-rail consumer that orders phases -- the
+// cost-model columns, -bcir-schedule, -bcir-overlap, -bcir-schedule-eft -- ranks by it; a
+// numeric-id sort broke the phase DAG whenever ids were declared out of dependency order. A
+// dep naming no phase is skipped here (R4 refuses the module); a cycle terminates because a
+// visited phase is never re-entered (R4 refuses that module too).
+inline SmallVector<PhaseOp> canonicalPhaseOrder(Operation *scope) {
+  SmallVector<PhaseOp> phases;
+  walkScope(scope, [&](PhaseOp p) { phases.push_back(p); });
+  llvm::DenseMap<StringRef, PhaseOp> byName;
+  for (PhaseOp p : phases)
+    byName.try_emplace(p.getSymName(), p);
+  llvm::DenseMap<Operation *, int> color; // 0 unvisited, 1 on the stack, 2 done
+  SmallVector<PhaseOp> order;
+  for (PhaseOp root : phases) {
+    if (color.lookup(root.getOperation()) != 0)
+      continue;
+    color[root.getOperation()] = 1;
+    SmallVector<std::pair<PhaseOp, unsigned>> stack;
+    stack.push_back({root, 0});
+    while (!stack.empty()) {
+      PhaseOp p = stack.back().first;
+      unsigned next = stack.back().second;
+      ArrayAttr deps = p.getDeps();
+      bool descended = false;
+      while (next < deps.size()) {
+        Attribute a = deps[next++];
+        stack.back().second = next;
+        auto ref = dyn_cast<FlatSymbolRefAttr>(a);
+        if (!ref)
+          continue;
+        auto it = byName.find(ref.getValue());
+        if (it == byName.end() || color.lookup(it->second.getOperation()) != 0)
+          continue;
+        color[it->second.getOperation()] = 1;
+        stack.push_back({it->second, 0});
+        descended = true;
+        break;
+      }
+      if (descended)
+        continue;
+      stack.pop_back();
+      if (color.lookup(p.getOperation()) != 2) {
+        color[p.getOperation()] = 2;
+        order.push_back(p);
+      }
+    }
+  }
+  return order;
+}
+
+// Phase symbol -> rank in the canonical order (0 = first). A claim naming an undeclared phase
+// (R2/R4 territory) ranks after every declared one.
+inline llvm::DenseMap<StringRef, int64_t> canonicalPhaseRank(Operation *scope) {
+  llvm::DenseMap<StringRef, int64_t> rank;
+  int64_t i = 0;
+  for (PhaseOp p : canonicalPhaseOrder(scope))
+    rank.try_emplace(p.getSymName(), i++);
+  return rank;
+}
+
+inline int64_t phaseRankOf(const llvm::DenseMap<StringRef, int64_t> &rank, StringRef phase) {
+  auto it = rank.find(phase);
+  return it == rank.end() ? std::numeric_limits<int64_t>::max() : it->second;
+}
+
+// The canonical order as phase IDS (the passes that key their per-phase state by id).
+inline SmallVector<int32_t> canonicalPhaseIds(Operation *scope) {
+  SmallVector<int32_t> ids;
+  for (PhaseOp p : canonicalPhaseOrder(scope))
+    ids.push_back(p.getId());
+  return ids;
+}
+
 } // namespace bcir
 
 #endif // BCIR_LIB_PASSES_BCIRPASSSUPPORT_H

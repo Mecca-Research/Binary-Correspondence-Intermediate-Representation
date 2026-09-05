@@ -201,34 +201,11 @@ static void eftDispatch(ArrayRef<Info *> claims,
   }
 }
 
-// gem.concurrency._topo_phase_ids: phases in dependency order (deps first).
+// gem.concurrency._topo_phase_ids: phases in dependency order (deps first) -- the ONE
+// canonical order of BCIRPassSupport.h (S0-6: shared with -bcir-schedule, -bcir-overlap and
+// the cost-model columns; this pass carried its own recursive port before).
 static SmallVector<int32_t> topoPhases(Operation *root) {
-  SmallVector<PhaseOp> phases;
-  llvm::DenseMap<int32_t, PhaseOp> byId;
-  llvm::DenseMap<StringRef, int32_t> idOf;
-  root->walk([&](PhaseOp p) {
-    phases.push_back(p);
-    byId[p.getId()] = p;
-    idOf[p.getSymName()] = p.getId();
-  });
-  SmallVector<int32_t> order;
-  llvm::DenseMap<int32_t, int> color;
-  std::function<void(int32_t)> visit = [&](int32_t pid) {
-    color[pid] = 1;
-    auto it = byId.find(pid);
-    if (it != byId.end())
-      for (Attribute a : it->second.getDeps())
-        if (auto ref = dyn_cast<FlatSymbolRefAttr>(a)) {
-          auto d = idOf.find(ref.getValue());
-          if (d != idOf.end() && color.lookup(d->second) == 0)
-            visit(d->second);
-        }
-    order.push_back(pid);
-  };
-  for (PhaseOp p : phases)
-    if (color.lookup(p.getId()) == 0)
-      visit(p.getId());
-  return order;
+  return canonicalPhaseIds(root);
 }
 
 // Shared front end: plan the module and build the per-claim Info list. Returns false if the

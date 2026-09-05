@@ -215,6 +215,88 @@ class MemoryHierarchy:
 # --- substrate / target descriptor H (the open container) -----------------------
 
 
+def pointer_width(triple: str) -> int | None:
+    """Pointer width in bits of a target triple's architecture, or None when unknown.
+
+    The one triple -> width table on the oracle rail (its MLIR mirror is
+    `BCIRPassSupport.h` `pointerWidthOfTriple`; the structural corpus checks the two agree
+    on every triple in use). Only the architecture component matters, so the repository's
+    profile triples (`x86_64-avx512`, `aarch64-sve`, `riscv64-rvv`, `nvptx64-warp`) and
+    full LLVM triples (`x86_64-unknown-linux-gnu`) resolve alike. A width the table does
+    not know is `None`, and the address-width law is vacuous for it -- never a guess."""
+    arch = str(triple).split("-", 1)[0].lower()
+    if not arch:
+        return None
+    if arch in _POINTER_BITS:
+        return _POINTER_BITS[arch]
+    for prefix, bits in _POINTER_BITS_PREFIX:
+        if arch.startswith(prefix):
+            return bits
+    return None
+
+
+# Exact architecture spellings first, then the versioned families (`armv7`, `thumbv8`,
+# `mipsel`, `powerpc64le`, ...). 64-bit wins where a name is a prefix of another (`nvptx`
+# vs `nvptx64`, `mips` vs `mips64`, `riscv32` vs `riscv64` are all exact entries).
+_POINTER_BITS = {
+    "x86_64": 64,
+    "amd64": 64,
+    "aarch64": 64,
+    "aarch64_be": 64,
+    "arm64": 64,
+    "arm64e": 64,
+    "riscv64": 64,
+    "nvptx64": 64,
+    "amdgcn": 64,
+    "ppc64": 64,
+    "ppc64le": 64,
+    "powerpc64": 64,
+    "powerpc64le": 64,
+    "mips64": 64,
+    "mips64el": 64,
+    "wasm64": 64,
+    "bpf": 64,
+    "bpfel": 64,
+    "bpfeb": 64,
+    "sparcv9": 64,
+    "sparc64": 64,
+    "s390x": 64,
+    "systemz": 64,
+    "loongarch64": 64,
+    "i386": 32,
+    "i486": 32,
+    "i586": 32,
+    "i686": 32,
+    "x86": 32,
+    "arm": 32,
+    "armeb": 32,
+    "thumb": 32,
+    "thumbeb": 32,
+    "riscv32": 32,
+    "nvptx": 32,
+    "wasm32": 32,
+    "mips": 32,
+    "mipsel": 32,
+    "ppc": 32,
+    "powerpc": 32,
+    "sparc": 32,
+    "loongarch32": 32,
+    "avr": 16,
+    "msp430": 16,
+}
+_POINTER_BITS_PREFIX = (
+    ("aarch64", 64),
+    ("arm64", 64),
+    ("armv", 32),
+    ("thumbv", 32),
+    ("mips64", 64),
+    ("mips", 32),
+    ("powerpc64", 64),
+    ("ppc64", 64),
+    ("sparcv", 32),
+)
+
+
 @dataclass(frozen=True)
 class TargetProfile:
     """Substrate descriptor H -- an *open container* for any target (x86/ARM/RISC-V/GPU).
@@ -245,9 +327,43 @@ class TargetProfile:
     # >=1 = a frozen CalibratedProfile was applied)
     mem: MemoryHierarchy = MemoryHierarchy.default()
 
+    def __post_init__(self) -> None:
+        # Construction-time well-formedness (S0-6), mirroring the parse-time
+        # `bcir.target.capability` verifier on the law rail: a substrate descriptor with a
+        # non-power-of-two cache line, an empty or non-positive lane geometry, or a zero
+        # element width would price every claim from nonsense. One rule, both rails.
+        cl = self.cacheline
+        if not isinstance(cl, int) or cl <= 0 or (cl & (cl - 1)) != 0:
+            raise ValueError(f"cacheline must be a positive power of two (got {cl})")
+        if not self.lane_widths:
+            raise ValueError("lane_widths must contain at least one positive width")
+        for w in self.lane_widths:
+            if w <= 0:
+                raise ValueError(f"lane widths must be positive (got {w})")
+        for name in (
+            "warp",
+            "gather_penalty",
+            "base_overhead",
+            "thermal_density",
+            "power_density",
+            "per_op_heat",
+            "cal_gen",
+        ):
+            if getattr(self, name) < 0:
+                raise ValueError(f"{name} must be non-negative (got {getattr(self, name)})")
+        for name in ("affinity_domains", "mem_channels", "mem_unit", "elem_bytes"):
+            if getattr(self, name) <= 0:
+                raise ValueError(f"{name} must be positive (got {getattr(self, name)})")
+
     @property
     def vector_width(self) -> int:
         return max(self.lane_widths)
+
+    @property
+    def pointer_bits(self) -> int | None:
+        """The target's pointer width in bits from its triple (None when the table does not
+        know the architecture) -- the address-width law R12 reads it."""
+        return pointer_width(self.triple)
 
     def widths(self) -> tuple[int, ...]:
         return tuple(sorted(set(self.lane_widths)))

@@ -6,20 +6,38 @@ One declaration or operation per line (the assembly-performance paradigm):
     res A rid 10 n 1024
     res B rid 11 n 1024
     res C rid 12 n 1024 domain hbm
-    ; operations: OP DST <- SRC[, SRC...] [n N] [lane L] [stride S]
+    ; operations: OP DST <- SRC[, SRC...] [n N] [lane L] [stride S] [hazard H]
     add C <- A, B n 1024 lane u stride unit
 
 Lines starting with ';' or '#' are comments. All operations land in phase 0.
+
+A claim's domain contract is DERIVED from the resources it touches (`model.derived_claim_domain`,
+LangRef R3): an isolated domain (mmio) it touches is its domain, else its destination's.
+A device-register access is therefore volatile, and needs `hazard atomic|barriered` -- the
+verifier's R3/R5 say so when it is missing, the frontend never invents one.
 """
 
 from __future__ import annotations
 
-from ..model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
+from ..model import (
+    ISOLATED_DOMAINS,
+    Claim,
+    Domain,
+    Lane,
+    Module,
+    Opcode,
+    Phase,
+    Resource,
+    StrideClass,
+    derived_claim_domain,
+)
 
 _DOMAINS = {d.name.lower(): d for d in Domain}
 _LANES = {l.name.lower(): l for l in Lane}
 _STRIDES = {s.name.lower(): s for s in StrideClass}
 _OPCODES = {o.name.lower(): o for o in Opcode}
+_HAZARDS = ("unique", "atomic", "barriered")
+_CLAIM_KEYS = ("n", "lane", "stride", "hazard")
 _MAX_SOURCE_CHARS = 1 << 20
 _MAX_LINES = 1 << 16
 _MAX_RESOURCES = 1 << 16
@@ -80,7 +98,7 @@ def parse_map(text: str) -> Module:
             m.add_resource(Resource(rid=rid, domain=domain, shape=(n,), name=name))
             continue
 
-        # operation line: OP DST <- SRC[, SRC...] [n N] [lane L] [stride S]
+        # operation line: OP DST <- SRC[, SRC...] [n N] [lane L] [stride S] [hazard H]
         if head not in _OPCODES:
             raise MapError(f"line {lineno}: unknown opcode {tok[0]!r}")
         if len(tok) < 4 or tok[2] != "<-":
@@ -94,16 +112,19 @@ def parse_map(text: str) -> Module:
         rest = tok[3:]
         fields_start = len(rest)
         for k, w in enumerate(rest):
-            if w.lower() in ("n", "lane", "stride"):
+            if w.lower() in _CLAIM_KEYS:
                 fields_start = k
                 break
             srcs.append(w.strip(","))
         if not srcs or any(not source for source in srcs):
             raise MapError(f"line {lineno}: at least one source is required")
-        kv = _kv(rest[fields_start:], {"n", "lane", "stride"}, lineno)
+        kv = _kv(rest[fields_start:], set(_CLAIM_KEYS), lineno)
         count = _integer(kv.get("n", "1"), "n", lineno)
         lane_name = kv.get("lane", "u").lower()
         stride_name = kv.get("stride", "unit").lower()
+        hazard = kv.get("hazard", "unique").lower()
+        if hazard not in _HAZARDS:
+            raise MapError(f"line {lineno}: unknown hazard {hazard!r}")
         if not 1 <= count <= _MAX_U64:
             raise MapError(f"line {lineno}: n must be in [1, 2^64-1]")
         if lane_name not in _LANES:
@@ -119,6 +140,10 @@ def parse_map(text: str) -> Module:
         rd = tuple(rid_of[s] for s in srcs)
         if dst not in rid_of:
             raise MapError(f"line {lineno}: undeclared destination {dst!r}")
+        try:
+            domain = derived_claim_domain([m.resource(rid_of[dst])], [m.resource(r) for r in rd])
+        except ValueError as exc:
+            raise MapError(f"line {lineno}: {exc}") from exc
         claims.append(
             Claim(
                 id=cid,
@@ -128,6 +153,9 @@ def parse_map(text: str) -> Module:
                 count=count,
                 rd=rd,
                 wr=(rid_of[dst],),
+                hazard=hazard,
+                domain=domain,
+                volatile=domain in ISOLATED_DOMAINS,
                 op=f"map.{head}",
             )
         )

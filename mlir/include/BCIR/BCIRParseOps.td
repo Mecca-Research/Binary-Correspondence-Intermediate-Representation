@@ -16,6 +16,7 @@ def BCIR_ParseGrammarOp : BCIR_Op<"parse.grammar", [Symbol, SymbolTable, NoTermi
   let arguments = (ins SymbolNameAttr:$sym_name, StrAttr:$syntax, StrAttr:$start_symbol);
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
+  let hasVerifier = 1;
 }
 
 def BCIR_ParseTokenOp : BCIR_Op<"parse.token", [Symbol]> {
@@ -24,6 +25,7 @@ def BCIR_ParseTokenOp : BCIR_Op<"parse.token", [Symbol]> {
                        DefaultValuedAttr<BoolAttr, "false">:$skip,
                        DefaultValuedAttr<I32Attr, "0">:$precedence);
   let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
 }
 
 def BCIR_ParseRuleOp : BCIR_Op<"parse.rule", [Symbol]> {

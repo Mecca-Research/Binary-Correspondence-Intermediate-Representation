@@ -185,20 +185,21 @@ def _fuzz_etl_binary(rng: random.Random, findings: list[FuzzFinding]) -> None:
             FuzzFinding("etl_binary", "roundtrip", "byte-aligned decode != int.from_bytes")
         )
 
-    # Adversarial: random fields (often unaligned / oversized) over a short buffer.
-    fields = tuple(
-        BinaryField(
-            f"f{i}",
-            offset_bits=rng.randint(0, 96),
-            width_bits=rng.randint(0, 96),
-            kind=rng.choice(("u", "s", "f", "bytes")),
-        )
-        for i in range(rng.randint(1, 4))
-    )
-    record = BinaryRecord("fuzz", fields)
+    # Adversarial: random fields (often unaligned / oversized / overlapping, sometimes a zero
+    # width) over a short buffer. Since S0-6 the descriptors validate at CONSTRUCTION, so the
+    # record itself may be refused (a ValueError, graceful) before any byte is decoded.
     data = _mutate_bytes(rng.randbytes(rng.randint(0, 8)), rng)
     try:
-        decode(record, data)
+        fields = tuple(
+            BinaryField(
+                f"f{i}",
+                offset_bits=rng.randint(0, 96),
+                width_bits=rng.randint(0, 96),
+                kind=rng.choice(("u", "s", "f", "bytes")),
+            )
+            for i in range(rng.randint(1, 4))
+        )
+        decode(BinaryRecord("fuzz", fields), data)
     except _GRACEFUL:
         pass
     except Exception as e:  # noqa: BLE001 - anything else is a robustness bug

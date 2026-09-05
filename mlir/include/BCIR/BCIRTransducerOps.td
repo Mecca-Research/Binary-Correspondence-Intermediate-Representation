@@ -19,6 +19,7 @@ def BCIR_FSMMachineOp : BCIR_Op<"fsm.machine", [Symbol, SymbolTable, NoTerminato
                        FlatSymbolRefAttr:$start_state);
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
+  let hasVerifier = 1;
 }
 
 def BCIR_FSMStateOp : BCIR_Op<"fsm.state", [Symbol]> {
@@ -27,6 +28,7 @@ def BCIR_FSMStateOp : BCIR_Op<"fsm.state", [Symbol]> {
                        DefaultValuedAttr<BoolAttr, "false">:$accepting,
                        DefaultValuedAttr<BoolAttr, "false">:$error);
   let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
 }
 
 def BCIR_FSMTransitionOp : BCIR_Op<"fsm.transition", [Symbol]> {
@@ -34,6 +36,7 @@ def BCIR_FSMTransitionOp : BCIR_Op<"fsm.transition", [Symbol]> {
   let arguments = (ins SymbolNameAttr:$sym_name, FlatSymbolRefAttr:$from,
                        FlatSymbolRefAttr:$to, StrAttr:$on, StrAttr:$guard, StrAttr:$action);
   let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
 }
 
 def BCIR_FSMStackOp : BCIR_Op<"fsm.stack", [Symbol]> {

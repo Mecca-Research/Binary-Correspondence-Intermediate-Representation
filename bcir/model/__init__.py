@@ -7,15 +7,18 @@ from .graph import (
     Phase,
     Resource,
     Timing,
+    derived_claim_domain,
     phase_graph_has_cycle,
     topological_phase_ids,
 )
-from .lanes import Domain, Lane, StrideClass
+from .lanes import ISOLATED_DOMAINS, Domain, Lane, StrideClass
 from .opcodes import ATOMIC_OPCODES, Opcode
 
 __all__ = [
     "Claim",
     "Domain",
+    "ISOLATED_DOMAINS",
+    "derived_claim_domain",
     "Lane",
     "Lifetime",
     "Module",
