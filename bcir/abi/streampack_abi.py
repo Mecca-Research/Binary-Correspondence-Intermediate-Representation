@@ -1,4 +1,4 @@
-"""BCIR StreamPack binary ABI v1 (frozen) + v2/v3 (append-only) -- reference codec.
+"""BCIR StreamPack binary ABI v1 (frozen) + v2/v3/v4 (append-only) -- reference codec.
 
 Layout (little-endian; see docs/kernel/BCIR_STREAMPACK_ABI.md and
 runtime/c/bcir_streampack.h for the normative spec):
@@ -7,21 +7,25 @@ runtime/c/bcir_streampack.h for the normative spec):
       magic[4]="BSPK"  version:u16  flags:u16
       topo_gen:u32  map_gen:u32  data_gen:u32
       n_segments:u32  n_prefetches:u32  n_blocks:u32  n_trace:u32
-      [v2] pipeline_depth:u16        (carved from the v1 reserved pad; v1 == 1)
+      [v2] pipeline_depth:u16 @36    (carved from the v1 reserved pad; v1 == 1)
+      [v4] n_gens:u32 @40            (carved from the pad; 38..39 stay reserved)
       reserved -> 64 bytes
     Body (sequential, length-prefixed records):
       source_plan:str
       segments[n_segments], prefetches[n_prefetches], blocks[n_blocks], trace[n_trace]
       [v2] prefetch records append buffers:u8 (2 = double-buffer contract)
       [v3] segment records append dispatch:u8 + channel:str
+      [v4] generations[n_gens], each rid:u32 map_gen:u32 data_gen:u32, RIDs strictly
+           ascending; the header map_gen/data_gen are the vector's maxima (law R11)
     Trailer:
       crc32:u32  (CRC-32 of every preceding byte)
 
 Strings are u16 length + UTF-8. Integer arrays are u16 count + elements. The
-format is frozen at v1 and evolves append-only: v2/v3 only *append* fields (header
-pad + record tails), the encoder emits the lowest version that carries the pack
-(a pack with neither v2 nor v3 features is byte-identical v1), and this
-reader accepts v1 through v3. v1 readers reject newer versions, by contract.
+format is frozen at v1 and evolves append-only: v2/v3/v4 only *append* fields (header
+pad + record tails + a trailing record family), the encoder emits the lowest version
+that carries the pack (a pack with no v2/v3/v4 feature is byte-identical v1; one
+carrying a generation vector is v4), and this reader accepts v1 through v4. v1 readers
+reject newer versions, by contract.
 """
 
 from __future__ import annotations
@@ -30,14 +34,14 @@ from dataclasses import dataclass
 import struct
 import zlib
 
-from ..gem.streampack import Block, LaneSegment, Prefetch, StreamPack, TraceNote
+from ..gem.streampack import Block, Generation, LaneSegment, Prefetch, StreamPack, TraceNote
 from ..model import Lane
 
 ABI_MAGIC = b"BSPK"
 ABI_VERSION = 1
-ABI_VERSION_MAX = (
-    3  # v2: pipeline_depth + prefetch double-buffer; v3: segment dispatch/channel (append-only)
-)
+# v2: pipeline_depth + prefetch double-buffer; v3: segment dispatch/channel; v4: the
+# per-resource generation vector (R11) -- all append-only.
+ABI_VERSION_MAX = 4
 
 # v3 dispatch is a small closed enum -> u8 on the wire (channel stays a free str). "core"/"host"
 # are the defaults a v1/v2 pack carries implicitly, so a pack that uses neither encodes as v1/v2.
@@ -48,7 +52,9 @@ _CHANNEL_DEFAULT = "host"
 
 _HEADER = struct.Struct("<4sHHIIIIIII")  # magic, ver, flags, 3 gens, 4 counts
 _HEADER_SIZE = 64
-_PIPELINE_OFF = _HEADER.size  # v2: u16 appended right after the v1 fields
+_PIPELINE_OFF = _HEADER.size  # v2: u16 appended right after the v1 fields (offset 36)
+_GENS_OFF = 40  # v4: n_gens u32 (4-aligned; 38..39 stay reserved)
+_GEN_SIZE = 12  # one generation record: rid:u32 map_gen:u32 data_gen:u32
 
 
 class AbiError(Exception):
@@ -162,6 +168,35 @@ def _validate_encode_contract(pack: StreamPack) -> None:
             or pf.buffers not in (1, 2)
         ):
             raise AbiError(f"prefetch[{index}] buffers must be 1 or 2, got {pf.buffers!r}")
+    _validate_generation_vector(pack)
+
+
+def _validate_generation_vector(pack: StreamPack) -> None:
+    """The v4 record's well-formedness, shared by the encoder and the decoder: RIDs strictly
+    ascending (sorted, unique), every field u32, and the header maxima equal to the
+    vector's -- the header tags a v1-v3 reader sees are a SUMMARY of the vector, and two
+    sources of truth that may disagree are a second spelling of a stale pack."""
+    gens = list(pack.generations)
+    _checked_uint("n_gens", len(gens), 32)
+    previous = -1
+    for index, g in enumerate(gens):
+        rid = _checked_uint(f"generation[{index}].rid", g.rid, 32)
+        _checked_uint(f"generation[{index}].map_gen", g.map_gen, 32)
+        _checked_uint(f"generation[{index}].data_gen", g.data_gen, 32)
+        if rid <= previous:
+            raise AbiError(
+                f"generation vector RIDs must be strictly ascending (generation[{index}] "
+                f"rid {rid} after {previous})"
+            )
+        previous = rid
+    if gens:
+        vec_map = max(g.map_gen for g in gens)
+        vec_data = max(g.data_gen for g in gens)
+        if pack.map_gen != vec_map or pack.data_gen != vec_data:
+            raise AbiError(
+                f"header map_gen/data_gen ({pack.map_gen}, {pack.data_gen}) must be the "
+                f"generation vector's maxima ({vec_map}, {vec_data})"
+            )
 
 
 class _Reader:
@@ -247,13 +282,20 @@ def _write_trace(w: _Writer, note: TraceNote) -> None:
     w.u64(note.trace_hash)
 
 
+def _write_generation(w: _Writer, g: Generation) -> None:
+    w.u32(g.rid)
+    w.u32(g.map_gen)
+    w.u32(g.data_gen)
+
+
 def encode(pack: StreamPack) -> bytes:
     """Serialize a StreamPack (CRC trailer); emits the lowest carrying version.
 
     Packs without v2 features (pipeline_depth == 1, no double-buffer prefetch)
     encode byte-identically to the frozen v1 format. A pack that uses v3 segment
     dispatch/channel (any non-default `dispatch`/`channel`) encodes as v3; one that
-    uses neither v2 nor v3 features stays byte-identical frozen v1.
+    carries a per-resource generation vector (every hydrated pack) encodes as v4; one
+    that uses none of them stays byte-identical frozen v1.
     """
     _validate_encode_contract(pack)
     needs_v2 = pack.pipeline_depth > 1 or any(pf.buffers != 1 for pf in pack.prefetches)
@@ -261,7 +303,8 @@ def encode(pack: StreamPack) -> bytes:
         seg.dispatch != _DISPATCH_DEFAULT or seg.channel != _CHANNEL_DEFAULT
         for seg in pack.segments
     )
-    version = 3 if needs_v3 else (2 if needs_v2 else ABI_VERSION)
+    needs_v4 = bool(pack.generations)
+    version = 4 if needs_v4 else (3 if needs_v3 else (2 if needs_v2 else ABI_VERSION))
     header = _HEADER.pack(
         ABI_MAGIC,
         version,
@@ -276,6 +319,9 @@ def encode(pack: StreamPack) -> bytes:
     )
     if version >= 2:
         header += struct.pack("<H", pack.pipeline_depth)
+    if version >= 4:
+        header += b"\x00" * (_GENS_OFF - len(header))  # 38..39 stay reserved
+        header += struct.pack("<I", len(pack.generations))
     header = header + b"\x00" * (_HEADER_SIZE - len(header))
 
     w = _Writer()
@@ -288,13 +334,16 @@ def encode(pack: StreamPack) -> bytes:
         _write_block(w, blk)
     for t in pack.trace_notes:
         _write_trace(w, t)
+    if version >= 4:
+        for g in pack.generations:
+            _write_generation(w, g)
 
     body = header + bytes(w.buf)
     return body + struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
 
 
 def decode(data: bytes) -> StreamPack:
-    """Parse the v1..v3 wire format back into a StreamPack (magic/version/CRC)."""
+    """Parse the v1..v4 wire format back into a StreamPack (magic/version/CRC)."""
     if len(data) < _HEADER_SIZE + 4:
         raise AbiError("buffer too small for a StreamPack")
     magic, version, flags, topo, mapg, datag, nseg, npf, nblk, ntr = _HEADER.unpack(
@@ -309,8 +358,12 @@ def decode(data: bytes) -> StreamPack:
     if flags:
         raise AbiError(f"reserved StreamPack flags must be zero, got 0x{flags:04x}")
     reserved_start = _PIPELINE_OFF + (2 if version >= 2 else 0)
-    if any(data[reserved_start:_HEADER_SIZE]):
+    reserved = bytes(data[reserved_start:_HEADER_SIZE])
+    if version >= 4:  # v4 carves n_gens out of the pad; the bytes around it stay reserved
+        reserved = bytes(data[reserved_start:_GENS_OFF]) + bytes(data[_GENS_OFF + 4 : _HEADER_SIZE])
+    if any(reserved):
         raise AbiError("reserved StreamPack header bytes must be zero")
+    n_gens = struct.unpack_from("<I", data, _GENS_OFF)[0] if version >= 4 else 0
     body, crc = data[:-4], struct.unpack("<I", data[-4:])[0]
     if (zlib.crc32(body) & 0xFFFFFFFF) != crc:
         raise AbiError("CRC mismatch (corrupt StreamPack)")
@@ -395,6 +448,11 @@ def decode(data: bytes) -> StreamPack:
         pack.blocks.append(Block(base=r.u64(), count=r.u64(), strides=r.u64_array()))
     for _ in range(ntr):
         pack.trace_notes.append(TraceNote(claim_id=r.u64(), src_hash=r.u64(), trace_hash=r.u64()))
+    for _ in range(n_gens):
+        pack.generations.append(Generation(rid=r.u32(), map_gen=r.u32(), data_gen=r.u32()))
+    # The vector's well-formedness is the same predicate the encoder applies (rail symmetry
+    # with the C decoder's BCIR_ERR_GENERATION): ascending RIDs, header maxima.
+    _validate_generation_vector(pack)
     if r.pos != len(data) - 4:
         raise AbiError(
             f"unexpected trailing body bytes: decoded through offset {r.pos}, "
@@ -432,6 +490,8 @@ def inspect_stream_pack(data: bytes) -> StreamPackInspection:
         append("block", index, f"block{index}", lambda w, block=block: _write_block(w, block))
     for index, note in enumerate(pack.trace_notes):
         append("trace", index, f"claim{note.claim_id}", lambda w, note=note: _write_trace(w, note))
+    for index, g in enumerate(pack.generations):
+        append("generation", index, f"rid{g.rid}", lambda w, g=g: _write_generation(w, g))
 
     trailer_offset = len(data) - 4
     if cursor != trailer_offset:

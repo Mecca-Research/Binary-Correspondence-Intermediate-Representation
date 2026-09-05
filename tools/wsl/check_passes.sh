@@ -25,6 +25,11 @@ echo "[passes] -bcir-verify negative cases (-verify-diagnostics)"
   && echo "  PASS verify_laws (R1-R7)" || { echo "  FAIL verify_laws"; fail=1; }
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_laws_deep.mlir" \
   && echo "  PASS verify_laws_deep (R8-R16)" || { echo "  FAIL verify_laws_deep"; fail=1; }
+# S0-2 (StreamPack v4): R11 reads the per-resource generation vector -- a resource that moved
+# under the header maxima, one declared after hydration, an undeclared rid, a pack with no
+# vector, and the op verifier's shape rules (unsorted rids, maxima, triples).
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_generation_vector.mlir" \
+  && echo "  PASS verify_generation_vector (R11 per resource, StreamPack v4)" || { echo "  FAIL verify_generation_vector"; fail=1; }
 # R19-R21 over the optional timing/lifetime metadata. Inert until S0-3: the fixture carried
 # its RUN line and expected-error markers, and nothing ran it (test_mlir_fixture_inventory).
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_timing_lifetime.mlir" \

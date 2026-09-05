@@ -164,7 +164,8 @@ bcir.module @full_vec_add_ct1 attributes {
 
   // ---- BCIR-4: GEM StreamPack (hydrated, prefetch + provenance) ----
   bcir.gem.stream_pack @sp0 attributes {
-    source_plan = @plan0, topo_gen = 1 : i64, map_gen = 1 : i64, data_gen = 4 : i64
+    source_plan = @plan0, topo_gen = 1 : i64, map_gen = 1 : i64, data_gen = 4 : i64,
+    generations = array<i64: 10, 1, 4, 11, 1, 4, 12, 1, 0>
   } {
     bcir.gem.prefetch @pf0 { distance = 4 : i32, targets = [@A, @B], hint = "T0", pattern = "linear" }
     bcir.gem.block @blk0 { base = 0 : i64, count = 1024 : i64, strideA = 1 : i64, strideB = 1 : i64, strideD = 1 : i64 }

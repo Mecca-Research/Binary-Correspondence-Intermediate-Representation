@@ -46,8 +46,11 @@ STREAMPACK_MODULE_OID: tuple[int, ...] = (*BCIR_ARC, 1)
 
 #: Bumped only when the ASN.1 module changes shape. Independent of the native
 #: StreamPack version: the projection can gain a field without the native format
-#: moving, and vice versa.
-PROJECTION_VERSION = 1
+#: moving, and vice versa. 2 since S0-E: the `generations` component (the per-resource
+#: generation vector, native v4). The schema's `version [0] INTEGER DEFAULT 1` keeps its
+#: original default, so a document without the field still means version 1 and a
+#: version-2 document spells its version explicitly (X.680: a DEFAULT is not revised).
+PROJECTION_VERSION = 2
 
 _INTEGER = Primitive(Universal.INTEGER, "INTEGER")
 _UTF8 = Primitive(Universal.UTF8_STRING, "UTF8String")
@@ -93,7 +96,8 @@ DISPATCH_NAMES = {v: k for k, v in DISPATCH_VALUES.items()}
 #       segments       [6] SEQUENCE OF LaneSegment,
 #       prefetches     [7] SEQUENCE OF Prefetch  DEFAULT {},
 #       blocks         [8] SEQUENCE OF Block     DEFAULT {},
-#       traceNotes     [9] SEQUENCE OF TraceNote DEFAULT {} }
+#       traceNotes     [9] SEQUENCE OF TraceNote DEFAULT {},
+#       generations   [10] SEQUENCE OF Generation DEFAULT {} }
 #
 #   LaneSegment ::= SEQUENCE {
 #       name           [0] UTF8String,
@@ -130,6 +134,11 @@ DISPATCH_NAMES = {v: k for k, v in DISPATCH_VALUES.items()}
 #       claimId        [0] INTEGER,
 #       srcHash        [1] INTEGER DEFAULT 0,
 #       traceHash      [2] INTEGER DEFAULT 0 }
+#
+#   Generation ::= SEQUENCE {
+#       rid            [0] INTEGER,
+#       mapGen         [1] INTEGER DEFAULT 0,
+#       dataGen        [2] INTEGER DEFAULT 0 }
 #
 # END
 
@@ -185,9 +194,20 @@ TRACE_NOTE = Sequence(
     name="TraceNote",
 )
 
+#: The per-resource generation vector (native StreamPack v4, law R11): one entry per
+#: declared RID, in RID order, taken at hydration.
+GENERATION = Sequence(
+    (
+        Component("rid", _INTEGER, tag=0),
+        Component("mapGen", _INTEGER, tag=1, default=0),
+        Component("dataGen", _INTEGER, tag=2, default=0),
+    ),
+    name="Generation",
+)
+
 STREAM_PACK = Sequence(
     (
-        Component("version", _INTEGER, tag=0, default=PROJECTION_VERSION),
+        Component("version", _INTEGER, tag=0, default=1),
         Component("sourcePlan", _UTF8, tag=1),
         Component("topoGen", _INTEGER, tag=2, default=1),
         Component("mapGen", _INTEGER, tag=3, default=0),
@@ -197,6 +217,9 @@ STREAM_PACK = Sequence(
         Component("prefetches", SequenceOf(PREFETCH, "SEQUENCE OF Prefetch"), tag=7, default=[]),
         Component("blocks", SequenceOf(BLOCK, "SEQUENCE OF Block"), tag=8, default=[]),
         Component("traceNotes", SequenceOf(TRACE_NOTE, "SEQUENCE OF TraceNote"), tag=9, default=[]),
+        Component(
+            "generations", SequenceOf(GENERATION, "SEQUENCE OF Generation"), tag=10, default=[]
+        ),
     ),
     name="StreamPack",
 )
@@ -210,6 +233,7 @@ MODULE = Module(
         "Prefetch": PREFETCH,
         "Block": BLOCK,
         "TraceNote": TRACE_NOTE,
+        "Generation": GENERATION,
     },
 )
 
@@ -271,12 +295,16 @@ def pack_to_value(pack) -> dict:
             }
             for t in pack.trace_notes
         ],
+        "generations": [
+            {"rid": g.rid, "mapGen": g.map_gen, "dataGen": g.data_gen}
+            for g in getattr(pack, "generations", ())
+        ],
     }
 
 
 def value_to_pack(value: dict):
     """The inverse of `pack_to_value` (imports the GEM types lazily — cold organ)."""
-    from ..gem.streampack import Block, LaneSegment, Prefetch, StreamPack, TraceNote
+    from ..gem.streampack import Block, Generation, LaneSegment, Prefetch, StreamPack, TraceNote
 
     return StreamPack(
         source_plan=value["sourcePlan"],
@@ -328,6 +356,10 @@ def value_to_pack(value: dict):
                 trace_hash=t.get("traceHash", 0),
             )
             for t in value.get("traceNotes", [])
+        ],
+        generations=[
+            Generation(rid=g["rid"], map_gen=g.get("mapGen", 0), data_gen=g.get("dataGen", 0))
+            for g in value.get("generations", [])
         ],
     )
 
@@ -428,6 +460,7 @@ __all__ = [
     "BLOCK",
     "DISPATCH_NAMES",
     "DISPATCH_VALUES",
+    "GENERATION",
     "LANE_SEGMENT",
     "MODULE",
     "decode_pack_jer",

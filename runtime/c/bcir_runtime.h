@@ -1,6 +1,6 @@
 /*===- bcir_runtime.h - freestanding BCIR StreamPack runtime --------------===
  *
- * A no-libc loader/executor for frozen StreamPack v1 and its append-only v2/v3 forms
+ * A no-libc loader/executor for frozen StreamPack v1 and its append-only v2/v3/v4 forms
  * (bcir_streampack.h / docs/kernel/BCIR_STREAMPACK_ABI.md). Depends only on
  * <stddef.h> + <stdint.h> (both freestanding-safe), so it links into kernels,
  * drivers, and embedded/WASM hosts with no runtime dependency.
@@ -38,7 +38,9 @@ typedef enum bcir_status {
   BCIR_ERR_OVERFLOW = 11,   /* a derived size/cost cannot be represented by the public ABI */
   BCIR_ERR_TRAILING = 12,   /* CRC-valid bytes remain after all declared body records */
   BCIR_ERR_RESERVED = 13,   /* a reserved header/record field is nonzero */
-  BCIR_ERR_UTF8 = 14        /* a length-prefixed wire string is not valid UTF-8 */
+  BCIR_ERR_UTF8 = 14,       /* a length-prefixed wire string is not valid UTF-8 */
+  BCIR_ERR_GENERATION = 15  /* a v4 generation vector is malformed: RIDs not strictly ascending,
+                             * or the header map_gen/data_gen are not the vector's maxima */
 } bcir_status;
 
 /* zlib-compatible CRC-32 (reflected, poly 0xEDB88320). NULL is valid only with len 0;
@@ -97,6 +99,29 @@ BCIR_NODISCARD bcir_status bcir_sp_check_generation(const uint8_t *BCIR_RESTRICT
                                                     uint32_t expected_map_gen,
                                                     uint32_t expected_data_gen);
 
+/* Per-generation callback (v4); return nonzero to stop the walk early. */
+typedef int (*bcir_gen_fn)(const bcir_generation_view *g, void *ctx);
+
+/* Walk the v4 per-resource generation vector in RID order. Runs the full semantic
+ * verification first (the vector is the body's tail, so exact consumption locates it);
+ * a v1-v3 pack has no vector and the walk invokes nothing. */
+BCIR_NODISCARD bcir_status bcir_sp_for_each_generation(const uint8_t *BCIR_RESTRICT data,
+                                                       size_t len, bcir_gen_fn fn,
+                                                       void *ctx);
+
+/* R11 per resource (S0-2, StreamPack v4): `live[0..n_live)` is the caller's live registry
+ * -- one (rid, map_gen, data_gen) per declared resource, any order. The pack is STALE
+ * (BCIR_ERR_STALE) unless every vector entry names a live resource with exactly its
+ * generation AND every live resource has an entry: a resource that moved while another
+ * still held the maximum, or one declared after hydration, is stale even though the
+ * header maxima agree. A pack with no vector is stale against any registry that
+ * declares resources (a v1-v3 artifact must be rehydrated), and clean against none.
+ * Validates magic/version/CRC and the semantic laws first (their statuses pass through).
+ * Mirrors bcir/verify::verify_pack's per-resource R11 and the law rail's walk. */
+BCIR_NODISCARD bcir_status bcir_sp_check_generation_vector(
+    const uint8_t *BCIR_RESTRICT data, size_t len,
+    const bcir_generation_view *BCIR_RESTRICT live, size_t n_live);
+
 /* R10 (stream provenance) + the range gate, over the WHOLE decoded pack (the freestanding
  * twin of verify_pack's R10). After the CRC/bounds check it enforces, on the decoded body:
  *   - every segment's claim_id resolves to a decoded trace record (no dangling/redirected id);
@@ -104,6 +129,8 @@ BCIR_NODISCARD bcir_status bcir_sp_check_generation(const uint8_t *BCIR_RESTRICT
  *   - every segment's non-empty `prefetch` name resolves to a declared prefetch record;
  *   - lane/width/dispatch are in range (as bcir_sp_for_each_segment, applied to every segment);
  *   - pipeline_depth >= 1 and every prefetch `buffers` is 1 or 2 (the v2 well-formedness);
+ *   - a v4 generation vector has strictly ascending RIDs and the header map_gen/data_gen are
+ *     its maxima (BCIR_ERR_GENERATION otherwise);
  *   - every declared trace record is present and the final record ends exactly at the CRC trailer.
  * When `expected_map_gen`/`expected_data_gen` are not (uint32_t)-1, R11 (staleness) is also
  * enforced. Returns BCIR_ERR_PROVENANCE / BCIR_ERR_STALE / BCIR_ERR_LANE / BCIR_ERR_WIDTH /

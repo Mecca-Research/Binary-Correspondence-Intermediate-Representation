@@ -403,6 +403,105 @@ def test_generation_drift_is_R11():
     assert "R11" in _laws(verify_pack(m, pack))
 
 
+def _hydrated_two_generations():
+    """vector_add with two resources at different generations, hydrated (StreamPack v4):
+    the header maxima are (3, 2); resource 11 sits under them at (1, 0)."""
+    m = vector_add(1024)
+    m.resources[10] = replace(m.resources[10], map_gen=3, data_gen=2)
+    m.resources[11] = replace(m.resources[11], map_gen=1, data_gen=0)
+    pack = hydrate(m, optimize(m, TARGETS["x86_avx512"], Theta.cool()))
+    assert (pack.map_gen, pack.data_gen) == (3, 2)
+    assert [(g.rid, g.map_gen, g.data_gen) for g in pack.generations] == [
+        (10, 3, 2),
+        (11, 1, 0),
+        (12, 0, 0),
+    ]
+    assert verify_pack(m, pack) == []
+    return m, pack
+
+
+def _messages(diags, law="R11"):
+    return [d.message for d in diags if d.law == law]
+
+
+def test_generation_drift_under_the_maxima_is_R11():
+    # S0-2 (StreamPack v4, R11 per resource): resource 11 moves from (1, 0) to (2, 1) while
+    # resource 10 still holds the maxima (3, 2). The maxima-only rule cannot see it (the
+    # RED witness: the header tags still equal the registry maxima); the per-resource
+    # vector names the moved resource and the repair.
+    m, pack = _hydrated_two_generations()
+    m.resources[11] = replace(m.resources[11], map_gen=2, data_gen=1)
+    live_max = (
+        max(r.map_gen for r in m.resources.values()),
+        max(r.data_gen for r in m.resources.values()),
+    )
+    assert live_max == (pack.map_gen, pack.data_gen)  # invisible to the maxima
+    messages = _messages(verify_pack(m, pack))
+    assert "stale StreamPack: RID 11 map_gen 1 != registry 2 (rehydrate: repack)" in messages
+    assert "stale StreamPack: RID 11 data_gen 0 != registry 1 (rehydrate: replan)" in messages
+    assert not [msg for msg in messages if "RID 10 " in msg or "RID 12 " in msg]
+
+
+def test_resource_declared_after_hydration_is_R11():
+    m, pack = _hydrated_two_generations()
+    m.resources[13] = replace(m.resources[12], rid=13, name="E")
+    messages = _messages(verify_pack(m, pack))
+    assert messages == [
+        "stale StreamPack: RID 13 was declared after hydration "
+        "(no generation vector entry; rehydrate: repack)"
+    ]
+
+
+def test_vector_naming_an_undeclared_rid_is_R11():
+    from bcir.gem.streampack import Generation
+
+    m, pack = _hydrated_two_generations()
+    pack.generations.append(Generation(13, 0, 0))  # the registry declares no RID 13
+    messages = _messages(verify_pack(m, pack))
+    assert messages == [
+        "generation vector names RID 13, which the registry does not declare (rehydrate: repack)"
+    ]
+
+
+def test_vector_less_pack_against_a_registry_is_R11():
+    # A v1-v3 artifact (no vector) is stale against any registry that declares resources:
+    # the maxima alone cannot see a resource that moved under them.
+    m, pack = _hydrated_two_generations()
+    pack.generations = []
+    messages = _messages(verify_pack(m, pack))
+    assert len(messages) == 1 and messages[0].startswith(
+        "stale StreamPack: no per-resource generation vector for a registry of 3 resource(s)"
+    )
+    # ... and a vector-less pack over an empty registry is judged by the maxima alone:
+    # (3, 2) over no resources is stale, (0, 0) is clean (R10 aside, which still sees
+    # the segment's undeclared RIDs and claim on the empty module).
+    empty = Module(name="empty")
+    assert _messages(verify_pack(empty, pack)) == [
+        "stale StreamPack: map_gen 3 != registry 0 (rehydrate: repack)",
+        "stale StreamPack: data_gen 2 != registry 0 (rehydrate: replan)",
+    ]
+    pack.map_gen, pack.data_gen = 0, 0
+    assert _messages(verify_pack(empty, pack)) == []
+
+
+def test_header_and_vector_maxima_must_agree_for_R11():
+    m, pack = _hydrated_two_generations()
+    pack.map_gen = 9  # the header summary disagrees with the vector
+    messages = _messages(verify_pack(m, pack))
+    assert messages == [
+        "header map_gen/data_gen (9, 2) are not the generation vector's maxima (3, 2)"
+    ]
+
+
+def test_unsorted_or_duplicate_vector_is_R11():
+    m, pack = _hydrated_two_generations()
+    pack.generations.reverse()
+    assert any("not in RID order" in msg for msg in _messages(verify_pack(m, pack)))
+    m, pack = _hydrated_two_generations()
+    pack.generations.append(pack.generations[0])
+    assert any("twice" in msg for msg in _messages(verify_pack(m, pack)))
+
+
 # --- R12: lowering legality -------------------------------------------------------
 
 

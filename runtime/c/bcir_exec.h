@@ -79,6 +79,18 @@ BCIR_NODISCARD bcir_status bcir_sp_execute_checked(const uint8_t *BCIR_RESTRICT 
                                                    size_t phases_cap, bcir_exec_fn fn, void *ctx,
                                                    bcir_exec_result *BCIR_RESTRICT out);
 
+/* As bcir_sp_execute_checked, but R11 is the PER-RESOURCE law (StreamPack v4, S0-2): the
+ * pack's generation vector must match the caller's live registry `live[0..n_live)` entry
+ * for entry (bcir_sp_check_generation_vector) -- a resource that moved under the header
+ * maxima, one declared after hydration, or a pack with no vector at all is STALE and is
+ * not executed. The entry point a driver holding its registry uses. */
+BCIR_NODISCARD bcir_status bcir_sp_execute_checked_vector(
+    const uint8_t *BCIR_RESTRICT data, size_t len,
+    const bcir_generation_view *BCIR_RESTRICT live, size_t n_live,
+    bcir_exec_item *BCIR_RESTRICT scratch, size_t scratch_cap,
+    bcir_phase_stat *BCIR_RESTRICT phases, size_t phases_cap, bcir_exec_fn fn, void *ctx,
+    bcir_exec_result *BCIR_RESTRICT out);
+
 #ifdef __cplusplus
 }
 #endif

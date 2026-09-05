@@ -863,6 +863,9 @@ def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
 
     `pack` is a `gem.streampack.StreamPack` (duck-typed).
 
+    R11 reads the pack's per-resource generation vector (StreamPack v4) against the live
+    registry; a pack without one is refused wherever the registry declares resources.
+
     `result` is the plan the pack was hydrated from. Supply it wherever it is known.
     Without it R10 can only ask whether each segment maps back to *some* claim in the
     module -- it cannot ask whether the pack is the lowering of the plan that was priced
@@ -985,25 +988,114 @@ def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
     # kbcir.calibrate.rehydrate_decide), never execute silently.
     if pack.topo_gen < 1:
         diags.append(Diagnostic("R11", f"invalid topo_gen {pack.topo_gen} (must be >= 1)"))
-    reg_map = max((r.map_gen for r in module.resources.values()), default=0)
-    reg_data = max((r.data_gen for r in module.resources.values()), default=0)
-    if pack.map_gen != reg_map:
-        diags.append(
-            Diagnostic(
-                "R11",
-                f"stale StreamPack: map_gen {pack.map_gen} != registry {reg_map} "
-                f"(rehydrate: repack)",
-            )
-        )
-    if pack.data_gen != reg_data:
-        diags.append(
-            Diagnostic(
-                "R11",
-                f"stale StreamPack: data_gen {pack.data_gen} != registry {reg_data} "
-                f"(rehydrate: replan)",
-            )
-        )
+    # R11 per resource (S0-2, StreamPack v4): the header tags are the registry's MAXIMA and
+    # nothing more -- a resource that moved while another still held the maximum, and a
+    # resource declared after hydration, were both invisible to them. The pack carries the
+    # per-resource generation vector it was hydrated from (`Generation` records in RID
+    # order); every entry must match the live registry exactly and every declared
+    # resource must have an entry, and the header maxima are the vector's. A pack verified
+    # against a registry that declares resources must carry the vector: a v1-v3 artifact
+    # (or one with the vector stripped) is refused, not judged by its maxima -- the same
+    # rule on the law rail and in the C twin (bcir_sp_check_generation_vector). Only a
+    # registry with no resources at all is judged by the maxima (which must then be 0).
+    diags += _verify_generation_vector(module, pack)
 
+    return diags
+
+
+def _verify_generation_vector(module: Module, pack) -> list[Diagnostic]:
+    diags: list[Diagnostic] = []
+    vector = list(getattr(pack, "generations", ()))
+    if not vector:
+        if module.resources:
+            diags.append(
+                Diagnostic(
+                    "R11",
+                    f"stale StreamPack: no per-resource generation vector for a registry of "
+                    f"{len(module.resources)} resource(s) (a v1-v3 artifact: the maxima alone "
+                    f"cannot see a resource that moved under them; rehydrate: repack)",
+                )
+            )
+            return diags
+        reg_map = max((r.map_gen for r in module.resources.values()), default=0)
+        reg_data = max((r.data_gen for r in module.resources.values()), default=0)
+        if pack.map_gen != reg_map:
+            diags.append(
+                Diagnostic(
+                    "R11",
+                    f"stale StreamPack: map_gen {pack.map_gen} != registry {reg_map} "
+                    f"(rehydrate: repack)",
+                )
+            )
+        if pack.data_gen != reg_data:
+            diags.append(
+                Diagnostic(
+                    "R11",
+                    f"stale StreamPack: data_gen {pack.data_gen} != registry {reg_data} "
+                    f"(rehydrate: replan)",
+                )
+            )
+        return diags
+    seen: dict[int, object] = {}
+    previous = -1
+    for g in vector:
+        if g.rid in seen:
+            diags.append(Diagnostic("R11", f"generation vector names RID {g.rid} twice"))
+        elif g.rid < previous:
+            diags.append(
+                Diagnostic(
+                    "R11", f"generation vector is not in RID order (RID {g.rid} after {previous})"
+                )
+            )
+        seen[g.rid] = g
+        previous = max(previous, g.rid)
+    vec_map = max(g.map_gen for g in vector)
+    vec_data = max(g.data_gen for g in vector)
+    if pack.map_gen != vec_map or pack.data_gen != vec_data:
+        diags.append(
+            Diagnostic(
+                "R11",
+                f"header map_gen/data_gen ({pack.map_gen}, {pack.data_gen}) are not the "
+                f"generation vector's maxima ({vec_map}, {vec_data})",
+            )
+        )
+    for rid in sorted(seen):
+        g = seen[rid]
+        res = module.resource(rid)
+        if res is None:
+            diags.append(
+                Diagnostic(
+                    "R11",
+                    f"generation vector names RID {rid}, which the registry does not declare "
+                    f"(rehydrate: repack)",
+                )
+            )
+            continue
+        if g.map_gen != res.map_gen:
+            diags.append(
+                Diagnostic(
+                    "R11",
+                    f"stale StreamPack: RID {rid} map_gen {g.map_gen} != registry {res.map_gen} "
+                    f"(rehydrate: repack)",
+                )
+            )
+        if g.data_gen != res.data_gen:
+            diags.append(
+                Diagnostic(
+                    "R11",
+                    f"stale StreamPack: RID {rid} data_gen {g.data_gen} != registry "
+                    f"{res.data_gen} (rehydrate: replan)",
+                )
+            )
+    for rid in sorted(module.resources):
+        if rid not in seen:
+            diags.append(
+                Diagnostic(
+                    "R11",
+                    f"stale StreamPack: RID {rid} was declared after hydration (no generation "
+                    f"vector entry; rehydrate: repack)",
+                )
+            )
     return diags
 
 

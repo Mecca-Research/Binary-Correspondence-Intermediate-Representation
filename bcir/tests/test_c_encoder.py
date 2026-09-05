@@ -5,8 +5,8 @@ driver-resident hydrate can emit the artifact with no Python -- completing the f
 round-trip (decoder + executor already landed). `bcir_sp_reencode` parses a pack and
 re-serializes it through the C writer; these tests pin that the re-encoded bytes are
 **byte-identical** to `bcir.abi.encode` across the corpus and all ABI versions (v1, v2
-with the pipeline/double-buffer tails, and v3 dispatch/channel), plus malformed-input /
-NOSPACE paths.
+with the pipeline/double-buffer tails, v3 dispatch/channel, and v4 with the per-resource
+generation vector every hydrated pack carries), plus malformed-input / NOSPACE paths.
 """
 
 from dataclasses import replace
@@ -107,9 +107,11 @@ def test_c_encoder_builds_freestanding():
         assert r.returncode == 0, f"{std}: {r.stderr}"
 
 
-def test_reencode_is_byte_identical_across_corpus_v1_v2_and_v3():
+def test_reencode_is_byte_identical_across_corpus_v1_to_v4():
     """The headline: C re-encode == bcir.abi.encode, byte-for-byte, on every corpus pack
-    in v1 (frozen), v2 (pipeline/double-buffer tails), and v3 (dispatch/channel)."""
+    in v4 (hydrated: the per-resource generation vector, alone and with the pipeline
+    tails), and on their vector-less twins in v1 (frozen) and v2 (pipeline/double-buffer
+    tails), plus v3 (dispatch/channel) with and without the vector."""
     if _cc() is None:
         return
     mods = {
@@ -125,14 +127,27 @@ def test_reencode_is_byte_identical_across_corpus_v1_v2_and_v3():
         assert exe is not None
         for name, m in mods.items():
             r = optimize(m, AVX, COOL)
-            for label, pack in (("v1", hydrate(m, r)), ("v2", hydrate_pipelined(m, r, depth=2))):
+            v4, v4p = hydrate(m, r), hydrate_pipelined(m, r, depth=2)
+            v1, v2 = hydrate(m, r), hydrate_pipelined(m, r, depth=2)
+            v1.generations, v2.generations = [], []  # the vector-less twins
+            for label, pack, version in (
+                ("v4", v4, 4),
+                ("v4-pipelined", v4p, 4),
+                ("v1", v1, 1),
+                ("v2", v2, 2),
+            ):
                 blob = encode(pack)
+                assert blob[4] == version, f"{name} {label}: wire version {blob[4]}"
                 assert _reencode(exe, tmp, blob) == blob, f"{name} {label}: not byte-identical"
         m = gather_reduce()
         pack = hydrate(m, optimize(m, AVX, COOL))
         pack.segments[0] = replace(
             pack.segments[0], opcode="reduce.add", dispatch="pim", channel="hbm_pim"
         )
+        blob = encode(pack)
+        assert blob[4] == 4  # dispatch/channel AND the vector: v4 implies the v3 tail
+        assert _reencode(exe, tmp, blob) == blob
+        pack.generations = []
         blob = encode(pack)
         assert blob[4] == 3
         assert _reencode(exe, tmp, blob) == blob

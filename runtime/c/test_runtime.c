@@ -26,6 +26,19 @@ static int on_segment(const bcir_segment_view *seg, void *vctx) {
   return 0;
 }
 
+typedef struct {
+  uint32_t count;
+  bcir_generation_view first;
+  int have_first;
+} gen_ctx;
+
+static int on_generation(const bcir_generation_view *g, void *vctx) {
+  gen_ctx *ctx = (gen_ctx *)vctx;
+  if (!ctx->have_first) { ctx->first = *g; ctx->have_first = 1; }
+  ctx->count++;
+  return 0;
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) { fprintf(stderr, "usage: %s <streampack-file>\n", argv[0]); return 2; }
   FILE *f = fopen(argv[1], "rb");
@@ -42,6 +55,9 @@ int main(int argc, char **argv) {
   walk_ctx ctx = {0};
   st = bcir_sp_for_each_segment(buf, (size_t)n, on_segment, &ctx);
   if (st != BCIR_OK) { printf("WALK_FAIL status=%d\n", st); free(buf); return 1; }
+  gen_ctx gctx = {0};
+  st = bcir_sp_for_each_generation(buf, (size_t)n, on_generation, &gctx);
+  if (st != BCIR_OK) { printf("GEN_WALK_FAIL status=%d\n", st); free(buf); return 1; }
 
   printf("version=%u\n", hdr.version);
   printf("pipeline_depth=%u\n", hdr.pipeline_depth);
@@ -63,6 +79,14 @@ int main(int argc, char **argv) {
     printf("seg0.dispatch=%u\n", s->dispatch);
     printf("seg0.channel=%.*s\n", (int)s->channel_len, s->channel ? s->channel : "");
     printf("seg0.prefetch=%.*s\n", (int)s->prefetch_len, s->prefetch ? s->prefetch : "");
+  }
+  /* v4: the per-resource generation vector (0 records before v4). */
+  printf("n_gens=%u\n", hdr.n_gens);
+  printf("gens_walked=%u\n", gctx.count);
+  if (gctx.have_first) {
+    printf("gen0.rid=%u\n", gctx.first.rid);
+    printf("gen0.map_gen=%u\n", gctx.first.map_gen);
+    printf("gen0.data_gen=%u\n", gctx.first.data_gen);
   }
   printf("OK\n");
   free(buf);

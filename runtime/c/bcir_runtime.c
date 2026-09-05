@@ -151,7 +151,8 @@ bcir_status bcir_sp_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
     hdr->topo_gen = 0; hdr->map_gen = 0; hdr->data_gen = 0;
     hdr->n_segments = 0; hdr->n_prefetches = 0;
     hdr->n_blocks = 0; hdr->n_trace = 0; hdr->pipeline_depth = 0;
-    for (int i = 0; i < 26; i++) hdr->reserved[i] = 0;
+    hdr->reserved0[0] = 0; hdr->reserved0[1] = 0; hdr->n_gens = 0;
+    for (int i = 0; i < 20; i++) hdr->reserved[i] = 0;
   }
   if (!data) return BCIR_ERR_TRUNCATED;
   if (len < (size_t)BCIR_STREAMPACK_HEADER_SIZE + 4u) return BCIR_ERR_TRUNCATED;
@@ -162,9 +163,13 @@ bcir_status bcir_sp_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
     return BCIR_ERR_VERSION;
   if (rd16(data + 6) != 0u) return BCIR_ERR_RESERVED;
   {
+    /* v2 carved pipeline_depth at 36..37; v4 carved n_gens at 40..43. Everything else in
+     * the pad is reserved and must be zero -- a reserved byte is never an extension point. */
     size_t reserved_start = version >= 2u ? 38u : 36u;
-    for (size_t i = reserved_start; i < BCIR_STREAMPACK_HEADER_SIZE; i++)
+    for (size_t i = reserved_start; i < BCIR_STREAMPACK_HEADER_SIZE; i++) {
+      if (version >= 4u && i >= 40u && i < 44u) continue;
       if (data[i] != 0u) return BCIR_ERR_RESERVED;
+    }
   }
   uint32_t stored = rd32(data + len - 4);
   if (bcir_crc32(data, len - 4) != stored) return BCIR_ERR_CRC;
@@ -181,6 +186,8 @@ bcir_status bcir_sp_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
     hdr->n_trace = rd32(data + 32);
     /* v2 appended into the v1 pad; v1 packs are single-phase-in-flight. */
     hdr->pipeline_depth = (version >= 2) ? rd16(data + 36) : 1;
+    /* v4 appended the generation-vector count; a v1-v3 pack carries no vector. */
+    hdr->n_gens = (version >= 4) ? rd32(data + 40) : 0;
   }
   return BCIR_OK;
 }
@@ -419,6 +426,25 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
     c_skip(&c, 16);                 /* src_hash + trace_hash */
   }
   if (c.err) return c_status(&c);
+  /* v4: the per-resource generation vector -- RIDs strictly ascending (sorted, unique) and
+   * the header map_gen/data_gen exactly its maxima. The header tags a v1-v3 reader sees are
+   * a SUMMARY of the vector; two sources of truth that may disagree are a second spelling
+   * of a stale pack (the Python decoder applies the same predicate). */
+  if (hdr.version >= 4) {
+    uint32_t prev = 0, vmap = 0, vdata = 0;
+    int have_prev = 0;
+    for (uint32_t i = 0; i < hdr.n_gens && !c.err; i++) {
+      uint32_t rid = c_u32(&c), mg = c_u32(&c), dg = c_u32(&c);
+      if (c.err) break;
+      if (have_prev && rid <= prev) return BCIR_ERR_GENERATION;
+      prev = rid; have_prev = 1;
+      if (mg > vmap) vmap = mg;
+      if (dg > vdata) vdata = dg;
+    }
+    if (c.err) return c_status(&c);
+    if (hdr.n_gens != 0 && (vmap != hdr.map_gen || vdata != hdr.data_gen))
+      return BCIR_ERR_GENERATION;
+  }
   if (c.pos != body_len) return BCIR_ERR_TRAILING;
 
   /* Pass 2: per segment, confirm (R10) its claim_id is traced + its prefetch resolves. */
@@ -458,6 +484,85 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
       if (!prefetch_covers_read(data, body_len, pf_start, hdr.n_prefetches, hdr.version,
                                 v.prefetch, v.prefetch_len, v.reads, v.n_reads))
         return BCIR_ERR_PROVENANCE;
+    }
+  }
+  return BCIR_OK;
+}
+
+/* --- v4: the per-resource generation vector (R11) ----------------------------------- */
+
+/* The vector is the body's tail (verified above to end exactly at the CRC), so after the
+ * semantic pass it is located by arithmetic, not by a third walk. */
+static bcir_status locate_generations(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                      bcir_streampack_header *hdr, size_t *start) {
+  bcir_status st = bcir_sp_verify_semantic(data, len, 0xFFFFFFFFu, 0xFFFFFFFFu);
+  if (st != BCIR_OK) return st;
+  st = bcir_sp_validate(data, len, hdr);
+  if (st != BCIR_OK) return st;
+  *start = 0;
+  if (hdr->version < 4 || hdr->n_gens == 0) return BCIR_OK;
+  {
+    size_t body_len = len - 4u;
+    size_t room = body_len - (size_t)BCIR_STREAMPACK_HEADER_SIZE;
+    if ((size_t)hdr->n_gens > room / BCIR_GENERATION_WIRE_SIZE) return BCIR_ERR_TRUNCATED;
+    *start = body_len - (size_t)hdr->n_gens * BCIR_GENERATION_WIRE_SIZE;
+  }
+  return BCIR_OK;
+}
+
+static void read_generation(const uint8_t *p, bcir_generation_view *g) {
+  g->rid = rd32(p); g->map_gen = rd32(p + 4); g->data_gen = rd32(p + 8);
+}
+
+bcir_status bcir_sp_for_each_generation(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                        bcir_gen_fn fn, void *ctx) {
+  bcir_streampack_header hdr;
+  size_t start;
+  bcir_status st = locate_generations(data, len, &hdr, &start);
+  if (st != BCIR_OK) return st;
+  if (hdr.version < 4) return BCIR_OK;
+  for (uint32_t i = 0; i < hdr.n_gens; i++) {
+    bcir_generation_view g;
+    read_generation(data + start + (size_t)i * BCIR_GENERATION_WIRE_SIZE, &g);
+    if (fn && fn(&g, ctx)) break;
+  }
+  return BCIR_OK;
+}
+
+bcir_status bcir_sp_check_generation_vector(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                            const bcir_generation_view *BCIR_RESTRICT live,
+                                            size_t n_live) {
+  bcir_streampack_header hdr;
+  size_t start;
+  bcir_status st = locate_generations(data, len, &hdr, &start);
+  if (st != BCIR_OK) return st;
+  if (n_live && !live) return BCIR_ERR_NOSPACE;   /* a caller table without storage */
+  {
+    uint32_t n_gens = hdr.version >= 4 ? hdr.n_gens : 0;
+    /* R11: a registry that declares resources needs the vector -- a v1-v3 artifact, or a
+     * pack with the vector stripped, is stale by construction, never judged by its maxima. */
+    if (n_gens == 0) return n_live ? BCIR_ERR_STALE : BCIR_OK;
+    /* A vector against an empty live registry: every entry names a resource the registry
+     * no longer declares. */
+    if (n_live == 0) return BCIR_ERR_STALE;
+    /* Every entry matches a live resource exactly (O(n*m), no allocation, no ordering
+     * demanded of the caller's table). */
+    for (uint32_t i = 0; i < n_gens; i++) {
+      bcir_generation_view g;
+      size_t j;
+      read_generation(data + start + (size_t)i * BCIR_GENERATION_WIRE_SIZE, &g);
+      for (j = 0; j < n_live; j++)
+        if (live[j].rid == g.rid) break;
+      if (j == n_live) return BCIR_ERR_STALE;                    /* an undeclared RID */
+      if (live[j].map_gen != g.map_gen || live[j].data_gen != g.data_gen)
+        return BCIR_ERR_STALE;                                    /* moved: repack/replan */
+    }
+    /* ...and every live resource has an entry (declared after hydration otherwise). */
+    for (size_t j = 0; j < n_live; j++) {
+      uint32_t i;
+      for (i = 0; i < n_gens; i++)
+        if (rd32(data + start + (size_t)i * BCIR_GENERATION_WIRE_SIZE) == live[j].rid) break;
+      if (i == n_gens) return BCIR_ERR_STALE;
     }
   }
   return BCIR_OK;

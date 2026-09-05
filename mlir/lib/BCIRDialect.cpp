@@ -141,6 +141,45 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   return ::mlir::success();
 }
 
+::mlir::LogicalResult GEMStreamPackOp::verify() {
+  // StreamPack v4 (S0-2, law R11): the per-resource generation vector's shape -- (rid,
+  // map_gen, data_gen) triples, every value an unsigned 32-bit integer, rids strictly
+  // ascending, and the header map_gen/data_gen exactly the vector's maxima. The same
+  // predicate both codecs apply (bcir/abi::_validate_generation_vector, bcir_runtime.c's
+  // BCIR_ERR_GENERATION); which resources the vector names against the registry is
+  // -bcir-verify's R11.
+  auto gens = getGenerations();
+  if (!gens)
+    return ::mlir::success();
+  ::llvm::ArrayRef<int64_t> v = *gens;
+  if (v.size() % 3 != 0)
+    return emitOpError() << "generations must hold (rid, map_gen, data_gen) triples (got "
+                         << v.size() << " values)";
+  int64_t prev = -1, vmap = 0, vdata = 0;
+  for (size_t i = 0; i < v.size(); i += 3) {
+    for (size_t k = 0; k < 3; ++k)
+      if (v[i + k] < 0 || v[i + k] > 0xFFFFFFFFll)
+        return emitOpError() << "generations[" << (i / 3)
+                             << "]: every value is an unsigned 32-bit integer (got " << v[i + k]
+                             << ")";
+    if (v[i] <= prev)
+      return emitOpError() << "generations: rids must be strictly ascending (rid " << v[i]
+                           << " after " << prev << ")";
+    prev = v[i];
+    if (v[i + 1] > vmap)
+      vmap = v[i + 1];
+    if (v[i + 2] > vdata)
+      vdata = v[i + 2];
+  }
+  if (!v.empty() &&
+      (static_cast<int64_t>(getMapGen()) != vmap || static_cast<int64_t>(getDataGen()) != vdata))
+    return emitOpError() << "map_gen/data_gen (" << static_cast<int64_t>(getMapGen()) << ", "
+                         << static_cast<int64_t>(getDataGen())
+                         << ") must be the generation vector's maxima (" << vmap << ", " << vdata
+                         << ")";
+  return ::mlir::success();
+}
+
 ::mlir::LogicalResult GEMMatmulOp::verify() {
   // The B1 plan record: positive shape, each tile in [1, dim], a known loop order, and the
   // bottleneck = max(compute, memory) (the max,+ roofline the dual-semiring search minimizes).

@@ -34,10 +34,34 @@ def test_listing_is_deterministic_and_contains_execution_and_provenance_fields()
     blob = _blob()
     listing = format_listing(blob)
     assert listing == format_listing(blob)
-    assert listing.startswith("BSPK v1 bytes=")
+    assert listing.startswith("BSPK v4 bytes=")  # a hydrated pack carries the v4 vector
     assert "segments:" in listing and "lane=u width=16" in listing
     assert "rd=[r10,r11] wr=[r12]" in listing
     assert "crc32 @" in listing and listing.endswith(" valid\n")
+
+
+def test_listing_shows_the_per_resource_generation_vector():
+    # v4 (R11 per resource): one line per declared resource in RID order, at the record's
+    # wire span; a vector-less (v1-v3) pack lists an empty section, never a fabricated one.
+    blob = _blob()
+    listing = format_listing(blob)
+    assert "generations=3" in listing
+    vector = listing.split("generation vector:\n", 1)[1].split("crc32 @", 1)[0].splitlines()
+    assert [line.split()[1] for line in vector] == ["r10:", "r11:", "r12:"]
+    assert all(line.split()[2:] == ["map=0", "data=0"] for line in vector)
+    assert all("+12 " in line for line in vector)  # 12 bytes per record
+    assert "# generation[0] 'rid10'" in format_hexdump(blob)
+
+    from bcir.gem.streampack import LaneSegment, StreamPack, TraceNote
+    from bcir.model import Lane
+
+    v1 = StreamPack(source_plan="plan0", map_gen=3, data_gen=2)
+    v1.segments.append(LaneSegment("seg0", 1000, 0, Lane.U, 16, "f32.add", (10, 11), (12,), ""))
+    v1.trace_notes.append(TraceNote(claim_id=1000))
+    v1_listing = format_listing(encode(v1))
+    assert v1_listing.startswith("BSPK v1 bytes=")
+    assert "generations=0" in v1_listing
+    assert "generation vector:\ncrc32 @" in v1_listing
 
 
 def test_hexdump_is_record_delimited_and_covers_exact_bytes():

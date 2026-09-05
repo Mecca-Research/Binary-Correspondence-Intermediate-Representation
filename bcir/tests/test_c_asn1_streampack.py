@@ -121,19 +121,23 @@ def test_der_projection_reconstructs_byte_identically_for_every_corpus_program()
 
 
 def test_the_reconstruction_picks_the_same_version_the_native_encoder_would():
-    """v1/v2/v3 is derived from CONTENT, and the projection does not carry it.
+    """v1/v2/v3/v4 is derived from CONTENT, and the projection does not carry it.
 
     The module's `version` field is the PROJECTION version and is independent of the
     native one by design, so the C rail has to re-apply the same rule
     `bcir/abi::encode` uses: v2 when anything is pipelined or double-buffered, v3 when
-    any segment carries a non-default dispatch or channel. A rail that guessed would
-    still produce a decodable pack -- just not the same octets, and so not the same
-    digest.
+    any segment carries a non-default dispatch or channel, v4 when the pack carries a
+    per-resource generation vector (which implies the v2/v3 tails). A rail that guessed
+    would still produce a decodable pack -- just not the same octets, and so not the
+    same digest.
     """
+    from bcir.gem.streampack import Generation
 
-    def build(pipeline_depth=1, buffers=1, dispatch="core", channel="host"):
+    def build(pipeline_depth=1, buffers=1, dispatch="core", channel="host", generations=False):
         pack = StreamPack(source_plan="plan0", topo_gen=1, map_gen=7, data_gen=19)
         pack.pipeline_depth = pipeline_depth
+        if generations:  # maxima (7, 19) == the header tags above
+            pack.generations = [Generation(10, 7, 2), Generation(11, 1, 19), Generation(12, 0, 0)]
         pack.prefetches.append(Prefetch("pf0", 4, (10, 11), "T0", "linear", buffers=buffers))
         pack.segments.append(
             LaneSegment(
@@ -159,6 +163,8 @@ def test_the_reconstruction_picks_the_same_version_the_native_encoder_would():
         "v2-buffers": build(buffers=2),
         "v3-dispatch": build(dispatch="pim"),
         "v3-channel": build(channel="nvidia_ptx"),
+        "v4-generations": build(generations=True),
+        "v4-generations-pipelined-pim": build(pipeline_depth=2, dispatch="pim", generations=True),
     }
     with tempfile.TemporaryDirectory() as tmp:
         exe = _build(tmp)
@@ -179,6 +185,8 @@ def test_the_reconstruction_picks_the_same_version_the_native_encoder_would():
             "v2-buffers": 2,
             "v3-dispatch": 3,
             "v3-channel": 3,
+            "v4-generations": 4,
+            "v4-generations-pipelined-pim": 4,
         }, seen
 
 

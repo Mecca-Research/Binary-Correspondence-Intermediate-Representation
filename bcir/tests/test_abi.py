@@ -1,10 +1,14 @@
 """Frozen StreamPack binary ABI (Phase 7) tests."""
 
+import struct
+import zlib
+from dataclasses import replace
+
 from bcir.abi import ABI_MAGIC, ABI_VERSION, AbiError, decode, encode
 from bcir.abi.streampack_abi import ABI_VERSION_MAX
 from bcir.examples import vector_add
-from bcir.gem import hydrate
-from bcir.gem.streampack import LaneSegment, Prefetch, StreamPack, TraceNote
+from bcir.gem import generation_vector, hydrate
+from bcir.gem.streampack import Generation, LaneSegment, Prefetch, StreamPack, TraceNote
 from bcir.kbcir import optimize
 from bcir.kbcir.cost import TargetProfile, Theta
 from bcir.model import Lane
@@ -15,25 +19,14 @@ def _pack():
     return hydrate(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()))
 
 
-def test_header_magic_and_version():
-    blob = encode(_pack())
-    assert blob[:4] == ABI_MAGIC == b"BSPK"
-    assert blob[4] == ABI_VERSION == 1
-    assert len(blob) >= 64 + 4  # header + crc trailer
+def _refix(blob: bytearray) -> bytes:
+    body = bytes(blob[:-4])
+    blob[-4:] = struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
+    return bytes(blob)
 
 
-def test_round_trip_is_lossless():
-    pack = _pack()
-    assert decode(encode(pack)) == pack
-
-
-def test_encoding_is_deterministic():
-    pack = _pack()
-    assert encode(pack) == encode(pack)  # stable bytes
-    assert encode(decode(encode(pack))) == encode(pack)  # idempotent
-
-
-def test_rich_pack_round_trips():
+def _v1_pack():
+    """A hand-built pack using no v2/v3/v4 feature: the frozen v1 encoding."""
     pack = StreamPack(source_plan="plan0", topo_gen=1, map_gen=7, data_gen=19)
     pack.prefetches.append(Prefetch("pf0", 4, (10, 11), "T0", "linear"))
     pack.segments.append(
@@ -52,25 +45,59 @@ def test_rich_pack_round_trips():
         )
     )
     pack.trace_notes.append(TraceNote(claim_id=1000, src_hash=42, trace_hash=99))
+    return pack
+
+
+def test_header_magic_and_version():
+    blob = encode(_pack())
+    assert blob[:4] == ABI_MAGIC == b"BSPK"
+    assert ABI_VERSION == 1  # the frozen base version
+    assert blob[4] == 4  # a hydrated pack carries the v4 generation vector
+    assert encode(_v1_pack())[4] == ABI_VERSION  # a vector-less pack stays frozen v1
+    assert len(blob) >= 64 + 4  # header + crc trailer
+
+
+def test_round_trip_is_lossless():
+    pack = _pack()
+    assert decode(encode(pack)) == pack
+
+
+def test_encoding_is_deterministic():
+    pack = _pack()
+    assert encode(pack) == encode(pack)  # stable bytes
+    assert encode(decode(encode(pack))) == encode(pack)  # idempotent
+
+
+def test_rich_pack_round_trips():
+    pack = _v1_pack()
     assert decode(encode(pack)) == pack
 
 
 def test_v2_features_round_trip_append_only():
     # A pack carrying pipeline/double-buffer contracts encodes as v2 and
     # round-trips losslessly; the v1 layout is untouched (append-only).
-    m = vector_add(1024)
-    from bcir.gem import hydrate_pipelined
-
-    pack = hydrate_pipelined(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()), depth=2)
+    pack = _v1_pack()
+    pack.pipeline_depth = 2
+    pack.prefetches[0] = replace(pack.prefetches[0], buffers=2)
     blob = encode(pack)
     assert blob[4] == 2  # v2 on the wire
     assert decode(blob) == pack
+    assert decode(blob).pipeline_depth == 2
+    # A hydrated pipelined pack carries the pipeline AND the generation vector (v4 implies
+    # the v2/v3 tails): the depth still round-trips through the v4 header.
+    m = vector_add(1024)
+    from bcir.gem import hydrate_pipelined
+
+    hydrated = hydrate_pipelined(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()), depth=2)
+    blob = encode(hydrated)
+    assert blob[4] == 4
+    assert decode(blob) == hydrated
     assert decode(blob).pipeline_depth == 2
 
 
 def test_packs_without_v2_features_stay_byte_frozen_v1():
     # The frozen-v1 promise: a pack with no v2 contracts is byte-identical v1.
-    pack = _pack()
+    pack = _v1_pack()
     assert pack.pipeline_depth == 1 and all(pf.buffers == 1 for pf in pack.prefetches)
     blob = encode(pack)
     assert blob[4] == ABI_VERSION == 1
@@ -108,9 +135,11 @@ def _v3_pack():
     return pack
 
 
-def test_abi_version_max_is_three():
-    # v3 (append-only) raised the maximum the reader handles to 3.
-    assert ABI_VERSION_MAX == 3
+def test_abi_version_max_is_four():
+    # v4 (append-only: the per-resource generation vector) raised the maximum the reader
+    # handles to 4; the frozen base stays 1.
+    assert ABI_VERSION_MAX == 4
+    assert ABI_VERSION == 1
 
 
 def test_v3_dispatch_channel_round_trips_append_only():
@@ -129,24 +158,152 @@ def test_v3_dispatch_channel_round_trips_append_only():
 def test_packs_without_v3_features_stay_byte_frozen_v1_v2():
     # The append-only promise extends to v3: a pack with every segment at the
     # dispatch/channel defaults ("core"/"host") is byte-identical to its v1/v2 encoding.
-    v1 = _pack()
+    v1 = _v1_pack()
     assert all(s.dispatch == "core" and s.channel == "host" for s in v1.segments)
     assert encode(v1)[4] == ABI_VERSION == 1  # still v1, no v3 tail
     # a v2-feature pack with default dispatch/channel stays v2 (not promoted to v3).
-    from bcir.gem import hydrate_pipelined
-
-    m = vector_add(1024)
-    v2 = hydrate_pipelined(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()), depth=2)
+    v2 = _v1_pack()
+    v2.pipeline_depth = 2
     assert all(s.dispatch == "core" and s.channel == "host" for s in v2.segments)
     assert encode(v2)[4] == 2
+    # ... and a v3 pack without a generation vector stays v3 (not promoted to v4).
+    assert not _v3_pack().generations
+    assert encode(_v3_pack())[4] == 3
+
+
+def _v4_pack():
+    """A hand-built pack that carries a per-resource generation vector (so it encodes as
+    v4) over an otherwise-v1 body: two resources at different generations, header maxima."""
+    pack = _v1_pack()
+    pack.map_gen, pack.data_gen = 7, 19
+    pack.generations = [Generation(10, 7, 2), Generation(11, 1, 19), Generation(12, 0, 0)]
+    return pack
+
+
+def test_hydrated_packs_carry_the_generation_vector_as_v4():
+    # S0-2 (R11 per resource): hydrate emits one (rid, map_gen, data_gen) per declared
+    # resource in RID order, the header maxima are the vector's maxima, and the pack is v4.
+    m = vector_add(1024)
+    m.resources[10] = replace(m.resources[10], map_gen=3, data_gen=2)
+    m.resources[11] = replace(m.resources[11], map_gen=1, data_gen=0)
+    pack = hydrate(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()))
+    assert pack.generations == generation_vector(m)
+    assert [(g.rid, g.map_gen, g.data_gen) for g in pack.generations] == [
+        (10, 3, 2),
+        (11, 1, 0),
+        (12, 0, 0),
+    ]
+    assert (pack.map_gen, pack.data_gen) == (3, 2)
+    blob = encode(pack)
+    assert blob[4] == 4
+    assert struct.unpack_from("<I", blob, 40) == (3,)  # n_gens carved from the pad
+    assert not any(blob[38:40]) and not any(blob[44:64])  # the pad around it stays reserved
+    out = decode(blob)
+    assert out == pack
+    assert encode(out) == blob
+
+
+def test_v4_generation_vector_round_trips_append_only():
+    # decode(encode(x)) == x, encode is idempotent, and the v4 record is a pure suffix:
+    # the vector-less twin's bytes are a prefix-with-header-diff of the v4 encoding, and
+    # the vector costs exactly 12 bytes per resource (the wire size of one record).
+    pack = _v4_pack()
+    blob = encode(pack)
+    assert blob[4] == 4
+    out = decode(blob)
+    assert out == pack
+    assert encode(out) == blob
+    twin = _v4_pack()
+    twin.generations = []
+    twin_blob = encode(twin)
+    assert twin_blob[4] == ABI_VERSION == 1
+    # v4 implies the v2/v3 tails (one `buffers` byte per prefetch; dispatch + channel per
+    # segment), then the vector costs exactly 12 bytes per resource as a pure suffix.
+    tails = len(pack.prefetches) + sum(1 + 2 + len(s.channel) for s in pack.segments)
+    assert len(blob) == len(twin_blob) + tails + 12 * len(pack.generations)
+    suffix = b"".join(struct.pack("<III", g.rid, g.map_gen, g.data_gen) for g in pack.generations)
+    assert blob[-4 - len(suffix) : -4] == suffix
+    # the header differs only in the version and n_gens fields (pipeline_depth is 1 either way).
+    assert blob[:4] == twin_blob[:4] and blob[6:36] == twin_blob[6:36]
+    assert struct.unpack_from("<H", blob, 36) == (1,) and blob[44:64] == twin_blob[44:64]
+
+
+def test_encoder_rejects_malformed_generation_vectors():
+    """The writer never emits a vector a reader would refuse: RIDs strictly ascending, u32
+    fields, and the header maxima equal to the vector's (one source of truth)."""
+    unsorted = _v4_pack()
+    unsorted.generations = [Generation(11, 1, 19), Generation(10, 7, 2)]
+    duplicate = _v4_pack()
+    duplicate.generations = [Generation(10, 7, 19), Generation(10, 7, 19)]
+    overflow = _v4_pack()
+    overflow.generations = [Generation(1 << 32, 7, 19)]
+    header_map = _v4_pack()
+    header_map.map_gen = 8  # not the vector's maximum
+    header_data = _v4_pack()
+    header_data.data_gen = 0
+    for pack in (unsorted, duplicate, overflow, header_map, header_data):
+        try:
+            encode(pack)
+            raise AssertionError("expected AbiError on a malformed generation vector")
+        except AbiError:
+            pass
+
+
+def test_v4_decoder_rejects_malformed_generation_vectors():
+    """CRC-valid v4 bytes outside the frozen contract fail the same predicate the encoder
+    applies (rail symmetry with the C decoder's BCIR_ERR_GENERATION / TRUNCATED / RESERVED)."""
+    from bcir.abi.streampack_abi import _GEN_SIZE
+
+    base = encode(_v4_pack())
+    n = len(_v4_pack().generations)
+    vec_off = len(base) - 4 - _GEN_SIZE * n
+    variants = []
+    # RIDs out of order: swap the first two records.
+    swapped = bytearray(base)
+    first = base[vec_off : vec_off + _GEN_SIZE]
+    second = base[vec_off + _GEN_SIZE : vec_off + 2 * _GEN_SIZE]
+    swapped[vec_off : vec_off + 2 * _GEN_SIZE] = second + first
+    variants.append(_refix(swapped))
+    # a duplicate RID: the second record names the first's rid.
+    duplicate = bytearray(base)
+    struct.pack_into("<I", duplicate, vec_off + _GEN_SIZE, 10)
+    variants.append(_refix(duplicate))
+    # the header maxima disagree with the vector (two sources of truth).
+    stale_header = bytearray(base)
+    struct.pack_into("<I", stale_header, 16, 8)  # map_gen @16
+    variants.append(_refix(stale_header))
+    stale_data = bytearray(base)
+    struct.pack_into("<I", stale_data, 20, 0)  # data_gen @20
+    variants.append(_refix(stale_data))
+    # n_gens promises one record more than the body carries (truncated vector).
+    short = bytearray(base)
+    struct.pack_into("<I", short, 40, n + 1)
+    variants.append(_refix(short))
+    # n_gens promises one record fewer: the last record becomes trailing bytes.
+    long_ = bytearray(base)
+    struct.pack_into("<I", long_, 40, n - 1)
+    variants.append(_refix(long_))
+    # a v3 header with nonzero bytes at 40..43: reserved until v4 says otherwise.
+    v3 = bytearray(encode(_v3_pack()))
+    assert v3[4] == 3
+    v3[40] = 1
+    variants.append(_refix(v3))
+    # the bytes around n_gens (38..39, 44..63) stay reserved on v4 too.
+    pad = bytearray(base)
+    pad[38] = 1
+    variants.append(_refix(pad))
+    for blob in variants:
+        try:
+            decode(blob)
+            raise AssertionError("expected a refusal of the malformed v4 record")
+        except AbiError:
+            pass
+    assert decode(base) == _v4_pack()  # the unmodified base is clean
 
 
 def test_v3_decode_rejects_unknown_dispatch_code():
     # The rail-symmetry guard: an on-wire dispatch byte outside {0=core,1=pim} RAISES on
     # decode (mirrors Lane(bad) raising), instead of silently defaulting.
-    import struct
-    import zlib
-
     blob = bytearray(encode(_v3_pack()))
     needle = struct.pack("<H", len("nvidia_ptx")) + b"nvidia_ptx"
     idx = bytes(blob).find(needle)
@@ -189,9 +346,6 @@ def test_encoder_rejects_unrepresentable_or_semantically_invalid_fields():
 
 def test_decoder_rejects_zero_pipeline_depth_and_invalid_buffer_count():
     """CRC-valid v2 values outside the frozen semantic range fail both constraints."""
-    import struct
-    import zlib
-
     pack = StreamPack(pipeline_depth=2)
     pack.prefetches.append(Prefetch("pf", 1, (), buffers=2))
     original = encode(pack)
@@ -217,8 +371,6 @@ def test_decoder_rejects_zero_pipeline_depth_and_invalid_buffer_count():
 def test_v3_decode_rejects_out_of_range_lane():
     # A CRC-fixed out-of-range lane is rejected through the public ABI error contract
     # (the same semantic refusal enforced by the C rail).
-    import struct
-    import zlib
     from bcir.abi.streampack_abi import _HEADER_SIZE
 
     blob = bytearray(encode(_pack()))
@@ -265,8 +417,6 @@ def test_decode_rejects_bad_magic_version_and_crc():
 def test_decoder_rejects_crc_valid_reserved_fields_and_invalid_utf8():
     """Reserved bits/bytes and stride_k are not extension points until a version says
     so; accepting them creates byte-distinct packs with parser-dependent meaning."""
-    import struct
-    import zlib
     from bcir.abi.streampack_abi import _HEADER_SIZE
 
     def refix(blob: bytearray) -> bytes:

@@ -36,7 +36,8 @@ def format_listing(data: bytes) -> str:
         f"generations topo={pack.topo_gen} map={pack.map_gen} data={pack.data_gen} "
         f"pipeline_depth={pack.pipeline_depth}",
         f"records segments={len(pack.segments)} prefetches={len(pack.prefetches)} "
-        f"blocks={len(pack.blocks)} trace={len(pack.trace_notes)}",
+        f"blocks={len(pack.blocks)} trace={len(pack.trace_notes)} "
+        f"generations={len(pack.generations)}",
         f"source_plan {pack.source_plan!r}",
     ]
 
@@ -77,6 +78,15 @@ def format_listing(data: bytes) -> str:
         lines.append(
             f"  @{span.offset:08x}+{span.length:<4} block{index}: base={block.base} "
             f"count={block.count} strides={list(block.strides)!r}"
+        )
+
+    # v4: the per-resource generation vector (R11 per resource), one record per declared
+    # resource in RID order; the header map/data tags above are its maxima.
+    lines.append("generation vector:")
+    for index, g in enumerate(pack.generations):
+        span = _span(info, "generation", index)
+        lines.append(
+            f"  @{span.offset:08x}+{span.length:<4} r{g.rid}: map={g.map_gen} data={g.data_gen}"
         )
 
     crc_span = _span(info, "crc32")

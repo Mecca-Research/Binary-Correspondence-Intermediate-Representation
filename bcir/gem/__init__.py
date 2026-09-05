@@ -18,6 +18,8 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "LaneSegment",
         "Prefetch",
         "StreamPack",
+        "Generation",
+        "generation_vector",
         "TraceNote",
         "hydrate",
         "hydrate_pipelined",

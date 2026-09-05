@@ -17,10 +17,15 @@ Used by tools/c/check_streampack_semantic.sh (the gate) and bcir/tests/test_abi.
            tampered_dispatch trailing_bytes
            reserved_flags reserved_header reserved_stride
            invalid_utf8 duplicate_segment duplicate_prefetch duplicate_trace
+           stale_vector missing_vector_entry undeclared_vector_rid
+           unsorted_vector duplicate_vector_rid vector_maxima_mismatch
+           truncated_vector reserved_n_gens
 
-The lettered groups are distinct adversarial classes; `--expected-gens` for stale prints
-the live (map_gen, data_gen) the C rail should
-be told so it can detect the staleness.
+The lettered groups are distinct adversarial classes. The meta line the tool prints,
+`<kind> <len> <map_gen> <data_gen> live=<rid:map:data,...>`, carries the live registry
+the C rail should be told: the (map_gen, data_gen) maxima for the legacy
+`bcir_sp_check_generation`, and the per-resource table for StreamPack v4's
+`bcir_sp_check_generation_vector` (the `--live` argument of the semantic harness).
 """
 
 from __future__ import annotations
@@ -30,14 +35,20 @@ import sys
 import zlib
 
 from bcir.abi import encode
-from bcir.abi.streampack_abi import _HEADER_SIZE
-from bcir.gem.streampack import LaneSegment, Prefetch, StreamPack, TraceNote
+from bcir.abi.streampack_abi import _GEN_SIZE, _GENS_OFF, _HEADER_SIZE
+from bcir.gem.streampack import Generation, LaneSegment, Prefetch, StreamPack, TraceNote
 from bcir.model import Lane
 
 # The live (registry) generation a fresh base pack carries -- the C rail is told these as
 # the "expected" generation, so only the stale mutation (which bumps them) trips R11.
 BASE_MAP_GEN = 7
 BASE_DATA_GEN = 19
+# The live registry per resource (S0-2, StreamPack v4): the v4 base pack's generation
+# vector mirrors it exactly, and its maxima are (BASE_MAP_GEN, BASE_DATA_GEN) -- so the
+# vector corruptions below are invisible to the legacy maxima check and visible only
+# to the per-resource one (the R11 witness of the maxima-only rule's blind spot).
+LIVE = ((10, BASE_MAP_GEN, 2), (11, 1, BASE_DATA_GEN), (12, 0, 0))
+LIVE_ARG = ",".join(f"{rid}:{mg}:{dg}" for rid, mg, dg in LIVE)
 
 KINDS = (
     "dangling_claim",  # (a) seg.claim_id redirected away from its trace note
@@ -57,7 +68,19 @@ KINDS = (
     "duplicate_segment",  # (k) the same claim would execute more than once
     "duplicate_prefetch",  # (k) one name ambiguously binds two prefetch records
     "duplicate_trace",  # (k) one claim ambiguously binds two trace records
+    "stale_vector",  # (l) v4: one resource's entry differs from the live registry, maxima agree
+    "missing_vector_entry",  # (l) v4: a live resource has no entry (declared after hydration)
+    "undeclared_vector_rid",  # (l) v4: the vector names a RID the live registry does not declare
+    "unsorted_vector",  # (m) v4: RIDs not strictly ascending (records swapped on the wire)
+    "duplicate_vector_rid",  # (m) v4: one RID named twice
+    "vector_maxima_mismatch",  # (m) v4: header map_gen is not the vector's maximum
+    "truncated_vector",  # (m) v4: n_gens promises a record the body does not carry
+    "reserved_n_gens",  # (i) v3: bytes 40..43 (n_gens on v4) are nonzero
 )
+# The kinds whose verdict needs the live per-resource table (`--live`), by class:
+# (l) well-formed packs that are STALE against LIVE; (m) malformed vectors refused by the
+# structural/semantic gate before any registry is consulted.
+VECTOR_KINDS = KINDS[-8:]
 
 
 def _refix_crc(data: bytes) -> bytes:
@@ -103,6 +126,19 @@ def base_pack() -> StreamPack:
     )
     p.trace_notes.append(TraceNote(claim_id=1000))
     return p
+
+
+def base_pack_v4() -> StreamPack:
+    """The base pack plus the v4 per-resource generation vector mirroring LIVE."""
+    p = base_pack()
+    p.generations = [Generation(rid, mg, dg) for rid, mg, dg in LIVE]
+    return p
+
+
+def _vector_offset(data: bytes) -> int:
+    """Absolute offset of the first v4 generation record (the body's tail)."""
+    (n_gens,) = struct.unpack_from("<I", data, _GENS_OFF)
+    return len(data) - 4 - _GEN_SIZE * n_gens
 
 
 def _replace_seg0(p: StreamPack, **kw) -> None:
@@ -193,6 +229,40 @@ def corrupt(kind: str) -> bytes:
     if kind == "duplicate_trace":
         p.trace_notes.append(p.trace_notes[0])
         return encode(p)
+    # --- (l) StreamPack v4: stale against the live registry, header maxima unchanged ---
+    v4 = base_pack_v4()
+    if kind == "stale_vector":
+        v4.generations[1] = Generation(11, 2, BASE_DATA_GEN)  # RID 11 moved under the maxima
+        return encode(v4)
+    if kind == "missing_vector_entry":
+        del v4.generations[2]  # RID 12 has no entry: declared after hydration
+        return encode(v4)
+    if kind == "undeclared_vector_rid":
+        v4.generations.append(Generation(13, 0, 0))  # the registry declares no RID 13
+        return encode(v4)
+    # --- (m) StreamPack v4: malformed vectors, refused before any registry is consulted ---
+    if kind == "unsorted_vector":
+        data = bytearray(encode(v4))
+        off = _vector_offset(bytes(data))
+        first, second = data[off : off + _GEN_SIZE], data[off + _GEN_SIZE : off + 2 * _GEN_SIZE]
+        data[off : off + 2 * _GEN_SIZE] = second + first
+        return _refix_crc(bytes(data))
+    if kind == "duplicate_vector_rid":
+        data = bytearray(encode(v4))
+        struct.pack_into("<I", data, _vector_offset(bytes(data)) + _GEN_SIZE, LIVE[0][0])
+        return _refix_crc(bytes(data))
+    if kind == "vector_maxima_mismatch":
+        data = bytearray(encode(v4))
+        struct.pack_into("<I", data, 16, BASE_MAP_GEN + 1)  # header map_gen @16
+        return _refix_crc(bytes(data))
+    if kind == "truncated_vector":
+        data = bytearray(encode(v4))
+        struct.pack_into("<I", data, _GENS_OFF, len(v4.generations) + 1)
+        return _refix_crc(bytes(data))
+    if kind == "reserved_n_gens":
+        data = bytearray(encode(p))  # the vector-less base: a v1 header, bytes 40..43 reserved
+        data[_GENS_OFF] = 1
+        return _refix_crc(bytes(data))
     raise SystemExit(f"unknown corruption kind {kind!r} (choose from {', '.join(KINDS)})")
 
 
@@ -206,8 +276,9 @@ def main(argv: list[str]) -> int:
     assert (zlib.crc32(body) & 0xFFFFFFFF) == crc, "internal: CRC was not fixed"
     with open(out, "wb") as fh:
         fh.write(data)
-    # report the expected (live) generation the C rail should be told for the staleness check.
-    print(f"{kind} {len(data)} {BASE_MAP_GEN} {BASE_DATA_GEN}")
+    # report the live generation the C rail should be told for the staleness checks: the
+    # maxima (legacy bcir_sp_check_generation) and the per-resource table (v4 `--live`).
+    print(f"{kind} {len(data)} {BASE_MAP_GEN} {BASE_DATA_GEN} live={LIVE_ARG}")
     return 0
 
 

@@ -4,6 +4,12 @@ The StreamPack is the hot executable artifact; the BCIR graph is the dormant
 semantic artifact. A StreamPack retains provenance back to BCIR claims and
 carries generation tags (topo/map/data) so a stale pack can be rehydrated
 (patch / repack / replan) instead of silently executing against drifted state.
+
+Since StreamPack v4 (S0-2, law R11) the pack also carries the registry's PER-RESOURCE
+generation vector -- one `Generation` per declared RID, in RID order, taken at hydration.
+The header's `map_gen` / `data_gen` are that vector's maxima and nothing more: a resource
+that moved while another still held the maximum was invisible to them, and a resource
+declared after hydration had no tag at all. R11 reads the vector on every rail.
 """
 
 from __future__ import annotations
@@ -63,6 +69,19 @@ class TraceNote:
     trace_hash: int = 0
 
 
+@dataclass(frozen=True)
+class Generation:
+    """One resource's generation at hydration (StreamPack v4, append-only; law R11): the pack
+    was hydrated while RID `rid` stood at (`map_gen`, `data_gen`). The vector is in RID order
+    and covers every resource the registry declared; R11 compares each entry with the live
+    registry, so a resource that moved under the header maxima, or one declared after
+    hydration, is a stale pack -- not a silent execution."""
+
+    rid: int
+    map_gen: int = 0
+    data_gen: int = 0
+
+
 @dataclass
 class StreamPack:
     source_plan: str = "plan0"
@@ -74,6 +93,9 @@ class StreamPack:
     prefetches: list[Prefetch] = field(default_factory=list)
     blocks: list[Block] = field(default_factory=list)
     trace_notes: list[TraceNote] = field(default_factory=list)
+    # v4 (append-only): the registry's per-resource generation vector at hydration, in RID
+    # order. Empty on a v1-v3 artifact; `hydrate` always fills it.
+    generations: list[Generation] = field(default_factory=list)
 
     def provenance_ok(self) -> bool:
         """R10: every segment maps back to >= 1 BCIR claim via a trace note."""
@@ -81,11 +103,28 @@ class StreamPack:
         return all(seg.claim_id in traced for seg in self.segments)
 
 
+def generation_vector(module: Module) -> list[Generation]:
+    """The registry's per-resource generation vector, in RID order (the v4 record R11 reads)."""
+    return [
+        Generation(r.rid, r.map_gen, r.data_gen)
+        for r in sorted(module.resources.values(), key=lambda r: r.rid)
+    ]
+
+
 def hydrate(module: Module, result: RealizationResult, plan: str = "plan0") -> StreamPack:
-    """Lower a selected realization plan into a StreamPack with provenance + tags."""
+    """Lower a selected realization plan into a StreamPack with provenance + tags.
+
+    The pack carries the registry's per-resource generation vector (v4) and, as its
+    maxima, the header `map_gen` / `data_gen` a v1-v3 reader sees."""
     map_gen = max((r.map_gen for r in module.resources.values()), default=0)
     data_gen = max((r.data_gen for r in module.resources.values()), default=0)
-    pack = StreamPack(source_plan=plan, topo_gen=1, map_gen=map_gen, data_gen=data_gen)
+    pack = StreamPack(
+        source_plan=plan,
+        topo_gen=1,
+        map_gen=map_gen,
+        data_gen=data_gen,
+        generations=generation_vector(module),
+    )
 
     claim_rows = [(ph.phase_id, claim) for ph in module.phases for claim in ph.claims]
     claim_by_id = {claim.id: (phase_id, claim) for phase_id, claim in claim_rows}
