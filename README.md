@@ -8,7 +8,7 @@ realization paths via the tropical (min,+) optimizer
 K_BCIR(G | H, Θ) = min_{π ∈ Legal(G,H)}  M(π, Θ)
                    subject to  R(π, Θ) ⪯ B(H, Θ)
 
-M(π,Θ) = makespan of π under the wave/token DAG     — (max,+) over parallel, (min,+)⊗ over series
+M(π,Θ) = makespan of π's canonical schedule artifact — (max,+) over parallel, (min,+)⊗ over series
 R(π,Θ) = additive resource vector (energy, traffic, …) — Σ as today
 B(H,Θ) = live budgets (thermal cap, power cap, bandwidth)
 ```

@@ -203,18 +203,32 @@ now, R13 keeps working, and the dialect change becomes optional rather than bloc
   `test_hash_parity.py`.
 - the `wall` row `static_memory.plan.2048` (301.02 ms): untouched here, and it is G3's.
 
-### G1 — one canonical schedule artifact
+### G1 — one canonical schedule artifact — **landed (S1-A, 2026-09-05)**
 
 *Report P0.1. The audit's sharpest correctness finding.*
 
 `price_scheduled` (fixed waves, round-robin bins) and `schedule_eft` (LPT/EFT with locality)
-are two different algorithms, and the objective reads one while the executor runs the other.
+were two different algorithms, and the objective read one while the executor ran the other.
 
-| Gate | Baseline | Target |
-|---|---|---|
-| `exact` `pricing.eft.divergence` | **1.9922** | **1.0** — both read one artifact |
-| `exact` Token execution and the priced schedule agree | not checked | identical slot assignment |
-| `wall` `audit.mixed-wave-token-eft.scale4` | 48.05 ms | no regression |
+| Gate | Baseline | Target | Outcome |
+|---|---|---|---|
+| `exact` `pricing.eft.divergence` | **1.9922** | **1.0** — both read one artifact | **1.0 exactly** (GAIN, at the bound); `price_waves_legacy` still measures 1.9922 on the same fixture — the witness |
+| `exact` Token execution and the priced schedule agree | not checked | identical slot assignment | **met**: `schedule_plan` is the artifact; `price_scheduled(...).schedule.slots == execute_tokens(...).slots` (and `schedule_eft`'s) on every corpus program, both modes |
+| `wall` `audit.mixed-wave-token-eft.scale4` | 48.05 ms | no regression | 26.43 → 26.07 ms A/B on the same host, result digest identical (13/13 audit cases identical) |
+
+What landed: `gem.schedule.schedule_plan` places the plan's own step costs by the hazard-
+honoring LPT/EFT dispatch, with `concurrency.hazard_predecessors` — RAW/WAR/WAW plus the
+`barriered`/`volatile` fence edges — built over every claim of a phase BEFORE the tail split
+and the sparse tail dispatched on its own stream inside the same loop (assessment row 6: a
+gather no longer starts before its producer finishes; a fence is overlapped by nothing);
+`price_scheduled` reads that placement (`.schedule` is the artifact), `optimize_scheduled`
+sweeps it, and `BCIRSchedule.h` is the law-rail twin shared by `-bcir-overlap`,
+`-bcir-schedule-eft`, `-bcir-async` and `-bcir-power-rail` (`schedule_hazards.mlir`; the gate
+checks the priced makespan equals the placed one on the corpus). The CSE credit now requires
+the complete semantic identity and excludes atomic, barriered, volatile, effectful, sparse and
+isolated-domain claims on both rails (row 7; `cost_model_cse_neg.mlir`). The schedule-
+predecessor re-coupling of the old pricer is retired with it: durations are the plan's step
+costs, the sum of the durations is the serial bound, and R9 holds by construction.
 
 This is a **correctness** metric wearing a performance costume. Any value but 1.0 means
 `M(π,Θ)` denotes two things, and no certificate above TMSAO-4 is possible while it does.
@@ -228,14 +242,26 @@ contributions and reprice only the affected chain.
 
 | Gate | Baseline | Target | Headroom today |
 |---|---|---|---|
-| `ratio` `optimize_scheduled.slowdown.512` | 69.2× | ≤ 8× | 94.2% |
-| `wall` `optimize_scheduled.512` | 1,703.66 ms | ≤ 200 ms | 98.7% |
-| `wall` `optimize_scheduled.256` | 435.73 ms | ≤ 100 ms | 97.4% |
+| `ratio` `optimize_scheduled.slowdown.512` | 69.2× | ≤ 8× | **6.27× after S1-A** (36.2% to the harness bound of 4×) |
+| `wall` `optimize_scheduled.512` | 1,703.66 ms | ≤ 200 ms | **83 ms after S1-A** (1,148 ms on the same host before it; indicative) |
+| `wall` `optimize_scheduled.256` | 435.73 ms | ≤ 100 ms | **29 ms after S1-A** (287 ms before; indicative) |
 | `exact` The plan chosen is unchanged | — | **identical assignment** |
 
 The last row is the one that matters. A faster sweep that picks a *different* plan has not
 been made faster; it has been changed. Delta pricing must be an exact refactor of the same
 search, proved by comparing assignments claim by claim.
+
+S1-A moved the first three rows, with the mechanism named: the canonical pricer made a full
+re-placement per trial cost ~8 ms at 512 claims (1,100× the serial pass — the harness refused
+it as a regression), so the sweep now builds the hazard DAG once, re-prices only the two steps
+an alternative touches, and places only alternatives that SHORTEN one of them (a step that only
+lengthens cannot lower a placement of step costs except through a list-scheduling anomaly,
+which is not a property of the plan). The assignment is identical to the exhaustive sweep's on
+the 11 corpus programs, the 256- and 512-claim harness fixtures and 150 generated modules under
+cool and hot Θ and two policies — and in every one of those cases both sweeps return the serial
+optimum, because under the coupled cost model a wider lane is never longer for its own step and
+the successor coupling does not distinguish vector widths. What remains for G2 is the general
+case — many step-shortening trials — where each trial still re-places the whole module.
 
 ### G3 — canonical digest computed once
 
@@ -602,7 +628,7 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
                                            S0-9 ODS→IRDL inventory gate                  <- LANDED (S0-B)
                                            S0-10 bcir-performance-audit rename + wording sweep  <- LANDED (S0-A)
                                            G7   native measurement repair          <- LANDED (S0-F)
-Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5
+Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               G1 <- LANDED (S1-A)
 Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13
 Stage 3  IPC at every level                G14 → G15 → G16
 Stage 4  performance program               G17, G18
@@ -646,9 +672,9 @@ no PMU):
 
 | Row | Slice | Baseline | Today | Verdict |
 |---|---|---:|---:|---|
-| `pricing.eft.divergence` | G1 | 1.9922 | 1.9922 | NO-CHANGE — outcome (a): the owning slice has not landed |
-| `optimize_scheduled.slowdown.512` | G2 | 69.2× | 65.5× | NO-CHANGE — inside the `ratio` band; outcome (a) |
-| five `wall` rows | G0–G3 | — | 1.5–3× faster | INDICATIVE — a faster host and interpreter, not evidence |
+| `pricing.eft.divergence` | G1 | 1.9922 | **1.0** (S1-A, 2026-09-05) | GAIN, at the bound — one artifact; the retired pricer still reads 1.9922 on the fixture as the witness |
+| `optimize_scheduled.slowdown.512` | G2 | 69.2× | **6.27×** (S1-A) | GAIN — the mechanism is named under G2; 36% of headroom to the 4× bound remains |
+| five `wall` rows | G0–G3 | — | 1.5–3× faster; `optimize_scheduled.512` 1,148 → 83 ms A/B on one host | INDICATIVE — a faster host and interpreter, not evidence; the A/B is the same host |
 | fourteen rows | G0, G4–G6 | — | not measured | need the exact oracles, the digest fixtures or the native rig |
 
 Everything BCIR emits is still TMSAO-4. G4 remains the first slice that can change that.

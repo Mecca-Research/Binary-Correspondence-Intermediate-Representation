@@ -27,6 +27,7 @@ import itertools
 from collections import defaultdict
 from dataclasses import dataclass
 
+from ..gem.concurrency import hazard_conflict
 from ..model import Claim, Module
 from .cost import HProfile, Theta
 from .realize import RealizationResult, optimize
@@ -34,15 +35,14 @@ from .weights import PERF, Policy
 
 
 def _conflict(a: Claim, b: Claim) -> bool:
-    """RAW / WAR / WAW between two claims (mirrors verify / overlap `_conflict`)."""
-    # ASM3b: a barriered claim is an ordering fence -- it conflicts with everything, so find_bundles /
-    # _legal_reorder never reorder any claim across it (the first-class-ordering-edge contract).
-    # §5.14 Phase 2: a VOLATILE access (MMIO) is fenced identically -- never reordered/fused/bundled.
-    if a.hazard == "barriered" or b.hazard == "barriered" or a.volatile or b.volatile:
-        return True
-    aw, ar = set(a.wr), set(a.rd)
-    bw, br = set(b.wr), set(b.rd)
-    return bool(aw & (br | bw) or bw & ar)
+    """RAW / WAR / WAW between two claims, or an ordering fence on either side.
+
+    ASM3b: a barriered claim is an ordering fence -- it conflicts with everything, so find_bundles /
+    _legal_reorder never reorder any claim across it (the first-class-ordering-edge contract).
+    §5.14 Phase 2: a VOLATILE access (MMIO) is fenced identically -- never reordered/fused/bundled.
+    G1 (S1-A): this is the ONE hazard predicate of the GEM rails, `concurrency.hazard_conflict`,
+    which the duration-aware scheduler and the token plan build their DAGs from as well."""
+    return hazard_conflict(a, b)
 
 
 @dataclass(frozen=True)

@@ -43,9 +43,14 @@ executable conformance oracle that must agree with these definitions
 >   7808, the shared-input chain 13696 (`test/passes/plan.mlir`), and the corpus
 >   1015808 / 101888 / 1595520 (`gem_corpus.mlir`).
 > - **Overlap / scheduled price (optimizer core, C++23)** — `-bcir-overlap`
->   (`lib/passes/BCIROverlapPass.cpp`) ports `gem/overlap.py`: the (max,+) wave makespan
->   M(pi,Theta) over the coupled plan. Reproduces the oracle — matmul makespan 253952 /
->   gain 761856, the shared-input chain gain 5888 (`test/passes/overlap.mlir`).
+>   (`lib/passes/BCIROverlapPass.cpp`) ports `gem/overlap.py`: M(pi,Theta) is the makespan of
+>   the ONE canonical schedule artifact (`lib/passes/BCIRSchedule.h`, the twin of
+>   `gem.schedule.schedule_plan` — G1): the plan's step costs placed by the hazard-honoring
+>   LPT/EFT dispatch `-bcir-schedule-eft` annotates, with the hazard DAG (data hazards and
+>   ordering fences) built over every claim before the tail split. Reproduces the oracle —
+>   matmul makespan 253952 / gain 761856, the shared-input chain gain 5888
+>   (`test/passes/overlap.mlir`); a dependent tail claim and a fence serialize on both
+>   passes (`schedule_hazards.mlir`).
 > - **RCSP plan-level (optimizer core, C++23)** — `-bcir-rcsp-plan`
 >   (`lib/passes/BCIRRcspPlanPass.cpp`) ports `rcsp.optimize_constrained`: the
 >   accumulated-budget label DP over the plan. A plan-wide cap narrows one claim where a

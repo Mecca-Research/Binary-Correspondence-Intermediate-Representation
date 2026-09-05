@@ -268,6 +268,10 @@ METRICS: tuple[Metric, ...] = (
     ),
     # --- §6.2: two implementations that do not describe the same schedule. This one is a
     # CORRECTNESS metric wearing a performance costume: the target is agreement, not speed.
+    # G1 (S1-A) landed the one artifact: `price_scheduled` reads `schedule_plan`, which is the
+    # placement `schedule_eft` returns, so the row reads exactly 1.0; the retired wave pricer
+    # is kept as `price_waves_legacy` and `measure_legacy_divergence` still reproduces the
+    # report's 1.9922 on this fixture (the witness that the fixture exhibits what it tracks).
     Metric(
         "pricing.eft.divergence",
         "scheduler",
@@ -537,6 +541,80 @@ def measure_planner() -> dict[str, float]:
     return {k: v for k, v in out.items() if not k.startswith("_")}
 
 
+def divergence_fixture():
+    """The §6.2 fixture: four independent claims across TWO domains, planned by the real cost
+    model. Returns (module, host, plan, durations).
+
+    The report measured `price_scheduled` at 51,200 against `schedule_eft` at 25,700 on four
+    independent claims with durations [25600, 100, 25600, 100] over two domains; this fixture
+    reproduces that ratio to every digit the report prints -- 1.9922178988 against 51200/25700
+    = 1.9922 -- with the retired pricer, while its absolute costs are 4x the report's. That is
+    the `ratio` vs `wall` classification demonstrating itself: the structure carries across
+    scales and machines, the milliseconds do not.
+
+    Three details are load-bearing, each found by getting it wrong first:
+      * the claims must touch DISTINCT resources, or they conflict and both schedulers
+        serialize them, giving a ratio of 1.0 and hiding the defect;
+      * the target must expose exactly TWO domains, because the divergence came from the wave
+        pricer's round-robin binning putting both large claims in one bin while EFT split them
+        -- with eight domains both found the same answer;
+      * the costs must come from the real cost model, because the pricers re-derive them from
+        the module and ignore costs supplied on the steps.
+    """
+    from dataclasses import replace
+
+    from bcir.kbcir import TARGETS, optimize
+    from bcir.kbcir.cost import Theta
+    from bcir.kbcir.weights import PERF
+    from bcir.model import Claim, Lane, Module, Opcode, Phase, Resource, StrideClass
+
+    host = replace(TARGETS["x86_avx2"], affinity_domains=2)
+    module = Module(name="divergence")
+    for rid in range(1, 9):
+        module.add_resource(Resource(rid=rid, shape=(65536,)))
+    module.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                Claim(
+                    id=index + 1,
+                    opcode=Opcode.ADD,
+                    lane=Lane.U,
+                    stride_class=StrideClass.UNIT,
+                    count=count,
+                    rd=(2 * index + 1,),
+                    wr=(2 * index + 2,),
+                    op="vector.add",
+                )
+                for index, count in enumerate((16384, 64, 16384, 64))
+            ],
+        )
+    )
+    result = optimize(module, host, Theta.cool(), PERF)
+    durations = {step.claim_id: step.cost for step in result.steps}
+    return module, host, result, durations
+
+
+def measure_legacy_divergence() -> float | None:
+    """The retired wave pricer (`gem.overlap.price_waves_legacy`) against the executor on the
+    §6.2 fixture: the number the report measured, kept so the fixture is proven to still
+    exhibit the divergence it exists to track. Not a graded row -- the pricer it measures is
+    read by nothing but this witness."""
+    try:
+        from bcir.gem.overlap import price_waves_legacy
+        from bcir.gem.schedule import schedule_eft
+        from bcir.kbcir.cost import Theta
+        from bcir.kbcir.weights import PERF
+
+        module, host, result, durations = divergence_fixture()
+        legacy = price_waves_legacy(module, result, host, Theta.cool(), PERF)
+        eft = schedule_eft(module, durations, host)
+        return legacy.makespan / eft.makespan if eft.makespan else None
+    except Exception as exc:  # pragma: no cover - shape probe
+        sys.stderr.write(f"[baseline] legacy divergence witness unavailable: {exc}\n")
+        return None
+
+
 def measure_exact() -> dict[str, float]:
     """The deterministic rows: solver optima and fixed-corpus fractions.
 
@@ -546,55 +624,16 @@ def measure_exact() -> dict[str, float]:
     """
     out: dict[str, float] = {}
 
-    # §6.2: price_scheduled against schedule_eft. The report measured 51,200 against
-    # 25,700 on four independent claims across TWO domains, and this fixture reproduces that
-    # ratio to every digit the report prints -- 1.9922178988 against 51200/25700 = 1.9922 --
-    # while its absolute costs are 4x the report's. That is the `ratio` vs `wall`
-    # classification demonstrating itself: the structure carries across scales and machines,
-    # the milliseconds do not.
-    #
-    # Three details are load-bearing, each found by getting it wrong first:
-    #   * the claims must touch DISTINCT resources, or they conflict and both schedulers
-    #     serialize them, giving a ratio of 1.0 and hiding the defect;
-    #   * the target must expose exactly TWO domains, because the divergence comes from
-    #     round-robin binning putting both large claims in one bin while EFT splits them --
-    #     with eight domains both schedulers find the same answer;
-    #   * the costs must come from the real cost model, because `price_scheduled` recomputes
-    #     from the module and ignores costs supplied on the steps.
+    # §6.2: price_scheduled against schedule_eft on `divergence_fixture`. Since G1 (S1-A) the
+    # price READS the executor's placement (`gem.schedule.schedule_plan`), so the row is 1.0
+    # by construction; `measure_legacy_divergence` keeps the report's 1.9922 as the witness.
     try:
-        from dataclasses import replace
-
         from bcir.gem.overlap import price_scheduled
         from bcir.gem.schedule import schedule_eft
-        from bcir.kbcir import TARGETS, optimize
         from bcir.kbcir.cost import Theta
         from bcir.kbcir.weights import PERF
-        from bcir.model import Claim, Lane, Module, Opcode, Phase, Resource, StrideClass
 
-        host = replace(TARGETS["x86_avx2"], affinity_domains=2)
-        module = Module(name="divergence")
-        for rid in range(1, 9):
-            module.add_resource(Resource(rid=rid, shape=(65536,)))
-        module.add_phase(
-            Phase(
-                phase_id=0,
-                claims=[
-                    Claim(
-                        id=index + 1,
-                        opcode=Opcode.ADD,
-                        lane=Lane.U,
-                        stride_class=StrideClass.UNIT,
-                        count=count,
-                        rd=(2 * index + 1,),
-                        wr=(2 * index + 2,),
-                        op="vector.add",
-                    )
-                    for index, count in enumerate((16384, 64, 16384, 64))
-                ],
-            )
-        )
-        result = optimize(module, host, Theta.cool(), PERF)
-        durations = {step.claim_id: step.cost for step in result.steps}
+        module, host, result, durations = divergence_fixture()
         priced = price_scheduled(module, result, host, Theta.cool(), PERF)
         eft = schedule_eft(module, durations, host)
         if eft.makespan:

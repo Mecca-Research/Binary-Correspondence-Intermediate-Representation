@@ -172,6 +172,23 @@ elements per regime into the evidence the table carries
 (`test_strided_order_is_a_full_cycle_permutation` pins the parent's n/gcd,
 `test_native_rig_reports_census_samples_and_an_attested_tenancy` reads the
 count back). A measurement's coverage claim needs a witness like any other gate.
+S1-A instances (2026-09-05): the divergence row's fixture was built to exhibit
+the defect it tracks, and the slice that fixed it keeps the fixture able to fire
+-- `test_the_divergence_fixture_still_reproduces_the_reports_own_number` drives
+the retired pricer (`price_waves_legacy`) over the same four claims and requires
+the report's 1.9922, while `test_the_divergence_row_reads_one_artifact` requires
+exactly 1.0 from the canonical price; a fixture that no longer exhibits the
+defect cannot grade the fix. The RED was recorded on both rails before any code
+moved: a gather placed at 0 before its producer's 5248 by the oracle's three
+schedulers and the law rail's three passes, a fence overlapped by a
+data-independent claim, and the CSE copy credit granted to a duplicate over a
+different count, offset or immediate and to atomic, barriered and volatile
+duplicates (`schedule_hazards.mlir` and `cost_model_cse_neg.mlir` pin the
+refusals; `test_schedule.py` / `test_fusion.py` are the oracle twins). The
+harness itself refused the first cut of the canonical pricer: a full
+re-placement per trial made the re-selection sweep 1,100x the serial pass and
+the `ratio` row reported REGRESSION -- a gate that fired on the slice that
+introduced the regression, before the slice claimed credit.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -517,6 +534,23 @@ signals than the rig (no DMI, no cgroup markers) and the GitHub aarch64 runner -
 DMI-attested VM that also exposes a PMU -- called the rig wrong for saying
 "virtualized": a mirror that checks a subset is a second rule, and it disagrees on
 exactly the host that matters.
+S1-A instances (2026-09-05): the scheduling hazard is ONE predicate
+(`concurrency.hazard_conflict` / `hazard_predecessors`, mirrored by
+`BCIRSchedule.h::hazardConflict` / `hazardPredecessors`) -- the bundle
+reorderer's fence-aware `_conflict` now delegates to it, and the two schedulers
+and both pricers build their DAGs from it, where before the tail split preceded
+a data-only DAG over the main claims and the fence lived in the bundle rail
+alone. The placement is ONE artifact (`gem.schedule.schedule_plan` /
+`BCIRSchedule.h`): `price_scheduled`, `schedule_eft`, `execute_tokens`,
+`optimize_scheduled` and the four law-rail passes read the same placement, so
+the objective cannot denote a schedule the executor never runs -- the finding
+was the same defect on both rails, a pricer and a scheduler that agreed on
+nothing but the serial bound. The CSE identity and eligibility are ONE pair of
+predicates with declared mirrors (`realize.cse_identity` / `cse_eligible` and
+`cm::cseIdentity` / `cseEligible`), and the categorical exclusion precedes the
+identity comparison on both rails; the oracle additionally refuses the fields
+the IR does not carry (`imm`, `tolerance_ulp`, `quantized_bits`) rather than
+credit a duplicate the law rail could not refuse.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

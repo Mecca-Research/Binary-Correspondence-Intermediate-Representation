@@ -38,6 +38,7 @@ from tools.perf.gemplus_baseline import (  # noqa: E402
     Metric,
     compare,
     measure_exact,
+    measure_legacy_divergence,
 )
 
 
@@ -124,25 +125,38 @@ def test_the_noise_band_widens_with_how_noisy_the_kind_is() -> None:
     assert exact.noise < wall.noise < ratio.noise
 
 
-def test_the_divergence_row_reproduces_the_reports_own_number() -> None:
+def test_the_divergence_fixture_still_reproduces_the_reports_own_number() -> None:
     """§6.2's fixture, and the reason this test is the important one in the file.
 
     The report measured `price_scheduled` at 51,200 against `schedule_eft` at 25,700 on the
-    same plan. This fixture's absolute costs are 4x the report's, and the RATIO matches to
-    every digit the report prints. If it ever stops matching, either the fixture drifted or
-    one of the two schedulers changed — and both of those need a human before any slice
-    claims credit for the difference.
+    same plan. G1 (S1-A) retired that pricer -- it is kept as `price_waves_legacy`, read by
+    nothing but this witness -- and the fixture's absolute costs are 4x the report's, yet the
+    RATIO the retired pricer produces matches to every digit the report prints. If it ever
+    stops matching, either the fixture drifted or the witness changed — and both of those
+    need a human, because a fixture that no longer exhibits the defect it was built around
+    cannot grade the slice that fixed it.
     """
+    value = measure_legacy_divergence()
+    assert value is not None, "the §6.2 fixture no longer builds; the witness measures nothing"
+    assert abs(value - 51200 / 25700) < 1e-6, (
+        f"the divergence fixture measures {value} under the retired pricer, the report "
+        f"measures {51200 / 25700}; the fixture and the report have come apart"
+    )
+    assert value > 1.5, "the fixture must still EXHIBIT the divergence it exists to track"
+
+
+def test_the_divergence_row_reads_one_artifact() -> None:
+    """G1's gate: `price_scheduled` reads the placement `schedule_eft` returns, so the row is
+    exactly 1.0 -- not within a band, exactly -- on the fixture that exhibited 1.9922. Any
+    other value is two prices for one plan again."""
     measured = measure_exact()
     value = measured.get("pricing.eft.divergence")
     assert value is not None, "the §6.2 fixture no longer builds; the row measures nothing"
-    assert abs(value - 51200 / 25700) < 1e-6, (
-        f"the divergence fixture measures {value}, the report measures "
-        f"{51200 / 25700}; the fixture and the report have come apart"
+    assert value == 1.0, f"the objective and the executor disagree again: {value}"
+    row = next(
+        r for r in compare(measured, same_host=False) if r["key"] == "pricing.eft.divergence"
     )
-
-    # And the meaning: any value but 1.0 is two prices for one plan.
-    assert value > 1.5, "the fixture must still EXHIBIT the divergence it exists to track"
+    assert row["verdict"] == "GAIN" and row["headroom"] == 0.0, row
 
 
 def test_compare_reports_every_metric_exactly_once() -> None:
