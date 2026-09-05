@@ -182,7 +182,11 @@ R14–R18 are first-class `-bcir-verify` laws, dual-rail with
 `provenance._digest`) and **cross-checks every component hash** — `m_theta` / `m_policy` /
 `m_target` / `m_module` — against the in-IR `kbcir.theta` / `kbcir.policy` (unfolded
 base) / `target.capability` / `bcir.module` (`hash_*`), so neither the digest nor any input
-identity is taken on trust. —
+identity is taken on trust. Since S0-D the two structural hashes cover every plan-affecting
+input: `hash_target` folds the memory hierarchy (`target.capability` `mem_tier_names` /
+`mem_tier_values` — the tier names, a channel's own included, and per tier the latency, the
+bandwidth and latency Q8 factors and the capacity; absent = the default hierarchy) and `hash_module` folds the claims in their declared order, on both
+rails. —
 every decision rule in force (gain schedule, cost table) carries a generation
 tag and an admitting certificate: a promoted portfolio entry requires its
 replay certificate, a calibrated profile must present its frozen table with

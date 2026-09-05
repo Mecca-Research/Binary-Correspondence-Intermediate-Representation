@@ -63,7 +63,12 @@ def _flatten(xs):
 
 
 def hash_module(module: Module) -> int:
-    """Hash the goal graph G structure (resources + claims + phase DAG)."""
+    """Hash the goal graph G structure: resources, the phase DAG, and the claims in their
+    DECLARED order (S0-1 / staged plan S0-D). Declared order is plan-affecting -- two claims
+    declared `a, b` and `b, a` plan to 9,216 and 10,496 on the same target -- and the old
+    sort by claim id erased it, so the two plans shared one content address. The law rail's
+    `hashModuleFromIR` walks the claims in textual order, which is the order the emitter
+    writes them: declared."""
     res = [
         (
             r.rid,
@@ -98,25 +103,32 @@ def hash_module(module: Module) -> int:
                 c.offset,
                 c.cost_class,
             )
-            for c in sorted(ph.claims, key=lambda c: c.id)
+            for c in ph.claims  # declared order (S0-D); the deps stay a set
         ]
         phases.append((ph.phase_id, tuple(sorted(ph.deps)), tuple(claims)))
     return _fnv(module.name, module.cacheline, module.align, tuple(res), tuple(phases))
 
 
 def hash_target(h) -> int:
-    """The target fields R13 hashes.
+    """The target fields R13 hashes -- every plan-affecting field of the profile, the
+    MEMORY HIERARCHY included (S0-1 / staged plan S0-D).
 
-    INCOMPLETE, knowingly, and `replay` above is what makes that safe rather than silent.
-    The memory hierarchy is not in here and is plan-affecting: multiplying the DRAM tier's
-    bandwidth and latency factors by 32 moves a `vector_add(4096)` score from 51,200 to
-    1,574,912 with this hash unchanged. Widening it is not a Python-side edit --
-    `BCIRVerifyPass.cpp`'s `hashTargetFromIR` recomputes this field for field from the IR
-    for R13's cross-check, and `TargetCapabilityOp` carries no attribute for the tiers, so
-    closing it means new ODS attributes and a matching C++ walk on both rails at once.
-    Tracked with the GEM+ scope work; until then `replay` compares the produced plan, not
-    only this digest, so a collision surfaces as a mismatch instead of a wrong answer.
+    Multiplying the DRAM tier's factors by 32 moves a `vector_add(4096)` score from 31,232 to
+    983,552; before S0-D this hash did not move with it, and only `replay`'s plan comparison
+    (and, since G0, the execution scope) stood between that collision and a wrong answer. The
+    tiers now fold in as (name, latency_cyc, bw_factor, lat_factor, capacity) in the
+    hierarchy's declared order, and the law rail recomputes them from `target.capability`'s
+    `mem_tier_names` / `mem_tier_values` (`hashTargetFromIR`; absent = `MemoryHierarchy.default()`,
+    the hierarchy every shipped profile carries, so IR written before the attributes hashes as
+    it did). Both rails
+    moved in one commit: a cross-rail content address that one rail widens alone is worse than
+    the gap.
     """
+    mem = getattr(h, "mem", None)
+    tiers = tuple(
+        (t.name, t.latency_cyc, t.bw_factor, t.lat_factor, t.capacity)
+        for t in getattr(mem, "tiers", ())
+    )
     return _fnv(
         h.name,
         h.triple,
@@ -134,6 +146,7 @@ def hash_target(h) -> int:
         h.affinity_domains,
         getattr(h, "mem_channels", 4),
         getattr(h, "cal_gen", 0),
+        tiers,
     )
 
 

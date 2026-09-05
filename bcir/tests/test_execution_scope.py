@@ -7,7 +7,8 @@ here matter more than the rest, because they are the two failures the scope exis
 **The collisions.** The 2026-08-12 audit found two inputs that change a plan without changing
 its digest: scaling one memory tier's factors moved a score from 51,200 to 1,574,912, and
 declaring two claims in the other order moved it from 3,840 to 4,352. Both survived because
-`hash_target` omits the memory hierarchy and `hash_module` sorts claims by id. The scope
+`hash_target` omitted the memory hierarchy and `hash_module` sorted claims by id (both widened
+in S0-D, on both rails). The scope
 covers both, and `diff` names which component moved.
 
 **The over-claim.** A class is not a label a caller picks. TMSAO-1 and TMSAO-2 are refused
@@ -123,21 +124,24 @@ def test_the_memory_hierarchy_is_inside_the_scope() -> None:
 
     # And it is genuinely the tiers doing it, not some other target field moving with them.
     assert base.component("H")["memory_hierarchy"] != altered.component("H")["memory_hierarchy"]
-    assert base.component("H")["target_hash"] == altered.component("H")["target_hash"], (
-        "hash_target still collides -- which is exactly why the scope carries the tiers "
-        "itself rather than relying on it"
+    # S0-D widened the cross-rail hash too: the tiers are inside `hash_target` on both rails
+    # now, so the scope's named component and the hash separate the two hierarchies together.
+    assert base.component("H")["target_hash"] != altered.component("H")["target_hash"], (
+        "hash_target must separate two memory hierarchies (S0-D)"
     )
 
 
 def test_the_declared_claim_order_is_inside_the_scope() -> None:
-    """`hash_module` sorts claims by id, so the two orders shared a digest."""
+    """The two declared orders shared a digest while `hash_module` sorted claims by id."""
     forward = scope_for(_chain("ab"), _HOST, Theta.cool(), PERF)
     reverse = scope_for(_chain("ba"), _HOST, Theta.cool(), PERF)
 
     assert forward.digest() != reverse.digest()
     assert forward.diff(reverse) == ("P",)
-    assert forward.component("P")["module_hash"] == reverse.component("P")["module_hash"], (
-        "the cross-rail module hash is unchanged by design; the scope adds the order on top"
+    # S0-D: `hash_module` folds the declared order on both rails, so the cross-rail hash and
+    # the scope's named `claim_order` component now separate the two orders together.
+    assert forward.component("P")["module_hash"] != reverse.component("P")["module_hash"], (
+        "hash_module must separate two declared claim orders (S0-D)"
     )
 
 

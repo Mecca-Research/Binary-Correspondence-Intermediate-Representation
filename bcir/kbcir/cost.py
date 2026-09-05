@@ -186,6 +186,43 @@ _DRAM = Tier("DRAM", latency_cyc=200, bw_factor=256, lat_factor=256)
 class MemoryHierarchy:
     tiers: tuple[Tier, ...]
 
+    def __post_init__(self) -> None:
+        # Construction-time well-formedness (S0-D), the twin of the `mem_tier_names` /
+        # `mem_tier_values` rules of the `bcir.target.capability` verifier: every tier has a
+        # non-empty name declared once, positive Q8 factors and a non-negative latency and
+        # capacity. A hierarchy is hashed into the plan's content address
+        # (provenance.hash_target), so it must be data a verifier can recompute from. Names
+        # are free strings, not MemTier members: a hardware channel may declare tiers the
+        # enum does not know (an embedded channel's "sram"); `tier_for` maps domains onto
+        # the enum-named ones and leaves the rest as the channel's own description.
+        seen: set[str] = set()
+        for t in self.tiers:
+            if not isinstance(t.name, str) or not t.name or any(ord(c) < 0x20 for c in t.name):
+                raise ValueError(f"memory tier name {t.name!r} must be a non-empty string")
+            if t.name in seen:
+                raise ValueError(f"memory tier {t.name!r} declared twice")
+            seen.add(t.name)
+            if t.bw_factor < 1 or t.lat_factor < 1:
+                raise ValueError(
+                    f"memory tier {t.name!r}: bw_factor and lat_factor must be positive"
+                )
+            if t.latency_cyc < 0 or t.capacity < 0:
+                raise ValueError(
+                    f"memory tier {t.name!r}: latency_cyc and capacity must be non-negative"
+                )
+
+    def tier_names(self) -> tuple[str, ...]:
+        """`mem_tier_names` of `bcir.target.capability`: the tier names in declared order."""
+        return tuple(t.name for t in self.tiers)
+
+    def tier_values(self) -> tuple[int, ...]:
+        """`mem_tier_values` of `bcir.target.capability`: four i64 per named tier --
+        (latency_cyc, bw_factor, lat_factor, capacity) in declared order."""
+        out: list[int] = []
+        for t in self.tiers:
+            out += [t.latency_cyc, t.bw_factor, t.lat_factor, t.capacity]
+        return tuple(out)
+
     def by_name(self, name: str) -> Tier:
         for t in self.tiers:
             if t.name == name:

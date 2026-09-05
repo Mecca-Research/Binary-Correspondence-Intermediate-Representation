@@ -89,7 +89,7 @@ _STRIDES = {v: k for k, v in _STRIDE_SPELL.items()}
 # cases fold real component values through the same FNV chain on both rails.
 _MM, _MT, _MTH, _MP = (
     7127522701151166272,
-    5864064355688965777,
+    5192828792194564141,
     1870846051561339781,
     4048695575545564183,
 )

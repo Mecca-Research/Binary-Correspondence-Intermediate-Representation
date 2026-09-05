@@ -107,6 +107,11 @@ class ClaimView:
         ""  # SS5.14 Phase 2: the extent-provenance signal, emitted only when set
     )
     callee_sig: str = ""  # SS5.14 Phase 2: the declared indirect-callee signature, emitted when set
+    # S0-D: the fields the R13 hash_module recompute folds (BCIRVerifyPass.cpp hashModuleFromIR)
+    # and the emitter used to leave at their ODS defaults -- a manifest attached to an emitted
+    # module could not cross-check its m_module.
+    opcode: int = 0  # the model.Opcode integer
+    offset: int = 0
 
 
 @dataclass(frozen=True)
@@ -188,6 +193,8 @@ def plan_view(
                 volatile=claim.volatile,
                 bounds_provenance=claim.bounds_provenance,
                 callee_sig=claim.callee_sig,
+                opcode=int(claim.opcode),
+                offset=claim.offset,
             )
         )
         prev_cand = sel
@@ -270,18 +277,28 @@ def to_mlir(
     # so a non-x86 target (arm64 / RISC-V / GPU) plans from its own constants, not the
     # CPU defaults. `warp` / `mem_channels` carry the warp geometry + roofline knee
     # (mem_channels feeds -bcir-schedule's bandwidth-bound parallelism).
+    # S0-D: every field the R13 hash_target recompute folds is emitted -- the profile name,
+    # the scalable flag, the calibration generation and the MEMORY HIERARCHY
+    # (`mem_tier_names` + `mem_tier_values`, four i64 per named tier in declared order) -- so
+    # a manifest attached to an emitted module cross-checks its m_target against exactly the
+    # profile that planned it.
     isa = ", ".join(f'"{x}"' for x in sorted(h.isa_features))
     lw = ", ".join(str(x) for x in h.lane_widths)
+    tier_names = ", ".join(f'"{n}"' for n in h.mem.tier_names())
+    tier_values = ", ".join(str(x) for x in h.mem.tier_values())
     L.append(
-        f'  bcir.target.capability @cpu {{ triple = "{h.triple}", '
+        f'  bcir.target.capability @cpu {{ target_name = "{h.name}", triple = "{h.triple}", '
         f"isa_features = [{isa}], lane_widths = array<i64: {lw}>, "
-        f"warp = {h.warp} : i32, cacheline = {h.cacheline} : i32, "
+        f"warp = {h.warp} : i32, scalable = {'true' if h.scalable else 'false'}, "
+        f"cacheline = {h.cacheline} : i32, "
         f"gather_penalty = {h.gather_penalty} : i32, "
         f"affinity_domains = {h.affinity_domains} : i32, "
         f"mem_channels = {h.mem_channels} : i32, "
         f"thermal_density = {h.thermal_density} : i32, power_density = {h.power_density} : i32, "
         f"mem_unit = {h.mem_unit} : i32, base_overhead = {h.base_overhead} : i32, "
-        f"per_op_heat = {h.per_op_heat} : i32, elem_bytes = {h.elem_bytes} : i32 }}"
+        f"per_op_heat = {h.per_op_heat} : i32, elem_bytes = {h.elem_bytes} : i32, "
+        f"cal_gen = {h.cal_gen} : i64, mem_tier_names = [{tier_names}], "
+        f"mem_tier_values = array<i64: {tier_values}> }}"
     )
     # registry: the resources the claims reference (so the cost model resolves the
     # tier from each claim's read[0] domain, and HAM access).
@@ -305,13 +322,18 @@ def to_mlir(
     L.append(
         f"  bcir.kbcir.theta @theta {{ thermal = {theta.thermal} : i32, "
         f"power = {theta.power} : i32, mem_pressure = {theta.mem_pressure} : i32, "
-        f"contention = {theta.contention} : i32 }}"
+        f"contention = {theta.contention} : i32, noise = {theta.noise} : i32, "
+        f"wear = {theta.wear} : i32, utilization = {theta.utilization} : i32, "
+        f"voltage = {theta.voltage} : i32 }}"
     )
     # policy (theta-folded weights; mode drives -bcir-select-realization lookup).
+    # `base_weights` is the UNFOLDED policy base (S0-D): the R13 hash_policy recompute folds
+    # it, and the manifest's m_policy cross-check needs a policy that carries it.
     wlist = ", ".join(str(x) for x in pv.weights)
+    blist = ", ".join(str(x) for x in policy.base)
     L.append(
         f"  bcir.kbcir.policy @perf {{ mode = #bcir.policy_mode<{pv.policy_mode}>, "
-        f"weights = array<i64: {wlist}> }}"
+        f"weights = array<i64: {wlist}>, base_weights = array<i64: {blist}> }}"
     )
     # optional plan-wide budget B(H,Theta): hard caps on additive resource dims that
     # -bcir-rcsp-plan's accumulated-budget label DP must respect (mirrors rcsp.Budget).
@@ -321,10 +343,12 @@ def to_mlir(
         dims = ", ".join(f'"{_DIMS[d]}"' for d, _ in budget.caps)
         caps = ", ".join(str(cap) for _, cap in budget.caps)
         L.append(f"  bcir.kbcir.budget @cap {{ dims = [{dims}], caps = array<i64: {caps}> }}")
-    # phases
-    for pid in pv.phase_ids:
-        deps = ", ".join(f"@p{d}" for d in pv.phase_deps.get(pid, ()))
-        L.append(f"  bcir.phase @p{pid} {{ id = {pid} : i32, deps = [{deps}] }}")
+    # phases, every one the module declares, in DECLARED order (S0-D): hash_module folds
+    # phases in that order and the law rail walks them textually, and a claim-less phase is
+    # still part of the goal graph's identity.
+    for ph in module.phases:
+        deps = ", ".join(f"@p{d}" for d in ph.deps)
+        L.append(f"  bcir.phase @p{ph.phase_id} {{ id = {ph.phase_id} : i32, deps = [{deps}] }}")
     # claims (region carries an index_range, like gem_passes.mlir)
     for cv in pv.claims:
         L.append(
@@ -335,7 +359,8 @@ def to_mlir(
             f"stride_class = #bcir.stride_class<{_STRIDE_SPELL[cv.stride_class]}>, "
             f"stride_k = {cv.stride_k} : i32, domain = #bcir.domain<{_DOMAIN_SPELL[cv.domain]}>, "
             f"hazard = #bcir.hazard<{cv.hazard}>, verify = #bcir.verify<{cv.verify}>, "
-            f"bounds = #bcir.bounds<{cv.bounds}>"
+            f"bounds = #bcir.bounds<{cv.bounds}>, opcode = {cv.opcode} : i32"
+            + (f", offset = {cv.offset} : i64" if cv.offset else "")
             + (", is_volatile = true" if cv.volatile else "")
             + (f', bounds_provenance = "{cv.bounds_provenance}"' if cv.bounds_provenance else "")
             + (f', callee_sig = "{cv.callee_sig}"' if cv.callee_sig else "")

@@ -8,31 +8,27 @@ the claim ranges over. Two certificates may be compared only when their scopes a
 a certificate whose scope omits a plan-affecting input is a claim about a model nobody wrote
 down.
 
-WHY THIS IS A NEW OBJECT RATHER THAN A WIDER `hash_target`.
+WHY THIS IS A NEW OBJECT RATHER THAN (ONLY) A WIDER `hash_target`.
 
 The obvious repair for the gap the 2026-08-12 audit found — `hash_target` omits the memory
-hierarchy, so scaling one tier's factors moved a plan's score from 51,200 to 1,574,912 with
-the digest unchanged — is to add the tiers to `hash_target`. That is the wrong move, and it
-took a failed attempt to see why.
+hierarchy, so scaling one tier's factors moved a plan's score thirty-fold with the digest
+unchanged — is to add the tiers to `hash_target`. Doing that ALONE was the wrong move, and
+it took a failed attempt to see why.
 
 `hash_module` and `hash_target` are not general-purpose identity functions. They are one half
 of R13's **cross-rail** check: `BCIRVerifyPass.cpp` recomputes both field for field from the
-IR, and the two must agree exactly. Widening them is therefore a change to the MLIR dialect
-(the tiers have no ODS attribute), the C++ walk, and the pinned constants in
-`verify_provenance.mlir` — all of which must land in one commit or the rails silently disagree
-about a content address, which is worse than the gap.
+IR, and the two must agree exactly. Widening them is therefore a change to the MLIR dialect,
+the C++ walk, and the pinned constants in `verify_provenance.mlir` — all of which must land in
+one commit or the rails silently disagree about a content address, which is worse than the gap.
 
-So the two jobs are separated instead of merged:
-
-  * `hash_module` / `hash_target` stay exactly as they are. Their job is *cross-rail
-    agreement*, they do it correctly, and R13 keeps working unchanged.
-  * `ExecutionScopeV1` is the *complete* identity, computed once in the oracle, and it is
-    what certificates bind to. It contains the target hash as one field among many, so the
-    cross-rail check remains a component of the scope rather than a competitor to it.
-
-That separation is what lets the gap close now: a certificate bound to a scope that includes
-the memory hierarchy cannot collide across two different hierarchies, whatever `hash_target`
-alone would have said.
+So the two jobs were separated: G0 landed `ExecutionScopeV1` as the *complete* identity
+certificates bind to, and S0-D (S0-1 of the staged plan) then widened the two cross-rail
+hashes on both rails in one commit — `hash_target` folds the memory hierarchy
+(`target.capability`'s `mem_tier_names` / `mem_tier_values`, absent = the default hierarchy)
+and `hash_module` folds
+the claims in DECLARED order. The scope keeps naming the tiers and the order as components of
+its own: a hash says *that* two scopes differ, `diff` says *which* component moved, and the
+scope is what a certificate class is judged against.
 
 THE COMPONENTS, and the honest state of each. `absent` is a first-class value here. A scope
 that silently omits `W` is indistinguishable from one where the workload happened to be
@@ -206,10 +202,9 @@ def scope_for(
         program = {
             "module_hash": hash_module(module),
             "name": module.name,
-            # DECLARED order, which `hash_module` erases by sorting on claim id. Two claims
-            # declared `a, b` and `b, a` plan to scores 3,840 and 4,352 and share a module
-            # hash; recording the order here separates them without touching the cross-rail
-            # hash the MLIR verifier recomputes.
+            # DECLARED order. Two claims declared `a, b` and `b, a` plan to different scores;
+            # `hash_module` folds the order too since S0-D, and the scope names it as a
+            # component so `diff` can say that P moved because of the order.
             "claim_order": [
                 [phase.phase_id, [claim.id for claim in phase.claims]] for phase in module.phases
             ],
@@ -228,9 +223,9 @@ def scope_for(
             "triple": target.triple,
             "lane_widths": sorted(target.lane_widths),
             "affinity_domains": target.affinity_domains,
-            # The component `hash_target` does not cover. `TargetCapabilityOp` carries no ODS
-            # attribute for it, so putting it here closes the gap in the oracle today while
-            # the dialect change stays a separate, two-rail piece of work.
+            # Named as a component so `diff` can say that H moved because of the tiers;
+            # `hash_target` folds them too since S0-D (`target.capability` `mem_tier_names` /
+            # `mem_tier_values`).
             "memory_hierarchy": tiers,
             "cal_gen": int(getattr(target, "cal_gen", 0)),
         }

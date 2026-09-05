@@ -320,16 +320,16 @@ def test_the_lowering_subset_refuses_addressing_it_does_not_emit() -> None:
 
 
 def test_replay_refuses_to_return_a_plan_the_manifest_does_not_record() -> None:
-    """`hash_target` omits the memory hierarchy, and that gap is not closed here.
+    """A replay against a different memory hierarchy is refused.
 
-    Closing it means new ODS attributes on `TargetCapabilityOp` plus a matching walk in
-    `BCIRVerifyPass.cpp`'s `hashTargetFromIR`, because R13 cross-checks this hash against
-    one recomputed from the IR -- a two-rail change, tracked with the GEM+ scope work.
-
-    What IS closed is the consequence: `replay` compared only the digest, so it returned a
-    plan scoring 1,574,912 for a manifest recording 51,200 and raised nothing, while
-    `reproduces()` on the same inputs correctly said False. A known-incomplete hash is
-    survivable; a replay that silently answers with a different plan is not.
+    `hash_target` omitted the memory hierarchy until S0-D closed it on both rails (new ODS
+    attributes on `TargetCapabilityOp` plus the matching walk in `BCIRVerifyPass.cpp`'s
+    `hashTargetFromIR`, because R13 cross-checks this hash against one recomputed from the
+    IR). Before that, what was closed was the consequence: `replay` compared only the
+    digest, so it returned a plan scoring 1,574,912 for a manifest recording 51,200 and
+    raised nothing, while `reproduces()` on the same inputs correctly said False. The plan
+    comparison stays: a known-incomplete hash is survivable, a replay that silently answers
+    with a different plan is not -- and this fixture now trips the digest check first.
     """
     from bcir.kbcir.cost import MemoryHierarchy, Tier
 
@@ -378,7 +378,11 @@ def test_replay_refuses_to_return_a_plan_the_manifest_does_not_record() -> None:
     try:
         got = replay(manifest, module, slower, _TH, PERF)
     except ProvenanceMismatch as exc:
-        assert "DIFFERENT plan" in str(exc), str(exc)
+        # Since S0-D `hash_target` folds the memory hierarchy, so the refusal comes at the
+        # digest check and names the component that moved (the manifest's `target`); the
+        # plan comparison below it stays as the second line, for any plan-affecting input a
+        # future hash still misses.
+        assert "'target'" in str(exc) or "DIFFERENT plan" in str(exc), str(exc)
         return
     raise AssertionError(
         f"replay returned a plan scoring {got.score} for a manifest recording {manifest.score}"

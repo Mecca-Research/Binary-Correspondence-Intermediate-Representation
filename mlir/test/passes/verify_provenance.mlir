@@ -11,9 +11,9 @@
 // hashes -- recomputed and accepted (no diagnostic).
 bcir.module @r13_digest_ok {
   bcir.kbcir.provenance_manifest @man_ok {
-    digest = 9201837206445197944 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
+    digest = 8915526058458340485 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
     reproduced = true,
-    m_module = 7127522701151166272 : i64, m_target = 5864064355688965777 : i64,
+    m_module = 7127522701151166272 : i64, m_target = 5192828792194564141 : i64,
     m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64
   }
 }
@@ -24,9 +24,9 @@ bcir.module @r13_digest_ok {
 // the components, in sorted order -- recomputed and accepted.
 bcir.module @r13_digest_ok_artifacts {
   bcir.kbcir.provenance_manifest @man_arts {
-    digest = 3780911091132933688 : i64, score = 7808 : i64, n_artifacts = 2 : i64,
+    digest = 6843787964663692581 : i64, score = 7808 : i64, n_artifacts = 2 : i64,
     reproduced = true,
-    m_module = 7127522701151166272 : i64, m_target = 5864064355688965777 : i64,
+    m_module = 7127522701151166272 : i64, m_target = 5192828792194564141 : i64,
     m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64,
     artifact_names = ["cal_gen", "map_gen"], artifact_gens = array<i64: 4, 2>
   }
@@ -37,11 +37,11 @@ bcir.module @r13_digest_ok_artifacts {
 // A tampered manifest: the declared digest does not match the FNV recompute of its own
 // component hashes -- rejected (the digest is no longer taken on trust).
 bcir.module @r13_digest_tampered {
-  // expected-error @+1 {{R13: provenance digest 123456789 does not match the digest recomputed from its component hashes 9201837206445197944}}
+  // expected-error @+1 {{R13: provenance digest 123456789 does not match the digest recomputed from its component hashes 8915526058458340485}}
   bcir.kbcir.provenance_manifest @man_bad {
     digest = 123456789 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
     reproduced = true,
-    m_module = 7127522701151166272 : i64, m_target = 5864064355688965777 : i64,
+    m_module = 7127522701151166272 : i64, m_target = 5192828792194564141 : i64,
     m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64
   }
 }
@@ -87,7 +87,9 @@ bcir.module @vec_add {
     lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = false, cacheline = 64 : i32,
     gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32,
     mem_unit = 1 : i32, base_overhead = 4 : i32, thermal_density = 64 : i32,
-    power_density = 64 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64
+    power_density = 64 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64,
+    mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"],
+    mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0>
   }
   bcir.kbcir.policy @perf {
     mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>,
@@ -107,9 +109,9 @@ bcir.module @vec_add {
     hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>
   } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.provenance_manifest @man_full {
-    digest = 9201837206445197944 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
+    digest = 8915526058458340485 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
     reproduced = true,
-    m_module = 7127522701151166272 : i64, m_target = 5864064355688965777 : i64,
+    m_module = 7127522701151166272 : i64, m_target = 5192828792194564141 : i64,
     m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64
   }
 }
@@ -150,9 +152,9 @@ bcir.module @cap_bad_target {
     mem_unit = 1 : i32, base_overhead = 4 : i32, thermal_density = 64 : i32,
     power_density = 64 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64
   }
-  // expected-error @+1 {{R13: manifest m_target 5864064355688965777 does not match the value recomputed from the IR}}
+  // expected-error @+1 {{R13: manifest m_target 5192828792194564141 does not match the value recomputed from the IR}}
   bcir.kbcir.provenance_manifest @man_bad_tgt {
-    digest = 6312301499076181918 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
-    reproduced = true, m_target = 5864064355688965777 : i64
+    digest = 348990622335490775 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
+    reproduced = true, m_target = 5192828792194564141 : i64
   }
 }

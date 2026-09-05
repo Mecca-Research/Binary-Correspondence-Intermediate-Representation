@@ -198,23 +198,24 @@ def test_mlir_verify_provenance_constants_are_in_sync():
     man = build_manifest(vector_add(1024), AVX, COOL)
     assert (man.m_module, man.m_target, man.m_theta, man.m_policy) == (
         7127522701151166272,
-        5864064355688965777,
+        5192828792194564141,
         1870846051561339781,
         4048695575545564183,
     )
-    assert man.digest == 9201837206445197944  # the no-artifact case
+    assert man.digest == 8915526058458340485  # the no-artifact case
     # the with-artifacts case folds (cal_gen, 4) and (map_gen, 2) in, sorted by name.
     arts = (("cal_gen", 4), ("map_gen", 2))
     assert (
         _fnv_outer((man.m_module, man.m_target, man.m_theta, man.m_policy), arts)
-        == 3780911091132933688
+        == 6843787964663692581
     )
 
 
 def test_component_hashes_recompute_from_ir_primitives():
     """Each component hash is the FNV-1a chain over exactly the primitives the IR carries
-    (resource/claim fields incl. the opcode; capability fields incl. name + scalable; policy
-    name + UNFOLDED base) -- the relation -bcir-verify recomputes from the IR for the
+    (resource/claim fields incl. the opcode, claims in declared order; capability fields
+    incl. name, scalable and the memory tiers; policy name + UNFOLDED base) -- the relation
+    -bcir-verify recomputes from the IR for the
     m_module / m_target / m_policy cross-checks (R13; BCIRVerifyPass.cpp hash*FromIR)."""
     from bcir.kbcir.provenance import hash_module, hash_target, hash_policy
     from bcir.kbcir.weights import PERF
@@ -243,7 +244,7 @@ def test_component_hashes_recompute_from_ir_primitives():
         ]
     for ph in m.phases:
         mod += [ph.phase_id, *sorted(ph.deps)]
-        for c in sorted(ph.claims, key=lambda c: c.id):
+        for c in ph.claims:  # declared order (S0-D)
             mod += [
                 c.id,
                 int(c.opcode),
@@ -280,5 +281,7 @@ def test_component_hashes_recompute_from_ir_primitives():
         getattr(H, "mem_channels", 4),
         getattr(H, "cal_gen", 0),
     ]
-    assert fnv(tgt) == hash_target(H) == 5864064355688965777
+    for t in H.mem.tiers:  # the memory hierarchy (S0-D), declared order
+        tgt += [t.name, t.latency_cyc, t.bw_factor, t.lat_factor, t.capacity]
+    assert fnv(tgt) == hash_target(H) == 5192828792194564141
     assert fnv([PERF.name, *PERF.base]) == hash_policy(PERF) == 4048695575545564183
