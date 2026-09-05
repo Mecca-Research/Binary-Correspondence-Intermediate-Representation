@@ -541,10 +541,36 @@ def test_ordered_hazard_without_fence_is_R12():
     assert "R12" in _laws(verify_lowering(m, res, ll))
 
 
-def test_scalar_legalization_is_a_legal_discharge():
-    # n not divisible by the selected width: the emitter legalizes to scalar and
-    # the discharge note records it -- R12 accepts exactly that fallback.
+def test_non_divisible_count_is_discharged_by_the_scalar_epilogue():
+    # S0-8: n not divisible by the selected width keeps the width; the runtime-n tail
+    # contract (the `n & -W` bound plus the scalar epilogue) is the discharge R12 accepts.
     m = vector_add(1000)  # 1000 % 16 != 0
     res = optimize(m, TARGETS["x86_avx512"], Theta.cool())
     ll = emit_kernel_ll(m, res)
+    assert "width=16" in ll.splitlines()[0] and "epilogue=scalar" in ll.splitlines()[0]
     assert verify_lowering(m, res, ll) == []
+
+
+def _r12_messages(m, res, ll):
+    return [d.message for d in verify_lowering(m, res, ll) if d.law == "R12"]
+
+
+def test_missing_tail_contract_is_R12():
+    # S0-8: a vector kernel that steps to n (no `n & -W` bound), one without the scalar
+    # epilogue, and one that does not declare the epilogue are each refused. The
+    # parent emitter's kernel -- the vector loop bounded by %n itself -- is the first.
+    m, res, ll = _lowered()
+    unbounded = ll.replace("%nvec = and i64 %n, -16", "%nvec = add i64 %n, 0")
+    assert any("no `and i64 %n, -16` mask" in msg for msg in _r12_messages(m, res, unbounded))
+    no_epilogue = ll.replace("%c = fadd float %a, %b", "%c = fadd <16 x float> %va, %vb")
+    assert any("no scalar epilogue" in msg for msg in _r12_messages(m, res, no_epilogue))
+    undeclared = ll.replace("epilogue=scalar", "epilogue=none")
+    assert any("declare epilogue=scalar" in msg for msg in _r12_messages(m, res, undeclared))
+    # a scalar kernel claiming an epilogue is a geometry lie the other way
+    scalar = emit_kernel_ll(m, res, width_override=1)
+    assert verify_lowering(m, res, scalar, width_override=1) == []
+    lying = scalar.replace("epilogue=none", "epilogue=scalar")
+    assert any("declares epilogue=scalar" in msg for msg in _r12_messages(m, res, lying)) or any(
+        "epilogue" in msg
+        for msg in [d.message for d in verify_lowering(m, res, lying, width_override=1)]
+    )

@@ -7,6 +7,17 @@ today. This is deliberately a partial LLVM AOT/JIT backend: it accepts exactly
 one selected, executable 2-read/1-write add/sub/mul claim and rejects arbitrary
 graphs instead of silently truncating them. The emitter only produces standard
 SSA instructions -- no constant-expression-over-SSA, no invented opcodes.
+
+The runtime-`n` tail contract (S0-8). The kernel takes its trip count `n` at RUNTIME,
+so the claim's `count` is only the expected one. A vector kernel therefore runs its
+`<W x ...>` loop over the largest multiple of W not above `n` (`n & -W`, W a power of
+two) and finishes the remainder in a scalar epilogue: bounds-safe for any `n`, the
+selected width kept whatever the count. The parent emitter legalized a non-divisible
+compile-time count to scalar and otherwise stepped the vector loop to `n` -- a runtime
+`n` that was not a multiple of W read and wrote past the buffers (the harness now calls
+every kernel with `count + 7`, a sub-width count and 0 behind canaries, so that miscompile
+cannot come back). R12 (`verify.verify_lowering`) holds the contract: the declared width
+is the selected one and a vector kernel carries the mask and the scalar epilogue.
 """
 
 from __future__ import annotations
@@ -133,9 +144,15 @@ def emit_kernel_ll(
     """Emit a legal LLVM IR kernel. `elem` is "f32" (float) or "i32" (integer, e.g.
     for FP-less targets like eBPF); `width_override` forces a vector/scalar width."""
     claim, cand = _find_elementwise(module, result)
-    n = max(1, claim.count)
     base_w = width_override if width_override else cand.width
-    w = base_w if (base_w >= 1 and n % base_w == 0) else 1
+    if base_w < 1 or (base_w & (base_w - 1)):
+        raise NotImplementedError(
+            f"the elementwise lowering subset emits a power-of-two lane width; candidate "
+            f"{cand.name} selects {base_w}"
+        )
+    # The selected width is realized whatever the count: a runtime `n` that is not a
+    # multiple of the width finishes in the scalar epilogue (the tail contract).
+    w = base_w
     if elem == "i32":
         ety = "i32"
         op_ll = _IOP[claim.opcode]
@@ -146,7 +163,9 @@ def emit_kernel_ll(
     params = _alias_params(claim)
     head = (
         f"; BCIR -> LLVM IR (legal-IR-only). op={claim.op or op_ll} "
-        f"lane={cand.lane.name} width={w} elem={ety} (K_BCIR-selected; candidate={cand.name})\n"
+        f"lane={cand.lane.name} width={w} elem={ety} "
+        f"epilogue={'scalar' if w > 1 else 'none'} "
+        f"(K_BCIR-selected; candidate={cand.name})\n"
         f'source_filename = "bcir.{module.name}.ll"\n\n'
     )
 
@@ -172,13 +191,20 @@ exit:
 }}
 """
     else:
+        # The vector loop runs over nvec = n & -W (the largest multiple of W not above n);
+        # the scalar epilogue finishes [nvec, n). Both guards compare against %n, so a
+        # trip count of any value -- including one below W, or zero -- is bounds-safe.
         vty = f"<{w} x {ety}>"
         body = f"""define void @{fn_name}({params}) {{
 entry:
   %empty = icmp sle i64 %n, 0
-  br i1 %empty, label %exit, label %loop
-loop:
-  %i = phi i64 [ 0, %entry ], [ %inext, %loop ]
+  br i1 %empty, label %exit, label %vec.check
+vec.check:
+  %nvec = and i64 %n, -{w}
+  %novec = icmp eq i64 %nvec, 0
+  br i1 %novec, label %tail.check, label %vec
+vec:
+  %i = phi i64 [ 0, %vec.check ], [ %inext, %vec ]
   %pa = getelementptr inbounds {ety}, ptr %A, i64 %i
   %pb = getelementptr inbounds {ety}, ptr %B, i64 %i
   %pc = getelementptr inbounds {ety}, ptr %C, i64 %i
@@ -187,8 +213,23 @@ loop:
   %vc = {op_ll} {vty} %va, %vb
   store {vty} %vc, ptr %pc, align 4
   %inext = add nuw nsw i64 %i, {w}
-  %done = icmp sge i64 %inext, %n
-  br i1 %done, label %exit, label %loop
+  %vdone = icmp sge i64 %inext, %nvec
+  br i1 %vdone, label %tail.check, label %vec
+tail.check:
+  %tdone0 = icmp sge i64 %nvec, %n
+  br i1 %tdone0, label %exit, label %tail
+tail:
+  %j = phi i64 [ %nvec, %tail.check ], [ %jnext, %tail ]
+  %ta = getelementptr inbounds {ety}, ptr %A, i64 %j
+  %tb = getelementptr inbounds {ety}, ptr %B, i64 %j
+  %tc = getelementptr inbounds {ety}, ptr %C, i64 %j
+  %a = load {ety}, ptr %ta, align 4
+  %b = load {ety}, ptr %tb, align 4
+  %c = {op_ll} {ety} %a, %b
+  store {ety} %c, ptr %tc, align 4
+  %jnext = add nuw nsw i64 %j, 1
+  %tdone = icmp sge i64 %jnext, %n
+  br i1 %tdone, label %exit, label %tail
 exit:
   ret void
 }}
@@ -196,28 +237,59 @@ exit:
     return head + body
 
 
-def emit_harness_c(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel") -> str:
-    claim, _ = _find_elementwise(module, result)
+def harness_trip_counts(module: Module, result: RealizationResult) -> tuple:
+    """The runtime trip counts the self-check harness drives the kernel with: the
+    planned count, a non-divisible one (`count + 7`), a count below one vector, and
+    zero. A kernel that steps its vector loop to `n` writes past the buffers on the
+    second and third; the harness's canaries turn that into a FAIL, not silence."""
+    claim, cand = _find_elementwise(module, result)
     n = max(1, claim.count)
+    return (n, n + 7, max(1, cand.width - 1), 0)
+
+
+def emit_harness_c(module: Module, result: RealizationResult, fn_name: str = "bcir_kernel") -> str:
+    """The C self-check harness: every trip count in `harness_trip_counts`, each behind
+    a canary region past `n` that the kernel must leave untouched (the tail contract)."""
+    claim, _ = _find_elementwise(module, result)
+    trips = ", ".join(str(t) for t in harness_trip_counts(module, result))
     _, op_c = _FOP[claim.opcode]
     return f"""#include <stdio.h>
 #include <stdlib.h>
 
 extern void {fn_name}(const float *A, const float *B, float *C, long n);
 
-int main(void) {{
-  long n = {n};
-  float *A = (float *)malloc((size_t)n * sizeof(float));
-  float *B = (float *)malloc((size_t)n * sizeof(float));
-  float *C = (float *)malloc((size_t)n * sizeof(float));
+#define CANARY 64
+static const float SENTINEL = -7777777.0f;
+
+/* Run the kernel at trip count n with CANARY elements of headroom past n on every
+ * array; a write past n is an unmasked tail, and it fails here rather than corrupting
+ * the heap silently. */
+static int check(long n) {{
+  long total = n + CANARY;
+  float *A = (float *)malloc((size_t)total * sizeof(float));
+  float *B = (float *)malloc((size_t)total * sizeof(float));
+  float *C = (float *)malloc((size_t)total * sizeof(float));
   if (!A || !B || !C) return 2;
-  for (long i = 0; i < n; i++) {{ A[i] = (float)i; B[i] = 2.0f * (float)i; C[i] = -1.0f; }}
+  for (long i = 0; i < total; i++) {{ A[i] = (float)i; B[i] = 2.0f * (float)i; C[i] = SENTINEL; }}
   {fn_name}(A, B, C, n);
   for (long i = 0; i < n; i++) {{
     float want = A[i] {op_c} B[i];
-    if (C[i] != want) {{ printf("FAIL at %ld: got %f want %f\\n", i, C[i], want); return 1; }}
+    if (C[i] != want) {{ printf("FAIL n=%ld at %ld: got %f want %f\\n", n, i, C[i], want); return 1; }}
   }}
-  printf("OK {fn_name} n=%ld\\n", n);
+  for (long i = n; i < total; i++) {{
+    if (C[i] != SENTINEL) {{ printf("FAIL n=%ld: wrote past n at %ld (an unmasked tail)\\n", n, i); return 1; }}
+  }}
+  free(A); free(B); free(C);
+  return 0;
+}}
+
+int main(void) {{
+  long trips[] = {{ {trips} }};
+  for (unsigned t = 0; t < sizeof trips / sizeof trips[0]; t++) {{
+    int rc = check(trips[t]);
+    if (rc) return rc;
+  }}
+  printf("OK {fn_name} trips={trips}\\n");
   return 0;
 }}
 """
