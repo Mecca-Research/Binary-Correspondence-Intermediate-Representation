@@ -197,6 +197,30 @@ budget; without the scope it checks candidate membership and coverage only),
 MLIR-native `-bcir-verify` pass enforces the structurally checkable form of all
 of R1–R25 on the dialect.
 
+**Structural well-formedness and the shared corpus (S0-6).** The structurally checkable
+form of R1, R3, R4, R7, R12 and R13 is ONE law on both rails, held to by the shared
+structural-law corpus (`bcir/verify/structural_corpus.py`; its generated law-rail projection
+`mlir/test/passes/structural_corpus.mlir`). R1 also requires a registry entry to describe a
+real extent — positive shape extents, an element count within signed 64-bit, a power-of-two
+`align`; an empty shape is an *unknown* extent, which R7 then
+cannot check statically. R3's isolated-domain rule: a resource in a device-isolated domain
+(MMIO; the memory tiers RAM/HBM/VRAM/CXL/NVM are what a claim stages across) is touched only
+by a claim declaring that domain, while such a claim may carry tier operands (the value an
+MMIO write stores, the index a register read uses). R4 also
+requires phase *identity* — one phase per id, every dependency a declared phase — and every
+consumer that orders phases uses the one canonical dependency-first order
+(`model.topological_phase_ids` / `canonicalPhaseOrder`). R7 also requires a non-negative
+count and offset, a positive `stride_k` and an extent within signed 64-bit. R12 also
+requires a first-class integer address (`volatile_load` / `volatile_store` / `atomic_rmw` /
+`atomic_cas`) to have the declared target's pointer width, from one triple→width table
+(`kbcir.cost.pointer_width` / `pointerWidthOfTriple`). R13 holds a manifest's artifact
+record to one arity, sorted unique names and a matching `n_artifacts`, refuses a component
+hash for an object the enclosing module does not carry, and holds a calibrated capability's
+constants to its certificate. The descriptors of the target (`TargetProfile` /
+`target.capability`), of the event-transduction layer (`binary.*`, `event.*`, `fsm.*`,
+`parse.*`) and of a `gem.conv` validate at construction on both rails under the same rules,
+and the MAP/ROP front-ends derive a claim's domain from the resources it touches.
+
 **Timing + lifetime laws (R19/R20/R21).** Three further laws over the
 register-transfer / naked-pointer-safety tracks. They are driven by *optional*
 claim metadata (absent by default, so the entire scalar / C-frontend subset is

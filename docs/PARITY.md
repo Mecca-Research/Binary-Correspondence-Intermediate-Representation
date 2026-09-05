@@ -141,6 +141,8 @@ accuracy, contention, verification`.
 | C runtime (Phase 8) | `runtime/c/bcir_runtime.{h,c}` decodes `abi.streampack_abi` | `runtime/c/bcir_streampack.h` (C23: `restrict`/`[[nodiscard]]`/frozen-ABI `static_assert`; fuzzed under libFuzzer+ASan/UBSan via `runtime/c/fuzz_streampack.c`) |
 | named pass pipelines | `bcir.run` CLI stages | **MLIR** `registerBCIRPipelines`: `bcir-audit` / `bcir-optimize` / `bcir-hydrate` / `bcir-lower-llvm` / `bcir-aot`, every one verifier-checkpointed on entry and `bcir-optimize` again on the plan it emits (`pipeline_checkpoints.mlir`); `bcir-aot` is **partial AOT preparation** and may leave mixed BCIR/GEM/LLVM IR |
 | module scope | `verify(module)`, `optimize(module, …)`: one module at a time by construction | `-bcir-verify`, `-bcir-select-realization`, `-bcir-rcsp` and the GEM batch/schedule/lower passes are anchored at `bcir.module` through one predicate (`BCIRPassSupport.h` `forEachScope` / `walkScope`); a multi-module file verifies and prices each module in its own symbol table, and operations outside any module are the one outer scope (`verify_module_scope.mlir`, `select_module_scope.mlir`) |
+| structural laws (S0-6) | `verify(module)` R1/R4/R7 well-formedness, `derived_claim_domain` (MAP/ROP), `verify_address_width`, and construction-time rules on `TargetProfile`, the ETL descriptors, `ProvenanceManifest` and `check_conv` | the op verifiers (`bcir.resource`/`claim`/`target.capability`/`gem.conv`; the `binary.*`/`event.*`/`fsm.*`/`parse.*` descriptors) and `-bcir-verify` R3 (isolated domains), R4 (phase identity), R12 (address width under a declared target), R13 (artifact record, absent objects, certified constants) — ONE corpus, `bcir/verify/structural_corpus.py`: the quick tier runs it on the oracle, `structural_corpus.mlir` (generated, drift-gated) runs it under `check_passes.sh`; every mismatch a finding |
+| phase order | `model.topological_phase_ids` (dependency-first, roots in declaration order) — the planner, R9, the GEM scheduler, `overlap._makespan` | `BCIRPassSupport.h` `canonicalPhaseOrder` ranks the cost-model columns, `-bcir-schedule`, `-bcir-overlap` and `-bcir-schedule-eft` (`schedule_phase_order.mlir`: ids declared out of dependency order) |
 | live state Θ (cost coupling) | `kbcir.cost.Theta` + `weights()` fold | `bcir.kbcir.theta` op (thermal/power/...) — `-bcir-plan`/`-bcir-overlap` apply the multiplicative thermal coupling under hot Θ (matmul hot 1159168; `theta_hot.mlir`) |
 | async tokens (Phase 8) | `gem.async_tokens` (fork/await plan) | `bcir.async.fork` / `bcir.async.await` (`!bcir.token`) |
 | memory model (Phase 8) | `lower.memory_model` (hazard→ordering) | `BCIR_MemOrdering` + barrier `ordering` → `llvm.fence` |
@@ -290,12 +292,19 @@ against the runner scripts both ways (a fixture nothing runs, a runner reference
 fixture), and `tools/irdl/check_inventory.py` reconciles the ODS dialect, the IRDL projection
 and `mlir/irdl/MANIFEST.json` — every operation projected under the one naming rule or
 declared unprojected with its reason, no stale entry, ghost, orphan or naming collision.
+The structural laws themselves are held to ONE corpus (S0-6, `bcir/verify/structural_corpus.py`):
+every case is a rail-neutral spec with the law family and the diagnostic each rail must
+produce; the quick tier runs the oracle over all of it, `mlir/test/passes/structural_corpus.mlir`
+is generated from it (`--check` refuses drift) and executes under `check_passes.sh`, and when
+`bcir-opt` is built the test drives both rails and asserts zero findings. A legal case refused,
+an illegal case admitted, a refusal for another reason or under another law — each is a finding.
 
 The current **R1–R25** MLIR law set is negative-tested per law with
 `-bcir-verify -verify-diagnostics`: `verify_laws.mlir` (R1–R7),
 `verify_laws_deep.mlir` (R8–R16), `verify_accuracy.mlir` (R17),
-`verify_callgraph.mlir` (R18), `verify_timing_lifetime.mlir` (R19–R21), and
-`verify_shape_dtype.mlir` (R22–R23). The Python oracle covers each applicable surface
+`verify_callgraph.mlir` (R18), `verify_timing_lifetime.mlir` (R19–R21),
+`verify_shape_dtype.mlir` (R22–R23), and the generated `structural_corpus.mlir` (the S0-6
+structural cases of R1–R4, R6–R8, R12, R13 and the descriptor op verifiers). The Python oracle covers each applicable surface
 through its verifier and dedicated timing/lifetime/GEM-seam tests; the C frontend's
 documented twin remains scoped to R1–R18. Generated `STATUS.md` is a static fixture
 inventory, not an execution claim. The pretty ODS corpus must also stay clean under the
