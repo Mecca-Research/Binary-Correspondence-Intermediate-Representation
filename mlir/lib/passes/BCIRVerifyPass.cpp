@@ -83,8 +83,27 @@ static int64_t hashPolicyFromIR(KBCIRPolicyOp pol) {
   return fnvMask(h);
 }
 
+// MemoryHierarchy.default() -- the tier names and, per tier, (latency_cyc, bw_factor,
+// lat_factor, capacity) -- the hierarchy a capability without `mem_tier_names` /
+// `mem_tier_values` carries (every shipped TargetProfile's). Pinned here because the hash
+// must reproduce the oracle's for IR written before the attributes existed.
+static constexpr const char *kDefaultMemTierNames[] = {"L1",  "L2",  "L3", "DRAM",
+                                                       "HBM", "CXL", "SSD"};
+static constexpr int64_t kDefaultMemTierValues[] = {
+    4,    16,   16,   0, // L1
+    12,   32,   48,   0, // L2
+    40,   96,   96,   0, // L3
+    200,  256,  256,  0, // DRAM (the x1.0 baseline)
+    160,  64,   192,  0, // HBM
+    350,  384,  512,  0, // CXL
+    5000, 1024, 4096, 0, // SSD
+};
+
 // provenance.hash_target: _fnv over the TargetProfile fields, flattened (sorted lane widths
-// expand to scalars; scalable is a Python bool -> "True"/"False").
+// expand to scalars; scalable is a Python bool -> "True"/"False"), then the memory hierarchy
+// (S0-1 / S0-D): each tier as (name, latency_cyc, bw_factor, lat_factor, capacity) in
+// declared order, from `mem_tier_names` / `mem_tier_values` when present and from
+// MemoryHierarchy.default() when not.
 static int64_t hashTargetFromIR(TargetCapabilityOp cap) {
   uint64_t h = kFnvOffset;
   h = fnvItem(h, cap.getTargetName());
@@ -106,13 +125,30 @@ static int64_t hashTargetFromIR(TargetCapabilityOp cap) {
   h = fnvInt(h, cap.getAffinityDomains());
   h = fnvInt(h, cap.getMemChannels());
   h = fnvInt(h, cap.getCalGen());
+  if (auto names = cap.getMemTierNames()) {
+    ArrayRef<int64_t> values =
+        cap.getMemTierValues() ? *cap.getMemTierValues() : ArrayRef<int64_t>();
+    for (size_t i = 0; i < names->size() && 4 * i + 3 < values.size(); ++i) {
+      h = fnvItem(h, cast<StringAttr>((*names)[i]).getValue());
+      for (size_t k = 0; k < 4; ++k)
+        h = fnvInt(h, values[4 * i + k]);
+    }
+  } else {
+    for (size_t i = 0; i < 7; ++i) {
+      h = fnvItem(h, kDefaultMemTierNames[i]);
+      for (size_t k = 0; k < 4; ++k)
+        h = fnvInt(h, kDefaultMemTierValues[4 * i + k]);
+    }
+  }
   return fnvMask(h);
 }
 
 // provenance.hash_module recomputed from the bcir.module IR: the goal-graph name/cacheline/
-// align, then each resource (sorted by rid) and each phase's claims (sorted by id), every
-// field flattened to a scalar exactly as _flatten yields it. Reads/writes are the resolved
-// RIDs (the oracle hashes c.rd / c.wr, the integer RIDs).
+// align, then each resource (sorted by rid) and each phase's claims in DECLARED order --
+// textual order, which is the order the emitter writes them (S0-1 / S0-D: the old sort by
+// claim id erased an order that moves the plan) -- every field flattened to a scalar exactly
+// as _flatten yields it. Reads/writes are the resolved RIDs (the oracle hashes c.rd / c.wr,
+// the integer RIDs).
 static int64_t hashModuleFromIR(Operation *modOp) {
   uint64_t h = kFnvOffset;
   StringRef name;
@@ -163,13 +199,11 @@ static int64_t hashModuleFromIR(Operation *modOp) {
     std::sort(deps.begin(), deps.end());
     for (int64_t d : deps)
       h = fnvInt(h, d);
-    SmallVector<ClaimOp> claims;
+    SmallVector<ClaimOp> claims; // declared (textual) order, never re-sorted
     modOp->walk([&](ClaimOp c) {
       if (c.getPhase() == ph.getSymName())
         claims.push_back(c);
     });
-    std::sort(claims.begin(), claims.end(),
-              [](ClaimOp a, ClaimOp b) { return a.getClaimId() < b.getClaimId(); });
     for (ClaimOp c : claims) {
       h = fnvInt(h, static_cast<int64_t>(c.getClaimId()));
       h = fnvInt(h, static_cast<int64_t>(c.getOpcode()));

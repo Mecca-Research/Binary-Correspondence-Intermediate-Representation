@@ -1270,6 +1270,39 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
   const int64_t perOpHeat = signedAttr("per_op_heat", static_cast<int64_t>(getPerOpHeat()));
   const int64_t elemBytes = signedAttr("elem_bytes", static_cast<int64_t>(getElemBytes()));
   const int64_t calGen = signedAttr("cal_gen", static_cast<int64_t>(getCalGen()));
+  // The memory hierarchy (S0-D): the two arrays travel together, one non-empty name per
+  // tier declared once, four values per named tier, positive Q8 factors, non-negative
+  // latency and capacity -- the twin of MemoryHierarchy.__post_init__, because the
+  // hierarchy is hashed into the plan's content address and must be data the verifier can
+  // recompute from.
+  {
+    auto names = getMemTierNames();
+    auto values = getMemTierValues();
+    if (names.has_value() != values.has_value())
+      return emitOpError() << "mem_tier_names and mem_tier_values are declared together";
+    if (names) {
+      if (values->size() != 4 * names->size())
+        return emitOpError() << "mem_tier_values must hold four values per named tier "
+                                "(latency_cyc, bw_factor, lat_factor, capacity); got "
+                             << values->size() << " values for " << names->size() << " tiers";
+      ::llvm::StringSet<> seen;
+      for (size_t i = 0; i < names->size(); ++i) {
+        auto name = ::mlir::dyn_cast<::mlir::StringAttr>((*names)[i]);
+        if (!name || name.getValue().empty())
+          return emitOpError() << "mem_tier_names: every tier name is a non-empty string";
+        if (!seen.insert(name.getValue()).second)
+          return emitOpError() << "mem_tier_names: tier '" << name.getValue() << "' declared twice";
+        const int64_t latency = (*values)[4 * i], bw = (*values)[4 * i + 1],
+                      lat = (*values)[4 * i + 2], capacity = (*values)[4 * i + 3];
+        if (latency < 0 || capacity < 0)
+          return emitOpError() << "mem_tier_values: tier '" << name.getValue()
+                               << "' latency_cyc and capacity must be non-negative";
+        if (bw < 1 || lat < 1)
+          return emitOpError() << "mem_tier_values: tier '" << name.getValue()
+                               << "' bw_factor and lat_factor must be positive Q8 ratios";
+      }
+    }
+  }
 
   if (warp < 0 || gatherPenalty < 0 || baseOverhead < 0 || thermalDensity < 0 || powerDensity < 0 ||
       perOpHeat < 0 || calGen < 0)

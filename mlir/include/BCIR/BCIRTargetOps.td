@@ -38,7 +38,18 @@ def BCIR_TargetCapabilityOp : BCIR_Op<"target.capability", [Symbol]> {
     DefaultValuedAttr<I32Attr, "4">:$elem_bytes,
     // Cost-table generation (0 = seeded constants; >=1 = a frozen
     // kbcir.calibration table was applied -- L1 freshness).
-    DefaultValuedAttr<I64Attr, "0">:$cal_gen);
+    DefaultValuedAttr<I64Attr, "0">:$cal_gen,
+    // The memory hierarchy (S0-1 / staged plan S0-D), two parallel arrays in the hierarchy's
+    // declared order: the tier NAMES (free strings -- the seven MemTier names for a shipped
+    // profile, a hardware channel's own tiers such as "sram" otherwise) and four i64 per
+    // named tier -- (latency_cyc, bw_factor, lat_factor, capacity) -- the mirror of cost.py
+    // MemoryHierarchy.tiers (`tier_names` / `tier_values`). Absent = MemoryHierarchy.default(),
+    // the hierarchy every shipped profile carries, so IR written before the attributes
+    // hashes as it did. -bcir-verify folds them into the R13 hash_target recompute: scaling
+    // one tier's factors moved a plan's score thirty-fold under an unchanged digest, and no
+    // attribute existed to recompute the widened hash from.
+    OptionalAttr<StrArrayAttr>:$mem_tier_names,
+    OptionalAttr<DenseI64ArrayAttr>:$mem_tier_values);
   let assemblyFormat = "$sym_name attr-dict";
   // Parse-time well-formedness: bounded cost-model fields have the signs their
   // arithmetic requires, the cacheline is a positive power of two, lane widths

@@ -11,16 +11,16 @@
 // parity (run_campaign) carried onto the MLIR/C++ rail.
 
 bcir.module @vec_add_x86_avx2 {
-  bcir.target.capability @cpu { triple = "x86_64-avx2", isa_features = ["avx2", "fma"], lane_widths = array<i64: 1, 8>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "x86-64-avx2", triple = "x86_64-avx2", isa_features = ["avx2", "fma"], lane_widths = array<i64: 1, 8>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r10 { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r11 { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r12 { rid = 12 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c1000 attributes { claim_id = 1000 : i32, phase = @p0, op = "vector.add", reads = [@r10, @r11], writes = [@r12], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c1000 attributes { claim_id = 1000 : i32, phase = @p0, op = "vector.add", reads = [@r10, @r11], writes = [@r12], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_1000_scalar { claim = @c1000, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_1000_vec8 { claim = @c1000, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -35,16 +35,16 @@ bcir.module @vec_add_x86_avx2 {
 // CHECK: kbcir.plan_score = 9472
 
 bcir.module @vec_add_x86_avx512 {
-  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "x86-64-avx512", triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r10 { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r11 { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r12 { rid = 12 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c1000 attributes { claim_id = 1000 : i32, phase = @p0, op = "vector.add", reads = [@r10, @r11], writes = [@r12], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c1000 attributes { claim_id = 1000 : i32, phase = @p0, op = "vector.add", reads = [@r10, @r11], writes = [@r12], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_1000_scalar { claim = @c1000, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_1000_vec8 { claim = @c1000, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -60,16 +60,16 @@ bcir.module @vec_add_x86_avx512 {
 // CHECK: kbcir.plan_score = 7808
 
 bcir.module @vec_add_arm64_neon {
-  bcir.target.capability @cpu { triple = "aarch64-neon", isa_features = ["neon"], lane_widths = array<i64: 1, 4>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "aarch64-neon", triple = "aarch64-neon", isa_features = ["neon"], lane_widths = array<i64: 1, 4>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r10 { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r11 { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r12 { rid = 12 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c1000 attributes { claim_id = 1000 : i32, phase = @p0, op = "vector.add", reads = [@r10, @r11], writes = [@r12], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c1000 attributes { claim_id = 1000 : i32, phase = @p0, op = "vector.add", reads = [@r10, @r11], writes = [@r12], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_1000_scalar { claim = @c1000, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_1000_vec4 { claim = @c1000, realization = "u.vec4", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 256, memory = 6144, fabric = 0, sync = 0, compile = 0, thermal = 512, power = 512, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -84,16 +84,16 @@ bcir.module @vec_add_arm64_neon {
 // CHECK: kbcir.plan_score = 12800
 
 bcir.module @vec_add_arm64_sve {
-  bcir.target.capability @cpu { triple = "aarch64-sve", isa_features = ["neon", "sve"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "aarch64-sve", triple = "aarch64-sve", isa_features = ["neon", "sve"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = true, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r10 { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r11 { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r12 { rid = 12 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c1000 attributes { claim_id = 1000 : i32, phase = @p0, op = "vector.add", reads = [@r10, @r11], writes = [@r12], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c1000 attributes { claim_id = 1000 : i32, phase = @p0, op = "vector.add", reads = [@r10, @r11], writes = [@r12], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_1000_scalar { claim = @c1000, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_1000_vec8 { claim = @c1000, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -109,16 +109,16 @@ bcir.module @vec_add_arm64_sve {
 // CHECK: kbcir.plan_score = 7808
 
 bcir.module @vec_add_nvidia_ptx {
-  bcir.target.capability @cpu { triple = "nvptx64-warp", isa_features = ["ptx", "warp"], lane_widths = array<i64: 1, 32>, warp = 32 : i32, cacheline = 128 : i32, gather_penalty = 16 : i32, affinity_domains = 128 : i32, mem_channels = 32 : i32, thermal_density = 32 : i32, power_density = 48 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "nvptx64-warp", triple = "nvptx64-warp", isa_features = ["ptx", "warp"], lane_widths = array<i64: 1, 32>, warp = 32 : i32, scalable = false, cacheline = 128 : i32, gather_penalty = 16 : i32, affinity_domains = 128 : i32, mem_channels = 32 : i32, thermal_density = 32 : i32, power_density = 48 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r10 { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r11 { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r12 { rid = 12 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c1000 attributes { claim_id = 1000 : i32, phase = @p0, op = "vector.add", reads = [@r10, @r11], writes = [@r12], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c1000 attributes { claim_id = 1000 : i32, phase = @p0, op = "vector.add", reads = [@r10, @r11], writes = [@r12], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_1000_scalar { claim = @c1000, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1056, power = 1072, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_1000_vec32 { claim = @c1000, realization = "u.vec32", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 32, memory = 3456, fabric = 0, sync = 0, compile = 0, thermal = 1056, power = 1568, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -133,16 +133,16 @@ bcir.module @vec_add_nvidia_ptx {
 // CHECK: kbcir.plan_score = 6976
 
 bcir.module @vec_add_riscv_rvv {
-  bcir.target.capability @cpu { triple = "riscv64-rvv", isa_features = ["rvv"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 4 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "riscv64-rvv", triple = "riscv64-rvv", isa_features = ["rvv"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = true, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 4 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r10 { rid = 10 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r11 { rid = 11 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r12 { rid = 12 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c1000 attributes { claim_id = 1000 : i32, phase = @p0, op = "vector.add", reads = [@r10, @r11], writes = [@r12], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c1000 attributes { claim_id = 1000 : i32, phase = @p0, op = "vector.add", reads = [@r10, @r11], writes = [@r12], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_1000_scalar { claim = @c1000, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_1000_vec8 { claim = @c1000, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -158,7 +158,7 @@ bcir.module @vec_add_riscv_rvv {
 // CHECK: kbcir.plan_score = 7808
 
 bcir.module @fused_chain_x86_avx2 {
-  bcir.target.capability @cpu { triple = "x86_64-avx2", isa_features = ["avx2", "fma"], lane_widths = array<i64: 1, 8>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "x86-64-avx2", triple = "x86_64-avx2", isa_features = ["avx2", "fma"], lane_widths = array<i64: 1, 8>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r60 { rid = 60 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r61 { rid = 61 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -166,11 +166,11 @@ bcir.module @fused_chain_x86_avx2 {
     bcir.resource @r63 { rid = 63 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r64 { rid = 64 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c6001 attributes { claim_id = 6001 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r61], writes = [@r62], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c6002 attributes { claim_id = 6002 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r63], writes = [@r64], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c6001 attributes { claim_id = 6001 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r61], writes = [@r62], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c6002 attributes { claim_id = 6002 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r63], writes = [@r64], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_6001_scalar { claim = @c6001, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_6001_vec8 { claim = @c6001, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -189,7 +189,7 @@ bcir.module @fused_chain_x86_avx2 {
 // CHECK: kbcir.plan_score = 16640
 
 bcir.module @fused_chain_x86_avx512 {
-  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "x86-64-avx512", triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r60 { rid = 60 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r61 { rid = 61 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -197,11 +197,11 @@ bcir.module @fused_chain_x86_avx512 {
     bcir.resource @r63 { rid = 63 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r64 { rid = 64 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c6001 attributes { claim_id = 6001 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r61], writes = [@r62], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c6002 attributes { claim_id = 6002 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r63], writes = [@r64], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c6001 attributes { claim_id = 6001 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r61], writes = [@r62], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c6002 attributes { claim_id = 6002 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r63], writes = [@r64], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_6001_scalar { claim = @c6001, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_6001_vec8 { claim = @c6001, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -222,7 +222,7 @@ bcir.module @fused_chain_x86_avx512 {
 // CHECK: kbcir.plan_score = 13696
 
 bcir.module @fused_chain_arm64_neon {
-  bcir.target.capability @cpu { triple = "aarch64-neon", isa_features = ["neon"], lane_widths = array<i64: 1, 4>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "aarch64-neon", triple = "aarch64-neon", isa_features = ["neon"], lane_widths = array<i64: 1, 4>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r60 { rid = 60 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r61 { rid = 61 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -230,11 +230,11 @@ bcir.module @fused_chain_arm64_neon {
     bcir.resource @r63 { rid = 63 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r64 { rid = 64 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c6001 attributes { claim_id = 6001 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r61], writes = [@r62], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c6002 attributes { claim_id = 6002 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r63], writes = [@r64], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c6001 attributes { claim_id = 6001 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r61], writes = [@r62], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c6002 attributes { claim_id = 6002 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r63], writes = [@r64], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_6001_scalar { claim = @c6001, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_6001_vec4 { claim = @c6001, realization = "u.vec4", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 256, memory = 6144, fabric = 0, sync = 0, compile = 0, thermal = 512, power = 512, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -253,7 +253,7 @@ bcir.module @fused_chain_arm64_neon {
 // CHECK: kbcir.plan_score = 22528
 
 bcir.module @fused_chain_arm64_sve {
-  bcir.target.capability @cpu { triple = "aarch64-sve", isa_features = ["neon", "sve"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "aarch64-sve", triple = "aarch64-sve", isa_features = ["neon", "sve"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = true, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r60 { rid = 60 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r61 { rid = 61 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -261,11 +261,11 @@ bcir.module @fused_chain_arm64_sve {
     bcir.resource @r63 { rid = 63 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r64 { rid = 64 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c6001 attributes { claim_id = 6001 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r61], writes = [@r62], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c6002 attributes { claim_id = 6002 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r63], writes = [@r64], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c6001 attributes { claim_id = 6001 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r61], writes = [@r62], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c6002 attributes { claim_id = 6002 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r63], writes = [@r64], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_6001_scalar { claim = @c6001, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_6001_vec8 { claim = @c6001, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -286,7 +286,7 @@ bcir.module @fused_chain_arm64_sve {
 // CHECK: kbcir.plan_score = 13696
 
 bcir.module @fused_chain_nvidia_ptx {
-  bcir.target.capability @cpu { triple = "nvptx64-warp", isa_features = ["ptx", "warp"], lane_widths = array<i64: 1, 32>, warp = 32 : i32, cacheline = 128 : i32, gather_penalty = 16 : i32, affinity_domains = 128 : i32, mem_channels = 32 : i32, thermal_density = 32 : i32, power_density = 48 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "nvptx64-warp", triple = "nvptx64-warp", isa_features = ["ptx", "warp"], lane_widths = array<i64: 1, 32>, warp = 32 : i32, scalable = false, cacheline = 128 : i32, gather_penalty = 16 : i32, affinity_domains = 128 : i32, mem_channels = 32 : i32, thermal_density = 32 : i32, power_density = 48 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r60 { rid = 60 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r61 { rid = 61 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -294,11 +294,11 @@ bcir.module @fused_chain_nvidia_ptx {
     bcir.resource @r63 { rid = 63 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r64 { rid = 64 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c6001 attributes { claim_id = 6001 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r61], writes = [@r62], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c6002 attributes { claim_id = 6002 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r63], writes = [@r64], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c6001 attributes { claim_id = 6001 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r61], writes = [@r62], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c6002 attributes { claim_id = 6002 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r63], writes = [@r64], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_6001_scalar { claim = @c6001, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1056, power = 1072, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_6001_vec32 { claim = @c6001, realization = "u.vec32", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 32, memory = 3456, fabric = 0, sync = 0, compile = 0, thermal = 1056, power = 1568, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -317,7 +317,7 @@ bcir.module @fused_chain_nvidia_ptx {
 // CHECK: kbcir.plan_score = 12224
 
 bcir.module @fused_chain_riscv_rvv {
-  bcir.target.capability @cpu { triple = "riscv64-rvv", isa_features = ["rvv"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 4 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "riscv64-rvv", triple = "riscv64-rvv", isa_features = ["rvv"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = true, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 4 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r60 { rid = 60 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r61 { rid = 61 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -325,11 +325,11 @@ bcir.module @fused_chain_riscv_rvv {
     bcir.resource @r63 { rid = 63 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r64 { rid = 64 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c6001 attributes { claim_id = 6001 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r61], writes = [@r62], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c6002 attributes { claim_id = 6002 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r63], writes = [@r64], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c6001 attributes { claim_id = 6001 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r61], writes = [@r62], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c6002 attributes { claim_id = 6002 : i32, phase = @p0, op = "vector.add", reads = [@r60, @r63], writes = [@r64], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_6001_scalar { claim = @c6001, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_6001_vec8 { claim = @c6001, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -350,7 +350,7 @@ bcir.module @fused_chain_riscv_rvv {
 // CHECK: kbcir.plan_score = 13696
 
 bcir.module @scan_chain_x86_avx2 {
-  bcir.target.capability @cpu { triple = "x86_64-avx2", isa_features = ["avx2", "fma"], lane_widths = array<i64: 1, 8>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "x86-64-avx2", triple = "x86_64-avx2", isa_features = ["avx2", "fma"], lane_widths = array<i64: 1, 8>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r80 { rid = 80 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r81 { rid = 81 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -358,11 +358,11 @@ bcir.module @scan_chain_x86_avx2 {
     bcir.resource @r83 { rid = 83 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r84 { rid = 84 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c8001 attributes { claim_id = 8001 : i32, phase = @p0, op = "vector.add", reads = [@r80, @r81], writes = [@r83], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c8002 attributes { claim_id = 8002 : i32, phase = @p0, op = "vector.add", reads = [@r83, @r82], writes = [@r84], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c8001 attributes { claim_id = 8001 : i32, phase = @p0, op = "vector.add", reads = [@r80, @r81], writes = [@r83], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c8002 attributes { claim_id = 8002 : i32, phase = @p0, op = "vector.add", reads = [@r83, @r82], writes = [@r84], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_8001_scalar { claim = @c8001, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_8001_vec8 { claim = @c8001, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -381,7 +381,7 @@ bcir.module @scan_chain_x86_avx2 {
 // CHECK: kbcir.plan_score = 16640
 
 bcir.module @scan_chain_x86_avx512 {
-  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "x86-64-avx512", triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r80 { rid = 80 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r81 { rid = 81 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -389,11 +389,11 @@ bcir.module @scan_chain_x86_avx512 {
     bcir.resource @r83 { rid = 83 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r84 { rid = 84 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c8001 attributes { claim_id = 8001 : i32, phase = @p0, op = "vector.add", reads = [@r80, @r81], writes = [@r83], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c8002 attributes { claim_id = 8002 : i32, phase = @p0, op = "vector.add", reads = [@r83, @r82], writes = [@r84], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c8001 attributes { claim_id = 8001 : i32, phase = @p0, op = "vector.add", reads = [@r80, @r81], writes = [@r83], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c8002 attributes { claim_id = 8002 : i32, phase = @p0, op = "vector.add", reads = [@r83, @r82], writes = [@r84], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_8001_scalar { claim = @c8001, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_8001_vec8 { claim = @c8001, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -414,7 +414,7 @@ bcir.module @scan_chain_x86_avx512 {
 // CHECK: kbcir.plan_score = 13696
 
 bcir.module @scan_chain_arm64_neon {
-  bcir.target.capability @cpu { triple = "aarch64-neon", isa_features = ["neon"], lane_widths = array<i64: 1, 4>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "aarch64-neon", triple = "aarch64-neon", isa_features = ["neon"], lane_widths = array<i64: 1, 4>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r80 { rid = 80 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r81 { rid = 81 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -422,11 +422,11 @@ bcir.module @scan_chain_arm64_neon {
     bcir.resource @r83 { rid = 83 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r84 { rid = 84 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c8001 attributes { claim_id = 8001 : i32, phase = @p0, op = "vector.add", reads = [@r80, @r81], writes = [@r83], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c8002 attributes { claim_id = 8002 : i32, phase = @p0, op = "vector.add", reads = [@r83, @r82], writes = [@r84], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c8001 attributes { claim_id = 8001 : i32, phase = @p0, op = "vector.add", reads = [@r80, @r81], writes = [@r83], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c8002 attributes { claim_id = 8002 : i32, phase = @p0, op = "vector.add", reads = [@r83, @r82], writes = [@r84], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_8001_scalar { claim = @c8001, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_8001_vec4 { claim = @c8001, realization = "u.vec4", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 256, memory = 6144, fabric = 0, sync = 0, compile = 0, thermal = 512, power = 512, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -445,7 +445,7 @@ bcir.module @scan_chain_arm64_neon {
 // CHECK: kbcir.plan_score = 22528
 
 bcir.module @scan_chain_arm64_sve {
-  bcir.target.capability @cpu { triple = "aarch64-sve", isa_features = ["neon", "sve"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "aarch64-sve", triple = "aarch64-sve", isa_features = ["neon", "sve"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = true, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r80 { rid = 80 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r81 { rid = 81 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -453,11 +453,11 @@ bcir.module @scan_chain_arm64_sve {
     bcir.resource @r83 { rid = 83 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r84 { rid = 84 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c8001 attributes { claim_id = 8001 : i32, phase = @p0, op = "vector.add", reads = [@r80, @r81], writes = [@r83], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c8002 attributes { claim_id = 8002 : i32, phase = @p0, op = "vector.add", reads = [@r83, @r82], writes = [@r84], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c8001 attributes { claim_id = 8001 : i32, phase = @p0, op = "vector.add", reads = [@r80, @r81], writes = [@r83], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c8002 attributes { claim_id = 8002 : i32, phase = @p0, op = "vector.add", reads = [@r83, @r82], writes = [@r84], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_8001_scalar { claim = @c8001, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_8001_vec8 { claim = @c8001, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -478,7 +478,7 @@ bcir.module @scan_chain_arm64_sve {
 // CHECK: kbcir.plan_score = 13696
 
 bcir.module @scan_chain_nvidia_ptx {
-  bcir.target.capability @cpu { triple = "nvptx64-warp", isa_features = ["ptx", "warp"], lane_widths = array<i64: 1, 32>, warp = 32 : i32, cacheline = 128 : i32, gather_penalty = 16 : i32, affinity_domains = 128 : i32, mem_channels = 32 : i32, thermal_density = 32 : i32, power_density = 48 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "nvptx64-warp", triple = "nvptx64-warp", isa_features = ["ptx", "warp"], lane_widths = array<i64: 1, 32>, warp = 32 : i32, scalable = false, cacheline = 128 : i32, gather_penalty = 16 : i32, affinity_domains = 128 : i32, mem_channels = 32 : i32, thermal_density = 32 : i32, power_density = 48 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r80 { rid = 80 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r81 { rid = 81 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -486,11 +486,11 @@ bcir.module @scan_chain_nvidia_ptx {
     bcir.resource @r83 { rid = 83 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r84 { rid = 84 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c8001 attributes { claim_id = 8001 : i32, phase = @p0, op = "vector.add", reads = [@r80, @r81], writes = [@r83], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c8002 attributes { claim_id = 8002 : i32, phase = @p0, op = "vector.add", reads = [@r83, @r82], writes = [@r84], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c8001 attributes { claim_id = 8001 : i32, phase = @p0, op = "vector.add", reads = [@r80, @r81], writes = [@r83], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c8002 attributes { claim_id = 8002 : i32, phase = @p0, op = "vector.add", reads = [@r83, @r82], writes = [@r84], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_8001_scalar { claim = @c8001, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1056, power = 1072, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_8001_vec32 { claim = @c8001, realization = "u.vec32", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 32, memory = 3456, fabric = 0, sync = 0, compile = 0, thermal = 1056, power = 1568, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -509,7 +509,7 @@ bcir.module @scan_chain_nvidia_ptx {
 // CHECK: kbcir.plan_score = 12224
 
 bcir.module @scan_chain_riscv_rvv {
-  bcir.target.capability @cpu { triple = "riscv64-rvv", isa_features = ["rvv"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 4 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "riscv64-rvv", triple = "riscv64-rvv", isa_features = ["rvv"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = true, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 4 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r80 { rid = 80 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r81 { rid = 81 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -517,11 +517,11 @@ bcir.module @scan_chain_riscv_rvv {
     bcir.resource @r83 { rid = 83 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r84 { rid = 84 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c8001 attributes { claim_id = 8001 : i32, phase = @p0, op = "vector.add", reads = [@r80, @r81], writes = [@r83], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c8002 attributes { claim_id = 8002 : i32, phase = @p0, op = "vector.add", reads = [@r83, @r82], writes = [@r84], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c8001 attributes { claim_id = 8001 : i32, phase = @p0, op = "vector.add", reads = [@r80, @r81], writes = [@r83], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c8002 attributes { claim_id = 8002 : i32, phase = @p0, op = "vector.add", reads = [@r83, @r82], writes = [@r84], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_8001_scalar { claim = @c8001, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_8001_vec8 { claim = @c8001, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -542,15 +542,15 @@ bcir.module @scan_chain_riscv_rvv {
 // CHECK: kbcir.plan_score = 13696
 
 bcir.module @histogram_gather_x86_avx2 {
-  bcir.target.capability @cpu { triple = "x86_64-avx2", isa_features = ["avx2", "fma"], lane_widths = array<i64: 1, 8>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "x86-64-avx2", triple = "x86_64-avx2", isa_features = ["avx2", "fma"], lane_widths = array<i64: 1, 8>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r30 { rid = 30 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r31 { rid = 31 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c3000 attributes { claim_id = 3000 : i32, phase = @p0, op = "histogram.scatter", reads = [@r30], writes = [@r31], count = 1024 : i64, lane = #bcir.lane<ggg>, stride_class = #bcir.stride_class<random>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c3000 attributes { claim_id = 3000 : i32, phase = @p0, op = "histogram.scatter", reads = [@r30], writes = [@r31], count = 1024 : i64, lane = #bcir.lane<ggg>, stride_class = #bcir.stride_class<random>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 13 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_3000_gather { claim = @c3000, realization = "ggg.gather", lane = #bcir.lane<ggg>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 0, memory = 264192, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     %sel_3000 = bcir.kbcir.select @c3000 from [@path_3000_gather] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_3000_gather, score = 528384 : i64 } : !bcir.path
@@ -564,15 +564,15 @@ bcir.module @histogram_gather_x86_avx2 {
 // CHECK: kbcir.plan_score = 528384
 
 bcir.module @histogram_gather_x86_avx512 {
-  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "x86-64-avx512", triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r30 { rid = 30 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r31 { rid = 31 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c3000 attributes { claim_id = 3000 : i32, phase = @p0, op = "histogram.scatter", reads = [@r30], writes = [@r31], count = 1024 : i64, lane = #bcir.lane<ggg>, stride_class = #bcir.stride_class<random>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c3000 attributes { claim_id = 3000 : i32, phase = @p0, op = "histogram.scatter", reads = [@r30], writes = [@r31], count = 1024 : i64, lane = #bcir.lane<ggg>, stride_class = #bcir.stride_class<random>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 13 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_3000_gather { claim = @c3000, realization = "ggg.gather", lane = #bcir.lane<ggg>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 0, memory = 264192, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     %sel_3000 = bcir.kbcir.select @c3000 from [@path_3000_gather] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_3000_gather, score = 528384 : i64 } : !bcir.path
@@ -586,15 +586,15 @@ bcir.module @histogram_gather_x86_avx512 {
 // CHECK: kbcir.plan_score = 528384
 
 bcir.module @histogram_gather_arm64_neon {
-  bcir.target.capability @cpu { triple = "aarch64-neon", isa_features = ["neon"], lane_widths = array<i64: 1, 4>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "aarch64-neon", triple = "aarch64-neon", isa_features = ["neon"], lane_widths = array<i64: 1, 4>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r30 { rid = 30 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r31 { rid = 31 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c3000 attributes { claim_id = 3000 : i32, phase = @p0, op = "histogram.scatter", reads = [@r30], writes = [@r31], count = 1024 : i64, lane = #bcir.lane<ggg>, stride_class = #bcir.stride_class<random>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c3000 attributes { claim_id = 3000 : i32, phase = @p0, op = "histogram.scatter", reads = [@r30], writes = [@r31], count = 1024 : i64, lane = #bcir.lane<ggg>, stride_class = #bcir.stride_class<random>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 13 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_3000_gather { claim = @c3000, realization = "ggg.gather", lane = #bcir.lane<ggg>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 0, memory = 264192, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     %sel_3000 = bcir.kbcir.select @c3000 from [@path_3000_gather] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_3000_gather, score = 528384 : i64 } : !bcir.path
@@ -608,15 +608,15 @@ bcir.module @histogram_gather_arm64_neon {
 // CHECK: kbcir.plan_score = 528384
 
 bcir.module @histogram_gather_arm64_sve {
-  bcir.target.capability @cpu { triple = "aarch64-sve", isa_features = ["neon", "sve"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "aarch64-sve", triple = "aarch64-sve", isa_features = ["neon", "sve"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = true, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r30 { rid = 30 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r31 { rid = 31 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c3000 attributes { claim_id = 3000 : i32, phase = @p0, op = "histogram.scatter", reads = [@r30], writes = [@r31], count = 1024 : i64, lane = #bcir.lane<ggg>, stride_class = #bcir.stride_class<random>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c3000 attributes { claim_id = 3000 : i32, phase = @p0, op = "histogram.scatter", reads = [@r30], writes = [@r31], count = 1024 : i64, lane = #bcir.lane<ggg>, stride_class = #bcir.stride_class<random>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 13 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_3000_gather { claim = @c3000, realization = "ggg.gather", lane = #bcir.lane<ggg>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 0, memory = 264192, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     %sel_3000 = bcir.kbcir.select @c3000 from [@path_3000_gather] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_3000_gather, score = 528384 : i64 } : !bcir.path
@@ -630,15 +630,15 @@ bcir.module @histogram_gather_arm64_sve {
 // CHECK: kbcir.plan_score = 528384
 
 bcir.module @histogram_gather_nvidia_ptx {
-  bcir.target.capability @cpu { triple = "nvptx64-warp", isa_features = ["ptx", "warp"], lane_widths = array<i64: 1, 32>, warp = 32 : i32, cacheline = 128 : i32, gather_penalty = 16 : i32, affinity_domains = 128 : i32, mem_channels = 32 : i32, thermal_density = 32 : i32, power_density = 48 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "nvptx64-warp", triple = "nvptx64-warp", isa_features = ["ptx", "warp"], lane_widths = array<i64: 1, 32>, warp = 32 : i32, scalable = false, cacheline = 128 : i32, gather_penalty = 16 : i32, affinity_domains = 128 : i32, mem_channels = 32 : i32, thermal_density = 32 : i32, power_density = 48 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r30 { rid = 30 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r31 { rid = 31 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c3000 attributes { claim_id = 3000 : i32, phase = @p0, op = "histogram.scatter", reads = [@r30], writes = [@r31], count = 1024 : i64, lane = #bcir.lane<ggg>, stride_class = #bcir.stride_class<random>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c3000 attributes { claim_id = 3000 : i32, phase = @p0, op = "histogram.scatter", reads = [@r30], writes = [@r31], count = 1024 : i64, lane = #bcir.lane<ggg>, stride_class = #bcir.stride_class<random>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 13 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_3000_gather { claim = @c3000, realization = "ggg.gather", lane = #bcir.lane<ggg>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 0, memory = 133120, fabric = 0, sync = 0, compile = 0, thermal = 1056, power = 1072, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     %sel_3000 = bcir.kbcir.select @c3000 from [@path_3000_gather] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_3000_gather, score = 266240 : i64 } : !bcir.path
@@ -652,15 +652,15 @@ bcir.module @histogram_gather_nvidia_ptx {
 // CHECK: kbcir.plan_score = 266240
 
 bcir.module @histogram_gather_riscv_rvv {
-  bcir.target.capability @cpu { triple = "riscv64-rvv", isa_features = ["rvv"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 4 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "riscv64-rvv", triple = "riscv64-rvv", isa_features = ["rvv"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = true, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 4 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r30 { rid = 30 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r31 { rid = 31 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c3000 attributes { claim_id = 3000 : i32, phase = @p0, op = "histogram.scatter", reads = [@r30], writes = [@r31], count = 1024 : i64, lane = #bcir.lane<ggg>, stride_class = #bcir.stride_class<random>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c3000 attributes { claim_id = 3000 : i32, phase = @p0, op = "histogram.scatter", reads = [@r30], writes = [@r31], count = 1024 : i64, lane = #bcir.lane<ggg>, stride_class = #bcir.stride_class<random>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 13 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_3000_gather { claim = @c3000, realization = "ggg.gather", lane = #bcir.lane<ggg>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 0, memory = 264192, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     %sel_3000 = bcir.kbcir.select @c3000 from [@path_3000_gather] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_3000_gather, score = 528384 : i64 } : !bcir.path
@@ -674,16 +674,16 @@ bcir.module @histogram_gather_riscv_rvv {
 // CHECK: kbcir.plan_score = 528384
 
 bcir.module @tiled_matmul_x86_avx2 {
-  bcir.target.capability @cpu { triple = "x86_64-avx2", isa_features = ["avx2", "fma"], lane_widths = array<i64: 1, 8>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "x86-64-avx2", triple = "x86_64-avx2", isa_features = ["avx2", "fma"], lane_widths = array<i64: 1, 8>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r40 { rid = 40 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r41 { rid = 41 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r42 { rid = 42 : i32, domain_kind = #bcir.domain<hbm>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], count = 65536 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 65536 step 1 }
+  bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], count = 65536 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 15 : i32 } { %i = bcir.index_range 0 to 65536 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_4000_tile { claim = @c4000, realization = "t.tile", lane = #bcir.lane<t>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 16384, memory = 294912, fabric = 0, sync = 0, compile = 0, thermal = 8704, power = 8704, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     %sel_4000 = bcir.kbcir.select @c4000 from [@path_4000_tile] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_4000_tile, score = 622592 : i64 } : !bcir.path
@@ -697,16 +697,16 @@ bcir.module @tiled_matmul_x86_avx2 {
 // CHECK: kbcir.plan_score = 622592
 
 bcir.module @tiled_matmul_x86_avx512 {
-  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "x86-64-avx512", triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r40 { rid = 40 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r41 { rid = 41 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r42 { rid = 42 : i32, domain_kind = #bcir.domain<hbm>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], count = 65536 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 65536 step 1 }
+  bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], count = 65536 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 15 : i32 } { %i = bcir.index_range 0 to 65536 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_4000_tile { claim = @c4000, realization = "t.tile", lane = #bcir.lane<t>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 8192, memory = 245760, fabric = 0, sync = 0, compile = 0, thermal = 5120, power = 5120, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     %sel_4000 = bcir.kbcir.select @c4000 from [@path_4000_tile] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_4000_tile, score = 507904 : i64 } : !bcir.path
@@ -720,16 +720,16 @@ bcir.module @tiled_matmul_x86_avx512 {
 // CHECK: kbcir.plan_score = 507904
 
 bcir.module @tiled_matmul_arm64_neon {
-  bcir.target.capability @cpu { triple = "aarch64-neon", isa_features = ["neon"], lane_widths = array<i64: 1, 4>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "aarch64-neon", triple = "aarch64-neon", isa_features = ["neon"], lane_widths = array<i64: 1, 4>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r40 { rid = 40 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r41 { rid = 41 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r42 { rid = 42 : i32, domain_kind = #bcir.domain<hbm>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], count = 65536 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 65536 step 1 }
+  bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], count = 65536 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 15 : i32 } { %i = bcir.index_range 0 to 65536 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_4000_tile { claim = @c4000, realization = "t.tile", lane = #bcir.lane<t>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 32768, memory = 393216, fabric = 0, sync = 0, compile = 0, thermal = 16640, power = 16640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     %sel_4000 = bcir.kbcir.select @c4000 from [@path_4000_tile] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_4000_tile, score = 851968 : i64 } : !bcir.path
@@ -743,16 +743,16 @@ bcir.module @tiled_matmul_arm64_neon {
 // CHECK: kbcir.plan_score = 851968
 
 bcir.module @tiled_matmul_arm64_sve {
-  bcir.target.capability @cpu { triple = "aarch64-sve", isa_features = ["neon", "sve"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "aarch64-sve", triple = "aarch64-sve", isa_features = ["neon", "sve"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = true, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r40 { rid = 40 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r41 { rid = 41 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r42 { rid = 42 : i32, domain_kind = #bcir.domain<hbm>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], count = 65536 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 65536 step 1 }
+  bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], count = 65536 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 15 : i32 } { %i = bcir.index_range 0 to 65536 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_4000_tile { claim = @c4000, realization = "t.tile", lane = #bcir.lane<t>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 8192, memory = 245760, fabric = 0, sync = 0, compile = 0, thermal = 5120, power = 5120, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     %sel_4000 = bcir.kbcir.select @c4000 from [@path_4000_tile] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_4000_tile, score = 507904 : i64 } : !bcir.path
@@ -766,16 +766,16 @@ bcir.module @tiled_matmul_arm64_sve {
 // CHECK: kbcir.plan_score = 507904
 
 bcir.module @tiled_matmul_nvidia_ptx {
-  bcir.target.capability @cpu { triple = "nvptx64-warp", isa_features = ["ptx", "warp"], lane_widths = array<i64: 1, 32>, warp = 32 : i32, cacheline = 128 : i32, gather_penalty = 16 : i32, affinity_domains = 128 : i32, mem_channels = 32 : i32, thermal_density = 32 : i32, power_density = 48 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "nvptx64-warp", triple = "nvptx64-warp", isa_features = ["ptx", "warp"], lane_widths = array<i64: 1, 32>, warp = 32 : i32, scalable = false, cacheline = 128 : i32, gather_penalty = 16 : i32, affinity_domains = 128 : i32, mem_channels = 32 : i32, thermal_density = 32 : i32, power_density = 48 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r40 { rid = 40 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r41 { rid = 41 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r42 { rid = 42 : i32, domain_kind = #bcir.domain<hbm>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], count = 65536 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 65536 step 1 }
+  bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], count = 65536 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 15 : i32 } { %i = bcir.index_range 0 to 65536 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_4000_tile { claim = @c4000, realization = "t.tile", lane = #bcir.lane<t>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 8192, memory = 245760, fabric = 0, sync = 0, compile = 0, thermal = 4608, power = 4864, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     %sel_4000 = bcir.kbcir.select @c4000 from [@path_4000_tile] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_4000_tile, score = 507904 : i64 } : !bcir.path
@@ -789,16 +789,16 @@ bcir.module @tiled_matmul_nvidia_ptx {
 // CHECK: kbcir.plan_score = 507904
 
 bcir.module @tiled_matmul_riscv_rvv {
-  bcir.target.capability @cpu { triple = "riscv64-rvv", isa_features = ["rvv"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 4 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "riscv64-rvv", triple = "riscv64-rvv", isa_features = ["rvv"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = true, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 4 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r40 { rid = 40 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r41 { rid = 41 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r42 { rid = 42 : i32, domain_kind = #bcir.domain<hbm>, shape = array<i64: 256, 256>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], count = 65536 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 65536 step 1 }
+  bcir.claim @c4000 attributes { claim_id = 4000 : i32, phase = @p0, op = "linalg.matmul", reads = [@r40, @r41], writes = [@r42], count = 65536 : i64, lane = #bcir.lane<t>, stride_class = #bcir.stride_class<tile>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 15 : i32 } { %i = bcir.index_range 0 to 65536 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_4000_tile { claim = @c4000, realization = "t.tile", lane = #bcir.lane<t>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 8192, memory = 245760, fabric = 0, sync = 0, compile = 0, thermal = 5120, power = 5120, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     %sel_4000 = bcir.kbcir.select @c4000 from [@path_4000_tile] { policy = #bcir.policy_mode<latency>, semiring = #bcir.semiring<min_plus>, selected = @path_4000_tile, score = 507904 : i64 } : !bcir.path
@@ -815,7 +815,7 @@ bcir.module @tiled_matmul_riscv_rvv {
 // -- plan where it binds (avx512/sve/rvv) and is feasibly inert otherwise.
 
 bcir.module @two_vec_x86_avx2 {
-  bcir.target.capability @cpu { triple = "x86_64-avx2", isa_features = ["avx2", "fma"], lane_widths = array<i64: 1, 8>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "x86-64-avx2", triple = "x86_64-avx2", isa_features = ["avx2", "fma"], lane_widths = array<i64: 1, 8>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r1 { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r2 { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -824,12 +824,12 @@ bcir.module @two_vec_x86_avx2 {
     bcir.resource @r5 { rid = 5 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r6 { rid = 6 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.kbcir.budget @cap { dims = ["thermal"], caps = array<i64: 1280> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c1 attributes { claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@r1, @r2], writes = [@r3], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c2 attributes { claim_id = 2 : i32, phase = @p0, op = "vector.add", reads = [@r4, @r5], writes = [@r6], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c1 attributes { claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@r1, @r2], writes = [@r3], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c2 attributes { claim_id = 2 : i32, phase = @p0, op = "vector.add", reads = [@r4, @r5], writes = [@r6], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_1_scalar { claim = @c1, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_1_vec8 { claim = @c1, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -850,7 +850,7 @@ bcir.module @two_vec_x86_avx2 {
 // CHECK-SAME: kbcir.rcsp_width = 8
 
 bcir.module @two_vec_x86_avx512 {
-  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "x86-64-avx512", triple = "x86_64-avx512", isa_features = ["avx2", "avx512f", "fma"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r1 { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r2 { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -859,12 +859,12 @@ bcir.module @two_vec_x86_avx512 {
     bcir.resource @r5 { rid = 5 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r6 { rid = 6 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.kbcir.budget @cap { dims = ["thermal"], caps = array<i64: 2175> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c1 attributes { claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@r1, @r2], writes = [@r3], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c2 attributes { claim_id = 2 : i32, phase = @p0, op = "vector.add", reads = [@r4, @r5], writes = [@r6], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c1 attributes { claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@r1, @r2], writes = [@r3], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c2 attributes { claim_id = 2 : i32, phase = @p0, op = "vector.add", reads = [@r4, @r5], writes = [@r6], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_1_scalar { claim = @c1, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_1_vec8 { claim = @c1, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -887,7 +887,7 @@ bcir.module @two_vec_x86_avx512 {
 // CHECK-SAME: kbcir.rcsp_width = 8
 
 bcir.module @two_vec_arm64_neon {
-  bcir.target.capability @cpu { triple = "aarch64-neon", isa_features = ["neon"], lane_widths = array<i64: 1, 4>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "aarch64-neon", triple = "aarch64-neon", isa_features = ["neon"], lane_widths = array<i64: 1, 4>, warp = 0 : i32, scalable = false, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r1 { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r2 { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -896,12 +896,12 @@ bcir.module @two_vec_arm64_neon {
     bcir.resource @r5 { rid = 5 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r6 { rid = 6 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.kbcir.budget @cap { dims = ["thermal"], caps = array<i64: 1024> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c1 attributes { claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@r1, @r2], writes = [@r3], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c2 attributes { claim_id = 2 : i32, phase = @p0, op = "vector.add", reads = [@r4, @r5], writes = [@r6], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c1 attributes { claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@r1, @r2], writes = [@r3], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c2 attributes { claim_id = 2 : i32, phase = @p0, op = "vector.add", reads = [@r4, @r5], writes = [@r6], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_1_scalar { claim = @c1, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_1_vec4 { claim = @c1, realization = "u.vec4", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 256, memory = 6144, fabric = 0, sync = 0, compile = 0, thermal = 512, power = 512, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -922,7 +922,7 @@ bcir.module @two_vec_arm64_neon {
 // CHECK-SAME: kbcir.rcsp_width = 4
 
 bcir.module @two_vec_arm64_sve {
-  bcir.target.capability @cpu { triple = "aarch64-sve", isa_features = ["neon", "sve"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "aarch64-sve", triple = "aarch64-sve", isa_features = ["neon", "sve"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = true, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 8 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r1 { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r2 { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -931,12 +931,12 @@ bcir.module @two_vec_arm64_sve {
     bcir.resource @r5 { rid = 5 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r6 { rid = 6 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.kbcir.budget @cap { dims = ["thermal"], caps = array<i64: 2175> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c1 attributes { claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@r1, @r2], writes = [@r3], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c2 attributes { claim_id = 2 : i32, phase = @p0, op = "vector.add", reads = [@r4, @r5], writes = [@r6], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c1 attributes { claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@r1, @r2], writes = [@r3], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c2 attributes { claim_id = 2 : i32, phase = @p0, op = "vector.add", reads = [@r4, @r5], writes = [@r6], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_1_scalar { claim = @c1, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_1_vec8 { claim = @c1, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -959,7 +959,7 @@ bcir.module @two_vec_arm64_sve {
 // CHECK-SAME: kbcir.rcsp_width = 8
 
 bcir.module @two_vec_nvidia_ptx {
-  bcir.target.capability @cpu { triple = "nvptx64-warp", isa_features = ["ptx", "warp"], lane_widths = array<i64: 1, 32>, warp = 32 : i32, cacheline = 128 : i32, gather_penalty = 16 : i32, affinity_domains = 128 : i32, mem_channels = 32 : i32, thermal_density = 32 : i32, power_density = 48 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "nvptx64-warp", triple = "nvptx64-warp", isa_features = ["ptx", "warp"], lane_widths = array<i64: 1, 32>, warp = 32 : i32, scalable = false, cacheline = 128 : i32, gather_penalty = 16 : i32, affinity_domains = 128 : i32, mem_channels = 32 : i32, thermal_density = 32 : i32, power_density = 48 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r1 { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r2 { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -968,12 +968,12 @@ bcir.module @two_vec_nvidia_ptx {
     bcir.resource @r5 { rid = 5 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r6 { rid = 6 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.kbcir.budget @cap { dims = ["thermal"], caps = array<i64: 2112> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c1 attributes { claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@r1, @r2], writes = [@r3], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c2 attributes { claim_id = 2 : i32, phase = @p0, op = "vector.add", reads = [@r4, @r5], writes = [@r6], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c1 attributes { claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@r1, @r2], writes = [@r3], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c2 attributes { claim_id = 2 : i32, phase = @p0, op = "vector.add", reads = [@r4, @r5], writes = [@r6], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_1_scalar { claim = @c1, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1056, power = 1072, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_1_vec32 { claim = @c1, realization = "u.vec32", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 32, memory = 3456, fabric = 0, sync = 0, compile = 0, thermal = 1056, power = 1568, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
@@ -994,7 +994,7 @@ bcir.module @two_vec_nvidia_ptx {
 // CHECK-SAME: kbcir.rcsp_width = 32
 
 bcir.module @two_vec_riscv_rvv {
-  bcir.target.capability @cpu { triple = "riscv64-rvv", isa_features = ["rvv"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 4 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32 }
+  bcir.target.capability @cpu { target_name = "riscv64-rvv", triple = "riscv64-rvv", isa_features = ["rvv"], lane_widths = array<i64: 1, 8, 16>, warp = 0 : i32, scalable = true, cacheline = 64 : i32, gather_penalty = 32 : i32, affinity_domains = 4 : i32, mem_channels = 4 : i32, thermal_density = 64 : i32, power_density = 64 : i32, mem_unit = 1 : i32, base_overhead = 4 : i32, per_op_heat = 1 : i32, elem_bytes = 4 : i32, cal_gen = 0 : i64, mem_tier_names = ["L1", "L2", "L3", "DRAM", "HBM", "CXL", "SSD"], mem_tier_values = array<i64: 4, 16, 16, 0, 12, 32, 48, 0, 40, 96, 96, 0, 200, 256, 256, 0, 160, 64, 192, 0, 350, 384, 512, 0, 5000, 1024, 4096, 0> }
   bcir.registry @RES {
     bcir.resource @r1 { rid = 1 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r2 { rid = 2 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
@@ -1003,12 +1003,12 @@ bcir.module @two_vec_riscv_rvv {
     bcir.resource @r5 { rid = 5 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
     bcir.resource @r6 { rid = 6 : i32, domain_kind = #bcir.domain<ram>, shape = array<i64: 1024>, layout = #bcir.layout<soa>, access = #bcir.access<flat> }
   }
-  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32 }
-  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
+  bcir.kbcir.theta @theta { thermal = 0 : i32, power = 0 : i32, mem_pressure = 0 : i32, contention = 0 : i32, noise = 0 : i32, wear = 0 : i32, utilization = 0 : i32, voltage = 0 : i32 }
+  bcir.kbcir.policy @perf { mode = #bcir.policy_mode<latency>, weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1>, base_weights = array<i64: 2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1> }
   bcir.kbcir.budget @cap { dims = ["thermal"], caps = array<i64: 2175> }
   bcir.phase @p0 { id = 0 : i32, deps = [] }
-  bcir.claim @c1 attributes { claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@r1, @r2], writes = [@r3], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
-  bcir.claim @c2 attributes { claim_id = 2 : i32, phase = @p0, op = "vector.add", reads = [@r4, @r5], writes = [@r6], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict> } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c1 attributes { claim_id = 1 : i32, phase = @p0, op = "vector.add", reads = [@r1, @r2], writes = [@r3], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
+  bcir.claim @c2 attributes { claim_id = 2 : i32, phase = @p0, op = "vector.add", reads = [@r4, @r5], writes = [@r6], count = 1024 : i64, lane = #bcir.lane<u>, stride_class = #bcir.stride_class<unit>, stride_k = 1 : i32, domain = #bcir.domain<ram>, hazard = #bcir.hazard<unique>, verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, opcode = 3 : i32 } { %i = bcir.index_range 0 to 1024 step 1 }
   bcir.kbcir.plan @plan0 {
     bcir.kbcir.path @path_1_scalar { claim = @c1, realization = "u.scalar", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 1024, memory = 15360, fabric = 0, sync = 0, compile = 0, thermal = 1088, power = 1088, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }
     bcir.kbcir.path @path_1_vec8 { claim = @c1, realization = "u.vec8", lane = #bcir.lane<u>, layout = #bcir.layout<soa>, cost = #bcir.costvec<compute = 128, memory = 4608, fabric = 0, sync = 0, compile = 0, thermal = 640, power = 640, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0> }

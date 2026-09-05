@@ -539,14 +539,14 @@ bcir.module @m {
 
 // manifest.legal [legal]
 bcir.module @m {
-  bcir.kbcir.provenance_manifest @man { digest = 3780911091132933688 : i64, score = 7808 : i64, n_artifacts = 2 : i64, reproduced = true, m_module = 7127522701151166272 : i64, m_target = 5864064355688965777 : i64, m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64, artifact_names = ["cal_gen", "map_gen"], artifact_gens = array<i64: 4, 2> }
+  bcir.kbcir.provenance_manifest @man { digest = 6843787964663692581 : i64, score = 7808 : i64, n_artifacts = 2 : i64, reproduced = true, m_module = 7127522701151166272 : i64, m_target = 5192828792194564141 : i64, m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64, artifact_names = ["cal_gen", "map_gen"], artifact_gens = array<i64: 4, 2> }
 }
 
 // -----
 
 // manifest.legal.no_artifacts [legal]
 bcir.module @m {
-  bcir.kbcir.provenance_manifest @man { digest = 9201837206445197944 : i64, score = 7808 : i64, n_artifacts = 0 : i64, reproduced = true, m_module = 7127522701151166272 : i64, m_target = 5864064355688965777 : i64, m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64 }
+  bcir.kbcir.provenance_manifest @man { digest = 8915526058458340485 : i64, score = 7808 : i64, n_artifacts = 0 : i64, reproduced = true, m_module = 7127522701151166272 : i64, m_target = 5192828792194564141 : i64, m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64 }
 }
 
 // -----
@@ -554,7 +554,7 @@ bcir.module @m {
 // manifest.unsorted_artifacts [R13] -- the digest was folded in the declared order, which the old law rail accepted
 bcir.module @m {
   // expected-error @+1 {{R13: manifest artifact names must be sorted and unique ('map_gen' precedes 'cal_gen')}}
-  bcir.kbcir.provenance_manifest @man { digest = 6667576232911818392 : i64, score = 7808 : i64, n_artifacts = 2 : i64, reproduced = true, m_module = 7127522701151166272 : i64, m_target = 5864064355688965777 : i64, m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64, artifact_names = ["map_gen", "cal_gen"], artifact_gens = array<i64: 2, 4> }
+  bcir.kbcir.provenance_manifest @man { digest = 4654169102590460869 : i64, score = 7808 : i64, n_artifacts = 2 : i64, reproduced = true, m_module = 7127522701151166272 : i64, m_target = 5192828792194564141 : i64, m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64, artifact_names = ["map_gen", "cal_gen"], artifact_gens = array<i64: 2, 4> }
 }
 
 // -----
@@ -562,7 +562,7 @@ bcir.module @m {
 // manifest.duplicate_artifact [R13]
 bcir.module @m {
   // expected-error @+1 {{R13: manifest artifact names must be sorted and unique ('cal_gen' precedes 'cal_gen')}}
-  bcir.kbcir.provenance_manifest @man { digest = 6927313181940481334 : i64, score = 7808 : i64, n_artifacts = 2 : i64, reproduced = true, m_module = 7127522701151166272 : i64, m_target = 5864064355688965777 : i64, m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64, artifact_names = ["cal_gen", "cal_gen"], artifact_gens = array<i64: 4, 2> }
+  bcir.kbcir.provenance_manifest @man { digest = 7002654814637788083 : i64, score = 7808 : i64, n_artifacts = 2 : i64, reproduced = true, m_module = 7127522701151166272 : i64, m_target = 5192828792194564141 : i64, m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64, artifact_names = ["cal_gen", "cal_gen"], artifact_gens = array<i64: 4, 2> }
 }
 
 // -----
@@ -570,7 +570,7 @@ bcir.module @m {
 // manifest.arity_mismatch [R13] -- a (name, generation) pair cannot mismatch its own arity in the oracle's object model
 bcir.module @m {
   // expected-error @+1 {{R13: manifest artifact_names/artifact_gens arity mismatch (1 names, 2 generations)}}
-  bcir.kbcir.provenance_manifest @man { digest = 3780911091132933688 : i64, score = 7808 : i64, n_artifacts = 1 : i64, reproduced = true, m_module = 7127522701151166272 : i64, m_target = 5864064355688965777 : i64, m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64, artifact_names = ["cal_gen"], artifact_gens = array<i64: 4, 2> }
+  bcir.kbcir.provenance_manifest @man { digest = 6843787964663692581 : i64, score = 7808 : i64, n_artifacts = 1 : i64, reproduced = true, m_module = 7127522701151166272 : i64, m_target = 5192828792194564141 : i64, m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64, artifact_names = ["cal_gen"], artifact_gens = array<i64: 4, 2> }
 }
 
 // -----
