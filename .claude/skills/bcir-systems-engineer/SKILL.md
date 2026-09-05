@@ -223,9 +223,10 @@ python tools/security/independent_review.py --self-check
 
 ## 8. Security-engineering lessons (paid for; do not re-buy)
 
-**The registry owns this now.** `docs/security/laws.md` holds **21 gate-authoring laws
-(L1–L21)**, each with its witness tests and a C/C++ port note, derived from 240 graded
-findings across #749's 42 review rounds. Read it before writing or reviewing a gate;
+**The registry owns this now.** `docs/security/laws.md` holds **22 gate-authoring laws
+(L1–L22)**, each with its witness tests and a C/C++ port note, derived from 240 graded
+findings across #749's 42 review rounds (L22, every rule admits a witness, came out of the
+#761/#762 review triage). Read it before writing or reviewing a gate;
 `bcir-cicd` is the companion skill for the pipeline half. What follows is the part of
 that experience that generalizes beyond gates, and the shape of the registry so you can
 navigate it:

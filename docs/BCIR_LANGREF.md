@@ -217,7 +217,9 @@ consumer that orders phases uses the one canonical dependency-first order
 count and offset, a positive `stride_k` and an extent within signed 64-bit. R12 also
 requires a first-class integer address (`volatile_load` / `volatile_store` / `atomic_rmw` /
 `atomic_cas`) to have the declared target's pointer width, from one triple→width table
-(`kbcir.cost.pointer_width` / `pointerWidthOfTriple`). R13 holds a manifest's artifact
+(`kbcir.cost.pointer_width` / `pointerWidthOfTriple`; no row below the 32-bit address floor,
+so every row admits an address, and the floor itself holds on both rails whatever the
+target). R13 holds a manifest's artifact
 record to one arity, sorted unique names and a matching `n_artifacts`, refuses a component
 hash for an object the enclosing module does not carry, and holds a calibrated capability's
 constants to its certificate. The descriptors of the target (`TargetProfile` /
@@ -681,7 +683,7 @@ reordered with other volatile accesses (the MMIO guarantee, matching the cfront 
 The verifier requires `$value` to be a **scalar** hardware-register type (an integer or
 float — a vector/index/struct device register is rejected) and `$addr` to be an integer of
 at least **pointer width (≥ 32 bits)** so a too-narrow address is not silently zero-extended
-into the device pointer. Like `bcir.asm`/`bcir.portio`, the oracle→MLIR wiring is a later
+into the device pointer (the oracle's `verify_address_width` refuses the same floor). Like `bcir.asm`/`bcir.portio`, the oracle→MLIR wiring is a later
 increment. (Tests:
 `mlir/test/passes/volatile_mmio_roundtrip.mlir`, `volatile_mmio.mlir`,
 `volatile_mmio_verify_neg.mlir`.)

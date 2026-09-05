@@ -428,7 +428,14 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   rail's walk pins the default hierarchy for IR without it) and `hash_module` folds the
   claims in declared order -- the audit's two collisions, a thirty-fold score move and a
   reordered pair of claims under one digest, now move the hash -- with the emitter writing
-  every hashed field and `test_hash_parity.py` holding the rails together.
+  every hashed field and `test_hash_parity.py` holding the rails together. The Codex review
+  of #761/#762 (13 findings, 2026-09-05) was triaged under the harvest protocol -- 1 NEW-LAW
+  (L22, every rule admits a witness), 10 INSTANCE, 2 LOCAL -- and fixed on both rails in one
+  PR: R9 over the emitted plan on the law rail (the third rail of S0-A's re-derivation), the
+  ROP pre-scan registering domains with rids, three M5 descriptor twins with their corpus
+  cases, the checked calibration derivation, the claimless-module manifest, the address floor
+  on the oracle and a pointer-width table with no sub-floor row (and `arm64_32`), the corpus's
+  required additional laws, and the two text gates reading their sources as their compilers do.
 
 ---
 

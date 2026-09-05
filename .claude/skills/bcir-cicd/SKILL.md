@@ -47,9 +47,9 @@ delegate the rest, record exact outputs in the PR body, regenerate `STATUS.md`
 
 ## 2. Gate-authoring laws
 
-> **`docs/security/laws.md` is the authority.** It holds the 21 registered laws
-> (L1–L21), each with its witness tests and a C/C++ port note, derived from all
-> 240 findings. The eleven rules below are the operational subset — the ones you
+> **`docs/security/laws.md` is the authority.** It holds the 22 registered laws
+> (L1–L22), each with its witness tests and a C/C++ port note, derived from all
+> 240 findings and the review triage since. The eleven rules below are the operational subset — the ones you
 > reach for while writing a gate — and each names its registered law so the two
 > cannot drift. When they disagree, the registry wins; when you find something
 > the registry lacks, add it there, not here.
