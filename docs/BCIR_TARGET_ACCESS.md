@@ -52,7 +52,10 @@ as separate fields: one is granted, the other is provisioned.
 | Tenancy | **shared** — refused for timing | dedicated, pinnable per cluster |
 
 Two consequences already shape the repository. The container is a shared runner, so
-`calibration.py` refuses it for any frozen cost table — correctly, and permanently. The
+`calibration.py` refuses it for any frozen cost table — correctly, and permanently — and
+since S0-F the native cost rig (`runtime/c/bcir_microbench.c`) attests its own tenancy from
+these same facts: here it reports `virtualized: hypervisor-flag` and reserves "bare-metal"
+for a host with no virtualization signal and an exposed PMU. The
 phone's 52 ns timer is what forced grouped timing (`TIMING_METHOD = 2`), and even after that
 fix its residual granularity is 52.083/8 ≈ 6.5 ns, which is still coarse enough that BER and
 DER decode are **indistinguishable** on the fast core.

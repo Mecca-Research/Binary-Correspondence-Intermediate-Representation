@@ -302,7 +302,7 @@ Each is one PR, one gate, one analysis paragraph. Stage 0 first, smallest first.
 | **S0-C** (both rails) — **landed** | S0-6 the shared structural-law corpus: widths, alignments, shapes, strides, phase identity and ordering, address width, non-RAM domains, M5 descriptors, MLIR R13 arity/order, the convolution overflow fixture — one corpus, two runners, every mismatch a finding | S0-B |
 | **S0-D** (two-rail, one commit) — **landed** | S0-1 `hash_target`/`hash_module` widening: ODS attributes for the memory tiers and declared order plus the matching C++ walks, with the differential regression | S0-B |
 | **S0-E** (ABI) — **landed** | S0-2 R11 per-resource generation vectors as a StreamPack v4 append-only record, its C twin and ASN.1 projection, landed with `BCIR_STREAMPACK_ABI.md` | — |
-| **S0-F** | G7 native measurement rig repair | — |
+| **S0-F** — **landed** | G7 native measurement rig repair: the full-cycle strided walk with a counted census, raw samples with their statistics, and a host attestation from which the rig derives its tenancy — "bare-metal" only with proof; the reader refuses a table whose summary or claim its evidence does not support | — |
 | **S1-A** | G1 one canonical schedule artifact, with cross-stream hazard edges before the tail split and the CSE exclusions as negatives | S0-D, S0-E |
 | **S1-B** | G3 digest computed once, with the mutation-invalidation witness | — |
 | **S1-C** | G11 `ExecutionPlanV1` records, C twin, BCAB kind, ASN.1 projection | S1-A, S0-E |

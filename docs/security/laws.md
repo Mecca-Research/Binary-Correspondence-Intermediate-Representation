@@ -163,6 +163,15 @@ as a witness: `stale_vector`, `missing_vector_entry` and `undeclared_vector_rid`
 must pass the maxima-only API and fail the vector
 (`test_c_rejects_stale_generation_vectors_per_resource`,
 `test_generation_drift_under_the_maxima_is_R11`, `verify_generation_vector.mlir`).
+S0-F instance (2026-09-05): the native rig's strided pass iterated n times over
+n/16 elements -- `(k * 16) % n` on a power-of-two n -- and reported a
+"cache-defeating" regime whose working set was one sixteenth of the buffer;
+nothing counted what the walk touched, so the claim could not fail. The walk is
+now a proved full-cycle permutation AND a non-timed census counts the unique
+elements per regime into the evidence the table carries
+(`test_strided_order_is_a_full_cycle_permutation` pins the parent's n/gcd,
+`test_native_rig_reports_census_samples_and_an_attested_tenancy` reads the
+count back). A measurement's coverage claim needs a witness like any other gate.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -570,6 +579,17 @@ findings by pointing at the declaration. Fifteen alias-tracking fixes were
 rolled back under this law.
 Witnesses: the `audit_tool_boundaries` module docstring;
 `test_fstring_subprocess_commands_are_flagged` where present in the suite.
+S0-F instance (2026-09-05): the native cost rig printed `native microbench
+(bare-metal)` as a literal -- a scope it never checked, so it held under WSL
+and under this session's hypervisor. The tenancy is now DERIVED in the tool
+from the host's own signals (hypervisor flag and nodes, DMI, WSL, container,
+the PMU event source) with the closed set `bare-metal` / `virtualized` /
+`containerized` / `unproven`, "bare-metal" reserved for no virtualization
+signal plus an exposed PMU, and the reader refuses a provenance whose claim
+the evidence does not attest
+(`test_native_rig_reports_census_samples_and_an_attested_tenancy`,
+`test_calibrate_native_refuses_an_unproved_bare_metal_claim`). A label a
+tool cannot check is a scope it has not declared.
 **Port note:** identical for any static analysis shipped as a gate.
 
 ### L19 — Unit tests mock the expensive rail

@@ -65,8 +65,9 @@ GEM+ G1–G8/G10 plus the 2026-09-04 re-staging's G11–G18 (plan ABI, dispatch 
 budgets, workload `W`, control-record ABI, live SPSC ring, data-plane hand-off, compact/native
 planner parity, incremental re-verification) and its Stage 0 closure items S0-1…S0-10 (landed so
 far: S0-4/S0-7/S0-10 as S0-A, S0-3/S0-5/S0-9 as S0-B, S0-6 as S0-C, S0-1 as S0-D, and S0-2 as
-S0-E — StreamPack v4's per-resource generation vector, R11 per resource on three rails; open:
-S0-8's tail contract and G7)
+S0-E — StreamPack v4's per-resource generation vector, R11 per resource on three rails; G7
+as S0-F — the native rig's full-cycle walk, census, raw samples and attested tenancy; open:
+S0-8's tail contract)
 (`docs/research/BCIR_GEMPLUS_TMSAO_STAGED_PLAN_2026-09-04.md`); resident UART/virtio drivers, Linux modules/UAPI, BCIR-Linux, native
 IPC/kernel, live telemetry transports, reset/paranoid-exception execution. UART and
 virtio-blk evidence must precede UAPI v1; direct behavior must stabilize before any IPC
@@ -172,7 +173,7 @@ Top-level: ./bcir ./channels ./docs ./llvm-training ./mlir ./runtime ./tools
 ### STATUS.md counts (generated source of truth)
 | Metric | Value |
 |---|---|
-| Static Python `test_*` function inventory | **3597** across 258 files |
+| Static Python `test_*` function inventory | **3601** across 258 files |
 | Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **133** |
 | Static registered-pass inventory | **37** |
 | Static MLIR fixture inventory (`mlir/test/`) | **125** files; 386 `expected-error` markers |
@@ -205,8 +206,8 @@ Top-level: ./bcir ./channels ./docs ./llvm-training ./mlir ./runtime ./tools
 - **docs/BCIR_MASTER_ROADMAP.md** (387L): 1. Mission and non-negotiable invariants · 2. Architecture and current baseline · 3. Dependency order · 4. Active workstreams · 5. Program milestones · 6. Release policy · 7. Validation and publication gate · 8. Decision boundaries · 9. Risk register · 10. Document ownership · 11. Immediate priority queue
 - **docs/BCIR_NATIVE_OBJECT_GATE.md** (152L): 1. The decision · 2. The warranted slice (done): real native objects end-to-en · 3. GO criteria — what would warrant BCIR-native isel · 4. STOP criteria — if a native-isel experiment is taken · 5. Current verdict and evidence boundary
 - **docs/BCIR_Repo_Structure.md** (212L): 1. Top-level ownership · 2. Oracle package (`bcir/`) · 3. Law rail (`mlir/`) · 4. C and C++ runtime classes · 5. Contract ownership · 6. Documentation taxonomy · 7. Build and validation entry points · Fast dependency-free oracle tier · Full local oracle/toolchain tier, with bounded concurrency · Production C and C++ boundaries · Optional pinned hosted-model CPU gate (one thread in CI) · MLIR/IRDL rails when the coherent LLVM toolset is installed · Documentation governance
-- **docs/BCIR_TARGET_ACCESS.md** (130L): 1. Privilege is not capability · 2. What the two available hosts actually provide · 3. What each open phase needs · 4. The bare-metal targets that would unblock it · 5. How to record a new host
-- **docs/DEVELOPMENT_HISTORY.md** (506L): 1. The development method · 2. The PR arc (eras) · 3. Condensed dated changelog · 4. Capability closure ledger migrated from the former master · 5. Where the detailed notes live now
+- **docs/BCIR_TARGET_ACCESS.md** (133L): 1. Privilege is not capability · 2. What the two available hosts actually provide · 3. What each open phase needs · 4. The bare-metal targets that would unblock it · 5. How to record a new host
+- **docs/DEVELOPMENT_HISTORY.md** (520L): 1. The development method · 2. The PR arc (eras) · 3. Condensed dated changelog · 4. Capability closure ledger migrated from the former master · 5. Where the detailed notes live now
 - **docs/ONBOARDING_DEEP_DIVE.md** (320L): 1. Read this first · 2. The three implementation rails · 3. From source to execution · 4. Core semantic and optimizer packages · 5. Frontends, lowering, and machine boundary · 6. Runtime memory and ownership · 7. Models, training, and BCIRQ8 · 8. Drivers, kernel, telemetry, and IPC · 9. Current evidence boundary · 10. Validation workflow · 11. Reading and change-placement map
 - **docs/PARITY.md** (397L): Enum value parity (normative) · Concept parity · Python ↔ C artifact and runtime parity · Python ↔ C frontend twin (`runtime/c/`) · Worked-example parity · Generated, adversarial parity (the proof, not the hope) · How parity is enforced today
 - **docs/PERFORMANCE_AUDIT.md** (149L): 1. Gate and evidence contract · 2. Defects and bottlenecks found · 3. Local before/after evidence · 4. What remains hardware- and workload-gated
@@ -237,7 +238,7 @@ Top-level: ./bcir ./channels ./docs ./llvm-training ./mlir ./runtime ./tools
 - **docs/machine-learning/THIRD_PARTY_MODELS.md** (129L): Maykeye/TinyLLama-v0 · CUDA-LLM comparison boundary · TinyStories dataset planned for BCIR-TinyStories-32M · Adaptive-architecture research boundary · Byte-native architecture research boundary · Sequence-interface and progressive-growth research boundary
 - **docs/research/BCIR_ADVANCED_TECHNIQUE_TRIAGE.md** (257L): The framing that decides most of the list · A. Already built · B. Already in the GEM+ roadmap · C. LLVM's job — BCIR's job is to supply the fact · D. Genuinely new — the roadmap additions · Summary: what changes in the roadmap
 - **docs/research/BCIR_GAME_OPTIMIZATION_ROADMAP.md** (442L): 1. The exact-vs-approximate split — the load-bearing thesis · 2. The overlap — what BCIR already embodies (map, don't re-b · 3. Per-game principles — the full ledger · 4. Lessons applied to **GEM** (the StreamPack hot path) · 5. Lessons applied to **K_BCIR** (the tropical cost model, e · 6. Lessons applied to the **StreamPack ABI** (frozen artifac · 7. Ranked build slices · 8. Risks & myth-flags · 9. The bottom line
-- **docs/research/BCIR_GEMPLUS_ROADMAP.md** (653L): 0. The measurement discipline, and why it comes first · 1. Scope identity: `S` · 2. Certificate classes · 3. The slices · 4. The sublinearity question, answered precisely · 5. The learned-optimization boundary · 6. Order of work — the six stages · 7. What this roadmap will not claim · 8. Current state, 2026-09-04
+- **docs/research/BCIR_GEMPLUS_ROADMAP.md** (654L): 0. The measurement discipline, and why it comes first · 1. Scope identity: `S` · 2. Certificate classes · 3. The slices · 4. The sublinearity question, answered precisely · 5. The learned-optimization boundary · 6. Order of work — the six stages · 7. What this roadmap will not claim · 8. Current state, 2026-09-04
 - **docs/research/BCIR_GEMPLUS_TMSAO_STAGED_PLAN_2026-09-04.md** (342L): 0. Inputs · 1. Executive summary · 2. Disposition of the assessment against `main` at #757 · 3. Measurement today · 4. What the assessment lacks · 5. The three emphases · 6. The re-staged program · 7. The sections, in order · 8. Decision rules and what this plan will not claim · 9. Sources
 - **docs/research/BCIR_NATIVE_BACKEND_FEASIBILITY.md** (217L): 1. What "native backend" means here · 2. Current state — the codegen spectrum BCIR already populat · 3. What a *general* native backend requires (and why it is e · 4. The gate, restated and assessed (status: all GO criteria  · 5. The candidate bounded targets, priced and ranked · 6. Development roadmap (executed ONLY if the gate opens for  · 7. What to do *now* (and how it de-risks any future native w · 8. Bottom line
 - **docs/research/BCIR_SECURITY_AUDIT_2026-08-12.md** (173L): 1. The two failure classes · 2. Class A — canonical-byte defects · 3. Class B — vacuous checks · 4. The one finding left half-closed · 5. Not reproduced · 6. Verification · 7. Recommended next
@@ -252,4 +253,4 @@ Top-level: ./bcir ./channels ./docs ./llvm-training ./mlir ./runtime ./tools
 - **docs/research/CLANG_COMPARISON.md** (98L): The fair frame · Results · Where we WIN · Where we MATCH · Where we LOSE (honest) · Bottom line
 - **docs/security/DEPENDENCY_AUDIT_2026-09-03.md** (233L): 1. Verdict · 2. Inventory and currency · 3. The advisory scan — method and result · 4. What the rail enforces from this slice on · 5. What this audit does not cover · 6. Recommendations
 - **docs/security/DEPENDENCY_AUDIT_2026-09-04.md** (289L): 1. Verdict · 2. Scope and method · 3. Inventory · 4. Advisory results · 5. Findings and dispositions · 6. Changes landed with this audit · 7. Reproduction · from the repository root; a scratch venv with pip-audit==2.1
-- **docs/security/laws.md** (913L): The harvest protocol · The staleness rule (declared, not discretionary) · The laws · Campaign classification summary
+- **docs/security/laws.md** (933L): The harvest protocol · The staleness rule (declared, not discretionary) · The laws · Campaign classification summary

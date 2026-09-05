@@ -449,6 +449,20 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   before it was closed; the mutator keeps the witness (`stale_vector` and its siblings pass
   the maxima-only API and fail the vector). Hand-built packs without a vector stay
   byte-frozen v1–v3; a hydrated vector_add pack grows from 220 to 264 bytes.
+  S0-F (2026-09-05) repaired the native measurement rig (GEM+ G7, report P0.3): the strided
+  walk `(k * 16) % n` had visited n/16 of a power-of-two buffer (a 2 MiB working set under a
+  nominal 32 MiB one) and the rig printed `native microbench (bare-metal)` under any
+  hypervisor -- both measured RED on this session's virtualized host before the fix. The walk
+  now runs the gcd(stride, n) cosets of the stride, a non-timed census counts the unique
+  elements per regime, the rig prints one raw sample per repeat with min/median/max/MAD and
+  an attestation of the host (hypervisor flag and nodes, DMI, WSL, container, PMU event
+  source, `perf_event_paranoid`, governor, RAPL, clocksource, timer quantum), and derives a
+  tenancy from it -- "bare-metal" only with no virtualization signal and an exposed PMU.
+  `CalibratedProfile` carries the evidence, re-derives the Q8 ratios from the sample medians
+  and refuses a summary or a tenancy claim its evidence does not support;
+  `calibrate_native(require_baremetal=True)` refuses every other tenancy with the signals that
+  decided it. `strided_order` is the Python twin of the walk, with the parent's n/gcd pinned
+  as the witness.
 
 ---
 
