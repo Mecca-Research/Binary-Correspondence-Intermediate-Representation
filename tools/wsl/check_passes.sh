@@ -33,6 +33,10 @@ echo "[passes] -bcir-verify negative cases (-verify-diagnostics)"
 # registry, and the outer scope is not vacuous.
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_module_scope.mlir" \
   && echo "  PASS verify_module_scope (S0-5)" || { echo "  FAIL verify_module_scope"; fail=1; }
+# S0-6: the shared structural-law corpus, GENERATED from bcir/verify/structural_corpus.py (the
+# oracle runner is the quick tier; `python -m bcir.verify.structural_corpus --check` refuses drift).
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/structural_corpus.mlir" \
+  && echo "  PASS structural_corpus (S0-6, both rails)" || { echo "  FAIL structural_corpus"; fail=1; }
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_accuracy.mlir" \
   && echo "  PASS verify_accuracy (R17 accuracy contract)" || { echo "  FAIL verify_accuracy"; fail=1; }
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_provenance.mlir" \
