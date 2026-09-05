@@ -415,7 +415,8 @@ the MLIR rail and a resident executor are to read it.*
 
 An append-only StreamPack v4 record family carrying what G1 makes canonical: schedule slots
 (claim, stream, bin, start, duration), lifetimes and addresses (from G5), movement edges (for
-G8), and the per-resource generation vectors (R11, the closure item S0-2). A C twin decodes it;
+G8), and the per-resource generation vectors (R11, the closure item S0-2 — landed as the
+StreamPack v4 record by S0-E, which the plan carries forward). A C twin decodes it;
 BCAB gains a kind for it; the ASN.1 projection follows the StreamPack precedent. The pack stays
 the executable; the plan is what the pack was derived from and what every reader prices.
 
@@ -590,7 +591,7 @@ correctness-closure items that are prerequisites rather than GEM+ slices.
 
 ```
 Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)             <- LANDED (S0-D)
-                                           S0-2 R11 per-resource generation vectors
+                                           S0-2 R11 per-resource generation vectors     <- LANDED (S0-E)
                                            S0-3 verify checkpoints in bcir-optimize/-hydrate + the inert fixtures  <- LANDED (S0-B)
                                            S0-4 EV1–EV3 in verify_all                 <- LANDED (S0-A)
                                            S0-5 module-scoped verifier walks             <- LANDED (S0-B)

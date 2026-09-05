@@ -31,7 +31,7 @@ not promoted to driver, transport, or hardware evidence.
 | Pillar | Verdict | Evidence boundary |
 |---|---|---|
 | C registry/macro-assembly surface | **Landed core; partial language breadth** | MMIO/volatile/atomic/bitfield/ABI/project/link/fallback paths are dual-railed; not full ISO C23 and not a resident driver |
-| IR ownership of planning and execution shape | **Landed** | R1–R25, K_BCIR, GEM, StreamPack v1–v3, event/DMA/device contracts; arbitrary-graph LLVM AOT remains absent |
+| IR ownership of planning and execution shape | **Landed** | R1–R25, K_BCIR, GEM, StreamPack v1–v4, event/DMA/device contracts; arbitrary-graph LLVM AOT remains absent |
 | Certified optimization and learning | **Landed reference; hardware evidence partial** | Exact search and frozen-Q8/replay/provenance controls exist; most target calibration is not yet driver/hardware qualified |
 | Math, AD, precision, and library substrate | **Advanced but bounded** | BCIRQ4T/AVX2/SmoothQuant, measured schedule artifacts, expanded closed-set AD, and workload-scoped numerical evidence exist; whole-model and multi-target qualification remains |
 | Model inference and training | **Real reference + hosted micro/C gates; not production/bare-metal complete** | Planned/streamed semantics, owned safe-resume pretraining, offline SFT/RM/DPO/PPO/reasoning/embedding stages, and TinyLlama/hosted→BCIRQ8→standalone-C parity exist; 32M/GPU/serving remain open |
@@ -71,7 +71,7 @@ not promoted to driver, transport, or hardware evidence.
   selected plan, StreamPack and lowering contracts are represented and checked.
 - K_BCIR provides exact min-plus, RCSP/Pareto, and schedule `(max,+)` rails. GEM owns
   hydration, waves, affinity, event phases, DMA descriptors, and device/channel metadata.
-- StreamPack v1 is frozen; v2/v3 evolve append-only and have Python/C malformed-input
+- StreamPack v1 is frozen; v2/v3/v4 evolve append-only and have Python/C malformed-input
   gates.
 - BCAB v1 preserves standard backend images inside one bounded content-addressed directory,
   with Python/C/C++ deterministic selection and MLIR metadata projection. This defines binary

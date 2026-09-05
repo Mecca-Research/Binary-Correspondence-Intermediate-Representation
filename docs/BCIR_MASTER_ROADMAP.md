@@ -48,7 +48,7 @@ The normative semantics and artifact contract are in
 | BCIR-1 | Shaped data, layouts, records, tensors | Resource/layout model; GEM tensor ops; binary-record/model frontends |
 | BCIR-2 | Registry and placement candidates | Registry, device manifests, memory banks, channels, generations |
 | BCIR-3 | Legal K_BCIR realization plan | Exact integer cost search, RCSP/Pareto, schedule-aware price, certified priors |
-| BCIR-4 | GEM execution and StreamPack | Hydration, wave/token scheduling, v1–v3 StreamPack, C executor |
+| BCIR-4 | GEM execution and StreamPack | Hydration, wave/token scheduling, v1–v4 StreamPack, C executor |
 | BCIR-5 | Target lowering and distribution | Partial LLVM/MLIR, portable C23, WASM/JVM/CIL subsets, SYCL/SPIR-V channel, resident toolchains, deterministic BCAB target-image selection |
 
 ### 2.2 Implementation rails
@@ -66,7 +66,7 @@ The normative semantics and artifact contract are in
 | Area | Landed baseline | Boundary that remains |
 |---|---|---|
 | Law and optimizer | R1–R25, twelve-axis cost vectors, exact planning, RCSP/Pareto, overlap pricing, replay/provenance, frozen learned priors | Additional laws require a demonstrated semantic gap and dual-rail negative coverage |
-| GEM and StreamPack | Hydration, scheduling, execution, strict v1–v3 codecs, C/Python byte parity, operator disassembly/hexdump | Hardware command packets and per-device execution are not implied |
+| GEM and StreamPack | Hydration, scheduling, execution, strict v1–v4 codecs, C/Python byte parity, operator disassembly/hexdump | Hardware command packets and per-device execution are not implied |
 | C compiler | Broad driver-oriented C23 subset, twin lowering, Clang differentials, target ABI matrix, project/link/fallback modes | Not complete ISO C23; unsupported constructs route to the resident compiler |
 | C memory/runtime | Freestanding/hosted/driver classes, allocator injection, failure tests, direct RuntimeChannel v1 | No out-of-process transport or resident hardware binding |
 | ML/reference | Tensor claims, closed-set AD, planned/streamed training, optional hosted Llama/AdamW micro training, safe resume/export, model ingest/tokenizer/decode, BCIRQ8, standalone-C parity, native Q8/Q4 conversion and Q8 projection kernels, exact native Q15 retrieval, payload-free placement, exact static tensor addresses, verified HAM residency/routes, strict context shards, dual-memory oracle, a bounded GNN/Transformer hardware-policy gate, adaptive and raw-byte BLT/MambaByte experiments, exact sequence-interface adaptation, causal FSQ series coding, and active-budget growth | The 32M, byte-native, and progressive models are untrained at useful scale; hardware-RL evidence is simulated; HAM has no physical adapter; no whole-model Q4, distributed trainer, GPU byte/model backend, live promotion corpus, or production serving engine |

@@ -125,7 +125,7 @@ prefetch/block/trace data, phases/waves, event phases, DMA descriptors, channel/
 bindings, and StreamPack. Duration-aware scheduling, affinity, bandwidth knees, and
 generation checks remain deterministic.
 
-StreamPack v1 is frozen. v2/v3 add records append-only while preserving old walkers.
+StreamPack v1 is frozen. v2/v3/v4 add records append-only while preserving old walkers (v4 carries the per-resource generation vector, R11 per resource).
 The exact bytes are owned by
 [`BCIR_STREAMPACK_ABI.md`](kernel/BCIR_STREAMPACK_ABI.md), Python codec code, and the C
 header/decoder together.
