@@ -423,6 +423,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   x86_64 and an unsorted manifest artifact record, ignored a calibration certificate's
   constants, validated no M5 descriptor, sorted phases by numeric id (an exec order that broke
   the phase DAG), and lowered a verifier-legal one-tile convolution to a `count = 0` block.
+  S0-D (2026-09-05) widened the two cross-rail content hashes on both rails in one commit:
+  `hash_target` folds the memory hierarchy (`target.capability` gains the tier arrays; the law
+  rail's walk pins the default hierarchy for IR without it) and `hash_module` folds the
+  claims in declared order -- the audit's two collisions, a thirty-fold score move and a
+  reordered pair of claims under one digest, now move the hash -- with the emitter writing
+  every hashed field and `test_hash_parity.py` holding the rails together.
 
 ---
 

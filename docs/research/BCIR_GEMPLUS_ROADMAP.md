@@ -120,8 +120,8 @@ factors by 32 moves a plan's score from **51,200 to 1,574,912 with the digest un
 
 | Component | Content | Where it is today |
 |---|---|---|
-| `P` | program, input contract, R-laws, semantics, precision, admitted approximation | `hash_module`, incomplete: claims are sorted by id, so declared order is erased |
-| `H` | topology, ISA/capabilities, banks, links, capacities | `hash_target`, **missing the memory hierarchy entirely** |
+| `P` | program, input contract, R-laws, semantics, precision, admitted approximation | `hash_module` (claims in declared order since S0-D; the scope names the order as a component) |
+| `H` | topology, ISA/capabilities, banks, links, capacities | `hash_target` (the memory hierarchy folded since S0-D, from `target.capability` `mem_tier_names` / `mem_tier_values` on the law rail) |
 | `W` | workload shapes, input distribution, concurrency, SLOs, horizon | not modelled |
 | `Θ` | firmware, microcode, driver, OS, clocks, thermal, contention, wear | `hash_theta`, partial |
 | `A` | admitted transformations, libraries, kernels, schedules, search boundary | implicit in `candidates_for` |
@@ -196,9 +196,11 @@ now, R13 keeps working, and the dialect change becomes optional rather than bloc
 
 **Still open from this slice**, deliberately and separately:
 
-- widening `hash_target` with a `DenseI64ArrayAttr` for the tiers plus the matching C++ walk,
-  so the MLIR rail can recompute the same complete identity. Not required for certificates
-  now that they bind to the scope.
+- ~~widening `hash_target` with a `DenseI64ArrayAttr` for the tiers plus the matching C++ walk,
+  so the MLIR rail can recompute the same complete identity.~~ **Landed as S0-D** (2026-09-05):
+  `mem_tier_names` / `mem_tier_values` on `target.capability`, the widened `hashTargetFromIR` / `hashModuleFromIR`
+  (declared claim order), the emitter writing every hashed field, and the two-rail regression
+  `test_hash_parity.py`.
 - the `wall` row `static_memory.plan.2048` (301.02 ms): untouched here, and it is G3's.
 
 ### G1 — one canonical schedule artifact
@@ -587,7 +589,7 @@ Re-staged on 2026-09-04 (the review in
 correctness-closure items that are prerequisites rather than GEM+ slices.
 
 ```
-Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)
+Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)             <- LANDED (S0-D)
                                            S0-2 R11 per-resource generation vectors
                                            S0-3 verify checkpoints in bcir-optimize/-hydrate + the inert fixtures  <- LANDED (S0-B)
                                            S0-4 EV1–EV3 in verify_all                 <- LANDED (S0-A)

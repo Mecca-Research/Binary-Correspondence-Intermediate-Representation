@@ -417,6 +417,13 @@ table and the canonical phase order are each ONE predicate with a declared mirro
 `pointerWidthOfTriple`; `model.topological_phase_ids` / `canonicalPhaseOrder`),
 and the corpus checks that the mirrors agree -- five phase orders and two
 isolated-domain rules were in use before.
+S0-D instance (2026-09-05): the two cross-rail content hashes are ONE definition each
+with a declared mirror (`provenance.hash_target` / `hashTargetFromIR`, `hash_module` /
+`hashModuleFromIR`) and were widened on both rails in one commit -- the memory
+hierarchy via two dialect attributes with a pinned default, the declared claim order by
+dropping a sort on both sides -- with `test_hash_parity.py` driving the law rail over
+emitted modules and their real manifests. A hash widened on one rail is a content
+address the rails disagree about, which is worse than the gap it closes.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
