@@ -110,7 +110,8 @@ DEFINITIONS IMPLICIT TAGS ::= BEGIN
       segments       [6] SEQUENCE OF LaneSegment,
       prefetches     [7] SEQUENCE OF Prefetch  DEFAULT {},
       blocks         [8] SEQUENCE OF Block     DEFAULT {},
-      traceNotes     [9] SEQUENCE OF TraceNote DEFAULT {} }
+      traceNotes     [9] SEQUENCE OF TraceNote DEFAULT {},
+      generations   [10] SEQUENCE OF Generation DEFAULT {} }
 
   LaneSegment ::= SEQUENCE {
       name           [0] UTF8String,
@@ -148,6 +149,11 @@ DEFINITIONS IMPLICIT TAGS ::= BEGIN
       srcHash        [1] INTEGER DEFAULT 0,
       traceHash      [2] INTEGER DEFAULT 0 }
 
+  Generation ::= SEQUENCE {
+      rid            [0] INTEGER,
+      mapGen         [1] INTEGER DEFAULT 0,
+      dataGen        [2] INTEGER DEFAULT 0 }
+
 END
 ```
 
@@ -166,7 +172,17 @@ Design notes worth stating because they are the non-obvious choices:
   zero and carries stride per-claim, so projecting it would add a field that never
   varies.
 - **The projection version is independent of the native StreamPack version.** The
-  module can gain a field without the native format moving, and vice versa.
+  module can gain a field without the native format moving, and vice versa. The
+  projection is at version 2 (`PROJECTION_VERSION`): version 1 had no `generations`
+  component; version 2 added it for StreamPack v4's per-resource generation vector.
+  The schema keeps `version [0] INTEGER DEFAULT 1` — X.680 does not revise a DEFAULT —
+  so a version-2 document spells its version explicitly and a document without the
+  field still means version 1.
+- **`generations` is the R11 witness, projected per resource.** One `Generation` per
+  declared resource in RID order (`rid`, `mapGen`, `dataGen`), the native v4 record
+  (`BCIR_STREAMPACK_ABI.md` §v4). A vector-less pack omits the component; a resource at
+  the `(0, 0)` defaults encodes as its `rid` alone. The DER → native fast path re-derives
+  v4 from the component's presence exactly as `bcir/abi::encode` does.
 
 ## 3a. The DER → native fast path
 
@@ -181,10 +197,10 @@ bcir_asn1_to_streampack(encode_pack(P))  ==  encode(P)
 ```
 
 Byte identity rather than equivalence is deliberate — it forces the C rail to re-derive
-everything the projection does not carry: the native StreamPack **version** (v1/v2/v3 is
-a function of content, and this module's own `version` field is the *projection* version,
-independent by design), the reserved `stride_k` this module does not project, and the
-CRC trailer. Anything less would let the reconstruction produce a decodable pack with a
+everything the projection does not carry: the native StreamPack **version** (v1/v2/v3/v4
+is a function of content, and this module's own `version` field is the *projection*
+version, independent by design), the reserved `stride_k` this module does not project,
+and the CRC trailer. Anything less would let the reconstruction produce a decodable pack with a
 different digest, which for a frozen, digested artifact is the same as producing the
 wrong one.
 

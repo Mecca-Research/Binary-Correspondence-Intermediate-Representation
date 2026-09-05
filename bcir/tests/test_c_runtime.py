@@ -75,10 +75,17 @@ def test_python_encodes_c_decodes():
         assert run.returncode == 0, run.stdout + run.stderr
         out = dict(line.split("=", 1) for line in run.stdout.splitlines() if "=" in line)
 
-        # Cross-language ABI fidelity: the C decode matches the Python encode.
+        # Cross-language ABI fidelity: the C decode matches the Python encode. A hydrated
+        # pack carries the v4 per-resource generation vector (S0-2), which the C walk
+        # reads back record by record.
         assert "OK" in run.stdout
-        assert int(out["version"]) == 1
+        assert int(out["version"]) == 4
         assert int(out["data_gen"]) == pack.data_gen
+        assert int(out["n_gens"]) == len(pack.generations) == 3
+        assert int(out["gens_walked"]) == len(pack.generations)
+        assert int(out["gen0.rid"]) == pack.generations[0].rid == 10
+        assert int(out["gen0.map_gen"]) == pack.generations[0].map_gen
+        assert int(out["gen0.data_gen"]) == pack.generations[0].data_gen
         assert int(out["n_segments"]) == len(pack.segments)
         assert int(out["walked"]) == len(pack.segments)
         assert int(out["seg0.claim_id"]) == seg.claim_id
@@ -92,15 +99,13 @@ def test_python_encodes_c_decodes():
 
 def test_python_encodes_v2_c_decodes():
     # StreamPack v2 (append-only): the C runtime accepts the new version and
-    # reads the pipeline contract; the segment stream stays v1-shaped.
+    # reads the pipeline contract; the segment stream stays v1-shaped. A hand-built
+    # pack: a hydrated one also carries the v4 vector (v4 implies the v2 tail).
     clang = which("clang")
     if clang is None:
         return
-    from bcir.gem import hydrate_pipelined
-    from bcir.kbcir import optimize as _opt
-
-    m = vector_add(1024)
-    pack = hydrate_pipelined(m, _opt(m, TargetProfile.x86_avx512(), Theta.cool()), depth=2)
+    pack = _v1_pack()
+    pack.pipeline_depth = 2
     with tempfile.TemporaryDirectory() as d:
         exe = os.path.join(d, "test_runtime")
         build = subprocess.run(
@@ -128,6 +133,7 @@ def test_python_encodes_v2_c_decodes():
         assert int(out["version"]) == 2
         assert int(out["pipeline_depth"]) == 2
         assert int(out["walked"]) == len(pack.segments)
+        assert int(out["n_gens"]) == 0  # no vector on a v1-v3 pack
 
 
 def _build_runtime_harness(
@@ -152,6 +158,30 @@ def _build_runtime_harness(
     )
     assert build.returncode == 0, build.stderr
     return exe
+
+
+def _v1_pack():
+    """A hand-built pack using no v2/v3/v4 feature (frozen v1 on the wire)."""
+    from bcir.gem.streampack import LaneSegment, Prefetch, StreamPack, TraceNote
+    from bcir.model import Lane
+
+    p = StreamPack(source_plan="plan0", topo_gen=1, map_gen=7, data_gen=19)
+    p.prefetches.append(Prefetch("pf0", 4, (10, 11)))
+    p.segments.append(
+        LaneSegment(
+            name="seg0",
+            claim_id=1000,
+            phase_id=0,
+            lane=Lane.GGG,
+            width=16,
+            opcode="f32.add",
+            reads=(10, 11),
+            writes=(12,),
+            prefetch="pf0",
+        )
+    )
+    p.trace_notes.append(TraceNote(claim_id=1000))
+    return p
 
 
 def _v3_pack():
@@ -179,6 +209,15 @@ def _v3_pack():
     return p
 
 
+def _v4_pack():
+    """A v3 pack plus the per-resource generation vector (v4 implies the v2/v3 tails)."""
+    from bcir.gem.streampack import Generation
+
+    p = _v3_pack()
+    p.generations = [Generation(10, 7, 2), Generation(11, 1, 19), Generation(12, 0, 0)]
+    return p
+
+
 def test_python_encodes_v3_c_decodes_dispatch_channel():
     # StreamPack v3 (append-only): the C runtime accepts v3 and reads the on-wire
     # segment dispatch (pim) + channel (nvidia_ptx) -- the routing fields are now
@@ -202,9 +241,9 @@ def test_python_encodes_v3_c_decodes_dispatch_channel():
 
 
 def test_c_decode_equals_python_decode_differential():
-    # C-decode == Python-decode on every field, over v1 / v2 / v3 packs (the
+    # C-decode == Python-decode on every field, over v1 / v2 / v3 / v4 packs (the
     # lane-asymmetry class: a value the Python decode normalizes/raises on must
-    # decode identically on the C rail).
+    # decode identically on the C rail; v4 adds the generation records).
     clang = which("clang")
     if clang is None:
         return
@@ -212,10 +251,15 @@ def test_c_decode_equals_python_decode_differential():
     from bcir.gem import hydrate_pipelined
 
     m = vector_add(1024)
+    v2 = _v1_pack()
+    v2.pipeline_depth = 2
     packs = {
-        1: _pack(),
-        2: hydrate_pipelined(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()), depth=2),
+        1: _v1_pack(),
+        2: v2,
         3: _v3_pack(),
+        4: _v4_pack(),
+        # a hydrated, pipelined pack: the pipeline tail AND the vector, on one v4 header
+        44: hydrate_pipelined(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()), depth=2),
     }
     with tempfile.TemporaryDirectory() as d:
         exe = _build_runtime_harness(clang, d)
@@ -228,8 +272,16 @@ def test_c_decode_equals_python_decode_differential():
             c = dict(line.split("=", 1) for line in run.stdout.splitlines() if "=" in line)
             py = py_decode(encode(pack))
             s = py.segments[0]
-            assert int(c["version"]) == want_ver
+            assert int(c["version"]) == min(want_ver, 4)
             assert int(c["pipeline_depth"]) == py.pipeline_depth
+            assert int(c["n_gens"]) == len(py.generations)
+            assert int(c["gens_walked"]) == len(py.generations)
+            if py.generations:
+                assert int(c["gen0.rid"]) == py.generations[0].rid
+                assert int(c["gen0.map_gen"]) == py.generations[0].map_gen
+                assert int(c["gen0.data_gen"]) == py.generations[0].data_gen
+            else:
+                assert "gen0.rid" not in c
             assert int(c["map_gen"]) == py.map_gen
             assert int(c["data_gen"]) == py.data_gen
             assert int(c["n_segments"]) == len(py.segments)
@@ -284,7 +336,7 @@ def test_c_rejects_crc_valid_semantically_corrupt_packs():
                 [sys.executable, mutator, kind, bin_path], capture_output=True, text=True, env=env
             )
             assert meta.returncode == 0, meta.stderr
-            _k, _n, mapg, datag = meta.stdout.split()
+            _k, _n, mapg, datag = meta.stdout.split()[:4]
             argv = [exe, bin_path]
             if kind == "stale_generation":
                 argv += [mapg, datag]  # tell the C rail the live generation
@@ -307,6 +359,92 @@ def test_c_rejects_crc_valid_semantically_corrupt_packs():
                 "BCIR_OK" if kind == "stale_generation" else "BCIR_ERR"
             ), (kind, run.stdout)
             assert run.returncode == 1, (kind, run.stdout)
+
+
+def test_c_rejects_stale_generation_vectors_per_resource():
+    # S0-2 (StreamPack v4, R11 per resource): the C rail checks the per-resource generation
+    # vector against the caller's live registry (bcir_sp_check_generation_vector + the
+    # vector-checked executor). The (l) kinds keep the header maxima intact, so the legacy
+    # maxima-only check ACCEPTS them (the RED witness of the closed blind spot) while the
+    # per-resource check refuses each; the (m) kinds are malformed vectors refused by the
+    # semantic gate before any registry is consulted, with the same code on both paths.
+    clang = which("clang")
+    if clang is None:
+        return
+    import sys
+
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    mutator = os.path.join(repo, "tools", "c", "streampack_corrupt.py")
+    want = {  # kind: (semantic verdict without a registry, per-resource verdict with --live)
+        "stale_vector": ("BCIR_OK", "BCIR_ERR_STALE"),
+        "missing_vector_entry": ("BCIR_OK", "BCIR_ERR_STALE"),
+        "undeclared_vector_rid": ("BCIR_OK", "BCIR_ERR_STALE"),
+        "unsorted_vector": ("BCIR_ERR_GENERATION", "BCIR_ERR_GENERATION"),
+        "duplicate_vector_rid": ("BCIR_ERR_GENERATION", "BCIR_ERR_GENERATION"),
+        "vector_maxima_mismatch": ("BCIR_ERR_GENERATION", "BCIR_ERR_GENERATION"),
+        "truncated_vector": ("BCIR_ERR_TRUNCATED", "BCIR_ERR_TRUNCATED"),
+        "reserved_n_gens": ("BCIR_ERR_RESERVED", "BCIR_ERR_RESERVED"),
+    }
+    env = dict(os.environ, PYTHONPATH=repo + os.pathsep + os.environ.get("PYTHONPATH", ""))
+
+    def fields_of(stdout):
+        out = {}
+        for line in stdout.splitlines():
+            for tok in line.split():
+                if "=" in tok:
+                    k, v = tok.split("=", 1)
+                    out[k] = v
+        return out
+
+    with tempfile.TemporaryDirectory() as d:
+        exe = _build_runtime_harness(
+            clang,
+            d,
+            name="test_sem",
+            srcs=("bcir_exec.c", "bcir_runtime.c", "bcir_verify.c", "test_streampack_semantic.c"),
+        )
+        live = None
+        for kind, (semantic, per_resource) in want.items():
+            bin_path = os.path.join(d, f"{kind}.bin")
+            meta = subprocess.run(
+                [sys.executable, mutator, kind, bin_path], capture_output=True, text=True, env=env
+            )
+            assert meta.returncode == 0, meta.stderr
+            _k, _n, mapg, datag, live_arg = meta.stdout.split()
+            live = live_arg.removeprefix("live=").split(",")
+            run = subprocess.run([exe, bin_path, "--live", *live], capture_output=True, text=True)
+            f = fields_of(run.stdout)
+            assert f.get("crc") == (
+                "BCIR_ERR_RESERVED" if kind == "reserved_n_gens" else "BCIR_OK"
+            ), (kind, run.stdout)
+            assert f.get("name") == semantic, (kind, run.stdout)
+            assert f.get("vector") == per_resource, (kind, run.stdout)
+            assert f.get("exec_vector") == per_resource, (kind, run.stdout)
+            assert run.returncode == 1, (kind, run.stdout)
+            if semantic == "BCIR_OK":
+                # RED witness: the maxima agree, so the legacy check executes the stale pack.
+                legacy = subprocess.run(
+                    [exe, bin_path, mapg, datag], capture_output=True, text=True
+                )
+                assert fields_of(legacy.stdout).get("exec") == "BCIR_OK", (kind, legacy.stdout)
+                assert legacy.returncode == 0, (kind, legacy.stdout)
+        assert live is not None
+        # A vector-less v1-v3 artifact is stale against any registry that declares
+        # resources; a v4 vector is stale against an empty registry and clean against its own.
+        from tools.c.streampack_corrupt import base_pack, base_pack_v4
+
+        vectorless, vector = os.path.join(d, "vectorless.bin"), os.path.join(d, "vector.bin")
+        with open(vectorless, "wb") as fh:
+            fh.write(encode(base_pack()))
+        with open(vector, "wb") as fh:
+            fh.write(encode(base_pack_v4()))
+        run = subprocess.run([exe, vectorless, "--live", *live], capture_output=True, text=True)
+        assert fields_of(run.stdout).get("exec_vector") == "BCIR_ERR_STALE", run.stdout
+        run = subprocess.run([exe, vector, "--live"], capture_output=True, text=True)
+        assert fields_of(run.stdout).get("exec_vector") == "BCIR_ERR_STALE", run.stdout
+        run = subprocess.run([exe, vector, "--live", *live], capture_output=True, text=True)
+        assert fields_of(run.stdout).get("exec_vector") == "BCIR_OK", run.stdout
+        assert run.returncode == 0, run.stdout
 
 
 def test_c_planner_rejects_unrepresentable_cost_instead_of_wrapping():

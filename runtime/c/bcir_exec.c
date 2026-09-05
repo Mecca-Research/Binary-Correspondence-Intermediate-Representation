@@ -131,3 +131,19 @@ bcir_status bcir_sp_execute_checked(const uint8_t *BCIR_RESTRICT data, size_t le
     return st;
   return bcir_sp_execute(data, len, scratch, scratch_cap, phases, phases_cap, fn, ctx, out);
 }
+
+bcir_status bcir_sp_execute_checked_vector(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                           const bcir_generation_view *BCIR_RESTRICT live,
+                                           size_t n_live,
+                                           bcir_exec_item *BCIR_RESTRICT scratch, size_t scratch_cap,
+                                           bcir_phase_stat *BCIR_RESTRICT phases, size_t phases_cap,
+                                           bcir_exec_fn fn, void *ctx,
+                                           bcir_exec_result *BCIR_RESTRICT out) {
+  if (out) { out->executed = 0; out->n_phases = 0; out->n_segments = 0; }
+  /* R11 per resource (v4): a STALE pack -- any resource moved, added, or the vector
+   * missing -- is refused before any execution; R10 + the range gate follow inside. */
+  bcir_status st = bcir_sp_check_generation_vector(data, len, live, n_live);
+  if (st != BCIR_OK)
+    return st;
+  return bcir_sp_execute(data, len, scratch, scratch_cap, phases, phases_cap, fn, ctx, out);
+}

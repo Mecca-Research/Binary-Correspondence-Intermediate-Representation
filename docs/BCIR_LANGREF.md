@@ -129,7 +129,8 @@ hard score, with equality at `T = 0`) is a verifier obligation under R9
   and is rehydrated (patch/repack/replan) on mismatch. Scheduling is
   duration-aware (`bcir.gem.schedule`): EFT waves with locality affinity and the
   bandwidth knee, or the `!bcir.token` DAG. StreamPack v1 is frozen; v2 adds
-  pipelining/double-buffer records and v3 adds segment dispatch/channel metadata under the
+  pipelining/double-buffer records, v3 adds segment dispatch/channel metadata, and v4 adds
+  the per-resource generation vector (R11 per resource, every hydrated pack) under the
   append-only rules in [`BCIR_STREAMPACK_ABI.md`](kernel/BCIR_STREAMPACK_ABI.md).
 - **Artifact selection envelope.** BCAB v1 binds a StreamPack to exact standard backend
   payloads and selects by target/feature/manifest/calibration/R12 policy. It is separately
@@ -1338,7 +1339,7 @@ and reject work outside it. The current profiles are:
 The following versioned contracts are adjacent to BCIR semantics but have dedicated
 normative documents because their byte/lifecycle evolution is independent:
 
-- StreamPack v1–v3: [`BCIR_STREAMPACK_ABI.md`](kernel/BCIR_STREAMPACK_ABI.md), whose
+- StreamPack v1–v4: [`BCIR_STREAMPACK_ABI.md`](kernel/BCIR_STREAMPACK_ABI.md), whose
   native octets stay frozen; its **additive** ASN.1 module and DER projection live in
   [`BCIR_ASN1_X690_ABI.md`](BCIR_ASN1_X690_ABI.md);
 - Artifact Bundle v1: [`BCIR_ARTIFACT_BUNDLE_ABI.md`](kernel/BCIR_ARTIFACT_BUNDLE_ABI.md);

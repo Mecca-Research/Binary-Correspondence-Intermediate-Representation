@@ -47,6 +47,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
    * extra bounded walks over the same untrusted bytes, so it must also never over-read. */
   (void)bcir_sp_verify_semantic(data, size, 0xFFFFFFFFu, 0xFFFFFFFFu);
   (void)bcir_sp_check_generation(data, size, 1u, 0u);
+  (void)bcir_sp_for_each_generation(data, size, 0, 0);                 /* the v4 vector walk */
+  {
+    static const bcir_generation_view live[2] = {{10u, 1u, 0u}, {11u, 0u, 0u}};
+    (void)bcir_sp_check_generation_vector(data, size, live, 2u);       /* R11 per resource */
+  }
   /* A standalone CRC over the buffer must also never over-read. */
   if (size)
     (void)bcir_crc32(data, size);

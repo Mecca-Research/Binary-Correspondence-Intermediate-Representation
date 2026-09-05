@@ -1,4 +1,4 @@
-# BCIR StreamPack binary ABI — v1 (frozen, normative) + v2/v3 (append-only)
+# BCIR StreamPack binary ABI — v1 (frozen, normative) + v2/v3/v4 (append-only)
 
 The StreamPack is BCIR's **portable artifact** (its WASM analog): a self-contained,
 hot, executable representation of a selected K_BCIR plan. This document freezes the
@@ -35,7 +35,9 @@ StreamPack byte, generation rule, or R10/R11 obligation.
 | 28 | `n_blocks` | `u32` | |
 | 32 | `n_trace` | `u32` | |
 | 36 | `pipeline_depth` | `u16` | **v2** (append-only); reads as 1 on v1 buffers |
-| 38 | `reserved` | `u8[26]` | pad to 64 |
+| 38 | `reserved` | `u8[2]` | pad (0) |
+| 40 | `n_gens` | `u32` | **v4** (append-only): generation-vector record count; reads as 0 on v1–v3 buffers |
+| 44 | `reserved` | `u8[20]` | pad to 64 |
 
 ## Body (sequential, length-prefixed)
 
@@ -49,6 +51,8 @@ StreamPack byte, generation rule, or R10/R11 obligation.
    [v2: buffers:u8]`
 4. `blocks[n_blocks]`, each: `base:u64  count:u64  strides:u64_array`
 5. `trace[n_trace]`, each: `claim_id:u64  src_hash:u64  trace_hash:u64`
+6. `[v4: generations[n_gens]]`, each: `rid:u32  map_gen:u32  data_gen:u32` (12 bytes;
+   RIDs strictly ascending)
 
 ## Trailer
 
@@ -61,8 +65,9 @@ v2 demonstrates the append-only evolution mechanism. It changes **no** v1 field
 offsets:
 
 - **Header** gains `pipeline_depth : u16` at offset **36** (carved from the v1
-  reserved pad; reserved shrinks to `u8[26]`). Phases in flight; `2` =
-  double-buffered software pipelining. Decoders treat v1 buffers as depth 1.
+  reserved pad; reserved shrank to `u8[26]`, from which v4 later carved `n_gens`).
+  Phases in flight; `2` = double-buffered software pipelining. Decoders treat v1
+  buffers as depth 1.
 - **Prefetch records** append `buffers : u8` after `pattern` (`2` = a
   double-buffer contract feeding the next pipelined phase, typically
   `pattern="double_buffer"`). Segment/block/trace records are **unchanged**, so
@@ -90,6 +95,46 @@ closing the gap where a `dispatch`/`channel` mutation was invisible to byte-iden
   rejects an out-of-range `lane` — the two rails (Python `decode` and the freestanding
   C `bcir_sp_for_each_segment`) raise/return `BCIR_ERR_*` identically.
 
+## v4 (append-only): per-resource generation vectors (R11)
+
+v4 closes the R11 blind spot of the header tags (S0-2): `map_gen`/`data_gen` are the
+**maxima** over the registry, so a resource that moved while another still held the
+maximum, or one declared after hydration, left a stale pack indistinguishable from a
+fresh one. v4 carries the generation of **every** declared resource:
+
+- **Header** gains `n_gens : u32` at offset **40** (carved from the pad; bytes 38–39
+  and 44–63 stay reserved and must be zero). Decoders read 0 on v1–v3 buffers, and a
+  v1–v3 buffer with nonzero bytes at 40–43 is refused as reserved (`BCIR_ERR_RESERVED`).
+- **Body** appends `generations[n_gens]` after the trace records: `rid:u32 map_gen:u32
+  data_gen:u32` (`bcir_generation_view`, `BCIR_GENERATION_WIRE_SIZE` = 12), one record
+  per declared resource in **strictly ascending RID order**. Segment, prefetch, block, and
+  trace records are **unchanged**; v4 implies v3 and v2 (the records carry their tails and
+  the header its `pipeline_depth`). Walkers that stop at the trace stream stay correct.
+- **The header tags are the vector's summary**: `map_gen`/`data_gen` MUST equal the
+  vector's maxima. A pack whose header and vector disagree, whose RIDs repeat or are out
+  of order, or whose `n_gens` promises records the body does not carry is malformed
+  (`AbiError` / `BCIR_ERR_GENERATION`, `BCIR_ERR_TRUNCATED`) on both rails before any
+  registry is consulted. `topo_gen` stays the constant `1`: topology identity is bound
+  through the plan's provenance manifest (`m_module`, R13), not through a pack tag.
+- **Encoders emit the lowest carrying version**: a pack with an empty vector is
+  byte-identical v1/v2/v3; `gem.hydrate` always emits the vector (`generation_vector`),
+  so every hydrated pack is v4, and a hand-built pack without one stays v1–v3.
+- **R11 per resource is ONE predicate on every rail** (`verify_pack`, the C
+  `bcir_sp_check_generation_vector` / `bcir_sp_execute_checked_vector`, and the law
+  rail's `-bcir-verify` over `bcir.gem.stream_pack`'s `generations` triples): with a
+  vector present, every entry must match the live registry exactly and every declared
+  resource must have an entry — a resource that moved under the maxima, one declared
+  after hydration, or an entry naming an undeclared RID is STALE (`BCIR_ERR_STALE`,
+  "rehydrate: repack" for `map_gen`, "replan" for `data_gen`). A pack with **no** vector
+  is stale against any registry that declares resources (a v1–v3 artifact must be
+  rehydrated) and, over an empty registry, is judged by the maxima alone (which must be 0).
+  The maxima-only API (`bcir_sp_check_generation`) remains for callers that hold only the
+  maxima; it cannot see a resource that moved under them, and the adversarial gate
+  keeps that RED witness (`stale_vector`, `missing_vector_entry`, `undeclared_vector_rid`).
+- Projected by the ASN.1 module as `generations [10] SEQUENCE OF Generation`
+  ([`BCIR_ASN1_X690_ABI.md`](../BCIR_ASN1_X690_ABI.md) §3, projection version 2); the
+  DER → native fast path re-derives v4 from the component's presence.
+
 ## Semantic trust boundary (R10/R11 in C)
 
 The CRC + bounds decode is memory-safe, but a CRC-valid pack can still be
@@ -105,8 +150,16 @@ The CRC + bounds decode is memory-safe, but a CRC-valid pack can still be
   `bcir_sp_execute_checked`) — `map_gen`/`data_gen` must match the caller's expected
   (live registry) generation, else the pack is STALE (`BCIR_ERR_STALE`) and is rehydrated,
   never executed. `bcir_sp_execute` rejects an R10/range-failing pack before running it.
-- **Exact body consumption** — after the declared segment/prefetch/block/trace records,
-  the next four bytes must be the CRC trailer and the trailer must end the artifact.
+- **R11 per resource** (v4: `bcir_sp_check_generation_vector`, and the vector-checked
+  executor `bcir_sp_execute_checked_vector`) — the caller's live registry table
+  (`bcir_generation_view[]`, any order) must match the pack's generation vector entry for
+  entry and resource for resource; a pack without a vector is STALE against any registry
+  that declares resources. The vector's well-formedness (ascending RIDs, header maxima)
+  is enforced by `bcir_sp_verify_semantic` (`BCIR_ERR_GENERATION`) before the registry
+  is consulted; `bcir_sp_for_each_generation` walks the records in RID order.
+- **Exact body consumption** — after the declared segment/prefetch/block/trace (and v4
+  generation) records, the next four bytes must be the CRC trailer and the trailer must
+  end the artifact.
   CRC-valid bytes inserted between the declared body and a recomputed CRC are rejected
   (`BCIR_ERR_TRAILING` in C) on both rails; parsers never treat an undeclared tail as an
   extension point.
@@ -116,10 +169,10 @@ These mirror `bcir/verify::verify_pack`, so the Python and C rails agree.
 ## Versioning (the freeze)
 
 - v1 is **frozen**: the field layout above does not change.
-- New fields are **append-only** across versions (v2/v3 above are the worked
+- New fields are **append-only** across versions (v2/v3/v4 above are the worked
   instances); a v1 reader of a v1 buffer is exact and lossless.
 - A reader **rejects** a buffer whose `version` exceeds the maximum it supports
-  (v3 today). `lane` values match `bcir/model/lanes.py` / `BCIRAttrs.td`
+  (v4 today). `lane` values match `bcir/model/lanes.py` / `BCIRAttrs.td`
   (`U=0,UX=1,T=2,GGG=3,A=4,H=5`).
 - The exact-consumption rule is decoder hardening, not a field-layout change, so it does
   **not** increment the wire version. Future records/fields require an explicit append-only
@@ -127,9 +180,10 @@ These mirror `bcir/verify::verify_pack`, so the Python and C rails agree.
 
 Writers reject values that cannot be represented exactly: integer fields never mask or wrap,
 `pipeline_depth` is in `1..65535`, prefetch `buffers` is `1` or `2`, segment width is a
-nonzero `u32` power of two, and dispatch is one of the closed v3 codes. Decoders apply the
-same depth/buffer/width/dispatch constraints. This is validation of the existing v1–v3
-contract, not a wire-layout revision.
+nonzero `u32` power of two, dispatch is one of the closed v3 codes, and a v4 generation
+vector has strictly ascending `u32` RIDs with the header tags as its maxima. Decoders apply
+the same depth/buffer/width/dispatch/vector constraints. This is validation of the existing
+v1–v4 contract, not a wire-layout revision.
 
 ## Why a frozen ABI now
 

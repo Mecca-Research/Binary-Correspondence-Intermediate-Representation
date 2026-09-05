@@ -13,7 +13,8 @@
  *
  * WHY TWO PASSES. The native header carries the record counts and the format version,
  * and the version is derived from CONTENT (v2 if any pipelining/double-buffering, v3 if
- * any non-default dispatch/channel) exactly as bcir/abi::encode derives it. The version
+ * any non-default dispatch/channel, v4 if a per-resource generation vector is carried)
+ * exactly as bcir/abi::encode derives it. The version
  * changes the BODY layout, so it has to be known before the first body octet is written.
  * Pass one counts and classifies; pass two writes. Both passes are bounded walks over
  * the caller's buffer -- no allocation, no recursion.
@@ -22,6 +23,7 @@
 
 #define SP_HDR_SIZE      ((size_t)BCIR_STREAMPACK_HEADER_SIZE)
 #define SP_PIPELINE_OFF  ((size_t)36)   /* "<4sHHIIIIIII" -- the v2 u16 goes right after */
+#define SP_GENS_OFF      ((size_t)40)   /* the v4 n_gens u32 (38..39 stay reserved) */
 
 /* The native defaults the projection omits (X.690 11.5). Spelled here because the C rail
  * must reproduce the same octets the Python encoder writes unconditionally. */
@@ -175,11 +177,11 @@ size_t bcir_asn1_streampack_bound(size_t der_len) {
 /* --- pass one: version + counts ---------------------------------------------------- */
 
 typedef struct {
-  uint32_t n_segments, n_prefetches, n_blocks, n_trace;
+  uint32_t n_segments, n_prefetches, n_blocks, n_trace, n_gens;
   uint16_t version;
   uint16_t pipeline_depth;
-  bcir_asn1_tlv segments, prefetches, blocks, trace;
-  int has_segments, has_prefetches, has_blocks, has_trace;
+  bcir_asn1_tlv segments, prefetches, blocks, trace, generations;
+  int has_segments, has_prefetches, has_blocks, has_trace, has_generations;
 } sp_shape;
 
 static bcir_asn1_status sp_classify(const uint8_t *der, size_t len,
@@ -202,8 +204,15 @@ static bcir_asn1_status sp_classify(const uint8_t *der, size_t len,
   if (st != BCIR_ASN1_OK) return st;
   st = sp_find_seq(der, len, root, 9, &shape->trace, &shape->has_trace);
   if (st != BCIR_ASN1_OK) return st;
+  st = sp_find_seq(der, len, root, 10, &shape->generations, &shape->has_generations);
+  if (st != BCIR_ASN1_OK) return st;
 
   shape->n_segments = shape->n_prefetches = shape->n_blocks = shape->n_trace = 0;
+  shape->n_gens = 0;
+  if (shape->has_generations) {
+    st = sp_count(der, len, &shape->generations, &shape->n_gens);
+    if (st != BCIR_ASN1_OK) return st;
+  }
   if (shape->has_segments) {
     st = sp_count(der, len, &shape->segments, &shape->n_segments);
     if (st != BCIR_ASN1_OK) return st;
@@ -253,7 +262,8 @@ static bcir_asn1_status sp_classify(const uint8_t *der, size_t len,
     if (st != BCIR_ASN1_END) return st;
   }
 
-  shape->version = needs_v3 ? 3u : (needs_v2 ? 2u : 1u);
+  /* v4 iff a per-resource generation vector is carried (bcir/abi::encode's `needs_v4`). */
+  shape->version = shape->n_gens ? 4u : (needs_v3 ? 3u : (needs_v2 ? 2u : 1u));
   return BCIR_ASN1_OK;
 }
 
@@ -478,6 +488,27 @@ static bcir_asn1_status sp_write_body(const uint8_t *der, size_t len,
     }
     if (st != BCIR_ASN1_END) return st;
   }
+
+  /* v4: the generation vector after the trace stream -- rid mandatory, the generations
+   * DEFAULT 0. Ordering and the header maxima are the semantic gate's verdict below. */
+  if (shape->version >= 4 && shape->has_generations) {
+    bcir_asn1_tlv gen;
+    st = bcir_asn1_first_child(der, len, &shape->generations, &gen);
+    while (st == BCIR_ASN1_OK) {
+      uint64_t value = 0;
+      st = sp_uint_req(der, len, &gen, 0, &value); if (st) return st;   /* rid     */
+      if (value > 0xFFFFFFFFu) return BCIR_ASN1_ERR_VALUE;
+      w_u32(w, (uint32_t)value);
+      st = sp_uint_or(der, len, &gen, 1, 0, &value); if (st) return st; /* mapGen  */
+      if (value > 0xFFFFFFFFu) return BCIR_ASN1_ERR_VALUE;
+      w_u32(w, (uint32_t)value);
+      st = sp_uint_or(der, len, &gen, 2, 0, &value); if (st) return st; /* dataGen */
+      if (value > 0xFFFFFFFFu) return BCIR_ASN1_ERR_VALUE;
+      w_u32(w, (uint32_t)value);
+      st = bcir_asn1_next(der, len, &shape->generations, &gen);
+    }
+    if (st != BCIR_ASN1_END) return st;
+  }
   return BCIR_ASN1_OK;
 }
 
@@ -532,6 +563,11 @@ bcir_status bcir_asn1_to_streampack(const uint8_t *BCIR_RESTRICT der, size_t der
   if (shape.version >= 2) {
     if (w.pos != SP_PIPELINE_OFF) return BCIR_ERR_NOSPACE;  /* layout guard */
     w_u16(&w, shape.pipeline_depth);
+  }
+  if (shape.version >= 4) {
+    while (!w.err && w.pos < SP_GENS_OFF) w_u8(&w, 0);      /* 38..39 reserved */
+    if (w.pos != SP_GENS_OFF) return BCIR_ERR_NOSPACE;      /* layout guard */
+    w_u32(&w, shape.n_gens);
   }
   while (!w.err && w.pos < SP_HDR_SIZE) w_u8(&w, 0);
   if (w.err) return BCIR_ERR_NOSPACE;

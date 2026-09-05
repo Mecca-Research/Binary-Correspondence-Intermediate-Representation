@@ -1998,8 +1998,9 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       }
     });
 
-    // R11: generation validity -- pack tags match the live registry maxima; a
-    // mismatch is a stale pack that must rehydrate (patch/repack/replan).
+    // R11: generation validity -- the pack's tags match the live registry; a mismatch is a
+    // stale pack that must rehydrate (patch/repack/replan). Since S0-2 the tags are the
+    // per-resource generation vector (below); the maxima judge only a resource-less scope.
     uint64_t regMapGen = 0, regDataGen = 0;
     bool anyResources = !resourceByName.empty();
     for (auto &it : resourceByName) {
@@ -2019,18 +2020,71 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         sp.emitError("R11: invalid topo_gen (must be >= 1)");
         ok = false;
       }
-      if (!anyResources)
+      // R11 per resource (S0-2, StreamPack v4): the header tags are the registry's MAXIMA
+      // and nothing more -- a resource that moved while another still held the maximum,
+      // and a resource declared after hydration, were invisible to them. The pack carries
+      // the per-resource vector it was hydrated from; every entry must match the scope's
+      // registry exactly and every declared resource must have an entry. A pack without a
+      // vector in a scope that declares resources is refused, never judged by its maxima
+      // (the oracle's verify_pack and the C twin's bcir_sp_check_generation_vector apply
+      // the same rule); only a scope with no resources is judged by the maxima (0).
+      auto gens = sp.getGenerations();
+      if (!anyResources) {
+        if (sp.getMapGen() != regMapGen) {
+          sp.emitError("R11: stale StreamPack: map_gen ")
+              << sp.getMapGen() << " != registry " << regMapGen << " (rehydrate: repack)";
+          ok = false;
+        }
+        if (sp.getDataGen() != regDataGen) {
+          sp.emitError("R11: stale StreamPack: data_gen ")
+              << sp.getDataGen() << " != registry " << regDataGen << " (rehydrate: replan)";
+          ok = false;
+        }
         return;
-      if (sp.getMapGen() != regMapGen) {
-        sp.emitError("R11: stale StreamPack: map_gen ")
-            << sp.getMapGen() << " != registry " << regMapGen << " (rehydrate: repack)";
-        ok = false;
       }
-      if (sp.getDataGen() != regDataGen) {
-        sp.emitError("R11: stale StreamPack: data_gen ")
-            << sp.getDataGen() << " != registry " << regDataGen << " (rehydrate: replan)";
+      if (!gens || gens->empty()) {
+        sp.emitError("R11: stale StreamPack: no per-resource generation vector for a registry of ")
+            << resourceByName.size()
+            << " resource(s) (a v1-v3 artifact: the maxima alone cannot see a resource that "
+               "moved under them; rehydrate: repack)";
         ok = false;
+        return;
       }
+      ArrayRef<int64_t> v = *gens;
+      llvm::DenseSet<uint32_t> named;
+      for (size_t i = 0; i + 2 < v.size(); i += 3) {
+        uint32_t rid = static_cast<uint32_t>(v[i]);
+        named.insert(rid);
+        auto it = rids.find(rid);
+        if (it == rids.end()) {
+          sp.emitError("R11: stale StreamPack: generation vector names rid ")
+              << rid << ", which the registry does not declare (rehydrate: repack)";
+          ok = false;
+          continue;
+        }
+        ResourceOp r = it->second;
+        if (static_cast<int64_t>(r.getMapGen()) != v[i + 1]) {
+          sp.emitError("R11: stale StreamPack: resource @")
+              << r.getSymName() << " (rid " << rid << ") map_gen " << v[i + 1] << " != registry "
+              << r.getMapGen() << " (rehydrate: repack)";
+          ok = false;
+        }
+        if (static_cast<int64_t>(r.getDataGen()) != v[i + 2]) {
+          sp.emitError("R11: stale StreamPack: resource @")
+              << r.getSymName() << " (rid " << rid << ") data_gen " << v[i + 2] << " != registry "
+              << r.getDataGen() << " (rehydrate: replan)";
+          ok = false;
+        }
+      }
+      walkScope(root, [&](ResourceOp r) {
+        if (!named.count(r.getRid())) {
+          sp.emitError("R11: stale StreamPack: resource @")
+              << r.getSymName() << " (rid " << r.getRid()
+              << ") was declared after hydration (no generation vector entry; rehydrate: "
+                 "repack)";
+          ok = false;
+        }
+      });
     });
 
     // R12: lowering legality -- a lowering contract preserves the BCIR

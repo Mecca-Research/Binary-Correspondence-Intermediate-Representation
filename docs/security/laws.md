@@ -152,6 +152,17 @@ passed the subset check
 gate reads its sources the way their compilers do (`active_text`,
 `active_shell_text`), and a documented requirement is asserted, never merely
 permitted.
+S0-E instance (2026-09-05): the maxima-only R11 was a rule whose loop iterated
+zero times over its own defect class -- a resource that moved while another
+held the maximum, or one declared after hydration, kept the header tags equal to
+the registry maxima, so the parent build ACCEPTED both on all three rails (the
+oracle over `vector_add`, the C `bcir_sp_check_generation` over the mutator's
+`stale_vector`, `-bcir-verify` over a two-resource registry). StreamPack v4's
+per-resource vector makes each a refusal, and the adversarial gate keeps the RED
+as a witness: `stale_vector`, `missing_vector_entry` and `undeclared_vector_rid`
+must pass the maxima-only API and fail the vector
+(`test_c_rejects_stale_generation_vectors_per_resource`,
+`test_generation_drift_under_the_maxima_is_R11`, `verify_generation_vector.mlir`).
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -471,6 +482,16 @@ second caller violated (`test_rop_forward_declared_resource_keeps_its_declared_d
 And the pointer-width mirror is compared entry for entry out of both sources
 (`test_the_pointer_width_tables_are_one_table_on_both_rails`), not on the
 handful of triples the corpus happens to use: `arm64_32` was 64 on both.
+S0-E instance (2026-09-05): R11 per resource is ONE predicate declared once
+(`BCIR_STREAMPACK_ABI.md` §v4: vector present -> every entry matches the live
+registry and every declared resource has an entry; vector absent -> stale against
+any registry that declares resources) and mirrored on all three rails in one PR
+(`verify_pack::_verify_generation_vector`, `bcir_sp_check_generation_vector`,
+`BCIRVerifyPass.cpp`'s R11 walk over the `generations` triples), with the vector's
+well-formedness (ascending RIDs, header maxima) shared by the encoder and the
+decoder (`_validate_generation_vector`, `bcir_sp_verify_semantic`, and
+`GEMStreamPackOp::verify`) and the ASN.1 projection carrying the same record. The
+legacy maxima API was kept, not re-implemented, so the two R11 forms cannot drift.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

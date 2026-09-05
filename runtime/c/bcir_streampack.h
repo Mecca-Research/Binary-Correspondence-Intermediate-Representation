@@ -3,13 +3,14 @@
  * The normative C view of the BCIR StreamPack wire format (the portable
  * artifact). The Python reference encoder/decoder is bcir/abi/streampack_abi.py;
  * docs/kernel/BCIR_STREAMPACK_ABI.md is the prose spec. The freestanding C runtime
- * loads v1 through the append-only v2/v3 forms with no libc dependency.
+ * loads v1 through the append-only v2/v3/v4 forms with no libc dependency.
  *
  * Wire format (little-endian):
  *   Header (64 bytes, cache-line aligned)  -- bcir_streampack_header
  *   Body (sequential, length-prefixed records):
  *     source_plan : str
  *     segments[n_segments] / prefetches[n_prefetches] / blocks[n_blocks] / trace[n_trace]
+ *     [v4: generations[n_gens]]  (the per-resource generation vector, law R11)
  *   Trailer: u32 CRC-32 of every preceding byte.
  *
  * Conventions:
@@ -49,7 +50,8 @@
 
 #define BCIR_STREAMPACK_MAGIC   "BSPK"   /* bytes 0..3 of the header */
 #define BCIR_STREAMPACK_VERSION 1
-#define BCIR_STREAMPACK_VERSION_MAX 3    /* v2: pipeline/double-buffer; v3: segment dispatch/channel */
+#define BCIR_STREAMPACK_VERSION_MAX 4    /* v2: pipeline/double-buffer; v3: segment dispatch/channel;
+                                          * v4: the per-resource generation vector (R11) */
 #define BCIR_STREAMPACK_HEADER_SIZE 64
 
 /* v3 segment dispatch (the execution-routing target). u8 enum on the wire, mirroring
@@ -65,20 +67,22 @@ typedef enum bcir_dispatch {
 extern "C" {
 #endif
 
-/* 64-byte, cache-line header. v2 appends fields into the v1 reserved pad. */
+/* 64-byte, cache-line header. v2 and v4 append fields into the v1 reserved pad. */
 typedef struct bcir_streampack_header {
   uint8_t  magic[4];        /* "BSPK" */
   uint16_t version;         /* 1..BCIR_STREAMPACK_VERSION_MAX */
   uint16_t flags;           /* reserved (0) */
-  uint32_t topo_gen;        /* generation tags (R11) */
+  uint32_t topo_gen;        /* generation tags (R11); map_gen/data_gen are the vector's maxima on v4 */
   uint32_t map_gen;
   uint32_t data_gen;
   uint32_t n_segments;      /* record counts in the body */
   uint32_t n_prefetches;
   uint32_t n_blocks;
   uint32_t n_trace;
-  uint16_t pipeline_depth;  /* v2: phases in flight (decoders see 1 for v1) */
-  uint8_t  reserved[26];    /* pad to 64 bytes (38 used + 26 = 64) */
+  uint16_t pipeline_depth;  /* v2 @36: phases in flight (decoders see 1 for v1) */
+  uint8_t  reserved0[2];    /* 38..39: reserved (0) */
+  uint32_t n_gens;          /* v4 @40: generation records after the trace stream (decoders see 0 before v4) */
+  uint8_t  reserved[20];    /* pad to 64 bytes (44 used + 20 = 64) */
 } bcir_streampack_header;
 
 /* The 64-byte cache-line header is the frozen ABI -- lock its size at compile time. */
@@ -90,6 +94,18 @@ typedef enum bcir_lane {
   BCIR_LANE_U = 0, BCIR_LANE_UX = 1, BCIR_LANE_T = 2,
   BCIR_LANE_GGG = 3, BCIR_LANE_A = 4, BCIR_LANE_H = 5
 } bcir_lane;
+
+/* v4 (append-only): one per-resource generation record (law R11) -- the registry's
+ * (map_gen, data_gen) for `rid` when the pack was hydrated. The body carries n_gens of
+ * them after the trace records, RIDs strictly ascending; the header map_gen/data_gen are
+ * their maxima. 12 bytes each on the wire (three little-endian u32). Mirrors
+ * bcir/gem/streampack.py::Generation. */
+typedef struct bcir_generation_view {
+  uint32_t rid;
+  uint32_t map_gen;
+  uint32_t data_gen;
+} bcir_generation_view;
+#define BCIR_GENERATION_WIRE_SIZE 12u
 
 /*
  * Body records are variable-length (length-prefixed), so they are described here
@@ -103,6 +119,7 @@ typedef enum bcir_lane {
  *                [v2: buffers:u8  (2 = double-buffer contract)]
  *   block     := base:u64  count:u64  strides:u64_array
  *   trace     := claim_id:u64  src_hash:u64  trace_hash:u64
+ *   [v4: generation := rid:u32  map_gen:u32  data_gen:u32   -- after the trace stream]
  *
  * v2 (append-only): the header gains pipeline_depth (in the v1 pad) and the
  * prefetch record appends buffers:u8. Segment/block/trace records are unchanged,
@@ -114,6 +131,18 @@ typedef enum bcir_lane {
  * mutation is no longer invisible to byte-identity. v3 implies v2 (it carries
  * pipeline_depth + the prefetch buffers tail). A pack that uses neither (every segment
  * "core"/"host") encodes as the lowest carrying version, so v1/v2 packs are unchanged.
+ *
+ * v4 (append-only, S0-2 / law R11): the header gains n_gens:u32 at offset 40 (carved
+ * from the pad; 38..39 stay reserved) and the body appends n_gens GENERATION records
+ * after the trace stream -- the registry's per-resource (map_gen, data_gen) at
+ * hydration, RIDs strictly ascending, the header map_gen/data_gen being their maxima
+ * (a decoder refuses a vector that is unsorted or whose maxima the header does not
+ * carry: BCIR_ERR_GENERATION). The maxima alone could not see a resource that moved
+ * while another still held the maximum, nor one declared after hydration;
+ * bcir_sp_check_generation_vector compares every entry with the caller's live registry.
+ * v4 implies v3 and v2 (every tail is written). A pack with no vector encodes as the
+ * lowest carrying version, so v1/v2/v3 artifacts are unchanged; every hydrated pack
+ * carries its vector and is v4.
  */
 
 #ifdef __cplusplus

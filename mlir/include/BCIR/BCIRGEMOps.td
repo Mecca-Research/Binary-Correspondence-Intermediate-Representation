@@ -11,14 +11,23 @@ def BCIR_GEMStreamPackOp : BCIR_Op<"gem.stream_pack", [Symbol, SymbolTable, NoTe
   let summary = "Hydrated GEM StreamPack (hot executable artifact)";
   // `pipeline_depth` (StreamPack ABI v2, append-only): phases in flight; 2 =
   // double-buffered software pipelining (mirrors gem.streampack.hydrate_pipelined).
+  // `generations` (StreamPack ABI v4, append-only; law R11, S0-2): the registry's
+  // per-resource generation vector at hydration as (rid, map_gen, data_gen) triples in
+  // strictly ascending rid order; `map_gen`/`data_gen` above are its maxima. The op
+  // verifier holds the shape (the codecs' predicate); -bcir-verify compares every entry
+  // with the scope's registry and refuses a pack without a vector where the registry
+  // declares resources (mirrors gem.streampack.StreamPack.generations and the C twin's
+  // bcir_generation_view).
   let arguments = (ins
     SymbolNameAttr:$sym_name, FlatSymbolRefAttr:$source_plan,
     I64Attr:$topo_gen, I64Attr:$map_gen, I64Attr:$data_gen,
-    DefaultValuedAttr<I32Attr, "1">:$pipeline_depth);
+    DefaultValuedAttr<I32Attr, "1">:$pipeline_depth,
+    OptionalAttr<DenseI64ArrayAttr>:$generations);
   // MLIR 22 forbids a Symbol op from producing an SSA result; the StreamPack is
   // addressed by its symbol -- the old !bcir.stream handle was vestigial.
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
+  let hasVerifier = 1;
 }
 
 def BCIR_GEMPrefetchOp : BCIR_Op<"gem.prefetch", [Symbol]> {

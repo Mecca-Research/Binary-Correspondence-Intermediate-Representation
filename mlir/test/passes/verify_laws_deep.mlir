@@ -82,9 +82,10 @@ bcir.module @r11 {
       cost = #bcir.costvec<compute = 1, memory = 0, fabric = 0, sync = 0, compile = 0, thermal = 0, power = 0, reliability = 0, security = 0, accuracy = 0, contention = 0, verification = 0>
     }
   }
-  // expected-error @+1 {{R11: stale StreamPack: map_gen 1 != registry 2 (rehydrate: repack)}}
+  // expected-error @+1 {{R11: stale StreamPack: resource @A (rid 10) map_gen 1 != registry 2 (rehydrate: repack)}}
   bcir.gem.stream_pack @sp0 attributes {
-    source_plan = @plan0, topo_gen = 1 : i64, map_gen = 1 : i64, data_gen = 0 : i64
+    source_plan = @plan0, topo_gen = 1 : i64, map_gen = 1 : i64, data_gen = 0 : i64,
+    generations = array<i64: 10, 1, 0>
   } {
     bcir.gem.block @blk0 { base = 0 : i64, count = 4 : i64, strideA = 1 : i64, strideB = 1 : i64, strideD = 1 : i64 }
   }

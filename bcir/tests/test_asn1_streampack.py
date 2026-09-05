@@ -102,6 +102,47 @@ def test_projection_omits_default_valued_components():
     del raw
 
 
+def test_generation_vector_is_projected_and_its_defaults_are_omitted():
+    """S0-2 (StreamPack v4): the per-resource generation vector is a named component
+    (`generations [10] SEQUENCE OF Generation DEFAULT {}`), so an ASN.1 peer can read
+    the R11 witness; a vector-less pack omits it (§11.5), and a Generation at the
+    (0, 0) defaults encodes as its rid alone. The projection version moved to 2 while
+    the schema keeps `version [0] INTEGER DEFAULT 1`: a version-2 document spells its
+    version explicitly, and a document without the field still means version 1."""
+    from bcir.gem.streampack import Generation
+
+    assert PROJECTION_VERSION == 2
+    _, pack = next(_packs())
+    assert pack.generations, "a hydrated pack carries the vector"
+    value = pack_to_value(pack)
+    assert value["version"] == 2
+    assert value["generations"] == [
+        {"rid": g.rid, "mapGen": g.map_gen, "dataGen": g.data_gen} for g in pack.generations
+    ]
+    assert decode_pack(encode_pack(pack)).generations == pack.generations
+    # the outer SEQUENCE carries a [10] child exactly when the vector is non-empty
+    tags = [child.tag.number for child in decode_one(encode_pack(pack)).children]
+    assert 10 in tags
+    vectorless = StreamPack(
+        source_plan=pack.source_plan, map_gen=0, data_gen=0, segments=pack.segments
+    )
+    tags = [child.tag.number for child in decode_one(encode_pack(vectorless)).children]
+    assert 10 not in tags
+    assert decode_pack(encode_pack(vectorless)).generations == []
+    # DEFAULT 0 map/data generations are omitted: (12, 0, 0) is shorter than (12, 1, 1)
+    at_defaults = StreamPack(
+        source_plan="p", map_gen=0, data_gen=0, generations=[Generation(12, 0, 0)]
+    )
+    moved = StreamPack(source_plan="p", map_gen=1, data_gen=1, generations=[Generation(12, 1, 1)])
+    assert len(encode_pack(at_defaults)) < len(encode_pack(moved))
+    assert decode_pack(encode_pack(at_defaults)) == at_defaults
+    assert decode_pack(encode_pack(moved)) == moved
+    # the native round trip of a v4 artifact (additive law) survives the projection
+    native = abi_encode(pack)
+    assert native[4] == 4
+    assert abi_encode(decode_pack(encode_pack(abi_decode(native)))) == native
+
+
 def test_module_identity_is_a_well_formed_private_enterprise_oid():
     """The module OID must live in private-enterprise space and encode canonically."""
     from bcir.asn1.values import decode_oid, encode_oid

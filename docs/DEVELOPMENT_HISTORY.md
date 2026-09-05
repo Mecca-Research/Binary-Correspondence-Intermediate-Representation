@@ -436,6 +436,19 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   cases, the checked calibration derivation, the claimless-module manifest, the address floor
   on the oracle and a pointer-width table with no sub-floor row (and `arm64_32`), the corpus's
   required additional laws, and the two text gates reading their sources as their compilers do.
+  S0-E (2026-09-05) landed StreamPack **v4**, the per-resource generation vector (S0-2): an
+  append-only record after the trace stream (`n_gens` carved from the header pad at offset 40,
+  one `rid/map_gen/data_gen` triple per declared resource in RID order, the header tags pinned
+  to the vector's maxima), emitted by every `hydrate`, with the C twin
+  (`bcir_sp_for_each_generation`, `bcir_sp_check_generation_vector`,
+  `bcir_sp_execute_checked_vector`, the byte-identical re-encode and the DER fast path), the
+  ASN.1 projection (`generations [10]`, projection version 2) and the law rail's
+  `generations` triples on `bcir.gem.stream_pack`. R11 per resource is one predicate on three
+  rails, and the parent's blind spot -- a resource that moved while another held the maximum,
+  or one declared after hydration, invisible to the maxima -- was measured RED on each rail
+  before it was closed; the mutator keeps the witness (`stale_vector` and its siblings pass
+  the maxima-only API and fail the vector). Hand-built packs without a vector stay
+  byte-frozen v1–v3; a hydrated vector_add pack grows from 220 to 264 bytes.
 
 ---
 

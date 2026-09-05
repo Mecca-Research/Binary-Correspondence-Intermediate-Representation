@@ -6,7 +6,7 @@
  *
  * `bcir_sp_reencode` parses a StreamPack field-by-field and re-serializes it through the
  * encoder's value-based write primitives into a caller buffer, recomputing the CRC. By
- * construction the output is **byte-identical** to the (frozen v1 / append-only v2/v3)
+ * construction the output is **byte-identical** to the (frozen v1 / append-only v2/v3/v4)
  * encoding, so a round-trip against a Python-encoded pack proves the writer primitives +
  * the record layout match the ABI exactly (the parity gate is
  * bcir/tests/test_c_encoder.py). The same write primitives a driver uses to emit a pack

@@ -156,6 +156,10 @@ bcir_status bcir_sp_reencode(const uint8_t *BCIR_RESTRICT in, size_t in_len,
     w_bytes(&w, r_take(&r, 8), 8); /* src_hash (u64) */
     w_bytes(&w, r_take(&r, 8), 8); /* trace_hash (u64) */
   }
+  if (hdr.version >= 4) {
+    for (uint32_t i = 0; i < hdr.n_gens && !r.err && !w.err; i++)  /* v4: rid, map_gen, data_gen */
+      w_bytes(&w, r_take(&r, BCIR_GENERATION_WIRE_SIZE), BCIR_GENERATION_WIRE_SIZE);
+  }
 
   if (r.err)
     return BCIR_ERR_TRUNCATED;

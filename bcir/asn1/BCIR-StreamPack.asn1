@@ -12,7 +12,8 @@ DEFINITIONS IMPLICIT TAGS ::= BEGIN
       segments       [6] SEQUENCE OF LaneSegment,
       prefetches     [7] SEQUENCE OF Prefetch  DEFAULT {},
       blocks         [8] SEQUENCE OF Block     DEFAULT {},
-      traceNotes     [9] SEQUENCE OF TraceNote DEFAULT {} }
+      traceNotes     [9] SEQUENCE OF TraceNote DEFAULT {},
+      generations   [10] SEQUENCE OF Generation DEFAULT {} }
 
   LaneSegment ::= SEQUENCE {
       name           [0] UTF8String,
@@ -49,5 +50,10 @@ DEFINITIONS IMPLICIT TAGS ::= BEGIN
       claimId        [0] INTEGER,
       srcHash        [1] INTEGER DEFAULT 0,
       traceHash      [2] INTEGER DEFAULT 0 }
+
+  Generation ::= SEQUENCE {
+      rid            [0] INTEGER,
+      mapGen         [1] INTEGER DEFAULT 0,
+      dataGen        [2] INTEGER DEFAULT 0 }
 
 END

@@ -36,7 +36,7 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     variadics), M5 ETL, telemetry/calibration (T1–T4: stable signal IDs and explicit metric
     semantics, strict UART frame ABI with sequence evidence,
     derived metrics, and OTLP/Prometheus-text/Redfish serialization adapters), StreamPack ABI
-    (v1 frozen, v2/v3 append-only), the **R1–R25** verifier, lowering (the single-claim
+    (v1 frozen, v2/v3/v4 append-only), the **R1–R25** verifier, lowering (the single-claim
     elementwise LLVM AOT/JIT/WASM subset /
     stackify / per-target llc / portable C23 kernels / Area-B library wraps), the
     Phase 13–26 learned organs (calibration, portfolio + replay gate, MoE gate, search
