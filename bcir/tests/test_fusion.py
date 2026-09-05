@@ -257,3 +257,125 @@ def test_cse_is_consistent_across_the_tropical_and_rcsp_rails():
 
 def test_cse_leaves_the_single_claim_pin_intact():
     assert optimize(vector_add(1024), AVX, COOL).score == 7808  # no duplicate -> no-op
+
+
+# --- G1 / S1-A (assessment row 7): the CSE identity is complete and the exclusions categorical --
+
+
+def _dup_module(second: dict, first: dict | None = None, resource_domain=None):
+    """c1 = A(10)+B(11)->D(12); c2 = A+B->E(13) with `second`'s field overrides (a would-be
+    duplicate of c1); `first` overrides c1 the same way, `resource_domain` re-homes A and B."""
+    from bcir.model import Domain
+
+    m = Module(name="cse_neg")
+    for rid in (10, 11, 12, 13):
+        m.add_resource(
+            Resource(
+                rid=rid,
+                shape=(1 << 16,),
+                domain=resource_domain if (resource_domain and rid in (10, 11)) else Domain.RAM,
+            )
+        )
+    base = dict(
+        opcode=Opcode.ADD,
+        lane=Lane.U,
+        stride_class=StrideClass.UNIT,
+        count=1 << 16,
+        op="vector.add",
+    )
+    c1 = Claim(id=1, rd=(10, 11), wr=(12,), **{**base, **(first or {})})
+    c2 = Claim(id=2, rd=(10, 11), wr=(13,), **{**base, **second})
+    m.add_phase(Phase(phase_id=0, deps=(), claims=[c1, c2]))
+    return m
+
+
+def _credited(m) -> bool:
+    """Whether claim 2 took the CSE copy credit: its fused candidates are cheaper than its own
+    offer (`candidates_for`, the price it pays with no earlier occurrence)."""
+    from bcir.kbcir.realize import candidates_for, fused_candidates
+
+    c2 = m.phases[0].claims[1]
+    own = candidates_for(c2, AVX, m.resource(c2.rd[0]))
+    return fused_candidates(m, AVX)[2] != own
+
+
+def test_cse_requires_the_complete_semantic_identity():
+    """The old key was the op string and the read versions: a duplicate over a different
+    count, offset, stride, lane, opcode or dynamic bound took the copy credit. The value is
+    the same only when the whole access pattern and contract are."""
+    assert _credited(_dup_module({}))  # the positive control: an exact duplicate is a copy
+    for label, diff in {
+        "count": {"count": 4096},
+        "offset": {"offset": 8},
+        "stride": {"stride_class": StrideClass.STRIDED, "stride_k": 2},
+        "lane": {"lane": Lane.UX, "stride_class": StrideClass.CACHELINE},
+        "opcode": {"opcode": Opcode.SUB},  # the op STRING agrees; the opcode does not
+        "dynamic": {"dynamic": True},
+    }.items():
+        assert not _credited(_dup_module(diff)), label
+
+
+def test_cse_never_merges_atomic_barriered_volatile_or_effectful_claims():
+    """Both claims carry the trait, so their identities agree and only the categorical
+    exclusion withholds the credit: an atomic read-modify-write, a barriered or volatile
+    access, an effect opcode, an indirect call, a claim with lifetime metadata, a sparse
+    gather, a non-default numeric contract, and the oracle-only fields the law rail cannot see."""
+    from bcir.model import Lifetime
+
+    for label, trait in {
+        "atomic hazard": {"hazard": "atomic"},
+        "barriered": {"hazard": "barriered"},
+        "volatile": {"hazard": "barriered", "volatile": True},
+        "atomic opcode": {"opcode": Opcode.ATOMIC_ADD, "op": "atomic.add", "hazard": "atomic"},
+        "barrier opcode": {"opcode": Opcode.BARRIER, "op": "c.fence", "hazard": "barriered"},
+        "dispatch": {
+            "opcode": Opcode.GEM_DISPATCH,
+            "op": "c.call.indirect",
+            "callee_sig": "int(int)",
+        },
+        "lifetime": {"lifetime": Lifetime("free")},
+        "gather": {
+            "lane": Lane.GGG,
+            "stride_class": StrideClass.RANDOM,
+            "opcode": Opcode.GGG_LOAD,
+            "op": "histogram.gather",
+        },
+        "immediate": {"imm": (7,)},
+        "tolerance": {"tolerance_ulp": 2},
+        "quantized": {"quantized_bits": 8},
+        "compensated": {"precision": "compensated"},
+    }.items():
+        assert not _credited(_dup_module(trait, first=trait)), label
+
+
+def test_cse_never_touches_an_isolated_domain():
+    """An MMIO register read is an effect: a claim in, or touching, an isolated domain is never
+    a common subexpression, whichever side declares it."""
+    from bcir.model import Domain
+
+    assert not _credited(_dup_module({}, resource_domain=Domain.MMIO))
+    mmio = {"domain": Domain.MMIO}
+    assert not _credited(_dup_module(mmio, first=mmio))
+
+
+def test_an_ineligible_claim_never_seeds_a_duplicate():
+    """The seed must be eligible too: a volatile read of A+B followed by an ordinary A+B is not
+    a value already in hand (the volatile read is not elidable and its value is not stable)."""
+    assert not _credited(_dup_module({}, first={"hazard": "barriered", "volatile": True}))
+    assert _credited(_dup_module({}))  # the same pair with an eligible seed IS a copy
+
+
+def test_cse_eligibility_and_identity_are_the_explicit_predicates():
+    """The two predicates the law rail mirrors (BCIRCostModel.h cseEligible / cseIdentity):
+    the identity carries the whole access pattern and the read versions; a rewrite of an
+    operand changes it, a bounds or verify contract does not."""
+    from bcir.kbcir.realize import cse_eligible, cse_identity
+
+    m = _dup_module({})
+    c1, c2 = m.phases[0].claims
+    assert cse_eligible(c1, m) and cse_eligible(c2, m)
+    assert cse_identity(c1, {}) == cse_identity(c2, {})
+    assert cse_identity(c1, {10: 1}) != cse_identity(c2, {})  # A rewritten: a new version
+    relaxed = replace(c2, verify="none", bounds="assumed_safe", cost_class="compute")
+    assert cse_identity(relaxed, {}) == cse_identity(c1, {})  # contracts are not the value
+    assert not cse_eligible(replace(c2, rd=()), m)  # nothing read: nothing to duplicate

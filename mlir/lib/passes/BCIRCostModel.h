@@ -246,6 +246,86 @@ inline Factor cseFactor(int nrd, int nwr) { // duplicate -> a copy (no recompute
   return f;
 }
 
+// --- CSE identity + eligibility (realize.cse_identity / cse_eligible, G1 / S1-A) -----------
+
+// model/opcodes.py ATOMIC_OPCODES: the atomic read-modify-write opcodes (ATOMIC_ADD, ATOMIC_SUB,
+// ATOMIC_XOR, CMPXCHG) -- and realize.EFFECTFUL_OPCODES: the effect edges (BARRIER, PHASE_ENTER,
+// PHASE_LEAVE, GEM_DISPATCH, PROV_NOTE). A duplicate of either is a second effect, not a copy.
+inline bool isAtomicOpcode(int64_t opcode) {
+  return opcode >= 6 && opcode <= 9;
+}
+inline bool isEffectOpcode(int64_t opcode) {
+  return opcode == 10 || opcode == 11 || opcode == 12 || opcode == 16 || opcode == 17;
+}
+
+// realize.cse_eligible: whether a claim may take part in CSE at all -- as the duplicate OR as
+// the seed an earlier occurrence provides. Categorical, before any identity is compared: an
+// atomic read-modify-write, a barriered or volatile claim, an effect opcode, an indirect call,
+// timing/lifetime metadata, a sparse GGG/random access, a non-default numeric contract
+// (precision), and a claim of or touching an isolated (MMIO) domain are never a common
+// subexpression. Byte-for-byte with the oracle over the fields the IR carries (the oracle
+// additionally refuses `imm`, `tolerance_ulp` and `quantized_bits`, which the IR does not
+// carry -- it refuses them so the two rails never disagree over a module the IR can express).
+inline bool cseEligible(ClaimOp c, ArrayRef<StringRef> reads, ArrayRef<StringRef> writes,
+                        const llvm::DenseMap<StringRef, ResourceOp> &resByName) {
+  if (reads.empty())
+    return false;
+  if (c.getHazard() != HazardMode::Unique || c.getIsVolatile())
+    return false;
+  int64_t opcode = static_cast<int64_t>(c.getOpcode());
+  if (isAtomicOpcode(opcode) || isEffectOpcode(opcode))
+    return false;
+  if (c.getCalleeSig() || c.getTiming() || c.getLifetime())
+    return false;
+  if (c.getLane() == Lane::GGG || c.getStrideClass() == StrideClass::Random)
+    return false;
+  if (c.getPrecision())
+    return false;
+  if (isIsolatedDomain(c.getDomain()))
+    return false;
+  auto touchesIsolated = [&](ArrayRef<StringRef> syms) {
+    for (StringRef sym : syms)
+      if (auto r = resByName.lookup(sym))
+        if (isIsolatedDomain(r.getDomainKind()))
+          return true;
+    return false;
+  };
+  return !touchesIsolated(reads) && !touchesIsolated(writes);
+}
+
+// realize.cse_identity: the complete semantic identity of a claim's VALUE -- the op (string and
+// opcode), the access pattern that decides which elements it touches (lane, stride class,
+// stride multiplier, offset, count), the domain, the dynamic-bound flag, and its read operands
+// AT THEIR CURRENT VERSIONS (a write bumps a version, so a rewrite between two occurrences
+// invalidates the match). The old key was the op and the read versions alone, so a duplicate
+// over a different count, offset or stride took the copy credit.
+inline std::string cseIdentity(ClaimOp c, ArrayRef<StringRef> reads,
+                               const llvm::DenseMap<StringRef, int> &version) {
+  std::string sig = c.getOp().str();
+  sig += "#";
+  sig += std::to_string(static_cast<int64_t>(c.getOpcode()));
+  sig += "#";
+  sig += std::to_string(static_cast<int64_t>(c.getLane()));
+  sig += "#";
+  sig += std::to_string(static_cast<int64_t>(c.getStrideClass()));
+  sig += "#";
+  sig += std::to_string(static_cast<int64_t>(c.getCount()));
+  sig += "#";
+  sig += std::to_string(static_cast<int64_t>(c.getStrideK()));
+  sig += "#";
+  sig += std::to_string(static_cast<int64_t>(c.getOffset()));
+  sig += "#";
+  sig += std::to_string(static_cast<int64_t>(c.getDomain()));
+  sig += c.getDynamic() ? "#dyn" : "#static";
+  for (StringRef rd : reads) {
+    sig += "|";
+    sig += rd.str();
+    sig += "@";
+    sig += std::to_string(version.lookup(rd));
+  }
+  return sig;
+}
+
 // A claim's fused candidate column, in flat (phase, declared) order.
 struct Column {
   ClaimOp claim;
@@ -313,15 +393,12 @@ inline std::vector<Column> fusedColumns(Operation *root, const Cap &h,
       }
     col.cands = candidatesFor(c, h, dom, ham);
 
-    std::string sig = c.getOp().str();
-    for (StringRef rd : col.reads) {
-      sig += "|";
-      sig += rd.str();
-      sig += "@";
-      sig += std::to_string(version.lookup(rd));
-    }
+    // The value-numbered semantic identity (G1): the same value at the same versions, and only
+    // an eligible claim seeds or takes the credit.
+    bool eligible = cseEligible(c, col.reads, writes, resByName);
+    std::string sig = eligible ? cseIdentity(c, col.reads, version) : std::string();
     bool barriered = c.getHazard() == HazardMode::Barriered; // ASM3b ordering fence
-    bool cse = !col.reads.empty() && seen.count(sig);
+    bool cse = eligible && seen.count(sig);
     bool defo = false;
     bool defoFenced = false; // a shared read was produced by a barriered producer (ASM3b)
     if (!cse)
@@ -344,7 +421,7 @@ inline std::vector<Column> fusedColumns(Operation *root, const Cap &h,
         applyFactor(cc.cost, f);
       col.fusion = cse ? "cse" : "deforest";
     }
-    if (!col.reads.empty())
+    if (eligible)
       seen.insert(sig);
     for (StringRef w : writes)
       version[w] = version.lookup(w) + 1;
@@ -395,15 +472,10 @@ fusedColumnsFromClaims(ArrayRef<ClaimOp> claims, const Cap &h,
         ham = r.getAccess() && *r.getAccess() == Access::HAM;
       }
     col.cands = candidatesFor(c, h, dom, ham);
-    std::string sig = c.getOp().str();
-    for (StringRef rd : col.reads) {
-      sig += "|";
-      sig += rd.str();
-      sig += "@";
-      sig += std::to_string(version.lookup(rd));
-    }
+    bool eligible = cseEligible(c, col.reads, col.writes, resByName);
+    std::string sig = eligible ? cseIdentity(c, col.reads, version) : std::string();
     bool barriered = c.getHazard() == HazardMode::Barriered; // ASM3b ordering fence
-    bool cse = !col.reads.empty() && seen.count(sig);
+    bool cse = eligible && seen.count(sig);
     bool defo = false;
     bool defoFenced = false; // a shared read was produced by a barriered producer (ASM3b)
     if (!cse)
@@ -425,7 +497,7 @@ fusedColumnsFromClaims(ArrayRef<ClaimOp> claims, const Cap &h,
         applyFactor(cc.cost, f);
       col.fusion = cse ? "cse" : "deforest";
     }
-    if (!col.reads.empty())
+    if (eligible)
       seen.insert(sig);
     for (StringRef wsym : col.writes)
       version[wsym] = version.lookup(wsym) + 1;

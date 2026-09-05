@@ -7,6 +7,14 @@ decoupled into a tail stream so the irreducible random work does not stall the
 sequential (U/UX/T) waves. Each wave's claims are pinned round-robin to the
 target's affinity domains (thread->cache); a wave wider than the available
 domains is oversubscribed, modeled as `contention` (cache thrash).
+
+The ONE hazard predicate of the GEM rails lives here (G1 / S1-A): `hazard_conflict`
+is a data hazard (RAW / WAR / WAW) OR an ordering fence -- a `barriered` or
+`volatile` claim conflicts with every other claim -- and `hazard_predecessors`
+builds the dependency DAG the duration-aware scheduler (`gem.schedule`), the token
+plan (`gem.async_tokens`) and the bundle reorderer (`kbcir.bundle`) all honor. The
+edges are built over EVERY claim of a phase, sparse tail included, BEFORE the
+stream split, so a gather that reads what a wave claim writes waits for it.
 """
 
 from __future__ import annotations
@@ -32,6 +40,19 @@ def _conflict(a: Claim, b: Claim) -> bool:
     aw, ar = set(a.wr), set(a.rd)
     bw, br = set(b.wr), set(b.rd)
     return bool(aw & (br | bw)) or bool(bw & ar)
+
+
+def is_fence(c: Claim) -> bool:
+    """An ordering fence: a `barriered`-hazard or `volatile` claim (ASM3b / §5.14). It is
+    never reordered, fused, bundled or overlapped with any other claim -- on either side."""
+    return c.hazard == "barriered" or bool(c.volatile)
+
+
+def hazard_conflict(a: Claim, b: Claim) -> bool:
+    """The ONE scheduling-hazard predicate (G1): a data hazard or an ordering fence on
+    either side. `kbcir.bundle._conflict` is this predicate; the schedulers build their
+    dependency DAGs from it (`hazard_predecessors`)."""
+    return is_fence(a) or is_fence(b) or _conflict(a, b)
 
 
 def _is_sparse(c: Claim) -> bool:
@@ -72,6 +93,37 @@ def _conflict_predecessors(claims: list[Claim]) -> dict[int, list[int]]:
             readers.setdefault(rid, []).append(claim.id)
         for rid in wr:
             writers.setdefault(rid, []).append(claim.id)
+    return out
+
+
+def hazard_predecessors(claims: list[Claim]) -> dict[int, list[int]]:
+    """Every earlier claim a claim must wait for: its data hazards (`_conflict_predecessors`)
+    plus the ordering fences (`is_fence`).
+
+    A fence waits for every claim since the previous fence and for that fence; every
+    later claim waits for the most recent fence. Transitively that is exactly "a fence
+    conflicts with everything" (`hazard_conflict`) in O(claims) fence edges instead of
+    O(claims^2), and a module with no fence gets byte-identical edges to the data-only
+    DAG. Predecessors are listed in position order. Built over EVERY claim handed in --
+    the caller passes a whole phase (or the whole module), sparse tail included, so the
+    cross-stream RAW/WAR/WAW edges exist before any stream split (G1 / S1-A).
+    """
+    out = _conflict_predecessors(claims)
+    position = {claim.id: index for index, claim in enumerate(claims)}
+    last_fence: int | None = None
+    segment: list[int] = []  # claims since the last fence (non-fences)
+    for claim in claims:
+        predecessors = out[claim.id]
+        if is_fence(claim):
+            extra = segment if last_fence is None else [last_fence, *segment]
+            if extra:
+                out[claim.id] = sorted(set(predecessors) | set(extra), key=position.__getitem__)
+            last_fence = claim.id
+            segment = []
+        else:
+            if last_fence is not None and last_fence not in predecessors:
+                out[claim.id] = sorted(set(predecessors) | {last_fence}, key=position.__getitem__)
+            segment.append(claim.id)
     return out
 
 

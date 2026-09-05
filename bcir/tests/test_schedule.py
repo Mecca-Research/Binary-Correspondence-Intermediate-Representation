@@ -2,14 +2,16 @@
 
 from dataclasses import replace
 
-from bcir.examples import vector_add
+from bcir.examples import PROGRAMS, vector_add
 from bcir.gem import (
     TAIL_STREAM,
     bandwidth_knee,
     durations_from,
     execute_tokens,
     hydrate_pipelined,
+    price_scheduled,
     schedule_eft,
+    schedule_plan,
 )
 from bcir.kbcir import TARGETS, optimize
 from bcir.kbcir.cost import TargetProfile, Theta
@@ -28,6 +30,7 @@ def _claim(
     cost_class="bandwidth",
     op="vector.add",
     opcode=Opcode.ADD,
+    **contract,
 ):
     return Claim(
         id=cid,
@@ -39,6 +42,20 @@ def _claim(
         wr=wr,
         op=op,
         cost_class=cost_class,
+        **contract,
+    )
+
+
+def _gather(cid, rd, wr, **contract):
+    return _claim(
+        cid,
+        rd,
+        wr,
+        lane=Lane.GGG,
+        sc=StrideClass.RANDOM,
+        op="histogram.gather",
+        opcode=Opcode.GGG_LOAD,
+        **contract,
     )
 
 
@@ -144,6 +161,185 @@ def test_ggg_tail_runs_on_its_own_stream():
     s = schedule_eft(m, {1: 6, 2: 9}, AVX)
     assert s.affinity[2] == TAIL_STREAM
     assert s.makespan == 9  # tail overlaps the wave stream: max(6, 9)
+
+
+# --- G1 / S1-A: the hazard DAG is built over every claim BEFORE the stream split -------------
+
+
+def test_a_dependent_tail_claim_waits_for_its_producer():
+    """RAW wave -> tail: the gather reads @11, which claim 1 writes. The parent build split the
+    streams first and ran the tail as a chain from the phase start, so the gather started at 0
+    with its input unwritten (assessment row 6, the negative witness). Both modes place the
+    same slots here -- one artifact, two edge sets that coincide on one phase."""
+    m = _module([(0, (), [_claim(1, (10,), (11,)), _gather(2, (11,), (12,))])], (10, 11, 12))
+    s = schedule_eft(m, {1: 6, 2: 9}, AVX)
+    assert s.slot_of(2).domain == TAIL_STREAM  # still the decoupled stream ...
+    assert s.slot_of(2).start == s.slot_of(1).finish == 6  # ... but after its producer
+    assert s.makespan == 15
+    assert execute_tokens(m, {1: 6, 2: 9}, AVX).slots == s.slots
+
+
+def test_a_wave_claim_waits_for_a_tail_producer_and_a_tail_writer_for_its_reader():
+    """The edges hold in both directions: RAW tail -> wave, and WAR wave -> tail."""
+    raw = _module([(0, (), [_gather(1, (10,), (11,)), _claim(2, (11,), (12,))])], (10, 11, 12))
+    s = schedule_eft(raw, {1: 9, 2: 6}, AVX)
+    assert s.slot_of(2).start == s.slot_of(1).finish == 9 and s.makespan == 15
+    war = _module([(0, (), [_claim(1, (11,), (12,)), _gather(2, (10,), (11,))])], (10, 11, 12))
+    w = schedule_eft(war, {1: 6, 2: 9}, AVX)
+    assert w.slot_of(2).start == w.slot_of(1).finish == 6 and w.makespan == 15
+
+
+def test_a_fence_is_overlapped_by_nothing():
+    """Claim 2 is barriered (then volatile) and shares no resource with 1 or 3: everything before
+    it finishes first and everything after it starts after it. The parent build placed all
+    three at 0 on separate domains."""
+    for fence in ({"hazard": "barriered"}, {"hazard": "barriered", "volatile": True}):
+        m = _module(
+            [
+                (
+                    0,
+                    (),
+                    [
+                        _claim(1, (10,), (11,)),
+                        _claim(2, (20,), (21,), **fence),
+                        _claim(3, (30,), (31,)),
+                    ],
+                )
+            ],
+            (10, 11, 20, 21, 30, 31),
+        )
+        s = schedule_eft(m, {1: 4, 2: 5, 3: 6}, AVX)
+        assert s.slot_of(2).start == s.slot_of(1).finish == 4, fence
+        assert s.slot_of(3).start == s.slot_of(2).finish == 9, fence
+        assert s.makespan == 15, fence
+
+
+def test_tokens_honor_a_fence_across_phases():
+    """The phase-1 claim is data-independent of the phase-0 fence: under tokens it used to
+    start at 0 (the pipelining of test_tokens_pipeline_independent_phases); a fence forbids
+    exactly that overlap, and the await list says why."""
+    from bcir.gem import async_plan
+
+    m = _module(
+        [
+            (0, (), [_claim(1, (10,), (11,), hazard="barriered")]),
+            (1, (0,), [_claim(2, (20,), (21,))]),
+        ],
+        (10, 11, 20, 21),
+    )
+    assert async_plan(m).awaits == {1: [], 2: [1]}
+    assert execute_tokens(m, {1: 8, 2: 5}, AVX).makespan == 13
+    assert schedule_eft(m, {1: 8, 2: 5}, AVX).makespan == 13
+
+
+def test_a_zero_cost_step_is_a_point_on_the_timeline():
+    """Durations are exactly the plan's step costs: a zero-cost step is a zero-length slot,
+    so a serialized chain never prices above its own serial sum (the R9 bound)."""
+    from types import SimpleNamespace
+
+    fake = SimpleNamespace(
+        steps=[SimpleNamespace(claim_id=1, cost=0), SimpleNamespace(claim_id=2, cost=5)]
+    )
+    assert durations_from(fake) == {1: 0, 2: 5}
+    m = _module([(0, (), [_claim(1, (10,), (11,)), _claim(2, (11,), (12,))])], (10, 11, 12))
+    s = schedule_eft(m, durations_from(fake), AVX)
+    assert (s.slot_of(1).start, s.slot_of(1).finish) == (0, 0)
+    assert (s.slot_of(2).start, s.slot_of(2).finish) == (0, 5) and s.makespan == 5
+
+
+def test_schedule_plan_is_the_one_artifact_the_price_and_the_executors_read():
+    """G1's gate: token execution and the priced schedule agree -- identical slot assignment.
+    `schedule_plan` is the artifact; `price_scheduled(...).schedule` IS it, and each executor
+    returns the same slots over the plan's own step costs, on every corpus program."""
+    theta = Theta.cool()
+    for name, build in PROGRAMS.items():
+        m = build()
+        r = optimize(m, AVX, theta)
+        for mode, executor in (("eft", schedule_eft), ("tokens", execute_tokens)):
+            artifact = schedule_plan(m, r, AVX, mode=mode)
+            assert (
+                artifact.mode == mode
+                and artifact.slots == executor(m, durations_from(r), AVX).slots
+            ), (name, mode)
+            priced = price_scheduled(m, r, AVX, theta, mode=mode)
+            assert (
+                priced.schedule.slots == artifact.slots and priced.makespan == artifact.makespan
+            ), (name, mode)
+            assert priced.serial == r.score == sum(durations_from(r).values()), name
+            assert 0 <= priced.makespan <= priced.serial, name
+
+
+def test_schedule_plan_refuses_an_unknown_mode():
+    m = vector_add(1024)
+    r = optimize(m, AVX, Theta.cool())
+    try:
+        schedule_plan(m, r, AVX, mode="waves")
+    except ValueError as exc:
+        assert "waves" in str(exc)
+    else:
+        raise AssertionError("an unknown schedule mode must be refused, not defaulted")
+
+
+def test_mlir_schedule_hazards_are_in_sync():
+    """Pins the constants -bcir-schedule-eft / -bcir-async / -bcir-overlap annotate in
+    mlir/test/passes/schedule_hazards.mlir (the module is emitted from this very build): the
+    gather waits for its producer on the tail stream, the fence waits for everything before it
+    and holds everything after it, and the price is the placement's makespan (gain 0)."""
+    from bcir.gem import async_plan
+    from bcir.gem.overlap import price_waves_legacy
+    from bcir.kbcir.weights import PERF
+    from bcir.model import Domain
+
+    def C(i, rd, wr, **kw):
+        kw.setdefault("lane", Lane.U)
+        kw.setdefault("sc", StrideClass.UNIT)
+        kw.setdefault("opcode", Opcode.ADD)
+        kw.setdefault("op", "vector.add")
+        return _claim(i, rd, wr, cost_class="compute", domain=Domain.RAM, **kw)
+
+    m = Module(name="hazards")
+    for r in range(10, 17):
+        m.add_resource(Resource(rid=r, domain=Domain.RAM, shape=(1024,)))
+    m.add_phase(
+        Phase(
+            phase_id=0,
+            claims=[
+                C(1, (10,), (11,), hazard="atomic"),
+                C(
+                    2,
+                    (11,),
+                    (12,),
+                    lane=Lane.GGG,
+                    sc=StrideClass.RANDOM,
+                    opcode=Opcode.GGG_LOAD,
+                    op="histogram.gather",
+                    hazard="atomic",
+                ),
+                C(3, (13,), (14,), hazard="barriered"),
+                C(4, (15,), (16,)),
+            ],
+        )
+    )
+    theta = Theta.cool()
+    r = optimize(m, AVX, theta, PERF)
+    assert durations_from(r) == {1: 5248, 2: 396288, 3: 5248, 4: 5248}
+    assert async_plan(m).awaits == {1: [], 2: [1], 3: [1, 2], 4: [3]}
+    expected = [
+        (1, 0, 0, 5248),
+        (2, TAIL_STREAM, 5248, 401536),
+        (3, 0, 401536, 406784),
+        (4, 0, 406784, 412032),
+    ]
+    for sched in (
+        schedule_eft(m, durations_from(r), AVX),
+        execute_tokens(m, durations_from(r), AVX),
+    ):
+        assert [(x.claim_id, x.domain, x.start, x.finish) for x in sched.slots] == expected
+        assert sched.makespan == 412032 and sched.knee == 4
+    priced = price_scheduled(m, r, AVX, theta, PERF)
+    assert (priced.makespan, priced.serial, priced.overlap_gain) == (412032, 412032, 0)
+    legacy = price_waves_legacy(m, r, AVX, theta, PERF)  # the witness: the parent's price
+    assert (legacy.makespan, legacy.overlap_gain) == (396288, 15744)
 
 
 def test_tokens_pipeline_independent_phases():

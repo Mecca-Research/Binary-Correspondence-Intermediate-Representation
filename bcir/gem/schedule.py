@@ -1,27 +1,48 @@
-"""Duration-aware GEM scheduling: EFT waves, the token DAG, locality, the knee.
+"""Duration-aware GEM scheduling: the ONE canonical schedule artifact (G1 / S1-A).
 
-Four upgrades over the unit-time wave scheduler (`concurrency.schedule_concurrent`),
-all deterministic and integer-only:
+`schedule_plan` places a selected K_BCIR plan once, deterministically and
+integer-only, and everything that needs a schedule reads that placement: the
+scheduled price M(pi, Theta) (`gem.overlap.price_scheduled`), the phase-barriered
+executor (`schedule_eft`), the token-DAG executor (`execute_tokens`) and the power
+rail. Before this slice the objective priced fixed greedy waves with round-robin
+bins while the executor ran LPT/EFT placement -- two prices for one plan (the
+2026-08-12 report's P0.1, 51,200 against 25,700 on four independent claims).
 
-  1. **Duration-aware waves (HEFT-lite).** Claims carry durations (the K_BCIR
-     step costs); within a phase an event-driven list scheduler dispatches the
+Four properties over the unit-time wave scheduler (`concurrency.schedule_concurrent`):
+
+  1. **Duration-aware waves (HEFT-lite).** Claims carry durations (the plan's
+     step costs, `durations_from`); an event-driven list scheduler dispatches the
      ready claim with the longest duration first (LPT priority -- the degenerate
-     upward rank of HEFT inside one phase) onto the domain with the earliest
-     finish time. Hazard conflicts (lower claim id = producer) serialize.
-  2. **Token-DAG execution.** `execute_tokens` consumes the `!bcir.token`
+     upward rank of HEFT inside one phase) onto the stream with the earliest
+     finish time.
+  2. **One hazard DAG, built before the stream split.** The dependency edges are
+     `concurrency.hazard_predecessors` over EVERY claim of the phase (or, under
+     tokens, of the module): RAW/WAR/WAW data hazards plus the ordering fences
+     (`barriered` / `volatile` claims). The sparse GGG/random tail is dispatched
+     on its own stream (`TAIL_STREAM`) inside the same event loop, so a gather
+     that reads what a wave claim writes waits for it, and a fence is overlapped
+     by nothing. The old split -- main claims first, the tail as a serial chain
+     from the phase start ignoring hazards -- let a tail claim start before its
+     producer finished.
+  3. **Token-DAG execution.** `execute_tokens` consumes the `!bcir.token`
      fork/await plan instead of phase barriers: a claim starts when the claims it
      awaits finish, so independent claims of a *later phase* overlap an earlier
-     phase -- software pipelining falls out of the dependency structure.
-  3. **Locality-aware affinity.** Among earliest-finish ties, a claim prefers the
-     domain already holding the most of its operand RIDs (cache reuse), replacing
-     blind round-robin.
-  4. **Bandwidth-knee clamp.** Bandwidth-class claims contend for at most
-     `bandwidth_knee(H)` concurrent slots (the roofline knee from the target's
-     `mem_channels`); compute-class claims use the full domain set. Parallelism
-     past the knee only thrashes the memory system, so the scheduler queues it.
+     phase -- software pipelining falls out of the dependency structure. The
+     phase-barriered schedule is its degenerate case; both modes are the same
+     placement over different edge sets.
+  4. **Locality + the bandwidth knee.** Among earliest-finish ties a claim
+     prefers the domain already holding the most of its operand RIDs; bandwidth-
+     class claims contend for at most `bandwidth_knee(H)` concurrent domains
+     (the roofline knee from the target's `mem_channels`), compute-class claims
+     for the full domain set.
+
+Durations are exactly the plan's step costs (a zero-cost step is a point on the
+timeline), so the sum of the durations is the serial bound and the placement's
+makespan never exceeds it: the R9 invariant `makespan + overlap_gain == serial`
+holds by construction of the artifact, not by a separate pricer's discipline.
 
 The unit-time wave scheduler remains the law for CT2 wave *formation*; this
-module is the duration-aware refinement that prices and places real work.
+module is the duration-aware placement that prices and places real work.
 """
 
 from __future__ import annotations
@@ -30,9 +51,9 @@ from dataclasses import dataclass, field
 
 from ..model import Claim, Module
 from .async_tokens import async_plan
-from .concurrency import _conflict_predecessors, _is_sparse, _topo_phase_ids
+from .concurrency import _is_sparse, _topo_phase_ids, hazard_predecessors
 
-TAIL_STREAM = -1  # the decoupled GGG tail executes on its own stream
+TAIL_STREAM = -1  # the decoupled GGG/random tail executes on its own stream
 
 
 @dataclass(frozen=True)
@@ -68,8 +89,14 @@ def bandwidth_knee(h) -> int:
 
 
 def durations_from(result) -> dict[int, int]:
-    """Claim durations from a K_BCIR realization (the scalarized step costs)."""
-    return {s.claim_id: max(1, s.cost) for s in result.steps}
+    """Claim durations from a K_BCIR realization: exactly the scalarized step costs.
+
+    Their sum is the plan score, which is the serial bound the scheduled price is
+    measured against (R9: makespan + overlap_gain == serial). A zero-cost step (a
+    weight-free fence under a policy that prices only compute and memory) is a
+    zero-length slot, not a unit one -- a floor would let a serialized chain of
+    such steps price above its own serial bound."""
+    return {s.claim_id: max(0, s.cost) for s in result.steps}
 
 
 def _rids(c: Claim) -> set[int]:
@@ -77,7 +104,7 @@ def _rids(c: Claim) -> set[int]:
 
 
 def _pick_domain(
-    c: Claim,
+    rids: set[int],
     ready_t: int,
     dur: int,
     domain_free: list[int],
@@ -85,16 +112,23 @@ def _pick_domain(
     eligible: range,
     locality: bool,
 ) -> tuple[int, int]:
-    """Earliest finish first; ties prefer the domain holding the claim's operands."""
-    best_d, best_key = eligible[0], None
-    rids = _rids(c)
+    """Earliest finish first; ties prefer the stream holding the claim's operands, then the
+    lowest index -- the key (finish, -score, index), with the locality score computed only
+    for the streams that tie on finish."""
+    best_d = eligible[0]
+    best_start = max(domain_free[best_d], ready_t)
     for d in eligible:
         start = max(domain_free[d], ready_t)
-        score = len(rids & resident[d]) if locality else 0
-        key = (start + dur, -score, d)
-        if best_key is None or key < best_key:
-            best_d, best_key = d, key
-    return best_d, max(domain_free[best_d], ready_t)
+        if start < best_start:
+            best_d, best_start = d, start
+    if locality:
+        best_score = len(rids & resident[best_d])
+        for d in eligible:
+            if d != best_d and max(domain_free[d], ready_t) == best_start:
+                score = len(rids & resident[d])
+                if score > best_score or (score == best_score and d < best_d):
+                    best_d, best_score = d, score
+    return best_d, best_start
 
 
 def _dispatch(
@@ -112,11 +146,17 @@ def _dispatch(
 ) -> None:
     """Event-driven LPT list scheduling of `claims` honoring `preds` edges.
 
-    A ready heap replaces repeated full scans/sorts of the pending list.  The heap
-    key is exactly the historical ``(-duration, claim_id)`` priority, so placement
-    and tie-breaking are unchanged.
+    `domain_free` / `resident` carry one entry per affinity domain plus one for the
+    tail stream (index `domains`): a sparse GGG/random claim is dispatched on the
+    tail inside this same loop, so its hazard edges hold across the streams and its
+    slot is reported on `TAIL_STREAM`. A ready heap replaces repeated full scans/
+    sorts of the pending list; the heap key is exactly the historical
+    ``(-duration, claim_id)`` priority, so placement and tie-breaking are unchanged.
     """
     import heapq
+
+    if len(domain_free) != domains + 1 or len(resident) != domains + 1:
+        raise ValueError("GEM dispatch needs one stream per affinity domain plus the tail")
 
     claim_by_id = {claim.id: claim for claim in claims}
     if len(claim_by_id) != len(claims):
@@ -133,71 +173,103 @@ def _dispatch(
                 raise ValueError(
                     f"GEM dispatch predecessor {predecessor} for claim {claim.id} is unavailable"
                 )
+
+    def duration_of(claim_id: int) -> int:
+        return max(0, durations.get(claim_id, 1))  # an unpriced claim takes a unit
+
+    tail = range(domains, domains + 1)  # the decoupled tail: its own stream, the same edges
+    wave = {True: range(knee), False: range(domains)}  # bandwidth: the knee; compute: all
     ready: list[tuple[int, int, int]] = []
     for claim in claims:
         if indegree[claim.id] == 0:
-            heapq.heappush(
-                ready, (-max(1, durations.get(claim.id, 1)), claim.id, ordinal[claim.id])
-            )
+            heapq.heappush(ready, (-duration_of(claim.id), claim.id, ordinal[claim.id]))
     dispatched = 0
     while ready:
         _negative_duration, claim_id, _index = heapq.heappop(ready)
         c = claim_by_id[claim_id]
-        dur = max(1, durations.get(c.id, 1))
-        ready_t = max([finish_of[p] for p in preds.get(c.id, ())], default=t0)
-        # Bandwidth-bound claims contend for the knee; compute-bound for all domains.
-        width = knee if c.cost_class == "bandwidth" else domains
-        d, start = _pick_domain(c, ready_t, dur, domain_free, resident, range(width), locality)
+        dur = duration_of(c.id)
+        ready_t = t0
+        for p in preds.get(c.id, ()):
+            if finish_of[p] > ready_t:
+                ready_t = finish_of[p]
+        eligible = tail if _is_sparse(c) else wave[c.cost_class == "bandwidth"]
+        rids = _rids(c)
+        d, start = _pick_domain(rids, ready_t, dur, domain_free, resident, eligible, locality)
         finish = start + dur
         domain_free[d] = finish
-        resident[d] |= _rids(c)
+        resident[d] |= rids
         finish_of[c.id] = finish
-        sched.slots.append(Slot(c.id, d, start, finish))
-        sched.affinity[c.id] = d
+        stream = TAIL_STREAM if d == domains else d
+        sched.slots.append(Slot(c.id, stream, start, finish))
+        sched.affinity[c.id] = stream
         dispatched += 1
         for successor in successors[c.id]:
             indegree[successor] -= 1
             if indegree[successor] == 0:
-                next_claim = claim_by_id[successor]
-                heapq.heappush(
-                    ready, (-max(1, durations.get(successor, 1)), successor, ordinal[next_claim.id])
-                )
+                heapq.heappush(ready, (-duration_of(successor), successor, ordinal[successor]))
     if dispatched != len(claims):
         raise ValueError("GEM dispatch dependency graph is cyclic")
 
 
-def schedule_eft(
-    module: Module, durations: dict[int, int], target=None, locality: bool = True
-) -> GemSchedule:
-    """Duration-aware wave scheduling (HEFT-lite) with phase barriers.
-
-    Within each phase: LPT priority + earliest-finish-time placement + locality
-    tie-breaks + the bandwidth-knee clamp; the GGG tail runs decoupled on its
-    own stream (phase span = max(main, tail)). Phases compose serially.
-    """
+def _streams(target) -> tuple[int, int]:
+    """(affinity domains, bandwidth knee) of a target; one domain and no knee without one."""
     domains = max(1, getattr(target, "affinity_domains", 1)) if target is not None else 1
     knee = bandwidth_knee(target) if target is not None else 1
-    sched = GemSchedule(mode="eft", knee=knee)
-    resident: list[set[int]] = [set() for _ in range(domains)]
-    pmap = module.phase_map()
-    t0 = 0
-    seen_claim_ids: set[int] = set()
+    return domains, knee
 
+
+def phase_hazards(module: Module) -> dict[int, dict[int, list[int]]]:
+    """The intra-phase hazard DAG of every phase -- over main AND tail claims, in claim-id
+    order, before any stream split -- keyed by phase id. A pure function of the module, so
+    a caller placing many duration vectors of one module (the re-selection sweep) builds it
+    once and hands it to `schedule_eft`."""
+    pmap = module.phase_map()
+    out: dict[int, dict[int, list[int]]] = {}
+    seen_claim_ids: set[int] = set()
     for pid in _topo_phase_ids(module):
         claims = sorted(pmap[pid].claims, key=lambda c: c.id)
         claim_ids = [claim.id for claim in claims]
         if len(set(claim_ids)) != len(claim_ids) or seen_claim_ids & set(claim_ids):
             raise ValueError("GEM scheduling requires module-wide unique claim ids")
         seen_claim_ids.update(claim_ids)
-        main = [c for c in claims if not _is_sparse(c)]
-        tail = [c for c in claims if _is_sparse(c)]
+        out[pid] = hazard_predecessors(claims)
+    return out
 
-        # Intra-phase hazard DAG: the lower claim id is the producer.
-        preds = _conflict_predecessors(main)
-        domain_free = [t0] * domains
+
+def schedule_eft(
+    module: Module,
+    durations: dict[int, int],
+    target=None,
+    locality: bool = True,
+    hazards: dict[int, dict[int, list[int]]] | None = None,
+) -> GemSchedule:
+    """Duration-aware wave scheduling (HEFT-lite) with phase barriers.
+
+    Within each phase: the hazard DAG over EVERY claim of the phase (data hazards
+    and fences, `hazard_predecessors`), then LPT priority + earliest-finish-time
+    placement + locality tie-breaks + the bandwidth-knee clamp, with the GGG/random
+    tail on its own stream inside the same dispatch (an independent tail still
+    overlaps the waves: phase span = max(main, tail); a dependent one waits).
+    Phases compose serially. `hazards` is `phase_hazards(module)`, precomputed by a
+    caller that places the same module many times.
+    """
+    domains, knee = _streams(target)
+    sched = GemSchedule(mode="eft", knee=knee)
+    resident: list[set[int]] = [set() for _ in range(domains + 1)]
+    pmap = module.phase_map()
+    t0 = 0
+    if hazards is None:
+        hazards = phase_hazards(module)
+
+    for pid in _topo_phase_ids(module):
+        claims = sorted(pmap[pid].claims, key=lambda c: c.id)
+        # The intra-phase hazard DAG over main AND tail claims, before the stream split
+        # (the lower claim id is the producer of a conflicting pair).
+        preds = hazards[pid]
+        domain_free = [t0] * (domains + 1)
         finish_of: dict[int, int] = {}
         _dispatch(
-            main,
+            claims,
             preds,
             durations,
             t0,
@@ -209,14 +281,7 @@ def schedule_eft(
             finish_of,
             sched,
         )
-
-        tt = t0
-        for c in tail:  # the decoupled tail: a serial chain overlapping the waves
-            dur = max(1, durations.get(c.id, 1))
-            sched.slots.append(Slot(c.id, TAIL_STREAM, tt, tt + dur))
-            sched.affinity[c.id] = TAIL_STREAM
-            tt += dur
-        t0 = max([t0, tt] + list(finish_of.values()))
+        t0 = max([t0] + list(finish_of.values()))
     sched.makespan = t0
     return sched
 
@@ -226,16 +291,16 @@ def execute_tokens(
 ) -> GemSchedule:
     """Token-DAG execution: phase barriers replaced by `!bcir.token` awaits.
 
-    A claim becomes ready when every claim it awaits has finished -- nothing
-    else holds it back, so independent claims of later phases overlap earlier
-    phases (pipelined phases fall out of the dependency structure). Placement
-    uses the same EFT + locality + knee machinery as `schedule_eft`; the
+    A claim becomes ready when every claim it awaits has finished (its data
+    hazards and the ordering fences, `async_plan`) -- nothing else holds it back,
+    so independent claims of later phases overlap earlier phases (pipelined
+    phases fall out of the dependency structure). Placement is the same EFT +
+    locality + knee + tail-stream dispatch as `schedule_eft`; the barriered
     schedule is its degenerate case when every cross-phase claim conflicts.
     """
-    domains = max(1, getattr(target, "affinity_domains", 1)) if target is not None else 1
-    knee = bandwidth_knee(target) if target is not None else 1
+    domains, knee = _streams(target)
     sched = GemSchedule(mode="tokens", knee=knee)
-    resident: list[set[int]] = [set() for _ in range(domains)]
+    resident: list[set[int]] = [set() for _ in range(domains + 1)]
 
     plan = async_plan(module)
     pmap = module.phase_map()
@@ -244,7 +309,7 @@ def execute_tokens(
         (c for pid in _topo_phase_ids(module) for c in pmap[pid].claims), key=lambda c: order[c.id]
     )
 
-    domain_free = [0] * domains
+    domain_free = [0] * (domains + 1)
     finish_of: dict[int, int] = {}
     _dispatch(
         claims,
@@ -261,6 +326,28 @@ def execute_tokens(
     )
     sched.makespan = max(finish_of.values(), default=0)
     return sched
+
+
+SCHEDULE_MODES = ("eft", "tokens")
+
+
+def schedule_plan(
+    module: Module, result, target=None, mode: str = "eft", locality: bool = True
+) -> GemSchedule:
+    """The canonical schedule artifact of a selected plan (G1).
+
+    One placement, read by the scheduled price and by the executors alike: the
+    plan's own step costs (`durations_from`) placed by the hazard-honoring LPT/EFT
+    dispatch, phase-barriered (`mode="eft"`, the default) or token-pipelined
+    (`mode="tokens"`). `gem.overlap.price_scheduled(...).schedule` is this object,
+    and `price_scheduled(...).makespan` is its makespan.
+    """
+    if mode not in SCHEDULE_MODES:
+        raise ValueError(f"unknown schedule mode {mode!r}; expected one of {SCHEDULE_MODES}")
+    durations = durations_from(result)
+    if mode == "eft":
+        return schedule_eft(module, durations, target, locality)
+    return execute_tokens(module, durations, target, locality)
 
 
 # --- phase-aware DVFS over the schedule timeline (schedule_power_rail) ------------

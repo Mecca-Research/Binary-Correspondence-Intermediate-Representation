@@ -337,6 +337,11 @@ echo "[passes] cost-model fusion (intra-phase deforestation + CSE)"
 run_fc -bcir-cost-model "${T}/cost_model_fusion.mlir"
 # ASM3b: no deforestation credit across a barriered consumer. Inert until S0-3 (see above).
 run_fc -bcir-cost-model "${T}/cost_model_barrier.mlir"
+# G1 / S1-A (assessment row 7): the CSE credit requires the complete semantic identity and
+# excludes atomic, barriered, volatile and effectful claims -- and an ineligible claim never
+# seeds a match (the oracle twin is test_fusion.py's CSE negatives).
+echo "[passes] cost-model CSE negatives (identity + exclusions, realize.cse_eligible / cse_identity)"
+run_fc -bcir-cost-model "${T}/cost_model_cse_neg.mlir"
 echo "[passes] cost-model verify dimension (exact/hash discharge cost)"
 run_fc -bcir-cost-model "${T}/cost_model_verify.mlir"
 echo "[passes] -bcir-cost-model cross-check on the pretty corpus (reproduces 7808)"
@@ -420,6 +425,37 @@ echo "[passes] schedule-eft (duration-aware EFT waves: gem.schedule.schedule_eft
 run_fc -bcir-schedule-eft "${T}/schedule_eft.mlir"
 echo "[passes] async (fork/await plan + pipelined cross-phase schedule: execute_tokens)"
 run_fc -bcir-async "${T}/async.mlir"
+# G1 / S1-A: ONE canonical schedule artifact (BCIRSchedule.h) read by -bcir-schedule-eft,
+# -bcir-async and -bcir-overlap alike, with the hazard DAG built over every claim of the phase
+# before the tail split -- a tail claim waits for its producer, a fence is overlapped by
+# nothing, and the price is the placement's makespan (the oracle twin is test_schedule.py).
+echo "[passes] schedule hazards (G1: the tail waits for its producer, a fence is overlapped by nothing, one price)"
+HAZARDS="-bcir-schedule-eft -bcir-async -bcir-overlap"
+if [ -n "${FC}" ]; then
+  "${BO}" ${HAZARDS} "${T}/schedule_hazards.mlir" 2>"${ERR}" | "${FC}" "${T}/schedule_hazards.mlir" \
+    && echo "  PASS schedule_hazards.mlir (FileCheck)" || { echo "  FAIL schedule_hazards.mlir"; cat "${ERR}"; fail=1; }
+else
+  "${BO}" ${HAZARDS} "${T}/schedule_hazards.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY schedule_hazards.mlir" || { echo "  FAIL schedule_hazards.mlir"; cat "${ERR}"; fail=1; }
+fi
+# The three passes must agree with each other on the artifact: the priced makespan IS the
+# placed makespan, on this fixture and on the widened corpus.
+hz_out="$("${BO}" ${HAZARDS} "${T}/schedule_hazards.mlir" 2>"${ERR}")"
+hz_sched="$(grep -o "kbcir.sched_makespan = [0-9]*" <<<"${hz_out}" | grep -o "[0-9]*$")"
+hz_price="$(grep -o "kbcir.overlap_makespan = [0-9]*" <<<"${hz_out}" | grep -o "[0-9]*$")"
+if [ -n "${hz_sched}" ] && [ "${hz_sched}" = "${hz_price}" ]; then
+  echo "  PASS schedule_hazards: -bcir-overlap prices the placement -bcir-schedule-eft annotates (${hz_price})"
+else
+  echo "  FAIL schedule_hazards: priced ${hz_price} vs placed ${hz_sched}"; fail=1
+fi
+gc_out="$("${BO}" -bcir-schedule-eft -bcir-overlap "${T}/gem_corpus.mlir" 2>"${ERR}")"
+gc_sched="$(grep -o "kbcir.sched_makespan = [0-9]*" <<<"${gc_out}" | grep -o "[0-9]*$" | tr '\n' ' ')"
+gc_price="$(grep -o "kbcir.overlap_makespan = [0-9]*" <<<"${gc_out}" | grep -o "[0-9]*$" | tr '\n' ' ')"
+if [ -n "${gc_sched}" ] && [ "${gc_sched}" = "${gc_price}" ]; then
+  echo "  PASS gem_corpus: one price per module on both passes (${gc_price})"
+else
+  echo "  FAIL gem_corpus: priced [${gc_price}] vs placed [${gc_sched}]"; fail=1
+fi
 echo "[passes] power-rail (per-slot DVFS over the EFT timeline: schedule_power_rail)"
 run_fc -bcir-power-rail "${T}/power_rail.mlir"
 echo "[passes] alloc-pool (liveness-based memory pooling: allocator.pool_plan)"

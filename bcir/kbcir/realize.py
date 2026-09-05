@@ -22,7 +22,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from ..model import ATOMIC_OPCODES, Claim, Lane, Module, Opcode, StrideClass, topological_phase_ids
+from ..model import (
+    ATOMIC_OPCODES,
+    ISOLATED_DOMAINS,
+    Claim,
+    Lane,
+    Module,
+    Opcode,
+    StrideClass,
+    topological_phase_ids,
+)
 from .cost import (
     COMPUTE,
     MEMORY,
@@ -305,6 +314,69 @@ def _flatten(module: Module) -> list[tuple[int, Claim]]:
 # --- fusion-aware candidate generation (shared by the tropical + RCSP rails) -----
 
 
+#: Opcodes that are EFFECT edges, never a value in hand: a second occurrence is a second
+#: effect, not a copy of the first (G1 / S1-A CSE exclusions; `cm::cseEligible` mirrors it).
+EFFECTFUL_OPCODES = frozenset(
+    {Opcode.BARRIER, Opcode.PHASE_ENTER, Opcode.PHASE_LEAVE, Opcode.GEM_DISPATCH, Opcode.PROV_NOTE}
+)
+
+
+def cse_eligible(claim: Claim, module: Module) -> bool:
+    """Whether a claim may take part in CSE at all -- as the duplicate OR as the seed an
+    earlier occurrence provides. Categorical, before any signature is compared: an atomic
+    read-modify-write, a barriered or volatile claim, an effect opcode (barrier, phase
+    enter/leave, dispatch, provenance note), an indirect call, a claim with timing or
+    lifetime metadata, a sparse GGG/random access (its elements depend on index data the
+    claim does not carry), a claim of or touching an isolated (MMIO) domain, a claim with
+    a non-default numeric contract (`precision`, `tolerance_ulp`, `quantized_bits`) and a
+    claim carrying a field the law rail cannot see (`imm`) are never a common
+    subexpression. The 2026-09-04 assessment (row 7) found the credit
+    granted to atomic and volatile duplicates with the barrier guard checked afterwards;
+    `BCIRCostModel.h::cseEligible` is the byte-for-byte mirror (R13 parity)."""
+    if not claim.rd:
+        return False
+    if claim.hazard != "unique" or claim.volatile:
+        return False
+    if claim.opcode in ATOMIC_OPCODES or claim.opcode in EFFECTFUL_OPCODES:
+        return False
+    if claim.callee_sig or claim.timing is not None or claim.lifetime is not None:
+        return False
+    if claim.lane == Lane.GGG or claim.stride_class == StrideClass.RANDOM:
+        return False
+    if claim.imm or claim.tolerance_ulp or claim.quantized_bits or claim.precision:
+        return False
+    if claim.domain in ISOLATED_DOMAINS:
+        return False
+    for rid in claim.io_rids():
+        resource = module.resource(rid)
+        if resource is not None and resource.domain in ISOLATED_DOMAINS:
+            return False
+    return True
+
+
+def cse_identity(claim: Claim, version: dict[int, int]) -> tuple:
+    """The complete semantic identity of a claim's VALUE: the op (string and opcode), the
+    access pattern that decides which elements it touches (lane, stride class, stride
+    multiplier, offset, count), the domain, the dynamic-bound flag, and its read operands
+    AT THEIR CURRENT VERSIONS (a write bumps a version, so
+    a rewrite between two occurrences invalidates the match). Two claims with the same
+    identity compute the same value; the second is a copy of the first. The old signature
+    was the op and the read versions alone, so a duplicate over a different count, offset
+    or stride took the copy credit."""
+    return (
+        claim.op,
+        int(claim.opcode),
+        int(claim.lane),
+        int(claim.stride_class),
+        claim.count,
+        claim.stride_k,
+        claim.offset,
+        int(claim.domain),
+        bool(claim.dynamic),
+        tuple((r, version.get(r, 0)) for r in claim.rd),
+    )
+
+
 def _cse_factor(claim: Claim) -> tuple[int, ...]:
     """The copy-cost factor for a claim that is a common subexpression of an earlier
     one: the value is already computed, so there is no recompute (compute zeroed) and
@@ -324,11 +396,15 @@ def fused_candidates(module: Module, h: HProfile) -> dict[int, list[Candidate]]:
     makespan, and serial bound stay consistent (makespan <= serial). Two discounts,
     applied at most one per claim (CSE wins, being the larger):
 
-      * **CSE / duplicate elimination**: a claim whose (op, operand value-numbers)
-        matches an earlier same-phase claim recomputes a value already in hand -- it
-        becomes a copy (no recompute, no operand reload). Value numbering (a write
-        bumps an operand's version) makes the match sound: a rewrite between the two
-        invalidates it. The egraph proves the same liked-pair CSE; this prices it.
+      * **CSE / duplicate elimination**: a claim whose complete semantic identity
+        (`cse_identity`: op, access pattern, domain, numeric contract, operand
+        value-numbers) matches an earlier same-phase claim recomputes a value already
+        in hand -- it becomes a copy (no recompute, no operand reload). Value numbering
+        (a write bumps an operand's version) makes the match sound: a rewrite between
+        the two invalidates it. Only `cse_eligible` claims seed or take the credit --
+        an atomic, barriered, volatile, effectful, sparse or isolated-domain claim is
+        never a common subexpression. The egraph proves the same liked-pair CSE; this
+        prices it.
       * **producer->consumer deforestation**: a claim reading an operand a prior
         same-phase claim produced fuses with it, so the intermediate never round-trips
         to memory (a memory discount).
@@ -348,12 +424,13 @@ def fused_candidates(module: Module, h: HProfile) -> dict[int, list[Candidate]]:
         ver = version.setdefault(phase_id, {})
         seenmap = seen.setdefault(phase_id, {})
         bset = barr_prod.setdefault(phase_id, set())
-        # value-numbered compute signature: same op + same operands AT THE SAME VERSIONS.
-        sig = (claim.op or claim.opcode, tuple((r, ver.get(r, 0)) for r in claim.rd))
+        # The value-numbered semantic identity (G1): the same value at the same versions.
+        eligible = cse_eligible(claim, module)
+        sig = cse_identity(claim, ver) if eligible else None
 
         cands = candidates_for(claim, h, resource)
         shared = pset & set(claim.rd)
-        if claim.rd and sig in seenmap:  # CSE: identical value already computed
+        if eligible and sig in seenmap:  # CSE: identical value already computed
             cse = _cse_factor(claim)
             cands = [
                 Candidate(c.lane, c.width, c.name, c.base.couple(cse), c.reads, c.writes)
@@ -371,7 +448,7 @@ def fused_candidates(module: Module, h: HProfile) -> dict[int, list[Candidate]]:
                     for c in cands
                 ]
 
-        if claim.rd:
+        if eligible:
             seenmap.setdefault(sig, claim.id)  # first occurrence pays full
         for r in claim.wr:  # a write creates a new operand version
             ver[r] = ver.get(r, 0) + 1
