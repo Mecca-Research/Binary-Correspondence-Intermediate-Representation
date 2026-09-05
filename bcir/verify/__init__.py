@@ -1298,9 +1298,19 @@ def verify_address_width(
     (>= 32 bits) still applies without a target; with one, this law is the contract. The
     triple -> width table is `kbcir.cost.pointer_width`, mirrored by `BCIRPassSupport.h`
     `pointerWidthOfTriple` (one table, both rails; the corpus checks every triple in use).
-    Vacuous for a triple the table does not know."""
-    from ..kbcir.cost import pointer_width
+    Vacuous for a triple the table does not know -- except for the floor: an operand narrower
+    than `ADDRESS_FLOOR_BITS` is refused whatever the target, as the law rail's op verifiers
+    refuse it (the one address rule that holds without a target in scope)."""
+    from ..kbcir.cost import ADDRESS_FLOOR_BITS, pointer_width
 
+    if addr_bits < ADDRESS_FLOOR_BITS:
+        return [
+            Diagnostic(
+                "R12",
+                f"the {what} is {addr_bits} bits; an address operand is at least "
+                f"{ADDRESS_FLOOR_BITS} bits (the inttoptr lowering's floor), whatever the target",
+            )
+        ]
     width = pointer_width(triple)
     if width is None or addr_bits == width:
         return []

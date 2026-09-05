@@ -367,8 +367,12 @@ def to_mlir(
             + " } "
             f"{{ %i = bcir.index_range 0 to {cv.count} step 1 }}"
         )
-    # the K_BCIR plan: candidate paths + per-claim min-plus select.
-    L.append("  bcir.kbcir.plan @plan0 {")
+    # the K_BCIR plan: candidate paths + per-claim min-plus select. A module with no claim has
+    # no plan step, and a `kbcir.plan` with an empty body has no wire form (its region holds
+    # one block), so no plan op is written for it -- the module still carries its resources,
+    # phases and manifest, which is what hash_module and R13 read.
+    if pv.claims:
+        L.append("  bcir.kbcir.plan @plan0 {")
     for cv in pv.claims:
         # The path's layout is the claim's primary (read[0]) resource's CHOSEN layout (G3): a path that
         # addresses an AoS resource carries #bcir.layout<aos>, not a hard-coded `soa`. Falls back to the
@@ -391,7 +395,8 @@ def to_mlir(
             f"selected = @{_path_sym(cv.claim_id, cv.selected)}, score = {cv.score} : i64 }} "
             ": !bcir.path"
         )
-    L.append("  }")
+    if pv.claims:
+        L.append("  }")
     # GEM lane segments (one per claim; preserve lane + resource set for R12 lower).
     for cv in pv.claims:
         L.append(

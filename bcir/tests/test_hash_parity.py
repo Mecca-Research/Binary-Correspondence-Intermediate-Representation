@@ -27,7 +27,7 @@ from bcir.kbcir.cost import MemoryHierarchy, MemTier, Theta, Tier
 from bcir.kbcir.provenance import build_manifest, hash_module, hash_target
 from bcir.kbcir.weights import PERF
 from bcir.lower.mlir import to_mlir
-from bcir.model import Claim, Lane, Module, Opcode, Phase, Resource, StrideClass
+from bcir.model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
 
 _AVX = TARGETS["x86_avx512"]
 _COOL = Theta.cool()
@@ -306,3 +306,22 @@ def test_law_rail_refuses_a_malformed_hierarchy() -> None:
     for bad_text, message in cases:
         errors = _verify(bo, bad_text)
         assert any(message in e for e in errors), (message, errors)
+
+
+def test_law_rail_accepts_a_manifest_of_a_claimless_module() -> None:
+    """A module with resources and phases and no claim is hashable -- hash_module folds its
+    metadata, resources and phases on both rails -- so its manifest's m_module recomputes.
+    Presence keyed on a claim refused it as carrying "no claim graph" (#762 review); and the
+    cross-check still fires on a forged m_module."""
+    bo = _find_bcir_opt()
+    if not bo:
+        return
+    m = Module(name="claimless")
+    m.add_resource(Resource(rid=10, domain=Domain.RAM, shape=(8,), name="A"))
+    m.add_phase(Phase(phase_id=0, deps=(), claims=[]))
+    text = _module_with_manifest(m, TARGETS["x86_avx512"])
+    assert "bcir.kbcir.plan" not in text  # a plan with no step has no wire form: not emitted
+    assert "bcir.phase @p0" in text and "bcir.resource @r10" in text
+    assert _verify(bo, text) == []
+    forged = re.sub(r"m_module = \d+", "m_module = 1", text)
+    assert any("manifest m_module 1 does not match" in line for line in _verify(bo, forged))

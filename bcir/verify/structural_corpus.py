@@ -94,6 +94,7 @@ _MM, _MT, _MTH, _MP = (
     4048695575545564183,
 )
 _LATENCY_WEIGHTS = (2, 2, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1)
+_I64_MAX = (1 << 63) - 1
 
 
 @dataclass(frozen=True)
@@ -109,7 +110,7 @@ class Case:
     mlir: str = ""  # expected law-rail diagnostic substring (an illegal case)
     rails: tuple[str, ...] = RAILS
     note: str = ""
-    also_laws: tuple[str, ...] = ()  # further law families BOTH rails report on this case
+    also_laws: tuple[str, ...] = ()  # further law families BOTH rails MUST report (required)
     mlir_also: tuple[str, ...] = ()  # the law rail's further diagnostics (one expectation each)
 
     @property
@@ -241,6 +242,7 @@ def _binary(fields, size_bits=0, endianness="little", alignment_bits=8) -> dict:
         "size_bits": size_bits,
         "endianness": endianness,
         "alignment_bits": alignment_bits,
+        "duplicate_record": False,  # a second record carrying the same NAME (distinct symbol)
     }
 
 
@@ -616,6 +618,34 @@ CASES: tuple[Case, ...] = (
     ),
     Case("addr.cas_i64_under_bpf", "mmio", _mmio("bpfel", 64, op="cas")),
     Case(
+        "addr.i32_under_arm64_32",
+        "mmio",
+        _mmio("arm64_32-apple-watchos", 32),
+        note="the watchOS ILP32 ABI: a 32-bit pointer on a 64-bit family (the family prefix "
+        "claimed it as 64; #762 review)",
+    ),
+    Case(
+        "addr.i64_under_arm64_32",
+        "mmio",
+        _mmio("arm64_32-apple-watchos", 64),
+        "R12",
+        "the device-register address is 64 bits but the target 'arm64_32-apple-watchos' "
+        "addresses 32-bit pointers; the inttoptr lowering would leave it truncated",
+        "R12: the device-register address is 64 bits but the target 'arm64_32-apple-watchos' "
+        "addresses 32-bit pointers; the inttoptr lowering would leave it truncated",
+    ),
+    Case(
+        "addr.i16_below_the_floor",
+        "mmio",
+        _mmio("x", 16),
+        "R12",
+        "the device-register address is 16 bits; an address operand is at least 32 bits",
+        "the device-register address must be an integer of at least pointer width (>= 32 bits; "
+        "got 'i16')",
+        note="the floor holds whatever the target (an unknown one here): the op verifier on the "
+        "law rail, R12 on the oracle -- and no tabulated width is below it (#762 review)",
+    ),
+    Case(
         "addr.i32_unknown_triple",
         "mmio",
         _mmio("x", 32),
@@ -726,6 +756,24 @@ CASES: tuple[Case, ...] = (
         "R13: capability @cpu constants drifted from calibration certificate @cal (gather_penalty "
         "32 vs certified 64, base_overhead 4 vs certified 4, mem_unit 1 vs 1)",
     ),
+    Case(
+        "calibration.strided_q8_overflow",
+        "calibration",
+        {
+            "cal_gen": 1,
+            "gather_penalty": 32,
+            "base_overhead": 4,
+            "random_q8": 8192,
+            "strided_q8": 1 << 62,
+        },
+        "R13",
+        "profile constants drifted from the certified table (cal_gen 1)",
+        "R13: capability @cpu certificate @cal strided_q8 4611686018427387904 overflows the "
+        "base_overhead derivation (4*strided_q8 exceeds signed 64-bit range)",
+        note="a ratio above INT64_MAX/4 passes R8's floor; the oracle prices in unbounded "
+        "integers and sees the drift, the law rail refuses the derivation it cannot represent "
+        "instead of overflowing (#762 review)",
+    ),
     # ---- the M5 descriptors (construction on the oracle; op verifiers on the law rail) --------
     Case(
         "m5.binary.legal",
@@ -759,6 +807,16 @@ CASES: tuple[Case, ...] = (
         "R21",
         "field 'a': kind must be one of u|s|f|bytes (got 'q')",
         "field 'a': kind must be one of u|s|f|bytes (got 'q')",
+    ),
+    Case(
+        "m5.field.end_overflow",
+        "binary",
+        _binary([("a", _I64_MAX, 1, "u")]),
+        "R21",
+        "field 'a': offset_bits + width_bits exceeds signed 64-bit range",
+        "field 'a': offset_bits + width_bits exceeds signed 64-bit range",
+        note="the end offset is signed 64-bit on the wire; the oracle admitted an end it could not "
+        "hand the law rail (#762 review)",
     ),
     Case(
         "m5.record.overlap",
@@ -800,6 +858,16 @@ CASES: tuple[Case, ...] = (
         "R21",
         "format 'f': alignment_bits must be positive (got 0)",
         "format 'f': alignment_bits must be positive (got 0)",
+    ),
+    Case(
+        "m5.format.duplicate_record_name",
+        "binary",
+        _binary([("a", 0, 8, "u")]) | {"duplicate_record": True},
+        "R21",
+        "format 'f': duplicate record names",
+        "format 'f': duplicate record name 'r'",
+        note="two records with distinct symbols and one name: the symbol table cannot see it "
+        "(#762 review)",
     ),
     Case(
         "m5.stream.legal",
@@ -882,6 +950,16 @@ CASES: tuple[Case, ...] = (
         "R21",
         "grammar: start_symbol must be a non-empty string (got '')",
         "grammar 'g': start_symbol must be non-empty",
+    ),
+    Case(
+        "m5.grammar.no_tokens",
+        "grammar",
+        {"start_symbol": "claim", "tokens": []},
+        "R21",
+        "grammar 'g': tokens must be a non-empty tuple of TokenRule",
+        "grammar 'g': at least one token rule is required (tokens must be non-empty)",
+        note="the tokenless body is spelled as an empty block (`^bb0:`) on the law rail "
+        "(#762 review)",
     ),
     Case(
         "m5.token.empty_pattern",
@@ -1136,11 +1214,12 @@ def run_oracle(case: Case) -> Verdict:
 
             fields = tuple(BinaryField(n, o, w, kind=k) for n, o, w, k in spec["fields"])
             record = BinaryRecord("r", fields, size_bits=spec["size_bits"])
+            records = (record, record) if spec.get("duplicate_record", False) else (record,)
             BinaryFormat(
                 "f",
                 endianness=spec["endianness"],
                 alignment_bits=spec["alignment_bits"],
-                records=(record,),
+                records=records,
             )
             return Verdict(ORACLE, False)
         if kind == "stream":
@@ -1380,11 +1459,20 @@ def render(case: Case, *, expectations: bool) -> str:
     elif kind == "binary":
         fields = spec["fields"]
         bad_field = next(
-            (f for f in fields if f[1] < 0 or f[2] < 1 or f[3] not in ("u", "s", "f", "bytes")),
+            (
+                f
+                for f in fields
+                if f[1] < 0
+                or f[2] < 1
+                or f[1] > _I64_MAX - f[2]
+                or f[3] not in ("u", "s", "f", "bytes")
+            ),
             None,
         )
         fmt_bad = (
-            spec["endianness"] not in ("little", "big", "le", "be") or spec["alignment_bits"] < 1
+            spec["endianness"] not in ("little", "big", "le", "be")
+            or spec["alignment_bits"] < 1
+            or spec.get("duplicate_record", False)
         )
         L = ["bcir.module @m {"]
         L.append(
@@ -1404,10 +1492,12 @@ def render(case: Case, *, expectations: bool) -> str:
             spec["record_fields"] if spec["record_fields"] is not None else [f[0] for f in fields]
         )
         rec_bad = case.law and bad_field is None and not fmt_bad
+        record_attrs = f'name = "r", fields = [{", ".join("@" + r for r in refs)}], size_bits = {spec["size_bits"]} : i64'
         L.append(
-            ("    " + _ERR if rec_bad else "    ")
-            + f'bcir.binary.record @r {{ name = "r", fields = [{", ".join("@" + r for r in refs)}], size_bits = {spec["size_bits"]} : i64 }}'
+            ("    " + _ERR if rec_bad else "    ") + f"bcir.binary.record @r {{ {record_attrs} }}"
         )
+        if spec.get("duplicate_record", False):
+            L.append(f"    bcir.binary.record @r2 {{ {record_attrs} }}")
         L += ["  }", "}"]
     elif kind == "stream":
         L = [
@@ -1470,6 +1560,10 @@ def render(case: Case, *, expectations: bool) -> str:
             ("  " + _ERR if grammar_bad else "  ")
             + f'bcir.parse.grammar @g attributes {{ syntax = "ebnf", start_symbol = "{spec["start_symbol"]}" }} {{',
         ]
+        if not tokens:
+            L.append(
+                "  ^bb0:"
+            )  # the one spelling of a tokenless body that parses (a bare `{}` is refused by the region constraint)
         for n, p in tokens:
             pat = p.replace("\\", "\\\\").replace('"', '\\"')
             L.append(
@@ -1593,15 +1687,18 @@ def findings(case: Case, verdicts: dict[str, Verdict]) -> list[Finding]:
                     f"{len(v.messages)} diagnostics for {len(expected_all)} expected: {list(v.messages)[:4]}",
                 )
             )
-        allowed = {case.law, *case.also_laws}
+        # A rail that names laws at all names exactly the corpus's: the case's family and every
+        # declared additional family -- a required set, not an allowlist (a rail dropping its
+        # R5 beside the R3 refusal used to pass the subset check; #762 review).
+        required = {case.law, *case.also_laws}
         named = {law for law in v.laws if law}
-        if named and not named <= allowed:
+        if named and named != required:
             out.append(
                 Finding(
                     case.name,
                     rail,
                     "law",
-                    f"reported {sorted(named)}, corpus allows {sorted(allowed)}",
+                    f"reported {sorted(named)}, corpus requires {sorted(required)}",
                 )
             )
     return out

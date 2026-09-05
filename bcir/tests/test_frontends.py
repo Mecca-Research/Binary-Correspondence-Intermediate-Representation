@@ -108,3 +108,31 @@ def test_declarative_frontends_reject_ambiguous_or_silent_defaults():
             raise AssertionError("ROP must reject ambiguous input")
         except ParseError:
             pass
+
+
+def test_rop_forward_declared_resource_keeps_its_declared_domain():
+    """A claim may name a resource declared later in the module (the pre-scan resolves every
+    rid); its domain contract derives from that resource's DECLARED domain. An MMIO register
+    declared after the phase that writes it is an MMIO, volatile, barriered claim, and the
+    module verifies -- it derived RAM (the map was filled in textual order), and the otherwise
+    legal module failed R3 (#762 review)."""
+    from bcir.kbcir.provenance import hash_module
+    from bcir.model import Domain
+    from bcir.verify import verify
+
+    phase = "  phase 0 {\n    claim c { op add reads A writes R count 1 hazard barriered }\n  }\n"
+    resources = "  resource A { rid 10 count 8 }\n  resource R { rid 5 domain mmio count 1 }\n"
+    forward = parse_rop_program("module m {\n" + phase + resources + "}\n")
+    declared_first = parse_rop_program("module m {\n" + resources + phase + "}\n")
+    claim = forward.phases[0].claims[0]
+    assert claim.domain is Domain.MMIO and claim.volatile
+    assert verify(forward) == []
+    assert hash_module(forward) == hash_module(
+        declared_first
+    )  # the order of declaration is not identity
+    # the pre-scan and the parse agree on every resource, or the parse is refused
+    try:
+        parse_rop_program("module m {\n  resource A { rid 10 domain nowhere count 8 }\n}\n")
+        raise AssertionError("an unknown domain spelling must be refused")
+    except ParseError:
+        pass

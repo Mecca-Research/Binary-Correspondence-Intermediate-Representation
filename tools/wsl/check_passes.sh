@@ -43,6 +43,18 @@ echo "[passes] -bcir-verify negative cases (-verify-diagnostics)"
   && echo "  PASS verify_provenance (R13 digest recompute + m_theta cross-check)" || { echo "  FAIL verify_provenance"; fail=1; }
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_callgraph.mlir" \
   && echo "  PASS verify_callgraph (R18 callee resolution + recursion)" || { echo "  FAIL verify_callgraph"; fail=1; }
+# S0-3 / #761 review: the checkpoint after -bcir-plan reads the plan it emitted (R9 re-derives
+# kbcir.plan_width / plan_cost / plan_score from the scope; four corruptions refused) ...
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_plan_annotations.mlir" \
+  && echo "  PASS verify_plan_annotations (R9 over the emitted plan)" || { echo "  FAIL verify_plan_annotations"; fail=1; }
+# ... and accepts every plan the planner itself emits: the checkpointed pipeline over plan.mlir
+# and over the widened corpus.
+if "${BO}" -bcir-optimize "${T}/plan.mlir" 2>"${ERR}" | grep -q "kbcir.plan_score = 13696" \
+   && "${BO}" -bcir-optimize "${T}/gem_corpus.mlir" >/dev/null 2>>"${ERR}"; then
+  echo "  PASS bcir-optimize checkpoint accepts the emitted plan (plan.mlir 13696, gem_corpus)"
+else
+  echo "  FAIL bcir-optimize checkpoint over the emitted plan"; cat "${ERR}"; fail=1
+fi
 
 echo "[passes] parse-time op verifiers (hasVerifier structural well-formedness)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/verify_ops.mlir" \

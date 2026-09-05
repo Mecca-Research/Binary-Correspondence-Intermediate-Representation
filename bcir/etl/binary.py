@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 FIELD_KINDS = ("u", "s", "f", "bytes")
 ENDIANNESS = ("little", "big", "le", "be")
+_I64_MAX = (1 << 63) - 1  # the wire's field arithmetic is signed 64-bit (`bcir.binary.field`)
 
 
 def _require_name(what: str, name: object) -> None:
@@ -47,6 +48,12 @@ class BinaryField:
         if self.width_bits < 1:
             raise ValueError(
                 f"field {self.name!r}: width_bits must be positive (got {self.width_bits})"
+            )
+        # The end offset is signed 64-bit on the wire (BinaryFieldOp::verify refuses the same
+        # sum); an end the law rail cannot represent is not a field the oracle admits either.
+        if self.offset_bits > _I64_MAX - self.width_bits:
+            raise ValueError(
+                f"field {self.name!r}: offset_bits + width_bits exceeds signed 64-bit range"
             )
         if self.kind not in FIELD_KINDS:
             raise ValueError(

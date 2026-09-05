@@ -1581,6 +1581,16 @@ static std::string joined(const char *const (&table)[N]) {
   if (static_cast<int64_t>(getAlignmentBits()) < 1)
     return emitOpError() << "format '" << getSymName() << "': alignment_bits must be positive (got "
                          << static_cast<int64_t>(getAlignmentBits()) << ")";
+  // Record NAMES are unique within a format (BinaryFormat.__post_init__): two records may
+  // carry distinct symbols (@r1, @r2) and one semantic name, which the symbol table cannot
+  // see. The children are not yet verified when this runs, so the attribute is read raw.
+  ::llvm::StringSet<> recordNames;
+  for (::mlir::Operation &op : getBody().front())
+    if (::mlir::isa<BinaryRecordOp>(&op))
+      if (auto name = op.getAttrOfType<::mlir::StringAttr>("name"))
+        if (!recordNames.insert(name.getValue()).second)
+          return emitOpError() << "format '" << getSymName() << "': duplicate record name '"
+                               << name.getValue() << "'";
   return ::mlir::success();
 }
 
@@ -1649,12 +1659,20 @@ static std::string joined(const char *const (&table)[N]) {
     return emitOpError() << "grammar '" << getSymName() << "': syntax must be non-empty";
   if (getStartSymbol().empty())
     return emitOpError() << "grammar '" << getSymName() << "': start_symbol must be non-empty";
+  // The oracle's Grammar refuses an empty token tuple; a body with no token rule (the
+  // `^bb0:` spelling of an empty block) is the same descriptor and is refused here too.
   ::llvm::StringSet<> names;
+  size_t tokens = 0;
   for (::mlir::Operation &op : getBody().front())
-    if (auto t = ::mlir::dyn_cast<ParseTokenOp>(&op))
+    if (auto t = ::mlir::dyn_cast<ParseTokenOp>(&op)) {
+      ++tokens;
       if (!names.insert(t.getSymName()).second)
         return emitOpError() << "grammar '" << getSymName() << "': duplicate token rule '"
                              << t.getSymName() << "'";
+    }
+  if (tokens == 0)
+    return emitOpError() << "grammar '" << getSymName()
+                         << "': at least one token rule is required (tokens must be non-empty)";
   return ::mlir::success();
 }
 
