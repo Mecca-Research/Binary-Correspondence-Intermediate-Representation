@@ -510,6 +510,13 @@ well-formedness (ascending RIDs, header maxima) shared by the encoder and the
 decoder (`_validate_generation_vector`, `bcir_sp_verify_semantic`, and
 `GEMStreamPackOp::verify`) and the ASN.1 projection carrying the same record. The
 legacy maxima API was kept, not re-implemented, so the two R11 forms cannot drift.
+S0-F instance (2026-09-05): the native rig's tenancy verdict is ONE predicate with a
+declared Python twin (`attest()` in `bcir_microbench.c` / `microbench.host_attestation`),
+and the test holds the rig to the twin field by field. The first test read fewer
+signals than the rig (no DMI, no cgroup markers) and the GitHub aarch64 runner -- a
+DMI-attested VM that also exposes a PMU -- called the rig wrong for saying
+"virtualized": a mirror that checks a subset is a second rule, and it disagrees on
+exactly the host that matters.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

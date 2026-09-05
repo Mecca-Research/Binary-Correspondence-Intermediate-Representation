@@ -16,6 +16,7 @@ from bcir.kbcir.microbench import (
     NativeEvidence,
     calibrate_from_raw,
     calibrate_native,
+    host_attestation,
     reference_table,
     run_microbench,
     strided_order,
@@ -180,26 +181,6 @@ def _native_rig(d, n, repeats):
     return run.stdout
 
 
-def _host_signals():
-    """The virtualization/PMU facts read from the same files the rig reads (Linux)."""
-
-    def contains(path, needle):
-        try:
-            with open(path, encoding="utf-8", errors="replace") as fh:
-                return any(needle in line.lower() for line in fh)
-        except OSError:
-            return False
-
-    hypervisor = contains("/proc/cpuinfo", " hypervisor") or os.path.exists("/sys/hypervisor/type")
-    wsl = contains("/proc/version", "microsoft")
-    container = os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
-    pmu = any(
-        os.path.exists(f"/sys/bus/event_source/devices/{src}/type")
-        for src in ("cpu", "cpu_core", "cpu_atom", "armv8_pmuv3", "armv8_pmuv3_0")
-    )
-    return hypervisor, wsl, container, pmu
-
-
 def test_native_rig_reports_census_samples_and_an_attested_tenancy():
     """G7 (S0-F): the rig's table is the summary of evidence it prints -- a counted
     census (every regime touches all n elements), one raw sample per repeat with the
@@ -227,18 +208,77 @@ def test_native_rig_reports_census_samples_and_an_attested_tenancy():
     assert ("bare-metal" in table.provenance) == ev.silicon
     assert "unique=4096/4096/4096" in table.provenance
     assert ev.timer_quantum_ns >= 0 and ev.os and ev.arch and ev.compiler
-    # the attestation agrees with the same facts read from Python (two readers, one truth)
-    hypervisor, wsl, container, pmu = _host_signals()
-    assert ev.hardware_pmu == pmu
-    if hypervisor or wsl:
-        assert ev.tenancy == "virtualized" and not ev.silicon
-    elif container:
-        assert ev.tenancy == "containerized" and not ev.silicon
-    elif pmu:
-        assert ev.tenancy == "bare-metal" and ev.silicon
-    else:
-        assert ev.tenancy == "unproven" and not ev.silicon
+    # the attestation is ONE predicate on both rails: the C rig and `host_attestation`
+    # read the same files by the same rules, field for field (the aarch64 CI runner is a
+    # DMI-attested VM that also exposes a PMU; a reader with fewer signals called it
+    # bare metal).
+    att = host_attestation()
+    assert (ev.tenancy, ev.signals, ev.hardware_pmu, ev.pmu_source) == (
+        att["tenancy"],
+        att["signals"],
+        att["hardware_pmu"],
+        att["pmu_source"],
+    ), (ev.tenancy, ev.signals, att)
+    assert (ev.dmi_vendor, ev.dmi_product) == (att["dmi_vendor"], att["dmi_product"])
+    assert ev.silicon == (att["tenancy"] == "bare-metal")
     assert CalibratedProfile.from_json(table.to_json()) == table
+
+
+def test_host_attestation_reserves_bare_metal_for_the_proved_case():
+    """The Python twin of the rig's rule over synthetic hosts: a hypervisor, DMI or WSL
+    signal is virtualized whatever the PMU says; a container alone is containerized; a
+    PMU with no signal is bare metal; nothing is unproven."""
+    from unittest import mock
+
+    import bcir.kbcir.microbench as mb
+
+    def host(files, readable):
+        def contains(path, needle):
+            return needle in files.get(path, "").lower()
+
+        def first_line(path):
+            return (
+                files.get(path, "unavailable").splitlines()[0] if path in files else "unavailable"
+            )
+
+        with (
+            mock.patch.object(mb, "_file_contains", contains),
+            mock.patch.object(mb, "_first_line", first_line),
+            mock.patch.object(mb, "_readable", lambda p: p in readable),
+        ):
+            return mb.host_attestation()
+
+    pmu = {"/sys/bus/event_source/devices/armv8_pmuv3_0/type"}
+    vm = host(
+        {
+            "/sys/class/dmi/id/sys_vendor": "Microsoft Corporation",
+            "/sys/class/dmi/id/product_name": "Virtual Machine",
+        },
+        pmu,
+    )
+    assert (vm["tenancy"], vm["signals"], vm["hardware_pmu"]) == (
+        "virtualized",
+        "dmi-virtual",
+        True,
+    )
+    flagged = host({"/proc/cpuinfo": "flags : fpu vme hypervisor sse"}, set())
+    assert (flagged["tenancy"], flagged["signals"]) == ("virtualized", "hypervisor-flag")
+    wsl = host({"/proc/version": "Linux version 5.15 (Microsoft@Microsoft.com)"}, pmu)
+    assert (wsl["tenancy"], wsl["signals"]) == ("virtualized", "wsl")
+    boxed = host({"/proc/1/cgroup": "0::/docker/abc"}, pmu)
+    assert (boxed["tenancy"], boxed["signals"]) == ("containerized", "container")
+    metal = host({}, pmu | {"/sys/class/powercap/intel-rapl/enabled"})
+    assert (metal["tenancy"], metal["signals"], metal["pmu_source"]) == (
+        "bare-metal",
+        "pmu=armv8_pmuv3_0",
+        "armv8_pmuv3_0",
+    )
+    nothing = host({}, set())
+    assert (nothing["tenancy"], nothing["signals"], nothing["hardware_pmu"]) == (
+        "unproven",
+        "no PMU exposed",
+        False,
+    )
 
 
 def test_native_table_summary_must_agree_with_its_evidence():

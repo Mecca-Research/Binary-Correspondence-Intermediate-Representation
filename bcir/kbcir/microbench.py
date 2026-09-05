@@ -85,6 +85,133 @@ def _median_of(xs) -> int:
     return ordered[len(ordered) // 2]
 
 
+# --- the host attestation: ONE predicate, mirrored by runtime/c/bcir_microbench.c ---------
+#
+# The rig decides its tenancy from files under /proc and /sys. The reader below applies the
+# same rules to the same files, so a test can hold the C rig to the Python twin field by
+# field (the GitHub aarch64 runner is a DMI-attested VM that also exposes a PMU: a reader
+# that checked fewer signals than the rig called it bare metal). Keep the two in lockstep:
+# a signal added on one side is a drift the test reports as a disagreement.
+
+_DMI_VIRTUAL = (
+    "kvm",
+    "qemu",
+    "vmware",
+    "virtualbox",
+    "innotek",
+    "xen",
+    "bochs",
+    "parallels",
+    "hyper-v",
+    "virtual machine",
+    "amazon ec2",
+    "google compute engine",
+    "openstack",
+    "bhyve",
+    "cloud hypervisor",
+    "firecracker",
+)
+_PMU_SOURCES = ("cpu", "cpu_core", "cpu_atom", "armv8_pmuv3", "armv8_pmuv3_0")
+_CONTAINER_CGROUP_MARKERS = ("docker", "containerd", "kubepods", "lxc", "libpod")
+
+
+def _readable(path: str) -> bool:
+    """fopen(path, "r") succeeds: the rig's existence test."""
+    try:
+        with open(path, "rb"):
+            return True
+    except IsADirectoryError:
+        return True
+    except OSError:
+        return False
+
+
+def _first_line(path: str) -> str:
+    """The first line of `path` without its newline, or "unavailable" (the rig's rule)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            line = fh.readline()
+    except OSError:
+        return "unavailable"
+    line = line.rstrip("\r\n")
+    return line if line else "unavailable"
+
+
+def _file_contains(path: str, needle: str) -> bool:
+    """Whether any line of `path`, lower-cased, contains `needle` (the rig's rule)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return any(needle in line.lower() for line in fh)
+    except OSError:
+        return False
+
+
+def host_attestation() -> dict:
+    """The tenancy verdict of this host and the signals it rests on, by the rig's rules.
+
+    Mirrors `attest()` in `runtime/c/bcir_microbench.c` exactly: a hypervisor flag in
+    /proc/cpuinfo, a hypervisor node, a DMI vendor/product naming a hypervisor, or WSL is
+    "virtualized"; a container marker alone is "containerized"; an exposed hardware PMU
+    with no such signal is "bare-metal"; anything else is "unproven". Returns the fields
+    the rig prints under the same names.
+    """
+    hypervisor_flag = _file_contains("/proc/cpuinfo", " hypervisor")
+    wsl = _file_contains("/proc/version", "microsoft") or _readable(
+        "/proc/sys/fs/binfmt_misc/WSLInterop"
+    )
+    container = (
+        _readable("/.dockerenv")
+        or _readable("/run/.containerenv")
+        or any(_file_contains("/proc/1/cgroup", marker) for marker in _CONTAINER_CGROUP_MARKERS)
+    )
+    hypervisor_node = (
+        _readable("/sys/hypervisor/type")
+        or _readable("/proc/device-tree/hypervisor/compatible")
+        or _readable("/proc/xen/capabilities")
+    )
+    dmi_vendor = _first_line("/sys/class/dmi/id/sys_vendor")
+    dmi_product = _first_line("/sys/class/dmi/id/product_name")
+    dmi_virtual = any(
+        key in dmi_vendor.lower() or key in dmi_product.lower() for key in _DMI_VIRTUAL
+    )
+    pmu_source = next(
+        (s for s in _PMU_SOURCES if _readable(f"/sys/bus/event_source/devices/{s}/type")),
+        "none",
+    )
+    hardware_pmu = pmu_source != "none"
+    signals = [
+        name
+        for flag, name in (
+            (hypervisor_flag, "hypervisor-flag"),
+            (hypervisor_node, "hypervisor-node"),
+            (dmi_virtual, "dmi-virtual"),
+            (wsl, "wsl"),
+            (container, "container"),
+        )
+        if flag
+    ]
+    if hypervisor_flag or hypervisor_node or dmi_virtual or wsl:
+        tenancy = "virtualized"
+    elif container:
+        tenancy = "containerized"
+    elif hardware_pmu:
+        tenancy = "bare-metal"
+    else:
+        tenancy = "unproven"
+    if signals:
+        signal_text = ",".join(signals)
+    else:
+        signal_text = f"pmu={pmu_source}" if hardware_pmu else "no PMU exposed"
+    return {
+        "tenancy": tenancy,
+        "signals": signal_text,
+        "hardware_pmu": hardware_pmu,
+        "pmu_source": pmu_source,
+        "dmi_vendor": dmi_vendor,
+        "dmi_product": dmi_product,
+    }
+
+
 @dataclass(frozen=True)
 class NativeEvidence:
     """What the native rig measured and where: the summary a reader sees is derived

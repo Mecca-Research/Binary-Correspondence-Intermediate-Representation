@@ -173,7 +173,7 @@ Top-level: ./bcir ./channels ./docs ./llvm-training ./mlir ./runtime ./tools
 ### STATUS.md counts (generated source of truth)
 | Metric | Value |
 |---|---|
-| Static Python `test_*` function inventory | **3605** across 258 files |
+| Static Python `test_*` function inventory | **3606** across 258 files |
 | Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **133** |
 | Static registered-pass inventory | **37** |
 | Static MLIR fixture inventory (`mlir/test/`) | **125** files; 386 `expected-error` markers |
@@ -253,4 +253,4 @@ Top-level: ./bcir ./channels ./docs ./llvm-training ./mlir ./runtime ./tools
 - **docs/research/CLANG_COMPARISON.md** (98L): The fair frame · Results · Where we WIN · Where we MATCH · Where we LOSE (honest) · Bottom line
 - **docs/security/DEPENDENCY_AUDIT_2026-09-03.md** (233L): 1. Verdict · 2. Inventory and currency · 3. The advisory scan — method and result · 4. What the rail enforces from this slice on · 5. What this audit does not cover · 6. Recommendations
 - **docs/security/DEPENDENCY_AUDIT_2026-09-04.md** (289L): 1. Verdict · 2. Scope and method · 3. Inventory · 4. Advisory results · 5. Findings and dispositions · 6. Changes landed with this audit · 7. Reproduction · from the repository root; a scratch venv with pip-audit==2.1
-- **docs/security/laws.md** (942L): The harvest protocol · The staleness rule (declared, not discretionary) · The laws · Campaign classification summary
+- **docs/security/laws.md** (949L): The harvest protocol · The staleness rule (declared, not discretionary) · The laws · Campaign classification summary
