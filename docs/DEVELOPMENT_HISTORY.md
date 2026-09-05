@@ -463,6 +463,19 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   `calibrate_native(require_baremetal=True)` refuses every other tenancy with the signals that
   decided it. `strided_order` is the Python twin of the walk, with the parent's n/gcd pinned
   as the witness.
+  S0-G (2026-09-05) closed Stage 0's last item, S0-8, the LLVM kernel's runtime-`n` tail
+  contract: the single-claim vector kernel had stepped its loop to the runtime `n` itself,
+  so any `n` that was not a multiple of the selected width read and wrote past the buffers
+  (vector_add at width 16 called with n = 1031 wrote C[1031..1039]; measured RED with the
+  new canary harness against the parent's kernel), and a non-divisible compile-time count
+  had been legalized to scalar. The kernel now runs its vector loop over `n & -W` and
+  finishes the remainder in a scalar epilogue at the selected width, declares
+  `epilogue=scalar`, refuses a width the mask cannot express; R12 holds the mask, the
+  epilogue and the declaration (an unbounded loop, a missing epilogue and an undeclared one
+  are each refused); and the self-check harness -- shared by the AOT, JIT and WASM paths --
+  drives every kernel with the planned count, `count + 7`, a sub-width count and zero
+  behind 64-element canaries. With S0-A through S0-G landed, Stage 0 of the GEM+/TMSAO
+  program is closed and Stage 1 (G1, G3, G11, G5) is unblocked.
 
 ---
 

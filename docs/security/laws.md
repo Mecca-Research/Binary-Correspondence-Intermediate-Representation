@@ -368,6 +368,15 @@ install the engine pinned into a scratch venv of their own, hand it to the
 rail as `PIP_AUDIT`, and pass `--installed` with the three names the audit
 must find; `test_ci_owns_the_advisory_rail` now pins that every job installing
 the engine is a job that requires it, and only those).
+S0-G instance (2026-09-05): the LLVM kernel's self-check harness called the
+kernel only at the claim's own count -- a multiple of the vector width by
+construction -- so the vector loop that stepped to `n` itself never met the
+runtime `n` it was wrong for, and every lowering test was green over a
+miscompile. The harness now drives every kernel with `count + 7`, a
+sub-width count and zero behind canaries, and the parent's kernel fails it
+(`FAIL n=1031: wrote past n at 1031`); R12 holds the contract in the text
+(`test_missing_tail_contract_is_R12`, `test_harness_drives_the_tail_contract`).
+A witness exercises the input the law is about, not the one that flatters it.
 **Port note:** the C header's error enum IS the contract; the fuzz harness
 whitelists those values and nothing else.
 
