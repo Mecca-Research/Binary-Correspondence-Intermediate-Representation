@@ -16,12 +16,14 @@ def BCIR_EventStreamOp : BCIR_Op<"event.stream", [Symbol]> {
   let arguments = (ins SymbolNameAttr:$sym_name, StrAttr:$kind, StrAttr:$encoding,
                        I64Attr:$element_bits, I64Attr:$max_window);
   let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
 }
 
 def BCIR_EventKindOp : BCIR_Op<"event.kind", [Symbol]> {
   let summary = "A named event class with a payload shape";
   let arguments = (ins SymbolNameAttr:$sym_name, StrAttr:$name, StrAttr:$payload_shape);
   let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
 }
 
 def BCIR_EventEmitOp : BCIR_Op<"event.emit"> {

@@ -48,16 +48,16 @@ bcir.module @r13_digest_tampered {
 
 // -----
 
-// R13 m_theta cross-check against the IR (ok): the cool components + a cool kbcir.theta op
+// R13 m_theta cross-check against the IR (ok): the cool m_theta + a cool kbcir.theta op
 // (all eight pressures 0). hash_theta recomputed from the op equals the declared m_theta
-// -- accepted (and the digest still recomputes).
+// -- accepted (and the digest still recomputes over (0, 0, m_theta, 0)). The manifest
+// declares ONLY the component this module carries: since S0-6 a manifest inside a module
+// that holds any hashable object may not declare a hash for an object the module lacks.
 bcir.module @r13_theta_ok {
   bcir.kbcir.theta @theta { thermal = 0 : i32 }
   bcir.kbcir.provenance_manifest @man_theta {
-    digest = 9201837206445197944 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
-    reproduced = true,
-    m_module = 7127522701151166272 : i64, m_target = 5864064355688965777 : i64,
-    m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64
+    digest = 5568577758313728278 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
+    reproduced = true, m_theta = 1870846051561339781 : i64
   }
 }
 
@@ -70,10 +70,8 @@ bcir.module @r13_theta_mismatch {
   bcir.kbcir.theta @theta { thermal = 80 : i32 }
   // expected-error @+1 {{R13: manifest m_theta 1870846051561339781 does not match the value recomputed from the IR 7137236898939919207}}
   bcir.kbcir.provenance_manifest @man_theta_bad {
-    digest = 9201837206445197944 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
-    reproduced = true,
-    m_module = 7127522701151166272 : i64, m_target = 5864064355688965777 : i64,
-    m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64
+    digest = 5568577758313728278 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
+    reproduced = true, m_theta = 1870846051561339781 : i64
   }
 }
 
@@ -135,10 +133,8 @@ bcir.module @vec_add_bad_opcode {
   } { %i = bcir.index_range 0 to 1024 step 1 }
   // expected-error @+1 {{R13: manifest m_module 7127522701151166272 does not match the value recomputed from the IR}}
   bcir.kbcir.provenance_manifest @man_bad_mod {
-    digest = 9201837206445197944 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
-    reproduced = true,
-    m_module = 7127522701151166272 : i64, m_target = 5864064355688965777 : i64,
-    m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64
+    digest = 5162498066540514716 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
+    reproduced = true, m_module = 7127522701151166272 : i64
   }
 }
 
@@ -156,9 +152,7 @@ bcir.module @cap_bad_target {
   }
   // expected-error @+1 {{R13: manifest m_target 5864064355688965777 does not match the value recomputed from the IR}}
   bcir.kbcir.provenance_manifest @man_bad_tgt {
-    digest = 9201837206445197944 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
-    reproduced = true,
-    m_module = 7127522701151166272 : i64, m_target = 5864064355688965777 : i64,
-    m_theta = 1870846051561339781 : i64, m_policy = 4048695575545564183 : i64
+    digest = 6312301499076181918 : i64, score = 7808 : i64, n_artifacts = 0 : i64,
+    reproduced = true, m_target = 5864064355688965777 : i64
   }
 }

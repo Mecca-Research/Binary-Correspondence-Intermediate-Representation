@@ -104,18 +104,20 @@ bcir.module @full_vec_add_ct1 attributes {
 
   // ---- LangRef Sec. 13: learning placement, as certified data ----
   // L1: the physics-anchored frozen cost table (ratio-1 reference: reproduces
-  // the seeded constants; gather_penalty = 8192/256 = 32, base_overhead = 4).
+  // @cpu's constants exactly; gather_penalty = 2048/256 = 8, base_overhead = 4*256/256 = 4).
+  // R13 holds the capability's constants to its certificate (S0-6): a table whose
+  // random_q8 said 32 while @cpu priced gathers at 8 was a rule in force nobody froze.
   bcir.kbcir.calibration @cal_cpu {
     target = @cpu, cal_gen = 1 : i64, samples = 0 : i64,
     provenance = "reference (ratio-1; reproduces the seeded constants exactly)",
-    stream_q8 = 256 : i64, strided_q8 = 256 : i64, random_q8 = 8192 : i64, compute_q8 = 256 : i64
+    stream_q8 = 256 : i64, strided_q8 = 256 : i64, random_q8 = 2048 : i64, compute_q8 = 256 : i64
   }
   // A Bayesian/conformal table (kbcir.bayescal): the same point estimate plus a
   // certified +/- delta on the random ratio at 90% coverage (split conformal).
   bcir.kbcir.calibration @cal_cpu_bayes {
     target = @cpu, cal_gen = 1 : i64, samples = 8 : i64,
     provenance = "bayes (conjugate VI + split conformal cov=0.9)",
-    stream_q8 = 256 : i64, strided_q8 = 256 : i64, random_q8 = 8192 : i64, compute_q8 = 256 : i64,
+    stream_q8 = 256 : i64, strided_q8 = 256 : i64, random_q8 = 2048 : i64, compute_q8 = 256 : i64,
     coverage_milli = 900 : i64, random_delta_q8 = 256 : i64
   }
   // L2: the certified gain-schedule portfolio + the replay gate that admitted it.

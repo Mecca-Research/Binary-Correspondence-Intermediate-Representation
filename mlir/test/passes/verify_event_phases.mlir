@@ -49,8 +49,9 @@ bcir.module @uart_rx_lawful {
     domain = #bcir.domain<mmio>, hazard = #bcir.hazard<atomic>,
     verify = #bcir.verify<bounds>, bounds = #bcir.bounds<strict>, is_volatile = true
   } { %i = bcir.index_range 0 to 1 step 1 }
-  // The handler splits its MMIO read from its RAM store -- on the law rail a claim
-  // never mixes a device-isolated domain with host memory (the R3 redirection gap).
+  // The handler splits its MMIO read from its RAM store: a device-isolated resource is
+  // touched only by a claim declaring its domain (the R3 redirection gap; since S0-6 the
+  // MMIO claim may also carry host operands, the store here simply has none to carry).
   bcir.claim @rx_read attributes {
     claim_id = 100 : i32, phase = @isr, op = "uart.rbr_read", reads = [@RBR],
     writes = [], count = 1 : i64, lane = #bcir.lane<u>,

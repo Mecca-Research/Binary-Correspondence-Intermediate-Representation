@@ -154,6 +154,8 @@ echo "[passes] lower-gem-activation op verifier negatives (the quarantine rule +
   && echo "  PASS lower_gem_activation_neg.mlir" || { echo "  FAIL lower_gem_activation_neg.mlir"; fail=1; }
 echo "[passes] lower-gem-conv (gem.conv plan -> im2col-gemm tiled gem.block sequence; G7 dual-rail parity)"
 run_fc -bcir-lower-gem-conv "${T}/lower_gem_conv.mlir"
+"${BO}" -bcir-lower-gem-conv -verify-diagnostics -split-input-file "${T}/lower_gem_conv_overflow.mlir" \
+  && echo "  PASS lower_gem_conv_overflow (S0-8 one-tile overflow)" || { echo "  FAIL lower_gem_conv_overflow"; fail=1; }
 echo "[passes] lower-gem-conv op verifier negatives (derived out dims / im2col gemm dims / strategy/tile / bottleneck / R17)"
 "${BO}" -verify-diagnostics -split-input-file "${T}/lower_gem_conv_neg.mlir" \
   && echo "  PASS lower_gem_conv_neg.mlir" || { echo "  FAIL lower_gem_conv_neg.mlir"; fail=1; }
@@ -453,6 +455,7 @@ for pl in bcir-optimize bcir-hydrate; do
 done
 # S0-5 on the selection pass: two modules with a namesake path each price their own.
 run_fc -bcir-select-realization "${T}/select_module_scope.mlir"
+run_fc -bcir-schedule "${T}/schedule_phase_order.mlir"
 
 echo "[passes] GEM cross-checks against the oracle (-verify-diagnostics)"
 "${BO}" -bcir-select-realization -bcir-lower-to-llvm -verify-diagnostics -split-input-file \

@@ -16,6 +16,7 @@ def BCIR_BinaryFormatOp : BCIR_Op<"binary.format", [Symbol, SymbolTable, NoTermi
   let arguments = (ins SymbolNameAttr:$sym_name, StrAttr:$endianness, I64Attr:$alignment_bits);
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
+  let hasVerifier = 1;
 }
 
 def BCIR_BinaryFieldOp : BCIR_Op<"binary.field", [Symbol]> {
@@ -23,6 +24,7 @@ def BCIR_BinaryFieldOp : BCIR_Op<"binary.field", [Symbol]> {
   let arguments = (ins SymbolNameAttr:$sym_name, StrAttr:$name, I64Attr:$offset_bits,
                        I64Attr:$width_bits, StrAttr:$kind, StrAttr:$semantic);
   let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
 }
 
 def BCIR_BinaryRecordOp : BCIR_Op<"binary.record", [Symbol]> {
@@ -30,6 +32,7 @@ def BCIR_BinaryRecordOp : BCIR_Op<"binary.record", [Symbol]> {
   let arguments = (ins SymbolNameAttr:$sym_name, StrAttr:$name,
                        FlatSymbolRefArrayAttr:$fields, I64Attr:$size_bits);
   let assemblyFormat = "$sym_name attr-dict";
+  let hasVerifier = 1;
 }
 
 def BCIR_BinaryDecodeOp : BCIR_Op<"binary.decode", [Symbol]> {

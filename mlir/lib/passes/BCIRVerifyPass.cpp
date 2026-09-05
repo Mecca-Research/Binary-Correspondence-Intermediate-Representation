@@ -263,14 +263,17 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         ok = false;
       }
     });
-    // A device-ISOLATED domain: an MMIO register or NVM cell is a distinct address
-    // space the host cannot transparently substitute for RAM/HBM/VRAM/CXL (which
-    // are mutually addressable host memory a compute claim may legitimately stage
-    // tiles across -- e.g. a matmul reading RAM tiles, accumulating in HBM). A claim
-    // that declares a host domain but TOUCHES an MMIO/NVM resource (or vice versa) is
-    // the data-redirection / MMIO-as-RAM gap: an isolated resource silently treated
-    // as the wrong address space. Such a touch must MATCH the claim's declared domain.
-    auto isIsolatedDomain = [](Domain d) { return d == Domain::MMIO || d == Domain::NVM; };
+    // A device-ISOLATED domain: an MMIO register is a distinct address space the host
+    // cannot transparently substitute for a memory tier (RAM/HBM/VRAM/CXL/NVM are
+    // mutually addressable tiers a compute claim may legitimately stage across -- a
+    // matmul reading RAM tiles and accumulating in HBM, the HAM fabric reading NVM into
+    // VRAM). A claim that declares a host domain but TOUCHES an MMIO resource is the
+    // data-redirection / MMIO-as-RAM gap: an isolated resource silently treated as the
+    // wrong address space. Such a touch must MATCH the claim's declared domain.
+    // S0-6 (one rule, both rails: model.ISOLATED_DOMAINS / verify R3 / isIsolatedDomain):
+    // only the RESOURCE side of the pair is held to it. A claim that declares an isolated
+    // domain may carry host operands -- the RAM value an MMIO write stores, the index a
+    // register read uses, the shape of every cfront MMIO access (38 of 38 in the corpus).
     walkScope(root, [&](ClaimOp c) {
       bool anyResolved = false, domainBacked = false;
       // Tighten the FIRST-MATCH weakness: the old check set domainBacked on the FIRST
@@ -278,7 +281,7 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       // were cross-domain. We keep that "at least one backs it" check (host domains may
       // legitimately mix) BUT additionally require every touched ISOLATED-domain resource
       // to match the claim's declared domain -- so a claim cannot reach a device register
-      // (MMIO) or NVM cell while declaring itself RAM/HBM, the redirection gap.
+      // (MMIO) while declaring itself RAM/HBM, the redirection gap.
       auto touch = [&](ArrayAttr refs, StringRef which) {
         for (Attribute a : refs) {
           auto ref = dyn_cast<FlatSymbolRefAttr>(a);
@@ -291,15 +294,8 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           Domain rd = it->second.getDomainKind();
           if (rd == c.getDomain())
             domainBacked = true;
-          else if (isIsolatedDomain(rd) || isIsolatedDomain(c.getDomain())) {
-            // Name whichever SIDE is the device-isolated one (the resource domain, the claim
-            // domain, or both) so the diagnostic is never factually wrong -- a RAM resource
-            // touched by an MMIO claim must not be called "device-isolated ram".
-            const char *which_isolated = (isIsolatedDomain(rd) && isIsolatedDomain(c.getDomain()))
-                                             ? "both domains are device-isolated and differ"
-                                         : isIsolatedDomain(rd)
-                                             ? "the resource is in a device-isolated domain"
-                                             : "the claim declares a device-isolated domain";
+          else if (isIsolatedDomain(rd)) {
+            const char *which_isolated = "the resource is in a device-isolated domain";
             c.emitError("R3: claim ")
                 << c.getSymName() << " " << which << " @" << ref.getValue() << " (domain "
                 << stringifyDomain(rd) << ") does not match the claim domain "
@@ -357,6 +353,28 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         if (auto ref = dyn_cast<FlatSymbolRefAttr>(a))
           deps[p.getSymName()].push_back(ref.getValue());
     });
+    // R4 (phase identity, S0-6 / row 9): a phase id names ONE phase and every dependency
+    // names a declared phase. The passes key their per-phase state by id, so a duplicate id
+    // merged two phases, and every order derivation skipped a dangling dep -- the canonical
+    // order was computed over a DAG the module never declared. Mirrors verify R4.
+    {
+      llvm::DenseMap<int32_t, PhaseOp> byId;
+      walkScope(root, [&](PhaseOp p) {
+        auto [it, inserted] = byId.try_emplace(p.getId(), p);
+        if (!inserted) {
+          p.emitError("R4: phase @") << p.getSymName() << " duplicates phase id " << p.getId()
+                                     << " of @" << it->second.getSymName();
+          ok = false;
+        }
+        for (Attribute a : p.getDeps())
+          if (auto ref = dyn_cast<FlatSymbolRefAttr>(a))
+            if (!phaseOps.count(ref.getValue())) {
+              p.emitError("R4: phase @")
+                  << p.getSymName() << " depends on undeclared phase @" << ref.getValue();
+              ok = false;
+            }
+      });
+    }
     // 0 = unvisited, 1 = on stack, 2 = done.
     llvm::DenseMap<StringRef, int> color;
     std::function<bool(StringRef)> hasCycle = [&](StringRef n) -> bool {
@@ -844,9 +862,11 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           ok = false;
         }
       }
+      // R13 (not R9): "every decision rule in force carries a generation tag" -- the
+      // provenance law, the number the oracle's verify_provenance reports (S0-6).
       for (int64_t g : pf.getGens())
         if (g < 1) {
-          pf.emitError("R9: portfolio generation tags must be >= 1");
+          pf.emitError("R13: portfolio generation tags must be >= 1");
           ok = false;
           break;
         }
@@ -906,6 +926,24 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       if (!cal || static_cast<int64_t>(cal.getCalGen()) != gen) {
         t.emitError("R13: capability @") << t.getSymName() << " claims cal_gen " << gen
                                          << " without a matching calibration certificate";
+        ok = false;
+        return;
+      }
+      // R13 (certified constants, S0-6 / row 12): the constants the capability prices with
+      // are the ones its certificate froze -- gather_penalty = max(1, random_q8/256),
+      // base_overhead = max(1, 4*strided_q8/256), mem_unit = 1 (CalibratedProfile.apply). A
+      // matching generation with drifted constants is a table the rule in force never used.
+      int64_t gather = std::max<int64_t>(1, static_cast<int64_t>(cal.getRandomQ8()) / 256);
+      int64_t base = std::max<int64_t>(1, (4 * static_cast<int64_t>(cal.getStridedQ8())) / 256);
+      int64_t haveGather = static_cast<int64_t>(t.getGatherPenalty());
+      int64_t haveBase = static_cast<int64_t>(t.getBaseOverhead());
+      int64_t haveUnit = static_cast<int64_t>(t.getMemUnit());
+      if (haveGather != gather || haveBase != base || haveUnit != 1) {
+        t.emitError("R13: capability @")
+            << t.getSymName() << " constants drifted from calibration certificate @"
+            << cal.getSymName() << " (gather_penalty " << haveGather << " vs certified " << gather
+            << ", base_overhead " << haveBase << " vs certified " << base << ", mem_unit "
+            << haveUnit << " vs 1)";
         ok = false;
       }
     });
@@ -1037,6 +1075,51 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
         pm.emitError("R13: deployed plan manifest did not reproduce on replay");
         ok = false;
       }
+      // R13 (artifact record shape, S0-6 / row 12): the artifact names and generations are
+      // parallel arrays of one arity, the names are sorted and unique, and n_artifacts counts
+      // them -- so the digest below folds the SAME (name, generation) sequence the oracle
+      // folded (provenance._norm_artifacts; ProvenanceManifest.from_json refuses anything
+      // else). The old recompute tolerated a missing name and folded the declared order, so a
+      // manifest the oracle refuses was accepted here with a digest of its own.
+      ArrayAttr names = pm.getArtifactNamesAttr();
+      std::optional<ArrayRef<int64_t>> gens = pm.getArtifactGens();
+      size_t nNames = names ? names.size() : 0, nGens = gens ? gens->size() : 0;
+      bool artifactsWellFormed = true;
+      if (nNames != nGens) {
+        pm.emitError("R13: manifest artifact_names/artifact_gens arity mismatch (")
+            << nNames << " names, " << nGens << " generations)";
+        ok = false;
+        artifactsWellFormed = false;
+      }
+      if (names) {
+        StringRef prev;
+        bool havePrev = false;
+        for (Attribute a : names) {
+          auto sname = dyn_cast<StringAttr>(a);
+          if (!sname || sname.getValue().empty()) {
+            pm.emitError("R13: manifest artifact names must be non-empty strings");
+            ok = false;
+            artifactsWellFormed = false;
+            break;
+          }
+          if (havePrev && !(prev < sname.getValue())) {
+            pm.emitError("R13: manifest artifact names must be sorted and unique ('")
+                << prev << "' precedes '" << sname.getValue() << "')";
+            ok = false;
+            artifactsWellFormed = false;
+            break;
+          }
+          prev = sname.getValue();
+          havePrev = true;
+        }
+      }
+      if (artifactsWellFormed && (names || gens) &&
+          static_cast<int64_t>(pm.getNArtifacts()) != static_cast<int64_t>(nNames)) {
+        pm.emitError("R13: manifest n_artifacts ")
+            << static_cast<int64_t>(pm.getNArtifacts()) << " != the " << nNames
+            << " artifact(s) it declares";
+        ok = false;
+      }
       // R13 digest recompute: when the manifest carries the four component hashes
       // (the FNV content hashes of module/target/theta/policy), recompute the digest
       // from first principles (provenance._digest = _fnv(m_module, m_target, m_theta,
@@ -1047,16 +1130,13 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
       int64_t mt = static_cast<int64_t>(pm.getMTarget());
       int64_t mth = static_cast<int64_t>(pm.getMTheta());
       int64_t mp = static_cast<int64_t>(pm.getMPolicy());
-      if (mm || mt || mth || mp) {
+      if ((mm || mt || mth || mp) && artifactsWellFormed) {
         uint64_t h = kFnvOffset;
         for (int64_t comp : {mm, mt, mth, mp})
           h = fnvItem(h, std::to_string(comp));
-        ArrayAttr names = pm.getArtifactNamesAttr();
-        if (auto gens = pm.getArtifactGens()) {
+        if (gens) {
           for (size_t i = 0; i < gens->size(); ++i) {
-            if (names && i < names.size())
-              if (auto s = dyn_cast<StringAttr>(names[i]))
-                h = fnvItem(h, s.getValue());
+            h = fnvItem(h, cast<StringAttr>(names[i]).getValue());
             h = fnvItem(h, std::to_string((*gens)[i]));
           }
         }
@@ -1107,6 +1187,24 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           ok = false;
         }
       };
+      // S0-6 (row 12, "skips absent IR objects"): inside a module that carries ANY of the four
+      // hashable objects, a manifest declares only components the IR can recompute -- a hash
+      // for an object the module does not carry was taken on trust, and a manifest could be
+      // attached to a module missing the very input it claims to have been planned from. A
+      // bare manifest record (a module holding nothing but manifests) stays a digest-only
+      // artifact, back-compatible.
+      const bool realModule = theta || cap || pol || hasClaim;
+      auto absent = [&](StringRef field, int64_t declared, bool present, StringRef what) {
+        if (realModule && declared && !present) {
+          pm.emitError("R13: manifest declares ")
+              << field << " but the module carries no " << what << " to recompute it from";
+          ok = false;
+        }
+      };
+      absent("m_theta", mth, static_cast<bool>(theta), "kbcir.theta");
+      absent("m_policy", mp, static_cast<bool>(pol), "kbcir.policy with base_weights");
+      absent("m_target", mt, static_cast<bool>(cap), "target.capability");
+      absent("m_module", mm, hasClaim, "claim graph");
       if (mth && theta)
         crossCheck("m_theta", mth, hashThetaFromIR(theta));
       if (mp && pol)
@@ -1505,6 +1603,53 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
           ok = false;
         }
       });
+    }
+
+    // R12 (address width, S0-6 / row 19): a first-class integer address -- the operand of a
+    // bcir.volatile_load / volatile_store / atomic_rmw / atomic_cas -- is inttoptr'd to the
+    // target's pointer, so under a declared target its width must EQUAL the pointer width: a
+    // narrower one is zero-extended (an i32 on x86_64 reaches only the low 4 GiB and every
+    // register above it aliases a different address), a wider one is truncated. The op
+    // verifiers keep the >= 32-bit floor for target-less IR. The triple -> width table is
+    // pointerWidthOfTriple (mirror of kbcir.cost.pointer_width; verify.verify_address_width
+    // is the oracle twin). Enforced when every capability in scope agrees on the width.
+    {
+      std::optional<unsigned> ptrBits;
+      bool ambiguous = false;
+      std::string tripleSpelled;
+      walkScope(root, [&](TargetCapabilityOp t) {
+        std::optional<unsigned> w = pointerWidthOfTriple(t.getTriple());
+        if (!w)
+          return;
+        if (ptrBits && *ptrBits != *w)
+          ambiguous = true;
+        if (!ptrBits) {
+          ptrBits = w;
+          tripleSpelled = t.getTriple().str();
+        }
+      });
+      auto checkAddr = [&](Operation *op, Type addrTy, StringRef what) {
+        if (!ptrBits || ambiguous)
+          return;
+        auto it = dyn_cast<IntegerType>(addrTy);
+        if (!it || it.getWidth() == *ptrBits)
+          return;
+        op->emitError("R12: the ")
+            << what << " is " << it.getWidth() << " bits but the target '" << tripleSpelled
+            << "' addresses " << *ptrBits << "-bit pointers; the inttoptr lowering would leave it "
+            << (it.getWidth() < *ptrBits ? "zero-extended" : "truncated");
+        ok = false;
+      };
+      walkScope(root, [&](VolatileLoadOp l) {
+        checkAddr(l, l.getAddr().getType(), "device-register address");
+      });
+      walkScope(root, [&](VolatileStoreOp st) {
+        checkAddr(st, st.getAddr().getType(), "device-register address");
+      });
+      walkScope(root,
+                [&](AtomicRMWOp a) { checkAddr(a, a.getAddr().getType(), "object address"); });
+      walkScope(root,
+                [&](AtomicCASOp a) { checkAddr(a, a.getAddr().getType(), "object address"); });
     }
 
     // R22/R23: shape-consistency + dtype-compatibility over the gem.* tensor ops (D2 -- the

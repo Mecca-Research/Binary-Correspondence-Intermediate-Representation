@@ -110,13 +110,16 @@ struct SchedulePass : public PassWrapper<SchedulePass, OperationPass<>> {
   }
 
   void scheduleScope(Operation *root, Builder &b) {
-    llvm::DenseMap<StringRef, int32_t> phaseId;
-    walkScope(root, [&](PhaseOp p) { phaseId[p.getSymName()] = p.getId(); });
+    // S0-6 (row 9): phases in the ONE canonical order (dependency-first; BCIRPassSupport.h
+    // canonicalPhaseOrder, the twin of model.topological_phase_ids), then ascending claim id.
+    // A numeric-id sort put a phase before the phase it depends on whenever ids were declared
+    // out of dependency order (schedule_phase_order.mlir).
+    llvm::DenseMap<StringRef, int64_t> rank = canonicalPhaseRank(root);
 
     SmallVector<ClaimOp> claims;
     walkScope(root, [&](ClaimOp c) { claims.push_back(c); });
     llvm::sort(claims, [&](ClaimOp a, ClaimOp b) {
-      int32_t pa = phaseId.lookup(a.getPhase()), pb = phaseId.lookup(b.getPhase());
+      int64_t pa = phaseRankOf(rank, a.getPhase()), pb = phaseRankOf(rank, b.getPhase());
       if (pa != pb)
         return pa < pb;
       return a.getClaimId() < b.getClaimId();
