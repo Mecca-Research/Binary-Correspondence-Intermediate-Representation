@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .lanes import Domain, Lane, StrideClass
+from .lanes import ISOLATED_DOMAINS, Domain, Lane, StrideClass
 from .opcodes import Opcode
 
 
@@ -171,6 +171,26 @@ class Module:
 
     def phase_map(self) -> dict[int, Phase]:
         return {p.phase_id: p for p in self.phases}
+
+
+def derived_claim_domain(writes, reads) -> Domain:
+    """The domain contract a frontend derives for a claim from the resources it touches
+    (LangRef R3; the MAP/ROP rule). An isolated domain (MMIO/NVM) the claim touches IS its
+    domain -- touching two different isolated domains has no lawful contract and is refused;
+    otherwise the domain of its first write, else of its first read, else RAM. The old
+    frontends defaulted every claim to RAM, so a program over HBM resources was refused by
+    R3 and a device register could not be addressed at all.
+
+    `writes` / `reads` are the touched `Resource`s (writes first: a claim's contract is
+    where its effect lands)."""
+    touched = [r for r in tuple(writes) + tuple(reads) if r is not None]
+    isolated = {r.domain for r in touched if r.domain in ISOLATED_DOMAINS}
+    if len(isolated) > 1:
+        names = ", ".join(sorted(d.name for d in isolated))
+        raise ValueError(f"a claim may not touch two isolated domains ({names})")
+    if isolated:
+        return next(iter(isolated))
+    return touched[0].domain if touched else Domain.RAM
 
 
 def topological_phase_ids(module: Module) -> list[int]:

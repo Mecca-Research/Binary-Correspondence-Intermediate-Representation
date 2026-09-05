@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 from ..model import (
     ATOMIC_OPCODES,
+    ISOLATED_DOMAINS,
     Claim,
     Domain,
     Lane,
@@ -74,6 +75,15 @@ _CONTROL_OPCODES = {
 # Access patterns whose touched index set is data-dependent (R7): a strict bounds
 # contract cannot be discharged statically, so a runtime verify contract is required.
 _DATA_DEPENDENT = {StrideClass.CACHELINE, StrideClass.RANDOM}
+# The signed 64-bit wire domain every extent, count and cost crosses into (the MLIR
+# attributes, the StreamPack fields, the C runtime): an oracle integer that does not fit
+# it is not a value the other rails can carry, so the structural laws refuse it here too
+# (S0-6: the same bound the op verifiers apply with checked arithmetic).
+_I64_MAX = (1 << 63) - 1
+
+
+def _is_pow2(n: int) -> bool:
+    return isinstance(n, int) and n > 0 and (n & (n - 1)) == 0
 
 
 def verify(module: Module) -> list[Diagnostic]:
@@ -86,6 +96,40 @@ def verify(module: Module) -> list[Diagnostic]:
         if rid in seen:
             diags.append(Diagnostic("R1", f"duplicate RID {rid}"))
         seen.add(rid)
+
+    # R1 (registry well-formedness, S0-6): a registry entry describes a real extent. Every
+    # declared shape extent is positive (an empty shape is an UNKNOWN extent, which R7 then
+    # cannot check statically -- the MLIR rail's convention), the element count fits the
+    # signed 64-bit wire domain and the alignment is a positive power of two. Mirrors the
+    # parse-time `bcir.resource` verifier: the oracle used to admit a zero-extent or
+    # misaligned resource the law rail refuses at parse. (`elem_bytes` is NOT held here: the
+    # dialect's resource carries no element width, and cfront's zero-size objects -- a
+    # `void *` pointee, a label address -- legitimately declare 0.)
+    for res in module.resources.values():
+        for extent in res.shape:
+            if extent <= 0:
+                diags.append(
+                    Diagnostic(
+                        "R1", f"resource {res.rid}: shape extents must be positive (got {extent})"
+                    )
+                )
+        if res.shape and all(extent > 0 for extent in res.shape):
+            count = 1
+            for extent in res.shape:
+                count *= extent
+            if count > _I64_MAX:
+                diags.append(
+                    Diagnostic(
+                        "R1", f"resource {res.rid}: shape element count exceeds signed 64-bit range"
+                    )
+                )
+        if not _is_pow2(res.align):
+            diags.append(
+                Diagnostic(
+                    "R1",
+                    f"resource {res.rid}: align must be a positive power of two (got {res.align})",
+                )
+            )
 
     # R1.1: claim-id uniqueness (mirror of R1, for the claim namespace). Every claim id must be unique
     # within the module -- a duplicate/injected claim id makes the claim graph ambiguous (a plan step,
@@ -128,6 +172,30 @@ def verify(module: Module) -> list[Diagnostic]:
                         f"{{{', '.join(sorted({r.domain.name for r in touched}))}}}",
                     )
                 )
+            # R3 (the isolated-domain redirection gap, S0-6 -- one rule on both rails): a
+            # resource in a device-ISOLATED domain (MMIO: `model.ISOLATED_DOMAINS`) may be
+            # touched only by a claim declaring that domain. A host-domain claim that reaches a
+            # device register while "backed" by one RAM operand was accepted by the membership
+            # check above -- an isolated resource silently treated as another address space. The
+            # converse stays legal: an MMIO claim carries the RAM value it stores / the index it
+            # reads (every cfront MMIO access has that shape), so only the RESOURCE side of the
+            # pair is required to match.
+            for kind, rids in (("read", claim.rd), ("write", claim.wr)):
+                for rid in rids:
+                    res = module.resource(rid)
+                    if (
+                        res is not None
+                        and res.domain in ISOLATED_DOMAINS
+                        and res.domain != claim.domain
+                    ):
+                        diags.append(
+                            Diagnostic(
+                                "R3",
+                                f"claim {claim.id}: {kind} of RID {rid} (domain {res.domain.name}) "
+                                f"does not match the claim domain {claim.domain.name} -- an "
+                                f"isolated resource may not be reached as another address space",
+                            )
+                        )
             for rid in claim.wr:
                 res = module.resource(rid)
                 if res is not None and res.domain == Domain.MMIO and claim.hazard == "unique":
@@ -139,6 +207,23 @@ def verify(module: Module) -> list[Diagnostic]:
                         )
                     )
 
+    # R4 (phase identity, S0-6): a phase id names ONE phase and every dependency names a
+    # declared phase. `Module.phase_map()` keys by id, so a duplicate silently shadowed its
+    # twin (the shadowed phase's deps vanished from the DAG) and `topological_phase_ids`
+    # ignored a dangling dep -- the canonical order was computed over a graph the module did
+    # not declare. Both rails now refuse the module before any order is derived from it.
+    seen_pid: set[int] = set()
+    for ph in module.phases:
+        if ph.phase_id in seen_pid:
+            diags.append(Diagnostic("R4", f"duplicate phase id {ph.phase_id}"))
+        seen_pid.add(ph.phase_id)
+    declared_pids = {ph.phase_id for ph in module.phases}
+    for ph in module.phases:
+        for dep in ph.deps:
+            if dep not in declared_pids:
+                diags.append(
+                    Diagnostic("R4", f"phase {ph.phase_id} depends on undeclared phase {dep}")
+                )
     # R4: phase DAG legality (acyclic).
     if _has_cycle(module):
         diags.append(Diagnostic("R4", "phase dependency graph contains a cycle"))
@@ -245,6 +330,35 @@ def verify(module: Module) -> list[Diagnostic]:
                     Diagnostic("R7", f"claim {claim.id}: unknown verify contract {claim.verify!r}")
                 )
                 continue
+            # R7 (access-pattern well-formedness, S0-6): the iteration extent is non-negative
+            # and the stride positive, whatever the bounds mode -- the parse-time `bcir.claim`
+            # verifier's rule. The oracle used to fold a zero or negative stride to 1 (`max(1,
+            # stride_k)`) and admit a negative count or offset, so a claim the law rail refuses
+            # at parse verified clean here and priced as a unit-stride stream.
+            malformed = False
+            if claim.count < 0:
+                diags.append(
+                    Diagnostic(
+                        "R7", f"claim {claim.id}: count must be non-negative (got {claim.count})"
+                    )
+                )
+                malformed = True
+            if claim.offset < 0:
+                diags.append(
+                    Diagnostic(
+                        "R7", f"claim {claim.id}: offset must be non-negative (got {claim.offset})"
+                    )
+                )
+                malformed = True
+            if claim.stride_k < 1:
+                diags.append(
+                    Diagnostic(
+                        "R7", f"claim {claim.id}: stride_k must be positive (got {claim.stride_k})"
+                    )
+                )
+                malformed = True
+            if malformed:
+                continue
             # A `masked` access (the §5.12 promotion: runtime-bounds-checked, the contract the quarantine
             # handler discharges) must DECLARE that runtime contract -- `verify == "bounds"`. The law now
             # SEES the masked metadata it previously skipped: a masked claim with no bounds verify is a
@@ -279,10 +393,19 @@ def verify(module: Module) -> list[Diagnostic]:
             # conservative under-approximation -- never a false positive). A
             # reduction (op "reduce.*") accumulates count reads into a single
             # location, so its write extent is one element, not count.
-            k = max(1, claim.stride_k)
+            k = claim.stride_k
             read_extent = claim.offset + (claim.count - 1) * k + 1 if claim.count > 0 else 0
             is_reduction = claim.op.startswith("reduce.")
             write_extent = claim.offset + (1 if is_reduction else claim.count)
+            if max(read_extent, write_extent) > _I64_MAX:
+                # The wire domain (S0-6): an extent the MLIR attributes and the C runtime
+                # cannot carry is refused, not compared -- checked arithmetic on the law rail.
+                diags.append(
+                    Diagnostic(
+                        "R7", f"claim {claim.id}: affine access extent exceeds signed 64-bit range"
+                    )
+                )
+                continue
             for rid, extent, kind in [(r, read_extent, "read") for r in claim.rd] + [
                 (w, write_extent, "write") for w in claim.wr
             ]:
@@ -1164,6 +1287,33 @@ def verify_c_lowering(
     return diags
 
 
+def verify_address_width(
+    triple: str, addr_bits: int, what: str = "device-register address"
+) -> list[Diagnostic]:
+    """Lowering law R12 (address width, S0-6): a first-class integer address -- the operand of
+    an MMIO `volatile_load`/`volatile_store` or an `atomic_rmw`/`atomic_cas` -- is `inttoptr`'d
+    to the target's pointer, so its width must EQUAL the target's pointer width. A narrower
+    address is zero-extended (an i32 on x86_64 reaches only the low 4 GiB and every address
+    above it wraps to a different register); a wider one is truncated. The op-level floor
+    (>= 32 bits) still applies without a target; with one, this law is the contract. The
+    triple -> width table is `kbcir.cost.pointer_width`, mirrored by `BCIRPassSupport.h`
+    `pointerWidthOfTriple` (one table, both rails; the corpus checks every triple in use).
+    Vacuous for a triple the table does not know."""
+    from ..kbcir.cost import pointer_width
+
+    width = pointer_width(triple)
+    if width is None or addr_bits == width:
+        return []
+    how = "zero-extended" if addr_bits < width else "truncated"
+    return [
+        Diagnostic(
+            "R12",
+            f"the {what} is {addr_bits} bits but the target '{triple}' addresses {width}-bit "
+            f"pointers; the inttoptr lowering would leave it {how}",
+        )
+    ]
+
+
 def verify_manifest(manifest, module, h, theta, policy=None, artifacts=()) -> list[Diagnostic]:
     """Provenance-manifest law R13: a deployed plan's manifest must (a) hash to the
     inputs/artifacts it claims (tamper-evidence) and (b) reproduce the recorded
@@ -1886,10 +2036,13 @@ def verify_provenance(
     # be backed by an admitting replay certificate covering exactly that swap.
     if portfolio is not None:
         for slot, entry in sorted(portfolio.entries.items()):
-            if not entry.certified:
-                continue
+            # "Every decision rule in force carries a generation tag" -- certified or not (the
+            # law rail refuses any gen < 1 entry; S0-6 aligns the oracle to that one rule).
             if entry.gen < 1:
-                diags.append(Diagnostic("R13", f"certified policy {slot!r} has no generation tag"))
+                diags.append(Diagnostic("R13", f"policy {slot!r} has no generation tag"))
+            # A promotion is witnessed or it did not happen: every gen > 1 entry, certified or
+            # not, needs the replay certificate that minted its generation (S0-6: the law rail
+            # already held every entry to this; the oracle skipped uncertified ones).
             if entry.gen > 1:
                 covering = [
                     c
