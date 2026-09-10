@@ -13,7 +13,7 @@ One body of knowledge, delivered in three shapes:
 | --- | --- | --- |
 | a person learning | the subject's `README.md` and curriculum | chapters, worked examples, exercises |
 | an agent doing a task | `tools/search_chunks.py`, or the subject's index | a scoped passage that traces to a line |
-| training a model | `tools/build_distillation.py` | chat-format records whose answers are gate-checked |
+| training a model | `tools/export_training_examples.py` | BCIR `SFTExample`s and verifier-decided preference pairs |
 
 The contract those three share is [`CORPUS_STANDARD.md`](CORPUS_STANDARD.md).
 The plan for growing it is [`ROADMAP.md`](ROADMAP.md).
@@ -41,13 +41,15 @@ the folder says so.
 Tier 1  prose          hand-written chapters; a factual claim belongs to a gate
 Tier 2  retrieval      deterministic chunks, line-traceable, embedding-ready
         + vectors      attributed embedding sets, searchable exactly
+        + judgments    derived queries that measure whether retrieval works
+        + memory       index concepts, so an answer carries its reason
 Tier 3  distillation   (system, user, assistant) records, each backed by a gate
 ```
 
 Tier 2 and Tier 3 are **derived**, never hand-written — the only way they stay
 in step with the prose.
 
-Three rules do most of the work:
+Four rules do most of the work:
 
 - **A chunk never carries a fabricated embedding.** `embedding` is `null` until
   a named model fills it. A vector with no model behind it is indistinguishable
@@ -57,9 +59,19 @@ Three rules do most of the work:
   `learned` (trained weights). Naming the model is necessary and not sufficient
   — the two are not interchangeable, and a consumer that cannot tell them apart
   discovers the difference in its own retrieval quality.
+- **Retrieval is measured, and never against questions written for it.** Every
+  judgment is derived from a binding the corpus already made — an index row, a
+  prose link — and every query family declares why it is easier or harder than a
+  real question. Scores are reported; the gate asserts properties, including
+  that a shuffled index collapses to noise.
 - **A distillation record exists only if a gate checks its answer.** No gate, no
   record. Tier 3 therefore grows only as fast as verification does, which is the
   intended pressure.
+- **The corpus feeds BCIR, it does not shadow it.** Chunks go through BCIR's own
+  corpus preparation, its tokenizer, and its example contracts; preference pairs
+  are decided by a verifier rather than a rater. The corpus records the two
+  artifacts it produces — `data` and `tokenizer` — and claims no training stage,
+  because it runs none.
 
 ## Building the records
 
@@ -77,13 +89,26 @@ python3 training/tools/search_chunks.py --query "what does musttail require of a
 python3 training/tools/search_chunks.py --query "opaque pointers" --backend both
 python3 training/tools/search_chunks.py --query "opaque pointers" --backend q8
 
+# how good is that retrieval, really? (judged queries, derived not authored)
+python3 training/tools/build_eval_queries.py --out build/training/eval
+python3 training/tools/evaluate_retrieval.py
+
+# an index-backed concept memory: retrieval you can read
+python3 training/tools/build_index_memory.py --out build/training/memory
+python3 training/tools/build_index_memory.py --recall "is my speedup real or just noise"
+
 # Tier 3 — gate-backed distillation records
 python3 training/tools/build_distillation.py --out build/training/distill
+
+# feed BCIR's own training stack: its corpus prep, tokenizer, example contracts
+python3 training/tools/export_training_examples.py --out build/training/export
 
 # The gates: schema, provenance, split leakage, determinism, anti-vacuity;
 # then attribution, row alignment, discrimination, and the native differential
 python3 training/tools/verify_corpus_records.py
 python3 training/tools/verify_embeddings.py
+python3 training/tools/verify_retrieval.py
+python3 training/tools/verify_training_export.py
 ```
 
 The arithmetic is BCIR's own. `--backend both` runs the pure-Python reference
@@ -109,16 +134,19 @@ compares digests, so determinism is checked rather than assumed.
 | --- | --- | --- |
 | [`schema/chunk-v1.json`](schema/chunk-v1.json) | 2 | retrieval indexes, RAG pipelines |
 | [`schema/embedding-set-v1.json`](schema/embedding-set-v1.json) | 2 | vector indexes |
+| [`schema/eval-set-v1.json`](schema/eval-set-v1.json) | 2 | retrieval evaluation |
 | [`schema/distill-v1.json`](schema/distill-v1.json) | 3 | supervised fine-tuning |
 
-All three are published contracts. The verifiers check the invariants that would
+All four are published contracts. The verifiers check the invariants that would
 corrupt training data if violated; the schemas are what an external consumer
 validates against.
 
 ## Verification boundary
 
-- **Checked:** every gate listed in a subject's `tools/`, plus the record and
-  embedding gates above. `llvm/` alone carries example assembly, opaque-pointer
+- **Checked:** every gate listed in a subject's `tools/`, plus the record,
+  embedding, retrieval, and training-export gates above — which also check that
+  every retrievable teaching document is named by some index, and that no
+  preference pair puts assembler-valid IR on its rejected side. `llvm/` alone carries example assembly, opaque-pointer
   conformance, exercise solutions, invalid fixtures, optimizer goldens, MLIR
   registry tiers, Clang lowering claims, benchmark analysis, and a built
   out-of-tree pass plugin.
@@ -129,9 +157,9 @@ validates against.
   refusal path is checked — an unloadable model writes nothing, and
   `--require-provider` turns that skip into a failure — but no trained model has
   been run end-to-end through the rail here, so the `deterministic: false`
-  branch of the embedding gate has never been taken. It is named rather than
-  implied, and closing it belongs with the retrieval evaluation in
-  [`ROADMAP.md`](ROADMAP.md) 0.6.
+  branch of the embedding gate has never been taken. Phase 0.6 built the metric
+  a learned model would be judged by; it did not obtain the model, and this
+  corpus still reports a **lexical** baseline only.
 - **Neither:** nothing. A claim that is neither checked nor declared reviewed is
   a defect.
 

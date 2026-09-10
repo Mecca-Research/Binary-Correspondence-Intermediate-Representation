@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The corpus's one door to BCIR's native math kernels.
+"""The corpus's one door into BCIR.
 
 `runtime/c/bcir_ai_kernels.c` carries the arithmetic this corpus needs and BCIR
 already gates: a symmetric power-of-two quantizer, an exact-integer top-k, and
@@ -21,6 +21,12 @@ below are stated once instead of per caller:
   * **The kernels are never a fallback.** A caller asks for native or asks for
     reference. Silently substituting one for the other would make a differential
     between them meaningless, since it could compare a thing to itself.
+
+Two doors live here, under the same rules: the native C kernels above, and
+BCIR's hosted training contracts below. The second is what stops `training/`
+from being a passive database -- the corpus feeds BCIR's own corpus
+preparation, tokenizer, example contracts, and pipeline ledger instead of
+emitting JSON that nothing in this repository consumes.
 """
 
 from __future__ import annotations
@@ -125,3 +131,38 @@ def q15_topk(query: array, codes: array, *, rows: int, dim: int, top_k: int, bui
     except (ValueError, RuntimeError) as exc:
         raise BackendUnavailable(f"BCIR Q15 top-k failed: {exc}") from exc
     return [(index, distance) for index, distance in matches]
+
+
+# --------------------------------------------------------------------------
+# The hosted training stack
+# --------------------------------------------------------------------------
+
+# These modules are deliberately tensor-framework free -- BCIR's own contracts
+# module says so in its first paragraph -- so the corpus can build real training
+# examples, and CI can gate them, without torch anywhere near the runner.
+HOSTED_MODULES = ("contracts", "data", "bpe", "pipeline")
+
+
+def load_hosted_training(*names: str):
+    """Import BCIR's hosted training modules, or raise `BackendUnavailable`.
+
+    Same posture as the kernels: lazy, opt-in, and never silently replaced by a
+    local reimplementation. If BCIR is not importable the caller reports an
+    honest skip rather than quietly exporting examples built to a contract this
+    corpus invented for itself -- which would defeat the point of using BCIR's.
+    """
+    import importlib
+    import sys
+
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    wanted = names or HOSTED_MODULES
+    loaded = {}
+    for name in wanted:
+        try:
+            loaded[name] = importlib.import_module(f"bcir.hosted.training.{name}")
+        except ImportError as exc:
+            raise BackendUnavailable(
+                f"bcir.hosted.training.{name} is not importable: {exc}"
+            ) from exc
+    return loaded
