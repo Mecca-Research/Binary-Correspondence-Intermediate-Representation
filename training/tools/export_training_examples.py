@@ -104,47 +104,91 @@ def canonical_json(payload: object) -> str:
 
 
 def raw_documents(chunks: list[dict], data_module):
-    """Corpus chunks, in the shape BCIR's corpus preparation already accepts.
+    """Corpus SOURCES, in the shape BCIR's corpus preparation already accepts.
 
-    Every field it wants, the chunk already carries -- identity, text, source,
-    licence, and the digest of the file the text came from. That correspondence
-    is why this is an edge and not an adapter.
+    One document per source file, not one per chunk. BCIR's splitter hashes each
+    `RawDocument` independently, so handing it chunks lets fragments of the same
+    chapter land in different splits: measured on this corpus, 89 of 285 sources
+    appeared in both train and validation, putting adjacent material from a
+    held-out chapter into training. That is the same one-source-one-split
+    invariant Tier 3 already keeps, broken at a different tier.
+
+    Grouping also matches what a `RawDocument` means. A document is a file with a
+    licence and a digest; a chunk is a retrieval fragment of one, and the two are
+    not interchangeable just because both carry text.
     """
-    return [
-        data_module.RawDocument(
-            document_id=chunk["chunk_id"].split(":", 1)[1],
-            text=chunk["text"],
-            source=chunk["source_path"],
-            license=LICENSE,
-            source_sha256=chunk["source_sha256"],
+    by_source: dict[str, dict] = {}
+    for chunk in chunks:
+        by_source.setdefault(chunk["source_path"], {"sha": chunk["source_sha256"], "chunks": []})[
+            "chunks"
+        ].append(chunk)
+
+    documents = []
+    missing = [source for source in sorted(by_source) if not (REPO_ROOT / source).is_file()]
+    if missing:
+        # Dropping these would export a smaller corpus than the chunks describe
+        # and report nothing, which is the failure mode this whole rail exists
+        # to refuse.
+        raise SystemExit(
+            f"export_training_examples: {len(missing)} chunked source(s) no longer "
+            f"exist: {', '.join(missing[:3])}\n"
+            "  the chunk build is stale; rebuild it: python3 training/tools/build_chunks.py"
         )
-        for chunk in chunks
-    ]
+    for source_path in sorted(by_source):
+        entry = by_source[source_path]
+        text = (REPO_ROOT / source_path).read_text(encoding="utf-8")
+        documents.append(
+            data_module.RawDocument(
+                document_id=entry["sha"],
+                text=text,
+                source=source_path,
+                license=LICENSE,
+                source_sha256=entry["sha"],
+            )
+        )
+    return documents
 
 
 def sft_examples(records: list[dict], tokenizer, contracts):
     """Tier-3 records under BCIR's own supervised-example contract.
 
-    The contract requires a `provenance_sha256`, which is exactly the discipline
-    Tier 3 already keeps: a record exists only because a gate checks its answer,
-    and the digest binds the example to the record that carries that gate.
+    Returned grouped by the record's declared split. `SFTExample` has no split
+    field, so writing them all into one file would silently merge the 12
+    validation and 5 test records into the 62 training ones and contaminate any
+    evaluation that trusts those splits. The grouping is the split.
+
+    `provenance_sha256` hashes the WHOLE record, not just its messages. A
+    record_id covers subject, task and messages only, so changing which gate
+    verifies an answer -- or its sources, split, or difficulty -- would leave the
+    digest identical and the change invisible. The justification is part of the
+    example's identity, because a gate-backed record whose gate changed is a
+    different record.
     """
-    examples = []
+    grouped: dict[str, list[tuple]] = {}
     for record in records:
         system, user, assistant = (message["content"] for message in record["messages"])
         prompt_ids = tokenizer.encode(f"{system}\n\n{user}", add_bos=True)
         response_ids = tokenizer.encode(assistant, add_eos=True)
         if not prompt_ids or not response_ids:
             continue
-        examples.append(
-            contracts.SFTExample(
-                prompt_ids=tuple(prompt_ids),
-                response_ids=tuple(response_ids),
-                provenance_sha256=record["record_id"].split(":", 1)[1],
-                weight=1.0,
-            )
+        example = contracts.SFTExample(
+            prompt_ids=tuple(prompt_ids),
+            response_ids=tuple(response_ids),
+            provenance_sha256=contracts.sha256_text(canonical_json(record)),
+            weight=1.0,
         )
-    return examples
+        # Kept beside the example because SFTExample cannot carry them and a
+        # consumer otherwise cannot tell which source and gate justified it.
+        provenance = {
+            "record_id": record["record_id"],
+            "task": record["task"],
+            "split": record["split"],
+            "source_paths": record["source_paths"],
+            "verified_by": record["verified_by"],
+            "difficulty": record["difficulty"],
+        }
+        grouped.setdefault(record["split"], []).append((example, provenance))
+    return grouped
 
 
 # A fixture is only a "rejected" sample if the ASSEMBLER refuses it. Two classes
@@ -261,7 +305,8 @@ def export(
 
     # 1. BCIR prepares and splits the corpus, and reports on what it dropped.
     spec = data.DataPreparationSpec(allowed_licenses=(LICENSE,), min_characters=32)
-    corpus = data.prepare_corpus(raw_documents(chunks, data), spec)
+    source_documents = raw_documents(chunks, data)
+    corpus = data.prepare_corpus(source_documents, spec)
 
     # 2. BCIR's tokenizer, trained on what BCIR prepared.
     train_docs = corpus.split("train")
@@ -276,7 +321,8 @@ def export(
     records = []
     for path in sorted(distill_dir.glob("*.distill.jsonl")):
         records.extend(read_jsonl(path))
-    sft = sft_examples(records, tokenizer, contracts)
+    sft_by_split = sft_examples(records, tokenizer, contracts)
+    sft = [pair for split in sorted(sft_by_split) for pair in sft_by_split[split]]
     preferences, legality_counts = legality_preferences(tokenizer, contracts, CORPUS_ROOT / "llvm")
 
     # 4. BCIR's ledger, recording only what the corpus actually produced.
@@ -291,7 +337,7 @@ def export(
     corpus_digest = corpus.digest
     tokenizer_digest = tokenizer.digest
     sft_digest = contracts.sha256_text(
-        canonical_json([dataclasses.asdict(example) for example in sft])
+        canonical_json([dataclasses.asdict(example) for example, _ in sft])
     )
     preference_digest = contracts.sha256_text(
         canonical_json([dataclasses.asdict(example) for example, _ in preferences])
@@ -322,9 +368,16 @@ def export(
     # newline here would make the file unreadable by the very reader that
     # defines the format.
     (out / "tokenizer.json").write_text(tokenizer.to_json(), encoding="utf-8")
-    (out / "sft.jsonl").write_text(
-        "".join(canonical_json(dataclasses.asdict(e)) + "\n" for e in sft), encoding="utf-8"
-    )
+    # One file per split. A held-out record must not be reachable by reading the
+    # training file, and a consumer must not have to trust a field to keep them
+    # apart.
+    for split, pairs in sorted(sft_by_split.items()):
+        (out / f"sft.{split}.jsonl").write_text(
+            "".join(
+                canonical_json({**dataclasses.asdict(e), "provenance": p}) + "\n" for e, p in pairs
+            ),
+            encoding="utf-8",
+        )
     (out / "preferences.jsonl").write_text(
         "".join(
             canonical_json({**dataclasses.asdict(e), "pair": origin}) + "\n"
@@ -348,12 +401,24 @@ def export(
             "bounded": len(tokenizer_docs) < len(train_docs),
         },
         "documents": {
+            "offered": len(source_documents),
             "prepared": len(corpus.documents),
             "train": len(train_docs),
             "validation": len(corpus.split("validation")),
+            # What BCIR's own preparation refused. Recorded because a corpus that
+            # silently shrank between what it offered and what it trained on is
+            # exactly the drift these rails exist to make visible.
+            "refused": {
+                "license": corpus.report.rejected_license,
+                "size": corpus.report.rejected_size,
+                "short": corpus.report.rejected_short,
+                "control_characters": corpus.report.rejected_control,
+                "exact_duplicates": corpus.report.exact_duplicates,
+            },
         },
         "examples": {
             "sft": len(sft),
+            "sft_by_split": {split: len(v) for split, v in sorted(sft_by_split.items())},
             "preference": len(preferences),
             "preference_sources": legality_counts,
         },
@@ -430,8 +495,9 @@ def main(argv: list[str] | None = None) -> int:
         f"[token]   vocab {manifest['tokenizer']['vocab_size']} trained on "
         f"{manifest['tokenizer']['trained_on_documents']} document(s){bounded}"
     )
+    splits = ", ".join(f"{n} {split}" for split, n in manifest["examples"]["sft_by_split"].items())
     print(
-        f"[examples] {manifest['examples']['sft']} SFT, "
+        f"[examples] {manifest['examples']['sft']} SFT ({splits}), "
         f"{manifest['examples']['preference']} verifier-decided preference pair(s)"
     )
     print(f"[write]   {args.out}")

@@ -63,7 +63,27 @@ MAX_QUERY_CHARS = 300
 # silently yields zero is indistinguishable from a family that does not exist,
 # which is how the distillation family was lost the first time this ran: a
 # length cap deleted all of it and the stats simply did not mention it.
-DECLARED_FAMILIES = ("index", "crossref", "distill", "heading")
+DECLARED_FAMILIES = ("index", "index-authored", "crossref", "distill", "heading")
+
+# Index files written in the same change as this evaluator. Their rows are NOT
+# the independent, pre-existing bindings the `index` family claims to be: they
+# were authored after retrieval gaps and scores had been measured, by the same
+# hand, so they can encode knowledge of the retriever.
+#
+# They are still useful judgments and still useful navigation, so they are kept
+# and separated rather than deleted -- reporting them apart is what lets a
+# reader see whether the authored rows score differently from the inherited
+# ones. Declared by name because a provenance cutoff read from git would break
+# the moment the corpus is exported, vendored, or squashed.
+EVALUATION_AUTHORED_INDEXES = frozenset(
+    {
+        "training/llvm/indexes/backend-and-jit.md",
+        "training/llvm/indexes/concurrency-and-atomics.md",
+        "training/llvm/indexes/exercises.md",
+        "training/llvm/indexes/frontend-and-production-lowering.md",
+        "training/llvm/indexes/performance-and-evidence.md",
+    }
+)
 # The heading control is a fixed, evenly spaced sample: enough to detect a
 # broken harness, not so many that a trivial family dominates the totals.
 HEADING_CONTROL_COUNT = 60
@@ -93,7 +113,14 @@ FAMILY_BIAS = {
         "Concepts are written by the same author as the chapters they point at, "
         "so they share vocabulary. The phrasing is descriptive rather than "
         "quoted, so a match is not a substring match, but this is not an "
-        "independent judge."
+        "independent judge. These rows predate the evaluation."
+    ),
+    "index-authored": (
+        "WRITTEN ALONGSIDE THIS EVALUATION, after retrieval gaps and scores had "
+        "been measured, by the same hand. These rows can encode knowledge of the "
+        "retriever and are therefore NOT independent judgments. Reported "
+        "separately so the difference from the inherited `index` rows is "
+        "visible instead of averaged away."
     ),
     "crossref": (
         "Link text describes the target in the linking author's words. Closest "
@@ -145,6 +172,34 @@ def load_chunk_sources(chunk_dir: Path) -> set[str]:
     return sources
 
 
+def corpus_digest(chunk_dir: Path) -> str:
+    """`embed_chunks.corpus_digest`, called rather than reimplemented.
+
+    A query set is only meaningful against the corpus it was derived from. Names
+    and counts are not enough: a chapter can be rewritten in place, leaving both
+    unchanged while every judgment in it becomes stale. The comparison is only
+    sound if both sides compute the same function, so there is one function --
+    a second implementation "kept in step" is a mismatch waiting for its first
+    edit, and it would surface as a spurious staleness failure.
+    """
+    import importlib.util
+
+    module = sys.modules.get("embed_chunks")
+    if module is None:
+        spec = importlib.util.spec_from_file_location("embed_chunks", TOOLS_DIR / "embed_chunks.py")
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["embed_chunks"] = module
+        spec.loader.exec_module(module)
+
+    chunks = []
+    for path in sorted(chunk_dir.glob("*.chunks.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                chunks.append(json.loads(line))
+    return module.corpus_digest(chunks)
+
+
 def make_query(
     *, family: str, query: str, targets: set[str], origin: str, note: str = ""
 ) -> dict | None:
@@ -189,11 +244,12 @@ def from_indexes(sources: set[str]) -> list[dict]:
                 for _text, href in LINK_RE.findall(line)
                 if (resolved := resolve(index_file, href)) and resolved in sources
             }
+            relative = index_file.relative_to(REPO_ROOT).as_posix()
             entry = make_query(
-                family="index",
+                family=("index-authored" if relative in EVALUATION_AUTHORED_INDEXES else "index"),
                 query=concept,
                 targets=targets,
-                origin=f"{index_file.relative_to(REPO_ROOT).as_posix()}:{number}",
+                origin=f"{relative}:{number}",
             )
             if entry:
                 queries.append(entry)
@@ -351,6 +407,7 @@ def build(chunk_dir: Path, distill_dir: Path) -> tuple[list[dict], dict]:
         ),
         "queries": len(ordered),
         "documents": len(sources),
+        "corpus_sha256": corpus_digest(chunk_dir),
         "families": families,
         "license": LICENSE,
     }

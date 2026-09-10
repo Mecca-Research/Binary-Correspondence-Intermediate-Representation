@@ -124,6 +124,35 @@ not a learned model's internals, and the corpus says so plainly. A memory is
 never scored on queries derived from its own rows; the exclusion is enforced per
 query from the memory's declared sources.
 
+**Corrected after review.** An adversarial review of the first cut found ten
+defects, and several were places where the code contradicted this document:
+the harness control was pooled into the headline score it is declared never to
+measure; `recall` was really a hit rate for the 119 judgments that name more
+than one document; index rows authored alongside the evaluator were counted as
+inherited judgments; the memory's lift was measured against a baseline drawn
+from a different population; and the corpus/vector/judgment artifacts were not
+bound, so a stale combination scored silently. Each is now fixed and gated.
+
+Two of the corrections changed conclusions, which is the point of measuring:
+the `index-authored` rows score *worse* than the inherited ones rather than
+better, and over the whole population the memory may answer, direct retrieval
+outranks it — the memory's advantage is real but confined to descriptive
+queries.
+
+Proving each new check could fail found three more holes, all of the same shape:
+a fix that was correct by construction and therefore ungated. Querying the
+memory in its own space produced identical numbers to querying it in the chunk
+set's, because today the two spaces are the same one — so `recall` now refuses a
+query of the wrong width outright and the gate exercises it against a memory
+built at another dimension. The provenance digest's *scope* was an assertion
+until the gate recomputed it from the records and perturbed each covered field.
+And the memory's entry-count check could not see a swap that preserved the
+count, or an index edited afterwards, so the memory now carries digests of both
+and refuses a combination that never coexisted. Reading the diff back
+adversarially added two more: the export claimed to report what BCIR refused and
+recorded none of it, and a chunk build naming a deleted source would have
+exported one chapter short without a word. Fifteen injected faults, all caught.
+
 **Still open in this area, deliberately.** The judged set is derived from one
 author's corpus, so it shares vocabulary with what it judges; an independent
 judge would be better and does not exist here. The concept memory is scoreable
