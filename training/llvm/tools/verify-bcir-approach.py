@@ -302,8 +302,11 @@ def check_no_dead_passes(report: Report, chapters: list[Path]) -> None:
         if line.startswith(("  ", "\t")) and line.strip()
     }
     report.require(len(available) > 50, f"opt listed only {len(available)} passes; unusable")
+
+    examined = 0
     for chapter in chapters:
         for pipeline in re.findall(r"-passes=([A-Za-z0-9,<>()_\-]+)", chapter.read_text("utf-8")):
+            examined += 1
             for name in re.split(r"[,()]", pipeline):
                 base = name.split("<")[0].strip()
                 if not base or base in ("default", "module", "function", "loop", "cgscc"):
@@ -312,6 +315,16 @@ def check_no_dead_passes(report: Report, chapters: list[Path]) -> None:
                     base in available or base.startswith("bcir-"),
                     f"{chapter.name}: names pass {base!r}, which this opt does not have",
                 )
+
+    # Anti-vacuity, as a state rather than a comment. This loop currently examines a
+    # single reference -- `opt -passes=verify` in chapter 01 -- so one edit to one
+    # sentence would leave the check iterating zero times and passing over anything.
+    # A gate that can go green without looking at its subject is broken while green.
+    report.require(
+        examined,
+        "no chapter names an opt pass pipeline, so the dead-pass check examined nothing; "
+        "either a chapter lost its `-passes=` reference or this check no longer belongs here",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
