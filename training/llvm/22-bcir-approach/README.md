@@ -56,6 +56,7 @@ and the cost model that sits between them.
 | [`01-correspondence-versus-structure.md`](01-correspondence-versus-structure.md) | What "correspondence" buys that structure does not: the same program, four substrates, two live states |
 | [`02-what-k-bcir-prices.md`](02-what-k-bcir-prices.md) | The twelve axes, which of them anything actually produces, and what each policy weights |
 | [`03-legality-before-cost.md`](03-legality-before-cost.md) | The budget ladder, `Infeasible` as a verdict, and the laws on both rails |
+| [`04-dialect-as-data.md`](04-dialect-as-data.md) | IRDL: the dialect as a file stock `mlir-opt` can read, and what that makes checkable that ODS cannot |
 
 ## Cross-links
 
