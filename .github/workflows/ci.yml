@@ -561,6 +561,15 @@ jobs:
       - name: LLVM training MLIR rail citations
         run: python3 training/llvm/tools/verify-mlir-rail-references.py
 
+      # The corpus spans two LLVM releases, so it snapshots each one's language surface
+      # (instructions, attributes, intrinsics) from that toolchain's own generated
+      # definitions and requires every item that moved between them to be either taught by
+      # a chapter or declared out of scope with a reason. This job installs llvm-dev for
+      # LLVM 18, so it OWNS the 18 snapshot: --require-surface 18 turns "no 18 headers"
+      # from a skip into a failure here, where the headers are supposed to be.
+      - name: LLVM training LangRef surface delta (owns the LLVM 18 snapshot)
+        run: python3 training/llvm/tools/verify-langref-delta.py --require-surface 18
+
       # Statistical kernels against hand-computable values, plus each benchmark
       # fixture's pinned verdict -- including the refusals.
       - name: LLVM training benchmark analysis self-test
@@ -742,6 +751,11 @@ jobs:
       # enforcing byte-identity. Enforcement stays in `training-llvm`, which runs clang 18.
       - name: LLVM training Clang frontend lowering claims (LLVM 23 delta report)
         run: python3 training/llvm/tools/verify-frontend-lowering.py --require-tools
+
+      # The other half of the surface-delta gate: this job installs llvm-23-dev, so it owns
+      # the LLVM 23 snapshot and refuses to skip that drift check.
+      - name: LLVM training LangRef surface delta (owns the LLVM 23 snapshot)
+        run: python3 training/llvm/tools/verify-langref-delta.py --require-surface 23
 
       # DELIBERATELY NOT REPEATED HERE: build-pass-plugin.sh. It builds a sample New PM
       # plugin against the LLVM development CMake package, and a plugin is loadable only by

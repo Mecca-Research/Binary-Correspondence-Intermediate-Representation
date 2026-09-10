@@ -20,6 +20,11 @@
 | Legality before cost, resource budgets, `Infeasible`, R1–R25 on both rails | [`22-bcir-approach/03-legality-before-cost.md`](../22-bcir-approach/03-legality-before-cost.md) |
 | IRDL, dialect-as-data, ODS versus a runtime projection, `--irdl-file` | [`22-bcir-approach/04-dialect-as-data.md`](../22-bcir-approach/04-dialect-as-data.md) |
 | BCIR as an IR: dispatcher, and the two senses of "legality" this corpus uses | [`22-bcir-approach/README.md`](../22-bcir-approach/README.md) |
+| Reading an LLVM version delta; opcode splits, renames, `llvm.experimental.` graduation | [`23-version-movement/01-reading-the-delta.md`](../23-version-movement/01-reading-the-delta.md) |
+| `ptrtoaddr` versus `ptrtoint`; address width, capability pointers, non-capturing casts | [`23-version-movement/02-ptrtoaddr.md`](../23-version-movement/02-ptrtoaddr.md) |
+| `ashr`/`lshr`, `fptosi`/`fptoui` poison, `sitofp` precision loss, `fneg` versus `fsub` | [`23-version-movement/03-conversions-and-shifts.md`](../23-version-movement/03-conversions-and-shifts.md) |
+| Version movement: dispatcher for what changed between LLVM releases | [`23-version-movement/README.md`](../23-version-movement/README.md) |
+| `captures(...)`, `range(...)`, `dead_on_return`; the attributes LLVM 23 added | [`23-version-movement/04-attributes-that-arrived.md`](../23-version-movement/04-attributes-that-arrived.md) |
 | LLVM backend target inventory and porting cost | [`12-backend-jit/08-target-backend-porting-map.md`](../12-backend-jit/08-target-backend-porting-map.md) |
 | Corpus self-test and path prompts | [`EVAL.md`](../EVAL.md) |
 | What LLVM IR is, big picture | [`00-foundations/01-what-is-llvm-ir.md`](../00-foundations/01-what-is-llvm-ir.md) |

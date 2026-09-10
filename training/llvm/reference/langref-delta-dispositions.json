@@ -1,0 +1,536 @@
+{
+  "note": "Disposition for every item in the LLVM 18 -> 23 surface delta. Each is either taught by a chapter (which the gate checks actually names it) or declared out of scope with a reason. verify-langref-delta.py refuses an item with no entry, an entry with no reason, a citation that does not name its subject, and an entry for an item no longer in the delta.",
+  "items": {
+    "PtrToAddr": {
+      "status": "taught",
+      "where": "23-version-movement/02-ptrtoaddr.md",
+      "note": "The only new opcode in five majors, and it is not a respelling of ptrtoint. Checked with llvm-as-23: `ptrtoaddr ptr %p to i32` fails the verifier with \"PtrToAddr result must be address width\" while `ptrtoint ptr %p to i32` assembles fine; on a fat-pointer address space (datalayout p1:128:128:128:64)"
+    },
+    "captures": {
+      "status": "taught",
+      "where": "23-version-movement/04-attributes-that-arrived.md",
+      "note": "Not a pure rename, and unavoidable in ordinary output. Checked: clang-23 -O2 on a 6-line C file prints `captures(none)` on the first parameter of the first function and on the strlen declaration; llvm-as-23/llvm-dis-23 auto-upgrade a hand-written `ptr nocapture readonly` and print it back as `ptr re"
+    },
+    "coro_elide_safe": {
+      "status": "declared",
+      "reason": "Checked: absent from a plain C++20 coroutine build, and emitted only when the awaitable type carries `[[clang::coro_await_elidable]]` \u2014 it is a permission slip for the coroutine heap-elision (HALO) pass, granted by the library author, not a fact about the coroutine's shape. The corpus's coroutine teaching is the part a reader must decode to follow the control flow: the `token` type, `llvm.coro.*` and the split at 13-advanced-ir/03-special-types-and-tokens.md and reference/intrinsics-quickref.md, none of which changes with or without the attribute. It also rides in the dropped `attributes #N` group line."
+    },
+    "dead_on_return": {
+      "status": "taught",
+      "where": "23-version-movement/04-attributes-that-arrived.md",
+      "note": "Checked with clang++-23 on a 7-line C++ file: `dead_on_return(32)` appears 5 times at -O0 and 5 times at -O2 on by-value aggregate arguments, i.e. on the most common shape in C++ output, with no flag or source attribute needed. It changes what the caller may assume (writes made to the byval copy nee"
+    },
+    "denormal-fp-math": {
+      "status": "declared",
+      "reason": "already taught as a departure: named in the rename table at 23-version-movement/01-reading-the-delta.md:82, which states that it folded into `denormal_fpenv` \u2014 the one thing a reader of older IR or older build files needs. No chapter ever taught the string attribute itself (grep: it occurs only at reference/llvm-surface-18.json:90), because it was a build-configuration string inside the `attributes #N` group line that the corpus's normalizer drops (tools/verify-frontend-lowering.py:52). Nothing the language could express was lost."
+    },
+    "denormal-fp-math-f32": {
+      "status": "declared",
+      "reason": "already taught as a departure: 23-version-movement/01-reading-the-delta.md:83 names it and its fold into `denormal_fpenv`. It was the f32-specific override of the same build-configuration string \u2014 its whole content was \"and float is different\", which the new attribute expresses as a second component \u2014 and it appears in the corpus only at reference/llvm-surface-18.json:91, never in a chapter, never in an example, and never in a snapshot line the normalizer keeps."
+    },
+    "denormal_fpenv": {
+      "status": "declared",
+      "reason": "Build-configuration knob, not lowering, and it never reaches a line the corpus shows. Checked: clang-23 emits `denormal_fpenv(preservesign)` only when the build passes -fdenormal-fp-math=; plain -O1, -ffast-math and -ffp-model=fast all emit nothing, and when it does appear it is inside the `attributes #0 = {...}` group line, which the snapshot normalizer drops entirely (tools/verify-frontend-lowering.py:52 _DROP_LINE). No chapter teaches either spelling (grep: `denormal-fp-math` occurs only in reference/llvm-surface-18.json:90-91), and the rename is already named at 23-version-movement/01-reading-the-delta.md:82-83. Teaching it would require opening FP-environment and denormal modes, which the corpus does not cover anywhere."
+    },
+    "flatten": {
+      "status": "declared",
+      "reason": "clang cannot put it in your IR. Checked: clang-23 accepts `__attribute__((flatten))` without complaint but emits no `flatten` attribute at -O0 or -O1, with an inlinable callee and with a `noinline` callee \u2014 the attribute group is `{ noinline nounwind optnone ... }` / `{ nounwind uwtable ... }` in every case. The IR attribute (Attributes.td:137-138, \"Flatten function by recursively inlining all calls\") is a directive for non-clang frontends and pass authors, lives in the dropped attributes-group line, and the corpus teaches inlining by its observable effect in 07-optimization rather than by directive. The 14 corpus files matching \"flatten\" all use the English word (\"lowering flattens this structure\"), never the attribute."
+    },
+    "hybrid_patchable": {
+      "status": "declared",
+      "reason": "Arm64EC-only: it marks a function that also needs an x64-emulation-compatible thunk under the Windows-on-Arm hybrid ABI, written by `__declspec(hybrid_patchable)`. Every target triple in the corpus's 209 .ll files is x86_64-unknown-linux-gnu (92), unknown-unknown-unknown (13), x86_64-pc-windows-msvc (2), riscv64-unknown-linux-gnu (2) or x86_64-pc-linux-gnu (1) \u2014 no arm64ec \u2014 so it cannot appear in any IR the corpus builds or a reader following it produces. The corpus already names Windows/MSVC ABI specifics as a boundary rather than a subject (16-exception-handling covers the SEH/funclet side it does teach)."
+    },
+    "llvm.acos": {
+      "status": "declared",
+      "reason": "libm-shaped math intrinsic newly given a core spelling. Its semantics are its libm function's, which the corpus does not re-document; what the corpus does teach -- that these lower to a call or an instruction depending on target and fast-math flags -- is unchanged by the family growing."
+    },
+    "llvm.alloc.token.id": {
+      "status": "declared",
+      "reason": "allocation-token identifier for heap-allocation typing, part of a 23-era hardening feature with no stable frontend spelling yet."
+    },
+    "llvm.allow.runtime.check": {
+      "status": "declared",
+      "reason": "optimizer hint that permits eliding a sanitizer or runtime check. It changes what an optimiser may delete, never what the program computes, and the corpus teaches sanitizer instrumentation by its instruction shape rather than by the hint intrinsics that tune it."
+    },
+    "llvm.allow.sanitize.address": {
+      "status": "declared",
+      "reason": "optimizer hint that permits eliding a sanitizer or runtime check. It changes what an optimiser may delete, never what the program computes, and the corpus teaches sanitizer instrumentation by its instruction shape rather than by the hint intrinsics that tune it."
+    },
+    "llvm.allow.sanitize.hwaddress": {
+      "status": "declared",
+      "reason": "optimizer hint that permits eliding a sanitizer or runtime check. It changes what an optimiser may delete, never what the program computes, and the corpus teaches sanitizer instrumentation by its instruction shape rather than by the hint intrinsics that tune it."
+    },
+    "llvm.allow.sanitize.memory": {
+      "status": "declared",
+      "reason": "optimizer hint that permits eliding a sanitizer or runtime check. It changes what an optimiser may delete, never what the program computes, and the corpus teaches sanitizer instrumentation by its instruction shape rather than by the hint intrinsics that tune it."
+    },
+    "llvm.allow.sanitize.thread": {
+      "status": "declared",
+      "reason": "optimizer hint that permits eliding a sanitizer or runtime check. It changes what an optimiser may delete, never what the program computes, and the corpus teaches sanitizer instrumentation by its instruction shape rather than by the hint intrinsics that tune it."
+    },
+    "llvm.allow.ubsan.check": {
+      "status": "declared",
+      "reason": "optimizer hint that permits eliding a sanitizer or runtime check. It changes what an optimiser may delete, never what the program computes, and the corpus teaches sanitizer instrumentation by its instruction shape rather than by the hint intrinsics that tune it."
+    },
+    "llvm.asin": {
+      "status": "declared",
+      "reason": "libm-shaped math intrinsic newly given a core spelling. Its semantics are its libm function's, which the corpus does not re-document; what the corpus does teach -- that these lower to a call or an instruction depending on target and fast-math flags -- is unchanged by the family growing."
+    },
+    "llvm.atan": {
+      "status": "declared",
+      "reason": "libm-shaped math intrinsic newly given a core spelling. Its semantics are its libm function's, which the corpus does not re-document; what the corpus does teach -- that these lower to a call or an instruction depending on target and fast-math flags -- is unchanged by the family growing."
+    },
+    "llvm.atan2": {
+      "status": "declared",
+      "reason": "libm-shaped math intrinsic newly given a core spelling. Its semantics are its libm function's, which the corpus does not re-document; what the corpus does teach -- that these lower to a call or an instruction depending on target and fast-math flags -- is unchanged by the family growing."
+    },
+    "llvm.clmul": {
+      "status": "declared",
+      "reason": "bit-manipulation intrinsic with direct hardware backing (carry-less multiply, parallel deposit and extract). The corpus teaches the generic bit intrinsics (ctpop, ctlz, cttz) and names the wider bit-manipulation families as target territory."
+    },
+    "llvm.cond.loop": {
+      "status": "declared",
+      "reason": "loop-structure hint new in 23, consumed by loop transforms. The corpus teaches loop metadata as the way loop facts are attached, and this hint has no clang spelling a reader could produce."
+    },
+    "llvm.convert.from.arbitrary.fp": {
+      "status": "declared",
+      "reason": "arbitrary-precision float conversion, new in 23 and used by frontends targeting non-IEEE formats. The corpus teaches the IEEE conversion opcodes (fptrunc/fpext) and does not cover arbitrary-precision float, so this has no chapter to attach to."
+    },
+    "llvm.convert.from.fp16": {
+      "status": "declared",
+      "reason": "departed: replaced by plain fptrunc/fpext to half, which the corpus already teaches. The replacement is shown in 23-version-movement/01-reading-the-delta.md; the intrinsic spelling is history."
+    },
+    "llvm.convert.to.arbitrary.fp": {
+      "status": "declared",
+      "reason": "arbitrary-precision float conversion, new in 23 and used by frontends targeting non-IEEE formats. The corpus teaches the IEEE conversion opcodes (fptrunc/fpext) and does not cover arbitrary-precision float, so this has no chapter to attach to."
+    },
+    "llvm.convert.to.fp16": {
+      "status": "declared",
+      "reason": "departed: replaced by plain fptrunc/fpext to half, which the corpus already teaches. The replacement is shown in 23-version-movement/01-reading-the-delta.md; the intrinsic spelling is history."
+    },
+    "llvm.coro.await.suspend.bool": {
+      "status": "declared",
+      "reason": "coroutine lowering internal, emitted and consumed by the coroutine passes. The corpus covers coroutines as an IR outline only (13-advanced-ir) and declares the lowering intrinsics a boundary; reading them without the pass pipeline that produces them teaches little."
+    },
+    "llvm.coro.await.suspend.handle": {
+      "status": "declared",
+      "reason": "coroutine lowering internal, emitted and consumed by the coroutine passes. The corpus covers coroutines as an IR outline only (13-advanced-ir) and declares the lowering intrinsics a boundary; reading them without the pass pipeline that produces them teaches little."
+    },
+    "llvm.coro.await.suspend.void": {
+      "status": "declared",
+      "reason": "coroutine lowering internal, emitted and consumed by the coroutine passes. The corpus covers coroutines as an IR outline only (13-advanced-ir) and declares the lowering intrinsics a boundary; reading them without the pass pipeline that produces them teaches little."
+    },
+    "llvm.coro.begin.custom.abi": {
+      "status": "declared",
+      "reason": "coroutine lowering internal, emitted and consumed by the coroutine passes. The corpus covers coroutines as an IR outline only (13-advanced-ir) and declares the lowering intrinsics a boundary; reading them without the pass pipeline that produces them teaches little."
+    },
+    "llvm.coro.dead": {
+      "status": "declared",
+      "reason": "coroutine lowering internal, emitted and consumed by the coroutine passes. The corpus covers coroutines as an IR outline only (13-advanced-ir) and declares the lowering intrinsics a boundary; reading them without the pass pipeline that produces them teaches little."
+    },
+    "llvm.coro.is_in_ramp": {
+      "status": "declared",
+      "reason": "coroutine lowering internal, emitted and consumed by the coroutine passes. The corpus covers coroutines as an IR outline only (13-advanced-ir) and declares the lowering intrinsics a boundary; reading them without the pass pipeline that produces them teaches little."
+    },
+    "llvm.cosh": {
+      "status": "declared",
+      "reason": "libm-shaped math intrinsic newly given a core spelling. Its semantics are its libm function's, which the corpus does not re-document; what the corpus does teach -- that these lower to a call or an instruction depending on target and fast-math flags -- is unchanged by the family growing."
+    },
+    "llvm.experimental.constrained.acos": {
+      "status": "declared",
+      "reason": "constrained-FP intrinsic: a new transcendental member of a family whose contract the corpus already teaches (the strictfp attribute, and the rounding-mode and exception-behaviour metadata operands). The rule is the lesson; enumerating each transcendental would not add one."
+    },
+    "llvm.experimental.constrained.asin": {
+      "status": "declared",
+      "reason": "constrained-FP intrinsic: a new transcendental member of a family whose contract the corpus already teaches (the strictfp attribute, and the rounding-mode and exception-behaviour metadata operands). The rule is the lesson; enumerating each transcendental would not add one."
+    },
+    "llvm.experimental.constrained.atan": {
+      "status": "declared",
+      "reason": "constrained-FP intrinsic: a new transcendental member of a family whose contract the corpus already teaches (the strictfp attribute, and the rounding-mode and exception-behaviour metadata operands). The rule is the lesson; enumerating each transcendental would not add one."
+    },
+    "llvm.experimental.constrained.atan2": {
+      "status": "declared",
+      "reason": "constrained-FP intrinsic: a new transcendental member of a family whose contract the corpus already teaches (the strictfp attribute, and the rounding-mode and exception-behaviour metadata operands). The rule is the lesson; enumerating each transcendental would not add one."
+    },
+    "llvm.experimental.constrained.cosh": {
+      "status": "declared",
+      "reason": "constrained-FP intrinsic: a new transcendental member of a family whose contract the corpus already teaches (the strictfp attribute, and the rounding-mode and exception-behaviour metadata operands). The rule is the lesson; enumerating each transcendental would not add one."
+    },
+    "llvm.experimental.constrained.sinh": {
+      "status": "declared",
+      "reason": "constrained-FP intrinsic: a new transcendental member of a family whose contract the corpus already teaches (the strictfp attribute, and the rounding-mode and exception-behaviour metadata operands). The rule is the lesson; enumerating each transcendental would not add one."
+    },
+    "llvm.experimental.constrained.tan": {
+      "status": "declared",
+      "reason": "constrained-FP intrinsic: a new transcendental member of a family whose contract the corpus already teaches (the strictfp attribute, and the rounding-mode and exception-behaviour metadata operands). The rule is the lesson; enumerating each transcendental would not add one."
+    },
+    "llvm.experimental.constrained.tanh": {
+      "status": "declared",
+      "reason": "constrained-FP intrinsic: a new transcendental member of a family whose contract the corpus already teaches (the strictfp attribute, and the rounding-mode and exception-behaviour metadata operands). The rule is the lesson; enumerating each transcendental would not add one."
+    },
+    "llvm.experimental.memset.pattern": {
+      "status": "declared",
+      "reason": "memset with a repeating multi-byte pattern rather than a single byte, new in 23 and not yet emitted by clang for ordinary C. The corpus teaches the memcpy/memset family and its alignment and volatility operands; a pattern variant with no frontend spelling adds no lesson a reader can reach."
+    },
+    "llvm.experimental.patchpoint": {
+      "status": "declared",
+      "reason": "type-generic replacement for the departed llvm.experimental.patchpoint.i64: the return type moved from the name into the signature. Same disposition as the .i64 form -- the corpus names stackmaps and patchpoints as a backend/JIT evidence contract (12-backend-jit) and does not teach emitting them."
+    },
+    "llvm.experimental.patchpoint.i64": {
+      "status": "declared",
+      "reason": "patchpoint variant for runtime patching by a JIT. The corpus names stackmaps and patchpoints as a backend/JIT evidence contract (12-backend-jit) and deliberately does not teach emitting them."
+    },
+    "llvm.experimental.stepvector": {
+      "status": "declared",
+      "reason": "already taught: 23-version-movement/01-reading-the-delta.md:100 lists this exact rename in the graduation table, with the stability-marker meaning of `llvm.experimental.` at :107 and the pinned-to-a-release consequence at :112. Its graduated form llvm.stepvector is marked taught in this group for its semantics, so the pair is covered from both sides \u2014 the naming event where the corpus already teaches naming events, the operation where the corpus teaches scalable vectors. Nothing is left for a separate section."
+    },
+    "llvm.experimental.vector.compress": {
+      "status": "declared",
+      "reason": "lane compaction \u2014 pack the active lanes toward the low end, preserving order \u2014 backing AVX-512 vcompress and SVE compact. It arrived in LLVM 23 still carrying the `experimental.` prefix, so it is on the in-flight side of the very pipeline 23-version-movement/01-reading-the-delta.md:107 describes, and pinning its spelling in a chapter is what SEMVER.md:11 ('Prefer IR syntax that remains stable across supported LLVM versions') tells this corpus not to do. Its longer-standing memory-side cousins llvm.masked.compressstore and llvm.masked.expandload predate LLVM 18 and the corpus already declines to teach those."
+    },
+    "llvm.experimental.vector.deinterleave2": {
+      "status": "declared",
+      "reason": "already taught: 23-version-movement/01-reading-the-delta.md:104 lists `llvm.experimental.vector.deinterleave2 -> llvm.vector.deinterleave2` in the graduation table. The operation is also already taught end to end: 09-vectorization/07-masked-and-interleaved-access.md:11 introduces AoS-to-SoA deinterleaving, :24 points at examples/interleaved-access-after-vectorize.ll, and :127-128 shows the portable fixed-width form as two constant-mask shufflevectors."
+    },
+    "llvm.experimental.vector.extract.last.active": {
+      "status": "declared",
+      "reason": "extracts the lane at the highest set position of a mask; the loop vectorizer emits it for 'last match wins' search loops. Still `experimental.`-spelled in LLVM 23, so it sits in the staging namespace 23-version-movement/01-reading-the-delta.md:107 warns readers not to hard-code. The reader's underlying need \u2014 get one lane out of a vector \u2014 is `extractelement`, already taught at reference/instruction-quickref.md:249 and 02-types/02-composite-types.md:13; this intrinsic only supplies a mask-derived index."
+    },
+    "llvm.experimental.vector.histogram.add": {
+      "status": "declared",
+      "reason": "masked scatter-with-conflict-detection that increments memory locations which may repeat within a single vector \u2014 emitted only when the loop vectorizer recognizes a histogram idiom AND the target has conflict detection (AVX-512CD vpconflict, SVE2 histcnt). The generalizable question is whether lanes of one vector iteration can collide, which 09-vectorization/04-vectorization-legality.md:32 ('No unsafe dependencies') and :69 ('Loop-carried dependencies') already teach; this is one target-gated answer, still experimental-spelled."
+    },
+    "llvm.experimental.vector.histogram.uadd.sat": {
+      "status": "declared",
+      "reason": "saturating-add variant of the LLVM 23 histogram family, for histogram loops whose bucket counters must clamp instead of wrap. It combines two things the corpus declines separately \u2014 the target-gated conflict-detection idiom (09-vectorization/04-vectorization-legality.md:32 teaches the underlying dependence question) and saturating arithmetic, whose generic form llvm.uadd.sat the corpus does not teach either \u2014 and it is still `experimental.`-spelled in LLVM 23."
+    },
+    "llvm.experimental.vector.histogram.umax": {
+      "status": "declared",
+      "reason": "unsigned-max variant of the LLVM 23 histogram family, for 'record the largest value seen per bucket' loops. Same target gating as the rest of the family (AVX-512CD, SVE2 histcnt) and same still-experimental spelling; the transferable content is the intra-vector collision question already taught at 09-vectorization/04-vectorization-legality.md:32 and :69."
+    },
+    "llvm.experimental.vector.histogram.umin": {
+      "status": "declared",
+      "reason": "unsigned-min variant of the LLVM 23 histogram family, the mirror of histogram.umax. It is vectorizer idiom-recognition output for one loop shape on targets with conflict detection, not a construct a reader writes, and it still carries the `experimental.` prefix that 23-version-movement/01-reading-the-delta.md:149 tells readers not to hard-code."
+    },
+    "llvm.experimental.vector.interleave2": {
+      "status": "declared",
+      "reason": "already taught: 23-version-movement/01-reading-the-delta.md:103 lists `llvm.experimental.vector.interleave2 -> llvm.vector.interleave2` in the graduation table. It is a pure rename, and the corpus already teaches the operation at fixed width \u2014 reference/instruction-quickref.md:108 names 'interleaves lanes' as a shufflevector role and 09-vectorization/07-masked-and-interleaved-access.md teaches interleaved-group recognition throughout."
+    },
+    "llvm.experimental.vector.match": {
+      "status": "declared",
+      "reason": "tests whether each lane's value appears anywhere in a second, small search vector \u2014 the SVE2 MATCH primitive behind vectorized strchr/strcspn-style searches, which lowers to one instruction on SVE2 and to an O(N*M) comparison chain elsewhere. That target-shaped profitability cliff is exactly the boundary 13-advanced-ir/02-target-specific-intrinsics.md draws, and the name is still `experimental.`-spelled in LLVM 23."
+    },
+    "llvm.experimental.vector.reverse": {
+      "status": "declared",
+      "reason": "already taught: 23-version-movement/01-reading-the-delta.md:101 lists `llvm.experimental.vector.reverse -> llvm.vector.reverse` in the graduation table, and it is a pure rename \u2014 no signature or semantic change to record. The operation is separately reachable from what the corpus already teaches: reference/instruction-quickref.md:108 lists 'reverses ... lanes' as a shufflevector role, so a reader knows the fixed-width form and needs only the scalable-vector reason the intrinsic exists."
+    },
+    "llvm.experimental.vector.splice": {
+      "status": "declared",
+      "reason": "already taught, but with a defect this group fixes rather than duplicates: 23-village is not the citation \u2014 23-version-movement/01-reading-the-delta.md:102 lists this departure in the graduation table, and its stated replacement `llvm.vector.splice` does not exist in LLVM 23 (reference/llvm-surface-23.json has only llvm.vector.splice.left and llvm.vector.splice.right). The departure itself is correctly recorded and correctly explained by the surrounding graduation rule at :107 and :112; the wrong half is the arrival name, which is why llvm.vector.splice.left and llvm.vector.splice.right are the taught items. Fixing that row covers this departure too."
+    },
+    "llvm.fake.use": {
+      "status": "declared",
+      "reason": "keeps a value live for the debugger without generating code, emitted under -fextend-lifetimes. The corpus teaches debug info as metadata and location records; this is a codegen-side lifetime device."
+    },
+    "llvm.hwasan.check.memaccess.fixedshadow": {
+      "status": "declared",
+      "reason": "hardware-assisted AddressSanitizer plumbing, emitted only by the HWASan instrumentation pass on targets with memory tagging. The corpus teaches sanitizers by what their instrumentation looks like, not by the intrinsics the pass writer uses."
+    },
+    "llvm.hwasan.check.memaccess.shortgranules.fixedshadow": {
+      "status": "declared",
+      "reason": "hardware-assisted AddressSanitizer plumbing, emitted only by the HWASan instrumentation pass on targets with memory tagging. The corpus teaches sanitizers by what their instrumentation looks like, not by the intrinsics the pass writer uses."
+    },
+    "llvm.instrprof.callsite": {
+      "status": "declared",
+      "reason": "PGO instrumentation counter intrinsic, written by the profile-instrumentation pass and consumed by llvm-profdata. The corpus teaches the PGO workflow through profile files, which is the level a reader works at."
+    },
+    "llvm.instrprof.mcdc.condbitmap.update": {
+      "status": "declared",
+      "reason": "PGO instrumentation counter intrinsic, written by the profile-instrumentation pass and consumed by llvm-profdata. The corpus teaches the PGO workflow through profile files, which is the level a reader works at."
+    },
+    "llvm.loop.dependence.raw.mask": {
+      "status": "declared",
+      "reason": "runtime loop-dependence check emitted by the loop vectoriser when it cannot prove independence statically. Meaningful only inside vectoriser output; the corpus teaches the alias facts the vectoriser needs rather than the checks it emits when it lacks them."
+    },
+    "llvm.loop.dependence.war.mask": {
+      "status": "declared",
+      "reason": "runtime loop-dependence check emitted by the loop vectoriser when it cannot prove independence statically. Meaningful only inside vectoriser output; the corpus teaches the alias facts the vectoriser needs rather than the checks it emits when it lacks them."
+    },
+    "llvm.looptrap": {
+      "status": "declared",
+      "reason": "traps on an infinite loop that the standard would otherwise allow to be removed. Tied to mustprogress/forward-progress semantics, which the corpus names but does not teach in depth."
+    },
+    "llvm.masked.sdiv": {
+      "status": "declared",
+      "reason": "new in LLVM 23 and the first llvm.masked.* members that are not memory operations, but the rule underneath is one the corpus already owns. Signed division cannot be speculated \u2014 sdiv by zero and sdiv INT_MIN/-1 are immediate undefined behavior \u2014 so a predicated sdiv cannot be lowered as compute-all-lanes-then-select the way a predicated add can. That is the safe-speculation rule taught at 13-advanced-ir/05-poison-undef-freeze.md:144 ('BCIR safe speculation with `freeze`') applied to one opcode, plus the mask-as-legality-device rule taught at 09-vectorization/07-masked-and-interleaved-access.md:144. The corpus's masked-family coverage deliberately stops at load/store (reference/intrinsics-quickref.md:81-82), where the mask governs memory legality."
+    },
+    "llvm.masked.srem": {
+      "status": "declared",
+      "reason": "predicated signed remainder, new in LLVM 23 for the same reason as llvm.masked.sdiv: srem by zero and srem INT_MIN/-1 are immediate undefined behavior, so inactive lanes must genuinely not execute rather than be selected away afterward. The generalizable content is the speculation rule at 13-advanced-ir/05-poison-undef-freeze.md:144, not the intrinsic spelling, and 15-binary-analysis/01-microarchitecture-side-channels.md:29 already flags srem as a variable-latency operation a reader should notice."
+    },
+    "llvm.masked.udiv": {
+      "status": "declared",
+      "reason": "predicated unsigned division, new in LLVM 23. Division by zero is immediate undefined behavior, which is why a masked form is needed at all instead of an unmasked udiv plus select \u2014 the corpus already teaches both halves of that reasoning: the safe-speculation rule at 13-advanced-ir/05-poison-undef-freeze.md:144, and 09-vectorization/03-vector-predication.md's Pitfalls, which states that `select` prevents a value from being chosen but requires both operands to already be safe to compute."
+    },
+    "llvm.masked.urem": {
+      "status": "declared",
+      "reason": "predicated unsigned remainder, new in LLVM 23, sharing the div-by-zero undefined-behavior reason that makes select-after-the-fact illegal for this opcode family. The rule is taught at 13-advanced-ir/05-poison-undef-freeze.md:144 and 09-vectorization/03-vector-predication.md Pitfalls; the corpus keeps its llvm.masked.* coverage at load/store, where the mask is a memory-legality device (09-vectorization/07-masked-and-interleaved-access.md:98)."
+    },
+    "llvm.maximumnum": {
+      "status": "declared",
+      "reason": "IEEE-754-2019 minimumNumber/maximumNumber, distinct from the existing minnum/maxnum in NaN handling. The corpus teaches float comparison and fast-math flags but does not enumerate the min/max family; adding two members does not change the lesson."
+    },
+    "llvm.minimumnum": {
+      "status": "declared",
+      "reason": "IEEE-754-2019 minimumNumber/maximumNumber, distinct from the existing minnum/maxnum in NaN handling. The corpus teaches float comparison and fast-math flags but does not enumerate the min/max family; adding two members does not change the lesson."
+    },
+    "llvm.modf": {
+      "status": "declared",
+      "reason": "libm-shaped math intrinsic newly given a core spelling. Its semantics are its libm function's, which the corpus does not re-document; what the corpus does teach -- that these lower to a call or an instruction depending on target and fast-math flags -- is unchanged by the family growing."
+    },
+    "llvm.objc.claim": {
+      "status": "declared",
+      "reason": "Objective-C ARC runtime intrinsic. The corpus teaches C and C++ lowering; Objective-C is not a language it covers, and its ARC intrinsics are declared out of scope as a family."
+    },
+    "llvm.pdep": {
+      "status": "declared",
+      "reason": "bit-manipulation intrinsic with direct hardware backing (carry-less multiply, parallel deposit and extract). The corpus teaches the generic bit intrinsics (ctpop, ctlz, cttz) and names the wider bit-manipulation families as target territory."
+    },
+    "llvm.pext": {
+      "status": "declared",
+      "reason": "bit-manipulation intrinsic with direct hardware backing (carry-less multiply, parallel deposit and extract). The corpus teaches the generic bit intrinsics (ctpop, ctlz, cttz) and names the wider bit-manipulation families as target territory."
+    },
+    "llvm.protected.field.ptr": {
+      "status": "declared",
+      "reason": "pointer-field protection intrinsic, part of the same 23-era hardening work; no frontend spelling a reader can produce and no chapter it belongs to."
+    },
+    "llvm.ptrauth.auth.with.pc.and.resign": {
+      "status": "declared",
+      "reason": "pointer-authentication intrinsic. Signing and authenticating pointers is an ABI feature of specific targets, and the corpus declares target ABI extensions a boundary (19-hardware-aware)."
+    },
+    "llvm.ptrauth.resign.load.relative": {
+      "status": "declared",
+      "reason": "pointer-authentication intrinsic. Signing and authenticating pointers is an ABI feature of specific targets, and the corpus declares target ABI extensions a boundary (19-hardware-aware)."
+    },
+    "llvm.readsteadycounter": {
+      "status": "declared",
+      "reason": "reads a monotonic hardware counter. The corpus's own measurement discipline chapter (21-performance-methodology) teaches counter access as a capability question answered by the host, and refuses to present an unreadable counter as a measurement -- the IR spelling is not the lesson."
+    },
+    "llvm.reloc.none": {
+      "status": "declared",
+      "reason": "emits a relocation without a value, used to force a symbol reference to survive to the object file. The corpus covers relocations from the object side (15-binary-analysis) rather than from the IR that requests them."
+    },
+    "llvm.scmp": {
+      "status": "declared",
+      "reason": "three-way comparison returning -1/0/1, the shape C++20's operator<=> lowers to. Genuinely useful, but the corpus teaches icmp and select as the comparison primitives and has no chapter on spaceship lowering to attach it to; recorded here as a known gap rather than taught thinly."
+    },
+    "llvm.sincos": {
+      "status": "declared",
+      "reason": "libm-shaped math intrinsic newly given a core spelling. Its semantics are its libm function's, which the corpus does not re-document; what the corpus does teach -- that these lower to a call or an instruction depending on target and fast-math flags -- is unchanged by the family growing."
+    },
+    "llvm.sincospi": {
+      "status": "declared",
+      "reason": "libm-shaped math intrinsic newly given a core spelling. Its semantics are its libm function's, which the corpus does not re-document; what the corpus does teach -- that these lower to a call or an instruction depending on target and fast-math flags -- is unchanged by the family growing."
+    },
+    "llvm.sinh": {
+      "status": "declared",
+      "reason": "libm-shaped math intrinsic newly given a core spelling. Its semantics are its libm function's, which the corpus does not re-document; what the corpus does teach -- that these lower to a call or an instruction depending on target and fast-math flags -- is unchanged by the family growing."
+    },
+    "llvm.stackaddress": {
+      "status": "declared",
+      "reason": "reads the current stack address. The corpus teaches stacksave/stackrestore as the stack-manipulation pair and declares the surrounding stack intrinsics a boundary."
+    },
+    "llvm.stepvector": {
+      "status": "taught",
+      "where": "23-version-movement/01-reading-the-delta.md",
+      "note": "A reader who dumps any SVE or RVV vectorized loop meets `call <vscale x 4 x i64> @llvm.stepvector.nxv4i64()` in the first lines of the vector body and cannot decode it from anything the corpus teaches. It is not an instruction, and the constant it stands in for cannot be written at all: 09-vectoriza"
+    },
+    "llvm.structured.alloca": {
+      "status": "declared",
+      "reason": "structured alloca/GEP carrying type information through lowering, new in 23 and not yet emitted by clang for ordinary C. The corpus teaches getelementptr as the addressing primitive; this is a parallel form with no frontend a reader can reach it from yet."
+    },
+    "llvm.structured.gep": {
+      "status": "declared",
+      "reason": "structured alloca/GEP carrying type information through lowering, new in 23 and not yet emitted by clang for ordinary C. The corpus teaches getelementptr as the addressing primitive; this is a parallel form with no frontend a reader can reach it from yet."
+    },
+    "llvm.tan": {
+      "status": "declared",
+      "reason": "libm-shaped math intrinsic newly given a core spelling. Its semantics are its libm function's, which the corpus does not re-document; what the corpus does teach -- that these lower to a call or an instruction depending on target and fast-math flags -- is unchanged by the family growing."
+    },
+    "llvm.tanh": {
+      "status": "declared",
+      "reason": "libm-shaped math intrinsic newly given a core spelling. Its semantics are its libm function's, which the corpus does not re-document; what the corpus does teach -- that these lower to a call or an instruction depending on target and fast-math flags -- is unchanged by the family growing."
+    },
+    "llvm.ucmp": {
+      "status": "declared",
+      "reason": "three-way comparison returning -1/0/1, the shape C++20's operator<=> lowers to. Genuinely useful, but the corpus teaches icmp and select as the comparison primitives and has no chapter on spaceship lowering to attach it to; recorded here as a known gap rather than taught thinly."
+    },
+    "llvm.vector.deinterleave2": {
+      "status": "declared",
+      "reason": "already taught as a naming event: 23-version-movement/01-reading-the-delta.md:104 names it as the graduated spelling of llvm.experimental.vector.deinterleave2. The operation is taught with a worked example: 09-vectorization/07-masked-and-interleaved-access.md:11 and :24, with the portable constant-mask shufflevector form at :127-128 and the example pair examples/interleaved-access-before.ll and examples/interleaved-access-after-vectorize.ll. The intrinsic is the same operation for scalable vectors, where the shuffle mask is unspellable."
+    },
+    "llvm.vector.deinterleave3": {
+      "status": "declared",
+      "reason": "factor-3 arity of an operation the corpus already teaches. LLVM 23 added factors 3-8 to match segmented load/store hardware (RVV vlseg3/vsseg3, AArch64 ld3/st3); the only difference from the factor-2 form is the group size, and 09-vectorization/07-masked-and-interleaved-access.md:144 already teaches stride and interleave-group size as the parameter that varies. Teaching six arities would be six copies of one idea."
+    },
+    "llvm.vector.deinterleave4": {
+      "status": "declared",
+      "reason": "factor-4 arity of the same operation, added in LLVM 23 for segmented memory hardware (RVV vlseg4, AArch64 ld4/st4). 09-vectorization/07-masked-and-interleaved-access.md:11 and :127-128 teach the deinterleave concept and its portable shufflevector form; the arity is a parameter of the interleave group, which :144 already teaches as a legality and cost signal."
+    },
+    "llvm.vector.deinterleave5": {
+      "status": "declared",
+      "reason": "factor-5 arity added in LLVM 23 alongside factors 3-8 to cover RVV segmented loads (vlseg5). No target instruction outside the RVV segment family consumes a factor-5 group, so a reader meets it only in RVV-specific output, which 09-vectorization/07-masked-and-interleaved-access.md:154 already names as a target boundary rather than teaching lane-for-lane."
+    },
+    "llvm.vector.deinterleave6": {
+      "status": "declared",
+      "reason": "factor-6 arity added in LLVM 23 for RVV segmented loads (vlseg6). Same operation and same teaching content as the factor-2 form taught at 09-vectorization/07-masked-and-interleaved-access.md:11 and :127-128; only the group size differs, and 13-advanced-ir/02-target-specific-intrinsics.md draws the boundary around constructs that exist to match one target's instruction family."
+    },
+    "llvm.vector.deinterleave7": {
+      "status": "declared",
+      "reason": "factor-7 arity added in LLVM 23 for RVV segmented loads (vlseg7). It exists to complete the vlseg2-vlseg8 range rather than to express a new idea; the deinterleave concept, its portable shufflevector form, and the stride/group-size signal are already taught at 09-vectorization/07-masked-and-interleaved-access.md:11, :127-128 and :144."
+    },
+    "llvm.vector.deinterleave8": {
+      "status": "declared",
+      "reason": "factor-8 arity, the top of the RVV vlseg2-vlseg8 range added in LLVM 23. Same content as the taught factor-2 case at 09-vectorization/07-masked-and-interleaved-access.md:11 and :127-128, with the group size as the only variable; the RVV boundary itself is already named at :154."
+    },
+    "llvm.vector.interleave2": {
+      "status": "declared",
+      "reason": "already taught as a naming event: 23-version-movement/01-reading-the-delta.md:103 names it as the graduated spelling of llvm.experimental.vector.interleave2. The operation is taught at fixed width \u2014 reference/instruction-quickref.md:108 lists interleaving as a shufflevector role and 09-vectorization/07-masked-and-interleaved-access.md:144 teaches stride and interleave-group recognition as the thing that actually varies between loops."
+    },
+    "llvm.vector.interleave3": {
+      "status": "declared",
+      "reason": "factor-3 interleave arity added in LLVM 23 for segmented stores (RVV vsseg3, AArch64 st3). reference/instruction-quickref.md:108 already names interleaving as a shufflevector role and 09-vectorization/07-masked-and-interleaved-access.md teaches interleave groups; the factor is a parameter, not a second concept."
+    },
+    "llvm.vector.interleave4": {
+      "status": "declared",
+      "reason": "factor-4 interleave arity added in LLVM 23 for segmented stores (RVV vsseg4, AArch64 st4). The SoA-to-AoS direction is the inverse of the deinterleave the corpus teaches at 09-vectorization/07-masked-and-interleaved-access.md:11 and :127-128, and the arity only sets the group size that :144 already teaches as a cost signal."
+    },
+    "llvm.vector.interleave5": {
+      "status": "declared",
+      "reason": "factor-5 interleave arity added in LLVM 23 to complete the RVV vsseg2-vsseg8 range. No non-RVV target consumes it, so it appears only in target-specific output, and 09-vectorization/07-masked-and-interleaved-access.md:154 already declares RVV scalable lowering a boundary the corpus sketches rather than enumerates."
+    },
+    "llvm.vector.interleave6": {
+      "status": "declared",
+      "reason": "factor-6 interleave arity added in LLVM 23 for RVV segmented stores (vsseg6). Same operation as the factor-2 form whose concept and portable shufflevector spelling are taught at 09-vectorization/07-masked-and-interleaved-access.md:11 and :127-128; the arity carries no new legality or semantic rule."
+    },
+    "llvm.vector.interleave7": {
+      "status": "declared",
+      "reason": "factor-7 interleave arity added in LLVM 23 for RVV segmented stores (vsseg7). It exists to fill the vsseg2-vsseg8 range; the interleave concept, the shufflevector role (reference/instruction-quickref.md:108) and the group-size cost signal (09-vectorization/07-masked-and-interleaved-access.md:144) are all already taught."
+    },
+    "llvm.vector.interleave8": {
+      "status": "declared",
+      "reason": "factor-8 interleave arity, the top of the RVV vsseg2-vsseg8 range added in LLVM 23. Identical teaching content to the factor-2 case already covered at 09-vectorization/07-masked-and-interleaved-access.md:11 and :127-128, with only the group size changed."
+    },
+    "llvm.vector.partial.reduce.add": {
+      "status": "declared",
+      "reason": "widening partial reduction: accumulate a wide integer vector into a narrower accumulator, the IR form of a dot-product/multiply-accumulate step backing SVE udot/sdot and AVX-VNNI vpdpbusd. It is a cost-model construct the vectorizer chooses, not something a reader writes, and the corpus already teaches the full-width reduction family it partially replaces at reference/intrinsics-quickref.md:129-138 while steering readers toward generic intrinsics over target instruction shapes at 13-advanced-ir/02-target-specific-intrinsics.md:54."
+    },
+    "llvm.vector.partial.reduce.fadd": {
+      "status": "declared",
+      "reason": "floating-point widening partial reduction, the FP counterpart of llvm.vector.partial.reduce.add. Its only distinctive content is reassociation legality, which the corpus already teaches for the full-width case at reference/intrinsics-quickref.md:136 ('Reassociation legality depends on FP flags/semantics') and in 13-advanced-ir/06-fast-math-flags.md; the partial form adds a target-selected accumulator width, not a new semantic."
+    },
+    "llvm.vector.reverse": {
+      "status": "declared",
+      "reason": "already taught as a naming event: 23-version-movement/01-reading-the-delta.md:101 names it as the graduated spelling of llvm.experimental.vector.reverse, so it arrived as a rename and not as new behavior. The operation is the scalable-vector form of a descending constant-mask shufflevector, a role reference/instruction-quickref.md:108 already lists ('splats, blends, concatenates, reverses, or interleaves lanes'); the intrinsic exists only because a `<vscale x N x T>` shuffle mask cannot be written down, which is the point the taught llvm.stepvector section makes."
+    },
+    "llvm.vector.splice.left": {
+      "status": "taught",
+      "where": "23-version-movement/01-reading-the-delta.md",
+      "note": "The graduation table at 23-version-movement/01-reading-the-delta.md:102 states `llvm.experimental.vector.splice -> llvm.vector.splice`. That target name does not exist in LLVM 23, and the repo proves it: reference/llvm-surface-23.json lists llvm.vector.splice.left and llvm.vector.splice.right, with "
+    },
+    "llvm.vector.splice.right": {
+      "status": "taught",
+      "where": "23-version-movement/01-reading-the-delta.md",
+      "note": "The other half of the same false row at 23-version-movement/01-reading-the-delta.md:102. LLVM 23's surface, per the repo's own reference/llvm-surface-23.json, has llvm.vector.splice.left and llvm.vector.splice.right and no plain llvm.vector.splice, so a reader must see both names to know what actual"
+    },
+    "llvm.vp.cttz.elts": {
+      "status": "declared",
+      "reason": "counts trailing zero lanes of a boolean vector under a mask and an explicit vector length, i.e. yields the index of the first active lane; the vectorizer emits it for early-exit 'find first' loops. It is a member of the Vector Predication family that 07-optimization/08-deep-optimization-lessons.md:190 already names in writing as a lowering target a predicated BCIR lane mask can become, alongside llvm.masked.*, selects and target masks \u2014 a boundary the corpus drew deliberately rather than a gap."
+    },
+    "llvm.vp.llrint": {
+      "status": "declared",
+      "reason": "predicated form of C's llrint (round floating-point to a 64-bit integer under the current rounding mode), carrying a mask and an %evl. Its only interesting content is the FP-environment and rounding-mode question, which the corpus places in 13-advanced-ir/06-fast-math-flags.md; the VP spelling adds predication vocabulary the corpus already names as a lowering boundary at 07-optimization/08-deep-optimization-lessons.md:190."
+    },
+    "llvm.vp.load.ff": {
+      "status": "declared",
+      "reason": "fault-only-first load: reads lanes until the first faulting address and returns both the data and how many lanes actually succeeded, so a loop can read past an unknown terminator (strlen-shaped) without faulting. It is genuinely interesting, but it is an RVV vleff / SVE ldff1 hardware capability with no portable equivalent \u2014 the case 13-advanced-ir/02-target-specific-intrinsics.md exists to bound \u2014 and the corpus already teaches why such a primitive must exist, in 09-vectorization/03-vector-predication.md's Pitfalls: a mask is not a bounds proof for inactive lanes unless the operation is truly masked."
+    },
+    "llvm.vp.lrint": {
+      "status": "declared",
+      "reason": "predicated form of C's lrint, the narrower sibling of llvm.vp.llrint. Same disposition: the rounding-mode and FP-environment semantics are the teachable part and live in 13-advanced-ir/06-fast-math-flags.md, while the %evl-carrying mirror belongs to the VP family the corpus names as a lowering boundary at 07-optimization/08-deep-optimization-lessons.md:190."
+    },
+    "llvm.vp.reduce.fmaximum": {
+      "status": "declared",
+      "reason": "predicated NaN-propagating maximum reduction. The distinguishing semantic \u2014 NaN-propagating versus LLVM's non-propagating fmax \u2014 is already taught for the non-VP form at reference/intrinsics-quickref.md:139 ('NaN-propagating minimum/maximum variants'), contrasted against :138. The VP form adds only a mask and %evl, which is the family boundary named at 07-optimization/08-deep-optimization-lessons.md:190."
+    },
+    "llvm.vp.reduce.fminimum": {
+      "status": "declared",
+      "reason": "predicated NaN-propagating minimum reduction, the mirror of llvm.vp.reduce.fmaximum. Its semantic content is taught at reference/intrinsics-quickref.md:139 for llvm.vector.reduce.fminimum; nothing new is introduced by the %evl-carrying spelling, which belongs to the VP lowering boundary at 07-optimization/08-deep-optimization-lessons.md:190."
+    },
+    "llvm.vp.sadd.sat": {
+      "status": "declared",
+      "reason": "predicated signed saturating addition. The corpus does not teach the generic llvm.sadd.sat either, and consistently so: its integer chapters teach the wrapping-and-poison model (nsw/nuw and 13-advanced-ir/05-poison-undef-freeze.md) that saturating operations exist to sidestep. Teaching the %evl-carrying mirror of an untaught generic would put the predicated variant before the base operation, and the VP family is already named as a lowering boundary at 07-optimization/08-deep-optimization-lessons.md:190."
+    },
+    "llvm.vp.ssub.sat": {
+      "status": "declared",
+      "reason": "predicated signed saturating subtraction, same shape as llvm.vp.sadd.sat. The generic llvm.ssub.sat is not taught, so the predicated mirror has no base to attach to; the corpus's integer overflow story is the nsw/nuw poison model in 13-advanced-ir/05-poison-undef-freeze.md, and the VP family is bounded at 07-optimization/08-deep-optimization-lessons.md:190."
+    },
+    "llvm.vp.uadd.sat": {
+      "status": "declared",
+      "reason": "predicated unsigned saturating addition. Like its signed sibling it mirrors a generic intrinsic (llvm.uadd.sat) the corpus does not teach, and it belongs to the Vector Predication family that 07-optimization/08-deep-optimization-lessons.md:190 explicitly names as a lowering target for BCIR lane masks rather than a construct the corpus enumerates."
+    },
+    "llvm.vp.usub.sat": {
+      "status": "declared",
+      "reason": "predicated unsigned saturating subtraction, completing the four VP saturating arithmetic arrivals. Same reason as the other three: the generic llvm.usub.sat is untaught, saturation is not part of the corpus's integer-semantics thread (which teaches wrapping and poison in 13-advanced-ir/05-poison-undef-freeze.md), and the VP family is a named lowering boundary at 07-optimization/08-deep-optimization-lessons.md:190."
+    },
+    "llvm.write_volatile_register": {
+      "status": "declared",
+      "reason": "writes a named machine register. The corpus teaches register binding through BCIR's own register model (bcir-mapping) and declares direct named-register access target territory."
+    },
+    "nocapture": {
+      "status": "declared",
+      "reason": "already taught: 01-syntax/01-modules-functions-blocks.md:116 defines it (\"The callee doesn't keep the pointer past the call\") and 23-version-movement/01-reading-the-delta.md:81 already names it as respelled `captures(none)`. It also did not leave the language: llvm-as-23 still parses hand-written `nocapture` and auto-upgrades it, printing `captures(none)` back. The real work is on the arrival side, which I marked taught \u2014 updating the table at :116 and the intrinsic declarations at 13-advanced-ir/01-common-intrinsics.md:31,54,69,108 to the LLVM 23 spelling and its component model."
+    },
+    "nodivergencesource": {
+      "status": "declared",
+      "reason": "GPU uniformity analysis: it promises a call introduces no new divergence, and it is consumed by the divergence/uniformity analysis that only AMDGPU and NVPTX run. The corpus teaches the other half of this story deliberately and stops there \u2014 `convergent` and the wavefront/subgroup model at 13-advanced-ir/03-special-types-and-tokens.md:53-58, and the `convergencectrl` bundle at reference/intrinsics-quickref.md:279-287 \u2014 and no corpus example uses a GPU triple. Checked: no CPU-target clang-23 invocation in my probes emitted it."
+    },
+    "noext": {
+      "status": "declared",
+      "reason": "The third member of a family whose other two the corpus already teaches: `signext` / `zeroext` at 01-syntax/01-modules-functions-blocks.md:120 and 05-control-flow/05-call-and-ret.md:213. `noext` says the ABI leaves a narrow argument's high bits unspecified, which is a live question only on ABIs like SystemZ's that would otherwise mandate extension. Checked: clang-23 emits `signext`/`zeroext` and never `noext` for i1/i8/i16 parameters and returns on both x86_64-linux and s390x-linux \u2014 including in a declaration-only call across a translation unit \u2014 so a reader on the corpus's triples will not meet it."
+    },
+    "noipa": {
+      "status": "declared",
+      "reason": "Not reachable from clang at all. Checked: clang-23 rejects it \u2014 \"warning: unknown attribute 'noipa' ignored [-Wunknown-attributes]\" \u2014 so it cannot appear in clang output; it is a GCC-compatibility attribute that GCC-compatible frontends emit, meaning \"do no interprocedural analysis across this function\". Its effect is the pessimistic corner of the interprocedural behaviour 07-optimization already teaches through pass behaviour, and it rides in the dropped `attributes #N` group line rather than on any instruction."
+    },
+    "nooutline": {
+      "status": "declared",
+      "reason": "Double opt-in and a pass level the corpus does not cover. Checked: clang-23 rejects the IR spelling as a source attribute (\"unknown attribute 'nooutline' ignored; did you mean 'no_outline'?\") and emits `nooutline` into the `attributes #0` group only when the source writes `__attribute__((no_outline))` \u2014 so it appears exclusively because the reader put it there. It opts a function out of the MachineOutliner, a MIR-level pass; grep finds no chapter mentioning the outliner (the \"outlin\" hits in exercises are about outlining a lowering, not the pass), and 12-backend-jit stops above MIR passes."
+    },
+    "range": {
+      "status": "taught",
+      "where": "23-version-movement/04-attributes-that-arrived.md",
+      "note": "Zero occurrences of `range(` anywhere in the corpus (grep over all .md and .ll), while clang-23 -O2 puts it on ordinary returns: `define dso_local range(i32 0, 2) i32 @cmpc(...)` for `return c < 128;` and `range(i32 0, 8)` for `return i & 7;`. In the same module clang emitted zero `!range` metadata "
+    },
+    "sanitize_alloc_token": {
+      "status": "declared",
+      "reason": "Verified emitted only under `-fsanitize=alloc-token`, and only in the `attributes #N` group line the normalizer drops (tools/verify-frontend-lowering.py:52). It marks a function for the allocation-token pass that rewrites allocator calls; the corpus's sanitizer teaching is deliberately about instrumentation you must not delete \u2014 shadow-address arithmetic, check branches, `!nosanitize` (08-pitfalls/16-sanitizer-instrumentation.md) \u2014 and teaches no sanitize_* attribute at all, not even the LLVM 18-era `sanitize_address`, so this opens no new gap relative to what the corpus covers."
+    },
+    "sanitize_numerical_stability": {
+      "status": "declared",
+      "reason": "Verified emitted only under `-fsanitize=numerical` (NSan, which shadows every FP computation in higher precision to catch instability), and only in the dropped `attributes #N` group line. Nothing in the corpus's FP material (the fast-math risk review at exercises/027, 08-pitfalls FP chapters) depends on the marker: the reader who turned NSan on chose it, and what they then read in the IR is the shadow-FP instrumentation, which is the same shape 08-pitfalls/16-sanitizer-instrumentation.md already teaches for the address case."
+    },
+    "sanitize_realtime": {
+      "status": "declared",
+      "reason": "Doubly opt-in. Checked: `-fsanitize=realtime` alone put nothing on an ordinary function \u2014 RTSan attaches this only to functions the source marks `[[clang::nonblocking]]`, so both the flag and the source annotation must be the reader's own choice. It marks the real-time constraint region for a runtime that traps on blocking calls; the corpus teaches no real-time or nonblocking-function contract anywhere, and the attribute lives in the dropped `attributes #N` group line."
+    },
+    "sanitize_realtime_blocking": {
+      "status": "declared",
+      "reason": "The complement of sanitize_realtime, attached to functions the source marks `[[clang::blocking]]` under `-fsanitize=realtime`; same double opt-in, verified the same way (nothing appears on an unannotated function). It is bookkeeping for the RTSan runtime rather than a fact about the IR's meaning: no instruction's semantics change, and it never leaves the `attributes #N` group line the corpus's snapshots drop."
+    },
+    "sanitize_type": {
+      "status": "declared",
+      "reason": "Verified emitted only under `-fsanitize=type` (TySan, which checks type-based aliasing violations at runtime), in the dropped `attributes #N` group line. The corpus already teaches the static half of this subject where a reader actually needs it \u2014 TBAA metadata at 06-metadata (tbaa-load-store.ll) and the aliasing pitfalls at 08-pitfalls/12 \u2014 and teaches no sanitize_* attribute; the marker adds nothing to reading either."
+    }
+  }
+}

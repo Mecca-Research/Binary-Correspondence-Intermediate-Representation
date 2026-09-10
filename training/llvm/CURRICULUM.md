@@ -332,6 +332,10 @@ speedup:
 3. [`22-bcir-approach/02-what-k-bcir-prices.md`](22-bcir-approach/02-what-k-bcir-prices.md) — the twelve cost axes, which of them anything produces, and what each policy weights.
 4. [`22-bcir-approach/03-legality-before-cost.md`](22-bcir-approach/03-legality-before-cost.md) — the budget ladder, `Infeasible` as a verdict, and R1–R25 on both rails.
 5. [`22-bcir-approach/04-dialect-as-data.md`](22-bcir-approach/04-dialect-as-data.md) — IRDL: a dialect stock `mlir-opt` can validate from a file, and the manifest that names what is not projected.
+6. [`23-version-movement/01-reading-the-delta.md`](23-version-movement/01-reading-the-delta.md) — the three ways a diff of two LLVM releases states something false, and the `llvm.experimental.` graduation rule.
+7. [`23-version-movement/02-ptrtoaddr.md`](23-version-movement/02-ptrtoaddr.md) — the one instruction LLVM 23 added, and why it is not a synonym for `ptrtoint`.
+8. [`23-version-movement/03-conversions-and-shifts.md`](23-version-movement/03-conversions-and-shifts.md) — `ashr` versus `lshr`, and the out-of-range float-to-int conversion that is `poison`.
+9. [`23-version-movement/04-attributes-that-arrived.md`](23-version-movement/04-attributes-that-arrived.md) — `captures(...)` replacing `nocapture`, `range(...)` on a return, and `dead_on_return` on C++ by-value parameters.
 6. Run `python3 training/llvm/tools/verify-bcir-approach.py` after editing any page here; every table in the subject is regenerated from `bcir/` and the IRDL rail.
 6. [`21-performance-methodology/06-hardware-counter-harness.md`](21-performance-methodology/06-hardware-counter-harness.md) — counters, and refusing honestly without a PMU
 

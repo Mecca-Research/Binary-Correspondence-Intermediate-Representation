@@ -61,6 +61,17 @@ LLVM_AS=$(find_tool llvm-as) || {
   printf 'error: required tool not found on PATH: llvm-as (or llvm-as-N)\n' >&2
   exit 127
 }
+
+# The corpus spans more than one LLVM release, so an example may legitimately need a
+# newer assembler than the host has -- `ptrtoaddr` parses on 23 and is a syntax error on
+# 18. Such a file declares `; REQUIRES: llvm >= N` on its own first lines and is skipped
+# below when this assembler is older. SEMVER.md has always allowed an example to state a
+# newer requirement; this is that rule made executable instead of advisory.
+ASSEMBLER_MAJOR=$("$LLVM_AS" --version 2>/dev/null | sed -n -E 's/.*LLVM version ([0-9]+)\..*/\1/p' | head -1)
+if [ -z "$ASSEMBLER_MAJOR" ]; then
+  printf 'error: could not read an LLVM major from %s --version; a version-gated example cannot be decided without one\n' "$LLVM_AS" >&2
+  exit 1
+fi
 OPT=$(find_tool opt) || {
   printf 'error: required tool not found on PATH: opt (or opt-N)\n' >&2
   exit 127
@@ -88,7 +99,19 @@ if "$LLVM_AS" "$KNOWN_INVALID_SENTINEL" -o /dev/null >/dev/null 2>&1; then
 fi
 printf 'ok\n'
 
+skipped=0
+gated=0
 for file in "${examples[@]}"; do
+  required=$(sed -n -E '1,8s/^; REQUIRES: llvm >= ([0-9]+)[[:space:]]*$/\1/p' "$file" | head -1)
+  if [ -n "$required" ]; then
+    gated=$((gated + 1))
+    if [ "$ASSEMBLER_MAJOR" -lt "$required" ]; then
+      skipped=$((skipped + 1))
+      printf '[skip] %s ... declares LLVM >= %s; this llvm-as is %s\n' \
+        "$(relpath "$file")" "$required" "$ASSEMBLER_MAJOR"
+      continue
+    fi
+  fi
   count=$((count + 1))
   run_step llvm-as "$file" "$LLVM_AS" "$file" -o /dev/null || status=1
   run_step verify "$file" "$OPT" -passes=verify "$file" -o /dev/null || status=1
@@ -99,8 +122,23 @@ if [ "$count" -eq 0 ]; then
   exit 1
 fi
 
+# Anti-vacuity for the directive itself. A version requirement is a way to say "check this
+# elsewhere", so it has to be checked SOMEWHERE: if every gated example skipped here, the
+# CI job that installs the newer toolchain is the one that owns them, and a run where they
+# ALL skip must not read as a run that verified them. Nothing is wrong with a local skip;
+# what would be wrong is letting the count disappear.
+if [ "$gated" -gt 0 ] && [ "$skipped" -eq "$gated" ]; then
+  printf 'note: all %d version-gated example(s) skipped on this LLVM %s host; the job that installs the newer toolchain verifies them.\n' \
+    "$gated" "$ASSEMBLER_MAJOR"
+fi
+
 if [ "$status" -eq 0 ]; then
-  printf 'Verified %d standalone LLVM IR example(s).\n' "$count"
+  if [ "$skipped" -gt 0 ]; then
+    printf 'Verified %d standalone LLVM IR example(s); %d skipped as needing a newer LLVM than %s.\n' \
+      "$count" "$skipped" "$ASSEMBLER_MAJOR"
+  else
+    printf 'Verified %d standalone LLVM IR example(s).\n' "$count"
+  fi
 else
   printf 'One or more standalone LLVM IR examples failed verification.\n' >&2
 fi

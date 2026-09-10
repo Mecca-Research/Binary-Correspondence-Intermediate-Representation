@@ -334,7 +334,7 @@ retraction:
 | --- | --- |
 | 1.1 | ~~Raise the corpus to **LLVM 23**~~ — **landed**: verified against 23.1.1 locally, and CI now runs a second `LLVM training corpus (LLVM 23)` job that installs 23 from apt.llvm.org and re-runs every toolchain-consuming corpus gate against it |
 | 1.2 | ~~Re-derive the frontend chapters against the **latest Clang**~~ — **done**: re-derived under clang 23.1.1; the checked claim set survived intact, three normalizer defects the LLVM 15 floor exposed are fixed, and a snapshot now records the clang that produced it |
-| 1.3 | Study the **LLVM 23 LangRef** and close the delta: new instructions, attributes, and intrinsics the corpus does not yet teach |
+| 1.3 | ~~Study the **LLVM 23 LangRef** and close the delta~~ — **landed**: the surface is snapshotted from each release's own generated definitions, every one of the 131 items that moved between 18 and 23 carries a disposition, and [`llvm/23-version-movement/`](llvm/23-version-movement) teaches what arrived |
 | 1.4 | **Comprehensive MLIR**: dialects, regions, interfaces, the pass infrastructure, bytecode, and the parts `14-` and `18-` only introduce |
 | 1.5 | ~~**IRDL**~~ — **landed**: [`llvm/22-bcir-approach/04-dialect-as-data.md`](llvm/22-bcir-approach/04-dialect-as-data.md), with the projection counted from the tree and the stock-`mlir-opt` round-trip exercised where a toolchain exists |
 | 1.6 | ~~**BCIR's own approach**~~ — **landed**: [`llvm/22-bcir-approach/`](llvm/22-bcir-approach) teaches the correspondence, the twelve cost axes, and legality before cost, with every table regenerated from `bcir/` |

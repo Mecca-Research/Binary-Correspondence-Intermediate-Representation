@@ -45,6 +45,7 @@ every lookup.
 | What BCIR is as an IR: correspondence, K_BCIR, and legality before cost | [`22-bcir-approach/README.md`](22-bcir-approach/README.md) |
 | Why a tighter budget can produce a more expensive plan | [`22-bcir-approach/03-legality-before-cost.md`](22-bcir-approach/03-legality-before-cost.md) |
 | A dialect as data: validating BCIR IR with stock MLIR and no build of this repo | [`22-bcir-approach/04-dialect-as-data.md`](22-bcir-approach/04-dialect-as-data.md) |
+| What changed between two LLVM releases, and the three ways a diff lies about it | [`23-version-movement/README.md`](23-version-movement/README.md) |
 | Porting an LLVM backend target: inventory, order, and cost | [`12-backend-jit/08-target-backend-porting-map.md`](12-backend-jit/08-target-backend-porting-map.md) |
 | Type metadata and CFI-style checked dispatch | [`06-metadata/04-type-metadata-cfi.md`](06-metadata/04-type-metadata-cfi.md) |
 | Repair, prediction, BCIR, MLIR, backend/JIT, and advanced-debugging exercises | [`exercises/README.md`](exercises/README.md) |
