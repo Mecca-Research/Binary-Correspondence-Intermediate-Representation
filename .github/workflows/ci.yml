@@ -570,6 +570,13 @@ jobs:
       - name: LLVM training LangRef surface delta (owns the LLVM 18 snapshot)
         run: python3 training/llvm/tools/verify-langref-delta.py --require-surface 18
 
+      # Chapter 24 teaches MLIR's framework -- regions, interfaces, pass anchoring,
+      # bytecode -- and every claim in it is behavioural, so the gate runs mlir-opt rather
+      # than asserting. This job installs no MLIR tools, so it reports an honest skip and
+      # names the owner; the LLVM 23 job below runs it with --require-tools.
+      - name: LLVM training MLIR infrastructure claims (skips without mlir-opt)
+        run: python3 training/llvm/tools/verify-mlir-infrastructure.py
+
       # Statistical kernels against hand-computable values, plus each benchmark
       # fixture's pinned verdict -- including the refusals.
       - name: LLVM training benchmark analysis self-test
@@ -756,6 +763,11 @@ jobs:
       # the LLVM 23 snapshot and refuses to skip that drift check.
       - name: LLVM training LangRef surface delta (owns the LLVM 23 snapshot)
         run: python3 training/llvm/tools/verify-langref-delta.py --require-surface 23
+
+      # This job installs mlir-23-tools, so it OWNS chapter 24's behaviour checks:
+      # --require-tools turns a missing mlir-opt from a skip into a failure here.
+      - name: LLVM training MLIR infrastructure claims (owns the mlir-opt checks)
+        run: python3 training/llvm/tools/verify-mlir-infrastructure.py --require-tools
 
       # DELIBERATELY NOT REPEATED HERE: build-pass-plugin.sh. It builds a sample New PM
       # plugin against the LLVM development CMake package, and a plugin is loadable only by

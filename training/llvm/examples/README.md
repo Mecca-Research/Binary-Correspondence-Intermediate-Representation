@@ -301,3 +301,6 @@ Notes:
 | `training/llvm/21-performance-methodology/examples/wall-clock-indicative.json` | Benchmark sample data | Synthetic wall-class timing series; `--gate` must refuse to gate on it. |
 | `training/llvm/23-version-movement/examples/conversions-and-shifts.ll` | Standalone example | The cast and shift opcodes the corpus listed but never ran; every asserted result is LLVM 23's own constant folding. |
 | `training/llvm/23-version-movement/examples/ptrtoaddr-vs-ptrtoint.ll` | Standalone example (`REQUIRES: llvm >= 23`) | `ptrtoaddr` against `ptrtoint` on an address space whose pointers are wider than their addresses. Not parseable before LLVM 23. |
+| `training/llvm/24-mlir-infrastructure/examples/regions-and-blocks.mlir` | MLIR example (Tier 2) | Op/region/block nesting and block arguments in place of phi nodes; the source for the custom-versus-generic and bytecode round-trip checks. |
+| `training/llvm/24-mlir-infrastructure/examples/interfaces-inlining.mlir` | MLIR example (Tier 2) | `--inline` reaching `func.func` through `CallOpInterface`/`CallableOpInterface` alone. |
+| `training/llvm/24-mlir-infrastructure/examples/unrealized-casts.mlir` | MLIR example (Tier 2) | A cancelling `unrealized_conversion_cast` pair and a lone one; reconciliation folds the first and leaves the second. |

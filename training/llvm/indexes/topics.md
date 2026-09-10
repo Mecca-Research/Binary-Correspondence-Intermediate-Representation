@@ -25,6 +25,11 @@
 | `ashr`/`lshr`, `fptosi`/`fptoui` poison, `sitofp` precision loss, `fneg` versus `fsub` | [`23-version-movement/03-conversions-and-shifts.md`](../23-version-movement/03-conversions-and-shifts.md) |
 | Version movement: dispatcher for what changed between LLVM releases | [`23-version-movement/README.md`](../23-version-movement/README.md) |
 | `captures(...)`, `range(...)`, `dead_on_return`; the attributes LLVM 23 added | [`23-version-movement/04-attributes-that-arrived.md`](../23-version-movement/04-attributes-that-arrived.md) |
+| MLIR regions, blocks, block arguments instead of phi, generic versus custom syntax | [`24-mlir-infrastructure/01-regions-blocks-and-the-two-syntaxes.md`](../24-mlir-infrastructure/01-regions-blocks-and-the-two-syntaxes.md) |
+| MLIR op/type/attribute interfaces, traits, `IsolatedFromAbove` | [`24-mlir-infrastructure/02-interfaces.md`](../24-mlir-infrastructure/02-interfaces.md) |
+| MLIR pass anchoring, `--pass-pipeline` nesting, analyses, parallel pass execution | [`24-mlir-infrastructure/03-the-pass-manager.md`](../24-mlir-infrastructure/03-the-pass-manager.md) |
+| MLIR bytecode, `unrealized_conversion_cast`, `--reconcile-unrealized-casts` | [`24-mlir-infrastructure/04-bytecode-and-partial-lowering.md`](../24-mlir-infrastructure/04-bytecode-and-partial-lowering.md) |
+| MLIR infrastructure: dispatcher for the framework beneath the dialects | [`24-mlir-infrastructure/README.md`](../24-mlir-infrastructure/README.md) |
 | LLVM backend target inventory and porting cost | [`12-backend-jit/08-target-backend-porting-map.md`](../12-backend-jit/08-target-backend-porting-map.md) |
 | Corpus self-test and path prompts | [`EVAL.md`](../EVAL.md) |
 | What LLVM IR is, big picture | [`00-foundations/01-what-is-llvm-ir.md`](../00-foundations/01-what-is-llvm-ir.md) |

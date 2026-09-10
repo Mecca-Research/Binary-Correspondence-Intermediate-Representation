@@ -73,6 +73,7 @@ training/llvm/
 ├── 21-performance-methodology/ workloads, trials, noise, significance, counters
 ├── 22-bcir-approach/      correspondence, K_BCIR's twelve axes, legality before cost
 ├── 23-version-movement/   how LLVM's surface moves between releases, and what 18->23 changed
+├── 24-mlir-infrastructure/ regions, interfaces, the pass manager, bytecode
 ├── exercises/            runnable prompts, expected observations, solutions
 ├── indexes/              generated or focused lookup indexes
 ├── tools/                example verification and smoke-test scripts
@@ -135,6 +136,7 @@ fast pre-edit checklist:
 | Making a performance claim that survives review | — | [`21-performance-methodology/README.md`](21-performance-methodology/README.md) |
 | Understanding what BCIR itself is, and why it refuses plans | — | [`22-bcir-approach/README.md`](22-bcir-approach/README.md) |
 | Tracking what a new LLVM release changed, without being fooled by the diff | — | [`23-version-movement/README.md`](23-version-movement/README.md) |
+| Understanding MLIR's framework rather than any one dialect | — | [`24-mlir-infrastructure/README.md`](24-mlir-infrastructure/README.md) |
 
 Use [`EXAMPLES.md`](EXAMPLES.md) for naming and verification rules before adding
 new artifacts to any of these families.
