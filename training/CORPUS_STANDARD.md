@@ -353,11 +353,15 @@ The split is drawn at *policy*, not at convenience. A subject declares:
 | how a prompt's reference solution is hidden from a model | the `*.solution.(ll\|mlir\|md)` pattern |
 | whether a submission may be *run*, and how | the `lli` harness, opt-in per exercise |
 
+| where its Tier-3 records come from | `llvm/tools/distill_sources.py`: five gates' worth of checked artifacts |
+| the system turn its records are answered as | "You are working with LLVM IR and compiler toolchains…" |
+
 Everything else is inherited: confinement of an untrusted answer, refusal of an
 attempt tree carrying a build file, allocation of a dimension's points across
 the checks that measure it, structural and rubric matching, the distinction
 between a failed check and one skipped for a missing tool, the report shape,
-split manifests, checksums, and deterministic JSONL.
+split manifests, checksums, deterministic JSONL, and the whole Tier-3 record
+contract — identity digest, gate binding and split policy.
 
 Two rules keep that real rather than nominal, and both are gated by
 [`tools/verify_grading.py`](tools/verify_grading.py):
@@ -365,6 +369,12 @@ Two rules keep that real rather than nominal, and both are gated by
 - **The shared rail names no subject.** Its docstrings may explain the boundary;
   its code may not cross it. The check strips comments and docstrings and then
   refuses any compiler, dialect or extension belonging to one subject.
+- **A record cannot be built without a gate.** `RecordBuilder.record` takes the
+  gate and the claim as required arguments and refuses an empty one, so "a
+  record exists only if a gate checks its answer" is a constructor precondition
+  rather than a convention. It also refuses a record with no source path, a
+  subject with an empty system prompt, an empty `SOURCES`, and two sources
+  sharing a task name.
 - **A policy predicate has one definition.** Before the machinery was shared,
   three tools carried their own tool-discovery rule and two more their own
   prompt-redaction and text-normalization rules. The copies agreed; nothing made

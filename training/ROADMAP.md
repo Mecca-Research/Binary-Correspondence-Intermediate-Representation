@@ -71,6 +71,7 @@ the intended pressure.
 | 0.5 Embedding step: a named model fills `embedding`, provenance recorded | landed |
 | 0.6 Retrieval evaluation: does a chunk set answer the questions it should? | landed |
 | 0.7 Extract the grader/dataset machinery from `llvm/` to `training/` | landed |
+| 0.8 Invert the distillation rail; inventory BCIR's ML components | landed |
 
 **0.5 closed with** `tools/embed_chunks.py`, `tools/search_chunks.py`,
 `tools/verify_embeddings.py`, and `schema/embedding-set-v1.json`. Vectors are
@@ -223,6 +224,64 @@ shared `tools/` directory and still knows LLVM: its five record extractors read
 boundary problem in the opposite direction, and closing it is a separate slice —
 the extractors belong to the subject, discovered through a profile, the way
 answer kinds now are.
+
+**0.8 closed the other half of the boundary, and corrected the record.**
+
+0.7 moved shared machinery out of the subject. `build_distillation.py` was the
+same problem pointing the other way: it sat in the shared `tools/` directory and
+knew that invalid fixtures are named `*.invalid.ll.txt`, that optimizer goldens
+live under `07-optimization/examples/`, and what an LLVM system prompt says. Its
+five extractors and that prompt now live in `llvm/tools/distill_sources.py`,
+found by convention; `tools/distillation.py` owns the record contract, the split
+policy and the identity digest, and knows nothing about any subject. The 79
+records it produces are byte-identical to before.
+
+The contract is enforceable rather than documented: a record cannot be
+constructed without naming a gate and a claim, a subject cannot declare an empty
+`SOURCES` or two sources with one task name, an empty system prompt is refused,
+and the split is re-derived per record from its own source file so two records
+from one chapter cannot straddle the boundary. Seven faults injected, seven
+caught.
+
+**What BCIR already provides for machine learning, measured.** This roadmap
+previously implied the training-time components were out of reach without torch.
+That was wrong twice over, and `tools/ml_components.py` now records what is
+actually there, with `tools/verify_ml_components.py` resolving every symbol
+*and calling it*:
+
+- **BCIR's substrate is tensor-framework free.** Attention, LayerNorm, RMSNorm
+  with its gradient, RoPE, the full transformer block with SwiGLU and causal
+  masking, activations with an exactness predicate, losses with their gradients,
+  reverse-mode autodiff on an explicit tape, SGD/momentum/RMSProp/Adam, a seeded
+  training loop, the precision framework (intervals, ULP distance, proved
+  quantization and reduction bounds), BCIRQ8, Q4 packing with SmoothQuant, GRU
+  and LSTM cells, a frozen-and-hardened MoE gate, and the byte-latent specs —
+  all of it runs on flat Python lists with no torch and no numpy. Seventeen
+  components are exercised on every run, not merely imported: a normalized row
+  really has zero mean, RoPE really preserves each pair's norm, an analytic
+  gradient really matches a central difference, a compensated reduction really
+  beats a naive one (naive 10 vs exact 11) with a tighter proved bound (10 → 1
+  ULP).
+- **The hosted stages run where torch is installed** — including here. BCIR's
+  `train_sft` consumes this corpus's own `SFTExample` (4 examples, 2 steps,
+  loss 4.218 → 3.973) and `train_dpo` its own `PreferenceExample`, after
+  refusing a reference model whose parameters can still move. The corpus's
+  export is therefore not a file nothing reads: it is the input to a stage that
+  demonstrably trains. Note that `stages.py` needs torch to **import**, not
+  merely to run — a first draft of the inventory claimed otherwise, having
+  measured only on a host where torch was installed, and CI corrected it within
+  two minutes. A property measured on one host is a property of that host until
+  a second one disagrees.
+- **Three components are declared and not exercised, each saying why** in a
+  field the gate checks rather than a sentence it would have to read: PPO needs
+  a rollout and a reward source the corpus does not produce; embedding
+  distillation needs a teacher this repository does not ship; bounded reasoning
+  search needs a generator, which is the model the corpus has not trained.
+
+That last line is the honest shape of what remains. The corpus can now feed
+supervised and preference training end to end; what it still cannot do is
+produce the *learned embedding* its own retrieval evaluation keeps reporting a
+lexical baseline for. Phase 0.6 built the metric; the teacher is the gap.
 
 ## Phase 1 — complete `llvm/`
 

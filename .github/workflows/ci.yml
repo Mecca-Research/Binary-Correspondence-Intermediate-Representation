@@ -420,6 +420,13 @@ jobs:
       - name: Bounded hardware RL train, search, static-memory, and StreamPack gate
         run: python tools/models/run_hardware_rl_gate.py --output-dir build/hardware-rl-gate
 
+      # This job installs torch, so a skipped hosted stage here would be a
+      # defect rather than the expected local condition: --require-torch turns
+      # it into a failure. The corpus's own SFTExample and PreferenceExample
+      # contracts are what BCIR's SFT and DPO stages are fed.
+      - name: Training corpus ML components against the hosted stages
+        run: python training/tools/verify_ml_components.py --require-torch
+
       - name: Upload deterministic hosted-model parity report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -593,6 +600,14 @@ jobs:
       # subject graded end to end through the real kernel.
       - name: Training corpus shared grading rail (subject-neutral, single-definition)
         run: python3 training/tools/verify_grading.py
+
+      # The corpus's inventory of BCIR's ML components is a claim about another
+      # part of the repository, so it is resolved AND exercised: every symbol
+      # must exist, and every component that claims to run must actually run.
+      # No torch on this runner, so the hosted stages are an honest skip here;
+      # the hosted-model job owns them.
+      - name: Training corpus ML component inventory (resolve + exercise)
+        run: python3 training/tools/verify_ml_components.py
 
       - name: LLVM training llc smoke
         run: |
