@@ -1,4 +1,7 @@
 ; Normalized `clang -O0 -S -emit-llvm -target x86_64-unknown-linux-gnu` output for abi-boundary.c.
+; Produced by clang 18. A host on that major must
+; reproduce this file byte for byte; a different major reports its
+; delta instead, because lowering legitimately moves between releases.
 ; Regenerate with:
 ;   python3 training/llvm/tools/verify-frontend-lowering.py --update
 ; Attribute groups, module flags, the ident string, and parameter

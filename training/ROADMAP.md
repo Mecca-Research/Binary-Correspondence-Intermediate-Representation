@@ -333,7 +333,7 @@ retraction:
 | Slice | Work |
 | --- | --- |
 | 1.1 | Raise the corpus to **LLVM 23**: install the toolchain, re-verify every example, and record where 15→23 changed a documented rule |
-| 1.2 | Re-derive the frontend chapters against the **latest Clang**, refreshing the checked claim set |
+| 1.2 | ~~Re-derive the frontend chapters against the **latest Clang**~~ — **done**: re-derived under clang 23.1.1; the checked claim set survived intact, three normalizer defects the LLVM 15 floor exposed are fixed, and a snapshot now records the clang that produced it |
 | 1.3 | Study the **LLVM 23 LangRef** and close the delta: new instructions, attributes, and intrinsics the corpus does not yet teach |
 | 1.4 | **Comprehensive MLIR**: dialects, regions, interfaces, the pass infrastructure, bytecode, and the parts `14-` and `18-` only introduce |
 | 1.5 | **IRDL**: dialect definition as data, and what it makes checkable that ODS does not |
@@ -345,6 +345,27 @@ specific LLVM release: doing that on a toolchain the corpus does not run would
 produce claims no gate checks. Slice 1.6 is not in that class — its claims are
 about this repository's own rails, so it landed first and no toolchain bump can
 invalidate it.
+
+**What 1.2 found.** Running the real frontend gate under clang 23.1.1 refused three
+ways, each a defect in how the corpus normalizes to its LLVM 15 floor rather than a
+change to anything a chapter teaches: `dead_on_return` entered as a bare flag and now
+takes an argument (`dead_on_return(4)`), so stripping the bare name orphaned `(4)`;
+`getelementptr inbounds nuw` carries a no-wrap flag the floor's assembler does not
+know, and the normalizer had no concept of instruction flags at all; and stripping
+`captures(...)` — clang 23's spelling of `nocapture` — left `writeonly ,` behind.
+With those fixed the gate passes on clang 18 and clang 23 alike, and **no claim the
+chapters teach changed between them**: three of four snapshots are byte-identical
+across five majors, and the fourth differs only in `nocapture`'s new spelling and a
+bool load materialized as `icmp ne` instead of `trunc` — neither of which any chapter
+asserts.
+
+A snapshot now records the clang that produced it, and the gate holds a host on that
+major to byte-identity while reporting, not failing, on any other. Nothing compared
+the checked-in snapshots to the toolchain's output before: the claims are checked
+against freshly compiled IR and the floor check assembles the fresh rendering, so a
+snapshot could have rotted into fiction while the gate stayed green. The snapshots
+stay stamped **clang 18**, not 23, because enforcement belongs where the toolchain
+runs — and CI installs Ubuntu's default.
 
 **A toolchain is reachable here after all.** `apt.llvm.org`, `releases.llvm.org`,
 `github.com/llvm` and the `llvm.org`/`mlir.llvm.org` documentation are refused by
